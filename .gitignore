@@ -1,0 +1,34 @@
+# --- Secrets ---
+# Your MTA Bus Time API key lives here. Never commit it.
+.env
+.env.*
+!.env.example
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Downloaded transit data ---
+data/gtfs_static/
+*.zip
+data/cache/
+*.pb
+
+# --- Node (only if you add a JS build step later) ---
+node_modules/
+dist/
+npm-debug.log*
+
+# --- OS / editor junk ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

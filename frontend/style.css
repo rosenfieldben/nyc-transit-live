@@ -40,6 +40,22 @@ html, body {
   margin-top: 2px;
 }
 
+#toggles {
+  display: flex;
+  gap: 14px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid #ddd;
+}
+
+#toggles label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+
 #status {
   margin-top: 6px;
   padding-top: 6px;
@@ -57,4 +73,15 @@ html, body {
   width: 20px;
   height: 20px;
   transition: transform 0.5s ease; /* smooth turn between polls */
+}
+
+/* Square subway markers */
+.train-marker svg {
+  width: 18px;
+  height: 18px;
+}
+
+.popup-sub {
+  color: #777;
+  font-size: 11px;
 }

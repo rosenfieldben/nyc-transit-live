@@ -8,20 +8,24 @@ L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
 }).addTo(map);
 
 // Buses and subways live in separate layer groups so they toggle independently.
+// Route lines are vectors (canvas), which Leaflet draws beneath marker panes.
 const busLayer = L.layerGroup().addTo(map);
 const subwayLayer = L.layerGroup().addTo(map);
+const routeLinesLayer = L.layerGroup().addTo(map);
 
-function bindToggle(checkboxId, layer) {
+function bindToggle(checkboxId, layers) {
   const box = document.getElementById(checkboxId);
   const sync = () => {
-    if (box.checked) map.addLayer(layer);
-    else map.removeLayer(layer);
+    for (const layer of layers) {
+      if (box.checked) map.addLayer(layer);
+      else map.removeLayer(layer);
+    }
   };
   box.addEventListener("change", sync);
   sync(); // some browsers restore checkbox state across reloads without firing change
 }
-bindToggle("toggle-buses", busLayer);
-bindToggle("toggle-subways", subwayLayer);
+bindToggle("toggle-buses", [busLayer]);
+bindToggle("toggle-subways", [subwayLayer, routeLinesLayer]);
 
 const statusEl = document.getElementById("status");
 
@@ -167,6 +171,33 @@ function trainPopup(record) {
   );
 }
 
+// Static route geometry, fetched once at startup (not polled). Canvas
+// renderer keeps ~22k points cheap; lines are decorative, so failures are
+// silent and the map just shows markers without them.
+const lineRenderer = L.canvas({ padding: 0.3 });
+
+async function loadRouteLines() {
+  let routes;
+  try {
+    const res = await fetch("/api/subway-routes");
+    if (!res.ok) return;
+    routes = await res.json();
+  } catch {
+    return;
+  }
+  for (const route of routes) {
+    for (const points of route.polylines) {
+      L.polyline(points, {
+        color: lineColor(route.route),
+        weight: 2.5,
+        opacity: 0.5,
+        interactive: false,
+        renderer: lineRenderer,
+      }).addTo(routeLinesLayer);
+    }
+  }
+}
+
 const trains = new Map(); // trip id -> { marker, routeId, latest }
 
 function applyTrains(data) {
@@ -248,5 +279,6 @@ async function refreshAll() {
   else setStatus(`${counts} · updated ${now}`);
 }
 
+loadRouteLines();
 refreshAll();
 setInterval(refreshAll, POLL_INTERVAL_MS);

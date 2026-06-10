@@ -7,9 +7,11 @@ import csv
 import io
 import logging
 import os
+import re
 import tempfile
 import time
 import zipfile
+from collections import defaultdict
 from pathlib import Path
 
 import httpx
@@ -112,3 +114,71 @@ async def load_subway_stops() -> dict[str, dict]:
         stops = _parse_stops()
     logger.info("Loaded %d subway stops from static GTFS", len(stops))
     return stops
+
+
+# A shape variant is kept only if it adds more than this fraction of new
+# geometry vs. variants already kept for the route. Express/local variants
+# share track geometry almost entirely; branches (e.g. the A's Rockaway legs)
+# differ substantially and survive the cut.
+_MIN_NEW_GEOMETRY = 0.05
+
+# Subway shape_ids look like "A..N04R" / "GS.N01R": route prefix, dots, then
+# the direction letter. We keep one direction per route — N and S trace the
+# same tracks at map scale.
+_SHAPE_ID_RE = re.compile(r"^([A-Za-z0-9]+)\.\.?N")
+
+
+def load_subway_route_shapes() -> list[dict]:
+    """Parse shapes.txt from the cached static GTFS into drawable polylines.
+
+    Returns [{"route": "A", "polylines": [[[lat, lon], ...], ...]}, ...] with
+    coordinates rounded to 5 decimals (~1 m). Assumes the zip exists (call
+    after load_subway_stops succeeds). Route lines are decorative, so any
+    parse problem logs and returns [] rather than raising.
+    """
+    try:
+        shapes: dict[str, list] = defaultdict(list)
+        with zipfile.ZipFile(SUBWAY_GTFS_ZIP) as zf:
+            with zf.open("shapes.txt") as raw:
+                reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
+                for row in reader:
+                    try:
+                        shapes[row["shape_id"]].append(
+                            (
+                                int(row["shape_pt_sequence"]),
+                                round(float(row["shape_pt_lat"]), 5),
+                                round(float(row["shape_pt_lon"]), 5),
+                            )
+                        )
+                    except (KeyError, ValueError, TypeError):
+                        continue  # malformed row
+
+        by_route: dict[str, list[list]] = defaultdict(list)
+        for shape_id, points in shapes.items():
+            match = _SHAPE_ID_RE.match(shape_id)
+            if not match:
+                continue
+            points.sort()
+            by_route[match.group(1)].append([[p[1], p[2]] for p in points])
+
+        routes: list[dict] = []
+        total = 0
+        for route, variants in sorted(by_route.items()):
+            variants.sort(key=len, reverse=True)
+            kept: list[list] = []
+            covered: set[tuple] = set()
+            for polyline in variants:
+                point_set = {tuple(p) for p in polyline}
+                if len(point_set - covered) / max(len(point_set), 1) > _MIN_NEW_GEOMETRY:
+                    kept.append(polyline)
+                    covered |= point_set
+            routes.append({"route": route, "polylines": kept})
+            total += sum(len(p) for p in kept)
+        logger.info(
+            "Loaded %d subway route lines (%d points) from static GTFS",
+            sum(len(r["polylines"]) for r in routes), total,
+        )
+        return routes
+    except Exception as exc:
+        logger.warning("Could not load subway route shapes (%s); skipping route lines", exc)
+        return []

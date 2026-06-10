@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from google.protobuf.message import DecodeError
 
 from feeds import fetch_subway_trains, fetch_vehicle_positions
-from static_data import load_subway_stops
+from static_data import load_subway_route_shapes, load_subway_stops
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -25,9 +25,12 @@ async def lifespan(app: FastAPI):
     # If it can't be loaded, keep serving buses; /api/subways returns 503.
     try:
         app.state.subway_stops = await load_subway_stops()
+        # Route lines reuse the zip the stops loader just ensured exists.
+        app.state.subway_routes = load_subway_route_shapes()
     except Exception as exc:
         logger.error("Could not load static subway GTFS (%s); /api/subways disabled", exc)
         app.state.subway_stops = None
+        app.state.subway_routes = []
     yield
 
 
@@ -52,6 +55,13 @@ async def get_buses() -> list[dict]:
         raise HTTPException(
             status_code=502, detail="Upstream bus feed returned undecodable data"
         ) from exc
+
+
+@app.get("/api/subway-routes")
+async def get_subway_routes() -> list[dict]:
+    """Static subway route geometry for drawing: one entry per route with its
+    polylines as [lat, lon] point lists. Loaded once at startup."""
+    return getattr(app.state, "subway_routes", None) or []
 
 
 @app.get("/api/subways")

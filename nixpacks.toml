@@ -1,0 +1,6 @@
+# Build configuration for Railway's Nixpacks builder.
+# The app uses asyncio.timeout (3.11+); pin a known-good interpreter.
+providers = ["python"]
+
+[variables]
+NIXPACKS_PYTHON_VERSION = "3.12"

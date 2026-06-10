@@ -1,0 +1,3 @@
+# Root-level requirements so Railway's Python builder detects the app.
+# The canonical list lives in backend/requirements.txt (used by local setup).
+-r backend/requirements.txt

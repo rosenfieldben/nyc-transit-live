@@ -11,7 +11,18 @@
 </head>
 <body>
   <div id="map"></div>
-  <div id="status">Loading buses…</div>
+  <div id="panel">
+    <div class="legend-row">
+      <svg viewBox="0 0 20 20"><path d="M10 2 L16 17 L10 13 L4 17 Z" fill="#1d4ed8" stroke="#fff" stroke-width="1.2"/></svg>
+      Bus (arrow points where it's heading)
+    </div>
+    <div class="legend-row">
+      <svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="5.5" fill="#1d4ed8" stroke="#fff" stroke-width="1.5"/></svg>
+      Bus, heading unknown
+    </div>
+    <div class="legend-note">Color indicates route &middot; click a bus for details</div>
+    <div id="status">Loading buses&hellip;</div>
+  </div>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
           integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
           crossorigin=""></script>

@@ -8,19 +8,53 @@ html, body {
   width: 100%;
 }
 
-#status {
+/* Legend + status panel, top right */
+#panel {
   position: absolute;
-  bottom: 10px;
-  left: 10px;
+  top: 10px;
+  right: 10px;
   z-index: 1000; /* above Leaflet panes */
-  background: rgba(255, 255, 255, 0.9);
-  padding: 4px 10px;
-  border-radius: 4px;
-  font: 13px/1.4 system-ui, sans-serif;
+  background: rgba(255, 255, 255, 0.92);
+  padding: 8px 12px;
+  border-radius: 6px;
+  font: 13px/1.5 system-ui, sans-serif;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  max-width: 240px;
+}
+
+.legend-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-row svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.legend-note {
+  color: #555;
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+#status {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid #ddd;
+  color: #333;
 }
 
 #status.error {
-  background: #ffe5e5;
   color: #a00000;
+  font-weight: 600;
+}
+
+/* Rotating bus markers */
+.bus-marker svg {
+  width: 20px;
+  height: 20px;
+  transition: transform 0.5s ease; /* smooth turn between polls */
 }

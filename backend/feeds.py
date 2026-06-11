@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 from google.protobuf.message import DecodeError
 from google.transit import gtfs_realtime_pb2
 
-logger = logging.getLogger("uvicorn.error")
+logger = logging.getLogger(__name__)
 
 # The .env file lives in the project root, one level up from backend/.
 PROJECT_ROOT = Path(__file__).resolve().parent.parent

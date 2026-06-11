@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -17,7 +18,16 @@ import bus_static
 from feeds import fetch_subway_trains, fetch_vehicle_positions
 from static_data import load_subway_route_shapes, load_subway_stops
 
-logger = logging.getLogger("uvicorn.error")
+logger = logging.getLogger(__name__)
+
+# Uvicorn configures its own loggers but leaves the root logger bare, so
+# module loggers (feeds, bus_static, static_data) would be invisible. Give
+# root a handler if nothing else has; keep root at WARNING so third-party
+# INFO noise (e.g. httpx per-request lines) stays out, and opt our modules in.
+if not logging.getLogger().handlers:
+    logging.basicConfig(level=logging.WARNING, format="%(levelname)s:     %(message)s")
+for _mod in (__name__, "feeds", "bus_static", "static_data"):
+    logging.getLogger(_mod).setLevel(logging.INFO)
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
@@ -119,6 +129,12 @@ async def lifespan(app: FastAPI):
     bus_static.stop()
     app.state.bus_index_task.cancel()
     app.state.feed_poll_task.cancel()
+    # Await both so cleanup (e.g. the poller's client close) finishes before
+    # shutdown proceeds; the stop event bounds how long the build task runs.
+    with contextlib.suppress(asyncio.CancelledError):
+        await app.state.bus_index_task
+    with contextlib.suppress(asyncio.CancelledError):
+        await app.state.feed_poll_task
 
 
 app = FastAPI(title="NYC Transit Live", version="0.2.0", lifespan=lifespan)
@@ -162,6 +178,12 @@ async def get_bus_route(route_id: str) -> dict:
         )
     geometry = await asyncio.to_thread(bus_static.get_route_geometry, route_id)
     if geometry is None:
+        if bus_static.is_partial():
+            raise HTTPException(
+                status_code=404,
+                detail=f"No shape found for route {route_id} (route index is "
+                "incomplete; some boroughs failed to download).",
+            )
         raise HTTPException(status_code=404, detail=f"No shape found for route {route_id}.")
     return geometry
 

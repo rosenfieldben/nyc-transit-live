@@ -38,6 +38,9 @@ nyc-transit-live/
    python -m venv .venv && source .venv/bin/activate
    pip install -r requirements.txt
    ```
+   Deploys (Railway, via the root `requirements.txt`) install the pinned
+   `backend/requirements.lock` instead; regeneration instructions are in the
+   lock file's header.
 4. **Run it.**
    ```bash
    uvicorn main:app --reload

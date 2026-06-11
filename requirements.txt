@@ -1,3 +1,4 @@
 # Root-level requirements so Railway's Python builder detects the app.
-# The canonical list lives in backend/requirements.txt (used by local setup).
--r backend/requirements.txt
+# Deploys install the pinned lock; local dev uses backend/requirements.txt
+# (the friendly lower-bound file) per the README.
+-r backend/requirements.lock

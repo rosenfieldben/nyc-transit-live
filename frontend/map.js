@@ -336,9 +336,13 @@ function applyTrains(data) {
 /* ---------------- Polling ---------------- */
 
 const sources = {
-  buses: { url: "/api/buses", apply: applyBuses, label: "buses", count: 0, error: null },
-  subways: { url: "/api/subways", apply: applyTrains, label: "trains", count: 0, error: null },
+  buses: { url: "/api/buses", apply: applyBuses, label: "buses", count: 0, error: null, fetchedAt: null },
+  subways: { url: "/api/subways", apply: applyTrains, label: "trains", count: 0, error: null, fetchedAt: null },
 };
+
+// The backend serves from its own ~20s poll cache; if its upstream fetches
+// start failing it keeps serving the last good data with the old fetched_at.
+const STALE_AFTER_S = 60;
 
 async function refreshSource(source) {
   try {
@@ -347,7 +351,9 @@ async function refreshSource(source) {
       const body = await res.json().catch(() => null);
       throw new Error(body?.detail ?? `HTTP ${res.status}`);
     }
-    const data = await res.json();
+    const body = await res.json();
+    source.fetchedAt = body.fetched_at ?? null;
+    const data = body.data ?? [];
     if (data.length === 0) {
       // Temporarily empty feed: keep last known markers on screen.
       source.error = "feed empty, showing last known";
@@ -360,6 +366,14 @@ async function refreshSource(source) {
     // Keep last known markers on screen; just surface the problem.
     source.error = err.message;
   }
+}
+
+function staleness(source) {
+  if (source.fetchedAt == null) return null;
+  const age = Date.now() / 1000 - source.fetchedAt;
+  if (age < STALE_AFTER_S) return null;
+  const human = age < 120 ? `${Math.round(age)}s` : `${Math.round(age / 60)}m`;
+  return `${source.label} data ${human} old`;
 }
 
 let refreshing = false; // don't let a slow poll overlap the next tick
@@ -375,11 +389,12 @@ async function refreshAll() {
   const counts = Object.values(sources)
     .map((s) => `${s.count.toLocaleString()} ${s.label}`)
     .join(" · ");
-  const errors = Object.values(sources)
+  const problems = Object.values(sources)
     .filter((s) => s.error)
-    .map((s) => `${s.label}: ${s.error}`);
+    .map((s) => `${s.label}: ${s.error}`)
+    .concat(Object.values(sources).map(staleness).filter(Boolean));
   const now = new Date().toLocaleTimeString();
-  if (errors.length) setStatus(`${counts} · ${now} — ${errors.join("; ")}`, true);
+  if (problems.length) setStatus(`${counts} · ${now} — ${problems.join("; ")}`, true);
   else setStatus(`${counts} · updated ${now}`);
 }
 

@@ -4,9 +4,10 @@ Bus shapes live in six borough GTFS zips (~52 MB compressed) whose bulk is
 stop_times.txt — which we never read. A background task downloads the zips
 one at a time, selects one representative shape per route and direction (the
 variant used by the most trips), and writes one small JSON file per route
-under data/cache/bus_routes/. Only the set of route ids stays in memory;
-request handlers read single per-route files on demand. Startup is not
-blocked: the endpoint reports "building" until the index is ready.
+under data/cache/bus_routes/. Request handlers read single per-route files on
+demand — the on-disk cache is the source of truth and nothing but a status
+flag stays in memory. Startup is not blocked: the endpoint reports "building"
+until the index is ready.
 """
 
 from __future__ import annotations
@@ -56,7 +57,6 @@ _ROUTE_ID_RE = re.compile(r"^[A-Za-z0-9+\-]{1,16}$")
 # request path reads geometry from disk, so workers would only disagree
 # about status, not data.
 _status = "missing"
-_routes: set[str] = set()
 
 # Set on shutdown so the build thread exits at the next check point instead
 # of pinning interpreter exit until all six downloads finish (task.cancel()
@@ -174,7 +174,11 @@ def _build_index_sync() -> set[str]:
         for key, url in BUS_GTFS_URLS.items():
             if _stop.is_set():
                 return routes
-            fd, tmp_name = tempfile.mkstemp(suffix=".zip")
+            # Download into the cache dir with a .part suffix so the sweep
+            # above also cleans up zips orphaned by a hard kill.
+            fd, tmp_name = tempfile.mkstemp(
+                dir=BUS_CACHE_DIR, prefix="gtfs_dl.", suffix=".zip.part"
+            )
             tmp = Path(tmp_name)
             try:
                 with os.fdopen(fd, "wb") as f:
@@ -214,7 +218,7 @@ async def ensure_index() -> None:
     beats none) but still triggers a rebuild so a transient download failure
     doesn't leave whole boroughs missing for 30 days.
     """
-    global _status, _routes
+    global _status
     have_partial = False
     try:
         if (
@@ -225,7 +229,6 @@ async def ensure_index() -> None:
             routes = {r for r in cached.get("routes", []) if isinstance(r, str)}
             failed = cached.get("failed") or []
             if routes:
-                _routes = routes
                 _status = "ready"
                 if not failed:
                     logger.info("bus route index: %d routes loaded from cache", len(routes))
@@ -248,7 +251,6 @@ async def ensure_index() -> None:
             _status = "failed"
         return
     if routes:
-        _routes = routes
         _status = "ready"
     elif not have_partial:
         _status = "failed"

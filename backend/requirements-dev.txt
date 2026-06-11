@@ -1,0 +1,4 @@
+# Dev/test dependencies — not installed on Railway (root requirements.txt
+# only references backend/requirements.txt).
+-r requirements.txt
+pytest>=8

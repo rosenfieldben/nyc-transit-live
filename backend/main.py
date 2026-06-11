@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -20,6 +21,80 @@ logger = logging.getLogger("uvicorn.error")
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
+# The backend polls the MTA once and serves every browser client from this
+# cache, so N clients never means N upstream fetches.
+POLL_INTERVAL_S = 20
+
+
+def _fresh_entry() -> dict:
+    return {"data": None, "fetched_at": None, "error": None}
+
+
+def _note_failure(entry: dict, status: int, detail: str) -> None:
+    """Record why the latest poll failed. Last-known data keeps being served;
+    the error only surfaces to clients while the cache has never been filled."""
+    entry["error"] = {"status": status, "detail": detail}
+    logger.warning("feed poll failed (%d): %s", status, detail)
+
+
+async def _refresh_buses(app: FastAPI, client: httpx.AsyncClient) -> None:
+    entry = app.state.feed_cache["buses"]
+    try:
+        data = await fetch_vehicle_positions(client)
+    except RuntimeError as exc:
+        # Missing/placeholder API key — a configuration problem, not a 500.
+        _note_failure(entry, 503, str(exc))
+        return
+    except httpx.HTTPError as exc:
+        _note_failure(entry, 502, f"Upstream MTA feed error: {exc}")
+        return
+    except DecodeError:
+        # HTTP 200 with a non-protobuf body (CDN error page, maintenance HTML).
+        _note_failure(entry, 502, "Upstream bus feed returned undecodable data")
+        return
+    entry.update(data=data, fetched_at=time.time(), error=None)
+
+
+async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
+    entry = app.state.feed_cache["subways"]
+    stops = app.state.subway_stops
+    if not stops:
+        _note_failure(
+            entry,
+            503,
+            "Static subway GTFS could not be loaded at startup; "
+            "restart the server to retry the download.",
+        )
+        return
+    try:
+        data = await fetch_subway_trains(stops, client)
+    except RuntimeError as exc:
+        # Every subway feed failed this poll.
+        _note_failure(entry, 502, str(exc))
+        return
+    except httpx.HTTPError as exc:
+        _note_failure(entry, 502, f"Upstream MTA feed error: {exc}")
+        return
+    entry.update(data=data, fetched_at=time.time(), error=None)
+
+
+async def _poll_feeds(app: FastAPI) -> None:
+    """Refresh both feeds every POLL_INTERVAL_S for the app's lifetime.
+
+    One shared client for the task's lifetime; per-feed errors are recorded
+    in the cache, and anything unexpected is logged rather than allowed to
+    kill the loop.
+    """
+    async with httpx.AsyncClient(timeout=30) as client:
+        while True:
+            try:
+                await asyncio.gather(
+                    _refresh_buses(app, client), _refresh_subways(app, client)
+                )
+            except Exception:
+                logger.exception("feed poll cycle failed unexpectedly")
+            await asyncio.sleep(POLL_INTERVAL_S)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -33,6 +108,8 @@ async def lifespan(app: FastAPI):
         logger.error("Could not load static subway GTFS (%s); /api/subways disabled", exc)
         app.state.subway_stops = None
         app.state.subway_routes = []
+    app.state.feed_cache = {"buses": _fresh_entry(), "subways": _fresh_entry()}
+    app.state.feed_poll_task = asyncio.create_task(_poll_feeds(app))
     # Bus route geometry indexes in the background — startup never waits on
     # the ~52 MB of borough GTFS zips; /api/bus-route reports until ready.
     app.state.bus_index_task = asyncio.create_task(bus_static.ensure_index())
@@ -41,29 +118,31 @@ async def lifespan(app: FastAPI):
     # worker thread, and interpreter exit would block joining it otherwise.
     bus_static.stop()
     app.state.bus_index_task.cancel()
+    app.state.feed_poll_task.cancel()
 
 
 app = FastAPI(title="NYC Transit Live", version="0.2.0", lifespan=lifespan)
 
 
+def _serve_cached(name: str) -> dict:
+    """Serve {fetched_at, data} from the cache. Stale-but-present data is
+    still served (fetched_at lets the frontend show staleness); errors only
+    reach clients while the cache has never successfully filled."""
+    entry = app.state.feed_cache[name]
+    if entry["data"] is not None:
+        return {"fetched_at": entry["fetched_at"], "data": entry["data"]}
+    if entry["error"]:
+        raise HTTPException(entry["error"]["status"], entry["error"]["detail"])
+    raise HTTPException(
+        status_code=503, detail="Feed cache is warming up; try again in a few seconds."
+    )
+
+
 @app.get("/api/buses")
-async def get_buses() -> list[dict]:
-    """Return a JSON list of buses, each with id, route_id, latitude,
-    longitude, and bearing."""
-    try:
-        return await fetch_vehicle_positions()
-    except RuntimeError as exc:
-        # Missing/placeholder API key — a configuration problem, not a 500.
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except httpx.HTTPError as exc:
-        raise HTTPException(
-            status_code=502, detail=f"Upstream MTA feed error: {exc}"
-        ) from exc
-    except DecodeError as exc:
-        # HTTP 200 with a non-protobuf body (CDN error page, maintenance HTML).
-        raise HTTPException(
-            status_code=502, detail="Upstream bus feed returned undecodable data"
-        ) from exc
+async def get_buses() -> dict:
+    """Cached bus positions: {fetched_at, data: [{id, route_id, latitude,
+    longitude, bearing}, ...]}. Refreshed by the background poller."""
+    return _serve_cached("buses")
 
 
 @app.get("/api/bus-route/{route_id}")
@@ -95,21 +174,10 @@ async def get_subway_routes() -> list[dict]:
 
 
 @app.get("/api/subways")
-async def get_subways() -> list[dict]:
-    """Return a JSON list of active trains, each placed at its next stop:
-    trip_id, route_id, latitude, longitude, stop_id, stop_name, direction."""
-    stops = getattr(app.state, "subway_stops", None)
-    if not stops:
-        raise HTTPException(
-            status_code=503,
-            detail="Static subway GTFS could not be loaded at startup; "
-            "restart the server to retry the download.",
-        )
-    try:
-        return await fetch_subway_trains(stops)
-    except RuntimeError as exc:
-        # Every subway feed failed this poll.
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+async def get_subways() -> dict:
+    """Cached train placements: {fetched_at, data: [{trip_id, route_id,
+    latitude, longitude, stop_id, stop_name, direction}, ...]}."""
+    return _serve_cached("subways")
 
 
 # Mounted last so /api/* routes take priority; html=True serves index.html at /.

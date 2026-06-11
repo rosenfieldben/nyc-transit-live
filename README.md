@@ -6,7 +6,7 @@ next station using real-time arrival data joined against the static schedule.
 
 ## How it works
 
-A small FastAPI backend polls the MTA's GTFS-Realtime feeds every ~30 seconds,
+A small FastAPI backend polls the MTA's GTFS-Realtime feeds every ~20 seconds,
 decodes the protobuf, and exposes clean JSON. A Leaflet frontend polls that JSON
 and draws/moves markers. The backend does the polling once and serves many
 browser clients, so the MTA endpoints aren't hit on every page refresh.
@@ -57,11 +57,11 @@ All feeds are free to use. Data is GTFS-Realtime (protobuf), decoded server-side
 
 ## Build phases
 
-- [ ] **1. Backend proves data flows** — `/api/buses` returns live JSON.
-- [ ] **2. Minimal map** — Leaflet map plots buses, polling every 15s.
-- [ ] **3. Readable markers** — bearing rotation, route colors, popups, failure handling.
-- [ ] **4. Subways** — `/api/subways`, trains placed at next station via static GTFS.
-- [ ] **5. Route lines** — draw `shapes.txt` route geometry under the markers.
+- [x] **1. Backend proves data flows** — `/api/buses` returns live JSON.
+- [x] **2. Minimal map** — Leaflet map plots buses, polling every 15s.
+- [x] **3. Readable markers** — bearing rotation, route colors, popups, failure handling.
+- [x] **4. Subways** — `/api/subways`, trains placed at next station via static GTFS.
+- [x] **5. Route lines** — draw `shapes.txt` route geometry under the markers.
 
 ## Notes
 

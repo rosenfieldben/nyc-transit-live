@@ -47,16 +47,16 @@ def _api_key() -> str:
     return key
 
 
-async def fetch_vehicle_positions() -> list[dict]:
+async def fetch_vehicle_positions(client: httpx.AsyncClient) -> list[dict]:
     """Fetch the feed, decode the protobuf, and return one dict per vehicle.
 
     Each dict has: id, route_id, latitude, longitude, bearing. Entities without
     a position are skipped; bearing is None when the feed doesn't report it.
+    The caller owns the client (the polling task holds one for its lifetime).
     """
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(VEHICLE_POSITIONS_URL, params={"key": _api_key()})
-        resp.raise_for_status()
-        raw = resp.content
+    resp = await client.get(VEHICLE_POSITIONS_URL, params={"key": _api_key()})
+    resp.raise_for_status()
+    raw = resp.content
 
     feed = gtfs_realtime_pb2.FeedMessage()
     feed.ParseFromString(raw)
@@ -221,24 +221,24 @@ def _decode_trains(raw: bytes, stops: dict[str, dict], feed_key: str, now: float
     return trains
 
 
-async def fetch_subway_trains(stops: dict[str, dict]) -> list[dict]:
+async def fetch_subway_trains(stops: dict[str, dict], client: httpx.AsyncClient) -> list[dict]:
     """Fetch all subway feeds concurrently and place each active train.
 
     Individual feed failures are logged and skipped so one bad feed doesn't
-    take out the endpoint; raises only when every feed fails.
+    take out the endpoint; raises only when every feed fails. The caller owns
+    the client (the polling task holds one for its lifetime).
     """
     now = time.time()
-    async with httpx.AsyncClient(timeout=30) as client:
 
-        async def fetch(url: str) -> bytes:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            return resp.content
+    async def fetch(url: str) -> bytes:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        return resp.content
 
-        results = await asyncio.gather(
-            *(fetch(url) for url in SUBWAY_FEED_URLS.values()),
-            return_exceptions=True,
-        )
+    results = await asyncio.gather(
+        *(fetch(url) for url in SUBWAY_FEED_URLS.values()),
+        return_exceptions=True,
+    )
 
     trains: list[dict] = []
     seen_trips: set[str] = set()

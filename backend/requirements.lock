@@ -1,15 +1,12 @@
 # Pinned production dependency set, installed by Railway via the root
 # requirements.txt. backend/requirements.txt stays the friendly lower-bound
-# file for local dev. Pins are resolved for the DEPLOY environment (CPython
-# 3.12 on Linux, per nixpacks.toml) — regenerate after changing
-# requirements.txt by resolving for that target and pinning the result:
-#   pip download --only-binary=:all: --python-version 3.12 --implementation cp \
-#     --platform manylinux_2_28_x86_64 --platform manylinux_2_17_x86_64 \
-#     --platform manylinux2014_x86_64 --platform any \
-#     -r backend/requirements.txt -d /tmp/pins312
-#   (then pin each downloaded wheel's name==version below this header)
-# A `pip freeze` from a clean 3.12 venv gives the same result when a 3.12
-# interpreter is available locally.
+# file for local dev. Generated under CPython 3.12.13 (matching the deploy
+# runtime pinned in nixpacks.toml) with:
+#   uv venv --python 3.12 /tmp/lock312
+#   uv pip install -r backend/requirements.txt --python /tmp/lock312/bin/python
+#   uv pip freeze --python /tmp/lock312/bin/python | sort
+# Regenerate the same way (and re-add this header) after changing
+# requirements.txt.
 annotated-doc==0.0.4
 annotated-types==0.7.0
 anyio==4.13.0
@@ -23,13 +20,13 @@ httptools==0.8.0
 httpx==0.28.1
 idna==3.18
 protobuf==7.35.0
+pydantic-core==2.46.4
 pydantic==2.13.4
-pydantic_core==2.46.4
 python-dotenv==1.2.2
-PyYAML==6.0.3
+pyyaml==6.0.3
 starlette==1.3.0
+typing-extensions==4.15.0
 typing-inspection==0.4.2
-typing_extensions==4.15.0
 uvicorn==0.49.0
 uvloop==0.22.1
 watchfiles==1.2.0

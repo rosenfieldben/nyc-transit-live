@@ -1,9 +1,15 @@
 # Pinned production dependency set, installed by Railway via the root
 # requirements.txt. backend/requirements.txt stays the friendly lower-bound
-# file for local dev. Regenerate after changing requirements.txt with:
-#   python3 -m venv /tmp/lockenv
-#   /tmp/lockenv/bin/pip install -r backend/requirements.txt
-#   /tmp/lockenv/bin/pip freeze   (paste below this header)
+# file for local dev. Pins are resolved for the DEPLOY environment (CPython
+# 3.12 on Linux, per nixpacks.toml) — regenerate after changing
+# requirements.txt by resolving for that target and pinning the result:
+#   pip download --only-binary=:all: --python-version 3.12 --implementation cp \
+#     --platform manylinux_2_28_x86_64 --platform manylinux_2_17_x86_64 \
+#     --platform manylinux2014_x86_64 --platform any \
+#     -r backend/requirements.txt -d /tmp/pins312
+#   (then pin each downloaded wheel's name==version below this header)
+# A `pip freeze` from a clean 3.12 venv gives the same result when a 3.12
+# interpreter is available locally.
 annotated-doc==0.0.4
 annotated-types==0.7.0
 anyio==4.13.0

@@ -56,6 +56,34 @@ html, body {
   user-select: none;
 }
 
+#route-banner[hidden] {
+  display: none; /* author display:flex would otherwise defeat the hidden attribute */
+}
+
+#route-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid #ddd;
+  font-weight: 600;
+}
+
+#route-clear {
+  border: 1px solid #ccc;
+  background: #f6f6f6;
+  border-radius: 4px;
+  padding: 1px 7px;
+  font: 12px system-ui, sans-serif;
+  cursor: pointer;
+}
+
+#route-clear:hover {
+  background: #ececec;
+}
+
 #status {
   margin-top: 6px;
   padding-top: 6px;

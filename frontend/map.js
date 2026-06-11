@@ -12,6 +12,7 @@ L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
 const busLayer = L.layerGroup().addTo(map);
 const subwayLayer = L.layerGroup().addTo(map);
 const routeLinesLayer = L.layerGroup().addTo(map);
+const busRouteLayer = L.layerGroup().addTo(map); // the one clicked bus route
 
 function bindToggle(checkboxId, layers) {
   const box = document.getElementById(checkboxId);
@@ -24,7 +25,7 @@ function bindToggle(checkboxId, layers) {
   box.addEventListener("change", sync);
   sync(); // some browsers restore checkbox state across reloads without firing change
 }
-bindToggle("toggle-buses", [busLayer]);
+bindToggle("toggle-buses", [busLayer, busRouteLayer]);
 bindToggle("toggle-subways", [subwayLayer, routeLinesLayer]);
 
 const statusEl = document.getElementById("status");
@@ -69,11 +70,109 @@ function busIcon(bus) {
 function busPopup(record) {
   const b = record.latest;
   const heading = b.bearing != null ? `${Math.round(b.bearing)}°` : "unknown";
+  const note = busRouteNotes.get(b.route_id);
+  const showNote = note && Date.now() - note.at < NOTE_TTL_MS;
   return (
     `<b style="color:${routeColor(b.route_id)}">${esc(b.route_id ?? "Unknown route")}</b>` +
-    `<br>Bus ${esc(b.id)}<br>Heading: ${heading}`
+    `<br>Bus ${esc(b.id)}<br>Heading: ${heading}` +
+    (showNote ? `<br><span class="popup-sub">${esc(note.message)}</span>` : "")
   );
 }
+
+/* ----- On-demand bus route line (click a bus to draw its route) ----- */
+
+let shownBusRoute = null; // { routeId, busId }
+let pendingBusId = null; // bus whose route fetch is in flight
+let busRouteSeq = 0; // request token: bumped by every new request AND by clear
+const busRouteNotes = new Map(); // route_id -> { message, at } shown in the popup
+const NOTE_TTL_MS = 60000; // a transient failure shouldn't haunt popups all session
+
+function refreshOpenPopup(busId) {
+  const record = buses.get(busId);
+  if (record?.marker.isPopupOpen()) record.marker.getPopup().update();
+}
+
+function clearBusRoute() {
+  busRouteSeq++; // invalidate any in-flight fetch
+  pendingBusId = null;
+  busRouteLayer.clearLayers();
+  shownBusRoute = null;
+  document.getElementById("route-banner").hidden = true;
+}
+
+async function toggleBusRoute(bus, marker) {
+  if (!bus?.route_id) return;
+
+  // Leaflet's own popup toggle runs before this handler, so isPopupOpen()
+  // reflects the popup's NEW state. For a re-click on the selected (or
+  // pending) bus: popup just closed -> remove the line; popup just reopened
+  // (it was closed by a map click earlier) -> keep the line as is.
+  const sameBus =
+    (shownBusRoute &&
+      shownBusRoute.busId === bus.id &&
+      shownBusRoute.routeId === bus.route_id) ||
+    pendingBusId === bus.id;
+  if (sameBus) {
+    if (!marker.isPopupOpen()) clearBusRoute();
+    return;
+  }
+
+  clearBusRoute(); // a different bus replaces any current line
+  const requestId = ++busRouteSeq;
+  pendingBusId = bus.id;
+
+  let geometry;
+  try {
+    const res = await fetch(`/api/bus-route/${encodeURIComponent(bus.route_id)}`);
+    if (requestId !== busRouteSeq) return; // superseded by a newer click/clear
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      pendingBusId = null;
+      busRouteNotes.set(bus.route_id, {
+        message: body?.detail ?? `Route line unavailable (HTTP ${res.status})`,
+        at: Date.now(),
+      });
+      refreshOpenPopup(bus.id);
+      return;
+    }
+    geometry = await res.json();
+  } catch {
+    if (requestId !== busRouteSeq) return;
+    pendingBusId = null;
+    busRouteNotes.set(bus.route_id, {
+      message: "Route line unavailable (network error)",
+      at: Date.now(),
+    });
+    refreshOpenPopup(bus.id);
+    return;
+  }
+  if (requestId !== busRouteSeq) return; // superseded while parsing
+  pendingBusId = null;
+  busRouteNotes.delete(bus.route_id);
+  refreshOpenPopup(bus.id);
+
+  for (const points of geometry.directions ?? []) {
+    L.polyline(points, {
+      color: routeColor(bus.route_id),
+      weight: 3.5,
+      opacity: 0.65,
+      interactive: false,
+      renderer: lineRenderer,
+    }).addTo(busRouteLayer);
+  }
+  shownBusRoute = { routeId: bus.route_id, busId: bus.id };
+  const banner = document.getElementById("route-banner");
+  document.getElementById("route-banner-label").textContent = `Bus route ${bus.route_id}`;
+  document.getElementById("route-banner-label").style.color = routeColor(bus.route_id);
+  banner.hidden = false;
+}
+
+document.getElementById("route-clear").addEventListener("click", clearBusRoute);
+
+// Keep the banner honest when the Buses toggle hides the route line layer.
+document.getElementById("toggle-buses").addEventListener("change", (e) => {
+  document.getElementById("route-banner").hidden = !e.target.checked || !shownBusRoute;
+});
 
 const buses = new Map(); // bus id -> { marker, routeId, bearing, latest }
 
@@ -84,6 +183,10 @@ function applyBuses(data) {
     const record = buses.get(bus.id);
     if (record) {
       record.marker.setLatLng([bus.latitude, bus.longitude]);
+      // Vehicle reassigned to a different route: its drawn line is now stale.
+      if (record.routeId !== bus.route_id && shownBusRoute?.busId === bus.id) {
+        clearBusRoute();
+      }
       const shapeChanged =
         record.routeId !== bus.route_id ||
         (record.bearing == null) !== (bus.bearing == null);
@@ -110,6 +213,7 @@ function applyBuses(data) {
       const newRecord = { bearing: bus.bearing, routeId: bus.route_id, latest: bus };
       newRecord.marker = L.marker([bus.latitude, bus.longitude], { icon: busIcon(bus) })
         .bindPopup(() => busPopup(newRecord))
+        .on("click", () => toggleBusRoute(newRecord.latest, newRecord.marker))
         .addTo(busLayer);
       buses.set(bus.id, newRecord);
     }

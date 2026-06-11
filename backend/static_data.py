@@ -29,6 +29,9 @@ MAX_AGE_DAYS = 30
 
 async def _download_zip() -> None:
     SUBWAY_GTFS_ZIP.parent.mkdir(parents=True, exist_ok=True)
+    # Sweep temp files orphaned by an earlier hard kill mid-download.
+    for stale in SUBWAY_GTFS_ZIP.parent.glob("*.part"):
+        stale.unlink(missing_ok=True)
     # Unique temp name so concurrent workers (uvicorn --workers N all run
     # lifespan) can't interleave writes into one file; same directory keeps
     # the final rename atomic, making concurrent downloads last-writer-wins.

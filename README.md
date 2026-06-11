@@ -14,17 +14,28 @@ browser clients, so the MTA endpoints aren't hit on every page refresh.
 ```
 nyc-transit-live/
 ├── backend/
-│   ├── main.py          # FastAPI app + JSON endpoints, serves the frontend
-│   ├── feeds.py         # fetch + decode GTFS-RT protobuf
-│   ├── static_data.py   # load stop coords / route shapes from static GTFS
-│   └── requirements.txt
+│   ├── main.py              # FastAPI app + JSON endpoints, serves the frontend
+│   ├── feeds.py             # fetch + decode GTFS-RT protobuf (buses + subways)
+│   ├── static_data.py       # load stop coords / route shapes from static GTFS
+│   ├── bus_static.py        # background-built on-disk index of bus route shapes
+│   ├── tests/               # pytest suite (run from backend/)
+│   ├── requirements.txt     # lower-bound deps for local dev
+│   ├── requirements.lock    # pinned deps installed by Railway and CI
+│   └── requirements-dev.txt # the lock + test-only extras
 ├── frontend/
 │   ├── index.html
-│   ├── map.js           # Leaflet map, polls backend, draws markers
+│   ├── map.js               # Leaflet map, polls backend, draws markers
+│   ├── helpers.js           # pure helpers shared with map.js (node-testable)
+│   ├── helpers.test.js      # node --test suite for the helpers
 │   └── style.css
 ├── data/
-│   └── gtfs_static/     # downloaded static GTFS (gitignored)
-└── .env                 # BUS_TIME_API_KEY (gitignored)
+│   ├── gtfs_static/         # downloaded static subway GTFS (gitignored)
+│   └── cache/bus_routes/    # background-built bus route index (gitignored)
+├── .github/workflows/ci.yml # backend pytest + frontend node tests
+├── railway.json             # Railway start command + healthcheck
+├── nixpacks.toml            # pins Python 3.12 for the Railway build
+├── requirements.txt         # root pointer -> backend/requirements.lock
+└── .env                     # BUS_TIME_API_KEY (gitignored)
 ```
 
 ## Setup
@@ -46,6 +57,12 @@ nyc-transit-live/
    uvicorn main:app --reload
    ```
    Then open http://localhost:8000.
+5. **Run the tests** (optional).
+   ```bash
+   pip install -r requirements-dev.txt   # from backend/
+   pytest
+   node --test "frontend/*.test.js"      # from the repo root
+   ```
 
 ## Data sources
 

@@ -16,3 +16,10 @@ jobs:
       - run: pip install -r backend/requirements-dev.txt
       - run: pytest
         working-directory: backend
+
+  frontend-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The runner's preinstalled Node is plenty for node --test.
+      - run: node --test "frontend/*.test.js"

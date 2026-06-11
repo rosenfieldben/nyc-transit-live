@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -48,6 +49,17 @@ def _note_failure(entry: dict, status: int, detail: str) -> None:
     logger.warning("feed poll failed (%d): %s", status, detail)
 
 
+_URL_RE = re.compile(r"https?://\S+")
+
+
+def _sanitize_upstream(exc: BaseException) -> str:
+    """Strip URLs from upstream error text before recording it: httpx error
+    strings embed the full request URL, which for the bus feed includes the
+    API key query parameter, and recorded details are served by /api/status
+    and the never-filled error paths."""
+    return _URL_RE.sub("<feed url>", str(exc))
+
+
 async def _refresh_buses(app: FastAPI, client: httpx.AsyncClient) -> None:
     entry = app.state.feed_cache["buses"]
     try:
@@ -57,7 +69,7 @@ async def _refresh_buses(app: FastAPI, client: httpx.AsyncClient) -> None:
         _note_failure(entry, 503, str(exc))
         return
     except httpx.HTTPError as exc:
-        _note_failure(entry, 502, f"Upstream MTA feed error: {exc}")
+        _note_failure(entry, 502, f"Upstream MTA feed error: {_sanitize_upstream(exc)}")
         return
     except DecodeError:
         # HTTP 200 with a non-protobuf body (CDN error page, maintenance HTML).
@@ -81,10 +93,10 @@ async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
         data = await fetch_subway_trains(stops, client)
     except RuntimeError as exc:
         # Every subway feed failed this poll.
-        _note_failure(entry, 502, str(exc))
+        _note_failure(entry, 502, _sanitize_upstream(exc))
         return
     except httpx.HTTPError as exc:
-        _note_failure(entry, 502, f"Upstream MTA feed error: {exc}")
+        _note_failure(entry, 502, f"Upstream MTA feed error: {_sanitize_upstream(exc)}")
         return
     entry.update(data=data, fetched_at=time.time(), error=None)
 

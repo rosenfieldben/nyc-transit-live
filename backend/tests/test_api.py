@@ -69,6 +69,8 @@ async def test_never_filled_cache_serves_recorded_503(client, cache):
     app_module._note_failure(cache["buses"], 503, "BUS_TIME_API_KEY is not set.")
     res = await client.get("/api/buses")
     assert res.status_code == 503
+    # Exact match on purpose: the contract under test is that the endpoint
+    # serves the recorded detail verbatim, and the test primed that string.
     assert res.json()["detail"] == "BUS_TIME_API_KEY is not set."
 
 
@@ -76,6 +78,7 @@ async def test_never_filled_cache_serves_recorded_502(client, cache):
     app_module._note_failure(cache["subways"], 502, "All subway feeds failed: timeout")
     res = await client.get("/api/subways")
     assert res.status_code == 502
+    # Exact match on purpose: verbatim pass-through of the recorded detail.
     assert res.json()["detail"] == "All subway feeds failed: timeout"
 
 
@@ -202,3 +205,45 @@ async def test_status_reports_ages_errors_and_gtfs_mtime(client, cache, status_e
     text = res.text
     assert "BUS_TIME_API_KEY=" not in text
     assert str(tmp_path) not in text and "/Users/" not in text and "/app/" not in text
+
+
+# ---------------- upstream error sanitization (no key/URL leakage) ----------------
+
+
+async def test_bus_refresh_error_never_records_url_or_key(client, cache, monkeypatch):
+    # httpx error text embeds the request URL — for the bus feed that URL
+    # carries the API key, and recorded details are served to clients.
+    async def boom(client_arg):
+        raise httpx.ConnectError(
+            "Connect failed for url "
+            "'https://gtfsrt.prod.obanyc.com/vehiclePositions?key=SECRETVALUE123'"
+        )
+
+    monkeypatch.setattr(app_module, "fetch_vehicle_positions", boom)
+    await app_module._refresh_buses(app_module.app, client=None)
+
+    detail = cache["buses"]["error"]["detail"]
+    assert cache["buses"]["error"]["status"] == 502
+    assert "SECRETVALUE123" not in detail
+    assert "https://" not in detail and "obanyc.com" not in detail
+
+    # End to end: neither surface that serves the detail leaks it.
+    for path in ("/api/buses", "/api/status"):
+        res = await client.get(path)
+        assert "SECRETVALUE123" not in res.text
+        assert "obanyc.com" not in res.text
+
+
+async def test_subway_refresh_error_never_records_url(client, cache, monkeypatch):
+    async def boom(stops, client_arg):
+        raise RuntimeError(
+            "All subway feeds failed: ACE: timeout at https://api-endpoint.mta.info/x"
+        )
+
+    monkeypatch.setattr(app_module, "fetch_subway_trains", boom)
+    app_module.app.state.subway_stops = {"101N": {}}
+    await app_module._refresh_subways(app_module.app, client=None)
+
+    detail = cache["subways"]["error"]["detail"]
+    assert "https://" not in detail and "mta.info" not in detail
+    assert "All subway feeds failed" in detail  # the useful part survives

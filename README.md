@@ -14,17 +14,28 @@ browser clients, so the MTA endpoints aren't hit on every page refresh.
 ```
 nyc-transit-live/
 ├── backend/
-│   ├── main.py          # FastAPI app + JSON endpoints, serves the frontend
-│   ├── feeds.py         # fetch + decode GTFS-RT protobuf
-│   ├── static_data.py   # load stop coords / route shapes from static GTFS
-│   └── requirements.txt
+│   ├── main.py              # FastAPI app + JSON endpoints, serves the frontend
+│   ├── feeds.py             # fetch + decode GTFS-RT protobuf (buses + subways)
+│   ├── static_data.py       # load stop coords / route shapes from static GTFS
+│   ├── bus_static.py        # background-built on-disk index of bus route shapes
+│   ├── tests/               # pytest suite (run from backend/)
+│   ├── requirements.txt     # lower-bound deps for local dev
+│   ├── requirements.lock    # pinned deps installed by Railway and CI
+│   └── requirements-dev.txt # the lock + test-only extras
 ├── frontend/
 │   ├── index.html
-│   ├── map.js           # Leaflet map, polls backend, draws markers
+│   ├── map.js               # Leaflet map, polls backend, draws markers
+│   ├── helpers.js           # pure helpers shared with map.js (node-testable)
+│   ├── helpers.test.js      # node --test suite for the helpers
 │   └── style.css
 ├── data/
-│   └── gtfs_static/     # downloaded static GTFS (gitignored)
-└── .env                 # BUS_TIME_API_KEY (gitignored)
+│   ├── gtfs_static/         # downloaded static subway GTFS (gitignored)
+│   └── cache/bus_routes/    # background-built bus route index (gitignored)
+├── .github/workflows/ci.yml # backend pytest + frontend node tests
+├── railway.json             # Railway start command + healthcheck
+├── nixpacks.toml            # pins Python 3.12 for the Railway build
+├── requirements.txt         # root pointer -> backend/requirements.lock
+└── .env                     # BUS_TIME_API_KEY (gitignored)
 ```
 
 ## Setup
@@ -38,11 +49,20 @@ nyc-transit-live/
    python -m venv .venv && source .venv/bin/activate
    pip install -r requirements.txt
    ```
+   Deploys (Railway, via the root `requirements.txt`) install the pinned
+   `backend/requirements.lock` instead; regeneration instructions are in the
+   lock file's header.
 4. **Run it.**
    ```bash
    uvicorn main:app --reload
    ```
    Then open http://localhost:8000.
+5. **Run the tests** (optional).
+   ```bash
+   pip install -r requirements-dev.txt   # from backend/
+   pytest
+   node --test "frontend/*.test.js"      # from the repo root
+   ```
 
 ## Data sources
 
@@ -54,6 +74,25 @@ nyc-transit-live/
   `data/gtfs_static/` and loaded into memory at startup.
 
 All feeds are free to use. Data is GTFS-Realtime (protobuf), decoded server-side.
+
+## Scaling
+
+The deploy must run a **single uvicorn worker** (the default; no `--workers`
+flag). `bus_static` keeps its index status and partial flag as per-process
+state: with multiple workers, each would download and build the bus route
+index independently, and a worker whose build partially failed would 404
+routes that another worker indexed fine. Route geometry itself is read from
+the shared on-disk cache, so data wouldn't corrupt — but going multi-worker
+would need a file lock around the index build (so one worker builds while
+the others wait) and workers re-reading the manifest instead of trusting
+their own build result.
+
+## Monitoring
+
+`GET /api/status` returns an operational snapshot: per-feed cache freshness
+(last successful fetch and age), the last recorded poll error if any, the bus
+route index state, and the static subway GTFS age. Useful as a health check
+and for diagnosing stale data in production.
 
 ## Build phases
 

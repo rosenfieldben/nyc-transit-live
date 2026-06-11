@@ -13,6 +13,8 @@ jobs:
         with:
           # Matches the runtime pinned in nixpacks.toml.
           python-version: "3.12"
+      # requirements-dev chains to requirements.lock, so the versions pytest
+      # runs against here are exactly what Railway deploys.
       - run: pip install -r backend/requirements-dev.txt
       - run: pytest
         working-directory: backend

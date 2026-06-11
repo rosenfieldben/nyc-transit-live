@@ -58,6 +58,13 @@ nyc-transit-live/
 
 All feeds are free to use. Data is GTFS-Realtime (protobuf), decoded server-side.
 
+## Monitoring
+
+`GET /api/status` returns an operational snapshot: per-feed cache freshness
+(last successful fetch and age), the last recorded poll error if any, the bus
+route index state, and the static subway GTFS age. Useful as a health check
+and for diagnosing stale data in production.
+
 ## Build phases
 
 - [x] **1. Backend proves data flows** — `/api/buses` returns live JSON.

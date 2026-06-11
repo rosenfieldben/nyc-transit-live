@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from google.protobuf.message import DecodeError
 
 import bus_static
+import static_data
 from feeds import fetch_subway_trains, fetch_vehicle_positions
 from static_data import load_subway_route_shapes, load_subway_stops
 
@@ -200,6 +201,37 @@ async def get_subways() -> dict:
     """Cached train placements: {fetched_at, data: [{trip_id, route_id,
     latitude, longitude, stop_id, stop_name, direction}, ...]}."""
     return _serve_cached("subways")
+
+
+@app.get("/api/status")
+async def get_status() -> dict:
+    """Operational snapshot: per-feed cache freshness and last recorded
+    error, bus route index state, and static subway GTFS age. No secrets,
+    no filesystem paths."""
+    now = time.time()
+    feeds = {}
+    for name, entry in getattr(app.state, "feed_cache", {}).items():
+        feeds[name] = {
+            "fetched_at": entry["fetched_at"],
+            "age_s": round(now - entry["fetched_at"], 1)
+            if entry["fetched_at"] is not None
+            else None,
+            "last_error": entry["error"],
+        }
+    static_gtfs = None
+    try:
+        mtime = static_data.SUBWAY_GTFS_ZIP.stat().st_mtime
+        static_gtfs = {"mtime": mtime, "age_s": round(now - mtime, 1)}
+    except OSError:
+        pass  # not downloaded (yet); reported as null
+    return {
+        "feeds": feeds,
+        "bus_route_index": {
+            "status": bus_static.status(),
+            "partial": bus_static.is_partial(),
+        },
+        "static_subway_gtfs": static_gtfs,
+    }
 
 
 # Mounted last so /api/* routes take priority; html=True serves index.html at /.

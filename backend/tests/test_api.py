@@ -150,3 +150,55 @@ async def test_bus_route_traversal_never_reads_outside_cache(client, bus_index, 
     assert res.json() != secret
     # The geometry reader itself must also reject the id outright.
     assert bus_static.get_route_geometry("../evil") is None
+
+
+# ---------------- /api/status ----------------
+
+
+@pytest.fixture
+def status_env(bus_index, tmp_path, monkeypatch):
+    """No static GTFS on disk by default; index state via bus_index knobs."""
+    import static_data
+
+    monkeypatch.setattr(static_data, "SUBWAY_GTFS_ZIP", tmp_path / "absent.zip")
+    return bus_index
+
+
+async def test_status_warming_state(client, status_env):
+    _, set_state = status_env
+    set_state("building")
+    res = await client.get("/api/status")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["feeds"]["buses"] == {"fetched_at": None, "age_s": None, "last_error": None}
+    assert body["bus_route_index"] == {"status": "building", "partial": False}
+    assert body["static_subway_gtfs"] is None
+
+
+async def test_status_reports_ages_errors_and_gtfs_mtime(client, cache, status_env, tmp_path, monkeypatch):
+    import time as time_mod
+
+    import static_data
+
+    _, set_state = status_env
+    set_state("ready", partial=True)
+    gtfs = tmp_path / "gtfs_subway.zip"
+    gtfs.write_bytes(b"zip")
+    monkeypatch.setattr(static_data, "SUBWAY_GTFS_ZIP", gtfs)
+
+    cache["buses"].update(data=BUSES, fetched_at=time_mod.time() - 30, error=None)
+    app_module._note_failure(cache["subways"], 502, "All subway feeds failed: timeout")
+
+    res = await client.get("/api/status")
+    body = res.json()
+    assert 29 <= body["feeds"]["buses"]["age_s"] <= 40
+    assert body["feeds"]["buses"]["last_error"] is None
+    assert body["feeds"]["subways"]["last_error"] == {
+        "status": 502, "detail": "All subway feeds failed: timeout",
+    }
+    assert body["bus_route_index"] == {"status": "ready", "partial": True}
+    assert body["static_subway_gtfs"]["age_s"] >= 0
+    # No secrets or filesystem paths in the payload.
+    text = res.text
+    assert "BUS_TIME_API_KEY=" not in text
+    assert str(tmp_path) not in text and "/Users/" not in text and "/app/" not in text

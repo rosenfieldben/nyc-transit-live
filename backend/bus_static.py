@@ -28,7 +28,7 @@ from pathlib import Path
 
 import httpx
 
-logger = logging.getLogger("uvicorn.error")
+logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 BUS_CACHE_DIR = PROJECT_ROOT / "data" / "cache" / "bus_routes"
@@ -58,6 +58,10 @@ _ROUTE_ID_RE = re.compile(r"^[A-Za-z0-9+\-]{1,16}$")
 # about status, not data.
 _status = "missing"
 
+# Whether the manifest behind the current "ready" status recorded failed
+# boroughs — lets the API say "index is incomplete" instead of a plain 404.
+_partial = False
+
 # Set on shutdown so the build thread exits at the next check point instead
 # of pinning interpreter exit until all six downloads finish (task.cancel()
 # cannot interrupt a thread).
@@ -66,6 +70,10 @@ _stop = threading.Event()
 
 def status() -> str:
     return _status
+
+
+def is_partial() -> bool:
+    return _partial
 
 
 def stop() -> None:
@@ -110,11 +118,12 @@ def _process_zip(zip_path: Path, skip_routes: set[str]) -> set[str]:
                 shape_use[(route_id, direction)][shape_id] += 1
 
         # Representative shape per route+direction: most trips, then
-        # lexicographic shape_id as a deterministic tie-break.
-        wanted: dict[str, tuple] = {}
+        # lexicographic shape_id as a deterministic tie-break. A shape can be
+        # selected by several route/direction pairs, so map to a list.
+        wanted: dict[str, list] = defaultdict(list)
         for (route_id, direction), counts in shape_use.items():
             shape_id = max(counts.items(), key=lambda kv: (kv[1], kv[0]))[0]
-            wanted[shape_id] = (route_id, direction)
+            wanted[shape_id].append((route_id, direction))
 
         # shapes.txt: collect points only for the selected shapes.
         points: dict[str, list] = defaultdict(list)
@@ -136,9 +145,10 @@ def _process_zip(zip_path: Path, skip_routes: set[str]) -> set[str]:
 
     by_route: dict[str, dict] = defaultdict(dict)
     for shape_id, pts in points.items():
-        route_id, direction = wanted[shape_id]
         pts.sort()
-        by_route[route_id][direction] = [[p[1], p[2]] for p in pts]
+        polyline = [[p[1], p[2]] for p in pts]
+        for route_id, direction in wanted[shape_id]:
+            by_route[route_id][direction] = polyline
 
     written: set[str] = set()
     for route_id, directions in by_route.items():
@@ -201,9 +211,12 @@ def _build_index_sync() -> set[str]:
             MANIFEST_PATH,
             {"routes": sorted(routes), "failed": failed, "built_at": int(time.time())},
         )
+        global _partial
+        _partial = bool(failed)
+        status_text = ("partial (failed: %s)" % ", ".join(failed)) if failed else "ready"
         logger.info(
             "bus route index %s: %d routes in %.0fs",
-            "partial (failed: %s)" % ", ".join(failed) if failed else "ready",
+            status_text,
             len(routes),
             time.time() - started,
         )
@@ -218,7 +231,7 @@ async def ensure_index() -> None:
     beats none) but still triggers a rebuild so a transient download failure
     doesn't leave whole boroughs missing for 30 days.
     """
-    global _status
+    global _status, _partial
     have_partial = False
     try:
         if (
@@ -230,6 +243,7 @@ async def ensure_index() -> None:
             failed = cached.get("failed") or []
             if routes:
                 _status = "ready"
+                _partial = bool(failed)
                 if not failed:
                     logger.info("bus route index: %d routes loaded from cache", len(routes))
                     return

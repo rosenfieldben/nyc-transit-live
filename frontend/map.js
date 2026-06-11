@@ -344,6 +344,11 @@ const sources = {
 // start failing it keeps serving the last good data with the old fetched_at.
 const STALE_AFTER_S = 60;
 
+// fetched_at is server time; comparing it to the client clock directly would
+// turn clock skew into false staleness warnings. The minimum observed
+// (clientNow - fetched_at) approximates skew plus minimal latency.
+let minClockOffset = null;
+
 async function refreshSource(source) {
   try {
     const res = await fetch(source.url);
@@ -353,6 +358,10 @@ async function refreshSource(source) {
     }
     const body = await res.json();
     source.fetchedAt = body.fetched_at ?? null;
+    if (source.fetchedAt != null) {
+      const offset = Date.now() / 1000 - source.fetchedAt;
+      if (minClockOffset == null || offset < minClockOffset) minClockOffset = offset;
+    }
     const data = body.data ?? [];
     if (data.length === 0) {
       // Temporarily empty feed: keep last known markers on screen.
@@ -370,7 +379,7 @@ async function refreshSource(source) {
 
 function staleness(source) {
   if (source.fetchedAt == null) return null;
-  const age = Date.now() / 1000 - source.fetchedAt;
+  const age = Math.max(0, Date.now() / 1000 - source.fetchedAt - (minClockOffset ?? 0));
   if (age < STALE_AFTER_S) return null;
   const human = age < 120 ? `${Math.round(age)}s` : `${Math.round(age / 60)}m`;
   return `${source.label} data ${human} old`;

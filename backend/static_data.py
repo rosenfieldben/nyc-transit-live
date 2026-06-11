@@ -16,7 +16,7 @@ from pathlib import Path
 
 import httpx
 
-logger = logging.getLogger("uvicorn.error")
+logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SUBWAY_GTFS_ZIP = PROJECT_ROOT / "data" / "gtfs_static" / "gtfs_subway.zip"

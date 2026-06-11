@@ -132,6 +132,16 @@ def test_malformed_shape_rows_skipped(tmp_path, cache_dir):
     assert read_route(cache_dir, "M1")["directions"] == [SA_GEO]
 
 
+def test_shared_shape_written_to_every_selecting_route(tmp_path, cache_dir):
+    # Two routes whose representative shape is the SAME shape_id: both route
+    # files must be written (a shape_id->single-pair map would drop one).
+    z = make_zip(tmp_path, trip("M1", "0", "SA") + trip("M2", "0", "SA"), SA)
+    written = _process_zip(z, skip_routes=set())
+    assert written == {"M1", "M2"}
+    assert read_route(cache_dir, "M1")["directions"] == [SA_GEO]
+    assert read_route(cache_dir, "M2")["directions"] == [SA_GEO]
+
+
 def test_missing_direction_id_bucketed_separately(tmp_path, cache_dir):
     no_dir = [{"route_id": "M1", "trip_id": "M1-x", "direction_id": "", "shape_id": "SB"}]
     z = make_zip(tmp_path, trip("M1", "0", "SA") + no_dir, SA + SB)

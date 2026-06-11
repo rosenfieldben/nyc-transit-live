@@ -58,6 +58,18 @@ nyc-transit-live/
 
 All feeds are free to use. Data is GTFS-Realtime (protobuf), decoded server-side.
 
+## Scaling
+
+The deploy must run a **single uvicorn worker** (the default; no `--workers`
+flag). `bus_static` keeps its index status and partial flag as per-process
+state: with multiple workers, each would download and build the bus route
+index independently, and a worker whose build partially failed would 404
+routes that another worker indexed fine. Route geometry itself is read from
+the shared on-disk cache, so data wouldn't corrupt — but going multi-worker
+would need a file lock around the index build (so one worker builds while
+the others wait) and workers re-reading the manifest instead of trusting
+their own build result.
+
 ## Monitoring
 
 `GET /api/status` returns an operational snapshot: per-feed cache freshness

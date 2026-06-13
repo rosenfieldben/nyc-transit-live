@@ -102,9 +102,7 @@ async def load_subway_stops() -> dict[str, dict]:
         except Exception as exc:
             if not SUBWAY_GTFS_ZIP.exists():
                 raise
-            logger.warning(
-                "Static GTFS re-download failed (%s); using stale cached copy", exc
-            )
+            logger.warning("Static GTFS re-download failed (%s); using stale cached copy", exc)
     try:
         stops = _parse_stops()
     except (zipfile.BadZipFile, KeyError, UnicodeDecodeError):
@@ -179,7 +177,8 @@ def load_subway_route_shapes() -> list[dict]:
             total += sum(len(p) for p in kept)
         logger.info(
             "Loaded %d subway route lines (%d points) from static GTFS",
-            sum(len(r["polylines"]) for r in routes), total,
+            sum(len(r["polylines"]) for r in routes),
+            total,
         )
         return routes
     except Exception as exc:

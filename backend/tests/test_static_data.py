@@ -129,7 +129,12 @@ async def test_malformed_coordinate_rows_skipped(gtfs_zip):
 
 def shape_rows(shape_id, points):
     return [
-        {"shape_id": shape_id, "shape_pt_sequence": str(i), "shape_pt_lat": str(lat), "shape_pt_lon": str(lon)}
+        {
+            "shape_id": shape_id,
+            "shape_pt_sequence": str(i),
+            "shape_pt_lat": str(lat),
+            "shape_pt_lon": str(lon),
+        }
         for i, (lat, lon) in enumerate(points, start=1)
     ]
 

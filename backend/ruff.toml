@@ -1,0 +1,8 @@
+# Minimal lint + format config for the backend. Catches import/usage drift
+# and keeps formatting consistent without imposing a heavy rule set.
+# CI runs `ruff check .` and `ruff format --check .` from this directory.
+line-length = 100
+
+[lint]
+# pycodestyle errors/warnings, pyflakes, and import sorting.
+select = ["E", "F", "I", "W"]

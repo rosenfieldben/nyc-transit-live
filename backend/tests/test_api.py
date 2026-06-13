@@ -14,9 +14,20 @@ import main as app_module
 
 pytestmark = pytest.mark.anyio
 
-BUSES = [{"id": "MTA NYCT_1", "route_id": "M15", "latitude": 40.7, "longitude": -74.0, "bearing": 90.0}]
-TRAINS = [{"trip_id": "70000_1..N01R", "route_id": "1", "latitude": 40.7, "longitude": -74.0,
-           "stop_id": "101N", "stop_name": "Alpha", "direction": "Northbound"}]
+BUSES = [
+    {"id": "MTA NYCT_1", "route_id": "M15", "latitude": 40.7, "longitude": -74.0, "bearing": 90.0}
+]
+TRAINS = [
+    {
+        "trip_id": "70000_1..N01R",
+        "route_id": "1",
+        "latitude": 40.7,
+        "longitude": -74.0,
+        "stop_id": "101N",
+        "stop_name": "Alpha",
+        "direction": "Northbound",
+    }
+]
 
 
 @pytest.fixture
@@ -178,7 +189,9 @@ async def test_status_warming_state(client, status_env):
     assert body["static_subway_gtfs"] is None
 
 
-async def test_status_reports_ages_errors_and_gtfs_mtime(client, cache, status_env, tmp_path, monkeypatch):
+async def test_status_reports_ages_errors_and_gtfs_mtime(
+    client, cache, status_env, tmp_path, monkeypatch
+):
     import time as time_mod
 
     import static_data
@@ -197,7 +210,8 @@ async def test_status_reports_ages_errors_and_gtfs_mtime(client, cache, status_e
     assert 29 <= body["feeds"]["buses"]["age_s"] <= 40
     assert body["feeds"]["buses"]["last_error"] is None
     assert body["feeds"]["subways"]["last_error"] == {
-        "status": 502, "detail": "All subway feeds failed: timeout",
+        "status": 502,
+        "detail": "All subway feeds failed: timeout",
     }
     assert body["bus_route_index"] == {"status": "ready", "partial": True}
     assert body["static_subway_gtfs"]["age_s"] >= 0

@@ -1,0 +1,861 @@
+{
+"now": 1781380197.0,
+"feed_key": "1-7+S",
+"trains": [
+{
+"trip_id": "088700_1..N04R",
+"route_id": "1",
+"latitude": 40.874561,
+"longitude": -73.909831,
+"stop_id": "106N",
+"stop_name": "Marble Hill-225 St",
+"direction": "Northbound"
+},
+{
+"trip_id": "088900_1..S04R",
+"route_id": "1",
+"latitude": 40.702068,
+"longitude": -74.013664,
+"stop_id": "142S",
+"stop_name": "South Ferry",
+"direction": "Southbound"
+},
+{
+"trip_id": "089500_1..N04R",
+"route_id": "1",
+"latitude": 40.864621,
+"longitude": -73.918822,
+"stop_id": "108N",
+"stop_name": "207 St",
+"direction": "Northbound"
+},
+{
+"trip_id": "089700_1..S04R",
+"route_id": "1",
+"latitude": 40.719318,
+"longitude": -74.006886,
+"stop_id": "136S",
+"stop_name": "Franklin St",
+"direction": "Southbound"
+},
+{
+"trip_id": "090300_1..N04R",
+"route_id": "1",
+"latitude": 40.840556,
+"longitude": -73.940133,
+"stop_id": "112N",
+"stop_name": "168 St-Washington Hts",
+"direction": "Northbound"
+},
+{
+"trip_id": "090500_1..S04R",
+"route_id": "1",
+"latitude": 40.722854,
+"longitude": -74.006277,
+"stop_id": "135S",
+"stop_name": "Canal St",
+"direction": "Southbound"
+},
+{
+"trip_id": "091100_1..N04R",
+"route_id": "1",
+"latitude": 40.822008,
+"longitude": -73.953676,
+"stop_id": "115N",
+"stop_name": "137 St-City College",
+"direction": "Northbound"
+},
+{
+"trip_id": "091300_1..S04R",
+"route_id": "1",
+"latitude": 40.75529,
+"longitude": -73.987495,
+"stop_id": "127S",
+"stop_name": "Times Sq-42 St",
+"direction": "Southbound"
+},
+{
+"trip_id": "091900_1..N04R",
+"route_id": "1",
+"latitude": 40.793919,
+"longitude": -73.972323,
+"stop_id": "120N",
+"stop_name": "96 St",
+"direction": "Northbound"
+},
+{
+"trip_id": "092100_1..S04R",
+"route_id": "1",
+"latitude": 40.778453,
+"longitude": -73.98197,
+"stop_id": "123S",
+"stop_name": "72 St",
+"direction": "Southbound"
+},
+{
+"trip_id": "092700_1..N04R",
+"route_id": "1",
+"latitude": 40.77344,
+"longitude": -73.982209,
+"stop_id": "124N",
+"stop_name": "66 St-Lincoln Center",
+"direction": "Northbound"
+},
+{
+"trip_id": "092900_1..S04R",
+"route_id": "1",
+"latitude": 40.803967,
+"longitude": -73.966847,
+"stop_id": "118S",
+"stop_name": "Cathedral Pkwy (110 St)",
+"direction": "Southbound"
+},
+{
+"trip_id": "093500_1..N04R",
+"route_id": "1",
+"latitude": 40.744081,
+"longitude": -73.995657,
+"stop_id": "130N",
+"stop_name": "23 St",
+"direction": "Northbound"
+},
+{
+"trip_id": "094300_1..N04R",
+"route_id": "1",
+"latitude": 40.728251,
+"longitude": -74.005367,
+"stop_id": "134N",
+"stop_name": "Houston St",
+"direction": "Northbound"
+},
+{
+"trip_id": "094500_1..S04R",
+"route_id": "1",
+"latitude": 40.869444,
+"longitude": -73.915279,
+"stop_id": "107S",
+"stop_name": "215 St",
+"direction": "Southbound"
+},
+{
+"trip_id": "095100_1..N04R",
+"route_id": "1",
+"latitude": 40.702068,
+"longitude": -74.013664,
+"stop_id": "142N",
+"stop_name": "South Ferry",
+"direction": "Northbound"
+},
+{
+"trip_id": "085950_2..S01R",
+"route_id": "2",
+"latitude": 40.645098,
+"longitude": -73.948959,
+"stop_id": "245S",
+"stop_name": "Beverly Rd",
+"direction": "Southbound"
+},
+{
+"trip_id": "086600_2..N01X039",
+"route_id": "2",
+"latitude": 40.848828,
+"longitude": -73.868457,
+"stop_id": "212N",
+"stop_name": "Bronx Park East",
+"direction": "Northbound"
+},
+{
+"trip_id": "087150_2..S01R",
+"route_id": "2",
+"latitude": 40.688246,
+"longitude": -73.980492,
+"stop_id": "234S",
+"stop_name": "Nevins St",
+"direction": "Southbound"
+},
+{
+"trip_id": "088350_2..S01R",
+"route_id": "2",
+"latitude": 40.693219,
+"longitude": -73.989998,
+"stop_id": "232S",
+"stop_name": "Borough Hall",
+"direction": "Southbound"
+},
+{
+"trip_id": "088400_2..N01X039",
+"route_id": "2",
+"latitude": 40.816109,
+"longitude": -73.917757,
+"stop_id": "221N",
+"stop_name": "3 Av-149 St",
+"direction": "Northbound"
+},
+{
+"trip_id": "089550_2..S01R",
+"route_id": "2",
+"latitude": 40.737826,
+"longitude": -74.000201,
+"stop_id": "132S",
+"stop_name": "14 St",
+"direction": "Southbound"
+},
+{
+"trip_id": "089600_2..N01X039",
+"route_id": "2",
+"latitude": 40.799075,
+"longitude": -73.951822,
+"stop_id": "227N",
+"stop_name": "110 St-Malcolm X Plaza",
+"direction": "Northbound"
+},
+{
+"trip_id": "090750_2..S01R",
+"route_id": "2",
+"latitude": 40.793919,
+"longitude": -73.972323,
+"stop_id": "120S",
+"stop_name": "96 St",
+"direction": "Southbound"
+},
+{
+"trip_id": "090800_2..N01X039",
+"route_id": "2",
+"latitude": 40.75529,
+"longitude": -73.987495,
+"stop_id": "127N",
+"stop_name": "Times Sq-42 St",
+"direction": "Northbound"
+},
+{
+"trip_id": "091950_2..S01R",
+"route_id": "2",
+"latitude": 40.816109,
+"longitude": -73.917757,
+"stop_id": "221S",
+"stop_name": "3 Av-149 St",
+"direction": "Southbound"
+},
+{
+"trip_id": "092000_2..N01X039",
+"route_id": "2",
+"latitude": 40.713051,
+"longitude": -74.008811,
+"stop_id": "228N",
+"stop_name": "Park Place",
+"direction": "Northbound"
+},
+{
+"trip_id": "093150_2..S01R",
+"route_id": "2",
+"latitude": 40.840295,
+"longitude": -73.880049,
+"stop_id": "214S",
+"stop_name": "West Farms Sq-E Tremont Av",
+"direction": "Southbound"
+},
+{
+"trip_id": "093200_2..N01X039",
+"route_id": "2",
+"latitude": 40.688246,
+"longitude": -73.980492,
+"stop_id": "234N",
+"stop_name": "Nevins St",
+"direction": "Northbound"
+},
+{
+"trip_id": "094350_2..S01R",
+"route_id": "2",
+"latitude": 40.87785,
+"longitude": -73.866256,
+"stop_id": "208S",
+"stop_name": "Gun Hill Rd",
+"direction": "Southbound"
+},
+{
+"trip_id": "094400_2..N01X039",
+"route_id": "2",
+"latitude": 40.662742,
+"longitude": -73.95085,
+"stop_id": "242N",
+"stop_name": "Sterling St",
+"direction": "Northbound"
+},
+{
+"trip_id": "091400_2..N01X039",
+"route_id": "2",
+"latitude": 40.737826,
+"longitude": -74.000201,
+"stop_id": "132N",
+"stop_name": "14 St",
+"direction": "Northbound"
+},
+{
+"trip_id": "088350_3..N01X014",
+"route_id": "3",
+"latitude": 40.82388,
+"longitude": -73.93647,
+"stop_id": "301N",
+"stop_name": "Harlem-148 St",
+"direction": "Northbound"
+},
+{
+"trip_id": "088400_3..S01R",
+"route_id": "3",
+"latitude": 40.666235,
+"longitude": -73.884079,
+"stop_id": "257S",
+"stop_name": "New Lots Av",
+"direction": "Southbound"
+},
+{
+"trip_id": "089550_3..N01X014",
+"route_id": "3",
+"latitude": 40.793919,
+"longitude": -73.972323,
+"stop_id": "120N",
+"stop_name": "96 St",
+"direction": "Northbound"
+},
+{
+"trip_id": "089600_3..S01R",
+"route_id": "3",
+"latitude": 40.664717,
+"longitude": -73.92261,
+"stop_id": "251S",
+"stop_name": "Sutter Av-Rutland Rd",
+"direction": "Southbound"
+},
+{
+"trip_id": "090750_3..N01X014",
+"route_id": "3",
+"latitude": 40.737826,
+"longitude": -74.000201,
+"stop_id": "132N",
+"stop_name": "14 St",
+"direction": "Northbound"
+},
+{
+"trip_id": "090900_3..S01R",
+"route_id": "3",
+"latitude": 40.690545,
+"longitude": -73.985065,
+"stop_id": "233S",
+"stop_name": "Hoyt St",
+"direction": "Southbound"
+},
+{
+"trip_id": "091950_3..N01X014",
+"route_id": "3",
+"latitude": 40.706821,
+"longitude": -74.0091,
+"stop_id": "230N",
+"stop_name": "Wall St",
+"direction": "Northbound"
+},
+{
+"trip_id": "092000_3..S01R",
+"route_id": "3",
+"latitude": 40.709416,
+"longitude": -74.006571,
+"stop_id": "229S",
+"stop_name": "Fulton St",
+"direction": "Southbound"
+},
+{
+"trip_id": "093150_3..N01X014",
+"route_id": "3",
+"latitude": 40.684359,
+"longitude": -73.977666,
+"stop_id": "235N",
+"stop_name": "Atlantic Av-Barclays Ctr",
+"direction": "Northbound"
+},
+{
+"trip_id": "093200_3..S01R",
+"route_id": "3",
+"latitude": 40.75529,
+"longitude": -73.987495,
+"stop_id": "127S",
+"stop_name": "Times Sq-42 St",
+"direction": "Southbound"
+},
+{
+"trip_id": "094350_3..N01X014",
+"route_id": "3",
+"latitude": 40.661453,
+"longitude": -73.916327,
+"stop_id": "252N",
+"stop_name": "Saratoga Av",
+"direction": "Northbound"
+},
+{
+"trip_id": "094400_3..S01R",
+"route_id": "3",
+"latitude": 40.802098,
+"longitude": -73.949625,
+"stop_id": "226S",
+"stop_name": "116 St",
+"direction": "Southbound"
+},
+{
+"trip_id": "088300_4..N06R",
+"route_id": "4",
+"latitude": 40.886037,
+"longitude": -73.878751,
+"stop_id": "401N",
+"stop_name": "Woodlawn",
+"direction": "Northbound"
+},
+{
+"trip_id": "089200_4..N06X118",
+"route_id": "4",
+"latitude": 40.858407,
+"longitude": -73.903879,
+"stop_id": "408N",
+"stop_name": "183 St",
+"direction": "Northbound"
+},
+{
+"trip_id": "089200_4..S06X022",
+"route_id": "4",
+"latitude": 40.713065,
+"longitude": -74.004131,
+"stop_id": "640S",
+"stop_name": "Brooklyn Bridge-City Hall",
+"direction": "Southbound"
+},
+{
+"trip_id": "090000_4..N06R",
+"route_id": "4",
+"latitude": 40.835537,
+"longitude": -73.9214,
+"stop_id": "413N",
+"stop_name": "167 St",
+"direction": "Northbound"
+},
+{
+"trip_id": "090500_4..S39X002",
+"route_id": "4",
+"latitude": 40.713065,
+"longitude": -74.004131,
+"stop_id": "640S",
+"stop_name": "Brooklyn Bridge-City Hall",
+"direction": "Southbound"
+},
+{
+"trip_id": "090700_4..N06X118",
+"route_id": "4",
+"latitude": 40.813224,
+"longitude": -73.929849,
+"stop_id": "416N",
+"stop_name": "138 St-Grand Concourse",
+"direction": "Northbound"
+},
+{
+"trip_id": "090800_4..S06X022",
+"route_id": "4",
+"latitude": 40.734673,
+"longitude": -73.989951,
+"stop_id": "635S",
+"stop_name": "14 St-Union Sq",
+"direction": "Southbound"
+},
+{
+"trip_id": "091600_4..N06R",
+"route_id": "4",
+"latitude": 40.762526,
+"longitude": -73.967967,
+"stop_id": "629N",
+"stop_name": "59 St",
+"direction": "Northbound"
+},
+{
+"trip_id": "091900_4..N06R",
+"route_id": "4",
+"latitude": 40.751776,
+"longitude": -73.976848,
+"stop_id": "631N",
+"stop_name": "Grand Central-42 St",
+"direction": "Northbound"
+},
+{
+"trip_id": "092400_4..S06X022",
+"route_id": "4",
+"latitude": 40.818375,
+"longitude": -73.927351,
+"stop_id": "415S",
+"stop_name": "149 St-Grand Concourse",
+"direction": "Southbound"
+},
+{
+"trip_id": "093100_4..N06R",
+"route_id": "4",
+"latitude": 40.713065,
+"longitude": -74.004131,
+"stop_id": "640N",
+"stop_name": "Brooklyn Bridge-City Hall",
+"direction": "Northbound"
+},
+{
+"trip_id": "093700_4..S39X002",
+"route_id": "4",
+"latitude": 40.827994,
+"longitude": -73.925831,
+"stop_id": "414S",
+"stop_name": "161 St-Yankee Stadium",
+"direction": "Southbound"
+},
+{
+"trip_id": "094000_4..N06X118",
+"route_id": "4",
+"latitude": 40.688246,
+"longitude": -73.980492,
+"stop_id": "234N",
+"stop_name": "Nevins St",
+"direction": "Northbound"
+},
+{
+"trip_id": "094000_4..S06X022",
+"route_id": "4",
+"latitude": 40.858407,
+"longitude": -73.903879,
+"stop_id": "408S",
+"stop_name": "183 St",
+"direction": "Southbound"
+},
+{
+"trip_id": "094300_4..N06X118",
+"route_id": "4",
+"latitude": 40.684359,
+"longitude": -73.977666,
+"stop_id": "235N",
+"stop_name": "Atlantic Av-Barclays Ctr",
+"direction": "Northbound"
+},
+{
+"trip_id": "094600_4..S06X022",
+"route_id": "4",
+"latitude": 40.873412,
+"longitude": -73.890064,
+"stop_id": "405S",
+"stop_name": "Bedford Park Blvd-Lehman College",
+"direction": "Southbound"
+},
+{
+"trip_id": "088150_5..S08X010",
+"route_id": "5",
+"latitude": 40.707557,
+"longitude": -74.011862,
+"stop_id": "419S",
+"stop_name": "Wall St",
+"direction": "Southbound"
+},
+{
+"trip_id": "088500_5..N75X013",
+"route_id": "5",
+"latitude": 40.869526,
+"longitude": -73.846384,
+"stop_id": "503N",
+"stop_name": "Gun Hill Rd",
+"direction": "Northbound"
+},
+{
+"trip_id": "089050_5..S08X010",
+"route_id": "5",
+"latitude": 40.751776,
+"longitude": -73.976848,
+"stop_id": "631S",
+"stop_name": "Grand Central-42 St",
+"direction": "Southbound"
+},
+{
+"trip_id": "090650_5..S08X010",
+"route_id": "5",
+"latitude": 40.77362,
+"longitude": -73.959874,
+"stop_id": "627S",
+"stop_name": "77 St",
+"direction": "Southbound"
+},
+{
+"trip_id": "090800_5..N75X013",
+"route_id": "5",
+"latitude": 40.81649,
+"longitude": -73.907807,
+"stop_id": "220N",
+"stop_name": "Jackson Av",
+"direction": "Northbound"
+},
+{
+"trip_id": "091500_5..N75X013",
+"route_id": "5",
+"latitude": 40.798629,
+"longitude": -73.941617,
+"stop_id": "622N",
+"stop_name": "116 St",
+"direction": "Northbound"
+},
+{
+"trip_id": "092700_5..N75X013",
+"route_id": "5",
+"latitude": 40.785672,
+"longitude": -73.95107,
+"stop_id": "625N",
+"stop_name": "96 St",
+"direction": "Northbound"
+},
+{
+"trip_id": "092950_5..S08X010",
+"route_id": "5",
+"latitude": 40.824073,
+"longitude": -73.893064,
+"stop_id": "217S",
+"stop_name": "Simpson St",
+"direction": "Southbound"
+},
+{
+"trip_id": "093800_5..N75X013",
+"route_id": "5",
+"latitude": 40.751776,
+"longitude": -73.976848,
+"stop_id": "631N",
+"stop_name": "Grand Central-42 St",
+"direction": "Northbound"
+},
+{
+"trip_id": "093850_5..S08X010",
+"route_id": "5",
+"latitude": 40.854364,
+"longitude": -73.860495,
+"stop_id": "505S",
+"stop_name": "Morris Park",
+"direction": "Southbound"
+},
+{
+"trip_id": "094800_5..N75X013",
+"route_id": "5",
+"latitude": 40.707557,
+"longitude": -74.011862,
+"stop_id": "419N",
+"stop_name": "Wall St",
+"direction": "Northbound"
+},
+{
+"trip_id": "088750_6..N01R",
+"route_id": "6",
+"latitude": 40.852462,
+"longitude": -73.828121,
+"stop_id": "601N",
+"stop_name": "Pelham Bay Park",
+"direction": "Northbound"
+},
+{
+"trip_id": "088950_6..S01X021",
+"route_id": "6",
+"latitude": 40.730054,
+"longitude": -73.99107,
+"stop_id": "636S",
+"stop_name": "Astor Pl",
+"direction": "Southbound"
+},
+{
+"trip_id": "089350_6..N01R",
+"route_id": "6",
+"latitude": 40.843863,
+"longitude": -73.836322,
+"stop_id": "603N",
+"stop_name": "Middletown Rd",
+"direction": "Northbound"
+},
+{
+"trip_id": "089550_6..S01X021",
+"route_id": "6",
+"latitude": 40.734673,
+"longitude": -73.989951,
+"stop_id": "635S",
+"stop_name": "14 St-Union Sq",
+"direction": "Southbound"
+},
+{
+"trip_id": "089950_6..N01R",
+"route_id": "6",
+"latitude": 40.829521,
+"longitude": -73.874516,
+"stop_id": "610N",
+"stop_name": "Morrison Av-Soundview",
+"direction": "Northbound"
+},
+{
+"trip_id": "090150_6..S01X021",
+"route_id": "6",
+"latitude": 40.746081,
+"longitude": -73.982076,
+"stop_id": "632S",
+"stop_name": "33 St",
+"direction": "Southbound"
+},
+{
+"trip_id": "090550_6..N01R",
+"route_id": "6",
+"latitude": 40.808719,
+"longitude": -73.907657,
+"stop_id": "616N",
+"stop_name": "E 143 St-St Mary's St",
+"direction": "Northbound"
+},
+{
+"trip_id": "090750_6..S01X021",
+"route_id": "6",
+"latitude": 40.768141,
+"longitude": -73.96387,
+"stop_id": "628S",
+"stop_name": "68 St-Hunter College",
+"direction": "Southbound"
+},
+{
+"trip_id": "091050_6..S01X021",
+"route_id": "6",
+"latitude": 40.768141,
+"longitude": -73.96387,
+"stop_id": "628S",
+"stop_name": "68 St-Hunter College",
+"direction": "Southbound"
+},
+{
+"trip_id": "091150_6..N01R",
+"route_id": "6",
+"latitude": 40.807566,
+"longitude": -73.91924,
+"stop_id": "618N",
+"stop_name": "Brook Av",
+"direction": "Northbound"
+},
+{
+"trip_id": "091750_6..N01R",
+"route_id": "6",
+"latitude": 40.810476,
+"longitude": -73.926138,
+"stop_id": "619N",
+"stop_name": "3 Av-138 St",
+"direction": "Northbound"
+},
+{
+"trip_id": "091950_6..S01X021",
+"route_id": "6",
+"latitude": 40.79502,
+"longitude": -73.94425,
+"stop_id": "623S",
+"stop_name": "110 St",
+"direction": "Southbound"
+},
+{
+"trip_id": "092050_6..N01R",
+"route_id": "6",
+"latitude": 40.79502,
+"longitude": -73.94425,
+"stop_id": "623N",
+"stop_name": "110 St",
+"direction": "Northbound"
+},
+{
+"trip_id": "092550_6..S01X021",
+"route_id": "6",
+"latitude": 40.804138,
+"longitude": -73.937594,
+"stop_id": "621S",
+"stop_name": "125 St",
+"direction": "Southbound"
+},
+{
+"trip_id": "092950_6..N01R",
+"route_id": "6",
+"latitude": 40.768141,
+"longitude": -73.96387,
+"stop_id": "628N",
+"stop_name": "68 St-Hunter College",
+"direction": "Northbound"
+},
+{
+"trip_id": "093150_6..S01X021",
+"route_id": "6",
+"latitude": 40.820948,
+"longitude": -73.890549,
+"stop_id": "613S",
+"stop_name": "Hunts Point Av",
+"direction": "Southbound"
+},
+{
+"trip_id": "093450_6..S01X021",
+"route_id": "6",
+"latitude": 40.820948,
+"longitude": -73.890549,
+"stop_id": "613S",
+"stop_name": "Hunts Point Av",
+"direction": "Southbound"
+},
+{
+"trip_id": "093550_6..N01R",
+"route_id": "6",
+"latitude": 40.757107,
+"longitude": -73.97192,
+"stop_id": "630N",
+"stop_name": "51 St",
+"direction": "Northbound"
+},
+{
+"trip_id": "094150_6..N01R",
+"route_id": "6",
+"latitude": 40.739864,
+"longitude": -73.986599,
+"stop_id": "634N",
+"stop_name": "23 St-Baruch College",
+"direction": "Northbound"
+},
+{
+"trip_id": "094350_6..S01X021",
+"route_id": "6",
+"latitude": 40.839892,
+"longitude": -73.842952,
+"stop_id": "604S",
+"stop_name": "Westchester Sq-E Tremont Av",
+"direction": "Southbound"
+},
+{
+"trip_id": "094750_6..N01R",
+"route_id": "6",
+"latitude": 40.722301,
+"longitude": -73.997141,
+"stop_id": "638N",
+"stop_name": "Spring St",
+"direction": "Northbound"
+},
+{
+"trip_id": "094950_6..S01X021",
+"route_id": "6",
+"latitude": 40.852462,
+"longitude": -73.828121,
+"stop_id": "601S",
+"stop_name": "Pelham Bay Park",
+"direction": "Southbound"
+},
+{
+"trip_id": "094900_GS.S04R",
+"route_id": "GS",
+"latitude": 40.752769,
+"longitude": -73.979189,
+"stop_id": "901S",
+"stop_name": "Grand Central-42 St",
+"direction": "Southbound"
+},
+{
+"trip_id": "095000_GS.N01R",
+"route_id": "GS",
+"latitude": 40.752769,
+"longitude": -73.979189,
+"stop_id": "901N",
+"stop_name": "Grand Central-42 St",
+"direction": "Northbound"
+}
+]
+}

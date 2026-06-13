@@ -261,7 +261,9 @@ async def fetch_subway_trains(stops: dict[str, dict], client: httpx.AsyncClient)
     if errors:
         logger.warning(
             "%d of %d subway feeds failed: %s",
-            len(errors), len(SUBWAY_FEED_URLS), "; ".join(errors),
+            len(errors),
+            len(SUBWAY_FEED_URLS),
+            "; ".join(errors),
         )
     if len(errors) == len(SUBWAY_FEED_URLS):
         raise RuntimeError(f"All subway feeds failed: {'; '.join(errors)}")

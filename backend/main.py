@@ -11,13 +11,15 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from google.protobuf.message import DecodeError
 
 import bus_static
 import static_data
 from feeds import fetch_subway_trains, fetch_vehicle_positions
+from models import BusFeed, RouteGeometry, StatusResponse, SubwayFeed, SubwayRoute
 from static_data import load_subway_route_shapes, load_subway_stops
 
 logger = logging.getLogger(__name__)
@@ -111,9 +113,7 @@ async def _poll_feeds(app: FastAPI) -> None:
     async with httpx.AsyncClient(timeout=30) as client:
         while True:
             try:
-                await asyncio.gather(
-                    _refresh_buses(app, client), _refresh_subways(app, client)
-                )
+                await asyncio.gather(_refresh_buses(app, client), _refresh_subways(app, client))
             except Exception:
                 logger.exception("feed poll cycle failed unexpectedly")
             await asyncio.sleep(POLL_INTERVAL_S)
@@ -152,6 +152,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="NYC Transit Live", version="0.2.0", lifespan=lifespan)
 
+# Feed payloads (thousands of buses, ~450 KB of route geometry) are JSON that
+# compresses ~5-10x; only bodies over ~1 KB are worth the CPU.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
 
 def _serve_cached(name: str) -> dict:
     """Serve {fetched_at, data} from the cache. Stale-but-present data is
@@ -167,14 +171,14 @@ def _serve_cached(name: str) -> dict:
     )
 
 
-@app.get("/api/buses")
+@app.get("/api/buses", response_model=BusFeed)
 async def get_buses() -> dict:
     """Cached bus positions: {fetched_at, data: [{id, route_id, latitude,
     longitude, bearing}, ...]}. Refreshed by the background poller."""
     return _serve_cached("buses")
 
 
-@app.get("/api/bus-route/{route_id}")
+@app.get("/api/bus-route/{route_id}", response_model=RouteGeometry)
 async def get_bus_route(route_id: str) -> dict:
     """One bus route's representative geometry (one polyline per direction),
     read from the on-disk index built in the background at startup."""
@@ -201,21 +205,23 @@ async def get_bus_route(route_id: str) -> dict:
     return geometry
 
 
-@app.get("/api/subway-routes")
-async def get_subway_routes() -> list[dict]:
+@app.get("/api/subway-routes", response_model=list[SubwayRoute])
+async def get_subway_routes(response: Response) -> list[dict]:
     """Static subway route geometry for drawing: one entry per route with its
-    polylines as [lat, lon] point lists. Loaded once at startup."""
+    polylines as [lat, lon] point lists. Loaded once at startup, so it's safe
+    for clients to cache between page loads."""
+    response.headers["Cache-Control"] = "public, max-age=3600"
     return getattr(app.state, "subway_routes", None) or []
 
 
-@app.get("/api/subways")
+@app.get("/api/subways", response_model=SubwayFeed)
 async def get_subways() -> dict:
     """Cached train placements: {fetched_at, data: [{trip_id, route_id,
     latitude, longitude, stop_id, stop_name, direction}, ...]}."""
     return _serve_cached("subways")
 
 
-@app.get("/api/status")
+@app.get("/api/status", response_model=StatusResponse)
 async def get_status() -> dict:
     """Operational snapshot: per-feed cache freshness and last recorded
     error, bus route index state, and static subway GTFS age. No secrets,

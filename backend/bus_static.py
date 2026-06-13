@@ -156,9 +156,7 @@ def _process_zip(zip_path: Path, skip_routes: set[str]) -> set[str]:
         polylines = [directions[d] for d in sorted(directions) if len(directions[d]) >= 2]
         if not polylines:
             continue  # nothing drawable
-        _atomic_write_json(
-            _route_path(route_id), {"route": route_id, "directions": polylines}
-        )
+        _atomic_write_json(_route_path(route_id), {"route": route_id, "directions": polylines})
         written.add(route_id)
     return written
 
@@ -250,13 +248,19 @@ async def ensure_index() -> None:
                 have_partial = True
                 logger.info(
                     "bus route index: partial cache (%d routes; failed: %s); rebuilding",
-                    len(routes), ", ".join(map(str, failed)),
+                    len(routes),
+                    ", ".join(map(str, failed)),
                 )
     except Exception as exc:
         logger.warning("bus route index manifest unreadable (%s); rebuilding", exc)
 
     if not have_partial:
         _status = "building"
+    # Clear any stop signal from a prior in-process lifespan before dispatching
+    # the build. Done here in the event-loop thread (not inside the worker) so
+    # a shutdown-driven stop() always happens-after this clear and the build
+    # thread's _stop.is_set() guards can't lose a real shutdown signal.
+    _stop.clear()
     try:
         routes = await asyncio.to_thread(_build_index_sync)
     except Exception as exc:

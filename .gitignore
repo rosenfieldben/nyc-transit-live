@@ -20,6 +20,8 @@ data/gtfs_static/
 *.zip
 data/cache/
 *.pb
+# ...but committed test fixtures (a captured real feed) are not "downloaded data".
+!backend/tests/fixtures/*.pb
 
 # --- Node (only if you add a JS build step later) ---
 node_modules/

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -15,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from google.protobuf.message import DecodeError
 
 import bus_static
+import static_data
 from feeds import fetch_subway_trains, fetch_vehicle_positions
 from static_data import load_subway_route_shapes, load_subway_stops
 
@@ -47,6 +49,17 @@ def _note_failure(entry: dict, status: int, detail: str) -> None:
     logger.warning("feed poll failed (%d): %s", status, detail)
 
 
+_URL_RE = re.compile(r"https?://\S+")
+
+
+def _sanitize_upstream(exc: BaseException) -> str:
+    """Strip URLs from upstream error text before recording it: httpx error
+    strings embed the full request URL, which for the bus feed includes the
+    API key query parameter, and recorded details are served by /api/status
+    and the never-filled error paths."""
+    return _URL_RE.sub("<feed url>", str(exc))
+
+
 async def _refresh_buses(app: FastAPI, client: httpx.AsyncClient) -> None:
     entry = app.state.feed_cache["buses"]
     try:
@@ -56,7 +69,7 @@ async def _refresh_buses(app: FastAPI, client: httpx.AsyncClient) -> None:
         _note_failure(entry, 503, str(exc))
         return
     except httpx.HTTPError as exc:
-        _note_failure(entry, 502, f"Upstream MTA feed error: {exc}")
+        _note_failure(entry, 502, f"Upstream MTA feed error: {_sanitize_upstream(exc)}")
         return
     except DecodeError:
         # HTTP 200 with a non-protobuf body (CDN error page, maintenance HTML).
@@ -80,10 +93,10 @@ async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
         data = await fetch_subway_trains(stops, client)
     except RuntimeError as exc:
         # Every subway feed failed this poll.
-        _note_failure(entry, 502, str(exc))
+        _note_failure(entry, 502, _sanitize_upstream(exc))
         return
     except httpx.HTTPError as exc:
-        _note_failure(entry, 502, f"Upstream MTA feed error: {exc}")
+        _note_failure(entry, 502, f"Upstream MTA feed error: {_sanitize_upstream(exc)}")
         return
     entry.update(data=data, fetched_at=time.time(), error=None)
 
@@ -200,6 +213,37 @@ async def get_subways() -> dict:
     """Cached train placements: {fetched_at, data: [{trip_id, route_id,
     latitude, longitude, stop_id, stop_name, direction}, ...]}."""
     return _serve_cached("subways")
+
+
+@app.get("/api/status")
+async def get_status() -> dict:
+    """Operational snapshot: per-feed cache freshness and last recorded
+    error, bus route index state, and static subway GTFS age. No secrets,
+    no filesystem paths."""
+    now = time.time()
+    feeds = {}
+    for name, entry in getattr(app.state, "feed_cache", {}).items():
+        feeds[name] = {
+            "fetched_at": entry["fetched_at"],
+            "age_s": round(now - entry["fetched_at"], 1)
+            if entry["fetched_at"] is not None
+            else None,
+            "last_error": entry["error"],
+        }
+    static_gtfs = None
+    try:
+        mtime = static_data.SUBWAY_GTFS_ZIP.stat().st_mtime
+        static_gtfs = {"mtime": mtime, "age_s": round(now - mtime, 1)}
+    except OSError:
+        pass  # not downloaded (yet); reported as null
+    return {
+        "feeds": feeds,
+        "bus_route_index": {
+            "status": bus_static.status(),
+            "partial": bus_static.is_partial(),
+        },
+        "static_subway_gtfs": static_gtfs,
+    }
 
 
 # Mounted last so /api/* routes take priority; html=True serves index.html at /.

@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # Matches the runtime pinned in nixpacks.toml.
+          python-version: "3.12"
+      # requirements-dev chains to requirements.lock, so the versions pytest
+      # runs against here are exactly what Railway deploys.
+      - run: pip install -r backend/requirements-dev.txt
+      - run: pytest
+        working-directory: backend
+
+  frontend-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The runner's preinstalled Node is plenty for node --test.
+      - run: node --test "frontend/*.test.js"

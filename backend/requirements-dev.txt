@@ -1,4 +1,6 @@
 # Dev/test dependencies — not installed on Railway (root requirements.txt
-# only references backend/requirements.txt).
--r requirements.txt
+# references only requirements.lock). Chains to the lock so tests run against
+# the exact versions production deploys; dev-only extras live below and must
+# never leak into the lock.
+-r requirements.lock
 pytest>=8

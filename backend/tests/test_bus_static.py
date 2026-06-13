@@ -10,7 +10,15 @@ import pytest
 import bus_static
 from bus_static import _process_zip
 
-TRIPS_COLS = ["route_id", "service_id", "trip_id", "trip_headsign", "direction_id", "block_id", "shape_id"]
+TRIPS_COLS = [
+    "route_id",
+    "service_id",
+    "trip_id",
+    "trip_headsign",
+    "direction_id",
+    "block_id",
+    "shape_id",
+]
 SHAPES_COLS = ["shape_id", "shape_pt_sequence", "shape_pt_lat", "shape_pt_lon"]
 
 
@@ -34,15 +42,24 @@ def make_zip(tmp_path, trips, shapes):
 def trip(route, direction, shape, n=1):
     """n trip rows for the same route/direction/shape."""
     return [
-        {"route_id": route, "trip_id": f"{route}-{direction}-{shape}-{i}",
-         "direction_id": direction, "shape_id": shape}
+        {
+            "route_id": route,
+            "trip_id": f"{route}-{direction}-{shape}-{i}",
+            "direction_id": direction,
+            "shape_id": shape,
+        }
         for i in range(n)
     ]
 
 
 def shape(shape_id, points):
     return [
-        {"shape_id": shape_id, "shape_pt_sequence": str(seq), "shape_pt_lat": str(lat), "shape_pt_lon": str(lon)}
+        {
+            "shape_id": shape_id,
+            "shape_pt_sequence": str(seq),
+            "shape_pt_lat": str(lat),
+            "shape_pt_lon": str(lon),
+        }
         for seq, lat, lon in points
     ]
 
@@ -126,7 +143,14 @@ def test_coordinates_rounded_to_five_decimals(tmp_path, cache_dir):
 
 
 def test_malformed_shape_rows_skipped(tmp_path, cache_dir):
-    rows = SA + [{"shape_id": "SA", "shape_pt_sequence": "3", "shape_pt_lat": "garbage", "shape_pt_lon": "-73.0"}]
+    rows = SA + [
+        {
+            "shape_id": "SA",
+            "shape_pt_sequence": "3",
+            "shape_pt_lat": "garbage",
+            "shape_pt_lon": "-73.0",
+        }
+    ]
     z = make_zip(tmp_path, trip("M1", "0", "SA"), rows)
     _process_zip(z, skip_routes=set())
     assert read_route(cache_dir, "M1")["directions"] == [SA_GEO]

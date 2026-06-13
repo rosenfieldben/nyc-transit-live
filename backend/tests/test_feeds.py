@@ -147,9 +147,7 @@ def test_past_stop_skipped_for_next_upcoming():
 
 
 def test_finished_trip_dropped():
-    trains = decode(
-        {"trip_id": STARTED, "route_id": "1", "stus": [("A01N", NOW - 300, NOW - 240)]}
-    )
+    trains = decode({"trip_id": STARTED, "route_id": "1", "stus": [("A01N", NOW - 300, NOW - 240)]})
     assert trains == []
 
 
@@ -172,44 +170,44 @@ def test_no_times_falls_back_to_first_resolvable():
 
 
 def test_unstarted_trip_excluded():
-    trains = decode(
-        {"trip_id": UNSTARTED, "route_id": "1", "stus": [("A01N", NOW + 660, None)]}
-    )
+    trains = decode({"trip_id": UNSTARTED, "route_id": "1", "stus": [("A01N", NOW + 660, None)]})
     assert trains == []
 
 
 def test_trip_within_start_grace_included():
-    trains = decode(
-        {"trip_id": BARELY_FUTURE, "route_id": "1", "stus": [("A01N", NOW + 90, None)]}
-    )
+    trains = decode({"trip_id": BARELY_FUTURE, "route_id": "1", "stus": [("A01N", NOW + 90, None)]})
     assert len(trains) == 1
 
 
 def test_unparseable_trip_id_uses_first_stop_time_cap():
-    far = {"trip_id": "WEIRD-ID-1", "route_id": "1", "start_date": "", "stus": [("A01N", NOW + 600, None)]}
-    near = {"trip_id": "WEIRD-ID-2", "route_id": "1", "start_date": "", "stus": [("A02N", NOW + 60, None)]}
+    far = {
+        "trip_id": "WEIRD-ID-1",
+        "route_id": "1",
+        "start_date": "",
+        "stus": [("A01N", NOW + 600, None)],
+    }
+    near = {
+        "trip_id": "WEIRD-ID-2",
+        "route_id": "1",
+        "start_date": "",
+        "stus": [("A02N", NOW + 60, None)],
+    }
     trains = decode(far, near)
     assert [t["trip_id"] for t in trains] == ["WEIRD-ID-2"]
 
 
 def test_southbound_direction_from_stop_suffix():
-    trains = decode(
-        {"trip_id": STARTED, "route_id": "1", "stus": [("A03S", NOW + 60, None)]}
-    )
+    trains = decode({"trip_id": STARTED, "route_id": "1", "stus": [("A03S", NOW + 60, None)]})
     assert trains[0]["direction"] == "Southbound"
 
 
 def test_missing_trip_id_falls_back_to_entity_id():
-    trains = decode(
-        {"trip_id": "", "route_id": "1", "stus": [("A01N", NOW + 60, None)]}
-    )
+    trains = decode({"trip_id": "", "route_id": "1", "stus": [("A01N", NOW + 60, None)]})
     assert trains[0]["trip_id"] == "TEST:ent0"
 
 
 def test_missing_route_id_is_none():
-    trains = decode(
-        {"trip_id": STARTED, "route_id": "", "stus": [("A01N", NOW + 60, None)]}
-    )
+    trains = decode({"trip_id": STARTED, "route_id": "", "stus": [("A01N", NOW + 60, None)]})
     assert trains[0]["route_id"] is None
 
 

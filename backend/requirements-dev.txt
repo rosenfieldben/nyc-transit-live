@@ -4,3 +4,6 @@
 # never leak into the lock.
 -r requirements.lock
 pytest>=8
+# Pinned so `ruff format --check` in CI uses the exact formatter the committed
+# code was formatted with — a newer ruff could change formatting and red CI.
+ruff==0.15.17

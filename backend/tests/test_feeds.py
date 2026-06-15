@@ -1,11 +1,23 @@
 """Unit tests for the pure GTFS-RT decoding logic in feeds.py."""
 
+import time
 from datetime import datetime
 from types import SimpleNamespace
 
+import pytest
 from google.transit import gtfs_realtime_pb2 as pb
 
-from feeds import NYC_TZ, _decode_trains, _stop_time, _trip_start_ts
+from feeds import (
+    ARRIVALS_PER_DIRECTION,
+    NYC_TZ,
+    SUBWAY_FEED_URLS,
+    _aggregate_feeds,
+    _decode_feed,
+    _decode_trains,
+    _stop_time,
+    _trip_start_ts,
+    fetch_subway_trains,
+)
 
 # Fixed "now": 2026-06-10 12:00:00 New York time.
 NOON = datetime(2026, 6, 10, 12, 0, 0, tzinfo=NYC_TZ)
@@ -217,3 +229,206 @@ def test_entity_without_trip_update_skipped():
     entity = feed.entity.add()
     entity.id = "vehicle-only"
     assert _decode_trains(feed.SerializeToString(), STOPS, "TEST", NOW) == []
+
+
+# ---------------- _decode_feed: per-station arrivals ----------------
+
+
+def decode_feed(*trips):
+    return _decode_feed(make_feed(*trips), STOPS, "TEST", NOW)
+
+
+def test_arrivals_include_every_upcoming_stop():
+    # Placement keeps only the next stop; arrivals keep them all, keyed by the
+    # station id (platform id with the N/S suffix stripped).
+    _, arrivals = decode_feed(
+        {
+            "trip_id": STARTED,
+            "route_id": "1",
+            "stus": [("A01N", NOW + 60, None), ("A02N", NOW + 300, None)],
+        }
+    )
+    assert sorted(arrivals) == ["A01", "A02"]
+    assert arrivals["A01"]["Northbound"][0] == {
+        "route_id": "1",
+        "trip_id": STARTED,
+        "arrival": NOW + 60,
+    }
+    assert arrivals["A02"]["Northbound"][0]["arrival"] == NOW + 300
+
+
+def test_arrivals_drop_past_stops():
+    _, arrivals = decode_feed(
+        {
+            "trip_id": STARTED,
+            "route_id": "1",
+            "stus": [("A01N", NOW - 300, NOW - 240), ("A02N", NOW + 120, None)],
+        }
+    )
+    assert "A01" not in arrivals  # already passed (same now-60 grace as placement)
+    assert arrivals["A02"]["Northbound"]
+
+
+def test_arrivals_dwelling_train_kept_at_current_station():
+    # Arrival in the past but departure in the future -> _stop_time future -> kept.
+    _, arrivals = decode_feed(
+        {"trip_id": STARTED, "route_id": "1", "stus": [("A01N", NOW - 30, NOW + 90)]}
+    )
+    assert arrivals["A01"]["Northbound"][0]["arrival"] == NOW + 90
+
+
+def test_arrivals_populate_both_directions():
+    _, arrivals = decode_feed(
+        {"trip_id": "70000_1..N01R", "route_id": "1", "stus": [("A01N", NOW + 60, None)]},
+        {"trip_id": "70010_1..S01R", "route_id": "1", "stus": [("A03S", NOW + 90, None)]},
+    )
+    assert arrivals["A01"]["Northbound"]
+    assert arrivals["A03"]["Southbound"]
+
+
+def test_arrivals_include_unstarted_trip_as_downstream_arrival():
+    # The deliberate divergence: an unstarted trip (departs its origin in ~10
+    # min) is EXCLUDED from placement, but its stop is a real future arrival.
+    trains, arrivals = decode_feed(
+        {"trip_id": UNSTARTED, "route_id": "1", "stus": [("A01N", NOW + 660, None)]}
+    )
+    assert trains == []  # placement filter excludes the unstarted trip
+    assert arrivals["A01"]["Northbound"][0]["trip_id"] == UNSTARTED
+
+
+def _pad(*feeds_bytes):
+    """Pad a few feed results out to the full SUBWAY_FEED_URLS count with empty
+    (but valid) feeds, so _aggregate_feeds' zip lines up."""
+    empty = make_feed()  # a header-only feed (FeedMessage.header is required)
+    return list(feeds_bytes) + [empty] * (len(SUBWAY_FEED_URLS) - len(feeds_bytes))
+
+
+def test_arrivals_dedup_same_trip_across_feeds():
+    feed = make_feed(
+        {"trip_id": "70000_1..N01R", "route_id": "1", "stus": [("A01N", NOW + 60, None)]}
+    )
+    # Same trip present in two feed results -> deduped to one placement and one
+    # arrival (covers both the train seen_trips and the arrival_trips guards).
+    trains, arrivals, errors = _aggregate_feeds(_pad(feed, feed), STOPS, NOW)
+    assert errors == []
+    assert len(trains) == 1
+    assert len(arrivals["A01"]["Northbound"]) == 1
+
+
+def test_arrivals_sorted_and_capped_per_direction():
+    trips = [
+        {
+            "trip_id": f"{70000 + i}_1..N01R",
+            "route_id": "1",
+            "stus": [("A01N", NOW + 600 - i * 10, None)],
+        }
+        for i in range(ARRIVALS_PER_DIRECTION + 2)
+    ]
+    _, arrivals, _ = _aggregate_feeds(_pad(make_feed(*trips)), STOPS, NOW)
+    northbound = arrivals["A01"]["Northbound"]
+    assert len(northbound) == ARRIVALS_PER_DIRECTION  # capped to the soonest
+    times = [a["arrival"] for a in northbound]
+    assert times == sorted(times)  # ascending
+    assert times[0] == NOW + 600 - (ARRIVALS_PER_DIRECTION + 1) * 10  # soonest kept
+
+
+def test_arrivals_skip_stop_without_clean_direction():
+    # A resolvable stop whose id has no N/S suffix has no platform direction,
+    # so it is not recorded as a station arrival.
+    stops = {**STOPS, "A04": {"name": "Delta", "lat": 40.7, "lon": -74.0}}
+    _, arrivals = _decode_feed(
+        make_feed({"trip_id": STARTED, "route_id": "1", "stus": [("A04", NOW + 60, None)]}),
+        stops,
+        "TEST",
+        NOW,
+    )
+    assert "A04" not in arrivals
+
+
+# ---------------- _aggregate_feeds: dedup + per-feed error handling ----------------
+
+
+def test_aggregate_skips_a_feed_whose_fetch_raised():
+    good = make_feed(
+        {"trip_id": "70000_1..N01R", "route_id": "1", "stus": [("A01N", NOW + 60, None)]}
+    )
+    results = _pad(RuntimeError("ACE down"), good)
+    trains, arrivals, errors = _aggregate_feeds(results, STOPS, NOW)
+    assert len(errors) == 1 and "ACE down" in errors[0]
+    assert len(trains) == 1  # the good feed still decoded
+    assert arrivals["A01"]["Northbound"]
+
+
+def test_aggregate_skips_a_corrupt_protobuf_feed():
+    good = make_feed(
+        {"trip_id": "70000_1..N01R", "route_id": "1", "stus": [("A01N", NOW + 60, None)]}
+    )
+    results = _pad(b"\x0a\xff", good)  # truncated length-delimited field -> DecodeError
+    trains, arrivals, errors = _aggregate_feeds(results, STOPS, NOW)
+    assert len(errors) == 1 and "undecodable protobuf" in errors[0]
+    assert len(trains) == 1
+    assert arrivals["A01"]["Northbound"]
+
+
+def test_aggregate_all_feeds_failed_records_every_error():
+    results = [RuntimeError("down")] * len(SUBWAY_FEED_URLS)
+    trains, arrivals, errors = _aggregate_feeds(results, STOPS, NOW)
+    assert len(errors) == len(SUBWAY_FEED_URLS)
+    assert trains == [] and arrivals == {}
+
+
+# ---------------- fetch_subway_trains: partial vs total failure ----------------
+
+
+class _FakeResp:
+    def __init__(self, content):
+        self.content = content
+
+    def raise_for_status(self):
+        pass
+
+
+class _FakeClient:
+    """Returns the same feed bytes for every URL, or raises when content is None."""
+
+    def __init__(self, content):
+        self._content = content
+
+    async def get(self, url):
+        if self._content is None:
+            raise RuntimeError("connect failed")
+        return _FakeResp(self._content)
+
+
+def _live_feed(trip_id, stop_id, arrival_offset):
+    """A one-trip feed timed against the real wall clock (fetch_subway_trains
+    uses time.time()), with a long-past start_date so the trip always counts
+    as started regardless of when the test runs."""
+    now = time.time()
+    feed = pb.FeedMessage()
+    feed.header.gtfs_realtime_version = "2.0"
+    feed.header.timestamp = int(now)
+    entity = feed.entity.add()
+    entity.id = "e0"
+    tu = entity.trip_update
+    tu.trip.trip_id = trip_id
+    tu.trip.route_id = "1"
+    tu.trip.start_date = "20200101"
+    stu = tu.stop_time_update.add()
+    stu.stop_id = stop_id
+    stu.arrival.time = int(now + arrival_offset)
+    return feed.SerializeToString()
+
+
+@pytest.mark.anyio
+async def test_fetch_subway_trains_returns_on_partial_success():
+    raw = _live_feed("100_1..N01R", "A01N", 60)
+    trains, arrivals = await fetch_subway_trains(STOPS, _FakeClient(raw))
+    assert len(trains) == 1  # same feed for all URLs -> deduped to one
+    assert arrivals["A01"]["Northbound"]
+
+
+@pytest.mark.anyio
+async def test_fetch_subway_trains_raises_when_all_feeds_fail():
+    with pytest.raises(RuntimeError):
+        await fetch_subway_trains(STOPS, _FakeClient(None))

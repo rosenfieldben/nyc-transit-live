@@ -6,7 +6,26 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { esc, routeColor, lineColor, staleness, noteClockOffset } = require("./helpers.js");
+const {
+  esc,
+  routeColor,
+  lineColor,
+  staleness,
+  noteClockOffset,
+  formatCountdown,
+} = require("./helpers.js");
+
+test("formatCountdown buckets a seconds delta into now / minutes", () => {
+  assert.equal(formatCountdown(null), "");
+  assert.equal(formatCountdown(NaN), "");
+  assert.equal(formatCountdown(0), "now");
+  assert.equal(formatCountdown(29), "now");
+  assert.equal(formatCountdown(-15), "now"); // already due / just passed
+  assert.equal(formatCountdown(30), "1 min");
+  assert.equal(formatCountdown(89), "1 min");
+  assert.equal(formatCountdown(90), "2 min");
+  assert.equal(formatCountdown(600), "10 min");
+});
 
 test("esc escapes all HTML-significant characters", () => {
   assert.equal(esc(`<b a="1" b='2'>&`), "&lt;b a=&quot;1&quot; b=&#39;2&#39;&gt;&amp;");

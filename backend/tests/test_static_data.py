@@ -144,6 +144,45 @@ def test_route_shapes_bad_zip_returns_empty_list(gtfs_zip):
     assert static_data.load_subway_route_shapes() == []
 
 
+# ---------------- load_subway_stations ----------------
+
+
+def test_load_subway_stations_parent_stations_only(gtfs_zip):
+    rows = [
+        {
+            "stop_id": "A01",
+            "stop_name": "Parent",
+            "stop_lat": "40.7",
+            "stop_lon": "-74.0",
+            "location_type": "1",
+        },
+        {
+            "stop_id": "A01N",
+            "stop_name": "Parent",
+            "stop_lat": "40.7",
+            "stop_lon": "-74.0",
+            "location_type": "0",
+            "parent_station": "A01",
+        },
+        {
+            "stop_id": "BAD",
+            "stop_name": "NoCoords",
+            "stop_lat": "",
+            "stop_lon": "",
+            "location_type": "1",
+        },
+    ]
+    write_gtfs_zip(gtfs_zip, stop_rows=rows)
+    stations = static_data.load_subway_stations()
+    assert set(stations) == {"A01"}  # platform A01N excluded; BAD has no coords
+    assert stations["A01"] == {"name": "Parent", "lat": 40.7, "lon": -74.0}
+
+
+def test_load_subway_stations_bad_zip_returns_empty(gtfs_zip):
+    gtfs_zip.write_bytes(b"corrupt")
+    assert static_data.load_subway_stations() == {}
+
+
 def test_variant_dedup_keeps_branch_drops_express(gtfs_zip):
     # 20-point trunk; an express variant sharing every point (0% new) must be
     # dropped; an 18-point branch with 5 new points (~28% new) must survive.

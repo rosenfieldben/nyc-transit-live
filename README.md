@@ -11,6 +11,18 @@ decodes the protobuf, and exposes clean JSON. A Leaflet frontend polls that JSON
 and draws/moves markers. The backend does the polling once and serves many
 browser clients, so the MTA endpoints aren't hit on every page refresh.
 
+Clicking a subway station marker shows the upcoming trains in each direction
+with live countdowns. The same subway poll that places trains also builds a
+per-station arrivals index in memory (the stops a train placement discards are
+exactly those arrival times), so a click is served from memory without hitting
+the MTA. The endpoints involved:
+
+- `GET /api/subway-stops` — station markers `[{id, name, lat, lon}]`, static
+  for the session (cached by the browser).
+- `GET /api/subway-arrivals/{station_id}` — `{fetched_at, station_id,
+  station_name, directions: {Northbound, Southbound}}` from the in-memory index,
+  refreshed each poll; the frontend ticks the countdowns down between polls.
+
 ```
 nyc-transit-live/
 ├── backend/

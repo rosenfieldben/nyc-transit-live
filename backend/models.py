@@ -51,6 +51,27 @@ class SubwayRoute(BaseModel):
     polylines: list[list[list[float]]]
 
 
+class SubwayStop(BaseModel):
+    id: str
+    name: str | None
+    lat: float
+    lon: float
+
+
+class Arrival(BaseModel):
+    route_id: str | None
+    trip_id: str
+    arrival: float  # absolute epoch seconds
+
+
+class StationArrivals(BaseModel):
+    fetched_at: float | None
+    station_id: str
+    station_name: str | None
+    # Keyed by "Northbound" / "Southbound"; both keys always present.
+    directions: dict[str, list[Arrival]]
+
+
 class FeedError(BaseModel):
     status: int
     detail: str

@@ -13,6 +13,7 @@ const busLayer = L.layerGroup().addTo(map);
 const subwayLayer = L.layerGroup().addTo(map);
 const routeLinesLayer = L.layerGroup().addTo(map);
 const busRouteLayer = L.layerGroup().addTo(map); // the one clicked bus route
+const stationLayer = L.layerGroup().addTo(map);
 
 function bindToggle(checkboxId, layers) {
   const box = document.getElementById(checkboxId);
@@ -27,6 +28,7 @@ function bindToggle(checkboxId, layers) {
 }
 bindToggle("toggle-buses", [busLayer, busRouteLayer]);
 bindToggle("toggle-subways", [subwayLayer, routeLinesLayer]);
+bindToggle("toggle-stations", [stationLayer]);
 
 const statusEl = document.getElementById("status");
 
@@ -267,6 +269,119 @@ async function loadRouteLines() {
   }
 }
 
+/* ----- Subway stations + live arrivals (click a station for countdowns) ----- */
+
+// Canvas-rendered so ~470 circle markers stay cheap and hit-testable.
+const stationRenderer = L.canvas({ padding: 0.5 });
+
+// One station popup is open at a time (Leaflet closes others). A request token
+// guards against a slow fetch landing after the user clicked a different
+// station; a 1s timer ticks countdowns down from absolute arrival timestamps
+// without re-fetching.
+let stationSeq = 0;
+let stationTimer = null;
+let openStation = null; // { station, marker } while a popup is open
+
+function arrivalsHtml(station, body) {
+  // Skew-corrected now, reusing the staleness baseline from helpers.js.
+  const now = Date.now() / 1000 - (minClockOffset ?? 0);
+  let html = `<b>${esc(station.name ?? station.id)}</b>`;
+  for (const dir of ["Northbound", "Southbound"]) {
+    const arrivals = body.directions?.[dir] ?? [];
+    html += `<div class="arr-dir">${dir}</div>`;
+    if (!arrivals.length) {
+      html += `<div class="arr-none">No trains</div>`;
+      continue;
+    }
+    html += arrivals
+      .map((a) => {
+        const route = a.route_id ?? "";
+        const textColor = DARK_TEXT_LINES.has(route[0]) ? "#1a1a1a" : "#fff";
+        const badge =
+          `<span class="arr-badge" style="background:${lineColor(route)};color:${textColor}">` +
+          `${esc(route || "?")}</span>`;
+        return `${badge} ${esc(formatCountdown(a.arrival - now))}`;
+      })
+      .join("<br>");
+  }
+  return html;
+}
+
+function stationError(station, message) {
+  return (
+    `<b>${esc(station.name ?? station.id)}</b>` +
+    `<br><span class="popup-sub">${esc(message)}</span>`
+  );
+}
+
+async function openStationArrivals(station, marker) {
+  const seq = ++stationSeq;
+  marker.setPopupContent(`<b>${esc(station.name ?? station.id)}</b><br>Loading arrivals…`);
+  let body;
+  try {
+    const res = await fetch(`/api/subway-arrivals/${encodeURIComponent(station.id)}`);
+    if (seq !== stationSeq) return; // superseded by another station click
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      marker.setPopupContent(
+        stationError(station, err?.detail ?? `Arrivals unavailable (HTTP ${res.status})`),
+      );
+      return;
+    }
+    body = await res.json();
+  } catch {
+    if (seq !== stationSeq) return;
+    marker.setPopupContent(stationError(station, "Arrivals unavailable (network error)"));
+    return;
+  }
+  if (seq !== stationSeq) return;
+  noteClockOffset(body.fetched_at); // keep the skew baseline fresh
+
+  const render = () => {
+    if (marker.isPopupOpen()) marker.setPopupContent(arrivalsHtml(station, body));
+  };
+  render();
+  // Don't start (or replace) the tick if the popup closed while we fetched —
+  // popupclose bumps stationSeq, but a close that lands exactly here would
+  // otherwise strand an interval that nothing clears.
+  if (!marker.isPopupOpen()) return;
+  clearInterval(stationTimer);
+  stationTimer = setInterval(render, 1000); // tick countdowns without re-fetch
+}
+
+async function loadStations() {
+  let stations;
+  try {
+    const res = await fetch("/api/subway-stops");
+    if (!res.ok) return;
+    stations = await res.json();
+  } catch {
+    return;
+  }
+  for (const station of stations) {
+    L.circleMarker([station.lat, station.lon], {
+      radius: 4,
+      color: "#333",
+      weight: 1.5,
+      fillColor: "#fff",
+      fillOpacity: 1,
+      renderer: stationRenderer,
+    })
+      .bindPopup("", { minWidth: 170 })
+      .on("popupopen", function () {
+        openStation = { station, marker: this };
+        openStationArrivals(station, this);
+      })
+      .on("popupclose", function () {
+        stationSeq++; // invalidate any in-flight arrivals fetch for this popup
+        clearInterval(stationTimer);
+        stationTimer = null;
+        if (openStation?.marker === this) openStation = null;
+      })
+      .addTo(stationLayer);
+  }
+}
+
 const trains = new Map(); // trip id -> { marker, routeId, latest }
 
 function applyTrains(data) {
@@ -350,8 +465,13 @@ async function refreshAll() {
   const now = new Date().toLocaleTimeString();
   if (problems.length) setStatus(`${counts} · ${now} — ${problems.join("; ")}`, true);
   else setStatus(`${counts} · updated ${now}`);
+
+  // Refresh the open station's arrivals so the train list (not just the
+  // countdowns) stays current on the same ~15s cadence as the markers.
+  if (openStation) openStationArrivals(openStation.station, openStation.marker);
 }
 
 loadRouteLines();
+loadStations();
 refreshAll();
 setInterval(refreshAll, POLL_INTERVAL_MS);

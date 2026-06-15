@@ -261,3 +261,68 @@ async def test_subway_refresh_error_never_records_url(client, cache, monkeypatch
     detail = cache["subways"]["error"]["detail"]
     assert "https://" not in detail and "mta.info" not in detail
     assert "All subway feeds failed" in detail  # the useful part survives
+
+
+# ---------------- /api/subway-stops and /api/subway-arrivals ----------------
+
+
+@pytest.fixture
+def subway_state(cache):
+    """Prime the station list and arrivals index without running the lifespan."""
+    app_module.app.state.subway_stations = {
+        "A01": {"name": "Alpha", "lat": 40.7, "lon": -74.0},
+    }
+    app_module.app.state.subway_arrivals = {
+        "A01": {"Northbound": [{"route_id": "1", "trip_id": "t1", "arrival": 1000.0}]}
+    }
+    return cache
+
+
+async def test_subway_stops_lists_stations(client, subway_state):
+    res = await client.get("/api/subway-stops")
+    assert res.status_code == 200
+    assert res.json() == [{"id": "A01", "name": "Alpha", "lat": 40.7, "lon": -74.0}]
+    assert "max-age" in res.headers.get("cache-control", "")
+
+
+async def test_subway_arrivals_warming_up_503(client, subway_state):
+    # No successful subway poll yet (the cache fixture leaves data=None).
+    res = await client.get("/api/subway-arrivals/A01")
+    assert res.status_code == 503
+    assert "warming up" in res.json()["detail"]
+
+
+async def test_subway_arrivals_known_station(client, subway_state, cache):
+    cache["subways"].update(data=[], fetched_at=1234.0, error=None)  # a poll succeeded
+    res = await client.get("/api/subway-arrivals/A01")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["station_id"] == "A01"
+    assert body["station_name"] == "Alpha"
+    assert body["fetched_at"] == 1234.0
+    assert body["directions"]["Northbound"][0] == {
+        "route_id": "1",
+        "trip_id": "t1",
+        "arrival": 1000.0,
+    }
+    assert body["directions"]["Southbound"] == []  # both keys always present
+
+
+async def test_subway_arrivals_known_station_without_upcoming_trains(client, subway_state, cache):
+    cache["subways"].update(data=[], fetched_at=1.0, error=None)
+    app_module.app.state.subway_arrivals = {}  # valid station, nothing upcoming
+    res = await client.get("/api/subway-arrivals/A01")
+    assert res.status_code == 200
+    assert res.json()["directions"] == {"Northbound": [], "Southbound": []}
+
+
+async def test_subway_arrivals_unknown_station_404(client, subway_state, cache):
+    cache["subways"].update(data=[], fetched_at=1.0, error=None)
+    res = await client.get("/api/subway-arrivals/ZZ9")
+    assert res.status_code == 404
+
+
+async def test_subway_arrivals_rejects_malformed_station_id(client, subway_state, cache):
+    cache["subways"].update(data=[], fetched_at=1.0, error=None)
+    res = await client.get("/api/subway-arrivals/..%2Fevil")
+    assert res.status_code == 404

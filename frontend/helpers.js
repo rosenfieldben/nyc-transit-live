@@ -64,9 +64,17 @@ function staleness(source) {
   return `${source.label} data ${human} old`;
 }
 
+// Arrival countdown label from a seconds-until-arrival delta: "now" when due
+// (or past), else rounded to whole minutes.
+function formatCountdown(seconds) {
+  if (seconds == null || Number.isNaN(seconds)) return "";
+  if (seconds < 30) return "now";
+  return `${Math.round(seconds / 60)} min`;
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
-    esc, routeColor, lineColor, staleness, noteClockOffset,
+    esc, routeColor, lineColor, staleness, noteClockOffset, formatCountdown,
     LINE_COLORS, DARK_TEXT_LINES, STALE_AFTER_S,
   };
 }

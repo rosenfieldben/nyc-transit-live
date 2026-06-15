@@ -117,6 +117,43 @@ async def load_subway_stops() -> dict[str, dict]:
     return stops
 
 
+def load_subway_stations() -> dict[str, dict]:
+    """Parent stations (GTFS location_type == 1) from the cached static GTFS:
+    station_id -> {name, lat, lon}.
+
+    These carry their own coordinates and are the clickable station markers;
+    realtime platform stop ids map onto them by stripping the trailing N/S
+    (see feeds._platform_direction). Station markers are optional UI, so any
+    parse problem logs and returns {} rather than raising.
+    """
+    try:
+        stations: dict[str, dict] = {}
+        with zipfile.ZipFile(SUBWAY_GTFS_ZIP) as zf:
+            with zf.open("stops.txt") as raw:
+                reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
+                for row in reader:
+                    if (row.get("location_type") or "").strip() != "1":
+                        continue
+                    station_id = (row.get("stop_id") or "").strip()
+                    if not station_id:
+                        continue
+                    try:
+                        lat = float(row.get("stop_lat") or "")
+                        lon = float(row.get("stop_lon") or "")
+                    except ValueError:
+                        continue
+                    stations[station_id] = {
+                        "name": (row.get("stop_name") or "").strip() or None,
+                        "lat": lat,
+                        "lon": lon,
+                    }
+        logger.info("Loaded %d subway stations from static GTFS", len(stations))
+        return stations
+    except Exception as exc:
+        logger.warning("Could not load subway stations (%s); skipping markers", exc)
+        return {}
+
+
 # A shape variant is kept only if it adds more than this fraction of new
 # geometry vs. variants already kept for the route. Express/local variants
 # share track geometry almost entirely; branches (e.g. the A's Rockaway legs)

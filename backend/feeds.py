@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import time
+from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -139,33 +140,72 @@ def _trip_start_ts(trip) -> float | None:
     return None
 
 
-def _decode_trains(raw: bytes, stops: dict[str, dict], feed_key: str, now: float) -> list[dict]:
-    """Decode one subway feed's trip updates into train placements.
+# Next this many upcoming trains kept per station and direction for arrivals.
+ARRIVALS_PER_DIRECTION = 6
 
-    Each train is placed at its next upcoming stop. The subway feeds carry
-    NYC-specific protobuf extensions; the standard bindings keep those as
-    unknown fields, so parsing tolerates them — we just can't read them.
-    Direction comes from the stop_id suffix instead (NYC convention: trailing
-    N/S on every platform id).
+
+def _platform_direction(stop_id: str) -> tuple[str | None, str]:
+    """(direction, station_id) for a platform stop_id via its N/S suffix.
+
+    NYC platform ids are the parent-station id plus a trailing N or S — the
+    same convention used for train direction — so the station id is the
+    platform id with that suffix stripped.
+    """
+    if stop_id.endswith("N"):
+        return "Northbound", stop_id[:-1]
+    if stop_id.endswith("S"):
+        return "Southbound", stop_id[:-1]
+    return None, stop_id
+
+
+def _decode_feed(
+    raw: bytes, stops: dict[str, dict], feed_key: str, now: float
+) -> tuple[list[dict], dict[str, dict[str, list[dict]]]]:
+    """Decode one subway feed into (train placements, per-station arrivals).
+
+    Parses the protobuf once and walks each trip's stop_time_updates for both
+    outputs. The subway feeds carry NYC-specific protobuf extensions; the
+    standard bindings keep those as unknown fields, so parsing tolerates them.
+
+    Placement keeps only the next stop and SKIPS not-yet-started trips
+    (TRIP_START_GRACE_S) so phantom trains don't pile up at terminals.
+    Arrivals deliberately do the OPPOSITE: every still-upcoming resolvable stop
+    is recorded with NO unstarted-trip filter, because a train departing its
+    origin in 20 minutes is a legitimate future arrival at the stations
+    downstream of it — exactly what a rider clicking a station wants to see.
     """
     feed = gtfs_realtime_pb2.FeedMessage()
     feed.ParseFromString(raw)  # caller handles DecodeError
 
     trains: list[dict] = []
+    arrivals: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
     for entity in feed.entity:
         if not entity.HasField("trip_update"):
             continue
         tu = entity.trip_update
+        trip_id = tu.trip.trip_id or f"{feed_key}:{entity.id}"
+        route_id = tu.trip.route_id or None
 
-        # Skip trips that haven't started yet (they appear in the feed well
-        # before departure and would otherwise sit as phantoms at terminals).
+        # Arrivals: every resolvable, still-upcoming stop (no unstarted filter).
+        for stu in tu.stop_time_update:
+            if not stu.stop_id or stu.stop_id not in stops:
+                continue
+            t = _stop_time(stu)
+            if t is None or t < now - 60:  # same just-passed grace as placement
+                continue
+            direction, station_id = _platform_direction(stu.stop_id)
+            if direction is None:
+                continue  # no clean platform direction; not a station arrival
+            arrivals[station_id][direction].append(
+                {"route_id": route_id, "trip_id": trip_id, "arrival": float(t)}
+            )
+
+        # Placement: skip not-yet-started trips, then pick the first stop that
+        # exists in the static GTFS and is still upcoming. Track the first
+        # resolvable stop as a fallback for trips whose updates carry no times.
         start_ts = _trip_start_ts(tu.trip)
         if start_ts is not None and start_ts > now + TRIP_START_GRACE_S:
             continue
-
-        # Pick the first stop that exists in the static GTFS and is still
-        # upcoming. Track the first resolvable stop as a fallback for trips
-        # whose updates carry no times at all.
         chosen = None
         chosen_time = None
         first_resolvable = None
@@ -200,17 +240,11 @@ def _decode_trains(raw: bytes, stops: dict[str, dict], feed_key: str, now: float
             continue
 
         stop = stops[chosen.stop_id]
-        if chosen.stop_id.endswith("N"):
-            direction = "Northbound"
-        elif chosen.stop_id.endswith("S"):
-            direction = "Southbound"
-        else:
-            direction = None
-
+        direction, _ = _platform_direction(chosen.stop_id)
         trains.append(
             {
-                "trip_id": tu.trip.trip_id or f"{feed_key}:{entity.id}",
-                "route_id": tu.trip.route_id or None,
+                "trip_id": trip_id,
+                "route_id": route_id,
                 "latitude": stop["lat"],
                 "longitude": stop["lon"],
                 "stop_id": chosen.stop_id,
@@ -218,11 +252,71 @@ def _decode_trains(raw: bytes, stops: dict[str, dict], feed_key: str, now: float
                 "direction": direction,
             }
         )
-    return trains
+    return trains, arrivals
 
 
-async def fetch_subway_trains(stops: dict[str, dict], client: httpx.AsyncClient) -> list[dict]:
-    """Fetch all subway feeds concurrently and place each active train.
+def _decode_trains(raw: bytes, stops: dict[str, dict], feed_key: str, now: float) -> list[dict]:
+    """Train placements for one feed — the placement half of _decode_feed.
+    Kept as a thin wrapper so the placement logic stays directly testable."""
+    return _decode_feed(raw, stops, feed_key, now)[0]
+
+
+def _aggregate_feeds(
+    results: list, stops: dict[str, dict], now: float
+) -> tuple[list[dict], dict[str, dict[str, list[dict]]], list[str]]:
+    """Decode every feed result, dedup trips across feeds, and merge arrivals.
+
+    `results` is aligned with SUBWAY_FEED_URLS; each item is decoded protobuf
+    bytes or an exception from the fetch. Returns (trains, arrivals, errors).
+    """
+    trains: list[dict] = []
+    seen_trips: set[str] = set()
+    arrivals: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
+    arrival_trips: set[str] = set()
+    errors: list[str] = []
+    for feed_key, result in zip(SUBWAY_FEED_URLS, results):
+        if isinstance(result, BaseException):
+            errors.append(f"{feed_key}: {result}")
+            continue
+        try:
+            feed_trains, feed_arrivals = _decode_feed(result, stops, feed_key, now)
+        except DecodeError as exc:
+            errors.append(f"{feed_key}: undecodable protobuf ({exc})")
+            continue
+        for train in feed_trains:
+            if train["trip_id"] in seen_trips:
+                continue
+            seen_trips.add(train["trip_id"])
+            trains.append(train)
+        # Merge arrivals, skipping any trip already contributed by an earlier
+        # feed (insurance against a trip appearing in two feeds). Within one
+        # feed a trip's arrivals at different stations are all kept, so trip
+        # ids are marked seen only after the whole feed is merged.
+        feed_trip_ids: set[str] = set()
+        for station_id, dirs in feed_arrivals.items():
+            for direction, arrs in dirs.items():
+                for arr in arrs:
+                    if arr["trip_id"] in arrival_trips:
+                        continue
+                    arrivals[station_id][direction].append(arr)
+                    feed_trip_ids.add(arr["trip_id"])
+        arrival_trips |= feed_trip_ids
+
+    # Keep the soonest arrivals per direction; the rest are noise on a popup.
+    trimmed: dict[str, dict[str, list[dict]]] = {}
+    for station_id, dirs in arrivals.items():
+        trimmed[station_id] = {}
+        for direction, arrs in dirs.items():
+            arrs.sort(key=lambda a: a["arrival"])
+            trimmed[station_id][direction] = arrs[:ARRIVALS_PER_DIRECTION]
+    return trains, trimmed, errors
+
+
+async def fetch_subway_trains(
+    stops: dict[str, dict], client: httpx.AsyncClient
+) -> tuple[list[dict], dict[str, dict[str, list[dict]]]]:
+    """Fetch all subway feeds concurrently; return (train placements,
+    per-station arrivals index).
 
     Individual feed failures are logged and skipped so one bad feed doesn't
     take out the endpoint; raises only when every feed fails. The caller owns
@@ -240,24 +334,7 @@ async def fetch_subway_trains(stops: dict[str, dict], client: httpx.AsyncClient)
         return_exceptions=True,
     )
 
-    trains: list[dict] = []
-    seen_trips: set[str] = set()
-    errors: list[str] = []
-    for feed_key, result in zip(SUBWAY_FEED_URLS, results):
-        if isinstance(result, BaseException):
-            errors.append(f"{feed_key}: {result}")
-            continue
-        try:
-            decoded = _decode_trains(result, stops, feed_key, now)
-        except DecodeError as exc:
-            errors.append(f"{feed_key}: undecodable protobuf ({exc})")
-            continue
-        for train in decoded:
-            if train["trip_id"] in seen_trips:
-                continue
-            seen_trips.add(train["trip_id"])
-            trains.append(train)
-
+    trains, arrivals, errors = _aggregate_feeds(results, stops, now)
     if errors:
         logger.warning(
             "%d of %d subway feeds failed: %s",
@@ -267,4 +344,4 @@ async def fetch_subway_trains(stops: dict[str, dict], client: httpx.AsyncClient)
         )
     if len(errors) == len(SUBWAY_FEED_URLS):
         raise RuntimeError(f"All subway feeds failed: {'; '.join(errors)}")
-    return trains
+    return trains, arrivals

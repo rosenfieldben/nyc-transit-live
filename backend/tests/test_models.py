@@ -11,10 +11,13 @@ from pathlib import Path
 
 import feeds
 from models import (
+    Arrival,
     BusFeed,
     BusIndexStatus,
+    StationArrivals,
     StatusResponse,
     SubwayFeed,
+    SubwayStop,
     Train,
     Vehicle,
 )
@@ -64,6 +67,31 @@ def test_feed_envelopes_validate():
                     "direction": "Northbound",
                 }
             ],
+        }
+    )
+
+
+SUBWAY_STOP = {"id": "A01", "name": "Alpha", "lat": 40.7, "lon": -74.0}
+ARRIVAL = {"route_id": "1", "trip_id": "t1", "arrival": 1000.0}
+
+
+def test_subway_stop_field_set_is_locked():
+    assert set(SubwayStop.model_fields) == set(SUBWAY_STOP)
+    SubwayStop.model_validate(SUBWAY_STOP)
+
+
+def test_arrival_field_set_is_locked():
+    assert set(Arrival.model_fields) == set(ARRIVAL)
+    Arrival.model_validate(ARRIVAL)
+
+
+def test_station_arrivals_validates_handler_shape():
+    StationArrivals.model_validate(
+        {
+            "fetched_at": 1234.0,
+            "station_id": "A01",
+            "station_name": "Alpha",
+            "directions": {"Northbound": [ARRIVAL], "Southbound": []},
         }
     )
 

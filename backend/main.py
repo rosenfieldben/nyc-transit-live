@@ -19,8 +19,20 @@ from google.protobuf.message import DecodeError
 import bus_static
 import static_data
 from feeds import fetch_subway_trains, fetch_vehicle_positions
-from models import BusFeed, RouteGeometry, StatusResponse, SubwayFeed, SubwayRoute
-from static_data import load_subway_route_shapes, load_subway_stops
+from models import (
+    BusFeed,
+    RouteGeometry,
+    StationArrivals,
+    StatusResponse,
+    SubwayFeed,
+    SubwayRoute,
+    SubwayStop,
+)
+from static_data import (
+    load_subway_route_shapes,
+    load_subway_stations,
+    load_subway_stops,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +50,10 @@ FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 # The backend polls the MTA once and serves every browser client from this
 # cache, so N clients never means N upstream fetches.
 POLL_INTERVAL_S = 20
+
+# Station ids index the in-memory arrivals dict; validate the path parameter
+# to reject malformed input (and any traversal-shaped surprises) up front.
+_STATION_ID_RE = re.compile(r"^[A-Za-z0-9]{1,6}$")
 
 
 def _fresh_entry() -> dict:
@@ -92,7 +108,7 @@ async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
         )
         return
     try:
-        data = await fetch_subway_trains(stops, client)
+        trains, arrivals = await fetch_subway_trains(stops, client)
     except RuntimeError as exc:
         # Every subway feed failed this poll.
         _note_failure(entry, 502, _sanitize_upstream(exc))
@@ -100,7 +116,10 @@ async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
     except httpx.HTTPError as exc:
         _note_failure(entry, 502, f"Upstream MTA feed error: {_sanitize_upstream(exc)}")
         return
-    entry.update(data=data, fetched_at=time.time(), error=None)
+    entry.update(data=trains, fetched_at=time.time(), error=None)
+    # Replace the arrivals index only on success, so a failed poll keeps the
+    # last-known arrivals on the same fetched_at — consistent with the cache.
+    app.state.subway_arrivals = arrivals
 
 
 async def _poll_feeds(app: FastAPI) -> None:
@@ -125,13 +144,18 @@ async def lifespan(app: FastAPI):
     # If it can't be loaded, keep serving buses; /api/subways returns 503.
     try:
         app.state.subway_stops = await load_subway_stops()
-        # Route lines reuse the zip the stops loader just ensured exists.
+        # Route lines and station markers reuse the zip the stops loader just
+        # ensured exists.
         app.state.subway_routes = load_subway_route_shapes()
+        app.state.subway_stations = load_subway_stations()
     except Exception as exc:
         logger.error("Could not load static subway GTFS (%s); /api/subways disabled", exc)
         app.state.subway_stops = None
         app.state.subway_routes = []
+        app.state.subway_stations = {}
     app.state.feed_cache = {"buses": _fresh_entry(), "subways": _fresh_entry()}
+    # Per-station arrivals index, rebuilt by each successful subway poll.
+    app.state.subway_arrivals = {}
     app.state.feed_poll_task = asyncio.create_task(_poll_feeds(app))
     # Bus route geometry indexes in the background — startup never waits on
     # the ~52 MB of borough GTFS zips; /api/bus-route reports until ready.
@@ -219,6 +243,46 @@ async def get_subways() -> dict:
     """Cached train placements: {fetched_at, data: [{trip_id, route_id,
     latitude, longitude, stop_id, stop_name, direction}, ...]}."""
     return _serve_cached("subways")
+
+
+@app.get("/api/subway-stops", response_model=list[SubwayStop])
+async def get_subway_stops(response: Response) -> list[dict]:
+    """Subway station markers ({id, name, lat, lon}) from the static GTFS.
+    Static for the session, so clients can cache it like the route lines."""
+    response.headers["Cache-Control"] = "public, max-age=3600"
+    stations = getattr(app.state, "subway_stations", None) or {}
+    return [
+        {"id": sid, "name": s["name"], "lat": s["lat"], "lon": s["lon"]}
+        for sid, s in stations.items()
+    ]
+
+
+@app.get("/api/subway-arrivals/{station_id}", response_model=StationArrivals)
+async def get_subway_arrivals(station_id: str) -> dict:
+    """Upcoming trains at a station, grouped by direction, from the in-memory
+    index refreshed each subway poll. 503 until the first successful poll
+    fills it (consistent with _serve_cached); 404 for an unknown or malformed
+    station id."""
+    entry = app.state.feed_cache["subways"]
+    if entry["data"] is None:  # no successful subway poll yet
+        if entry["error"]:
+            raise HTTPException(entry["error"]["status"], entry["error"]["detail"])
+        raise HTTPException(
+            status_code=503, detail="Feed cache is warming up; try again in a few seconds."
+        )
+    stations = getattr(app.state, "subway_stations", None) or {}
+    if not _STATION_ID_RE.match(station_id) or station_id not in stations:
+        raise HTTPException(status_code=404, detail=f"Unknown station {station_id}.")
+    station_arrivals = (getattr(app.state, "subway_arrivals", None) or {}).get(station_id, {})
+    return {
+        "fetched_at": entry["fetched_at"],
+        "station_id": station_id,
+        "station_name": stations[station_id]["name"],
+        "directions": {
+            "Northbound": station_arrivals.get("Northbound", []),
+            "Southbound": station_arrivals.get("Southbound", []),
+        },
+    }
 
 
 @app.get("/api/status", response_model=StatusResponse)

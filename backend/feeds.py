@@ -261,6 +261,8 @@ def _decode_feed(
         chosen = None
         chosen_time = None
         first_resolvable = None
+        prev_resolvable = None  # the resolvable stop immediately before `chosen`
+        last_resolvable = None  # most recent resolvable stop seen while scanning
         saw_timed = False
         for stu in tu.stop_time_update:
             if not stu.stop_id or stu.stop_id not in stops:
@@ -271,14 +273,17 @@ def _decode_feed(
                 first_resolvable = stu
             t = _stop_time(stu)
             if t is None:
+                last_resolvable = stu
                 continue
             saw_timed = True
             if t >= now - 60:  # small grace for clock skew / just-passed stops
                 chosen = stu
                 chosen_time = t
+                prev_resolvable = last_resolvable  # the station just behind it
                 break
+            last_resolvable = stu
         if chosen is None and not saw_timed:
-            chosen = first_resolvable
+            chosen = first_resolvable  # no-times fallback: prev_resolvable stays None
         if chosen is None:
             continue  # trip finished, or nothing resolvable
 
@@ -296,6 +301,17 @@ def _decode_feed(
 
         stop = stops[chosen.stop_id]
         direction, _ = _platform_direction(chosen.stop_id)
+        # Interpolation anchors (v1: straight line prev -> next station). The
+        # next/current station stays in latitude/longitude as the static
+        # fallback; prev_* describe the most-recently-passed station, null when
+        # none precedes the chosen stop or its time is unknown. next_time is the
+        # expected time at the chosen station, null on the no-times fallback.
+        prev_lat = prev_lon = prev_time = None
+        if prev_resolvable is not None:
+            prev_stop = stops[prev_resolvable.stop_id]
+            prev_lat, prev_lon = prev_stop["lat"], prev_stop["lon"]
+            pt = _stop_time(prev_resolvable)
+            prev_time = float(pt) if pt is not None else None
         trains.append(
             {
                 "trip_id": trip_id,
@@ -305,6 +321,10 @@ def _decode_feed(
                 "stop_id": chosen.stop_id,
                 "stop_name": stop["name"],
                 "direction": direction,
+                "prev_lat": prev_lat,
+                "prev_lon": prev_lon,
+                "prev_time": prev_time,
+                "next_time": float(chosen_time) if chosen_time is not None else None,
             }
         )
     return trains, arrivals, _header_timestamp(feed)

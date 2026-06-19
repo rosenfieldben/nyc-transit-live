@@ -13,7 +13,39 @@ const {
   staleness,
   noteClockOffset,
   formatCountdown,
+  trainLatLng,
 } = require("./helpers.js");
+
+test("trainLatLng interpolates along prev->next and clamps to [0,1]", () => {
+  const train = { prev_lat: 0, prev_lon: 0, latitude: 10, longitude: 20, prev_time: 100, next_time: 200 };
+  assert.deepEqual(trainLatLng(train, 150), [5, 10]); // midpoint
+  assert.deepEqual(trainLatLng(train, 50), [0, 0]); // before prev_time -> clamp 0 -> prev
+  assert.deepEqual(trainLatLng(train, 999), [10, 20]); // after next_time -> clamp 1 -> next
+});
+
+test("trainLatLng falls back to the static position when anchors are unusable", () => {
+  const base = { latitude: 10, longitude: 20 };
+  // no previous station
+  assert.deepEqual(
+    trainLatLng({ ...base, prev_lat: null, prev_lon: null, prev_time: null, next_time: 200 }, 150),
+    [10, 20],
+  );
+  // missing next_time
+  assert.deepEqual(
+    trainLatLng({ ...base, prev_lat: 0, prev_lon: 0, prev_time: 100, next_time: null }, 150),
+    [10, 20],
+  );
+  // missing prev_time (prev coords present but untimed)
+  assert.deepEqual(
+    trainLatLng({ ...base, prev_lat: 0, prev_lon: 0, prev_time: null, next_time: 200 }, 150),
+    [10, 20],
+  );
+  // non-monotonic times (next_time <= prev_time)
+  assert.deepEqual(
+    trainLatLng({ ...base, prev_lat: 0, prev_lon: 0, prev_time: 200, next_time: 200 }, 150),
+    [10, 20],
+  );
+});
 
 test("formatCountdown buckets a seconds delta into now / minutes", () => {
   assert.equal(formatCountdown(null), "");

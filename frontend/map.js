@@ -392,21 +392,24 @@ async function loadStations() {
 const trains = new Map(); // trip id -> { marker, routeId, latest }
 
 function applyTrains(data) {
+  // Skew-corrected now, same basis as arrivalsHtml; trainLatLng interpolates
+  // each train between its prev and next station (static fallback otherwise).
+  const now = Date.now() / 1000 - (minClockOffset ?? 0);
   const seen = new Set();
   for (const train of data) {
     seen.add(train.trip_id);
     const record = trains.get(train.trip_id);
     if (record) {
-      record.marker.setLatLng([train.latitude, train.longitude]);
+      record.latest = train;
+      record.marker.setLatLng(trainLatLng(train, now));
       if (record.routeId !== train.route_id) {
         record.marker.setIcon(trainIcon(train));
         record.routeId = train.route_id;
       }
-      record.latest = train;
       if (record.marker.isPopupOpen()) record.marker.getPopup().update();
     } else {
       const newRecord = { routeId: train.route_id, latest: train };
-      newRecord.marker = L.marker([train.latitude, train.longitude], { icon: trainIcon(train) })
+      newRecord.marker = L.marker(trainLatLng(train, now), { icon: trainIcon(train) })
         .bindPopup(() => trainPopup(newRecord))
         .addTo(subwayLayer);
       trains.set(train.trip_id, newRecord);
@@ -418,6 +421,24 @@ function applyTrains(data) {
       trains.delete(id);
     }
   }
+}
+
+// Glide trains between polls: recompute every marker's interpolated position
+// from the current skew-corrected time. Throttled to ~10 fps (trains are slow
+// and there can be a few hundred markers), and skipped entirely while the
+// subway layer is hidden. rAF keeps rescheduling so it resumes on re-toggle.
+const TRAIN_TICK_MS = 100;
+let lastTrainTick = 0;
+
+function animateTrains(ts) {
+  if (ts - lastTrainTick >= TRAIN_TICK_MS && map.hasLayer(subwayLayer)) {
+    lastTrainTick = ts;
+    const now = Date.now() / 1000 - (minClockOffset ?? 0);
+    for (const record of trains.values()) {
+      record.marker.setLatLng(trainLatLng(record.latest, now));
+    }
+  }
+  requestAnimationFrame(animateTrains);
 }
 
 /* ---------------- Polling ---------------- */
@@ -483,3 +504,4 @@ loadRouteLines();
 loadStations();
 refreshAll();
 setInterval(refreshAll, POLL_INTERVAL_MS);
+requestAnimationFrame(animateTrains); // glide trains between polls

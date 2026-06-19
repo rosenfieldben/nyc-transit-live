@@ -74,6 +74,20 @@ function staleness(source, now = Date.now() / 1000) {
   return `${source.label} data ${human} old`;
 }
 
+// v1 train position: straight-line interpolation from the previous station to
+// the next/current station, parameterized by time. `now` is skew-corrected
+// epoch seconds. Falls back to the static next-station position
+// [latitude, longitude] when the anchors are missing or non-monotonic. (v2 will
+// follow the route polyline — keep that swap localized to this function.)
+function trainLatLng(train, now) {
+  const { prev_lat, prev_lon, prev_time, next_time, latitude, longitude } = train;
+  if (prev_lat == null || prev_time == null || next_time == null || next_time <= prev_time) {
+    return [latitude, longitude];
+  }
+  const f = Math.min(1, Math.max(0, (now - prev_time) / (next_time - prev_time)));
+  return [prev_lat + (latitude - prev_lat) * f, prev_lon + (longitude - prev_lon) * f];
+}
+
 // Arrival countdown label from a seconds-until-arrival delta: "now" when due
 // (or past), else rounded to whole minutes.
 function formatCountdown(seconds) {
@@ -85,6 +99,6 @@ function formatCountdown(seconds) {
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     esc, routeColor, lineColor, staleness, noteClockOffset, formatCountdown,
-    LINE_COLORS, DARK_TEXT_LINES, FEED_STALE_AFTER_S,
+    trainLatLng, LINE_COLORS, DARK_TEXT_LINES, FEED_STALE_AFTER_S,
   };
 }

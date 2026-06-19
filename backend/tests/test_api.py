@@ -28,6 +28,10 @@ TRAINS = [
         "stop_id": "101N",
         "stop_name": "Alpha",
         "direction": "Northbound",
+        "prev_lat": 40.69,
+        "prev_lon": -74.01,
+        "prev_time": 999.0,
+        "next_time": 1002.0,
     }
 ]
 

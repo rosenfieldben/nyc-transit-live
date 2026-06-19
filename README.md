@@ -2,7 +2,9 @@
 
 A live map of NYC subways and buses, built on the MTA's public real-time feeds.
 Buses report true GPS positions and move on the map; subways are placed at their
-next station using real-time arrival data joined against the static schedule.
+next station using real-time arrival data joined against the static schedule,
+then glide between stations as time passes (v1: straight-line interpolation
+between the previous and next station; v2 will follow the actual route geometry).
 
 ## How it works
 
@@ -126,6 +128,8 @@ warnings.
 - [x] **3. Readable markers** — bearing rotation, route colors, popups, failure handling.
 - [x] **4. Subways** — `/api/subways`, trains placed at next station via static GTFS.
 - [x] **5. Route lines** — draw `shapes.txt` route geometry under the markers.
+- [x] **6. Train motion (v1)** — trains glide between stations via straight-line
+  interpolation, animated client-side between polls. (v2: follow route geometry.)
 
 ## Notes
 

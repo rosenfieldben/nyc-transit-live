@@ -16,6 +16,7 @@ from feeds import (
     _decode_trains,
     _stop_time,
     _trip_start_ts,
+    carry_forward_prev,
     fetch_subway_trains,
     fetch_vehicle_positions,
 )
@@ -645,3 +646,106 @@ async def test_fetch_vehicle_positions_skips_out_of_range(monkeypatch):
     vehicles, ts = await fetch_vehicle_positions(_FakeBusClient(raw))
     assert [v["id"] for v in vehicles] == ["in"]  # the (0, 0) vehicle is dropped
     assert ts == NOW
+
+
+# ---------------- carry_forward_prev: cross-poll previous-station anchor ----------------
+
+
+def mk_train(trip_id, stop_id, lat, lon, next_time, prev_lat=None, prev_lon=None, prev_time=None):
+    """A minimal placement train dict (the shape carry_forward_prev reads/writes)."""
+    return {
+        "trip_id": trip_id,
+        "route_id": "1",
+        "latitude": lat,
+        "longitude": lon,
+        "stop_id": stop_id,
+        "stop_name": stop_id,
+        "direction": "Northbound",
+        "prev_lat": prev_lat,
+        "prev_lon": prev_lon,
+        "prev_time": prev_time,
+        "next_time": next_time,
+    }
+
+
+def _mem(stop_id, lat, lon, time):
+    return {"stop_id": stop_id, "lat": lat, "lon": lon, "time": time}
+
+
+def test_carry_forward_synthesizes_prev_from_remembered_stop():
+    train = mk_train("t1", "B02N", 40.71, -74.01, next_time=1000.0)
+    new_mem = carry_forward_prev([train], {"t1": _mem("B01N", 40.70, -74.00, 940.0)})
+    assert (train["prev_lat"], train["prev_lon"], train["prev_time"]) == (40.70, -74.00, 940.0)
+    # And the memory is rebuilt from this poll's position.
+    assert new_mem["t1"] == _mem("B02N", 40.71, -74.01, 1000.0)
+
+
+def test_carry_forward_preserves_real_feed_prev():
+    train = mk_train(
+        "t1",
+        "B02N",
+        40.71,
+        -74.01,
+        next_time=1000.0,
+        prev_lat=40.65,
+        prev_lon=-73.95,
+        prev_time=900.0,
+    )
+    carry_forward_prev([train], {"t1": _mem("B01N", 40.70, -74.00, 940.0)})
+    assert (train["prev_lat"], train["prev_lon"], train["prev_time"]) == (40.65, -73.95, 900.0)
+
+
+def test_carry_forward_no_memory_leaves_null_but_records_position():
+    train = mk_train("t1", "B02N", 40.71, -74.01, next_time=1000.0)
+    new_mem = carry_forward_prev([train], {})
+    assert train["prev_lat"] is None and train["prev_lon"] is None and train["prev_time"] is None
+    assert new_mem["t1"] == _mem("B02N", 40.71, -74.01, 1000.0)
+
+
+def test_carry_forward_same_stop_dwell_does_not_synthesize():
+    train = mk_train("t1", "B02N", 40.71, -74.01, next_time=1000.0)
+    carry_forward_prev([train], {"t1": _mem("B02N", 40.71, -74.01, 940.0)})
+    assert train["prev_lat"] is None
+
+
+def test_carry_forward_remembered_time_none_does_not_synthesize():
+    train = mk_train("t1", "B02N", 40.71, -74.01, next_time=1000.0)
+    carry_forward_prev([train], {"t1": _mem("B01N", 40.70, -74.00, None)})
+    assert train["prev_lat"] is None
+
+
+def test_carry_forward_next_time_none_does_not_synthesize():
+    train = mk_train("t1", "B02N", 40.71, -74.01, next_time=None)
+    new_mem = carry_forward_prev([train], {"t1": _mem("B01N", 40.70, -74.00, 940.0)})
+    assert train["prev_lat"] is None
+    assert new_mem["t1"]["time"] is None  # still recorded (with a null anchor)
+
+
+def test_carry_forward_non_monotonic_remembered_time_does_not_synthesize():
+    # Remembered time >= next_time gives no forward bracket.
+    equal = mk_train("t1", "B02N", 40.71, -74.01, next_time=1000.0)
+    carry_forward_prev([equal], {"t1": _mem("B01N", 40.70, -74.00, 1000.0)})
+    assert equal["prev_lat"] is None
+    later = mk_train("t1", "B02N", 40.71, -74.01, next_time=1000.0)
+    carry_forward_prev([later], {"t1": _mem("B01N", 40.70, -74.00, 1100.0)})
+    assert later["prev_lat"] is None
+
+
+def test_carry_forward_prunes_trips_absent_this_poll():
+    train = mk_train("t1", "B02N", 40.71, -74.01, next_time=1000.0)
+    old = {"t1": _mem("B01N", 40.70, -74.00, 940.0), "gone": _mem("X01N", 40.6, -73.9, 800.0)}
+    new_mem = carry_forward_prev([train], old)
+    assert "t1" in new_mem and "gone" not in new_mem
+
+
+def test_carry_forward_two_poll_sequence_glides():
+    # Poll 1: first sighting at B01N, no memory -> prev null, position recorded.
+    p1 = mk_train("t1", "B01N", 40.70, -74.00, next_time=900.0)
+    mem = carry_forward_prev([p1], {})
+    assert p1["prev_lat"] is None
+    # Poll 2: same trip advanced to B02N, feed prev still null -> synthesized prev
+    # is poll 1's stop coords with prev_time == poll 1's next_time.
+    p2 = mk_train("t1", "B02N", 40.71, -74.01, next_time=1000.0)
+    carry_forward_prev([p2], mem)
+    assert (p2["prev_lat"], p2["prev_lon"]) == (40.70, -74.00)
+    assert p2["prev_time"] == 900.0

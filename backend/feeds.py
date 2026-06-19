@@ -48,12 +48,20 @@ def _api_key() -> str:
     return key
 
 
-async def fetch_vehicle_positions(client: httpx.AsyncClient) -> list[dict]:
-    """Fetch the feed, decode the protobuf, and return one dict per vehicle.
+def _header_timestamp(feed) -> float | None:
+    """The feed's content time (FeedHeader.timestamp, MTA's clock) as a float,
+    or None when the feed omits it (the field is 0). This is distinct from the
+    app server's poll time — see the freshness handling in main.py."""
+    return float(feed.header.timestamp) or None
 
-    Each dict has: id, route_id, latitude, longitude, bearing. Entities without
-    a position are skipped; bearing is None when the feed doesn't report it.
-    The caller owns the client (the polling task holds one for its lifetime).
+
+async def fetch_vehicle_positions(client: httpx.AsyncClient) -> tuple[list[dict], float | None]:
+    """Fetch the feed, decode the protobuf, and return (vehicles, feed_timestamp).
+
+    Each vehicle dict has: id, route_id, latitude, longitude, bearing. Entities
+    without a position are skipped; bearing is None when the feed doesn't report
+    it. feed_timestamp is the feed's content time (MTA's clock). The caller owns
+    the client (the polling task holds one for its lifetime).
     """
     resp = await client.get(VEHICLE_POSITIONS_URL, params={"key": _api_key()})
     resp.raise_for_status()
@@ -79,7 +87,7 @@ async def fetch_vehicle_positions(client: httpx.AsyncClient) -> list[dict]:
                 "bearing": pos.bearing if pos.HasField("bearing") else None,
             }
         )
-    return vehicles
+    return vehicles, _header_timestamp(feed)
 
 
 NYC_TZ = ZoneInfo("America/New_York")
@@ -160,8 +168,9 @@ def _platform_direction(stop_id: str) -> tuple[str | None, str]:
 
 def _decode_feed(
     raw: bytes, stops: dict[str, dict], feed_key: str, now: float
-) -> tuple[list[dict], dict[str, dict[str, list[dict]]]]:
-    """Decode one subway feed into (train placements, per-station arrivals).
+) -> tuple[list[dict], dict[str, dict[str, list[dict]]], float | None]:
+    """Decode one subway feed into (train placements, per-station arrivals,
+    feed_timestamp).
 
     Parses the protobuf once and walks each trip's stop_time_updates for both
     outputs. The subway feeds carry NYC-specific protobuf extensions; the
@@ -252,7 +261,7 @@ def _decode_feed(
                 "direction": direction,
             }
         )
-    return trains, arrivals
+    return trains, arrivals, _header_timestamp(feed)
 
 
 def _decode_trains(raw: bytes, stops: dict[str, dict], feed_key: str, now: float) -> list[dict]:
@@ -263,26 +272,32 @@ def _decode_trains(raw: bytes, stops: dict[str, dict], feed_key: str, now: float
 
 def _aggregate_feeds(
     results: list, stops: dict[str, dict], now: float
-) -> tuple[list[dict], dict[str, dict[str, list[dict]]], list[str]]:
+) -> tuple[list[dict], dict[str, dict[str, list[dict]]], float | None, list[str]]:
     """Decode every feed result, dedup trips across feeds, and merge arrivals.
 
     `results` is aligned with SUBWAY_FEED_URLS; each item is decoded protobuf
-    bytes or an exception from the fetch. Returns (trains, arrivals, errors).
+    bytes or an exception from the fetch. Returns
+    (trains, arrivals, feed_timestamp, errors), where feed_timestamp is the
+    OLDEST content time across successfully decoded feeds — the freshness of
+    the combined view is bounded by its stalest member.
     """
     trains: list[dict] = []
     seen_trips: set[str] = set()
     arrivals: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
     arrival_trips: set[str] = set()
+    timestamps: list[float] = []
     errors: list[str] = []
     for feed_key, result in zip(SUBWAY_FEED_URLS, results):
         if isinstance(result, BaseException):
             errors.append(f"{feed_key}: {result}")
             continue
         try:
-            feed_trains, feed_arrivals = _decode_feed(result, stops, feed_key, now)
+            feed_trains, feed_arrivals, feed_ts = _decode_feed(result, stops, feed_key, now)
         except DecodeError as exc:
             errors.append(f"{feed_key}: undecodable protobuf ({exc})")
             continue
+        if feed_ts is not None:
+            timestamps.append(feed_ts)
         for train in feed_trains:
             if train["trip_id"] in seen_trips:
                 continue
@@ -309,18 +324,20 @@ def _aggregate_feeds(
         for direction, arrs in dirs.items():
             arrs.sort(key=lambda a: a["arrival"])
             trimmed[station_id][direction] = arrs[:ARRIVALS_PER_DIRECTION]
-    return trains, trimmed, errors
+    feed_timestamp = min(timestamps) if timestamps else None
+    return trains, trimmed, feed_timestamp, errors
 
 
 async def fetch_subway_trains(
     stops: dict[str, dict], client: httpx.AsyncClient
-) -> tuple[list[dict], dict[str, dict[str, list[dict]]]]:
+) -> tuple[list[dict], dict[str, dict[str, list[dict]]], float | None]:
     """Fetch all subway feeds concurrently; return (train placements,
-    per-station arrivals index).
+    per-station arrivals index, feed_timestamp).
 
-    Individual feed failures are logged and skipped so one bad feed doesn't
-    take out the endpoint; raises only when every feed fails. The caller owns
-    the client (the polling task holds one for its lifetime).
+    feed_timestamp is the oldest content time across decoded feeds. Individual
+    feed failures are logged and skipped so one bad feed doesn't take out the
+    endpoint; raises only when every feed fails. The caller owns the client
+    (the polling task holds one for its lifetime).
     """
     now = time.time()
 
@@ -334,7 +351,7 @@ async def fetch_subway_trains(
         return_exceptions=True,
     )
 
-    trains, arrivals, errors = _aggregate_feeds(results, stops, now)
+    trains, arrivals, feed_timestamp, errors = _aggregate_feeds(results, stops, now)
     if errors:
         logger.warning(
             "%d of %d subway feeds failed: %s",
@@ -344,4 +361,4 @@ async def fetch_subway_trains(
         )
     if len(errors) == len(SUBWAY_FEED_URLS):
         raise RuntimeError(f"All subway feeds failed: {'; '.join(errors)}")
-    return trains, arrivals
+    return trains, arrivals, feed_timestamp

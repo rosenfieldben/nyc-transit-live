@@ -41,27 +41,34 @@ function lineColor(routeId) {
   return LINE_COLORS[routeId] ?? LINE_COLORS[routeId[0]] ?? "#555555";
 }
 
-// The backend serves from its own ~20s poll cache; if its upstream fetches
-// start failing it keeps serving the last good data with the old fetched_at.
-const STALE_AFTER_S = 60;
+// Upstream-staleness threshold, mirroring the backend FEED_STALE_AFTER_S: how
+// far the feed CONTENT time may lag the poll time before we flag it.
+const FEED_STALE_AFTER_S = 90;
 
-// fetched_at is server time; comparing it to the client clock directly would
-// turn clock skew into false staleness warnings. The minimum observed
-// (clientNow - fetched_at) approximates skew plus minimal latency.
+// fetched_at and feed_timestamp are BOTH the server's recorded values (poll
+// time and the feed's content time). Their difference is the feed's staleness,
+// measured entirely server-side — so the browser clock never enters the
+// staleness check and clock skew can't cause false warnings. Returns null when
+// it can't be computed (no successful fetch, or the feed omits its timestamp).
+function staleness(source) {
+  if (source.fetchedAt == null || source.feedTimestamp == null) return null;
+  const age = source.fetchedAt - source.feedTimestamp;
+  if (age < FEED_STALE_AFTER_S) return null;
+  const human = age < 120 ? `${Math.round(age)}s` : `${Math.round(age / 60)}m`;
+  return `${source.label} data ${human} old`;
+}
+
+// The clock-offset estimate is still needed by the station arrivals countdown
+// (map.js), which compares absolute MTA arrival timestamps to the browser
+// clock — that genuinely needs skew correction. The staleness check above does
+// not. minClockOffset = the minimum observed (clientNow - fetched_at), which
+// approximates skew plus minimal latency.
 let minClockOffset = null;
 
 function noteClockOffset(fetchedAt) {
   if (fetchedAt == null) return;
   const offset = Date.now() / 1000 - fetchedAt;
   if (minClockOffset == null || offset < minClockOffset) minClockOffset = offset;
-}
-
-function staleness(source) {
-  if (source.fetchedAt == null) return null;
-  const age = Math.max(0, Date.now() / 1000 - source.fetchedAt - (minClockOffset ?? 0));
-  if (age < STALE_AFTER_S) return null;
-  const human = age < 120 ? `${Math.round(age)}s` : `${Math.round(age / 60)}m`;
-  return `${source.label} data ${human} old`;
 }
 
 // Arrival countdown label from a seconds-until-arrival delta: "now" when due
@@ -75,6 +82,6 @@ function formatCountdown(seconds) {
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     esc, routeColor, lineColor, staleness, noteClockOffset, formatCountdown,
-    LINE_COLORS, DARK_TEXT_LINES, STALE_AFTER_S,
+    LINE_COLORS, DARK_TEXT_LINES, FEED_STALE_AFTER_S,
   };
 }

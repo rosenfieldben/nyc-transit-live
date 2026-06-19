@@ -57,23 +57,23 @@ async def test_empty_cache_returns_warming_up_503(client, path):
 
 
 async def test_successful_refresh_serves_envelope(client, cache):
-    cache["buses"].update(data=BUSES, fetched_at=1000.0, error=None)
-    cache["subways"].update(data=TRAINS, fetched_at=1001.0, error=None)
+    cache["buses"].update(data=BUSES, fetched_at=1000.0, feed_timestamp=995.0, error=None)
+    cache["subways"].update(data=TRAINS, fetched_at=1001.0, feed_timestamp=996.0, error=None)
     res = await client.get("/api/buses")
     assert res.status_code == 200
-    assert res.json() == {"fetched_at": 1000.0, "data": BUSES}
+    assert res.json() == {"fetched_at": 1000.0, "feed_timestamp": 995.0, "data": BUSES}
     res = await client.get("/api/subways")
-    assert res.json() == {"fetched_at": 1001.0, "data": TRAINS}
+    assert res.json() == {"fetched_at": 1001.0, "feed_timestamp": 996.0, "data": TRAINS}
 
 
 async def test_stale_data_beats_subsequent_error(client, cache):
     # A successful refresh followed by a failed one: last-known data is
-    # served, with the old fetched_at exposing the staleness.
-    cache["buses"].update(data=BUSES, fetched_at=1000.0, error=None)
+    # served, with the old fetched_at/feed_timestamp exposing the staleness.
+    cache["buses"].update(data=BUSES, fetched_at=1000.0, feed_timestamp=995.0, error=None)
     app_module._note_failure(cache["buses"], 502, "Upstream MTA feed error: boom")
     res = await client.get("/api/buses")
     assert res.status_code == 200
-    assert res.json() == {"fetched_at": 1000.0, "data": BUSES}
+    assert res.json() == {"fetched_at": 1000.0, "feed_timestamp": 995.0, "data": BUSES}
 
 
 async def test_never_filled_cache_serves_recorded_503(client, cache):
@@ -184,7 +184,12 @@ async def test_status_warming_state(client, status_env):
     res = await client.get("/api/status")
     assert res.status_code == 200
     body = res.json()
-    assert body["feeds"]["buses"] == {"fetched_at": None, "age_s": None, "last_error": None}
+    assert body["feeds"]["buses"] == {
+        "fetched_at": None,
+        "age_s": None,
+        "feed_age_s": None,
+        "last_error": None,
+    }
     assert body["bus_route_index"] == {"status": "building", "partial": False}
     assert body["static_subway_gtfs"] is None
 
@@ -202,13 +207,16 @@ async def test_status_reports_ages_errors_and_gtfs_mtime(
     gtfs.write_bytes(b"zip")
     monkeypatch.setattr(static_data, "SUBWAY_GTFS_ZIP", gtfs)
 
-    cache["buses"].update(data=BUSES, fetched_at=time_mod.time() - 30, error=None)
+    fetched = time_mod.time() - 30
+    cache["buses"].update(data=BUSES, fetched_at=fetched, feed_timestamp=fetched - 5, error=None)
     app_module._note_failure(cache["subways"], 502, "All subway feeds failed: timeout")
 
     res = await client.get("/api/status")
     body = res.json()
     assert 29 <= body["feeds"]["buses"]["age_s"] <= 40
+    assert body["feeds"]["buses"]["feed_age_s"] == 5.0  # fetched_at - feed_timestamp
     assert body["feeds"]["buses"]["last_error"] is None
+    assert body["feeds"]["subways"]["feed_age_s"] is None  # never filled
     assert body["feeds"]["subways"]["last_error"] == {
         "status": 502,
         "detail": "All subway feeds failed: timeout",

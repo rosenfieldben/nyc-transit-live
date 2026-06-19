@@ -423,8 +423,8 @@ function applyTrains(data) {
 /* ---------------- Polling ---------------- */
 
 const sources = {
-  buses: { url: "/api/buses", apply: applyBuses, label: "buses", count: 0, error: null, fetchedAt: null },
-  subways: { url: "/api/subways", apply: applyTrains, label: "trains", count: 0, error: null, fetchedAt: null },
+  buses: { url: "/api/buses", apply: applyBuses, label: "buses", count: 0, error: null, fetchedAt: null, feedTimestamp: null },
+  subways: { url: "/api/subways", apply: applyTrains, label: "trains", count: 0, error: null, fetchedAt: null, feedTimestamp: null },
 };
 
 async function refreshSource(source) {
@@ -436,7 +436,8 @@ async function refreshSource(source) {
     }
     const body = await res.json();
     source.fetchedAt = body.fetched_at ?? null;
-    noteClockOffset(source.fetchedAt); // staleness baseline lives in helpers.js
+    source.feedTimestamp = body.feed_timestamp ?? null; // server-side staleness signal
+    noteClockOffset(source.fetchedAt); // skew baseline for the arrivals countdown
     const data = body.data ?? [];
     if (data.length === 0) {
       // Temporarily empty feed: keep last known markers on screen.

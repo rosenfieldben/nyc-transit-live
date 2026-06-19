@@ -48,27 +48,34 @@ test("lineColor maps trunks, falls back by first char, defaults gray", () => {
   assert.equal(lineColor("X9"), "#555555"); // unknown line
 });
 
-test("staleness with no offset samples: fresh null, stale in s then m", () => {
-  const now = Date.now() / 1000;
-  assert.equal(staleness({ label: "buses", fetchedAt: null }), null);
-  assert.equal(staleness({ label: "buses", fetchedAt: now - 20 }), null);
-  assert.equal(staleness({ label: "buses", fetchedAt: now - 90 }), "buses data 90s old");
-  assert.equal(staleness({ label: "trains", fetchedAt: now - 300 }), "trains data 5m old");
-  // Server clock ahead of client: age clamps to 0, never negative.
-  assert.equal(staleness({ label: "buses", fetchedAt: now + 500 }), null);
+test("staleness uses the two server timestamps, not the browser clock", () => {
+  // age = fetchedAt - feedTimestamp (both server-recorded); fresh < 90s -> null.
+  assert.equal(staleness({ label: "buses", fetchedAt: 1000, feedTimestamp: 990 }), null);
+  // Exactly at the threshold and beyond -> stale, formatted s then m.
+  assert.equal(
+    staleness({ label: "buses", fetchedAt: 1090, feedTimestamp: 1000 }),
+    "buses data 90s old",
+  );
+  assert.equal(
+    staleness({ label: "trains", fetchedAt: 1300, feedTimestamp: 1000 }),
+    "trains data 5m old",
+  );
+  // The absolute magnitude of the timestamps is irrelevant — only their
+  // difference matters, so a far-future browser clock can't change the verdict.
+  assert.equal(staleness({ label: "buses", fetchedAt: 5_000_000_090, feedTimestamp: 5_000_000_000 }), "buses data 90s old");
 });
 
-test("staleness corrects for client clock skew via the min offset", () => {
-  const now = Date.now() / 1000;
-  // Server clock 120s behind the client: every fetched_at looks 120s old.
-  noteClockOffset(now - 120);
-  assert.equal(staleness({ label: "buses", fetchedAt: now - 120 }), null);
-  // Genuinely 90s of staleness on top of the skew is still detected.
-  assert.equal(staleness({ label: "buses", fetchedAt: now - 210 }), "buses data 90s old");
+test("staleness is null when a timestamp is missing or the feed is fresh", () => {
+  assert.equal(staleness({ label: "buses", fetchedAt: null, feedTimestamp: 1000 }), null);
+  assert.equal(staleness({ label: "buses", fetchedAt: 1000, feedTimestamp: null }), null);
+  // A negative diff (clock quirk where content time is ahead of poll time) is
+  // below threshold, so not flagged.
+  assert.equal(staleness({ label: "buses", fetchedAt: 1000, feedTimestamp: 1100 }), null);
 });
 
-test("a smaller offset sample tightens the baseline", () => {
-  const now = Date.now() / 1000;
-  noteClockOffset(now); // ~zero offset replaces the 120s sample
-  assert.equal(staleness({ label: "buses", fetchedAt: now - 90 }), "buses data 90s old");
+test("noteClockOffset accepts a timestamp without throwing", () => {
+  // minClockOffset is internal (used by the map.js countdown, not staleness);
+  // just confirm the exported helper is callable and null-safe.
+  assert.doesNotThrow(() => noteClockOffset(Date.now() / 1000));
+  assert.doesNotThrow(() => noteClockOffset(null));
 });

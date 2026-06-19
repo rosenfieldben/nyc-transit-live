@@ -151,6 +151,16 @@ def _trip_start_ts(trip) -> float | None:
 # Next this many upcoming trains kept per station and direction for arrivals.
 ARRIVALS_PER_DIRECTION = 6
 
+# GTFS-RT schedule relationships that mean "ignore this": a CANCELED/DELETED
+# trip isn't running; a SKIPPED/NO_DATA stop carries no real prediction. We
+# drop them from both placement and arrivals. DELETED was added to the trip
+# enum after this binding's version, so resolve it defensively (the -1 sentinel
+# can't collide with a real enum value, which are all >= 0).
+_TRIP_SR = gtfs_realtime_pb2.TripDescriptor.ScheduleRelationship
+_STOP_SR = gtfs_realtime_pb2.TripUpdate.StopTimeUpdate.ScheduleRelationship
+_DROP_TRIP_RELATIONSHIPS = frozenset({_TRIP_SR.CANCELED, getattr(_TRIP_SR, "DELETED", -1)})
+_DROP_STOP_RELATIONSHIPS = frozenset({_STOP_SR.SKIPPED, _STOP_SR.NO_DATA})
+
 
 def _platform_direction(stop_id: str) -> tuple[str | None, str]:
     """(direction, station_id) for a platform stop_id via its N/S suffix.
@@ -192,6 +202,8 @@ def _decode_feed(
         if not entity.HasField("trip_update"):
             continue
         tu = entity.trip_update
+        if tu.trip.schedule_relationship in _DROP_TRIP_RELATIONSHIPS:
+            continue  # canceled/deleted trip: drop from both placement and arrivals
         trip_id = tu.trip.trip_id or f"{feed_key}:{entity.id}"
         route_id = tu.trip.route_id or None
 
@@ -199,6 +211,8 @@ def _decode_feed(
         for stu in tu.stop_time_update:
             if not stu.stop_id or stu.stop_id not in stops:
                 continue
+            if stu.schedule_relationship in _DROP_STOP_RELATIONSHIPS:
+                continue  # skipped / no-data stop: no real prediction
             t = _stop_time(stu)
             if t is None or t < now - 60:  # same just-passed grace as placement
                 continue
@@ -222,6 +236,8 @@ def _decode_feed(
         for stu in tu.stop_time_update:
             if not stu.stop_id or stu.stop_id not in stops:
                 continue  # unknown station (e.g. closed); try the next one
+            if stu.schedule_relationship in _DROP_STOP_RELATIONSHIPS:
+                continue  # skipped / no-data stop: not a real placement target
             if first_resolvable is None:
                 first_resolvable = stu
             t = _stop_time(stu)

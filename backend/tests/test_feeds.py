@@ -31,7 +31,7 @@ STOPS = {
 }
 
 
-def make_stu(stop_id=None, arrival=None, departure=None):
+def make_stu(stop_id=None, arrival=None, departure=None, relationship=None):
     stu = pb.TripUpdate.StopTimeUpdate()
     if stop_id is not None:
         stu.stop_id = stop_id
@@ -39,11 +39,14 @@ def make_stu(stop_id=None, arrival=None, departure=None):
         stu.arrival.time = int(arrival)
     if departure is not None:
         stu.departure.time = int(departure)
+    if relationship is not None:
+        stu.schedule_relationship = relationship
     return stu
 
 
 def make_feed(*trips):
-    """trips: dicts with trip_id, route_id, start_date, stus=[(stop, arr, dep)]."""
+    """trips: dicts with trip_id, route_id, start_date, optional relationship
+    (trip-level ScheduleRelationship), and stus=[(stop, arr, dep[, relationship])]."""
     feed = pb.FeedMessage()
     feed.header.gtfs_realtime_version = "2.0"
     feed.header.timestamp = int(NOW)
@@ -54,8 +57,10 @@ def make_feed(*trips):
         tu.trip.trip_id = t.get("trip_id", "")
         tu.trip.route_id = t.get("route_id", "")
         tu.trip.start_date = t.get("start_date", TODAY)
-        for stop_id, arr, dep in t.get("stus", []):
-            tu.stop_time_update.append(make_stu(stop_id, arr, dep))
+        if "relationship" in t:
+            tu.trip.schedule_relationship = t["relationship"]
+        for stu_spec in t.get("stus", []):
+            tu.stop_time_update.append(make_stu(*stu_spec))
     return feed.SerializeToString()
 
 
@@ -343,6 +348,44 @@ def test_arrivals_skip_stop_without_clean_direction():
         NOW,
     )
     assert "A04" not in arrivals
+
+
+# ---------------- schedule-relationship filtering ----------------
+
+_TRIP_CANCELED = pb.TripDescriptor.ScheduleRelationship.CANCELED
+_STOP_SKIPPED = pb.TripUpdate.StopTimeUpdate.ScheduleRelationship.SKIPPED
+_STOP_NO_DATA = pb.TripUpdate.StopTimeUpdate.ScheduleRelationship.NO_DATA
+
+
+def test_canceled_trip_dropped_from_placement_and_arrivals():
+    trains, arrivals, _ = decode_feed(
+        {
+            "trip_id": STARTED,
+            "route_id": "1",
+            "relationship": _TRIP_CANCELED,
+            "stus": [("A01N", NOW + 60, None)],
+        }
+    )
+    assert trains == []
+    assert arrivals == {}
+
+
+def test_skipped_and_no_data_stops_excluded():
+    # A01N (skipped) and A02N (no-data) carry no real prediction; A03S does.
+    trains, arrivals, _ = decode_feed(
+        {
+            "trip_id": STARTED,
+            "route_id": "1",
+            "stus": [
+                ("A01N", NOW + 60, None, _STOP_SKIPPED),
+                ("A02N", NOW + 120, None, _STOP_NO_DATA),
+                ("A03S", NOW + 180, None),
+            ],
+        }
+    )
+    assert "A01" not in arrivals and "A02" not in arrivals
+    assert arrivals["A03"]["Southbound"]
+    assert [t["stop_id"] for t in trains] == ["A03S"]  # placement skips both too
 
 
 # ---------------- feed_timestamp threading ----------------

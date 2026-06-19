@@ -423,8 +423,26 @@ def test_interp_no_times_fallback_nulls_prev_and_next():
     )
     t = trains[0]
     assert t["stop_id"] == "A01N"  # first resolvable, static fallback
-    assert t["prev_lat"] is None and t["prev_time"] is None
+    assert t["prev_lat"] is None and t["prev_lon"] is None and t["prev_time"] is None
     assert t["next_time"] is None
+
+
+def test_interp_untimed_prev_keeps_coords_but_null_time():
+    # The previous resolvable stop has coords but no time: prev coords are set
+    # (so v2 could still use them) while prev_time is null, which makes the
+    # frontend helper fall back to the static position. Locks that edge.
+    trains, _, _ = decode_feed(
+        {
+            "trip_id": STARTED,
+            "route_id": "1",
+            "stus": [("A01N", None, None), ("A02N", NOW + 60, None)],
+        }
+    )
+    t = trains[0]
+    assert t["stop_id"] == "A02N"
+    assert (t["prev_lat"], t["prev_lon"]) == A01  # untimed predecessor, coords kept
+    assert t["prev_time"] is None
+    assert t["next_time"] == NOW + 60
 
 
 # ---------------- schedule-relationship filtering ----------------

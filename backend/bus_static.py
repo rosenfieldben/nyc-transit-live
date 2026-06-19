@@ -39,6 +39,13 @@ MANIFEST_PATH = BUS_CACHE_DIR / "_manifest.json"
 # in practice each deploy rebuilds once in the background.
 MAX_AGE_DAYS = 30
 
+# Whole-transfer deadline per borough zip (parallel to static_data's
+# asyncio.timeout for the subway zip). The httpx client's timeout is per
+# socket read, so a trickling response could otherwise hang a borough forever;
+# this bounds the total download. Over-deadline is treated as one failed
+# borough, not a total build failure.
+BUS_ZIP_DEADLINE_S = 120
+
 BUS_GTFS_URLS = {
     "manhattan": "https://rrgtfsfeeds.s3.amazonaws.com/gtfs_m.zip",
     "brooklyn": "https://rrgtfsfeeds.s3.amazonaws.com/gtfs_b.zip",
@@ -161,14 +168,49 @@ def _process_zip(zip_path: Path, skip_routes: set[str]) -> set[str]:
     return written
 
 
+class _BuildStopped(Exception):
+    """Raised inside a borough download when the shutdown event fires, so the
+    build loop aborts cleanly instead of recording a spurious failed borough."""
+
+
+def _download_borough(client, key: str, url: str, skip_routes: set[str]) -> set[str]:
+    """Download one borough zip and return the route ids it contributes.
+
+    A whole-transfer deadline (BUS_ZIP_DEADLINE_S) bounds a trickling download
+    that the per-read socket timeout wouldn't catch. Raises _BuildStopped if
+    shutdown is signalled mid-download; other failures (HTTP, deadline, parse)
+    propagate so the caller can record this borough as failed. Downloads into
+    the cache dir with a .part suffix so the build's sweep also cleans up zips
+    orphaned by a hard kill.
+    """
+    fd, tmp_name = tempfile.mkstemp(dir=BUS_CACHE_DIR, prefix="gtfs_dl.", suffix=".zip.part")
+    tmp = Path(tmp_name)
+    started = time.time()
+    try:
+        with os.fdopen(fd, "wb") as f:
+            with client.stream("GET", url) as resp:
+                resp.raise_for_status()
+                for chunk in resp.iter_bytes():
+                    if _stop.is_set():
+                        raise _BuildStopped
+                    if time.time() - started > BUS_ZIP_DEADLINE_S:
+                        raise TimeoutError(
+                            f"{key} download exceeded {BUS_ZIP_DEADLINE_S}s deadline"
+                        )
+                    f.write(chunk)
+        return _process_zip(tmp, skip_routes=skip_routes)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 def _build_index_sync() -> set[str]:
     """Download and process all borough zips; returns all route ids written.
 
     Runs in a worker thread. One zip on disk at a time; a failed borough is
     logged, recorded in the manifest, and skipped so one bad download doesn't
-    lose the other five. Checks the shutdown event between boroughs and
-    between download chunks; on shutdown the manifest is NOT written, so the
-    next startup rebuilds rather than trusting a partial index.
+    lose the other five. Checks the shutdown event between boroughs and (via
+    _download_borough) between download chunks; on shutdown the manifest is NOT
+    written, so the next startup rebuilds rather than trusting a partial index.
     """
     BUS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     # Sweep temp files orphaned by an earlier hard kill mid-write.
@@ -182,28 +224,16 @@ def _build_index_sync() -> set[str]:
         for key, url in BUS_GTFS_URLS.items():
             if _stop.is_set():
                 return routes
-            # Download into the cache dir with a .part suffix so the sweep
-            # above also cleans up zips orphaned by a hard kill.
-            fd, tmp_name = tempfile.mkstemp(
-                dir=BUS_CACHE_DIR, prefix="gtfs_dl.", suffix=".zip.part"
-            )
-            tmp = Path(tmp_name)
             try:
-                with os.fdopen(fd, "wb") as f:
-                    with client.stream("GET", url) as resp:
-                        resp.raise_for_status()
-                        for chunk in resp.iter_bytes():
-                            if _stop.is_set():
-                                return routes
-                            f.write(chunk)
-                written = _process_zip(tmp, skip_routes=routes)
-                routes |= written
-                logger.info("bus route index: %s contributed %d routes", key, len(written))
+                written = _download_borough(client, key, url, routes)
+            except _BuildStopped:
+                return routes  # shutdown mid-download: abort, don't write manifest
             except Exception as exc:
                 logger.warning("bus route index: %s failed (%s); skipping", key, exc)
                 failed.append(key)
-            finally:
-                tmp.unlink(missing_ok=True)
+                continue
+            routes |= written
+            logger.info("bus route index: %s contributed %d routes", key, len(written))
     if routes:
         _atomic_write_json(
             MANIFEST_PATH,

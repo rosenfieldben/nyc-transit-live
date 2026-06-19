@@ -172,3 +172,67 @@ def test_missing_direction_id_bucketed_separately(tmp_path, cache_dir):
     _process_zip(z, skip_routes=set())
     # "?" bucket sorts after "0", so both polylines appear, SA first.
     assert read_route(cache_dir, "M1")["directions"] == [SA_GEO, SB_GEO]
+
+
+# ---------------- _build_index_sync: per-borough failure + deadline ----------------
+
+
+class _FakeStream:
+    def __init__(self, data):
+        self._data = data
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def raise_for_status(self):
+        pass
+
+    def iter_bytes(self):
+        yield self._data
+
+
+class _FakeBuildClient:
+    def __init__(self, data=b"zipbytes"):
+        self._data = data
+
+    def stream(self, method, url):
+        return _FakeStream(self._data)
+
+
+def test_download_borough_enforces_whole_transfer_deadline(tmp_path, monkeypatch):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    monkeypatch.setattr(bus_static, "BUS_CACHE_DIR", cache)
+    monkeypatch.setattr(bus_static, "BUS_ZIP_DEADLINE_S", -1)  # any elapsed exceeds it
+    bus_static._stop.clear()
+    with pytest.raises(TimeoutError):
+        bus_static._download_borough(_FakeBuildClient(), "queens", "http://x", set())
+    assert list(cache.glob("*.part")) == []  # the temp file is cleaned up
+
+
+def test_build_index_records_a_failed_borough_and_keeps_the_rest(tmp_path, monkeypatch):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    monkeypatch.setattr(bus_static, "BUS_CACHE_DIR", cache)
+    monkeypatch.setattr(bus_static, "MANIFEST_PATH", cache / "_manifest.json")
+    monkeypatch.setattr(bus_static, "_partial", False)
+    bus_static._stop.clear()
+
+    failing = "queens"
+
+    def fake_download(client, key, url, skip_routes):
+        if key == failing:
+            raise TimeoutError("deadline exceeded")  # e.g. an over-deadline download
+        return {f"route-{key}"}
+
+    monkeypatch.setattr(bus_static, "_download_borough", fake_download)
+    routes = bus_static._build_index_sync()
+
+    assert f"route-{failing}" not in routes
+    assert len(routes) == len(bus_static.BUS_GTFS_URLS) - 1  # the other boroughs succeeded
+    manifest = json.loads((cache / "_manifest.json").read_text())
+    assert manifest["failed"] == [failing]  # recorded, not a total build failure
+    assert bus_static.is_partial() is True

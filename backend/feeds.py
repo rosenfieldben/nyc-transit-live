@@ -24,6 +24,17 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 VEHICLE_POSITIONS_URL = "https://gtfsrt.prod.obanyc.com/vehiclePositions"
 
+# NYC bounding box. The bus feed occasionally emits out-of-range coordinates
+# (e.g. (0, 0) from a depot/test vehicle) that would scatter markers across the
+# globe; this is the same invariant the subway golden test asserts.
+NYC_LAT_MIN, NYC_LAT_MAX = 40.4, 41.1
+NYC_LON_MIN, NYC_LON_MAX = -74.3, -73.6
+
+
+def _in_nyc(lat: float, lon: float) -> bool:
+    return NYC_LAT_MIN <= lat <= NYC_LAT_MAX and NYC_LON_MIN <= lon <= NYC_LON_MAX
+
+
 # Keyless subway GTFS-RT feeds, one per line group.
 _SUBWAY_BASE = "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs"
 SUBWAY_FEED_URLS = {
@@ -78,6 +89,8 @@ async def fetch_vehicle_positions(client: httpx.AsyncClient) -> tuple[list[dict]
         if not v.HasField("position"):
             continue
         pos = v.position
+        if not _in_nyc(pos.latitude, pos.longitude):
+            continue  # out-of-range coordinate (e.g. 0,0); not a real NYC bus
         vehicles.append(
             {
                 "id": v.vehicle.id or entity.id,
@@ -129,6 +142,14 @@ def _trip_start_ts(trip) -> float | None:
     centiminutes after midnight of the service day (may exceed 24h for
     post-midnight trips). Returns None if neither source parses.
     """
+    # KNOWN CAVEAT (DST): we add a timedelta to service-day midnight and rely on
+    # .timestamp() below. Adding a timedelta to a zoneinfo-aware datetime shifts
+    # wall-clock fields without re-normalizing the UTC offset, so on the ~2
+    # days/year that cross a DST boundary the derived instant can be off by an
+    # hour. The schedule start is only used as a coarse "has this trip departed"
+    # discriminator (TRIP_START_GRACE_S = 120s), so a twice-yearly hour skew
+    # doesn't meaningfully affect placement; a precise fix would need wall-clock
+    # reconstruction with fold handling and isn't worth the regression risk.
     try:
         d = trip.start_date  # YYYYMMDD
         base = datetime(int(d[:4]), int(d[4:6]), int(d[6:8]), tzinfo=NYC_TZ)

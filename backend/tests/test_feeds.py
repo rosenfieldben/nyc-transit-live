@@ -17,6 +17,7 @@ from feeds import (
     _stop_time,
     _trip_start_ts,
     fetch_subway_trains,
+    fetch_vehicle_positions,
 )
 
 # Fixed "now": 2026-06-10 12:00:00 New York time.
@@ -528,3 +529,41 @@ async def test_fetch_subway_trains_returns_on_partial_success():
 async def test_fetch_subway_trains_raises_when_all_feeds_fail():
     with pytest.raises(RuntimeError):
         await fetch_subway_trains(STOPS, _FakeClient(None))
+
+
+# ---------------- fetch_vehicle_positions: NYC bounds + timestamp ----------------
+
+
+class _FakeBusClient:
+    """Bus client stub: fetch_vehicle_positions calls get(url, params=...)."""
+
+    def __init__(self, content):
+        self._content = content
+
+    async def get(self, url, params=None):
+        return _FakeResp(self._content)
+
+
+def _bus_feed(*vehicles):
+    """vehicles: (id, route_id, lat, lon) tuples."""
+    feed = pb.FeedMessage()
+    feed.header.gtfs_realtime_version = "2.0"
+    feed.header.timestamp = int(NOW)
+    for i, (vid, route, lat, lon) in enumerate(vehicles):
+        entity = feed.entity.add()
+        entity.id = f"v{i}"
+        v = entity.vehicle
+        v.vehicle.id = vid
+        v.trip.route_id = route
+        v.position.latitude = lat
+        v.position.longitude = lon
+    return feed.SerializeToString()
+
+
+@pytest.mark.anyio
+async def test_fetch_vehicle_positions_skips_out_of_range(monkeypatch):
+    monkeypatch.setenv("BUS_TIME_API_KEY", "test-key")
+    raw = _bus_feed(("in", "M15", 40.75, -73.99), ("out", "X", 0.0, 0.0))
+    vehicles, ts = await fetch_vehicle_positions(_FakeBusClient(raw))
+    assert [v["id"] for v in vehicles] == ["in"]  # the (0, 0) vehicle is dropped
+    assert ts == NOW

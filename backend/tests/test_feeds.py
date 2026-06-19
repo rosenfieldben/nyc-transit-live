@@ -367,6 +367,84 @@ def test_arrivals_skip_stop_without_clean_direction():
     assert "A04" not in arrivals
 
 
+# ---------------- interpolation anchors (prev_*/next_time) ----------------
+
+# STOPS coords, for asserting prev/next anchors.
+A01 = (40.70, -74.00)
+A02 = (40.71, -74.01)
+
+
+def test_interp_anchors_prev_passed_next_upcoming():
+    # A01N already passed, A02N upcoming -> placed at A02N (static fallback),
+    # prev anchored to A01N with both timestamps for interpolation.
+    trains, _, _ = decode_feed(
+        {
+            "trip_id": STARTED,
+            "route_id": "1",
+            "stus": [("A01N", NOW - 300, None), ("A02N", NOW + 120, None)],
+        }
+    )
+    t = trains[0]
+    assert (t["latitude"], t["longitude"]) == A02 and t["stop_id"] == "A02N"
+    assert (t["prev_lat"], t["prev_lon"]) == A01
+    assert t["prev_time"] == NOW - 300
+    assert t["next_time"] == NOW + 120
+
+
+def test_interp_prev_null_at_first_resolvable_stop():
+    trains, _, _ = decode_feed(
+        {"trip_id": STARTED, "route_id": "1", "stus": [("A01N", NOW + 60, None)]}
+    )
+    t = trains[0]
+    assert t["prev_lat"] is None and t["prev_lon"] is None and t["prev_time"] is None
+    assert t["next_time"] == NOW + 60
+
+
+def test_interp_dwelling_prev_prior_next_is_departure():
+    # Dwelling at A02N (arrival past, departure future) -> chosen via the
+    # departure; prev is the prior station, next_time is that departure.
+    trains, _, _ = decode_feed(
+        {
+            "trip_id": STARTED,
+            "route_id": "1",
+            "stus": [("A01N", NOW - 300, None), ("A02N", NOW - 30, NOW + 90)],
+        }
+    )
+    t = trains[0]
+    assert t["stop_id"] == "A02N"
+    assert (t["prev_lat"], t["prev_lon"]) == A01
+    assert t["prev_time"] == NOW - 300
+    assert t["next_time"] == NOW + 90  # the future departure
+
+
+def test_interp_no_times_fallback_nulls_prev_and_next():
+    trains, _, _ = decode_feed(
+        {"trip_id": STARTED, "route_id": "1", "stus": [("A01N", None, None), ("A02N", None, None)]}
+    )
+    t = trains[0]
+    assert t["stop_id"] == "A01N"  # first resolvable, static fallback
+    assert t["prev_lat"] is None and t["prev_lon"] is None and t["prev_time"] is None
+    assert t["next_time"] is None
+
+
+def test_interp_untimed_prev_keeps_coords_but_null_time():
+    # The previous resolvable stop has coords but no time: prev coords are set
+    # (so v2 could still use them) while prev_time is null, which makes the
+    # frontend helper fall back to the static position. Locks that edge.
+    trains, _, _ = decode_feed(
+        {
+            "trip_id": STARTED,
+            "route_id": "1",
+            "stus": [("A01N", None, None), ("A02N", NOW + 60, None)],
+        }
+    )
+    t = trains[0]
+    assert t["stop_id"] == "A02N"
+    assert (t["prev_lat"], t["prev_lon"]) == A01  # untimed predecessor, coords kept
+    assert t["prev_time"] is None
+    assert t["next_time"] == NOW + 60
+
+
 # ---------------- schedule-relationship filtering ----------------
 
 _TRIP_CANCELED = pb.TripDescriptor.ScheduleRelationship.CANCELED

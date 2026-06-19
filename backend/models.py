@@ -24,11 +24,16 @@ class Vehicle(BaseModel):
 class Train(BaseModel):
     trip_id: str
     route_id: str | None
-    latitude: float
+    latitude: float  # next/current station — the static-fallback position
     longitude: float
     stop_id: str
     stop_name: str | None
     direction: str | None
+    # Interpolation anchors (v1: straight line prev station -> next station).
+    prev_lat: float | None
+    prev_lon: float | None
+    prev_time: float | None  # _stop_time at the previous station (epoch)
+    next_time: float | None  # expected time at the next station (epoch)
 
 
 class BusFeed(BaseModel):

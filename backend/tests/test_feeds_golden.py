@@ -68,3 +68,10 @@ def test_every_golden_train_is_well_formed():
         assert train["direction"] in ("Northbound", "Southbound", None)
         assert 40.4 < train["latitude"] < 41.1
         assert -74.3 < train["longitude"] < -73.6
+        # Interpolation anchors: where a prev station exists, it's in the NYC
+        # bbox and precedes the next stop in time (so the helper's f >= 0).
+        if train["prev_lat"] is not None:
+            assert 40.4 < train["prev_lat"] < 41.1
+            assert -74.3 < train["prev_lon"] < -73.6
+            if train["prev_time"] is not None and train["next_time"] is not None:
+                assert train["prev_time"] < train["next_time"]

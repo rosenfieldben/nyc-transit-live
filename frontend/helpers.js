@@ -41,34 +41,37 @@ function lineColor(routeId) {
   return LINE_COLORS[routeId] ?? LINE_COLORS[routeId[0]] ?? "#555555";
 }
 
-// Upstream-staleness threshold, mirroring the backend FEED_STALE_AFTER_S: how
-// far the feed CONTENT time may lag the poll time before we flag it.
+// Staleness threshold, mirroring the backend FEED_STALE_AFTER_S.
 const FEED_STALE_AFTER_S = 90;
 
-// fetched_at and feed_timestamp are BOTH the server's recorded values (poll
-// time and the feed's content time). Their difference is the feed's staleness,
-// measured entirely server-side — so the browser clock never enters the
-// staleness check and clock skew can't cause false warnings. Returns null when
-// it can't be computed (no successful fetch, or the feed omits its timestamp).
-function staleness(source) {
-  if (source.fetchedAt == null || source.feedTimestamp == null) return null;
-  const age = source.fetchedAt - source.feedTimestamp;
-  if (age < FEED_STALE_AFTER_S) return null;
-  const human = age < 120 ? `${Math.round(age)}s` : `${Math.round(age / 60)}m`;
-  return `${source.label} data ${human} old`;
-}
-
-// The clock-offset estimate is still needed by the station arrivals countdown
-// (map.js), which compares absolute MTA arrival timestamps to the browser
-// clock — that genuinely needs skew correction. The staleness check above does
-// not. minClockOffset = the minimum observed (clientNow - fetched_at), which
-// approximates skew plus minimal latency.
+// minClockOffset = the minimum observed (clientNow - fetched_at), approximating
+// browser-vs-server skew plus minimal latency. Used to skew-correct the
+// arrivals countdown (map.js, which compares absolute MTA timestamps to the
+// browser clock) and the poll-age term of staleness() below.
 let minClockOffset = null;
 
 function noteClockOffset(fetchedAt) {
   if (fetchedAt == null) return;
   const offset = Date.now() / 1000 - fetchedAt;
   if (minClockOffset == null || offset < minClockOffset) minClockOffset = offset;
+}
+
+// Two independent staleness signals, flag if EITHER crosses the threshold:
+//   1. upstream lag = fetched_at - feed_timestamp — both server-recorded, so
+//      this is clock-skew free; detects the MTA feed itself going stale.
+//   2. poll age = now - fetched_at (skew-corrected via minClockOffset) — detects
+//      OUR backend having stopped polling, where it keeps serving frozen
+//      last-good data so the upstream-lag term alone would stay constant and
+//      silent. `now` is injected for testability (defaults to the wall clock).
+function staleness(source, now = Date.now() / 1000) {
+  if (source.fetchedAt == null) return null;
+  const upstreamLag =
+    source.feedTimestamp == null ? 0 : source.fetchedAt - source.feedTimestamp;
+  const pollAge = now - source.fetchedAt - (minClockOffset ?? 0);
+  const age = Math.max(upstreamLag, pollAge, 0);
+  if (age < FEED_STALE_AFTER_S) return null;
+  const human = age < 120 ? `${Math.round(age)}s` : `${Math.round(age / 60)}m`;
+  return `${source.label} data ${human} old`;
 }
 
 // Arrival countdown label from a seconds-until-arrival delta: "now" when due

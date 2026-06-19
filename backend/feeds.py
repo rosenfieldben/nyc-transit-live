@@ -172,11 +172,19 @@ def _trip_start_ts(trip) -> float | None:
 # Next this many upcoming trains kept per station and direction for arrivals.
 ARRIVALS_PER_DIRECTION = 6
 
-# GTFS-RT schedule relationships that mean "ignore this": a CANCELED/DELETED
-# trip isn't running; a SKIPPED/NO_DATA stop carries no real prediction. We
-# drop them from both placement and arrivals. DELETED was added to the trip
-# enum after this binding's version, so resolve it defensively (the -1 sentinel
-# can't collide with a real enum value, which are all >= 0).
+# GTFS-RT schedule relationships that mean "ignore this": a CANCELED trip isn't
+# running; a SKIPPED/NO_DATA stop carries no real prediction. We drop them from
+# both placement and arrivals.
+#
+# DELETED is included for forward-compatibility but does NOT take effect with
+# this binding: gtfs-realtime-bindings 2.0.0 predates DELETED in the trip enum,
+# so getattr resolves it to the -1 sentinel (collision-safe) AND, more to the
+# point, a real DELETED=7 on the wire is coerced to SCHEDULED=0 by proto2's
+# closed-enum decoding — so a DELETED trip currently reads as SCHEDULED and is
+# NOT filtered. Reliably dropping it would need a binding upgrade (after which
+# getattr would resolve DELETED and this check would work) or raw unknown-field
+# parsing; neither is worth it for a rare case. CANCELED (value 3, present in
+# the binding) is filtered correctly.
 _TRIP_SR = gtfs_realtime_pb2.TripDescriptor.ScheduleRelationship
 _STOP_SR = gtfs_realtime_pb2.TripUpdate.StopTimeUpdate.ScheduleRelationship
 _DROP_TRIP_RELATIONSHIPS = frozenset({_TRIP_SR.CANCELED, getattr(_TRIP_SR, "DELETED", -1)})

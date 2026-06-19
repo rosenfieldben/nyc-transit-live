@@ -202,9 +202,11 @@ app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
 def _serve_cached(name: str) -> dict:
-    """Serve {fetched_at, data} from the cache. Stale-but-present data is
-    still served (fetched_at lets the frontend show staleness); errors only
-    reach clients while the cache has never successfully filled."""
+    """Serve {fetched_at, feed_timestamp, data} from the cache. Stale-but-present
+    data is still served; the frontend judges staleness from the fetched_at /
+    feed_timestamp pair (upstream lag) plus its own skew-corrected poll age
+    (now - fetched_at), so a stuck poller serving frozen data still surfaces.
+    Errors only reach clients while the cache has never successfully filled."""
     entry = app.state.feed_cache[name]
     if entry["data"] is not None:
         return {
@@ -355,15 +357,23 @@ async def healthz() -> JSONResponse:
     degraded, so a cold-start deploy stays healthy through the index warmup
     (within Railway's healthcheckTimeout) instead of flapping."""
     reasons: list[str] = []
+    now = time.time()
     cache = getattr(app.state, "feed_cache", {})
-    # A feed counts as fresh if it has data and its content age is within the
-    # threshold (or unknown — having data beats penalizing a missing timestamp).
+    # A feed is fresh if it has data AND neither (a) the upstream content was
+    # stale at the last poll (feed_age; unknown is tolerated — having data beats
+    # penalizing a missing timestamp) nor (b) the poll loop has stalled
+    # (now - fetched_at). The poll-age term catches a stuck poller that keeps
+    # serving frozen last-good data, which feed_age alone can't see. Both use
+    # server-recorded times, so no clock skew. The `<` boundary matches the
+    # frontend (helpers.js flags at age >= FEED_STALE_AFTER_S).
     fresh = []
     for name, entry in cache.items():
         if entry["data"] is None:
             continue
-        age = _feed_age(entry)
-        if age is None or age <= FEED_STALE_AFTER_S:
+        feed_age = _feed_age(entry)
+        upstream_ok = feed_age is None or feed_age < FEED_STALE_AFTER_S
+        poll_ok = (now - entry["fetched_at"]) < FEED_STALE_AFTER_S
+        if upstream_ok and poll_ok:
             fresh.append(name)
     if not fresh:
         reasons.append("no feed has fresh data")

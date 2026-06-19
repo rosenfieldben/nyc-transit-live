@@ -6,6 +6,7 @@ manually per test and no real MTA endpoint is ever contacted.
 
 import asyncio
 import json
+import time
 
 import httpx
 import pytest
@@ -348,12 +349,16 @@ def healthz_env(cache, monkeypatch):
     return cache
 
 
-def _fresh(entry, fetched_at=1000.0, age=5.0):
-    entry.update(data=[1], fetched_at=fetched_at, feed_timestamp=fetched_at - age, error=None)
+def _fresh(entry, age=5.0):
+    # Polled just now; content was `age` seconds old at that poll.
+    now = time.time()
+    entry.update(data=[1], fetched_at=now, feed_timestamp=now - age, error=None)
 
 
-def _stale(entry, fetched_at=1000.0, age=300.0):
-    entry.update(data=[1], fetched_at=fetched_at, feed_timestamp=fetched_at - age, error=None)
+def _stale(entry, age=300.0):
+    # Recent poll, but upstream content `age` seconds old (upstream staleness).
+    now = time.time()
+    entry.update(data=[1], fetched_at=now, feed_timestamp=now - age, error=None)
 
 
 async def test_healthz_warming_is_degraded(client, healthz_env):
@@ -399,6 +404,33 @@ async def test_healthz_building_index_stays_healthy(client, healthz_env, monkeyp
     monkeypatch.setattr(bus_static, "_status", "building")  # cold-start build in progress
     res = await client.get("/healthz")
     assert res.status_code == 200  # building != failed -> no flap during warmup
+
+
+async def test_healthz_degraded_at_exactly_the_threshold(client, healthz_env):
+    # age == FEED_STALE_AFTER_S is stale on both sides (< boundary, matching the
+    # frontend's >= warn), so a feed exactly at the threshold is not fresh.
+    _stale(healthz_env["buses"], age=float(app_module.FEED_STALE_AFTER_S))
+    _stale(healthz_env["subways"], age=float(app_module.FEED_STALE_AFTER_S))
+    res = await client.get("/healthz")
+    assert res.status_code == 503
+
+
+async def test_healthz_fresh_with_unknown_feed_timestamp(client, healthz_env):
+    # A feed can have data but no feed_timestamp (the feed omitted its header
+    # time); unknown upstream age is tolerated as long as the poll is current.
+    healthz_env["buses"].update(data=[1], fetched_at=time.time(), feed_timestamp=None, error=None)
+    res = await client.get("/healthz")
+    assert res.status_code == 200
+    assert res.json() == {"status": "pass"}
+
+
+async def test_healthz_degraded_when_poll_loop_stalled(client, healthz_env):
+    # Upstream content was fresh at the last poll, but that poll was long ago
+    # (a stuck poller serving frozen data) — the poll-age term must catch it.
+    old = time.time() - 600
+    healthz_env["buses"].update(data=[1], fetched_at=old, feed_timestamp=old - 5, error=None)
+    res = await client.get("/healthz")
+    assert res.status_code == 503
 
 
 async def test_healthz_never_leaks_error_details(client, healthz_env):

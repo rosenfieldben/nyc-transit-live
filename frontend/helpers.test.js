@@ -48,34 +48,46 @@ test("lineColor maps trunks, falls back by first char, defaults gray", () => {
   assert.equal(lineColor("X9"), "#555555"); // unknown line
 });
 
-test("staleness uses the two server timestamps, not the browser clock", () => {
-  // age = fetchedAt - feedTimestamp (both server-recorded); fresh < 90s -> null.
-  assert.equal(staleness({ label: "buses", fetchedAt: 1000, feedTimestamp: 990 }), null);
-  // Exactly at the threshold and beyond -> stale, formatted s then m.
+// `now` is passed explicitly for determinism; minClockOffset is null here
+// (nothing calls noteClockOffset before these), so the poll-age term is exactly
+// now - fetchedAt.
+test("staleness flags upstream lag (skew-free) at/over the threshold", () => {
+  const now = 10_000;
+  // Fresh: content 15s old at a poll 5s ago.
+  assert.equal(staleness({ label: "buses", fetchedAt: now - 5, feedTimestamp: now - 15 }, now), null);
+  // Upstream stale: content was 100s old at the (recent) last poll. The diff of
+  // the two server timestamps drives this, so the browser clock can't skew it.
   assert.equal(
-    staleness({ label: "buses", fetchedAt: 1090, feedTimestamp: 1000 }),
-    "buses data 90s old",
+    staleness({ label: "buses", fetchedAt: now - 5, feedTimestamp: now - 105 }, now),
+    "buses data 100s old",
   );
-  assert.equal(
-    staleness({ label: "trains", fetchedAt: 1300, feedTimestamp: 1000 }),
-    "trains data 5m old",
-  );
-  // The absolute magnitude of the timestamps is irrelevant — only their
-  // difference matters, so a far-future browser clock can't change the verdict.
-  assert.equal(staleness({ label: "buses", fetchedAt: 5_000_000_090, feedTimestamp: 5_000_000_000 }), "buses data 90s old");
-});
+})
 
-test("staleness is null when a timestamp is missing or the feed is fresh", () => {
-  assert.equal(staleness({ label: "buses", fetchedAt: null, feedTimestamp: 1000 }), null);
-  assert.equal(staleness({ label: "buses", fetchedAt: 1000, feedTimestamp: null }), null);
-  // A negative diff (clock quirk where content time is ahead of poll time) is
-  // below threshold, so not flagged.
-  assert.equal(staleness({ label: "buses", fetchedAt: 1000, feedTimestamp: 1100 }), null);
-});
+test("staleness flags a stuck backend via poll age even when upstream lag is tiny", () => {
+  const now = 10_000;
+  // Backend stopped polling 200s ago; content was fresh (5s) at that last poll.
+  // Upstream-lag alone (5s) would stay silent — poll-age (200s) must flag it.
+  assert.equal(
+    staleness({ label: "trains", fetchedAt: now - 200, feedTimestamp: now - 205 }, now),
+    "trains data 3m old",
+  );
+  // Works with a missing feed_timestamp too (upstream lag unknown -> 0).
+  assert.equal(
+    staleness({ label: "buses", fetchedAt: now - 200, feedTimestamp: null }, now),
+    "buses data 3m old",
+  );
+})
+
+test("staleness is null when fresh or never fetched", () => {
+  const now = 10_000;
+  assert.equal(staleness({ label: "buses", fetchedAt: null, feedTimestamp: now }, now), null);
+  assert.equal(staleness({ label: "buses", fetchedAt: now - 5, feedTimestamp: now - 5 }, now), null);
+  assert.equal(staleness({ label: "buses", fetchedAt: now - 5, feedTimestamp: null }, now), null);
+})
 
 test("noteClockOffset accepts a timestamp without throwing", () => {
-  // minClockOffset is internal (used by the map.js countdown, not staleness);
+  // minClockOffset is internal (used by the countdown and the poll-age term);
   // just confirm the exported helper is callable and null-safe.
   assert.doesNotThrow(() => noteClockOffset(Date.now() / 1000));
   assert.doesNotThrow(() => noteClockOffset(null));
-});
+})

@@ -253,13 +253,14 @@ def _decode_feed(
         if chosen is None:
             continue  # trip finished, or nothing resolvable
 
-        # No derivable schedule start: fall back to distrusting a trip still
-        # at its first listed stop with that stop far in the future.
+        # No derivable schedule start: fall back to distrusting a trip still at
+        # its first RESOLVABLE stop with that stop far in the future. (Using
+        # the first resolvable stop, not stop_time_update[0]: a leading unknown
+        # station must not let a far-future trip bypass this cap.)
         if (
             start_ts is None
             and chosen_time is not None
-            and len(tu.stop_time_update)
-            and chosen is tu.stop_time_update[0]
+            and chosen is first_resolvable
             and chosen_time > now + MAX_FUTURE_FIRST_STOP_S
         ):
             continue

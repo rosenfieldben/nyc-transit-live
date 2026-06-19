@@ -213,6 +213,22 @@ def test_unparseable_trip_id_uses_first_stop_time_cap():
     assert [t["trip_id"] for t in trains] == ["WEIRD-ID-2"]
 
 
+def test_placement_cap_uses_first_resolvable_not_index_zero():
+    # Start-less trip whose first LISTED stop is an unknown station and whose
+    # first RESOLVABLE stop is ~10 min out. The old `chosen is stop_time_update[0]`
+    # check let it slip through (chosen was the 2nd stu); keyed on first_resolvable
+    # it is correctly dropped by the far-future cap.
+    trains = decode(
+        {
+            "trip_id": "WEIRD-ID",
+            "route_id": "1",
+            "start_date": "",
+            "stus": [("ZZ9N", NOW + 30, None), ("A01N", NOW + 600, None)],
+        }
+    )
+    assert trains == []
+
+
 def test_southbound_direction_from_stop_suffix():
     trains = decode({"trip_id": STARTED, "route_id": "1", "stus": [("A03S", NOW + 60, None)]})
     assert trains[0]["direction"] == "Southbound"

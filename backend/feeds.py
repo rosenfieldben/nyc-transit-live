@@ -411,6 +411,22 @@ def carry_forward_prev(trains: list[dict], last_positions: dict[str, dict]) -> d
     (remembered time < next_time). A real prev from the feed is never overwritten. The
     returned dict is rebuilt from this poll's trains and replaces the memory wholesale,
     so finished or absent trips are pruned.
+
+    KNOWN v1.5 LIMITATIONS (straight-line interpolation; both resolved by v2's
+    route-geometry slicing, which is inherently along-route and forward-only):
+      * Backward slide on stop regression. The remembered stop has no route-order
+        guarantee — unlike the feed-provided prev, which is always the immediately
+        preceding stop in the trip's own sequence. If the feed re-estimates a held or
+        rerouted trip's chosen stop EARLIER on the line than last poll, the synthesized
+        bracket points backward and the train is drawn sliding the wrong way. The
+        time guard (remembered time < next_time) compares predicted ETAs, not station
+        positions, so it can't catch this; a real fix needs the static route stop order.
+      * Multi-poll / multi-station gap. The remembered stop is normally one station
+        back, but after one or more failed polls (memory is preserved across them) or a
+        2+-station jump within a single interval it can be further back, so the straight
+        line cuts across the skipped station(s). Self-corrects on the next good poll.
+    Both are rare, self-correcting, and never worse than v1's static placement; we
+    accept them in v1.5 rather than pull route-order logic forward out of v2.
     """
     new_positions: dict[str, dict] = {}
     for train in trains:

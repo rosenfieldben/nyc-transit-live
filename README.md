@@ -5,6 +5,9 @@ Buses report true GPS positions and move on the map; subways are placed at their
 next station using real-time arrival data joined against the static schedule,
 then glide between stations as time passes (v1: straight-line interpolation
 between the previous and next station; v2 will follow the actual route geometry).
+The feeds usually prune the just-departed stop, so the backend carries each
+train's previous-poll station forward across polls as that anchor — letting
+trains glide even when the feed omits where they came from.
 
 ## How it works
 
@@ -129,7 +132,9 @@ warnings.
 - [x] **4. Subways** — `/api/subways`, trains placed at next station via static GTFS.
 - [x] **5. Route lines** — draw `shapes.txt` route geometry under the markers.
 - [x] **6. Train motion (v1)** — trains glide between stations via straight-line
-  interpolation, animated client-side between polls. (v2: follow route geometry.)
+  interpolation, animated client-side between polls; the previous-station anchor
+  is carried forward across polls so trains glide even when the feed prunes the
+  just-departed stop. (v2: follow route geometry.)
 
 ## Notes
 

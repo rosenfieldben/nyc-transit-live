@@ -394,6 +394,48 @@ def _aggregate_feeds(
     return trains, trimmed, feed_timestamp, errors
 
 
+def carry_forward_prev(trains: list[dict], last_positions: dict[str, dict]) -> dict[str, dict]:
+    """Fill missing prev anchors from the previous poll, and return the position
+    memory for the next poll.
+
+    _decode_feed can only set prev_* when the feed includes the just-departed stop,
+    which the NYCT feeds usually prune, so most trains arrive here with a null prev
+    and snap station to station each poll. A trip's chosen stop advances by one
+    station between polls, so the stop it pointed at last poll is the station it is
+    now moving away from: we synthesize prev_* from that remembered stop, handing the
+    frontend a bracket to interpolate over.
+
+    Synthesizes only when the feed gave no real prev (prev_lat is None), the trip was
+    seen last poll at a DIFFERENT stop, that remembered position has a usable time
+    anchor, the current placement has a next_time, and the bracket is monotonic
+    (remembered time < next_time). A real prev from the feed is never overwritten. The
+    returned dict is rebuilt from this poll's trains and replaces the memory wholesale,
+    so finished or absent trips are pruned.
+    """
+    new_positions: dict[str, dict] = {}
+    for train in trains:
+        trip_id = train["trip_id"]
+        next_time = train["next_time"]
+        if train["prev_lat"] is None and next_time is not None:
+            prev = last_positions.get(trip_id)
+            if (
+                prev is not None
+                and prev["time"] is not None
+                and prev["stop_id"] != train["stop_id"]
+                and prev["time"] < next_time
+            ):
+                train["prev_lat"] = prev["lat"]
+                train["prev_lon"] = prev["lon"]
+                train["prev_time"] = prev["time"]
+        new_positions[trip_id] = {
+            "stop_id": train["stop_id"],
+            "lat": train["latitude"],
+            "lon": train["longitude"],
+            "time": next_time,
+        }
+    return new_positions
+
+
 async def fetch_subway_trains(
     stops: dict[str, dict], client: httpx.AsyncClient
 ) -> tuple[list[dict], dict[str, dict[str, list[dict]]], float | None]:

@@ -19,7 +19,7 @@ from google.protobuf.message import DecodeError
 
 import bus_static
 import static_data
-from feeds import fetch_subway_trains, fetch_vehicle_positions
+from feeds import carry_forward_prev, fetch_subway_trains, fetch_vehicle_positions
 from models import (
     BusFeed,
     RouteGeometry,
@@ -136,6 +136,12 @@ async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
     except httpx.HTTPError as exc:
         _note_failure(entry, 502, f"Upstream MTA feed error: {_sanitize_upstream(exc)}")
         return
+    # Carry each trip's previous-poll stop forward as its prev interpolation anchor
+    # when the feed pruned the departed stop (mutates trains in place), then remember
+    # this poll's positions for the next one.
+    app.state.subway_positions = carry_forward_prev(
+        trains, getattr(app.state, "subway_positions", {})
+    )
     entry.update(data=trains, fetched_at=time.time(), feed_timestamp=feed_timestamp, error=None)
     # Replace the arrivals index only on success, so a failed poll keeps the
     # last-known arrivals on the same fetched_at — consistent with the cache.
@@ -176,6 +182,9 @@ async def lifespan(app: FastAPI):
     app.state.feed_cache = {"buses": _fresh_entry(), "subways": _fresh_entry()}
     # Per-station arrivals index, rebuilt by each successful subway poll.
     app.state.subway_arrivals = {}
+    # Per-trip previous-poll position, used to carry a prev interpolation anchor
+    # forward when the feed pruned the just-departed stop (see carry_forward_prev).
+    app.state.subway_positions = {}
     app.state.feed_poll_task = asyncio.create_task(_poll_feeds(app))
     # Bus route geometry indexes in the background — startup never waits on
     # the ~52 MB of borough GTFS zips; /api/bus-route reports until ready.

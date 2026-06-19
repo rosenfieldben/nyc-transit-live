@@ -17,6 +17,7 @@ from feeds import (
     _stop_time,
     _trip_start_ts,
     fetch_subway_trains,
+    fetch_vehicle_positions,
 )
 
 # Fixed "now": 2026-06-10 12:00:00 New York time.
@@ -31,7 +32,7 @@ STOPS = {
 }
 
 
-def make_stu(stop_id=None, arrival=None, departure=None):
+def make_stu(stop_id=None, arrival=None, departure=None, relationship=None):
     stu = pb.TripUpdate.StopTimeUpdate()
     if stop_id is not None:
         stu.stop_id = stop_id
@@ -39,11 +40,14 @@ def make_stu(stop_id=None, arrival=None, departure=None):
         stu.arrival.time = int(arrival)
     if departure is not None:
         stu.departure.time = int(departure)
+    if relationship is not None:
+        stu.schedule_relationship = relationship
     return stu
 
 
 def make_feed(*trips):
-    """trips: dicts with trip_id, route_id, start_date, stus=[(stop, arr, dep)]."""
+    """trips: dicts with trip_id, route_id, start_date, optional relationship
+    (trip-level ScheduleRelationship), and stus=[(stop, arr, dep[, relationship])]."""
     feed = pb.FeedMessage()
     feed.header.gtfs_realtime_version = "2.0"
     feed.header.timestamp = int(NOW)
@@ -54,8 +58,10 @@ def make_feed(*trips):
         tu.trip.trip_id = t.get("trip_id", "")
         tu.trip.route_id = t.get("route_id", "")
         tu.trip.start_date = t.get("start_date", TODAY)
-        for stop_id, arr, dep in t.get("stus", []):
-            tu.stop_time_update.append(make_stu(stop_id, arr, dep))
+        if "relationship" in t:
+            tu.trip.schedule_relationship = t["relationship"]
+        for stu_spec in t.get("stus", []):
+            tu.stop_time_update.append(make_stu(*stu_spec))
     return feed.SerializeToString()
 
 
@@ -208,6 +214,22 @@ def test_unparseable_trip_id_uses_first_stop_time_cap():
     assert [t["trip_id"] for t in trains] == ["WEIRD-ID-2"]
 
 
+def test_placement_cap_uses_first_resolvable_not_index_zero():
+    # Start-less trip whose first LISTED stop is an unknown station and whose
+    # first RESOLVABLE stop is ~10 min out. The old `chosen is stop_time_update[0]`
+    # check let it slip through (chosen was the 2nd stu); keyed on first_resolvable
+    # it is correctly dropped by the far-future cap.
+    trains = decode(
+        {
+            "trip_id": "WEIRD-ID",
+            "route_id": "1",
+            "start_date": "",
+            "stus": [("ZZ9N", NOW + 30, None), ("A01N", NOW + 600, None)],
+        }
+    )
+    assert trains == []
+
+
 def test_southbound_direction_from_stop_suffix():
     trains = decode({"trip_id": STARTED, "route_id": "1", "stus": [("A03S", NOW + 60, None)]})
     assert trains[0]["direction"] == "Southbound"
@@ -241,7 +263,7 @@ def decode_feed(*trips):
 def test_arrivals_include_every_upcoming_stop():
     # Placement keeps only the next stop; arrivals keep them all, keyed by the
     # station id (platform id with the N/S suffix stripped).
-    _, arrivals = decode_feed(
+    _, arrivals, _ = decode_feed(
         {
             "trip_id": STARTED,
             "route_id": "1",
@@ -258,7 +280,7 @@ def test_arrivals_include_every_upcoming_stop():
 
 
 def test_arrivals_drop_past_stops():
-    _, arrivals = decode_feed(
+    _, arrivals, _ = decode_feed(
         {
             "trip_id": STARTED,
             "route_id": "1",
@@ -271,14 +293,14 @@ def test_arrivals_drop_past_stops():
 
 def test_arrivals_dwelling_train_kept_at_current_station():
     # Arrival in the past but departure in the future -> _stop_time future -> kept.
-    _, arrivals = decode_feed(
+    _, arrivals, _ = decode_feed(
         {"trip_id": STARTED, "route_id": "1", "stus": [("A01N", NOW - 30, NOW + 90)]}
     )
     assert arrivals["A01"]["Northbound"][0]["arrival"] == NOW + 90
 
 
 def test_arrivals_populate_both_directions():
-    _, arrivals = decode_feed(
+    _, arrivals, _ = decode_feed(
         {"trip_id": "70000_1..N01R", "route_id": "1", "stus": [("A01N", NOW + 60, None)]},
         {"trip_id": "70010_1..S01R", "route_id": "1", "stus": [("A03S", NOW + 90, None)]},
     )
@@ -289,7 +311,7 @@ def test_arrivals_populate_both_directions():
 def test_arrivals_include_unstarted_trip_as_downstream_arrival():
     # The deliberate divergence: an unstarted trip (departs its origin in ~10
     # min) is EXCLUDED from placement, but its stop is a real future arrival.
-    trains, arrivals = decode_feed(
+    trains, arrivals, _ = decode_feed(
         {"trip_id": UNSTARTED, "route_id": "1", "stus": [("A01N", NOW + 660, None)]}
     )
     assert trains == []  # placement filter excludes the unstarted trip
@@ -309,7 +331,7 @@ def test_arrivals_dedup_same_trip_across_feeds():
     )
     # Same trip present in two feed results -> deduped to one placement and one
     # arrival (covers both the train seen_trips and the arrival_trips guards).
-    trains, arrivals, errors = _aggregate_feeds(_pad(feed, feed), STOPS, NOW)
+    trains, arrivals, _, errors = _aggregate_feeds(_pad(feed, feed), STOPS, NOW)
     assert errors == []
     assert len(trains) == 1
     assert len(arrivals["A01"]["Northbound"]) == 1
@@ -324,7 +346,7 @@ def test_arrivals_sorted_and_capped_per_direction():
         }
         for i in range(ARRIVALS_PER_DIRECTION + 2)
     ]
-    _, arrivals, _ = _aggregate_feeds(_pad(make_feed(*trips)), STOPS, NOW)
+    _, arrivals, _, _ = _aggregate_feeds(_pad(make_feed(*trips)), STOPS, NOW)
     northbound = arrivals["A01"]["Northbound"]
     assert len(northbound) == ARRIVALS_PER_DIRECTION  # capped to the soonest
     times = [a["arrival"] for a in northbound]
@@ -336,13 +358,88 @@ def test_arrivals_skip_stop_without_clean_direction():
     # A resolvable stop whose id has no N/S suffix has no platform direction,
     # so it is not recorded as a station arrival.
     stops = {**STOPS, "A04": {"name": "Delta", "lat": 40.7, "lon": -74.0}}
-    _, arrivals = _decode_feed(
+    _, arrivals, _ = _decode_feed(
         make_feed({"trip_id": STARTED, "route_id": "1", "stus": [("A04", NOW + 60, None)]}),
         stops,
         "TEST",
         NOW,
     )
     assert "A04" not in arrivals
+
+
+# ---------------- schedule-relationship filtering ----------------
+
+_TRIP_CANCELED = pb.TripDescriptor.ScheduleRelationship.CANCELED
+_STOP_SKIPPED = pb.TripUpdate.StopTimeUpdate.ScheduleRelationship.SKIPPED
+_STOP_NO_DATA = pb.TripUpdate.StopTimeUpdate.ScheduleRelationship.NO_DATA
+
+
+def test_canceled_trip_dropped_from_placement_and_arrivals():
+    trains, arrivals, _ = decode_feed(
+        {
+            "trip_id": STARTED,
+            "route_id": "1",
+            "relationship": _TRIP_CANCELED,
+            "stus": [("A01N", NOW + 60, None)],
+        }
+    )
+    assert trains == []
+    assert arrivals == {}
+
+
+def test_skipped_and_no_data_stops_excluded():
+    # A01N (skipped) and A02N (no-data) carry no real prediction; A03S does.
+    trains, arrivals, _ = decode_feed(
+        {
+            "trip_id": STARTED,
+            "route_id": "1",
+            "stus": [
+                ("A01N", NOW + 60, None, _STOP_SKIPPED),
+                ("A02N", NOW + 120, None, _STOP_NO_DATA),
+                ("A03S", NOW + 180, None),
+            ],
+        }
+    )
+    assert "A01" not in arrivals and "A02" not in arrivals
+    assert arrivals["A03"]["Southbound"]
+    assert [t["stop_id"] for t in trains] == ["A03S"]  # placement skips both too
+
+
+# ---------------- feed_timestamp threading ----------------
+
+
+def _feed_with_ts(ts, *trips):
+    """A feed whose FeedHeader.timestamp is overridden to `ts`."""
+    feed = pb.FeedMessage()
+    feed.ParseFromString(make_feed(*trips))
+    feed.header.timestamp = int(ts)
+    return feed.SerializeToString()
+
+
+def test_decode_feed_returns_header_timestamp():
+    _, _, ts = decode_feed(
+        {"trip_id": STARTED, "route_id": "1", "stus": [("A01N", NOW + 60, None)]}
+    )
+    assert ts == NOW  # make_feed sets header.timestamp = int(NOW)
+
+
+def test_decode_feed_timestamp_none_when_feed_omits_it():
+    feed = pb.FeedMessage()
+    feed.header.gtfs_realtime_version = "2.0"  # timestamp left at its 0 default
+    _, _, ts = _decode_feed(feed.SerializeToString(), STOPS, "TEST", NOW)
+    assert ts is None
+
+
+def test_aggregate_uses_oldest_feed_timestamp():
+    # The combined view is only as fresh as its stalest member.
+    older = _feed_with_ts(
+        NOW - 100, {"trip_id": "70000_1..N01R", "route_id": "1", "stus": [("A01N", NOW + 60, None)]}
+    )
+    newer = _feed_with_ts(
+        NOW, {"trip_id": "70001_1..N01R", "route_id": "1", "stus": [("A02N", NOW + 60, None)]}
+    )
+    _, _, ts, _ = _aggregate_feeds(_pad(newer, older), STOPS, NOW)
+    assert ts == NOW - 100  # min across decoded feeds (padding feeds carry NOW)
 
 
 # ---------------- _aggregate_feeds: dedup + per-feed error handling ----------------
@@ -353,7 +450,7 @@ def test_aggregate_skips_a_feed_whose_fetch_raised():
         {"trip_id": "70000_1..N01R", "route_id": "1", "stus": [("A01N", NOW + 60, None)]}
     )
     results = _pad(RuntimeError("ACE down"), good)
-    trains, arrivals, errors = _aggregate_feeds(results, STOPS, NOW)
+    trains, arrivals, _, errors = _aggregate_feeds(results, STOPS, NOW)
     assert len(errors) == 1 and "ACE down" in errors[0]
     assert len(trains) == 1  # the good feed still decoded
     assert arrivals["A01"]["Northbound"]
@@ -364,7 +461,7 @@ def test_aggregate_skips_a_corrupt_protobuf_feed():
         {"trip_id": "70000_1..N01R", "route_id": "1", "stus": [("A01N", NOW + 60, None)]}
     )
     results = _pad(b"\x0a\xff", good)  # truncated length-delimited field -> DecodeError
-    trains, arrivals, errors = _aggregate_feeds(results, STOPS, NOW)
+    trains, arrivals, _, errors = _aggregate_feeds(results, STOPS, NOW)
     assert len(errors) == 1 and "undecodable protobuf" in errors[0]
     assert len(trains) == 1
     assert arrivals["A01"]["Northbound"]
@@ -372,7 +469,7 @@ def test_aggregate_skips_a_corrupt_protobuf_feed():
 
 def test_aggregate_all_feeds_failed_records_every_error():
     results = [RuntimeError("down")] * len(SUBWAY_FEED_URLS)
-    trains, arrivals, errors = _aggregate_feeds(results, STOPS, NOW)
+    trains, arrivals, _, errors = _aggregate_feeds(results, STOPS, NOW)
     assert len(errors) == len(SUBWAY_FEED_URLS)
     assert trains == [] and arrivals == {}
 
@@ -423,7 +520,7 @@ def _live_feed(trip_id, stop_id, arrival_offset):
 @pytest.mark.anyio
 async def test_fetch_subway_trains_returns_on_partial_success():
     raw = _live_feed("100_1..N01R", "A01N", 60)
-    trains, arrivals = await fetch_subway_trains(STOPS, _FakeClient(raw))
+    trains, arrivals, _ = await fetch_subway_trains(STOPS, _FakeClient(raw))
     assert len(trains) == 1  # same feed for all URLs -> deduped to one
     assert arrivals["A01"]["Northbound"]
 
@@ -432,3 +529,41 @@ async def test_fetch_subway_trains_returns_on_partial_success():
 async def test_fetch_subway_trains_raises_when_all_feeds_fail():
     with pytest.raises(RuntimeError):
         await fetch_subway_trains(STOPS, _FakeClient(None))
+
+
+# ---------------- fetch_vehicle_positions: NYC bounds + timestamp ----------------
+
+
+class _FakeBusClient:
+    """Bus client stub: fetch_vehicle_positions calls get(url, params=...)."""
+
+    def __init__(self, content):
+        self._content = content
+
+    async def get(self, url, params=None):
+        return _FakeResp(self._content)
+
+
+def _bus_feed(*vehicles):
+    """vehicles: (id, route_id, lat, lon) tuples."""
+    feed = pb.FeedMessage()
+    feed.header.gtfs_realtime_version = "2.0"
+    feed.header.timestamp = int(NOW)
+    for i, (vid, route, lat, lon) in enumerate(vehicles):
+        entity = feed.entity.add()
+        entity.id = f"v{i}"
+        v = entity.vehicle
+        v.vehicle.id = vid
+        v.trip.route_id = route
+        v.position.latitude = lat
+        v.position.longitude = lon
+    return feed.SerializeToString()
+
+
+@pytest.mark.anyio
+async def test_fetch_vehicle_positions_skips_out_of_range(monkeypatch):
+    monkeypatch.setenv("BUS_TIME_API_KEY", "test-key")
+    raw = _bus_feed(("in", "M15", 40.75, -73.99), ("out", "X", 0.0, 0.0))
+    vehicles, ts = await fetch_vehicle_positions(_FakeBusClient(raw))
+    assert [v["id"] for v in vehicles] == ["in"]  # the (0, 0) vehicle is dropped
+    assert ts == NOW

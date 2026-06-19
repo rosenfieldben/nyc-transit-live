@@ -41,13 +41,13 @@ function lineColor(routeId) {
   return LINE_COLORS[routeId] ?? LINE_COLORS[routeId[0]] ?? "#555555";
 }
 
-// The backend serves from its own ~20s poll cache; if its upstream fetches
-// start failing it keeps serving the last good data with the old fetched_at.
-const STALE_AFTER_S = 60;
+// Staleness threshold, mirroring the backend FEED_STALE_AFTER_S.
+const FEED_STALE_AFTER_S = 90;
 
-// fetched_at is server time; comparing it to the client clock directly would
-// turn clock skew into false staleness warnings. The minimum observed
-// (clientNow - fetched_at) approximates skew plus minimal latency.
+// minClockOffset = the minimum observed (clientNow - fetched_at), approximating
+// browser-vs-server skew plus minimal latency. Used to skew-correct the
+// arrivals countdown (map.js, which compares absolute MTA timestamps to the
+// browser clock) and the poll-age term of staleness() below.
 let minClockOffset = null;
 
 function noteClockOffset(fetchedAt) {
@@ -56,10 +56,20 @@ function noteClockOffset(fetchedAt) {
   if (minClockOffset == null || offset < minClockOffset) minClockOffset = offset;
 }
 
-function staleness(source) {
+// Two independent staleness signals, flag if EITHER crosses the threshold:
+//   1. upstream lag = fetched_at - feed_timestamp — both server-recorded, so
+//      this is clock-skew free; detects the MTA feed itself going stale.
+//   2. poll age = now - fetched_at (skew-corrected via minClockOffset) — detects
+//      OUR backend having stopped polling, where it keeps serving frozen
+//      last-good data so the upstream-lag term alone would stay constant and
+//      silent. `now` is injected for testability (defaults to the wall clock).
+function staleness(source, now = Date.now() / 1000) {
   if (source.fetchedAt == null) return null;
-  const age = Math.max(0, Date.now() / 1000 - source.fetchedAt - (minClockOffset ?? 0));
-  if (age < STALE_AFTER_S) return null;
+  const upstreamLag =
+    source.feedTimestamp == null ? 0 : source.fetchedAt - source.feedTimestamp;
+  const pollAge = now - source.fetchedAt - (minClockOffset ?? 0);
+  const age = Math.max(upstreamLag, pollAge, 0);
+  if (age < FEED_STALE_AFTER_S) return null;
   const human = age < 120 ? `${Math.round(age)}s` : `${Math.round(age / 60)}m`;
   return `${source.label} data ${human} old`;
 }
@@ -75,6 +85,6 @@ function formatCountdown(seconds) {
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     esc, routeColor, lineColor, staleness, noteClockOffset, formatCountdown,
-    LINE_COLORS, DARK_TEXT_LINES, STALE_AFTER_S,
+    LINE_COLORS, DARK_TEXT_LINES, FEED_STALE_AFTER_S,
   };
 }

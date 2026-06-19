@@ -101,10 +101,23 @@ their own build result.
 
 ## Monitoring
 
-`GET /api/status` returns an operational snapshot: per-feed cache freshness
-(last successful fetch and age), the last recorded poll error if any, the bus
-route index state, and the static subway GTFS age. Useful as a health check
-and for diagnosing stale data in production.
+`GET /api/status` returns an always-200 operational snapshot: per-feed cache
+freshness — both `age_s` (since this server last polled) and `feed_age_s` (how
+stale the feed's own content was at poll time) — the last recorded poll error
+if any, the bus route index state, and the static subway GTFS age.
+
+`GET /healthz` is the readiness probe (Railway's healthcheck points here). It
+returns 503 when the app can't serve fresh data: no feed is fresh, or the bus
+route index build has failed. It stays healthy as long as **at least one** feed
+is fresh, so a misconfigured key (which only stops the bus feed) doesn't take
+down an otherwise-working subway map, and a still-building index during cold
+start doesn't flap it.
+
+Both feed envelopes (`/api/buses`, `/api/subways`) carry `fetched_at` (this
+server's poll time) and `feed_timestamp` (the feed's own content time, oldest
+across the subway feeds). The frontend judges staleness from the difference of
+those two server-side values, so the browser clock never causes false "stale"
+warnings.
 
 ## Build phases
 

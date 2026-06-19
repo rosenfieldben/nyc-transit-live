@@ -13,6 +13,7 @@ from pathlib import Path
 import httpx
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from google.protobuf.message import DecodeError
 
@@ -51,13 +52,32 @@ FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 # cache, so N clients never means N upstream fetches.
 POLL_INTERVAL_S = 20
 
+# Upstream-staleness threshold: how far the feed's CONTENT time (MTA's clock)
+# may lag the poll time (this server's clock) before the data is considered
+# stale — used by /healthz and reported via /api/status. Computed from two
+# server-captured timestamps (fetched_at - feed_timestamp), so the browser
+# clock is never involved; the frontend mirrors this in helpers.js.
+FEED_STALE_AFTER_S = 90
+
+
+def _feed_age(entry: dict) -> float | None:
+    """Seconds the feed content lagged the poll, or None if not computable.
+    Both inputs are server-captured at poll time, so this is clock-skew free."""
+    if entry["fetched_at"] is None or entry["feed_timestamp"] is None:
+        return None
+    return entry["fetched_at"] - entry["feed_timestamp"]
+
+
 # Station ids index the in-memory arrivals dict; validate the path parameter
 # to reject malformed input (and any traversal-shaped surprises) up front.
 _STATION_ID_RE = re.compile(r"^[A-Za-z0-9]{1,6}$")
 
 
 def _fresh_entry() -> dict:
-    return {"data": None, "fetched_at": None, "error": None}
+    # fetched_at = this server's poll time; feed_timestamp = the feed's content
+    # time (MTA's clock). Both are stored so freshness can be judged without the
+    # browser clock — see _feed_age and FEED_STALE_AFTER_S.
+    return {"data": None, "fetched_at": None, "feed_timestamp": None, "error": None}
 
 
 def _note_failure(entry: dict, status: int, detail: str) -> None:
@@ -81,7 +101,7 @@ def _sanitize_upstream(exc: BaseException) -> str:
 async def _refresh_buses(app: FastAPI, client: httpx.AsyncClient) -> None:
     entry = app.state.feed_cache["buses"]
     try:
-        data = await fetch_vehicle_positions(client)
+        data, feed_timestamp = await fetch_vehicle_positions(client)
     except RuntimeError as exc:
         # Missing/placeholder API key — a configuration problem, not a 500.
         _note_failure(entry, 503, str(exc))
@@ -93,7 +113,7 @@ async def _refresh_buses(app: FastAPI, client: httpx.AsyncClient) -> None:
         # HTTP 200 with a non-protobuf body (CDN error page, maintenance HTML).
         _note_failure(entry, 502, "Upstream bus feed returned undecodable data")
         return
-    entry.update(data=data, fetched_at=time.time(), error=None)
+    entry.update(data=data, fetched_at=time.time(), feed_timestamp=feed_timestamp, error=None)
 
 
 async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
@@ -108,7 +128,7 @@ async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
         )
         return
     try:
-        trains, arrivals = await fetch_subway_trains(stops, client)
+        trains, arrivals, feed_timestamp = await fetch_subway_trains(stops, client)
     except RuntimeError as exc:
         # Every subway feed failed this poll.
         _note_failure(entry, 502, _sanitize_upstream(exc))
@@ -116,7 +136,7 @@ async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
     except httpx.HTTPError as exc:
         _note_failure(entry, 502, f"Upstream MTA feed error: {_sanitize_upstream(exc)}")
         return
-    entry.update(data=trains, fetched_at=time.time(), error=None)
+    entry.update(data=trains, fetched_at=time.time(), feed_timestamp=feed_timestamp, error=None)
     # Replace the arrivals index only on success, so a failed poll keeps the
     # last-known arrivals on the same fetched_at — consistent with the cache.
     app.state.subway_arrivals = arrivals
@@ -182,12 +202,18 @@ app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
 def _serve_cached(name: str) -> dict:
-    """Serve {fetched_at, data} from the cache. Stale-but-present data is
-    still served (fetched_at lets the frontend show staleness); errors only
-    reach clients while the cache has never successfully filled."""
+    """Serve {fetched_at, feed_timestamp, data} from the cache. Stale-but-present
+    data is still served; the frontend judges staleness from the fetched_at /
+    feed_timestamp pair (upstream lag) plus its own skew-corrected poll age
+    (now - fetched_at), so a stuck poller serving frozen data still surfaces.
+    Errors only reach clients while the cache has never successfully filled."""
     entry = app.state.feed_cache[name]
     if entry["data"] is not None:
-        return {"fetched_at": entry["fetched_at"], "data": entry["data"]}
+        return {
+            "fetched_at": entry["fetched_at"],
+            "feed_timestamp": entry["feed_timestamp"],
+            "data": entry["data"],
+        }
     if entry["error"]:
         raise HTTPException(entry["error"]["status"], entry["error"]["detail"])
     raise HTTPException(
@@ -293,11 +319,13 @@ async def get_status() -> dict:
     now = time.time()
     feeds = {}
     for name, entry in getattr(app.state, "feed_cache", {}).items():
+        feed_age = _feed_age(entry)
         feeds[name] = {
             "fetched_at": entry["fetched_at"],
             "age_s": round(now - entry["fetched_at"], 1)
             if entry["fetched_at"] is not None
             else None,
+            "feed_age_s": round(feed_age, 1) if feed_age is not None else None,
             "last_error": entry["error"],
         }
     static_gtfs = None
@@ -314,6 +342,48 @@ async def get_status() -> dict:
         },
         "static_subway_gtfs": static_gtfs,
     }
+
+
+@app.get("/healthz", include_in_schema=False)
+async def healthz() -> JSONResponse:
+    """Readiness probe for the platform (Railway points its healthcheck here).
+    Unlike the always-200 /api/status snapshot, this returns 503 when the app
+    can't serve fresh data.
+
+    Lenient by design: ready as long as AT LEAST ONE feed has fresh data, so a
+    misconfigured key (which only stops the bus feed) doesn't take down an
+    otherwise-working subway map. Degraded when no feed is fresh, or the bus
+    route index build has failed. A still-building/missing index is NOT
+    degraded, so a cold-start deploy stays healthy through the index warmup
+    (within Railway's healthcheckTimeout) instead of flapping."""
+    reasons: list[str] = []
+    now = time.time()
+    cache = getattr(app.state, "feed_cache", {})
+    # A feed is fresh if it has data AND neither (a) the upstream content was
+    # stale at the last poll (feed_age; unknown is tolerated — having data beats
+    # penalizing a missing timestamp) nor (b) the poll loop has stalled
+    # (now - fetched_at). The poll-age term catches a stuck poller that keeps
+    # serving frozen last-good data, which feed_age alone can't see. Both use
+    # server-recorded times, so no clock skew. The `<` boundary matches the
+    # frontend (helpers.js flags at age >= FEED_STALE_AFTER_S).
+    fresh = []
+    for name, entry in cache.items():
+        if entry["data"] is None:
+            continue
+        feed_age = _feed_age(entry)
+        upstream_ok = feed_age is None or feed_age < FEED_STALE_AFTER_S
+        poll_ok = (now - entry["fetched_at"]) < FEED_STALE_AFTER_S
+        if upstream_ok and poll_ok:
+            fresh.append(name)
+    if not fresh:
+        reasons.append("no feed has fresh data")
+    if bus_static.status() == "failed":
+        reasons.append("bus route index failed to build")
+
+    body: dict = {"status": "fail" if reasons else "pass"}
+    if reasons:
+        body["reasons"] = reasons
+    return JSONResponse(body, status_code=503 if reasons else 200)
 
 
 # Mounted last so /api/* routes take priority; html=True serves index.html at /.

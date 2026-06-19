@@ -4,7 +4,9 @@ httpx's ASGITransport never sends lifespan events, so app.state is primed
 manually per test and no real MTA endpoint is ever contacted.
 """
 
+import asyncio
 import json
+import time
 
 import httpx
 import pytest
@@ -57,23 +59,23 @@ async def test_empty_cache_returns_warming_up_503(client, path):
 
 
 async def test_successful_refresh_serves_envelope(client, cache):
-    cache["buses"].update(data=BUSES, fetched_at=1000.0, error=None)
-    cache["subways"].update(data=TRAINS, fetched_at=1001.0, error=None)
+    cache["buses"].update(data=BUSES, fetched_at=1000.0, feed_timestamp=995.0, error=None)
+    cache["subways"].update(data=TRAINS, fetched_at=1001.0, feed_timestamp=996.0, error=None)
     res = await client.get("/api/buses")
     assert res.status_code == 200
-    assert res.json() == {"fetched_at": 1000.0, "data": BUSES}
+    assert res.json() == {"fetched_at": 1000.0, "feed_timestamp": 995.0, "data": BUSES}
     res = await client.get("/api/subways")
-    assert res.json() == {"fetched_at": 1001.0, "data": TRAINS}
+    assert res.json() == {"fetched_at": 1001.0, "feed_timestamp": 996.0, "data": TRAINS}
 
 
 async def test_stale_data_beats_subsequent_error(client, cache):
     # A successful refresh followed by a failed one: last-known data is
-    # served, with the old fetched_at exposing the staleness.
-    cache["buses"].update(data=BUSES, fetched_at=1000.0, error=None)
+    # served, with the old fetched_at/feed_timestamp exposing the staleness.
+    cache["buses"].update(data=BUSES, fetched_at=1000.0, feed_timestamp=995.0, error=None)
     app_module._note_failure(cache["buses"], 502, "Upstream MTA feed error: boom")
     res = await client.get("/api/buses")
     assert res.status_code == 200
-    assert res.json() == {"fetched_at": 1000.0, "data": BUSES}
+    assert res.json() == {"fetched_at": 1000.0, "feed_timestamp": 995.0, "data": BUSES}
 
 
 async def test_never_filled_cache_serves_recorded_503(client, cache):
@@ -184,7 +186,12 @@ async def test_status_warming_state(client, status_env):
     res = await client.get("/api/status")
     assert res.status_code == 200
     body = res.json()
-    assert body["feeds"]["buses"] == {"fetched_at": None, "age_s": None, "last_error": None}
+    assert body["feeds"]["buses"] == {
+        "fetched_at": None,
+        "age_s": None,
+        "feed_age_s": None,
+        "last_error": None,
+    }
     assert body["bus_route_index"] == {"status": "building", "partial": False}
     assert body["static_subway_gtfs"] is None
 
@@ -202,13 +209,16 @@ async def test_status_reports_ages_errors_and_gtfs_mtime(
     gtfs.write_bytes(b"zip")
     monkeypatch.setattr(static_data, "SUBWAY_GTFS_ZIP", gtfs)
 
-    cache["buses"].update(data=BUSES, fetched_at=time_mod.time() - 30, error=None)
+    fetched = time_mod.time() - 30
+    cache["buses"].update(data=BUSES, fetched_at=fetched, feed_timestamp=fetched - 5, error=None)
     app_module._note_failure(cache["subways"], 502, "All subway feeds failed: timeout")
 
     res = await client.get("/api/status")
     body = res.json()
     assert 29 <= body["feeds"]["buses"]["age_s"] <= 40
+    assert body["feeds"]["buses"]["feed_age_s"] == 5.0  # fetched_at - feed_timestamp
     assert body["feeds"]["buses"]["last_error"] is None
+    assert body["feeds"]["subways"]["feed_age_s"] is None  # never filled
     assert body["feeds"]["subways"]["last_error"] == {
         "status": 502,
         "detail": "All subway feeds failed: timeout",
@@ -326,3 +336,154 @@ async def test_subway_arrivals_rejects_malformed_station_id(client, subway_state
     cache["subways"].update(data=[], fetched_at=1.0, error=None)
     res = await client.get("/api/subway-arrivals/..%2Fevil")
     assert res.status_code == 404
+
+
+# ---------------- /healthz readiness probe ----------------
+
+
+@pytest.fixture
+def healthz_env(cache, monkeypatch):
+    # Bus index "ready" by default so it doesn't add a degraded reason; tests
+    # that care about the index override it.
+    monkeypatch.setattr(bus_static, "_status", "ready")
+    return cache
+
+
+def _fresh(entry, age=5.0):
+    # Polled just now; content was `age` seconds old at that poll.
+    now = time.time()
+    entry.update(data=[1], fetched_at=now, feed_timestamp=now - age, error=None)
+
+
+def _stale(entry, age=300.0):
+    # Recent poll, but upstream content `age` seconds old (upstream staleness).
+    now = time.time()
+    entry.update(data=[1], fetched_at=now, feed_timestamp=now - age, error=None)
+
+
+async def test_healthz_warming_is_degraded(client, healthz_env):
+    # No feed filled yet (cold start, before first poll).
+    res = await client.get("/healthz")
+    assert res.status_code == 503
+    assert res.json()["status"] == "fail"
+    assert any("fresh" in r for r in res.json()["reasons"])
+
+
+async def test_healthz_passes_with_one_fresh_feed(client, healthz_env):
+    _fresh(healthz_env["buses"])
+    res = await client.get("/healthz")
+    assert res.status_code == 200
+    assert res.json() == {"status": "pass"}
+
+
+async def test_healthz_lenient_one_fresh_other_stale(client, healthz_env):
+    _fresh(healthz_env["buses"])  # fresh
+    _stale(healthz_env["subways"])  # 300s stale
+    res = await client.get("/healthz")
+    assert res.status_code == 200  # >= 1 fresh feed -> healthy
+
+
+async def test_healthz_degraded_when_all_feeds_stale(client, healthz_env):
+    _stale(healthz_env["buses"])
+    _stale(healthz_env["subways"])
+    res = await client.get("/healthz")
+    assert res.status_code == 503
+    assert any("fresh" in r for r in res.json()["reasons"])
+
+
+async def test_healthz_degraded_when_bus_index_failed(client, healthz_env, monkeypatch):
+    _fresh(healthz_env["buses"])  # feed is fresh...
+    monkeypatch.setattr(bus_static, "_status", "failed")  # ...but the index failed
+    res = await client.get("/healthz")
+    assert res.status_code == 503
+    assert any("index" in r for r in res.json()["reasons"])
+
+
+async def test_healthz_building_index_stays_healthy(client, healthz_env, monkeypatch):
+    _fresh(healthz_env["buses"])
+    monkeypatch.setattr(bus_static, "_status", "building")  # cold-start build in progress
+    res = await client.get("/healthz")
+    assert res.status_code == 200  # building != failed -> no flap during warmup
+
+
+async def test_healthz_degraded_at_exactly_the_threshold(client, healthz_env):
+    # age == FEED_STALE_AFTER_S is stale on both sides (< boundary, matching the
+    # frontend's >= warn), so a feed exactly at the threshold is not fresh.
+    _stale(healthz_env["buses"], age=float(app_module.FEED_STALE_AFTER_S))
+    _stale(healthz_env["subways"], age=float(app_module.FEED_STALE_AFTER_S))
+    res = await client.get("/healthz")
+    assert res.status_code == 503
+
+
+async def test_healthz_fresh_with_unknown_feed_timestamp(client, healthz_env):
+    # A feed can have data but no feed_timestamp (the feed omitted its header
+    # time); unknown upstream age is tolerated as long as the poll is current.
+    healthz_env["buses"].update(data=[1], fetched_at=time.time(), feed_timestamp=None, error=None)
+    res = await client.get("/healthz")
+    assert res.status_code == 200
+    assert res.json() == {"status": "pass"}
+
+
+async def test_healthz_degraded_when_poll_loop_stalled(client, healthz_env):
+    # Upstream content was fresh at the last poll, but that poll was long ago
+    # (a stuck poller serving frozen data) — the poll-age term must catch it.
+    old = time.time() - 600
+    healthz_env["buses"].update(data=[1], fetched_at=old, feed_timestamp=old - 5, error=None)
+    res = await client.get("/healthz")
+    assert res.status_code == 503
+
+
+async def test_healthz_never_leaks_error_details(client, healthz_env):
+    app_module._note_failure(healthz_env["buses"], 502, "boom at https://feed/x?key=SECRET")
+    res = await client.get("/healthz")
+    assert "SECRET" not in res.text and "https://" not in res.text
+
+
+# ---------------- lifespan startup/shutdown smoke ----------------
+
+
+async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
+    # ASGITransport never runs lifespan, so drive the contextmanager directly
+    # (no extra dependency). Fake the static loaders and the upstream fetchers
+    # so startup needs no network and the poll fills the cache instantly.
+    async def fake_stops():
+        return {"101N": {"name": "Alpha", "lat": 40.7, "lon": -74.0}}
+
+    async def fake_fetch_buses(client):
+        return BUSES, 1000.0
+
+    async def fake_fetch_subways(stops, client):
+        return TRAINS, {}, 1001.0
+
+    async def fake_ensure_index():
+        return None
+
+    monkeypatch.setattr(app_module, "load_subway_stops", fake_stops)
+    monkeypatch.setattr(app_module, "load_subway_route_shapes", lambda: [])
+    monkeypatch.setattr(app_module, "load_subway_stations", lambda: {})
+    monkeypatch.setattr(app_module, "fetch_vehicle_positions", fake_fetch_buses)
+    monkeypatch.setattr(app_module, "fetch_subway_trains", fake_fetch_subways)
+    monkeypatch.setattr(bus_static, "ensure_index", fake_ensure_index)
+
+    app = app_module.app
+    async with app_module.lifespan(app):
+        # Static load ran; cache + tasks exist.
+        assert app.state.subway_stops == {"101N": {"name": "Alpha", "lat": 40.7, "lon": -74.0}}
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+            # Wait for the background poll task's first cycle to fill the cache.
+            for _ in range(100):
+                if app.state.feed_cache["buses"]["data"] is not None:
+                    break
+                await asyncio.sleep(0.01)
+            assert app.state.feed_cache["buses"]["data"] == BUSES
+            assert app.state.feed_cache["buses"]["feed_timestamp"] == 1000.0
+            res = await c.get("/api/status")
+            assert res.status_code == 200
+            assert res.json()["feeds"]["buses"]["fetched_at"] is not None
+        poll_task = app.state.feed_poll_task
+        index_task = app.state.bus_index_task
+
+    # Shutdown cancelled/awaited both background tasks.
+    assert poll_task.done()
+    assert index_task.done()

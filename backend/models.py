@@ -32,12 +32,14 @@ class Train(BaseModel):
 
 
 class BusFeed(BaseModel):
-    fetched_at: float | None
+    fetched_at: float | None  # this server's poll time
+    feed_timestamp: float | None  # the feed's content time (MTA's clock)
     data: list[Vehicle]
 
 
 class SubwayFeed(BaseModel):
     fetched_at: float | None
+    feed_timestamp: float | None  # oldest content time across subway feeds
     data: list[Train]
 
 
@@ -79,7 +81,8 @@ class FeedError(BaseModel):
 
 class FeedStatus(BaseModel):
     fetched_at: float | None
-    age_s: float | None
+    age_s: float | None  # seconds since this server last polled
+    feed_age_s: float | None  # how stale the feed CONTENT was at poll time
     last_error: FeedError | None
 
 

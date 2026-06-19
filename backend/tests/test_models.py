@@ -51,11 +51,13 @@ def test_train_model_matches_real_decode_output_exactly():
 
 
 def test_feed_envelopes_validate():
-    BusFeed.model_validate({"fetched_at": 1000.0, "data": [VEHICLE]})
-    BusFeed.model_validate({"fetched_at": None, "data": []})
+    # feed_timestamp is a required field (may be None) alongside fetched_at.
+    BusFeed.model_validate({"fetched_at": 1000.0, "feed_timestamp": 995.0, "data": [VEHICLE]})
+    BusFeed.model_validate({"fetched_at": None, "feed_timestamp": None, "data": []})
     SubwayFeed.model_validate(
         {
             "fetched_at": 1000.0,
+            "feed_timestamp": 996.0,
             "data": [
                 {
                     "trip_id": "70000_1..N01R",
@@ -101,10 +103,16 @@ def test_status_model_validates_handler_shape():
     StatusResponse.model_validate(
         {
             "feeds": {
-                "buses": {"fetched_at": 1000.0, "age_s": 5.0, "last_error": None},
+                "buses": {
+                    "fetched_at": 1000.0,
+                    "age_s": 5.0,
+                    "feed_age_s": 3.0,
+                    "last_error": None,
+                },
                 "subways": {
                     "fetched_at": None,
                     "age_s": None,
+                    "feed_age_s": None,
                     "last_error": {"status": 502, "detail": "boom"},
                 },
             },

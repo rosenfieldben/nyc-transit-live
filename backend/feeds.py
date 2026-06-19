@@ -24,6 +24,17 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 VEHICLE_POSITIONS_URL = "https://gtfsrt.prod.obanyc.com/vehiclePositions"
 
+# NYC bounding box. The bus feed occasionally emits out-of-range coordinates
+# (e.g. (0, 0) from a depot/test vehicle) that would scatter markers across the
+# globe; this is the same invariant the subway golden test asserts.
+NYC_LAT_MIN, NYC_LAT_MAX = 40.4, 41.1
+NYC_LON_MIN, NYC_LON_MAX = -74.3, -73.6
+
+
+def _in_nyc(lat: float, lon: float) -> bool:
+    return NYC_LAT_MIN <= lat <= NYC_LAT_MAX and NYC_LON_MIN <= lon <= NYC_LON_MAX
+
+
 # Keyless subway GTFS-RT feeds, one per line group.
 _SUBWAY_BASE = "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs"
 SUBWAY_FEED_URLS = {
@@ -48,12 +59,20 @@ def _api_key() -> str:
     return key
 
 
-async def fetch_vehicle_positions(client: httpx.AsyncClient) -> list[dict]:
-    """Fetch the feed, decode the protobuf, and return one dict per vehicle.
+def _header_timestamp(feed) -> float | None:
+    """The feed's content time (FeedHeader.timestamp, MTA's clock) as a float,
+    or None when the feed omits it (the field is 0). This is distinct from the
+    app server's poll time — see the freshness handling in main.py."""
+    return float(feed.header.timestamp) or None
 
-    Each dict has: id, route_id, latitude, longitude, bearing. Entities without
-    a position are skipped; bearing is None when the feed doesn't report it.
-    The caller owns the client (the polling task holds one for its lifetime).
+
+async def fetch_vehicle_positions(client: httpx.AsyncClient) -> tuple[list[dict], float | None]:
+    """Fetch the feed, decode the protobuf, and return (vehicles, feed_timestamp).
+
+    Each vehicle dict has: id, route_id, latitude, longitude, bearing. Entities
+    without a position are skipped; bearing is None when the feed doesn't report
+    it. feed_timestamp is the feed's content time (MTA's clock). The caller owns
+    the client (the polling task holds one for its lifetime).
     """
     resp = await client.get(VEHICLE_POSITIONS_URL, params={"key": _api_key()})
     resp.raise_for_status()
@@ -70,6 +89,8 @@ async def fetch_vehicle_positions(client: httpx.AsyncClient) -> list[dict]:
         if not v.HasField("position"):
             continue
         pos = v.position
+        if not _in_nyc(pos.latitude, pos.longitude):
+            continue  # out-of-range coordinate (e.g. 0,0); not a real NYC bus
         vehicles.append(
             {
                 "id": v.vehicle.id or entity.id,
@@ -79,7 +100,7 @@ async def fetch_vehicle_positions(client: httpx.AsyncClient) -> list[dict]:
                 "bearing": pos.bearing if pos.HasField("bearing") else None,
             }
         )
-    return vehicles
+    return vehicles, _header_timestamp(feed)
 
 
 NYC_TZ = ZoneInfo("America/New_York")
@@ -121,6 +142,14 @@ def _trip_start_ts(trip) -> float | None:
     centiminutes after midnight of the service day (may exceed 24h for
     post-midnight trips). Returns None if neither source parses.
     """
+    # KNOWN CAVEAT (DST): we add a timedelta to service-day midnight and rely on
+    # .timestamp() below. Adding a timedelta to a zoneinfo-aware datetime shifts
+    # wall-clock fields without re-normalizing the UTC offset, so on the ~2
+    # days/year that cross a DST boundary the derived instant can be off by an
+    # hour. The schedule start is only used as a coarse "has this trip departed"
+    # discriminator (TRIP_START_GRACE_S = 120s), so a twice-yearly hour skew
+    # doesn't meaningfully affect placement; a precise fix would need wall-clock
+    # reconstruction with fold handling and isn't worth the regression risk.
     try:
         d = trip.start_date  # YYYYMMDD
         base = datetime(int(d[:4]), int(d[4:6]), int(d[6:8]), tzinfo=NYC_TZ)
@@ -143,6 +172,24 @@ def _trip_start_ts(trip) -> float | None:
 # Next this many upcoming trains kept per station and direction for arrivals.
 ARRIVALS_PER_DIRECTION = 6
 
+# GTFS-RT schedule relationships that mean "ignore this": a CANCELED trip isn't
+# running; a SKIPPED/NO_DATA stop carries no real prediction. We drop them from
+# both placement and arrivals.
+#
+# DELETED is included for forward-compatibility but does NOT take effect with
+# this binding: gtfs-realtime-bindings 2.0.0 predates DELETED in the trip enum,
+# so getattr resolves it to the -1 sentinel (collision-safe) AND, more to the
+# point, a real DELETED=7 on the wire is coerced to SCHEDULED=0 by proto2's
+# closed-enum decoding — so a DELETED trip currently reads as SCHEDULED and is
+# NOT filtered. Reliably dropping it would need a binding upgrade (after which
+# getattr would resolve DELETED and this check would work) or raw unknown-field
+# parsing; neither is worth it for a rare case. CANCELED (value 3, present in
+# the binding) is filtered correctly.
+_TRIP_SR = gtfs_realtime_pb2.TripDescriptor.ScheduleRelationship
+_STOP_SR = gtfs_realtime_pb2.TripUpdate.StopTimeUpdate.ScheduleRelationship
+_DROP_TRIP_RELATIONSHIPS = frozenset({_TRIP_SR.CANCELED, getattr(_TRIP_SR, "DELETED", -1)})
+_DROP_STOP_RELATIONSHIPS = frozenset({_STOP_SR.SKIPPED, _STOP_SR.NO_DATA})
+
 
 def _platform_direction(stop_id: str) -> tuple[str | None, str]:
     """(direction, station_id) for a platform stop_id via its N/S suffix.
@@ -160,8 +207,9 @@ def _platform_direction(stop_id: str) -> tuple[str | None, str]:
 
 def _decode_feed(
     raw: bytes, stops: dict[str, dict], feed_key: str, now: float
-) -> tuple[list[dict], dict[str, dict[str, list[dict]]]]:
-    """Decode one subway feed into (train placements, per-station arrivals).
+) -> tuple[list[dict], dict[str, dict[str, list[dict]]], float | None]:
+    """Decode one subway feed into (train placements, per-station arrivals,
+    feed_timestamp).
 
     Parses the protobuf once and walks each trip's stop_time_updates for both
     outputs. The subway feeds carry NYC-specific protobuf extensions; the
@@ -183,6 +231,8 @@ def _decode_feed(
         if not entity.HasField("trip_update"):
             continue
         tu = entity.trip_update
+        if tu.trip.schedule_relationship in _DROP_TRIP_RELATIONSHIPS:
+            continue  # canceled/deleted trip: drop from both placement and arrivals
         trip_id = tu.trip.trip_id or f"{feed_key}:{entity.id}"
         route_id = tu.trip.route_id or None
 
@@ -190,6 +240,8 @@ def _decode_feed(
         for stu in tu.stop_time_update:
             if not stu.stop_id or stu.stop_id not in stops:
                 continue
+            if stu.schedule_relationship in _DROP_STOP_RELATIONSHIPS:
+                continue  # skipped / no-data stop: no real prediction
             t = _stop_time(stu)
             if t is None or t < now - 60:  # same just-passed grace as placement
                 continue
@@ -213,6 +265,8 @@ def _decode_feed(
         for stu in tu.stop_time_update:
             if not stu.stop_id or stu.stop_id not in stops:
                 continue  # unknown station (e.g. closed); try the next one
+            if stu.schedule_relationship in _DROP_STOP_RELATIONSHIPS:
+                continue  # skipped / no-data stop: not a real placement target
             if first_resolvable is None:
                 first_resolvable = stu
             t = _stop_time(stu)
@@ -228,13 +282,14 @@ def _decode_feed(
         if chosen is None:
             continue  # trip finished, or nothing resolvable
 
-        # No derivable schedule start: fall back to distrusting a trip still
-        # at its first listed stop with that stop far in the future.
+        # No derivable schedule start: fall back to distrusting a trip still at
+        # its first RESOLVABLE stop with that stop far in the future. (Using
+        # the first resolvable stop, not stop_time_update[0]: a leading unknown
+        # station must not let a far-future trip bypass this cap.)
         if (
             start_ts is None
             and chosen_time is not None
-            and len(tu.stop_time_update)
-            and chosen is tu.stop_time_update[0]
+            and chosen is first_resolvable
             and chosen_time > now + MAX_FUTURE_FIRST_STOP_S
         ):
             continue
@@ -252,7 +307,7 @@ def _decode_feed(
                 "direction": direction,
             }
         )
-    return trains, arrivals
+    return trains, arrivals, _header_timestamp(feed)
 
 
 def _decode_trains(raw: bytes, stops: dict[str, dict], feed_key: str, now: float) -> list[dict]:
@@ -263,26 +318,32 @@ def _decode_trains(raw: bytes, stops: dict[str, dict], feed_key: str, now: float
 
 def _aggregate_feeds(
     results: list, stops: dict[str, dict], now: float
-) -> tuple[list[dict], dict[str, dict[str, list[dict]]], list[str]]:
+) -> tuple[list[dict], dict[str, dict[str, list[dict]]], float | None, list[str]]:
     """Decode every feed result, dedup trips across feeds, and merge arrivals.
 
     `results` is aligned with SUBWAY_FEED_URLS; each item is decoded protobuf
-    bytes or an exception from the fetch. Returns (trains, arrivals, errors).
+    bytes or an exception from the fetch. Returns
+    (trains, arrivals, feed_timestamp, errors), where feed_timestamp is the
+    OLDEST content time across successfully decoded feeds — the freshness of
+    the combined view is bounded by its stalest member.
     """
     trains: list[dict] = []
     seen_trips: set[str] = set()
     arrivals: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
     arrival_trips: set[str] = set()
+    timestamps: list[float] = []
     errors: list[str] = []
     for feed_key, result in zip(SUBWAY_FEED_URLS, results):
         if isinstance(result, BaseException):
             errors.append(f"{feed_key}: {result}")
             continue
         try:
-            feed_trains, feed_arrivals = _decode_feed(result, stops, feed_key, now)
+            feed_trains, feed_arrivals, feed_ts = _decode_feed(result, stops, feed_key, now)
         except DecodeError as exc:
             errors.append(f"{feed_key}: undecodable protobuf ({exc})")
             continue
+        if feed_ts is not None:
+            timestamps.append(feed_ts)
         for train in feed_trains:
             if train["trip_id"] in seen_trips:
                 continue
@@ -309,18 +370,20 @@ def _aggregate_feeds(
         for direction, arrs in dirs.items():
             arrs.sort(key=lambda a: a["arrival"])
             trimmed[station_id][direction] = arrs[:ARRIVALS_PER_DIRECTION]
-    return trains, trimmed, errors
+    feed_timestamp = min(timestamps) if timestamps else None
+    return trains, trimmed, feed_timestamp, errors
 
 
 async def fetch_subway_trains(
     stops: dict[str, dict], client: httpx.AsyncClient
-) -> tuple[list[dict], dict[str, dict[str, list[dict]]]]:
+) -> tuple[list[dict], dict[str, dict[str, list[dict]]], float | None]:
     """Fetch all subway feeds concurrently; return (train placements,
-    per-station arrivals index).
+    per-station arrivals index, feed_timestamp).
 
-    Individual feed failures are logged and skipped so one bad feed doesn't
-    take out the endpoint; raises only when every feed fails. The caller owns
-    the client (the polling task holds one for its lifetime).
+    feed_timestamp is the oldest content time across decoded feeds. Individual
+    feed failures are logged and skipped so one bad feed doesn't take out the
+    endpoint; raises only when every feed fails. The caller owns the client
+    (the polling task holds one for its lifetime).
     """
     now = time.time()
 
@@ -334,7 +397,7 @@ async def fetch_subway_trains(
         return_exceptions=True,
     )
 
-    trains, arrivals, errors = _aggregate_feeds(results, stops, now)
+    trains, arrivals, feed_timestamp, errors = _aggregate_feeds(results, stops, now)
     if errors:
         logger.warning(
             "%d of %d subway feeds failed: %s",
@@ -344,4 +407,4 @@ async def fetch_subway_trains(
         )
     if len(errors) == len(SUBWAY_FEED_URLS):
         raise RuntimeError(f"All subway feeds failed: {'; '.join(errors)}")
-    return trains, arrivals
+    return trains, arrivals, feed_timestamp

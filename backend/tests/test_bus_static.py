@@ -172,3 +172,106 @@ def test_missing_direction_id_bucketed_separately(tmp_path, cache_dir):
     _process_zip(z, skip_routes=set())
     # "?" bucket sorts after "0", so both polylines appear, SA first.
     assert read_route(cache_dir, "M1")["directions"] == [SA_GEO, SB_GEO]
+
+
+# ---------------- _build_index_sync: per-borough failure + deadline ----------------
+
+
+class _FakeStream:
+    def __init__(self, data):
+        self._data = data
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def raise_for_status(self):
+        pass
+
+    def iter_bytes(self):
+        yield self._data
+
+
+class _FakeBuildClient:
+    def __init__(self, data=b"zipbytes"):
+        self._data = data
+
+    def stream(self, method, url):
+        return _FakeStream(self._data)
+
+
+def test_download_borough_enforces_whole_transfer_deadline(tmp_path, monkeypatch):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    monkeypatch.setattr(bus_static, "BUS_CACHE_DIR", cache)
+    monkeypatch.setattr(bus_static, "BUS_ZIP_DEADLINE_S", -1)  # any elapsed exceeds it
+    bus_static._stop.clear()
+    with pytest.raises(TimeoutError):
+        bus_static._download_borough(_FakeBuildClient(), "queens", "http://x", set())
+    assert list(cache.glob("*.part")) == []  # the temp file is cleaned up
+
+
+def test_build_index_records_a_failed_borough_and_keeps_the_rest(tmp_path, monkeypatch):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    monkeypatch.setattr(bus_static, "BUS_CACHE_DIR", cache)
+    monkeypatch.setattr(bus_static, "MANIFEST_PATH", cache / "_manifest.json")
+    monkeypatch.setattr(bus_static, "_partial", False)
+    bus_static._stop.clear()
+
+    failing = "queens"
+
+    def fake_download(client, key, url, skip_routes):
+        if key == failing:
+            raise TimeoutError("deadline exceeded")  # e.g. an over-deadline download
+        return {f"route-{key}"}
+
+    monkeypatch.setattr(bus_static, "_download_borough", fake_download)
+    routes = bus_static._build_index_sync()
+
+    assert f"route-{failing}" not in routes
+    assert len(routes) == len(bus_static.BUS_GTFS_URLS) - 1  # the other boroughs succeeded
+    manifest = json.loads((cache / "_manifest.json").read_text())
+    assert manifest["failed"] == [failing]  # recorded, not a total build failure
+    assert bus_static.is_partial() is True
+
+
+def test_download_borough_raises_build_stopped_on_shutdown(tmp_path, monkeypatch):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    monkeypatch.setattr(bus_static, "BUS_CACHE_DIR", cache)
+    bus_static._stop.set()  # shutdown signalled before/at the download
+    try:
+        with pytest.raises(bus_static._BuildStopped):
+            bus_static._download_borough(_FakeBuildClient(), "queens", "http://x", set())
+        assert list(cache.glob("*.part")) == []  # temp file cleaned up
+    finally:
+        bus_static._stop.clear()  # module-global; don't leak to other tests
+
+
+def test_build_index_aborts_without_manifest_on_shutdown(tmp_path, monkeypatch):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    monkeypatch.setattr(bus_static, "BUS_CACHE_DIR", cache)
+    monkeypatch.setattr(bus_static, "MANIFEST_PATH", cache / "_manifest.json")
+    bus_static._stop.clear()
+
+    calls = []
+
+    def fake_download(client, key, url, skip_routes):
+        calls.append(key)
+        if len(calls) == 2:
+            raise bus_static._BuildStopped  # shutdown mid-build, on the 2nd borough
+        return {f"route-{key}"}
+
+    monkeypatch.setattr(bus_static, "_download_borough", fake_download)
+    try:
+        routes = bus_static._build_index_sync()
+        # Returned the routes gathered so far; did NOT record a failed borough
+        # and did NOT write a (partial) manifest the next startup would trust.
+        assert routes == {"route-manhattan"}  # first borough only
+        assert not (cache / "_manifest.json").exists()
+    finally:
+        bus_static._stop.clear()

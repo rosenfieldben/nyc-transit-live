@@ -13,6 +13,7 @@ from pathlib import Path
 import httpx
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from google.protobuf.message import DecodeError
 
@@ -339,6 +340,40 @@ async def get_status() -> dict:
         },
         "static_subway_gtfs": static_gtfs,
     }
+
+
+@app.get("/healthz", include_in_schema=False)
+async def healthz() -> JSONResponse:
+    """Readiness probe for the platform (Railway points its healthcheck here).
+    Unlike the always-200 /api/status snapshot, this returns 503 when the app
+    can't serve fresh data.
+
+    Lenient by design: ready as long as AT LEAST ONE feed has fresh data, so a
+    misconfigured key (which only stops the bus feed) doesn't take down an
+    otherwise-working subway map. Degraded when no feed is fresh, or the bus
+    route index build has failed. A still-building/missing index is NOT
+    degraded, so a cold-start deploy stays healthy through the index warmup
+    (within Railway's healthcheckTimeout) instead of flapping."""
+    reasons: list[str] = []
+    cache = getattr(app.state, "feed_cache", {})
+    # A feed counts as fresh if it has data and its content age is within the
+    # threshold (or unknown — having data beats penalizing a missing timestamp).
+    fresh = []
+    for name, entry in cache.items():
+        if entry["data"] is None:
+            continue
+        age = _feed_age(entry)
+        if age is None or age <= FEED_STALE_AFTER_S:
+            fresh.append(name)
+    if not fresh:
+        reasons.append("no feed has fresh data")
+    if bus_static.status() == "failed":
+        reasons.append("bus route index failed to build")
+
+    body: dict = {"status": "fail" if reasons else "pass"}
+    if reasons:
+        body["reasons"] = reasons
+    return JSONResponse(body, status_code=503 if reasons else 200)
 
 
 # Mounted last so /api/* routes take priority; html=True serves index.html at /.

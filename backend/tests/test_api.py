@@ -334,3 +334,73 @@ async def test_subway_arrivals_rejects_malformed_station_id(client, subway_state
     cache["subways"].update(data=[], fetched_at=1.0, error=None)
     res = await client.get("/api/subway-arrivals/..%2Fevil")
     assert res.status_code == 404
+
+
+# ---------------- /healthz readiness probe ----------------
+
+
+@pytest.fixture
+def healthz_env(cache, monkeypatch):
+    # Bus index "ready" by default so it doesn't add a degraded reason; tests
+    # that care about the index override it.
+    monkeypatch.setattr(bus_static, "_status", "ready")
+    return cache
+
+
+def _fresh(entry, fetched_at=1000.0, age=5.0):
+    entry.update(data=[1], fetched_at=fetched_at, feed_timestamp=fetched_at - age, error=None)
+
+
+def _stale(entry, fetched_at=1000.0, age=300.0):
+    entry.update(data=[1], fetched_at=fetched_at, feed_timestamp=fetched_at - age, error=None)
+
+
+async def test_healthz_warming_is_degraded(client, healthz_env):
+    # No feed filled yet (cold start, before first poll).
+    res = await client.get("/healthz")
+    assert res.status_code == 503
+    assert res.json()["status"] == "fail"
+    assert any("fresh" in r for r in res.json()["reasons"])
+
+
+async def test_healthz_passes_with_one_fresh_feed(client, healthz_env):
+    _fresh(healthz_env["buses"])
+    res = await client.get("/healthz")
+    assert res.status_code == 200
+    assert res.json() == {"status": "pass"}
+
+
+async def test_healthz_lenient_one_fresh_other_stale(client, healthz_env):
+    _fresh(healthz_env["buses"])  # fresh
+    _stale(healthz_env["subways"])  # 300s stale
+    res = await client.get("/healthz")
+    assert res.status_code == 200  # >= 1 fresh feed -> healthy
+
+
+async def test_healthz_degraded_when_all_feeds_stale(client, healthz_env):
+    _stale(healthz_env["buses"])
+    _stale(healthz_env["subways"])
+    res = await client.get("/healthz")
+    assert res.status_code == 503
+    assert any("fresh" in r for r in res.json()["reasons"])
+
+
+async def test_healthz_degraded_when_bus_index_failed(client, healthz_env, monkeypatch):
+    _fresh(healthz_env["buses"])  # feed is fresh...
+    monkeypatch.setattr(bus_static, "_status", "failed")  # ...but the index failed
+    res = await client.get("/healthz")
+    assert res.status_code == 503
+    assert any("index" in r for r in res.json()["reasons"])
+
+
+async def test_healthz_building_index_stays_healthy(client, healthz_env, monkeypatch):
+    _fresh(healthz_env["buses"])
+    monkeypatch.setattr(bus_static, "_status", "building")  # cold-start build in progress
+    res = await client.get("/healthz")
+    assert res.status_code == 200  # building != failed -> no flap during warmup
+
+
+async def test_healthz_never_leaks_error_details(client, healthz_env):
+    app_module._note_failure(healthz_env["buses"], 502, "boom at https://feed/x?key=SECRET")
+    res = await client.get("/healthz")
+    assert "SECRET" not in res.text and "https://" not in res.text

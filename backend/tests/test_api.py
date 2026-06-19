@@ -4,6 +4,7 @@ httpx's ASGITransport never sends lifespan events, so app.state is primed
 manually per test and no real MTA endpoint is ever contacted.
 """
 
+import asyncio
 import json
 
 import httpx
@@ -404,3 +405,53 @@ async def test_healthz_never_leaks_error_details(client, healthz_env):
     app_module._note_failure(healthz_env["buses"], 502, "boom at https://feed/x?key=SECRET")
     res = await client.get("/healthz")
     assert "SECRET" not in res.text and "https://" not in res.text
+
+
+# ---------------- lifespan startup/shutdown smoke ----------------
+
+
+async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
+    # ASGITransport never runs lifespan, so drive the contextmanager directly
+    # (no extra dependency). Fake the static loaders and the upstream fetchers
+    # so startup needs no network and the poll fills the cache instantly.
+    async def fake_stops():
+        return {"101N": {"name": "Alpha", "lat": 40.7, "lon": -74.0}}
+
+    async def fake_fetch_buses(client):
+        return BUSES, 1000.0
+
+    async def fake_fetch_subways(stops, client):
+        return TRAINS, {}, 1001.0
+
+    async def fake_ensure_index():
+        return None
+
+    monkeypatch.setattr(app_module, "load_subway_stops", fake_stops)
+    monkeypatch.setattr(app_module, "load_subway_route_shapes", lambda: [])
+    monkeypatch.setattr(app_module, "load_subway_stations", lambda: {})
+    monkeypatch.setattr(app_module, "fetch_vehicle_positions", fake_fetch_buses)
+    monkeypatch.setattr(app_module, "fetch_subway_trains", fake_fetch_subways)
+    monkeypatch.setattr(bus_static, "ensure_index", fake_ensure_index)
+
+    app = app_module.app
+    async with app_module.lifespan(app):
+        # Static load ran; cache + tasks exist.
+        assert app.state.subway_stops == {"101N": {"name": "Alpha", "lat": 40.7, "lon": -74.0}}
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+            # Wait for the background poll task's first cycle to fill the cache.
+            for _ in range(100):
+                if app.state.feed_cache["buses"]["data"] is not None:
+                    break
+                await asyncio.sleep(0.01)
+            assert app.state.feed_cache["buses"]["data"] == BUSES
+            assert app.state.feed_cache["buses"]["feed_timestamp"] == 1000.0
+            res = await c.get("/api/status")
+            assert res.status_code == 200
+            assert res.json()["feeds"]["buses"]["fetched_at"] is not None
+        poll_task = app.state.feed_poll_task
+        index_task = app.state.bus_index_task
+
+    # Shutdown cancelled/awaited both background tasks.
+    assert poll_task.done()
+    assert index_task.done()

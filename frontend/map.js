@@ -2,6 +2,12 @@ const POLL_INTERVAL_MS = 15000;
 
 const map = L.map("map").setView([40.7128, -74.006], 12);
 
+// Station dots get their own canvas pane sandwiched between the route lines
+// (overlayPane, 400) and the train/bus markers (markerPane, 600), so the
+// station canvas — not the route-line canvas it overlaps — receives clicks.
+map.createPane("stationPane");
+map.getPane("stationPane").style.zIndex = 450;
+
 L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 19,
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
@@ -271,8 +277,9 @@ async function loadRouteLines() {
 
 /* ----- Subway stations + live arrivals (click a station for countdowns) ----- */
 
-// Canvas-rendered so ~470 circle markers stay cheap and hit-testable.
-const stationRenderer = L.canvas({ padding: 0.5 });
+// Canvas-rendered so ~470 circle markers stay cheap and hit-testable; on its
+// own pane (above the route-line canvas) so station clicks land here.
+const stationRenderer = L.canvas({ padding: 0.5, pane: "stationPane" });
 
 // One station popup is open at a time (Leaflet closes others). A request token
 // guards against a slow fetch landing after the user clicked a different

@@ -668,84 +668,122 @@ def mk_train(trip_id, stop_id, lat, lon, next_time, prev_lat=None, prev_lon=None
     }
 
 
-def _mem(stop_id, lat, lon, time):
+def _obs(stop_id, lat, lon, next_time, anchor=None):
+    # A last_positions entry: last observed position plus the carried anchor.
+    return {"stop_id": stop_id, "lat": lat, "lon": lon, "next_time": next_time, "anchor": anchor}
+
+
+def _anchor(stop_id, lat, lon, time):
     return {"stop_id": stop_id, "lat": lat, "lon": lon, "time": time}
 
 
-def test_carry_forward_synthesizes_prev_from_remembered_stop():
-    train = mk_train("t1", "B02N", 40.71, -74.01, next_time=1000.0)
-    new_mem = carry_forward_prev([train], {"t1": _mem("B01N", 40.70, -74.00, 940.0)})
-    assert (train["prev_lat"], train["prev_lon"], train["prev_time"]) == (40.70, -74.00, 940.0)
-    # And the memory is rebuilt from this poll's position.
-    assert new_mem["t1"] == _mem("B02N", 40.71, -74.01, 1000.0)
+# Three stations along one segment chain.
+S1 = (40.70, -74.00)
+S2 = (40.71, -74.01)
+S3 = (40.72, -74.02)
 
 
-def test_carry_forward_preserves_real_feed_prev():
+def test_carry_forward_transition_synthesizes_prev():
+    # Last poll observed approaching S1 (next_time 940), no anchor yet; now at S2.
+    train = mk_train("t1", "S2", *S2, next_time=1000.0)
+    new_mem = carry_forward_prev([train], {"t1": _obs("S1", *S1, 940.0)})
+    assert (train["prev_lat"], train["prev_lon"], train["prev_time"]) == (*S1, 940.0)
+    # The just-departed station becomes the stored anchor for the next poll.
+    assert new_mem["t1"]["anchor"] == _anchor("S1", *S1, 940.0)
+    assert (new_mem["t1"]["stop_id"], new_mem["t1"]["next_time"]) == ("S2", 1000.0)
+
+
+def test_carry_forward_stable_segment_persists_anchor():
+    # The case the old design missed: same next stop as last poll, but a carried
+    # anchor is present -> prev is STILL synthesized, and the anchor is held fixed.
+    carried = _anchor("S1", *S1, 940.0)
+    train = mk_train("t1", "S2", *S2, next_time=1010.0)
+    new_mem = carry_forward_prev([train], {"t1": _obs("S2", *S2, 1000.0, anchor=carried)})
+    assert (train["prev_lat"], train["prev_lon"], train["prev_time"]) == (*S1, 940.0)
+    assert new_mem["t1"]["anchor"] == carried  # carried forward unchanged
+
+
+def test_carry_forward_preserves_real_feed_prev_but_stores_anchor():
     train = mk_train(
-        "t1",
-        "B02N",
-        40.71,
-        -74.01,
-        next_time=1000.0,
-        prev_lat=40.65,
-        prev_lon=-73.95,
-        prev_time=900.0,
+        "t1", "S2", *S2, next_time=1000.0, prev_lat=40.65, prev_lon=-73.95, prev_time=900.0
     )
-    carry_forward_prev([train], {"t1": _mem("B01N", 40.70, -74.00, 940.0)})
+    new_mem = carry_forward_prev([train], {"t1": _obs("S1", *S1, 940.0)})
     assert (train["prev_lat"], train["prev_lon"], train["prev_time"]) == (40.65, -73.95, 900.0)
+    # The anchor is still computed from the transition and stored for next poll.
+    assert new_mem["t1"]["anchor"] == _anchor("S1", *S1, 940.0)
 
 
-def test_carry_forward_no_memory_leaves_null_but_records_position():
-    train = mk_train("t1", "B02N", 40.71, -74.01, next_time=1000.0)
+def test_carry_forward_first_sighting_records_anchor_none():
+    train = mk_train("t1", "S2", *S2, next_time=1000.0)
     new_mem = carry_forward_prev([train], {})
-    assert train["prev_lat"] is None and train["prev_lon"] is None and train["prev_time"] is None
-    assert new_mem["t1"] == _mem("B02N", 40.71, -74.01, 1000.0)
-
-
-def test_carry_forward_same_stop_dwell_does_not_synthesize():
-    train = mk_train("t1", "B02N", 40.71, -74.01, next_time=1000.0)
-    carry_forward_prev([train], {"t1": _mem("B02N", 40.71, -74.01, 940.0)})
     assert train["prev_lat"] is None
+    assert new_mem["t1"] == _obs("S2", *S2, 1000.0, anchor=None)
 
 
-def test_carry_forward_remembered_time_none_does_not_synthesize():
-    train = mk_train("t1", "B02N", 40.71, -74.01, next_time=1000.0)
-    carry_forward_prev([train], {"t1": _mem("B01N", 40.70, -74.00, None)})
+def test_carry_forward_same_stop_no_anchor_does_not_synthesize():
+    # First segment after sighting: same stop, but no anchor carried yet.
+    train = mk_train("t1", "S2", *S2, next_time=1000.0)
+    new_mem = carry_forward_prev([train], {"t1": _obs("S2", *S2, 980.0, anchor=None)})
     assert train["prev_lat"] is None
+    assert new_mem["t1"]["anchor"] is None
 
 
 def test_carry_forward_next_time_none_does_not_synthesize():
-    train = mk_train("t1", "B02N", 40.71, -74.01, next_time=None)
-    new_mem = carry_forward_prev([train], {"t1": _mem("B01N", 40.70, -74.00, 940.0)})
+    train = mk_train("t1", "S2", *S2, next_time=None)
+    new_mem = carry_forward_prev([train], {"t1": _obs("S1", *S1, 940.0)})
     assert train["prev_lat"] is None
-    assert new_mem["t1"]["time"] is None  # still recorded (with a null anchor)
+    assert new_mem["t1"]["next_time"] is None  # still recorded
 
 
-def test_carry_forward_non_monotonic_remembered_time_does_not_synthesize():
-    # Remembered time >= next_time gives no forward bracket.
-    equal = mk_train("t1", "B02N", 40.71, -74.01, next_time=1000.0)
-    carry_forward_prev([equal], {"t1": _mem("B01N", 40.70, -74.00, 1000.0)})
+def test_carry_forward_anchor_time_none_does_not_synthesize():
+    train = mk_train("t1", "S2", *S2, next_time=1000.0)
+    carried = _anchor("S1", *S1, None)
+    carry_forward_prev([train], {"t1": _obs("S2", *S2, 1000.0, anchor=carried)})
+    assert train["prev_lat"] is None
+
+
+def test_carry_forward_non_monotonic_anchor_does_not_synthesize():
+    # Anchor time >= next_time gives no forward bracket.
+    equal = mk_train("t1", "S2", *S2, next_time=1000.0)
+    carry_forward_prev([equal], {"t1": _obs("S2", *S2, 1000.0, anchor=_anchor("S1", *S1, 1000.0))})
     assert equal["prev_lat"] is None
-    later = mk_train("t1", "B02N", 40.71, -74.01, next_time=1000.0)
-    carry_forward_prev([later], {"t1": _mem("B01N", 40.70, -74.00, 1100.0)})
+    later = mk_train("t1", "S2", *S2, next_time=1000.0)
+    carry_forward_prev([later], {"t1": _obs("S2", *S2, 1000.0, anchor=_anchor("S1", *S1, 1100.0))})
     assert later["prev_lat"] is None
 
 
+def test_carry_forward_anchor_on_current_stop_does_not_synthesize():
+    # Degenerate stop-regression onto the held anchor: the carried anchor records
+    # the very station the train is at now. With every OTHER guard satisfied, the
+    # anchor-stop != current-stop guard alone must block a zero-length prev==next
+    # bracket. (This is the anchor-station sub-case of the documented backward-slide
+    # limitation; here it's correctly refused rather than drawn.)
+    train = mk_train("t1", "S1", *S1, next_time=1100.0)
+    carry_forward_prev([train], {"t1": _obs("S1", *S1, 1000.0, anchor=_anchor("S1", *S1, 940.0))})
+    assert train["prev_lat"] is None
+
+
 def test_carry_forward_prunes_trips_absent_this_poll():
-    train = mk_train("t1", "B02N", 40.71, -74.01, next_time=1000.0)
-    old = {"t1": _mem("B01N", 40.70, -74.00, 940.0), "gone": _mem("X01N", 40.6, -73.9, 800.0)}
+    train = mk_train("t1", "S2", *S2, next_time=1000.0)
+    old = {"t1": _obs("S1", *S1, 940.0), "gone": _obs("X1", 40.6, -73.9, 800.0)}
     new_mem = carry_forward_prev([train], old)
     assert "t1" in new_mem and "gone" not in new_mem
 
 
-def test_carry_forward_two_poll_sequence_glides():
-    # Poll 1: first sighting at B01N, no memory -> prev null, position recorded.
-    p1 = mk_train("t1", "B01N", 40.70, -74.00, next_time=900.0)
-    mem = carry_forward_prev([p1], {})
+def test_carry_forward_multi_poll_continuous_glide():
+    # Poll 1: first sighting at S1, no memory -> prev null.
+    p1 = mk_train("t1", "S1", *S1, next_time=900.0)
+    m1 = carry_forward_prev([p1], {})
     assert p1["prev_lat"] is None
-    # Poll 2: same trip advanced to B02N, feed prev still null -> synthesized prev
-    # is poll 1's stop coords with prev_time == poll 1's next_time.
-    p2 = mk_train("t1", "B02N", 40.71, -74.01, next_time=1000.0)
-    carry_forward_prev([p2], mem)
-    assert (p2["prev_lat"], p2["prev_lon"]) == (40.70, -74.00)
-    assert p2["prev_time"] == 900.0
+    # Poll 2: advanced to S2 -> prev = S1, prev_time == poll 1's next_time.
+    p2 = mk_train("t1", "S2", *S2, next_time=1000.0)
+    m2 = carry_forward_prev([p2], m1)
+    assert (p2["prev_lat"], p2["prev_lon"], p2["prev_time"]) == (*S1, 900.0)
+    # Poll 3: STILL at S2 (same segment) -> prev STILL S1 (anchor held). This is the fix.
+    p3 = mk_train("t1", "S2", *S2, next_time=1005.0)
+    m3 = carry_forward_prev([p3], m2)
+    assert (p3["prev_lat"], p3["prev_lon"], p3["prev_time"]) == (*S1, 900.0)
+    # Poll 4: advanced to S3 -> prev = S2, prev_time == poll 3's next_time.
+    p4 = mk_train("t1", "S3", *S3, next_time=1100.0)
+    carry_forward_prev([p4], m3)
+    assert (p4["prev_lat"], p4["prev_lon"], p4["prev_time"]) == (*S2, 1005.0)

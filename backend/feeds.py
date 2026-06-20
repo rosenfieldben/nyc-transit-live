@@ -395,59 +395,79 @@ def _aggregate_feeds(
 
 
 def carry_forward_prev(trains: list[dict], last_positions: dict[str, dict]) -> dict[str, dict]:
-    """Fill missing prev anchors from the previous poll, and return the position
-    memory for the next poll.
+    """Fill missing prev anchors from a persisted previous-station anchor, and return the
+    position memory for the next poll.
 
-    _decode_feed can only set prev_* when the feed includes the just-departed stop,
-    which the NYCT feeds usually prune, so most trains arrive here with a null prev
-    and snap station to station each poll. A trip's chosen stop advances by one
-    station between polls, so the stop it pointed at last poll is the station it is
-    now moving away from: we synthesize prev_* from that remembered stop, handing the
-    frontend a bracket to interpolate over.
+    The NYCT feeds usually prune the just-departed stop, so _decode_feed leaves prev_* null
+    for most trains. We recover a prev by remembering, per trip, the station it most recently
+    departed (the anchor) and holding that anchor fixed for as long as the train is approaching
+    the same next stop, advancing it only when the next stop changes. Holding it fixed is the
+    point: if the anchor were recomputed only on the transition poll, prev would be supplied on
+    just that one poll and the train would snap to its next station on every other poll of the
+    segment.
 
-    Synthesizes only when the feed gave no real prev (prev_lat is None), the trip was
-    seen last poll at a DIFFERENT stop, that remembered position has a usable time
-    anchor, the current placement has a next_time, and the bracket is monotonic
-    (remembered time < next_time). A real prev from the feed is never overwritten. The
-    returned dict is rebuilt from this poll's trains and replaces the memory wholesale,
+    Each poll, the anchor is: None on first sighting; the previous observation (the now-departed
+    station, timed by its last predicted arrival) when the next stop changed; or the carried
+    anchor when the next stop is unchanged. prev is synthesized from the anchor only when the
+    feed gave no real prev (prev_lat is None), the anchor is a different, time-stamped station,
+    the current placement has a next_time, and the bracket is forward (anchor time < next_time).
+    A real feed prev is never overwritten. The returned dict is rebuilt from this poll's trains,
     so finished or absent trips are pruned.
 
-    KNOWN v1.5 LIMITATIONS (straight-line interpolation; both resolved by v2's
-    route-geometry slicing, which is inherently along-route and forward-only):
-      * Backward slide on stop regression. The remembered stop has no route-order
-        guarantee — unlike the feed-provided prev, which is always the immediately
-        preceding stop in the trip's own sequence. If the feed re-estimates a held or
-        rerouted trip's chosen stop EARLIER on the line than last poll, the synthesized
-        bracket points backward and the train is drawn sliding the wrong way. The
-        time guard (remembered time < next_time) compares predicted ETAs, not station
-        positions, so it can't catch this; a real fix needs the static route stop order.
-      * Multi-poll / multi-station gap. The remembered stop is normally one station
-        back, but after one or more failed polls (memory is preserved across them) or a
-        2+-station jump within a single interval it can be further back, so the straight
-        line cuts across the skipped station(s). Self-corrects on the next good poll.
-    Both are rare, self-correcting, and never worse than v1's static placement; we
-    accept them in v1.5 rather than pull route-order logic forward out of v2.
+    KNOWN LIMITATIONS (straight-line interpolation; both resolved by v2's route-geometry
+    slicing, which is along-route and forward-only):
+      * Backward slide on stop regression. The anchor advances on ANY next-stop change,
+        including a backward one. If the feed revises a held or mis-predicted trip's next stop
+        to a station earlier on the line while the new ETA is further out, the forward-time
+        guard (anchor time < next_time) still passes and the train is drawn sliding backward
+        for one poll. The guard compares ETAs, not station positions, so it cannot catch this;
+        a real fix needs the static route stop order (v2).
+      * Multi-poll / multi-station gap. The anchor is normally one station back, but after one
+        or more missed polls (memory is preserved across a failed poll) or a 2+-station jump in
+        a single interval it can be further back, so the straight line cuts across the skipped
+        station(s). Self-corrects on the next good poll.
+    Both are rare, self-correcting, and we accept them here rather than pull route-order logic
+    forward out of v2.
     """
     new_positions: dict[str, dict] = {}
     for train in trains:
         trip_id = train["trip_id"]
         next_time = train["next_time"]
-        if train["prev_lat"] is None and next_time is not None:
-            prev = last_positions.get(trip_id)
-            if (
-                prev is not None
-                and prev["time"] is not None
-                and prev["stop_id"] != train["stop_id"]
-                and prev["time"] < next_time
-            ):
-                train["prev_lat"] = prev["lat"]
-                train["prev_lon"] = prev["lon"]
-                train["prev_time"] = prev["time"]
+        prev_obs = last_positions.get(trip_id)
+
+        # The departed-station anchor for this poll (held fixed across a segment).
+        if prev_obs is None:
+            anchor = None  # first sighting: nothing behind it yet
+        elif prev_obs["stop_id"] != train["stop_id"]:
+            # Next stop advanced: the station approached last poll is the one just
+            # departed, timed by its last predicted arrival.
+            anchor = {
+                "stop_id": prev_obs["stop_id"],
+                "lat": prev_obs["lat"],
+                "lon": prev_obs["lon"],
+                "time": prev_obs["next_time"],
+            }
+        else:
+            anchor = prev_obs["anchor"]  # same segment: keep the anchor fixed
+
+        if (
+            train["prev_lat"] is None
+            and next_time is not None
+            and anchor is not None
+            and anchor["time"] is not None
+            and anchor["stop_id"] != train["stop_id"]
+            and anchor["time"] < next_time
+        ):
+            train["prev_lat"] = anchor["lat"]
+            train["prev_lon"] = anchor["lon"]
+            train["prev_time"] = anchor["time"]
+
         new_positions[trip_id] = {
             "stop_id": train["stop_id"],
             "lat": train["latitude"],
             "lon": train["longitude"],
-            "time": next_time,
+            "next_time": next_time,
+            "anchor": anchor,
         }
     return new_positions
 

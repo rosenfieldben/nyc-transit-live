@@ -443,7 +443,9 @@ function applyTrains(data) {
     seen.add(train.trip_id);
     const record = trains.get(train.trip_id);
     if (record) {
-      const segId = `${train.prev_time}|${train.stop_id}`;
+      // route_id is in the key: a mid-trip route relabel must re-project onto the
+      // new route's geometry rather than reuse the old route's cached slice.
+      const segId = `${train.route_id}|${train.prev_time}|${train.stop_id}`;
       train._route =
         record._segId === segId && record.latest._route
           ? record.latest._route
@@ -458,7 +460,7 @@ function applyTrains(data) {
       if (record.marker.isPopupOpen()) record.marker.getPopup().update();
     } else {
       const newRecord = { routeId: train.route_id, latest: train, fState: {} };
-      newRecord._segId = `${train.prev_time}|${train.stop_id}`;
+      newRecord._segId = `${train.route_id}|${train.prev_time}|${train.stop_id}`;
       train._route = computeRouteSlice(train);
       newRecord.marker = L.marker(trainLatLng(train, now, newRecord.fState), { icon: trainIcon(train) })
         .bindPopup(() => trainPopup(newRecord))

@@ -12,6 +12,7 @@ import httpx
 import pytest
 
 import bus_static
+import feeds
 import main as app_module
 
 pytestmark = pytest.mark.anyio
@@ -42,6 +43,7 @@ def cache():
         "buses": app_module._fresh_entry(),
         "subways": app_module._fresh_entry(),
     }
+    app_module.app.state.subway_feed_health = None
     return app_module.app.state.feed_cache
 
 
@@ -235,6 +237,13 @@ async def test_status_reports_ages_errors_and_gtfs_mtime(
     assert str(tmp_path) not in text and "/Users/" not in text and "/app/" not in text
 
 
+async def test_status_reports_subway_feed_health(client, status_env):
+    app_module.app.state.subway_feed_health = {"total": 8, "ok": 7, "failed": ["BDFM"]}
+    res = await client.get("/api/status")
+    assert res.status_code == 200
+    assert res.json()["subway_feeds"] == {"total": 8, "ok": 7, "failed": ["BDFM"]}
+
+
 # ---------------- upstream error sanitization (no key/URL leakage) ----------------
 
 
@@ -275,6 +284,57 @@ async def test_subway_refresh_error_never_records_url(client, cache, monkeypatch
     detail = cache["subways"]["error"]["detail"]
     assert "https://" not in detail and "mta.info" not in detail
     assert "All subway feeds failed" in detail  # the useful part survives
+
+
+async def test_subway_refresh_records_partial_feed_health(client, cache, monkeypatch):
+    # A poll where some feed groups failed still returns data; the entry error
+    # stays clear, but the partial outage must be recorded for /api/status.
+    async def partial(stops, client_arg):
+        return TRAINS, {}, 996.0, ["BDFM"]
+
+    monkeypatch.setattr(app_module, "fetch_subway_trains", partial)
+    app_module.app.state.subway_stops = {"101N": {}}
+    await app_module._refresh_subways(app_module.app, client=None)
+
+    assert cache["subways"]["error"] is None
+    assert cache["subways"]["data"] == TRAINS
+    total = len(feeds.SUBWAY_FEED_URLS)
+    assert app_module.app.state.subway_feed_health == {
+        "total": total,
+        "ok": total - 1,
+        "failed": ["BDFM"],
+    }
+
+
+async def test_subway_refresh_records_full_feed_health(client, cache, monkeypatch):
+    async def full(stops, client_arg):
+        return TRAINS, {}, 996.0, []
+
+    monkeypatch.setattr(app_module, "fetch_subway_trains", full)
+    app_module.app.state.subway_stops = {"101N": {}}
+    await app_module._refresh_subways(app_module.app, client=None)
+
+    total = len(feeds.SUBWAY_FEED_URLS)
+    assert app_module.app.state.subway_feed_health == {
+        "total": total,
+        "ok": total,
+        "failed": [],
+    }
+
+
+async def test_subway_refresh_total_failure_marks_all_feeds_failed(client, cache, monkeypatch):
+    async def boom(stops, client_arg):
+        raise RuntimeError("All subway feeds failed: every group timed out")
+
+    monkeypatch.setattr(app_module, "fetch_subway_trains", boom)
+    app_module.app.state.subway_stops = {"101N": {}}
+    await app_module._refresh_subways(app_module.app, client=None)
+
+    total = len(feeds.SUBWAY_FEED_URLS)
+    health = app_module.app.state.subway_feed_health
+    assert health["total"] == total and health["ok"] == 0
+    assert len(health["failed"]) == total
+    assert cache["subways"]["error"]["status"] == 502
 
 
 # ---------------- /api/subway-stops and /api/subway-arrivals ----------------
@@ -457,7 +517,7 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
         return BUSES, 1000.0
 
     async def fake_fetch_subways(stops, client):
-        return TRAINS, {}, 1001.0
+        return TRAINS, {}, 1001.0, []
 
     async def fake_ensure_index():
         return None

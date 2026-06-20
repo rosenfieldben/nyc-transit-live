@@ -17,6 +17,7 @@ from models import (
     StationArrivals,
     StatusResponse,
     SubwayFeed,
+    SubwayFeedHealth,
     SubwayStop,
     Train,
     Vehicle,
@@ -122,9 +123,11 @@ def test_status_model_validates_handler_shape():
             },
             "bus_route_index": {"status": "ready", "partial": False},
             "static_subway_gtfs": None,
+            "subway_feeds": {"total": 8, "ok": 7, "failed": ["BDFM"]},
         }
     )
     BusIndexStatus.model_validate({"status": "building", "partial": False})
+    SubwayFeedHealth.model_validate({"total": 8, "ok": 8, "failed": []})
 
 
 def test_decoded_train_keys_cover_model():

@@ -101,7 +101,14 @@ class StaticGtfsStatus(BaseModel):
     age_s: float
 
 
+class SubwayFeedHealth(BaseModel):
+    total: int  # number of subway feed groups polled
+    ok: int  # how many returned usable data on the last poll
+    failed: list[str]  # feed-group keys that failed the last poll (e.g. ["BDFM"])
+
+
 class StatusResponse(BaseModel):
     feeds: dict[str, FeedStatus]
     bus_route_index: BusIndexStatus
     static_subway_gtfs: StaticGtfsStatus | None
+    subway_feeds: SubwayFeedHealth | None

@@ -419,5 +419,22 @@ async def healthz() -> JSONResponse:
     return JSONResponse(body, status_code=503 if reasons else 200)
 
 
+class RevalidatingStaticFiles(StaticFiles):
+    """StaticFiles that asks the browser to revalidate every load.
+
+    The frontend assets are unhashed (no build step) and served under stable
+    names (index.html, helpers.js, map.js, style.css), so a long-lived cache
+    would serve a stale bundle after a deploy (the symptom this fixes). With
+    no-cache the browser keeps the file but revalidates via the ETag and
+    Last-Modified StaticFiles already sets, so an unchanged file is a cheap 304
+    and a deployed change is picked up immediately.
+    """
+
+    async def get_response(self, path: str, scope) -> Response:
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 # Mounted last so /api/* routes take priority; html=True serves index.html at /.
-app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
+app.mount("/", RevalidatingStaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")

@@ -503,6 +503,29 @@ async def test_healthz_never_leaks_error_details(client, healthz_env):
     assert "SECRET" not in res.text and "https://" not in res.text
 
 
+# ---------------- static frontend assets (no-cache for deploys) ----------------
+
+
+@pytest.mark.parametrize("path", ["/", "/index.html", "/helpers.js", "/map.js", "/style.css"])
+async def test_static_assets_sent_with_no_cache(client, path):
+    # Unhashed assets under stable names: a deploy must be picked up immediately,
+    # so they carry Cache-Control: no-cache (browser revalidates via the ETag).
+    res = await client.get(path)
+    assert res.status_code == 200
+    assert res.headers["cache-control"] == "no-cache"
+    assert res.headers.get("etag")  # the ETag that makes revalidation a cheap 304
+
+
+async def test_static_revalidation_is_a_cheap_304(client):
+    # no-cache means revalidate, not refetch: a matching ETag returns an empty
+    # 304 that still carries the directive, so an unchanged asset costs no body.
+    first = await client.get("/helpers.js")
+    res = await client.get("/helpers.js", headers={"If-None-Match": first.headers["etag"]})
+    assert res.status_code == 304
+    assert res.headers["cache-control"] == "no-cache"
+    assert res.content == b""
+
+
 # ---------------- lifespan startup/shutdown smoke ----------------
 
 

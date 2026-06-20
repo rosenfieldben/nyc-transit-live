@@ -752,6 +752,17 @@ def test_carry_forward_non_monotonic_anchor_does_not_synthesize():
     assert later["prev_lat"] is None
 
 
+def test_carry_forward_anchor_on_current_stop_does_not_synthesize():
+    # Degenerate stop-regression onto the held anchor: the carried anchor records
+    # the very station the train is at now. With every OTHER guard satisfied, the
+    # anchor-stop != current-stop guard alone must block a zero-length prev==next
+    # bracket. (This is the anchor-station sub-case of the documented backward-slide
+    # limitation; here it's correctly refused rather than drawn.)
+    train = mk_train("t1", "S1", *S1, next_time=1100.0)
+    carry_forward_prev([train], {"t1": _obs("S1", *S1, 1000.0, anchor=_anchor("S1", *S1, 940.0))})
+    assert train["prev_lat"] is None
+
+
 def test_carry_forward_prunes_trips_absent_this_poll():
     train = mk_train("t1", "S2", *S2, next_time=1000.0)
     old = {"t1": _obs("S1", *S1, 940.0), "gone": _obs("X1", 40.6, -73.9, 800.0)}

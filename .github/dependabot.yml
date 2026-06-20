@@ -1,0 +1,20 @@
+# Dependabot keeps the GitHub Actions in CI and the Python deps current. Updates
+# are grouped so each ecosystem opens one batched PR per week instead of a
+# separate PR per package.
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      python:
+        patterns: ["*"]
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      actions:
+        patterns: ["*"]

@@ -252,6 +252,7 @@ function trainPopup(record) {
 // renderer keeps ~22k points cheap; lines are decorative, so failures are
 // silent and the map just shows markers without them.
 const lineRenderer = L.canvas({ padding: 0.3 });
+const routeIndex = new Map(); // route_id -> [{ points, cum }] for interpolation
 
 async function loadRouteLines() {
   let routes;
@@ -263,6 +264,10 @@ async function loadRouteLines() {
     return;
   }
   for (const route of routes) {
+    routeIndex.set(
+      route.route,
+      route.polylines.map((points) => ({ points, cum: polylineCumLengths(points) })),
+    );
     for (const points of route.polylines) {
       L.polyline(points, {
         color: lineColor(route.route),
@@ -410,6 +415,25 @@ async function loadStations() {
 
 const trains = new Map(); // trip id -> { marker, routeId, latest }
 
+// Slice a train's route polyline between its previous and next station by
+// projecting both station coordinates (prev = prev_lat/prev_lon, next =
+// latitude/longitude) onto the route geometry. Returns { points, cum, s0, s1 }
+// when both project onto the SAME polyline within tolerance and the arc between
+// them is plausible; null otherwise, so trainLatLng uses the v1 straight line.
+// The slice walks in the sign of (s1 - s0), so it serves both travel directions
+// on the single stored shape.
+function computeRouteSlice(train) {
+  if (train.prev_lat == null) return null;
+  const geom = routeIndex.get(train.route_id);
+  if (!geom) return null;
+  const p0 = projectOntoRoute(geom, train.prev_lat, train.prev_lon);
+  const p1 = projectOntoRoute(geom, train.latitude, train.longitude);
+  if (!p0 || !p1 || p0.poly !== p1.poly) return null;
+  if (Math.abs(p1.s - p0.s) > ROUTE_MAX_SLICE) return null;
+  const poly = geom[p0.poly];
+  return { points: poly.points, cum: poly.cum, s0: p0.s, s1: p1.s };
+}
+
 function applyTrains(data) {
   // Skew-corrected now, same basis as arrivalsHtml; trainLatLng interpolates
   // each train between its prev and next station (static fallback otherwise).
@@ -419,16 +443,26 @@ function applyTrains(data) {
     seen.add(train.trip_id);
     const record = trains.get(train.trip_id);
     if (record) {
+      // route_id is in the key: a mid-trip route relabel must re-project onto the
+      // new route's geometry rather than reuse the old route's cached slice.
+      const segId = `${train.route_id}|${train.prev_time}|${train.stop_id}`;
+      train._route =
+        record._segId === segId && record.latest._route
+          ? record.latest._route
+          : computeRouteSlice(train);
+      record._segId = segId;
       record.latest = train;
-      record.marker.setLatLng(trainLatLng(train, now));
+      record.marker.setLatLng(trainLatLng(train, now, record.fState));
       if (record.routeId !== train.route_id) {
         record.marker.setIcon(trainIcon(train));
         record.routeId = train.route_id;
       }
       if (record.marker.isPopupOpen()) record.marker.getPopup().update();
     } else {
-      const newRecord = { routeId: train.route_id, latest: train };
-      newRecord.marker = L.marker(trainLatLng(train, now), { icon: trainIcon(train) })
+      const newRecord = { routeId: train.route_id, latest: train, fState: {} };
+      newRecord._segId = `${train.route_id}|${train.prev_time}|${train.stop_id}`;
+      train._route = computeRouteSlice(train);
+      newRecord.marker = L.marker(trainLatLng(train, now, newRecord.fState), { icon: trainIcon(train) })
         .bindPopup(() => trainPopup(newRecord))
         .addTo(subwayLayer);
       trains.set(train.trip_id, newRecord);
@@ -454,7 +488,7 @@ function animateTrains(ts) {
     lastTrainTick = ts;
     const now = Date.now() / 1000 - (minClockOffset ?? 0);
     for (const record of trains.values()) {
-      record.marker.setLatLng(trainLatLng(record.latest, now));
+      record.marker.setLatLng(trainLatLng(record.latest, now, record.fState));
     }
   }
   requestAnimationFrame(animateTrains);

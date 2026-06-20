@@ -19,7 +19,7 @@ from google.protobuf.message import DecodeError
 
 import bus_static
 import static_data
-from feeds import carry_forward_prev, fetch_subway_trains, fetch_vehicle_positions
+from feeds import SUBWAY_FEED_URLS, carry_forward_prev, fetch_subway_trains, fetch_vehicle_positions
 from models import (
     BusFeed,
     RouteGeometry,
@@ -127,15 +127,35 @@ async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
             "restart the server to retry the download.",
         )
         return
+    total_feeds = len(SUBWAY_FEED_URLS)
     try:
-        trains, arrivals, feed_timestamp = await fetch_subway_trains(stops, client)
+        trains, arrivals, feed_timestamp, failed_feeds = await fetch_subway_trains(stops, client)
     except RuntimeError as exc:
         # Every subway feed failed this poll.
+        app.state.subway_feed_health = {
+            "total": total_feeds,
+            "ok": 0,
+            "failed": sorted(SUBWAY_FEED_URLS),
+        }
         _note_failure(entry, 502, _sanitize_upstream(exc))
         return
     except httpx.HTTPError as exc:
+        app.state.subway_feed_health = {
+            "total": total_feeds,
+            "ok": 0,
+            "failed": sorted(SUBWAY_FEED_URLS),
+        }
         _note_failure(entry, 502, f"Upstream MTA feed error: {_sanitize_upstream(exc)}")
         return
+    # Partial failures still return data, so without this a vanished line group
+    # would leave no trace (the entry error is cleared below, and feed_timestamp
+    # is the min over only the surviving feeds). Record which groups dropped so
+    # /api/status can surface the partial outage.
+    app.state.subway_feed_health = {
+        "total": total_feeds,
+        "ok": total_feeds - len(failed_feeds),
+        "failed": failed_feeds,
+    }
     # Carry each trip's previous-poll stop forward as its prev interpolation anchor
     # when the feed pruned the departed stop (mutates trains in place), then remember
     # this poll's positions for the next one.
@@ -144,7 +164,7 @@ async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
     )
     entry.update(data=trains, fetched_at=time.time(), feed_timestamp=feed_timestamp, error=None)
     # Replace the arrivals index only on success, so a failed poll keeps the
-    # last-known arrivals on the same fetched_at — consistent with the cache.
+    # last-known arrivals on the same fetched_at, consistent with the cache.
     app.state.subway_arrivals = arrivals
 
 
@@ -185,6 +205,9 @@ async def lifespan(app: FastAPI):
     # Per-trip previous-poll position, used to carry a prev interpolation anchor
     # forward when the feed pruned the just-departed stop (see carry_forward_prev).
     app.state.subway_positions = {}
+    # Per-feed-group health of the most recent subway poll (None until the first
+    # poll), surfaced by /api/status so a partial feed outage is visible.
+    app.state.subway_feed_health = None
     app.state.feed_poll_task = asyncio.create_task(_poll_feeds(app))
     # Bus route geometry indexes in the background — startup never waits on
     # the ~52 MB of borough GTFS zips; /api/bus-route reports until ready.
@@ -350,6 +373,7 @@ async def get_status() -> dict:
             "partial": bus_static.is_partial(),
         },
         "static_subway_gtfs": static_gtfs,
+        "subway_feeds": getattr(app.state, "subway_feed_health", None),
     }
 
 

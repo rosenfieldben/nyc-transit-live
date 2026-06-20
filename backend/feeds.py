@@ -338,29 +338,30 @@ def _decode_trains(raw: bytes, stops: dict[str, dict], feed_key: str, now: float
 
 def _aggregate_feeds(
     results: list, stops: dict[str, dict], now: float
-) -> tuple[list[dict], dict[str, dict[str, list[dict]]], float | None, list[str]]:
+) -> tuple[list[dict], dict[str, dict[str, list[dict]]], float | None, dict[str, str]]:
     """Decode every feed result, dedup trips across feeds, and merge arrivals.
 
     `results` is aligned with SUBWAY_FEED_URLS; each item is decoded protobuf
     bytes or an exception from the fetch. Returns
-    (trains, arrivals, feed_timestamp, errors), where feed_timestamp is the
-    OLDEST content time across successfully decoded feeds — the freshness of
-    the combined view is bounded by its stalest member.
+    (trains, arrivals, feed_timestamp, feed_errors), where feed_timestamp is the
+    OLDEST content time across successfully decoded feeds and feed_errors maps
+    each failed feed-group key to its raw failure reason (empty when every feed
+    decoded).
     """
     trains: list[dict] = []
     seen_trips: set[str] = set()
     arrivals: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
     arrival_trips: set[str] = set()
     timestamps: list[float] = []
-    errors: list[str] = []
+    feed_errors: dict[str, str] = {}
     for feed_key, result in zip(SUBWAY_FEED_URLS, results):
         if isinstance(result, BaseException):
-            errors.append(f"{feed_key}: {result}")
+            feed_errors[feed_key] = str(result)
             continue
         try:
             feed_trains, feed_arrivals, feed_ts = _decode_feed(result, stops, feed_key, now)
         except DecodeError as exc:
-            errors.append(f"{feed_key}: undecodable protobuf ({exc})")
+            feed_errors[feed_key] = f"undecodable protobuf ({exc})"
             continue
         if feed_ts is not None:
             timestamps.append(feed_ts)
@@ -391,7 +392,7 @@ def _aggregate_feeds(
             arrs.sort(key=lambda a: a["arrival"])
             trimmed[station_id][direction] = arrs[:ARRIVALS_PER_DIRECTION]
     feed_timestamp = min(timestamps) if timestamps else None
-    return trains, trimmed, feed_timestamp, errors
+    return trains, trimmed, feed_timestamp, feed_errors
 
 
 def carry_forward_prev(trains: list[dict], last_positions: dict[str, dict]) -> dict[str, dict]:
@@ -474,14 +475,16 @@ def carry_forward_prev(trains: list[dict], last_positions: dict[str, dict]) -> d
 
 async def fetch_subway_trains(
     stops: dict[str, dict], client: httpx.AsyncClient
-) -> tuple[list[dict], dict[str, dict[str, list[dict]]], float | None]:
+) -> tuple[list[dict], dict[str, dict[str, list[dict]]], float | None, list[str]]:
     """Fetch all subway feeds concurrently; return (train placements,
-    per-station arrivals index, feed_timestamp).
+    per-station arrivals index, feed_timestamp, failed_feeds).
 
-    feed_timestamp is the oldest content time across decoded feeds. Individual
-    feed failures are logged and skipped so one bad feed doesn't take out the
-    endpoint; raises only when every feed fails. The caller owns the client
-    (the polling task holds one for its lifetime).
+    failed_feeds is the sorted list of feed-group keys that failed this poll (a
+    fetch error or an undecodable protobuf), empty on a fully successful poll.
+    It lets the caller report a partial outage instead of silently dropping a
+    whole line group. Individual feed failures are logged and skipped so one bad
+    feed doesn't take out the endpoint; this raises only when every feed fails.
+    The caller owns the client (the polling task holds one for its lifetime).
     """
     now = time.time()
 
@@ -495,14 +498,15 @@ async def fetch_subway_trains(
         return_exceptions=True,
     )
 
-    trains, arrivals, feed_timestamp, errors = _aggregate_feeds(results, stops, now)
-    if errors:
+    trains, arrivals, feed_timestamp, feed_errors = _aggregate_feeds(results, stops, now)
+    if feed_errors:
         logger.warning(
             "%d of %d subway feeds failed: %s",
-            len(errors),
+            len(feed_errors),
             len(SUBWAY_FEED_URLS),
-            "; ".join(errors),
+            "; ".join(f"{key}: {reason}" for key, reason in feed_errors.items()),
         )
-    if len(errors) == len(SUBWAY_FEED_URLS):
-        raise RuntimeError(f"All subway feeds failed: {'; '.join(errors)}")
-    return trains, arrivals, feed_timestamp
+    if len(feed_errors) == len(SUBWAY_FEED_URLS):
+        joined = "; ".join(f"{key}: {reason}" for key, reason in feed_errors.items())
+        raise RuntimeError(f"All subway feeds failed: {joined}")
+    return trains, arrivals, feed_timestamp, sorted(feed_errors)

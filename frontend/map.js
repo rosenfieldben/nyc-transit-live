@@ -283,11 +283,22 @@ const stationRenderer = L.canvas({ padding: 0.5, pane: "stationPane" });
 
 // One station popup is open at a time (Leaflet closes others). A request token
 // guards against a slow fetch landing after the user clicked a different
-// station; a 1s timer ticks countdowns down from absolute arrival timestamps
-// without re-fetching.
+// station, and a 1s timer ticks countdowns down from absolute arrival
+// timestamps without re-fetching. The last good arrivals payload lives on
+// openStation so the tick and the 15s refresh share one source of truth (no
+// captured-body closure that a later call could leave firing over newer state).
 let stationSeq = 0;
 let stationTimer = null;
-let openStation = null; // { station, marker } while a popup is open
+let openStation = null; // { station, marker, body } while a popup is open
+
+// Repaint the open popup from openStation.body. Reading the shared body (rather
+// than a value captured per fetch) is what stops a stale tick from overwriting
+// newer content: there is only ever one body to draw, the current one.
+function renderStation() {
+  if (!openStation || !openStation.body) return;
+  const { station, marker, body } = openStation;
+  if (marker.isPopupOpen()) marker.setPopupContent(arrivalsHtml(station, body));
+}
 
 function arrivalsHtml(station, body) {
   // Skew-corrected now, reusing the staleness baseline from helpers.js.
@@ -321,39 +332,47 @@ function stationError(station, message) {
   );
 }
 
-async function openStationArrivals(station, marker) {
+// refresh=false is a fresh popup open (show a Loading state, surface errors).
+// refresh=true is the 15s background refresh of an already-open popup: keep the
+// current arrivals ticking, swap in new data when it lands, and stay quiet on a
+// failed poll rather than blanking good data with a Loading or error message.
+async function openStationArrivals(station, marker, { refresh = false } = {}) {
   const seq = ++stationSeq;
-  marker.setPopupContent(`<b>${esc(station.name ?? station.id)}</b><br>Loading arrivals…`);
+  if (!refresh) {
+    // Stop the previous tick up front so it cannot fire during this fetch.
+    clearInterval(stationTimer);
+    stationTimer = null;
+    marker.setPopupContent(`<b>${esc(station.name ?? station.id)}</b><br>Loading arrivals…`);
+  }
   let body;
   try {
     const res = await fetch(`/api/subway-arrivals/${encodeURIComponent(station.id)}`);
-    if (seq !== stationSeq) return; // superseded by another station click
+    if (seq !== stationSeq) return; // superseded by another station click or a close
     if (!res.ok) {
-      const err = await res.json().catch(() => null);
-      marker.setPopupContent(
-        stationError(station, err?.detail ?? `Arrivals unavailable (HTTP ${res.status})`),
-      );
-      return;
+      if (!refresh) {
+        const err = await res.json().catch(() => null);
+        marker.setPopupContent(
+          stationError(station, err?.detail ?? `Arrivals unavailable (HTTP ${res.status})`),
+        );
+      }
+      return; // a failed background refresh keeps the last-known arrivals ticking
     }
     body = await res.json();
   } catch {
     if (seq !== stationSeq) return;
-    marker.setPopupContent(stationError(station, "Arrivals unavailable (network error)"));
+    if (!refresh) {
+      marker.setPopupContent(stationError(station, "Arrivals unavailable (network error)"));
+    }
     return;
   }
   if (seq !== stationSeq) return;
   noteClockOffset(body.fetched_at); // keep the skew baseline fresh
-
-  const render = () => {
-    if (marker.isPopupOpen()) marker.setPopupContent(arrivalsHtml(station, body));
-  };
-  render();
-  // Don't start (or replace) the tick if the popup closed while we fetched —
-  // popupclose bumps stationSeq, but a close that lands exactly here would
-  // otherwise strand an interval that nothing clears.
+  if (openStation && openStation.marker === marker) openStation.body = body;
+  renderStation();
   if (!marker.isPopupOpen()) return;
+  // (Re)start the single tick now that fresh data is in place.
   clearInterval(stationTimer);
-  stationTimer = setInterval(render, 1000); // tick countdowns without re-fetch
+  stationTimer = setInterval(renderStation, 1000);
 }
 
 async function loadStations() {
@@ -376,7 +395,7 @@ async function loadStations() {
     })
       .bindPopup("", { minWidth: 170 })
       .on("popupopen", function () {
-        openStation = { station, marker: this };
+        openStation = { station, marker: this, body: null };
         openStationArrivals(station, this);
       })
       .on("popupclose", function () {
@@ -497,7 +516,7 @@ async function refreshAll() {
 
   // Refresh the open station's arrivals so the train list (not just the
   // countdowns) stays current on the same ~15s cadence as the markers.
-  if (openStation) openStationArrivals(openStation.station, openStation.marker);
+  if (openStation) openStationArrivals(openStation.station, openStation.marker, { refresh: true });
 }
 
 loadRouteLines();

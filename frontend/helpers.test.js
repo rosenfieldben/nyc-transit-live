@@ -14,6 +14,9 @@ const {
   noteClockOffset,
   formatCountdown,
   trainLatLng,
+  polylineCumLengths,
+  pointAtArcLength,
+  projectOntoRoute,
 } = require("./helpers.js");
 
 test("trainLatLng interpolates along prev->next and clamps to [0,1]", () => {
@@ -123,3 +126,74 @@ test("noteClockOffset accepts a timestamp without throwing", () => {
   assert.doesNotThrow(() => noteClockOffset(Date.now() / 1000));
   assert.doesNotThrow(() => noteClockOffset(null));
 })
+
+// ---------------- v2 route-polyline interpolation ----------------
+
+test("polylineCumLengths sums segment lengths (lon deltas zero -> exact lat distances)", () => {
+  assert.deepEqual(polylineCumLengths([[0, 0], [1, 0], [3, 0]]), [0, 1, 3]);
+});
+
+test("pointAtArcLength walks the polyline and clamps to [0, total]", () => {
+  const points = [[0, 0], [1, 0], [3, 0]];
+  const cum = polylineCumLengths(points);
+  assert.deepEqual(pointAtArcLength(points, cum, 0), [0, 0]);
+  assert.deepEqual(pointAtArcLength(points, cum, 3), [3, 0]);
+  assert.deepEqual(pointAtArcLength(points, cum, 2), [2, 0]);
+  assert.deepEqual(pointAtArcLength(points, cum, 0.5), [0.5, 0]);
+  assert.deepEqual(pointAtArcLength(points, cum, -1), [0, 0]); // clamp low
+  assert.deepEqual(pointAtArcLength(points, cum, 99), [3, 0]); // clamp high
+});
+
+function geomFrom(...polylines) {
+  return polylines.map((points) => ({ points, cum: polylineCumLengths(points) }));
+}
+
+test("projectOntoRoute returns the nearest polyline within tolerance, null beyond it", () => {
+  const geom = geomFrom([[0, 0], [2, 0], [2, 2]]);
+  const on = projectOntoRoute(geom, 1, 0); // on the first segment, ~s=1
+  assert.equal(on.poly, 0);
+  assert.ok(on.dist < 1e-9);
+  assert.ok(Math.abs(on.s - 1) < 1e-9);
+  assert.equal(projectOntoRoute(geom, 3, 3), null); // far from every polyline
+});
+
+test("projectOntoRoute picks the closer of two polylines", () => {
+  // Poly 0 runs along lat=0; poly 1 runs along lat=5. A point at lat~5 is poly 1.
+  const geom = geomFrom([[0, 0], [0, 2]], [[5, 0], [5, 2]]);
+  const r = projectOntoRoute(geom, 5, 1);
+  assert.equal(r.poly, 1);
+});
+
+test("trainLatLng follows the route slice, not the chord, when _route is present", () => {
+  const points = [[0, 0], [0, 2], [2, 2]]; // L-shaped: up then right
+  const cum = polylineCumLengths(points);
+  const total = cum[cum.length - 1];
+  const train = {
+    prev_lat: 0, prev_lon: 0, latitude: 2, longitude: 2,
+    prev_time: 100, next_time: 200, stop_id: "X",
+    _route: { points, cum, s0: 0, s1: total },
+  };
+  const got = trainLatLng(train, 150, {}); // f = 0.5
+  assert.deepEqual(got, pointAtArcLength(points, cum, 0.5 * total));
+  assert.notDeepEqual(got, [1, 1]); // NOT the straight-chord midpoint
+});
+
+test("trainLatLng falls back to the straight chord when _route is absent", () => {
+  const train = {
+    prev_lat: 0, prev_lon: 0, latitude: 2, longitude: 2,
+    prev_time: 100, next_time: 200, stop_id: "X",
+  };
+  assert.deepEqual(trainLatLng(train, 150, {}), [1, 1]); // chord midpoint
+});
+
+test("trainLatLng monotonic-f clamp: dwell can't drag the marker backward; resets per segment", () => {
+  const state = {};
+  const train = { prev_lat: 0, prev_lon: 0, latitude: 10, longitude: 0, prev_time: 100, stop_id: "X" };
+  assert.deepEqual(trainLatLng({ ...train, next_time: 200 }, 150, state), [5, 0]); // f=0.5
+  // Dwell: next_time grows so rawF would drop to 0.2, but the clamp holds f at 0.5.
+  assert.deepEqual(trainLatLng({ ...train, next_time: 400 }, 160, state), [5, 0]);
+  // Time marches on within the same segment: f advances to 0.8.
+  assert.deepEqual(trainLatLng({ ...train, next_time: 200 }, 180, state), [8, 0]);
+  // New segment (stop_id changes): clamp resets, f = 0.1.
+  assert.deepEqual(trainLatLng({ ...train, stop_id: "Y", next_time: 200 }, 110, state), [1, 0]);
+});

@@ -44,6 +44,16 @@ function lineColor(routeId) {
 // Staleness threshold, mirroring the backend FEED_STALE_AFTER_S.
 const FEED_STALE_AFTER_S = 90;
 
+// Longitude is compressed by latitude; scale lon deltas so planar distances are
+// roughly isotropic across NYC. We only need internally consistent arc-length,
+// not true meters, so a single fixed factor at the city's latitude is plenty.
+const _COS_LAT = Math.cos((40.7 * Math.PI) / 180);
+// A station must project within this distance of a route polyline to be used.
+const ROUTE_ACCEPT_DIST = 0.0025;
+// Reject an implausibly long slice (misprojection onto a far lobe of a line that
+// doubles back, e.g. the Pelham loop): fall back to the straight line instead.
+const ROUTE_MAX_SLICE = 0.05;
+
 // minClockOffset = the minimum observed (clientNow - fetched_at), approximating
 // browser-vs-server skew plus minimal latency. Used to skew-correct the
 // arrivals countdown (map.js, which compares absolute MTA timestamps to the
@@ -74,17 +84,91 @@ function staleness(source, now = Date.now() / 1000) {
   return `${source.label} data ${human} old`;
 }
 
-// v1 train position: straight-line interpolation from the previous station to
-// the next/current station, parameterized by time. `now` is skew-corrected
-// epoch seconds. Falls back to the static next-station position
-// [latitude, longitude] when the anchors are missing or non-monotonic. (v2 will
-// follow the route polyline — keep that swap localized to this function.)
-function trainLatLng(train, now) {
+function _segLen(aLat, aLon, bLat, bLon) {
+  return Math.hypot((bLon - aLon) * _COS_LAT, bLat - aLat);
+}
+
+// Cumulative arc-length along a polyline: cum[0] = 0, cum[i] = cum[i-1] +
+// segLen(points[i-1], points[i]). cum.length === points.length.
+function polylineCumLengths(points) {
+  const cum = [0];
+  for (let i = 1; i < points.length; i++) {
+    cum.push(cum[i - 1] + _segLen(points[i - 1][0], points[i - 1][1], points[i][0], points[i][1]));
+  }
+  return cum;
+}
+
+// [lat, lon] at arc-length s along the polyline, clamped to [0, total]. Binary
+// search the segment containing s, then lerp the real coords within it.
+function pointAtArcLength(points, cum, s) {
+  const total = cum[cum.length - 1];
+  if (!(total > 0) || s <= 0) return points[0].slice();
+  if (s >= total) return points[points.length - 1].slice();
+  let lo = 0, hi = cum.length - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (cum[mid] <= s) lo = mid;
+    else hi = mid;
+  }
+  const seg = cum[hi] - cum[lo];
+  const u = seg > 0 ? (s - cum[lo]) / seg : 0;
+  const [aLat, aLon] = points[lo];
+  const [bLat, bLon] = points[hi];
+  return [aLat + (bLat - aLat) * u, aLon + (bLon - aLon) * u];
+}
+
+// Closest point on one polyline to P: { s, dist } in the same basis as cum, or
+// null for a degenerate (<2-point) polyline.
+function _projectOntoPolyline(points, cum, pLat, pLon) {
+  if (points.length < 2) return null;
+  let best = null;
+  const px = pLon * _COS_LAT, py = pLat;
+  for (let i = 1; i < points.length; i++) {
+    const ax = points[i - 1][1] * _COS_LAT, ay = points[i - 1][0];
+    const bx = points[i][1] * _COS_LAT, by = points[i][0];
+    const dx = bx - ax, dy = by - ay;
+    const len2 = dx * dx + dy * dy;
+    const u = len2 > 0 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2)) : 0;
+    const dist = Math.hypot(px - (ax + dx * u), py - (ay + dy * u));
+    if (best === null || dist < best.dist) best = { dist, s: cum[i - 1] + Math.sqrt(len2) * u };
+  }
+  return best;
+}
+
+// Project P onto a route's polylines (each { points, cum }); return
+// { poly, s, dist } for the closest one within ROUTE_ACCEPT_DIST, else null.
+function projectOntoRoute(routeGeom, pLat, pLon) {
+  let best = null;
+  for (let i = 0; i < routeGeom.length; i++) {
+    const r = _projectOntoPolyline(routeGeom[i].points, routeGeom[i].cum, pLat, pLon);
+    if (r && (best === null || r.dist < best.dist)) best = { poly: i, s: r.s, dist: r.dist };
+  }
+  return best && best.dist <= ROUTE_ACCEPT_DIST ? best : null;
+}
+
+// v2 train position: walk the route polyline from the previous-station offset to
+// the next-station offset, parameterized by time. train._route ({ points, cum,
+// s0, s1 }) is attached per poll by map.js when both stations projected cleanly
+// onto the SAME polyline; absent otherwise, so this falls back to the v1 straight
+// line. `now` is skew-corrected epoch seconds. `state` carries the monotonic-f
+// clamp across calls: f may not decrease within a segment (so a growing next_time
+// on a dwelling train can't drag the marker backward); it resets per segment.
+function trainLatLng(train, now, state = {}) {
   const { prev_lat, prev_lon, prev_time, next_time, latitude, longitude } = train;
+  // Unusable timing: sit at the static next-station position (v1 behavior).
   if (prev_lat == null || prev_time == null || next_time == null || next_time <= prev_time) {
     return [latitude, longitude];
   }
-  const f = Math.min(1, Math.max(0, (now - prev_time) / (next_time - prev_time)));
+  const segKey = `${prev_time}|${train.stop_id}`;
+  if (state.segKey !== segKey) {
+    state.segKey = segKey;
+    state.lastF = 0;
+  }
+  const rawF = (now - prev_time) / (next_time - prev_time);
+  const f = Math.min(1, Math.max(rawF, state.lastF));
+  state.lastF = f;
+  const r = train._route;
+  if (r) return pointAtArcLength(r.points, r.cum, r.s0 + (r.s1 - r.s0) * f);
   return [prev_lat + (latitude - prev_lat) * f, prev_lon + (longitude - prev_lon) * f];
 }
 
@@ -99,6 +183,7 @@ function formatCountdown(seconds) {
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     esc, routeColor, lineColor, staleness, noteClockOffset, formatCountdown,
-    trainLatLng, LINE_COLORS, DARK_TEXT_LINES, FEED_STALE_AFTER_S,
+    trainLatLng, polylineCumLengths, pointAtArcLength, projectOntoRoute,
+    ROUTE_ACCEPT_DIST, ROUTE_MAX_SLICE, LINE_COLORS, DARK_TEXT_LINES, FEED_STALE_AFTER_S,
   };
 }

@@ -375,10 +375,12 @@ async def get_subways() -> dict:
 
 @app.get("/api/railroads", response_model=RailroadFeed)
 async def get_railroads() -> dict:
-    """Cached LIRR + Metro-North trains that report a GPS position: {fetched_at,
-    feed_timestamp, data: [{system, trip_id, route_id, latitude, longitude,
-    bearing, train_num, ...}, ...]}. Phase 1 is GPS only; trains without a
-    vehicle position are omitted."""
+    """Cached LIRR + Metro-North trains: {fetched_at, feed_timestamp, data:
+    [{system, trip_id, route_id, latitude, longitude, bearing, train_num, ...},
+    ...]}. Includes both GPS-positioned trains and schedule-placed trains
+    positioned at their next station (the latter only when static railroad stops
+    are loaded for that system); a placed train carries null bearing and filled
+    direction/next_time/prev_* anchors."""
     return _serve_cached("railroads")
 
 

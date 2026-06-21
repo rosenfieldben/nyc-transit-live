@@ -631,9 +631,12 @@ def _railroad_trip_start_ts(trip) -> float | None:
     'GO201_26_6006_2', MNR '3116189'), so that heuristic would derive a wildly
     wrong start and wrongly drop the train as not-yet-started. MNR carries
     start_time so it gets the not-yet-started filter; LIRR omits start_time, so
-    this returns None there (no filter, and the far-future-first-stop cap guards
-    phantom terminals instead). The DST caveat noted on _trip_start_ts applies
-    equally here.
+    this returns None there (no filter). A missing or malformed start_date also
+    returns None rather than substituting the wall clock: the subway helper can
+    do that because it has a trip_id-prefix fallback, but this is the sole start
+    source, and a now()-based start would make placement nondeterministic (the
+    golden freezes `now`) and could wrongly drop or keep a train by calendar date.
+    The DST caveat noted on _trip_start_ts applies equally here.
     """
     if not trip.start_time:
         return None
@@ -641,7 +644,7 @@ def _railroad_trip_start_ts(trip) -> float | None:
         d = trip.start_date  # YYYYMMDD
         base = datetime(int(d[:4]), int(d[4:6]), int(d[6:8]), tzinfo=NYC_TZ)
     except (ValueError, IndexError):
-        base = datetime.now(NYC_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
+        return None  # no usable service date: no not-yet-started filter
     try:
         h, m, s = (int(p) for p in trip.start_time.split(":"))
         return (base + timedelta(hours=h, minutes=m, seconds=s)).timestamp()
@@ -678,6 +681,10 @@ def _decode_railroad_placements(
     # shares its trip_id with the matching trip_update, so this set skips placing
     # an already-GPS train; for MNR the vehicle trip_id differs from the
     # trip_update's, so the per-entity check below is what catches it instead.
+    # KNOWN GAP (not seen in any captured feed): a positioned LIRR-style vehicle
+    # with an EMPTY trip_id cannot be joined to its separate trip_update, so that
+    # train could be placed (hollow) on top of its GPS marker. Joining by entity
+    # id would need a naming convention we cannot rely on, so it is left as-is.
     positioned_ids: set[str] = set()
     for entity in feed.entity:
         if entity.HasField("vehicle") and entity.vehicle.HasField("position"):

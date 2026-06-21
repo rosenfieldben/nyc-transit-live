@@ -446,6 +446,19 @@ def test_finished_trip_all_stops_past_dropped():
     assert _placed(feed) == []
 
 
+def test_far_future_first_stop_is_kept_no_subway_cap():
+    # Railroad feeds prune passed stops, so a running train's first listed stop is
+    # simply its next station, often far out. Unlike the subway path, that is NOT
+    # dropped: the far-future-first-stop cap is intentionally not applied here. A
+    # no-start_time (LIRR-style) trip whose only stop is 1h ahead must be placed.
+    feed = pb.FeedMessage()
+    _tu_entity(feed, "T1", stops=[("A", NOW + 3600)])
+    placed = _placed(feed)
+    assert len(placed) == 1
+    assert (placed[0]["latitude"], placed[0]["longitude"]) == (40.80, -73.50)
+    assert placed[0]["next_time"] == NOW + 3600
+
+
 def test_direction_from_direction_id_and_null_when_absent():
     feed = pb.FeedMessage()
     _tu_entity(feed, "OUT", direction_id=0, stops=[("A", NOW + 120)])

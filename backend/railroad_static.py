@@ -3,8 +3,10 @@
 The Phase-2 data foundation: each system's stops, trips, and shapes loaded into
 memory. Railroad GTFS diverges from the subway schema (opaque plain stop_ids with
 no N/S suffix, different shape_id formats), so the subway helpers in static_data
-are intentionally NOT reused. Nothing consumes this module yet: no placement, no
-decoder changes, no endpoint or frontend wiring.
+are intentionally NOT reused. main.py's lifespan loads this at startup and stores
+the per-system stops on app.state.railroad_stops, which feeds._decode_railroad_
+placements uses to place the position-less trains at their next station. The
+trips and shapes tables are parsed too, for a later gliding increment.
 """
 
 from __future__ import annotations

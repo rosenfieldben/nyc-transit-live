@@ -146,7 +146,7 @@ async def test_railroads_stale_data_beats_subsequent_error(client, cache):
 async def test_railroad_refresh_records_partial_feed_health(client, cache, monkeypatch):
     # One system fails, one returns data: the entry error stays clear, but the
     # partial outage is recorded for /api/status (parallel to the subway case).
-    async def partial(client_arg):
+    async def partial(client_arg, stops_arg):
         return RAILROADS, 996.0, ["MNR"]
 
     monkeypatch.setattr(app_module, "fetch_railroad_trains", partial)
@@ -163,7 +163,7 @@ async def test_railroad_refresh_records_partial_feed_health(client, cache, monke
 
 
 async def test_railroad_refresh_total_failure_marks_all_feeds_failed(client, cache, monkeypatch):
-    async def boom(client_arg):
+    async def boom(client_arg, stops_arg):
         raise RuntimeError("All railroad feeds failed: every system timed out")
 
     monkeypatch.setattr(app_module, "fetch_railroad_trains", boom)
@@ -623,8 +623,12 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
     async def fake_fetch_subways(stops, client):
         return TRAINS, {}, 1001.0, []
 
-    async def fake_fetch_railroads(client):
+    async def fake_fetch_railroads(client, stops):
         return RAILROADS, 1002.0, []
+
+    async def fake_load_railroad_static():
+        # No network; placement input is irrelevant because the fetch is faked.
+        return {"LIRR": None, "MNR": None}
 
     async def fake_ensure_index():
         return None
@@ -635,6 +639,9 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
     monkeypatch.setattr(app_module, "fetch_vehicle_positions", fake_fetch_buses)
     monkeypatch.setattr(app_module, "fetch_subway_trains", fake_fetch_subways)
     monkeypatch.setattr(app_module, "fetch_railroad_trains", fake_fetch_railroads)
+    monkeypatch.setattr(
+        app_module.railroad_static, "load_railroad_static", fake_load_railroad_static
+    )
     monkeypatch.setattr(bus_static, "ensure_index", fake_ensure_index)
 
     app = app_module.app

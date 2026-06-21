@@ -1,0 +1,572 @@
+{
+"1": {
+"lat": 40.752998,
+"lon": -73.977056,
+"name": "Grand Central"
+},
+"10": {
+"lat": 40.862248,
+"lon": -73.91312,
+"name": "University Heights"
+},
+"100": {
+"lat": 41.637525,
+"lon": -73.57145,
+"name": "Harlem Valley-Wingdale"
+},
+"101": {
+"lat": 41.740401,
+"lon": -73.576502,
+"name": "Dover Plains"
+},
+"105": {
+"lat": 40.912161,
+"lon": -73.832185,
+"name": "Mt Vernon East"
+},
+"106": {
+"lat": 40.910321,
+"lon": -73.810242,
+"name": "Pelham"
+},
+"108": {
+"lat": 40.911605,
+"lon": -73.783807,
+"name": "New Rochelle"
+},
+"11": {
+"lat": 40.874333,
+"lon": -73.910941,
+"name": "Marble Hill"
+},
+"110": {
+"lat": 40.933394,
+"lon": -73.759792,
+"name": "Larchmont"
+},
+"111": {
+"lat": 40.954061,
+"lon": -73.736125,
+"name": "Mamaroneck"
+},
+"112": {
+"lat": 40.969432,
+"lon": -73.712964,
+"name": "Harrison"
+},
+"114": {
+"lat": 40.985922,
+"lon": -73.682553,
+"name": "Rye"
+},
+"115": {
+"lat": 41.000732,
+"lon": -73.6647,
+"name": "Port Chester"
+},
+"116": {
+"lat": 41.021277,
+"lon": -73.624621,
+"name": "Greenwich"
+},
+"118": {
+"lat": 41.030171,
+"lon": -73.598306,
+"name": "Cos Cob"
+},
+"120": {
+"lat": 41.031682,
+"lon": -73.588173,
+"name": "Riverside"
+},
+"121": {
+"lat": 41.033817,
+"lon": -73.565859,
+"name": "Old Greenwich"
+},
+"124": {
+"lat": 41.046611,
+"lon": -73.542846,
+"name": "Stamford"
+},
+"127": {
+"lat": 41.069041,
+"lon": -73.49788,
+"name": "Noroton Heights"
+},
+"128": {
+"lat": 41.076913,
+"lon": -73.472966,
+"name": "Darien"
+},
+"129": {
+"lat": 41.077456,
+"lon": -73.445527,
+"name": "Rowayton"
+},
+"131": {
+"lat": 41.09673,
+"lon": -73.421132,
+"name": "South Norwalk"
+},
+"133": {
+"lat": 41.103996,
+"lon": -73.404588,
+"name": "East Norwalk"
+},
+"134": {
+"lat": 41.118928,
+"lon": -73.371413,
+"name": "Westport"
+},
+"136": {
+"lat": 41.122265,
+"lon": -73.315408,
+"name": "Green's Farms"
+},
+"137": {
+"lat": 41.134844,
+"lon": -73.28897,
+"name": "Southport"
+},
+"138": {
+"lat": 41.143077,
+"lon": -73.257742,
+"name": "Fairfield"
+},
+"14": {
+"lat": 40.878245,
+"lon": -73.921455,
+"name": "Spuyten Duyvil"
+},
+"140": {
+"lat": 41.178677,
+"lon": -73.187076,
+"name": "Bridgeport"
+},
+"143": {
+"lat": 41.194255,
+"lon": -73.131532,
+"name": "Stratford"
+},
+"145": {
+"lat": 41.223231,
+"lon": -73.057647,
+"name": "Milford"
+},
+"149": {
+"lat": 41.296501,
+"lon": -72.92829,
+"name": "New Haven"
+},
+"151": {
+"lat": 41.304979,
+"lon": -72.921747,
+"name": "New Haven-State St"
+},
+"153": {
+"lat": 41.070547,
+"lon": -73.520021,
+"name": "Glenbrook"
+},
+"154": {
+"lat": 41.08876,
+"lon": -73.517828,
+"name": "Springdale"
+},
+"155": {
+"lat": 41.116012,
+"lon": -73.498149,
+"name": "Talmadge Hill"
+},
+"157": {
+"lat": 41.146305,
+"lon": -73.495626,
+"name": "New Canaan"
+},
+"158": {
+"lat": 41.146618,
+"lon": -73.427859,
+"name": "Merritt 7"
+},
+"16": {
+"lat": 40.903981,
+"lon": -73.914126,
+"name": "Riverdale"
+},
+"160": {
+"lat": 41.196202,
+"lon": -73.432434,
+"name": "Wilton"
+},
+"161": {
+"lat": 41.21662,
+"lon": -73.426703,
+"name": "Cannondale"
+},
+"162": {
+"lat": 41.26763,
+"lon": -73.441421,
+"name": "Branchville"
+},
+"163": {
+"lat": 41.325684,
+"lon": -73.4338,
+"name": "Redding"
+},
+"164": {
+"lat": 41.376225,
+"lon": -73.418171,
+"name": "Bethel"
+},
+"165": {
+"lat": 41.396146,
+"lon": -73.44879,
+"name": "Danbury"
+},
+"167": {
+"lat": 41.319718,
+"lon": -73.083548,
+"name": "Derby-Shelton"
+},
+"168": {
+"lat": 41.344156,
+"lon": -73.079892,
+"name": "Ansonia"
+},
+"169": {
+"lat": 41.395139,
+"lon": -73.072499,
+"name": "Seymour"
+},
+"17": {
+"lat": 40.924972,
+"lon": -73.904612,
+"name": "Ludlow"
+},
+"170": {
+"lat": 41.441752,
+"lon": -73.06359,
+"name": "Beacon Falls"
+},
+"171": {
+"lat": 41.494204,
+"lon": -73.052655,
+"name": "Naugatuck"
+},
+"172": {
+"lat": 41.552728,
+"lon": -73.046126,
+"name": "Waterbury"
+},
+"176": {
+"lat": 41.779938,
+"lon": -73.558204,
+"name": "Tenmile River"
+},
+"177": {
+"lat": 41.814722,
+"lon": -73.562197,
+"name": "Wassaic"
+},
+"18": {
+"lat": 40.935795,
+"lon": -73.902668,
+"name": "Yonkers"
+},
+"184": {
+"lat": 40.8359,
+"lon": -73.9315,
+"name": "Highbridge Yard"
+},
+"188": {
+"lat": 41.161,
+"lon": -73.234336,
+"name": "Fairfield-Black Rock"
+},
+"19": {
+"lat": 40.950496,
+"lon": -73.899062,
+"name": "Glenwood"
+},
+"190": {
+"lat": 41.27142,
+"lon": -72.963488,
+"name": "West Haven"
+},
+"20": {
+"lat": 40.972705,
+"lon": -73.889069,
+"name": "Greystone"
+},
+"22": {
+"lat": 40.994109,
+"lon": -73.884512,
+"name": "Hastings-on-Hudson"
+},
+"23": {
+"lat": 41.012459,
+"lon": -73.87949,
+"name": "Dobbs Ferry"
+},
+"24": {
+"lat": 41.026198,
+"lon": -73.876543,
+"name": "Ardsley-on-Hudson"
+},
+"25": {
+"lat": 41.039993,
+"lon": -73.873083,
+"name": "Irvington"
+},
+"27": {
+"lat": 41.076473,
+"lon": -73.864563,
+"name": "Tarrytown"
+},
+"29": {
+"lat": 41.09492,
+"lon": -73.869755,
+"name": "Philipse Manor"
+},
+"30": {
+"lat": 41.135763,
+"lon": -73.866163,
+"name": "Scarborough"
+},
+"31": {
+"lat": 41.157663,
+"lon": -73.869281,
+"name": "Ossining"
+},
+"33": {
+"lat": 41.189903,
+"lon": -73.882394,
+"name": "Croton-Harmon"
+},
+"37": {
+"lat": 41.246259,
+"lon": -73.921884,
+"name": "Cortlandt"
+},
+"39": {
+"lat": 41.285962,
+"lon": -73.93042,
+"name": "Peekskill"
+},
+"4": {
+"lat": 40.805157,
+"lon": -73.939149,
+"name": "Harlem-125 St"
+},
+"40": {
+"lat": 41.332601,
+"lon": -73.970426,
+"name": "Manitou"
+},
+"42": {
+"lat": 41.38178,
+"lon": -73.947202,
+"name": "Garrison"
+},
+"43": {
+"lat": 41.415283,
+"lon": -73.95809,
+"name": "Cold Spring"
+},
+"44": {
+"lat": 41.450181,
+"lon": -73.982449,
+"name": "Breakneck Ridge"
+},
+"46": {
+"lat": 41.504007,
+"lon": -73.984528,
+"name": "Beacon"
+},
+"49": {
+"lat": 41.587448,
+"lon": -73.947226,
+"name": "New Hamburg"
+},
+"51": {
+"lat": 41.705839,
+"lon": -73.937946,
+"name": "Poughkeepsie"
+},
+"54": {
+"lat": 40.825761,
+"lon": -73.915231,
+"name": "Melrose"
+},
+"55": {
+"lat": 40.847301,
+"lon": -73.89955,
+"name": "Tremont"
+},
+"56": {
+"lat": 40.8615,
+"lon": -73.89058,
+"name": "Fordham"
+},
+"57": {
+"lat": 40.866555,
+"lon": -73.883109,
+"name": "Botanical Garden"
+},
+"58": {
+"lat": 40.878569,
+"lon": -73.871064,
+"name": "Williams Bridge"
+},
+"59": {
+"lat": 40.895361,
+"lon": -73.862916,
+"name": "Woodlawn"
+},
+"61": {
+"lat": 40.905936,
+"lon": -73.85568,
+"name": "Wakefield"
+},
+"62": {
+"lat": 40.912142,
+"lon": -73.851129,
+"name": "Mt Vernon West"
+},
+"622": {
+"lat": 40.8253,
+"lon": -73.9299,
+"name": "Yankees-E 153 St"
+},
+"64": {
+"lat": 40.92699,
+"lon": -73.83948,
+"name": "Fleetwood"
+},
+"65": {
+"lat": 40.93978,
+"lon": -73.835208,
+"name": "Bronxville"
+},
+"651": {
+"lat": 41.082147,
+"lon": -73.519675,
+"name": "Springdale MW Facility"
+},
+"66": {
+"lat": 40.949393,
+"lon": -73.830166,
+"name": "Tuckahoe"
+},
+"68": {
+"lat": 40.958997,
+"lon": -73.820564,
+"name": "Crestwood"
+},
+"71": {
+"lat": 40.989168,
+"lon": -73.808634,
+"name": "Scarsdale"
+},
+"72": {
+"lat": 41.010333,
+"lon": -73.796407,
+"name": "Hartsdale"
+},
+"74": {
+"lat": 41.032589,
+"lon": -73.775208,
+"name": "White Plains"
+},
+"76": {
+"lat": 41.049806,
+"lon": -73.773142,
+"name": "North White Plains"
+},
+"78": {
+"lat": 41.072819,
+"lon": -73.772599,
+"name": "Valhalla"
+},
+"79": {
+"lat": 41.095877,
+"lon": -73.793822,
+"name": "Mt Pleasant"
+},
+"80": {
+"lat": 41.108581,
+"lon": -73.79625,
+"name": "Hawthorne"
+},
+"81": {
+"lat": 41.135222,
+"lon": -73.792661,
+"name": "Pleasantville"
+},
+"83": {
+"lat": 41.158015,
+"lon": -73.774885,
+"name": "Chappaqua"
+},
+"84": {
+"lat": 41.208242,
+"lon": -73.729778,
+"name": "Mt Kisco"
+},
+"85": {
+"lat": 41.237316,
+"lon": -73.699936,
+"name": "Bedford Hills"
+},
+"86": {
+"lat": 41.259552,
+"lon": -73.684155,
+"name": "Katonah"
+},
+"88": {
+"lat": 41.294338,
+"lon": -73.677655,
+"name": "Goldens Bridge"
+},
+"89": {
+"lat": 41.325775,
+"lon": -73.659061,
+"name": "Purdy's"
+},
+"9": {
+"lat": 40.854252,
+"lon": -73.919583,
+"name": "Morris Heights"
+},
+"90": {
+"lat": 41.347722,
+"lon": -73.662269,
+"name": "Croton Falls"
+},
+"91": {
+"lat": 41.39447,
+"lon": -73.619802,
+"name": "Brewster"
+},
+"94": {
+"lat": 41.413203,
+"lon": -73.623787,
+"name": "Southeast"
+},
+"97": {
+"lat": 41.511827,
+"lon": -73.604584,
+"name": "Patterson"
+},
+"98": {
+"lat": 41.564205,
+"lon": -73.600524,
+"name": "Pawling"
+},
+"99": {
+"lat": 41.592871,
+"lon": -73.588032,
+"name": "Appalachian Trail"
+}
+}

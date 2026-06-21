@@ -496,15 +496,27 @@ function animateTrains(ts) {
   requestAnimationFrame(animateTrains);
 }
 
-/* ---------------- Railroads (LIRR + MNR, real GPS) ---------------- */
+/* ---------------- Railroads (LIRR + MNR) ---------------- */
+
+// A train with no GPS position is placed at its next station from the schedule.
+// GPS trains carry no anchor or direction fields (that is the GPS decode
+// contract), so any non-null anchor/direction marks a placed train. The only
+// exception is a placed train whose stops carry no times AND no direction, which
+// reads as GPS; that case does not occur in practice and is harmless.
+function isPlacedRailroad(t) {
+  return t.next_time != null || t.direction != null || t.prev_lat != null;
+}
 
 // Square markers, colored by railroadColor (railroad route ids collide with the
-// subway palette, so they get their own). Phase 1 is GPS only.
+// subway palette, so they get their own). GPS trains are filled; placed trains
+// (a station estimate from the schedule, no live position) are hollow, so the
+// two are visually distinct.
 function railroadIcon(train) {
   const color = railroadColor(train.route_id);
-  const html = `<svg viewBox="0 0 16 16">
-      <rect x="1.5" y="1.5" width="13" height="13" rx="1.5" fill="${color}" stroke="#fff" stroke-width="1.5"/>
-    </svg>`;
+  const rect = isPlacedRailroad(train)
+    ? `<rect x="2" y="2" width="12" height="12" rx="1.5" fill="#fff" stroke="${color}" stroke-width="2.5"/>`
+    : `<rect x="1.5" y="1.5" width="13" height="13" rx="1.5" fill="${color}" stroke="#fff" stroke-width="1.5"/>`;
+  const html = `<svg viewBox="0 0 16 16">${rect}</svg>`;
   return L.divIcon({ className: "railroad-marker", html, iconSize: [16, 16], iconAnchor: [8, 8] });
 }
 
@@ -514,43 +526,52 @@ function railroadPopup(record) {
   return (
     `<b style="color:${railroadColor(t.route_id)}">${esc(head)}</b>` +
     (t.train_num ? `<br>Train ${esc(t.train_num)}` : "") +
-    `<br><span class="popup-sub">live GPS</span>`
+    (t.direction ? `<br>${esc(t.direction)}` : "") +
+    `<br><span class="popup-sub">${isPlacedRailroad(t) ? "scheduled (no GPS)" : "live GPS"}</span>`
   );
 }
 
-// Keyed by trip_id. These are real positions, so markers move via setLatLng on
-// each poll (NOT routed through trainLatLng / animateTrains).
-// PHASE 2: when position-less railroad trains are placed at their next station,
-// they will glide via trainLatLng + the animate loop like subways; GPS trains can
-// join the same path through trainLatLng's null-anchor static fallback, unifying
-// the render path (so this setLatLng-only branch goes away).
-const railroads = new Map(); // trip_id -> { marker, routeId, latest }
+// Keyed by (system, trip_id): LIRR and MNR trip_id namespaces are independent, so
+// trip_id alone would collide (the backend dedups by the same composite). GPS
+// trains move via setLatLng each poll (NOT routed through trainLatLng /
+// animateTrains); placed trains sit at their station, with next_time/prev_*
+// already filled so a later gliding increment can animate them via trainLatLng.
+const railroads = new Map(); // `${system}|${trip_id}` -> { marker, routeId, placed, latest }
+
+function railroadKey(train) {
+  return `${train.system}|${train.trip_id}`;
+}
 
 function applyRailroads(data) {
   const seen = new Set();
   for (const train of data) {
-    seen.add(train.trip_id);
-    const record = railroads.get(train.trip_id);
+    const key = railroadKey(train);
+    seen.add(key);
+    const placed = isPlacedRailroad(train);
+    const record = railroads.get(key);
     if (record) {
       record.marker.setLatLng([train.latitude, train.longitude]);
       record.latest = train;
-      if (record.routeId !== train.route_id) {
+      // Re-skin when the route color or the GPS/placed status flips (a placed
+      // train can pick up a GPS position on a later poll, or lose one).
+      if (record.routeId !== train.route_id || record.placed !== placed) {
         record.marker.setIcon(railroadIcon(train));
         record.routeId = train.route_id;
+        record.placed = placed;
       }
       if (record.marker.isPopupOpen()) record.marker.getPopup().update();
     } else {
-      const newRecord = { routeId: train.route_id, latest: train };
+      const newRecord = { routeId: train.route_id, placed, latest: train };
       newRecord.marker = L.marker([train.latitude, train.longitude], { icon: railroadIcon(train) })
         .bindPopup(() => railroadPopup(newRecord))
         .addTo(railroadLayer);
-      railroads.set(train.trip_id, newRecord);
+      railroads.set(key, newRecord);
     }
   }
-  for (const [id, record] of railroads) {
-    if (!seen.has(id)) {
+  for (const [key, record] of railroads) {
+    if (!seen.has(key)) {
       railroadLayer.removeLayer(record.marker);
-      railroads.delete(id);
+      railroads.delete(key);
     }
   }
 }

@@ -1,0 +1,20 @@
+{
+"now": 1782006692.0,
+"system": "MNR",
+"trains": [
+{
+"system": "MNR",
+"trip_id": "3117769",
+"route_id": "1",
+"latitude": 40.752998,
+"longitude": -73.977056,
+"bearing": null,
+"train_num": "8765",
+"direction": null,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"next_time": 1782006780.0
+}
+]
+}

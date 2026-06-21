@@ -99,6 +99,16 @@ def test_decoded_railroad_train_keys_cover_model():
     assert all(set(t) == set(RailroadTrain.model_fields) for t in trains)
 
 
+def test_placed_railroad_train_keys_cover_model():
+    # The station-placement path emits the SAME RailroadTrain shape as the GPS
+    # path, so both feed the /api/railroads RailroadFeed without a model change.
+    raw = (FIXTURES / "railroad_lirr.pb").read_bytes()
+    stops = json.loads((FIXTURES / "railroad_lirr_stops.json").read_text())
+    placed = feeds._decode_railroad_placements(raw, "LIRR", stops, 0.0)
+    assert placed, "placement produced no trains"
+    assert all(set(t) == set(RailroadTrain.model_fields) for t in placed)
+
+
 def test_railroad_feed_envelope_validates():
     sample = {
         "system": "MNR",

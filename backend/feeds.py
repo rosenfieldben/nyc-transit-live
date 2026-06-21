@@ -616,11 +616,192 @@ def _decode_railroad_vehicles(
     return trains, _header_timestamp(feed)
 
 
+# Railroad direction_id is agency-defined; for the LIRR and MNR the 0/1 binary
+# maps to outbound (away from the NYC terminal) and inbound (toward it). MNR omits
+# direction_id from its realtime trip_update, so its placed trains get a null
+# direction; LIRR populates it.
+_RAILROAD_DIRECTION = {0: "Outbound", 1: "Inbound"}
+
+
+def _railroad_trip_start_ts(trip) -> float | None:
+    """Scheduled start of a railroad trip from start_date + start_time, or None.
+
+    Unlike the subway _trip_start_ts this deliberately does NOT fall back to a
+    trip_id prefix: railroad trip_ids are not centiminute-encoded (LIRR
+    'GO201_26_6006_2', MNR '3116189'), so that heuristic would derive a wildly
+    wrong start and wrongly drop the train as not-yet-started. MNR carries
+    start_time so it gets the not-yet-started filter; LIRR omits start_time, so
+    this returns None there (no filter, and the far-future-first-stop cap guards
+    phantom terminals instead). The DST caveat noted on _trip_start_ts applies
+    equally here.
+    """
+    if not trip.start_time:
+        return None
+    try:
+        d = trip.start_date  # YYYYMMDD
+        base = datetime(int(d[:4]), int(d[4:6]), int(d[6:8]), tzinfo=NYC_TZ)
+    except (ValueError, IndexError):
+        base = datetime.now(NYC_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
+    try:
+        h, m, s = (int(p) for p in trip.start_time.split(":"))
+        return (base + timedelta(hours=h, minutes=m, seconds=s)).timestamp()
+    except ValueError:
+        return None
+
+
+def _decode_railroad_placements(
+    raw: bytes, system: str, stops: dict[str, dict], now: float
+) -> list[dict]:
+    """Place the position-less railroad trains at their next station.
+
+    The GPS slice (_decode_railroad_vehicles) covers trains that report a
+    vehicle.position; this fills the rest from their trip_updates, reusing the
+    subway _decode_feed placement: drop canceled trips, skip skipped/no-data
+    stops, pick the first resolvable still-upcoming stop (with a just-passed
+    grace), fall back to the first resolvable stop when none carries a time, and
+    drop a not-yet-started trip. Two railroad differences from the subway path:
+    railroad stop_ids have no N/S suffix, so direction comes from the realtime
+    trip.direction_id (null when the feed omits it, e.g. MNR), and the start time
+    is derived from start_date+start_time only (see _railroad_trip_start_ts).
+
+    A GPS train is never also placed: a trip_update is skipped when its OWN entity
+    carries a position (MNR's combined entity) or when its trip_id is one a
+    positioned vehicle entity carries (LIRR's split layout, where the vehicle
+    entity shares the trip_id). prev_*/next_time are filled wherever the
+    stop_time_updates carry times so a later gliding increment needs no reshape;
+    no slicing or motion is built here.
+    """
+    feed = gtfs_realtime_pb2.FeedMessage()
+    feed.ParseFromString(raw)
+
+    # Trip ids a positioned vehicle entity carries. For LIRR the vehicle entity
+    # shares its trip_id with the matching trip_update, so this set skips placing
+    # an already-GPS train; for MNR the vehicle trip_id differs from the
+    # trip_update's, so the per-entity check below is what catches it instead.
+    positioned_ids: set[str] = set()
+    for entity in feed.entity:
+        if entity.HasField("vehicle") and entity.vehicle.HasField("position"):
+            if entity.vehicle.trip.trip_id:
+                positioned_ids.add(entity.vehicle.trip.trip_id)
+
+    trains: list[dict] = []
+    for entity in feed.entity:
+        if not entity.HasField("trip_update"):
+            continue
+        # MNR combines trip_update + vehicle in one entity: if this entity already
+        # carries a position its train is GPS-placed, so never place it again.
+        if entity.HasField("vehicle") and entity.vehicle.HasField("position"):
+            continue
+        tu = entity.trip_update
+        # LIRR splits them: a separate vehicle entity holds this train's position
+        # under the same trip_id, so skip placing it.
+        if tu.trip.trip_id and tu.trip.trip_id in positioned_ids:
+            continue
+        if tu.trip.schedule_relationship in _DROP_TRIP_RELATIONSHIPS:
+            continue  # canceled/deleted trip
+
+        # Not-yet-started filter (MNR carries the start; LIRR has no start_time so
+        # start_ts is None and the far-future-first-stop cap applies below).
+        start_ts = _railroad_trip_start_ts(tu.trip)
+        if start_ts is not None and start_ts > now + TRIP_START_GRACE_S:
+            continue
+
+        # Pick the first resolvable, still-upcoming stop. Mirror _decode_feed:
+        # track the first resolvable stop (no-times fallback) and the stop just
+        # behind the chosen one (the prev anchor).
+        chosen = None
+        chosen_time = None
+        first_resolvable = None
+        prev_resolvable = None
+        last_resolvable = None
+        saw_timed = False
+        for stu in tu.stop_time_update:
+            if not stu.stop_id or stu.stop_id not in stops:
+                continue  # unknown station; try the next one
+            if stu.schedule_relationship in _DROP_STOP_RELATIONSHIPS:
+                continue  # skipped / no-data stop
+            if first_resolvable is None:
+                first_resolvable = stu
+            t = _stop_time(stu)
+            if t is None:
+                last_resolvable = stu
+                continue
+            saw_timed = True
+            if t >= now - 60:  # small grace for clock skew / just-passed stops
+                chosen = stu
+                chosen_time = t
+                prev_resolvable = last_resolvable
+                break
+            last_resolvable = stu
+        if chosen is None and not saw_timed:
+            chosen = first_resolvable  # no-times fallback: prev_resolvable stays None
+        if chosen is None:
+            continue  # trip finished, or nothing resolvable
+        # NOTE: the subway far-future-first-stop cap (MAX_FUTURE_FIRST_STOP_S) is
+        # deliberately NOT applied here. It treats "chosen is the first resolvable
+        # stop and far in the future" as a not-yet-departed phantom, which holds
+        # for subway feeds that list a trip from its origin. The railroad feeds
+        # PRUNE already-passed stops, so a running train's first listed stop is
+        # simply its next station (often many minutes out), and the cap would drop
+        # most running trains. MNR's not-yet-started filter (start_time, above)
+        # screens its future-scheduled trips; LIRR carries no start_time, so a
+        # not-yet-departed LIRR train cannot be told from a running one and is
+        # placed at its next/origin station, which is acceptable for static
+        # placement (gliding comes in the next increment).
+
+        stop = stops[chosen.stop_id]
+        direction = (
+            _RAILROAD_DIRECTION.get(tu.trip.direction_id)
+            if tu.trip.HasField("direction_id")
+            else None
+        )
+        # The chosen station is the static-fallback position; prev_* describe the
+        # most-recently-passed station (null when none precedes it or its time is
+        # unknown); next_time is the predicted time at the chosen station.
+        prev_lat = prev_lon = prev_time = None
+        if prev_resolvable is not None:
+            prev_stop = stops[prev_resolvable.stop_id]
+            prev_lat, prev_lon = prev_stop["lat"], prev_stop["lon"]
+            pt = _stop_time(prev_resolvable)
+            prev_time = float(pt) if pt is not None else None
+        # MNR's combined entity keeps a vehicle (just no position) carrying the
+        # train number; LIRR's trip_update-only entity has none.
+        train_num = None
+        if entity.HasField("vehicle"):
+            train_num = (entity.vehicle.vehicle.label or entity.vehicle.vehicle.id) or None
+        trains.append(
+            {
+                "system": system,
+                "trip_id": tu.trip.trip_id or f"{system}:{entity.id}",
+                "route_id": tu.trip.route_id or None,
+                "latitude": stop["lat"],
+                "longitude": stop["lon"],
+                "bearing": None,  # placed from schedule, no GPS heading
+                "train_num": train_num,
+                "direction": direction,
+                "prev_lat": prev_lat,
+                "prev_lon": prev_lon,
+                "prev_time": prev_time,
+                "next_time": float(chosen_time) if chosen_time is not None else None,
+            }
+        )
+    return trains
+
+
 async def fetch_railroad_trains(
     client: httpx.AsyncClient,
+    railroad_stops: dict[str, dict | None],
 ) -> tuple[list[dict], float | None, list[str]]:
     """Fetch the LIRR and MNR feeds concurrently; return
     (trains, feed_timestamp, failed_feeds).
+
+    Each feed contributes the GPS-positioned trains (_decode_railroad_vehicles)
+    plus the position-less trains placed at their next station
+    (_decode_railroad_placements, using railroad_stops[system] for coordinates;
+    placement is skipped for a system whose static stops are None). Trains are
+    deduped by (system, trip_id) with the GPS train winning any conflict (GPS is
+    added first); the composite key matters because LIRR's and MNR's trip_id
+    namespaces are independent.
 
     feed_timestamp comes only from systems whose header is a trustworthy
     freshness signal (RAILROAD_FRESHNESS_SYSTEMS): today just LIRR, whose header
@@ -629,11 +810,10 @@ async def fetch_railroad_trains(
     oldest such trusted header (only LIRR's today, but min-across-trusted stays
     correct if another trusted feed is added later), or None when no trusted feed
     decoded. Mirrors fetch_subway_trains: per-feed failures (a fetch error or
-    undecodable protobuf) are logged and skipped, trains are de-duped by trip_id
-    across the two systems (a guard, since the namespaces shouldn't collide), and
-    this raises only when every feed fails. failed_feeds is the sorted list of
-    systems that dropped this poll, empty on a fully successful poll. The caller
-    owns the client (the polling task holds one for its lifetime).
+    undecodable protobuf) are logged and skipped, and this raises only when every
+    feed fails. failed_feeds is the sorted list of systems that dropped this poll,
+    empty on a fully successful poll. The caller owns the client (the polling task
+    holds one for its lifetime).
     """
     now = time.time()
 
@@ -649,26 +829,41 @@ async def fetch_railroad_trains(
     )
 
     trains: list[dict] = []
-    seen_trips: set[str] = set()
+    seen: set[tuple[str, str]] = set()  # (system, trip_id)
     timestamps: list[float] = []
     feed_errors: dict[str, str] = {}
+    raw_by_system: dict[str, bytes] = {}  # successfully decoded, kept for placement
+    # GPS pass first, so a positioned train wins its (system, trip_id) key.
     for system, result in zip(systems, results):
         if isinstance(result, BaseException):
             feed_errors[system] = str(result)
             continue
         try:
-            decoded, feed_ts = _decode_railroad_vehicles(result, system, now)
+            gps, feed_ts = _decode_railroad_vehicles(result, system, now)
         except DecodeError as exc:
             feed_errors[system] = f"undecodable protobuf ({exc})"
             continue
+        raw_by_system[system] = result
         # Only trust a freshness-authoritative system's header (see
         # RAILROAD_FRESHNESS_SYSTEMS); MNR's lagging shared clock is ignored.
         if feed_ts is not None and system in RAILROAD_FRESHNESS_SYSTEMS:
             timestamps.append(feed_ts)
-        for train in decoded:
-            if train["trip_id"] in seen_trips:
+        for train in gps:
+            key = (system, train["trip_id"])
+            if key in seen:
                 continue
-            seen_trips.add(train["trip_id"])
+            seen.add(key)
+            trains.append(train)
+    # Placement pass: position-less trains, only where static stops are loaded.
+    for system, result in raw_by_system.items():
+        stops = (railroad_stops or {}).get(system)
+        if not stops:
+            continue
+        for train in _decode_railroad_placements(result, system, stops, now):
+            key = (system, train["trip_id"])
+            if key in seen:
+                continue
+            seen.add(key)
             trains.append(train)
 
     if feed_errors:

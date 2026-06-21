@@ -1,11 +1,14 @@
-"""Golden + unit tests for the railroad (LIRR / MNR) GPS decode.
+"""Golden + unit tests for the railroad (LIRR / MNR) decode: GPS + placement.
 
 Like test_feeds_golden.py, the riskiest part is decoding the true shape of the
-feed, so these lock _decode_railroad_vehicles against real captured payloads
+feed, so these lock _decode_railroad_vehicles (GPS) and _decode_railroad_placements
+(station placement of the position-less trains) against real captured payloads
 (the bytes carry no PII) with `now` frozen to each feed's header timestamp.
-Synthetic feeds cover the two route_id-join layouts and the position filter.
+Synthetic feeds cover the route_id-join layouts, the position filter, and the
+placement edges. The placement golden also uses the committed per-system stops
+(railroad_{lirr,mnr}_stops.json), so no test touches the network.
 
-To regenerate after an INTENTIONAL decode change, from backend/:
+To regenerate the GPS golden after an INTENTIONAL decode change, from backend/:
 
     python - <<'PY'
     import json
@@ -22,9 +25,33 @@ To regenerate after an INTENTIONAL decode change, from backend/:
         (FIX / f"railroad_{key}_expected.json").write_text(
             json.dumps({"now": now, "system": system, "trains": trains}, indent=0))
     PY
+
+To regenerate the PLACEMENT golden (network-free, using the committed stops.json):
+
+    python - <<'PY'
+    import json
+    from pathlib import Path
+    from google.transit import gtfs_realtime_pb2 as pb
+    import feeds
+    FIX = Path("tests/fixtures")
+    for system in ("LIRR", "MNR"):
+        key = system.lower()
+        raw = (FIX / f"railroad_{key}.pb").read_bytes()
+        stops = json.loads((FIX / f"railroad_{key}_stops.json").read_text())
+        feed = pb.FeedMessage(); feed.ParseFromString(raw)
+        now = float(feed.header.timestamp)
+        placed = feeds._decode_railroad_placements(raw, system, stops, now)
+        (FIX / f"railroad_{key}_placed_expected.json").write_text(
+            json.dumps({"now": now, "system": system, "trains": placed}, indent=0))
+    PY
+
+The stops.json fixtures themselves are regenerated from the static GTFS via
+railroad_static.load_railroad_static() only when the static parsing changes.
 """
 
 import json
+import time
+from datetime import datetime
 from pathlib import Path
 
 import httpx
@@ -70,9 +97,50 @@ def test_every_golden_train_is_well_formed(system):
         assert train["system"] == system
         assert feeds.RAILROAD_LAT_MIN <= train["latitude"] <= feeds.RAILROAD_LAT_MAX
         assert feeds.RAILROAD_LON_MIN <= train["longitude"] <= feeds.RAILROAD_LON_MAX
-        # Phase-1 trains are GPS only: every anchor + direction field is null.
+        # GPS trains are positions only: every anchor + direction field is null.
         for field in ("direction", "prev_lat", "prev_lon", "prev_time", "next_time"):
             assert train[field] is None
+
+
+# ---------------- placement golden ----------------
+
+
+def _load_placed(system: str):
+    key = system.lower()
+    raw = (FIXTURES / f"railroad_{key}.pb").read_bytes()
+    stops = json.loads((FIXTURES / f"railroad_{key}_stops.json").read_text())
+    expected = json.loads((FIXTURES / f"railroad_{key}_placed_expected.json").read_text())
+    return raw, stops, expected
+
+
+@pytest.mark.parametrize("system", SYSTEMS)
+def test_placed_feed_decodes_to_golden_output(system):
+    raw, stops, expected = _load_placed(system)
+    placed = feeds._decode_railroad_placements(raw, expected["system"], stops, expected["now"])
+    assert placed == expected["trains"]
+
+
+def test_placed_golden_is_nontrivial():
+    # LIRR has many position-less running trains (its feed prunes passed stops, so
+    # most omitted trains are placeable); MNR's omitted trains are mostly GPS-
+    # covered or future-scheduled, so its placed count is small but nonzero.
+    assert len(_load_placed("LIRR")[2]["trains"]) > 10
+    assert len(_load_placed("MNR")[2]["trains"]) >= 1
+
+
+@pytest.mark.parametrize("system", SYSTEMS)
+def test_every_placed_train_is_well_formed(system):
+    raw, stops, expected = _load_placed(system)
+    coords = {(s["lat"], s["lon"]) for s in stops.values()}
+    for t in expected["trains"]:
+        assert t["system"] == system
+        assert t["bearing"] is None  # placed from schedule, no GPS heading
+        assert (t["latitude"], t["longitude"]) in coords  # placed AT a static stop
+        assert feeds.RAILROAD_LAT_MIN <= t["latitude"] <= feeds.RAILROAD_LAT_MAX
+        assert feeds.RAILROAD_LON_MIN <= t["longitude"] <= feeds.RAILROAD_LON_MAX
+        # Anchors are filled wherever the feed carries times: these placements all
+        # have a timed next stop (the no-times fallback would leave next_time null).
+        assert t["next_time"] is not None
 
 
 # ---------------- synthetic: extraction rules ----------------
@@ -193,7 +261,7 @@ def _raw(system):
 @pytest.mark.anyio
 async def test_fetch_timestamp_uses_lirr_header_only():
     client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": _raw("MNR")})
-    _, feed_ts, _ = await feeds.fetch_railroad_trains(client)
+    _, feed_ts, _ = await feeds.fetch_railroad_trains(client, {})
     lirr_ts = _load("LIRR")[1]["now"]
     mnr_ts = _load("MNR")[1]["now"]
     # Only LIRR (freshness-authoritative) drives feed_timestamp; MNR's header is
@@ -207,7 +275,7 @@ async def test_fetch_timestamp_none_when_only_untrusted_feed_succeeds():
     # LIRR (the only trusted system) fails; MNR succeeds but contributes no
     # timestamp, so feed_timestamp falls back to None / the poll-age signal.
     client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": _raw("MNR")}, down=["LIRR"])
-    trains, feed_ts, failed = await feeds.fetch_railroad_trains(client)
+    trains, feed_ts, failed = await feeds.fetch_railroad_trains(client, {})
     assert failed == ["LIRR"]
     assert trains and all(t["system"] == "MNR" for t in trains)
     assert feed_ts is None
@@ -216,7 +284,7 @@ async def test_fetch_timestamp_none_when_only_untrusted_feed_succeeds():
 @pytest.mark.anyio
 async def test_fetch_dedups_duplicate_trip_ids_on_the_live_path():
     client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": _raw("MNR")})
-    trains, _, failed = await feeds.fetch_railroad_trains(client)
+    trains, _, failed = await feeds.fetch_railroad_trains(client, {})
     assert failed == []
     # The MNR feed repeats trains across separate vehicle entities; the live path
     # collapses them to one marker per trip_id (49 decoded -> 33 unique), which
@@ -231,7 +299,7 @@ async def test_fetch_dedups_duplicate_trip_ids_on_the_live_path():
 @pytest.mark.anyio
 async def test_fetch_skips_a_failed_feed_and_reports_it():
     client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": _raw("MNR")}, down=["MNR"])
-    trains, _, failed = await feeds.fetch_railroad_trains(client)
+    trains, _, failed = await feeds.fetch_railroad_trains(client, {})
     assert failed == ["MNR"]
     assert trains and all(t["system"] == "LIRR" for t in trains)
 
@@ -240,7 +308,7 @@ async def test_fetch_skips_a_failed_feed_and_reports_it():
 async def test_fetch_skips_an_undecodable_feed():
     # MNR returns a truncated length-delimited field -> DecodeError, skipped.
     client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": b"\x0a\xff"})
-    trains, _, failed = await feeds.fetch_railroad_trains(client)
+    trains, _, failed = await feeds.fetch_railroad_trains(client, {})
     assert failed == ["MNR"]
     assert trains and all(t["system"] == "LIRR" for t in trains)
 
@@ -249,4 +317,205 @@ async def test_fetch_skips_an_undecodable_feed():
 async def test_fetch_raises_when_all_feeds_fail():
     client = _FakeRailClient({}, down=["LIRR", "MNR"])
     with pytest.raises(RuntimeError, match="All railroad feeds failed"):
-        await feeds.fetch_railroad_trains(client)
+        await feeds.fetch_railroad_trains(client, {})
+
+
+# ---------------- synthetic: placement edges ----------------
+
+NOW = 1000.0
+SYN_STOPS = {
+    "A": {"name": "Aville", "lat": 40.80, "lon": -73.50},
+    "B": {"name": "Bville", "lat": 40.81, "lon": -73.51},
+    "C": {"name": "Cville", "lat": 40.82, "lon": -73.52},
+}
+
+_SKIPPED = pb.TripUpdate.StopTimeUpdate.ScheduleRelationship.SKIPPED
+_NO_DATA = pb.TripUpdate.StopTimeUpdate.ScheduleRelationship.NO_DATA
+_CANCELED = pb.TripDescriptor.ScheduleRelationship.CANCELED
+
+
+def _tu_entity(
+    feed,
+    trip_id,
+    route_id="5",
+    direction_id=None,
+    start_time="",
+    start_date="",
+    stops=(),
+    canceled=False,
+):
+    """Add a trip_update entity. stops = [(stop_id, time | None [, schedule_rel]), ...]."""
+    ent = feed.entity.add()
+    ent.id = trip_id
+    tu = ent.trip_update
+    tu.trip.trip_id = trip_id
+    tu.trip.route_id = route_id
+    if direction_id is not None:
+        tu.trip.direction_id = direction_id
+    if start_time:
+        tu.trip.start_time = start_time
+    if start_date:
+        tu.trip.start_date = start_date
+    if canceled:
+        tu.trip.schedule_relationship = _CANCELED
+    for spec in stops:
+        sid, t = spec[0], spec[1]
+        stu = tu.stop_time_update.add()
+        stu.stop_id = sid
+        if t is not None:
+            stu.arrival.time = int(t)
+        if len(spec) > 2 and spec[2] is not None:
+            stu.schedule_relationship = spec[2]
+    return ent
+
+
+def _placed(feed, system="LIRR", stops=SYN_STOPS, now=NOW):
+    feed.header.gtfs_realtime_version = "2.0"  # required field for serialization
+    return feeds._decode_railroad_placements(feed.SerializeToString(), system, stops, now)
+
+
+def test_position_less_trip_placed_at_next_stop_with_prev_anchor():
+    feed = pb.FeedMessage()
+    # A is just-passed, B is next-upcoming, C is later. Placed at B; prev anchor A.
+    _tu_entity(
+        feed, "T1", direction_id=1, stops=[("A", NOW - 300), ("B", NOW + 120), ("C", NOW + 600)]
+    )
+    placed = _placed(feed)
+    assert len(placed) == 1
+    t = placed[0]
+    assert (t["latitude"], t["longitude"]) == (40.81, -73.51)  # B
+    assert t["next_time"] == NOW + 120
+    assert (t["prev_lat"], t["prev_lon"], t["prev_time"]) == (40.80, -73.50, NOW - 300)  # A
+    assert t["direction"] == "Inbound"
+    assert t["bearing"] is None and t["route_id"] == "5"
+
+
+def test_gps_trip_not_double_placed_combined_entity():
+    # MNR layout: one entity carries BOTH a position and a trip_update (with a
+    # different vehicle trip_id); the GPS slice owns it, so it is not placed.
+    feed = pb.FeedMessage()
+    ent = _tu_entity(feed, "3114306", stops=[("A", NOW + 120)])
+    ent.vehicle.trip.trip_id = "1797"
+    ent.vehicle.position.latitude = 40.8
+    ent.vehicle.position.longitude = -73.5
+    assert _placed(feed, system="MNR") == []
+
+
+def test_gps_trip_not_double_placed_split_entity():
+    # LIRR layout: a separate vehicle entity holds the position under the same
+    # trip_id as the trip_update; the trip_update must not also be placed.
+    feed = pb.FeedMessage()
+    _tu_entity(feed, "T1", stops=[("A", NOW + 120)])
+    veh = feed.entity.add()
+    veh.id = "v1"
+    veh.vehicle.trip.trip_id = "T1"
+    veh.vehicle.position.latitude = 40.8
+    veh.vehicle.position.longitude = -73.5
+    assert _placed(feed, system="LIRR") == []
+
+
+def test_canceled_trip_dropped_from_placement():
+    feed = pb.FeedMessage()
+    _tu_entity(feed, "T1", stops=[("A", NOW + 120)], canceled=True)
+    assert _placed(feed) == []
+
+
+def test_skipped_and_no_data_stops_skipped_in_placement():
+    feed = pb.FeedMessage()
+    _tu_entity(
+        feed, "T1", stops=[("A", NOW + 60, _SKIPPED), ("B", NOW + 90, _NO_DATA), ("C", NOW + 120)]
+    )
+    placed = _placed(feed)
+    assert len(placed) == 1
+    assert (placed[0]["latitude"], placed[0]["longitude"]) == (40.82, -73.52)  # C
+    assert placed[0]["next_time"] == NOW + 120
+
+
+def test_no_times_fallback_to_first_resolvable_stop():
+    feed = pb.FeedMessage()
+    _tu_entity(feed, "T1", stops=[("A", None), ("B", None)])  # no stop carries a time
+    placed = _placed(feed)
+    assert len(placed) == 1
+    assert (placed[0]["latitude"], placed[0]["longitude"]) == (40.80, -73.50)  # A
+    assert placed[0]["next_time"] is None and placed[0]["prev_lat"] is None
+
+
+def test_finished_trip_all_stops_past_dropped():
+    feed = pb.FeedMessage()
+    _tu_entity(feed, "T1", stops=[("A", NOW - 600), ("B", NOW - 300)])  # all past
+    assert _placed(feed) == []
+
+
+def test_direction_from_direction_id_and_null_when_absent():
+    feed = pb.FeedMessage()
+    _tu_entity(feed, "OUT", direction_id=0, stops=[("A", NOW + 120)])
+    _tu_entity(feed, "IN", direction_id=1, stops=[("A", NOW + 120)])
+    _tu_entity(feed, "NONE", stops=[("A", NOW + 120)])  # no direction_id (e.g. MNR)
+    dirs = {t["trip_id"]: t["direction"] for t in _placed(feed)}
+    assert dirs == {"OUT": "Outbound", "IN": "Inbound", "NONE": None}
+
+
+def test_started_vs_not_yet_started_via_start_time():
+    base = datetime(2026, 6, 20, 23, 0, 0, tzinfo=feeds.NYC_TZ)
+    now = base.timestamp()
+    feed = pb.FeedMessage()
+    _tu_entity(
+        feed, "RUNNING", start_time="22:25:00", start_date="20260620", stops=[("A", now + 120)]
+    )
+    _tu_entity(
+        feed, "FUTURE", start_time="23:30:00", start_date="20260620", stops=[("A", now + 120)]
+    )
+    ids = {t["trip_id"] for t in _placed(feed, now=now)}
+    assert ids == {"RUNNING"}  # the 23:30 start is > now + grace, so not-yet-started
+
+
+# ---------------- fetch_railroad_trains: merge + composite-key dedup ----------------
+
+
+def _gps_feed(trip_id, route_id="5"):
+    f = pb.FeedMessage()
+    f.header.gtfs_realtime_version = "2.0"
+    f.header.timestamp = 1782006915
+    e = f.entity.add()
+    e.id = trip_id
+    e.vehicle.trip.trip_id = trip_id
+    e.vehicle.trip.route_id = route_id
+    e.vehicle.position.latitude = 40.8
+    e.vehicle.position.longitude = -73.5
+    return f
+
+
+@pytest.mark.anyio
+async def test_fetch_merges_gps_and_placed_trains():
+    # One feed with a GPS train and a separate position-less trip_update; with
+    # static stops supplied, both appear (GPS slice + placement).
+    # fetch_railroad_trains uses time.time() internally, so the placed stop must
+    # be in the real future to be the next-upcoming stop.
+    f = _gps_feed("GPS1")
+    _tu_entity(f, "PLACED1", route_id="6", stops=[("A", time.time() + 600)])
+    client = _FakeRailClient({"LIRR": f.SerializeToString(), "MNR": _raw("MNR")}, down=["MNR"])
+    stops = {"LIRR": {"A": {"name": "A", "lat": 40.81, "lon": -73.51}}, "MNR": None}
+    trains, _, failed = await feeds.fetch_railroad_trains(client, stops)
+    assert failed == ["MNR"]
+    by_id = {t["trip_id"]: t for t in trains}
+    # GPS coords come through the protobuf float32 position, so compare approx.
+    assert by_id["GPS1"]["latitude"] == pytest.approx(40.8)
+    assert by_id["GPS1"]["bearing"] is None and by_id["GPS1"]["route_id"] == "5"
+    # Placed coords are the static stop's (a Python float), so they are exact.
+    assert (by_id["PLACED1"]["latitude"], by_id["PLACED1"]["longitude"]) == (40.81, -73.51)
+    assert by_id["PLACED1"]["next_time"] is not None and by_id["PLACED1"]["route_id"] == "6"
+
+
+@pytest.mark.anyio
+async def test_fetch_dedups_by_system_trip_id_composite_key():
+    # The same trip_id in both feeds: (system, trip_id) keeps both, where a
+    # trip_id-alone dedup would have dropped one.
+    client = _FakeRailClient(
+        {
+            "LIRR": _gps_feed("SHARED").SerializeToString(),
+            "MNR": _gps_feed("SHARED").SerializeToString(),
+        }
+    )
+    trains, _, failed = await feeds.fetch_railroad_trains(client, {})
+    assert failed == []
+    assert {(t["system"], t["trip_id"]) for t in trains} == {("LIRR", "SHARED"), ("MNR", "SHARED")}

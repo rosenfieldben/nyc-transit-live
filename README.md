@@ -127,10 +127,13 @@ start doesn't flap it.
 
 The feed envelopes (`/api/buses`, `/api/subways`, `/api/railroads`) carry
 `fetched_at` (this server's poll time) and `feed_timestamp` (the feed's own
-content time: oldest across the subway feeds for `/api/subways`, and oldest
-across the LIRR + Metro-North feeds for `/api/railroads`). The frontend judges
-staleness from the difference of those two server-side values, so the browser
-clock never causes false "stale" warnings.
+content time: oldest across the subway feeds for `/api/subways`). For
+`/api/railroads`, `feed_timestamp` reflects LIRR's feed-generation time; MNR
+publishes a lagging shared header clock that does not track publish time (it is
+copied onto every vehicle too, while the GPS positions are live), so it is not
+used as a freshness signal. The frontend judges staleness from the difference of
+those two server-side values, so the browser clock never causes false "stale"
+warnings.
 
 ## Build phases
 

@@ -191,12 +191,26 @@ def _raw(system):
 
 
 @pytest.mark.anyio
-async def test_fetch_returns_oldest_timestamp_across_feeds():
+async def test_fetch_timestamp_uses_lirr_header_only():
     client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": _raw("MNR")})
     _, feed_ts, _ = await feeds.fetch_railroad_trains(client)
-    # The combined view is only as fresh as its stalest feed.
-    oldest = min(_load("LIRR")[1]["now"], _load("MNR")[1]["now"])
-    assert feed_ts == oldest == 1782006692.0
+    lirr_ts = _load("LIRR")[1]["now"]
+    mnr_ts = _load("MNR")[1]["now"]
+    # Only LIRR (freshness-authoritative) drives feed_timestamp; MNR's header is
+    # ignored even though it is the older of the two.
+    assert feed_ts == lirr_ts == 1782006915.0
+    assert feed_ts != mnr_ts  # 1782006692.0, MNR's older lagging header, is not used
+
+
+@pytest.mark.anyio
+async def test_fetch_timestamp_none_when_only_untrusted_feed_succeeds():
+    # LIRR (the only trusted system) fails; MNR succeeds but contributes no
+    # timestamp, so feed_timestamp falls back to None / the poll-age signal.
+    client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": _raw("MNR")}, down=["LIRR"])
+    trains, feed_ts, failed = await feeds.fetch_railroad_trains(client)
+    assert failed == ["LIRR"]
+    assert trains and all(t["system"] == "MNR" for t in trains)
+    assert feed_ts is None
 
 
 @pytest.mark.anyio

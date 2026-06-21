@@ -72,6 +72,16 @@ RAILROAD_FEED_URLS = {
     "MNR": _RAILROAD_BASE + "/mnr%2Fgtfs-mnr",
 }
 
+# Per-feed content time (FeedHeader.timestamp) is only a usable freshness
+# signal for a system whose header tracks publish time. A
+# per-vehicle-vs-header probe found MNR stamps a bursty clock that lags
+# ~2-4 min onto its header AND copies it onto every vehicle.timestamp (no
+# independent signal), while its GPS positions are live; LIRR's header is the
+# true feed-generation time. So only LIRR's header drives the railroad
+# feed_timestamp. An MNR upstream freeze can't be timestamp-detected from this
+# feed and falls to the poll-age signal instead.
+RAILROAD_FRESHNESS_SYSTEMS = frozenset({"LIRR"})
+
 
 def _api_key() -> str:
     key = os.getenv("BUS_TIME_API_KEY")
@@ -613,8 +623,9 @@ async def fetch_railroad_trains(
     (trains, feed_timestamp, failed_feeds).
 
     feed_timestamp is the OLDEST content time across successfully decoded feeds
-    (the combined view is only as fresh as its stalest member), or None if none
-    decoded. Mirrors fetch_subway_trains: per-feed failures (a fetch error or
+    whose header is a trustworthy freshness signal (RAILROAD_FRESHNESS_SYSTEMS,
+    just LIRR today; MNR's lagging shared clock is ignored), or None when none of
+    those decoded. Mirrors fetch_subway_trains: per-feed failures (a fetch error or
     undecodable protobuf) are logged and skipped, trains are de-duped by trip_id
     across the two systems (a guard, since the namespaces shouldn't collide), and
     this raises only when every feed fails. failed_feeds is the sorted list of
@@ -647,7 +658,9 @@ async def fetch_railroad_trains(
         except DecodeError as exc:
             feed_errors[system] = f"undecodable protobuf ({exc})"
             continue
-        if feed_ts is not None:
+        # Only trust a freshness-authoritative system's header (see
+        # RAILROAD_FRESHNESS_SYSTEMS); MNR's lagging shared clock is ignored.
+        if feed_ts is not None and system in RAILROAD_FRESHNESS_SYSTEMS:
             timestamps.append(feed_ts)
         for train in decoded:
             if train["trip_id"] in seen_trips:

@@ -18,6 +18,7 @@ const {
   pointAtArcLength,
   projectOntoRoute,
   railroadColor,
+  isPlacedRailroad,
 } = require("./helpers.js");
 
 test("trainLatLng interpolates along prev->next and clamps to [0,1]", () => {
@@ -91,6 +92,21 @@ test("railroadColor is deterministic, from the palette, and null-safe", () => {
   assert.equal(railroadColor(""), "#607d8b");
   // A railroad route id is colored on its own scale, not the subway's.
   assert.notEqual(railroadColor("1"), lineColor("1"));
+});
+
+test("isPlacedRailroad keys off stop_id (the authoritative placed-vs-GPS signal)", () => {
+  // A GPS train: the decode emits stop_id/stop_name null even though it has a
+  // real position, so it is NOT placed.
+  assert.equal(isPlacedRailroad({ stop_id: null, stop_name: null, next_time: null }), false);
+  // A normal placed train (timed next stop).
+  assert.equal(isPlacedRailroad({ stop_id: "12", stop_name: "Jamaica", next_time: 1000 }), true);
+  // The case the old time/direction-based check missed: a no-times MNR placement
+  // has next_time/prev_lat/direction all null but a real stop_id, and must still
+  // read as placed so its marker, label, and next-stop popup line stay correct.
+  assert.equal(
+    isPlacedRailroad({ stop_id: "1", stop_name: "Grand Central", next_time: null, prev_lat: null, direction: null }),
+    true,
+  );
 });
 
 // `now` is passed explicitly for determinism; minClockOffset is null here

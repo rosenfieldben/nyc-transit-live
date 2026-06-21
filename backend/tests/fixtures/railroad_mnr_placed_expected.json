@@ -10,6 +10,8 @@
 "longitude": -73.977056,
 "bearing": null,
 "train_num": "8765",
+"stop_id": "1",
+"stop_name": "Grand Central",
 "direction": null,
 "prev_lat": null,
 "prev_lon": null,

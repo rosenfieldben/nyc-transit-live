@@ -44,6 +44,8 @@ RAILROADS = [
         "longitude": -73.5,
         "bearing": None,
         "train_num": "1797",
+        "stop_id": None,
+        "stop_name": None,
         "direction": None,
         "prev_lat": None,
         "prev_lon": None,
@@ -627,8 +629,15 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
         return RAILROADS, 1002.0, []
 
     async def fake_load_railroad_static():
-        # No network; placement input is irrelevant because the fetch is faked.
-        return {"LIRR": None, "MNR": None}
+        # No network. LIRR carries stops/trips/shapes; MNR failed to load (None).
+        return {
+            "LIRR": {
+                "stops": {"1": {"name": "Aville", "lat": 40.7, "lon": -74.0}},
+                "trips": {"t1": {"route_id": "5", "shape_id": "s1"}},
+                "shapes": {"s1": [[40.7, -74.0], [40.71, -74.01]]},
+            },
+            "MNR": None,
+        }
 
     async def fake_ensure_index():
         return None
@@ -648,6 +657,21 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
     async with app_module.lifespan(app):
         # Static load ran; cache + tasks exist.
         assert app.state.subway_stops == {"101N": {"name": "Alpha", "lat": 40.7, "lon": -74.0}}
+        # The full per-system railroad static is kept (trips/shapes for gliding),
+        # and railroad_stops is derived from it (None for the failed system).
+        assert app.state.railroad_static["LIRR"]["trips"] == {
+            "t1": {"route_id": "5", "shape_id": "s1"}
+        }
+        assert app.state.railroad_static["LIRR"]["shapes"]["s1"] == [[40.7, -74.0], [40.71, -74.01]]
+        assert app.state.railroad_stops["LIRR"] == {
+            "1": {"name": "Aville", "lat": 40.7, "lon": -74.0}
+        }
+        assert app.state.railroad_stops["MNR"] is None
+        # The carry-forward memory is initialized empty. Asserted here, before the
+        # block below waits on the first poll, so it is still the startup value
+        # (the poll's carry_forward_prev would otherwise fill it).
+        assert app.state.railroad_positions == {}
+        assert app.state.subway_positions == {}
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
             # Wait for the background poll task's first cycle to fill the cache.

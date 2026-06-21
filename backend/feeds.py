@@ -8,6 +8,7 @@ import logging
 import os
 import time
 from collections import defaultdict
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -429,11 +430,20 @@ def _aggregate_feeds(
     return trains, trimmed, feed_timestamp, feed_errors
 
 
-def carry_forward_prev(trains: list[dict], last_positions: dict[str, dict]) -> dict[str, dict]:
+def carry_forward_prev(
+    trains: list[dict],
+    last_positions: dict,
+    key: Callable[[dict], object] | None = None,
+) -> dict:
     """Fill missing prev anchors from a persisted previous-station anchor, and return the
     position memory for the next poll.
 
-    The NYCT feeds usually prune the just-departed stop, so _decode_feed leaves prev_* null
+    `key` maps a train to its memory key; it defaults to the trip_id, which is what the subway
+    path passes. The railroad path passes (system, trip_id) because LIRR and MNR trip_id
+    namespaces are independent and can collide. The anchor-holding behavior and the limitations
+    below are identical for both; only the key differs.
+
+    The feeds usually prune the just-departed stop, so the decode leaves prev_* null
     for most trains. We recover a prev by remembering, per trip, the station it most recently
     departed (the anchor) and holding that anchor fixed for as long as the train is approaching
     the same next stop, advancing it only when the next stop changes. Holding it fixed is the
@@ -464,11 +474,11 @@ def carry_forward_prev(trains: list[dict], last_positions: dict[str, dict]) -> d
     Both are rare, self-correcting, and we accept them here rather than pull route-order logic
     forward out of v2.
     """
-    new_positions: dict[str, dict] = {}
+    new_positions: dict = {}
     for train in trains:
-        trip_id = train["trip_id"]
+        mem_key = train["trip_id"] if key is None else key(train)
         next_time = train["next_time"]
-        prev_obs = last_positions.get(trip_id)
+        prev_obs = last_positions.get(mem_key)
 
         # The departed-station anchor for this poll (held fixed across a segment).
         if prev_obs is None:
@@ -497,7 +507,7 @@ def carry_forward_prev(trains: list[dict], last_positions: dict[str, dict]) -> d
             train["prev_lon"] = anchor["lon"]
             train["prev_time"] = anchor["time"]
 
-        new_positions[trip_id] = {
+        new_positions[mem_key] = {
             "stop_id": train["stop_id"],
             "lat": train["latitude"],
             "lon": train["longitude"],
@@ -606,6 +616,8 @@ def _decode_railroad_vehicles(
                 "longitude": pos.longitude,
                 "bearing": pos.bearing if pos.HasField("bearing") else None,
                 "train_num": (v.vehicle.label or v.vehicle.id) or None,
+                "stop_id": None,  # GPS trains carry a real position, not a station
+                "stop_name": None,
                 "direction": None,
                 "prev_lat": None,
                 "prev_lon": None,
@@ -785,6 +797,8 @@ def _decode_railroad_placements(
                 "longitude": stop["lon"],
                 "bearing": None,  # placed from schedule, no GPS heading
                 "train_num": train_num,
+                "stop_id": chosen.stop_id,  # the next/current station the carry-forward keys on
+                "stop_name": stop["name"],
                 "direction": direction,
                 "prev_lat": prev_lat,
                 "prev_lon": prev_lon,

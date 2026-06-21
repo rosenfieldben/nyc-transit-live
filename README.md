@@ -3,11 +3,13 @@
 A live map of NYC subways and buses, built on the MTA's public real-time feeds.
 Buses report true GPS positions and move on the map; subways are placed at their
 next station using real-time arrival data joined against the static schedule,
-then glide between stations as time passes (v1: straight-line interpolation
-between the previous and next station; v2 will follow the actual route geometry).
-The feeds usually prune the just-departed stop, so the backend carries each
-train's previous-poll station forward across polls as that anchor — letting
-trains glide even when the feed omits where they came from.
+then glide between stations as time passes, following the actual route geometry.
+Each train's previous and next station are projected onto the route shape, and
+the marker walks the arc between the two offsets, parameterized by time; a train
+that does not project cleanly onto its route shape falls back to a straight line
+between the two stations. The feeds usually prune the just-departed stop, so the
+backend carries each train's previous-poll station forward across polls as that
+anchor, letting trains glide even when the feed omits where they came from.
 
 ## How it works
 
@@ -134,7 +136,14 @@ warnings.
 - [x] **6. Train motion (v1)** — trains glide between stations via straight-line
   interpolation, animated client-side between polls; the previous-station anchor
   is carried forward across polls so trains glide even when the feed prunes the
-  just-departed stop. (v2: follow route geometry.)
+  just-departed stop.
+- [x] **7. Train motion (v2)**: trains follow the actual route geometry between
+  stations. Each train's previous and next station are projected onto the route
+  shape and the marker walks the arc between the two offsets, parameterized by
+  time, with a monotonic clamp so a dwelling train cannot slide backward. A train
+  that does not project cleanly onto its route shape (off-shape stations, an
+  implausibly long slice, or an unindexed route) falls back to the v1 straight
+  line.
 
 ## Notes
 

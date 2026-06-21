@@ -526,6 +526,8 @@ function railroadPopup(record) {
   return (
     `<b style="color:${railroadColor(t.route_id)}">${esc(head)}</b>` +
     (t.train_num ? `<br>Train ${esc(t.train_num)}` : "") +
+    // Placed trains carry a next/current station; GPS trains do not.
+    (isPlacedRailroad(t) && t.stop_name ? `<br>Next stop: ${esc(t.stop_name)}` : "") +
     (t.direction ? `<br>${esc(t.direction)}` : "") +
     `<br><span class="popup-sub">${isPlacedRailroad(t) ? "scheduled (no GPS)" : "live GPS"}</span>`
   );

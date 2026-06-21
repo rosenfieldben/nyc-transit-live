@@ -97,8 +97,17 @@ def test_every_golden_train_is_well_formed(system):
         assert train["system"] == system
         assert feeds.RAILROAD_LAT_MIN <= train["latitude"] <= feeds.RAILROAD_LAT_MAX
         assert feeds.RAILROAD_LON_MIN <= train["longitude"] <= feeds.RAILROAD_LON_MAX
-        # GPS trains are positions only: every anchor + direction field is null.
-        for field in ("direction", "prev_lat", "prev_lon", "prev_time", "next_time"):
+        # GPS trains are positions only: every anchor + direction field is null,
+        # and they carry no station id/name (they are not placed at a stop).
+        for field in (
+            "stop_id",
+            "stop_name",
+            "direction",
+            "prev_lat",
+            "prev_lon",
+            "prev_time",
+            "next_time",
+        ):
             assert train[field] is None
 
 
@@ -141,6 +150,9 @@ def test_every_placed_train_is_well_formed(system):
         # Anchors are filled wherever the feed carries times: these placements all
         # have a timed next stop (the no-times fallback would leave next_time null).
         assert t["next_time"] is not None
+        # Placed AT a known station, with its name (the carry-forward keys on stop_id).
+        assert t["stop_id"] in stops
+        assert t["stop_name"] is not None
 
 
 # ---------------- synthetic: extraction rules ----------------
@@ -532,3 +544,124 @@ async def test_fetch_dedups_by_system_trip_id_composite_key():
     trains, _, failed = await feeds.fetch_railroad_trains(client, {})
     assert failed == []
     assert {(t["system"], t["trip_id"]) for t in trains} == {("LIRR", "SHARED"), ("MNR", "SHARED")}
+
+
+# ---------------- railroad carry-forward (keyed by (system, trip_id)) ----------------
+
+# Three stations along one segment chain.
+RS1 = (40.70, -74.00)
+RS2 = (40.71, -74.01)
+RS3 = (40.72, -74.02)
+
+
+def _rt(system, trip_id, stop_id, lat, lon, next_time, prev_lat=None):
+    """A railroad placed-train dict (the fields carry_forward_prev reads/writes)."""
+    return {
+        "system": system,
+        "trip_id": trip_id,
+        "route_id": "5",
+        "latitude": lat,
+        "longitude": lon,
+        "bearing": None,
+        "train_num": None,
+        "stop_id": stop_id,
+        "stop_name": stop_id,
+        "direction": None,
+        "prev_lat": prev_lat,
+        "prev_lon": None,
+        "prev_time": None,
+        "next_time": next_time,
+    }
+
+
+def _robs(stop_id, lat, lon, next_time, anchor=None):
+    return {"stop_id": stop_id, "lat": lat, "lon": lon, "next_time": next_time, "anchor": anchor}
+
+
+def _ranchor(stop_id, lat, lon, time):
+    return {"stop_id": stop_id, "lat": lat, "lon": lon, "time": time}
+
+
+def _rcf(trains, mem):
+    # The railroad path keys memory by (system, trip_id).
+    return feeds.carry_forward_prev(trains, mem, key=lambda t: (t["system"], t["trip_id"]))
+
+
+def test_railroad_carry_forward_first_sighting_records_anchor_none():
+    t = _rt("LIRR", "t1", "B", *RS2, next_time=1000.0)
+    mem = _rcf([t], {})
+    assert t["prev_lat"] is None  # nothing behind it yet
+    assert mem[("LIRR", "t1")] == _robs("B", *RS2, 1000.0, anchor=None)
+
+
+def test_railroad_carry_forward_transition_synthesizes_prev():
+    # Last poll approaching A (next_time 940); now at B -> prev is A, the departed station.
+    t = _rt("LIRR", "t1", "B", *RS2, next_time=1000.0)
+    mem = _rcf([t], {("LIRR", "t1"): _robs("A", *RS1, 940.0)})
+    assert (t["prev_lat"], t["prev_lon"], t["prev_time"]) == (*RS1, 940.0)
+    assert mem[("LIRR", "t1")]["anchor"] == _ranchor("A", *RS1, 940.0)
+
+
+def test_railroad_carry_forward_stable_segment_holds_anchor():
+    carried = _ranchor("A", *RS1, 940.0)
+    t = _rt("LIRR", "t1", "B", *RS2, next_time=1010.0)
+    mem = _rcf([t], {("LIRR", "t1"): _robs("B", *RS2, 1000.0, anchor=carried)})
+    assert (t["prev_lat"], t["prev_lon"], t["prev_time"]) == (*RS1, 940.0)  # still synthesized
+    assert mem[("LIRR", "t1")]["anchor"] == carried  # held fixed across the segment
+
+
+def test_railroad_carry_forward_guards_refuse_synthesis():
+    # next_time None (no forward bracket)
+    t = _rt("MNR", "t1", "B", *RS2, next_time=None)
+    _rcf([t], {("MNR", "t1"): _robs("A", *RS1, 940.0)})
+    assert t["prev_lat"] is None
+    # anchor time None
+    t = _rt("MNR", "t1", "B", *RS2, next_time=1000.0)
+    _rcf([t], {("MNR", "t1"): _robs("B", *RS2, 1000.0, anchor=_ranchor("A", *RS1, None))})
+    assert t["prev_lat"] is None
+    # non-monotonic (anchor time >= next_time)
+    t = _rt("MNR", "t1", "B", *RS2, next_time=1000.0)
+    _rcf([t], {("MNR", "t1"): _robs("B", *RS2, 1000.0, anchor=_ranchor("A", *RS1, 1100.0))})
+    assert t["prev_lat"] is None
+    # anchor on the current stop (degenerate zero-length bracket)
+    t = _rt("MNR", "t1", "A", *RS1, next_time=1100.0)
+    _rcf([t], {("MNR", "t1"): _robs("A", *RS1, 1000.0, anchor=_ranchor("A", *RS1, 940.0))})
+    assert t["prev_lat"] is None
+
+
+def test_railroad_carry_forward_prunes_absent_trips():
+    t = _rt("LIRR", "t1", "B", *RS2, next_time=1000.0)
+    old = {("LIRR", "t1"): _robs("A", *RS1, 940.0), ("MNR", "gone"): _robs("X", 40.6, -73.9, 800.0)}
+    mem = _rcf([t], old)
+    assert ("LIRR", "t1") in mem and ("MNR", "gone") not in mem
+
+
+def test_railroad_carry_forward_multi_poll_glide():
+    p1 = _rt("LIRR", "t1", "A", *RS1, next_time=900.0)
+    m1 = _rcf([p1], {})
+    assert p1["prev_lat"] is None
+    p2 = _rt("LIRR", "t1", "B", *RS2, next_time=1000.0)
+    m2 = _rcf([p2], m1)
+    assert (p2["prev_lat"], p2["prev_lon"], p2["prev_time"]) == (*RS1, 900.0)
+    p3 = _rt("LIRR", "t1", "B", *RS2, next_time=1005.0)  # same segment
+    m3 = _rcf([p3], m2)
+    assert (p3["prev_lat"], p3["prev_lon"], p3["prev_time"]) == (*RS1, 900.0)  # anchor held
+    p4 = _rt("LIRR", "t1", "C", *RS3, next_time=1100.0)  # advanced again
+    _rcf([p4], m3)
+    assert (p4["prev_lat"], p4["prev_lon"], p4["prev_time"]) == (*RS2, 1005.0)
+
+
+def test_railroad_carry_forward_same_trip_id_independent_across_systems():
+    # A trip_id present in BOTH systems must not cross-contaminate: each is keyed by
+    # (system, trip_id). Here LIRR 99 advanced A->B (synthesizes prev) while MNR 99
+    # is still at A with no anchor (no synthesis) -> trip_id alone would have bled.
+    lirr = _rt("LIRR", "99", "B", *RS2, next_time=1000.0)
+    mnr = _rt("MNR", "99", "A", *RS1, next_time=1000.0)
+    mem = {
+        ("LIRR", "99"): _robs("A", *RS1, 940.0),
+        ("MNR", "99"): _robs("A", *RS1, 940.0, anchor=None),
+    }
+    out = _rcf([lirr, mnr], mem)
+    assert (lirr["prev_lat"], lirr["prev_lon"]) == RS1  # LIRR synthesized from A
+    assert mnr["prev_lat"] is None  # MNR same stop, no anchor -> no synthesis
+    assert set(out) == {("LIRR", "99"), ("MNR", "99")}

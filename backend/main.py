@@ -209,6 +209,17 @@ async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
         "ok": total_feeds - len(failed_feeds),
         "failed": failed_feeds,
     }
+    # Carry each placed train's prev station forward across polls (the feeds prune
+    # the just-departed stop, so the decode leaves prev_* null), giving the gliding
+    # increment a previous-station anchor. GPS trains have next_time None, so the
+    # forward-bracket guard skips them and they never synthesize a prev. Keyed by
+    # (system, trip_id) since LIRR and MNR trip_ids are independent; mutates the
+    # placed trains in place, then the memory is remembered for the next poll.
+    app.state.railroad_positions = carry_forward_prev(
+        trains,
+        getattr(app.state, "railroad_positions", {}),
+        key=lambda t: (t["system"], t["trip_id"]),
+    )
     # feed_timestamp comes from LIRR's header only (MNR's lagging shared clock is
     # excluded; see feeds.RAILROAD_FRESHNESS_SYSTEMS); a failed poll keeps the
     # last-known timestamp, same as the subway cache.
@@ -253,13 +264,15 @@ async def lifespan(app: FastAPI):
     # Railroad static GTFS, per system, for station placement of position-less
     # trains. Each system loads independently and leniently: a None for a system
     # (download/parse failed) just means that system gets GPS trains only, never
-    # a crash. Store the per-system stops; trips/shapes are for a later gliding
-    # increment.
+    # a crash. The full per-system {stops, trips, shapes} is kept: stops drive
+    # placement now, and trips/shapes are the geometry the gliding increment builds.
     try:
         railroad_static_data = await railroad_static.load_railroad_static()
     except Exception as exc:
         logger.error("Could not load railroad static GTFS (%s); placement disabled", exc)
         railroad_static_data = {}
+    app.state.railroad_static = railroad_static_data  # {system: {stops, trips, shapes} | None}
+    # Derived so the placement path (_refresh_railroads) reads stops unchanged.
     app.state.railroad_stops = {
         system: (data["stops"] if data else None) for system, data in railroad_static_data.items()
     }
@@ -273,6 +286,8 @@ async def lifespan(app: FastAPI):
     # Per-trip previous-poll position, used to carry a prev interpolation anchor
     # forward when the feed pruned the just-departed stop (see carry_forward_prev).
     app.state.subway_positions = {}
+    # Same, for the railroad placements, keyed by (system, trip_id).
+    app.state.railroad_positions = {}
     # Per-feed-group health of the most recent subway poll (None until the first
     # poll), surfaced by /api/status so a partial feed outage is visible.
     app.state.subway_feed_health = None

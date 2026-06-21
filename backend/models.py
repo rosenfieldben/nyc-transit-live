@@ -44,8 +44,11 @@ class RailroadTrain(BaseModel):
     longitude: float
     bearing: float | None
     train_num: str | None  # vehicle label/id, the rider-facing train number
-    # Phase-2 fields (station placement + schedule join), present-but-null now so
-    # filling them later needs no model change.
+    # Placement fields. stop_id/stop_name are the next/current station (null for a
+    # GPS train); the rest are filled for placed trains, with the anchors carried
+    # forward across polls. The model mirrors models.Train.
+    stop_id: str | None
+    stop_name: str | None
     direction: str | None
     prev_lat: float | None
     prev_lon: float | None

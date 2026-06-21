@@ -118,6 +118,8 @@ def test_railroad_feed_envelope_validates():
         "longitude": -73.5,
         "bearing": None,
         "train_num": "1797",
+        "stop_id": None,
+        "stop_name": None,
         "direction": None,
         "prev_lat": None,
         "prev_lon": None,

@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from google.protobuf.message import DecodeError
 
 import bus_static
+import railroad_static
 import static_data
 from feeds import (
     RAILROAD_FEED_URLS,
@@ -181,7 +182,9 @@ async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
     entry = app.state.feed_cache["railroads"]
     total_feeds = len(RAILROAD_FEED_URLS)
     try:
-        trains, feed_timestamp, failed_feeds = await fetch_railroad_trains(client)
+        trains, feed_timestamp, failed_feeds = await fetch_railroad_trains(
+            client, getattr(app.state, "railroad_stops", {})
+        )
     except RuntimeError as exc:
         # Every railroad feed failed this poll.
         app.state.railroad_feed_health = {
@@ -247,6 +250,19 @@ async def lifespan(app: FastAPI):
         app.state.subway_stops = None
         app.state.subway_routes = []
         app.state.subway_stations = {}
+    # Railroad static GTFS, per system, for station placement of position-less
+    # trains. Each system loads independently and leniently: a None for a system
+    # (download/parse failed) just means that system gets GPS trains only, never
+    # a crash. Store the per-system stops; trips/shapes are for a later gliding
+    # increment.
+    try:
+        railroad_static_data = await railroad_static.load_railroad_static()
+    except Exception as exc:
+        logger.error("Could not load railroad static GTFS (%s); placement disabled", exc)
+        railroad_static_data = {}
+    app.state.railroad_stops = {
+        system: (data["stops"] if data else None) for system, data in railroad_static_data.items()
+    }
     app.state.feed_cache = {
         "buses": _fresh_entry(),
         "subways": _fresh_entry(),
@@ -359,10 +375,12 @@ async def get_subways() -> dict:
 
 @app.get("/api/railroads", response_model=RailroadFeed)
 async def get_railroads() -> dict:
-    """Cached LIRR + Metro-North trains that report a GPS position: {fetched_at,
-    feed_timestamp, data: [{system, trip_id, route_id, latitude, longitude,
-    bearing, train_num, ...}, ...]}. Phase 1 is GPS only; trains without a
-    vehicle position are omitted."""
+    """Cached LIRR + Metro-North trains: {fetched_at, feed_timestamp, data:
+    [{system, trip_id, route_id, latitude, longitude, bearing, train_num, ...},
+    ...]}. Includes both GPS-positioned trains and schedule-placed trains
+    positioned at their next station (the latter only when static railroad stops
+    are loaded for that system); a placed train carries null bearing and filled
+    direction/next_time/prev_* anchors."""
     return _serve_cached("railroads")
 
 

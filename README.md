@@ -156,9 +156,15 @@ warnings.
 - [x] **8. Commuter rail (GPS)**: `/api/railroads` serves the LIRR and
   Metro-North trains that report a vehicle position, drawn as a toggleable layer
   of square markers at their real lat/lon.
-- [ ] **9. Commuter rail (station placement)**: place position-less railroad
-  trains at their next station from the trip updates, the way subways are placed,
-  for the trains the GPS slice omits.
+- [x] **9. Commuter rail (station placement)**: the position-less railroad trains
+  the GPS slice omits are placed at their next station from the trip updates (the
+  way subways are placed), joining the static railroad GTFS for coordinates and
+  taking direction from the realtime direction_id. They render as hollow squares
+  (a scheduled estimate) vs the filled GPS squares. Static placement only; the
+  time anchors (next_time / prev_*) are filled but motion is the next increment.
+- [ ] **10. Commuter rail (gliding)**: animate the placed trains between stations
+  along the route shape, the way subway v2 does (LIRR can join the static shape
+  per-trip; MNR needs a route-level shape, see the recon in the PR history).
 
 ## Notes
 

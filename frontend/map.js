@@ -20,6 +20,7 @@ const subwayLayer = L.layerGroup().addTo(map);
 const routeLinesLayer = L.layerGroup().addTo(map);
 const busRouteLayer = L.layerGroup().addTo(map); // the one clicked bus route
 const stationLayer = L.layerGroup().addTo(map);
+const railroadLayer = L.layerGroup().addTo(map); // LIRR + MNR GPS markers
 
 function bindToggle(checkboxId, layers) {
   const box = document.getElementById(checkboxId);
@@ -35,6 +36,7 @@ function bindToggle(checkboxId, layers) {
 bindToggle("toggle-buses", [busLayer, busRouteLayer]);
 bindToggle("toggle-subways", [subwayLayer, routeLinesLayer]);
 bindToggle("toggle-stations", [stationLayer]);
+bindToggle("toggle-railroads", [railroadLayer]);
 
 const statusEl = document.getElementById("status");
 
@@ -494,11 +496,67 @@ function animateTrains(ts) {
   requestAnimationFrame(animateTrains);
 }
 
+/* ---------------- Railroads (LIRR + MNR, real GPS) ---------------- */
+
+// Square markers, colored by railroadColor (railroad route ids collide with the
+// subway palette, so they get their own). Phase 1 is GPS only.
+function railroadIcon(train) {
+  const color = railroadColor(train.route_id);
+  const html = `<svg viewBox="0 0 16 16">
+      <rect x="1.5" y="1.5" width="13" height="13" rx="1.5" fill="${color}" stroke="#fff" stroke-width="1.5"/>
+    </svg>`;
+  return L.divIcon({ className: "railroad-marker", html, iconSize: [16, 16], iconAnchor: [8, 8] });
+}
+
+function railroadPopup(record) {
+  const t = record.latest;
+  const head = `${t.system}${t.route_id ? " route " + t.route_id : ""}`;
+  return (
+    `<b style="color:${railroadColor(t.route_id)}">${esc(head)}</b>` +
+    (t.train_num ? `<br>Train ${esc(t.train_num)}` : "") +
+    `<br><span class="popup-sub">live GPS</span>`
+  );
+}
+
+// Keyed by trip_id. These are real positions, so markers move via setLatLng on
+// each poll (NOT routed through trainLatLng / animateTrains).
+const railroads = new Map(); // trip_id -> { marker, routeId, latest }
+
+function applyRailroads(data) {
+  const seen = new Set();
+  for (const train of data) {
+    seen.add(train.trip_id);
+    const record = railroads.get(train.trip_id);
+    if (record) {
+      record.marker.setLatLng([train.latitude, train.longitude]);
+      record.latest = train;
+      if (record.routeId !== train.route_id) {
+        record.marker.setIcon(railroadIcon(train));
+        record.routeId = train.route_id;
+      }
+      if (record.marker.isPopupOpen()) record.marker.getPopup().update();
+    } else {
+      const newRecord = { routeId: train.route_id, latest: train };
+      newRecord.marker = L.marker([train.latitude, train.longitude], { icon: railroadIcon(train) })
+        .bindPopup(() => railroadPopup(newRecord))
+        .addTo(railroadLayer);
+      railroads.set(train.trip_id, newRecord);
+    }
+  }
+  for (const [id, record] of railroads) {
+    if (!seen.has(id)) {
+      railroadLayer.removeLayer(record.marker);
+      railroads.delete(id);
+    }
+  }
+}
+
 /* ---------------- Polling ---------------- */
 
 const sources = {
   buses: { url: "/api/buses", apply: applyBuses, label: "buses", count: 0, error: null, fetchedAt: null, feedTimestamp: null },
   subways: { url: "/api/subways", apply: applyTrains, label: "trains", count: 0, error: null, fetchedAt: null, feedTimestamp: null },
+  railroads: { url: "/api/railroads", apply: applyRailroads, label: "railroad", count: 0, error: null, fetchedAt: null, feedTimestamp: null },
 };
 
 async function refreshSource(source) {

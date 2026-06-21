@@ -19,9 +19,17 @@ from google.protobuf.message import DecodeError
 
 import bus_static
 import static_data
-from feeds import SUBWAY_FEED_URLS, carry_forward_prev, fetch_subway_trains, fetch_vehicle_positions
+from feeds import (
+    RAILROAD_FEED_URLS,
+    SUBWAY_FEED_URLS,
+    carry_forward_prev,
+    fetch_railroad_trains,
+    fetch_subway_trains,
+    fetch_vehicle_positions,
+)
 from models import (
     BusFeed,
+    RailroadFeed,
     RouteGeometry,
     StationArrivals,
     StatusResponse,
@@ -168,6 +176,40 @@ async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
     app.state.subway_arrivals = arrivals
 
 
+async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
+    entry = app.state.feed_cache["railroads"]
+    total_feeds = len(RAILROAD_FEED_URLS)
+    try:
+        trains, failed_feeds = await fetch_railroad_trains(client)
+    except RuntimeError as exc:
+        # Every railroad feed failed this poll.
+        app.state.railroad_feed_health = {
+            "total": total_feeds,
+            "ok": 0,
+            "failed": sorted(RAILROAD_FEED_URLS),
+        }
+        _note_failure(entry, 502, _sanitize_upstream(exc))
+        return
+    except httpx.HTTPError as exc:
+        app.state.railroad_feed_health = {
+            "total": total_feeds,
+            "ok": 0,
+            "failed": sorted(RAILROAD_FEED_URLS),
+        }
+        _note_failure(entry, 502, f"Upstream MTA feed error: {_sanitize_upstream(exc)}")
+        return
+    # Partial failures still return data; record which systems dropped so
+    # /api/status surfaces the partial outage (parallel to _refresh_subways).
+    app.state.railroad_feed_health = {
+        "total": total_feeds,
+        "ok": total_feeds - len(failed_feeds),
+        "failed": failed_feeds,
+    }
+    # feed_timestamp is None in phase 1 (per-feed content time not threaded yet);
+    # staleness still works off the poll-age term.
+    entry.update(data=trains, fetched_at=time.time(), feed_timestamp=None, error=None)
+
+
 async def _poll_feeds(app: FastAPI) -> None:
     """Refresh both feeds every POLL_INTERVAL_S for the app's lifetime.
 
@@ -178,7 +220,11 @@ async def _poll_feeds(app: FastAPI) -> None:
     async with httpx.AsyncClient(timeout=30) as client:
         while True:
             try:
-                await asyncio.gather(_refresh_buses(app, client), _refresh_subways(app, client))
+                await asyncio.gather(
+                    _refresh_buses(app, client),
+                    _refresh_subways(app, client),
+                    _refresh_railroads(app, client),
+                )
             except Exception:
                 logger.exception("feed poll cycle failed unexpectedly")
             await asyncio.sleep(POLL_INTERVAL_S)
@@ -199,7 +245,11 @@ async def lifespan(app: FastAPI):
         app.state.subway_stops = None
         app.state.subway_routes = []
         app.state.subway_stations = {}
-    app.state.feed_cache = {"buses": _fresh_entry(), "subways": _fresh_entry()}
+    app.state.feed_cache = {
+        "buses": _fresh_entry(),
+        "subways": _fresh_entry(),
+        "railroads": _fresh_entry(),
+    }
     # Per-station arrivals index, rebuilt by each successful subway poll.
     app.state.subway_arrivals = {}
     # Per-trip previous-poll position, used to carry a prev interpolation anchor
@@ -208,6 +258,8 @@ async def lifespan(app: FastAPI):
     # Per-feed-group health of the most recent subway poll (None until the first
     # poll), surfaced by /api/status so a partial feed outage is visible.
     app.state.subway_feed_health = None
+    # Same, for the railroad feeds (LIRR + MNR).
+    app.state.railroad_feed_health = None
     app.state.feed_poll_task = asyncio.create_task(_poll_feeds(app))
     # Bus route geometry indexes in the background — startup never waits on
     # the ~52 MB of borough GTFS zips; /api/bus-route reports until ready.
@@ -303,6 +355,15 @@ async def get_subways() -> dict:
     return _serve_cached("subways")
 
 
+@app.get("/api/railroads", response_model=RailroadFeed)
+async def get_railroads() -> dict:
+    """Cached LIRR + Metro-North trains that report a GPS position: {fetched_at,
+    feed_timestamp, data: [{system, trip_id, route_id, latitude, longitude,
+    bearing, train_num, ...}, ...]}. Phase 1 is GPS only; trains without a
+    vehicle position are omitted."""
+    return _serve_cached("railroads")
+
+
 @app.get("/api/subway-stops", response_model=list[SubwayStop])
 async def get_subway_stops(response: Response) -> list[dict]:
     """Subway station markers ({id, name, lat, lon}) from the static GTFS.
@@ -374,6 +435,7 @@ async def get_status() -> dict:
         },
         "static_subway_gtfs": static_gtfs,
         "subway_feeds": getattr(app.state, "subway_feed_health", None),
+        "railroad_feeds": getattr(app.state, "railroad_feed_health", None),
     }
 
 

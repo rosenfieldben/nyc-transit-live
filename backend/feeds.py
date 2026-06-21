@@ -35,6 +35,20 @@ def _in_nyc(lat: float, lon: float) -> bool:
     return NYC_LAT_MIN <= lat <= NYC_LAT_MAX and NYC_LON_MIN <= lon <= NYC_LON_MAX
 
 
+# Railroad bounding box: much wider than the bus/subway NYC box because the LIRR
+# runs out to Montauk and the MNR to Poughkeepsie / Wassaic / New Haven. Used to
+# drop any stray out-of-range vehicle coordinate; every captured sample falls
+# inside, so this is a sanity guard, not a service-area definition.
+RAILROAD_LAT_MIN, RAILROAD_LAT_MAX = 40.3, 42.1
+RAILROAD_LON_MIN, RAILROAD_LON_MAX = -74.5, -71.7
+
+
+def _in_railroad_box(lat: float, lon: float) -> bool:
+    return (
+        RAILROAD_LAT_MIN <= lat <= RAILROAD_LAT_MAX and RAILROAD_LON_MIN <= lon <= RAILROAD_LON_MAX
+    )
+
+
 # Keyless subway GTFS-RT feeds, one per line group.
 _SUBWAY_BASE = "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs"
 SUBWAY_FEED_URLS = {
@@ -46,6 +60,15 @@ SUBWAY_FEED_URLS = {
     "NQRW": _SUBWAY_BASE + "-nqrw",
     "L": _SUBWAY_BASE + "-l",
     "SIR": _SUBWAY_BASE + "-si",
+}
+
+# Keyless commuter-rail GTFS-RT feeds, same %2F-encoded base as the subway feeds
+# (the literal-slash form is an unmatched API Gateway route that 403s with a
+# misleading "Missing Authentication Token"; the encoded form needs no key).
+_RAILROAD_BASE = "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds"
+RAILROAD_FEED_URLS = {
+    "LIRR": _RAILROAD_BASE + "/lirr%2Fgtfs-lirr",
+    "MNR": _RAILROAD_BASE + "/mnr%2Fgtfs-mnr",
 }
 
 
@@ -510,3 +533,123 @@ async def fetch_subway_trains(
         joined = "; ".join(f"{key}: {reason}" for key, reason in feed_errors.items())
         raise RuntimeError(f"All subway feeds failed: {joined}")
     return trains, arrivals, feed_timestamp, sorted(feed_errors)
+
+
+def _decode_railroad_vehicles(raw: bytes, system: str, now: float) -> list[dict]:
+    """Decode one railroad feed into the trains that report a GPS position.
+
+    Phase 1 keeps only entities whose vehicle carries a position. This covers
+    both feed layouts: LIRR puts the vehicle in its own entity, MNR combines the
+    trip_update and vehicle in one. Each kept train carries its real lat/lon (no
+    station projection needed). An empty vehicle route_id is filled from the
+    trip_update: MNR's combined entity carries the route on its own trip_update
+    (MNR's vehicle.trip holds the train number, not the trip_update's internal
+    trip id, so the same-entity read is what fills MNR), while LIRR's separate
+    vehicle entity is joined by trip_id to this feed's trip_updates. Coordinates
+    are filtered to the railroad box as a sanity guard. The direction and
+    interpolation-anchor fields are emitted as None: phase 2 (placing
+    position-less trains at their next station) fills them, so the RailroadTrain
+    model needs no change then. `now` is unused in phase 1 (no schedule join
+    yet); it is kept for parity with the subway decoders and frozen by the golden
+    test.
+    """
+    feed = gtfs_realtime_pb2.FeedMessage()
+    feed.ParseFromString(raw)
+
+    # trip_id -> route_id from this feed's trip_updates, to fill an empty vehicle
+    # route_id in the separate-entity (LIRR) layout. The combined-entity (MNR)
+    # layout is handled inline below via the entity's own trip_update.
+    route_by_trip: dict[str, str] = {}
+    for entity in feed.entity:
+        if entity.HasField("trip_update"):
+            trip = entity.trip_update.trip
+            if trip.trip_id and trip.route_id:
+                route_by_trip.setdefault(trip.trip_id, trip.route_id)
+
+    trains: list[dict] = []
+    for entity in feed.entity:
+        if not entity.HasField("vehicle"):
+            continue
+        v = entity.vehicle
+        if not v.HasField("position"):
+            continue
+        pos = v.position
+        if not _in_railroad_box(pos.latitude, pos.longitude):
+            continue  # stray out-of-range coordinate; not a real train
+        route_id = v.trip.route_id
+        if not route_id and entity.HasField("trip_update"):
+            route_id = entity.trip_update.trip.route_id  # combined entity (MNR)
+        if not route_id:
+            route_id = route_by_trip.get(v.trip.trip_id, "")  # by trip_id (LIRR)
+        route_id = route_id or None
+        trains.append(
+            {
+                "system": system,
+                "trip_id": v.trip.trip_id or entity.id,
+                "route_id": route_id,
+                "latitude": pos.latitude,
+                "longitude": pos.longitude,
+                "bearing": pos.bearing if pos.HasField("bearing") else None,
+                "train_num": (v.vehicle.label or v.vehicle.id) or None,
+                "direction": None,
+                "prev_lat": None,
+                "prev_lon": None,
+                "prev_time": None,
+                "next_time": None,
+            }
+        )
+    return trains
+
+
+async def fetch_railroad_trains(client: httpx.AsyncClient) -> tuple[list[dict], list[str]]:
+    """Fetch the LIRR and MNR feeds concurrently; return (trains, failed_feeds).
+
+    Mirrors fetch_subway_trains: per-feed failures (a fetch error or undecodable
+    protobuf) are logged and skipped, trains are de-duped by trip_id across the
+    two systems (a guard, since the namespaces shouldn't collide), and this
+    raises only when every feed fails. failed_feeds is the sorted list of systems
+    that dropped this poll, empty on a fully successful poll. The caller owns the
+    client (the polling task holds one for its lifetime).
+    """
+    now = time.time()
+
+    async def fetch(url: str) -> bytes:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        return resp.content
+
+    systems = list(RAILROAD_FEED_URLS)
+    results = await asyncio.gather(
+        *(fetch(RAILROAD_FEED_URLS[s]) for s in systems),
+        return_exceptions=True,
+    )
+
+    trains: list[dict] = []
+    seen_trips: set[str] = set()
+    feed_errors: dict[str, str] = {}
+    for system, result in zip(systems, results):
+        if isinstance(result, BaseException):
+            feed_errors[system] = str(result)
+            continue
+        try:
+            decoded = _decode_railroad_vehicles(result, system, now)
+        except DecodeError as exc:
+            feed_errors[system] = f"undecodable protobuf ({exc})"
+            continue
+        for train in decoded:
+            if train["trip_id"] in seen_trips:
+                continue
+            seen_trips.add(train["trip_id"])
+            trains.append(train)
+
+    if feed_errors:
+        logger.warning(
+            "%d of %d railroad feeds failed: %s",
+            len(feed_errors),
+            len(RAILROAD_FEED_URLS),
+            "; ".join(f"{key}: {reason}" for key, reason in feed_errors.items()),
+        )
+    if len(feed_errors) == len(RAILROAD_FEED_URLS):
+        joined = "; ".join(f"{key}: {reason}" for key, reason in feed_errors.items())
+        raise RuntimeError(f"All railroad feeds failed: {joined}")
+    return trains, sorted(feed_errors)

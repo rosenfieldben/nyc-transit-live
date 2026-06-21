@@ -29,7 +29,7 @@ class Train(BaseModel):
     stop_id: str
     stop_name: str | None
     direction: str | None
-    # Interpolation anchors (v1: straight line prev station -> next station).
+    # Interpolation anchors (v2: route-polyline slice, straight-line fallback).
     prev_lat: float | None
     prev_lon: float | None
     prev_time: float | None  # _stop_time at the previous station (epoch)

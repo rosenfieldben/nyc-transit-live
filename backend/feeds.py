@@ -301,7 +301,7 @@ def _decode_feed(
 
         stop = stops[chosen.stop_id]
         direction, _ = _platform_direction(chosen.stop_id)
-        # Interpolation anchors (v1: straight line prev -> next station). The
+        # Interpolation anchors (v2: route-polyline slice, straight-line fallback). The
         # next/current station stays in latitude/longitude as the static
         # fallback; prev_* describe the most-recently-passed station, null when
         # none precedes the chosen stop or its time is unknown. next_time is the

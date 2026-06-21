@@ -498,14 +498,8 @@ function animateTrains(ts) {
 
 /* ---------------- Railroads (LIRR + MNR) ---------------- */
 
-// A train with no GPS position is placed at its next station from the schedule.
-// GPS trains carry no anchor or direction fields (that is the GPS decode
-// contract), so any non-null anchor/direction marks a placed train. The only
-// exception is a placed train whose stops carry no times AND no direction, which
-// reads as GPS; that case does not occur in practice and is harmless.
-function isPlacedRailroad(t) {
-  return t.next_time != null || t.direction != null || t.prev_lat != null;
-}
+// isPlacedRailroad (placed-at-station vs live GPS) lives in helpers.js so it is
+// node-testable; it keys off the authoritative stop_id the GPS decode leaves null.
 
 // Square markers, colored by railroadColor (railroad route ids collide with the
 // subway palette, so they get their own). GPS trains are filled; placed trains

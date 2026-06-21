@@ -653,15 +653,19 @@ def test_railroad_carry_forward_multi_poll_glide():
 
 def test_railroad_carry_forward_same_trip_id_independent_across_systems():
     # A trip_id present in BOTH systems must not cross-contaminate: each is keyed by
-    # (system, trip_id). Here LIRR 99 advanced A->B (synthesizes prev) while MNR 99
-    # is still at A with no anchor (no synthesis) -> trip_id alone would have bled.
+    # (system, trip_id). Both LIRR 99 and MNR 99 transition this poll, but from
+    # DIFFERENT departed stations (LIRR A->B, MNR B->C), so each must synthesize its
+    # OWN distinct prev from its own memory slot. Under a trip_id-alone key the two
+    # would share one "99" slot: the read would cross the wrong anchor in (and the
+    # write would collapse the memory to a single entry), so both the distinct-prev
+    # assertions and the set(out) shape assertion below would fail.
     lirr = _rt("LIRR", "99", "B", *RS2, next_time=1000.0)
-    mnr = _rt("MNR", "99", "A", *RS1, next_time=1000.0)
+    mnr = _rt("MNR", "99", "C", *RS3, next_time=1000.0)
     mem = {
-        ("LIRR", "99"): _robs("A", *RS1, 940.0),
-        ("MNR", "99"): _robs("A", *RS1, 940.0, anchor=None),
+        ("LIRR", "99"): _robs("A", *RS1, 940.0),  # LIRR most recently departed A
+        ("MNR", "99"): _robs("B", *RS2, 940.0),  # MNR most recently departed B
     }
     out = _rcf([lirr, mnr], mem)
-    assert (lirr["prev_lat"], lirr["prev_lon"]) == RS1  # LIRR synthesized from A
-    assert mnr["prev_lat"] is None  # MNR same stop, no anchor -> no synthesis
+    assert (lirr["prev_lat"], lirr["prev_lon"], lirr["prev_time"]) == (*RS1, 940.0)  # from A
+    assert (mnr["prev_lat"], mnr["prev_lon"], mnr["prev_time"]) == (*RS2, 940.0)  # from B, not A
     assert set(out) == {("LIRR", "99"), ("MNR", "99")}

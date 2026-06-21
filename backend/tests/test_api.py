@@ -667,6 +667,11 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
             "1": {"name": "Aville", "lat": 40.7, "lon": -74.0}
         }
         assert app.state.railroad_stops["MNR"] is None
+        # The carry-forward memory is initialized empty. Asserted here, before the
+        # block below waits on the first poll, so it is still the startup value
+        # (the poll's carry_forward_prev would otherwise fill it).
+        assert app.state.railroad_positions == {}
+        assert app.state.subway_positions == {}
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
             # Wait for the background poll task's first cycle to fill the cache.

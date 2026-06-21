@@ -57,6 +57,17 @@ function railroadColor(routeId) {
   return RAILROAD_COLORS[h % RAILROAD_COLORS.length];
 }
 
+// A railroad train placed at its next station (vs one drawn at a live GPS
+// position). stop_id is the authoritative discriminator: the placement decode
+// always emits a resolved stop_id (and stop_name), while the GPS decode
+// contractually emits null for both. Keying off stop_id (rather than the
+// time/direction anchors) keeps a no-times placement, e.g. an MNR train whose
+// stops carry no times and no direction_id, correctly classified, so the marker
+// fill, the GPS/scheduled label, and the next-stop popup line all stay consistent.
+function isPlacedRailroad(t) {
+  return t.stop_id != null;
+}
+
 // Staleness threshold, mirroring the backend FEED_STALE_AFTER_S.
 const FEED_STALE_AFTER_S = 90;
 
@@ -200,7 +211,7 @@ if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     esc, routeColor, lineColor, staleness, noteClockOffset, formatCountdown,
     trainLatLng, polylineCumLengths, pointAtArcLength, projectOntoRoute,
-    railroadColor, ROUTE_ACCEPT_DIST, ROUTE_MAX_SLICE, LINE_COLORS, DARK_TEXT_LINES,
-    FEED_STALE_AFTER_S,
+    railroadColor, isPlacedRailroad, ROUTE_ACCEPT_DIST, ROUTE_MAX_SLICE,
+    LINE_COLORS, DARK_TEXT_LINES, FEED_STALE_AFTER_S,
   };
 }

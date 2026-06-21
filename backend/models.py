@@ -67,7 +67,10 @@ class SubwayFeed(BaseModel):
 
 class RailroadFeed(BaseModel):
     fetched_at: float | None
-    feed_timestamp: float | None  # None in phase 1 (no per-feed content time threaded yet)
+    # LIRR's feed-generation time; MNR's header is a lagging shared clock that
+    # does not track publish time, so it is not used as a freshness signal (see
+    # feeds.RAILROAD_FRESHNESS_SYSTEMS).
+    feed_timestamp: float | None
     data: list[RailroadTrain]
 
 

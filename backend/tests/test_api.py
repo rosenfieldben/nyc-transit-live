@@ -147,12 +147,13 @@ async def test_railroad_refresh_records_partial_feed_health(client, cache, monke
     # One system fails, one returns data: the entry error stays clear, but the
     # partial outage is recorded for /api/status (parallel to the subway case).
     async def partial(client_arg):
-        return RAILROADS, ["MNR"]
+        return RAILROADS, 996.0, ["MNR"]
 
     monkeypatch.setattr(app_module, "fetch_railroad_trains", partial)
     await app_module._refresh_railroads(app_module.app, client=None)
     assert cache["railroads"]["error"] is None
     assert cache["railroads"]["data"] == RAILROADS
+    assert cache["railroads"]["feed_timestamp"] == 996.0  # threaded through from the fetch
     total = len(feeds.RAILROAD_FEED_URLS)
     assert app_module.app.state.railroad_feed_health == {
         "total": total,
@@ -623,7 +624,7 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
         return TRAINS, {}, 1001.0, []
 
     async def fake_fetch_railroads(client):
-        return RAILROADS, []
+        return RAILROADS, 1002.0, []
 
     async def fake_ensure_index():
         return None

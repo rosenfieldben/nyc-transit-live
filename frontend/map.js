@@ -520,6 +520,10 @@ function railroadPopup(record) {
 
 // Keyed by trip_id. These are real positions, so markers move via setLatLng on
 // each poll (NOT routed through trainLatLng / animateTrains).
+// PHASE 2: when position-less railroad trains are placed at their next station,
+// they will glide via trainLatLng + the animate loop like subways; GPS trains can
+// join the same path through trainLatLng's null-anchor static fallback, unifying
+// the render path (so this setLatLng-only branch goes away).
 const railroads = new Map(); // trip_id -> { marker, routeId, latest }
 
 function applyRailroads(data) {

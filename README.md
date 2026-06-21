@@ -1,6 +1,7 @@
 # NYC Transit Live
 
-A live map of NYC subways and buses, built on the MTA's public real-time feeds.
+A live map of NYC subways, buses, and commuter rail (LIRR + Metro-North), built
+on the MTA's public real-time feeds.
 Buses report true GPS positions and move on the map; subways are placed at their
 next station using real-time arrival data joined against the static schedule,
 then glide between stations as time passes, following the actual route geometry.
@@ -34,7 +35,7 @@ the MTA. The endpoints involved:
 nyc-transit-live/
 ├── backend/
 │   ├── main.py              # FastAPI app + JSON endpoints, serves the frontend
-│   ├── feeds.py             # fetch + decode GTFS-RT protobuf (buses + subways)
+│   ├── feeds.py             # fetch + decode GTFS-RT protobuf (buses + subways + railroads)
 │   ├── static_data.py       # load stop coords / route shapes from static GTFS
 │   ├── bus_static.py        # background-built on-disk index of bus route shapes
 │   ├── tests/               # pytest suite (run from backend/)
@@ -89,6 +90,10 @@ nyc-transit-live/
 - **Subways** — MTA keyless GTFS-RT feeds, grouped by line (ACE, BDFM, numbered
   lines, etc.). These carry trip/arrival updates, not GPS, so trains are shown
   at their next station.
+- **Commuter rail** — MTA keyless GTFS-RT feeds for the LIRR and Metro-North.
+  These do report real GPS, so phase 1 shows the trains that carry a vehicle
+  position at their true lat/lon; trains without a position are omitted (station
+  placement from the trip updates is a planned phase 2).
 - **Static GTFS** — stop coordinates and route shapes, downloaded into
   `data/gtfs_static/` and loaded into memory at startup.
 
@@ -120,9 +125,13 @@ is fresh, so a misconfigured key (which only stops the bus feed) doesn't take
 down an otherwise-working subway map, and a still-building index during cold
 start doesn't flap it.
 
-Both feed envelopes (`/api/buses`, `/api/subways`) carry `fetched_at` (this
-server's poll time) and `feed_timestamp` (the feed's own content time, oldest
-across the subway feeds). The frontend judges staleness from the difference of
+The feed envelopes (`/api/buses`, `/api/subways`, `/api/railroads`) carry
+`fetched_at` (this server's poll time) and `feed_timestamp` (the feed's own
+content time: oldest across the subway feeds for `/api/subways`). For
+`/api/railroads`, `feed_timestamp` reflects LIRR's feed-generation time; MNR
+publishes a lagging shared header clock that does not track publish time (it is
+copied onto every vehicle too, while the GPS positions are live), so it is not
+used as a freshness signal. The frontend judges staleness from the difference of
 those two server-side values, so the browser clock never causes false "stale"
 warnings.
 
@@ -144,6 +153,12 @@ warnings.
   that does not project cleanly onto its route shape (off-shape stations, an
   implausibly long slice, or an unindexed route) falls back to the v1 straight
   line.
+- [x] **8. Commuter rail (GPS)**: `/api/railroads` serves the LIRR and
+  Metro-North trains that report a vehicle position, drawn as a toggleable layer
+  of square markers at their real lat/lon.
+- [ ] **9. Commuter rail (station placement)**: place position-less railroad
+  trains at their next station from the trip updates, the way subways are placed,
+  for the trains the GPS slice omits.
 
 ## Notes
 

@@ -27,6 +27,7 @@ To regenerate after an INTENTIONAL decode change, from backend/:
 import json
 from pathlib import Path
 
+import httpx
 import pytest
 from google.transit import gtfs_realtime_pb2 as pb
 
@@ -141,3 +142,73 @@ def test_vehicle_own_route_id_preferred_and_train_num_falls_back_to_id():
     trains = feeds._decode_railroad_vehicles(feed.SerializeToString(), "LIRR", 0.0)
     assert trains[0]["route_id"] == "5"  # vehicle's own route_id wins
     assert trains[0]["train_num"] == "veh-9"  # label empty -> vehicle.id
+
+
+# ---------------- fetch_railroad_trains: live path (fake client) ----------------
+
+
+class _FakeResp:
+    def __init__(self, content):
+        self.content = content
+
+    def raise_for_status(self):
+        pass
+
+
+class _FakeRailClient:
+    """Dispatches by URL: returns bytes for a system, raises for a 'down' one."""
+
+    def __init__(self, by_system, down=()):
+        self._by_system = by_system
+        self._down = set(down)
+
+    async def get(self, url):
+        for system in feeds.RAILROAD_FEED_URLS:
+            if system.lower() in url.lower():
+                if system in self._down:
+                    raise httpx.HTTPError(f"{system} down")
+                return _FakeResp(self._by_system[system])
+        raise AssertionError(f"unexpected url {url}")
+
+
+def _raw(system):
+    return (FIXTURES / f"railroad_{system.lower()}.pb").read_bytes()
+
+
+@pytest.mark.anyio
+async def test_fetch_dedups_duplicate_trip_ids_on_the_live_path():
+    client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": _raw("MNR")})
+    trains, failed = await feeds.fetch_railroad_trains(client)
+    assert failed == []
+    # The MNR feed repeats trains across separate vehicle entities; the live path
+    # collapses them to one marker per trip_id (49 decoded -> 33 unique), which
+    # the golden decode (no de-dup) does not.
+    mnr = [t for t in trains if t["system"] == "MNR"]
+    assert len(mnr) == 33
+    assert len({t["trip_id"] for t in mnr}) == 33
+    assert len([t for t in trains if t["system"] == "LIRR"]) == 69
+    assert len(trains) == 69 + 33
+
+
+@pytest.mark.anyio
+async def test_fetch_skips_a_failed_feed_and_reports_it():
+    client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": _raw("MNR")}, down=["MNR"])
+    trains, failed = await feeds.fetch_railroad_trains(client)
+    assert failed == ["MNR"]
+    assert trains and all(t["system"] == "LIRR" for t in trains)
+
+
+@pytest.mark.anyio
+async def test_fetch_skips_an_undecodable_feed():
+    # MNR returns a truncated length-delimited field -> DecodeError, skipped.
+    client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": b"\x0a\xff"})
+    trains, failed = await feeds.fetch_railroad_trains(client)
+    assert failed == ["MNR"]
+    assert trains and all(t["system"] == "LIRR" for t in trains)
+
+
+@pytest.mark.anyio
+async def test_fetch_raises_when_all_feeds_fail():
+    client = _FakeRailClient({}, down=["LIRR", "MNR"])
+    with pytest.raises(RuntimeError, match="All railroad feeds failed"):
+        await feeds.fetch_railroad_trains(client)

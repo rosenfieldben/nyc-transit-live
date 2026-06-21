@@ -206,8 +206,9 @@ async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
         "ok": total_feeds - len(failed_feeds),
         "failed": failed_feeds,
     }
-    # feed_timestamp is the oldest content time across the LIRR and MNR feeds;
-    # a failed poll keeps the last-known timestamp, same as the subway cache.
+    # feed_timestamp comes from LIRR's header only (MNR's lagging shared clock is
+    # excluded; see feeds.RAILROAD_FRESHNESS_SYSTEMS); a failed poll keeps the
+    # last-known timestamp, same as the subway cache.
     entry.update(data=trains, fetched_at=time.time(), feed_timestamp=feed_timestamp, error=None)
 
 
@@ -279,7 +280,7 @@ async def lifespan(app: FastAPI):
         await app.state.feed_poll_task
 
 
-app = FastAPI(title="NYC Transit Live", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="NYC Transit Live", version="0.3.0", lifespan=lifespan)
 
 # Feed payloads (thousands of buses, ~450 KB of route geometry) are JSON that
 # compresses ~5-10x; only bodies over ~1 KB are worth the CPU.

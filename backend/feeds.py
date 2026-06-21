@@ -553,10 +553,10 @@ def _decode_railroad_vehicles(
 
     feed_timestamp is the feed's content time (FeedHeader.timestamp, MTA's
     clock), or None when the feed omits it. Phase 1 keeps only entities whose
-    vehicle carries a position. This covers
-    both feed layouts: LIRR puts the vehicle in its own entity, MNR combines the
-    trip_update and vehicle in one. Each kept train carries its real lat/lon (no
-    station projection needed). An empty vehicle route_id is filled from the
+    vehicle carries a position, covering both feed layouts: LIRR puts the vehicle
+    in its own entity, MNR combines the trip_update and vehicle in one. Each kept
+    train carries its real lat/lon (no station projection needed). An empty
+    vehicle route_id is filled from the
     trip_update: MNR's combined entity carries the route on its own trip_update
     (MNR's vehicle.trip holds the train number, not the trip_update's internal
     trip id, so the same-entity read is what fills MNR), while LIRR's separate
@@ -622,10 +622,13 @@ async def fetch_railroad_trains(
     """Fetch the LIRR and MNR feeds concurrently; return
     (trains, feed_timestamp, failed_feeds).
 
-    feed_timestamp is the OLDEST content time across successfully decoded feeds
-    whose header is a trustworthy freshness signal (RAILROAD_FRESHNESS_SYSTEMS,
-    just LIRR today; MNR's lagging shared clock is ignored), or None when none of
-    those decoded. Mirrors fetch_subway_trains: per-feed failures (a fetch error or
+    feed_timestamp comes only from systems whose header is a trustworthy
+    freshness signal (RAILROAD_FRESHNESS_SYSTEMS): today just LIRR, whose header
+    is the true feed-generation time. MNR's header is a lagging shared clock and
+    is deliberately excluded, so it never drives staleness. The value is the
+    oldest such trusted header (only LIRR's today, but min-across-trusted stays
+    correct if another trusted feed is added later), or None when no trusted feed
+    decoded. Mirrors fetch_subway_trains: per-feed failures (a fetch error or
     undecodable protobuf) are logged and skipped, trains are de-duped by trip_id
     across the two systems (a guard, since the namespaces shouldn't collide), and
     this raises only when every feed fails. failed_feeds is the sorted list of

@@ -41,6 +41,22 @@ function lineColor(routeId) {
   return LINE_COLORS[routeId] ?? LINE_COLORS[routeId[0]] ?? "#555555";
 }
 
+// Railroad route ids (LIRR branch codes, MNR line numbers) collide with subway
+// ids and with each other, so they get their own palette rather than reusing
+// lineColor. Deterministic per id from a fixed palette, with a neutral default
+// for a missing id.
+const RAILROAD_COLORS = [
+  "#7b1fa2", "#00838f", "#c2185b", "#1565c0", "#ef6c00",
+  "#4527a0", "#2e7d32", "#ad1457", "#00695c", "#5d4037",
+];
+
+function railroadColor(routeId) {
+  if (!routeId) return "#607d8b";
+  let h = 0;
+  for (const c of routeId) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return RAILROAD_COLORS[h % RAILROAD_COLORS.length];
+}
+
 // Staleness threshold, mirroring the backend FEED_STALE_AFTER_S.
 const FEED_STALE_AFTER_S = 90;
 
@@ -184,6 +200,7 @@ if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     esc, routeColor, lineColor, staleness, noteClockOffset, formatCountdown,
     trainLatLng, polylineCumLengths, pointAtArcLength, projectOntoRoute,
-    ROUTE_ACCEPT_DIST, ROUTE_MAX_SLICE, LINE_COLORS, DARK_TEXT_LINES, FEED_STALE_AFTER_S,
+    railroadColor, ROUTE_ACCEPT_DIST, ROUTE_MAX_SLICE, LINE_COLORS, DARK_TEXT_LINES,
+    FEED_STALE_AFTER_S,
   };
 }

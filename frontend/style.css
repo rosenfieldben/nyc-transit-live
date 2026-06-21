@@ -42,7 +42,9 @@ html, body {
 
 #toggles {
   display: flex;
-  gap: 14px;
+  flex-wrap: wrap;
+  row-gap: 4px;
+  column-gap: 14px;
   margin-top: 6px;
   padding-top: 6px;
   border-top: 1px solid #ddd;
@@ -107,6 +109,12 @@ html, body {
 .train-marker svg {
   width: 18px;
   height: 18px;
+}
+
+/* Square railroad (LIRR / MNR) markers */
+.railroad-marker svg {
+  width: 16px;
+  height: 16px;
 }
 
 .popup-sub {

@@ -35,6 +35,22 @@ TRAINS = [
         "next_time": 1002.0,
     }
 ]
+RAILROADS = [
+    {
+        "system": "MNR",
+        "trip_id": "1797",
+        "route_id": "4",
+        "latitude": 41.0,
+        "longitude": -73.5,
+        "bearing": None,
+        "train_num": "1797",
+        "direction": None,
+        "prev_lat": None,
+        "prev_lon": None,
+        "prev_time": None,
+        "next_time": None,
+    }
+]
 
 
 @pytest.fixture
@@ -42,8 +58,10 @@ def cache():
     app_module.app.state.feed_cache = {
         "buses": app_module._fresh_entry(),
         "subways": app_module._fresh_entry(),
+        "railroads": app_module._fresh_entry(),
     }
     app_module.app.state.subway_feed_health = None
+    app_module.app.state.railroad_feed_health = None
     return app_module.app.state.feed_cache
 
 
@@ -99,6 +117,61 @@ async def test_never_filled_cache_serves_recorded_502(client, cache):
     assert res.status_code == 502
     # Exact match on purpose: verbatim pass-through of the recorded detail.
     assert res.json()["detail"] == "All subway feeds failed: timeout"
+
+
+# ---------------- /api/railroads cache states + feed health ----------------
+
+
+async def test_railroads_warming_up_503(client):
+    res = await client.get("/api/railroads")
+    assert res.status_code == 503
+    assert "warming up" in res.json()["detail"]
+
+
+async def test_railroads_successful_envelope(client, cache):
+    cache["railroads"].update(data=RAILROADS, fetched_at=1001.0, feed_timestamp=None, error=None)
+    res = await client.get("/api/railroads")
+    assert res.status_code == 200
+    assert res.json() == {"fetched_at": 1001.0, "feed_timestamp": None, "data": RAILROADS}
+
+
+async def test_railroads_stale_data_beats_subsequent_error(client, cache):
+    cache["railroads"].update(data=RAILROADS, fetched_at=1001.0, feed_timestamp=None, error=None)
+    app_module._note_failure(cache["railroads"], 502, "Upstream MTA feed error: boom")
+    res = await client.get("/api/railroads")
+    assert res.status_code == 200
+    assert res.json()["data"] == RAILROADS  # last-known data still served
+
+
+async def test_railroad_refresh_records_partial_feed_health(client, cache, monkeypatch):
+    # One system fails, one returns data: the entry error stays clear, but the
+    # partial outage is recorded for /api/status (parallel to the subway case).
+    async def partial(client_arg):
+        return RAILROADS, ["MNR"]
+
+    monkeypatch.setattr(app_module, "fetch_railroad_trains", partial)
+    await app_module._refresh_railroads(app_module.app, client=None)
+    assert cache["railroads"]["error"] is None
+    assert cache["railroads"]["data"] == RAILROADS
+    total = len(feeds.RAILROAD_FEED_URLS)
+    assert app_module.app.state.railroad_feed_health == {
+        "total": total,
+        "ok": total - 1,
+        "failed": ["MNR"],
+    }
+
+
+async def test_railroad_refresh_total_failure_marks_all_feeds_failed(client, cache, monkeypatch):
+    async def boom(client_arg):
+        raise RuntimeError("All railroad feeds failed: every system timed out")
+
+    monkeypatch.setattr(app_module, "fetch_railroad_trains", boom)
+    await app_module._refresh_railroads(app_module.app, client=None)
+    total = len(feeds.RAILROAD_FEED_URLS)
+    health = app_module.app.state.railroad_feed_health
+    assert health["total"] == total and health["ok"] == 0
+    assert len(health["failed"]) == total
+    assert cache["railroads"]["error"]["status"] == 502
 
 
 # ---------------- /api/bus-route/{id} index states ----------------
@@ -242,6 +315,13 @@ async def test_status_reports_subway_feed_health(client, status_env):
     res = await client.get("/api/status")
     assert res.status_code == 200
     assert res.json()["subway_feeds"] == {"total": 8, "ok": 7, "failed": ["BDFM"]}
+
+
+async def test_status_reports_railroad_feed_health(client, status_env):
+    app_module.app.state.railroad_feed_health = {"total": 2, "ok": 1, "failed": ["MNR"]}
+    res = await client.get("/api/status")
+    assert res.status_code == 200
+    assert res.json()["railroad_feeds"] == {"total": 2, "ok": 1, "failed": ["MNR"]}
 
 
 # ---------------- upstream error sanitization (no key/URL leakage) ----------------
@@ -542,6 +622,9 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
     async def fake_fetch_subways(stops, client):
         return TRAINS, {}, 1001.0, []
 
+    async def fake_fetch_railroads(client):
+        return RAILROADS, []
+
     async def fake_ensure_index():
         return None
 
@@ -550,6 +633,7 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
     monkeypatch.setattr(app_module, "load_subway_stations", lambda: {})
     monkeypatch.setattr(app_module, "fetch_vehicle_positions", fake_fetch_buses)
     monkeypatch.setattr(app_module, "fetch_subway_trains", fake_fetch_subways)
+    monkeypatch.setattr(app_module, "fetch_railroad_trains", fake_fetch_railroads)
     monkeypatch.setattr(bus_static, "ensure_index", fake_ensure_index)
 
     app = app_module.app

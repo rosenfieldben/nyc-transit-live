@@ -17,6 +17,7 @@ const {
   polylineCumLengths,
   pointAtArcLength,
   projectOntoRoute,
+  railroadColor,
 } = require("./helpers.js");
 
 test("trainLatLng interpolates along prev->next and clamps to [0,1]", () => {
@@ -81,6 +82,15 @@ test("lineColor maps trunks, falls back by first char, defaults gray", () => {
   assert.equal(lineColor("6X"), lineColor("6")); // express variant by first char
   assert.equal(lineColor(null), "#555555");
   assert.equal(lineColor("X9"), "#555555"); // unknown line
+});
+
+test("railroadColor is deterministic, from the palette, and null-safe", () => {
+  assert.equal(railroadColor("3"), railroadColor("3")); // deterministic
+  assert.match(railroadColor("3"), /^#[0-9a-f]{6}$/);
+  assert.equal(railroadColor(null), "#607d8b"); // neutral default
+  assert.equal(railroadColor(""), "#607d8b");
+  // A railroad route id is colored on its own scale, not the subway's.
+  assert.notEqual(railroadColor("1"), lineColor("1"));
 });
 
 // `now` is passed explicitly for determinism; minClockOffset is null here

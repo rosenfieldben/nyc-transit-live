@@ -36,6 +36,23 @@ class Train(BaseModel):
     next_time: float | None  # expected time at the next station (epoch)
 
 
+class RailroadTrain(BaseModel):
+    system: str  # "LIRR" or "MNR"
+    trip_id: str
+    route_id: str | None
+    latitude: float  # real GPS position reported by the vehicle feed
+    longitude: float
+    bearing: float | None
+    train_num: str | None  # vehicle label/id, the rider-facing train number
+    # Phase-2 fields (station placement + schedule join), present-but-null now so
+    # filling them later needs no model change.
+    direction: str | None
+    prev_lat: float | None
+    prev_lon: float | None
+    prev_time: float | None
+    next_time: float | None
+
+
 class BusFeed(BaseModel):
     fetched_at: float | None  # this server's poll time
     feed_timestamp: float | None  # the feed's content time (MTA's clock)
@@ -46,6 +63,12 @@ class SubwayFeed(BaseModel):
     fetched_at: float | None
     feed_timestamp: float | None  # oldest content time across subway feeds
     data: list[Train]
+
+
+class RailroadFeed(BaseModel):
+    fetched_at: float | None
+    feed_timestamp: float | None  # None in phase 1 (no per-feed content time threaded yet)
+    data: list[RailroadTrain]
 
 
 class RouteGeometry(BaseModel):
@@ -107,8 +130,15 @@ class SubwayFeedHealth(BaseModel):
     failed: list[str]  # feed-group keys that failed the last poll (e.g. ["BDFM"])
 
 
+class RailroadFeedHealth(BaseModel):
+    total: int  # number of railroad feeds polled (LIRR + MNR)
+    ok: int  # how many returned usable data on the last poll
+    failed: list[str]  # systems that failed the last poll (e.g. ["MNR"])
+
+
 class StatusResponse(BaseModel):
     feeds: dict[str, FeedStatus]
     bus_route_index: BusIndexStatus
     static_subway_gtfs: StaticGtfsStatus | None
     subway_feeds: SubwayFeedHealth | None
+    railroad_feeds: RailroadFeedHealth | None

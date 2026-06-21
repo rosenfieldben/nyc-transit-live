@@ -14,6 +14,9 @@ from models import (
     Arrival,
     BusFeed,
     BusIndexStatus,
+    RailroadFeed,
+    RailroadFeedHealth,
+    RailroadTrain,
     StationArrivals,
     StatusResponse,
     SubwayFeed,
@@ -78,6 +81,43 @@ def test_feed_envelopes_validate():
     )
 
 
+def test_railroad_train_model_matches_real_decode_output_exactly():
+    fields = set(RailroadTrain.model_fields)
+    for system in ("lirr", "mnr"):
+        expected = json.loads((FIXTURES / f"railroad_{system}_expected.json").read_text())
+        assert expected["trains"], "golden fixture is empty"
+        for train in expected["trains"]:
+            assert set(train) == fields  # no added / missing keys vs the model
+            RailroadTrain.model_validate(train)
+
+
+def test_decoded_railroad_train_keys_cover_model():
+    # Tie the model to the live decode path, not just the serialized fixture.
+    raw = (FIXTURES / "railroad_mnr.pb").read_bytes()
+    trains = feeds._decode_railroad_vehicles(raw, "MNR", 0.0)
+    assert trains, "decode produced no trains"
+    assert all(set(t) == set(RailroadTrain.model_fields) for t in trains)
+
+
+def test_railroad_feed_envelope_validates():
+    sample = {
+        "system": "MNR",
+        "trip_id": "1797",
+        "route_id": "4",
+        "latitude": 41.0,
+        "longitude": -73.5,
+        "bearing": None,
+        "train_num": "1797",
+        "direction": None,
+        "prev_lat": None,
+        "prev_lon": None,
+        "prev_time": None,
+        "next_time": None,
+    }
+    RailroadFeed.model_validate({"fetched_at": 1000.0, "feed_timestamp": None, "data": [sample]})
+    RailroadFeed.model_validate({"fetched_at": None, "feed_timestamp": None, "data": []})
+
+
 SUBWAY_STOP = {"id": "A01", "name": "Alpha", "lat": 40.7, "lon": -74.0}
 ARRIVAL = {"route_id": "1", "trip_id": "t1", "arrival": 1000.0}
 
@@ -124,10 +164,12 @@ def test_status_model_validates_handler_shape():
             "bus_route_index": {"status": "ready", "partial": False},
             "static_subway_gtfs": None,
             "subway_feeds": {"total": 8, "ok": 7, "failed": ["BDFM"]},
+            "railroad_feeds": {"total": 2, "ok": 1, "failed": ["MNR"]},
         }
     )
     BusIndexStatus.model_validate({"status": "building", "partial": False})
     SubwayFeedHealth.model_validate({"total": 8, "ok": 8, "failed": []})
+    RailroadFeedHealth.model_validate({"total": 2, "ok": 2, "failed": []})
 
 
 def test_decoded_train_keys_cover_model():

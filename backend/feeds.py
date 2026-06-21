@@ -1,4 +1,5 @@
-"""Fetch and decode the MTA GTFS-Realtime feeds (bus positions, subway trips)."""
+"""Fetch and decode the MTA GTFS-Realtime feeds (bus positions, subway trips,
+commuter-rail / railroad GPS positions)."""
 
 from __future__ import annotations
 
@@ -535,10 +536,14 @@ async def fetch_subway_trains(
     return trains, arrivals, feed_timestamp, sorted(feed_errors)
 
 
-def _decode_railroad_vehicles(raw: bytes, system: str, now: float) -> list[dict]:
-    """Decode one railroad feed into the trains that report a GPS position.
+def _decode_railroad_vehicles(
+    raw: bytes, system: str, now: float
+) -> tuple[list[dict], float | None]:
+    """Decode one railroad feed; return (trains, feed_timestamp).
 
-    Phase 1 keeps only entities whose vehicle carries a position. This covers
+    feed_timestamp is the feed's content time (FeedHeader.timestamp, MTA's
+    clock), or None when the feed omits it. Phase 1 keeps only entities whose
+    vehicle carries a position. This covers
     both feed layouts: LIRR puts the vehicle in its own entity, MNR combines the
     trip_update and vehicle in one. Each kept train carries its real lat/lon (no
     station projection needed). An empty vehicle route_id is filled from the
@@ -598,18 +603,23 @@ def _decode_railroad_vehicles(raw: bytes, system: str, now: float) -> list[dict]
                 "next_time": None,
             }
         )
-    return trains
+    return trains, _header_timestamp(feed)
 
 
-async def fetch_railroad_trains(client: httpx.AsyncClient) -> tuple[list[dict], list[str]]:
-    """Fetch the LIRR and MNR feeds concurrently; return (trains, failed_feeds).
+async def fetch_railroad_trains(
+    client: httpx.AsyncClient,
+) -> tuple[list[dict], float | None, list[str]]:
+    """Fetch the LIRR and MNR feeds concurrently; return
+    (trains, feed_timestamp, failed_feeds).
 
-    Mirrors fetch_subway_trains: per-feed failures (a fetch error or undecodable
-    protobuf) are logged and skipped, trains are de-duped by trip_id across the
-    two systems (a guard, since the namespaces shouldn't collide), and this
-    raises only when every feed fails. failed_feeds is the sorted list of systems
-    that dropped this poll, empty on a fully successful poll. The caller owns the
-    client (the polling task holds one for its lifetime).
+    feed_timestamp is the OLDEST content time across successfully decoded feeds
+    (the combined view is only as fresh as its stalest member), or None if none
+    decoded. Mirrors fetch_subway_trains: per-feed failures (a fetch error or
+    undecodable protobuf) are logged and skipped, trains are de-duped by trip_id
+    across the two systems (a guard, since the namespaces shouldn't collide), and
+    this raises only when every feed fails. failed_feeds is the sorted list of
+    systems that dropped this poll, empty on a fully successful poll. The caller
+    owns the client (the polling task holds one for its lifetime).
     """
     now = time.time()
 
@@ -626,16 +636,19 @@ async def fetch_railroad_trains(client: httpx.AsyncClient) -> tuple[list[dict], 
 
     trains: list[dict] = []
     seen_trips: set[str] = set()
+    timestamps: list[float] = []
     feed_errors: dict[str, str] = {}
     for system, result in zip(systems, results):
         if isinstance(result, BaseException):
             feed_errors[system] = str(result)
             continue
         try:
-            decoded = _decode_railroad_vehicles(result, system, now)
+            decoded, feed_ts = _decode_railroad_vehicles(result, system, now)
         except DecodeError as exc:
             feed_errors[system] = f"undecodable protobuf ({exc})"
             continue
+        if feed_ts is not None:
+            timestamps.append(feed_ts)
         for train in decoded:
             if train["trip_id"] in seen_trips:
                 continue
@@ -652,4 +665,5 @@ async def fetch_railroad_trains(client: httpx.AsyncClient) -> tuple[list[dict], 
     if len(feed_errors) == len(RAILROAD_FEED_URLS):
         joined = "; ".join(f"{key}: {reason}" for key, reason in feed_errors.items())
         raise RuntimeError(f"All railroad feeds failed: {joined}")
-    return trains, sorted(feed_errors)
+    feed_timestamp = min(timestamps) if timestamps else None
+    return trains, feed_timestamp, sorted(feed_errors)

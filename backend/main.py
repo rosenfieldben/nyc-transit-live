@@ -1,4 +1,5 @@
-"""FastAPI app exposing decoded MTA realtime data (buses + subways) as JSON."""
+"""FastAPI app exposing decoded MTA realtime data (buses + subways + commuter
+rail / railroads) as JSON."""
 
 from __future__ import annotations
 
@@ -180,7 +181,7 @@ async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
     entry = app.state.feed_cache["railroads"]
     total_feeds = len(RAILROAD_FEED_URLS)
     try:
-        trains, failed_feeds = await fetch_railroad_trains(client)
+        trains, feed_timestamp, failed_feeds = await fetch_railroad_trains(client)
     except RuntimeError as exc:
         # Every railroad feed failed this poll.
         app.state.railroad_feed_health = {
@@ -205,9 +206,9 @@ async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
         "ok": total_feeds - len(failed_feeds),
         "failed": failed_feeds,
     }
-    # feed_timestamp is None in phase 1 (per-feed content time not threaded yet);
-    # staleness still works off the poll-age term.
-    entry.update(data=trains, fetched_at=time.time(), feed_timestamp=None, error=None)
+    # feed_timestamp is the oldest content time across the LIRR and MNR feeds;
+    # a failed poll keeps the last-known timestamp, same as the subway cache.
+    entry.update(data=trains, fetched_at=time.time(), feed_timestamp=feed_timestamp, error=None)
 
 
 async def _poll_feeds(app: FastAPI) -> None:

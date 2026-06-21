@@ -18,7 +18,7 @@ To regenerate after an INTENTIONAL decode change, from backend/:
         raw = (FIX / f"railroad_{key}.pb").read_bytes()
         feed = pb.FeedMessage(); feed.ParseFromString(raw)
         now = float(feed.header.timestamp)
-        trains = feeds._decode_railroad_vehicles(raw, system, now)
+        trains, _ = feeds._decode_railroad_vehicles(raw, system, now)
         (FIX / f"railroad_{key}_expected.json").write_text(
             json.dumps({"now": now, "system": system, "trains": trains}, indent=0))
     PY
@@ -50,8 +50,10 @@ def _load(system: str):
 @pytest.mark.parametrize("system", SYSTEMS)
 def test_real_feed_decodes_to_golden_output(system):
     raw, expected = _load(system)
-    trains = feeds._decode_railroad_vehicles(raw, expected["system"], expected["now"])
+    trains, feed_ts = feeds._decode_railroad_vehicles(raw, expected["system"], expected["now"])
     assert trains == expected["trains"]
+    # The decoder reads the header timestamp the fixture was frozen to.
+    assert feed_ts == expected["now"]
 
 
 @pytest.mark.parametrize("system", SYSTEMS)
@@ -100,13 +102,13 @@ def test_entity_without_vehicle_position_is_omitted():
     ent.id = "tu-only"
     ent.trip_update.trip.trip_id = "T1"
     ent.trip_update.trip.route_id = "3"
-    trains = feeds._decode_railroad_vehicles(feed.SerializeToString(), "MNR", 0.0)
+    trains, _ = feeds._decode_railroad_vehicles(feed.SerializeToString(), "MNR", 0.0)
     assert trains == []
 
 
 def test_position_outside_railroad_box_is_dropped():
     feed, _ = _vehicle_entity("v1", route_id="5", lat=0.0, lon=0.0)  # (0,0) is out of range
-    trains = feeds._decode_railroad_vehicles(feed.SerializeToString(), "LIRR", 0.0)
+    trains, _ = feeds._decode_railroad_vehicles(feed.SerializeToString(), "LIRR", 0.0)
     assert trains == []
 
 
@@ -118,7 +120,7 @@ def test_route_id_join_by_trip_id_separate_entity():
     tu.id = "tu1"
     tu.trip_update.trip.trip_id = "TR_42"
     tu.trip_update.trip.route_id = "8"
-    trains = feeds._decode_railroad_vehicles(feed.SerializeToString(), "LIRR", 0.0)
+    trains, _ = feeds._decode_railroad_vehicles(feed.SerializeToString(), "LIRR", 0.0)
     assert len(trains) == 1
     assert trains[0]["route_id"] == "8"
     assert trains[0]["trip_id"] == "TR_42"
@@ -130,7 +132,7 @@ def test_route_id_from_same_entity_trip_update():
     feed, ent = _vehicle_entity("1797", trip_id="1797", route_id="", label="1797")
     ent.trip_update.trip.trip_id = "3114306"
     ent.trip_update.trip.route_id = "4"
-    trains = feeds._decode_railroad_vehicles(feed.SerializeToString(), "MNR", 0.0)
+    trains, _ = feeds._decode_railroad_vehicles(feed.SerializeToString(), "MNR", 0.0)
     assert len(trains) == 1
     assert trains[0]["route_id"] == "4"
     assert trains[0]["train_num"] == "1797"
@@ -139,9 +141,22 @@ def test_route_id_from_same_entity_trip_update():
 def test_vehicle_own_route_id_preferred_and_train_num_falls_back_to_id():
     feed, ent = _vehicle_entity("v1", trip_id="T9", route_id="5", label="")
     ent.vehicle.vehicle.id = "veh-9"
-    trains = feeds._decode_railroad_vehicles(feed.SerializeToString(), "LIRR", 0.0)
+    trains, _ = feeds._decode_railroad_vehicles(feed.SerializeToString(), "LIRR", 0.0)
     assert trains[0]["route_id"] == "5"  # vehicle's own route_id wins
     assert trains[0]["train_num"] == "veh-9"  # label empty -> vehicle.id
+
+
+def test_decode_returns_header_timestamp():
+    feed, _ = _vehicle_entity("v1", route_id="5")  # _vehicle_entity sets header.timestamp
+    _, feed_ts = feeds._decode_railroad_vehicles(feed.SerializeToString(), "LIRR", 0.0)
+    assert feed_ts == 1782006915.0
+
+
+def test_decode_timestamp_none_when_feed_omits_it():
+    feed = pb.FeedMessage()
+    feed.header.gtfs_realtime_version = "2.0"  # timestamp left at its 0 default
+    _, feed_ts = feeds._decode_railroad_vehicles(feed.SerializeToString(), "MNR", 0.0)
+    assert feed_ts is None
 
 
 # ---------------- fetch_railroad_trains: live path (fake client) ----------------
@@ -176,9 +191,18 @@ def _raw(system):
 
 
 @pytest.mark.anyio
+async def test_fetch_returns_oldest_timestamp_across_feeds():
+    client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": _raw("MNR")})
+    _, feed_ts, _ = await feeds.fetch_railroad_trains(client)
+    # The combined view is only as fresh as its stalest feed.
+    oldest = min(_load("LIRR")[1]["now"], _load("MNR")[1]["now"])
+    assert feed_ts == oldest == 1782006692.0
+
+
+@pytest.mark.anyio
 async def test_fetch_dedups_duplicate_trip_ids_on_the_live_path():
     client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": _raw("MNR")})
-    trains, failed = await feeds.fetch_railroad_trains(client)
+    trains, _, failed = await feeds.fetch_railroad_trains(client)
     assert failed == []
     # The MNR feed repeats trains across separate vehicle entities; the live path
     # collapses them to one marker per trip_id (49 decoded -> 33 unique), which
@@ -193,7 +217,7 @@ async def test_fetch_dedups_duplicate_trip_ids_on_the_live_path():
 @pytest.mark.anyio
 async def test_fetch_skips_a_failed_feed_and_reports_it():
     client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": _raw("MNR")}, down=["MNR"])
-    trains, failed = await feeds.fetch_railroad_trains(client)
+    trains, _, failed = await feeds.fetch_railroad_trains(client)
     assert failed == ["MNR"]
     assert trains and all(t["system"] == "LIRR" for t in trains)
 
@@ -202,7 +226,7 @@ async def test_fetch_skips_a_failed_feed_and_reports_it():
 async def test_fetch_skips_an_undecodable_feed():
     # MNR returns a truncated length-delimited field -> DecodeError, skipped.
     client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": b"\x0a\xff"})
-    trains, failed = await feeds.fetch_railroad_trains(client)
+    trains, _, failed = await feeds.fetch_railroad_trains(client)
     assert failed == ["MNR"]
     assert trains and all(t["system"] == "LIRR" for t in trains)
 

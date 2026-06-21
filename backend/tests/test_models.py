@@ -94,7 +94,7 @@ def test_railroad_train_model_matches_real_decode_output_exactly():
 def test_decoded_railroad_train_keys_cover_model():
     # Tie the model to the live decode path, not just the serialized fixture.
     raw = (FIXTURES / "railroad_mnr.pb").read_bytes()
-    trains = feeds._decode_railroad_vehicles(raw, "MNR", 0.0)
+    trains, _ = feeds._decode_railroad_vehicles(raw, "MNR", 0.0)
     assert trains, "decode produced no trains"
     assert all(set(t) == set(RailroadTrain.model_fields) for t in trains)
 

@@ -67,7 +67,7 @@ class SubwayFeed(BaseModel):
 
 class RailroadFeed(BaseModel):
     fetched_at: float | None
-    feed_timestamp: float | None  # None in phase 1 (no per-feed content time threaded yet)
+    feed_timestamp: float | None  # oldest content time across the LIRR and MNR feeds
     data: list[RailroadTrain]
 
 

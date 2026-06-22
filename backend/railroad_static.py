@@ -169,6 +169,59 @@ def _parse_system(zip_path: Path) -> dict:
         }
 
 
+# A shape variant is kept only if it adds more than this fraction of new
+# geometry vs. variants already kept for the route, the same threshold and
+# rationale as the subway route lines (static_data._MIN_NEW_GEOMETRY):
+# express/local and the reverse-direction shape share almost all points and
+# collapse, while a real branch (e.g. the New Haven line's New Canaan / Danbury
+# / Waterbury legs) survives.
+_MIN_NEW_GEOMETRY = 0.05
+
+
+def build_railroad_route_shapes(trips: dict[str, dict], shapes: dict[str, list]) -> list[dict]:
+    """Per-route representative polylines for one railroad system.
+
+    Returns [{"route": route_id, "polylines": [[[lat, lon], ...], ...]}, ...]
+    sorted by route_id. A pure transform over the already-parsed trips/shapes
+    tables (no zip read, no network), so the lifespan builds it from
+    app.state.railroad_static[system] without re-parsing.
+
+    Railroad shape_ids are not route-encoded (unlike the subway A..N04R form), so
+    routes are grouped via trips.txt (trip -> route_id, shape_id) rather than a
+    shape_id regex. This also serves MNR, whose realtime trip_ids do not join
+    trips.txt: the route line is built from the STATIC trips/shapes only, and the
+    frontend associates a train with its route by route_id plus coordinate
+    projection, never by the realtime trip_id.
+
+    For each route the distinct shape_ids its trips use are collected (blank
+    shape_ids skipped), polylines pulled from `shapes`, and added-geometry dedup
+    (the subway threshold) keeps branch variants while collapsing shared-track
+    and reverse-direction variants (the point-set test is order-independent, so a
+    reversed shape reads as 0% new and drops out). A route whose shapes are all
+    blank or degenerate is dropped.
+    """
+    shape_ids_by_route: dict[str, set] = defaultdict(set)
+    for trip in trips.values():
+        route_id, shape_id = trip.get("route_id"), trip.get("shape_id")
+        if route_id and shape_id:
+            shape_ids_by_route[route_id].add(shape_id)
+
+    routes: list[dict] = []
+    for route_id, shape_ids in sorted(shape_ids_by_route.items()):
+        variants = [shapes[s] for s in shape_ids if len(shapes.get(s) or ()) >= 2]
+        variants.sort(key=len, reverse=True)
+        kept: list[list] = []
+        covered: set[tuple] = set()
+        for polyline in variants:
+            point_set = {tuple(p) for p in polyline}
+            if len(point_set - covered) / max(len(point_set), 1) > _MIN_NEW_GEOMETRY:
+                kept.append(polyline)
+                covered |= point_set
+        if kept:
+            routes.append({"route": route_id, "polylines": kept})
+    return routes
+
+
 async def _load_one(system: str) -> dict | None:
     """Ensure/refresh one system's zip and parse it, or None on any failure.
 

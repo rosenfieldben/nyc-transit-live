@@ -17,6 +17,7 @@ const {
   polylineCumLengths,
   pointAtArcLength,
   projectOntoRoute,
+  computeRouteSlice,
   railroadColor,
   isPlacedRailroad,
 } = require("./helpers.js");
@@ -188,6 +189,34 @@ test("projectOntoRoute picks the closer of two polylines", () => {
   const geom = geomFrom([[0, 0], [0, 2]], [[5, 0], [5, 2]]);
   const r = projectOntoRoute(geom, 5, 1);
   assert.equal(r.poly, 1);
+});
+
+test("computeRouteSlice returns a slice when both stations hit the same polyline", () => {
+  const geom = geomFrom([[0, 0], [0, 2], [2, 2]]); // L-shape
+  const train = { prev_lat: 0, prev_lon: 0, latitude: 2, longitude: 2 };
+  const slice = computeRouteSlice(train, geom, { maxSlice: 100 }); // length gate tested separately
+  assert.equal(slice.points, geom[0].points);
+  assert.ok(Math.abs(slice.s0 - 0) < 1e-9);
+  assert.ok(Math.abs(slice.s1 - geom[0].cum[geom[0].cum.length - 1]) < 1e-9);
+});
+
+test("computeRouteSlice returns null when prev is missing or geom absent", () => {
+  const geom = geomFrom([[0, 0], [0, 2]]);
+  assert.equal(computeRouteSlice({ prev_lat: null, prev_lon: null, latitude: 0, longitude: 1 }, geom), null);
+  assert.equal(computeRouteSlice({ prev_lat: 0, prev_lon: 0, latitude: 0, longitude: 1 }, null), null);
+});
+
+test("computeRouteSlice returns null when the stations are on different polylines", () => {
+  const geom = geomFrom([[0, 0], [0, 2]], [[5, 0], [5, 2]]);
+  assert.equal(computeRouteSlice({ prev_lat: 0, prev_lon: 0, latitude: 5, longitude: 2 }, geom), null);
+});
+
+test("computeRouteSlice rejects an over-long slice but a larger maxSlice admits it", () => {
+  const geom = geomFrom([[0, 0], [2, 0]]); // arc length 2 (lat units), well over ROUTE_MAX_SLICE
+  const train = { prev_lat: 0, prev_lon: 0, latitude: 2, longitude: 0 };
+  assert.equal(computeRouteSlice(train, geom), null);
+  const slice = computeRouteSlice(train, geom, { maxSlice: 5 });
+  assert.ok(slice && Math.abs(slice.s1 - slice.s0) > 1.9);
 });
 
 test("trainLatLng follows the route slice, not the chord, when _route is present", () => {

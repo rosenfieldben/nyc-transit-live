@@ -20,6 +20,8 @@ const {
   computeRouteSlice,
   railroadColor,
   isPlacedRailroad,
+  ROUTE_MAX_SLICE,
+  RAILROAD_ROUTE_MAX_SLICE,
 } = require("./helpers.js");
 
 test("trainLatLng interpolates along prev->next and clamps to [0,1]", () => {
@@ -217,6 +219,25 @@ test("computeRouteSlice rejects an over-long slice but a larger maxSlice admits 
   assert.equal(computeRouteSlice(train, geom), null);
   const slice = computeRouteSlice(train, geom, { maxSlice: 5 });
   assert.ok(slice && Math.abs(slice.s1 - slice.s0) > 1.9);
+});
+
+// ---------------- railroad slice tolerance ----------------
+
+test("the railroad slice cap is looser than the subway one", () => {
+  // If the railroad cap were <= the subway cap, every long railroad segment
+  // would fail the length gate and fall back to the straight chord.
+  assert.ok(RAILROAD_ROUTE_MAX_SLICE > ROUTE_MAX_SLICE);
+});
+
+test("a railroad-scale segment is admitted by the railroad cap, rejected by the subway default", () => {
+  // ~0.15 in the isotropic basis: the magnitude of the LIRR's longest real gap
+  // (Amagansett to Montauk). The subway default rejects it; the railroad cap
+  // admits it. Both stations sit on the polyline, so projection succeeds.
+  const geom = geomFrom([[0, 0], [0.15, 0]]); // arc length 0.15 (lat units)
+  const train = { prev_lat: 0, prev_lon: 0, latitude: 0.15, longitude: 0 };
+  assert.equal(computeRouteSlice(train, geom), null); // subway default (0.05) rejects
+  const slice = computeRouteSlice(train, geom, { maxSlice: RAILROAD_ROUTE_MAX_SLICE });
+  assert.ok(slice && Math.abs(slice.s1 - slice.s0) > 0.14); // railroad cap admits
 });
 
 test("trainLatLng follows the route slice, not the chord, when _route is present", () => {

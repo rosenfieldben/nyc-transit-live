@@ -208,7 +208,15 @@ def build_railroad_route_shapes(trips: dict[str, dict], shapes: dict[str, list])
 
     routes: list[dict] = []
     for route_id, shape_ids in sorted(shape_ids_by_route.items()):
-        variants = [shapes[s] for s in shape_ids if len(shapes.get(s) or ()) >= 2]
+        # sorted(shape_ids) before the stable length sort so the variant order is
+        # deterministic: set iteration of shape_id strings is salted by
+        # PYTHONHASHSEED, and among equal-length variants the dedup loop keeps
+        # whichever it sees first, so an unsorted set could yield a different
+        # polyline order AND a different kept set across process restarts. The
+        # subway builder gets this for free by iterating insertion-ordered
+        # shapes.items(); we sort the shape_ids to match. shapes.get(s) (not [s])
+        # tolerates a trip that references a shape_id absent from shapes.txt.
+        variants = [pts for s in sorted(shape_ids) if len(pts := shapes.get(s) or ()) >= 2]
         variants.sort(key=len, reverse=True)
         kept: list[list] = []
         covered: set[tuple] = set()
@@ -217,6 +225,9 @@ def build_railroad_route_shapes(trips: dict[str, dict], shapes: dict[str, list])
             if len(point_set - covered) / max(len(point_set), 1) > _MIN_NEW_GEOMETRY:
                 kept.append(polyline)
                 covered |= point_set
+        # Drop a route with no usable geometry (deliberately unlike the subway
+        # load_subway_route_shapes, which appends every route even with empty
+        # polylines); a railroad route line is only emitted when it has geometry.
         if kept:
             routes.append({"route": route_id, "polylines": kept})
     return routes

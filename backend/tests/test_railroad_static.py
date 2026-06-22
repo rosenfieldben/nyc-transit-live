@@ -379,3 +379,19 @@ def test_route_builder_shared_shape_appears_under_both_routes_sorted():
     assert [r["route"] for r in routes] == ["3", "9"]  # output sorted by route_id
     assert routes[0]["polylines"] == [shared]
     assert routes[1]["polylines"] == [shared]
+
+
+def test_route_builder_equal_length_variants_ordered_deterministically():
+    # Two disjoint branches of equal length: the output order must be pinned by
+    # shape_id, not by hash-salted set iteration, so it is reproducible across
+    # process restarts (the subway builder gets this from insertion order). Under
+    # the old unsorted-set iteration this assertion was PYTHONHASHSEED-dependent.
+    branch_a = [[10.0, float(i)] for i in range(5)]
+    branch_z = [[20.0, float(i)] for i in range(5)]  # same length, disjoint geometry
+    shapes = {"z": branch_z, "a": branch_a}
+    trips = {"t1": _trip("7", "z"), "t2": _trip("7", "a")}
+
+    routes = railroad_static.build_railroad_route_shapes(trips, shapes)
+    assert len(routes) == 1
+    # sorted(shape_ids) orders "a" before "z"; the stable length sort preserves it.
+    assert routes[0]["polylines"] == [branch_a, branch_z]

@@ -181,6 +181,8 @@ function projectOntoRoute(routeGeom, pLat, pLon, maxDist = ROUTE_ACCEPT_DIST) {
 // / acceptDist default to the subway constants. Returns { points, cum, s0, s1 }
 // when both stations project onto the SAME polyline within tolerance and the arc
 // between them is plausible; null otherwise (trainLatLng then uses the straight line).
+// s0/s1 are returned unordered (not min/max): the arc is walked in the sign of
+// (s1 - s0), so a single stored shape serves both travel directions.
 function computeRouteSlice(train, geom, { maxSlice = ROUTE_MAX_SLICE, acceptDist = ROUTE_ACCEPT_DIST } = {}) {
   if (train.prev_lat == null) return null;
   if (!geom) return null;

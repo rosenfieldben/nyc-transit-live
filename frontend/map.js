@@ -417,24 +417,10 @@ async function loadStations() {
 
 const trains = new Map(); // trip id -> { marker, routeId, latest }
 
-// Slice a train's route polyline between its previous and next station by
-// projecting both station coordinates (prev = prev_lat/prev_lon, next =
-// latitude/longitude) onto the route geometry. Returns { points, cum, s0, s1 }
-// when both project onto the SAME polyline within tolerance and the arc between
-// them is plausible; null otherwise, so trainLatLng uses the v1 straight line.
-// The slice walks in the sign of (s1 - s0), so it serves both travel directions
-// on the single stored shape.
-function computeRouteSlice(train) {
-  if (train.prev_lat == null) return null;
-  const geom = routeIndex.get(train.route_id);
-  if (!geom) return null;
-  const p0 = projectOntoRoute(geom, train.prev_lat, train.prev_lon);
-  const p1 = projectOntoRoute(geom, train.latitude, train.longitude);
-  if (!p0 || !p1 || p0.poly !== p1.poly) return null;
-  if (Math.abs(p1.s - p0.s) > ROUTE_MAX_SLICE) return null;
-  const poly = geom[p0.poly];
-  return { points: poly.points, cum: poly.cum, s0: p0.s, s1: p1.s };
-}
+// computeRouteSlice (slice a train's route polyline between its prev and next
+// station) lives in helpers.js so it is node-testable and shared with the
+// railroad route index; it is pure, so the caller resolves the route geometry
+// (routeIndex.get) and passes it in.
 
 function applyTrains(data) {
   // Skew-corrected now, same basis as arrivalsHtml; trainLatLng interpolates
@@ -451,7 +437,7 @@ function applyTrains(data) {
       train._route =
         record._segId === segId && record.latest._route
           ? record.latest._route
-          : computeRouteSlice(train);
+          : computeRouteSlice(train, routeIndex.get(train.route_id));
       record._segId = segId;
       record.latest = train;
       record.marker.setLatLng(trainLatLng(train, now, record.fState));
@@ -463,7 +449,7 @@ function applyTrains(data) {
     } else {
       const newRecord = { routeId: train.route_id, latest: train, fState: {} };
       newRecord._segId = `${train.route_id}|${train.prev_time}|${train.stop_id}`;
-      train._route = computeRouteSlice(train);
+      train._route = computeRouteSlice(train, routeIndex.get(train.route_id));
       newRecord.marker = L.marker(trainLatLng(train, now, newRecord.fState), { icon: trainIcon(train) })
         .bindPopup(() => trainPopup(newRecord))
         .addTo(subwayLayer);

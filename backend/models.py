@@ -87,6 +87,12 @@ class SubwayRoute(BaseModel):
     polylines: list[list[list[float]]]
 
 
+class RailroadRoute(BaseModel):
+    system: str  # "LIRR" or "MNR" (route ids collide across systems)
+    route: str
+    polylines: list[list[list[float]]]
+
+
 class SubwayStop(BaseModel):
     id: str
     name: str | None

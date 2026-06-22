@@ -32,6 +32,7 @@ from feeds import (
 from models import (
     BusFeed,
     RailroadFeed,
+    RailroadRoute,
     RouteGeometry,
     StationArrivals,
     StatusResponse,
@@ -276,6 +277,17 @@ async def lifespan(app: FastAPI):
     app.state.railroad_stops = {
         system: (data["stops"] if data else None) for system, data in railroad_static_data.items()
     }
+    # Per-system railroad route geometry, for drawing and for the gliding slice,
+    # built from the trips/shapes kept in railroad_static (a pure in-memory
+    # transform, no extra download). None static for a system -> no routes for it.
+    app.state.railroad_routes = {
+        system: (
+            railroad_static.build_railroad_route_shapes(data["trips"], data["shapes"])
+            if data
+            else []
+        )
+        for system, data in railroad_static_data.items()
+    }
     app.state.feed_cache = {
         "buses": _fresh_entry(),
         "subways": _fresh_entry(),
@@ -379,6 +391,21 @@ async def get_subway_routes(response: Response) -> list[dict]:
     for clients to cache between page loads."""
     response.headers["Cache-Control"] = "public, max-age=3600"
     return getattr(app.state, "subway_routes", None) or []
+
+
+@app.get("/api/railroad-routes", response_model=list[RailroadRoute])
+async def get_railroad_routes(response: Response) -> list[dict]:
+    """Static LIRR + Metro-North route geometry for drawing and gliding: one
+    entry per (system, route) with polylines as [lat, lon] point lists. Built
+    once at startup, so clients can cache it between loads. Keyed by system
+    because LIRR and MNR route ids collide (both have a "1")."""
+    response.headers["Cache-Control"] = "public, max-age=3600"
+    by_system = getattr(app.state, "railroad_routes", None) or {}
+    return [
+        {"system": system, "route": entry["route"], "polylines": entry["polylines"]}
+        for system, entries in by_system.items()
+        for entry in entries
+    ]
 
 
 @app.get("/api/subways", response_model=SubwayFeed)

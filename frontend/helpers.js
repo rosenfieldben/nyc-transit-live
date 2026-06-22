@@ -163,14 +163,35 @@ function _projectOntoPolyline(points, cum, pLat, pLon) {
 }
 
 // Project P onto a route's polylines (each { points, cum }); return
-// { poly, s, dist } for the closest one within ROUTE_ACCEPT_DIST, else null.
-function projectOntoRoute(routeGeom, pLat, pLon) {
+// { poly, s, dist } for the closest one within maxDist, else null. maxDist is
+// parameterized (default = the subway constant) so a later increment can pass a
+// looser railroad tolerance without touching callers.
+function projectOntoRoute(routeGeom, pLat, pLon, maxDist = ROUTE_ACCEPT_DIST) {
   let best = null;
   for (let i = 0; i < routeGeom.length; i++) {
     const r = _projectOntoPolyline(routeGeom[i].points, routeGeom[i].cum, pLat, pLon);
     if (r && (best === null || r.dist < best.dist)) best = { poly: i, s: r.s, dist: r.dist };
   }
-  return best && best.dist <= ROUTE_ACCEPT_DIST ? best : null;
+  return best && best.dist <= maxDist ? best : null;
+}
+
+// Slice a train's route polyline between its prev and next station. `geom` is the
+// resolved [{points, cum}, ...] for the train's route (the CALLER looks it up, so
+// this stays pure and serves both the subway and railroad route indexes); maxSlice
+// / acceptDist default to the subway constants. Returns { points, cum, s0, s1 }
+// when both stations project onto the SAME polyline within tolerance and the arc
+// between them is plausible; null otherwise (trainLatLng then uses the straight line).
+// s0/s1 are returned unordered (not min/max): the arc is walked in the sign of
+// (s1 - s0), so a single stored shape serves both travel directions.
+function computeRouteSlice(train, geom, { maxSlice = ROUTE_MAX_SLICE, acceptDist = ROUTE_ACCEPT_DIST } = {}) {
+  if (train.prev_lat == null) return null;
+  if (!geom) return null;
+  const p0 = projectOntoRoute(geom, train.prev_lat, train.prev_lon, acceptDist);
+  const p1 = projectOntoRoute(geom, train.latitude, train.longitude, acceptDist);
+  if (!p0 || !p1 || p0.poly !== p1.poly) return null;
+  if (Math.abs(p1.s - p0.s) > maxSlice) return null;
+  const poly = geom[p0.poly];
+  return { points: poly.points, cum: poly.cum, s0: p0.s, s1: p1.s };
 }
 
 // v2 train position: walk the route polyline from the previous-station offset to
@@ -211,7 +232,7 @@ if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     esc, routeColor, lineColor, staleness, noteClockOffset, formatCountdown,
     trainLatLng, polylineCumLengths, pointAtArcLength, projectOntoRoute,
-    railroadColor, isPlacedRailroad, ROUTE_ACCEPT_DIST, ROUTE_MAX_SLICE,
-    LINE_COLORS, DARK_TEXT_LINES, FEED_STALE_AFTER_S,
+    computeRouteSlice, railroadColor, isPlacedRailroad, ROUTE_ACCEPT_DIST,
+    ROUTE_MAX_SLICE, LINE_COLORS, DARK_TEXT_LINES, FEED_STALE_AFTER_S,
   };
 }

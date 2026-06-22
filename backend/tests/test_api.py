@@ -609,6 +609,22 @@ async def test_static_revalidation_is_a_cheap_304(client):
     assert res.content == b""
 
 
+# ---------------- /api/railroad-routes ----------------
+
+
+async def test_railroad_routes_endpoint_flattens_and_caches(client):
+    app_module.app.state.railroad_routes = {
+        "LIRR": [{"route": "5", "polylines": [[[40.7, -74.0], [40.71, -74.01]]]}],
+        "MNR": [],
+    }
+    res = await client.get("/api/railroad-routes")
+    assert res.status_code == 200
+    assert res.json() == [
+        {"system": "LIRR", "route": "5", "polylines": [[[40.7, -74.0], [40.71, -74.01]]]}
+    ]
+    assert "max-age" in res.headers.get("cache-control", "")
+
+
 # ---------------- lifespan startup/shutdown smoke ----------------
 
 
@@ -672,6 +688,12 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
         # (the poll's carry_forward_prev would otherwise fill it).
         assert app.state.railroad_positions == {}
         assert app.state.subway_positions == {}
+        # Route geometry is built from the kept trips/shapes (pure transform); the
+        # failed MNR system gets an empty list, not a crash.
+        assert app.state.railroad_routes["LIRR"] == [
+            {"route": "5", "polylines": [[[40.7, -74.0], [40.71, -74.01]]]}
+        ]
+        assert app.state.railroad_routes["MNR"] == []
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
             # Wait for the background poll task's first cycle to fill the cache.

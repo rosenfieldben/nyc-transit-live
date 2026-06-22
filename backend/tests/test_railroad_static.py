@@ -287,3 +287,111 @@ async def test_one_system_failure_does_not_block_the_other(rail_paths):
     assert set(result) == {"LIRR", "MNR"}
     assert result["LIRR"] is not None and "8" in result["LIRR"]["stops"]
     assert result["MNR"] is None
+
+
+# ---------------- build_railroad_route_shapes (synthetic parsed tables) ----------------
+#
+# The builder is a pure transform over the already-parsed trips/shapes tables, so
+# these feed dicts directly (no zip), mirroring
+# test_static_data.test_variant_dedup_keeps_branch_drops_express. Trips carry only
+# the two fields the builder reads (route_id, shape_id).
+
+
+def _trip(route_id, shape_id):
+    return {"route_id": route_id, "shape_id": shape_id}
+
+
+def test_route_builder_keeps_branch_drops_express():
+    # Trunk (20 pts) + an express that is a strict subset of the trunk points
+    # (0% new -> dropped) + a branch that diverges (mostly new -> kept).
+    trunk = [[0.0, float(i)] for i in range(20)]
+    express = [[0.0, float(i)] for i in range(0, 10, 2)]  # all points lie on the trunk
+    branch = [[float(i), 0.0] for i in range(15)]  # only [0, 0] shared with the trunk
+    shapes = {"T": trunk, "E": express, "B": branch}
+    trips = {"t1": _trip("5", "T"), "t2": _trip("5", "E"), "t3": _trip("5", "B")}
+
+    routes = railroad_static.build_railroad_route_shapes(trips, shapes)
+    assert len(routes) == 1
+    assert routes[0]["route"] == "5"
+    kept = routes[0]["polylines"]
+    assert trunk in kept and branch in kept  # trunk + real branch survive
+    assert express not in kept  # shared-track variant collapses
+    assert len(kept) == 2
+
+
+def test_route_builder_distinct_branches_survive_new_haven_case():
+    # One route, several distinct branch shapes across several trips (the MNR New
+    # Haven line: New Canaan / Danbury / Waterbury). Disjoint geometry, so all four
+    # are >5% new and none collapse.
+    trunk = [[40.0, float(i) / 100] for i in range(30)]
+    new_canaan = [[41.0, float(i) / 100] for i in range(20)]
+    danbury = [[42.0, float(i) / 100] for i in range(20)]
+    waterbury = [[43.0, float(i) / 100] for i in range(20)]
+    shapes = {"trunk": trunk, "nc": new_canaan, "dan": danbury, "wat": waterbury}
+    trips = {
+        "a": _trip("1", "trunk"),
+        "b": _trip("1", "nc"),
+        "c": _trip("1", "dan"),
+        "d": _trip("1", "wat"),
+    }
+
+    routes = railroad_static.build_railroad_route_shapes(trips, shapes)
+    assert len(routes) == 1
+    assert len(routes[0]["polylines"]) == 4  # trunk + 3 distinct branches, none drop
+
+
+def test_route_builder_reverse_direction_collapses():
+    # The reverse-direction shape is the same point set in reversed order, so it
+    # reads as 0% new (the point-set test is order-independent) and collapses.
+    fwd = [[0.0, float(i)] for i in range(10)]
+    rev = list(reversed(fwd))
+    shapes = {"F": fwd, "R": rev}
+    trips = {"t1": _trip("2", "F"), "t2": _trip("2", "R")}
+
+    routes = railroad_static.build_railroad_route_shapes(trips, shapes)
+    assert len(routes) == 1
+    assert len(routes[0]["polylines"]) == 1  # one direction kept, the reverse dropped
+
+
+def test_route_builder_blank_and_degenerate_shapes_contribute_nothing():
+    # Blank/None shape_ids are ignored; a route whose only shape is degenerate
+    # (<2 points) yields no entry at all.
+    shapes = {"good": [[0.0, 0.0], [0.0, 1.0], [0.0, 2.0]], "deg": [[5.0, 5.0]]}
+    trips = {
+        "t1": _trip("5", "good"),
+        "t2": _trip("5", ""),  # blank shape_id skipped
+        "t3": _trip("5", None),  # None shape_id skipped
+        "t4": _trip("9", "deg"),  # route 9's only shape is a single point
+        "t5": _trip("9", ""),
+    }
+
+    routes = railroad_static.build_railroad_route_shapes(trips, shapes)
+    assert [r["route"] for r in routes] == ["5"]  # route 9 has no usable geometry
+    assert routes[0]["polylines"] == [shapes["good"]]
+
+
+def test_route_builder_shared_shape_appears_under_both_routes_sorted():
+    shared = [[0.0, 0.0], [0.0, 1.0], [0.0, 2.0]]
+    shapes = {"sh": shared}
+    trips = {"t1": _trip("9", "sh"), "t2": _trip("3", "sh")}
+
+    routes = railroad_static.build_railroad_route_shapes(trips, shapes)
+    assert [r["route"] for r in routes] == ["3", "9"]  # output sorted by route_id
+    assert routes[0]["polylines"] == [shared]
+    assert routes[1]["polylines"] == [shared]
+
+
+def test_route_builder_equal_length_variants_ordered_deterministically():
+    # Two disjoint branches of equal length: the output order must be pinned by
+    # shape_id, not by hash-salted set iteration, so it is reproducible across
+    # process restarts (the subway builder gets this from insertion order). Under
+    # the old unsorted-set iteration this assertion was PYTHONHASHSEED-dependent.
+    branch_a = [[10.0, float(i)] for i in range(5)]
+    branch_z = [[20.0, float(i)] for i in range(5)]  # same length, disjoint geometry
+    shapes = {"z": branch_z, "a": branch_a}
+    trips = {"t1": _trip("7", "z"), "t2": _trip("7", "a")}
+
+    routes = railroad_static.build_railroad_route_shapes(trips, shapes)
+    assert len(routes) == 1
+    # sorted(shape_ids) orders "a" before "z"; the stable length sort preserves it.
+    assert routes[0]["polylines"] == [branch_a, branch_z]

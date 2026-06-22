@@ -10,12 +10,14 @@ import json
 from pathlib import Path
 
 import feeds
+import railroad_static
 from models import (
     Arrival,
     BusFeed,
     BusIndexStatus,
     RailroadFeed,
     RailroadFeedHealth,
+    RailroadRoute,
     RailroadTrain,
     StationArrivals,
     StatusResponse,
@@ -128,6 +130,24 @@ def test_railroad_feed_envelope_validates():
     }
     RailroadFeed.model_validate({"fetched_at": 1000.0, "feed_timestamp": None, "data": [sample]})
     RailroadFeed.model_validate({"fetched_at": None, "feed_timestamp": None, "data": []})
+
+
+def test_railroad_route_model_validates_sample():
+    RailroadRoute.model_validate(
+        {"system": "MNR", "route": "3", "polylines": [[[41.0, -73.0], [41.1, -73.1]]]}
+    )
+
+
+def test_railroad_route_builder_output_covers_model():
+    # The builder emits {route, polylines}; the endpoint adds system. Tie the two
+    # together so a field added to the builder or the model can't drift apart: each
+    # builder entry plus "system" must be exactly the model's field set.
+    shapes = {"a": [[0.0, 0.0], [0.0, 1.0], [0.0, 2.0]]}
+    trips = {"t1": {"route_id": "5", "shape_id": "a"}}
+    entries = railroad_static.build_railroad_route_shapes(trips, shapes)
+    assert entries  # guard against a vacuous pass
+    for entry in entries:
+        assert set(entry) | {"system"} == set(RailroadRoute.model_fields)
 
 
 SUBWAY_STOP = {"id": "A01", "name": "Alpha", "lat": 40.7, "lon": -74.0}

@@ -26,6 +26,16 @@ SUBWAY_GTFS_URL = "https://rrgtfsfeeds.s3.amazonaws.com/gtfs_subway.zip"
 # republishes it a few times a year; station coordinates change rarely.
 MAX_AGE_DAYS = 30
 
+# Whole-transfer deadline for the subway zip, tighter than Railway's 300s
+# healthcheck window so this plus the (concurrent) railroad pair stay under it
+# on a cold deploy. Stopgap: the durable fix is to move static loading off the
+# startup critical path into a background task like bus_static. The MTA zips are
+# small (S3-fast), so 120s is generous in practice; the residual risk is a
+# degraded network leaving the subway map on a 503 until the next deploy.
+# Duplicated in railroad_static rather than shared: the two modules are kept
+# intentionally separate.
+_DOWNLOAD_DEADLINE_S = 120
+
 
 async def _download_zip() -> None:
     SUBWAY_GTFS_ZIP.parent.mkdir(parents=True, exist_ok=True)
@@ -44,7 +54,7 @@ async def _download_zip() -> None:
     try:
         # httpx's timeout is per socket read; bound the whole transfer so a
         # trickling response can't stall startup indefinitely.
-        async with asyncio.timeout(300):
+        async with asyncio.timeout(_DOWNLOAD_DEADLINE_S):
             async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
                 async with client.stream("GET", SUBWAY_GTFS_URL) as resp:
                     resp.raise_for_status()

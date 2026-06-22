@@ -44,6 +44,15 @@ RAILROAD_STATIC_ZIPS = {
 # MTA republishes it a few times a year; stop coordinates change rarely.
 MAX_AGE_DAYS = 30
 
+# Whole-transfer deadline per static zip, tighter than Railway's 300s
+# healthcheck window so the subway zip plus the (now concurrent) railroad
+# pair stay under it on a cold deploy. Stopgap: the durable fix is to move
+# static loading off the startup critical path into a background task like
+# bus_static. The MTA zips are small (S3-fast), so 120s is generous in
+# practice; the residual risk is a degraded network leaving a system on
+# GPS-only / 503 until the next deploy.
+_DOWNLOAD_DEADLINE_S = 120
+
 
 async def _download_zip(system: str) -> None:
     """Download one system's GTFS zip atomically into its cache path."""
@@ -63,7 +72,7 @@ async def _download_zip(system: str) -> None:
     try:
         # httpx's timeout is per socket read; bound the whole transfer so a
         # trickling response can't stall indefinitely.
-        async with asyncio.timeout(300):
+        async with asyncio.timeout(_DOWNLOAD_DEADLINE_S):
             async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
                 async with client.stream("GET", url) as resp:
                     resp.raise_for_status()
@@ -206,7 +215,12 @@ async def load_railroad_static() -> dict[str, dict | None]:
 
     Returns {"LIRR": {stops, trips, shapes} | None, "MNR": {...} | None}. Each
     system is ensured/refreshed and parsed independently and leniently: a failure
-    for one leaves it None without raising or affecting the other. Nothing depends
-    on this yet, so it never raises on a single-system failure.
+    for one leaves it None without raising or affecting the other, so this never
+    raises on a single-system failure even though placement consumes it. The
+    systems load concurrently to keep cold-start under the healthcheck window;
+    _load_one swallows its own exceptions and returns None, so a plain gather
+    (no return_exceptions) preserves the per-system None semantics.
     """
-    return {system: await _load_one(system) for system in RAILROAD_STATIC_URLS}
+    systems = list(RAILROAD_STATIC_URLS)
+    results = await asyncio.gather(*(_load_one(system) for system in systems))
+    return dict(zip(systems, results))

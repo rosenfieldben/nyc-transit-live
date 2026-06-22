@@ -81,6 +81,20 @@ const ROUTE_ACCEPT_DIST = 0.0025;
 // doubles back, e.g. the Pelham loop): fall back to the straight line instead.
 const ROUTE_MAX_SLICE = 0.05;
 
+// Railroad inter-station gaps dwarf subway ones: the LIRR's longest real gap,
+// Amagansett to Montauk, is about 0.15 in the isotropic basis (roughly 3x
+// ROUTE_MAX_SLICE), and several MNR gaps (Poughkeepsie to New Hamburg) exceed
+// 0.1. With the subway cap those segments fail the length gate and fall back to
+// the straight chord, defeating the point. This looser cap admits them while
+// staying well under any doubling-back lobe: railroad lines are radial with
+// branches, not looped like the Pelham 6, so a far misprojection is still
+// rejected.
+const RAILROAD_ROUTE_MAX_SLICE = 0.3;
+// Start equal to the subway projection tolerance. Loosen only if placed-train
+// platform coordinates prove to sit too far off the modeled track, which would
+// show up as straight-chord fallback on segments that should glide.
+const RAILROAD_ROUTE_ACCEPT_DIST = 0.0025;
+
 // minClockOffset = the minimum observed (clientNow - fetched_at), approximating
 // browser-vs-server skew plus minimal latency. Used to skew-correct the
 // arrivals countdown (map.js, which compares absolute MTA timestamps to the
@@ -233,6 +247,7 @@ if (typeof module !== "undefined" && module.exports) {
     esc, routeColor, lineColor, staleness, noteClockOffset, formatCountdown,
     trainLatLng, polylineCumLengths, pointAtArcLength, projectOntoRoute,
     computeRouteSlice, railroadColor, isPlacedRailroad, ROUTE_ACCEPT_DIST,
-    ROUTE_MAX_SLICE, LINE_COLORS, DARK_TEXT_LINES, FEED_STALE_AFTER_S,
+    ROUTE_MAX_SLICE, RAILROAD_ROUTE_MAX_SLICE, RAILROAD_ROUTE_ACCEPT_DIST,
+    LINE_COLORS, DARK_TEXT_LINES, FEED_STALE_AFTER_S,
   };
 }

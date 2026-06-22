@@ -162,9 +162,13 @@ warnings.
   taking direction from the realtime direction_id. They render as hollow squares
   (a scheduled estimate) vs the filled GPS squares. Static placement only; the
   time anchors (next_time / prev_*) are filled but motion is the next increment.
-- [ ] **10. Commuter rail (gliding)**: animate the placed trains between stations
-  along the route shape, the way subway v2 does (LIRR can join the static shape
-  per-trip; MNR needs a route-level shape, see the recon in the PR history).
+- [x] **10. Commuter rail (gliding)**: the schedule-placed LIRR + Metro-North
+  trains glide between stations along the route shape, the way subway v2 does.
+  Route geometry is built per route from the static trips/shapes and associated
+  to a train by route_id plus coordinate projection, never the realtime trip_id
+  (which MNR does not join to its static schedule), so one approach serves both
+  systems. GPS trains keep moving by their reported position; only the placed
+  trains glide.
 
 ## Notes
 

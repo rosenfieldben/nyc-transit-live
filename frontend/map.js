@@ -21,6 +21,7 @@ const routeLinesLayer = L.layerGroup().addTo(map);
 const busRouteLayer = L.layerGroup().addTo(map); // the one clicked bus route
 const stationLayer = L.layerGroup().addTo(map);
 const railroadLayer = L.layerGroup().addTo(map); // LIRR + MNR GPS markers
+const railroadRouteLinesLayer = L.layerGroup().addTo(map); // LIRR + MNR route geometry
 
 function bindToggle(checkboxId, layers) {
   const box = document.getElementById(checkboxId);
@@ -36,7 +37,7 @@ function bindToggle(checkboxId, layers) {
 bindToggle("toggle-buses", [busLayer, busRouteLayer]);
 bindToggle("toggle-subways", [subwayLayer, routeLinesLayer]);
 bindToggle("toggle-stations", [stationLayer]);
-bindToggle("toggle-railroads", [railroadLayer]);
+bindToggle("toggle-railroads", [railroadLayer, railroadRouteLinesLayer]);
 
 const statusEl = document.getElementById("status");
 
@@ -282,6 +283,40 @@ async function loadRouteLines() {
   }
 }
 
+// `${system}|${route_id}` -> [{ points, cum }], the geometry placed railroad
+// trains glide along. Keyed by (system, route_id) because LIRR and MNR route ids
+// collide; populated by loadRailroadRoutes and read by applyRailroads.
+const railroadRouteIndex = new Map();
+
+async function loadRailroadRoutes() {
+  let routes;
+  try {
+    const res = await fetch("/api/railroad-routes");
+    if (!res.ok) return; // route lines are decorative; degrade silently
+    routes = await res.json();
+  } catch {
+    return;
+  }
+  for (const route of routes) {
+    // Key by (system, route): LIRR and MNR route ids collide, so route_id alone
+    // would merge two systems' geometry. Matches the endpoint's {system, route,
+    // polylines} shape and the (system, route_id) lookup in applyRailroads.
+    railroadRouteIndex.set(
+      `${route.system}|${route.route}`,
+      route.polylines.map((points) => ({ points, cum: polylineCumLengths(points) })),
+    );
+    for (const points of route.polylines) {
+      L.polyline(points, {
+        color: railroadColor(route.route),
+        weight: 2.5,
+        opacity: 0.5,
+        interactive: false,
+        renderer: lineRenderer,
+      }).addTo(railroadRouteLinesLayer);
+    }
+  }
+}
+
 /* ----- Subway stations + live arrivals (click a station for countdowns) ----- */
 
 // Canvas-rendered so ~470 circle markers stay cheap and hit-testable; on its
@@ -472,11 +507,24 @@ const TRAIN_TICK_MS = 100;
 let lastTrainTick = 0;
 
 function animateTrains(ts) {
-  if (ts - lastTrainTick >= TRAIN_TICK_MS && map.hasLayer(subwayLayer)) {
+  // Glides both subway trains and placed railroad trains between polls. GPS
+  // railroad trains are not animated here: they move by their reported position
+  // in applyRailroads. Each layer is gated on its own visibility; rAF keeps
+  // rescheduling so animation resumes on re-toggle.
+  if (ts - lastTrainTick >= TRAIN_TICK_MS) {
     lastTrainTick = ts;
     const now = Date.now() / 1000 - (minClockOffset ?? 0);
-    for (const record of trains.values()) {
-      record.marker.setLatLng(trainLatLng(record.latest, now, record.fState));
+    if (map.hasLayer(subwayLayer)) {
+      for (const record of trains.values()) {
+        record.marker.setLatLng(trainLatLng(record.latest, now, record.fState));
+      }
+    }
+    if (map.hasLayer(railroadLayer)) {
+      for (const record of railroads.values()) {
+        if (record.placed) {
+          record.marker.setLatLng(trainLatLng(record.latest, now, record.fState));
+        }
+      }
     }
   }
   requestAnimationFrame(animateTrains);
@@ -514,17 +562,26 @@ function railroadPopup(record) {
 }
 
 // Keyed by (system, trip_id): LIRR and MNR trip_id namespaces are independent, so
-// trip_id alone would collide (the backend dedups by the same composite). GPS
-// trains move via setLatLng each poll (NOT routed through trainLatLng /
-// animateTrains); placed trains sit at their station, with next_time/prev_*
-// already filled so a later gliding increment can animate them via trainLatLng.
-const railroads = new Map(); // `${system}|${trip_id}` -> { marker, routeId, placed, latest }
+// trip_id alone would collide (the backend dedups by the same composite). Placed
+// trains glide between their prev and next station via trainLatLng (the subway v2
+// path), animated by animateTrains; GPS trains move by their reported position
+// via setLatLng each poll and are never routed through trainLatLng.
+const railroads = new Map(); // `${system}|${trip_id}` -> { marker, routeId, placed, latest, fState, _segId }
 
 function railroadKey(train) {
   return `${train.system}|${train.trip_id}`;
 }
 
+// Railroad gliding reuses computeRouteSlice / trainLatLng unchanged; it differs
+// from the subway path only in the geometry it looks up (railroadRouteIndex, by
+// (system, route_id)) and these looser tolerances (railroad inter-station gaps
+// dwarf subway ones).
+const RAILROAD_SLICE_OPTS = { maxSlice: RAILROAD_ROUTE_MAX_SLICE, acceptDist: RAILROAD_ROUTE_ACCEPT_DIST };
+
 function applyRailroads(data) {
+  // Skew-corrected now, same basis as applyTrains; placed trains interpolate
+  // between their prev and next station, GPS trains use their reported position.
+  const now = Date.now() / 1000 - (minClockOffset ?? 0);
   const seen = new Set();
   for (const train of data) {
     const key = railroadKey(train);
@@ -532,8 +589,25 @@ function applyRailroads(data) {
     const placed = isPlacedRailroad(train);
     const record = railroads.get(key);
     if (record) {
-      record.marker.setLatLng([train.latitude, train.longitude]);
+      if (placed) {
+        // Same slice caching as applyTrains, but key geometry by (system,
+        // route_id) and pass the railroad tolerances. A mid-trip route relabel
+        // changes segId and re-projects onto the new route's geometry.
+        const segId = `${train.route_id}|${train.prev_time}|${train.stop_id}`;
+        train._route =
+          record._segId === segId && record.latest._route
+            ? record.latest._route
+            : computeRouteSlice(
+                train,
+                railroadRouteIndex.get(`${train.system}|${train.route_id}`),
+                RAILROAD_SLICE_OPTS,
+              );
+        record._segId = segId;
+      }
       record.latest = train;
+      record.marker.setLatLng(
+        placed ? trainLatLng(train, now, record.fState) : [train.latitude, train.longitude],
+      );
       // Re-skin when the route color or the GPS/placed status flips (a placed
       // train can pick up a GPS position on a later poll, or lose one).
       if (record.routeId !== train.route_id || record.placed !== placed) {
@@ -543,8 +617,19 @@ function applyRailroads(data) {
       }
       if (record.marker.isPopupOpen()) record.marker.getPopup().update();
     } else {
-      const newRecord = { routeId: train.route_id, placed, latest: train };
-      newRecord.marker = L.marker([train.latitude, train.longitude], { icon: railroadIcon(train) })
+      const newRecord = { routeId: train.route_id, placed, latest: train, fState: {} };
+      if (placed) {
+        newRecord._segId = `${train.route_id}|${train.prev_time}|${train.stop_id}`;
+        train._route = computeRouteSlice(
+          train,
+          railroadRouteIndex.get(`${train.system}|${train.route_id}`),
+          RAILROAD_SLICE_OPTS,
+        );
+      }
+      newRecord.marker = L.marker(
+        placed ? trainLatLng(train, now, newRecord.fState) : [train.latitude, train.longitude],
+        { icon: railroadIcon(train) },
+      )
         .bindPopup(() => railroadPopup(newRecord))
         .addTo(railroadLayer);
       railroads.set(key, newRecord);
@@ -619,6 +704,7 @@ async function refreshAll() {
 }
 
 loadRouteLines();
+loadRailroadRoutes();
 loadStations();
 refreshAll();
 setInterval(refreshAll, POLL_INTERVAL_MS);

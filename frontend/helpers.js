@@ -125,6 +125,33 @@ function staleness(source, now = Date.now() / 1000) {
   return `${source.label} data ${human} old`;
 }
 
+// Decide what a successful-but-EMPTY poll should do. Keeping the last-known
+// markers protects against a TRANSIENT empty feed (a blip that would otherwise
+// flicker every marker off and back on), but it must be bounded or a real lull
+// (an overnight railroad gap) leaves ghost markers frozen forever. We bound it
+// by TIME, not poll count: the poll cadence can change, so "N empty polls" is
+// meaningless, whereas elapsed seconds is stable. `emptyRunStart` is the
+// fetched_at of the FIRST empty poll in the current empty run (null when the
+// previous poll was non-empty); `fetchedAt` is this poll's. Both are the
+// server-recorded fetched_at, not the wall clock, so the decision is skew-free
+// and consistent with staleness() above. Within FEED_STALE_AFTER_S of the run's
+// start, keep the markers and warn "showing last known"; at or past that
+// threshold, apply the empty dataset (the callers' unseen-marker sweeps clear
+// the layer) and drop the now-false "showing last known" clause. Returns the
+// decision plus the run start to store back (unchanged reset happens on the
+// caller's non-empty path). A null fetched_at cannot be timed, so it holds
+// last-known without starting or advancing a run.
+function emptyFeedDecision(emptyRunStart, fetchedAt) {
+  if (fetchedAt == null) {
+    return { applyEmpty: false, error: "feed empty, showing last known", emptyRunStart };
+  }
+  const start = emptyRunStart ?? fetchedAt; // first empty poll of this run
+  if (fetchedAt - start >= FEED_STALE_AFTER_S) {
+    return { applyEmpty: true, error: "feed empty", emptyRunStart: start };
+  }
+  return { applyEmpty: false, error: "feed empty, showing last known", emptyRunStart: start };
+}
+
 function _segLen(aLat, aLon, bLat, bLon) {
   return Math.hypot((bLon - aLon) * _COS_LAT, bLat - aLat);
 }
@@ -313,8 +340,8 @@ function railroadArrivalsHtml(station, body, now, nameFor = () => null) {
 
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
-    esc, routeColor, lineColor, staleness, noteClockOffset, formatCountdown,
-    trainLatLng, polylineCumLengths, pointAtArcLength, projectOntoRoute,
+    esc, routeColor, lineColor, staleness, emptyFeedDecision, noteClockOffset,
+    formatCountdown, trainLatLng, polylineCumLengths, pointAtArcLength, projectOntoRoute,
     computeRouteSlice, railroadColor, isPlacedRailroad, orderedRailroadBuckets,
     railroadArrivalsHtml, formatRailroadHead, ROUTE_ACCEPT_DIST, ROUTE_MAX_SLICE,
     RAILROAD_ROUTE_MAX_SLICE, RAILROAD_ROUTE_ACCEPT_DIST, RAILROAD_BUCKET_ORDER,

@@ -722,10 +722,12 @@ function applyRailroads(data) {
 
 /* ---------------- Polling ---------------- */
 
+// emptyRunStart: fetched_at of the first empty poll in the current empty run
+// (null when the last poll carried data); drives emptyFeedDecision's time bound.
 const sources = {
-  buses: { url: "/api/buses", apply: applyBuses, label: "buses", count: 0, error: null, fetchedAt: null, feedTimestamp: null },
-  subways: { url: "/api/subways", apply: applyTrains, label: "trains", count: 0, error: null, fetchedAt: null, feedTimestamp: null },
-  railroads: { url: "/api/railroads", apply: applyRailroads, label: "railroad", count: 0, error: null, fetchedAt: null, feedTimestamp: null },
+  buses: { url: "/api/buses", apply: applyBuses, label: "buses", count: 0, error: null, fetchedAt: null, feedTimestamp: null, emptyRunStart: null },
+  subways: { url: "/api/subways", apply: applyTrains, label: "trains", count: 0, error: null, fetchedAt: null, feedTimestamp: null, emptyRunStart: null },
+  railroads: { url: "/api/railroads", apply: applyRailroads, label: "railroad", count: 0, error: null, fetchedAt: null, feedTimestamp: null, emptyRunStart: null },
 };
 
 async function refreshSource(source) {
@@ -741,15 +743,26 @@ async function refreshSource(source) {
     noteClockOffset(source.fetchedAt); // skew baseline for the arrivals countdown
     const data = body.data ?? [];
     if (data.length === 0) {
-      // Temporarily empty feed: keep last known markers on screen.
-      source.error = "feed empty, showing last known";
+      // Empty successful poll. Keep last-known markers only while the empty run is
+      // TRANSIENT (a blip); once it has lasted FEED_STALE_AFTER_S by server
+      // fetched_at, apply the empty set so the unseen-marker sweeps clear the layer
+      // rather than leaving ghost markers frozen at stale positions forever.
+      const decision = emptyFeedDecision(source.emptyRunStart, source.fetchedAt);
+      source.emptyRunStart = decision.emptyRunStart;
+      source.error = decision.error;
+      if (decision.applyEmpty) {
+        source.apply([]); // seen-set sweep removes every marker
+        source.count = 0;
+      }
       return;
     }
     source.apply(data);
     source.count = data.length;
     source.error = null;
+    source.emptyRunStart = null; // a non-empty poll ends the empty run
   } catch (err) {
-    // Keep last known markers on screen; just surface the problem.
+    // Keep last known markers on screen; just surface the problem. A failed poll
+    // neither starts nor advances the empty run (emptyRunStart is left as is).
     source.error = err.message;
   }
 }

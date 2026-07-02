@@ -7,3 +7,6 @@ pytest>=8
 # Pinned so `ruff format --check` in CI uses the exact formatter the committed
 # code was formatted with — a newer ruff could change formatting and red CI.
 ruff==0.15.17
+# Pinned for the same reason: a newer mypy can surface new errors on unchanged
+# code and red CI. Config lives in mypy.ini next to ruff.toml.
+mypy==2.1.0

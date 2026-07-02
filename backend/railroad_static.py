@@ -29,11 +29,13 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _STATIC_DIR = PROJECT_ROOT / "data" / "gtfs_static"
 
-# The MNR path is a best guess (the LIRR path is the known-good MTA developer
-# URL); the module and tests never depend on either URL resolving.
+# The canonical S3 URLs the MTA developer paths 301 to, verified 2026-06-22
+# (both serve 200 application/zip over https; the old plain-http
+# web.mta.info/developers/data/... paths redirect here). The module and tests
+# never depend on either URL resolving.
 RAILROAD_STATIC_URLS = {
-    "LIRR": "http://web.mta.info/developers/data/lirr/google_transit.zip",
-    "MNR": "http://web.mta.info/developers/data/mnr/google_transit.zip",
+    "LIRR": "https://rrgtfsfeeds.s3.amazonaws.com/gtfslirr.zip",
+    "MNR": "https://rrgtfsfeeds.s3.amazonaws.com/gtfsmnr.zip",
 }
 RAILROAD_STATIC_ZIPS = {
     "LIRR": _STATIC_DIR / "gtfs_lirr.zip",
@@ -216,7 +218,7 @@ def build_railroad_route_shapes(trips: dict[str, dict], shapes: dict[str, list])
         # subway builder gets this for free by iterating insertion-ordered
         # shapes.items(); we sort the shape_ids to match. shapes.get(s) (not [s])
         # tolerates a trip that references a shape_id absent from shapes.txt.
-        variants = [pts for s in sorted(shape_ids) if len(pts := shapes.get(s) or ()) >= 2]
+        variants = [pts for s in sorted(shape_ids) if len(pts := shapes.get(s) or []) >= 2]
         variants.sort(key=len, reverse=True)
         kept: list[list] = []
         covered: set[tuple] = set()

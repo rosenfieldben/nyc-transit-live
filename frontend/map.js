@@ -86,6 +86,16 @@ let busRouteSeq = 0; // request token: bumped by every new request AND by clear
 const busRouteNotes = new Map(); // route_id -> { message, at } shown in the popup
 const NOTE_TTL_MS = 60000; // a transient failure shouldn't haunt popups all session
 
+// Notes are only ever added on fetch failures (below), so sweeping expired
+// entries on each set bounds the map for the session without any timer.
+function setBusRouteNote(routeId, message) {
+  const now = Date.now();
+  for (const [id, note] of busRouteNotes) {
+    if (now - note.at >= NOTE_TTL_MS) busRouteNotes.delete(id);
+  }
+  busRouteNotes.set(routeId, { message, at: now });
+}
+
 function refreshOpenPopup(busId) {
   const record = buses.get(busId);
   if (record?.marker.isPopupOpen()) record.marker.getPopup().update();
@@ -127,10 +137,7 @@ async function toggleBusRoute(bus, marker) {
     if (!res.ok) {
       const body = await res.json().catch(() => null);
       pendingBusId = null;
-      busRouteNotes.set(bus.route_id, {
-        message: body?.detail ?? `Route line unavailable (HTTP ${res.status})`,
-        at: Date.now(),
-      });
+      setBusRouteNote(bus.route_id, body?.detail ?? `Route line unavailable (HTTP ${res.status})`);
       refreshOpenPopup(bus.id);
       return;
     }
@@ -138,10 +145,7 @@ async function toggleBusRoute(bus, marker) {
   } catch {
     if (requestId !== busRouteSeq) return;
     pendingBusId = null;
-    busRouteNotes.set(bus.route_id, {
-      message: "Route line unavailable (network error)",
-      at: Date.now(),
-    });
+    setBusRouteNote(bus.route_id, "Route line unavailable (network error)");
     refreshOpenPopup(bus.id);
     return;
   }
@@ -194,14 +198,15 @@ function applyBuses(data) {
       } else if (record.bearing !== bus.bearing && bus.bearing != null) {
         // Mutate the existing SVG so the CSS rotation transition animates;
         // setIcon would recreate the element and snap to the new angle.
+        const icon = busIcon(bus); // built once, reused by both branches below
         const svg = record.marker.getElement()?.firstElementChild;
         if (svg) {
           svg.style.transform = `rotate(${Number(bus.bearing)}deg)`;
           // Keep the stored html current so Leaflet recreates the element
           // correctly if the layer is toggled off and back on.
-          record.marker.options.icon.options.html = busIcon(bus).options.html;
+          record.marker.options.icon.options.html = icon.options.html;
         } else {
-          record.marker.setIcon(busIcon(bus)); // not in the DOM (layer hidden)
+          record.marker.setIcon(icon); // not in the DOM (layer hidden)
         }
       }
       record.bearing = bus.bearing;

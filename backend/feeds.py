@@ -681,15 +681,16 @@ def _direction_from_progression(
 
 
 def _infer_railroad_direction(tu, stops: dict[str, dict]) -> str | None:
-    """Direction bucket for a direction-less trip, inferred from its stop
-    progression, or None. Uses the first and last RESOLVABLE stops (the same
-    stop_id-in-stops and non-dropped-relationship filters the arrivals scan
+    """Inferred direction ("Inbound"/"Outbound") for a direction-less trip from
+    its stop progression, or None. Uses the first and last RESOLVABLE stops (the
+    same stop_id-in-stops and non-dropped-relationship filters the arrivals scan
     applies, but NOT the just-passed grace: the whole trip's endpoints set its
     direction regardless of which stops are still upcoming).
 
-    This feeds ONLY arrivals bucketing. Placed trains keep a null direction:
-    filling it from this heuristic is deliberately deferred so the placement
-    output stays exactly what the placed-golden fixtures lock.
+    The caller computes this once per trip and feeds it to BOTH the arrivals
+    bucket and the placed train's direction field. A None result maps to the
+    "Trains" arrivals bucket but to a null placement direction (the residual
+    differs by half). It is a heuristic, not feed data.
     """
     resolvable = [
         stops[stu.stop_id]
@@ -808,20 +809,21 @@ def _decode_railroad_feed(
 
         arr_trip_id = tu.trip.trip_id or f"{system}:{entity.id}"
         arr_route_id = tu.trip.route_id or None
-        # Direction bucket. LIRR reads direction_id straight. For a trip with no
-        # usable direction_id (all of MNR, plus the rare LIRR trip missing it),
-        # infer Inbound/Outbound from the stop progression toward the NYC anchor.
-        # "Trains" is the residual bucket for trips whose direction could neither
-        # be read from the feed nor inferred from the heuristic. This inference is
-        # arrivals-only: placed trains keep a null direction (deferred).
-        bucket = (
+        # Direction, computed ONCE per trip and used for BOTH the arrivals bucket
+        # and the placed train's direction field below: direction_id if present
+        # (LIRR), else the stop-progression inference (a heuristic, not feed data;
+        # covers MNR and any direction-less LIRR trip), else None. The residual
+        # differs by half: no direction means the "Trains" arrivals bucket but a
+        # null placement direction. _infer_railroad_direction is called at most
+        # once per trip (only when direction_id is absent).
+        direction = (
             _RAILROAD_DIRECTION.get(tu.trip.direction_id)
             if tu.trip.HasField("direction_id")
             else None
         )
-        if bucket is None:
-            bucket = _infer_railroad_direction(tu, stops)
-        bucket = bucket or "Trains"
+        if direction is None:
+            direction = _infer_railroad_direction(tu, stops)
+        bucket = direction or "Trains"
         # Train number: MNR's combined entity carries it inline (same read as the
         # placement path below); LIRR joins it from the positioned vehicle entity.
         train_num = None
@@ -909,14 +911,11 @@ def _decode_railroad_feed(
         # placement (gliding comes in the next increment).
 
         stop = stops[chosen.stop_id]
-        # Placement direction is read from direction_id ONLY (null for MNR). The
-        # arrivals-scan progression heuristic is deliberately NOT used here: it
-        # would change placed trains' direction field and the placed-golden output.
-        direction = (
-            _RAILROAD_DIRECTION.get(tu.trip.direction_id)
-            if tu.trip.HasField("direction_id")
-            else None
-        )
+        # `direction` was computed once above: direction_id (LIRR) or the
+        # stop-progression inference (a heuristic, not feed data), null when
+        # neither. For MNR the popup line this feeds is therefore inferred, not
+        # reported. (Unlike the "Trains" arrivals residual, a null direction stays
+        # null here rather than becoming a bucket label.)
         # The chosen station is the static-fallback position; prev_* describe the
         # most-recently-passed station (null when none precedes it or its time is
         # unknown); next_time is the predicted time at the chosen station.

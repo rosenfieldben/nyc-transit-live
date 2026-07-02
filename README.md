@@ -182,9 +182,11 @@ warnings.
 - [x] **9. Commuter rail (station placement)**: the position-less railroad trains
   the GPS slice omits are placed at their next station from the trip updates (the
   way subways are placed), joining the static railroad GTFS for coordinates and
-  taking direction from the realtime direction_id. They render as hollow squares
-  (a scheduled estimate) vs the filled GPS squares. Static placement only; the
-  time anchors (next_time / prev_*) are filled but motion is the next increment.
+  taking direction from the realtime direction_id, or, for a trip that omits it
+  (MNR), from the same stop-progression inference the arrivals use (a heuristic,
+  null when neither applies). They render as hollow squares (a scheduled estimate)
+  vs the filled GPS squares. Static placement only; the time anchors (next_time /
+  prev_*) are filled but motion is the next increment.
 - [x] **10. Commuter rail (gliding)**: the schedule-placed LIRR + Metro-North
   trains glide between stations along the route shape, the way subway v2 does.
   Route geometry is built per route from the static trips/shapes and associated

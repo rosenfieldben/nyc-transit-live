@@ -12,7 +12,7 @@
 "train_num": "8765",
 "stop_id": "1",
 "stop_name": "Grand Central",
-"direction": null,
+"direction": "Outbound",
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,

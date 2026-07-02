@@ -54,6 +54,17 @@ namespaces are independent, so the arrivals endpoint is keyed by system):
   when no vehicle entity joins), and `/api/railroad-routes` supplies each route's
   rider-facing name (e.g. "Babylon Branch") for the popups.
 
+AirTrain JFK is the exception: the Port Authority publishes no real-time feed for
+it, so this layer is scheduled reference data by design, not a degraded live mode.
+It ships as one committed fixture and never shows train positions or a live
+countdown.
+
+- `GET /api/airtrain`: the whole static dataset `{stations, routes}` in one
+  response; each route carries its ordered guideway `polyline`, the `stations` it
+  serves, and non-overlapping scheduled `headways`. The frontend draws it as its
+  own toggleable layer, and a station popup shows each serving branch's scheduled
+  headway for the current New York time, labeled "(scheduled)".
+
 ```
 nyc-transit-live/
 ├── backend/
@@ -61,6 +72,8 @@ nyc-transit-live/
 │   ├── feeds.py             # fetch + decode GTFS-RT protobuf (buses + subways + railroads)
 │   ├── static_data.py       # load stop coords / route shapes from static GTFS
 │   ├── bus_static.py        # background-built on-disk index of bus route shapes
+│   ├── airtrain_static.py   # load the committed AirTrain JFK fixture (no network)
+│   ├── scripts/             # one-off generators (gen_airtrain_fixture.py)
 │   ├── tests/               # pytest suite (run from backend/)
 │   ├── requirements.txt     # lower-bound deps for local dev
 │   ├── requirements.lock    # pinned deps installed by Railway and CI
@@ -78,6 +91,7 @@ nyc-transit-live/
 │   ├── playwright.config.js # chromium only, starts the static server
 │   └── fixtures/            # handcrafted JSON payloads + vendored leaflet dist
 ├── data/
+│   ├── airtrain_jfk.json    # committed AirTrain JFK fixture (geometry + scheduled headways)
 │   ├── gtfs_static/         # downloaded static subway GTFS (gitignored)
 │   └── cache/bus_routes/    # background-built bus route index (gitignored)
 ├── .github/workflows/ci.yml # backend pytest + frontend node tests + e2e smoke
@@ -152,8 +166,36 @@ arrival countdowns and the staleness window are deterministic (no sleeps).
   and railroad, each independent), off the startup critical path. A group's load
   retries automatically on failure, so a degraded network at boot self-heals
   rather than stranding the map until the next deploy.
+- **AirTrain JFK**: 511NY open-data static GTFS, with no real-time feed. Committed
+  once as `data/airtrain_jfk.json` and never fetched at runtime, so this layer is
+  scheduled reference data, not a live mode. See the regeneration note below.
 
 All feeds are free to use. Data is GTFS-Realtime (protobuf), decoded server-side.
+
+### AirTrain JFK (scheduled reference data, no live feed)
+
+The Port Authority publishes no GTFS-Realtime for AirTrain JFK, so this layer is
+scheduled reference data by design, not a degraded live mode. It ships as one
+committed fixture and the UI never fakes a countdown: station popups show the
+scheduled headway for the current New York time, labeled "(scheduled)".
+
+Regenerate only if 511NY refreshes the source feed. Its `calendar.txt` expired
+2021-12-31, so the feed is stale as a schedule authority and the geometry and
+headways rarely change; regeneration matters only when 511NY publishes a new zip.
+To regenerate:
+
+```bash
+python backend/scripts/gen_airtrain_fixture.py   # downloads the 511NY zip, writes data/airtrain_jfk.json
+```
+
+The script prints a per-route headway table. Eyeball it against the Port
+Authority's published AirTrain frequencies before committing, and do not silently
+adjust a mismatch. A backend test asserts the committed fixture has exactly 10
+stations and 3 routes, so a regeneration that drifts those counts fails loudly in
+CI. Overlapping frequency bands (an all-day base under narrower daytime bands) are
+reconciled as base-plus-override, where the most frequent covering band wins rather
+than being summed as concurrent patterns; see the `reconcile_bands` comment in
+`backend/scripts/gen_airtrain_fixture.py`.
 
 ## Scaling
 

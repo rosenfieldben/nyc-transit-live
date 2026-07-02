@@ -338,6 +338,61 @@ function railroadArrivalsHtml(station, body, now, nameFor = () => null) {
   return html;
 }
 
+// ---- AirTrain JFK (static-only, no realtime feed) ----
+
+// Parse an "HH:MM" band bound to minutes since midnight, accepting "24:00" (1440)
+// as an end-of-day bound.
+function hhmmToMinutes(hhmm) {
+  const [h, m] = String(hhmm).split(":");
+  return Number(h) * 60 + Number(m);
+}
+
+// Select the scheduled AirTrain headway band covering a minute-of-day, using
+// HALF-OPEN [start, end) intervals so every minute maps to exactly one band (one
+// band's end bound is the next band's start). `minutesSinceMidnight` is 0..1439.
+// Returns the band (carrying headway_min) or null when NO band covers the minute.
+// The null case is defensive on purpose: a future regenerated fixture could leave
+// a gap, and returning null (so the caller can say "schedule unavailable") is safer
+// than assuming the table always tiles the full day and guessing a nearest band.
+function selectHeadwayBand(bands, minutesSinceMidnight) {
+  for (const band of bands ?? []) {
+    const start = hhmmToMinutes(band.start);
+    const end = hhmmToMinutes(band.end);
+    if (minutesSinceMidnight >= start && minutesSinceMidnight < end) return band;
+  }
+  return null;
+}
+
+// AirTrain JFK station popup HTML. WHY this is a plain static popup and NOT the
+// live arrivals component (bindStationPopup / openStationArrivals / the 1s
+// countdown tick): AirTrain has no realtime feed, so there is nothing to count
+// down to, and a ticking "arriving in N min" would fabricate precision the data
+// does not have. Instead we show the SCHEDULED headway band for the current time,
+// clearly labeled "(scheduled)". `minutes` is minutes since NY midnight, computed
+// by the CALLER and passed in (kept pure and testable with a plain numeric input).
+// Every feed-derived string is escaped.
+function airtrainStationPopupHtml(station, routes, minutes) {
+  const serving = (routes ?? []).filter((r) => (r.stations ?? []).includes(station.id));
+  const header =
+    `<b>${esc(station.name ?? station.id)}</b>` +
+    `<div class="popup-sub">AirTrain JFK &middot; scheduled service (no live tracking)</div>`;
+  if (!serving.length) {
+    return `${header}<div>No AirTrain branch serves this station.</div>`;
+  }
+  let html = header;
+  for (const route of serving) {
+    const band = selectHeadwayBand(route.headways, minutes);
+    const name = esc(route.name ?? route.id);
+    // headway_min is a validated integer (AirTrainHeadwayBand.headway_min: int), not
+    // feed-derived text, so it is interpolated directly; esc() is reserved for the
+    // untrusted string fields (station and route names).
+    html += band
+      ? `<div>${name}: every ~${band.headway_min} min <span class="popup-sub">(scheduled)</span></div>`
+      : `<div>${name}: <span class="popup-sub">schedule unavailable</span></div>`;
+  }
+  return html;
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     esc, routeColor, lineColor, staleness, emptyFeedDecision, noteClockOffset,
@@ -346,5 +401,6 @@ if (typeof module !== "undefined" && module.exports) {
     railroadArrivalsHtml, formatRailroadHead, ROUTE_ACCEPT_DIST, ROUTE_MAX_SLICE,
     RAILROAD_ROUTE_MAX_SLICE, RAILROAD_ROUTE_ACCEPT_DIST, RAILROAD_BUCKET_ORDER,
     LINE_COLORS, DARK_TEXT_LINES, FEED_STALE_AFTER_S,
+    selectHeadwayBand, airtrainStationPopupHtml,
   };
 }

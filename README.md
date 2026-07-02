@@ -71,10 +71,17 @@ nyc-transit-live/
 │   ├── helpers.js           # pure helpers shared with map.js (node-testable)
 │   ├── helpers.test.js      # node --test suite for the helpers
 │   └── style.css
+├── tests/e2e/               # hermetic Playwright smoke suite (dev/test only)
+│   ├── smoke.spec.js        # the scenarios; all network intercepted
+│   ├── mock.js              # /api/* fixtures + vendored Leaflet interception
+│   ├── serve.js             # tiny static server for frontend/ (no backend)
+│   ├── playwright.config.js # chromium only, starts the static server
+│   └── fixtures/            # handcrafted JSON payloads + vendored leaflet dist
 ├── data/
 │   ├── gtfs_static/         # downloaded static subway GTFS (gitignored)
 │   └── cache/bus_routes/    # background-built bus route index (gitignored)
-├── .github/workflows/ci.yml # backend pytest + frontend node tests
+├── .github/workflows/ci.yml # backend pytest + frontend node tests + e2e smoke
+├── package.json             # dev-only: @playwright/test (the app is buildless)
 ├── railway.json             # Railway start command + healthcheck
 ├── nixpacks.toml            # pins Python 3.12 for the Railway build
 ├── requirements.txt         # root pointer -> backend/requirements.lock
@@ -106,6 +113,29 @@ nyc-transit-live/
    pytest
    node --test "frontend/*.test.js"      # from the repo root
    ```
+
+### End-to-end smoke suite (Playwright)
+
+A small hermetic Playwright suite exercises the real frontend in chromium: map
+boot, the empty-feed grace behavior, a failed poll, the station arrivals popup,
+the click-supersession race, layer toggles, and the bus route line. Run it from
+the repo root:
+
+```bash
+npm ci                          # dev-only deps (the app itself has no build step)
+npx playwright install chromium # one-time browser download
+npx playwright test --config tests/e2e/playwright.config.js
+```
+
+It is **hermetic by design**: the config starts a tiny static server for
+`frontend/` (the Python backend is never launched), and every request is
+intercepted in the browser. All `/api/*` calls are answered from the handcrafted
+fixtures in `tests/e2e/fixtures/`, and the two unpkg Leaflet URLs are fulfilled
+from byte-identical vendored copies of `leaflet@1.9.4` under
+`tests/e2e/fixtures/vendor/` (serving the exact bytes keeps the SRI `integrity`
+attributes in `index.html` valid). Nothing leaves the machine, so CI needs no
+network at test time. Time is frozen with Playwright's clock control, so the
+arrival countdowns and the staleness window are deterministic (no sleeps).
 
 ## Data sources
 

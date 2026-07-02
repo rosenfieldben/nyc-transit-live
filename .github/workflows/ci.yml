@@ -32,3 +32,22 @@ jobs:
       - uses: actions/checkout@v4
       # The runner's preinstalled Node is plenty for node --test.
       - run: node --test "frontend/*.test.js"
+
+  frontend-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      # Dev-only deps for the Playwright smoke suite (the app itself is buildless);
+      # npm ci installs the exact @playwright/test pinned in package-lock.json.
+      - run: npm ci
+      # Chromium only, matching the single-browser smoke config; --with-deps pulls
+      # the system libraries the headless browser needs on the runner.
+      - run: npx playwright install chromium --with-deps
+      # Hermetic: page.route intercepts every /api/* and the two unpkg Leaflet URLs,
+      # and the config's webServer serves frontend/, so this needs no network or
+      # Python backend at test time.
+      - run: npx playwright test --config tests/e2e/playwright.config.js

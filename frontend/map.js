@@ -600,7 +600,10 @@ async function loadAirtrain() {
   // deliberately does NOT use bindStationPopup / the live countdown machinery,
   // because AirTrain has no realtime feed to count down from.
   for (const station of data.stations ?? []) {
-    L.marker([station.lat, station.lon], { icon: airtrainIcon() })
+    // Render on stationPane (z-index 450) like the subway/rail station dots, so the
+    // squares sit ABOVE route lines but BELOW the train/bus markers (markerPane 600),
+    // matching the station-below-vehicles layering the rest of the map keeps.
+    L.marker([station.lat, station.lon], { icon: airtrainIcon(), pane: "stationPane" })
       .bindPopup(() => airtrainStationPopupHtml(station, routes, nyMinutesSinceMidnight()))
       .addTo(airtrainStationLayer);
   }

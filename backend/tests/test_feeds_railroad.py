@@ -205,9 +205,10 @@ def test_arrivals_golden_is_nontrivial():
 def test_every_golden_arrival_is_well_formed(system):
     _, stops, expected = _load_arrivals(system)
     now = expected["now"]
-    # The bucket asymmetry at scale: LIRR carries direction_id so it can use all
-    # three buckets; MNR omits it, so every MNR arrival is in "Trains".
-    valid_buckets = {"Outbound", "Inbound", "Trains"} if system == "LIRR" else {"Trains"}
+    # Both systems can use all three buckets now: LIRR reads direction_id, MNR
+    # infers Inbound/Outbound from the stop progression (Phase 11c), and "Trains"
+    # remains the residual for trips whose direction is neither read nor inferred.
+    valid_buckets = {"Outbound", "Inbound", "Trains"}
     for stop_id, buckets in expected["arrivals"].items():
         assert stop_id in stops  # resolvable station
         for bucket, arrs in buckets.items():
@@ -682,6 +683,83 @@ def test_arrivals_train_num_none_when_no_vehicle_entity():
     _tu_entity(feed, "T1", direction_id=0, stops=[("A", NOW + 120)])
     _, arrivals = _decode(feed, system="LIRR")
     assert arrivals["A"]["Outbound"][0]["train_num"] is None
+
+
+# ---------------- synthetic: MNR direction inference (arrivals bucketing) ----------------
+
+# Stops on a radial toward the NYC anchor (Grand Central). FAR is far out, NEAR is
+# close to the city, MID sits a hair inside FAR (under the epsilon from it). Deltas
+# verified against feeds._DIRECTION_EPSILON: FAR->NEAR ~0.61 (Inbound), FAR->MID
+# ~0.009 (< epsilon, Trains).
+INF_STOPS = {
+    "FAR": {"name": "Far", "lat": 41.30, "lon": -73.60},
+    "MID": {"name": "Mid", "lat": 41.29, "lon": -73.60},
+    "NEAR": {"name": "Near", "lat": 40.76, "lon": -73.97},
+}
+
+
+def test_direction_from_progression_is_pure_and_terminal_agnostic():
+    # Toward the anchor -> Inbound, away -> Outbound, under-epsilon net move -> None.
+    assert feeds._direction_from_progression(41.30, -73.60, 40.76, -73.97) == "Inbound"
+    assert feeds._direction_from_progression(40.76, -73.97, 41.30, -73.60) == "Outbound"
+    assert feeds._direction_from_progression(41.30, -73.60, 41.29, -73.60) is None
+
+
+def test_mnr_arrivals_inbound_inferred_from_progression():
+    feed = pb.FeedMessage()
+    # No direction_id (MNR); stops progress FAR -> NEAR (toward the city) -> Inbound.
+    _tu_entity(feed, "M1", stops=[("FAR", NOW + 60), ("NEAR", NOW + 300)])
+    _, arrivals = _decode(feed, system="MNR", stops=INF_STOPS)
+    assert set(arrivals["FAR"]) == {"Inbound"}
+    assert set(arrivals["NEAR"]) == {"Inbound"}
+
+
+def test_mnr_arrivals_outbound_inferred_from_progression():
+    feed = pb.FeedMessage()
+    _tu_entity(feed, "M1", stops=[("NEAR", NOW + 60), ("FAR", NOW + 300)])  # away from the city
+    _, arrivals = _decode(feed, system="MNR", stops=INF_STOPS)
+    assert set(arrivals["NEAR"]) == {"Outbound"}
+    assert set(arrivals["FAR"]) == {"Outbound"}
+
+
+def test_arrivals_single_resolvable_stop_falls_back_to_trains():
+    feed = pb.FeedMessage()
+    _tu_entity(feed, "M1", stops=[("NEAR", NOW + 60)])  # only one resolvable stop
+    _, arrivals = _decode(feed, system="MNR", stops=INF_STOPS)
+    assert set(arrivals["NEAR"]) == {"Trains"}
+
+
+def test_arrivals_under_epsilon_delta_falls_back_to_trains():
+    feed = pb.FeedMessage()
+    _tu_entity(feed, "M1", stops=[("FAR", NOW + 60), ("MID", NOW + 120)])  # net move < epsilon
+    _, arrivals = _decode(feed, system="MNR", stops=INF_STOPS)
+    assert set(arrivals["FAR"]) == {"Trains"}
+
+
+def test_direction_id_wins_over_inference():
+    feed = pb.FeedMessage()
+    # LIRR with direction_id=1 (Inbound) but a NEAR->FAR progression that WOULD
+    # infer Outbound: the feed's direction_id must win; inference is a fallback.
+    _tu_entity(feed, "L1", direction_id=1, stops=[("NEAR", NOW + 60), ("FAR", NOW + 300)])
+    _, arrivals = _decode(feed, system="LIRR", stops=INF_STOPS)
+    assert set(arrivals["NEAR"]) == {"Inbound"}
+
+
+def test_inference_applies_to_direction_less_lirr_trip():
+    feed = pb.FeedMessage()
+    _tu_entity(feed, "L1", stops=[("FAR", NOW + 60), ("NEAR", NOW + 300)])  # LIRR, no direction_id
+    _, arrivals = _decode(feed, system="LIRR", stops=INF_STOPS)
+    assert set(arrivals["FAR"]) == {"Inbound"}
+
+
+def test_placement_direction_stays_null_despite_arrivals_inference():
+    # The inference is arrivals-only: a placeable MNR trip whose arrivals infer a
+    # direction must STILL be placed with direction=None (placement byte-identity).
+    feed = pb.FeedMessage()
+    _tu_entity(feed, "M1", stops=[("FAR", NOW + 60), ("NEAR", NOW + 300)])
+    placed, arrivals = _decode(feed, system="MNR", stops=INF_STOPS)
+    assert set(arrivals["FAR"]) == {"Inbound"}  # arrivals did infer a direction
+    assert len(placed) == 1 and placed[0]["direction"] is None  # placement untouched
 
 
 # ---------------- fetch_railroad_trains: merge + composite-key dedup ----------------

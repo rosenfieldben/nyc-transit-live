@@ -24,6 +24,8 @@ DEAD_URL = "http://127.0.0.1:9/google_transit.zip"
 STOPS_COLS = ["stop_id", "stop_name", "stop_lat", "stop_lon"]
 TRIPS_COLS = ["route_id", "service_id", "trip_id", "trip_headsign", "direction_id", "shape_id"]
 SHAPES_COLS = ["shape_id", "shape_pt_sequence", "shape_pt_lat", "shape_pt_lon"]
+# route_color is a real GTFS column but is deliberately not parsed (own palette).
+ROUTES_COLS = ["route_id", "route_short_name", "route_long_name", "route_color"]
 
 # Numeric/opaque stop_ids (no N/S suffix) and shape_ids that would NOT match the
 # subway shape regex, mirroring the railroad GTFS shape.
@@ -81,10 +83,14 @@ def shape_rows(shape_id, points):
 
 
 DEFAULT_SHAPE_ROWS = shape_rows("5", [(40.70, -74.00), (40.71, -74.01)])
+ROUTE_ROWS = [
+    {"route_id": "5", "route_long_name": "Montauk Branch", "route_color": "00B2A9"},
+    {"route_id": "8", "route_short_name": "WH", "route_long_name": "", "route_color": "00A1DE"},
+]
 
 
 def write_railroad_zip(
-    path, stops=STOP_ROWS, trips=TRIP_ROWS, shapes=DEFAULT_SHAPE_ROWS, members=None
+    path, stops=STOP_ROWS, trips=TRIP_ROWS, shapes=DEFAULT_SHAPE_ROWS, routes=ROUTE_ROWS, members=None
 ):
     """Write a minimal railroad GTFS zip; `members` overrides the file map entirely."""
     if members is None:
@@ -92,6 +98,7 @@ def write_railroad_zip(
             "stops.txt": csv_text(STOPS_COLS, stops),
             "trips.txt": csv_text(TRIPS_COLS, trips),
             "shapes.txt": csv_text(SHAPES_COLS, shapes),
+            "routes.txt": csv_text(ROUTES_COLS, routes),
         }
     with zipfile.ZipFile(path, "w") as zf:
         for name, content in members.items():
@@ -117,14 +124,54 @@ def age_file(path, days):
 # ---------------- _parse_system (direct, no network) ----------------
 
 
-def test_parse_system_returns_three_tables(tmp_path):
+def test_parse_system_returns_four_tables(tmp_path):
     path = tmp_path / "g.zip"
     write_railroad_zip(path)
     data = railroad_static._parse_system(path)
-    assert set(data) == {"stops", "trips", "shapes"}
+    assert set(data) == {"stops", "trips", "shapes", "routes"}
     # Full-precision coords (no rounding for stops).
     assert data["stops"]["8"] == {"name": "Hicksville", "lat": 40.768, "lon": -73.531}
     assert data["stops"]["12"]["lat"] == 40.7005
+    assert data["routes"]["5"]["long_name"] == "Montauk Branch"
+
+
+def test_parse_routes_reads_names_blank_to_none(tmp_path):
+    path = tmp_path / "g.zip"
+    write_railroad_zip(path)
+    routes = railroad_static._parse_system(path)["routes"]
+    assert routes["5"] == {"long_name": "Montauk Branch", "short_name": None}
+    # route 8 carries a short_name but a blank long_name.
+    assert routes["8"] == {"long_name": None, "short_name": "WH"}
+
+
+def test_parse_routes_missing_member_degrades_to_empty(tmp_path):
+    # routes.txt is optional: a zip without it must still load (empty routes table,
+    # stops/trips/shapes intact), NOT fail the whole system load.
+    path = tmp_path / "g.zip"
+    write_railroad_zip(
+        path,
+        members={
+            "stops.txt": csv_text(STOPS_COLS, STOP_ROWS),
+            "trips.txt": csv_text(TRIPS_COLS, TRIP_ROWS),
+            "shapes.txt": csv_text(SHAPES_COLS, DEFAULT_SHAPE_ROWS),
+        },
+    )
+    data = railroad_static._parse_system(path)
+    assert data["routes"] == {}
+    assert "8" in data["stops"] and "GO5_1" in data["trips"]  # the rest loaded fine
+
+
+def test_parse_routes_skips_blank_id_and_dedups_first_wins(tmp_path):
+    rows = [
+        {"route_id": "", "route_long_name": "No Id"},  # blank route_id: skipped
+        {"route_id": "9", "route_long_name": "First"},
+        {"route_id": "9", "route_long_name": "Second"},  # duplicate route_id: first wins
+    ]
+    path = tmp_path / "g.zip"
+    write_railroad_zip(path, routes=rows)
+    routes = railroad_static._parse_system(path)["routes"]
+    assert set(routes) == {"9"}
+    assert routes["9"]["long_name"] == "First"
 
 
 def test_parse_system_skips_malformed_coordinate_rows(tmp_path):

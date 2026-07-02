@@ -22,6 +22,7 @@ const {
   isPlacedRailroad,
   orderedRailroadBuckets,
   railroadArrivalsHtml,
+  formatRailroadHead,
   ROUTE_MAX_SLICE,
   RAILROAD_ROUTE_MAX_SLICE,
 } = require("./helpers.js");
@@ -117,6 +118,28 @@ test("railroadArrivalsHtml renders a No trains state for empty directions", () =
   assert.ok(html.includes("Grand Central"));
   assert.ok(html.includes("arr-none"));
   assert.ok(html.includes("No trains"));
+});
+
+test("railroadArrivalsHtml shows the route name from nameFor and escapes it", () => {
+  const station = { id: "12", system: "LIRR", name: "Jamaica" };
+  const body = {
+    directions: { Inbound: [{ route_id: "1", trip_id: "t1", arrival: 100, train_num: null }] },
+  };
+  // Hostile route name via the resolver: it must appear escaped, never raw.
+  const html = railroadArrivalsHtml(station, body, 40, () => "Bab<script>Branch");
+  assert.ok(html.includes("Bab&lt;script&gt;Branch"));
+  assert.ok(!html.includes("<script>"));
+  // Absent name (resolver returns null) just omits the label, no crash.
+  const plain = railroadArrivalsHtml(station, body, 40, () => null);
+  assert.ok(plain.includes("arr-badge") && plain.includes("1 min"));
+});
+
+test("formatRailroadHead prefers the route name, falls back to route id, then system", () => {
+  assert.equal(formatRailroadHead("LIRR", "1", "Babylon Branch"), "LIRR · Babylon Branch");
+  assert.equal(formatRailroadHead("LIRR", "1", null), "LIRR route 1");
+  assert.equal(formatRailroadHead("MNR", null, null), "MNR");
+  // Returns plain text (the caller escapes); it does not itself inject markup.
+  assert.equal(formatRailroadHead("MNR", "3", "New Haven"), "MNR · New Haven");
 });
 
 test("esc escapes all HTML-significant characters", () => {

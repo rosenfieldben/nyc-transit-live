@@ -300,7 +300,9 @@ async def lifespan(app: FastAPI):
     # transform, no extra download). None static for a system -> no routes for it.
     app.state.railroad_routes = {
         system: (
-            railroad_static.build_railroad_route_shapes(data["trips"], data["shapes"])
+            railroad_static.build_railroad_route_shapes(
+                data["trips"], data["shapes"], data["routes"]
+            )
             if data
             else []
         )
@@ -417,14 +419,25 @@ async def get_subway_routes(response: Response) -> list[dict]:
 
 @app.get("/api/railroad-routes", response_model=list[RailroadRoute])
 async def get_railroad_routes(response: Response) -> list[dict]:
-    """Static LIRR + Metro-North route geometry for drawing and gliding: one
-    entry per (system, route) with polylines as [lat, lon] point lists. Built
-    once at startup, so clients can cache it between loads. Keyed by system
-    because LIRR and MNR route ids collide (both have a "1")."""
+    """Static LIRR + Metro-North route geometry for drawing and gliding: one entry
+    per (system, route) with its rider-facing `name` (from routes.txt, null when
+    the route has no name) and polylines as [lat, lon] point lists. Built once at
+    startup, so clients can cache it between loads. Keyed by system because LIRR
+    and MNR route ids collide (both have a "1").
+
+    KNOWN GAP: the builder drops a route with no usable geometry, so a
+    geometry-less route's name never reaches the frontend. That is acceptable:
+    such a route has no line to draw and no trains to place, so it is equally
+    invisible whether or not its name is known."""
     response.headers["Cache-Control"] = "public, max-age=3600"
     by_system = getattr(app.state, "railroad_routes", None) or {}
     return [
-        {"system": system, "route": entry["route"], "polylines": entry["polylines"]}
+        {
+            "system": system,
+            "route": entry["route"],
+            "name": entry["name"],
+            "polylines": entry["polylines"],
+        }
         for system, entries in by_system.items()
         for entry in entries
     ]

@@ -90,6 +90,7 @@ class SubwayRoute(BaseModel):
 class RailroadRoute(BaseModel):
     system: str  # "LIRR" or "MNR" (route ids collide across systems)
     route: str
+    name: str | None  # rider-facing route name from routes.txt, null when absent
     polylines: list[list[list[float]]]
 
 

@@ -265,14 +265,27 @@ function orderedRailroadBuckets(directions) {
   return [...known, ...extra].map((name) => [name, present[name]]);
 }
 
+// Rider-facing head text for a railroad TRAIN popup: "LIRR · Babylon Branch"
+// when the route name is known, else "LIRR route 5", else just the system.
+// Returns PLAIN text (system, routeId, and name are all feed-derived, so the
+// caller escapes the whole result before inserting it into markup).
+function formatRailroadHead(system, routeId, name) {
+  const sys = system || "";
+  if (name) return `${sys} · ${name}`;
+  if (routeId) return `${sys} route ${routeId}`;
+  return sys;
+}
+
 // Full railroad station arrivals popup HTML. Lives here (not map.js) so node can
 // test the escaping and ordering. `now` is the skew-corrected clock, passed in
-// for testability (map.js computes it from minClockOffset). Header is the
-// station name plus a muted system tag; each present bucket renders its heading
-// and one row per train: a route badge (railroadColor, white text on the dark
-// palette), the train number when the feed carries one, and the countdown. Every
-// feed-derived string is escaped before it touches the markup.
-function railroadArrivalsHtml(station, body, now) {
+// for testability (map.js computes it from minClockOffset). `nameFor(routeId)`
+// resolves a route's rider-facing name for this station's system (map.js closes
+// over the (system|route_id) name map), returning null when unknown. Header is
+// the station name plus a muted system tag; each present bucket renders its
+// heading and one row per train: a route badge (railroadColor, white text on the
+// dark palette), the route name where known, the train number when the feed
+// carries one, and the countdown. Every feed-derived string is escaped.
+function railroadArrivalsHtml(station, body, now, nameFor = () => null) {
   const header =
     `<b>${esc(station.name ?? station.id)}</b> ` +
     `<span class="popup-sub">${esc(station.system ?? "")}</span>`;
@@ -287,8 +300,10 @@ function railroadArrivalsHtml(station, body, now) {
         const badge =
           `<span class="arr-badge" style="background:${railroadColor(route)};color:#fff">` +
           `${esc(route || "?")}</span>`;
+        const routeName = a.route_id ? nameFor(a.route_id) : null;
+        const label = routeName ? ` ${esc(routeName)}` : "";
         const num = a.train_num ? ` <span class="popup-sub">#${esc(a.train_num)}</span>` : "";
-        return `${badge}${num} ${esc(formatCountdown(a.arrival - now))}`;
+        return `${badge}${label}${num} ${esc(formatCountdown(a.arrival - now))}`;
       })
       .join("<br>");
   }
@@ -300,7 +315,7 @@ if (typeof module !== "undefined" && module.exports) {
     esc, routeColor, lineColor, staleness, noteClockOffset, formatCountdown,
     trainLatLng, polylineCumLengths, pointAtArcLength, projectOntoRoute,
     computeRouteSlice, railroadColor, isPlacedRailroad, orderedRailroadBuckets,
-    railroadArrivalsHtml, ROUTE_ACCEPT_DIST, ROUTE_MAX_SLICE,
+    railroadArrivalsHtml, formatRailroadHead, ROUTE_ACCEPT_DIST, ROUTE_MAX_SLICE,
     RAILROAD_ROUTE_MAX_SLICE, RAILROAD_ROUTE_ACCEPT_DIST, RAILROAD_BUCKET_ORDER,
     LINE_COLORS, DARK_TEXT_LINES, FEED_STALE_AFTER_S,
   };

@@ -394,3 +394,106 @@ test("trainLatLng monotonic-f clamp: dwell can't drag the marker backward; reset
   // New segment (stop_id changes): clamp resets, f = 0.1.
   assert.deepEqual(trainLatLng({ ...train, stop_id: "Y", next_time: 200 }, 110, state), [1, 0]);
 });
+
+// ---- AirTrain JFK static headway helpers ----
+
+// Separate require (additive; leaves the top import block untouched).
+const { selectHeadwayBand, airtrainStationPopupHtml } = require("./helpers.js");
+
+// The real reconciled bands from data/airtrain_jfk.json (all 3 routes share them):
+// 15 min overnight, 7 min shoulders, 4 min midday, half-open [start, end).
+const AIRTRAIN_BANDS = [
+  { start: "00:00", end: "06:00", headway_min: 15 },
+  { start: "06:00", end: "11:00", headway_min: 7 },
+  { start: "11:00", end: "22:00", headway_min: 4 },
+  { start: "22:00", end: "24:00", headway_min: 7 },
+];
+
+const AIRTRAIN_ROUTES = [
+  { id: "2878", name: "Jamaica", stations: ["160565", "160564"], headways: AIRTRAIN_BANDS },
+  { id: "2879", name: "Howard Beach", stations: ["160564"], headways: AIRTRAIN_BANDS },
+];
+
+test("selectHeadwayBand maps both sides of every real band edge (half-open)", () => {
+  const hw = (m) => selectHeadwayBand(AIRTRAIN_BANDS, m)?.headway_min;
+  assert.equal(hw(0), 15); // 00:00 start of day
+  assert.equal(hw(359), 15); // 05:59 last minute of the overnight band
+  assert.equal(hw(360), 7); // 06:00 belongs to the NEXT band, not the one ending here
+  assert.equal(hw(659), 7); // 10:59
+  assert.equal(hw(660), 4); // 11:00
+  assert.equal(hw(1319), 4); // 21:59
+  assert.equal(hw(1320), 7); // 22:00
+  assert.equal(hw(1439), 7); // 23:59 last minute of the day
+});
+
+test("selectHeadwayBand returns null on a gapped table (true null path)", () => {
+  // Deliberately gapped: nothing covers 07:00-09:00 (420..540).
+  const gapped = [
+    { start: "06:00", end: "07:00", headway_min: 5 },
+    { start: "09:00", end: "10:00", headway_min: 5 },
+  ];
+  assert.equal(selectHeadwayBand(gapped, 420), null); // 07:00 exactly, in the gap
+  assert.equal(selectHeadwayBand(gapped, 480), null); // 08:00, mid-gap
+  assert.equal(selectHeadwayBand(gapped, 539), null); // 08:59, last gap minute
+  assert.equal(selectHeadwayBand(gapped, 400)?.headway_min, 5); // 06:40 IS covered (sanity)
+  // Missing / empty band lists degrade to null, never throw.
+  assert.equal(selectHeadwayBand([], 600), null);
+  assert.equal(selectHeadwayBand(undefined, 600), null);
+});
+
+test("selectHeadwayBand pins out-of-range inputs to null", () => {
+  // -1 precedes every band; 1440 is the exclusive end of the last band. Both fall
+  // outside every half-open interval, so the defined behavior is null.
+  assert.equal(selectHeadwayBand(AIRTRAIN_BANDS, -1), null);
+  assert.equal(selectHeadwayBand(AIRTRAIN_BANDS, 1440), null);
+});
+
+test("airtrainStationPopupHtml: scheduled label + subhead, single-branch station", () => {
+  const station = { id: "160565", name: "Jamaica Station-Station D" };
+  const html = airtrainStationPopupHtml(station, AIRTRAIN_ROUTES, 720); // 12:00 -> 4 min
+  assert.match(html, /Jamaica Station-Station D/);
+  assert.match(html, /scheduled service \(no live tracking\)/);
+  assert.match(html, /Jamaica: every ~4 min/);
+  assert.match(html, /\(scheduled\)/);
+  assert.doesNotMatch(html, /Howard Beach/); // 160565 is served only by the Jamaica branch
+});
+
+test("airtrainStationPopupHtml: multi-branch station lists every serving branch", () => {
+  const station = { id: "160564", name: "Federal Circle-Station C" };
+  const html = airtrainStationPopupHtml(station, AIRTRAIN_ROUTES, 720);
+  assert.match(html, /Jamaica: every ~4 min/);
+  assert.match(html, /Howard Beach: every ~4 min/);
+});
+
+test("airtrainStationPopupHtml: null band renders a fallback, never 'undefined'", () => {
+  const station = { id: "160564", name: "Federal Circle-Station C" };
+  const html = airtrainStationPopupHtml(station, AIRTRAIN_ROUTES, 1440); // out of range -> null band
+  assert.match(html, /schedule unavailable/);
+  assert.doesNotMatch(html, /undefined/);
+  assert.doesNotMatch(html, /every ~/); // no headway number when the band is unknown
+});
+
+test("airtrainStationPopupHtml escapes station and route names", () => {
+  const station = { id: "x", name: "<script>Evil</script>" };
+  const routes = [{ id: "r", name: "A&B <Branch>", stations: ["x"], headways: AIRTRAIN_BANDS }];
+  const html = airtrainStationPopupHtml(station, routes, 720);
+  assert.match(html, /&lt;script&gt;Evil&lt;\/script&gt;/);
+  assert.match(html, /A&amp;B &lt;Branch&gt;/);
+  assert.doesNotMatch(html, /<script>Evil<\/script>/); // the raw tag never reaches the DOM
+});
+
+test("airtrainStationPopupHtml uses no live-countdown markup", () => {
+  const station = { id: "160564", name: "Federal Circle" };
+  const html = airtrainStationPopupHtml(station, AIRTRAIN_ROUTES, 720);
+  // None of the CSS classes the live-arrivals countdown popups use.
+  for (const cls of ["arr-dir", "arr-badge", "arr-none"]) {
+    assert.ok(!html.includes(cls), `must not use live-arrivals class ${cls}`);
+  }
+});
+
+test("airtrainStationPopupHtml: station served by no branch", () => {
+  const station = { id: "999", name: "Nowhere" };
+  const html = airtrainStationPopupHtml(station, AIRTRAIN_ROUTES, 720);
+  assert.match(html, /No AirTrain branch serves this station/);
+  assert.doesNotMatch(html, /undefined/);
+});

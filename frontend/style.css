@@ -117,6 +117,12 @@ html, body {
   height: 16px;
 }
 
+/* Square AirTrain JFK station markers */
+.airtrain-marker svg {
+  width: 14px;
+  height: 14px;
+}
+
 .popup-sub {
   color: #777;
   font-size: 11px;

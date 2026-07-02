@@ -33,6 +33,8 @@ from models import (
     BusFeed,
     RailroadFeed,
     RailroadRoute,
+    RailroadStationArrivals,
+    RailroadStop,
     RouteGeometry,
     StationArrivals,
     StatusResponse,
@@ -82,6 +84,15 @@ def _feed_age(entry: dict) -> float | None:
 # Station ids index the in-memory arrivals dict; validate the path parameter
 # to reject malformed input (and any traversal-shaped surprises) up front.
 _STATION_ID_RE = re.compile(r"^[A-Za-z0-9]{1,6}$")
+
+# Railroad stop_ids are purely numeric in both fixtures (LIRR and MNR are each
+# 1 to 3 digit opaque ids, e.g. "1", "12", "237"); allow up to 4 digits for
+# headroom. This is only a cheap malformed-input pre-filter: membership in the
+# system's static stops (belt-and-suspenders, like _STATION_ID_RE) is the real
+# gate. The two systems' namespaces are independent, so the endpoint is keyed by
+# (system, stop_id).
+_RAILROAD_STATION_ID_RE = re.compile(r"^[0-9]{1,4}$")
+_RAILROAD_SYSTEMS = frozenset({"LIRR", "MNR"})
 
 
 def _fresh_entry() -> dict:
@@ -183,7 +194,7 @@ async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
     entry = app.state.feed_cache["railroads"]
     total_feeds = len(RAILROAD_FEED_URLS)
     try:
-        trains, feed_timestamp, failed_feeds = await fetch_railroad_trains(
+        trains, arrivals_by_system, feed_timestamp, failed_feeds = await fetch_railroad_trains(
             client, getattr(app.state, "railroad_stops", {})
         )
     except RuntimeError as exc:
@@ -225,6 +236,13 @@ async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
     # excluded; see feeds.RAILROAD_FRESHNESS_SYSTEMS); a failed poll keeps the
     # last-known timestamp, same as the subway cache.
     entry.update(data=trains, fetched_at=time.time(), feed_timestamp=feed_timestamp, error=None)
+    # Replace only the systems that decoded this poll (arrivals_by_system omits a
+    # transiently-failed system), so its last-known arrivals survive while the
+    # others refresh. Same "a failed poll never blanks a working index" rule as
+    # the subway arrivals, applied per system since the two are independent.
+    railroad_arrivals = getattr(app.state, "railroad_arrivals", None) or {}
+    railroad_arrivals.update(arrivals_by_system)
+    app.state.railroad_arrivals = railroad_arrivals
 
 
 async def _poll_feeds(app: FastAPI) -> None:
@@ -295,6 +313,10 @@ async def lifespan(app: FastAPI):
     }
     # Per-station arrivals index, rebuilt by each successful subway poll.
     app.state.subway_arrivals = {}
+    # Same, per railroad system: {"LIRR": {...}, "MNR": {...}}, each system
+    # replaced only on a poll where it decoded (a transient failure keeps its
+    # last-known arrivals). Empty until the first successful railroad poll.
+    app.state.railroad_arrivals = {}
     # Per-trip previous-poll position, used to carry a prev interpolation anchor
     # forward when the feed pruned the just-departed stop (see carry_forward_prev).
     app.state.subway_positions = {}
@@ -463,6 +485,65 @@ async def get_subway_arrivals(station_id: str) -> dict:
             "Northbound": station_arrivals.get("Northbound", []),
             "Southbound": station_arrivals.get("Southbound", []),
         },
+    }
+
+
+@app.get("/api/railroad-stops", response_model=list[RailroadStop])
+async def get_railroad_stops(response: Response) -> list[dict]:
+    """LIRR + Metro-North station markers ({system, id, name, lat, lon}) from the
+    static GTFS, keyed by system because the two stop_id namespaces are
+    independent. Static for the session, so clients can cache it. Empty list (not
+    an error) when no static loaded, and a system whose static failed to load
+    (None stops) contributes nothing."""
+    response.headers["Cache-Control"] = "public, max-age=3600"
+    by_system = getattr(app.state, "railroad_stops", None) or {}
+    return [
+        {"system": system, "id": sid, "name": s["name"], "lat": s["lat"], "lon": s["lon"]}
+        for system, stops in by_system.items()
+        if stops
+        for sid, s in stops.items()
+    ]
+
+
+@app.get("/api/railroad-arrivals/{system}/{stop_id}", response_model=RailroadStationArrivals)
+async def get_railroad_arrivals(system: str, stop_id: str) -> dict:
+    """Upcoming trains at a railroad station, grouped by direction bucket, from
+    the in-memory index refreshed each railroad poll.
+
+    The bucket keys are asymmetric by system: LIRR arrivals split into "Outbound"
+    and "Inbound" from the realtime direction_id, while MNR (which omits
+    direction_id) and any direction-less LIRR trip fall into a single "Trains"
+    bucket. `directions` carries only the buckets that actually have upcoming
+    trains at this station, so a station shows some subset of
+    {Outbound, Inbound, Trains} (unlike the subway endpoint, which always emits
+    both platform directions); an empty {} means nothing is upcoming. GPS trains
+    ARE included here (a positioned train still stops at stations), even though
+    the marker layer draws them from their live position.
+
+    404 for a system outside {LIRR, MNR}; 503 while the railroad cache has never
+    filled (consistent with /api/subway-arrivals); 404 for a malformed or unknown
+    stop_id (regex plus membership in that system's static stops)."""
+    if system not in _RAILROAD_SYSTEMS:
+        raise HTTPException(status_code=404, detail=f"Unknown system {system}.")
+    entry = app.state.feed_cache["railroads"]
+    if entry["data"] is None:  # no successful railroad poll yet
+        if entry["error"]:
+            raise HTTPException(entry["error"]["status"], entry["error"]["detail"])
+        raise HTTPException(
+            status_code=503, detail="Feed cache is warming up; try again in a few seconds."
+        )
+    stops = (getattr(app.state, "railroad_stops", None) or {}).get(system) or {}
+    if not _RAILROAD_STATION_ID_RE.match(stop_id) or stop_id not in stops:
+        raise HTTPException(status_code=404, detail=f"Unknown {system} station {stop_id}.")
+    station_arrivals = (
+        (getattr(app.state, "railroad_arrivals", None) or {}).get(system, {}).get(stop_id, {})
+    )
+    return {
+        "fetched_at": entry["fetched_at"],
+        "system": system,
+        "stop_id": stop_id,
+        "stop_name": stops[stop_id]["name"],
+        "directions": station_arrivals,
     }
 
 

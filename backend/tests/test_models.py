@@ -15,9 +15,12 @@ from models import (
     Arrival,
     BusFeed,
     BusIndexStatus,
+    RailroadArrival,
     RailroadFeed,
     RailroadFeedHealth,
     RailroadRoute,
+    RailroadStationArrivals,
+    RailroadStop,
     RailroadTrain,
     StationArrivals,
     StatusResponse,
@@ -152,6 +155,8 @@ def test_railroad_route_builder_output_covers_model():
 
 SUBWAY_STOP = {"id": "A01", "name": "Alpha", "lat": 40.7, "lon": -74.0}
 ARRIVAL = {"route_id": "1", "trip_id": "t1", "arrival": 1000.0}
+RAILROAD_STOP = {"system": "LIRR", "id": "12", "name": "Jamaica", "lat": 40.7, "lon": -73.8}
+RAILROAD_ARRIVAL = {"route_id": "5", "trip_id": "t1", "arrival": 1000.0, "train_num": "704"}
 
 
 def test_subway_stop_field_set_is_locked():
@@ -159,9 +164,22 @@ def test_subway_stop_field_set_is_locked():
     SubwayStop.model_validate(SUBWAY_STOP)
 
 
+def test_railroad_stop_field_set_is_locked():
+    assert set(RailroadStop.model_fields) == set(RAILROAD_STOP)
+    RailroadStop.model_validate(RAILROAD_STOP)
+
+
 def test_arrival_field_set_is_locked():
     assert set(Arrival.model_fields) == set(ARRIVAL)
     Arrival.model_validate(ARRIVAL)
+
+
+def test_railroad_arrival_field_set_is_locked():
+    # A railroad arrival adds train_num over the subway Arrival; lock it so a
+    # decode change that drops or renames the number fails in CI.
+    assert set(RailroadArrival.model_fields) == set(RAILROAD_ARRIVAL)
+    RailroadArrival.model_validate(RAILROAD_ARRIVAL)
+    RailroadArrival.model_validate({**RAILROAD_ARRIVAL, "route_id": None, "train_num": None})
 
 
 def test_station_arrivals_validates_handler_shape():
@@ -171,6 +189,29 @@ def test_station_arrivals_validates_handler_shape():
             "station_id": "A01",
             "station_name": "Alpha",
             "directions": {"Northbound": [ARRIVAL], "Southbound": []},
+        }
+    )
+
+
+def test_railroad_station_arrivals_validates_handler_shape():
+    # LIRR shape (Outbound/Inbound buckets) and the empty-directions case both
+    # validate; the bucket keys are whatever the station carries, not fixed.
+    RailroadStationArrivals.model_validate(
+        {
+            "fetched_at": 1234.0,
+            "system": "LIRR",
+            "stop_id": "12",
+            "stop_name": "Jamaica",
+            "directions": {"Outbound": [RAILROAD_ARRIVAL], "Inbound": []},
+        }
+    )
+    RailroadStationArrivals.model_validate(
+        {
+            "fetched_at": None,
+            "system": "MNR",
+            "stop_id": "1",
+            "stop_name": "Grand Central",
+            "directions": {},
         }
     )
 

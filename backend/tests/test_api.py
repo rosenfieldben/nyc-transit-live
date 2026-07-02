@@ -149,7 +149,7 @@ async def test_railroad_refresh_records_partial_feed_health(client, cache, monke
     # One system fails, one returns data: the entry error stays clear, but the
     # partial outage is recorded for /api/status (parallel to the subway case).
     async def partial(client_arg, stops_arg):
-        return RAILROADS, 996.0, ["MNR"]
+        return RAILROADS, {}, 996.0, ["MNR"]
 
     monkeypatch.setattr(app_module, "fetch_railroad_trains", partial)
     await app_module._refresh_railroads(app_module.app, client=None)
@@ -175,6 +175,25 @@ async def test_railroad_refresh_total_failure_marks_all_feeds_failed(client, cac
     assert health["total"] == total and health["ok"] == 0
     assert len(health["failed"]) == total
     assert cache["railroads"]["error"]["status"] == 502
+
+
+async def test_railroad_refresh_replaces_only_decoded_systems_arrivals(client, cache, monkeypatch):
+    # Decision 3: a poll where only LIRR decoded refreshes LIRR's arrivals while
+    # leaving MNR's last-known arrivals intact (per-system leniency).
+    app_module.app.state.railroad_arrivals = {
+        "LIRR": {"12": {"Outbound": [{"route_id": "5", "trip_id": "old", "arrival": 1.0}]}},
+        "MNR": {"1": {"Trains": [{"route_id": "1", "trip_id": "keep", "arrival": 1.0}]}},
+    }
+    new_lirr = {"12": {"Inbound": [{"route_id": "5", "trip_id": "new", "arrival": 2.0}]}}
+
+    async def only_lirr(client_arg, stops_arg):
+        return RAILROADS, {"LIRR": new_lirr}, 996.0, ["MNR"]
+
+    monkeypatch.setattr(app_module, "fetch_railroad_trains", only_lirr)
+    await app_module._refresh_railroads(app_module.app, client=None)
+    arrivals = app_module.app.state.railroad_arrivals
+    assert arrivals["LIRR"] == new_lirr  # LIRR fully replaced (old dropped)
+    assert arrivals["MNR"]["1"]["Trains"][0]["trip_id"] == "keep"  # MNR preserved
 
 
 # ---------------- /api/bus-route/{id} index states ----------------
@@ -485,6 +504,115 @@ async def test_subway_arrivals_rejects_malformed_station_id(client, subway_state
     assert res.status_code == 404
 
 
+# ---------------- /api/railroad-stops and /api/railroad-arrivals ----------------
+
+
+@pytest.fixture
+def railroad_state(cache):
+    """Prime the per-system station lists and arrivals index without the lifespan."""
+    app_module.app.state.railroad_stops = {
+        "LIRR": {"12": {"name": "Jamaica", "lat": 40.7, "lon": -73.8}},
+        "MNR": {"1": {"name": "Grand Central", "lat": 40.75, "lon": -73.97}},
+    }
+    app_module.app.state.railroad_arrivals = {
+        "LIRR": {
+            "12": {
+                "Outbound": [
+                    {"route_id": "5", "trip_id": "t1", "arrival": 1000.0, "train_num": "704"}
+                ]
+            }
+        },
+        "MNR": {
+            "1": {
+                "Trains": [
+                    {"route_id": "1", "trip_id": "m1", "arrival": 1000.0, "train_num": "8765"}
+                ]
+            }
+        },
+    }
+    return cache
+
+
+async def test_railroad_stops_lists_stations_per_system(client, railroad_state):
+    res = await client.get("/api/railroad-stops")
+    assert res.status_code == 200
+    assert res.json() == [
+        {"system": "LIRR", "id": "12", "name": "Jamaica", "lat": 40.7, "lon": -73.8},
+        {"system": "MNR", "id": "1", "name": "Grand Central", "lat": 40.75, "lon": -73.97},
+    ]
+    assert "max-age" in res.headers.get("cache-control", "")
+
+
+async def test_railroad_stops_skips_systems_without_static(client, cache):
+    # A system whose static failed to load (None) contributes nothing; no crash.
+    app_module.app.state.railroad_stops = {
+        "LIRR": {"12": {"name": "Jamaica", "lat": 40.7, "lon": -73.8}},
+        "MNR": None,
+    }
+    res = await client.get("/api/railroad-stops")
+    assert res.status_code == 200
+    assert [s["system"] for s in res.json()] == ["LIRR"]
+
+
+async def test_railroad_arrivals_warming_up_503(client, railroad_state):
+    # No successful railroad poll yet (the cache fixture leaves data=None).
+    res = await client.get("/api/railroad-arrivals/LIRR/12")
+    assert res.status_code == 503
+    assert "warming up" in res.json()["detail"]
+
+
+async def test_railroad_arrivals_unknown_system_404(client, railroad_state, cache):
+    cache["railroads"].update(data=[], fetched_at=1.0, error=None)
+    res = await client.get("/api/railroad-arrivals/NJT/1")
+    assert res.status_code == 404
+
+
+async def test_railroad_arrivals_unknown_stop_404(client, railroad_state, cache):
+    cache["railroads"].update(data=[], fetched_at=1.0, error=None)
+    res = await client.get("/api/railroad-arrivals/LIRR/999")  # valid format, not a station
+    assert res.status_code == 404
+
+
+async def test_railroad_arrivals_rejects_malformed_stop_id(client, railroad_state, cache):
+    cache["railroads"].update(data=[], fetched_at=1.0, error=None)
+    res = await client.get("/api/railroad-arrivals/LIRR/abc")  # non-numeric, fails the regex
+    assert res.status_code == 404
+
+
+async def test_railroad_arrivals_lirr_known_station(client, railroad_state, cache):
+    cache["railroads"].update(data=[], fetched_at=1234.0, error=None)  # a poll succeeded
+    res = await client.get("/api/railroad-arrivals/LIRR/12")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["system"] == "LIRR"
+    assert body["stop_id"] == "12"
+    assert body["stop_name"] == "Jamaica"
+    assert body["fetched_at"] == 1234.0
+    assert body["directions"] == {
+        "Outbound": [{"route_id": "5", "trip_id": "t1", "arrival": 1000.0, "train_num": "704"}]
+    }
+
+
+async def test_railroad_arrivals_mnr_single_trains_bucket(client, railroad_state, cache):
+    cache["railroads"].update(data=[], fetched_at=1234.0, error=None)
+    res = await client.get("/api/railroad-arrivals/MNR/1")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["system"] == "MNR" and body["stop_name"] == "Grand Central"
+    # MNR uses only the "Trains" bucket; no empty Outbound/Inbound emitted.
+    assert set(body["directions"]) == {"Trains"}
+    assert body["directions"]["Trains"][0]["train_num"] == "8765"
+
+
+async def test_railroad_arrivals_empty_when_nothing_upcoming(client, railroad_state, cache):
+    cache["railroads"].update(data=[], fetched_at=1.0, error=None)
+    # Valid station, nothing upcoming.
+    app_module.app.state.railroad_arrivals = {"LIRR": {}, "MNR": {}}
+    res = await client.get("/api/railroad-arrivals/LIRR/12")
+    assert res.status_code == 200
+    assert res.json()["directions"] == {}  # no buckets fabricated for symmetry
+
+
 # ---------------- /healthz readiness probe ----------------
 
 
@@ -642,7 +770,7 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
         return TRAINS, {}, 1001.0, []
 
     async def fake_fetch_railroads(client, stops):
-        return RAILROADS, 1002.0, []
+        return RAILROADS, {}, 1002.0, []
 
     async def fake_load_railroad_static():
         # No network. LIRR carries stops/trips/shapes; MNR failed to load (None).

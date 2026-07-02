@@ -948,6 +948,42 @@ async def test_subway_static_warmup_retries_after_failure(monkeypatch):
         await asyncio.gather(task, return_exceptions=True)
 
 
+async def test_subway_static_warmup_cancels_cleanly_during_retry_sleep(monkeypatch):
+    # Parked in the retry sleep (loader always fails, interval set huge): a cancel
+    # must complete promptly rather than wait out STATIC_RETRY_S (the clean-
+    # shutdown-during-retry invariant).
+    monkeypatch.setattr(app_module, "STATIC_RETRY_S", 3600)
+
+    async def always_fails():
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(app_module, "load_subway_stops", always_fails)
+    monkeypatch.setattr(app_module, "load_subway_route_shapes", lambda: [])
+    monkeypatch.setattr(app_module, "load_subway_stations", lambda: {})
+    app = _fake_app(subway_static_status="loading")
+    task = asyncio.create_task(app_module._warm_subway_static(app))
+    for _ in range(200):  # wait until it parks in the retry sleep
+        if app.state.subway_static_status == "failed":
+            break
+        await asyncio.sleep(0.005)
+    assert app.state.subway_static_status == "failed"
+    task.cancel()
+    # Finishes well within STATIC_RETRY_S (3600s); wait_for raises if it hung.
+    await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), timeout=5)
+    assert task.cancelled()
+
+
+async def test_subway_refresh_warming_does_not_log_per_poll(client, cache, caplog):
+    # The stops-absent warming path sets the cache 503 but must NOT log a warning:
+    # it recurs every poll, so the only log is the single _set_static_status
+    # transition, not per-poll spam.
+    app_module.app.state.subway_stops = None
+    with caplog.at_level(logging.WARNING, logger=app_module.logger.name):
+        await app_module._refresh_subways(app_module.app, client=None)
+    assert cache["subways"]["error"]["status"] == 503
+    assert not [r for r in caplog.records if "feed poll failed" in r.getMessage()]
+
+
 async def test_railroad_static_warmup_loading_to_ready(monkeypatch):
     async def fake_load():
         return {

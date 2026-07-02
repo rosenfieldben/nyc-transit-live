@@ -102,11 +102,15 @@ def _fresh_entry() -> dict:
     return {"data": None, "fetched_at": None, "feed_timestamp": None, "error": None}
 
 
-def _note_failure(entry: dict, status: int, detail: str) -> None:
+def _note_failure(entry: dict, status: int, detail: str, log: bool = True) -> None:
     """Record why the latest poll failed. Last-known data keeps being served;
-    the error only surfaces to clients while the cache has never been filled."""
+    the error only surfaces to clients while the cache has never been filled.
+    log=False suppresses the warning for an EXPECTED, recurring condition (the
+    subway warming path notes a 503 every poll while static loads, but the single
+    transition warning belongs to _set_static_status, not every 20s poll)."""
     entry["error"] = {"status": status, "detail": detail}
-    logger.warning("feed poll failed (%d): %s", status, detail)
+    if log:
+        logger.warning("feed poll failed (%d): %s", status, detail)
 
 
 _URL_RE = re.compile(r"https?://\S+")
@@ -144,10 +148,13 @@ async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
     if not stops:
         # Static GTFS not ready yet (still loading, or a failed attempt retrying in
         # the background). No restart needed: the warmup retries automatically.
+        # log=False: this recurs every poll during warmup, so the only log is the
+        # single transition warning from _set_static_status (no per-poll spam).
         _note_failure(
             entry,
             503,
             "Static subway GTFS is still loading; it will retry automatically. Try again shortly.",
+            log=False,
         )
         return
     total_feeds = len(SUBWAY_FEED_URLS)

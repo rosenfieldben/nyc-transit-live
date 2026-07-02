@@ -20,6 +20,8 @@ const {
   computeRouteSlice,
   railroadColor,
   isPlacedRailroad,
+  orderedRailroadBuckets,
+  railroadArrivalsHtml,
   ROUTE_MAX_SLICE,
   RAILROAD_ROUTE_MAX_SLICE,
 } = require("./helpers.js");
@@ -65,6 +67,56 @@ test("formatCountdown buckets a seconds delta into now / minutes", () => {
   assert.equal(formatCountdown(89), "1 min");
   assert.equal(formatCountdown(90), "2 min");
   assert.equal(formatCountdown(600), "10 min");
+});
+
+test("formatCountdown renders the hours tier at 100 minutes and up", () => {
+  // Boundary on both sides: 99 minutes stays in the minutes tier, 100 minutes
+  // (6000s) crosses to the hours tier. Below is unchanged from the minutes-only
+  // version (subway countdowns effectively never reach 100 min).
+  assert.equal(formatCountdown(5940), "99 min"); // 99 min, minutes tier
+  assert.equal(formatCountdown(6000), "1 h 40 min"); // 100 min, hours tier
+  assert.equal(formatCountdown(7200), "2 h 0 min"); // exact hour keeps "0 min"
+  assert.equal(formatCountdown(3600), "60 min"); // still minutes (60 < 100)
+});
+
+test("orderedRailroadBuckets keeps a stable Inbound, Outbound, Trains order", () => {
+  const arr = (n) => [{ route_id: "1", trip_id: `t${n}`, arrival: n, train_num: null }];
+  // Full set: fixed display order regardless of input key order.
+  assert.deepEqual(
+    orderedRailroadBuckets({ Trains: arr(3), Outbound: arr(2), Inbound: arr(1) }).map((b) => b[0]),
+    ["Inbound", "Outbound", "Trains"],
+  );
+  // Subsets: only the present buckets, in order.
+  assert.deepEqual(
+    orderedRailroadBuckets({ Outbound: arr(2), Inbound: arr(1) }).map((b) => b[0]),
+    ["Inbound", "Outbound"],
+  );
+  assert.deepEqual(orderedRailroadBuckets({ Trains: arr(1) }).map((b) => b[0]), ["Trains"]);
+  // Empty directions, and buckets that arrive empty, yield nothing to render.
+  assert.deepEqual(orderedRailroadBuckets({}), []);
+  assert.deepEqual(orderedRailroadBuckets({ Inbound: [] }), []);
+});
+
+test("railroadArrivalsHtml escapes a hostile station name and train_num", () => {
+  const station = { id: "12", system: "LI<b>RR", name: "Jamaica<script>" };
+  const body = {
+    directions: {
+      Inbound: [{ route_id: "5", trip_id: "t1", arrival: 100, train_num: "27<img>12" }],
+    },
+  };
+  const html = railroadArrivalsHtml(station, body, 40);
+  assert.ok(!html.includes("<script>"));
+  assert.ok(html.includes("Jamaica&lt;script&gt;"));
+  assert.ok(html.includes("LI&lt;b&gt;RR")); // system tag escaped
+  assert.ok(html.includes("#27&lt;img&gt;12")); // train number escaped, kept its # prefix
+  assert.ok(html.includes("1 min")); // (100 - 40)s -> "1 min" countdown
+});
+
+test("railroadArrivalsHtml renders a No trains state for empty directions", () => {
+  const html = railroadArrivalsHtml({ id: "1", system: "MNR", name: "Grand Central" }, { directions: {} }, 0);
+  assert.ok(html.includes("Grand Central"));
+  assert.ok(html.includes("arr-none"));
+  assert.ok(html.includes("No trains"));
 });
 
 test("esc escapes all HTML-significant characters", () => {

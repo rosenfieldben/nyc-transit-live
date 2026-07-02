@@ -22,6 +22,7 @@ const busRouteLayer = L.layerGroup().addTo(map); // the one clicked bus route
 const stationLayer = L.layerGroup().addTo(map);
 const railroadLayer = L.layerGroup().addTo(map); // LIRR + MNR GPS markers
 const railroadRouteLinesLayer = L.layerGroup().addTo(map); // LIRR + MNR route geometry
+const railroadStationLayer = L.layerGroup().addTo(map); // LIRR + MNR clickable stations
 
 function bindToggle(checkboxId, layers) {
   const box = document.getElementById(checkboxId);
@@ -37,7 +38,7 @@ function bindToggle(checkboxId, layers) {
 bindToggle("toggle-buses", [busLayer, busRouteLayer]);
 bindToggle("toggle-subways", [subwayLayer, routeLinesLayer]);
 bindToggle("toggle-stations", [stationLayer]);
-bindToggle("toggle-railroads", [railroadLayer, railroadRouteLinesLayer]);
+bindToggle("toggle-railroads", [railroadLayer, railroadRouteLinesLayer, railroadStationLayer]);
 
 const statusEl = document.getElementById("status");
 
@@ -328,26 +329,30 @@ async function loadRailroadRoutes() {
 // own pane (above the route-line canvas) so station clicks land here.
 const stationRenderer = L.canvas({ padding: 0.5, pane: "stationPane" });
 
-// One station popup is open at a time (Leaflet closes others). A request token
-// guards against a slow fetch landing after the user clicked a different
-// station, and a 1s timer ticks countdowns down from absolute arrival
-// timestamps without re-fetching. The last good arrivals payload lives on
-// openStation so the tick and the 15s refresh share one source of truth (no
-// captured-body closure that a later call could leave firing over newer state).
+// Shared popup machinery for BOTH station kinds (subway + railroad). One popup
+// is open at a time (Leaflet closes others). A request token guards against a
+// slow fetch landing after the user clicked a different station (of either
+// kind, since the token is shared), and a 1s timer ticks countdowns down from
+// absolute arrival timestamps without re-fetching. The last good arrivals
+// payload lives on openStation so the tick and the 15s refresh share one source
+// of truth (no captured-body closure that a later call could leave firing over
+// newer state). openStation carries the station, its marker, the fetched body,
+// the arrivals fetch `url`, and a kind-specific `render(station, body)`; the
+// fetch/guard/timer skeleton below is otherwise kind-agnostic.
 let stationSeq = 0;
 let stationTimer = null;
-let openStation = null; // { station, marker, body } while a popup is open
+let openStation = null; // { station, marker, body, url, render } while open
 
 // Repaint the open popup from openStation.body. Reading the shared body (rather
 // than a value captured per fetch) is what stops a stale tick from overwriting
 // newer content: there is only ever one body to draw, the current one.
 function renderStation() {
   if (!openStation || !openStation.body) return;
-  const { station, marker, body } = openStation;
-  if (marker.isPopupOpen()) marker.setPopupContent(arrivalsHtml(station, body));
+  const { station, marker, body, render } = openStation;
+  if (marker.isPopupOpen()) marker.setPopupContent(render(station, body));
 }
 
-function arrivalsHtml(station, body) {
+function subwayArrivalsHtml(station, body) {
   // Skew-corrected now, reusing the staleness baseline from helpers.js.
   const now = Date.now() / 1000 - (minClockOffset ?? 0);
   let html = `<b>${esc(station.name ?? station.id)}</b>`;
@@ -383,7 +388,12 @@ function stationError(station, message) {
 // refresh=true is the 15s background refresh of an already-open popup: keep the
 // current arrivals ticking, swap in new data when it lands, and stay quiet on a
 // failed poll rather than blanking good data with a Loading or error message.
-async function openStationArrivals(station, marker, { refresh = false } = {}) {
+// Reads the current openStation descriptor for the url/render, so it is the same
+// skeleton for either station kind.
+async function openStationArrivals({ refresh = false } = {}) {
+  const open = openStation;
+  if (!open) return;
+  const { station, marker, url } = open;
   const seq = ++stationSeq;
   if (!refresh) {
     // Stop the previous tick up front so it cannot fire during this fetch.
@@ -393,7 +403,7 @@ async function openStationArrivals(station, marker, { refresh = false } = {}) {
   }
   let body;
   try {
-    const res = await fetch(`/api/subway-arrivals/${encodeURIComponent(station.id)}`);
+    const res = await fetch(url);
     if (seq !== stationSeq) return; // superseded by another station click or a close
     if (!res.ok) {
       if (!refresh) {
@@ -414,12 +424,31 @@ async function openStationArrivals(station, marker, { refresh = false } = {}) {
   }
   if (seq !== stationSeq) return;
   noteClockOffset(body.fetched_at); // keep the skew baseline fresh
-  if (openStation && openStation.marker === marker) openStation.body = body;
+  if (openStation === open) openStation.body = body;
   renderStation();
   if (!marker.isPopupOpen()) return;
   // (Re)start the single tick now that fresh data is in place.
   clearInterval(stationTimer);
   stationTimer = setInterval(renderStation, 1000);
+}
+
+// Wire one station circleMarker to the shared popup lifecycle. makeDescriptor(marker)
+// builds the openStation descriptor (kind-specific url + render); the seq bump,
+// timer teardown, and one-popup-at-a-time invalidation are identical for both
+// kinds, so they live here once.
+function bindStationPopup(marker, makeDescriptor) {
+  return marker
+    .bindPopup("", { minWidth: 170 })
+    .on("popupopen", function () {
+      openStation = makeDescriptor(this);
+      openStationArrivals();
+    })
+    .on("popupclose", function () {
+      stationSeq++; // invalidate any in-flight arrivals fetch for this popup
+      clearInterval(stationTimer);
+      stationTimer = null;
+      if (openStation?.marker === this) openStation = null;
+    });
 }
 
 async function loadStations() {
@@ -432,26 +461,55 @@ async function loadStations() {
     return;
   }
   for (const station of stations) {
-    L.circleMarker([station.lat, station.lon], {
+    const marker = L.circleMarker([station.lat, station.lon], {
       radius: 4,
       color: "#333",
       weight: 1.5,
       fillColor: "#fff",
       fillOpacity: 1,
       renderer: stationRenderer,
-    })
-      .bindPopup("", { minWidth: 170 })
-      .on("popupopen", function () {
-        openStation = { station, marker: this, body: null };
-        openStationArrivals(station, this);
-      })
-      .on("popupclose", function () {
-        stationSeq++; // invalidate any in-flight arrivals fetch for this popup
-        clearInterval(stationTimer);
-        stationTimer = null;
-        if (openStation?.marker === this) openStation = null;
-      })
-      .addTo(stationLayer);
+    });
+    bindStationPopup(marker, (m) => ({
+      station,
+      marker: m,
+      body: null,
+      url: `/api/subway-arrivals/${encodeURIComponent(station.id)}`,
+      render: subwayArrivalsHtml,
+    })).addTo(stationLayer);
+  }
+}
+
+async function loadRailroadStations() {
+  let stations;
+  try {
+    const res = await fetch("/api/railroad-stops");
+    if (!res.ok) return; // stations are a convenience layer; degrade silently
+    stations = await res.json();
+  } catch {
+    return;
+  }
+  for (const station of stations) {
+    // Same pane/renderer as subway stations (click priority + cheap canvas), but
+    // visually distinct: heavier, darker slate stroke and a slightly smaller
+    // radius over the shared white fill. Keyed by (system, id) in the fetch url
+    // because LIRR and MNR stop_id namespaces can collide.
+    const marker = L.circleMarker([station.lat, station.lon], {
+      radius: 3.5,
+      color: "#334155",
+      weight: 2.5,
+      fillColor: "#fff",
+      fillOpacity: 1,
+      renderer: stationRenderer,
+    });
+    bindStationPopup(marker, (m) => ({
+      station,
+      marker: m,
+      body: null,
+      url:
+        `/api/railroad-arrivals/${encodeURIComponent(station.system)}` +
+        `/${encodeURIComponent(station.id)}`,
+      render: (s, b) => railroadArrivalsHtml(s, b, Date.now() / 1000 - (minClockOffset ?? 0)),
+    })).addTo(railroadStationLayer);
   }
 }
 
@@ -703,14 +761,16 @@ async function refreshAll() {
   if (problems.length) setStatus(`${counts} · ${now} — ${problems.join("; ")}`, true);
   else setStatus(`${counts} · updated ${now}`);
 
-  // Refresh the open station's arrivals so the train list (not just the
-  // countdowns) stays current on the same ~15s cadence as the markers.
-  if (openStation) openStationArrivals(openStation.station, openStation.marker, { refresh: true });
+  // Refresh whichever station popup is open (subway or railroad) so the train
+  // list (not just the countdowns) stays current on the same ~15s cadence as the
+  // markers. openStationArrivals reads the open descriptor, so it is kind-agnostic.
+  if (openStation) openStationArrivals({ refresh: true });
 }
 
 loadRouteLines();
 loadRailroadRoutes();
 loadStations();
+loadRailroadStations();
 refreshAll();
 setInterval(refreshAll, POLL_INTERVAL_MS);
 requestAnimationFrame(animateTrains); // glide trains between polls

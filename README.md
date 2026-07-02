@@ -188,6 +188,14 @@ warnings.
   (which MNR does not join to its static schedule), so one approach serves both
   systems. GPS trains keep moving by their reported position; only the placed
   trains glide.
+- [x] **11. Commuter rail (station arrivals)**: clickable LIRR + Metro-North
+  station markers with live countdowns, the way subway stations work. The
+  railroad poll builds a per-system in-memory arrivals index (`/api/railroad-stops`
+  and `/api/railroad-arrivals/{system}/{stop_id}`); the popup renders whichever
+  direction buckets a station carries. LIRR splits into Inbound/Outbound from
+  the realtime direction_id, while Metro-North omits it, so all its trains show
+  in a single Trains bucket. GPS-tracked trains are included in arrivals even
+  though the marker layer draws them from their live position.
 
 ## Notes
 

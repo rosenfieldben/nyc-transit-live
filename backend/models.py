@@ -141,6 +141,35 @@ class RailroadStationArrivals(BaseModel):
     directions: dict[str, list[RailroadArrival]]
 
 
+# AirTrain JFK: a static-only mode (no realtime feed exists). The whole dataset
+# ships as one committed fixture, so a single /api/airtrain endpoint returns
+# AirTrainData. Headways are SCHEDULED reference bands, never live countdowns.
+class AirTrainHeadwayBand(BaseModel):
+    start: str  # "HH:MM" service-day local (America/New_York), band start inclusive
+    end: str  # "HH:MM", band end exclusive ("24:00" == end of service day)
+    headway_min: int  # scheduled minutes between trains in this band (reference, not live)
+
+
+class AirTrainStation(BaseModel):
+    id: str
+    name: str
+    lat: float
+    lon: float
+
+
+class AirTrainRoute(BaseModel):
+    id: str
+    name: str
+    polyline: list[list[float]]  # ordered [[lat, lon], ...] guideway geometry
+    stations: list[str]  # ordered station ids this branch serves
+    headways: list[AirTrainHeadwayBand]  # non-overlapping bands covering the service day
+
+
+class AirTrainData(BaseModel):
+    stations: list[AirTrainStation]
+    routes: list[AirTrainRoute]
+
+
 class FeedError(BaseModel):
     status: int
     detail: str

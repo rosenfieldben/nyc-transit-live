@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from google.protobuf.message import DecodeError
 
+import airtrain_static
 import bus_static
 import railroad_static
 import static_data
@@ -30,6 +31,7 @@ from feeds import (
     fetch_vehicle_positions,
 )
 from models import (
+    AirTrainData,
     BusFeed,
     RailroadFeed,
     RailroadRoute,
@@ -367,6 +369,12 @@ async def lifespan(app: FastAPI):
     app.state.railroad_stops = {}
     app.state.railroad_routes = {}
     app.state.railroad_static_status = "loading"
+    # AirTrain JFK is a committed static fixture (data/airtrain_jfk.json), not a
+    # network download, so it loads SYNCHRONOUSLY here and is ready the instant the
+    # server accepts requests (no warmup task, no "loading" state, no 503). Loading
+    # it may raise and abort boot, which is intended: unlike the graceful network
+    # loaders above, a bad committed fixture is a build bug that must fail loudly.
+    app.state.airtrain = airtrain_static.load_airtrain()
     app.state.feed_cache = {
         "buses": _fresh_entry(),
         "subways": _fresh_entry(),
@@ -619,6 +627,20 @@ async def get_railroad_stops(response: Response) -> list[dict]:
         if stops
         for sid, s in stops.items()
     ]
+
+
+@app.get("/api/airtrain", response_model=AirTrainData)
+async def get_airtrain(response: Response) -> dict:
+    """AirTrain JFK static geometry, stations, and SCHEDULED headways.
+
+    Static-only: AirTrain JFK has no realtime feed, so this endpoint never carries
+    live positions or countdowns; the headways are scheduled reference bands (see
+    the _provenance block in data/airtrain_jfk.json). Loaded once at startup from a
+    committed fixture, so it is always ready while the server is up (no warming
+    503) and is cacheable for the session like the other static endpoints.
+    """
+    response.headers["Cache-Control"] = "public, max-age=3600"
+    return app.state.airtrain
 
 
 @app.get("/api/railroad-arrivals/{system}/{stop_id}", response_model=RailroadStationArrivals)

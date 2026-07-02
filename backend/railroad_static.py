@@ -1,12 +1,13 @@
 """Download and load the static GTFS for the MTA railroads (LIRR + Metro-North).
 
-The Phase-2 data foundation: each system's stops, trips, and shapes loaded into
-memory. Railroad GTFS diverges from the subway schema (opaque plain stop_ids with
-no N/S suffix, different shape_id formats), so the subway helpers in static_data
-are intentionally NOT reused. main.py's lifespan loads this at startup and stores
-the per-system stops on app.state.railroad_stops, which feeds._decode_railroad_
-placements uses to place the position-less trains at their next station. The
-trips and shapes tables are parsed too, for a later gliding increment.
+The Phase-2 data foundation: each system's stops, trips, shapes, and routes
+loaded into memory. Railroad GTFS diverges from the subway schema (opaque plain
+stop_ids with no N/S suffix, different shape_id formats), so the subway helpers in
+static_data are intentionally NOT reused. main.py's lifespan loads this at startup
+and stores the per-system stops on app.state.railroad_stops, which
+feeds._decode_railroad_placements uses to place the position-less trains at their
+next station. The trips and shapes tables feed the route-geometry builder, and the
+routes table supplies the rider-facing route names on /api/railroad-routes.
 """
 
 from __future__ import annotations
@@ -161,13 +162,46 @@ def _parse_shapes(zf: zipfile.ZipFile) -> dict[str, list]:
     return shapes
 
 
+def _parse_routes(zf: zipfile.ZipFile) -> dict[str, dict]:
+    """routes.txt -> route_id -> {long_name, short_name}, each a stripped string
+    or None when blank. Rows with no route_id are skipped; first-writer-wins on a
+    duplicate route_id.
+
+    routes.txt is treated as OPTIONAL: a zip without it yields an empty table
+    rather than failing the whole system load, because the names are a rider-facing
+    convenience, not load-critical like stops/trips/shapes. route_color is
+    deliberately NOT read: the project uses its own palette rather than agency
+    branding (see the README MTA-branding note), so the agency colors are unused.
+    """
+    routes: dict[str, dict] = {}
+    try:
+        member = zf.open("routes.txt")
+    except KeyError:
+        return routes  # optional member absent: no names, not a load failure
+    with member as raw:
+        reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
+        for row in reader:
+            route_id = (row.get("route_id") or "").strip()
+            if not route_id or route_id in routes:
+                continue
+            routes[route_id] = {
+                "long_name": (row.get("route_long_name") or "").strip() or None,
+                "short_name": (row.get("route_short_name") or "").strip() or None,
+            }
+    return routes
+
+
 def _parse_system(zip_path: Path) -> dict:
-    """Parse one railroad GTFS zip into {stops, trips, shapes} in a single open."""
+    """Parse one railroad GTFS zip into {stops, trips, shapes, routes} in a single
+    open. stops/trips/shapes are required members (a missing one raises for
+    _load_one to recover from); routes.txt is optional and yields an empty table
+    when absent."""
     with zipfile.ZipFile(zip_path) as zf:
         return {
             "stops": _parse_stops(zf),
             "trips": _parse_trips(zf),
             "shapes": _parse_shapes(zf),
+            "routes": _parse_routes(zf),
         }
 
 
@@ -180,13 +214,20 @@ def _parse_system(zip_path: Path) -> dict:
 _MIN_NEW_GEOMETRY = 0.05
 
 
-def build_railroad_route_shapes(trips: dict[str, dict], shapes: dict[str, list]) -> list[dict]:
+def build_railroad_route_shapes(
+    trips: dict[str, dict], shapes: dict[str, list], route_names: dict[str, dict] | None = None
+) -> list[dict]:
     """Per-route representative polylines for one railroad system.
 
-    Returns [{"route": route_id, "polylines": [[[lat, lon], ...], ...]}, ...]
-    sorted by route_id. A pure transform over the already-parsed trips/shapes
-    tables (no zip read, no network), so the lifespan builds it from
-    app.state.railroad_static[system] without re-parsing.
+    Returns [{"route": route_id, "name": str | None, "polylines": [...]}, ...]
+    sorted by route_id. `name` is the rider-facing route name (long_name, else
+    short_name, else null) looked up in `route_names` (the parsed routes.txt
+    table); pass it to fill names, omit it for a geometry-only build. A pure
+    transform over the already-parsed tables (no zip read, no network), so the
+    lifespan builds it from app.state.railroad_static[system] without re-parsing.
+    A route dropped here for having no usable geometry (below) also loses its
+    name: it has no line to draw and no trains to place, so it is invisible either
+    way (documented on the /api/railroad-routes endpoint).
 
     Railroad shape_ids are not route-encoded (unlike the subway A..N04R form), so
     routes are grouped via trips.txt (trip -> route_id, shape_id) rather than a
@@ -231,7 +272,9 @@ def build_railroad_route_shapes(trips: dict[str, dict], shapes: dict[str, list])
         # load_subway_route_shapes, which appends every route even with empty
         # polylines); a railroad route line is only emitted when it has geometry.
         if kept:
-            routes.append({"route": route_id, "polylines": kept})
+            info = (route_names or {}).get(route_id) or {}
+            name = info.get("long_name") or info.get("short_name")
+            routes.append({"route": route_id, "name": name, "polylines": kept})
     return routes
 
 
@@ -267,11 +310,12 @@ async def _load_one(system: str) -> dict | None:
             logger.warning("%s static GTFS unavailable (%s); skipping", system, exc)
             return None
     logger.info(
-        "Loaded %s static GTFS: %d stops, %d trips, %d shapes",
+        "Loaded %s static GTFS: %d stops, %d trips, %d shapes, %d routes",
         system,
         len(data["stops"]),
         len(data["trips"]),
         len(data["shapes"]),
+        len(data["routes"]),
     )
     return data
 

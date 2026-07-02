@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import time
 from collections import defaultdict
@@ -634,6 +635,74 @@ def _decode_railroad_vehicles(
 # direction; LIRR populates it.
 _RAILROAD_DIRECTION = {0: "Outbound", 1: "Inbound"}
 
+# A generic "toward the city" anchor for direction INFERENCE (arrivals bucketing
+# only, see _infer_railroad_direction), at Grand Central Terminal (MNR stop_id 1).
+# At the metro scale it also stands in for the other NYC rail terminals: LIRR's
+# Penn Station and Atlantic Terminal and the west-of-Hudson lines' Hoboken end all
+# sit within a few km of it, so distance-to-this-point is a fine proxy for "how
+# close to the city" whichever terminal a trip actually runs to.
+_NYC_ANCHOR_LAT, _NYC_ANCHOR_LON = 40.752998, -73.977056
+# Longitude is compressed by latitude; scale lon deltas so the distance is roughly
+# isotropic (the same idea as the frontend's _COS_LAT). Only internally consistent
+# radial distance matters here, not true meters.
+_ANCHOR_COS_LAT = math.cos(math.radians(40.7))
+# Minimum net change in distance-to-anchor (scaled degrees) to commit to an
+# inferred direction. ~0.01 degree is roughly 1 km of net radial movement: large
+# enough that a near-tie (a cross-radial hop) or a single-resolvable-stop stub
+# falls back to "Trains" rather than flapping, and far below the net radial span
+# of any real multi-stop inbound/outbound trip on these lines (whose smallest
+# inter-station gaps already run ~1 to 2 km, and a directional trip nets many).
+_DIRECTION_EPSILON = 0.01
+
+
+def _dist_to_anchor(lat: float, lon: float) -> float:
+    """Isotropic planar distance from (lat, lon) to the NYC anchor, in scaled
+    degrees (lon compressed by cos(latitude))."""
+    return math.hypot(lat - _NYC_ANCHOR_LAT, (lon - _NYC_ANCHOR_LON) * _ANCHOR_COS_LAT)
+
+
+def _direction_from_progression(
+    first_lat: float, first_lon: float, last_lat: float, last_lon: float
+) -> str | None:
+    """Infer "Inbound"/"Outbound" from whether a trip's first-to-last resolvable
+    stops move toward or away from the NYC anchor, or None when the net radial
+    change is under _DIRECTION_EPSILON (near-ties and stubs).
+
+    Pure and terminal-agnostic: it reads only the endpoints' distance to the
+    anchor, so it serves MNR (no direction_id) and any direction-less trip without
+    knowing which terminal the line runs to.
+    """
+    delta = _dist_to_anchor(first_lat, first_lon) - _dist_to_anchor(last_lat, last_lon)
+    if delta > _DIRECTION_EPSILON:
+        return "Inbound"  # ending closer to the city than it started
+    if delta < -_DIRECTION_EPSILON:
+        return "Outbound"  # ending farther from the city
+    return None  # ambiguous: the caller falls back to the "Trains" bucket
+
+
+def _infer_railroad_direction(tu, stops: dict[str, dict]) -> str | None:
+    """Direction bucket for a direction-less trip, inferred from its stop
+    progression, or None. Uses the first and last RESOLVABLE stops (the same
+    stop_id-in-stops and non-dropped-relationship filters the arrivals scan
+    applies, but NOT the just-passed grace: the whole trip's endpoints set its
+    direction regardless of which stops are still upcoming).
+
+    This feeds ONLY arrivals bucketing. Placed trains keep a null direction:
+    filling it from this heuristic is deliberately deferred so the placement
+    output stays exactly what the placed-golden fixtures lock.
+    """
+    resolvable = [
+        stops[stu.stop_id]
+        for stu in tu.stop_time_update
+        if stu.stop_id
+        and stu.stop_id in stops
+        and stu.schedule_relationship not in _DROP_STOP_RELATIONSHIPS
+    ]
+    if len(resolvable) < 2:
+        return None  # single resolvable stop (or none): nothing to compare
+    first, last = resolvable[0], resolvable[-1]
+    return _direction_from_progression(first["lat"], first["lon"], last["lat"], last["lon"])
+
 
 def _railroad_trip_start_ts(trip) -> float | None:
     """Scheduled start of a railroad trip from start_date + start_time, or None.
@@ -691,11 +760,12 @@ def _decode_railroad_feed(
     of it, and (2) positioned (GPS) trains ARE included: a GPS train still stops
     at stations, and omitting it would hide exactly the best-tracked trains (the
     position-skip guards only the placement half). Arrivals are bucketed by
-    direction: LIRR trips go in "Outbound"/"Inbound" from trip.direction_id via
-    _RAILROAD_DIRECTION, and everything else (MNR, which omits direction_id, and
-    any LIRR trip missing it) goes in a single time-sorted "Trains" bucket.
-    Inferring MNR direction from terminal stops is deliberately deferred. Each
-    bucket is sorted by arrival time and capped at ARRIVALS_PER_DIRECTION.
+    direction: LIRR trips read trip.direction_id via _RAILROAD_DIRECTION, while a
+    trip with no usable direction_id (all of MNR, plus any LIRR trip missing it)
+    has its direction INFERRED from the stop progression toward the NYC anchor
+    (_infer_railroad_direction, a heuristic, not feed data). "Trains" is the
+    residual bucket for trips whose direction could be neither read nor inferred.
+    Each bucket is sorted by arrival time and capped at ARRIVALS_PER_DIRECTION.
     """
     feed = gtfs_realtime_pb2.FeedMessage()
     feed.ParseFromString(raw)
@@ -738,13 +808,20 @@ def _decode_railroad_feed(
 
         arr_trip_id = tu.trip.trip_id or f"{system}:{entity.id}"
         arr_route_id = tu.trip.route_id or None
-        # LIRR "Outbound"/"Inbound" from direction_id; MNR (no direction_id) and a
-        # direction-less LIRR trip fall into one "Trains" bucket.
+        # Direction bucket. LIRR reads direction_id straight. For a trip with no
+        # usable direction_id (all of MNR, plus the rare LIRR trip missing it),
+        # infer Inbound/Outbound from the stop progression toward the NYC anchor.
+        # "Trains" is the residual bucket for trips whose direction could neither
+        # be read from the feed nor inferred from the heuristic. This inference is
+        # arrivals-only: placed trains keep a null direction (deferred).
         bucket = (
             _RAILROAD_DIRECTION.get(tu.trip.direction_id)
             if tu.trip.HasField("direction_id")
             else None
-        ) or "Trains"
+        )
+        if bucket is None:
+            bucket = _infer_railroad_direction(tu, stops)
+        bucket = bucket or "Trains"
         # Train number: MNR's combined entity carries it inline (same read as the
         # placement path below); LIRR joins it from the positioned vehicle entity.
         train_num = None
@@ -832,6 +909,9 @@ def _decode_railroad_feed(
         # placement (gliding comes in the next increment).
 
         stop = stops[chosen.stop_id]
+        # Placement direction is read from direction_id ONLY (null for MNR). The
+        # arrivals-scan progression heuristic is deliberately NOT used here: it
+        # would change placed trains' direction field and the placed-golden output.
         direction = (
             _RAILROAD_DIRECTION.get(tu.trip.direction_id)
             if tu.trip.HasField("direction_id")

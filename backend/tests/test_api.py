@@ -742,13 +742,30 @@ async def test_static_revalidation_is_a_cheap_304(client):
 
 async def test_railroad_routes_endpoint_flattens_and_caches(client):
     app_module.app.state.railroad_routes = {
-        "LIRR": [{"route": "5", "polylines": [[[40.7, -74.0], [40.71, -74.01]]]}],
-        "MNR": [],
+        "LIRR": [
+            {
+                "route": "5",
+                "name": "Montauk Branch",
+                "polylines": [[[40.7, -74.0], [40.71, -74.01]]],
+            }
+        ],
+        "MNR": [{"route": "9", "name": None, "polylines": [[[41.0, -73.0], [41.1, -73.1]]]}],
     }
     res = await client.get("/api/railroad-routes")
     assert res.status_code == 200
     assert res.json() == [
-        {"system": "LIRR", "route": "5", "polylines": [[[40.7, -74.0], [40.71, -74.01]]]}
+        {
+            "system": "LIRR",
+            "route": "5",
+            "name": "Montauk Branch",  # rider-facing name carried through
+            "polylines": [[[40.7, -74.0], [40.71, -74.01]]],
+        },
+        {
+            "system": "MNR",
+            "route": "9",
+            "name": None,  # a route with no routes.txt name is still served
+            "polylines": [[[41.0, -73.0], [41.1, -73.1]]],
+        },
     ]
     assert "max-age" in res.headers.get("cache-control", "")
 
@@ -773,12 +790,13 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
         return RAILROADS, {}, 1002.0, []
 
     async def fake_load_railroad_static():
-        # No network. LIRR carries stops/trips/shapes; MNR failed to load (None).
+        # No network. LIRR carries stops/trips/shapes/routes; MNR failed (None).
         return {
             "LIRR": {
                 "stops": {"1": {"name": "Aville", "lat": 40.7, "lon": -74.0}},
                 "trips": {"t1": {"route_id": "5", "shape_id": "s1"}},
                 "shapes": {"s1": [[40.7, -74.0], [40.71, -74.01]]},
+                "routes": {"5": {"long_name": "Montauk Branch", "short_name": None}},
             },
             "MNR": None,
         }
@@ -816,10 +834,15 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
         # (the poll's carry_forward_prev would otherwise fill it).
         assert app.state.railroad_positions == {}
         assert app.state.subway_positions == {}
-        # Route geometry is built from the kept trips/shapes (pure transform); the
-        # failed MNR system gets an empty list, not a crash.
+        # Route geometry is built from the kept trips/shapes (pure transform) with
+        # the route name attached from routes.txt; the failed MNR system gets an
+        # empty list, not a crash.
         assert app.state.railroad_routes["LIRR"] == [
-            {"route": "5", "polylines": [[[40.7, -74.0], [40.71, -74.01]]]}
+            {
+                "route": "5",
+                "name": "Montauk Branch",
+                "polylines": [[[40.7, -74.0], [40.71, -74.01]]],
+            }
         ]
         assert app.state.railroad_routes["MNR"] == []
         transport = httpx.ASGITransport(app=app)

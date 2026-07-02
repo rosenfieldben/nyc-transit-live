@@ -40,15 +40,19 @@ namespaces are independent, so the arrivals endpoint is keyed by system):
   nothing (empty list, not an error, when none loaded).
 - `GET /api/railroad-arrivals/{system}/{stop_id}`: `{fetched_at, system,
   stop_id, stop_name, directions}` for `system` in `{LIRR, MNR}`. The direction
-  buckets are asymmetric: LIRR splits into `Outbound`/`Inbound` from the realtime
-  `direction_id`, while Metro-North omits `direction_id`, so all its trains land
-  in a single time-sorted `Trains` bucket (inferring MNR direction from terminal
-  stops is deferred). `directions` carries only the buckets that have upcoming
-  trains, so a station shows some subset of those keys (an empty object means
-  nothing upcoming). Unlike the marker layer, this index INCLUDES the GPS-tracked
-  trains: a positioned train still stops at stations, so omitting it would hide
-  exactly the best-tracked trains. Each railroad arrival also carries a
-  `train_num` (the rider-facing train number, null when no vehicle entity joins).
+  buckets are asymmetric: LIRR reads `Outbound`/`Inbound` straight from the
+  realtime `direction_id`. Metro-North omits `direction_id`, so its direction is
+  INFERRED per trip from whether its stop sequence moves toward or away from an
+  NYC anchor (Grand Central): a heuristic from stop progression, not feed data.
+  `Trains` is the residual bucket for trips whose direction could be neither read
+  nor inferred (a near-tie or a single-resolvable-stop stub). `directions` carries
+  only the buckets that have upcoming trains, so a station shows some subset of
+  those keys (an empty object means nothing upcoming). Unlike the marker layer,
+  this index INCLUDES the GPS-tracked trains: a positioned train still stops at
+  stations, so omitting it would hide exactly the best-tracked trains. Each
+  railroad arrival also carries a `train_num` (the rider-facing train number, null
+  when no vehicle entity joins), and `/api/railroad-routes` supplies each route's
+  rider-facing name (e.g. "Babylon Branch") for the popups.
 
 ```
 nyc-transit-live/
@@ -192,9 +196,11 @@ warnings.
   station markers with live countdowns, the way subway stations work. The
   railroad poll builds a per-system in-memory arrivals index (`/api/railroad-stops`
   and `/api/railroad-arrivals/{system}/{stop_id}`); the popup renders whichever
-  direction buckets a station carries. LIRR splits into Inbound/Outbound from
-  the realtime direction_id, while Metro-North omits it, so all its trains show
-  in a single Trains bucket. GPS-tracked trains are included in arrivals even
+  direction buckets a station carries, labeled with the rider-facing route name
+  (e.g. "Babylon Branch") from routes.txt. LIRR reads Inbound/Outbound from the
+  realtime direction_id; Metro-North omits it, so its direction is inferred per
+  trip from the stop progression toward an NYC anchor, with a residual Trains
+  bucket for the ambiguous cases. GPS-tracked trains are included in arrivals even
   though the marker layer draws them from their live position.
 
 ## Notes

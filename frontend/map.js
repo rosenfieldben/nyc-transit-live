@@ -293,6 +293,9 @@ async function loadRouteLines() {
 // trains glide along. Keyed by (system, route_id) because LIRR and MNR route ids
 // collide; populated by loadRailroadRoutes and read by applyRailroads.
 const railroadRouteIndex = new Map();
+// `system|route_id` -> rider-facing route name (e.g. "Babylon Branch"), from
+// /api/railroad-routes; used to label the railroad train and station popups.
+const railroadRouteNames = new Map();
 
 async function loadRailroadRoutes() {
   let routes;
@@ -306,11 +309,16 @@ async function loadRailroadRoutes() {
   for (const route of routes) {
     // Key by (system, route): LIRR and MNR route ids collide, so route_id alone
     // would merge two systems' geometry. Matches the endpoint's {system, route,
-    // polylines} shape and the (system, route_id) lookup in applyRailroads.
+    // name, polylines} shape and the (system, route_id) lookup in applyRailroads.
     railroadRouteIndex.set(
       `${route.system}|${route.route}`,
       route.polylines.map((points) => ({ points, cum: polylineCumLengths(points) })),
     );
+    // The rider-facing route name (e.g. "Babylon Branch"), for the train and
+    // station-arrivals popups; only routes with geometry reach here (see the
+    // endpoint's KNOWN GAP), which is fine since a geometry-less route has no
+    // trains to label either.
+    if (route.name) railroadRouteNames.set(`${route.system}|${route.route}`, route.name);
     for (const points of route.polylines) {
       L.polyline(points, {
         color: railroadColor(route.route),
@@ -508,7 +516,13 @@ async function loadRailroadStations() {
       url:
         `/api/railroad-arrivals/${encodeURIComponent(station.system)}` +
         `/${encodeURIComponent(station.id)}`,
-      render: (s, b) => railroadArrivalsHtml(s, b, Date.now() / 1000 - (minClockOffset ?? 0)),
+      render: (s, b) =>
+        railroadArrivalsHtml(
+          s,
+          b,
+          Date.now() / 1000 - (minClockOffset ?? 0),
+          (routeId) => railroadRouteNames.get(`${s.system}|${routeId}`) || null,
+        ),
     })).addTo(railroadStationLayer);
   }
 }
@@ -613,7 +627,7 @@ function railroadIcon(train) {
 
 function railroadPopup(record) {
   const t = record.latest;
-  const head = `${t.system}${t.route_id ? " route " + t.route_id : ""}`;
+  const head = formatRailroadHead(t.system, t.route_id, railroadRouteNames.get(`${t.system}|${t.route_id}`));
   return (
     `<b style="color:${railroadColor(t.route_id)}">${esc(head)}</b>` +
     (t.train_num ? `<br>Train ${esc(t.train_num)}` : "") +

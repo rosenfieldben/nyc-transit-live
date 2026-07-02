@@ -300,7 +300,9 @@ async def lifespan(app: FastAPI):
     # transform, no extra download). None static for a system -> no routes for it.
     app.state.railroad_routes = {
         system: (
-            railroad_static.build_railroad_route_shapes(data["trips"], data["shapes"])
+            railroad_static.build_railroad_route_shapes(
+                data["trips"], data["shapes"], data["routes"]
+            )
             if data
             else []
         )
@@ -417,14 +419,25 @@ async def get_subway_routes(response: Response) -> list[dict]:
 
 @app.get("/api/railroad-routes", response_model=list[RailroadRoute])
 async def get_railroad_routes(response: Response) -> list[dict]:
-    """Static LIRR + Metro-North route geometry for drawing and gliding: one
-    entry per (system, route) with polylines as [lat, lon] point lists. Built
-    once at startup, so clients can cache it between loads. Keyed by system
-    because LIRR and MNR route ids collide (both have a "1")."""
+    """Static LIRR + Metro-North route geometry for drawing and gliding: one entry
+    per (system, route) with its rider-facing `name` (from routes.txt, null when
+    the route has no name) and polylines as [lat, lon] point lists. Built once at
+    startup, so clients can cache it between loads. Keyed by system because LIRR
+    and MNR route ids collide (both have a "1").
+
+    KNOWN GAP: the builder drops a route with no usable geometry, so a
+    geometry-less route's name never reaches the frontend. That is acceptable:
+    such a route has no line to draw and no trains to place, so it is equally
+    invisible whether or not its name is known."""
     response.headers["Cache-Control"] = "public, max-age=3600"
     by_system = getattr(app.state, "railroad_routes", None) or {}
     return [
-        {"system": system, "route": entry["route"], "polylines": entry["polylines"]}
+        {
+            "system": system,
+            "route": entry["route"],
+            "name": entry["name"],
+            "polylines": entry["polylines"],
+        }
         for system, entries in by_system.items()
         for entry in entries
     ]
@@ -510,11 +523,13 @@ async def get_railroad_arrivals(system: str, stop_id: str) -> dict:
     """Upcoming trains at a railroad station, grouped by direction bucket, from
     the in-memory index refreshed each railroad poll.
 
-    The bucket keys are asymmetric by system: LIRR arrivals split into "Outbound"
-    and "Inbound" from the realtime direction_id, while MNR (which omits
-    direction_id) and any direction-less LIRR trip fall into a single "Trains"
-    bucket. `directions` carries only the buckets that actually have upcoming
-    trains at this station, so a station shows some subset of
+    The bucket keys are asymmetric by system: LIRR reads "Outbound"/"Inbound"
+    straight from the realtime direction_id, while a trip with no usable
+    direction_id (all of MNR, plus a rare LIRR trip missing it) has its direction
+    INFERRED from the stop progression toward the NYC anchor (a heuristic, not
+    feed data). "Trains" is the residual bucket for trips whose direction could be
+    neither read nor inferred. `directions` carries only the buckets that actually
+    have upcoming trains at this station, so a station shows some subset of
     {Outbound, Inbound, Trains} (unlike the subway endpoint, which always emits
     both platform directions); an empty {} means nothing is upcoming. GPS trains
     ARE included here (a positioned train still stops at stations), even though

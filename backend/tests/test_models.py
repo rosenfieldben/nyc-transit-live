@@ -137,20 +137,29 @@ def test_railroad_feed_envelope_validates():
 
 def test_railroad_route_model_validates_sample():
     RailroadRoute.model_validate(
-        {"system": "MNR", "route": "3", "polylines": [[[41.0, -73.0], [41.1, -73.1]]]}
+        {"system": "MNR", "route": "3", "name": "New Haven", "polylines": [[[41.0, -73.0]]]}
+    )
+    # name is nullable (a route with no routes.txt entry).
+    RailroadRoute.model_validate(
+        {"system": "MNR", "route": "3", "name": None, "polylines": [[[41.0, -73.0], [41.1, -73.1]]]}
     )
 
 
 def test_railroad_route_builder_output_covers_model():
-    # The builder emits {route, polylines}; the endpoint adds system. Tie the two
-    # together so a field added to the builder or the model can't drift apart: each
-    # builder entry plus "system" must be exactly the model's field set.
+    # The builder emits {route, name, polylines}; the endpoint adds system. Tie the
+    # two together so a field added to the builder or the model can't drift apart:
+    # each builder entry plus "system" must be exactly the model's field set. Also
+    # confirm the name is filled from the routes table (long_name, else short_name).
     shapes = {"a": [[0.0, 0.0], [0.0, 1.0], [0.0, 2.0]]}
     trips = {"t1": {"route_id": "5", "shape_id": "a"}}
-    entries = railroad_static.build_railroad_route_shapes(trips, shapes)
+    route_names = {"5": {"long_name": "Montauk Branch", "short_name": None}}
+    entries = railroad_static.build_railroad_route_shapes(trips, shapes, route_names)
     assert entries  # guard against a vacuous pass
     for entry in entries:
         assert set(entry) | {"system"} == set(RailroadRoute.model_fields)
+    assert entries[0]["name"] == "Montauk Branch"
+    # Omitting the routes table leaves name null (geometry-only build).
+    assert railroad_static.build_railroad_route_shapes(trips, shapes)[0]["name"] is None
 
 
 SUBWAY_STOP = {"id": "A01", "name": "Alpha", "lat": 40.7, "lon": -74.0}

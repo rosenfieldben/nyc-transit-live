@@ -20,6 +20,9 @@ jobs:
         working-directory: backend
       - run: ruff format --check .
         working-directory: backend
+      # Type-checks the application modules per backend/mypy.ini.
+      - run: mypy
+        working-directory: backend
       - run: pytest
         working-directory: backend
 

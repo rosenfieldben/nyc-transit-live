@@ -1,0 +1,14 @@
+{
+  "//": "Dev/test tooling ONLY, for the hermetic Playwright e2e smoke suite under tests/e2e. The app itself has NO build step: it ships as static files in frontend/ (index.html plus plain <script> tags, no bundler). Nothing here is served to users or imported by the app; this file exists solely so CI and local dev can install @playwright/test. The frontend unit tests still run with a bare `node --test`, no dependencies.",
+  "name": "nyc-transit-live-e2e",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Hermetic Playwright smoke tests for the NYC Transit Live frontend (dev/test only; the app is buildless).",
+  "scripts": {
+    "test:e2e": "playwright test --config tests/e2e/playwright.config.js",
+    "serve": "node tests/e2e/serve.js"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.1"
+  }
+}

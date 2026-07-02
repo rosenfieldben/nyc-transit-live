@@ -251,9 +251,10 @@ function formatCountdown(seconds) {
 // sends only the non-empty buckets (any subset of Inbound/Outbound/Trains), so
 // this orders the ones that have trains and never fabricates empties: Inbound
 // first (toward the NYC terminal, the common ask), then Outbound, then the
-// direction-less "Trains" bucket (MNR omits direction_id, so all its trains land
-// there). Returns [[name, arrivals], ...]. Any unexpected key is appended rather
-// than dropped, so a backend change can never silently hide trains.
+// residual "Trains" bucket (for trips whose direction the backend could neither
+// read from direction_id nor infer from the MNR stop-progression heuristic).
+// Returns [[name, arrivals], ...]. Any unexpected key is appended rather than
+// dropped, so a backend change can never silently hide trains.
 const RAILROAD_BUCKET_ORDER = ["Inbound", "Outbound", "Trains"];
 
 function orderedRailroadBuckets(directions) {

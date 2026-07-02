@@ -742,7 +742,13 @@ async def test_static_revalidation_is_a_cheap_304(client):
 
 async def test_railroad_routes_endpoint_flattens_and_caches(client):
     app_module.app.state.railroad_routes = {
-        "LIRR": [{"route": "5", "name": "Montauk Branch", "polylines": [[[40.7, -74.0], [40.71, -74.01]]]}],
+        "LIRR": [
+            {
+                "route": "5",
+                "name": "Montauk Branch",
+                "polylines": [[[40.7, -74.0], [40.71, -74.01]]],
+            }
+        ],
         "MNR": [{"route": "9", "name": None, "polylines": [[[41.0, -73.0], [41.1, -73.1]]]}],
     }
     res = await client.get("/api/railroad-routes")
@@ -832,7 +838,11 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
         # the route name attached from routes.txt; the failed MNR system gets an
         # empty list, not a crash.
         assert app.state.railroad_routes["LIRR"] == [
-            {"route": "5", "name": "Montauk Branch", "polylines": [[[40.7, -74.0], [40.71, -74.01]]]}
+            {
+                "route": "5",
+                "name": "Montauk Branch",
+                "polylines": [[[40.7, -74.0], [40.71, -74.01]]],
+            }
         ]
         assert app.state.railroad_routes["MNR"] == []
         transport = httpx.ASGITransport(app=app)

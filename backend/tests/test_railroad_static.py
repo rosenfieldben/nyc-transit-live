@@ -90,7 +90,12 @@ ROUTE_ROWS = [
 
 
 def write_railroad_zip(
-    path, stops=STOP_ROWS, trips=TRIP_ROWS, shapes=DEFAULT_SHAPE_ROWS, routes=ROUTE_ROWS, members=None
+    path,
+    stops=STOP_ROWS,
+    trips=TRIP_ROWS,
+    shapes=DEFAULT_SHAPE_ROWS,
+    routes=ROUTE_ROWS,
+    members=None,
 ):
     """Write a minimal railroad GTFS zip; `members` overrides the file map entirely."""
     if members is None:

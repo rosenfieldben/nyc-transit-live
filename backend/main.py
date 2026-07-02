@@ -523,11 +523,13 @@ async def get_railroad_arrivals(system: str, stop_id: str) -> dict:
     """Upcoming trains at a railroad station, grouped by direction bucket, from
     the in-memory index refreshed each railroad poll.
 
-    The bucket keys are asymmetric by system: LIRR arrivals split into "Outbound"
-    and "Inbound" from the realtime direction_id, while MNR (which omits
-    direction_id) and any direction-less LIRR trip fall into a single "Trains"
-    bucket. `directions` carries only the buckets that actually have upcoming
-    trains at this station, so a station shows some subset of
+    The bucket keys are asymmetric by system: LIRR reads "Outbound"/"Inbound"
+    straight from the realtime direction_id, while a trip with no usable
+    direction_id (all of MNR, plus a rare LIRR trip missing it) has its direction
+    INFERRED from the stop progression toward the NYC anchor (a heuristic, not
+    feed data). "Trains" is the residual bucket for trips whose direction could be
+    neither read nor inferred. `directions` carries only the buckets that actually
+    have upcoming trains at this station, so a station shows some subset of
     {Outbound, Inbound, Trains} (unlike the subway endpoint, which always emits
     both platform directions); an empty {} means nothing is upcoming. GPS trains
     ARE included here (a positioned train still stops at stations), even though

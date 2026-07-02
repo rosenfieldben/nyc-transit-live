@@ -521,7 +521,7 @@ const trains = new Map(); // trip id -> { marker, routeId, latest }
 // (routeIndex.get) and passes it in.
 
 function applyTrains(data) {
-  // Skew-corrected now, same basis as arrivalsHtml; trainLatLng interpolates
+  // Skew-corrected now, same basis as the arrivals popups; trainLatLng interpolates
   // each train between its prev and next station (static fallback otherwise).
   const now = Date.now() / 1000 - (minClockOffset ?? 0);
   const seen = new Set();

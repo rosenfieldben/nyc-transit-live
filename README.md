@@ -31,6 +31,25 @@ the MTA. The endpoints involved:
   station_name, directions: {Northbound, Southbound}}` from the in-memory index,
   refreshed each poll; the frontend ticks the countdowns down between polls.
 
+The LIRR and Metro-North get the same treatment, built during the railroad poll
+into a per-system in-memory index (`railroad_stops` and `railroad_arrivals`
+namespaces are independent, so the arrivals endpoint is keyed by system):
+
+- `GET /api/railroad-stops`: station markers `[{system, id, name, lat, lon}]`,
+  static for the session; a system whose static GTFS did not load contributes
+  nothing (empty list, not an error, when none loaded).
+- `GET /api/railroad-arrivals/{system}/{stop_id}`: `{fetched_at, system,
+  stop_id, stop_name, directions}` for `system` in `{LIRR, MNR}`. The direction
+  buckets are asymmetric: LIRR splits into `Outbound`/`Inbound` from the realtime
+  `direction_id`, while Metro-North omits `direction_id`, so all its trains land
+  in a single time-sorted `Trains` bucket (inferring MNR direction from terminal
+  stops is deferred). `directions` carries only the buckets that have upcoming
+  trains, so a station shows some subset of those keys (an empty object means
+  nothing upcoming). Unlike the marker layer, this index INCLUDES the GPS-tracked
+  trains: a positioned train still stops at stations, so omitting it would hide
+  exactly the best-tracked trains. Each railroad arrival also carries a
+  `train_num` (the rider-facing train number, null when no vehicle entity joins).
+
 ```
 nyc-transit-live/
 ├── backend/

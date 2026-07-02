@@ -1,0 +1,3896 @@
+{
+"arrivals": {
+"1": {
+"Trains": [
+{
+"arrival": 1782006780.0,
+"route_id": "1",
+"train_num": "8765",
+"trip_id": "3117769"
+},
+{
+"arrival": 1782006960.0,
+"route_id": "1",
+"train_num": "8863",
+"trip_id": "3117818"
+},
+{
+"arrival": 1782007560.0,
+"route_id": "3",
+"train_num": "6566",
+"trip_id": "3117604"
+},
+{
+"arrival": 1782007560.0,
+"route_id": "2",
+"train_num": "9562",
+"trip_id": "3117889"
+},
+{
+"arrival": 1782008040.0,
+"route_id": "2",
+"train_num": "9667",
+"trip_id": "3117942"
+},
+{
+"arrival": 1782008100.0,
+"route_id": "3",
+"train_num": "6361",
+"trip_id": "3117517"
+}
+]
+},
+"10": {
+"Trains": [
+{
+"arrival": 1782006900.0,
+"route_id": "1",
+"train_num": "8764",
+"trip_id": "3117768"
+},
+{
+"arrival": 1782009960.0,
+"route_id": "1",
+"train_num": "8767",
+"trip_id": "3117771"
+},
+{
+"arrival": 1782010320.0,
+"route_id": "1",
+"train_num": "8768",
+"trip_id": "3117772"
+},
+{
+"arrival": 1782013560.0,
+"route_id": "1",
+"train_num": "8771",
+"trip_id": "3117774"
+},
+{
+"arrival": 1782014040.0,
+"route_id": "1",
+"train_num": "8772",
+"trip_id": "3117775"
+},
+{
+"arrival": 1782016980.0,
+"route_id": "1",
+"train_num": "8797",
+"trip_id": "3118425"
+}
+]
+},
+"100": {
+"Trains": [
+{
+"arrival": 1782009060.0,
+"route_id": "2",
+"train_num": "9974",
+"trip_id": "3117968"
+},
+{
+"arrival": 1782012360.0,
+"route_id": "2",
+"train_num": "9963",
+"trip_id": "3117966"
+},
+{
+"arrival": 1782022320.0,
+"route_id": "2",
+"train_num": "9995",
+"trip_id": "3118605"
+}
+]
+},
+"101": {
+"Trains": [
+{
+"arrival": 1782008580.0,
+"route_id": "2",
+"train_num": "9974",
+"trip_id": "3117968"
+},
+{
+"arrival": 1782012840.0,
+"route_id": "2",
+"train_num": "9963",
+"trip_id": "3117966"
+},
+{
+"arrival": 1782023040.0,
+"route_id": "2",
+"train_num": "9995",
+"trip_id": "3118605"
+}
+]
+},
+"105": {
+"Trains": [
+{
+"arrival": 1782007560.0,
+"route_id": "3",
+"train_num": "6366",
+"trip_id": "3117522"
+},
+{
+"arrival": 1782007680.0,
+"route_id": "3",
+"train_num": "6363",
+"trip_id": "3117519"
+},
+{
+"arrival": 1782009780.0,
+"route_id": "3",
+"train_num": "6365",
+"trip_id": "3117521"
+},
+{
+"arrival": 1782011160.0,
+"route_id": "3",
+"train_num": "6370",
+"trip_id": "3117524"
+},
+{
+"arrival": 1782012900.0,
+"route_id": "3",
+"train_num": "6372",
+"trip_id": "3117526"
+},
+{
+"arrival": 1782013680.0,
+"route_id": "3",
+"train_num": "6369",
+"trip_id": "3117523"
+}
+]
+},
+"106": {
+"Trains": [
+{
+"arrival": 1782007500.0,
+"route_id": "3",
+"train_num": "6363",
+"trip_id": "3117519"
+},
+{
+"arrival": 1782007740.0,
+"route_id": "3",
+"train_num": "6366",
+"trip_id": "3117522"
+},
+{
+"arrival": 1782009600.0,
+"route_id": "3",
+"train_num": "6365",
+"trip_id": "3117521"
+},
+{
+"arrival": 1782011340.0,
+"route_id": "3",
+"train_num": "6370",
+"trip_id": "3117524"
+},
+{
+"arrival": 1782013080.0,
+"route_id": "3",
+"train_num": "6372",
+"trip_id": "3117526"
+},
+{
+"arrival": 1782013500.0,
+"route_id": "3",
+"train_num": "6369",
+"trip_id": "3117523"
+}
+]
+},
+"108": {
+"Trains": [
+{
+"arrival": 1782007260.0,
+"route_id": "3",
+"train_num": "6363",
+"trip_id": "3117519"
+},
+{
+"arrival": 1782007980.0,
+"route_id": "3",
+"train_num": "6366",
+"trip_id": "3117522"
+},
+{
+"arrival": 1782009360.0,
+"route_id": "3",
+"train_num": "6365",
+"trip_id": "3117521"
+},
+{
+"arrival": 1782011580.0,
+"route_id": "3",
+"train_num": "6370",
+"trip_id": "3117524"
+},
+{
+"arrival": 1782013260.0,
+"route_id": "3",
+"train_num": "6369",
+"trip_id": "3117523"
+},
+{
+"arrival": 1782013320.0,
+"route_id": "3",
+"train_num": "6372",
+"trip_id": "3117526"
+}
+]
+},
+"11": {
+"Trains": [
+{
+"arrival": 1782006780.0,
+"route_id": "1",
+"train_num": "8764",
+"trip_id": "3117768"
+},
+{
+"arrival": 1782008100.0,
+"route_id": "1",
+"train_num": "8765",
+"trip_id": "3117769"
+},
+{
+"arrival": 1782008160.0,
+"route_id": "1",
+"train_num": "8766",
+"trip_id": "3117770"
+},
+{
+"arrival": 1782010080.0,
+"route_id": "1",
+"train_num": "8767",
+"trip_id": "3117771"
+},
+{
+"arrival": 1782010200.0,
+"route_id": "1",
+"train_num": "8768",
+"trip_id": "3117772"
+},
+{
+"arrival": 1782011700.0,
+"route_id": "1",
+"train_num": "8769",
+"trip_id": "3117773"
+}
+]
+},
+"110": {
+"Trains": [
+{
+"arrival": 1782007020.0,
+"route_id": "3",
+"train_num": "6363",
+"trip_id": "3117519"
+},
+{
+"arrival": 1782008220.0,
+"route_id": "3",
+"train_num": "6366",
+"trip_id": "3117522"
+},
+{
+"arrival": 1782009120.0,
+"route_id": "3",
+"train_num": "6365",
+"trip_id": "3117521"
+},
+{
+"arrival": 1782011820.0,
+"route_id": "3",
+"train_num": "6370",
+"trip_id": "3117524"
+},
+{
+"arrival": 1782013020.0,
+"route_id": "3",
+"train_num": "6369",
+"trip_id": "3117523"
+},
+{
+"arrival": 1782013560.0,
+"route_id": "3",
+"train_num": "6372",
+"trip_id": "3117526"
+}
+]
+},
+"111": {
+"Trains": [
+{
+"arrival": 1782006840.0,
+"route_id": "3",
+"train_num": "6363",
+"trip_id": "3117519"
+},
+{
+"arrival": 1782008400.0,
+"route_id": "3",
+"train_num": "6366",
+"trip_id": "3117522"
+},
+{
+"arrival": 1782008940.0,
+"route_id": "3",
+"train_num": "6365",
+"trip_id": "3117521"
+},
+{
+"arrival": 1782012000.0,
+"route_id": "3",
+"train_num": "6370",
+"trip_id": "3117524"
+},
+{
+"arrival": 1782012840.0,
+"route_id": "3",
+"train_num": "6369",
+"trip_id": "3117523"
+},
+{
+"arrival": 1782013740.0,
+"route_id": "3",
+"train_num": "6372",
+"trip_id": "3117526"
+}
+]
+},
+"112": {
+"Trains": [
+{
+"arrival": 1782006660.0,
+"route_id": "3",
+"train_num": "6363",
+"trip_id": "3117519"
+},
+{
+"arrival": 1782008580.0,
+"route_id": "3",
+"train_num": "6366",
+"trip_id": "3117522"
+},
+{
+"arrival": 1782008760.0,
+"route_id": "3",
+"train_num": "6365",
+"trip_id": "3117521"
+},
+{
+"arrival": 1782012180.0,
+"route_id": "3",
+"train_num": "6370",
+"trip_id": "3117524"
+},
+{
+"arrival": 1782012660.0,
+"route_id": "3",
+"train_num": "6369",
+"trip_id": "3117523"
+},
+{
+"arrival": 1782013920.0,
+"route_id": "3",
+"train_num": "6372",
+"trip_id": "3117526"
+}
+]
+},
+"114": {
+"Trains": [
+{
+"arrival": 1782006840.0,
+"route_id": "3",
+"train_num": "6364",
+"trip_id": "3117520"
+},
+{
+"arrival": 1782008460.0,
+"route_id": "3",
+"train_num": "6365",
+"trip_id": "3117521"
+},
+{
+"arrival": 1782008820.0,
+"route_id": "3",
+"train_num": "6366",
+"trip_id": "3117522"
+},
+{
+"arrival": 1782012360.0,
+"route_id": "3",
+"train_num": "6369",
+"trip_id": "3117523"
+},
+{
+"arrival": 1782012420.0,
+"route_id": "3",
+"train_num": "6370",
+"trip_id": "3117524"
+},
+{
+"arrival": 1782014160.0,
+"route_id": "3",
+"train_num": "6372",
+"trip_id": "3117526"
+}
+]
+},
+"115": {
+"Trains": [
+{
+"arrival": 1782007020.0,
+"route_id": "3",
+"train_num": "6364",
+"trip_id": "3117520"
+},
+{
+"arrival": 1782008280.0,
+"route_id": "3",
+"train_num": "6365",
+"trip_id": "3117521"
+},
+{
+"arrival": 1782009000.0,
+"route_id": "3",
+"train_num": "6366",
+"trip_id": "3117522"
+},
+{
+"arrival": 1782012180.0,
+"route_id": "3",
+"train_num": "6369",
+"trip_id": "3117523"
+},
+{
+"arrival": 1782012600.0,
+"route_id": "3",
+"train_num": "6370",
+"trip_id": "3117524"
+},
+{
+"arrival": 1782014340.0,
+"route_id": "3",
+"train_num": "6372",
+"trip_id": "3117526"
+}
+]
+},
+"116": {
+"Trains": [
+{
+"arrival": 1782007260.0,
+"route_id": "3",
+"train_num": "6364",
+"trip_id": "3117520"
+},
+{
+"arrival": 1782008040.0,
+"route_id": "3",
+"train_num": "6365",
+"trip_id": "3117521"
+},
+{
+"arrival": 1782009240.0,
+"route_id": "3",
+"train_num": "6366",
+"trip_id": "3117522"
+},
+{
+"arrival": 1782011940.0,
+"route_id": "3",
+"train_num": "6369",
+"trip_id": "3117523"
+},
+{
+"arrival": 1782012840.0,
+"route_id": "3",
+"train_num": "6370",
+"trip_id": "3117524"
+},
+{
+"arrival": 1782014580.0,
+"route_id": "3",
+"train_num": "6372",
+"trip_id": "3117526"
+}
+]
+},
+"118": {
+"Trains": [
+{
+"arrival": 1782007500.0,
+"route_id": "3",
+"train_num": "6364",
+"trip_id": "3117520"
+},
+{
+"arrival": 1782007800.0,
+"route_id": "3",
+"train_num": "6365",
+"trip_id": "3117521"
+},
+{
+"arrival": 1782009480.0,
+"route_id": "3",
+"train_num": "6366",
+"trip_id": "3117522"
+},
+{
+"arrival": 1782011700.0,
+"route_id": "3",
+"train_num": "6369",
+"trip_id": "3117523"
+},
+{
+"arrival": 1782013080.0,
+"route_id": "3",
+"train_num": "6370",
+"trip_id": "3117524"
+},
+{
+"arrival": 1782014820.0,
+"route_id": "3",
+"train_num": "6372",
+"trip_id": "3117526"
+}
+]
+},
+"120": {
+"Trains": [
+{
+"arrival": 1782007620.0,
+"route_id": "3",
+"train_num": "6364",
+"trip_id": "3117520"
+},
+{
+"arrival": 1782007680.0,
+"route_id": "3",
+"train_num": "6365",
+"trip_id": "3117521"
+},
+{
+"arrival": 1782009600.0,
+"route_id": "3",
+"train_num": "6366",
+"trip_id": "3117522"
+},
+{
+"arrival": 1782011580.0,
+"route_id": "3",
+"train_num": "6369",
+"trip_id": "3117523"
+},
+{
+"arrival": 1782013200.0,
+"route_id": "3",
+"train_num": "6370",
+"trip_id": "3117524"
+},
+{
+"arrival": 1782014940.0,
+"route_id": "3",
+"train_num": "6372",
+"trip_id": "3117526"
+}
+]
+},
+"121": {
+"Trains": [
+{
+"arrival": 1782007560.0,
+"route_id": "3",
+"train_num": "6365",
+"trip_id": "3117521"
+},
+{
+"arrival": 1782007800.0,
+"route_id": "3",
+"train_num": "6364",
+"trip_id": "3117520"
+},
+{
+"arrival": 1782009780.0,
+"route_id": "3",
+"train_num": "6366",
+"trip_id": "3117522"
+},
+{
+"arrival": 1782011460.0,
+"route_id": "3",
+"train_num": "6369",
+"trip_id": "3117523"
+},
+{
+"arrival": 1782013380.0,
+"route_id": "3",
+"train_num": "6370",
+"trip_id": "3117524"
+},
+{
+"arrival": 1782015060.0,
+"route_id": "3",
+"train_num": "6371",
+"trip_id": "3117525"
+}
+]
+},
+"124": {
+"Trains": [
+{
+"arrival": 1782006840.0,
+"route_id": "3",
+"train_num": "6562",
+"trip_id": "3117601"
+},
+{
+"arrival": 1782006960.0,
+"route_id": "3",
+"train_num": "6565",
+"trip_id": "3117603"
+},
+{
+"arrival": 1782007260.0,
+"route_id": "4",
+"train_num": "6762",
+"trip_id": "3117642"
+},
+{
+"arrival": 1782007380.0,
+"route_id": "3",
+"train_num": "6365",
+"trip_id": "3117521"
+},
+{
+"arrival": 1782008520.0,
+"route_id": "3",
+"train_num": "6364",
+"trip_id": "3117520"
+},
+{
+"arrival": 1782008880.0,
+"route_id": "3",
+"train_num": "6564",
+"trip_id": "3117602"
+}
+]
+},
+"127": {
+"Trains": [
+{
+"arrival": 1782007200.0,
+"route_id": "3",
+"train_num": "6562",
+"trip_id": "3117601"
+},
+{
+"arrival": 1782009840.0,
+"route_id": "3",
+"train_num": "6569",
+"trip_id": "3117606"
+},
+{
+"arrival": 1782011040.0,
+"route_id": "3",
+"train_num": "6566",
+"trip_id": "3117604"
+},
+{
+"arrival": 1782013740.0,
+"route_id": "3",
+"train_num": "6571",
+"trip_id": "3117608"
+},
+{
+"arrival": 1782015660.0,
+"route_id": "3",
+"train_num": "6570",
+"trip_id": "3117607"
+},
+{
+"arrival": 1782017040.0,
+"route_id": "3",
+"train_num": "6573",
+"trip_id": "3117609"
+}
+]
+},
+"128": {
+"Trains": [
+{
+"arrival": 1782007380.0,
+"route_id": "3",
+"train_num": "6562",
+"trip_id": "3117601"
+},
+{
+"arrival": 1782009300.0,
+"route_id": "3",
+"train_num": "6564",
+"trip_id": "3117602"
+},
+{
+"arrival": 1782009660.0,
+"route_id": "3",
+"train_num": "6569",
+"trip_id": "3117606"
+},
+{
+"arrival": 1782011220.0,
+"route_id": "3",
+"train_num": "6566",
+"trip_id": "3117604"
+},
+{
+"arrival": 1782012780.0,
+"route_id": "3",
+"train_num": "6568",
+"trip_id": "3117605"
+},
+{
+"arrival": 1782013560.0,
+"route_id": "3",
+"train_num": "6571",
+"trip_id": "3117608"
+}
+]
+},
+"129": {
+"Trains": [
+{
+"arrival": 1782007560.0,
+"route_id": "3",
+"train_num": "6562",
+"trip_id": "3117601"
+},
+{
+"arrival": 1782009420.0,
+"route_id": "3",
+"train_num": "6569",
+"trip_id": "3117606"
+},
+{
+"arrival": 1782011400.0,
+"route_id": "3",
+"train_num": "6566",
+"trip_id": "3117604"
+},
+{
+"arrival": 1782013320.0,
+"route_id": "3",
+"train_num": "6571",
+"trip_id": "3117608"
+},
+{
+"arrival": 1782016020.0,
+"route_id": "3",
+"train_num": "6570",
+"trip_id": "3117607"
+},
+{
+"arrival": 1782016620.0,
+"route_id": "3",
+"train_num": "6573",
+"trip_id": "3117609"
+}
+]
+},
+"131": {
+"Trains": [
+{
+"arrival": 1782007860.0,
+"route_id": "3",
+"train_num": "6562",
+"trip_id": "3117601"
+},
+{
+"arrival": 1782008220.0,
+"route_id": "5",
+"train_num": "6862",
+"trip_id": "3117659"
+},
+{
+"arrival": 1782009180.0,
+"route_id": "3",
+"train_num": "6569",
+"trip_id": "3117606"
+},
+{
+"arrival": 1782009660.0,
+"route_id": "3",
+"train_num": "6564",
+"trip_id": "3117602"
+},
+{
+"arrival": 1782011700.0,
+"route_id": "3",
+"train_num": "6566",
+"trip_id": "3117604"
+},
+{
+"arrival": 1782013080.0,
+"route_id": "3",
+"train_num": "6571",
+"trip_id": "3117608"
+}
+]
+},
+"133": {
+"Trains": [
+{
+"arrival": 1782008040.0,
+"route_id": "3",
+"train_num": "6562",
+"trip_id": "3117601"
+},
+{
+"arrival": 1782009000.0,
+"route_id": "3",
+"train_num": "6569",
+"trip_id": "3117606"
+},
+{
+"arrival": 1782011880.0,
+"route_id": "3",
+"train_num": "6566",
+"trip_id": "3117604"
+},
+{
+"arrival": 1782012900.0,
+"route_id": "3",
+"train_num": "6571",
+"trip_id": "3117608"
+},
+{
+"arrival": 1782016200.0,
+"route_id": "3",
+"train_num": "6573",
+"trip_id": "3117609"
+},
+{
+"arrival": 1782016440.0,
+"route_id": "3",
+"train_num": "6570",
+"trip_id": "3117607"
+}
+]
+},
+"134": {
+"Trains": [
+{
+"arrival": 1782008280.0,
+"route_id": "3",
+"train_num": "6562",
+"trip_id": "3117601"
+},
+{
+"arrival": 1782008760.0,
+"route_id": "3",
+"train_num": "6569",
+"trip_id": "3117606"
+},
+{
+"arrival": 1782009900.0,
+"route_id": "3",
+"train_num": "6564",
+"trip_id": "3117602"
+},
+{
+"arrival": 1782012120.0,
+"route_id": "3",
+"train_num": "6566",
+"trip_id": "3117604"
+},
+{
+"arrival": 1782012660.0,
+"route_id": "3",
+"train_num": "6571",
+"trip_id": "3117608"
+},
+{
+"arrival": 1782013380.0,
+"route_id": "3",
+"train_num": "6568",
+"trip_id": "3117605"
+}
+]
+},
+"136": {
+"Trains": [
+{
+"arrival": 1782008460.0,
+"route_id": "3",
+"train_num": "6569",
+"trip_id": "3117606"
+},
+{
+"arrival": 1782008520.0,
+"route_id": "3",
+"train_num": "6562",
+"trip_id": "3117601"
+},
+{
+"arrival": 1782012300.0,
+"route_id": "3",
+"train_num": "6571",
+"trip_id": "3117608"
+},
+{
+"arrival": 1782012360.0,
+"route_id": "3",
+"train_num": "6566",
+"trip_id": "3117604"
+},
+{
+"arrival": 1782015660.0,
+"route_id": "3",
+"train_num": "6573",
+"trip_id": "3117609"
+},
+{
+"arrival": 1782016980.0,
+"route_id": "3",
+"train_num": "6570",
+"trip_id": "3117607"
+}
+]
+},
+"137": {
+"Trains": [
+{
+"arrival": 1782008280.0,
+"route_id": "3",
+"train_num": "6569",
+"trip_id": "3117606"
+},
+{
+"arrival": 1782008760.0,
+"route_id": "3",
+"train_num": "6562",
+"trip_id": "3117601"
+},
+{
+"arrival": 1782012120.0,
+"route_id": "3",
+"train_num": "6571",
+"trip_id": "3117608"
+},
+{
+"arrival": 1782012600.0,
+"route_id": "3",
+"train_num": "6566",
+"trip_id": "3117604"
+},
+{
+"arrival": 1782015480.0,
+"route_id": "3",
+"train_num": "6573",
+"trip_id": "3117609"
+},
+{
+"arrival": 1782017160.0,
+"route_id": "3",
+"train_num": "6570",
+"trip_id": "3117607"
+}
+]
+},
+"138": {
+"Trains": [
+{
+"arrival": 1782006960.0,
+"route_id": "3",
+"train_num": "6560",
+"trip_id": "3117599"
+},
+{
+"arrival": 1782008100.0,
+"route_id": "3",
+"train_num": "6569",
+"trip_id": "3117606"
+},
+{
+"arrival": 1782009000.0,
+"route_id": "3",
+"train_num": "6562",
+"trip_id": "3117601"
+},
+{
+"arrival": 1782010440.0,
+"route_id": "3",
+"train_num": "6564",
+"trip_id": "3117602"
+},
+{
+"arrival": 1782011940.0,
+"route_id": "3",
+"train_num": "6571",
+"trip_id": "3117608"
+},
+{
+"arrival": 1782012840.0,
+"route_id": "3",
+"train_num": "6566",
+"trip_id": "3117604"
+}
+]
+},
+"14": {
+"Trains": [
+{
+"arrival": 1782006660.0,
+"route_id": "1",
+"train_num": "8763",
+"trip_id": "3117767"
+},
+{
+"arrival": 1782007920.0,
+"route_id": "1",
+"train_num": "8766",
+"trip_id": "3117770"
+},
+{
+"arrival": 1782008220.0,
+"route_id": "1",
+"train_num": "8765",
+"trip_id": "3117769"
+},
+{
+"arrival": 1782009960.0,
+"route_id": "1",
+"train_num": "8768",
+"trip_id": "3117772"
+},
+{
+"arrival": 1782010260.0,
+"route_id": "1",
+"train_num": "8767",
+"trip_id": "3117771"
+},
+{
+"arrival": 1782011820.0,
+"route_id": "1",
+"train_num": "8769",
+"trip_id": "3117773"
+}
+]
+},
+"140": {
+"Trains": [
+{
+"arrival": 1782007500.0,
+"route_id": "3",
+"train_num": "6569",
+"trip_id": "3117606"
+},
+{
+"arrival": 1782007560.0,
+"route_id": "3",
+"train_num": "6560",
+"trip_id": "3117599"
+},
+{
+"arrival": 1782009600.0,
+"route_id": "3",
+"train_num": "6562",
+"trip_id": "3117601"
+},
+{
+"arrival": 1782010800.0,
+"route_id": "6",
+"train_num": "6971",
+"trip_id": "3117674"
+},
+{
+"arrival": 1782011040.0,
+"route_id": "3",
+"train_num": "6564",
+"trip_id": "3117602"
+},
+{
+"arrival": 1782011400.0,
+"route_id": "3",
+"train_num": "6571",
+"trip_id": "3117608"
+}
+]
+},
+"143": {
+"Trains": [
+{
+"arrival": 1782007080.0,
+"route_id": "3",
+"train_num": "6569",
+"trip_id": "3117606"
+},
+{
+"arrival": 1782007920.0,
+"route_id": "3",
+"train_num": "6560",
+"trip_id": "3117599"
+},
+{
+"arrival": 1782010020.0,
+"route_id": "3",
+"train_num": "6562",
+"trip_id": "3117601"
+},
+{
+"arrival": 1782011040.0,
+"route_id": "3",
+"train_num": "6571",
+"trip_id": "3117608"
+},
+{
+"arrival": 1782011400.0,
+"route_id": "3",
+"train_num": "6564",
+"trip_id": "3117602"
+},
+{
+"arrival": 1782013860.0,
+"route_id": "3",
+"train_num": "6566",
+"trip_id": "3117604"
+}
+]
+},
+"145": {
+"Trains": [
+{
+"arrival": 1782006720.0,
+"route_id": "3",
+"train_num": "6569",
+"trip_id": "3117606"
+},
+{
+"arrival": 1782006840.0,
+"route_id": "3",
+"train_num": "6558",
+"trip_id": "3117598"
+},
+{
+"arrival": 1782008340.0,
+"route_id": "3",
+"train_num": "6560",
+"trip_id": "3117599"
+},
+{
+"arrival": 1782010440.0,
+"route_id": "3",
+"train_num": "6562",
+"trip_id": "3117601"
+},
+{
+"arrival": 1782010620.0,
+"route_id": "3",
+"train_num": "6571",
+"trip_id": "3117608"
+},
+{
+"arrival": 1782011820.0,
+"route_id": "3",
+"train_num": "6564",
+"trip_id": "3117602"
+}
+]
+},
+"149": {
+"Trains": [
+{
+"arrival": 1782008220.0,
+"route_id": "3",
+"train_num": "6558",
+"trip_id": "3117598"
+},
+{
+"arrival": 1782009720.0,
+"route_id": "3",
+"train_num": "6560",
+"trip_id": "3117599"
+},
+{
+"arrival": 1782009900.0,
+"route_id": "3",
+"train_num": "6571",
+"trip_id": "3117608"
+},
+{
+"arrival": 1782011820.0,
+"route_id": "3",
+"train_num": "6562",
+"trip_id": "3117601"
+},
+{
+"arrival": 1782013140.0,
+"route_id": "3",
+"train_num": "6573",
+"trip_id": "3117609"
+},
+{
+"arrival": 1782013200.0,
+"route_id": "3",
+"train_num": "6564",
+"trip_id": "3117602"
+}
+]
+},
+"153": {
+"Trains": [
+{
+"arrival": 1782007500.0,
+"route_id": "4",
+"train_num": "6762",
+"trip_id": "3117642"
+},
+{
+"arrival": 1782009600.0,
+"route_id": "4",
+"train_num": "6769",
+"trip_id": "3117645"
+},
+{
+"arrival": 1782011100.0,
+"route_id": "4",
+"train_num": "6766",
+"trip_id": "3117644"
+},
+{
+"arrival": 1782013200.0,
+"route_id": "4",
+"train_num": "6771",
+"trip_id": "3117647"
+},
+{
+"arrival": 1782015840.0,
+"route_id": "4",
+"train_num": "6770",
+"trip_id": "3118306"
+},
+{
+"arrival": 1782018600.0,
+"route_id": "4",
+"train_num": "6798",
+"trip_id": "3118308"
+}
+]
+},
+"154": {
+"Trains": [
+{
+"arrival": 1782007680.0,
+"route_id": "4",
+"train_num": "6762",
+"trip_id": "3117642"
+},
+{
+"arrival": 1782009420.0,
+"route_id": "4",
+"train_num": "6769",
+"trip_id": "3117645"
+},
+{
+"arrival": 1782011280.0,
+"route_id": "4",
+"train_num": "6766",
+"trip_id": "3117644"
+},
+{
+"arrival": 1782013020.0,
+"route_id": "4",
+"train_num": "6771",
+"trip_id": "3117647"
+},
+{
+"arrival": 1782016020.0,
+"route_id": "4",
+"train_num": "6770",
+"trip_id": "3118306"
+},
+{
+"arrival": 1782018780.0,
+"route_id": "4",
+"train_num": "6798",
+"trip_id": "3118308"
+}
+]
+},
+"155": {
+"Trains": [
+{
+"arrival": 1782007920.0,
+"route_id": "4",
+"train_num": "6762",
+"trip_id": "3117642"
+},
+{
+"arrival": 1782009180.0,
+"route_id": "4",
+"train_num": "6769",
+"trip_id": "3117645"
+},
+{
+"arrival": 1782011520.0,
+"route_id": "4",
+"train_num": "6766",
+"trip_id": "3117644"
+},
+{
+"arrival": 1782012780.0,
+"route_id": "4",
+"train_num": "6771",
+"trip_id": "3117647"
+},
+{
+"arrival": 1782016260.0,
+"route_id": "4",
+"train_num": "6770",
+"trip_id": "3118306"
+},
+{
+"arrival": 1782019080.0,
+"route_id": "4",
+"train_num": "6798",
+"trip_id": "3118308"
+}
+]
+},
+"157": {
+"Trains": [
+{
+"arrival": 1782008280.0,
+"route_id": "4",
+"train_num": "6762",
+"trip_id": "3117642"
+},
+{
+"arrival": 1782008880.0,
+"route_id": "4",
+"train_num": "6769",
+"trip_id": "3117645"
+},
+{
+"arrival": 1782011880.0,
+"route_id": "4",
+"train_num": "6766",
+"trip_id": "3117644"
+},
+{
+"arrival": 1782012480.0,
+"route_id": "4",
+"train_num": "6771",
+"trip_id": "3117647"
+},
+{
+"arrival": 1782016680.0,
+"route_id": "4",
+"train_num": "6770",
+"trip_id": "3118306"
+},
+{
+"arrival": 1782019560.0,
+"route_id": "4",
+"train_num": "6798",
+"trip_id": "3118308"
+}
+]
+},
+"158": {
+"Trains": [
+{
+"arrival": 1782008820.0,
+"route_id": "5",
+"train_num": "6862",
+"trip_id": "3117659"
+},
+{
+"arrival": 1782014580.0,
+"route_id": "5",
+"train_num": "6873",
+"trip_id": "3117661"
+},
+{
+"arrival": 1782017100.0,
+"route_id": "5",
+"train_num": "6870",
+"trip_id": "3118320"
+}
+]
+},
+"16": {
+"Trains": [
+{
+"arrival": 1782006840.0,
+"route_id": "1",
+"train_num": "8763",
+"trip_id": "3117767"
+},
+{
+"arrival": 1782007680.0,
+"route_id": "1",
+"train_num": "8766",
+"trip_id": "3117770"
+},
+{
+"arrival": 1782008520.0,
+"route_id": "1",
+"train_num": "8765",
+"trip_id": "3117769"
+},
+{
+"arrival": 1782009720.0,
+"route_id": "1",
+"train_num": "8768",
+"trip_id": "3117772"
+},
+{
+"arrival": 1782010440.0,
+"route_id": "1",
+"train_num": "8767",
+"trip_id": "3117771"
+},
+{
+"arrival": 1782012120.0,
+"route_id": "1",
+"train_num": "8769",
+"trip_id": "3117773"
+}
+]
+},
+"160": {
+"Trains": [
+{
+"arrival": 1782009180.0,
+"route_id": "5",
+"train_num": "6862",
+"trip_id": "3117659"
+},
+{
+"arrival": 1782014280.0,
+"route_id": "5",
+"train_num": "6873",
+"trip_id": "3117661"
+},
+{
+"arrival": 1782017460.0,
+"route_id": "5",
+"train_num": "6870",
+"trip_id": "3118320"
+}
+]
+},
+"161": {
+"Trains": [
+{
+"arrival": 1782009420.0,
+"route_id": "5",
+"train_num": "6862",
+"trip_id": "3117659"
+},
+{
+"arrival": 1782014040.0,
+"route_id": "5",
+"train_num": "6873",
+"trip_id": "3117661"
+},
+{
+"arrival": 1782017700.0,
+"route_id": "5",
+"train_num": "6870",
+"trip_id": "3118320"
+}
+]
+},
+"162": {
+"Trains": [
+{
+"arrival": 1782009780.0,
+"route_id": "5",
+"train_num": "6862",
+"trip_id": "3117659"
+},
+{
+"arrival": 1782013680.0,
+"route_id": "5",
+"train_num": "6873",
+"trip_id": "3117661"
+},
+{
+"arrival": 1782018060.0,
+"route_id": "5",
+"train_num": "6870",
+"trip_id": "3118320"
+}
+]
+},
+"163": {
+"Trains": [
+{
+"arrival": 1782010260.0,
+"route_id": "5",
+"train_num": "6862",
+"trip_id": "3117659"
+},
+{
+"arrival": 1782013200.0,
+"route_id": "5",
+"train_num": "6873",
+"trip_id": "3117661"
+},
+{
+"arrival": 1782018540.0,
+"route_id": "5",
+"train_num": "6870",
+"trip_id": "3118320"
+}
+]
+},
+"164": {
+"Trains": [
+{
+"arrival": 1782010680.0,
+"route_id": "5",
+"train_num": "6862",
+"trip_id": "3117659"
+},
+{
+"arrival": 1782012720.0,
+"route_id": "5",
+"train_num": "6873",
+"trip_id": "3117661"
+},
+{
+"arrival": 1782018960.0,
+"route_id": "5",
+"train_num": "6870",
+"trip_id": "3118320"
+}
+]
+},
+"165": {
+"Trains": [
+{
+"arrival": 1782011460.0,
+"route_id": "5",
+"train_num": "6862",
+"trip_id": "3117659"
+},
+{
+"arrival": 1782012300.0,
+"route_id": "5",
+"train_num": "6873",
+"trip_id": "3117661"
+},
+{
+"arrival": 1782019740.0,
+"route_id": "5",
+"train_num": "6870",
+"trip_id": "3118320"
+}
+]
+},
+"167": {
+"Trains": [
+{
+"arrival": 1782009300.0,
+"route_id": "6",
+"train_num": "6971",
+"trip_id": "3117674"
+},
+{
+"arrival": 1782015120.0,
+"route_id": "6",
+"train_num": "6966",
+"trip_id": "3117673"
+}
+]
+},
+"168": {
+"Trains": [
+{
+"arrival": 1782009060.0,
+"route_id": "6",
+"train_num": "6971",
+"trip_id": "3117674"
+},
+{
+"arrival": 1782015360.0,
+"route_id": "6",
+"train_num": "6966",
+"trip_id": "3117673"
+}
+]
+},
+"169": {
+"Trains": [
+{
+"arrival": 1782008640.0,
+"route_id": "6",
+"train_num": "6971",
+"trip_id": "3117674"
+},
+{
+"arrival": 1782015780.0,
+"route_id": "6",
+"train_num": "6966",
+"trip_id": "3117673"
+}
+]
+},
+"17": {
+"Trains": [
+{
+"arrival": 1782007020.0,
+"route_id": "1",
+"train_num": "8763",
+"trip_id": "3117767"
+},
+{
+"arrival": 1782009600.0,
+"route_id": "1",
+"train_num": "8768",
+"trip_id": "3117772"
+},
+{
+"arrival": 1782010620.0,
+"route_id": "1",
+"train_num": "8767",
+"trip_id": "3117771"
+},
+{
+"arrival": 1782013320.0,
+"route_id": "1",
+"train_num": "8772",
+"trip_id": "3117775"
+},
+{
+"arrival": 1782014220.0,
+"route_id": "1",
+"train_num": "8771",
+"trip_id": "3117774"
+},
+{
+"arrival": 1782016740.0,
+"route_id": "1",
+"train_num": "8776",
+"trip_id": "3117776"
+}
+]
+},
+"170": {
+"Trains": [
+{
+"arrival": 1782008340.0,
+"route_id": "6",
+"train_num": "6971",
+"trip_id": "3117674"
+},
+{
+"arrival": 1782016140.0,
+"route_id": "6",
+"train_num": "6966",
+"trip_id": "3117673"
+}
+]
+},
+"171": {
+"Trains": [
+{
+"arrival": 1782007920.0,
+"route_id": "6",
+"train_num": "6971",
+"trip_id": "3117674"
+},
+{
+"arrival": 1782016560.0,
+"route_id": "6",
+"train_num": "6966",
+"trip_id": "3117673"
+}
+]
+},
+"172": {
+"Trains": [
+{
+"arrival": 1782007380.0,
+"route_id": "6",
+"train_num": "6971",
+"trip_id": "3117674"
+},
+{
+"arrival": 1782017280.0,
+"route_id": "6",
+"train_num": "6966",
+"trip_id": "3117673"
+}
+]
+},
+"176": {
+"Trains": [
+{
+"arrival": 1782008340.0,
+"route_id": "2",
+"train_num": "9974",
+"trip_id": "3117968"
+},
+{
+"arrival": 1782013020.0,
+"route_id": "2",
+"train_num": "9963",
+"trip_id": "3117966"
+}
+]
+},
+"177": {
+"Trains": [
+{
+"arrival": 1782008100.0,
+"route_id": "2",
+"train_num": "9974",
+"trip_id": "3117968"
+},
+{
+"arrival": 1782013740.0,
+"route_id": "2",
+"train_num": "9963",
+"trip_id": "3117966"
+}
+]
+},
+"18": {
+"Trains": [
+{
+"arrival": 1782007140.0,
+"route_id": "1",
+"train_num": "8763",
+"trip_id": "3117767"
+},
+{
+"arrival": 1782007440.0,
+"route_id": "1",
+"train_num": "8766",
+"trip_id": "3117770"
+},
+{
+"arrival": 1782008760.0,
+"route_id": "1",
+"train_num": "8765",
+"trip_id": "3117769"
+},
+{
+"arrival": 1782009420.0,
+"route_id": "1",
+"train_num": "8768",
+"trip_id": "3117772"
+},
+{
+"arrival": 1782010740.0,
+"route_id": "1",
+"train_num": "8767",
+"trip_id": "3117771"
+},
+{
+"arrival": 1782011880.0,
+"route_id": "1",
+"train_num": "8872",
+"trip_id": "3117823"
+}
+]
+},
+"188": {
+"Trains": [
+{
+"arrival": 1782007140.0,
+"route_id": "3",
+"train_num": "6560",
+"trip_id": "3117599"
+},
+{
+"arrival": 1782007860.0,
+"route_id": "3",
+"train_num": "6569",
+"trip_id": "3117606"
+},
+{
+"arrival": 1782009180.0,
+"route_id": "3",
+"train_num": "6562",
+"trip_id": "3117601"
+},
+{
+"arrival": 1782010620.0,
+"route_id": "3",
+"train_num": "6564",
+"trip_id": "3117602"
+},
+{
+"arrival": 1782011760.0,
+"route_id": "3",
+"train_num": "6571",
+"trip_id": "3117608"
+},
+{
+"arrival": 1782013020.0,
+"route_id": "3",
+"train_num": "6566",
+"trip_id": "3117604"
+}
+]
+},
+"19": {
+"Trains": [
+{
+"arrival": 1782007260.0,
+"route_id": "1",
+"train_num": "8763",
+"trip_id": "3117767"
+},
+{
+"arrival": 1782009240.0,
+"route_id": "1",
+"train_num": "8768",
+"trip_id": "3117772"
+},
+{
+"arrival": 1782010860.0,
+"route_id": "1",
+"train_num": "8767",
+"trip_id": "3117771"
+},
+{
+"arrival": 1782012960.0,
+"route_id": "1",
+"train_num": "8772",
+"trip_id": "3117775"
+},
+{
+"arrival": 1782014460.0,
+"route_id": "1",
+"train_num": "8771",
+"trip_id": "3117774"
+},
+{
+"arrival": 1782016380.0,
+"route_id": "1",
+"train_num": "8776",
+"trip_id": "3117776"
+}
+]
+},
+"190": {
+"Trains": [
+{
+"arrival": 1782007260.0,
+"route_id": "3",
+"train_num": "6558",
+"trip_id": "3117598"
+},
+{
+"arrival": 1782008760.0,
+"route_id": "3",
+"train_num": "6560",
+"trip_id": "3117599"
+},
+{
+"arrival": 1782010200.0,
+"route_id": "3",
+"train_num": "6571",
+"trip_id": "3117608"
+},
+{
+"arrival": 1782010860.0,
+"route_id": "3",
+"train_num": "6562",
+"trip_id": "3117601"
+},
+{
+"arrival": 1782012240.0,
+"route_id": "3",
+"train_num": "6564",
+"trip_id": "3117602"
+},
+{
+"arrival": 1782013440.0,
+"route_id": "3",
+"train_num": "6573",
+"trip_id": "3117609"
+}
+]
+},
+"20": {
+"Trains": [
+{
+"arrival": 1782007440.0,
+"route_id": "1",
+"train_num": "8763",
+"trip_id": "3117767"
+},
+{
+"arrival": 1782009060.0,
+"route_id": "1",
+"train_num": "8768",
+"trip_id": "3117772"
+},
+{
+"arrival": 1782011040.0,
+"route_id": "1",
+"train_num": "8767",
+"trip_id": "3117771"
+},
+{
+"arrival": 1782012780.0,
+"route_id": "1",
+"train_num": "8772",
+"trip_id": "3117775"
+},
+{
+"arrival": 1782014640.0,
+"route_id": "1",
+"train_num": "8771",
+"trip_id": "3117774"
+},
+{
+"arrival": 1782016200.0,
+"route_id": "1",
+"train_num": "8776",
+"trip_id": "3117776"
+}
+]
+},
+"22": {
+"Trains": [
+{
+"arrival": 1782007080.0,
+"route_id": "1",
+"train_num": "8766",
+"trip_id": "3117770"
+},
+{
+"arrival": 1782007620.0,
+"route_id": "1",
+"train_num": "8763",
+"trip_id": "3117767"
+},
+{
+"arrival": 1782008880.0,
+"route_id": "1",
+"train_num": "8768",
+"trip_id": "3117772"
+},
+{
+"arrival": 1782009120.0,
+"route_id": "1",
+"train_num": "8765",
+"trip_id": "3117769"
+},
+{
+"arrival": 1782011220.0,
+"route_id": "1",
+"train_num": "8767",
+"trip_id": "3117771"
+},
+{
+"arrival": 1782012600.0,
+"route_id": "1",
+"train_num": "8772",
+"trip_id": "3117775"
+}
+]
+},
+"23": {
+"Trains": [
+{
+"arrival": 1782006900.0,
+"route_id": "1",
+"train_num": "8766",
+"trip_id": "3117770"
+},
+{
+"arrival": 1782007800.0,
+"route_id": "1",
+"train_num": "8763",
+"trip_id": "3117767"
+},
+{
+"arrival": 1782008760.0,
+"route_id": "1",
+"train_num": "8768",
+"trip_id": "3117772"
+},
+{
+"arrival": 1782009240.0,
+"route_id": "1",
+"train_num": "8765",
+"trip_id": "3117769"
+},
+{
+"arrival": 1782011400.0,
+"route_id": "1",
+"train_num": "8767",
+"trip_id": "3117771"
+},
+{
+"arrival": 1782012480.0,
+"route_id": "1",
+"train_num": "8772",
+"trip_id": "3117775"
+}
+]
+},
+"24": {
+"Trains": [
+{
+"arrival": 1782007920.0,
+"route_id": "1",
+"train_num": "8763",
+"trip_id": "3117767"
+},
+{
+"arrival": 1782008640.0,
+"route_id": "1",
+"train_num": "8768",
+"trip_id": "3117772"
+},
+{
+"arrival": 1782011520.0,
+"route_id": "1",
+"train_num": "8767",
+"trip_id": "3117771"
+},
+{
+"arrival": 1782012360.0,
+"route_id": "1",
+"train_num": "8772",
+"trip_id": "3117775"
+},
+{
+"arrival": 1782015120.0,
+"route_id": "1",
+"train_num": "8771",
+"trip_id": "3117774"
+},
+{
+"arrival": 1782015780.0,
+"route_id": "1",
+"train_num": "8776",
+"trip_id": "3117776"
+}
+]
+},
+"25": {
+"Trains": [
+{
+"arrival": 1782006720.0,
+"route_id": "1",
+"train_num": "8766",
+"trip_id": "3117770"
+},
+{
+"arrival": 1782008040.0,
+"route_id": "1",
+"train_num": "8763",
+"trip_id": "3117767"
+},
+{
+"arrival": 1782008520.0,
+"route_id": "1",
+"train_num": "8768",
+"trip_id": "3117772"
+},
+{
+"arrival": 1782009480.0,
+"route_id": "1",
+"train_num": "8765",
+"trip_id": "3117769"
+},
+{
+"arrival": 1782011640.0,
+"route_id": "1",
+"train_num": "8767",
+"trip_id": "3117771"
+},
+{
+"arrival": 1782012240.0,
+"route_id": "1",
+"train_num": "8772",
+"trip_id": "3117775"
+}
+]
+},
+"27": {
+"Trains": [
+{
+"arrival": 1782007800.0,
+"route_id": "1",
+"train_num": "8868",
+"trip_id": "3117821"
+},
+{
+"arrival": 1782008280.0,
+"route_id": "1",
+"train_num": "8763",
+"trip_id": "3117767"
+},
+{
+"arrival": 1782008280.0,
+"route_id": "1",
+"train_num": "8768",
+"trip_id": "3117772"
+},
+{
+"arrival": 1782009300.0,
+"route_id": "1",
+"train_num": "8863",
+"trip_id": "3117818"
+},
+{
+"arrival": 1782009720.0,
+"route_id": "1",
+"train_num": "8765",
+"trip_id": "3117769"
+},
+{
+"arrival": 1782011100.0,
+"route_id": "1",
+"train_num": "8872",
+"trip_id": "3117823"
+}
+]
+},
+"29": {
+"Trains": [
+{
+"arrival": 1782008160.0,
+"route_id": "1",
+"train_num": "8768",
+"trip_id": "3117772"
+},
+{
+"arrival": 1782008460.0,
+"route_id": "1",
+"train_num": "8763",
+"trip_id": "3117767"
+},
+{
+"arrival": 1782011880.0,
+"route_id": "1",
+"train_num": "8772",
+"trip_id": "3117775"
+},
+{
+"arrival": 1782012060.0,
+"route_id": "1",
+"train_num": "8767",
+"trip_id": "3117771"
+},
+{
+"arrival": 1782015300.0,
+"route_id": "1",
+"train_num": "8776",
+"trip_id": "3117776"
+},
+{
+"arrival": 1782015660.0,
+"route_id": "1",
+"train_num": "8771",
+"trip_id": "3117774"
+}
+]
+},
+"30": {
+"Trains": [
+{
+"arrival": 1782007920.0,
+"route_id": "1",
+"train_num": "8768",
+"trip_id": "3117772"
+},
+{
+"arrival": 1782008700.0,
+"route_id": "1",
+"train_num": "8763",
+"trip_id": "3117767"
+},
+{
+"arrival": 1782011640.0,
+"route_id": "1",
+"train_num": "8772",
+"trip_id": "3117775"
+},
+{
+"arrival": 1782012300.0,
+"route_id": "1",
+"train_num": "8767",
+"trip_id": "3117771"
+},
+{
+"arrival": 1782015060.0,
+"route_id": "1",
+"train_num": "8776",
+"trip_id": "3117776"
+},
+{
+"arrival": 1782015900.0,
+"route_id": "1",
+"train_num": "8771",
+"trip_id": "3117774"
+}
+]
+},
+"31": {
+"Trains": [
+{
+"arrival": 1782007320.0,
+"route_id": "1",
+"train_num": "8868",
+"trip_id": "3117821"
+},
+{
+"arrival": 1782007800.0,
+"route_id": "1",
+"train_num": "8768",
+"trip_id": "3117772"
+},
+{
+"arrival": 1782008880.0,
+"route_id": "1",
+"train_num": "8763",
+"trip_id": "3117767"
+},
+{
+"arrival": 1782009780.0,
+"route_id": "1",
+"train_num": "8863",
+"trip_id": "3117818"
+},
+{
+"arrival": 1782010200.0,
+"route_id": "1",
+"train_num": "8765",
+"trip_id": "3117769"
+},
+{
+"arrival": 1782010620.0,
+"route_id": "1",
+"train_num": "8872",
+"trip_id": "3117823"
+}
+]
+},
+"33": {
+"Trains": [
+{
+"arrival": 1782007080.0,
+"route_id": "1",
+"train_num": "8868",
+"trip_id": "3117821"
+},
+{
+"arrival": 1782007320.0,
+"route_id": "1",
+"train_num": "8761",
+"trip_id": "3117765"
+},
+{
+"arrival": 1782007560.0,
+"route_id": "1",
+"train_num": "8768",
+"trip_id": "3117772"
+},
+{
+"arrival": 1782009420.0,
+"route_id": "1",
+"train_num": "8763",
+"trip_id": "3117767"
+},
+{
+"arrival": 1782010140.0,
+"route_id": "1",
+"train_num": "8863",
+"trip_id": "3117818"
+},
+{
+"arrival": 1782010380.0,
+"route_id": "1",
+"train_num": "8872",
+"trip_id": "3117823"
+}
+]
+},
+"37": {
+"Trains": [
+{
+"arrival": 1782007020.0,
+"route_id": "1",
+"train_num": "8859",
+"trip_id": "3117816"
+},
+{
+"arrival": 1782009840.0,
+"route_id": "1",
+"train_num": "8872",
+"trip_id": "3117823"
+},
+{
+"arrival": 1782010620.0,
+"route_id": "1",
+"train_num": "8863",
+"trip_id": "3117818"
+},
+{
+"arrival": 1782013500.0,
+"route_id": "1",
+"train_num": "8876",
+"trip_id": "3117824"
+},
+{
+"arrival": 1782014220.0,
+"route_id": "1",
+"train_num": "8867",
+"trip_id": "3117820"
+},
+{
+"arrival": 1782017100.0,
+"route_id": "1",
+"train_num": "8898",
+"trip_id": "3117826"
+}
+]
+},
+"39": {
+"Trains": [
+{
+"arrival": 1782007320.0,
+"route_id": "1",
+"train_num": "8859",
+"trip_id": "3117816"
+},
+{
+"arrival": 1782009540.0,
+"route_id": "1",
+"train_num": "8872",
+"trip_id": "3117823"
+},
+{
+"arrival": 1782010920.0,
+"route_id": "1",
+"train_num": "8863",
+"trip_id": "3117818"
+},
+{
+"arrival": 1782013200.0,
+"route_id": "1",
+"train_num": "8876",
+"trip_id": "3117824"
+},
+{
+"arrival": 1782014520.0,
+"route_id": "1",
+"train_num": "8867",
+"trip_id": "3117820"
+},
+{
+"arrival": 1782016800.0,
+"route_id": "1",
+"train_num": "8898",
+"trip_id": "3117826"
+}
+]
+},
+"4": {
+"Trains": [
+{
+"arrival": 1782006720.0,
+"route_id": "2",
+"train_num": "9562",
+"trip_id": "3117889"
+},
+{
+"arrival": 1782006720.0,
+"route_id": "2",
+"train_num": "9567",
+"trip_id": "3117892"
+},
+{
+"arrival": 1782007440.0,
+"route_id": "1",
+"train_num": "8765",
+"trip_id": "3117769"
+},
+{
+"arrival": 1782007620.0,
+"route_id": "1",
+"train_num": "8764",
+"trip_id": "3117768"
+},
+{
+"arrival": 1782007620.0,
+"route_id": "1",
+"train_num": "8863",
+"trip_id": "3117818"
+},
+{
+"arrival": 1782008160.0,
+"route_id": "3",
+"train_num": "6566",
+"trip_id": "3117604"
+}
+]
+},
+"42": {
+"Trains": [
+{
+"arrival": 1782008040.0,
+"route_id": "1",
+"train_num": "8859",
+"trip_id": "3117816"
+},
+{
+"arrival": 1782008820.0,
+"route_id": "1",
+"train_num": "8872",
+"trip_id": "3117823"
+},
+{
+"arrival": 1782011640.0,
+"route_id": "1",
+"train_num": "8863",
+"trip_id": "3117818"
+},
+{
+"arrival": 1782012540.0,
+"route_id": "1",
+"train_num": "8876",
+"trip_id": "3117824"
+},
+{
+"arrival": 1782015240.0,
+"route_id": "1",
+"train_num": "8867",
+"trip_id": "3117820"
+},
+{
+"arrival": 1782016140.0,
+"route_id": "1",
+"train_num": "8898",
+"trip_id": "3117826"
+}
+]
+},
+"43": {
+"Trains": [
+{
+"arrival": 1782008280.0,
+"route_id": "1",
+"train_num": "8859",
+"trip_id": "3117816"
+},
+{
+"arrival": 1782008580.0,
+"route_id": "1",
+"train_num": "8872",
+"trip_id": "3117823"
+},
+{
+"arrival": 1782011880.0,
+"route_id": "1",
+"train_num": "8863",
+"trip_id": "3117818"
+},
+{
+"arrival": 1782012300.0,
+"route_id": "1",
+"train_num": "8876",
+"trip_id": "3117824"
+},
+{
+"arrival": 1782015480.0,
+"route_id": "1",
+"train_num": "8867",
+"trip_id": "3117820"
+},
+{
+"arrival": 1782015900.0,
+"route_id": "1",
+"train_num": "8898",
+"trip_id": "3117826"
+}
+]
+},
+"46": {
+"Trains": [
+{
+"arrival": 1782006780.0,
+"route_id": "1",
+"train_num": "8855",
+"trip_id": "3117814"
+},
+{
+"arrival": 1782008040.0,
+"route_id": "1",
+"train_num": "8872",
+"trip_id": "3117823"
+},
+{
+"arrival": 1782008820.0,
+"route_id": "1",
+"train_num": "8859",
+"trip_id": "3117816"
+},
+{
+"arrival": 1782011820.0,
+"route_id": "1",
+"train_num": "8876",
+"trip_id": "3117824"
+},
+{
+"arrival": 1782012420.0,
+"route_id": "1",
+"train_num": "8863",
+"trip_id": "3117818"
+},
+{
+"arrival": 1782015420.0,
+"route_id": "1",
+"train_num": "8898",
+"trip_id": "3117826"
+}
+]
+},
+"49": {
+"Trains": [
+{
+"arrival": 1782007320.0,
+"route_id": "1",
+"train_num": "8855",
+"trip_id": "3117814"
+},
+{
+"arrival": 1782007560.0,
+"route_id": "1",
+"train_num": "8872",
+"trip_id": "3117823"
+},
+{
+"arrival": 1782009360.0,
+"route_id": "1",
+"train_num": "8859",
+"trip_id": "3117816"
+},
+{
+"arrival": 1782011340.0,
+"route_id": "1",
+"train_num": "8876",
+"trip_id": "3117824"
+},
+{
+"arrival": 1782012960.0,
+"route_id": "1",
+"train_num": "8863",
+"trip_id": "3117818"
+},
+{
+"arrival": 1782014940.0,
+"route_id": "1",
+"train_num": "8898",
+"trip_id": "3117826"
+}
+]
+},
+"51": {
+"Trains": [
+{
+"arrival": 1782007020.0,
+"route_id": "1",
+"train_num": "8872",
+"trip_id": "3117823"
+},
+{
+"arrival": 1782008220.0,
+"route_id": "1",
+"train_num": "8855",
+"trip_id": "3117814"
+},
+{
+"arrival": 1782010200.0,
+"route_id": "1",
+"train_num": "8859",
+"trip_id": "3117816"
+},
+{
+"arrival": 1782010740.0,
+"route_id": "1",
+"train_num": "8876",
+"trip_id": "3117824"
+},
+{
+"arrival": 1782013800.0,
+"route_id": "1",
+"train_num": "8863",
+"trip_id": "3117818"
+},
+{
+"arrival": 1782014340.0,
+"route_id": "1",
+"train_num": "8898",
+"trip_id": "3117826"
+}
+]
+},
+"54": {
+"Trains": [
+{
+"arrival": 1782006960.0,
+"route_id": "2",
+"train_num": "9567",
+"trip_id": "3117892"
+},
+{
+"arrival": 1782008160.0,
+"route_id": "2",
+"train_num": "9364",
+"trip_id": "3117855"
+},
+{
+"arrival": 1782009360.0,
+"route_id": "2",
+"train_num": "9571",
+"trip_id": "3117894"
+},
+{
+"arrival": 1782009900.0,
+"route_id": "2",
+"train_num": "9566",
+"trip_id": "3117891"
+},
+{
+"arrival": 1782011580.0,
+"route_id": "2",
+"train_num": "9573",
+"trip_id": "3117895"
+},
+{
+"arrival": 1782011760.0,
+"route_id": "2",
+"train_num": "9368",
+"trip_id": "3117857"
+}
+]
+},
+"55": {
+"Trains": [
+{
+"arrival": 1782007140.0,
+"route_id": "2",
+"train_num": "9567",
+"trip_id": "3117892"
+},
+{
+"arrival": 1782007980.0,
+"route_id": "2",
+"train_num": "9364",
+"trip_id": "3117855"
+},
+{
+"arrival": 1782009540.0,
+"route_id": "2",
+"train_num": "9571",
+"trip_id": "3117894"
+},
+{
+"arrival": 1782009720.0,
+"route_id": "2",
+"train_num": "9566",
+"trip_id": "3117891"
+},
+{
+"arrival": 1782011580.0,
+"route_id": "2",
+"train_num": "9368",
+"trip_id": "3117857"
+},
+{
+"arrival": 1782011700.0,
+"route_id": "2",
+"train_num": "9573",
+"trip_id": "3117895"
+}
+]
+},
+"56": {
+"Trains": [
+{
+"arrival": 1782006960.0,
+"route_id": "3",
+"train_num": "6366",
+"trip_id": "3117522"
+},
+{
+"arrival": 1782007320.0,
+"route_id": "2",
+"train_num": "9567",
+"trip_id": "3117892"
+},
+{
+"arrival": 1782007860.0,
+"route_id": "2",
+"train_num": "9364",
+"trip_id": "3117855"
+},
+{
+"arrival": 1782008160.0,
+"route_id": "3",
+"train_num": "6363",
+"trip_id": "3117519"
+},
+{
+"arrival": 1782009600.0,
+"route_id": "2",
+"train_num": "9566",
+"trip_id": "3117891"
+},
+{
+"arrival": 1782009720.0,
+"route_id": "2",
+"train_num": "9571",
+"trip_id": "3117894"
+}
+]
+},
+"57": {
+"Trains": [
+{
+"arrival": 1782007500.0,
+"route_id": "2",
+"train_num": "9567",
+"trip_id": "3117892"
+},
+{
+"arrival": 1782007680.0,
+"route_id": "2",
+"train_num": "9364",
+"trip_id": "3117855"
+},
+{
+"arrival": 1782009420.0,
+"route_id": "2",
+"train_num": "9566",
+"trip_id": "3117891"
+},
+{
+"arrival": 1782009900.0,
+"route_id": "2",
+"train_num": "9571",
+"trip_id": "3117894"
+},
+{
+"arrival": 1782011280.0,
+"route_id": "2",
+"train_num": "9368",
+"trip_id": "3117857"
+},
+{
+"arrival": 1782011940.0,
+"route_id": "2",
+"train_num": "9573",
+"trip_id": "3117895"
+}
+]
+},
+"58": {
+"Trains": [
+{
+"arrival": 1782007500.0,
+"route_id": "2",
+"train_num": "9364",
+"trip_id": "3117855"
+},
+{
+"arrival": 1782007680.0,
+"route_id": "2",
+"train_num": "9567",
+"trip_id": "3117892"
+},
+{
+"arrival": 1782009240.0,
+"route_id": "2",
+"train_num": "9566",
+"trip_id": "3117891"
+},
+{
+"arrival": 1782010080.0,
+"route_id": "2",
+"train_num": "9571",
+"trip_id": "3117894"
+},
+{
+"arrival": 1782011100.0,
+"route_id": "2",
+"train_num": "9368",
+"trip_id": "3117857"
+},
+{
+"arrival": 1782012060.0,
+"route_id": "2",
+"train_num": "9573",
+"trip_id": "3117895"
+}
+]
+},
+"59": {
+"Trains": [
+{
+"arrival": 1782007320.0,
+"route_id": "2",
+"train_num": "9364",
+"trip_id": "3117855"
+},
+{
+"arrival": 1782007860.0,
+"route_id": "2",
+"train_num": "9567",
+"trip_id": "3117892"
+},
+{
+"arrival": 1782009060.0,
+"route_id": "2",
+"train_num": "9566",
+"trip_id": "3117891"
+},
+{
+"arrival": 1782010260.0,
+"route_id": "2",
+"train_num": "9571",
+"trip_id": "3117894"
+},
+{
+"arrival": 1782010920.0,
+"route_id": "2",
+"train_num": "9368",
+"trip_id": "3117857"
+},
+{
+"arrival": 1782012240.0,
+"route_id": "2",
+"train_num": "9573",
+"trip_id": "3117895"
+}
+]
+},
+"61": {
+"Trains": [
+{
+"arrival": 1782007200.0,
+"route_id": "2",
+"train_num": "9364",
+"trip_id": "3117855"
+},
+{
+"arrival": 1782007980.0,
+"route_id": "2",
+"train_num": "9567",
+"trip_id": "3117892"
+},
+{
+"arrival": 1782008940.0,
+"route_id": "2",
+"train_num": "9566",
+"trip_id": "3117891"
+},
+{
+"arrival": 1782010380.0,
+"route_id": "2",
+"train_num": "9571",
+"trip_id": "3117894"
+},
+{
+"arrival": 1782010800.0,
+"route_id": "2",
+"train_num": "9368",
+"trip_id": "3117857"
+},
+{
+"arrival": 1782012360.0,
+"route_id": "2",
+"train_num": "9573",
+"trip_id": "3117895"
+}
+]
+},
+"62": {
+"Trains": [
+{
+"arrival": 1782006660.0,
+"route_id": "2",
+"train_num": "9365",
+"trip_id": "3117856"
+},
+{
+"arrival": 1782007080.0,
+"route_id": "2",
+"train_num": "9364",
+"trip_id": "3117855"
+},
+{
+"arrival": 1782008160.0,
+"route_id": "2",
+"train_num": "9567",
+"trip_id": "3117892"
+},
+{
+"arrival": 1782008820.0,
+"route_id": "2",
+"train_num": "9566",
+"trip_id": "3117891"
+},
+{
+"arrival": 1782010560.0,
+"route_id": "2",
+"train_num": "9571",
+"trip_id": "3117894"
+},
+{
+"arrival": 1782010680.0,
+"route_id": "2",
+"train_num": "9368",
+"trip_id": "3117857"
+}
+]
+},
+"622": {
+"Trains": [
+{
+"arrival": 1782007320.0,
+"route_id": "1",
+"train_num": "8764",
+"trip_id": "3117768"
+},
+{
+"arrival": 1782009660.0,
+"route_id": "1",
+"train_num": "8767",
+"trip_id": "3117771"
+},
+{
+"arrival": 1782010740.0,
+"route_id": "1",
+"train_num": "8768",
+"trip_id": "3117772"
+},
+{
+"arrival": 1782013260.0,
+"route_id": "1",
+"train_num": "8771",
+"trip_id": "3117774"
+},
+{
+"arrival": 1782014460.0,
+"route_id": "1",
+"train_num": "8772",
+"trip_id": "3117775"
+},
+{
+"arrival": 1782016620.0,
+"route_id": "1",
+"train_num": "8797",
+"trip_id": "3118425"
+}
+]
+},
+"64": {
+"Trains": [
+{
+"arrival": 1782006840.0,
+"route_id": "2",
+"train_num": "9365",
+"trip_id": "3117856"
+},
+{
+"arrival": 1782006900.0,
+"route_id": "2",
+"train_num": "9364",
+"trip_id": "3117855"
+},
+{
+"arrival": 1782008340.0,
+"route_id": "2",
+"train_num": "9567",
+"trip_id": "3117892"
+},
+{
+"arrival": 1782008640.0,
+"route_id": "2",
+"train_num": "9566",
+"trip_id": "3117891"
+},
+{
+"arrival": 1782010500.0,
+"route_id": "2",
+"train_num": "9368",
+"trip_id": "3117857"
+},
+{
+"arrival": 1782010740.0,
+"route_id": "2",
+"train_num": "9571",
+"trip_id": "3117894"
+}
+]
+},
+"65": {
+"Trains": [
+{
+"arrival": 1782006780.0,
+"route_id": "2",
+"train_num": "9364",
+"trip_id": "3117855"
+},
+{
+"arrival": 1782007020.0,
+"route_id": "2",
+"train_num": "9365",
+"trip_id": "3117856"
+},
+{
+"arrival": 1782008520.0,
+"route_id": "2",
+"train_num": "9566",
+"trip_id": "3117891"
+},
+{
+"arrival": 1782008520.0,
+"route_id": "2",
+"train_num": "9567",
+"trip_id": "3117892"
+},
+{
+"arrival": 1782010380.0,
+"route_id": "2",
+"train_num": "9368",
+"trip_id": "3117857"
+},
+{
+"arrival": 1782010920.0,
+"route_id": "2",
+"train_num": "9571",
+"trip_id": "3117894"
+}
+]
+},
+"66": {
+"Trains": [
+{
+"arrival": 1782006660.0,
+"route_id": "2",
+"train_num": "9364",
+"trip_id": "3117855"
+},
+{
+"arrival": 1782007140.0,
+"route_id": "2",
+"train_num": "9365",
+"trip_id": "3117856"
+},
+{
+"arrival": 1782008400.0,
+"route_id": "2",
+"train_num": "9566",
+"trip_id": "3117891"
+},
+{
+"arrival": 1782008640.0,
+"route_id": "2",
+"train_num": "9567",
+"trip_id": "3117892"
+},
+{
+"arrival": 1782010260.0,
+"route_id": "2",
+"train_num": "9368",
+"trip_id": "3117857"
+},
+{
+"arrival": 1782011040.0,
+"route_id": "2",
+"train_num": "9571",
+"trip_id": "3117894"
+}
+]
+},
+"68": {
+"Trains": [
+{
+"arrival": 1782007500.0,
+"route_id": "2",
+"train_num": "9365",
+"trip_id": "3117856"
+},
+{
+"arrival": 1782008220.0,
+"route_id": "2",
+"train_num": "9566",
+"trip_id": "3117891"
+},
+{
+"arrival": 1782008820.0,
+"route_id": "2",
+"train_num": "9567",
+"trip_id": "3117892"
+},
+{
+"arrival": 1782010080.0,
+"route_id": "2",
+"train_num": "9368",
+"trip_id": "3117857"
+},
+{
+"arrival": 1782011220.0,
+"route_id": "2",
+"train_num": "9571",
+"trip_id": "3117894"
+},
+{
+"arrival": 1782011820.0,
+"route_id": "2",
+"train_num": "9570",
+"trip_id": "3117893"
+}
+]
+},
+"71": {
+"Trains": [
+{
+"arrival": 1782007980.0,
+"route_id": "2",
+"train_num": "9566",
+"trip_id": "3117891"
+},
+{
+"arrival": 1782009060.0,
+"route_id": "2",
+"train_num": "9567",
+"trip_id": "3117892"
+},
+{
+"arrival": 1782011460.0,
+"route_id": "2",
+"train_num": "9571",
+"trip_id": "3117894"
+},
+{
+"arrival": 1782011580.0,
+"route_id": "2",
+"train_num": "9570",
+"trip_id": "3117893"
+},
+{
+"arrival": 1782013320.0,
+"route_id": "2",
+"train_num": "9573",
+"trip_id": "3117895"
+},
+{
+"arrival": 1782013680.0,
+"route_id": "2",
+"train_num": "9673",
+"trip_id": "3117945"
+}
+]
+},
+"72": {
+"Trains": [
+{
+"arrival": 1782007800.0,
+"route_id": "2",
+"train_num": "9566",
+"trip_id": "3117891"
+},
+{
+"arrival": 1782009240.0,
+"route_id": "2",
+"train_num": "9567",
+"trip_id": "3117892"
+},
+{
+"arrival": 1782011400.0,
+"route_id": "2",
+"train_num": "9570",
+"trip_id": "3117893"
+},
+{
+"arrival": 1782011640.0,
+"route_id": "2",
+"train_num": "9571",
+"trip_id": "3117894"
+},
+{
+"arrival": 1782013500.0,
+"route_id": "2",
+"train_num": "9573",
+"trip_id": "3117895"
+},
+{
+"arrival": 1782013860.0,
+"route_id": "2",
+"train_num": "9673",
+"trip_id": "3117945"
+}
+]
+},
+"74": {
+"Trains": [
+{
+"arrival": 1782006660.0,
+"route_id": "2",
+"train_num": "9663",
+"trip_id": "3117940"
+},
+{
+"arrival": 1782007320.0,
+"route_id": "2",
+"train_num": "9666",
+"trip_id": "3117941"
+},
+{
+"arrival": 1782007560.0,
+"route_id": "2",
+"train_num": "9566",
+"trip_id": "3117891"
+},
+{
+"arrival": 1782009480.0,
+"route_id": "2",
+"train_num": "9567",
+"trip_id": "3117892"
+},
+{
+"arrival": 1782010260.0,
+"route_id": "2",
+"train_num": "9667",
+"trip_id": "3117942"
+},
+{
+"arrival": 1782010920.0,
+"route_id": "2",
+"train_num": "9670",
+"trip_id": "3117943"
+}
+]
+},
+"76": {
+"Trains": [
+{
+"arrival": 1782007020.0,
+"route_id": "2",
+"train_num": "9663",
+"trip_id": "3117940"
+},
+{
+"arrival": 1782007080.0,
+"route_id": "2",
+"train_num": "9666",
+"trip_id": "3117941"
+},
+{
+"arrival": 1782007320.0,
+"route_id": "2",
+"train_num": "9566",
+"trip_id": "3117891"
+},
+{
+"arrival": 1782010020.0,
+"route_id": "2",
+"train_num": "9567",
+"trip_id": "3117892"
+},
+{
+"arrival": 1782010620.0,
+"route_id": "2",
+"train_num": "9667",
+"trip_id": "3117942"
+},
+{
+"arrival": 1782010680.0,
+"route_id": "2",
+"train_num": "9670",
+"trip_id": "3117943"
+}
+]
+},
+"78": {
+"Trains": [
+{
+"arrival": 1782006780.0,
+"route_id": "2",
+"train_num": "9666",
+"trip_id": "3117941"
+},
+{
+"arrival": 1782007260.0,
+"route_id": "2",
+"train_num": "9663",
+"trip_id": "3117940"
+},
+{
+"arrival": 1782010380.0,
+"route_id": "2",
+"train_num": "9670",
+"trip_id": "3117943"
+},
+{
+"arrival": 1782010860.0,
+"route_id": "2",
+"train_num": "9667",
+"trip_id": "3117942"
+},
+{
+"arrival": 1782012960.0,
+"route_id": "2",
+"train_num": "9671",
+"trip_id": "3117944"
+},
+{
+"arrival": 1782013980.0,
+"route_id": "2",
+"train_num": "9674",
+"trip_id": "3117946"
+}
+]
+},
+"80": {
+"Trains": [
+{
+"arrival": 1782007500.0,
+"route_id": "2",
+"train_num": "9663",
+"trip_id": "3117940"
+},
+{
+"arrival": 1782010140.0,
+"route_id": "2",
+"train_num": "9670",
+"trip_id": "3117943"
+},
+{
+"arrival": 1782011100.0,
+"route_id": "2",
+"train_num": "9667",
+"trip_id": "3117942"
+},
+{
+"arrival": 1782013200.0,
+"route_id": "2",
+"train_num": "9671",
+"trip_id": "3117944"
+},
+{
+"arrival": 1782013740.0,
+"route_id": "2",
+"train_num": "9674",
+"trip_id": "3117946"
+},
+{
+"arrival": 1782014880.0,
+"route_id": "2",
+"train_num": "9673",
+"trip_id": "3117945"
+}
+]
+},
+"81": {
+"Trains": [
+{
+"arrival": 1782007740.0,
+"route_id": "2",
+"train_num": "9663",
+"trip_id": "3117940"
+},
+{
+"arrival": 1782009900.0,
+"route_id": "2",
+"train_num": "9670",
+"trip_id": "3117943"
+},
+{
+"arrival": 1782011340.0,
+"route_id": "2",
+"train_num": "9667",
+"trip_id": "3117942"
+},
+{
+"arrival": 1782013440.0,
+"route_id": "2",
+"train_num": "9671",
+"trip_id": "3117944"
+},
+{
+"arrival": 1782013500.0,
+"route_id": "2",
+"train_num": "9674",
+"trip_id": "3117946"
+},
+{
+"arrival": 1782015120.0,
+"route_id": "2",
+"train_num": "9673",
+"trip_id": "3117945"
+}
+]
+},
+"83": {
+"Trains": [
+{
+"arrival": 1782007920.0,
+"route_id": "2",
+"train_num": "9663",
+"trip_id": "3117940"
+},
+{
+"arrival": 1782009720.0,
+"route_id": "2",
+"train_num": "9670",
+"trip_id": "3117943"
+},
+{
+"arrival": 1782011520.0,
+"route_id": "2",
+"train_num": "9667",
+"trip_id": "3117942"
+},
+{
+"arrival": 1782013320.0,
+"route_id": "2",
+"train_num": "9674",
+"trip_id": "3117946"
+},
+{
+"arrival": 1782013620.0,
+"route_id": "2",
+"train_num": "9671",
+"trip_id": "3117944"
+},
+{
+"arrival": 1782015300.0,
+"route_id": "2",
+"train_num": "9673",
+"trip_id": "3117945"
+}
+]
+},
+"84": {
+"Trains": [
+{
+"arrival": 1782008280.0,
+"route_id": "2",
+"train_num": "9663",
+"trip_id": "3117940"
+},
+{
+"arrival": 1782009420.0,
+"route_id": "2",
+"train_num": "9670",
+"trip_id": "3117943"
+},
+{
+"arrival": 1782011880.0,
+"route_id": "2",
+"train_num": "9667",
+"trip_id": "3117942"
+},
+{
+"arrival": 1782013020.0,
+"route_id": "2",
+"train_num": "9674",
+"trip_id": "3117946"
+},
+{
+"arrival": 1782013980.0,
+"route_id": "2",
+"train_num": "9671",
+"trip_id": "3117944"
+},
+{
+"arrival": 1782015660.0,
+"route_id": "2",
+"train_num": "9673",
+"trip_id": "3117945"
+}
+]
+},
+"85": {
+"Trains": [
+{
+"arrival": 1782008520.0,
+"route_id": "2",
+"train_num": "9663",
+"trip_id": "3117940"
+},
+{
+"arrival": 1782009180.0,
+"route_id": "2",
+"train_num": "9670",
+"trip_id": "3117943"
+},
+{
+"arrival": 1782012120.0,
+"route_id": "2",
+"train_num": "9667",
+"trip_id": "3117942"
+},
+{
+"arrival": 1782012780.0,
+"route_id": "2",
+"train_num": "9674",
+"trip_id": "3117946"
+},
+{
+"arrival": 1782014220.0,
+"route_id": "2",
+"train_num": "9671",
+"trip_id": "3117944"
+},
+{
+"arrival": 1782015900.0,
+"route_id": "2",
+"train_num": "9673",
+"trip_id": "3117945"
+}
+]
+},
+"86": {
+"Trains": [
+{
+"arrival": 1782008700.0,
+"route_id": "2",
+"train_num": "9663",
+"trip_id": "3117940"
+},
+{
+"arrival": 1782008940.0,
+"route_id": "2",
+"train_num": "9670",
+"trip_id": "3117943"
+},
+{
+"arrival": 1782012300.0,
+"route_id": "2",
+"train_num": "9667",
+"trip_id": "3117942"
+},
+{
+"arrival": 1782012540.0,
+"route_id": "2",
+"train_num": "9674",
+"trip_id": "3117946"
+},
+{
+"arrival": 1782014400.0,
+"route_id": "2",
+"train_num": "9671",
+"trip_id": "3117944"
+},
+{
+"arrival": 1782016080.0,
+"route_id": "2",
+"train_num": "9673",
+"trip_id": "3117945"
+}
+]
+},
+"88": {
+"Trains": [
+{
+"arrival": 1782008640.0,
+"route_id": "2",
+"train_num": "9670",
+"trip_id": "3117943"
+},
+{
+"arrival": 1782008940.0,
+"route_id": "2",
+"train_num": "9663",
+"trip_id": "3117940"
+},
+{
+"arrival": 1782012240.0,
+"route_id": "2",
+"train_num": "9674",
+"trip_id": "3117946"
+},
+{
+"arrival": 1782012540.0,
+"route_id": "2",
+"train_num": "9667",
+"trip_id": "3117942"
+},
+{
+"arrival": 1782014640.0,
+"route_id": "2",
+"train_num": "9671",
+"trip_id": "3117944"
+},
+{
+"arrival": 1782015840.0,
+"route_id": "2",
+"train_num": "9698",
+"trip_id": "3117949"
+}
+]
+},
+"89": {
+"Trains": [
+{
+"arrival": 1782008400.0,
+"route_id": "2",
+"train_num": "9670",
+"trip_id": "3117943"
+},
+{
+"arrival": 1782009180.0,
+"route_id": "2",
+"train_num": "9663",
+"trip_id": "3117940"
+},
+{
+"arrival": 1782012000.0,
+"route_id": "2",
+"train_num": "9674",
+"trip_id": "3117946"
+},
+{
+"arrival": 1782012780.0,
+"route_id": "2",
+"train_num": "9667",
+"trip_id": "3117942"
+},
+{
+"arrival": 1782014880.0,
+"route_id": "2",
+"train_num": "9671",
+"trip_id": "3117944"
+},
+{
+"arrival": 1782015600.0,
+"route_id": "2",
+"train_num": "9698",
+"trip_id": "3117949"
+}
+]
+},
+"9": {
+"Trains": [
+{
+"arrival": 1782007020.0,
+"route_id": "1",
+"train_num": "8764",
+"trip_id": "3117768"
+},
+{
+"arrival": 1782009840.0,
+"route_id": "1",
+"train_num": "8767",
+"trip_id": "3117771"
+},
+{
+"arrival": 1782010440.0,
+"route_id": "1",
+"train_num": "8768",
+"trip_id": "3117772"
+},
+{
+"arrival": 1782013440.0,
+"route_id": "1",
+"train_num": "8771",
+"trip_id": "3117774"
+},
+{
+"arrival": 1782014160.0,
+"route_id": "1",
+"train_num": "8772",
+"trip_id": "3117775"
+},
+{
+"arrival": 1782016860.0,
+"route_id": "1",
+"train_num": "8797",
+"trip_id": "3118425"
+}
+]
+},
+"90": {
+"Trains": [
+{
+"arrival": 1782008220.0,
+"route_id": "2",
+"train_num": "9670",
+"trip_id": "3117943"
+},
+{
+"arrival": 1782009360.0,
+"route_id": "2",
+"train_num": "9663",
+"trip_id": "3117940"
+},
+{
+"arrival": 1782011820.0,
+"route_id": "2",
+"train_num": "9674",
+"trip_id": "3117946"
+},
+{
+"arrival": 1782012960.0,
+"route_id": "2",
+"train_num": "9667",
+"trip_id": "3117942"
+},
+{
+"arrival": 1782015060.0,
+"route_id": "2",
+"train_num": "9671",
+"trip_id": "3117944"
+},
+{
+"arrival": 1782015420.0,
+"route_id": "2",
+"train_num": "9698",
+"trip_id": "3117949"
+}
+]
+},
+"91": {
+"Trains": [
+{
+"arrival": 1782007920.0,
+"route_id": "2",
+"train_num": "9670",
+"trip_id": "3117943"
+},
+{
+"arrival": 1782009720.0,
+"route_id": "2",
+"train_num": "9663",
+"trip_id": "3117940"
+},
+{
+"arrival": 1782011520.0,
+"route_id": "2",
+"train_num": "9674",
+"trip_id": "3117946"
+},
+{
+"arrival": 1782013320.0,
+"route_id": "2",
+"train_num": "9667",
+"trip_id": "3117942"
+},
+{
+"arrival": 1782015120.0,
+"route_id": "2",
+"train_num": "9698",
+"trip_id": "3117949"
+},
+{
+"arrival": 1782015420.0,
+"route_id": "2",
+"train_num": "9671",
+"trip_id": "3117944"
+}
+]
+},
+"94": {
+"Trains": [
+{
+"arrival": 1782007740.0,
+"route_id": "2",
+"train_num": "9670",
+"trip_id": "3117943"
+},
+{
+"arrival": 1782010500.0,
+"route_id": "2",
+"train_num": "9974",
+"trip_id": "3117968"
+},
+{
+"arrival": 1782010620.0,
+"route_id": "2",
+"train_num": "9663",
+"trip_id": "3117940"
+},
+{
+"arrival": 1782011100.0,
+"route_id": "2",
+"train_num": "9963",
+"trip_id": "3117966"
+},
+{
+"arrival": 1782011340.0,
+"route_id": "2",
+"train_num": "9674",
+"trip_id": "3117946"
+},
+{
+"arrival": 1782014160.0,
+"route_id": "2",
+"train_num": "9667",
+"trip_id": "3117942"
+}
+]
+},
+"97": {
+"Trains": [
+{
+"arrival": 1782009840.0,
+"route_id": "2",
+"train_num": "9974",
+"trip_id": "3117968"
+},
+{
+"arrival": 1782011580.0,
+"route_id": "2",
+"train_num": "9963",
+"trip_id": "3117966"
+},
+{
+"arrival": 1782021540.0,
+"route_id": "2",
+"train_num": "9995",
+"trip_id": "3118605"
+}
+]
+},
+"98": {
+"Trains": [
+{
+"arrival": 1782009480.0,
+"route_id": "2",
+"train_num": "9974",
+"trip_id": "3117968"
+},
+{
+"arrival": 1782011940.0,
+"route_id": "2",
+"train_num": "9963",
+"trip_id": "3117966"
+},
+{
+"arrival": 1782021900.0,
+"route_id": "2",
+"train_num": "9995",
+"trip_id": "3118605"
+}
+]
+}
+},
+"now": 1782006692.0,
+"system": "MNR"
+}

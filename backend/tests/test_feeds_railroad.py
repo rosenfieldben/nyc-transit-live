@@ -155,6 +155,72 @@ def test_every_placed_train_is_well_formed(system):
         assert t["stop_name"] is not None
 
 
+# ---------------- arrivals golden ----------------
+
+# Regenerate the arrivals golden after an INTENTIONAL decode change, from backend/
+# (network-free, using the committed stops.json):
+#
+#     python - <<'PY'
+#     import json
+#     from pathlib import Path
+#     from google.transit import gtfs_realtime_pb2 as pb
+#     import feeds
+#     FIX = Path("tests/fixtures")
+#     for system in ("LIRR", "MNR"):
+#         key = system.lower()
+#         raw = (FIX / f"railroad_{key}.pb").read_bytes()
+#         stops = json.loads((FIX / f"railroad_{key}_stops.json").read_text())
+#         feed = pb.FeedMessage(); feed.ParseFromString(raw)
+#         now = float(feed.header.timestamp)
+#         _placed, arrivals = feeds._decode_railroad_feed(raw, system, stops, now)
+#         (FIX / f"railroad_{key}_arrivals_expected.json").write_text(
+#             json.dumps({"now": now, "system": system, "arrivals": arrivals},
+#                        sort_keys=True, indent=0))
+#     PY
+
+
+def _load_arrivals(system: str):
+    key = system.lower()
+    raw = (FIXTURES / f"railroad_{key}.pb").read_bytes()
+    stops = json.loads((FIXTURES / f"railroad_{key}_stops.json").read_text())
+    expected = json.loads((FIXTURES / f"railroad_{key}_arrivals_expected.json").read_text())
+    return raw, stops, expected
+
+
+@pytest.mark.parametrize("system", SYSTEMS)
+def test_arrivals_feed_decodes_to_golden_output(system):
+    raw, stops, expected = _load_arrivals(system)
+    _placed, arrivals = feeds._decode_railroad_feed(raw, expected["system"], stops, expected["now"])
+    assert arrivals == expected["arrivals"]
+
+
+def test_arrivals_golden_is_nontrivial():
+    # Guard the guard: an empty index would make the equality test vacuous. Both
+    # systems index arrivals at well over 50 stations in the captured feeds.
+    assert len(_load_arrivals("LIRR")[2]["arrivals"]) > 50
+    assert len(_load_arrivals("MNR")[2]["arrivals"]) > 50
+
+
+@pytest.mark.parametrize("system", SYSTEMS)
+def test_every_golden_arrival_is_well_formed(system):
+    _, stops, expected = _load_arrivals(system)
+    now = expected["now"]
+    # The bucket asymmetry at scale: LIRR carries direction_id so it can use all
+    # three buckets; MNR omits it, so every MNR arrival is in "Trains".
+    valid_buckets = {"Outbound", "Inbound", "Trains"} if system == "LIRR" else {"Trains"}
+    for stop_id, buckets in expected["arrivals"].items():
+        assert stop_id in stops  # resolvable station
+        for bucket, arrs in buckets.items():
+            assert bucket in valid_buckets
+            assert arrs  # the decode never stores an empty bucket
+            assert len(arrs) <= feeds.ARRIVALS_PER_DIRECTION  # capped
+            times = [a["arrival"] for a in arrs]
+            assert times == sorted(times)  # soonest first
+            for a in arrs:
+                assert set(a) == {"route_id", "trip_id", "arrival", "train_num"}
+                assert a["arrival"] >= now - 60  # just-passed grace floor
+
+
 # ---------------- synthetic: extraction rules ----------------
 
 
@@ -273,7 +339,7 @@ def _raw(system):
 @pytest.mark.anyio
 async def test_fetch_timestamp_uses_lirr_header_only():
     client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": _raw("MNR")})
-    _, feed_ts, _ = await feeds.fetch_railroad_trains(client, {})
+    _, _, feed_ts, _ = await feeds.fetch_railroad_trains(client, {})
     lirr_ts = _load("LIRR")[1]["now"]
     mnr_ts = _load("MNR")[1]["now"]
     # Only LIRR (freshness-authoritative) drives feed_timestamp; MNR's header is
@@ -287,7 +353,7 @@ async def test_fetch_timestamp_none_when_only_untrusted_feed_succeeds():
     # LIRR (the only trusted system) fails; MNR succeeds but contributes no
     # timestamp, so feed_timestamp falls back to None / the poll-age signal.
     client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": _raw("MNR")}, down=["LIRR"])
-    trains, feed_ts, failed = await feeds.fetch_railroad_trains(client, {})
+    trains, _, feed_ts, failed = await feeds.fetch_railroad_trains(client, {})
     assert failed == ["LIRR"]
     assert trains and all(t["system"] == "MNR" for t in trains)
     assert feed_ts is None
@@ -296,7 +362,7 @@ async def test_fetch_timestamp_none_when_only_untrusted_feed_succeeds():
 @pytest.mark.anyio
 async def test_fetch_dedups_duplicate_trip_ids_on_the_live_path():
     client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": _raw("MNR")})
-    trains, _, failed = await feeds.fetch_railroad_trains(client, {})
+    trains, _, _, failed = await feeds.fetch_railroad_trains(client, {})
     assert failed == []
     # The MNR feed repeats trains across separate vehicle entities; the live path
     # collapses them to one marker per trip_id (49 decoded -> 33 unique), which
@@ -311,7 +377,7 @@ async def test_fetch_dedups_duplicate_trip_ids_on_the_live_path():
 @pytest.mark.anyio
 async def test_fetch_skips_a_failed_feed_and_reports_it():
     client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": _raw("MNR")}, down=["MNR"])
-    trains, _, failed = await feeds.fetch_railroad_trains(client, {})
+    trains, _, _, failed = await feeds.fetch_railroad_trains(client, {})
     assert failed == ["MNR"]
     assert trains and all(t["system"] == "LIRR" for t in trains)
 
@@ -320,7 +386,7 @@ async def test_fetch_skips_a_failed_feed_and_reports_it():
 async def test_fetch_skips_an_undecodable_feed():
     # MNR returns a truncated length-delimited field -> DecodeError, skipped.
     client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": b"\x0a\xff"})
-    trains, _, failed = await feeds.fetch_railroad_trains(client, {})
+    trains, _, _, failed = await feeds.fetch_railroad_trains(client, {})
     assert failed == ["MNR"]
     assert trains and all(t["system"] == "LIRR" for t in trains)
 
@@ -494,6 +560,130 @@ def test_started_vs_not_yet_started_via_start_time():
     assert ids == {"RUNNING"}  # the 23:30 start is > now + grace, so not-yet-started
 
 
+# ---------------- synthetic: arrivals extraction ----------------
+
+
+def _decode(feed, system="LIRR", stops=SYN_STOPS, now=NOW):
+    """(placed, arrivals) from the combined decoder; sets the required header."""
+    feed.header.gtfs_realtime_version = "2.0"
+    return feeds._decode_railroad_feed(feed.SerializeToString(), system, stops, now)
+
+
+def test_gps_train_in_arrivals_but_excluded_from_placement():
+    # A positioned (GPS) trip: the placement half skips it, but its trip_update
+    # stops must still be indexed as arrivals (a GPS train still stops at stations).
+    feed = pb.FeedMessage()
+    ent = _tu_entity(feed, "T1", stops=[("A", NOW + 120), ("B", NOW + 240)])
+    ent.vehicle.trip.trip_id = "T1"
+    ent.vehicle.position.latitude = 40.8
+    ent.vehicle.position.longitude = -73.5
+    placed, arrivals = _decode(feed, system="MNR")
+    assert placed == []  # positioned -> not placed
+    assert arrivals["A"]["Trains"] and arrivals["B"]["Trains"]  # but still in arrivals
+
+
+def test_lirr_arrivals_bucketed_by_direction_id_with_trains_fallback():
+    feed = pb.FeedMessage()
+    _tu_entity(feed, "OUT", direction_id=0, stops=[("A", NOW + 120)])
+    _tu_entity(feed, "IN", direction_id=1, stops=[("A", NOW + 180)])
+    _tu_entity(feed, "NODIR", stops=[("A", NOW + 240)])  # LIRR trip missing direction_id
+    _, arrivals = _decode(feed, system="LIRR")
+    buckets = {k: [a["trip_id"] for a in v] for k, v in arrivals["A"].items()}
+    assert buckets == {"Outbound": ["OUT"], "Inbound": ["IN"], "Trains": ["NODIR"]}
+
+
+def test_mnr_arrivals_all_in_single_trains_bucket():
+    # MNR omits direction_id, so every arrival lands in "Trains", time-sorted.
+    feed = pb.FeedMessage()
+    _tu_entity(feed, "M1", stops=[("A", NOW + 180)])
+    _tu_entity(feed, "M2", stops=[("A", NOW + 60)])
+    _, arrivals = _decode(feed, system="MNR")
+    assert set(arrivals["A"]) == {"Trains"}
+    assert [a["trip_id"] for a in arrivals["A"]["Trains"]] == ["M2", "M1"]  # sorted by time
+
+
+def test_canceled_trip_dropped_from_arrivals():
+    feed = pb.FeedMessage()
+    _tu_entity(feed, "T1", direction_id=0, stops=[("A", NOW + 120)], canceled=True)
+    _, arrivals = _decode(feed, system="LIRR")
+    assert arrivals == {}  # canceled trip contributes to neither placement nor arrivals
+
+
+def test_skipped_and_no_data_stops_dropped_from_arrivals():
+    feed = pb.FeedMessage()
+    _tu_entity(
+        feed,
+        "T1",
+        direction_id=0,
+        stops=[("A", NOW + 60, _SKIPPED), ("B", NOW + 90, _NO_DATA), ("C", NOW + 120)],
+    )
+    _, arrivals = _decode(feed, system="LIRR")
+    assert set(arrivals) == {"C"}  # only the real-prediction stop is indexed
+    assert arrivals["C"]["Outbound"][0]["arrival"] == NOW + 120
+
+
+def test_arrivals_just_passed_grace_boundary():
+    # Same now - 60 grace as placement: a stop at now-60 is kept, now-61 dropped.
+    feed = pb.FeedMessage()
+    _tu_entity(
+        feed, "T1", direction_id=1, stops=[("A", NOW - 61), ("B", NOW - 60), ("C", NOW + 30)]
+    )
+    _, arrivals = _decode(feed, system="LIRR")
+    assert set(arrivals) == {"B", "C"}  # A is past the grace floor
+
+
+def test_arrivals_sorted_and_capped_per_bucket():
+    feed = pb.FeedMessage()
+    # Eight inbound trains at A, out of order; the bucket keeps the six soonest.
+    for i, dt in enumerate([300, 60, 500, 120, 240, 30, 420, 180]):
+        _tu_entity(feed, f"T{i}", direction_id=1, stops=[("A", NOW + dt)])
+    _, arrivals = _decode(feed, system="LIRR")
+    inbound = arrivals["A"]["Inbound"]
+    assert len(inbound) == feeds.ARRIVALS_PER_DIRECTION  # capped at 6
+    times = [a["arrival"] for a in inbound]
+    assert times == sorted(times)  # soonest first
+    assert times[0] == NOW + 30 and times[-1] == NOW + 300  # kept the six soonest
+
+
+def test_lirr_arrivals_train_num_joins_from_positioned_vehicle():
+    # LIRR's trip_update-only entity has no vehicle; its train number is joined
+    # from the separate positioned vehicle entity sharing the trip_id.
+    feed = pb.FeedMessage()
+    _tu_entity(feed, "T1", direction_id=1, stops=[("A", NOW + 120)])
+    veh = feed.entity.add()
+    veh.id = "v1"
+    veh.vehicle.trip.trip_id = "T1"
+    veh.vehicle.vehicle.label = "704"
+    veh.vehicle.position.latitude = 40.8
+    veh.vehicle.position.longitude = -73.5
+    placed, arrivals = _decode(feed, system="LIRR")
+    assert placed == []  # the GPS train is not placed
+    assert arrivals["A"]["Inbound"][0]["train_num"] == "704"  # but its arrival carries the number
+
+
+def test_mnr_arrivals_train_num_from_combined_entity():
+    # MNR's combined entity carries the label inline (read the same way placement
+    # reads it), so its arrivals carry the train number without a join.
+    feed = pb.FeedMessage()
+    ent = _tu_entity(feed, "3114306", stops=[("A", NOW + 120)])
+    ent.vehicle.trip.trip_id = "1797"
+    ent.vehicle.vehicle.label = "1797"
+    ent.vehicle.position.latitude = 40.8
+    ent.vehicle.position.longitude = -73.5
+    placed, arrivals = _decode(feed, system="MNR")
+    assert placed == []  # positioned -> not placed
+    assert arrivals["A"]["Trains"][0]["train_num"] == "1797"
+
+
+def test_arrivals_train_num_none_when_no_vehicle_entity():
+    # A placed (position-less) LIRR trip with no vehicle entity anywhere: arrivals
+    # carry a null train number.
+    feed = pb.FeedMessage()
+    _tu_entity(feed, "T1", direction_id=0, stops=[("A", NOW + 120)])
+    _, arrivals = _decode(feed, system="LIRR")
+    assert arrivals["A"]["Outbound"][0]["train_num"] is None
+
+
 # ---------------- fetch_railroad_trains: merge + composite-key dedup ----------------
 
 
@@ -520,7 +710,7 @@ async def test_fetch_merges_gps_and_placed_trains():
     _tu_entity(f, "PLACED1", route_id="6", stops=[("A", time.time() + 600)])
     client = _FakeRailClient({"LIRR": f.SerializeToString(), "MNR": _raw("MNR")}, down=["MNR"])
     stops = {"LIRR": {"A": {"name": "A", "lat": 40.81, "lon": -73.51}}, "MNR": None}
-    trains, _, failed = await feeds.fetch_railroad_trains(client, stops)
+    trains, _, _, failed = await feeds.fetch_railroad_trains(client, stops)
     assert failed == ["MNR"]
     by_id = {t["trip_id"]: t for t in trains}
     # GPS coords come through the protobuf float32 position, so compare approx.
@@ -541,7 +731,7 @@ async def test_fetch_dedups_by_system_trip_id_composite_key():
             "MNR": _gps_feed("SHARED").SerializeToString(),
         }
     )
-    trains, _, failed = await feeds.fetch_railroad_trains(client, {})
+    trains, _, _, failed = await feeds.fetch_railroad_trains(client, {})
     assert failed == []
     assert {(t["system"], t["trip_id"]) for t in trains} == {("LIRR", "SHARED"), ("MNR", "SHARED")}
 

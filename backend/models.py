@@ -100,10 +100,25 @@ class SubwayStop(BaseModel):
     lon: float
 
 
+class RailroadStop(BaseModel):
+    system: str  # "LIRR" or "MNR" (stop_id namespaces are independent)
+    id: str
+    name: str | None
+    lat: float
+    lon: float
+
+
 class Arrival(BaseModel):
     route_id: str | None
     trip_id: str
     arrival: float  # absolute epoch seconds
+
+
+class RailroadArrival(BaseModel):
+    route_id: str | None
+    trip_id: str
+    arrival: float  # absolute epoch seconds
+    train_num: str | None  # rider-facing train number, null when no vehicle joins
 
 
 class StationArrivals(BaseModel):
@@ -112,6 +127,17 @@ class StationArrivals(BaseModel):
     station_name: str | None
     # Keyed by "Northbound" / "Southbound"; both keys always present.
     directions: dict[str, list[Arrival]]
+
+
+class RailroadStationArrivals(BaseModel):
+    fetched_at: float | None
+    system: str
+    stop_id: str
+    stop_name: str | None
+    # Bucket keys are asymmetric and only present when they have trains: LIRR uses
+    # "Outbound"/"Inbound" (from direction_id), MNR and direction-less LIRR trips
+    # use "Trains". An empty dict means nothing upcoming.
+    directions: dict[str, list[RailroadArrival]]
 
 
 class FeedError(BaseModel):

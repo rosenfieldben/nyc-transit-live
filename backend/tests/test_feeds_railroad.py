@@ -752,14 +752,53 @@ def test_inference_applies_to_direction_less_lirr_trip():
     assert set(arrivals["FAR"]) == {"Inbound"}
 
 
-def test_placement_direction_stays_null_despite_arrivals_inference():
-    # The inference is arrivals-only: a placeable MNR trip whose arrivals infer a
-    # direction must STILL be placed with direction=None (placement byte-identity).
+# ---------------- Phase 11d: placed direction from the inference ----------------
+
+
+def test_placed_mnr_train_carries_inferred_direction():
+    # A placeable MNR trip (no direction_id) whose stops progress FAR -> NEAR is
+    # now PLACED with the inferred direction (11d), not a null.
     feed = pb.FeedMessage()
     _tu_entity(feed, "M1", stops=[("FAR", NOW + 60), ("NEAR", NOW + 300)])
+    placed, _ = _decode(feed, system="MNR", stops=INF_STOPS)
+    assert len(placed) == 1 and placed[0]["direction"] == "Inbound"
+
+
+def test_placed_and_arrivals_direction_agree_for_the_same_trip():
+    # The single per-trip direction feeds BOTH: the placed train's direction and
+    # the arrivals bucket its stops land in must be the same inferred value.
+    feed = pb.FeedMessage()
+    _tu_entity(feed, "M1", stops=[("NEAR", NOW + 60), ("FAR", NOW + 300)])  # away -> Outbound
     placed, arrivals = _decode(feed, system="MNR", stops=INF_STOPS)
-    assert set(arrivals["FAR"]) == {"Inbound"}  # arrivals did infer a direction
-    assert len(placed) == 1 and placed[0]["direction"] is None  # placement untouched
+    assert len(placed) == 1 and placed[0]["direction"] == "Outbound"
+    assert set(arrivals["NEAR"]) == {"Outbound"} and set(arrivals["FAR"]) == {"Outbound"}
+
+
+def test_placed_direction_null_when_inference_is_ambiguous():
+    # Under-epsilon net move (FAR -> MID): the arrivals bucket is the "Trains"
+    # residual, but the placed train's direction stays null (the residual differs
+    # by half). A single-resolvable-stop trip behaves the same.
+    feed = pb.FeedMessage()
+    _tu_entity(feed, "M1", stops=[("FAR", NOW + 60), ("MID", NOW + 120)])
+    placed, arrivals = _decode(feed, system="MNR", stops=INF_STOPS)
+    assert set(arrivals["FAR"]) == {"Trains"}
+    assert len(placed) == 1 and placed[0]["direction"] is None
+
+    single = pb.FeedMessage()
+    _tu_entity(single, "M2", stops=[("NEAR", NOW + 60)])
+    placed2, arrivals2 = _decode(single, system="MNR", stops=INF_STOPS)
+    assert set(arrivals2["NEAR"]) == {"Trains"}
+    assert len(placed2) == 1 and placed2[0]["direction"] is None
+
+
+def test_placed_lirr_direction_id_wins_over_inference():
+    # direction_id=1 (Inbound) but a NEAR -> FAR progression that WOULD infer
+    # Outbound: the placed train keeps the reported direction, not the inference.
+    feed = pb.FeedMessage()
+    _tu_entity(feed, "L1", direction_id=1, stops=[("NEAR", NOW + 60), ("FAR", NOW + 300)])
+    placed, arrivals = _decode(feed, system="LIRR", stops=INF_STOPS)
+    assert len(placed) == 1 and placed[0]["direction"] == "Inbound"
+    assert set(arrivals["NEAR"]) == {"Inbound"}  # bucket agrees, both from direction_id
 
 
 # ---------------- fetch_railroad_trains: merge + composite-key dedup ----------------

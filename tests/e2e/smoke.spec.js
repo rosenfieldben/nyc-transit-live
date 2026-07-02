@@ -219,3 +219,42 @@ test("7. bus route: clicking a bus draws the line and banner, clear removes both
   await expect(banner).toBeHidden();
   expect(await page.evaluate(() => busRouteLayer.getLayers().length)).toBe(0);
 });
+
+test("8. AirTrain: static branches, scheduled popup (not live), toggle", async ({ page }) => {
+  await boot(page);
+  await waitForReady(page);
+  // AirTrain loads independently of waitForReady, so wait for its own layers.
+  await page.waitForFunction(
+    () =>
+      typeof airtrainStationLayer !== "undefined" &&
+      airtrainStationLayer.getLayers().length === 3 &&
+      airtrainRouteLinesLayer.getLayers().length === 2,
+  );
+  await expect(page.locator(".airtrain-marker")).toHaveCount(3);
+
+  // Open Federal Circle (fixture order A, B, C -> index 1), served by BOTH branches.
+  // The frozen clock (12:00Z == 08:00 America/New_York in July) selects the 7-min band.
+  await page.evaluate(() => airtrainStationLayer.getLayers()[1].openPopup());
+  await expect(popup(page)).toContainText("Federal Circle");
+  await expect(popup(page)).toContainText("no live tracking");
+  await expect(popup(page)).toContainText("Jamaica: every ~7 min");
+  await expect(popup(page)).toContainText("Howard Beach: every ~7 min");
+  await expect(popup(page)).toContainText("(scheduled)");
+
+  // It is a PLAIN popup, not the live-arrivals component: the shared countdown
+  // globals stay untouched and none of the live-arrivals markup is used.
+  const probe = await page.evaluate(() => ({
+    stationTimer,
+    openStation,
+    hasArrBadge: (document.querySelector(".leaflet-popup-content")?.innerHTML || "").includes("arr-badge"),
+  }));
+  expect(probe).toEqual({ stationTimer: null, openStation: null, hasArrBadge: false });
+
+  // Toggle hides then restores the AirTrain layers (square markers + route lines).
+  await page.locator("#toggle-airtrain").uncheck();
+  await expect(page.locator(".airtrain-marker")).toHaveCount(0);
+  expect(await page.evaluate(() => map.hasLayer(airtrainRouteLinesLayer))).toBe(false);
+  await page.locator("#toggle-airtrain").check();
+  await expect(page.locator(".airtrain-marker")).toHaveCount(3);
+  expect(await page.evaluate(() => map.hasLayer(airtrainRouteLinesLayer))).toBe(true);
+});

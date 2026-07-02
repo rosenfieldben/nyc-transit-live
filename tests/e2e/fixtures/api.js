@@ -147,6 +147,30 @@ const busRoute = () => ({
   directions: [[[40.72, -73.98], [40.73, -73.98], [40.74, -73.97]]],
 });
 
+// AirTrain JFK static layer (no realtime feed). Matches AirTrainData: {stations,
+// routes}, each route with an ordered polyline, the station ids it serves, and
+// non-overlapping scheduled headway bands. At the frozen clock (12:00Z is 08:00
+// America/New_York in July), the 06:00-11:00 band applies, so popups read "7 min".
+const AIRTRAIN_BANDS = [
+  { start: "00:00", end: "06:00", headway_min: 15 },
+  { start: "06:00", end: "11:00", headway_min: 7 },
+  { start: "11:00", end: "22:00", headway_min: 4 },
+  { start: "22:00", end: "24:00", headway_min: 7 },
+];
+
+const airtrain = () => ({
+  stations: [
+    { id: "A", name: "Terminal Alpha", lat: 40.645, lon: -73.785 },
+    { id: "B", name: "Federal Circle", lat: 40.66, lon: -73.803 },
+    { id: "C", name: "Jamaica", lat: 40.7, lon: -73.808 },
+  ],
+  routes: [
+    // Federal Circle (B) is served by BOTH branches; Jamaica (C) only by R1.
+    { id: "R1", name: "Jamaica", polyline: [[40.7, -73.808], [40.66, -73.803], [40.645, -73.785]], stations: ["C", "B", "A"], headways: AIRTRAIN_BANDS },
+    { id: "R2", name: "Howard Beach", polyline: [[40.66, -73.803], [40.645, -73.785]], stations: ["B", "A"], headways: AIRTRAIN_BANDS },
+  ],
+});
+
 module.exports = {
   FROZEN_MS,
   FROZEN_S,
@@ -161,4 +185,5 @@ module.exports = {
   subwayArrivals,
   railroadArrivals,
   busRoute,
+  airtrain,
 };

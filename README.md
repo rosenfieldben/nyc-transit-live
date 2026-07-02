@@ -118,7 +118,10 @@ nyc-transit-live/
   position at their true lat/lon; trains without a position are omitted (station
   placement from the trip updates is a planned phase 2).
 - **Static GTFS** — stop coordinates and route shapes, downloaded into
-  `data/gtfs_static/` and loaded into memory at startup.
+  `data/gtfs_static/` and loaded into memory by background warmup tasks (subway
+  and railroad, each independent), off the startup critical path. A group's load
+  retries automatically on failure, so a degraded network at boot self-heals
+  rather than stranding the map until the next deploy.
 
 All feeds are free to use. Data is GTFS-Realtime (protobuf), decoded server-side.
 
@@ -132,21 +135,36 @@ routes that another worker indexed fine. Route geometry itself is read from
 the shared on-disk cache, so data wouldn't corrupt — but going multi-worker
 would need a file lock around the index build (so one worker builds while
 the others wait) and workers re-reading the manifest instead of trusting
-their own build result.
+their own build result. The static-GTFS warmups (subway, railroad) keep their
+loaded tables and their loading/ready/failed status in per-process memory too,
+so the same single-worker assumption applies; the on-disk zips are shared and
+downloaded last-writer-wins.
 
 ## Monitoring
 
 `GET /api/status` returns an always-200 operational snapshot: per-feed cache
 freshness — both `age_s` (since this server last polled) and `feed_age_s` (how
 stale the feed's own content was at poll time) — the last recorded poll error
-if any, the bus route index state, and the static subway GTFS age.
+if any, the bus route index state, the static subway GTFS age, and each static
+group's warmup state (`subway_static` / `railroad_static`: loading, ready, or
+failed-and-retrying).
 
 `GET /healthz` is the readiness probe (Railway's healthcheck points here). It
-returns 503 when the app can't serve fresh data: no feed is fresh, or the bus
-route index build has failed. It stays healthy as long as **at least one** feed
-is fresh, so a misconfigured key (which only stops the bus feed) doesn't take
-down an otherwise-working subway map, and a still-building index during cold
-start doesn't flap it.
+returns 503 when the app can't serve fresh data: no feed is fresh, the bus route
+index build has failed, or the subway static load has failed (and is retrying).
+It stays healthy as long as **at least one** feed is fresh, so a misconfigured
+key (which only stops the bus feed) doesn't take down an otherwise-working subway
+map. A still-**loading** static group or bus index during cold start does not
+flap it (the load runs in the background, off the healthcheck critical path);
+only the failed states, which retry, degrade it until a retry succeeds. Railroad
+static failure is deliberately lenient (that system degrades to GPS-only) rather
+than a healthz reason.
+
+While a static group is still loading, its decorative endpoints
+(`/api/subway-stops`, `/api/subway-routes`, `/api/railroad-stops`,
+`/api/railroad-routes`) return 503 rather than an empty list, so a browser never
+caches an empty payload for the hour-long `max-age` during a cold start; a failed
+group serves `[]` with `no-cache` so a later retry is picked up.
 
 The feed envelopes (`/api/buses`, `/api/subways`, `/api/railroads`) carry
 `fetched_at` (this server's poll time) and `feed_timestamp` (the feed's own

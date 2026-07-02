@@ -245,6 +245,8 @@ def test_status_model_validates_handler_shape():
             },
             "bus_route_index": {"status": "ready", "partial": False},
             "static_subway_gtfs": None,
+            "subway_static": "ready",
+            "railroad_static": "loading",
             "subway_feeds": {"total": 8, "ok": 7, "failed": ["BDFM"]},
             "railroad_feeds": {"total": 2, "ok": 1, "failed": ["MNR"]},
         }

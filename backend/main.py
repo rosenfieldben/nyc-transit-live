@@ -142,11 +142,12 @@ async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
     entry = app.state.feed_cache["subways"]
     stops = app.state.subway_stops
     if not stops:
+        # Static GTFS not ready yet (still loading, or a failed attempt retrying in
+        # the background). No restart needed: the warmup retries automatically.
         _note_failure(
             entry,
             503,
-            "Static subway GTFS could not be loaded at startup; "
-            "restart the server to retry the download.",
+            "Static subway GTFS is still loading; it will retry automatically. Try again shortly.",
         )
         return
     total_feeds = len(SUBWAY_FEED_URLS)
@@ -265,49 +266,100 @@ async def _poll_feeds(app: FastAPI) -> None:
             await asyncio.sleep(POLL_INTERVAL_S)
 
 
+# Static GTFS loads in the background, off the startup critical path (the durable
+# version of the old _DOWNLOAD_DEADLINE_S stopgap). Each group runs its own warmup
+# task with a "loading" -> "ready" | "failed" state machine: on failure it sleeps
+# STATIC_RETRY_S and retries until it succeeds or the app shuts down, so a degraded
+# network at boot self-heals instead of stranding the map until the next deploy.
+STATIC_RETRY_S = 300  # module-level so tests can shorten it
+
+
+def _set_static_status(
+    app: FastAPI, field: str, status: str, exc: BaseException | None = None
+) -> None:
+    """Set a static group's status, logging only on a TRANSITION so a long retry
+    loop (or the per-poll checks that read this) never spams the log. `field` is
+    "subway_static_status" or "railroad_static_status"."""
+    if getattr(app.state, field, None) == status:
+        return
+    setattr(app.state, field, status)
+    if status == "failed":
+        logger.warning("%s failed to load (%s); retrying in %ds", field, exc, STATIC_RETRY_S)
+    elif status == "ready":
+        logger.info("%s ready", field)
+
+
+async def _warm_subway_static(app: FastAPI) -> None:
+    """Load the subway static GTFS (stops, route lines, station markers) in the
+    background, retrying every STATIC_RETRY_S until it succeeds. Fills the same
+    app.state fields the handlers read, then flips the group to ready. A failed
+    attempt leaves stops None, so the poller keeps noting a warming 503 and
+    /healthz reports the failure until a retry succeeds."""
+    while True:
+        try:
+            stops = await load_subway_stops()
+            routes = load_subway_route_shapes()  # reuse the zip the stops load ensured
+            stations = load_subway_stations()
+        except Exception as exc:
+            _set_static_status(app, "subway_static_status", "failed", exc)
+            await asyncio.sleep(STATIC_RETRY_S)
+            continue
+        app.state.subway_stops = stops
+        app.state.subway_routes = routes
+        app.state.subway_stations = stations
+        _set_static_status(app, "subway_static_status", "ready")
+        return
+
+
+async def _warm_railroad_static(app: FastAPI) -> None:
+    """Load the railroad static GTFS in the background, retrying every
+    STATIC_RETRY_S. load_railroad_static is lenient per system (a download or
+    parse failure for one system yields None for it, GPS-only, without raising),
+    so the group reaches ready once the attempt COMPLETES even if a system is
+    None; only an unexpected raise (never per-system None) drives the failed and
+    retry path. Fills the derived stops and route geometry the handlers read."""
+    while True:
+        try:
+            data = await railroad_static.load_railroad_static()
+        except Exception as exc:
+            _set_static_status(app, "railroad_static_status", "failed", exc)
+            await asyncio.sleep(STATIC_RETRY_S)
+            continue
+        app.state.railroad_static = data
+        # Derived so the placement path (_refresh_railroads) reads stops unchanged;
+        # a None system stays None (GPS-only), never a crash.
+        app.state.railroad_stops = {
+            system: (d["stops"] if d else None) for system, d in data.items()
+        }
+        app.state.railroad_routes = {
+            system: (
+                railroad_static.build_railroad_route_shapes(d["trips"], d["shapes"], d["routes"])
+                if d
+                else []
+            )
+            for system, d in data.items()
+        }
+        _set_static_status(app, "railroad_static_status", "ready")
+        return
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Load the static GTFS station lookup once at startup, not per request.
-    # If it can't be loaded, keep serving buses; /api/subways returns 503.
-    try:
-        app.state.subway_stops = await load_subway_stops()
-        # Route lines and station markers reuse the zip the stops loader just
-        # ensured exists.
-        app.state.subway_routes = load_subway_route_shapes()
-        app.state.subway_stations = load_subway_stations()
-    except Exception as exc:
-        logger.error("Could not load static subway GTFS (%s); /api/subways disabled", exc)
-        app.state.subway_stops = None
-        app.state.subway_routes = []
-        app.state.subway_stations = {}
-    # Railroad static GTFS, per system, for station placement of position-less
-    # trains. Each system loads independently and leniently: a None for a system
-    # (download/parse failed) just means that system gets GPS trains only, never
-    # a crash. The full per-system {stops, trips, shapes} is kept: stops drive
-    # placement now, and trips/shapes are the geometry the gliding increment builds.
-    try:
-        railroad_static_data = await railroad_static.load_railroad_static()
-    except Exception as exc:
-        logger.error("Could not load railroad static GTFS (%s); placement disabled", exc)
-        railroad_static_data = {}
-    app.state.railroad_static = railroad_static_data  # {system: {stops, trips, shapes} | None}
-    # Derived so the placement path (_refresh_railroads) reads stops unchanged.
-    app.state.railroad_stops = {
-        system: (data["stops"] if data else None) for system, data in railroad_static_data.items()
-    }
-    # Per-system railroad route geometry, for drawing and for the gliding slice,
-    # built from the trips/shapes kept in railroad_static (a pure in-memory
-    # transform, no extra download). None static for a system -> no routes for it.
-    app.state.railroad_routes = {
-        system: (
-            railroad_static.build_railroad_route_shapes(
-                data["trips"], data["shapes"], data["routes"]
-            )
-            if data
-            else []
-        )
-        for system, data in railroad_static_data.items()
-    }
+    # Static GTFS loads in the BACKGROUND (see _warm_subway_static /
+    # _warm_railroad_static), so startup returns immediately and never spends
+    # Railway's healthcheck window on a download. State starts empty and each
+    # group starts "loading"; the warmup tasks fill these fields and flip to
+    # "ready" (or "failed" and retry). Until subway static is ready the poller
+    # notes a warming 503 and the static endpoints report loading; railroad
+    # serves GPS-only trains until its stops arrive.
+    app.state.subway_stops = None
+    app.state.subway_routes = []
+    app.state.subway_stations = {}
+    app.state.subway_static_status = "loading"
+    app.state.railroad_static = {}  # {system: {stops, trips, shapes, routes} | None}
+    app.state.railroad_stops = {}
+    app.state.railroad_routes = {}
+    app.state.railroad_static_status = "loading"
     app.state.feed_cache = {
         "buses": _fresh_entry(),
         "subways": _fresh_entry(),
@@ -329,6 +381,10 @@ async def lifespan(app: FastAPI):
     app.state.subway_feed_health = None
     # Same, for the railroad feeds (LIRR + MNR).
     app.state.railroad_feed_health = None
+    # Background warmups: static GTFS (each group retries on failure) and the bus
+    # route index. Startup never waits on any of them.
+    app.state.subway_static_task = asyncio.create_task(_warm_subway_static(app))
+    app.state.railroad_static_task = asyncio.create_task(_warm_railroad_static(app))
     app.state.feed_poll_task = asyncio.create_task(_poll_feeds(app))
     # Bus route geometry indexes in the background — startup never waits on
     # the ~52 MB of borough GTFS zips; /api/bus-route reports until ready.
@@ -339,12 +395,20 @@ async def lifespan(app: FastAPI):
     bus_static.stop()
     app.state.bus_index_task.cancel()
     app.state.feed_poll_task.cancel()
-    # Await both so cleanup (e.g. the poller's client close) finishes before
+    # cancel() during a warmup's retry sleep raises CancelledError inside the
+    # sleep, so shutdown never waits out a mid-retry STATIC_RETRY_S.
+    app.state.subway_static_task.cancel()
+    app.state.railroad_static_task.cancel()
+    # Await all so cleanup (e.g. the poller's client close) finishes before
     # shutdown proceeds; the stop event bounds how long the build task runs.
-    with contextlib.suppress(asyncio.CancelledError):
-        await app.state.bus_index_task
-    with contextlib.suppress(asyncio.CancelledError):
-        await app.state.feed_poll_task
+    for task in (
+        app.state.bus_index_task,
+        app.state.feed_poll_task,
+        app.state.subway_static_task,
+        app.state.railroad_static_task,
+    ):
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
 
 
 app = FastAPI(title="NYC Transit Live", version="0.3.0", lifespan=lifespan)
@@ -372,6 +436,25 @@ def _serve_cached(name: str) -> dict:
     raise HTTPException(
         status_code=503, detail="Feed cache is warming up; try again in a few seconds."
     )
+
+
+def _static_endpoint_ready(status: str, response: Response, warming_detail: str) -> bool:
+    """Shared warming behavior for the static-derived (decorative) endpoints.
+
+    - loading: raise a 503 (the data is coming; do not cache anything).
+    - ready: set the long cache header and return True so the caller serves data.
+    - failed (retrying): set no-cache and return False so the caller serves [] that
+      a browser will NOT cache, so a later retry success is not masked for an hour.
+    Returning [] under a max-age here (the old behavior) was the cold-start bug:
+    a browser could cache an empty payload for the whole warmup.
+    """
+    if status == "loading":
+        raise HTTPException(status_code=503, detail=warming_detail)
+    if status == "ready":
+        response.headers["Cache-Control"] = "public, max-age=3600"
+        return True
+    response.headers["Cache-Control"] = "no-cache"  # failed: never cache the empty
+    return False
 
 
 @app.get("/api/buses", response_model=BusFeed)
@@ -411,9 +494,12 @@ async def get_bus_route(route_id: str) -> dict:
 @app.get("/api/subway-routes", response_model=list[SubwayRoute])
 async def get_subway_routes(response: Response) -> list[dict]:
     """Static subway route geometry for drawing: one entry per route with its
-    polylines as [lat, lon] point lists. Loaded once at startup, so it's safe
-    for clients to cache between page loads."""
-    response.headers["Cache-Control"] = "public, max-age=3600"
+    polylines as [lat, lon] point lists. Loaded in the background, so clients can
+    cache it between page loads once ready; 503 while the static GTFS is still
+    loading (do not cache a warming empty)."""
+    status = getattr(app.state, "subway_static_status", "loading")
+    if not _static_endpoint_ready(status, response, "Static subway GTFS is still loading."):
+        return []
     return getattr(app.state, "subway_routes", None) or []
 
 
@@ -428,8 +514,13 @@ async def get_railroad_routes(response: Response) -> list[dict]:
     KNOWN GAP: the builder drops a route with no usable geometry, so a
     geometry-less route's name never reaches the frontend. That is acceptable:
     such a route has no line to draw and no trains to place, so it is equally
-    invisible whether or not its name is known."""
-    response.headers["Cache-Control"] = "public, max-age=3600"
+    invisible whether or not its name is known.
+
+    503 while the railroad static GTFS is still loading; once ready, cacheable
+    (even if a system's static failed and its entries are absent, GPS-only)."""
+    status = getattr(app.state, "railroad_static_status", "loading")
+    if not _static_endpoint_ready(status, response, "Static railroad GTFS is still loading."):
+        return []
     by_system = getattr(app.state, "railroad_routes", None) or {}
     return [
         {
@@ -464,8 +555,11 @@ async def get_railroads() -> dict:
 @app.get("/api/subway-stops", response_model=list[SubwayStop])
 async def get_subway_stops(response: Response) -> list[dict]:
     """Subway station markers ({id, name, lat, lon}) from the static GTFS.
-    Static for the session, so clients can cache it like the route lines."""
-    response.headers["Cache-Control"] = "public, max-age=3600"
+    Cacheable for the session once ready; 503 while the static GTFS is still
+    loading (do not cache a warming empty)."""
+    status = getattr(app.state, "subway_static_status", "loading")
+    if not _static_endpoint_ready(status, response, "Static subway GTFS is still loading."):
+        return []
     stations = getattr(app.state, "subway_stations", None) or {}
     return [
         {"id": sid, "name": s["name"], "lat": s["lat"], "lon": s["lon"]}
@@ -505,10 +599,12 @@ async def get_subway_arrivals(station_id: str) -> dict:
 async def get_railroad_stops(response: Response) -> list[dict]:
     """LIRR + Metro-North station markers ({system, id, name, lat, lon}) from the
     static GTFS, keyed by system because the two stop_id namespaces are
-    independent. Static for the session, so clients can cache it. Empty list (not
-    an error) when no static loaded, and a system whose static failed to load
-    (None stops) contributes nothing."""
-    response.headers["Cache-Control"] = "public, max-age=3600"
+    independent. Cacheable for the session once ready; 503 while the railroad
+    static GTFS is still loading. A system whose static failed to load (None
+    stops) contributes nothing, GPS-only."""
+    status = getattr(app.state, "railroad_static_status", "loading")
+    if not _static_endpoint_ready(status, response, "Static railroad GTFS is still loading."):
+        return []
     by_system = getattr(app.state, "railroad_stops", None) or {}
     return [
         {"system": system, "id": sid, "name": s["name"], "lat": s["lat"], "lon": s["lon"]}
@@ -564,9 +660,9 @@ async def get_railroad_arrivals(system: str, stop_id: str) -> dict:
 
 @app.get("/api/status", response_model=StatusResponse)
 async def get_status() -> dict:
-    """Operational snapshot: per-feed cache freshness and last recorded
-    error, bus route index state, and static subway GTFS age. No secrets,
-    no filesystem paths."""
+    """Operational snapshot: per-feed cache freshness and last recorded error,
+    bus route index state, static subway GTFS age, and each static group's warmup
+    state (loading / ready / failed). No secrets, no filesystem paths."""
     now = time.time()
     feeds = {}
     for name, entry in getattr(app.state, "feed_cache", {}).items():
@@ -592,6 +688,8 @@ async def get_status() -> dict:
             "partial": bus_static.is_partial(),
         },
         "static_subway_gtfs": static_gtfs,
+        "subway_static": getattr(app.state, "subway_static_status", None),
+        "railroad_static": getattr(app.state, "railroad_static_status", None),
         "subway_feeds": getattr(app.state, "subway_feed_health", None),
         "railroad_feeds": getattr(app.state, "railroad_feed_health", None),
     }
@@ -605,10 +703,14 @@ async def healthz() -> JSONResponse:
 
     Lenient by design: ready as long as AT LEAST ONE feed has fresh data, so a
     misconfigured key (which only stops the bus feed) doesn't take down an
-    otherwise-working subway map. Degraded when no feed is fresh, or the bus
-    route index build has failed. A still-building/missing index is NOT
-    degraded, so a cold-start deploy stays healthy through the index warmup
-    (within Railway's healthcheckTimeout) instead of flapping."""
+    otherwise-working subway map. Degraded when no feed is fresh, the bus route
+    index build has failed, or the subway static load has failed (and is
+    retrying). A still-LOADING static group or bus index is NOT degraded, so a
+    cold-start deploy stays healthy through the warmup (within Railway's
+    healthcheckTimeout) instead of flapping; the failed states, which retry,
+    surface until a retry succeeds. Railroad static failure is deliberately NOT a
+    reason: a system whose static did not load degrades to GPS-only (still useful)
+    rather than taking the probe down, matching its lenient per-system loading."""
     reasons: list[str] = []
     now = time.time()
     cache = getattr(app.state, "feed_cache", {})
@@ -632,6 +734,12 @@ async def healthz() -> JSONResponse:
         reasons.append("no feed has fresh data")
     if bus_static.status() == "failed":
         reasons.append("bus route index failed to build")
+    # A failed subway static load is degraded (symmetric with the bus index), but
+    # it retries in the background, so this clears once a retry succeeds. "loading"
+    # is not degraded (cold-start warmup). Railroad static is intentionally omitted
+    # (its failure is a lenient GPS-only degradation, per the docstring).
+    if getattr(app.state, "subway_static_status", None) == "failed":
+        reasons.append("subway static GTFS failed to load")
 
     body: dict = {"status": "fail" if reasons else "pass"}
     if reasons:

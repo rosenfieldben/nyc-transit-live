@@ -47,13 +47,12 @@ RAILROAD_STATIC_ZIPS = {
 # MTA republishes it a few times a year; stop coordinates change rarely.
 MAX_AGE_DAYS = 30
 
-# Whole-transfer deadline per static zip, tighter than Railway's 300s
-# healthcheck window so the subway zip plus the (now concurrent) railroad
-# pair stay under it on a cold deploy. Stopgap: the durable fix is to move
-# static loading off the startup critical path into a background task like
-# bus_static. The MTA zips are small (S3-fast), so 120s is generous in
-# practice; the residual risk is a degraded network leaving a system on
-# GPS-only / 503 until the next deploy.
+# Whole-transfer deadline per static zip: httpx's timeout is per socket read, so
+# this bounds the WHOLE transfer, stopping a trickling response from stalling the
+# download indefinitely. The load runs in a background warmup task (main.py
+# _warm_railroad_static) that retries on failure, so this is just a per-attempt
+# ceiling, not a startup gate. The MTA zips are small (S3-fast), so 120s is
+# generous.
 _DOWNLOAD_DEADLINE_S = 120
 
 

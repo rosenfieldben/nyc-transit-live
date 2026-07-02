@@ -26,14 +26,13 @@ SUBWAY_GTFS_URL = "https://rrgtfsfeeds.s3.amazonaws.com/gtfs_subway.zip"
 # republishes it a few times a year; station coordinates change rarely.
 MAX_AGE_DAYS = 30
 
-# Whole-transfer deadline for the subway zip, tighter than Railway's 300s
-# healthcheck window so this plus the (concurrent) railroad pair stay under it
-# on a cold deploy. Stopgap: the durable fix is to move static loading off the
-# startup critical path into a background task like bus_static. The MTA zips are
-# small (S3-fast), so 120s is generous in practice; the residual risk is a
-# degraded network leaving the subway map on a 503 until the next deploy.
-# Duplicated in railroad_static rather than shared: the two modules are kept
-# intentionally separate.
+# Whole-transfer deadline for the subway zip: httpx's timeout is per socket read,
+# so this bounds the WHOLE transfer, stopping a trickling response from stalling
+# the download indefinitely. The load runs in a background warmup task (main.py
+# _warm_subway_static) that retries on failure, so this is just a per-attempt
+# ceiling, not a startup gate. The MTA zips are small (S3-fast), so 120s is
+# generous. Duplicated in railroad_static rather than shared: the two modules are
+# kept intentionally separate.
 _DOWNLOAD_DEADLINE_S = 120
 
 

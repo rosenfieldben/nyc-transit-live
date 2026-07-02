@@ -179,5 +179,9 @@ class StatusResponse(BaseModel):
     feeds: dict[str, FeedStatus]
     bus_route_index: BusIndexStatus
     static_subway_gtfs: StaticGtfsStatus | None
+    # Background static-GTFS warmup state per group: "loading" | "ready" |
+    # "failed" (None only before the lifespan sets it, e.g. a bare test app).
+    subway_static: str | None
+    railroad_static: str | None
     subway_feeds: SubwayFeedHealth | None
     railroad_feeds: RailroadFeedHealth | None

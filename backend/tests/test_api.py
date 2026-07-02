@@ -6,7 +6,9 @@ manually per test and no real MTA endpoint is ever contacted.
 
 import asyncio
 import json
+import logging
 import time
+import types
 
 import httpx
 import pytest
@@ -444,7 +446,9 @@ async def test_subway_refresh_total_failure_marks_all_feeds_failed(client, cache
 
 @pytest.fixture
 def subway_state(cache):
-    """Prime the station list and arrivals index without running the lifespan."""
+    """Prime the station list and arrivals index without running the lifespan.
+    The static group is marked ready (the warmup task would have set it)."""
+    app_module.app.state.subway_static_status = "ready"
     app_module.app.state.subway_stations = {
         "A01": {"name": "Alpha", "lat": 40.7, "lon": -74.0},
     }
@@ -509,7 +513,9 @@ async def test_subway_arrivals_rejects_malformed_station_id(client, subway_state
 
 @pytest.fixture
 def railroad_state(cache):
-    """Prime the per-system station lists and arrivals index without the lifespan."""
+    """Prime the per-system station lists and arrivals index without the lifespan.
+    The static group is marked ready (the warmup task would have set it)."""
+    app_module.app.state.railroad_static_status = "ready"
     app_module.app.state.railroad_stops = {
         "LIRR": {"12": {"name": "Jamaica", "lat": 40.7, "lon": -73.8}},
         "MNR": {"1": {"name": "Grand Central", "lat": 40.75, "lon": -73.97}},
@@ -545,6 +551,7 @@ async def test_railroad_stops_lists_stations_per_system(client, railroad_state):
 
 async def test_railroad_stops_skips_systems_without_static(client, cache):
     # A system whose static failed to load (None) contributes nothing; no crash.
+    app_module.app.state.railroad_static_status = "ready"
     app_module.app.state.railroad_stops = {
         "LIRR": {"12": {"name": "Jamaica", "lat": 40.7, "lon": -73.8}},
         "MNR": None,
@@ -741,6 +748,7 @@ async def test_static_revalidation_is_a_cheap_304(client):
 
 
 async def test_railroad_routes_endpoint_flattens_and_caches(client):
+    app_module.app.state.railroad_static_status = "ready"
     app_module.app.state.railroad_routes = {
         "LIRR": [
             {
@@ -817,38 +825,47 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
 
     app = app_module.app
     async with app_module.lifespan(app):
-        # Static load ran; cache + tasks exist.
-        assert app.state.subway_stops == {"101N": {"name": "Alpha", "lat": 40.7, "lon": -74.0}}
-        # The full per-system railroad static is kept (trips/shapes for gliding),
-        # and railroad_stops is derived from it (None for the failed system).
-        assert app.state.railroad_static["LIRR"]["trips"] == {
-            "t1": {"route_id": "5", "shape_id": "s1"}
-        }
-        assert app.state.railroad_static["LIRR"]["shapes"]["s1"] == [[40.7, -74.0], [40.71, -74.01]]
-        assert app.state.railroad_stops["LIRR"] == {
-            "1": {"name": "Aville", "lat": 40.7, "lon": -74.0}
-        }
-        assert app.state.railroad_stops["MNR"] is None
-        # The carry-forward memory is initialized empty. Asserted here, before the
-        # block below waits on the first poll, so it is still the startup value
-        # (the poll's carry_forward_prev would otherwise fill it).
+        # Immediately after entering (no await yet), the warmup tasks are created
+        # but have not run: static state is still the "loading" initial values,
+        # and the carry-forward memory is empty (the poll would fill it).
+        assert app.state.subway_static_status == "loading"
+        assert app.state.railroad_static_status == "loading"
+        assert app.state.subway_stops is None
         assert app.state.railroad_positions == {}
         assert app.state.subway_positions == {}
-        # Route geometry is built from the kept trips/shapes (pure transform) with
-        # the route name attached from routes.txt; the failed MNR system gets an
-        # empty list, not a crash.
-        assert app.state.railroad_routes["LIRR"] == [
-            {
-                "route": "5",
-                "name": "Montauk Branch",
-                "polylines": [[[40.7, -74.0], [40.71, -74.01]]],
-            }
-        ]
-        assert app.state.railroad_routes["MNR"] == []
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+            # The static loads run in the background now; wait for both to be ready.
+            for _ in range(200):
+                if (
+                    app.state.subway_static_status == "ready"
+                    and app.state.railroad_static_status == "ready"
+                ):
+                    break
+                await asyncio.sleep(0.01)
+            assert app.state.subway_static_status == "ready"
+            assert app.state.railroad_static_status == "ready"
+            # The warmup filled the same fields the old synchronous load did.
+            assert app.state.subway_stops == {"101N": {"name": "Alpha", "lat": 40.7, "lon": -74.0}}
+            assert app.state.railroad_static["LIRR"]["trips"] == {
+                "t1": {"route_id": "5", "shape_id": "s1"}
+            }
+            assert app.state.railroad_stops["LIRR"] == {
+                "1": {"name": "Aville", "lat": 40.7, "lon": -74.0}
+            }
+            assert app.state.railroad_stops["MNR"] is None  # failed system -> None, GPS-only
+            # Route geometry built from the kept trips/shapes with the routes.txt
+            # name; the failed MNR system gets an empty list, not a crash.
+            assert app.state.railroad_routes["LIRR"] == [
+                {
+                    "route": "5",
+                    "name": "Montauk Branch",
+                    "polylines": [[[40.7, -74.0], [40.71, -74.01]]],
+                }
+            ]
+            assert app.state.railroad_routes["MNR"] == []
             # Wait for the background poll task's first cycle to fill the cache.
-            for _ in range(100):
+            for _ in range(200):
                 if app.state.feed_cache["buses"]["data"] is not None:
                     break
                 await asyncio.sleep(0.01)
@@ -857,9 +874,185 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
             res = await c.get("/api/status")
             assert res.status_code == 200
             assert res.json()["feeds"]["buses"]["fetched_at"] is not None
-        poll_task = app.state.feed_poll_task
-        index_task = app.state.bus_index_task
+            # The static group states are reported.
+            assert res.json()["subway_static"] == "ready"
+            assert res.json()["railroad_static"] == "ready"
+        tasks = (
+            app.state.feed_poll_task,
+            app.state.bus_index_task,
+            app.state.subway_static_task,
+            app.state.railroad_static_task,
+        )
 
-    # Shutdown cancelled/awaited both background tasks.
-    assert poll_task.done()
-    assert index_task.done()
+    # Shutdown cancelled/awaited every background task (poll, bus index, both
+    # static warmups).
+    for task in tasks:
+        assert task.done()
+
+
+# ---------------- background static warmup state machine ----------------
+
+SUBWAY_STOPS = {"101N": {"name": "Alpha", "lat": 40.7, "lon": -74.0}}
+
+
+def _fake_app(**state):
+    return types.SimpleNamespace(state=types.SimpleNamespace(**state))
+
+
+async def test_subway_static_warmup_loading_to_ready(monkeypatch):
+    async def fake_stops():
+        return SUBWAY_STOPS
+
+    routes = [{"route": "1", "polylines": []}]
+    monkeypatch.setattr(app_module, "load_subway_stops", fake_stops)
+    monkeypatch.setattr(app_module, "load_subway_route_shapes", lambda: routes)
+    monkeypatch.setattr(app_module, "load_subway_stations", lambda: SUBWAY_STOPS)
+    app = _fake_app(subway_static_status="loading")
+    await app_module._warm_subway_static(app)
+    assert app.state.subway_static_status == "ready"
+    assert app.state.subway_stops == SUBWAY_STOPS
+    assert app.state.subway_routes == [{"route": "1", "polylines": []}]
+    assert app.state.subway_stations == SUBWAY_STOPS
+
+
+async def test_subway_static_warmup_retries_after_failure(monkeypatch):
+    # loading -> failed -> retry -> ready, driven with the retry interval shortened.
+    monkeypatch.setattr(app_module, "STATIC_RETRY_S", 0.01)
+    gate = {"ok": False}
+
+    async def gated_stops():
+        if not gate["ok"]:
+            raise RuntimeError("network blip")
+        return SUBWAY_STOPS
+
+    monkeypatch.setattr(app_module, "load_subway_stops", gated_stops)
+    monkeypatch.setattr(app_module, "load_subway_route_shapes", lambda: [])
+    monkeypatch.setattr(app_module, "load_subway_stations", lambda: {})
+    app = _fake_app(subway_static_status="loading")
+    task = asyncio.create_task(app_module._warm_subway_static(app))
+    try:
+        for _ in range(200):  # wait until the first attempt has failed
+            if app.state.subway_static_status == "failed":
+                break
+            await asyncio.sleep(0.005)
+        assert app.state.subway_static_status == "failed"
+        gate["ok"] = True  # let the next retry succeed
+        for _ in range(200):
+            if app.state.subway_static_status == "ready":
+                break
+            await asyncio.sleep(0.005)
+        assert app.state.subway_static_status == "ready"
+        assert app.state.subway_stops == SUBWAY_STOPS
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_railroad_static_warmup_loading_to_ready(monkeypatch):
+    async def fake_load():
+        return {
+            "LIRR": {
+                "stops": {"1": {"name": "Aville", "lat": 40.7, "lon": -74.0}},
+                "trips": {"t1": {"route_id": "5", "shape_id": "s1"}},
+                "shapes": {"s1": [[40.7, -74.0], [40.71, -74.01]]},
+                "routes": {"5": {"long_name": "Montauk Branch", "short_name": None}},
+            },
+            "MNR": None,  # failed system -> None, GPS-only
+        }
+
+    monkeypatch.setattr(app_module.railroad_static, "load_railroad_static", fake_load)
+    app = _fake_app(railroad_static_status="loading")
+    await app_module._warm_railroad_static(app)
+    assert app.state.railroad_static_status == "ready"  # ready even with a None system
+    assert app.state.railroad_stops["LIRR"] == {"1": {"name": "Aville", "lat": 40.7, "lon": -74.0}}
+    assert app.state.railroad_stops["MNR"] is None
+    assert app.state.railroad_routes["LIRR"][0]["name"] == "Montauk Branch"
+    assert app.state.railroad_routes["MNR"] == []
+
+
+def test_set_static_status_logs_once_per_transition(caplog):
+    app = _fake_app(subway_static_status="loading")
+    with caplog.at_level(logging.INFO, logger=app_module.logger.name):
+        app_module._set_static_status(app, "subway_static_status", "ready")
+        app_module._set_static_status(app, "subway_static_status", "ready")  # no transition
+    assert app.state.subway_static_status == "ready"
+    ready_logs = [r for r in caplog.records if "ready" in r.getMessage()]
+    assert len(ready_logs) == 1  # logged on the transition only, not the repeat
+
+
+# ---------------- static endpoints while warming ----------------
+
+
+async def test_subway_stops_503_while_loading(client):
+    app_module.app.state.subway_static_status = "loading"
+    res = await client.get("/api/subway-stops")
+    assert res.status_code == 503
+    assert "loading" in res.json()["detail"].lower()
+
+
+async def test_subway_stops_no_cache_empty_when_failed(client):
+    # A failed load serves [] but with no-cache, so a browser does not pin the
+    # empty for an hour and a later retry success is picked up.
+    app_module.app.state.subway_static_status = "failed"
+    app_module.app.state.subway_stations = {"A01": {"name": "Alpha", "lat": 40.7, "lon": -74.0}}
+    res = await client.get("/api/subway-stops")
+    assert res.status_code == 200
+    assert res.json() == []
+    assert res.headers.get("cache-control") == "no-cache"
+
+
+async def test_railroad_routes_503_while_loading(client):
+    app_module.app.state.railroad_static_status = "loading"
+    res = await client.get("/api/railroad-routes")
+    assert res.status_code == 503
+    assert "loading" in res.json()["detail"].lower()
+
+
+async def test_railroad_routes_no_cache_empty_when_failed(client):
+    app_module.app.state.railroad_static_status = "failed"
+    app_module.app.state.railroad_routes = {}
+    res = await client.get("/api/railroad-routes")
+    assert res.status_code == 200
+    assert res.json() == []
+    assert res.headers.get("cache-control") == "no-cache"
+
+
+# ---------------- poller warming detail + healthz while warming ----------------
+
+
+async def test_subway_refresh_notes_warming_503_while_static_loading(client, cache):
+    # Static not ready: the poller notes a 503 whose detail no longer claims a
+    # restart is needed (the warmup retries automatically).
+    app_module.app.state.subway_stops = None
+    await app_module._refresh_subways(app_module.app, client=None)
+    err = cache["subways"]["error"]
+    assert err["status"] == 503
+    assert "loading" in err["detail"].lower()
+    assert "restart" not in err["detail"].lower()
+
+
+async def test_healthz_not_degraded_while_static_loading(client, healthz_env):
+    _fresh(healthz_env["buses"])  # a fresh feed keeps it up
+    app_module.app.state.subway_static_status = "loading"  # cold-start warmup
+    res = await client.get("/healthz")
+    assert res.status_code == 200  # loading is not a degraded reason
+
+
+async def test_healthz_degraded_on_failed_subway_static_and_recovers(client, healthz_env):
+    _fresh(healthz_env["buses"])
+    app_module.app.state.subway_static_status = "failed"
+    res = await client.get("/healthz")
+    assert res.status_code == 503
+    assert any("subway static" in r for r in res.json()["reasons"])
+    # A retry succeeding clears the reason.
+    app_module.app.state.subway_static_status = "ready"
+    res = await client.get("/healthz")
+    assert res.status_code == 200
+
+
+async def test_healthz_lenient_on_failed_railroad_static(client, healthz_env):
+    # Railroad static failure degrades to GPS-only, NOT a healthz reason.
+    _fresh(healthz_env["buses"])
+    app_module.app.state.railroad_static_status = "failed"
+    res = await client.get("/healthz")
+    assert res.status_code == 200

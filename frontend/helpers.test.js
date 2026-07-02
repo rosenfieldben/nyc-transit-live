@@ -11,6 +11,7 @@ const {
   routeColor,
   lineColor,
   staleness,
+  emptyFeedDecision,
   noteClockOffset,
   formatCountdown,
   trainLatLng,
@@ -25,6 +26,7 @@ const {
   formatRailroadHead,
   ROUTE_MAX_SLICE,
   RAILROAD_ROUTE_MAX_SLICE,
+  FEED_STALE_AFTER_S,
 } = require("./helpers.js");
 
 test("trainLatLng interpolates along prev->next and clamps to [0,1]", () => {
@@ -223,6 +225,50 @@ test("staleness is null when fresh or never fetched", () => {
   assert.equal(staleness({ label: "buses", fetchedAt: now - 5, feedTimestamp: now - 5 }, now), null);
   assert.equal(staleness({ label: "buses", fetchedAt: now - 5, feedTimestamp: null }, now), null);
 })
+
+test("emptyFeedDecision keeps last-known on the first empty poll and records the run start", () => {
+  const d = emptyFeedDecision(null, 1000);
+  assert.equal(d.applyEmpty, false);
+  assert.equal(d.error, "feed empty, showing last known");
+  assert.equal(d.emptyRunStart, 1000); // this poll's fetched_at starts the run
+});
+
+test("emptyFeedDecision keeps last-known for empties within the window", () => {
+  const d = emptyFeedDecision(1000, 1000 + FEED_STALE_AFTER_S - 1); // just inside
+  assert.equal(d.applyEmpty, false);
+  assert.equal(d.error, "feed empty, showing last known");
+  assert.equal(d.emptyRunStart, 1000); // run start carried forward, not reset
+});
+
+test("emptyFeedDecision applies the empty set at and after the threshold", () => {
+  const at = emptyFeedDecision(1000, 1000 + FEED_STALE_AFTER_S); // exactly at the boundary
+  assert.equal(at.applyEmpty, true);
+  assert.equal(at.error, "feed empty"); // the "showing last known" clause is dropped
+  assert.equal(at.emptyRunStart, 1000);
+  const after = emptyFeedDecision(1000, 1000 + FEED_STALE_AFTER_S + 30);
+  assert.equal(after.applyEmpty, true);
+  assert.equal(after.error, "feed empty");
+});
+
+test("emptyFeedDecision starts a fresh window after a reset (non-empty poll)", () => {
+  // map.js resets emptyRunStart to null on any non-empty poll; a later empty then
+  // begins a brand-new window rather than counting from the old, long-past run.
+  const fresh = emptyFeedDecision(null, 5000);
+  assert.equal(fresh.applyEmpty, false);
+  assert.equal(fresh.emptyRunStart, 5000);
+  const soon = emptyFeedDecision(fresh.emptyRunStart, 5000 + 1); // 1s into the new run
+  assert.equal(soon.applyEmpty, false);
+  assert.equal(soon.error, "feed empty, showing last known");
+});
+
+test("emptyFeedDecision holds last-known without starting a run when fetched_at is null", () => {
+  // A missing server fetched_at cannot be timed, so we cannot bound the run: hold
+  // last-known and leave the run start untouched rather than clearing markers.
+  const d = emptyFeedDecision(null, null);
+  assert.equal(d.applyEmpty, false);
+  assert.equal(d.error, "feed empty, showing last known");
+  assert.equal(d.emptyRunStart, null);
+});
 
 test("noteClockOffset accepts a timestamp without throwing", () => {
   // minClockOffset is internal (used by the countdown and the poll-age term);

@@ -635,8 +635,8 @@ def _decode_railroad_vehicles(
 # direction; LIRR populates it.
 _RAILROAD_DIRECTION = {0: "Outbound", 1: "Inbound"}
 
-# A generic "toward the city" anchor for direction INFERENCE (arrivals bucketing
-# only, see _infer_railroad_direction), at Grand Central Terminal (MNR stop_id 1).
+# A generic "toward the city" anchor for direction INFERENCE (see
+# _infer_railroad_direction), at Grand Central Terminal (MNR stop_id 1).
 # At the metro scale it also stands in for the other NYC rail terminals: LIRR's
 # Penn Station and Atlantic Terminal and the west-of-Hudson lines' Hoboken end all
 # sit within a few km of it, so distance-to-this-point is a fine proxy for "how
@@ -677,7 +677,7 @@ def _direction_from_progression(
         return "Inbound"  # ending closer to the city than it started
     if delta < -_DIRECTION_EPSILON:
         return "Outbound"  # ending farther from the city
-    return None  # ambiguous: the caller falls back to the "Trains" bucket
+    return None  # ambiguous: arrivals fall back to the "Trains" bucket, placement stays null
 
 
 def _infer_railroad_direction(tu, stops: dict[str, dict]) -> str | None:

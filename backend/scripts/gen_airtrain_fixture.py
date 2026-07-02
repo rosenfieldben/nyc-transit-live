@@ -345,7 +345,10 @@ def main() -> int:
             "\nRECONCILIATION NEEDS REVIEW: do not trust the headway table "
             "until the flags above are resolved."
         )
-    return 0
+    # Reflect the clean flag in the exit code so a scripted or `set -e` regeneration
+    # sees a non-zero status on a dirty fixture, not only the printed banner. The
+    # artifact is still written so a human can inspect what the flags refer to.
+    return 0 if clean else 1
 
 
 if __name__ == "__main__":

@@ -383,8 +383,11 @@ function airtrainStationPopupHtml(station, routes, minutes) {
   for (const route of serving) {
     const band = selectHeadwayBand(route.headways, minutes);
     const name = esc(route.name ?? route.id);
+    // headway_min is a validated integer (AirTrainHeadwayBand.headway_min: int), not
+    // feed-derived text, so it is interpolated directly; esc() is reserved for the
+    // untrusted string fields (station and route names).
     html += band
-      ? `<div>${name}: every ~${esc(band.headway_min)} min <span class="popup-sub">(scheduled)</span></div>`
+      ? `<div>${name}: every ~${band.headway_min} min <span class="popup-sub">(scheduled)</span></div>`
       : `<div>${name}: <span class="popup-sub">schedule unavailable</span></div>`;
   }
   return html;

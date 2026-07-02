@@ -227,6 +227,12 @@ function applyBuses(data) {
     if (!seen.has(id)) {
       busLayer.removeLayer(record.marker);
       buses.delete(id);
+      // If the vehicle whose route line is drawn (or has a fetch in flight) drops
+      // out of the feed, clear that line and its banner too, so a bounded
+      // empty-feed sweep (or a lone reassignment) does not leave a ghost route
+      // pointing at a bus no longer on the map. clearBusRoute also invalidates
+      // any in-flight route fetch via its request token.
+      if (shownBusRoute?.busId === id || pendingBusId === id) clearBusRoute();
     }
   }
 }

@@ -369,3 +369,38 @@ test("11. alerts: agency-wide banner shows, dismisses per id, reopens only for a
   await expect(banner).toContainText("Systemwide: new incident");
   await expect(banner).not.toContainText("reduced service");
 });
+
+test("12. cold start: station markers appear without a reload once 503s heal", async ({ page }) => {
+  // First two /api/subway-stops requests return the backend's warming 503; the
+  // third serves the normal fixture, simulating a static-GTFS warmup finishing
+  // after page load. The frozen clock makes the retry backoff deterministic:
+  // retryUntil schedules via setTimeout, which only fires on clock.runFor.
+  let stopRequests = 0;
+  await boot(page, (ctx) => {
+    ctx.overrides.subwayStops = (route) => {
+      stopRequests += 1;
+      if (stopRequests <= 2) return json(route, { detail: "Static subway GTFS is still loading." }, 503);
+      return json(route, fx.subwayStops());
+    };
+  });
+
+  // Live-data markers arrive normally; the subway station dots do not (attempt 1 hit a 503).
+  await expect(busMarkers(page)).toHaveCount(2);
+  await expect
+    .poll(() => page.evaluate(() => stationLayer.getLayers().length))
+    .toBe(0);
+
+  // Read the retry base from the app so this test tracks the constant instead of
+  // hardcoding the backoff. Attempt 2 fires after baseMs (503 again), attempt 3
+  // after 2x baseMs (200): the dots appear with NO reload.
+  const baseMs = await page.evaluate(() => STATIC_RETRY_BASE_MS);
+  await page.clock.runFor(baseMs); // attempt 2: still 503
+  await expect
+    .poll(() => page.evaluate(() => stationLayer.getLayers().length))
+    .toBe(0);
+  await page.clock.runFor(baseMs * 2); // attempt 3: fixture lands
+  await expect
+    .poll(() => page.evaluate(() => stationLayer.getLayers().length))
+    .toBe(2);
+  expect(stopRequests).toBe(3); // exactly one request per attempt, then the loader stopped
+});

@@ -19,6 +19,13 @@ decodes the protobuf, and exposes clean JSON. A Leaflet frontend polls that JSON
 and draws/moves markers. The backend does the polling once and serves many
 browser clients, so the MTA endpoints aren't hit on every page refresh.
 
+A visitor who lands during a backend cold start still gets a full map without
+reloading: the static loaders (route lines, station dots, AirTrain) retry with
+doubling backoff (1s up to 30s) until they populate, matching the backend's
+warmup semantics (a warming group 503s; a failed group serves an empty payload
+under no-cache while its server-side retry heals it, so an empty 200 means "ask
+again later", never success). Each loader stops for good once it has populated.
+
 Clicking a subway station marker shows the upcoming trains in each direction
 with live countdowns, and any active service alerts affecting that station in a
 quiet block above the countdowns (the railroad station popups do the same). The
@@ -343,6 +350,15 @@ warnings.
   alert id for the session, so clearing a standing incident does not suppress the
   next, distinct one. Route-line severity styling stays deferred until a backend
   phase decodes the MTA Mercury extension (live alerts all report `UNKNOWN_EFFECT`).
+- [x] **12d. Static loaders retry until they populate (frontend)**: the five static
+  loaders (subway routes/stations, railroad routes/stations, AirTrain) retry with
+  doubling backoff (1s capped at 30s) until they have populated their layer, so a
+  visitor who lands during a backend cold start gets a map that fills in on its
+  own once the static GTFS warms. An empty 200 counts as failure, matching the
+  backend's failed-warmup no-cache semantics; a non-empty railroad payload counts
+  as success even if one system is missing, because the backend's lenient
+  per-system warmup settles that state and frontend retries cannot improve it.
+  Live-data polling already self-healed and is untouched.
 
 ## Notes
 

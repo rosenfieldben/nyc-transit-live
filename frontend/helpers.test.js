@@ -633,3 +633,69 @@ test("bannerAlerts handles an empty or missing list", () => {
   assert.deepEqual(bannerAlerts([]), []);
   assert.deepEqual(bannerAlerts(undefined), []);
 });
+
+// ---- Static-loader retry helper (phase 12d) ----
+
+const { retryUntil } = require("./helpers.js");
+
+// Instant injected sleep that records every wait it was asked for, so the exact
+// backoff sequence is assertable without real timers.
+function instantSleep() {
+  const waits = [];
+  const sleep = (ms) => {
+    waits.push(ms);
+    return Promise.resolve();
+  };
+  return { waits, sleep };
+}
+
+test("retryUntil resolves after a first-try success without sleeping", async () => {
+  const { waits, sleep } = instantSleep();
+  let calls = 0;
+  await retryUntil(async () => {
+    calls += 1;
+    return true;
+  }, { baseMs: 1000, capMs: 30000, sleep });
+  assert.equal(calls, 1);
+  assert.deepEqual(waits, []); // success on attempt one never schedules a wait
+});
+
+test("retryUntil doubles the backoff from baseMs and caps at capMs", async () => {
+  const { waits, sleep } = instantSleep();
+  let calls = 0;
+  await retryUntil(async () => {
+    calls += 1;
+    return calls === 8; // fail 7 times, succeed on the 8th
+  }, { baseMs: 1000, capMs: 30000, sleep });
+  assert.equal(calls, 8);
+  // 7 failures = 7 waits: doubling from 1000, capped at 30000 (32000 never appears).
+  assert.deepEqual(waits, [1000, 2000, 4000, 8000, 16000, 30000, 30000]);
+});
+
+test("retryUntil treats a thrown error as falsy and keeps retrying", async () => {
+  const { waits, sleep } = instantSleep();
+  let calls = 0;
+  await retryUntil(async () => {
+    calls += 1;
+    if (calls < 3) throw new Error("network down");
+    return true;
+  }, { baseMs: 500, capMs: 30000, sleep });
+  assert.equal(calls, 3);
+  assert.deepEqual(waits, [500, 1000]);
+});
+
+test("retryUntil with a loader-shaped fn: false on empty payload, true on populated", async () => {
+  // Mimics the static loaders: an empty array is the backend's failed-warmup []
+  // (not success), a populated one ends the loop.
+  const payloads = [[], [], [{ id: "127" }]];
+  const populated = [];
+  const { waits, sleep } = instantSleep();
+  await retryUntil(async () => {
+    const data = payloads.shift();
+    if (!data.length) return false;
+    populated.push(...data);
+    return true;
+  }, { baseMs: 1000, capMs: 30000, sleep });
+  assert.deepEqual(populated, [{ id: "127" }]); // populated exactly once, no double-add
+  assert.deepEqual(waits, [1000, 2000]);
+});

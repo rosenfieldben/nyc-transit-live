@@ -488,6 +488,33 @@ function alertsBlockHtml(alerts) {
   return `<div class="alert-block">${rows.join("")}</div>`;
 }
 
+// ---- Static-loader retry (phase 12d) ----
+
+// Retry fn until it resolves truthy, with doubling backoff from baseMs capped at
+// capMs. A falsy resolution or a thrown error schedules the next attempt. WHY
+// forever, with no attempt cap: the wrapped requests are cheap (the backend caches
+// static payloads and serves 503/[] instantly while warming), and a map that never
+// fills in is strictly worse than a slow retry hum in a background tab. WHY no
+// jitter: jitter exists to de-synchronize a fleet of clients hammering a shared
+// origin; here a handful of browsers each retry a cached endpoint every 30s at
+// worst, so synchronized arrivals cost nothing and determinism keeps tests exact.
+// `sleep` is injected so node tests resolve instantly and can assert the exact
+// backoff sequence; the browser caller uses the default setTimeout sleep.
+async function retryUntil(fn, { baseMs, capMs, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
+  let wait = baseMs;
+  for (;;) {
+    let ok = false;
+    try {
+      ok = await fn();
+    } catch {
+      // thrown = falsy: a fetch/parse error is just another "not yet" signal
+    }
+    if (ok) return;
+    await sleep(wait);
+    wait = Math.min(wait * 2, capMs);
+  }
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     esc, routeColor, lineColor, staleness, emptyFeedDecision, noteClockOffset,
@@ -497,6 +524,6 @@ if (typeof module !== "undefined" && module.exports) {
     indexAlerts, matchStationAlerts, matchRouteAlerts, bannerAlerts, alertsBlockHtml,
     RAILROAD_ROUTE_MAX_SLICE, RAILROAD_ROUTE_ACCEPT_DIST, RAILROAD_BUCKET_ORDER,
     LINE_COLORS, DARK_TEXT_LINES, FEED_STALE_AFTER_S,
-    selectHeadwayBand, airtrainStationPopupHtml,
+    selectHeadwayBand, airtrainStationPopupHtml, retryUntil,
   };
 }

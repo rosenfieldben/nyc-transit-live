@@ -497,3 +497,76 @@ test("airtrainStationPopupHtml: station served by no branch", () => {
   assert.match(html, /No AirTrain branch serves this station/);
   assert.doesNotMatch(html, /undefined/);
 });
+
+// ---- Service alerts helpers (phase 12b) ----
+
+const { indexAlerts, matchStationAlerts, alertsBlockHtml } = require("./helpers.js");
+
+// s1/s2 are subway; l1 is LIRR with a COLLIDING numeric stop ("127") and route
+// ("1") shared with subway ids, to prove system scoping keeps them apart.
+const ALERTS = [
+  { id: "s1", system: "subway", header: "[2] delays", routes: ["2"], stops: ["127"], starts_at: 100, ends_at: null },
+  { id: "s2", system: "subway", header: "Signal work", routes: ["Q"], stops: ["R20"], starts_at: 200, ends_at: 999 },
+  { id: "l1", system: "LIRR", header: "LIRR alert", routes: ["1"], stops: ["127"], starts_at: 50, ends_at: null },
+];
+
+test("matchStationAlerts matches by stop id", () => {
+  const idx = indexAlerts(ALERTS);
+  const got = matchStationAlerts(idx, "subway", "127", []); // no arrivals routes
+  assert.deepEqual(got.map((a) => a.id), ["s1"]);
+});
+
+test("matchStationAlerts matches by a route present in the arrivals", () => {
+  const idx = indexAlerts(ALERTS);
+  // Station id not in any stop selector, but route Q is in the arrivals rows.
+  const got = matchStationAlerts(idx, "subway", "somewhere-else", ["Q"]);
+  assert.deepEqual(got.map((a) => a.id), ["s2"]);
+});
+
+test("matchStationAlerts is scoped by system (LIRR ids never leak into subway)", () => {
+  const idx = indexAlerts(ALERTS);
+  // Subway popup at station "127" with route "1" in arrivals: the LIRR alert l1
+  // shares BOTH that stop id and route id, but must not appear under "subway".
+  const subway = matchStationAlerts(idx, "subway", "127", ["1"]);
+  assert.deepEqual(subway.map((a) => a.id), ["s1"]);
+  // The same collision resolves the other way under the LIRR system.
+  const lirr = matchStationAlerts(idx, "LIRR", "127", ["1"]);
+  assert.deepEqual(lirr.map((a) => a.id), ["l1"]);
+});
+
+test("matchStationAlerts dedups an alert matching by both stop and route", () => {
+  const idx = indexAlerts(ALERTS);
+  // s1 has stop "127" AND route "2"; passing both must yield it exactly once.
+  const got = matchStationAlerts(idx, "subway", "127", ["2"]);
+  assert.deepEqual(got.map((a) => a.id), ["s1"]);
+});
+
+test("matchStationAlerts sorts open-ended first, then by starts_at, then id", () => {
+  const sortAlerts = [
+    { id: "b", system: "subway", header: "b", routes: [], stops: ["X"], starts_at: 300, ends_at: null },
+    { id: "a", system: "subway", header: "a", routes: [], stops: ["X"], starts_at: 100, ends_at: null },
+    { id: "d", system: "subway", header: "d", routes: [], stops: ["X"], starts_at: 50, ends_at: 999 },
+    { id: "c", system: "subway", header: "c", routes: [], stops: ["X"], starts_at: 100, ends_at: null },
+  ];
+  const got = matchStationAlerts(indexAlerts(sortAlerts), "subway", "X", []);
+  // open-ended (a,c,b) before dated (d); within open-ended by start then id: a,c,b.
+  assert.deepEqual(got.map((a) => a.id), ["a", "c", "b", "d"]);
+});
+
+test("matchStationAlerts returns [] for an empty store and for no matches", () => {
+  assert.deepEqual(matchStationAlerts(indexAlerts([]), "subway", "127", ["2"]), []);
+  assert.deepEqual(matchStationAlerts(indexAlerts(ALERTS), "subway", "ZZZ", ["ZZ"]), []);
+});
+
+test("alertsBlockHtml renders escaped header rows, or nothing when empty", () => {
+  assert.equal(alertsBlockHtml([]), "");
+  const html = alertsBlockHtml([{ id: "x", header: "Delay <at> Times & 5 St" }]);
+  assert.match(html, /class="alert-block"/);
+  assert.match(html, /class="alert-row"/);
+  assert.match(html, /Delay &lt;at&gt; Times &amp; 5 St/);
+  assert.doesNotMatch(html, /<at>/); // raw markup never reaches the popup
+});
+
+test("alertsBlockHtml skips alerts with no header and renders nothing if all are empty", () => {
+  assert.equal(alertsBlockHtml([{ id: "x", header: null }]), "");
+});

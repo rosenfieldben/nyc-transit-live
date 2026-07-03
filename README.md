@@ -20,10 +20,15 @@ and draws/moves markers. The backend does the polling once and serves many
 browser clients, so the MTA endpoints aren't hit on every page refresh.
 
 Clicking a subway station marker shows the upcoming trains in each direction
-with live countdowns. The same subway poll that places trains also builds a
-per-station arrivals index in memory (the stops a train placement discards are
-exactly those arrival times), so a click is served from memory without hitting
-the MTA. The endpoints involved:
+with live countdowns, and any active service alerts affecting that station in a
+quiet block above the countdowns (the railroad station popups do the same). The
+alerts come from the `/api/alerts` store; an alert applies to a station when it
+selects that station's stop id, or a route currently arriving there, within the
+same system (numeric ids collide across modes, so the join is system-scoped).
+Alerts are decorative: a failed or stale alerts fetch never blocks the arrivals.
+The same subway poll that places trains also builds a per-station arrivals index
+in memory (the stops a train placement discards are exactly those arrival times),
+so a click is served from memory without hitting the MTA. The endpoints involved:
 
 - `GET /api/subway-stops` — station markers `[{id, name, lat, lon}]`, static
   for the session (cached by the browser).
@@ -317,6 +322,14 @@ warnings.
   index of alerts active now (not-yet-active planned work is held back and counted
   for `/api/status`), and serves them from `/api/alerts`. `/api/status` reports the
   alert feed's health; `/healthz` ignores it (decorative). Map surfaces are 12b/12c.
+- [x] **12b. Service alerts in station popups (frontend)**: the frontend polls
+  `/api/alerts` on its own 60s loop and shows the alerts affecting a clicked station
+  in a quiet block above the arrival countdowns, in both the subway and railroad
+  popups. An alert applies when it selects the station's stop id, or a route in its
+  current arrivals, within the same system (the match is system-scoped because
+  numeric route/stop ids collide across modes). Header text only; alerts are
+  decorative, so a failed fetch keeps the last-known set silently and never blocks
+  arrivals. Map banner and systemwide/bus alerts are 12c.
 
 ## Notes
 

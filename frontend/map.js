@@ -1,4 +1,8 @@
 const POLL_INTERVAL_MS = 15000;
+// Service alerts change far slower than positions, so they poll on their own loop
+// at the backend cadence (60s). Alerts are decorative: a failed fetch keeps the
+// last-known set silently and never blocks or delays the arrivals popups.
+const ALERT_POLL_INTERVAL_MS = 60000;
 
 const map = L.map("map").setView([40.7128, -74.006], 12);
 
@@ -470,6 +474,39 @@ function bindStationPopup(marker, makeDescriptor) {
     });
 }
 
+/* ---------------- Service alerts (station popups) ---------------- */
+
+// Active alerts indexed by (system, stop) and (system, route), rebuilt each poll.
+// Starts empty, so a popup opened before the first fetch simply shows no alerts.
+let alertsIndex = indexAlerts([]);
+
+// Poll /api/alerts on the alerts cadence. WHY a failed or non-200 fetch is swallowed
+// and keeps the last-known index: alerts are a decorative overlay, so their
+// staleness or absence must never surface an error or delay the arrivals a rider
+// clicked for. There is no user-facing alerts error state, by design.
+async function loadAlerts() {
+  try {
+    const res = await fetch("/api/alerts");
+    if (!res.ok) return; // keep the last-known index silently
+    const body = await res.json();
+    alertsIndex = indexAlerts(body.alerts ?? []);
+  } catch {
+    // network error: keep the last-known index, no user-facing error
+  }
+}
+
+// The alerts block for a station popup: match the current index (read fresh as a
+// global, so a popup re-render picks up whatever the store holds now) against the
+// station, scoped by system, plus the route ids present in its current arrivals.
+// Returns "" when nothing matches, so no empty container is rendered.
+function stationAlertsBlock(system, station, body) {
+  const routeIds = new Set();
+  for (const arrivals of Object.values(body?.directions ?? {})) {
+    for (const arr of arrivals ?? []) if (arr.route_id) routeIds.add(arr.route_id);
+  }
+  return alertsBlockHtml(matchStationAlerts(alertsIndex, system, station.id, routeIds));
+}
+
 async function loadStations() {
   let stations;
   try {
@@ -493,7 +530,8 @@ async function loadStations() {
       marker: m,
       body: null,
       url: `/api/subway-arrivals/${encodeURIComponent(station.id)}`,
-      render: subwayArrivalsHtml,
+      // Prepend any active subway alerts affecting this station above the arrivals.
+      render: (s, b) => stationAlertsBlock("subway", s, b) + subwayArrivalsHtml(s, b),
     })).addTo(stationLayer);
   }
 }
@@ -527,7 +565,10 @@ async function loadRailroadStations() {
       url:
         `/api/railroad-arrivals/${encodeURIComponent(station.system)}` +
         `/${encodeURIComponent(station.id)}`,
+      // Prepend any active alerts for this railroad station, scoped to its own
+      // system (LIRR/MNR) so a colliding numeric id from another mode never leaks.
       render: (s, b) =>
+        stationAlertsBlock(s.system, s, b) +
         railroadArrivalsHtml(
           s,
           b,
@@ -881,6 +922,8 @@ loadRailroadRoutes();
 loadStations();
 loadRailroadStations();
 loadAirtrain();
+loadAlerts();
 refreshAll();
 setInterval(refreshAll, POLL_INTERVAL_MS);
+setInterval(loadAlerts, ALERT_POLL_INTERVAL_MS);
 requestAnimationFrame(animateTrains); // glide trains between polls

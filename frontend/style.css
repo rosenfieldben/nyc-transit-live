@@ -149,3 +149,19 @@ html, body {
   font-weight: 700;
   text-align: center;
 }
+
+/* Service alerts block in a station popup: a quiet amber-accented note above the
+   arrivals, small text, no MTA branding or official route symbols. */
+.alert-block {
+  margin: 2px 0 6px;
+  padding: 4px 7px;
+  border-left: 3px solid #d9a406;
+  background: #fdf6e3;
+  border-radius: 2px;
+  font-size: 11px;
+  color: #5a4a1a;
+}
+
+.alert-row + .alert-row {
+  margin-top: 3px;
+}

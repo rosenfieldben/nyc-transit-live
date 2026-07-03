@@ -166,16 +166,22 @@ html, body {
   margin-top: 3px;
 }
 
-/* Agency-wide alerts banner: a quiet but noticeable strip centered over the top of
-   the map. #alert-banner is just a positioning anchor and is empty (no visible box)
-   until map.js injects .alert-banner-strip. No MTA branding. */
+/* Agency-wide alerts banner: a quiet but noticeable strip across the top of the map.
+   #alert-banner is just a positioning anchor and is empty (no visible box) until
+   map.js injects .alert-banner-strip. No MTA branding.
+   Anchored top-LEFT (not centered) and stacked ABOVE the top-right #panel. A centered
+   banner slid under the panel at narrow widths and was painted behind it (same
+   z-index, panel later in the DOM), hiding the alert on mobile. Left-anchored with a
+   higher z-index, a systemwide alert is always visible; on a narrow screen it may
+   briefly overlap the legend, which is acceptable since dismissing it restores the
+   panel and an agency-wide alert outranks the legend during an incident. */
 #alert-banner {
   position: absolute;
   top: 10px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 1000; /* above Leaflet panes, same tier as the legend panel */
-  max-width: min(560px, calc(100% - 280px)); /* leave room for the top-right panel */
+  left: 10px;
+  right: 10px;
+  max-width: 560px; /* left-aligned; full width only on a narrow screen */
+  z-index: 1001; /* above Leaflet panes AND the legend #panel (z-index 1000) */
 }
 
 .alert-banner-strip {

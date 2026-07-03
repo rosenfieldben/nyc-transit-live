@@ -527,15 +527,26 @@ function routeAlertsBlock(system, routeId) {
 
 // Agency-wide (selector-less) alerts get a dismissible banner over the map instead
 // of a popup, since they belong to no single route or station. WHY dismissal is per
-// alert id and in-memory for the session: dismissing hides the currently-shown ids,
-// a later poll re-showing the SAME ids keeps them hidden, but a NEW id (never
+// alert and in-memory for the session: dismissing hides the currently-shown alerts,
+// a later poll re-showing the SAME ones keeps them hidden, but a NEW one (never
 // dismissed) reopens the banner. So a rider can clear a standing incident without
-// losing the next, distinct one, and a page reload starts fresh.
+// losing the next, distinct one, and a page reload starts fresh. The key is
+// "system|id", scoped like every other alert join, so a bare id reused across two
+// feeds cannot make dismissing one hide an unrelated agency-wide alert.
 const dismissedAlertIds = new Set();
+const alertKey = (a) => `${a.system}|${a.id}`;
+
+// Signature of the last-rendered banner, so an unchanged banner is NOT rebuilt every
+// 60s poll: reassigning innerHTML would drop any text the rider has selected and
+// re-parse identical markup for no visual change.
+let lastBannerKey = null;
 
 function renderAlertBanner(alerts) {
   const el = document.getElementById("alert-banner");
-  const shown = alerts.filter((a) => a.header && !dismissedAlertIds.has(a.id));
+  const shown = alerts.filter((a) => a.header && !dismissedAlertIds.has(alertKey(a)));
+  const key = shown.map(alertKey).join("\n");
+  if (key === lastBannerKey) return; // unchanged since the last render: leave the DOM alone
+  lastBannerKey = key;
   if (!shown.length) {
     el.replaceChildren(); // nothing to show: no banner strip in the DOM
     return;
@@ -547,7 +558,7 @@ function renderAlertBanner(alerts) {
     `<button type="button" id="alert-banner-dismiss" title="Dismiss">&times;</button>` +
     `</div>`;
   el.querySelector("#alert-banner-dismiss").addEventListener("click", () => {
-    for (const alert of shown) dismissedAlertIds.add(alert.id);
+    for (const alert of shown) dismissedAlertIds.add(alertKey(alert));
     renderAlertBanner(alerts); // re-render: the dismissed ids drop out, emptying the strip
   });
 }

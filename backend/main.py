@@ -301,11 +301,12 @@ async def _refresh_alerts(app: FastAPI, client: httpx.AsyncClient) -> None:
     entry = app.state.alerts_cache
     try:
         alerts, suppressed, _failed = await fetch_service_alerts(client)
-    except httpx.HTTPError as exc:
-        _note_failure(entry, 502, f"Upstream MTA alert feed error: {_sanitize_upstream(exc)}")
-        return
     except RuntimeError as exc:
-        # Every alert feed failed this poll; keep the last-known index.
+        # Every alert feed failed this poll; keep the last-known index. Unlike the
+        # single-fetch refreshers (buses/subways), there is no httpx.HTTPError to catch
+        # here: fetch_service_alerts gathers the four feeds with return_exceptions=True,
+        # so a per-feed HTTP or decode error is captured inside it and only the
+        # all-failed RuntimeError ever propagates.
         _note_failure(entry, 502, _sanitize_upstream(exc))
         return
     entry.update(

@@ -434,11 +434,13 @@ function compareAlerts(a, b) {
 // arrivals (arrivalRouteIds, the route ids already rendered in the countdown rows).
 // Everything is scoped by `system`, so a numeric id shared across modes never leaks.
 //
-// KNOWN LIMITATION of the route match (b): a fully SUSPENDED route produces no
-// arrivals rows, so arrivalRouteIds is empty for it and a route-only alert for that
-// route will not surface at the stations it serves. In practice the stop-level
-// selectors (a) cover this, because MTA alerts commonly enumerate the affected
-// stations; a static routes-per-station join is out of scope until a phase needs it.
+// KNOWN LIMITATION of the route match (b): arrivalRouteIds only holds routes with a
+// train in the CURRENT arrivals window, so a route that serves the station but has no
+// imminent train there drops out. That is a fully SUSPENDED route, but also a long
+// late-night headway or a between-trains moment, so a route-only alert for such a
+// route will not surface at that station. In practice the stop-level selectors (a)
+// cover this, because MTA alerts commonly enumerate the affected stations; a static
+// routes-per-station join is out of scope until a phase needs it.
 //
 // Deterministic sort so the block is stable across refreshes: open-ended alerts (no
 // end) first, then by starts_at (earliest first, a null start sorts first), then id.

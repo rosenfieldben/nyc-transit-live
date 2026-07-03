@@ -8,8 +8,12 @@ const { installMocks, json, emptyFeedAt } = require("./mock");
 
 // Common setup: intercept everything, freeze the clock at FROZEN_MS, then load the
 // app. Returns the mock ctx so a test can flip overrides / read hit counts.
-async function boot(page) {
+async function boot(page, beforeGoto) {
   const ctx = await installMocks(page);
+  // beforeGoto runs after the routes are installed but BEFORE navigation, so a test
+  // can seed an override (e.g. a non-empty /api/alerts) that the page's very first
+  // fetch picks up. Existing scenarios pass no hook and are unaffected.
+  if (beforeGoto) beforeGoto(ctx);
   // install() alone lets fake time keep flowing; pauseAt() freezes it at FROZEN so
   // the first poll, the clock-skew baseline, and the countdowns are all computed at
   // exactly FROZEN. Tests move time forward explicitly with page.clock.runFor.
@@ -257,4 +261,42 @@ test("8. AirTrain: static branches, scheduled popup (not live), toggle", async (
   await page.locator("#toggle-airtrain").check();
   await expect(page.locator(".airtrain-marker")).toHaveCount(3);
   expect(await page.evaluate(() => map.hasLayer(airtrainRouteLinesLayer))).toBe(true);
+});
+
+test("9. alerts: a matching subway alert renders above arrivals; a colliding railroad alert does not leak", async ({ page }) => {
+  // sub-1 matches Times Sq (stop "127") under system subway. lirr-collide shares
+  // BOTH that stop id and a route id ("1") present in the arrivals, but is system
+  // LIRR, so system scoping must keep it out of the subway popup.
+  const alertsFixture = {
+    fetched_at: fx.FROZEN_S,
+    alerts: [
+      { id: "sub-1", system: "subway", header: "[2] delays at Times Sq-42 St", description: null,
+        effect: "UNKNOWN_EFFECT", cause: "UNKNOWN_CAUSE", routes: ["2"], stops: ["127"],
+        starts_at: fx.FROZEN_S - 600, ends_at: null },
+      { id: "lirr-collide", system: "LIRR", header: "LIRR alert must not leak into subway", description: null,
+        effect: "UNKNOWN_EFFECT", cause: "UNKNOWN_CAUSE", routes: ["1"], stops: ["127"],
+        starts_at: fx.FROZEN_S - 600, ends_at: null },
+    ],
+  };
+  await boot(page, (ctx) => {
+    ctx.overrides.alerts = (route) => json(route, alertsFixture);
+  });
+  await waitForReady(page);
+  // Wait until the alert is actually indexed before opening (the block renders from
+  // whatever the store holds at popup-render time).
+  await page.waitForFunction(
+    () => typeof alertsIndex !== "undefined" && alertsIndex.byStop.has("subway|127"),
+  );
+
+  await page.evaluate(() => stationLayer.getLayers()[0].openPopup()); // Times Sq (id 127)
+  await expect(popup(page)).toContainText("[2] delays at Times Sq-42 St");
+  await expect(popup(page)).not.toContainText("LIRR alert must not leak");
+
+  // The alert block sits ABOVE the direction sections.
+  const order = await page.evaluate(() => {
+    const html = document.querySelector(".leaflet-popup-content").innerHTML;
+    return { block: html.indexOf("alert-block"), dir: html.indexOf("arr-dir") };
+  });
+  expect(order.block).toBeGreaterThanOrEqual(0);
+  expect(order.block).toBeLessThan(order.dir);
 });

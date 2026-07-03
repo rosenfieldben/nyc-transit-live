@@ -393,12 +393,79 @@ function airtrainStationPopupHtml(station, routes, minutes) {
   return html;
 }
 
+// ---- Service alerts in the station popups (phase 12b) ----
+
+// Index the active-alerts list into two lookups, each keyed by "system|id": one by
+// stop selector, one by route selector. WHY the key embeds the system: numeric ids
+// collide ACROSS systems (LIRR route "1" vs subway route "1" vs MNR route "1"), so a
+// join scoped only by id would leak alerts between modes. Every lookup below is
+// therefore system-scoped.
+function indexAlerts(alerts) {
+  const byStop = new Map(); // "system|stop_id" -> [alert, ...]
+  const byRoute = new Map(); // "system|route_id" -> [alert, ...]
+  const push = (map, key, alert) => {
+    const list = map.get(key);
+    if (list) list.push(alert);
+    else map.set(key, [alert]);
+  };
+  for (const alert of alerts ?? []) {
+    for (const stop of alert.stops ?? []) push(byStop, `${alert.system}|${stop}`, alert);
+    for (const route of alert.routes ?? []) push(byRoute, `${alert.system}|${route}`, alert);
+  }
+  return { byStop, byRoute };
+}
+
+// Alerts affecting one station popup, deduped and sorted. An alert applies when
+// alert.system === system AND either (a) the station's id is in alert.stops, or
+// (b) alert.routes intersects the routes actually present in this station's current
+// arrivals (arrivalRouteIds, the route ids already rendered in the countdown rows).
+// Everything is scoped by `system`, so a numeric id shared across modes never leaks.
+//
+// KNOWN LIMITATION of the route match (b): a fully SUSPENDED route produces no
+// arrivals rows, so arrivalRouteIds is empty for it and a route-only alert for that
+// route will not surface at the stations it serves. In practice the stop-level
+// selectors (a) cover this, because MTA alerts commonly enumerate the affected
+// stations; a static routes-per-station join is out of scope until a phase needs it.
+//
+// Deterministic sort so the block is stable across refreshes: open-ended alerts (no
+// end) first, then by starts_at (earliest first, a null start sorts first), then id.
+function matchStationAlerts(index, system, stationId, arrivalRouteIds) {
+  const matched = new Map(); // id -> alert; an alert matching by BOTH stop and route appears once
+  for (const alert of index.byStop.get(`${system}|${stationId}`) ?? []) matched.set(alert.id, alert);
+  for (const routeId of arrivalRouteIds ?? []) {
+    for (const alert of index.byRoute.get(`${system}|${routeId}`) ?? []) matched.set(alert.id, alert);
+  }
+  return [...matched.values()].sort((a, b) => {
+    const aOpen = a.ends_at == null ? 0 : 1;
+    const bOpen = b.ends_at == null ? 0 : 1;
+    if (aOpen !== bOpen) return aOpen - bOpen;
+    const aStart = a.starts_at ?? -Infinity;
+    const bStart = b.starts_at ?? -Infinity;
+    if (aStart !== bStart) return aStart - bStart;
+    return String(a.id).localeCompare(String(b.id));
+  });
+}
+
+// Compact alerts block for a station popup: one escaped header line per alert, or ""
+// when there is nothing to show (so the caller renders NO container at all). Header
+// text only in this phase (description/effect omitted); the text is kept verbatim
+// and escaped, so bracketed route tokens like [Q] render as plain text, no
+// substitution. Alerts with no header contribute nothing.
+function alertsBlockHtml(alerts) {
+  const rows = (alerts ?? [])
+    .filter((a) => a.header)
+    .map((a) => `<div class="alert-row">${esc(a.header)}</div>`);
+  if (!rows.length) return "";
+  return `<div class="alert-block">${rows.join("")}</div>`;
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     esc, routeColor, lineColor, staleness, emptyFeedDecision, noteClockOffset,
     formatCountdown, trainLatLng, polylineCumLengths, pointAtArcLength, projectOntoRoute,
     computeRouteSlice, railroadColor, isPlacedRailroad, orderedRailroadBuckets,
     railroadArrivalsHtml, formatRailroadHead, ROUTE_ACCEPT_DIST, ROUTE_MAX_SLICE,
+    indexAlerts, matchStationAlerts, alertsBlockHtml,
     RAILROAD_ROUTE_MAX_SLICE, RAILROAD_ROUTE_ACCEPT_DIST, RAILROAD_BUCKET_ORDER,
     LINE_COLORS, DARK_TEXT_LINES, FEED_STALE_AFTER_S,
     selectHeadwayBand, airtrainStationPopupHtml,

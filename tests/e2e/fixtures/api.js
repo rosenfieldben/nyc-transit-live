@@ -171,6 +171,11 @@ const airtrain = () => ({
   ],
 });
 
+// Service alerts default to an EMPTY list so every existing scenario's popup
+// expectations are untouched by the new /api/alerts fetch. The alerts scenario
+// overrides this per-test with a fixture that matches the station under test.
+const alerts = () => ({ fetched_at: FROZEN_S, alerts: [] });
+
 module.exports = {
   FROZEN_MS,
   FROZEN_S,
@@ -186,4 +191,5 @@ module.exports = {
   railroadArrivals,
   busRoute,
   airtrain,
+  alerts,
 };

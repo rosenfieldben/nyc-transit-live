@@ -3,6 +3,12 @@ const POLL_INTERVAL_MS = 15000;
 // at the backend cadence (60s). Alerts are decorative: a failed fetch keeps the
 // last-known set silently and never blocks or delays the arrivals popups.
 const ALERT_POLL_INTERVAL_MS = 60000;
+// Static loaders (route lines, station dots, AirTrain) retry with doubling backoff
+// until they populate, so a visitor who lands during a backend cold start gets a
+// map that fills in by itself once the static GTFS warms (see the retryUntil calls
+// at the bottom). 1s catches a fast warmup quickly; 30s is the idle hum ceiling.
+const STATIC_RETRY_BASE_MS = 1000;
+const STATIC_RETRY_CAP_MS = 30000;
 
 const map = L.map("map").setView([40.7128, -74.006], 12);
 
@@ -282,15 +288,26 @@ function trainPopup(record) {
 const lineRenderer = L.canvas({ padding: 0.3 });
 const routeIndex = new Map(); // route_id -> [{ points, cum }] for interpolation
 
+// The five static loaders below each return true only once they have populated
+// their layer from a NON-EMPTY payload, and false otherwise, so retryUntil can
+// keep asking. WHY an empty 200 is not success: while a static group's warmup has
+// FAILED (and is retrying server-side), its endpoints serve [] under Cache-Control
+// no-cache, precisely so a browser will come back and see the healed state; and
+// while it is still LOADING they 503. None of these endpoints has a legitimately
+// empty steady state, so emptiness always means "ask again later". Each attempt
+// stays all-or-nothing (populate only after the full payload parsed), so a retry
+// can never double-add markers or polylines; once a loader returns true it is
+// never called again.
 async function loadRouteLines() {
   let routes;
   try {
     const res = await fetch("/api/subway-routes");
-    if (!res.ok) return;
+    if (!res.ok) return false;
     routes = await res.json();
   } catch {
-    return;
+    return false;
   }
+  if (!routes.length) return false; // failed-warmup []: retry until the backend heals
   for (const route of routes) {
     routeIndex.set(
       route.route,
@@ -306,6 +323,7 @@ async function loadRouteLines() {
       }).addTo(routeLinesLayer);
     }
   }
+  return true;
 }
 
 // `${system}|${route_id}` -> [{ points, cum }], the geometry placed railroad
@@ -320,11 +338,19 @@ async function loadRailroadRoutes() {
   let routes;
   try {
     const res = await fetch("/api/railroad-routes");
-    if (!res.ok) return; // route lines are decorative; degrade silently
+    if (!res.ok) return false; // warming 503 (or transient error): retry
     routes = await res.json();
   } catch {
-    return;
+    return false;
   }
+  // RAILROAD NUANCE: the backend's railroad warmup is lenient PER SYSTEM. It
+  // settles "ready" even when one system's static failed to load, and this
+  // endpoint then serves only the loaded system's entries under the normal
+  // hour-long cache. A non-empty one-system payload is therefore a SETTLED state
+  // the server-side warmup will not revisit, so accepting it and stopping is
+  // correct: further frontend retries would just re-read the same cached partial,
+  // never a fuller one. Only a fully empty payload means "ask again later".
+  if (!routes.length) return false;
   for (const route of routes) {
     // Key by (system, route): LIRR and MNR route ids collide, so route_id alone
     // would merge two systems' geometry. Matches the endpoint's {system, route,
@@ -348,6 +374,7 @@ async function loadRailroadRoutes() {
       }).addTo(railroadRouteLinesLayer);
     }
   }
+  return true;
 }
 
 /* ----- Subway stations + live arrivals (click a station for countdowns) ----- */
@@ -567,11 +594,12 @@ async function loadStations() {
   let stations;
   try {
     const res = await fetch("/api/subway-stops");
-    if (!res.ok) return;
+    if (!res.ok) return false; // warming 503 (or transient error): retry
     stations = await res.json();
   } catch {
-    return;
+    return false;
   }
+  if (!stations.length) return false; // failed-warmup []: retry until the backend heals
   for (const station of stations) {
     const marker = L.circleMarker([station.lat, station.lon], {
       radius: 4,
@@ -590,17 +618,21 @@ async function loadStations() {
       render: (s, b) => stationAlertsBlock("subway", s, b) + subwayArrivalsHtml(s, b),
     })).addTo(stationLayer);
   }
+  return true;
 }
 
 async function loadRailroadStations() {
   let stations;
   try {
     const res = await fetch("/api/railroad-stops");
-    if (!res.ok) return; // stations are a convenience layer; degrade silently
+    if (!res.ok) return false; // warming 503 (or transient error): retry
     stations = await res.json();
   } catch {
-    return;
+    return false;
   }
+  // Same settled-partial rule as loadRailroadRoutes: a one-system payload is a
+  // state the lenient backend warmup will not revisit, so non-empty is success.
+  if (!stations.length) return false;
   for (const station of stations) {
     // Same pane/renderer as subway stations (click priority + cheap canvas), but
     // visually distinct: heavier, darker slate stroke and a slightly smaller
@@ -633,6 +665,7 @@ async function loadRailroadStations() {
         ),
     })).addTo(railroadStationLayer);
   }
+  return true;
 }
 
 /* ---------------- AirTrain JFK (static-only) ---------------- */
@@ -673,12 +706,16 @@ async function loadAirtrain() {
   let data;
   try {
     const res = await fetch("/api/airtrain");
-    if (!res.ok) return; // static convenience layer; degrade silently like the other loaders
+    if (!res.ok) return false;
     data = await res.json();
   } catch {
-    return;
+    return false;
   }
-  const routes = data.routes ?? [];
+  // AirTrain serves a committed fixture, so only a transient network error can
+  // fail it (there is no warmup 503 or failed-[] state). It still gets the same
+  // non-empty check for uniformity with the other static loaders.
+  if (!data.stations?.length || !data.routes?.length) return false;
+  const routes = data.routes;
   // Branch guideways: one AirTrain color, non-interactive (clicks fall through to
   // the station markers, matching the subway/rail route lines).
   for (const route of routes) {
@@ -696,7 +733,7 @@ async function loadAirtrain() {
   // long-lived tab never shows a stale band, and there is no timer to leak. This
   // deliberately does NOT use bindStationPopup / the live countdown machinery,
   // because AirTrain has no realtime feed to count down from.
-  for (const station of data.stations ?? []) {
+  for (const station of data.stations) {
     // Render on stationPane (z-index 450) like the subway/rail station dots, so the
     // squares sit ABOVE route lines but BELOW the train/bus markers (markerPane 600),
     // matching the station-below-vehicles layering the rest of the map keeps.
@@ -704,6 +741,7 @@ async function loadAirtrain() {
       .bindPopup(() => airtrainStationPopupHtml(station, routes, nyMinutesSinceMidnight()))
       .addTo(airtrainStationLayer);
   }
+  return true;
 }
 
 const trains = new Map(); // trip id -> { marker, routeId, latest }
@@ -976,11 +1014,17 @@ async function refreshAll() {
   if (openStation) openStationArrivals({ refresh: true });
 }
 
-loadRouteLines();
-loadRailroadRoutes();
-loadStations();
-loadRailroadStations();
-loadAirtrain();
+// Static loaders retry until they populate, so a visitor who lands during a
+// backend cold start (warming 503s, or a failed warmup serving [] no-cache) gets
+// a map that fills in on its own once the backend heals; each loader stops for
+// good after its first successful populate. Live-data polling (refreshAll,
+// loadAlerts) is untouched: it already self-heals on its own intervals.
+const staticRetryOpts = { baseMs: STATIC_RETRY_BASE_MS, capMs: STATIC_RETRY_CAP_MS };
+retryUntil(loadRouteLines, staticRetryOpts);
+retryUntil(loadRailroadRoutes, staticRetryOpts);
+retryUntil(loadStations, staticRetryOpts);
+retryUntil(loadRailroadStations, staticRetryOpts);
+retryUntil(loadAirtrain, staticRetryOpts);
 loadAlerts();
 refreshAll();
 setInterval(refreshAll, POLL_INTERVAL_MS);

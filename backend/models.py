@@ -170,6 +170,27 @@ class AirTrainData(BaseModel):
     routes: list[AirTrainRoute]
 
 
+# Service alerts. One polled feed per system (subway/bus/LIRR/MNR); the decode
+# keeps only alerts active now and tags each with its system. Text is verbatim
+# from the feed (route tokens like [Q] included); 12b owns rendering.
+class Alert(BaseModel):
+    id: str
+    system: str  # feed this came from: subway | bus | LIRR | MNR
+    header: str | None
+    description: str | None
+    effect: str  # GTFS-RT Effect enum name (e.g. NO_SERVICE, DETOUR)
+    cause: str  # GTFS-RT Cause enum name (e.g. MAINTENANCE)
+    routes: list[str]  # deduped route selectors from the informed_entity list
+    stops: list[str]  # deduped stop selectors (subway: parent-station ids)
+    starts_at: float | None  # covering period start, null when open on the left
+    ends_at: float | None  # covering period end, null when open-ended
+
+
+class AlertFeed(BaseModel):
+    fetched_at: float | None
+    alerts: list[Alert]
+
+
 class FeedError(BaseModel):
     status: int
     detail: str
@@ -204,6 +225,14 @@ class RailroadFeedHealth(BaseModel):
     failed: list[str]  # systems that failed the last poll (e.g. ["MNR"])
 
 
+class AlertStatus(BaseModel):
+    fetched_at: float | None
+    age_s: float | None  # seconds since the alert poll last succeeded
+    last_error: FeedError | None
+    active: int  # active alerts currently in the index
+    suppressed_planned: int  # not-yet-active planned alerts held back this poll
+
+
 class StatusResponse(BaseModel):
     feeds: dict[str, FeedStatus]
     bus_route_index: BusIndexStatus
@@ -214,3 +243,7 @@ class StatusResponse(BaseModel):
     railroad_static: str | None
     subway_feeds: SubwayFeedHealth | None
     railroad_feeds: RailroadFeedHealth | None
+    # Alert feed health (None only before the lifespan sets it, e.g. a bare test app).
+    # Defaulted so pre-alerts /api/status callers and fixtures validate unchanged;
+    # the live handler always populates it.
+    alerts: AlertStatus | None = None

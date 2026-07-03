@@ -1,0 +1,72 @@
+{
+"now": 1783049285.0,
+"feed_key": "MNR",
+"alerts": [
+{
+"id": "lmm:alert:551186",
+"system": "MNR",
+"header": "NJ TRANSIT rail service is subject to up to 60-minute delays systemwide due to impacts on the equipment related to extreme temperatures.",
+"description": "Midtown Direct service is being diverted to Hoboken. NJ TRANSIT rail tickets and passes are being cross honored by NJ TRANSIT and private carrier bus and PATH at Newark Penn, Hoboken and 33rd Street, New York. Customers should visit njtransit.com/abc for available alternate service information.",
+"effect": "UNKNOWN_EFFECT",
+"cause": "UNKNOWN_CAUSE",
+"routes": [
+"50",
+"51"
+],
+"stops": [],
+"starts_at": 1783020983,
+"ends_at": null
+},
+{
+"id": "lmm:planned_work:32826",
+"system": "MNR",
+"header": "Riverdale station north end access is restricted at W 255 St. Build in extra travel time.",
+"description": "The closure of W. 255th Street for roadway construction is now in effect. \n\nAll AM and PM passenger pick-ups will now take place at the bus drop-off area. \n\nFor your safety, please use the platform stairs to access the new pick-up location and avoid walking on the roadway.",
+"effect": "UNKNOWN_EFFECT",
+"cause": "UNKNOWN_CAUSE",
+"routes": [
+"1"
+],
+"stops": [
+"16"
+],
+"starts_at": 1782100800,
+"ends_at": 1794718800
+},
+{
+"id": "lmm:planned_work:32172",
+"system": "MNR",
+"header": "The elevator leading to the tracks 2 and 4\u202fplatform at New Rochelle is closed for upgrade work.",
+"description": "The tracks will remain accessible via the stairs.\n\nCustomers\u202frequiring elevator access should consider traveling from\u202fLarchmont station.",
+"effect": "UNKNOWN_EFFECT",
+"cause": "UNKNOWN_CAUSE",
+"routes": [
+"3"
+],
+"stops": [
+"108"
+],
+"starts_at": 1779768060,
+"ends_at": 1784347140
+},
+{
+"id": "lmm:planned_work:31150",
+"system": "MNR",
+"header": "Temporary platforms are in place at Botanical Garden, Williams Bridge, and Woodlawn for northbound travel. Build in extra travel time to reach the\u202fplatform.",
+"description": "What's Happening?\n\nWe are renovating some Harlem Line stations in the Bronx. Learn more about the project\u202fhere.",
+"effect": "UNKNOWN_EFFECT",
+"cause": "UNKNOWN_CAUSE",
+"routes": [
+"2"
+],
+"stops": [
+"57",
+"58",
+"59"
+],
+"starts_at": 1776312000,
+"ends_at": 1796100300
+}
+],
+"suppressed": 5
+}

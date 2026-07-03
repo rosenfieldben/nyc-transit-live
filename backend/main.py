@@ -27,11 +27,13 @@ from feeds import (
     SUBWAY_FEED_URLS,
     carry_forward_prev,
     fetch_railroad_trains,
+    fetch_service_alerts,
     fetch_subway_trains,
     fetch_vehicle_positions,
 )
 from models import (
     AirTrainData,
+    AlertFeed,
     BusFeed,
     RailroadFeed,
     RailroadRoute,
@@ -66,6 +68,12 @@ FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 # The backend polls the MTA once and serves every browser client from this
 # cache, so N clients never means N upstream fetches.
 POLL_INTERVAL_S = 20
+
+# Service alerts poll on their OWN slower loop: alerts change far more slowly than
+# vehicle positions, and the subway alerts feed alone is ~400 KB, so re-pulling all
+# four every 20s would be wasteful. A separate lifespan task on this cadence keeps
+# the position poll lean and independent (an alert-feed outage never stalls it).
+ALERT_POLL_INTERVAL_S = 60
 
 # Upstream-staleness threshold: how far the feed's CONTENT time (MTA's clock)
 # may lag the poll time (this server's clock) before the data is considered
@@ -102,6 +110,14 @@ def _fresh_entry() -> dict:
     # time (MTA's clock). Both are stored so freshness can be judged without the
     # browser clock — see _feed_age and FEED_STALE_AFTER_S.
     return {"data": None, "fetched_at": None, "feed_timestamp": None, "error": None}
+
+
+def _fresh_alerts_entry() -> dict:
+    # alerts = the active-alert index (None until the first successful poll, [] once
+    # a poll decoded zero active alerts); active/suppressed are the counts /api/status
+    # reports. Same last-known-on-failure rule as the feed cache: a failed poll keeps
+    # the last index and its fetched_at, replacing them only on a poll that decoded.
+    return {"alerts": None, "fetched_at": None, "error": None, "active": 0, "suppressed": 0}
 
 
 def _note_failure(entry: dict, status: int, detail: str, log: bool = True) -> None:
@@ -275,6 +291,48 @@ async def _poll_feeds(app: FastAPI) -> None:
             await asyncio.sleep(POLL_INTERVAL_S)
 
 
+async def _refresh_alerts(app: FastAPI, client: httpx.AsyncClient) -> None:
+    """Refresh the active-alerts index. Same cache contract as the feeds: a failed
+    poll keeps the last-known index and its fetched_at (the error is recorded but
+    only surfaces to clients while the index has never filled), and the index is
+    replaced only on a poll that decoded. A partial failure (some feeds down, not
+    all) is a SUCCESS: fetch_service_alerts already dropped the failed systems'
+    alerts and returned, so the poll succeeds and the error clears."""
+    entry = app.state.alerts_cache
+    try:
+        alerts, suppressed, _failed = await fetch_service_alerts(client)
+    except httpx.HTTPError as exc:
+        _note_failure(entry, 502, f"Upstream MTA alert feed error: {_sanitize_upstream(exc)}")
+        return
+    except RuntimeError as exc:
+        # Every alert feed failed this poll; keep the last-known index.
+        _note_failure(entry, 502, _sanitize_upstream(exc))
+        return
+    entry.update(
+        alerts=alerts,
+        fetched_at=time.time(),
+        error=None,
+        active=len(alerts),
+        suppressed=suppressed,
+    )
+
+
+async def _poll_alerts(app: FastAPI) -> None:
+    """Refresh the alerts index every ALERT_POLL_INTERVAL_S for the app's lifetime.
+
+    A separate task from _poll_feeds (own client, slower cadence): alerts change
+    slowly and the feeds are large, and keeping it independent means an alert-feed
+    outage never delays a position poll. Anything unexpected is logged rather than
+    allowed to kill the loop, matching _poll_feeds."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        while True:
+            try:
+                await _refresh_alerts(app, client)
+            except Exception:
+                logger.exception("alert poll cycle failed unexpectedly")
+            await asyncio.sleep(ALERT_POLL_INTERVAL_S)
+
+
 # Static GTFS loads in the background, off the startup critical path (the durable
 # version of the old _DOWNLOAD_DEADLINE_S stopgap). Each group runs its own warmup
 # task with a "loading" -> "ready" | "failed" state machine: on failure it sleeps
@@ -380,6 +438,8 @@ async def lifespan(app: FastAPI):
         "subways": _fresh_entry(),
         "railroads": _fresh_entry(),
     }
+    # Active service-alerts index, refreshed by its own slower poll (_poll_alerts).
+    app.state.alerts_cache = _fresh_alerts_entry()
     # Per-station arrivals index, rebuilt by each successful subway poll.
     app.state.subway_arrivals = {}
     # Same, per railroad system: {"LIRR": {...}, "MNR": {...}}, each system
@@ -401,6 +461,8 @@ async def lifespan(app: FastAPI):
     app.state.subway_static_task = asyncio.create_task(_warm_subway_static(app))
     app.state.railroad_static_task = asyncio.create_task(_warm_railroad_static(app))
     app.state.feed_poll_task = asyncio.create_task(_poll_feeds(app))
+    # Service alerts poll on their own slower loop, independent of the position poll.
+    app.state.alert_poll_task = asyncio.create_task(_poll_alerts(app))
     # Bus route geometry indexes in the background — startup never waits on
     # the ~52 MB of borough GTFS zips; /api/bus-route reports until ready.
     app.state.bus_index_task = asyncio.create_task(bus_static.ensure_index())
@@ -410,6 +472,7 @@ async def lifespan(app: FastAPI):
     bus_static.stop()
     app.state.bus_index_task.cancel()
     app.state.feed_poll_task.cancel()
+    app.state.alert_poll_task.cancel()
     # cancel() during a warmup's retry sleep raises CancelledError inside the
     # sleep, so shutdown never waits out a mid-retry STATIC_RETRY_S.
     app.state.subway_static_task.cancel()
@@ -419,6 +482,7 @@ async def lifespan(app: FastAPI):
     for task in (
         app.state.bus_index_task,
         app.state.feed_poll_task,
+        app.state.alert_poll_task,
         app.state.subway_static_task,
         app.state.railroad_static_task,
     ):
@@ -567,6 +631,25 @@ async def get_railroads() -> dict:
     return _serve_cached("railroads")
 
 
+@app.get("/api/alerts", response_model=AlertFeed)
+async def get_alerts() -> dict:
+    """Active service alerts from the in-memory index: {fetched_at, alerts: [...]},
+    one entry per alert active now across the subway/bus/LIRR/MNR feeds.
+
+    Same envelope treatment as the other live feeds (no explicit Cache-Control; the
+    frontend polls it, and _serve_cached sets none either). An index that decoded
+    zero active alerts serves an empty list, NOT an error; a 503 surfaces only until
+    the first successful poll fills the index (mirrors _serve_cached's warming path)."""
+    entry = app.state.alerts_cache
+    if entry["alerts"] is not None:
+        return {"fetched_at": entry["fetched_at"], "alerts": entry["alerts"]}
+    if entry["error"]:
+        raise HTTPException(entry["error"]["status"], entry["error"]["detail"])
+    raise HTTPException(
+        status_code=503, detail="Alerts cache is warming up; try again in a few seconds."
+    )
+
+
 @app.get("/api/subway-stops", response_model=list[SubwayStop])
 async def get_subway_stops(response: Response) -> list[dict]:
     """Subway station markers ({id, name, lat, lon}) from the static GTFS.
@@ -710,6 +793,20 @@ async def get_status() -> dict:
         static_gtfs = {"mtime": mtime, "age_s": round(now - mtime, 1)}
     except OSError:
         pass  # not downloaded (yet); reported as null
+    # Alert feed health: poll age, last recorded error, and the active vs held-back
+    # planned counts. suppressed_planned is the not-yet-active work the last poll
+    # excluded from the index, so an operator can see there is upcoming service work.
+    alerts_entry = getattr(app.state, "alerts_cache", None)
+    alerts = None
+    if alerts_entry is not None:
+        fetched_at = alerts_entry["fetched_at"]
+        alerts = {
+            "fetched_at": fetched_at,
+            "age_s": round(now - fetched_at, 1) if fetched_at is not None else None,
+            "last_error": alerts_entry["error"],
+            "active": alerts_entry["active"],
+            "suppressed_planned": alerts_entry["suppressed"],
+        }
     return {
         "feeds": feeds,
         "bus_route_index": {
@@ -721,6 +818,7 @@ async def get_status() -> dict:
         "railroad_static": getattr(app.state, "railroad_static_status", None),
         "subway_feeds": getattr(app.state, "subway_feed_health", None),
         "railroad_feeds": getattr(app.state, "railroad_feed_health", None),
+        "alerts": alerts,
     }
 
 
@@ -769,6 +867,10 @@ async def healthz() -> JSONResponse:
     # (its failure is a lenient GPS-only degradation, per the docstring).
     if getattr(app.state, "subway_static_status", None) == "failed":
         reasons.append("subway static GTFS failed to load")
+    # The service-alerts feed is deliberately NOT a health input. Alerts are a
+    # decorative overlay (like railroad static): an alert-feed outage degrades only
+    # the alerts layer and must not fail the readiness probe that gates the whole
+    # app, so alerts_cache is not consulted here.
 
     body: dict = {"status": "fail" if reasons else "pass"}
     if reasons:

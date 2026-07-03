@@ -1092,3 +1092,97 @@ async def test_healthz_lenient_on_failed_railroad_static(client, healthz_env):
     app_module.app.state.railroad_static_status = "failed"
     res = await client.get("/healthz")
     assert res.status_code == 200
+
+
+async def test_healthz_ignores_failed_alerts(client, healthz_env):
+    # The alerts feed is decorative: a failed alert poll must NOT fail the probe.
+    _fresh(healthz_env["buses"])
+    app_module.app.state.alerts_cache = app_module._fresh_alerts_entry()
+    app_module._note_failure(app_module.app.state.alerts_cache, 502, "all alert feeds down")
+    res = await client.get("/healthz")
+    assert res.status_code == 200
+
+
+# ---------------- /api/alerts ----------------
+
+ALERT = {
+    "id": "lmm:alert:1",
+    "system": "MNR",
+    "header": "Delays on the Harlem Line",
+    "description": None,
+    "effect": "SIGNIFICANT_DELAYS",
+    "cause": "MAINTENANCE",
+    "routes": ["1"],
+    "stops": ["16"],
+    "starts_at": 1000.0,
+    "ends_at": None,
+}
+
+
+@pytest.fixture
+def alerts_cache():
+    app_module.app.state.alerts_cache = app_module._fresh_alerts_entry()
+    return app_module.app.state.alerts_cache
+
+
+async def test_alerts_served_from_seeded_index(client, alerts_cache):
+    alerts_cache.update(alerts=[ALERT], fetched_at=1000.0, active=1, suppressed=2)
+    res = await client.get("/api/alerts")
+    assert res.status_code == 200
+    assert res.json() == {"fetched_at": 1000.0, "alerts": [ALERT]}
+
+
+async def test_alerts_empty_index_is_empty_list_not_error(client, alerts_cache):
+    # A poll that decoded zero active alerts serves an empty list, not a 503/500.
+    alerts_cache.update(alerts=[], fetched_at=1000.0, active=0, suppressed=0)
+    res = await client.get("/api/alerts")
+    assert res.status_code == 200
+    assert res.json() == {"fetched_at": 1000.0, "alerts": []}
+
+
+async def test_alerts_warming_before_first_poll_returns_503(client, alerts_cache):
+    res = await client.get("/api/alerts")  # index None, no error yet
+    assert res.status_code == 503
+    assert "warming up" in res.json()["detail"]
+
+
+async def test_alerts_failed_poll_keeps_last_known(client, alerts_cache, monkeypatch):
+    alerts_cache.update(alerts=[ALERT], fetched_at=1000.0, active=1, suppressed=2)
+
+    async def boom(client_arg):
+        raise RuntimeError("All alert feeds failed: every feed timed out")
+
+    monkeypatch.setattr(app_module, "fetch_service_alerts", boom)
+    await app_module._refresh_alerts(app_module.app, client=None)
+    # Last-known index and fetched_at kept; the error is recorded but not served
+    # while the index is filled.
+    assert alerts_cache["alerts"] == [ALERT]
+    assert alerts_cache["fetched_at"] == 1000.0
+    assert alerts_cache["error"]["status"] == 502
+    res = await client.get("/api/alerts")
+    assert res.status_code == 200
+    assert res.json()["alerts"] == [ALERT]
+
+
+async def test_alerts_successful_poll_replaces_index(client, alerts_cache, monkeypatch):
+    async def ok(client_arg):
+        return [ALERT], 3, ["bus"]  # decoded alerts, suppressed count, one failed feed
+
+    monkeypatch.setattr(app_module, "fetch_service_alerts", ok)
+    await app_module._refresh_alerts(app_module.app, client=None)
+    assert alerts_cache["alerts"] == [ALERT]
+    assert alerts_cache["active"] == 1
+    assert alerts_cache["suppressed"] == 3
+    assert alerts_cache["error"] is None  # a partial failure is still a successful poll
+    assert alerts_cache["fetched_at"] is not None
+
+
+async def test_status_reports_alerts(client, status_env, alerts_cache):
+    alerts_cache.update(alerts=[ALERT], fetched_at=time.time() - 10, active=1, suppressed=4)
+    res = await client.get("/api/status")
+    assert res.status_code == 200
+    alerts_status = res.json()["alerts"]
+    assert alerts_status["active"] == 1
+    assert alerts_status["suppressed_planned"] == 4
+    assert alerts_status["last_error"] is None
+    assert 9 <= alerts_status["age_s"] <= 20

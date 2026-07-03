@@ -65,6 +65,17 @@ countdown.
   own toggleable layer, and a station popup shows each serving branch's scheduled
   headway for the current New York time, labeled "(scheduled)".
 
+Service alerts are polled on their own slower loop and served from an in-memory
+index (there is no map surface for them yet; that is a later phase):
+
+- `GET /api/alerts`: `{fetched_at, alerts: [...]}`, one entry per alert active now
+  across the keyless subway/bus/LIRR/MNR alert feeds: `{id, system, header,
+  description, effect, cause, routes, stops, starts_at, ends_at}`. `routes`/`stops`
+  are the deduped selectors from the alert's informed_entity list (subway stop
+  selectors are parent-station ids, the same id space as `/api/subway-stops`);
+  `ends_at` is null for an open-ended alert. Only alerts active NOW are included;
+  not-yet-active planned work is held back and counted in `/api/status`.
+
 ```
 nyc-transit-live/
 ├── backend/
@@ -219,7 +230,10 @@ freshness — both `age_s` (since this server last polled) and `feed_age_s` (how
 stale the feed's own content was at poll time) — the last recorded poll error
 if any, the bus route index state, the static subway GTFS age, and each static
 group's warmup state (`subway_static` / `railroad_static`: loading, ready, or
-failed-and-retrying).
+failed-and-retrying). The `alerts` entry reports the alert poll's `age_s`, its
+last error if any, the `active` alert count in the index, and `suppressed_planned`
+(not-yet-active planned work the last poll held back), so upcoming service work is
+visible even though it is excluded from `/api/alerts`.
 
 `GET /healthz` is the readiness probe (Railway's healthcheck points here). It
 returns 503 when the app can't serve fresh data: no feed is fresh, the bus route
@@ -294,6 +308,15 @@ warnings.
   trip from the stop progression toward an NYC anchor, with a residual Trains
   bucket for the ambiguous cases. GPS-tracked trains are included in arrivals even
   though the marker layer draws them from their live position.
+- [x] **12. AirTrain JFK (static layer)**: a scheduled-reference-only layer for
+  AirTrain JFK (no realtime feed exists), served from a committed fixture via
+  `/api/airtrain` and drawn as its own toggleable layer with scheduled headways.
+  See the AirTrain JFK section above.
+- [x] **12a. Service alerts (backend)**: the backend polls the keyless
+  subway/bus/LIRR/MNR GTFS-RT alert feeds on a slower 60s loop, keeps an in-memory
+  index of alerts active now (not-yet-active planned work is held back and counted
+  for `/api/status`), and serves them from `/api/alerts`. `/api/status` reports the
+  alert feed's health; `/healthz` ignores it (decorative). Map surfaces are 12b/12c.
 
 ## Notes
 

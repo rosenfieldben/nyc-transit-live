@@ -415,17 +415,32 @@ function indexAlerts(alerts) {
   return { byStop, byRoute };
 }
 
+// Shared deterministic order for an alerts list: open-ended (no end) first, then by
+// starts_at (earliest first, a null start sorts first), then id. Reused by the
+// station, route, and banner matchers so the ordering is identical everywhere.
+function compareAlerts(a, b) {
+  const aOpen = a.ends_at == null ? 0 : 1;
+  const bOpen = b.ends_at == null ? 0 : 1;
+  if (aOpen !== bOpen) return aOpen - bOpen;
+  const aStart = a.starts_at ?? -Infinity;
+  const bStart = b.starts_at ?? -Infinity;
+  if (aStart !== bStart) return aStart - bStart;
+  return String(a.id).localeCompare(String(b.id));
+}
+
 // Alerts affecting one station popup, deduped and sorted. An alert applies when
 // alert.system === system AND either (a) the station's id is in alert.stops, or
 // (b) alert.routes intersects the routes actually present in this station's current
 // arrivals (arrivalRouteIds, the route ids already rendered in the countdown rows).
 // Everything is scoped by `system`, so a numeric id shared across modes never leaks.
 //
-// KNOWN LIMITATION of the route match (b): a fully SUSPENDED route produces no
-// arrivals rows, so arrivalRouteIds is empty for it and a route-only alert for that
-// route will not surface at the stations it serves. In practice the stop-level
-// selectors (a) cover this, because MTA alerts commonly enumerate the affected
-// stations; a static routes-per-station join is out of scope until a phase needs it.
+// KNOWN LIMITATION of the route match (b): arrivalRouteIds only holds routes with a
+// train in the CURRENT arrivals window, so a route that serves the station but has no
+// imminent train there drops out. That is a fully SUSPENDED route, but also a long
+// late-night headway or a between-trains moment, so a route-only alert for such a
+// route will not surface at that station. In practice the stop-level selectors (a)
+// cover this, because MTA alerts commonly enumerate the affected stations; a static
+// routes-per-station join is out of scope until a phase needs it.
 //
 // Deterministic sort so the block is stable across refreshes: open-ended alerts (no
 // end) first, then by starts_at (earliest first, a null start sorts first), then id.
@@ -435,15 +450,29 @@ function matchStationAlerts(index, system, stationId, arrivalRouteIds) {
   for (const routeId of arrivalRouteIds ?? []) {
     for (const alert of index.byRoute.get(`${system}|${routeId}`) ?? []) matched.set(alert.id, alert);
   }
-  return [...matched.values()].sort((a, b) => {
-    const aOpen = a.ends_at == null ? 0 : 1;
-    const bOpen = b.ends_at == null ? 0 : 1;
-    if (aOpen !== bOpen) return aOpen - bOpen;
-    const aStart = a.starts_at ?? -Infinity;
-    const bStart = b.starts_at ?? -Infinity;
-    if (aStart !== bStart) return aStart - bStart;
-    return String(a.id).localeCompare(String(b.id));
-  });
+  return [...matched.values()].sort(compareAlerts);
+}
+
+// Alerts for a route surface (a bus, subway train, or railroad train popup), from
+// the SAME byRoute lookup, scoped by system so a numeric route id shared across
+// modes never leaks. A null or missing route_id matches nothing. Deduped (an alert
+// naming the route more than once appears once) and sorted like the station matcher.
+function matchRouteAlerts(index, system, routeId) {
+  if (!routeId) return [];
+  const matched = new Map();
+  for (const alert of index.byRoute.get(`${system}|${routeId}`) ?? []) matched.set(alert.id, alert);
+  return [...matched.values()].sort(compareAlerts);
+}
+
+// Agency-wide alerts for the banner: those that name NO route and NO stop, across
+// ALL systems, sorted the same way. A route-scoped or stop-scoped alert is excluded
+// (it belongs on its route/station surface, not the banner), so nothing is ever
+// double-shown. Takes the raw alerts list, since selector-less alerts appear in
+// neither byStop nor byRoute.
+function bannerAlerts(alerts) {
+  return (alerts ?? [])
+    .filter((a) => !(a.routes ?? []).length && !(a.stops ?? []).length)
+    .sort(compareAlerts);
 }
 
 // Compact alerts block for a station popup: one escaped header line per alert, or ""
@@ -465,7 +494,7 @@ if (typeof module !== "undefined" && module.exports) {
     formatCountdown, trainLatLng, polylineCumLengths, pointAtArcLength, projectOntoRoute,
     computeRouteSlice, railroadColor, isPlacedRailroad, orderedRailroadBuckets,
     railroadArrivalsHtml, formatRailroadHead, ROUTE_ACCEPT_DIST, ROUTE_MAX_SLICE,
-    indexAlerts, matchStationAlerts, alertsBlockHtml,
+    indexAlerts, matchStationAlerts, matchRouteAlerts, bannerAlerts, alertsBlockHtml,
     RAILROAD_ROUTE_MAX_SLICE, RAILROAD_ROUTE_ACCEPT_DIST, RAILROAD_BUCKET_ORDER,
     LINE_COLORS, DARK_TEXT_LINES, FEED_STALE_AFTER_S,
     selectHeadwayBand, airtrainStationPopupHtml,

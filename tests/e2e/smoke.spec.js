@@ -300,3 +300,72 @@ test("9. alerts: a matching subway alert renders above arrivals; a colliding rai
   expect(order.block).toBeGreaterThanOrEqual(0);
   expect(order.block).toBeLessThan(order.dir);
 });
+
+test("10. alerts: a bus alert shows in the bus popup and not on a subway train", async ({ page }) => {
+  const alertsFixture = {
+    fetched_at: fx.FROZEN_S,
+    alerts: [
+      { id: "bus-m15", system: "bus", header: "M15 detour via 2 Av", description: null,
+        effect: "UNKNOWN_EFFECT", cause: "UNKNOWN_CAUSE", routes: ["M15"], stops: [],
+        starts_at: fx.FROZEN_S - 600, ends_at: null },
+    ],
+  };
+  await boot(page, (ctx) => {
+    ctx.overrides.alerts = (route) => json(route, alertsFixture);
+  });
+  await waitForReady(page);
+  await page.waitForFunction(
+    () => typeof alertsIndex !== "undefined" && alertsIndex.byRoute.has("bus|M15"),
+  );
+
+  // Open the M15 bus popup (find its record by route_id, so we click the right bus).
+  await page.evaluate(() => {
+    [...buses.values()].find((r) => r.latest.route_id === "M15").marker.openPopup();
+  });
+  await expect(popup(page)).toContainText("M15 detour via 2 Av");
+  await expect(popup(page)).toContainText("Bus MTA NYCT_101"); // it is the bus popup
+
+  // A subway train popup (route "1") must NOT show the bus alert (system + route scoped).
+  await page.evaluate(() => {
+    [...trains.values()].find((r) => r.latest.route_id === "1").marker.openPopup();
+  });
+  await page.clock.runFor(250); // flush Leaflet's faded-popup removal timer (frozen clock holds it)
+  await expect(page.locator(".leaflet-popup")).toHaveCount(1);
+  await expect(popup(page)).toContainText("1 train");
+  await expect(popup(page)).not.toContainText("M15 detour");
+});
+
+test("11. alerts: agency-wide banner shows, dismisses per id, reopens only for a new id", async ({ page }) => {
+  const wide = (id, header) => ({
+    id, system: "subway", header, description: null, effect: "UNKNOWN_EFFECT", cause: "UNKNOWN_CAUSE",
+    routes: [], stops: [], starts_at: fx.FROZEN_S - 600, ends_at: null,
+  });
+  const ctx = await boot(page, (c) => {
+    c.overrides.alerts = (route) =>
+      json(route, { fetched_at: fx.FROZEN_S, alerts: [wide("wide-1", "Systemwide: reduced service")] });
+  });
+  await waitForReady(page);
+
+  const banner = page.locator("#alert-banner");
+  await expect(banner).toContainText("Systemwide: reduced service");
+
+  // Dismiss hides it (empties the banner element).
+  await banner.locator("#alert-banner-dismiss").click();
+  await expect(banner).toBeEmpty();
+
+  // A later poll re-showing the SAME id must not reopen it (loadAlerts() is what the
+  // 60s interval calls; invoking it directly avoids a long fake-clock advance).
+  await page.evaluate(() => loadAlerts());
+  await expect(banner).toBeEmpty();
+
+  // A poll carrying a NEW id reopens the banner with the new header only; the
+  // dismissed id stays hidden.
+  ctx.overrides.alerts = (route) =>
+    json(route, {
+      fetched_at: fx.FROZEN_S,
+      alerts: [wide("wide-1", "Systemwide: reduced service"), wide("wide-2", "Systemwide: new incident")],
+    });
+  await page.evaluate(() => loadAlerts());
+  await expect(banner).toContainText("Systemwide: new incident");
+  await expect(banner).not.toContainText("reduced service");
+});

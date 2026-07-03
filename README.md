@@ -25,7 +25,13 @@ quiet block above the countdowns (the railroad station popups do the same). The
 alerts come from the `/api/alerts` store; an alert applies to a station when it
 selects that station's stop id, or a route currently arriving there, within the
 same system (numeric ids collide across modes, so the join is system-scoped).
+Clicking a bus, a subway train, or a railroad train shows the alerts for that
+vehicle's route the same way, and agency-wide alerts (which name no route and no
+stop) appear in a dismissible banner over the map rather than in any one popup.
 Alerts are decorative: a failed or stale alerts fetch never blocks the arrivals.
+Route-line severity styling is deferred: the MTA stamps `UNKNOWN_EFFECT` on live
+alerts, so a real severity signal needs a future backend phase to decode the
+Mercury extension.
 The same subway poll that places trains also builds a per-station arrivals index
 in memory (the stops a train placement discards are exactly those arrival times),
 so a click is served from memory without hitting the MTA. The endpoints involved:
@@ -330,6 +336,13 @@ warnings.
   numeric route/stop ids collide across modes). Header text only; alerts are
   decorative, so a failed fetch keeps the last-known set silently and never blocks
   arrivals. Map banner and systemwide/bus alerts are 12c.
+- [x] **12c. Service alerts on vehicles + systemwide banner (frontend)**: the same
+  alerts store now feeds the bus, subway-train, and railroad-train popups (matched
+  by the vehicle's route, system-scoped), and agency-wide alerts (no route and no
+  stop selectors) surface in a dismissible banner over the map. Dismissal is per
+  alert id for the session, so clearing a standing incident does not suppress the
+  next, distinct one. Route-line severity styling stays deferred until a backend
+  phase decodes the MTA Mercury extension (live alerts all report `UNKNOWN_EFFECT`).
 
 ## Notes
 

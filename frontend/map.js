@@ -82,6 +82,9 @@ function busPopup(record) {
   const note = busRouteNotes.get(b.route_id);
   const showNote = note && Date.now() - note.at < NOTE_TTL_MS;
   return (
+    // Bus alerts are route-only (no stop selectors); "bus" route ids share the
+    // bus layer's id space, so the match is by route_id under system "bus".
+    routeAlertsBlock("bus", b.route_id) +
     `<b style="color:${routeColor(b.route_id)}">${esc(b.route_id ?? "Unknown route")}</b>` +
     `<br>Bus ${esc(b.id)}<br>Heading: ${heading}` +
     (showNote ? `<br><span class="popup-sub">${esc(note.message)}</span>` : "")
@@ -265,6 +268,7 @@ function trainIcon(train) {
 function trainPopup(record) {
   const t = record.latest;
   return (
+    routeAlertsBlock("subway", t.route_id) +
     `<b style="color:${lineColor(t.route_id)}">${esc(t.route_id ?? "?")} train</b>` +
     `<br>Next stop: ${esc(t.stop_name ?? t.stop_id ?? "unknown")}` +
     (t.direction ? `<br>${esc(t.direction)}` : "") +
@@ -487,11 +491,15 @@ let alertsIndex = indexAlerts([]);
 async function loadAlerts() {
   try {
     const res = await fetch("/api/alerts");
-    if (!res.ok) return; // keep the last-known index silently
+    if (!res.ok) return; // keep the last-known index + banner silently
     const body = await res.json();
-    alertsIndex = indexAlerts(body.alerts ?? []);
+    const list = body.alerts ?? [];
+    alertsIndex = indexAlerts(list);
+    // The banner re-renders every poll (unlike popups, which render on open), so a
+    // resolved agency-wide alert disappears on the next poll and a new one appears.
+    renderAlertBanner(bannerAlerts(list));
   } catch {
-    // network error: keep the last-known index, no user-facing error
+    // network error: keep the last-known index + banner, no user-facing error
   }
 }
 
@@ -505,6 +513,43 @@ function stationAlertsBlock(system, station, body) {
     for (const arr of arrivals ?? []) if (arr.route_id) routeIds.add(arr.route_id);
   }
   return alertsBlockHtml(matchStationAlerts(alertsIndex, system, station.id, routeIds));
+}
+
+// The alerts block for a route surface (bus / subway train / railroad train popup):
+// match the current index against the popup's system and route. WHY read alertsIndex
+// fresh each call: these popups are bound as functions and render at OPEN time (and
+// on the marker poll's popup.update()), so they show the store as of open/refresh,
+// not a live stream. A newly-arrived alert appears the next time the popup opens or
+// updates, the same contract the arrivals popups follow.
+function routeAlertsBlock(system, routeId) {
+  return alertsBlockHtml(matchRouteAlerts(alertsIndex, system, routeId));
+}
+
+// Agency-wide (selector-less) alerts get a dismissible banner over the map instead
+// of a popup, since they belong to no single route or station. WHY dismissal is per
+// alert id and in-memory for the session: dismissing hides the currently-shown ids,
+// a later poll re-showing the SAME ids keeps them hidden, but a NEW id (never
+// dismissed) reopens the banner. So a rider can clear a standing incident without
+// losing the next, distinct one, and a page reload starts fresh.
+const dismissedAlertIds = new Set();
+
+function renderAlertBanner(alerts) {
+  const el = document.getElementById("alert-banner");
+  const shown = alerts.filter((a) => a.header && !dismissedAlertIds.has(a.id));
+  if (!shown.length) {
+    el.replaceChildren(); // nothing to show: no banner strip in the DOM
+    return;
+  }
+  const rows = shown.map((a) => `<div class="alert-banner-row">${esc(a.header)}</div>`).join("");
+  el.innerHTML =
+    `<div class="alert-banner-strip">` +
+    `<div class="alert-banner-rows">${rows}</div>` +
+    `<button type="button" id="alert-banner-dismiss" title="Dismiss">&times;</button>` +
+    `</div>`;
+  el.querySelector("#alert-banner-dismiss").addEventListener("click", () => {
+    for (const alert of shown) dismissedAlertIds.add(alert.id);
+    renderAlertBanner(alerts); // re-render: the dismissed ids drop out, emptying the strip
+  });
 }
 
 async function loadStations() {
@@ -752,6 +797,9 @@ function railroadPopup(record) {
   const t = record.latest;
   const head = formatRailroadHead(t.system, t.route_id, railroadRouteNames.get(`${t.system}|${t.route_id}`));
   return (
+    // Scoped to the train's OWN system (LIRR/MNR) so a numeric route id shared with
+    // another mode never leaks in.
+    routeAlertsBlock(t.system, t.route_id) +
     `<b style="color:${railroadColor(t.route_id)}">${esc(head)}</b>` +
     (t.train_num ? `<br>Train ${esc(t.train_num)}` : "") +
     // Placed trains carry a next/current station; GPS trains do not.

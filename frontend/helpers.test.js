@@ -570,3 +570,66 @@ test("alertsBlockHtml renders escaped header rows, or nothing when empty", () =>
 test("alertsBlockHtml skips alerts with no header and renders nothing if all are empty", () => {
   assert.equal(alertsBlockHtml([{ id: "x", header: null }]), "");
 });
+
+// ---- Service alerts: route surfaces + agency-wide banner (phase 12c) ----
+
+const { matchRouteAlerts, bannerAlerts } = require("./helpers.js");
+
+const ROUTE_ALERTS = [
+  { id: "bus-1", system: "bus", header: "B46 detour", routes: ["B46"], stops: [], starts_at: 100, ends_at: null },
+  { id: "sub-b46", system: "subway", header: "hypothetical subway B46", routes: ["B46"], stops: [], starts_at: 100, ends_at: null },
+  { id: "wide-1", system: "subway", header: "systemwide A", routes: [], stops: [], starts_at: 300, ends_at: null },
+  { id: "wide-2", system: "LIRR", header: "systemwide B", routes: [], stops: [], starts_at: 100, ends_at: 999 },
+  { id: "route-only", system: "bus", header: "M15 note", routes: ["M15"], stops: [], starts_at: 50, ends_at: null },
+  { id: "stop-only", system: "subway", header: "stop note", routes: [], stops: ["127"], starts_at: 50, ends_at: null },
+  { id: "route-and-stop", system: "subway", header: "both", routes: ["2"], stops: ["127"], starts_at: 50, ends_at: null },
+];
+
+test("matchRouteAlerts matches a bus route and is scoped by system", () => {
+  const idx = indexAlerts(ROUTE_ALERTS);
+  // bus "B46" matches only the bus alert, never the same-id subway alert.
+  assert.deepEqual(matchRouteAlerts(idx, "bus", "B46").map((a) => a.id), ["bus-1"]);
+  assert.deepEqual(matchRouteAlerts(idx, "subway", "B46").map((a) => a.id), ["sub-b46"]);
+});
+
+test("matchRouteAlerts returns [] for a null/missing route_id and for no match", () => {
+  const idx = indexAlerts(ROUTE_ALERTS);
+  assert.deepEqual(matchRouteAlerts(idx, "bus", null), []);
+  assert.deepEqual(matchRouteAlerts(idx, "bus", undefined), []);
+  assert.deepEqual(matchRouteAlerts(idx, "bus", "Q99"), []);
+  assert.deepEqual(matchRouteAlerts(indexAlerts([]), "bus", "B46"), []);
+});
+
+test("matchRouteAlerts dedups an alert that names the route more than once", () => {
+  const dup = [{ id: "z", system: "bus", header: "z", routes: ["B46", "B46"], stops: [], starts_at: 1, ends_at: null }];
+  assert.deepEqual(matchRouteAlerts(indexAlerts(dup), "bus", "B46").map((a) => a.id), ["z"]);
+});
+
+test("matchRouteAlerts sorts deterministically like the station matcher", () => {
+  const alerts = [
+    { id: "b", system: "bus", header: "b", routes: ["X"], stops: [], starts_at: 300, ends_at: null },
+    { id: "a", system: "bus", header: "a", routes: ["X"], stops: [], starts_at: 100, ends_at: null },
+    { id: "d", system: "bus", header: "d", routes: ["X"], stops: [], starts_at: 50, ends_at: 999 },
+    { id: "c", system: "bus", header: "c", routes: ["X"], stops: [], starts_at: 100, ends_at: null },
+  ];
+  assert.deepEqual(matchRouteAlerts(indexAlerts(alerts), "bus", "X").map((a) => a.id), ["a", "c", "b", "d"]);
+});
+
+test("bannerAlerts keeps only selector-less alerts, across systems, sorted", () => {
+  // wide-1 (open-ended) before wide-2 (dated); everything with a route or stop is out.
+  assert.deepEqual(bannerAlerts(ROUTE_ALERTS).map((a) => a.id), ["wide-1", "wide-2"]);
+});
+
+test("bannerAlerts excludes route-only, stop-only, and route+stop alerts", () => {
+  const scoped = [
+    { id: "r", system: "bus", header: "r", routes: ["M15"], stops: [], starts_at: 1, ends_at: null },
+    { id: "s", system: "subway", header: "s", routes: [], stops: ["127"], starts_at: 1, ends_at: null },
+    { id: "rs", system: "subway", header: "rs", routes: ["2"], stops: ["127"], starts_at: 1, ends_at: null },
+  ];
+  assert.deepEqual(bannerAlerts(scoped), []);
+});
+
+test("bannerAlerts handles an empty or missing list", () => {
+  assert.deepEqual(bannerAlerts([]), []);
+  assert.deepEqual(bannerAlerts(undefined), []);
+});

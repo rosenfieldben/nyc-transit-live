@@ -165,3 +165,49 @@ html, body {
 .alert-row + .alert-row {
   margin-top: 3px;
 }
+
+/* Agency-wide alerts banner: a quiet but noticeable strip centered over the top of
+   the map. #alert-banner is just a positioning anchor and is empty (no visible box)
+   until map.js injects .alert-banner-strip. No MTA branding. */
+#alert-banner {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000; /* above Leaflet panes, same tier as the legend panel */
+  max-width: min(560px, calc(100% - 280px)); /* leave room for the top-right panel */
+}
+
+.alert-banner-strip {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: #fde8b0;
+  border: 1px solid #d9a406;
+  border-radius: 6px;
+  padding: 7px 10px;
+  font: 12px/1.4 system-ui, sans-serif;
+  color: #4a3c10;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.alert-banner-rows {
+  flex: 1;
+}
+
+.alert-banner-row + .alert-banner-row {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(217, 164, 6, 0.4);
+}
+
+#alert-banner-dismiss {
+  flex: none;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  color: #4a3c10;
+  padding: 0 2px;
+}

@@ -221,18 +221,22 @@ def _trip_start_ts(trip) -> float | None:
 ARRIVALS_PER_DIRECTION = 6
 
 # GTFS-RT schedule relationships that mean "ignore this": a CANCELED trip isn't
-# running; a SKIPPED/NO_DATA stop carries no real prediction. We drop them from
-# both placement and arrivals.
+# running; a DELETED trip has been removed and must not render as a ghost train;
+# a SKIPPED/NO_DATA stop carries no real prediction. We drop them from both
+# placement and arrivals.
 #
-# DELETED is included for forward-compatibility but does NOT take effect with
-# this binding: gtfs-realtime-bindings 2.0.0 predates DELETED in the trip enum,
-# so getattr resolves it to the -1 sentinel (collision-safe) AND, more to the
-# point, a real DELETED=7 on the wire is coerced to SCHEDULED=0 by proto2's
-# closed-enum decoding — so a DELETED trip currently reads as SCHEDULED and is
-# NOT filtered. Reliably dropping it would need a binding upgrade (after which
-# getattr would resolve DELETED and this check would work) or raw unknown-field
-# parsing; neither is worth it for a rare case. CANCELED (value 3, present in
-# the binding) is filtered correctly.
+# DELETED is filtered as of gtfs-realtime-bindings 2.1.0 (the pin in
+# requirements.lock), whose trip enum carries DELETED=7. Under the old 2.0.0
+# binding it was not: proto2's closed-enum decoding coerced an unknown wire
+# value to the field default, so a real DELETED=7 read as SCHEDULED=0 and
+# slipped past this set. The getattr below was written for exactly this
+# upgrade: it resolved to a collision-safe -1 sentinel under 2.0.0 and now
+# resolves the real value, activating the filter with no logic change (getattr
+# is kept, rather than a direct attribute read, so an older binding degrades to
+# the sentinel instead of raising at import). NEW (2.1.0's other addition)
+# marks a trip new relative to the static schedule, the same family as ADDED;
+# ADDED trips run and are not dropped, so NEW is deliberately not dropped
+# either, and unfiltered NEW is not the bug this pin fixed.
 _TRIP_SR = gtfs_realtime_pb2.TripDescriptor.ScheduleRelationship
 _STOP_SR = gtfs_realtime_pb2.TripUpdate.StopTimeUpdate.ScheduleRelationship
 _DROP_TRIP_RELATIONSHIPS = frozenset({_TRIP_SR.CANCELED, getattr(_TRIP_SR, "DELETED", -1)})

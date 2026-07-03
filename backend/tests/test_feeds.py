@@ -466,6 +466,44 @@ def test_canceled_trip_dropped_from_placement_and_arrivals():
     assert arrivals == {}
 
 
+def test_deleted_trip_dropped_from_placement_and_arrivals():
+    # Pins the gtfs-realtime-bindings >= 2.1 floor doing its job: under 2.0.0 a
+    # wire DELETED=7 was coerced to SCHEDULED by proto2's closed-enum decoding
+    # and slipped past the drop set, rendering a ghost train. With the enum
+    # value present, the getattr in _DROP_TRIP_RELATIONSHIPS resolves it and the
+    # trip vanishes from BOTH outputs, exactly like CANCELED.
+    deleted = pb.TripDescriptor.ScheduleRelationship.DELETED
+    trains, arrivals, _ = decode_feed(
+        {
+            "trip_id": STARTED,
+            "route_id": "1",
+            "relationship": deleted,
+            "stus": [("A01N", NOW + 60, None)],
+        }
+    )
+    assert trains == []
+    assert arrivals == {}
+
+
+def test_new_trip_is_not_dropped():
+    # NEW (also added in bindings 2.1.0) marks a trip new relative to the static
+    # schedule, the same family as ADDED. ADDED trips run and are not dropped,
+    # so NEW must not be dropped either: unfiltered NEW is a decision, not the
+    # coercion bug the DELETED test above guards against.
+    new = pb.TripDescriptor.ScheduleRelationship.NEW
+    trains, arrivals, _ = decode_feed(
+        {
+            "trip_id": STARTED,
+            "route_id": "1",
+            "relationship": new,
+            "stus": [("A01N", NOW + 60, None)],
+        }
+    )
+    assert len(trains) == 1
+    assert trains[0]["stop_id"] == "A01N"
+    assert arrivals["A01"]["Northbound"]  # its upcoming stop is indexed too
+
+
 def test_skipped_and_no_data_stops_excluded():
     # A01N (skipped) and A02N (no-data) carry no real prediction; A03S does.
     trains, arrivals, _ = decode_feed(

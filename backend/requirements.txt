@@ -2,4 +2,8 @@ fastapi>=0.110
 uvicorn[standard]>=0.29
 httpx>=0.27
 python-dotenv>=1.0
-gtfs-realtime-bindings>=1.0
+# 2.1 is the first release whose trip ScheduleRelationship enum carries DELETED,
+# which the decoder's drop set resolves via getattr; under 2.0 a wire DELETED was
+# coerced to SCHEDULED and not filtered. The unit tests assert DELETED filtering,
+# so a dev environment below 2.1 fails them; the floor rises with the lock.
+gtfs-realtime-bindings>=2.1

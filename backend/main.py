@@ -27,6 +27,7 @@ from feeds import (
     RAILROAD_FEED_URLS,
     SUBWAY_FEED_URLS,
     carry_forward_prev,
+    fetch_path_trains,
     fetch_railroad_trains,
     fetch_service_alerts,
     fetch_subway_trains,
@@ -36,7 +37,9 @@ from models import (
     AirTrainData,
     AlertFeed,
     BusFeed,
+    PathFeed,
     PathRoute,
+    PathStationArrivals,
     PathStop,
     RailroadFeed,
     RailroadRoute,
@@ -106,6 +109,13 @@ _STATION_ID_RE = re.compile(r"^[A-Za-z0-9]{1,6}$")
 # (system, stop_id).
 _RAILROAD_STATION_ID_RE = re.compile(r"^[0-9]{1,4}$")
 _RAILROAD_SYSTEMS = frozenset({"LIRR", "MNR"})
+
+# PATH parent station ids are 5-digit numerics (26733 Newark, 26734 WTC);
+# allow up to 6 digits for headroom. Like the other station-id regexes this is
+# only a cheap malformed-input pre-filter: membership in app.state.path_stops
+# is the real gate. PATH ids live in their own namespace (they collide
+# numerically with MTA ids), so this never mixes with the MTA regexes.
+_PATH_STATION_ID_RE = re.compile(r"^[0-9]{1,6}$")
 
 
 def _fresh_entry() -> dict:
@@ -274,8 +284,75 @@ async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
     app.state.railroad_arrivals = railroad_arrivals
 
 
+async def _refresh_path(app: FastAPI, client: httpx.AsyncClient) -> None:
+    """Refresh the PATH trains + arrivals from the community bridge feed.
+
+    Same cache contract as the other systems: a failed poll keeps the
+    last-known trains AND arrivals (the error only surfaces to clients while
+    the cache has never filled), and both are replaced only on a poll that
+    decoded. Deliberately NO carry_forward_prev here: the anchor memory keys
+    on trip ids, and PATH bridge trip ids do not survive an upstream refresh
+    (see path_static's module docstring), so every poll decodes independently
+    and prev_* stays null until 13d introduces a synthetic identity.
+    """
+    entry = app.state.feed_cache["path"]
+    stops = getattr(app.state, "path_stops", None)
+    if not stops:
+        # The 13a static group is not ready yet: neither placement nor
+        # arrivals can resolve parent station ids. Same quiet warming path as
+        # the subway refresher: log=False because this recurs every poll
+        # during warmup and the single transition log belongs to
+        # _set_static_status, not the 20s poll loop.
+        _note_failure(
+            entry,
+            503,
+            "Static PATH GTFS is still loading; it will retry automatically. Try again shortly.",
+            log=False,
+        )
+        return
+    try:
+        trains, arrivals, feed_timestamp, unresolved = await fetch_path_trains(client, stops)
+    except httpx.HTTPError as exc:
+        app.state.path_feed_health = {"total": 1, "ok": 0, "failed": ["PATH"]}
+        _note_failure(entry, 502, f"Upstream PATH bridge feed error: {_sanitize_upstream(exc)}")
+        return
+    except DecodeError:
+        # HTTP 200 with a non-protobuf body (bridge error page, proxy HTML).
+        app.state.path_feed_health = {"total": 1, "ok": 0, "failed": ["PATH"]}
+        _note_failure(entry, 502, "Upstream PATH bridge feed returned undecodable data")
+        return
+    # A nonzero unresolved count means the bridge referenced station ids the
+    # static stops table lacks (a renumber, or a lagging 13a snapshot): those
+    # trains are silently absent from the map, so the condition must be
+    # operator-visible. Logged only when it APPEARS or CLEARS (comparing
+    # against the previous poll's health, so a persistent drift never spams
+    # the 20s loop, matching _set_static_status's transition-only rule) and
+    # carried on path_feed_health so /api/status shows it while it lasts. A
+    # failed poll in between resets the memory (its health dict has no count),
+    # so the warning refires after an outage: acceptable, it is still news.
+    was_drifting = bool((getattr(app.state, "path_feed_health", None) or {}).get("unresolved"))
+    if bool(unresolved) != was_drifting:
+        if unresolved:
+            logger.warning(
+                "PATH decode is dropping %d entities whose station ids are missing "
+                "from the static stops table (bridge and static GTFS may disagree)",
+                unresolved,
+            )
+        else:
+            logger.info("PATH unknown-station drops cleared")
+    app.state.path_feed_health = {"total": 1, "ok": 1, "failed": [], "unresolved": unresolved}
+    # feed_timestamp is the bridge's write time; it advances even when the
+    # content is a re-served identical generation, which is NORMAL for PATH
+    # (the bridge regenerates faster than the upstream refreshes), so content
+    # sameness across polls is never treated as staleness.
+    entry.update(data=trains, fetched_at=time.time(), feed_timestamp=feed_timestamp, error=None)
+    # Replace the arrivals index only on success, so a failed poll keeps the
+    # last-known arrivals on the same fetched_at, consistent with the cache.
+    app.state.path_arrivals = arrivals
+
+
 async def _poll_feeds(app: FastAPI) -> None:
-    """Refresh both feeds every POLL_INTERVAL_S for the app's lifetime.
+    """Refresh the feeds every POLL_INTERVAL_S for the app's lifetime.
 
     One shared client for the task's lifetime; per-feed errors are recorded
     in the cache, and anything unexpected is logged rather than allowed to
@@ -288,6 +365,7 @@ async def _poll_feeds(app: FastAPI) -> None:
                     _refresh_buses(app, client),
                     _refresh_subways(app, client),
                     _refresh_railroads(app, client),
+                    _refresh_path(app, client),
                 )
             except Exception:
                 logger.exception("feed poll cycle failed unexpectedly")
@@ -484,6 +562,7 @@ async def lifespan(app: FastAPI):
         "buses": _fresh_entry(),
         "subways": _fresh_entry(),
         "railroads": _fresh_entry(),
+        "path": _fresh_entry(),
     }
     # Active service-alerts index, refreshed by its own slower poll (_poll_alerts).
     app.state.alerts_cache = _fresh_alerts_entry()
@@ -493,6 +572,10 @@ async def lifespan(app: FastAPI):
     # replaced only on a poll where it decoded (a transient failure keeps its
     # last-known arrivals). Empty until the first successful railroad poll.
     app.state.railroad_arrivals = {}
+    # Per-station PATH arrivals, rebuilt by each successful PATH poll (empty
+    # until the first one; a failed poll keeps the last-known index). Its own
+    # field, never merged with the MTA indexes: PATH ids collide numerically.
+    app.state.path_arrivals = {}
     # Per-trip previous-poll position, used to carry a prev interpolation anchor
     # forward when the feed pruned the just-departed stop (see carry_forward_prev).
     app.state.subway_positions = {}
@@ -503,6 +586,8 @@ async def lifespan(app: FastAPI):
     app.state.subway_feed_health = None
     # Same, for the railroad feeds (LIRR + MNR).
     app.state.railroad_feed_health = None
+    # Same, for the single PATH bridge feed.
+    app.state.path_feed_health = None
     # Background warmups: static GTFS (each group retries on failure) and the bus
     # route index. Startup never waits on any of them.
     app.state.subway_static_task = asyncio.create_task(_warm_subway_static(app))
@@ -547,18 +632,23 @@ app = FastAPI(title="NYC Transit Live", version="0.3.0", lifespan=lifespan)
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
-def _serve_cached(name: str) -> dict:
-    """Serve {fetched_at, feed_timestamp, data} from the cache. Stale-but-present
+def _serve_cached(name: str, data_key: str = "data") -> dict:
+    """Serve {fetched_at, feed_timestamp, <data_key>} from the cache. Stale-but-present
     data is still served; the frontend judges staleness from the fetched_at /
     feed_timestamp pair (upstream lag) plus its own skew-corrected poll age
     (now - fetched_at), so a stuck poller serving frozen data still surfaces.
-    Errors only reach clients while the cache has never successfully filled."""
+    Errors only reach clients while the cache has never successfully filled.
+
+    data_key names the payload field in the envelope: the MTA feeds use "data"
+    (the default), the PATH feed uses "trains" (its PathFeed model). Keeping the
+    envelope/warming/never-filled contract in one place means a change here
+    (a header, a reworded 503) reaches every feed endpoint, PATH included."""
     entry = app.state.feed_cache[name]
     if entry["data"] is not None:
         return {
             "fetched_at": entry["fetched_at"],
             "feed_timestamp": entry["feed_timestamp"],
-            "data": entry["data"],
+            data_key: entry["data"],
         }
     if entry["error"]:
         raise HTTPException(entry["error"]["status"], entry["error"]["detail"])
@@ -701,6 +791,55 @@ async def get_path_routes(response: Response) -> list[dict]:
     if not routes:
         response.headers["Cache-Control"] = "no-cache"
     return routes
+
+
+@app.get("/api/path", response_model=PathFeed)
+async def get_path() -> dict:
+    """Cached PATH trains from the community bridge feed: {fetched_at,
+    feed_timestamp, trains}. Every train is schedule-placed at its next
+    station (the bridge carries no vehicle positions) with null prev_*
+    anchors: PATH bridge trip ids do not survive an upstream refresh, so no
+    cross-poll identity or gliding exists yet (13d). feed_timestamp is the
+    bridge's write time, which advances even when the content is a re-served
+    identical generation (normal for PATH, not staleness).
+
+    The envelope key is `trains` (not the `data` the MTA feeds use), served via
+    _serve_cached's data_key so the warming / never-filled contract stays in
+    one place shared with the MTA feed endpoints.
+    """
+    return _serve_cached("path", data_key="trains")
+
+
+@app.get("/api/path-arrivals/{stop_id}", response_model=PathStationArrivals)
+async def get_path_arrivals(stop_id: str) -> dict:
+    """Upcoming PATH trains at a parent station, grouped by direction bucket,
+    from the in-memory index refreshed each PATH poll.
+
+    Modeled on /api/railroad-arrivals minus the system segment (PATH is a
+    single system). Bucket keys are "To New York" / "To New Jersey" (from the
+    realtime direction_id) with "Trains" as the direction-less residual,
+    present only when populated; an empty {} means nothing upcoming. Rows
+    carry a trip_id for shape parity only: PATH trip ids are unstable across
+    upstream refreshes and display-poor, so clients must never key on or show
+    them. 503 while the PATH cache has never filled (consistent with the
+    other arrivals endpoints); 404 for a malformed or unknown stop id (regex
+    plus membership in the static parent stops)."""
+    entry = app.state.feed_cache["path"]
+    if entry["data"] is None:  # no successful PATH poll yet
+        if entry["error"]:
+            raise HTTPException(entry["error"]["status"], entry["error"]["detail"])
+        raise HTTPException(
+            status_code=503, detail="Feed cache is warming up; try again in a few seconds."
+        )
+    stops = getattr(app.state, "path_stops", None) or {}
+    if not _PATH_STATION_ID_RE.match(stop_id) or stop_id not in stops:
+        raise HTTPException(status_code=404, detail=f"Unknown PATH station {stop_id}.")
+    return {
+        "fetched_at": entry["fetched_at"],
+        "stop_id": stop_id,
+        "stop_name": stops[stop_id]["name"],
+        "directions": (getattr(app.state, "path_arrivals", None) or {}).get(stop_id, {}),
+    }
 
 
 @app.get("/api/subways", response_model=SubwayFeed)
@@ -913,6 +1052,7 @@ async def get_status() -> dict:
         "path_static": getattr(app.state, "path_static_status", None),
         "subway_feeds": getattr(app.state, "subway_feed_health", None),
         "railroad_feeds": getattr(app.state, "railroad_feed_health", None),
+        "path_feeds": getattr(app.state, "path_feed_health", None),
         "alerts": alerts,
     }
 
@@ -966,6 +1106,15 @@ async def healthz() -> JSONResponse:
     # decorative overlay (like railroad static): an alert-feed outage degrades only
     # the alerts layer and must not fail the readiness probe that gates the whole
     # app, so alerts_cache is not consulted here.
+    # The PATH bridge feed, by contrast, IS a health input: it rides feed_cache
+    # like the MTA feeds, so a fresh PATH poll counts toward the "at least one
+    # fresh feed" test above. That is intentional (PATH trains are a real served
+    # layer, not a decorative overlay), with one caveat worth knowing: the bridge
+    # is an unofficial community service, so under a total MTA-upstream outage a
+    # still-fresh PATH bridge alone keeps the probe green. That is acceptable
+    # here (the app genuinely can serve PATH data, and a total MTA outage 503s
+    # every instance identically, so there is no healthier instance to fail over
+    # to); per-feed detail stays visible in /api/status regardless.
 
     body: dict = {"status": "fail" if reasons else "pass"}
     if reasons:

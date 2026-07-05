@@ -63,9 +63,11 @@ def cache():
         "buses": app_module._fresh_entry(),
         "subways": app_module._fresh_entry(),
         "railroads": app_module._fresh_entry(),
+        "path": app_module._fresh_entry(),
     }
     app_module.app.state.subway_feed_health = None
     app_module.app.state.railroad_feed_health = None
+    app_module.app.state.path_feed_health = None
     return app_module.app.state.feed_cache
 
 
@@ -346,6 +348,18 @@ async def test_status_reports_railroad_feed_health(client, status_env):
     res = await client.get("/api/status")
     assert res.status_code == 200
     assert res.json()["railroad_feeds"] == {"total": 2, "ok": 1, "failed": ["MNR"]}
+
+
+async def test_status_reports_path_feed_health_and_cache_entry(client, cache, status_env):
+    # The PATH bridge is a polled feed like the others: its cache entry rides
+    # the feeds map automatically and its single-feed health is reported
+    # alongside subway_feeds/railroad_feeds.
+    app_module.app.state.path_feed_health = {"total": 1, "ok": 0, "failed": ["PATH"]}
+    res = await client.get("/api/status")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["path_feeds"] == {"total": 1, "ok": 0, "failed": ["PATH"]}
+    assert "path" in body["feeds"]  # the cache entry surfaces with the other feeds
 
 
 async def test_status_reports_path_static(client, status_env):
@@ -890,6 +904,173 @@ async def test_path_routes_ready_but_empty_is_no_cache(client):
     assert res.headers.get("cache-control") == "no-cache"
 
 
+# ---------------- /api/path and /api/path-arrivals (13b realtime) ----------------
+
+PATH_TRAINS = [
+    {
+        "trip_id": "5c0e8a4d-uuid",  # bridge ids are unstable; carried, never keyed on
+        "route_id": "862",
+        "latitude": 40.73454,
+        "longitude": -74.16375,
+        "stop_id": "26733",
+        "stop_name": "Newark",
+        "direction": "To New Jersey",
+        "prev_lat": None,  # 13b: no carry-forward, prev is null on every train
+        "prev_lon": None,
+        "prev_time": None,
+        "next_time": 1500.0,
+    }
+]
+PATH_ARRIVALS = {
+    "26733": {"To New Jersey": [{"route_id": "862", "trip_id": "5c0e8a4d-uuid", "arrival": 1500.0}]}
+}
+
+
+async def test_path_feed_warming_up_503(client):
+    res = await client.get("/api/path")
+    assert res.status_code == 503
+    assert "warming up" in res.json()["detail"]
+
+
+async def test_path_feed_envelope_uses_trains_key(client, cache):
+    cache["path"].update(data=PATH_TRAINS, fetched_at=1001.0, feed_timestamp=996.0, error=None)
+    res = await client.get("/api/path")
+    assert res.status_code == 200
+    # The envelope key is `trains` (not the MTA feeds' `data`).
+    assert res.json() == {"fetched_at": 1001.0, "feed_timestamp": 996.0, "trains": PATH_TRAINS}
+
+
+async def test_path_feed_stale_data_beats_subsequent_error(client, cache):
+    cache["path"].update(data=PATH_TRAINS, fetched_at=1001.0, feed_timestamp=996.0, error=None)
+    app_module._note_failure(cache["path"], 502, "Upstream PATH bridge feed error: boom")
+    res = await client.get("/api/path")
+    assert res.status_code == 200
+    assert res.json()["trains"] == PATH_TRAINS  # last-known data still served
+
+
+async def test_path_feed_never_filled_serves_recorded_error(client, cache):
+    app_module._note_failure(cache["path"], 502, "Upstream PATH bridge feed error: boom")
+    res = await client.get("/api/path")
+    assert res.status_code == 502
+    assert res.json()["detail"] == "Upstream PATH bridge feed error: boom"
+
+
+@pytest.fixture
+def path_rt_state(cache):
+    """Prime the PATH static stops + arrivals index without running the lifespan."""
+    app_module.app.state.path_stops = {
+        "26733": {"id": "26733", "name": "Newark", "lat": 40.73454, "lon": -74.16375},
+        "26734": {"id": "26734", "name": "World Trade Center", "lat": 40.71271, "lon": -74.01193},
+    }
+    app_module.app.state.path_arrivals = PATH_ARRIVALS
+    return cache
+
+
+async def test_path_arrivals_warming_up_503(client, path_rt_state):
+    # No successful PATH poll yet (the cache fixture leaves data=None).
+    res = await client.get("/api/path-arrivals/26733")
+    assert res.status_code == 503
+    assert "warming up" in res.json()["detail"]
+
+
+async def test_path_arrivals_known_station(client, path_rt_state, cache):
+    cache["path"].update(data=[], fetched_at=1234.0, error=None)  # a poll succeeded
+    res = await client.get("/api/path-arrivals/26733")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["stop_id"] == "26733"
+    assert body["stop_name"] == "Newark"
+    assert body["fetched_at"] == 1234.0
+    assert body["directions"] == {
+        "To New Jersey": [{"route_id": "862", "trip_id": "5c0e8a4d-uuid", "arrival": 1500.0}]
+    }
+
+
+async def test_path_arrivals_empty_when_nothing_upcoming(client, path_rt_state, cache):
+    cache["path"].update(data=[], fetched_at=1.0, error=None)
+    app_module.app.state.path_arrivals = {}  # valid station, nothing upcoming
+    res = await client.get("/api/path-arrivals/26734")
+    assert res.status_code == 200
+    assert res.json()["directions"] == {}  # no buckets fabricated
+
+
+async def test_path_arrivals_unknown_stop_404(client, path_rt_state, cache):
+    cache["path"].update(data=[], fetched_at=1.0, error=None)
+    res = await client.get("/api/path-arrivals/99999")  # valid format, not a station
+    assert res.status_code == 404
+
+
+async def test_path_arrivals_rejects_malformed_stop_id(client, path_rt_state, cache):
+    cache["path"].update(data=[], fetched_at=1.0, error=None)
+    res = await client.get("/api/path-arrivals/..%2Fevil")
+    assert res.status_code == 404
+
+
+# ---------------- _refresh_path: warming, success, failure ----------------
+
+
+async def test_path_refresh_warming_while_static_loading(client, cache, caplog):
+    # The 13a static group is not ready: the refresher notes a quiet 503 (the
+    # transition log belongs to _set_static_status, not the 20s poll loop) and
+    # never calls the fetch.
+    app_module.app.state.path_stops = {}
+    with caplog.at_level(logging.WARNING, logger=app_module.logger.name):
+        await app_module._refresh_path(app_module.app, client=None)
+    err = cache["path"]["error"]
+    assert err["status"] == 503
+    assert "loading" in err["detail"].lower()
+    assert not [r for r in caplog.records if "feed poll failed" in r.getMessage()]
+
+
+async def test_path_refresh_success_fills_cache_arrivals_and_health(client, path_rt_state, cache):
+    async def ok(client_arg, stops_arg):
+        return PATH_TRAINS, PATH_ARRIVALS, 996.0
+
+    orig = app_module.fetch_path_trains
+    app_module.fetch_path_trains = ok
+    try:
+        await app_module._refresh_path(app_module.app, client=None)
+    finally:
+        app_module.fetch_path_trains = orig
+    assert cache["path"]["data"] == PATH_TRAINS
+    assert cache["path"]["feed_timestamp"] == 996.0
+    assert cache["path"]["error"] is None
+    assert app_module.app.state.path_arrivals == PATH_ARRIVALS
+    assert app_module.app.state.path_feed_health == {"total": 1, "ok": 1, "failed": []}
+
+
+async def test_path_refresh_failure_keeps_last_known(client, path_rt_state, cache, monkeypatch):
+    # A poll that fails after a success keeps the last-known trains AND
+    # arrivals (consistent with the other systems) while recording the error.
+    cache["path"].update(data=PATH_TRAINS, fetched_at=1001.0, feed_timestamp=996.0, error=None)
+    app_module.app.state.path_arrivals = PATH_ARRIVALS
+
+    async def boom(client_arg, stops_arg):
+        raise httpx.ConnectError("bridge down at https://path.transitdata.nyc/gtfsrt")
+
+    monkeypatch.setattr(app_module, "fetch_path_trains", boom)
+    await app_module._refresh_path(app_module.app, client=None)
+    assert cache["path"]["data"] == PATH_TRAINS  # kept
+    assert app_module.app.state.path_arrivals == PATH_ARRIVALS  # kept
+    assert app_module.app.state.path_feed_health == {"total": 1, "ok": 0, "failed": ["PATH"]}
+    detail = cache["path"]["error"]["detail"]
+    assert cache["path"]["error"]["status"] == 502
+    assert "https://" not in detail  # sanitized, no bridge URL leaked
+
+
+async def test_path_refresh_undecodable_body_records_502(client, path_rt_state, cache, monkeypatch):
+    from google.protobuf.message import DecodeError
+
+    async def bad(client_arg, stops_arg):
+        raise DecodeError("truncated")
+
+    monkeypatch.setattr(app_module, "fetch_path_trains", bad)
+    await app_module._refresh_path(app_module.app, client=None)
+    assert cache["path"]["error"]["status"] == 502
+    assert "undecodable" in cache["path"]["error"]["detail"]
+    assert app_module.app.state.path_feed_health == {"total": 1, "ok": 0, "failed": ["PATH"]}
+
+
 # ---------------- lifespan startup/shutdown smoke ----------------
 
 
@@ -908,6 +1089,9 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
 
     async def fake_fetch_railroads(client, stops):
         return RAILROADS, {}, 1002.0, []
+
+    async def fake_fetch_path(client, stops):
+        return PATH_TRAINS, PATH_ARRIVALS, 1003.0
 
     async def fake_load_railroad_static():
         # No network. LIRR carries stops/trips/shapes/routes; MNR failed (None).
@@ -933,6 +1117,7 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
     monkeypatch.setattr(app_module, "fetch_vehicle_positions", fake_fetch_buses)
     monkeypatch.setattr(app_module, "fetch_subway_trains", fake_fetch_subways)
     monkeypatch.setattr(app_module, "fetch_railroad_trains", fake_fetch_railroads)
+    monkeypatch.setattr(app_module, "fetch_path_trains", fake_fetch_path)
     monkeypatch.setattr(
         app_module.railroad_static, "load_railroad_static", fake_load_railroad_static
     )
@@ -999,13 +1184,26 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
                     "shape": [[[40.7, -74.2], [40.71, -74.1]]],
                 }
             ]
-            # Wait for the background poll task's first cycle to fill the cache.
+            # Wait for the background poll task's first cycle to fill the caches
+            # (PATH included: its refresher needs the path static warmup done,
+            # which the ready-wait above guaranteed).
             for _ in range(200):
-                if app.state.feed_cache["buses"]["data"] is not None:
+                if (
+                    app.state.feed_cache["buses"]["data"] is not None
+                    and app.state.feed_cache["path"]["data"] is not None
+                ):
                     break
                 await asyncio.sleep(0.01)
             assert app.state.feed_cache["buses"]["data"] == BUSES
             assert app.state.feed_cache["buses"]["feed_timestamp"] == 1000.0
+            # The same poll cycle refreshed PATH: cache filled, arrivals index
+            # replaced, single-feed health recorded (the PATH static warmup
+            # already populated path_stops above, so the refresher was not on
+            # its warming path).
+            assert app.state.feed_cache["path"]["data"] == PATH_TRAINS
+            assert app.state.feed_cache["path"]["feed_timestamp"] == 1003.0
+            assert app.state.path_arrivals == PATH_ARRIVALS
+            assert app.state.path_feed_health == {"total": 1, "ok": 1, "failed": []}
             res = await c.get("/api/status")
             assert res.status_code == 200
             assert res.json()["feeds"]["buses"]["fetched_at"] is not None

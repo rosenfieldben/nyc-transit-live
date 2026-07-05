@@ -15,6 +15,10 @@ from models import (
     Arrival,
     BusFeed,
     BusIndexStatus,
+    PathArrival,
+    PathFeed,
+    PathStationArrivals,
+    PathTrain,
     RailroadArrival,
     RailroadFeed,
     RailroadFeedHealth,
@@ -225,6 +229,67 @@ def test_railroad_station_arrivals_validates_handler_shape():
     )
 
 
+def test_decoded_path_train_keys_cover_model():
+    # Tie PathTrain to the live decode path: a synthetic bridge-style entity
+    # (one next-arrival stop, the shape the real feed serves) must emit exactly
+    # the model's field set, so decode/model drift fails here.
+    from google.transit import gtfs_realtime_pb2 as pb
+
+    feed = pb.FeedMessage()
+    feed.header.gtfs_realtime_version = "2.0"
+    ent = feed.entity.add()
+    ent.id = "e1"
+    ent.trip_update.trip.trip_id = "uuid-1"
+    ent.trip_update.trip.route_id = "862"
+    ent.trip_update.trip.direction_id = 1
+    stu = ent.trip_update.stop_time_update.add()
+    stu.stop_id = "26733"
+    stu.arrival.time = 1500
+    stops = {"26733": {"id": "26733", "name": "Newark", "lat": 40.73454, "lon": -74.16375}}
+    trains, arrivals, _ = feeds._decode_path_feed(feed.SerializeToString(), stops, 1000.0)
+    assert trains, "decode produced no trains"
+    assert all(set(t) == set(PathTrain.model_fields) for t in trains)
+    for t in trains:
+        PathTrain.model_validate(t)
+    for buckets in arrivals.values():
+        for rows in buckets.values():
+            for row in rows:
+                assert set(row) == set(PathArrival.model_fields)
+                PathArrival.model_validate(row)
+
+
+def test_path_feed_and_arrivals_envelopes_validate():
+    train = {
+        "trip_id": "uuid-1",
+        "route_id": "862",
+        "latitude": 40.73454,
+        "longitude": -74.16375,
+        "stop_id": "26733",
+        "stop_name": "Newark",
+        "direction": "To New Jersey",
+        "prev_lat": None,
+        "prev_lon": None,
+        "prev_time": None,
+        "next_time": 1500.0,
+    }
+    # The PATH envelope key is `trains` (not the MTA feeds' `data`).
+    PathFeed.model_validate({"fetched_at": 1000.0, "feed_timestamp": 996.0, "trains": [train]})
+    PathFeed.model_validate({"fetched_at": None, "feed_timestamp": None, "trains": []})
+    PathStationArrivals.model_validate(
+        {
+            "fetched_at": 1234.0,
+            "stop_id": "26733",
+            "stop_name": "Newark",
+            "directions": {
+                "To New York": [{"route_id": "862", "trip_id": "uuid-1", "arrival": 1500.0}]
+            },
+        }
+    )
+    PathStationArrivals.model_validate(
+        {"fetched_at": None, "stop_id": "26734", "stop_name": None, "directions": {}}
+    )
+
+
 def test_status_model_validates_handler_shape():
     # Mirrors what get_status builds, including a recorded error and null GTFS.
     StatusResponse.model_validate(
@@ -250,6 +315,7 @@ def test_status_model_validates_handler_shape():
             "path_static": "failed",
             "subway_feeds": {"total": 8, "ok": 7, "failed": ["BDFM"]},
             "railroad_feeds": {"total": 2, "ok": 1, "failed": ["MNR"]},
+            "path_feeds": {"total": 1, "ok": 1, "failed": []},
         }
     )
     BusIndexStatus.model_validate({"status": "building", "partial": False})

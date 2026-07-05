@@ -1087,6 +1087,179 @@ async def fetch_railroad_trains(
     return trains, arrivals_by_system, feed_timestamp, sorted(feed_errors)
 
 
+# ---- PATH (Port Authority Trans-Hudson) ----
+
+# Community GTFS-RT bridge (jamespfennell/path-train-gtfs-realtime, sourced
+# from the PANYNJ API). Unofficial with no SLA, so the URL is an env override:
+# pointing at a self-hosted bridge is a config change, not a code change.
+PATH_RT_URL = os.getenv("PATH_RT_URL", "https://path.transitdata.nyc/gtfsrt")
+
+# Sent on every bridge request. The bridge is a community service; a
+# descriptive User-Agent lets its maintainer see who is polling and reach out,
+# instead of an anonymous default UA.
+PATH_USER_AGENT = "nyc-transit-live (+https://github.com/rosenfieldben/nyc-transit-live)"
+
+# PATH direction_id semantics, verified against static trips.txt across all 7
+# routes via a headsign-by-direction tally (2026-07-05): 0 runs toward the New
+# Jersey terminal (Newark, Hoboken, Journal Square, Harrison, Grove St), 1
+# toward the New York terminal (33rd Street, World Trade Center). These labels
+# are the arrivals bucket keys AND the placed train's direction field.
+_PATH_DIRECTION = {0: "To New Jersey", 1: "To New York"}
+
+
+def _decode_path_feed(
+    raw: bytes, stops: dict[str, dict], now: float
+) -> tuple[list[dict], dict[str, dict[str, list[dict]]], float | None]:
+    """Decode the PATH bridge feed into (train placements, per-station
+    arrivals, feed_timestamp).
+
+    The bridge serves TripUpdate entities only (no VehiclePositions), each
+    observed carrying EXACTLY ONE stop_time_update: the next arrival. The scan
+    below does not assume that: it takes the FIRST resolvable, still-upcoming
+    stop_time_update and ignores any later ones, so a bridge that starts
+    emitting full stop lists neither breaks the decode nor changes its output
+    shape. One consequence is deliberate: arrivals index only that one chosen
+    stop per trip (there is nothing downstream to index today).
+
+    Stop ids are the PARENT station ids from the 13a static stops table, so
+    `stops` is app.state.path_stops and the stop_id IS the station id (no
+    platform suffix, no child folding needed). An entity whose stop ids do not
+    resolve there is skipped; the skips are counted and logged at debug level
+    (a persistent count would mean the static table and the bridge disagree).
+
+    PLACEMENT mirrors the railroad conventions: drop canceled/deleted trips
+    and skipped/no-data stops, keep a just-passed grace of 60s, fall back to
+    the first resolvable stop when no stop carries a time (next_time null),
+    and drop a trip whose only timed stops are all past. There is no
+    not-yet-started filter: the bridge emits only live next-arrival
+    predictions (no start_date/start_time to derive one from), so the subway
+    phantom problem cannot arise. prev_* is ALWAYS null in this phase: the
+    carry-forward anchor memory keys on trip ids, and PATH bridge trip ids do
+    not survive an upstream refresh (see path_static's module docstring), so
+    an anchor keyed on them would silently mismatch; 13d owns a synthetic
+    identity before any anchor is trustworthy.
+
+    ARRIVALS are bucketed by direction_id ("To New York" / "To New Jersey",
+    see _PATH_DIRECTION), with "Trains" as the residual for a direction-less
+    trip, matching the railroad bucket discipline (keys present only when
+    populated, sorted soonest-first, capped at ARRIVALS_PER_DIRECTION). Rows
+    carry trip_id for shape parity with the railroad arrivals, but PATH trip
+    ids are display-poor AND unstable across upstream refreshes: the frontend
+    must never key on them or show them.
+
+    feed_timestamp is the bridge's WRITE time, a fair "is the bridge alive"
+    signal. It advances even when the entity content is unchanged, because the
+    bridge regenerates (~15s) faster than the upstream refreshes: consecutive
+    polls with identical content are NORMAL for PATH, never a stuck-feed
+    signal, so there is deliberately no content-unchanged staleness heuristic
+    here or anywhere downstream.
+    """
+    feed = gtfs_realtime_pb2.FeedMessage()
+    feed.ParseFromString(raw)  # caller handles DecodeError
+
+    trains: list[dict] = []
+    arrivals: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
+    unresolved_entities = 0
+    for entity in feed.entity:
+        if not entity.HasField("trip_update"):
+            continue
+        tu = entity.trip_update
+        if tu.trip.schedule_relationship in _DROP_TRIP_RELATIONSHIPS:
+            continue  # canceled/deleted trip: drop from both placement and arrivals
+        trip_id = tu.trip.trip_id or f"PATH:{entity.id}"
+        route_id = tu.trip.route_id or None
+        direction = (
+            _PATH_DIRECTION.get(tu.trip.direction_id) if tu.trip.HasField("direction_id") else None
+        )
+
+        # One scan picks the single stop both outputs use: the first
+        # resolvable, still-upcoming stop_time_update (today the only one).
+        chosen = None
+        chosen_time = None
+        first_resolvable = None
+        saw_timed = False
+        saw_any_stop = False
+        for stu in tu.stop_time_update:
+            saw_any_stop = True
+            if not stu.stop_id or stu.stop_id not in stops:
+                continue  # not a parent station id we know; try the next one
+            if stu.schedule_relationship in _DROP_STOP_RELATIONSHIPS:
+                continue  # skipped / no-data stop: no real prediction
+            if first_resolvable is None:
+                first_resolvable = stu
+            t = _stop_time(stu)
+            if t is None:
+                continue
+            saw_timed = True
+            if t >= now - 60:  # same just-passed grace as the other systems
+                chosen = stu
+                chosen_time = t
+                break
+        if chosen is None and not saw_timed:
+            chosen = first_resolvable  # no-times fallback: next_time stays null
+        if chosen is None:
+            if saw_any_stop and first_resolvable is None:
+                unresolved_entities += 1  # every stop id failed to resolve
+            continue  # unresolvable, or its only timed stops are all past
+
+        stop = stops[chosen.stop_id]
+        if chosen_time is not None:
+            bucket = direction or "Trains"
+            arrivals[chosen.stop_id][bucket].append(
+                {"route_id": route_id, "trip_id": trip_id, "arrival": float(chosen_time)}
+            )
+        trains.append(
+            {
+                "trip_id": trip_id,
+                "route_id": route_id,
+                "latitude": stop["lat"],
+                "longitude": stop["lon"],
+                "stop_id": chosen.stop_id,
+                "stop_name": stop["name"],
+                "direction": direction,
+                "prev_lat": None,  # no carry-forward in 13b (unstable trip ids)
+                "prev_lon": None,
+                "prev_time": None,
+                "next_time": float(chosen_time) if chosen_time is not None else None,
+            }
+        )
+
+    if unresolved_entities:
+        logger.debug(
+            "PATH decode skipped %d entities whose stop ids resolve to no parent station",
+            unresolved_entities,
+        )
+
+    # Keep the soonest arrivals per bucket; the rest are noise on a popup.
+    trimmed: dict[str, dict[str, list[dict]]] = {}
+    for station_id, buckets in arrivals.items():
+        trimmed[station_id] = {}
+        for direction_key, arrs in buckets.items():
+            arrs.sort(key=lambda a: a["arrival"])
+            trimmed[station_id][direction_key] = arrs[:ARRIVALS_PER_DIRECTION]
+    return trains, trimmed, _header_timestamp(feed)
+
+
+async def fetch_path_trains(
+    client: httpx.AsyncClient, path_stops: dict[str, dict]
+) -> tuple[list[dict], dict[str, dict[str, list[dict]]], float | None]:
+    """Fetch the PATH bridge feed; return (trains, arrivals_by_stop,
+    feed_timestamp).
+
+    Single feed, so unlike fetch_subway_trains / fetch_railroad_trains there
+    is no partial-failure aggregation: an HTTP error or undecodable body
+    propagates for the caller (main._refresh_path) to record, the same way the
+    single-feed bus fetch behaves. The caller owns the client and must only
+    call this once path_stops is populated (placement and arrivals both
+    resolve parent station ids through it). See _decode_path_feed for the
+    duplicate-generation and unstable-trip-id caveats.
+    """
+    now = time.time()
+    resp = await client.get(PATH_RT_URL, headers={"User-Agent": PATH_USER_AGENT})
+    resp.raise_for_status()
+    return _decode_path_feed(resp.content, path_stops, now)
+
+
 # ---- Service alerts ----
 
 _ALERT_EFFECT = gtfs_realtime_pb2.Alert.Effect

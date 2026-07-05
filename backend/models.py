@@ -141,9 +141,61 @@ class RailroadStationArrivals(BaseModel):
     directions: dict[str, list[RailroadArrival]]
 
 
-# PATH: phase 13a is the static foundation only (stops, routes, geometry).
-# Realtime is a later phase, and PATH ids stay in their own namespace (numeric
-# PATH stop ids collide with MTA numeric ids across systems).
+# PATH realtime (13b): trains placed at their next station from the community
+# bridge feed, plus a per-station arrivals index. PATH ids stay in their own
+# namespace (numeric PATH stop ids collide with MTA numeric ids across
+# systems). Bridge trip ids are UNSTABLE across upstream refreshes and
+# display-poor (see path_static's module docstring): they are carried for
+# shape parity with the other systems only, and the frontend must never key
+# on or display them. prev_* is always null in 13b (no carry-forward until
+# 13d's synthetic identity); the fields exist so 13d fills them without a
+# model change, the same forward-compatibility the railroad phase 1 used.
+class PathTrain(BaseModel):
+    trip_id: str
+    route_id: str | None
+    latitude: float  # next/current station, the static placement (no GPS in this feed)
+    longitude: float
+    stop_id: str
+    stop_name: str | None
+    direction: str | None  # "To New York" / "To New Jersey", null when the feed omits it
+    prev_lat: float | None
+    prev_lon: float | None
+    prev_time: float | None
+    next_time: float | None
+
+
+class PathFeed(BaseModel):
+    fetched_at: float | None
+    # The bridge's WRITE time: it advances every regeneration (~15s) even when
+    # the entity content is unchanged, so it signals "bridge alive", not
+    # "upstream refreshed". Unchanged content across polls is normal for PATH.
+    feed_timestamp: float | None
+    trains: list[PathTrain]
+
+
+class PathArrival(BaseModel):
+    route_id: str | None
+    trip_id: str  # unstable + display-poor: parity with RailroadArrival only, never key on it
+    arrival: float  # absolute epoch seconds
+
+
+class PathStationArrivals(BaseModel):
+    fetched_at: float | None
+    stop_id: str
+    stop_name: str | None
+    # Keys are "To New York" / "To New Jersey" (from direction_id) with
+    # "Trains" as the direction-less residual, present only when populated
+    # (the railroad bucket discipline); {} means nothing upcoming.
+    directions: dict[str, list[PathArrival]]
+
+
+class PathFeedHealth(BaseModel):
+    total: int  # 1: PATH is a single bridge feed
+    ok: int
+    failed: list[str]  # ["PATH"] when the last poll failed, else []
+
+
+# PATH static (13a): station markers and route geometry.
 class PathStop(BaseModel):
     id: str
     name: str | None
@@ -264,6 +316,7 @@ class StatusResponse(BaseModel):
     path_static: str | None
     subway_feeds: SubwayFeedHealth | None
     railroad_feeds: RailroadFeedHealth | None
+    path_feeds: PathFeedHealth | None
     # Alert feed health (None only before the lifespan sets it, e.g. a bare test app).
     # Defaulted so pre-alerts /api/status callers and fixtures validate unchanged;
     # the live handler always populates it.

@@ -778,6 +778,75 @@ async def test_railroad_routes_endpoint_flattens_and_caches(client):
     assert "max-age" in res.headers.get("cache-control", "")
 
 
+# ---------------- /api/path-stops and /api/path-routes ----------------
+
+PATH_STOPS = {
+    "26733": {"id": "26733", "name": "Newark", "lat": 40.73454, "lon": -74.16375},
+    "26734": {"id": "26734", "name": "World Trade Center", "lat": 40.71271, "lon": -74.01193},
+}
+PATH_ROUTES = [
+    {
+        "id": "862",
+        "name": "Newark - World Trade Center",
+        "color": "d93a30",
+        "text_color": "ffffff",
+        "shape": [[[40.73454, -74.16375], [40.71271, -74.01193]]],
+    }
+]
+
+
+async def test_path_stops_503_while_loading(client):
+    app_module.app.state.path_static_status = "loading"
+    res = await client.get("/api/path-stops")
+    assert res.status_code == 503
+    assert "loading" in res.json()["detail"].lower()
+
+
+async def test_path_stops_served_with_max_age_when_ready(client):
+    app_module.app.state.path_static_status = "ready"
+    app_module.app.state.path_stops = PATH_STOPS
+    res = await client.get("/api/path-stops")
+    assert res.status_code == 200
+    assert res.json() == list(PATH_STOPS.values())
+    assert "max-age" in res.headers.get("cache-control", "")
+
+
+async def test_path_stops_no_cache_empty_when_failed(client):
+    # A failed (retrying) load serves [] under no-cache even if stale state is
+    # present, so an empty 200 always means "ask again later", never success.
+    app_module.app.state.path_static_status = "failed"
+    app_module.app.state.path_stops = PATH_STOPS
+    res = await client.get("/api/path-stops")
+    assert res.status_code == 200
+    assert res.json() == []
+    assert res.headers.get("cache-control") == "no-cache"
+
+
+async def test_path_routes_503_while_loading(client):
+    app_module.app.state.path_static_status = "loading"
+    res = await client.get("/api/path-routes")
+    assert res.status_code == 503
+    assert "loading" in res.json()["detail"].lower()
+
+
+async def test_path_routes_served_with_branding_when_ready(client):
+    app_module.app.state.path_static_status = "ready"
+    app_module.app.state.path_routes = PATH_ROUTES
+    res = await client.get("/api/path-routes")
+    assert res.status_code == 200
+    assert res.json() == PATH_ROUTES  # id/name/color/text_color/shape verbatim
+    assert "max-age" in res.headers.get("cache-control", "")
+
+
+async def test_path_routes_no_cache_empty_when_failed(client):
+    app_module.app.state.path_static_status = "failed"
+    app_module.app.state.path_routes = PATH_ROUTES
+    res = await client.get("/api/path-routes")
+    assert res.status_code == 200
+    assert res.json() == []
+    assert res.headers.get("cache-control") == "no-cache"
+
+
 # ---------------- lifespan startup/shutdown smoke ----------------
 
 
@@ -809,6 +878,23 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
             "MNR": None,
         }
 
+    async def fake_load_path_static():
+        # No network. One parent station, one child platform, one route.
+        return {
+            "stops": {"26733": {"id": "26733", "name": "Newark", "lat": 40.7, "lon": -74.2}},
+            "child_to_parent": {"781718": "26733"},
+            "trips": {"p1": {"route_id": "862", "direction_id": "0", "shape_id": "s1"}},
+            "shapes": {"s1": [[40.7, -74.2], [40.71, -74.1]]},
+            "routes": {
+                "862": {
+                    "long_name": "Newark - World Trade Center",
+                    "short_name": None,
+                    "color": "d93a30",
+                    "text_color": "ffffff",
+                }
+            },
+        }
+
     async def fake_ensure_index():
         return None
 
@@ -821,6 +907,7 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
     monkeypatch.setattr(
         app_module.railroad_static, "load_railroad_static", fake_load_railroad_static
     )
+    monkeypatch.setattr(app_module.path_static, "load_path_static", fake_load_path_static)
     monkeypatch.setattr(bus_static, "ensure_index", fake_ensure_index)
 
     app = app_module.app
@@ -830,7 +917,9 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
         # and the carry-forward memory is empty (the poll would fill it).
         assert app.state.subway_static_status == "loading"
         assert app.state.railroad_static_status == "loading"
+        assert app.state.path_static_status == "loading"
         assert app.state.subway_stops is None
+        assert app.state.path_stops == {}
         assert app.state.railroad_positions == {}
         assert app.state.subway_positions == {}
         transport = httpx.ASGITransport(app=app)
@@ -840,11 +929,13 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
                 if (
                     app.state.subway_static_status == "ready"
                     and app.state.railroad_static_status == "ready"
+                    and app.state.path_static_status == "ready"
                 ):
                     break
                 await asyncio.sleep(0.01)
             assert app.state.subway_static_status == "ready"
             assert app.state.railroad_static_status == "ready"
+            assert app.state.path_static_status == "ready"
             # The warmup filled the same fields the old synchronous load did.
             assert app.state.subway_stops == {"101N": {"name": "Alpha", "lat": 40.7, "lon": -74.0}}
             assert app.state.railroad_static["LIRR"]["trips"] == {
@@ -864,6 +955,21 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
                 }
             ]
             assert app.state.railroad_routes["MNR"] == []
+            # PATH warmup filled its own namespaced fields (never merged into
+            # the MTA stop tables) and built the modal route geometry.
+            assert app.state.path_stops == {
+                "26733": {"id": "26733", "name": "Newark", "lat": 40.7, "lon": -74.2}
+            }
+            assert app.state.path_static["child_to_parent"] == {"781718": "26733"}
+            assert app.state.path_routes == [
+                {
+                    "id": "862",
+                    "name": "Newark - World Trade Center",
+                    "color": "d93a30",
+                    "text_color": "ffffff",
+                    "shape": [[[40.7, -74.2], [40.71, -74.1]]],
+                }
+            ]
             # Wait for the background poll task's first cycle to fill the cache.
             for _ in range(200):
                 if app.state.feed_cache["buses"]["data"] is not None:
@@ -882,6 +988,7 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
             app.state.bus_index_task,
             app.state.subway_static_task,
             app.state.railroad_static_task,
+            app.state.path_static_task,
         )
 
     # Shutdown cancelled/awaited every background task (poll, bus index, both
@@ -1004,6 +1111,68 @@ async def test_railroad_static_warmup_loading_to_ready(monkeypatch):
     assert app.state.railroad_stops["MNR"] is None
     assert app.state.railroad_routes["LIRR"][0]["name"] == "Montauk Branch"
     assert app.state.railroad_routes["MNR"] == []
+
+
+PATH_STATIC_DATA = {
+    "stops": {"26733": {"id": "26733", "name": "Newark", "lat": 40.7, "lon": -74.2}},
+    "child_to_parent": {"781718": "26733"},
+    "trips": {"p1": {"route_id": "862", "direction_id": "0", "shape_id": "s1"}},
+    "shapes": {"s1": [[40.7, -74.2], [40.71, -74.1]]},
+    "routes": {
+        "862": {
+            "long_name": "Newark - World Trade Center",
+            "short_name": None,
+            "color": "d93a30",
+            "text_color": "ffffff",
+        }
+    },
+}
+
+
+async def test_path_static_warmup_loading_to_ready(monkeypatch):
+    async def fake_load():
+        return PATH_STATIC_DATA
+
+    monkeypatch.setattr(app_module.path_static, "load_path_static", fake_load)
+    app = _fake_app(path_static_status="loading")
+    await app_module._warm_path_static(app)
+    assert app.state.path_static_status == "ready"
+    assert app.state.path_stops == PATH_STATIC_DATA["stops"]
+    assert app.state.path_static["child_to_parent"] == {"781718": "26733"}
+    assert app.state.path_routes[0]["id"] == "862"
+    assert app.state.path_routes[0]["color"] == "d93a30"
+
+
+async def test_path_static_warmup_empty_result_is_failed_then_recovers(monkeypatch):
+    # load_path_static is lenient ({} on failure, no exception), and PATH is a
+    # single system: an empty result must drive the FAILED state (unlike the
+    # railroad group, which reaches ready with a None system) so the endpoints
+    # keep serving the no-cache empty until a retry brings real data.
+    monkeypatch.setattr(app_module, "STATIC_RETRY_S", 0.01)
+    gate = {"ok": False}
+
+    async def gated_load():
+        return PATH_STATIC_DATA if gate["ok"] else {}
+
+    monkeypatch.setattr(app_module.path_static, "load_path_static", gated_load)
+    app = _fake_app(path_static_status="loading")
+    task = asyncio.create_task(app_module._warm_path_static(app))
+    try:
+        for _ in range(200):  # wait until the empty attempt has failed
+            if app.state.path_static_status == "failed":
+                break
+            await asyncio.sleep(0.005)
+        assert app.state.path_static_status == "failed"
+        gate["ok"] = True  # let the next retry succeed
+        for _ in range(200):
+            if app.state.path_static_status == "ready":
+                break
+            await asyncio.sleep(0.005)
+        assert app.state.path_static_status == "ready"
+        assert app.state.path_stops == PATH_STATIC_DATA["stops"]
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 def test_set_static_status_logs_once_per_transition(caplog):

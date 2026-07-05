@@ -83,6 +83,17 @@ countdown.
   own toggleable layer, and a station popup shows each serving branch's scheduled
   headway for the current New York time, labeled "(scheduled)".
 
+PATH (Port Authority Trans-Hudson) has its static foundation in: the backend
+downloads and caches PATH's static GTFS in its own warmup group and serves the
+13 parent-station markers from `GET /api/path-stops` (`[{id, name, lat, lon}]`)
+and the seven routes with their rider-facing names, colors, and modal route
+geometry from `GET /api/path-routes` (`[{id, name, color, text_color, shape}]`).
+Realtime PATH trains are a later phase (PATH publishes no official GTFS-RT feed;
+a community bridge feed will be consumed later), and PATH will have no service
+alerts feed initially. PATH data is courtesy of PANYNJ, published via Trillium,
+and subject to their license terms. PATH stop ids stay in their own namespace:
+they are numeric and collide with MTA numeric ids across systems.
+
 Service alerts are polled on their own slower loop and served from an in-memory
 index (there is no map surface for them yet; that is a later phase):
 
@@ -102,7 +113,8 @@ nyc-transit-live/
 │   ├── static_data.py       # load stop coords / route shapes from static GTFS
 │   ├── bus_static.py        # background-built on-disk index of bus route shapes
 │   ├── airtrain_static.py   # load the committed AirTrain JFK fixture (no network)
-│   ├── scripts/             # one-off generators (gen_airtrain_fixture.py)
+│   ├── path_static.py       # download/parse the PATH static GTFS (PANYNJ via Trillium)
+│   ├── scripts/             # one-off generators (gen_airtrain_fixture.py, gen_path_fixture.py)
 │   ├── tests/               # pytest suite (run from backend/)
 │   ├── requirements.txt     # lower-bound deps for local dev
 │   ├── requirements.lock    # pinned deps installed by Railway and CI
@@ -359,6 +371,14 @@ warnings.
   as success even if one system is missing, because the backend's lenient
   per-system warmup settles that state and frontend retries cannot improve it.
   Live-data polling already self-healed and is untouched.
+- [x] **13a. PATH (static foundation)**: the PATH static GTFS (stops, routes,
+  shapes, trips) is downloaded, cached, and served from its own warmup group via
+  `/api/path-stops` (13 parent-station markers) and `/api/path-routes` (route
+  names, colors, and modal route geometry). Static only: realtime PATH trains
+  come in a later phase via a community bridge feed (whose trip ids were
+  verified UNSTABLE across refreshes, so nothing keys on PATH trip ids), and
+  PATH has no service alerts feed initially. Data courtesy of PANYNJ via
+  Trillium, subject to their license terms.
 
 ## Notes
 

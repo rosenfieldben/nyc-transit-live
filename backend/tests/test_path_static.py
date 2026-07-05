@@ -249,7 +249,12 @@ def test_parse_routes_never_carries_route_desc():
     # The real 862 row carries stale 2020 Sandy-closure text in route_desc;
     # the parsed table must not have a slot for it to leak through.
     routes = path_static._parse_routes(csv_stream(ROUTES_COLS, ROUTE_ROWS))
-    assert not any("desc" in key for row in routes.values() for key in row)
+    # Exact key set: route_desc (or any other column) can never leak, whatever
+    # it is named. The old `"desc" in key` form was dead because _parse_routes
+    # hardcodes these four keys, so no key could ever contain "desc".
+    assert all(
+        set(row) == {"long_name", "short_name", "color", "text_color"} for row in routes.values()
+    )
     assert not any("Sandy" in value for row in routes.values() for value in row.values() if value)
 
 
@@ -538,6 +543,48 @@ async def test_unusable_cache_and_failed_redownload_returns_empty(path_paths):
     assert data == {}
 
 
+# A structurally valid zip whose stops.txt has NO parent stations (only child
+# platforms): _parse_zip succeeds but data["stops"] is empty. This is the
+# "fresh-but-empty cache" the loader must not wedge on.
+EMPTY_PARENT_STOPS = [
+    {
+        "stop_id": "781718",
+        "stop_name": "Newark Track 1",
+        "stop_lat": "40.73454",
+        "stop_lon": "-74.16375",
+        "location_type": "0",
+        "parent_station": "26733",
+    }
+]
+
+
+async def test_fresh_but_empty_cache_redownloads_and_recovers(path_paths, monkeypatch):
+    # A fresh cache that parses to ZERO parent stations is treated as unusable,
+    # so the loader re-downloads once instead of trusting the fresh mtime and
+    # wedging until MAX_AGE_DAYS. Without this a transiently-empty upstream would
+    # never be refetched even after it self-corrected.
+    write_path_zip(path_paths, stops=EMPTY_PARENT_STOPS)  # fresh, valid, no parents
+    calls = []
+
+    async def fake_download():
+        calls.append(True)
+        write_path_zip(path_paths)  # upstream corrected: now has parent stations
+
+    monkeypatch.setattr(path_static, "_download_zip", fake_download)
+    data = await path_static.load_path_static()
+    assert calls == [True]  # exactly one recovery download
+    assert "26733" in data["stops"]  # the corrected feed is picked up
+
+
+async def test_persistently_empty_feed_returns_empty(path_paths):
+    # Fresh empty cache + a dead URL: the recovery re-download also fails, so the
+    # result is {} and the warmup marks the group failed (single-system PATH). The
+    # cache invalidation still fired, so the NEXT warm retry re-downloads again.
+    write_path_zip(path_paths, stops=EMPTY_PARENT_STOPS)  # fresh, valid, no parents
+    data = await path_static.load_path_static()
+    assert data == {}
+
+
 # ---------------- golden tests over the trimmed real fixture ----------------
 #
 # fixtures/path_gtfs/ is a trimmed copy of the real Trillium feed written by
@@ -585,7 +632,10 @@ def test_golden_route_table_colors():
     routes = path_static._parse_routes(_fixture("routes.txt"))
     assert {rid: r["color"] for rid, r in routes.items()} == EXPECTED_ROUTE_COLORS
     assert all(r["text_color"] for r in routes.values())
-    assert not any("desc" in key for row in routes.values() for key in row)
+    # Exact key set, so the stale route_desc on 862 cannot leak (any name).
+    assert all(
+        set(r) == {"long_name", "short_name", "color", "text_color"} for r in routes.values()
+    )
 
 
 @golden

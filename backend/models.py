@@ -261,6 +261,7 @@ class StatusResponse(BaseModel):
     # "failed" (None only before the lifespan sets it, e.g. a bare test app).
     subway_static: str | None
     railroad_static: str | None
+    path_static: str | None
     subway_feeds: SubwayFeedHealth | None
     railroad_feeds: RailroadFeedHealth | None
     # Alert feed health (None only before the lifespan sets it, e.g. a bare test app).

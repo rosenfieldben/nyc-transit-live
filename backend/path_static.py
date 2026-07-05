@@ -348,11 +348,18 @@ async def load_path_static() -> dict:
                 return {}
             logger.warning("PATH static GTFS re-download failed (%s); using stale cached copy", exc)
     try:
-        data = _parse_zip(zip_path)
+        data: dict | None = _parse_zip(zip_path)
     except (zipfile.BadZipFile, KeyError, UnicodeDecodeError):
-        # Unusable cache: corrupt zip, a missing member (stops/trips/shapes),
-        # or undecodable text. Refetch once rather than staying wedged.
-        logger.warning("Cached PATH static GTFS is unusable; re-downloading")
+        data = None
+    # data is None for a corrupt/missing-member/undecodable cache, and a valid
+    # parse that yields zero parent stations is treated as unusable too: the
+    # warmup marks the single-system PATH group "failed" on empty stops (main.py
+    # _warm_path_static), and without invalidating here an already fresh cache
+    # would never be re-downloaded, so a transiently-empty upstream would wedge
+    # the group until MAX_AGE_DAYS forced a refetch even after it self-corrected.
+    # Refetching now lets the next warm retry pick up a corrected feed.
+    if data is None or not data["stops"]:
+        logger.warning("Cached PATH static GTFS is unusable or empty; re-downloading")
         zip_path.unlink(missing_ok=True)
         try:
             await _download_zip()

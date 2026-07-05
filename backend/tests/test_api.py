@@ -348,6 +348,16 @@ async def test_status_reports_railroad_feed_health(client, status_env):
     assert res.json()["railroad_feeds"] == {"total": 2, "ok": 1, "failed": ["MNR"]}
 
 
+async def test_status_reports_path_static(client, status_env):
+    # PATH is the only static group that can loop in "failed" forever (single
+    # system), so its warmup state must be visible in the operational snapshot
+    # alongside subway_static and railroad_static.
+    app_module.app.state.path_static_status = "failed"
+    res = await client.get("/api/status")
+    assert res.status_code == 200
+    assert res.json()["path_static"] == "failed"
+
+
 # ---------------- upstream error sanitization (no key/URL leakage) ----------------
 
 
@@ -794,6 +804,24 @@ PATH_ROUTES = [
     }
 ]
 
+# One load_path_static() return shape (parent station, child platform, one
+# route), shared by the lifespan smoke test and the warmup state-machine tests
+# so a change to the loaded table shape is edited in exactly one place.
+PATH_STATIC_DATA = {
+    "stops": {"26733": {"id": "26733", "name": "Newark", "lat": 40.7, "lon": -74.2}},
+    "child_to_parent": {"781718": "26733"},
+    "trips": {"p1": {"route_id": "862", "direction_id": "0", "shape_id": "s1"}},
+    "shapes": {"s1": [[40.7, -74.2], [40.71, -74.1]]},
+    "routes": {
+        "862": {
+            "long_name": "Newark - World Trade Center",
+            "short_name": None,
+            "color": "d93a30",
+            "text_color": "ffffff",
+        }
+    },
+}
+
 
 async def test_path_stops_503_while_loading(client):
     app_module.app.state.path_static_status = "loading"
@@ -847,6 +875,21 @@ async def test_path_routes_no_cache_empty_when_failed(client):
     assert res.headers.get("cache-control") == "no-cache"
 
 
+async def test_path_routes_ready_but_empty_is_no_cache(client):
+    # The warmup gates "ready" on parent stops, not on built geometry, so a
+    # degraded feed (stops parse, shapes do not) can reach ready with empty
+    # routes. That empty list must be served no-cache, not under the ready
+    # max-age, so a browser does not pin empty geometry for an hour ("empty 200
+    # means ask again later"). Distinct from the failed case above: here the
+    # group really is ready, there is just nothing drawable this load.
+    app_module.app.state.path_static_status = "ready"
+    app_module.app.state.path_routes = []
+    res = await client.get("/api/path-routes")
+    assert res.status_code == 200
+    assert res.json() == []
+    assert res.headers.get("cache-control") == "no-cache"
+
+
 # ---------------- lifespan startup/shutdown smoke ----------------
 
 
@@ -879,21 +922,7 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
         }
 
     async def fake_load_path_static():
-        # No network. One parent station, one child platform, one route.
-        return {
-            "stops": {"26733": {"id": "26733", "name": "Newark", "lat": 40.7, "lon": -74.2}},
-            "child_to_parent": {"781718": "26733"},
-            "trips": {"p1": {"route_id": "862", "direction_id": "0", "shape_id": "s1"}},
-            "shapes": {"s1": [[40.7, -74.2], [40.71, -74.1]]},
-            "routes": {
-                "862": {
-                    "long_name": "Newark - World Trade Center",
-                    "short_name": None,
-                    "color": "d93a30",
-                    "text_color": "ffffff",
-                }
-            },
-        }
+        return PATH_STATIC_DATA  # no network; shared module-level fixture shape
 
     async def fake_ensure_index():
         return None
@@ -983,6 +1012,7 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
             # The static group states are reported.
             assert res.json()["subway_static"] == "ready"
             assert res.json()["railroad_static"] == "ready"
+            assert res.json()["path_static"] == "ready"
         tasks = (
             app.state.feed_poll_task,
             app.state.bus_index_task,
@@ -1111,22 +1141,6 @@ async def test_railroad_static_warmup_loading_to_ready(monkeypatch):
     assert app.state.railroad_stops["MNR"] is None
     assert app.state.railroad_routes["LIRR"][0]["name"] == "Montauk Branch"
     assert app.state.railroad_routes["MNR"] == []
-
-
-PATH_STATIC_DATA = {
-    "stops": {"26733": {"id": "26733", "name": "Newark", "lat": 40.7, "lon": -74.2}},
-    "child_to_parent": {"781718": "26733"},
-    "trips": {"p1": {"route_id": "862", "direction_id": "0", "shape_id": "s1"}},
-    "shapes": {"s1": [[40.7, -74.2], [40.71, -74.1]]},
-    "routes": {
-        "862": {
-            "long_name": "Newark - World Trade Center",
-            "short_name": None,
-            "color": "d93a30",
-            "text_color": "ffffff",
-        }
-    },
-}
 
 
 async def test_path_static_warmup_loading_to_ready(monkeypatch):

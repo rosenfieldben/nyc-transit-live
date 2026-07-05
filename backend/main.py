@@ -350,7 +350,8 @@ def _set_static_status(
 ) -> None:
     """Set a static group's status, logging only on a TRANSITION so a long retry
     loop (or the per-poll checks that read this) never spams the log. `field` is
-    "subway_static_status" or "railroad_static_status"."""
+    one of "subway_static_status", "railroad_static_status", or
+    "path_static_status"."""
     if getattr(app.state, field, None) == status:
         return
     setattr(app.state, field, status)
@@ -684,11 +685,22 @@ async def get_path_routes(response: Response) -> list[dict]:
     and the modal polyline(s) as [lat, lon] point lists (variant shapes are
     short-turn or track-work patterns; see build_path_route_shapes). Built once
     at warmup, so clients can cache it between loads. Same warming semantics as
-    /api/path-stops: 503 while loading, [] under no-cache while failed."""
+    /api/path-stops: 503 while loading, [] under no-cache while failed.
+
+    One extra guard beyond path-stops: the warmup gates "ready" on parent stops,
+    not on the built geometry, so a degraded feed whose stops parse but whose
+    shapes do not can reach "ready" with an empty routes list. An empty list is
+    then served with no-cache (not the ready max-age), keeping the "empty 200
+    means ask again later" contract so a browser does not pin empty geometry for
+    an hour. path-stops needs no such guard: an empty-stops load marks the group
+    failed instead of ready, so a ready path-stops response is never empty."""
     status = getattr(app.state, "path_static_status", "loading")
     if not _static_endpoint_ready(status, response, "Static PATH GTFS is still loading."):
         return []
-    return getattr(app.state, "path_routes", None) or []
+    routes = getattr(app.state, "path_routes", None) or []
+    if not routes:
+        response.headers["Cache-Control"] = "no-cache"
+    return routes
 
 
 @app.get("/api/subways", response_model=SubwayFeed)
@@ -894,6 +906,11 @@ async def get_status() -> dict:
         "static_subway_gtfs": static_gtfs,
         "subway_static": getattr(app.state, "subway_static_status", None),
         "railroad_static": getattr(app.state, "railroad_static_status", None),
+        # PATH is the only static group that stays "failed" until a retry
+        # succeeds (single system, so an empty load is a full failure, not a
+        # lenient GPS-only degradation), so its warmup state must be visible in
+        # the operational snapshot the way every other group's is.
+        "path_static": getattr(app.state, "path_static_status", None),
         "subway_feeds": getattr(app.state, "subway_feed_health", None),
         "railroad_feeds": getattr(app.state, "railroad_feed_health", None),
         "alerts": alerts,

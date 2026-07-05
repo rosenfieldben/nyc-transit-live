@@ -311,7 +311,7 @@ async def _refresh_path(app: FastAPI, client: httpx.AsyncClient) -> None:
         )
         return
     try:
-        trains, arrivals, feed_timestamp = await fetch_path_trains(client, stops)
+        trains, arrivals, feed_timestamp, unresolved = await fetch_path_trains(client, stops)
     except httpx.HTTPError as exc:
         app.state.path_feed_health = {"total": 1, "ok": 0, "failed": ["PATH"]}
         _note_failure(entry, 502, f"Upstream PATH bridge feed error: {_sanitize_upstream(exc)}")
@@ -321,7 +321,26 @@ async def _refresh_path(app: FastAPI, client: httpx.AsyncClient) -> None:
         app.state.path_feed_health = {"total": 1, "ok": 0, "failed": ["PATH"]}
         _note_failure(entry, 502, "Upstream PATH bridge feed returned undecodable data")
         return
-    app.state.path_feed_health = {"total": 1, "ok": 1, "failed": []}
+    # A nonzero unresolved count means the bridge referenced station ids the
+    # static stops table lacks (a renumber, or a lagging 13a snapshot): those
+    # trains are silently absent from the map, so the condition must be
+    # operator-visible. Logged only when it APPEARS or CLEARS (comparing
+    # against the previous poll's health, so a persistent drift never spams
+    # the 20s loop, matching _set_static_status's transition-only rule) and
+    # carried on path_feed_health so /api/status shows it while it lasts. A
+    # failed poll in between resets the memory (its health dict has no count),
+    # so the warning refires after an outage: acceptable, it is still news.
+    was_drifting = bool((getattr(app.state, "path_feed_health", None) or {}).get("unresolved"))
+    if bool(unresolved) != was_drifting:
+        if unresolved:
+            logger.warning(
+                "PATH decode is dropping %d entities whose station ids are missing "
+                "from the static stops table (bridge and static GTFS may disagree)",
+                unresolved,
+            )
+        else:
+            logger.info("PATH unknown-station drops cleared")
+    app.state.path_feed_health = {"total": 1, "ok": 1, "failed": [], "unresolved": unresolved}
     # feed_timestamp is the bridge's write time; it advances even when the
     # content is a re-served identical generation, which is NORMAL for PATH
     # (the bridge regenerates faster than the upstream refreshes), so content

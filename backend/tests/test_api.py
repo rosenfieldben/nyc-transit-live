@@ -358,7 +358,9 @@ async def test_status_reports_path_feed_health_and_cache_entry(client, cache, st
     res = await client.get("/api/status")
     assert res.status_code == 200
     body = res.json()
-    assert body["path_feeds"] == {"total": 1, "ok": 0, "failed": ["PATH"]}
+    # The failure-branch health dict carries no unresolved count (no decode
+    # ran); the model default fills 0 at the boundary.
+    assert body["path_feeds"] == {"total": 1, "ok": 0, "failed": ["PATH"], "unresolved": 0}
     assert "path" in body["feeds"]  # the cache entry surfaces with the other feeds
 
 
@@ -1024,7 +1026,7 @@ async def test_path_refresh_warming_while_static_loading(client, cache, caplog):
 
 async def test_path_refresh_success_fills_cache_arrivals_and_health(client, path_rt_state, cache):
     async def ok(client_arg, stops_arg):
-        return PATH_TRAINS, PATH_ARRIVALS, 996.0
+        return PATH_TRAINS, PATH_ARRIVALS, 996.0, 0
 
     orig = app_module.fetch_path_trains
     app_module.fetch_path_trains = ok
@@ -1036,7 +1038,43 @@ async def test_path_refresh_success_fills_cache_arrivals_and_health(client, path
     assert cache["path"]["feed_timestamp"] == 996.0
     assert cache["path"]["error"] is None
     assert app_module.app.state.path_arrivals == PATH_ARRIVALS
-    assert app_module.app.state.path_feed_health == {"total": 1, "ok": 1, "failed": []}
+    assert app_module.app.state.path_feed_health == {
+        "total": 1,
+        "ok": 1,
+        "failed": [],
+        "unresolved": 0,
+    }
+
+
+async def test_path_refresh_unresolved_drift_logs_on_transition_only(
+    client, path_rt_state, cache, monkeypatch, caplog
+):
+    # A static-vs-bridge station-id drift (unresolved > 0) must be
+    # operator-visible without per-poll spam: one warning when it appears,
+    # silence while it persists, one info when it clears. The count rides
+    # path_feed_health so /api/status shows it in between.
+    counts = iter([3, 3, 0])
+
+    async def drifting(client_arg, stops_arg):
+        return PATH_TRAINS, PATH_ARRIVALS, 996.0, next(counts)
+
+    monkeypatch.setattr(app_module, "fetch_path_trains", drifting)
+
+    def drift_logs():
+        return [
+            r for r in caplog.records if "missing" in r.getMessage() and "PATH" in r.getMessage()
+        ]
+
+    with caplog.at_level(logging.INFO, logger=app_module.logger.name):
+        await app_module._refresh_path(app_module.app, client=None)  # 0 -> 3: warn
+        assert len(drift_logs()) == 1
+        assert app_module.app.state.path_feed_health["unresolved"] == 3
+        await app_module._refresh_path(app_module.app, client=None)  # 3 -> 3: silent
+        assert len(drift_logs()) == 1
+        await app_module._refresh_path(app_module.app, client=None)  # 3 -> 0: cleared info
+        assert app_module.app.state.path_feed_health["unresolved"] == 0
+        cleared = [r for r in caplog.records if "cleared" in r.getMessage()]
+        assert len(cleared) == 1
 
 
 async def test_path_refresh_failure_keeps_last_known(client, path_rt_state, cache, monkeypatch):
@@ -1091,7 +1129,7 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
         return RAILROADS, {}, 1002.0, []
 
     async def fake_fetch_path(client, stops):
-        return PATH_TRAINS, PATH_ARRIVALS, 1003.0
+        return PATH_TRAINS, PATH_ARRIVALS, 1003.0, 0
 
     async def fake_load_railroad_static():
         # No network. LIRR carries stops/trips/shapes/routes; MNR failed (None).
@@ -1203,7 +1241,12 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
             assert app.state.feed_cache["path"]["data"] == PATH_TRAINS
             assert app.state.feed_cache["path"]["feed_timestamp"] == 1003.0
             assert app.state.path_arrivals == PATH_ARRIVALS
-            assert app.state.path_feed_health == {"total": 1, "ok": 1, "failed": []}
+            assert app.state.path_feed_health == {
+                "total": 1,
+                "ok": 1,
+                "failed": [],
+                "unresolved": 0,
+            }
             res = await c.get("/api/status")
             assert res.status_code == 200
             assert res.json()["feeds"]["buses"]["fetched_at"] is not None

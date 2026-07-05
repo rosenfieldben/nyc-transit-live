@@ -18,7 +18,6 @@ as ordinary snapshots: no cross-poll identity, no staleness inference.
 """
 
 import json
-import logging
 from pathlib import Path
 
 import httpx
@@ -68,11 +67,18 @@ def _path_entity(feed, trip_id, route_id="862", direction_id=None, stops=(), can
     return ent
 
 
-def _decode(feed, stops=PATH_STOPS, now=NOW, header_ts=1782000000):
+def _decode_full(feed, stops=PATH_STOPS, now=NOW, header_ts=1782000000):
+    """The decoder's full (trains, arrivals, feed_timestamp, unresolved) tuple."""
     feed.header.gtfs_realtime_version = "2.0"
     if header_ts is not None:
         feed.header.timestamp = header_ts
     return feeds._decode_path_feed(feed.SerializeToString(), stops, now)
+
+
+def _decode(feed, stops=PATH_STOPS, now=NOW, header_ts=1782000000):
+    """(trains, arrivals, feed_timestamp): the outputs most tests read. The
+    unresolved counter has its own dedicated tests via _decode_full."""
+    return _decode_full(feed, stops, now, header_ts)[:3]
 
 
 # ---------------- placement ----------------
@@ -134,24 +140,22 @@ def test_unresolvable_stop_id_skipped_without_failing_the_decode():
     assert set(arrivals) == {"26733"}
 
 
-def test_unresolved_counter_logs_only_for_unknown_stations(caplog):
-    # The debug counter names a static-vs-bridge id mismatch, so it must count
-    # ONLY entities whose stop ids resolve to no known station, NOT a known
-    # station that happened to be SKIPPED/NO_DATA (a normal suspension).
+def test_unresolved_counts_only_unknown_stations():
+    # The returned counter names a static-vs-bridge id mismatch, so it must
+    # count ONLY entities whose stop ids resolve to no known station, NOT a
+    # known station that happened to be SKIPPED/NO_DATA (a normal suspension).
+    # Surfacing (transition-only warning + path_feed_health) is the poll
+    # loop's job and is tested in test_api.py.
     unknown = pb.FeedMessage()
     _path_entity(unknown, "GHOST", direction_id=1, stops=[("99999", NOW + 60)])
-    with caplog.at_level(logging.DEBUG, logger=feeds.logger.name):
-        _decode(unknown)
-    assert [r for r in caplog.records if "resolve to no parent station" in r.getMessage()]
+    _, _, _, unresolved = _decode_full(unknown)
+    assert unresolved == 1
 
-    caplog.clear()
     skipped = pb.FeedMessage()
     _path_entity(skipped, "SUSP", direction_id=1, stops=[("26733", NOW + 60, _SKIPPED)])
-    with caplog.at_level(logging.DEBUG, logger=feeds.logger.name):
-        trains, arrivals, _ = _decode(skipped)
+    trains, arrivals, _, unresolved = _decode_full(skipped)
     assert trains == [] and arrivals == {}  # still dropped from both outputs
-    # ...but a resolvable-yet-skipped station must NOT be logged as unresolvable.
-    assert not [r for r in caplog.records if "resolve to no parent station" in r.getMessage()]
+    assert unresolved == 0  # resolvable-but-skipped is NOT an id mismatch
 
 
 def test_missing_arrival_time_places_with_null_next_time_and_no_arrival_row():
@@ -279,8 +283,8 @@ def test_churn_pair_decodes_independently_with_equivalent_counts():
     # despite the disjoint ids.
     gen_a = _generation(["uuid-a1", "uuid-a2"], header_ts=1782000000)
     gen_b = _generation(["uuid-b1", "uuid-b2"], header_ts=1782000015)
-    trains_a, _, _ = feeds._decode_path_feed(gen_a.SerializeToString(), PATH_STOPS, NOW)
-    trains_b, _, _ = feeds._decode_path_feed(gen_b.SerializeToString(), PATH_STOPS, NOW)
+    trains_a, _, _, _ = feeds._decode_path_feed(gen_a.SerializeToString(), PATH_STOPS, NOW)
+    trains_b, _, _, _ = feeds._decode_path_feed(gen_b.SerializeToString(), PATH_STOPS, NOW)
     ids_a = {t["trip_id"] for t in trains_a}
     ids_b = {t["trip_id"] for t in trains_b}
     assert ids_a and ids_b and not (ids_a & ids_b)  # fully disjoint ids
@@ -303,8 +307,12 @@ def test_duplicate_pair_identical_output_and_no_error():
     # content-comparison anywhere in the decode path).
     dup_a = _generation(["uuid-1", "uuid-2"], header_ts=1782000000)
     dup_b = _generation(["uuid-1", "uuid-2"], header_ts=1782000015)
-    trains_a, arrivals_a, ts_a = feeds._decode_path_feed(dup_a.SerializeToString(), PATH_STOPS, NOW)
-    trains_b, arrivals_b, ts_b = feeds._decode_path_feed(dup_b.SerializeToString(), PATH_STOPS, NOW)
+    trains_a, arrivals_a, ts_a, _ = feeds._decode_path_feed(
+        dup_a.SerializeToString(), PATH_STOPS, NOW
+    )
+    trains_b, arrivals_b, ts_b, _ = feeds._decode_path_feed(
+        dup_b.SerializeToString(), PATH_STOPS, NOW
+    )
     assert trains_a == trains_b
     assert arrivals_a == arrivals_b
     assert (ts_a, ts_b) == (1782000000.0, 1782000015.0)  # only the write time moved
@@ -338,7 +346,7 @@ class _FakePathClient:
 async def test_fetch_sends_descriptive_user_agent_to_the_bridge():
     feed = _generation(["u1", "u2"], header_ts=1782000000)
     client = _FakePathClient(feed.SerializeToString())
-    trains, arrivals, feed_ts = await feeds.fetch_path_trains(client, PATH_STOPS)
+    trains, arrivals, feed_ts, unresolved = await feeds.fetch_path_trains(client, PATH_STOPS)
     assert len(client.requests) == 1
     url, headers = client.requests[0]
     assert url == feeds.PATH_RT_URL
@@ -349,8 +357,10 @@ async def test_fetch_sends_descriptive_user_agent_to_the_bridge():
     assert feed_ts == 1782000000.0
     # Times in the fixture are relative to NOW, far in the past against
     # time.time(): the fetch decodes but drops the past-only trips, proving
-    # the live path wires the real clock through.
+    # the live path wires the real clock through. Both stations resolve, so
+    # the unresolved count rides through as zero.
     assert trains == [] and arrivals == {}
+    assert unresolved == 0
 
 
 @pytest.mark.anyio
@@ -389,10 +399,16 @@ def _golden_stops():
 def test_golden_gen_a_decodes_to_expected_output():
     raw = (FIXTURES / "path_rt_gen_a.pb").read_bytes()
     expected = json.loads((FIXTURES / "path_rt_gen_a_expected.json").read_text())
-    trains, arrivals, feed_ts = feeds._decode_path_feed(raw, _golden_stops(), expected["now"])
+    trains, arrivals, feed_ts, unresolved = feeds._decode_path_feed(
+        raw, _golden_stops(), expected["now"]
+    )
     assert trains == expected["trains"]
     assert arrivals == expected["arrivals"]
     assert feed_ts == expected["now"]  # the capture froze `now` to the header
+    # The stops snapshot is captured in the same session as the feed, so every
+    # bridge station must resolve; the capture script refuses to write a
+    # fixture where they disagree.
+    assert unresolved == 0
 
 
 @golden
@@ -432,7 +448,7 @@ def test_golden_churn_pair_disjoint_ids_equivalent_picture():
         feed.ParseFromString(raw)
         now = float(feed.header.timestamp)
         header_now.append(now)
-        trains, _, _ = feeds._decode_path_feed(raw, stops, now)
+        trains, _, _, _ = feeds._decode_path_feed(raw, stops, now)
         decoded.append(trains)
     ids_a = {t["trip_id"] for t in decoded[0]}
     ids_b = {t["trip_id"] for t in decoded[1]}
@@ -465,7 +481,7 @@ def test_golden_duplicate_pair_identical_content_differing_write_time():
     feed = pb.FeedMessage()
     feed.ParseFromString(raw_a)
     now = float(feed.header.timestamp)
-    trains_a, arrivals_a, ts_a = feeds._decode_path_feed(raw_a, stops, now)
-    trains_b, arrivals_b, ts_b = feeds._decode_path_feed(raw_b, stops, now)
+    trains_a, arrivals_a, ts_a, _ = feeds._decode_path_feed(raw_a, stops, now)
+    trains_b, arrivals_b, ts_b, _ = feeds._decode_path_feed(raw_b, stops, now)
     assert trains_a == trains_b and arrivals_a == arrivals_b
     assert ts_a != ts_b  # only the bridge's write time differs

@@ -186,7 +186,17 @@ def main() -> int:
     feed = pb.FeedMessage()
     feed.ParseFromString(gen_a)
     now = float(feed.header.timestamp)
-    trains, arrivals, feed_ts = feeds._decode_path_feed(gen_a, stops, now)
+    trains, arrivals, feed_ts, unresolved = feeds._decode_path_feed(gen_a, stops, now)
+    if unresolved:
+        # The stops snapshot was captured in the same session as the feed, so
+        # every bridge station id must resolve; a mismatch means the static
+        # table and the bridge disagree RIGHT NOW and the fixture would fail
+        # its own golden (which asserts unresolved == 0). Do not commit it.
+        print(
+            f"FAILED: gen_a references {unresolved} entities whose station ids are "
+            "missing from the static stops table; fix the static/bridge drift first."
+        )
+        return 1
     expected = {"now": now, "trains": trains, "arrivals": arrivals}
     (FIXTURES / "path_rt_gen_a_expected.json").write_text(
         json.dumps(expected, indent=0, sort_keys=True)
@@ -196,7 +206,10 @@ def main() -> int:
     print("\n" + "=" * 72)
     print("MANUAL VERIFICATION (eyeball before committing, per house rules)")
     print("=" * 72)
-    print(f"entities in gen_a: {len(feed.entity)} | decoded trains: {len(trains)}")
+    print(
+        f"entities in gen_a: {len(feed.entity)} | decoded trains: {len(trains)} | "
+        f"unresolved station ids: {unresolved}"
+    )
     by_dir: dict[str, int] = {}
     for t in trains:
         by_dir[t["direction"] or "(none)"] = by_dir.get(t["direction"] or "(none)", 0) + 1

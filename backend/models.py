@@ -193,6 +193,12 @@ class PathFeedHealth(BaseModel):
     total: int  # 1: PATH is a single bridge feed
     ok: int
     failed: list[str]  # ["PATH"] when the last poll failed, else []
+    # Entities the last successful poll dropped because NO stop id resolved to
+    # a known parent station: nonzero means the bridge and the static stops
+    # table disagree (a station renumber or a lagging 13a snapshot) and those
+    # trains are silently missing from the map. Defaulted because the
+    # failure-branch health dicts carry no count (no decode ran).
+    unresolved: int = 0
 
 
 # PATH static (13a): station markers and route geometry.

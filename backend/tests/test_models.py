@@ -246,7 +246,7 @@ def test_decoded_path_train_keys_cover_model():
     stu.stop_id = "26733"
     stu.arrival.time = 1500
     stops = {"26733": {"id": "26733", "name": "Newark", "lat": 40.73454, "lon": -74.16375}}
-    trains, arrivals, _ = feeds._decode_path_feed(feed.SerializeToString(), stops, 1000.0)
+    trains, arrivals, _, _ = feeds._decode_path_feed(feed.SerializeToString(), stops, 1000.0)
     assert trains, "decode produced no trains"
     assert all(set(t) == set(PathTrain.model_fields) for t in trains)
     for t in trains:
@@ -315,7 +315,7 @@ def test_status_model_validates_handler_shape():
             "path_static": "failed",
             "subway_feeds": {"total": 8, "ok": 7, "failed": ["BDFM"]},
             "railroad_feeds": {"total": 2, "ok": 1, "failed": ["MNR"]},
-            "path_feeds": {"total": 1, "ok": 1, "failed": []},
+            "path_feeds": {"total": 1, "ok": 1, "failed": [], "unresolved": 0},
         }
     )
     BusIndexStatus.model_validate({"status": "building", "partial": False})

@@ -1109,9 +1109,9 @@ _PATH_DIRECTION = {0: "To New Jersey", 1: "To New York"}
 
 def _decode_path_feed(
     raw: bytes, stops: dict[str, dict], now: float
-) -> tuple[list[dict], dict[str, dict[str, list[dict]]], float | None]:
+) -> tuple[list[dict], dict[str, dict[str, list[dict]]], float | None, int]:
     """Decode the PATH bridge feed into (train placements, per-station
-    arrivals, feed_timestamp).
+    arrivals, feed_timestamp, unresolved_entities).
 
     The bridge serves TripUpdate entities only (no VehiclePositions), each
     observed carrying EXACTLY ONE stop_time_update: the next arrival. The scan
@@ -1123,9 +1123,14 @@ def _decode_path_feed(
 
     Stop ids are the PARENT station ids from the 13a static stops table, so
     `stops` is app.state.path_stops and the stop_id IS the station id (no
-    platform suffix, no child folding needed). An entity whose stop ids do not
-    resolve there is skipped; the skips are counted and logged at debug level
-    (a persistent count would mean the static table and the bridge disagree).
+    platform suffix, no child folding needed). An entity none of whose stop
+    ids resolve there is skipped and COUNTED: unresolved_entities is returned
+    so the caller can surface a persistent count (it means the static table
+    and the bridge disagree, e.g. a station renumber, and those trains are
+    silently absent from the map). The decoder itself does not log: surfacing
+    belongs to the poll loop, which can rate the signal transition-only
+    instead of once per decode (main._refresh_path). A known station whose
+    stop was merely SKIPPED/NO_DATA is a resolvable id and is NOT counted.
 
     PLACEMENT mirrors the railroad conventions: drop canceled/deleted trips
     and skipped/no-data stops, keep a just-passed grace of 60s, fall back to
@@ -1232,12 +1237,6 @@ def _decode_path_feed(
             }
         )
 
-    if unresolved_entities:
-        logger.debug(
-            "PATH decode skipped %d entities whose stop ids resolve to no parent station",
-            unresolved_entities,
-        )
-
     # Keep the soonest arrivals per bucket; the rest are noise on a popup.
     trimmed: dict[str, dict[str, list[dict]]] = {}
     for station_id, buckets in arrivals.items():
@@ -1245,22 +1244,25 @@ def _decode_path_feed(
         for direction_key, arrs in buckets.items():
             arrs.sort(key=lambda a: a["arrival"])
             trimmed[station_id][direction_key] = arrs[:ARRIVALS_PER_DIRECTION]
-    return trains, trimmed, _header_timestamp(feed)
+    return trains, trimmed, _header_timestamp(feed), unresolved_entities
 
 
 async def fetch_path_trains(
     client: httpx.AsyncClient, path_stops: dict[str, dict]
-) -> tuple[list[dict], dict[str, dict[str, list[dict]]], float | None]:
+) -> tuple[list[dict], dict[str, dict[str, list[dict]]], float | None, int]:
     """Fetch the PATH bridge feed; return (trains, arrivals_by_stop,
-    feed_timestamp).
+    feed_timestamp, unresolved_entities).
 
     Single feed, so unlike fetch_subway_trains / fetch_railroad_trains there
     is no partial-failure aggregation: an HTTP error or undecodable body
     propagates for the caller (main._refresh_path) to record, the same way the
     single-feed bus fetch behaves. The caller owns the client and must only
     call this once path_stops is populated (placement and arrivals both
-    resolve parent station ids through it). See _decode_path_feed for the
-    duplicate-generation and unstable-trip-id caveats.
+    resolve parent station ids through it). unresolved_entities is the count
+    of entities dropped because no stop id resolved to a known parent station
+    (see _decode_path_feed): the caller surfaces it, since a persistent count
+    means trains are silently missing from the map. See _decode_path_feed for
+    the duplicate-generation and unstable-trip-id caveats too.
     """
     now = time.time()
     resp = await client.get(PATH_RT_URL, headers={"User-Agent": PATH_USER_AGENT})

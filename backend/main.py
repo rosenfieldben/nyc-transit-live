@@ -613,18 +613,23 @@ app = FastAPI(title="NYC Transit Live", version="0.3.0", lifespan=lifespan)
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
-def _serve_cached(name: str) -> dict:
-    """Serve {fetched_at, feed_timestamp, data} from the cache. Stale-but-present
+def _serve_cached(name: str, data_key: str = "data") -> dict:
+    """Serve {fetched_at, feed_timestamp, <data_key>} from the cache. Stale-but-present
     data is still served; the frontend judges staleness from the fetched_at /
     feed_timestamp pair (upstream lag) plus its own skew-corrected poll age
     (now - fetched_at), so a stuck poller serving frozen data still surfaces.
-    Errors only reach clients while the cache has never successfully filled."""
+    Errors only reach clients while the cache has never successfully filled.
+
+    data_key names the payload field in the envelope: the MTA feeds use "data"
+    (the default), the PATH feed uses "trains" (its PathFeed model). Keeping the
+    envelope/warming/never-filled contract in one place means a change here
+    (a header, a reworded 503) reaches every feed endpoint, PATH included."""
     entry = app.state.feed_cache[name]
     if entry["data"] is not None:
         return {
             "fetched_at": entry["fetched_at"],
             "feed_timestamp": entry["feed_timestamp"],
-            "data": entry["data"],
+            data_key: entry["data"],
         }
     if entry["error"]:
         raise HTTPException(entry["error"]["status"], entry["error"]["detail"])
@@ -779,22 +784,11 @@ async def get_path() -> dict:
     bridge's write time, which advances even when the content is a re-served
     identical generation (normal for PATH, not staleness).
 
-    The envelope key is `trains` (not the `data` the MTA feeds use), so this
-    reads its cache entry directly instead of through _serve_cached; the
-    warming / never-filled-error semantics are the same.
+    The envelope key is `trains` (not the `data` the MTA feeds use), served via
+    _serve_cached's data_key so the warming / never-filled contract stays in
+    one place shared with the MTA feed endpoints.
     """
-    entry = app.state.feed_cache["path"]
-    if entry["data"] is not None:
-        return {
-            "fetched_at": entry["fetched_at"],
-            "feed_timestamp": entry["feed_timestamp"],
-            "trains": entry["data"],
-        }
-    if entry["error"]:
-        raise HTTPException(entry["error"]["status"], entry["error"]["detail"])
-    raise HTTPException(
-        status_code=503, detail="Feed cache is warming up; try again in a few seconds."
-    )
+    return _serve_cached("path", data_key="trains")
 
 
 @app.get("/api/path-arrivals/{stop_id}", response_model=PathStationArrivals)
@@ -1093,6 +1087,15 @@ async def healthz() -> JSONResponse:
     # decorative overlay (like railroad static): an alert-feed outage degrades only
     # the alerts layer and must not fail the readiness probe that gates the whole
     # app, so alerts_cache is not consulted here.
+    # The PATH bridge feed, by contrast, IS a health input: it rides feed_cache
+    # like the MTA feeds, so a fresh PATH poll counts toward the "at least one
+    # fresh feed" test above. That is intentional (PATH trains are a real served
+    # layer, not a decorative overlay), with one caveat worth knowing: the bridge
+    # is an unofficial community service, so under a total MTA-upstream outage a
+    # still-fresh PATH bridge alone keeps the probe green. That is acceptable
+    # here (the app genuinely can serve PATH data, and a total MTA outage 503s
+    # every instance identically, so there is no healthier instance to fail over
+    # to); per-feed detail stays visible in /api/status regardless.
 
     body: dict = {"status": "fail" if reasons else "pass"}
     if reasons:

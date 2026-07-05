@@ -18,6 +18,7 @@ as ordinary snapshots: no cross-poll identity, no staleness inference.
 """
 
 import json
+import logging
 from pathlib import Path
 
 import httpx
@@ -131,6 +132,26 @@ def test_unresolvable_stop_id_skipped_without_failing_the_decode():
     trains, arrivals, _ = _decode(feed)
     assert [t["trip_id"] for t in trains] == ["OK"]  # the good entity still decodes
     assert set(arrivals) == {"26733"}
+
+
+def test_unresolved_counter_logs_only_for_unknown_stations(caplog):
+    # The debug counter names a static-vs-bridge id mismatch, so it must count
+    # ONLY entities whose stop ids resolve to no known station, NOT a known
+    # station that happened to be SKIPPED/NO_DATA (a normal suspension).
+    unknown = pb.FeedMessage()
+    _path_entity(unknown, "GHOST", direction_id=1, stops=[("99999", NOW + 60)])
+    with caplog.at_level(logging.DEBUG, logger=feeds.logger.name):
+        _decode(unknown)
+    assert [r for r in caplog.records if "resolve to no parent station" in r.getMessage()]
+
+    caplog.clear()
+    skipped = pb.FeedMessage()
+    _path_entity(skipped, "SUSP", direction_id=1, stops=[("26733", NOW + 60, _SKIPPED)])
+    with caplog.at_level(logging.DEBUG, logger=feeds.logger.name):
+        trains, arrivals, _ = _decode(skipped)
+    assert trains == [] and arrivals == {}  # still dropped from both outputs
+    # ...but a resolvable-yet-skipped station must NOT be logged as unresolvable.
+    assert not [r for r in caplog.records if "resolve to no parent station" in r.getMessage()]
 
 
 def test_missing_arrival_time_places_with_null_next_time_and_no_arrival_row():
@@ -377,9 +398,14 @@ def test_golden_gen_a_decodes_to_expected_output():
 @golden
 def test_golden_output_is_nontrivial():
     # Guard the guard: an empty fixture would make the equality test vacuous.
+    # The floor is only "non-empty", NOT a service-volume threshold: the capture
+    # script gates on a churn + duplicate pair (an upstream refresh), which
+    # occurs independent of how many trains are running, so a legitimate
+    # off-peak capture can be small. A higher floor would false-fail a valid,
+    # manually-verified overnight fixture.
     expected = json.loads((FIXTURES / "path_rt_gen_a_expected.json").read_text())
-    assert len(expected["trains"]) > 5
-    assert len(expected["arrivals"]) > 3
+    assert len(expected["trains"]) >= 1
+    assert len(expected["arrivals"]) >= 1
 
 
 @golden

@@ -1179,10 +1179,12 @@ def _decode_path_feed(
         first_resolvable = None
         saw_timed = False
         saw_any_stop = False
+        saw_known_station = False  # a stop_id in `stops`, even if later skipped
         for stu in tu.stop_time_update:
             saw_any_stop = True
             if not stu.stop_id or stu.stop_id not in stops:
                 continue  # not a parent station id we know; try the next one
+            saw_known_station = True
             if stu.schedule_relationship in _DROP_STOP_RELATIONSHIPS:
                 continue  # skipped / no-data stop: no real prediction
             if first_resolvable is None:
@@ -1198,8 +1200,14 @@ def _decode_path_feed(
         if chosen is None and not saw_timed:
             chosen = first_resolvable  # no-times fallback: next_time stays null
         if chosen is None:
-            if saw_any_stop and first_resolvable is None:
-                unresolved_entities += 1  # every stop id failed to resolve
+            # Count ONLY the static-vs-bridge disagreement the debug log names:
+            # an entity that had stops but none resolved to a known station. A
+            # known station that was merely SKIPPED/NO_DATA (a normal service
+            # suspension) is a resolvable id, so it must NOT inflate this count,
+            # or the log would misdirect an operator toward a nonexistent id
+            # mismatch.
+            if saw_any_stop and not saw_known_station:
+                unresolved_entities += 1
             continue  # unresolvable, or its only timed stops are all past
 
         stop = stops[chosen.stop_id]

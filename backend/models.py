@@ -141,6 +141,26 @@ class RailroadStationArrivals(BaseModel):
     directions: dict[str, list[RailroadArrival]]
 
 
+# PATH: phase 13a is the static foundation only (stops, routes, geometry).
+# Realtime is a later phase, and PATH ids stay in their own namespace (numeric
+# PATH stop ids collide with MTA numeric ids across systems).
+class PathStop(BaseModel):
+    id: str
+    name: str | None
+    lat: float
+    lon: float
+
+
+class PathRoute(BaseModel):
+    id: str
+    name: str | None  # rider-facing route name from routes.txt, null when absent
+    color: str | None  # route_color hex (no '#') verbatim from routes.txt
+    text_color: str | None  # route_text_color hex, same treatment
+    # The modal polyline(s) for the route: one per direction that survives the
+    # reverse-direction dedup (usually one), as [[lat, lon], ...] lists.
+    shape: list[list[list[float]]]
+
+
 # AirTrain JFK: a static-only mode (no realtime feed exists). The whole dataset
 # ships as one committed fixture, so a single /api/airtrain endpoint returns
 # AirTrainData. Headways are SCHEDULED reference bands, never live countdowns.
@@ -241,6 +261,7 @@ class StatusResponse(BaseModel):
     # "failed" (None only before the lifespan sets it, e.g. a bare test app).
     subway_static: str | None
     railroad_static: str | None
+    path_static: str | None
     subway_feeds: SubwayFeedHealth | None
     railroad_feeds: RailroadFeedHealth | None
     # Alert feed health (None only before the lifespan sets it, e.g. a bare test app).

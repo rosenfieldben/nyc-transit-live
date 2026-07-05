@@ -20,6 +20,7 @@ from google.protobuf.message import DecodeError
 
 import airtrain_static
 import bus_static
+import path_static
 import railroad_static
 import static_data
 from feeds import (
@@ -35,6 +36,8 @@ from models import (
     AirTrainData,
     AlertFeed,
     BusFeed,
+    PathRoute,
+    PathStop,
     RailroadFeed,
     RailroadRoute,
     RailroadStationArrivals,
@@ -347,7 +350,8 @@ def _set_static_status(
 ) -> None:
     """Set a static group's status, logging only on a TRANSITION so a long retry
     loop (or the per-poll checks that read this) never spams the log. `field` is
-    "subway_static_status" or "railroad_static_status"."""
+    one of "subway_static_status", "railroad_static_status", or
+    "path_static_status"."""
     if getattr(app.state, field, None) == status:
         return
     setattr(app.state, field, status)
@@ -411,6 +415,40 @@ async def _warm_railroad_static(app: FastAPI) -> None:
         return
 
 
+async def _warm_path_static(app: FastAPI) -> None:
+    """Load the PATH static GTFS in the background, retrying every
+    STATIC_RETRY_S. load_path_static is lenient (a download or parse failure
+    yields {} without raising), and PATH is a SINGLE system: unlike the
+    railroad group, which reaches ready with one system None because the other
+    still deserves serving, an empty PATH result means the only system failed,
+    so the group stays failed and retries. That keeps the endpoint contract
+    honest: while failed they serve [] under no-cache ("ask again later"), and
+    ready-with-cache-headers is only ever reached with real data."""
+    while True:
+        try:
+            data = await path_static.load_path_static()
+        except Exception as exc:
+            _set_static_status(app, "path_static_status", "failed", exc)
+            await asyncio.sleep(STATIC_RETRY_S)
+            continue
+        if not data.get("stops"):
+            _set_static_status(
+                app,
+                "path_static_status",
+                "failed",
+                RuntimeError("PATH static GTFS unavailable or empty"),
+            )
+            await asyncio.sleep(STATIC_RETRY_S)
+            continue
+        app.state.path_static = data
+        app.state.path_stops = data["stops"]
+        app.state.path_routes = path_static.build_path_route_shapes(
+            data["trips"], data["shapes"], data["routes"]
+        )
+        _set_static_status(app, "path_static_status", "ready")
+        return
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Static GTFS loads in the BACKGROUND (see _warm_subway_static /
@@ -428,6 +466,14 @@ async def lifespan(app: FastAPI):
     app.state.railroad_stops = {}
     app.state.railroad_routes = {}
     app.state.railroad_static_status = "loading"
+    # PATH static foundation (phase 13a; realtime is a later phase). Own
+    # app.state fields, never merged into a shared namespace: numeric PATH stop
+    # ids collide with MTA numeric ids across systems, the same reason the
+    # alerts join is system-scoped.
+    app.state.path_static = {}  # {stops, child_to_parent, trips, shapes, routes} or {}
+    app.state.path_stops = {}
+    app.state.path_routes = []
+    app.state.path_static_status = "loading"
     # AirTrain JFK is a committed static fixture (data/airtrain_jfk.json), not a
     # network download, so it loads SYNCHRONOUSLY here and is ready the instant the
     # server accepts requests (no warmup task, no "loading" state, no 503). Loading
@@ -461,6 +507,7 @@ async def lifespan(app: FastAPI):
     # route index. Startup never waits on any of them.
     app.state.subway_static_task = asyncio.create_task(_warm_subway_static(app))
     app.state.railroad_static_task = asyncio.create_task(_warm_railroad_static(app))
+    app.state.path_static_task = asyncio.create_task(_warm_path_static(app))
     app.state.feed_poll_task = asyncio.create_task(_poll_feeds(app))
     # Service alerts poll on their own slower loop, independent of the position poll.
     app.state.alert_poll_task = asyncio.create_task(_poll_alerts(app))
@@ -478,6 +525,7 @@ async def lifespan(app: FastAPI):
     # sleep, so shutdown never waits out a mid-retry STATIC_RETRY_S.
     app.state.subway_static_task.cancel()
     app.state.railroad_static_task.cancel()
+    app.state.path_static_task.cancel()
     # Await all so cleanup (e.g. the poller's client close) finishes before
     # shutdown proceeds; the stop event bounds how long the build task runs.
     for task in (
@@ -486,6 +534,7 @@ async def lifespan(app: FastAPI):
         app.state.alert_poll_task,
         app.state.subway_static_task,
         app.state.railroad_static_task,
+        app.state.path_static_task,
     ):
         with contextlib.suppress(asyncio.CancelledError):
             await task
@@ -612,6 +661,46 @@ async def get_railroad_routes(response: Response) -> list[dict]:
         for system, entries in by_system.items()
         for entry in entries
     ]
+
+
+@app.get("/api/path-stops", response_model=list[PathStop])
+async def get_path_stops(response: Response) -> list[dict]:
+    """PATH parent-station markers ({id, name, lat, lon}) from the static GTFS.
+    Parents only: the child platforms exist in the loaded tables (and the
+    child_to_parent map) for later phases but are never served as markers.
+    Cacheable for the session once ready; 503 while the static GTFS is still
+    loading; a failed (retrying) load serves [] under no-cache, so an empty
+    200 means "ask again later", never success."""
+    status = getattr(app.state, "path_static_status", "loading")
+    if not _static_endpoint_ready(status, response, "Static PATH GTFS is still loading."):
+        return []
+    stops = getattr(app.state, "path_stops", None) or {}
+    return list(stops.values())
+
+
+@app.get("/api/path-routes", response_model=list[PathRoute])
+async def get_path_routes(response: Response) -> list[dict]:
+    """Static PATH route geometry and branding for drawing: one entry per route
+    with its rider-facing name, route_color/route_text_color from routes.txt,
+    and the modal polyline(s) as [lat, lon] point lists (variant shapes are
+    short-turn or track-work patterns; see build_path_route_shapes). Built once
+    at warmup, so clients can cache it between loads. Same warming semantics as
+    /api/path-stops: 503 while loading, [] under no-cache while failed.
+
+    One extra guard beyond path-stops: the warmup gates "ready" on parent stops,
+    not on the built geometry, so a degraded feed whose stops parse but whose
+    shapes do not can reach "ready" with an empty routes list. An empty list is
+    then served with no-cache (not the ready max-age), keeping the "empty 200
+    means ask again later" contract so a browser does not pin empty geometry for
+    an hour. path-stops needs no such guard: an empty-stops load marks the group
+    failed instead of ready, so a ready path-stops response is never empty."""
+    status = getattr(app.state, "path_static_status", "loading")
+    if not _static_endpoint_ready(status, response, "Static PATH GTFS is still loading."):
+        return []
+    routes = getattr(app.state, "path_routes", None) or []
+    if not routes:
+        response.headers["Cache-Control"] = "no-cache"
+    return routes
 
 
 @app.get("/api/subways", response_model=SubwayFeed)
@@ -817,6 +906,11 @@ async def get_status() -> dict:
         "static_subway_gtfs": static_gtfs,
         "subway_static": getattr(app.state, "subway_static_status", None),
         "railroad_static": getattr(app.state, "railroad_static_status", None),
+        # PATH is the only static group that stays "failed" until a retry
+        # succeeds (single system, so an empty load is a full failure, not a
+        # lenient GPS-only degradation), so its warmup state must be visible in
+        # the operational snapshot the way every other group's is.
+        "path_static": getattr(app.state, "path_static_status", None),
         "subway_feeds": getattr(app.state, "subway_feed_health", None),
         "railroad_feeds": getattr(app.state, "railroad_feed_health", None),
         "alerts": alerts,

@@ -1,0 +1,1031 @@
+{
+"arrivals": {
+"26722": {
+"To New Jersey": [
+{
+"arrival": 1783297654.0,
+"route_id": "861",
+"trip_id": "33bb257ef5cdd67b8e1b611d73f2392d"
+},
+{
+"arrival": 1783297772.0,
+"route_id": "859",
+"trip_id": "c4708d2d809cb0e9dab480a0c00394a5"
+}
+],
+"To New York": [
+{
+"arrival": 1783297678.0,
+"route_id": "859",
+"trip_id": "4f41a8b3c416d01f68812cc835ff5d59"
+},
+{
+"arrival": 1783298055.0,
+"route_id": "861",
+"trip_id": "14f12da7a1656e761206a6544238adb1"
+}
+]
+},
+"26723": {
+"To New Jersey": [
+{
+"arrival": 1783297564.0,
+"route_id": "861",
+"trip_id": "ad12b083078611d4737efe173ba679ba"
+},
+{
+"arrival": 1783297682.0,
+"route_id": "859",
+"trip_id": "3de18e383cd3db3a339e1972e4aef9c7"
+}
+],
+"To New York": [
+{
+"arrival": 1783297525.0,
+"route_id": "861",
+"trip_id": "77cb2dec820137f07a59fdbe98e6d1d0"
+},
+{
+"arrival": 1783297786.0,
+"route_id": "859",
+"trip_id": "a0f436ff7432e015c417b90fb40f1791"
+}
+]
+},
+"26724": {
+"To New Jersey": [
+{
+"arrival": 1783297464.0,
+"route_id": "861",
+"trip_id": "914e4f785ddc74ede6f078cf15276dc2"
+},
+{
+"arrival": 1783297620.0,
+"route_id": "859",
+"trip_id": "1bfa23b15af1c4021ee9fd91ebbe1a35"
+},
+{
+"arrival": 1783298040.0,
+"route_id": "861",
+"trip_id": "cb4c6e12b8b5bca43eeb1e4ec8b20ef6"
+},
+{
+"arrival": 1783298220.0,
+"route_id": "859",
+"trip_id": "41e76558e9353f22ba67e31276ed4fee"
+}
+]
+},
+"26725": {
+"To New Jersey": [
+{
+"arrival": 1783297744.0,
+"route_id": "861",
+"trip_id": "8c9895169a230e3c7d1aec91c29686fc"
+},
+{
+"arrival": 1783297862.0,
+"route_id": "859",
+"trip_id": "07a8f0c34c625ae7e4d9e2f6adb3acc2"
+}
+],
+"To New York": [
+{
+"arrival": 1783297606.0,
+"route_id": "859",
+"trip_id": "f6ae54bbbba1533c62232c988a624ecf"
+},
+{
+"arrival": 1783297965.0,
+"route_id": "861",
+"trip_id": "097f35eb88a05f2e0d619d304958b8f4"
+}
+]
+},
+"26726": {
+"To New Jersey": [
+{
+"arrival": 1783297834.0,
+"route_id": "861",
+"trip_id": "a9a6f330235989921a2cfee75a56e759"
+},
+{
+"arrival": 1783297952.0,
+"route_id": "859",
+"trip_id": "ea0d75afb946d65b977dd1b10d83346c"
+}
+],
+"To New York": [
+{
+"arrival": 1783297516.0,
+"route_id": "859",
+"trip_id": "1063c98be17c31266bff6e99152a56ce"
+},
+{
+"arrival": 1783297875.0,
+"route_id": "861",
+"trip_id": "eb6c1173bdd0ab3261c5beaeb4d4b38f"
+}
+]
+},
+"26727": {
+"To New Jersey": [
+{
+"arrival": 1783297623.0,
+"route_id": "862",
+"trip_id": "22796ec63db5ea6f922dc7a0ef7dcc72"
+},
+{
+"arrival": 1783297722.0,
+"route_id": "860",
+"trip_id": "c97b6a07f90f694b408e4ba800a230ce"
+}
+],
+"To New York": [
+{
+"arrival": 1783297667.0,
+"route_id": "862",
+"trip_id": "1d4b8990bd898f896e18879bcca9a072"
+},
+{
+"arrival": 1783297758.0,
+"route_id": "860",
+"trip_id": "30449265398e861ca3c862fef0cfd271"
+}
+]
+},
+"26728": {
+"To New Jersey": [
+{
+"arrival": 1783297803.0,
+"route_id": "862",
+"trip_id": "422d246f0e372b8d0fdb159ad30a1212"
+},
+{
+"arrival": 1783297933.0,
+"route_id": "861",
+"trip_id": "3603b95cc09ffeedbb61764b7f5a8e3b"
+}
+],
+"To New York": [
+{
+"arrival": 1783297515.0,
+"route_id": "862",
+"trip_id": "c7a8a2c48e74ccef55d7343bc3693073"
+},
+{
+"arrival": 1783297812.0,
+"route_id": "861",
+"trip_id": "ff981e0f6c557f2226956af011fa571a"
+}
+]
+},
+"26729": {
+"To New Jersey": [
+{
+"arrival": 1783297748.0,
+"route_id": "862",
+"trip_id": "5130142f918fedffea76b1415de72157"
+},
+{
+"arrival": 1783298327.0,
+"route_id": "862",
+"trip_id": "8cf8dd95ff881ad8598da53218cb090d"
+}
+],
+"To New York": [
+{
+"arrival": 1783297662.0,
+"route_id": "862",
+"trip_id": "7e5434c30bc1c4f793bf9a5c90bfefc6"
+},
+{
+"arrival": 1783298142.0,
+"route_id": "862",
+"trip_id": "437f71fa6c228ddbda3e926f3a9f8ca8"
+}
+]
+},
+"26730": {
+"To New York": [
+{
+"arrival": 1783297620.0,
+"route_id": "859",
+"trip_id": "4c6e3e1bce8a57fee0455ab750574c37"
+},
+{
+"arrival": 1783297920.0,
+"route_id": "860",
+"trip_id": "3e01bf8a36b1d48a05768ecdd7ef8c21"
+},
+{
+"arrival": 1783298220.0,
+"route_id": "859",
+"trip_id": "a85ab30bb87246ee1db47c18c44986c9"
+},
+{
+"arrival": 1783298520.0,
+"route_id": "860",
+"trip_id": "502196fbecb666f6de4c5336d3ed2ce8"
+}
+]
+},
+"26731": {
+"To New Jersey": [
+{
+"arrival": 1783297667.0,
+"route_id": "862",
+"trip_id": "d0f329f15d62fd9eb6b932c73032fde3"
+},
+{
+"arrival": 1783298073.0,
+"route_id": "862",
+"trip_id": "daecca1dfb61937091eb1432219700f4"
+}
+],
+"To New York": [
+{
+"arrival": 1783297560.0,
+"route_id": "861",
+"trip_id": "3a316f99aa9b5792e060243f3779c640"
+},
+{
+"arrival": 1783297768.0,
+"route_id": "862",
+"trip_id": "aff0570c0f38a44a5302fd02ea4efa61"
+},
+{
+"arrival": 1783298160.0,
+"route_id": "861",
+"trip_id": "f7a738852a3ef9dd84584ddfba2e712b"
+},
+{
+"arrival": 1783298322.0,
+"route_id": "862",
+"trip_id": "21b9a25c21d6e21e148fd207374d9581"
+}
+]
+},
+"26732": {
+"To New Jersey": [
+{
+"arrival": 1783297723.0,
+"route_id": "861",
+"trip_id": "04bfb013b128d18820ca8b3df58acc9b"
+},
+{
+"arrival": 1783297902.0,
+"route_id": "860",
+"trip_id": "590158d4a5e8d9d14dfba665756d85bc"
+}
+],
+"To New York": [
+{
+"arrival": 1783297578.0,
+"route_id": "860",
+"trip_id": "e3961cbdee4f3cbbb7cbee7f407cd42f"
+},
+{
+"arrival": 1783298022.0,
+"route_id": "861",
+"trip_id": "cf0c03b277b896276dec16a6bcaba577"
+}
+]
+},
+"26733": {
+"To New York": [
+{
+"arrival": 1783297560.0,
+"route_id": "862",
+"trip_id": "80d7f42e570fba64cb333eb0ce05a351"
+},
+{
+"arrival": 1783298040.0,
+"route_id": "862",
+"trip_id": "0bd36c1629017321d9824d937ab3e8d1"
+}
+]
+},
+"26734": {
+"To New Jersey": [
+{
+"arrival": 1783297500.0,
+"route_id": "860",
+"trip_id": "73484a37b152b25630a6e5fb698373d0"
+},
+{
+"arrival": 1783297860.0,
+"route_id": "862",
+"trip_id": "d1759b422db2796863568e10a6449732"
+},
+{
+"arrival": 1783298100.0,
+"route_id": "860",
+"trip_id": "4aad94a3b587834cd2ebaf7f98a9b10f"
+},
+{
+"arrival": 1783298340.0,
+"route_id": "862",
+"trip_id": "7e00b428879f51cd9f5a9aead4bf5acf"
+},
+{
+"arrival": 1783298700.0,
+"route_id": "860",
+"trip_id": "e3ba13d2b2ae1bb272fc95ae107a1114"
+}
+]
+}
+},
+"now": 1783297522.0,
+"trains": [
+{
+"direction": "To New York",
+"latitude": 40.73454,
+"longitude": -74.16375,
+"next_time": 1783297560.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "862",
+"stop_id": "26733",
+"stop_name": "Newark",
+"trip_id": "80d7f42e570fba64cb333eb0ce05a351"
+},
+{
+"direction": "To New York",
+"latitude": 40.73454,
+"longitude": -74.16375,
+"next_time": 1783298040.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "862",
+"stop_id": "26733",
+"stop_name": "Newark",
+"trip_id": "0bd36c1629017321d9824d937ab3e8d1"
+},
+{
+"direction": "To New Jersey",
+"latitude": 40.73942,
+"longitude": -74.15587,
+"next_time": 1783297748.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "862",
+"stop_id": "26729",
+"stop_name": "Harrison",
+"trip_id": "5130142f918fedffea76b1415de72157"
+},
+{
+"direction": "To New Jersey",
+"latitude": 40.73942,
+"longitude": -74.15587,
+"next_time": 1783298327.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "862",
+"stop_id": "26729",
+"stop_name": "Harrison",
+"trip_id": "8cf8dd95ff881ad8598da53218cb090d"
+},
+{
+"direction": "To New York",
+"latitude": 40.73942,
+"longitude": -74.15587,
+"next_time": 1783297662.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "862",
+"stop_id": "26729",
+"stop_name": "Harrison",
+"trip_id": "7e5434c30bc1c4f793bf9a5c90bfefc6"
+},
+{
+"direction": "To New York",
+"latitude": 40.73942,
+"longitude": -74.15587,
+"next_time": 1783298142.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "862",
+"stop_id": "26729",
+"stop_name": "Harrison",
+"trip_id": "437f71fa6c228ddbda3e926f3a9f8ca8"
+},
+{
+"direction": "To New Jersey",
+"latitude": 40.73301,
+"longitude": -74.06289,
+"next_time": 1783297667.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "862",
+"stop_id": "26731",
+"stop_name": "Journal Square",
+"trip_id": "d0f329f15d62fd9eb6b932c73032fde3"
+},
+{
+"direction": "To New Jersey",
+"latitude": 40.73301,
+"longitude": -74.06289,
+"next_time": 1783298073.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "862",
+"stop_id": "26731",
+"stop_name": "Journal Square",
+"trip_id": "daecca1dfb61937091eb1432219700f4"
+},
+{
+"direction": "To New York",
+"latitude": 40.73301,
+"longitude": -74.06289,
+"next_time": 1783297560.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "861",
+"stop_id": "26731",
+"stop_name": "Journal Square",
+"trip_id": "3a316f99aa9b5792e060243f3779c640"
+},
+{
+"direction": "To New York",
+"latitude": 40.73301,
+"longitude": -74.06289,
+"next_time": 1783297768.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "862",
+"stop_id": "26731",
+"stop_name": "Journal Square",
+"trip_id": "aff0570c0f38a44a5302fd02ea4efa61"
+},
+{
+"direction": "To New York",
+"latitude": 40.73301,
+"longitude": -74.06289,
+"next_time": 1783298160.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "861",
+"stop_id": "26731",
+"stop_name": "Journal Square",
+"trip_id": "f7a738852a3ef9dd84584ddfba2e712b"
+},
+{
+"direction": "To New York",
+"latitude": 40.73301,
+"longitude": -74.06289,
+"next_time": 1783298322.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "862",
+"stop_id": "26731",
+"stop_name": "Journal Square",
+"trip_id": "21b9a25c21d6e21e148fd207374d9581"
+},
+{
+"direction": "To New Jersey",
+"latitude": 40.71966,
+"longitude": -74.04245,
+"next_time": 1783297803.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "862",
+"stop_id": "26728",
+"stop_name": "Grove Street",
+"trip_id": "422d246f0e372b8d0fdb159ad30a1212"
+},
+{
+"direction": "To New Jersey",
+"latitude": 40.71966,
+"longitude": -74.04245,
+"next_time": 1783297933.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "861",
+"stop_id": "26728",
+"stop_name": "Grove Street",
+"trip_id": "3603b95cc09ffeedbb61764b7f5a8e3b"
+},
+{
+"direction": "To New York",
+"latitude": 40.71966,
+"longitude": -74.04245,
+"next_time": 1783297515.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "862",
+"stop_id": "26728",
+"stop_name": "Grove Street",
+"trip_id": "c7a8a2c48e74ccef55d7343bc3693073"
+},
+{
+"direction": "To New York",
+"latitude": 40.71966,
+"longitude": -74.04245,
+"next_time": 1783297812.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "861",
+"stop_id": "26728",
+"stop_name": "Grove Street",
+"trip_id": "ff981e0f6c557f2226956af011fa571a"
+},
+{
+"direction": "To New Jersey",
+"latitude": 40.71676,
+"longitude": -74.03238,
+"next_time": 1783297623.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "862",
+"stop_id": "26727",
+"stop_name": "Exchange Place",
+"trip_id": "22796ec63db5ea6f922dc7a0ef7dcc72"
+},
+{
+"direction": "To New Jersey",
+"latitude": 40.71676,
+"longitude": -74.03238,
+"next_time": 1783297722.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "860",
+"stop_id": "26727",
+"stop_name": "Exchange Place",
+"trip_id": "c97b6a07f90f694b408e4ba800a230ce"
+},
+{
+"direction": "To New York",
+"latitude": 40.71676,
+"longitude": -74.03238,
+"next_time": 1783297667.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "862",
+"stop_id": "26727",
+"stop_name": "Exchange Place",
+"trip_id": "1d4b8990bd898f896e18879bcca9a072"
+},
+{
+"direction": "To New York",
+"latitude": 40.71676,
+"longitude": -74.03238,
+"next_time": 1783297758.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "860",
+"stop_id": "26727",
+"stop_name": "Exchange Place",
+"trip_id": "30449265398e861ca3c862fef0cfd271"
+},
+{
+"direction": "To New Jersey",
+"latitude": 40.71271,
+"longitude": -74.01193,
+"next_time": 1783297500.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "860",
+"stop_id": "26734",
+"stop_name": "World Trade Center",
+"trip_id": "73484a37b152b25630a6e5fb698373d0"
+},
+{
+"direction": "To New Jersey",
+"latitude": 40.71271,
+"longitude": -74.01193,
+"next_time": 1783297860.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "862",
+"stop_id": "26734",
+"stop_name": "World Trade Center",
+"trip_id": "d1759b422db2796863568e10a6449732"
+},
+{
+"direction": "To New Jersey",
+"latitude": 40.71271,
+"longitude": -74.01193,
+"next_time": 1783298100.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "860",
+"stop_id": "26734",
+"stop_name": "World Trade Center",
+"trip_id": "4aad94a3b587834cd2ebaf7f98a9b10f"
+},
+{
+"direction": "To New Jersey",
+"latitude": 40.71271,
+"longitude": -74.01193,
+"next_time": 1783298340.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "862",
+"stop_id": "26734",
+"stop_name": "World Trade Center",
+"trip_id": "7e00b428879f51cd9f5a9aead4bf5acf"
+},
+{
+"direction": "To New Jersey",
+"latitude": 40.71271,
+"longitude": -74.01193,
+"next_time": 1783298700.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "860",
+"stop_id": "26734",
+"stop_name": "World Trade Center",
+"trip_id": "e3ba13d2b2ae1bb272fc95ae107a1114"
+},
+{
+"direction": "To New Jersey",
+"latitude": 40.72699,
+"longitude": -74.03383,
+"next_time": 1783297723.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "861",
+"stop_id": "26732",
+"stop_name": "Newport",
+"trip_id": "04bfb013b128d18820ca8b3df58acc9b"
+},
+{
+"direction": "To New Jersey",
+"latitude": 40.72699,
+"longitude": -74.03383,
+"next_time": 1783297902.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "860",
+"stop_id": "26732",
+"stop_name": "Newport",
+"trip_id": "590158d4a5e8d9d14dfba665756d85bc"
+},
+{
+"direction": "To New York",
+"latitude": 40.72699,
+"longitude": -74.03383,
+"next_time": 1783297578.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "860",
+"stop_id": "26732",
+"stop_name": "Newport",
+"trip_id": "e3961cbdee4f3cbbb7cbee7f407cd42f"
+},
+{
+"direction": "To New York",
+"latitude": 40.72699,
+"longitude": -74.03383,
+"next_time": 1783298022.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "861",
+"stop_id": "26732",
+"stop_name": "Newport",
+"trip_id": "cf0c03b277b896276dec16a6bcaba577"
+},
+{
+"direction": "To New York",
+"latitude": 40.73586,
+"longitude": -74.02922,
+"next_time": 1783297620.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "859",
+"stop_id": "26730",
+"stop_name": "Hoboken",
+"trip_id": "4c6e3e1bce8a57fee0455ab750574c37"
+},
+{
+"direction": "To New York",
+"latitude": 40.73586,
+"longitude": -74.02922,
+"next_time": 1783297920.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "860",
+"stop_id": "26730",
+"stop_name": "Hoboken",
+"trip_id": "3e01bf8a36b1d48a05768ecdd7ef8c21"
+},
+{
+"direction": "To New York",
+"latitude": 40.73586,
+"longitude": -74.02922,
+"next_time": 1783298220.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "859",
+"stop_id": "26730",
+"stop_name": "Hoboken",
+"trip_id": "a85ab30bb87246ee1db47c18c44986c9"
+},
+{
+"direction": "To New York",
+"latitude": 40.73586,
+"longitude": -74.02922,
+"next_time": 1783298520.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "860",
+"stop_id": "26730",
+"stop_name": "Hoboken",
+"trip_id": "502196fbecb666f6de4c5336d3ed2ce8"
+},
+{
+"direction": "To New Jersey",
+"latitude": 40.73295,
+"longitude": -74.00707,
+"next_time": 1783297834.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "861",
+"stop_id": "26726",
+"stop_name": "Christopher Street",
+"trip_id": "a9a6f330235989921a2cfee75a56e759"
+},
+{
+"direction": "To New Jersey",
+"latitude": 40.73295,
+"longitude": -74.00707,
+"next_time": 1783297952.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "859",
+"stop_id": "26726",
+"stop_name": "Christopher Street",
+"trip_id": "ea0d75afb946d65b977dd1b10d83346c"
+},
+{
+"direction": "To New York",
+"latitude": 40.73295,
+"longitude": -74.00707,
+"next_time": 1783297516.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "859",
+"stop_id": "26726",
+"stop_name": "Christopher Street",
+"trip_id": "1063c98be17c31266bff6e99152a56ce"
+},
+{
+"direction": "To New York",
+"latitude": 40.73295,
+"longitude": -74.00707,
+"next_time": 1783297875.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "861",
+"stop_id": "26726",
+"stop_name": "Christopher Street",
+"trip_id": "eb6c1173bdd0ab3261c5beaeb4d4b38f"
+},
+{
+"direction": "To New Jersey",
+"latitude": 40.73424,
+"longitude": -73.9991,
+"next_time": 1783297744.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "861",
+"stop_id": "26725",
+"stop_name": "9th Street",
+"trip_id": "8c9895169a230e3c7d1aec91c29686fc"
+},
+{
+"direction": "To New Jersey",
+"latitude": 40.73424,
+"longitude": -73.9991,
+"next_time": 1783297862.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "859",
+"stop_id": "26725",
+"stop_name": "9th Street",
+"trip_id": "07a8f0c34c625ae7e4d9e2f6adb3acc2"
+},
+{
+"direction": "To New York",
+"latitude": 40.73424,
+"longitude": -73.9991,
+"next_time": 1783297606.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "859",
+"stop_id": "26725",
+"stop_name": "9th Street",
+"trip_id": "f6ae54bbbba1533c62232c988a624ecf"
+},
+{
+"direction": "To New York",
+"latitude": 40.73424,
+"longitude": -73.9991,
+"next_time": 1783297965.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "861",
+"stop_id": "26725",
+"stop_name": "9th Street",
+"trip_id": "097f35eb88a05f2e0d619d304958b8f4"
+},
+{
+"direction": "To New Jersey",
+"latitude": 40.73735,
+"longitude": -73.99684,
+"next_time": 1783297654.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "861",
+"stop_id": "26722",
+"stop_name": "14th Street",
+"trip_id": "33bb257ef5cdd67b8e1b611d73f2392d"
+},
+{
+"direction": "To New Jersey",
+"latitude": 40.73735,
+"longitude": -73.99684,
+"next_time": 1783297772.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "859",
+"stop_id": "26722",
+"stop_name": "14th Street",
+"trip_id": "c4708d2d809cb0e9dab480a0c00394a5"
+},
+{
+"direction": "To New York",
+"latitude": 40.73735,
+"longitude": -73.99684,
+"next_time": 1783297678.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "859",
+"stop_id": "26722",
+"stop_name": "14th Street",
+"trip_id": "4f41a8b3c416d01f68812cc835ff5d59"
+},
+{
+"direction": "To New York",
+"latitude": 40.73735,
+"longitude": -73.99684,
+"next_time": 1783298055.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "861",
+"stop_id": "26722",
+"stop_name": "14th Street",
+"trip_id": "14f12da7a1656e761206a6544238adb1"
+},
+{
+"direction": "To New Jersey",
+"latitude": 40.7429,
+"longitude": -73.99278,
+"next_time": 1783297564.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "861",
+"stop_id": "26723",
+"stop_name": "23rd Street",
+"trip_id": "ad12b083078611d4737efe173ba679ba"
+},
+{
+"direction": "To New Jersey",
+"latitude": 40.7429,
+"longitude": -73.99278,
+"next_time": 1783297682.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "859",
+"stop_id": "26723",
+"stop_name": "23rd Street",
+"trip_id": "3de18e383cd3db3a339e1972e4aef9c7"
+},
+{
+"direction": "To New York",
+"latitude": 40.7429,
+"longitude": -73.99278,
+"next_time": 1783297525.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "861",
+"stop_id": "26723",
+"stop_name": "23rd Street",
+"trip_id": "77cb2dec820137f07a59fdbe98e6d1d0"
+},
+{
+"direction": "To New York",
+"latitude": 40.7429,
+"longitude": -73.99278,
+"next_time": 1783297786.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "859",
+"stop_id": "26723",
+"stop_name": "23rd Street",
+"trip_id": "a0f436ff7432e015c417b90fb40f1791"
+},
+{
+"direction": "To New Jersey",
+"latitude": 40.74912,
+"longitude": -73.98827,
+"next_time": 1783297464.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "861",
+"stop_id": "26724",
+"stop_name": "33rd Street",
+"trip_id": "914e4f785ddc74ede6f078cf15276dc2"
+},
+{
+"direction": "To New Jersey",
+"latitude": 40.74912,
+"longitude": -73.98827,
+"next_time": 1783297620.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "859",
+"stop_id": "26724",
+"stop_name": "33rd Street",
+"trip_id": "1bfa23b15af1c4021ee9fd91ebbe1a35"
+},
+{
+"direction": "To New Jersey",
+"latitude": 40.74912,
+"longitude": -73.98827,
+"next_time": 1783298040.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "861",
+"stop_id": "26724",
+"stop_name": "33rd Street",
+"trip_id": "cb4c6e12b8b5bca43eeb1e4ec8b20ef6"
+},
+{
+"direction": "To New Jersey",
+"latitude": 40.74912,
+"longitude": -73.98827,
+"next_time": 1783298220.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "859",
+"stop_id": "26724",
+"stop_name": "33rd Street",
+"trip_id": "41e76558e9353f22ba67e31276ed4fee"
+}
+]
+}

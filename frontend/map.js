@@ -37,6 +37,11 @@ const railroadStationLayer = L.layerGroup().addTo(map); // LIRR + MNR clickable 
 // toggles independently of the railroad group.
 const airtrainRouteLinesLayer = L.layerGroup().addTo(map); // 3 branch guideways
 const airtrainStationLayer = L.layerGroup().addTo(map); // 10 clickable stations
+// PATH gets its own three groups (mirroring the railroad trio) so the whole
+// system toggles as one.
+const pathRouteLines = L.layerGroup().addTo(map); // route geometry, both directions per route
+const pathStations = L.layerGroup().addTo(map); // 13 clickable parent stations
+const pathTrains = L.layerGroup().addTo(map); // trains placed at their next station
 
 function bindToggle(checkboxId, layers) {
   const box = document.getElementById(checkboxId);
@@ -54,6 +59,7 @@ bindToggle("toggle-subways", [subwayLayer, routeLinesLayer]);
 bindToggle("toggle-stations", [stationLayer]);
 bindToggle("toggle-railroads", [railroadLayer, railroadRouteLinesLayer, railroadStationLayer]);
 bindToggle("toggle-airtrain", [airtrainRouteLinesLayer, airtrainStationLayer]);
+bindToggle("toggle-path", [pathRouteLines, pathStations, pathTrains]);
 
 const statusEl = document.getElementById("status");
 
@@ -288,7 +294,7 @@ function trainPopup(record) {
 const lineRenderer = L.canvas({ padding: 0.3 });
 const routeIndex = new Map(); // route_id -> [{ points, cum }] for interpolation
 
-// The five static loaders below each return true only once they have populated
+// The static loaders below each return true only once they have populated
 // their layer from a NON-EMPTY payload, and false otherwise, so retryUntil can
 // keep asking. WHY an empty 200 is not success: while a static group's warmup has
 // FAILED (and is retrying server-side), its endpoints serve [] under Cache-Control
@@ -744,6 +750,154 @@ async function loadAirtrain() {
   return true;
 }
 
+/* ---------------- PATH ---------------- */
+
+// route_id -> css color / rider-facing name, from /api/path-routes; read by the
+// PATH train icons/popups and the station arrivals badges. pathColor validates
+// the feed's bare-hex route_color, so every stored value is a safe css color.
+const pathRouteColors = new Map();
+const pathRouteNames = new Map();
+
+async function loadPathRoutes() {
+  let routes;
+  try {
+    const res = await fetch("/api/path-routes");
+    if (!res.ok) return false; // warming 503 (or transient error): retry
+    routes = await res.json();
+  } catch {
+    return false;
+  }
+  // Same contract as the subway loaders: PATH is a single-system warmup group,
+  // so a failed-warmup [] (served no-cache) always means "ask again later".
+  if (!routes.length) return false;
+  for (const route of routes) {
+    const color = pathColor(route.color);
+    pathRouteColors.set(route.id, color);
+    if (route.name) pathRouteNames.set(route.id, route.name);
+    // Every entry of the shape list draws (the modal polyline per direction,
+    // usually two per route); non-interactive like the AirTrain guideways so
+    // clicks fall through to the station dots.
+    for (const points of route.shape) {
+      L.polyline(points, {
+        color,
+        weight: 2.5,
+        opacity: 0.5,
+        interactive: false,
+        renderer: lineRenderer,
+      }).addTo(pathRouteLines);
+    }
+  }
+  return true;
+}
+
+async function loadPathStops() {
+  let stations;
+  try {
+    const res = await fetch("/api/path-stops");
+    if (!res.ok) return false; // warming 503 (or transient error): retry
+    stations = await res.json();
+  } catch {
+    return false;
+  }
+  if (!stations.length) return false; // failed-warmup []: retry until the backend heals
+  for (const station of stations) {
+    // Same pane/renderer as the other station dots (click priority + cheap
+    // canvas), but INVERTED fill: a solid slate-blue dot under a white ring,
+    // where subway and railroad stations are both white-filled rings. PATH
+    // stations sit directly among subway stations in Manhattan (33rd St, WTC),
+    // so a third white-filled ring variant would be indistinguishable at a
+    // glance; flipping the fill makes the mode legible the way the AirTrain
+    // square does by shape. The slate-blue belongs to neither the subway nor
+    // the railroad palette nor any real PATH route color.
+    const marker = L.circleMarker([station.lat, station.lon], {
+      radius: 4,
+      color: "#fff",
+      weight: 1.5,
+      fillColor: "#3d5a80",
+      fillOpacity: 1,
+      renderer: stationRenderer,
+    });
+    bindStationPopup(marker, (m) => ({
+      station,
+      marker: m,
+      body: null,
+      url: `/api/path-arrivals/${encodeURIComponent(station.id)}`,
+      // Unlike the subway/railroad renders there is NO alerts prepend: PATH
+      // publishes no service alerts feed, so there is nothing to join. The
+      // countdown tick, refresh, and supersession machinery are all inherited
+      // from bindStationPopup / openStationArrivals unchanged.
+      render: (s, b) =>
+        pathArrivalsHtml(
+          s,
+          b,
+          Date.now() / 1000 - (minClockOffset ?? 0),
+          (routeId) => pathRouteColors.get(routeId) ?? PATH_FALLBACK_COLOR,
+          (routeId) => pathRouteNames.get(routeId) || null,
+        ),
+    })).addTo(pathStations);
+  }
+  return true;
+}
+
+// Diamond markers, a different SHAPE from the subway's rounded squares and the
+// railroad's squares: PATH trains sit at the same Manhattan stations as subway
+// trains, so shape (not just color, which varies per route on both modes) is
+// what keeps them apart at a glance.
+//
+// Anchored ABOVE the station point rather than centered on it. Every PATH
+// train is placed at exactly its station's coordinates (no GPS, no gliding
+// until 13d), so a centered diamond on the higher marker pane would cover the
+// station dot and steal every click meant for the arrivals popup; with ~50
+// trains over 13 stations, that blocked arrivals at essentially every station.
+// Floating the diamond just above the dot, tip pointing at it like a map pin,
+// keeps BOTH click targets alive: the dot for arrivals, the diamond for the
+// train. popupAnchor lifts the train popup to the diamond rather than the
+// station point beneath it.
+function pathIcon(train) {
+  const color = pathRouteColors.get(train.route_id) ?? PATH_FALLBACK_COLOR;
+  const html =
+    `<svg viewBox="0 0 16 16"><path d="M8 1.5 L14.5 8 L8 14.5 L1.5 8 Z" ` +
+    `fill="${color}" stroke="#fff" stroke-width="1.5"/></svg>`;
+  return L.divIcon({
+    className: "path-marker",
+    html,
+    iconSize: [16, 16],
+    iconAnchor: [8, 20],
+    popupAnchor: [0, -20],
+  });
+}
+
+function applyPath(data) {
+  // WHOLESALE REBUILD, deliberately unlike every other apply*: PATH bridge trip
+  // ids churn 100% when the upstream refreshes (recorded in path_static.py's
+  // module docstring), so the keyed diffing the bus/subway/railroad paths use
+  // would see every train as removed AND re-added on such a poll: phantom
+  // add/remove churn over what is physically the same handful of trains.
+  // Rebuilding ~50 markers is cheap, and a failed /api/path poll never reaches
+  // here (refreshSource keeps last-known markers on error, like the other
+  // systems). Cost accepted knowingly: an open PATH train popup survives at
+  // most one poll, since without stable identity there is nothing to reattach
+  // it to. 13d may add a synthetic cross-poll identity; until then nothing
+  // keys on trip_id.
+  pathTrains.clearLayers();
+  for (const train of data) {
+    // Marker at the placed (next/current) station, the railroad position-less
+    // precedent: the bridge feed carries no vehicle positions, no prev anchors
+    // (null in 13b by design), so there is no interpolation and no gliding.
+    L.marker([train.latitude, train.longitude], { icon: pathIcon(train) })
+      .bindPopup(() =>
+        // No routeAlertsBlock prepend here either (the subway trainPopup's
+        // alert join): PATH has no alerts feed.
+        pathTrainPopupHtml(
+          train,
+          pathRouteNames.get(train.route_id) || null,
+          pathRouteColors.get(train.route_id) ?? PATH_FALLBACK_COLOR,
+        ),
+      )
+      .addTo(pathTrains);
+  }
+}
+
 const trains = new Map(); // trip id -> { marker, routeId, latest }
 
 // computeRouteSlice (slice a train's route polyline between its prev and next
@@ -944,10 +1098,13 @@ function applyRailroads(data) {
 
 // emptyRunStart: fetched_at of the first empty poll in the current empty run
 // (null when the last poll carried data); drives emptyFeedDecision's time bound.
+// path's dataKey: its envelope carries `trains` where the MTA feeds carry `data`
+// (the backend keeps the shared warming contract under a different key).
 const sources = {
   buses: { url: "/api/buses", apply: applyBuses, label: "buses", count: 0, error: null, fetchedAt: null, feedTimestamp: null, emptyRunStart: null },
   subways: { url: "/api/subways", apply: applyTrains, label: "trains", count: 0, error: null, fetchedAt: null, feedTimestamp: null, emptyRunStart: null },
   railroads: { url: "/api/railroads", apply: applyRailroads, label: "railroad", count: 0, error: null, fetchedAt: null, feedTimestamp: null, emptyRunStart: null },
+  path: { url: "/api/path", apply: applyPath, label: "PATH", dataKey: "trains", count: 0, error: null, fetchedAt: null, feedTimestamp: null, emptyRunStart: null },
 };
 
 async function refreshSource(source) {
@@ -961,7 +1118,7 @@ async function refreshSource(source) {
     source.fetchedAt = body.fetched_at ?? null;
     source.feedTimestamp = body.feed_timestamp ?? null; // server-side staleness signal
     noteClockOffset(source.fetchedAt); // skew baseline for the arrivals countdown
-    const data = body.data ?? [];
+    const data = body[source.dataKey ?? "data"] ?? [];
     if (data.length === 0) {
       // Empty successful poll. Keep last-known markers only while the empty run is
       // TRANSIENT (a blip); once it has lasted FEED_STALE_AFTER_S by server
@@ -1025,6 +1182,8 @@ retryUntil(loadRailroadRoutes, staticRetryOpts);
 retryUntil(loadStations, staticRetryOpts);
 retryUntil(loadRailroadStations, staticRetryOpts);
 retryUntil(loadAirtrain, staticRetryOpts);
+retryUntil(loadPathRoutes, staticRetryOpts);
+retryUntil(loadPathStops, staticRetryOpts);
 loadAlerts();
 refreshAll();
 setInterval(refreshAll, POLL_INTERVAL_MS);

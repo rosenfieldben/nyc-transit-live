@@ -123,6 +123,12 @@ html, body {
   height: 14px;
 }
 
+/* Diamond PATH train markers */
+.path-marker svg {
+  width: 16px;
+  height: 16px;
+}
+
 .popup-sub {
   color: #777;
   font-size: 11px;

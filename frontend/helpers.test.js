@@ -24,6 +24,13 @@ const {
   orderedRailroadBuckets,
   railroadArrivalsHtml,
   formatRailroadHead,
+  PATH_BUCKET_ORDER,
+  PATH_FALLBACK_COLOR,
+  orderedPathBuckets,
+  pathColor,
+  formatPathHead,
+  pathTrainPopupHtml,
+  pathArrivalsHtml,
   ROUTE_MAX_SLICE,
   RAILROAD_ROUTE_MAX_SLICE,
   FEED_STALE_AFTER_S,
@@ -134,6 +141,115 @@ test("railroadArrivalsHtml shows the route name from nameFor and escapes it", ()
   // Absent name (resolver returns null) just omits the label, no crash.
   const plain = railroadArrivalsHtml(station, body, 40, () => null);
   assert.ok(plain.includes("arr-badge") && plain.includes("1 min"));
+});
+
+test("orderedPathBuckets keeps a stable To New York, To New Jersey, Trains order", () => {
+  const arr = (n) => [{ route_id: "862", trip_id: `t${n}`, arrival: n }];
+  assert.deepEqual(PATH_BUCKET_ORDER, ["To New York", "To New Jersey", "Trains"]);
+  // Full set: fixed display order regardless of input key order.
+  assert.deepEqual(
+    orderedPathBuckets({ Trains: arr(3), "To New Jersey": arr(2), "To New York": arr(1) }).map((b) => b[0]),
+    ["To New York", "To New Jersey", "Trains"],
+  );
+  // Subsets: only the present buckets, in order.
+  assert.deepEqual(
+    orderedPathBuckets({ "To New Jersey": arr(2), "To New York": arr(1) }).map((b) => b[0]),
+    ["To New York", "To New Jersey"],
+  );
+  assert.deepEqual(orderedPathBuckets({ Trains: arr(1) }).map((b) => b[0]), ["Trains"]);
+  // An unexpected key is appended rather than dropped (never silently hide trains).
+  assert.deepEqual(
+    orderedPathBuckets({ Shuttle: arr(2), "To New York": arr(1) }).map((b) => b[0]),
+    ["To New York", "Shuttle"],
+  );
+  // Empty directions, and buckets that arrive empty, yield nothing to render.
+  assert.deepEqual(orderedPathBuckets({}), []);
+  assert.deepEqual(orderedPathBuckets({ "To New York": [] }), []);
+});
+
+test("pathColor validates and prefixes the feed's bare hex, else falls back", () => {
+  assert.equal(pathColor("4d92fb"), "#4d92fb");
+  assert.equal(pathColor("D93A30"), "#D93A30"); // either case accepted
+  assert.equal(pathColor(null), PATH_FALLBACK_COLOR);
+  assert.equal(pathColor(undefined), PATH_FALLBACK_COLOR);
+  assert.equal(pathColor("fff"), PATH_FALLBACK_COLOR); // short form not served; reject
+  // A hostile value never reaches a style attribute; the fallback does instead.
+  assert.equal(pathColor('red;"onmouseover="x'), PATH_FALLBACK_COLOR);
+  assert.equal(pathColor("4d92fb", "#000000"), "#4d92fb"); // fallback unused when valid
+  assert.equal(pathColor("nope", "#000000"), "#000000"); // caller-chosen fallback
+});
+
+test("formatPathHead prefers the route name, falls back to route id, then PATH", () => {
+  assert.equal(formatPathHead("862", "Newark - World Trade Center"), "Newark - World Trade Center");
+  assert.equal(formatPathHead("862", null), "PATH route 862");
+  assert.equal(formatPathHead(null, null), "PATH");
+});
+
+test("pathTrainPopupHtml shows placement fields, never the unstable trip id", () => {
+  const train = {
+    trip_id: "329352234",
+    route_id: "862",
+    stop_name: "Journal Square",
+    direction: "To New Jersey",
+  };
+  const html = pathTrainPopupHtml(train, "Newark - World Trade Center", "#d93a30");
+  assert.ok(html.includes("Newark - World Trade Center"));
+  assert.ok(html.includes("Next stop: Journal Square"));
+  assert.ok(html.includes("To New Jersey"));
+  assert.ok(html.includes("scheduled position (no GPS)"));
+  assert.ok(html.includes("#d93a30"));
+  // The API contract: bridge trip ids are unstable and display-poor, never shown.
+  assert.ok(!html.includes("329352234"));
+});
+
+test("pathTrainPopupHtml escapes hostile fields and omits absent ones", () => {
+  const train = { route_id: "8<b>62", stop_name: null, direction: null };
+  const html = pathTrainPopupHtml(train, null, "#546e7a");
+  assert.ok(html.includes("PATH route 8&lt;b&gt;62"));
+  assert.ok(!html.includes("8<b>62"));
+  assert.ok(!html.includes("Next stop"));
+  const hostileName = pathTrainPopupHtml({ route_id: "862" }, "New<script>ark", "#546e7a");
+  assert.ok(hostileName.includes("New&lt;script&gt;ark"));
+  assert.ok(!hostileName.includes("<script>"));
+});
+
+test("pathArrivalsHtml renders buckets in order with badge colors and countdowns", () => {
+  const station = { id: "26734", name: "World Trade Center" };
+  const body = {
+    directions: {
+      "To New Jersey": [{ route_id: "862", trip_id: "b", arrival: 400 }],
+      "To New York": [{ route_id: "859", trip_id: "a", arrival: 100 }],
+    },
+  };
+  const colorFor = (id) => ({ 859: "#4d92fb", 862: "#d93a30" })[id];
+  const nameFor = (id) => ({ 859: "Hoboken - 33rd", 862: "Newark - World Trade Center" })[id];
+  const html = pathArrivalsHtml(station, body, 40, colorFor, nameFor);
+  assert.ok(html.indexOf("To New York") < html.indexOf("To New Jersey")); // fixed order
+  assert.ok(html.includes("World Trade Center"));
+  assert.ok(html.includes("#4d92fb") && html.includes("#d93a30")); // per-route badge colors
+  assert.ok(html.includes("Hoboken - 33rd"));
+  assert.ok(html.includes("1 min")); // (100 - 40)s
+  assert.ok(html.includes("6 min")); // (400 - 40)s
+});
+
+test("pathArrivalsHtml renders No trains for an empty directions dict and escapes hostile fields", () => {
+  const empty = pathArrivalsHtml({ id: "26733", name: "Newark" }, { directions: {} }, 0);
+  assert.ok(empty.includes("Newark"));
+  assert.ok(empty.includes("arr-none") && empty.includes("No trains"));
+
+  const hostile = pathArrivalsHtml(
+    { id: "26733", name: "New<script>ark" },
+    { directions: { "To New York": [{ route_id: "8<img>", trip_id: "t", arrival: 100 }] } },
+    40,
+    undefined,
+    () => "Ho<script>boken",
+  );
+  assert.ok(hostile.includes("New&lt;script&gt;ark"));
+  assert.ok(hostile.includes("8&lt;img&gt;"));
+  assert.ok(hostile.includes("Ho&lt;script&gt;boken"));
+  assert.ok(!hostile.includes("<script>") && !hostile.includes("<img>"));
+  // The default colorFor keeps the badge on the neutral fallback.
+  assert.ok(hostile.includes(PATH_FALLBACK_COLOR));
 });
 
 test("formatRailroadHead prefers the route name, falls back to route id, then system", () => {

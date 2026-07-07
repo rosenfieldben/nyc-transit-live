@@ -31,6 +31,7 @@ async function boot(page, beforeGoto) {
 const busMarkers = (page) => page.locator(".bus-marker");
 const trainMarkers = (page) => page.locator(".train-marker");
 const railroadMarkers = (page) => page.locator(".railroad-marker");
+const pathMarkers = (page) => page.locator(".path-marker");
 const popup = (page) => page.locator(".leaflet-popup-content");
 
 // Wait until the first poll and the one-shot static loads (stations, route names)
@@ -403,4 +404,225 @@ test("12. cold start: station markers appear without a reload once 503s heal", a
     .poll(() => page.evaluate(() => stationLayer.getLayers().length))
     .toBe(2);
   expect(stopRequests).toBe(3); // exactly one request per attempt, then the loader stopped
+});
+
+// Wait until the PATH static loaders (stations, route lines + name/color
+// tables) and the first /api/path poll have all landed. PATH loads
+// independently of waitForReady's layers, so PATH tests wait on its own state.
+async function waitForPathReady(page) {
+  await expect(pathMarkers(page)).toHaveCount(2);
+  await page.waitForFunction(
+    () =>
+      typeof pathStations !== "undefined" &&
+      pathStations.getLayers().length === 2 &&
+      pathRouteLines.getLayers().length === 4 && // 2 routes x 2 direction polylines
+      pathRouteNames.size === 2,
+  );
+}
+
+test("13. PATH boot: lines, stations and trains render; the toggle hides all three layers", async ({ page }) => {
+  const ctx = await boot(page);
+  await waitForReady(page);
+  await waitForPathReady(page);
+  expect(ctx.leaks).toEqual([]); // the four PATH endpoints are all mocked locally
+
+  const status = page.locator("#status");
+  await expect(status).toContainText("2 PATH");
+  await expect(status).not.toHaveClass(/error/);
+
+  const layerState = () =>
+    page.evaluate(() => ({
+      lines: map.hasLayer(pathRouteLines),
+      stations: map.hasLayer(pathStations),
+      trains: map.hasLayer(pathTrains),
+    }));
+  expect(await layerState()).toEqual({ lines: true, stations: true, trains: true });
+
+  await page.locator("#toggle-path").uncheck();
+  await expect(pathMarkers(page)).toHaveCount(0);
+  expect(await layerState()).toEqual({ lines: false, stations: false, trains: false });
+  // Other modes are untouched by the PATH toggle.
+  await expect(trainMarkers(page)).toHaveCount(2);
+  await expect(railroadMarkers(page)).toHaveCount(2);
+
+  await page.locator("#toggle-path").check();
+  await expect(pathMarkers(page)).toHaveCount(2);
+  expect(await layerState()).toEqual({ lines: true, stations: true, trains: true });
+});
+
+test("14. PATH station popup: bucketed arrivals in order, ticking without refetching", async ({ page }) => {
+  // Seed alerts whose selectors would match this station if PATH ever joined
+  // the alerts store: one under a hypothetical PATH system tag, and one whose
+  // subway stop id collides with the PATH station's numeric id. Without seeded
+  // matching data the no-alert-block assertion below would be vacuous (an
+  // empty alerts index can never render a block regardless of the render).
+  const alertsFixture = {
+    fetched_at: fx.FROZEN_S,
+    alerts: [
+      { id: "path-1", system: "PATH", header: "PATH alert must never render", description: null,
+        effect: "UNKNOWN_EFFECT", cause: "UNKNOWN_CAUSE", routes: ["862", "859"], stops: ["26734"],
+        starts_at: fx.FROZEN_S - 600, ends_at: null },
+      { id: "sub-collide", system: "subway", header: "Colliding subway stop id must not leak", description: null,
+        effect: "UNKNOWN_EFFECT", cause: "UNKNOWN_CAUSE", routes: ["859"], stops: ["26734"],
+        starts_at: fx.FROZEN_S - 600, ends_at: null },
+    ],
+  };
+  const ctx = await boot(page, (c) => {
+    c.overrides.alerts = (route) => json(route, alertsFixture);
+  });
+  await waitForPathReady(page);
+  // The alerts must be indexed BEFORE the popup renders, or the absence
+  // assertions pass trivially against a not-yet-loaded store.
+  await page.waitForFunction(
+    () => typeof alertsIndex !== "undefined" && alertsIndex.byStop.has("PATH|26734"),
+  );
+
+  // Open World Trade Center (first PATH station in the fixture).
+  await page.evaluate(() => pathStations.getLayers()[0].openPopup());
+  await expect(popup(page)).toContainText("World Trade Center");
+  await expect(popup(page)).toContainText("To New York");
+  await expect(popup(page)).toContainText("To New Jersey");
+  await expect(popup(page)).toContainText("2 min"); // the +90s To New York arrival
+  await expect(popup(page)).toContainText("5 min"); // the +300s To New Jersey arrival
+  expect(ctx.counts.pathArrivals).toBe(1);
+
+  // Buckets render in the fixed order regardless of the fixture's key order
+  // (the fixture lists To New Jersey first), with the rider-facing route name.
+  const html = await popup(page).innerHTML();
+  expect(html.indexOf("To New York")).toBeGreaterThanOrEqual(0);
+  expect(html.indexOf("To New York")).toBeLessThan(html.indexOf("To New Jersey"));
+  await expect(popup(page)).toContainText("Hoboken - 33rd");
+  // PATH has no alerts feed, so no alert block may prepend even though the
+  // store now holds alerts that WOULD match this station under a PATH system
+  // tag or a colliding subway stop id. This fails if a PATH render ever grows
+  // a stationAlertsBlock join.
+  expect(html).not.toContain("alert-block");
+  expect(html).not.toContain("PATH alert must never render");
+  expect(html).not.toContain("Colliding subway stop id must not leak");
+
+  // The shared 1s tick repaints from the cached body: +90s -> +89s crosses the
+  // rounding boundary (2 min -> 1 min) with no new fetch.
+  await page.clock.runFor(1_000);
+  await expect(popup(page)).toContainText("1 min");
+  expect(ctx.counts.pathArrivals).toBe(1);
+});
+
+test("15. PATH cold start: dots and lines appear without a reload once 503s heal", async ({ page }) => {
+  // Mirror of the subway-stops warming spec for BOTH PATH static loaders: the
+  // first two requests to each return the backend's warming 503, the third
+  // serves the fixture. retryUntil's setTimeout backoff fires on clock.runFor.
+  const warmed = { pathStops: 0, pathRoutes: 0 };
+  const warming = (key, healed) => (route) => {
+    warmed[key] += 1;
+    if (warmed[key] <= 2) return json(route, { detail: "Static PATH GTFS is still loading." }, 503);
+    return json(route, healed());
+  };
+  await boot(page, (ctx) => {
+    ctx.overrides.pathStops = warming("pathStops", () => fx.pathStops());
+    ctx.overrides.pathRoutes = warming("pathRoutes", () => fx.pathRoutes());
+  });
+
+  // Live PATH trains arrive normally; the static dots and lines do not (503s).
+  await expect(pathMarkers(page)).toHaveCount(2);
+  const layerCounts = () =>
+    page.evaluate(() => ({
+      stations: pathStations.getLayers().length,
+      lines: pathRouteLines.getLayers().length,
+    }));
+  await expect.poll(layerCounts).toEqual({ stations: 0, lines: 0 });
+
+  const baseMs = await page.evaluate(() => STATIC_RETRY_BASE_MS);
+  await page.clock.runFor(baseMs); // attempt 2: still 503
+  await expect.poll(layerCounts).toEqual({ stations: 0, lines: 0 });
+  await page.clock.runFor(baseMs * 2); // attempt 3: fixtures land
+  await expect.poll(layerCounts).toEqual({ stations: 2, lines: 4 });
+  expect(warmed).toEqual({ pathStops: 3, pathRoutes: 3 }); // one request per attempt, then stopped
+});
+
+test("16. PATH churn: wholesale rebuild across disjoint-id and identical-id polls", async ({ page }) => {
+  // The pinned 13c behavior: the bridge's trip ids churn 100% on an upstream
+  // refresh, and the frontend rebuilds the layer wholesale instead of diffing
+  // on trip_id. Count stability alone cannot distinguish a wholesale rebuild
+  // from a (forbidden) trip_id-keyed diff, so this pins BOTH regimes: churned
+  // ids keep the count with no error, and an IDENTICAL payload still replaces
+  // every marker DOM node, which a keyed diff would have reused.
+  const genA = fx.path("a").trains.map((t) => t.trip_id);
+  const genB = fx.path("b").trains.map((t) => t.trip_id);
+  expect(genA.filter((id) => genB.includes(id))).toEqual([]); // fully disjoint ids
+
+  const pageErrors = [];
+  const ctx = await boot(page);
+  page.on("pageerror", (err) => pageErrors.push(String(err)));
+  await waitForPathReady(page);
+
+  // Poll 2: same physical picture, 100% churned trip ids (an upstream refresh).
+  ctx.overrides.path = (route, fixtures) => json(route, fixtures.path("b"));
+  await page.clock.runFor(15_000);
+  await expect(pathMarkers(page)).toHaveCount(2);
+  await expect(page.locator("#status")).toContainText("2 PATH");
+  await expect(page.locator("#status")).not.toHaveClass(/error/);
+
+  // Poll 3: byte-identical to poll 2 (normal for PATH: the bridge regenerates
+  // faster than the upstream refreshes). Tag the current marker elements, then
+  // let the poll fire: a wholesale rebuild replaces every element, so no tag
+  // survives; a trip_id-keyed diff would keep the tagged elements alive.
+  await page.evaluate(() => {
+    for (const el of document.querySelectorAll(".path-marker")) el.dataset.stale = "1";
+  });
+  await page.clock.runFor(15_000);
+  await expect(pathMarkers(page)).toHaveCount(2);
+  expect(
+    await page.evaluate(() => document.querySelectorAll('.path-marker[data-stale="1"]').length),
+  ).toBe(0);
+
+  expect(pageErrors).toEqual([]);
+  expect(ctx.counts.path).toBe(3); // exactly the three polls
+});
+
+test("17. PATH click targets: the station dot opens arrivals, the diamond above it opens the train", async ({ page }) => {
+  // Regression pin for the occlusion bug: every PATH train is placed at
+  // exactly its station's coordinates, so before the pin-style icon offset a
+  // real click on an occupied station hit the train diamond (marker pane sits
+  // above the station pane) and the arrivals popup was unreachable. This test
+  // clicks with the MOUSE, not openPopup(), because programmatic opening is
+  // exactly what masked the bug in test 14.
+  await boot(page);
+  await waitForPathReady(page);
+
+  // WTC has a train placed on it in the fixtures (path-a-1 shares its coords).
+  // Zoom in so neighboring fixture markers cannot straddle the click point.
+  await page.evaluate(() => {
+    map.setView([40.71271, -74.01193], 14);
+  });
+  // Container-point lookups are recomputed before EACH click: opening a popup
+  // auto-pans the map, so a point captured earlier goes stale and a click at
+  // it lands on empty canvas.
+  const stationPoint = () =>
+    page.evaluate(() => {
+      const p = map.latLngToContainerPoint([40.71271, -74.01193]);
+      return { x: p.x, y: p.y };
+    });
+  const box = await page.locator("#map").boundingBox();
+
+  // A click AT the station point lands on the dot: bucketed arrivals open.
+  const first = await stationPoint();
+  await page.mouse.click(box.x + first.x, box.y + first.y);
+  await expect(popup(page)).toContainText("World Trade Center");
+  await expect(popup(page)).toContainText("To New York");
+  await expect(popup(page)).not.toContainText("scheduled position (no GPS)");
+
+  // Close the arrivals popup first: its box opens upward over the diamond, so
+  // the second click would land on the popup instead of the marker beneath.
+  await page.evaluate(() => {
+    map.closePopup();
+  });
+  await page.clock.runFor(250); // flush Leaflet's faded-popup removal + autoPan animation
+
+  // A click on the diamond hovering above the dot (icon box spans 4..20px
+  // above the anchor) opens the train popup instead.
+  const second = await stationPoint();
+  await page.mouse.click(box.x + second.x, box.y + second.y - 12);
+  await expect(page.locator(".leaflet-popup")).toHaveCount(1);
+  await expect(popup(page)).toContainText("scheduled position (no GPS)");
+  await expect(popup(page)).toContainText("To New York"); // the train's direction line
 });

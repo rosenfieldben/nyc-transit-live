@@ -59,6 +59,10 @@
       <svg viewBox="0 0 14 14"><rect x="1.5" y="1.5" width="11" height="11" rx="2" fill="#fff" stroke="#b5179e" stroke-width="2.5"/></svg>
       AirTrain JFK station (click for scheduled headways)
     </div>
+    <div class="legend-row">
+      <svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="4.5" fill="#3d5a80" stroke="#fff" stroke-width="1.5"/></svg>
+      PATH station (click for arrivals); trains are diamonds
+    </div>
     <div class="legend-note">Color indicates route &middot; click a bus to draw its route</div>
     <div id="route-banner" hidden>
       <span id="route-banner-label"></span>
@@ -70,6 +74,7 @@
       <label><input type="checkbox" id="toggle-stations" checked> Stations</label>
       <label><input type="checkbox" id="toggle-railroads" checked> Railroads</label>
       <label><input type="checkbox" id="toggle-airtrain" checked> AirTrain JFK</label>
+      <label><input type="checkbox" id="toggle-path" checked> PATH</label>
     </div>
     <div id="status">Loading&hellip;</div>
   </div>

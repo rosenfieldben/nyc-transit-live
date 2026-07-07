@@ -84,6 +84,11 @@ async function installMocks(page) {
   await endpoint("**/api/railroad-stops", "railroadStops", () => fx.railroadStops());
   await endpoint("**/api/railroad-routes", "railroadRoutes", () => fx.railroadRoutes());
   await endpoint("**/api/airtrain", "airtrain", () => fx.airtrain());
+  // "**/api/path" is end-anchored, so it cannot swallow path-stops/path-routes.
+  await endpoint("**/api/path", "path", () => fx.path());
+  await endpoint("**/api/path-stops", "pathStops", () => fx.pathStops());
+  await endpoint("**/api/path-routes", "pathRoutes", () => fx.pathRoutes());
+  await endpoint("**/api/path-arrivals/**", "pathArrivals", () => fx.pathArrivals());
   await endpoint("**/api/alerts", "alerts", () => fx.alerts());
   await endpoint("**/api/subway-arrivals/**", "subwayArrivals", () => fx.subwayArrivals());
   await endpoint("**/api/railroad-arrivals/**", "railroadArrivals", () => fx.railroadArrivals());

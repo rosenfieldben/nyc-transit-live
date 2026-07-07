@@ -274,23 +274,29 @@ function formatCountdown(seconds) {
   return `${Math.floor(mins / 60)} h ${mins % 60} min`;
 }
 
-// Railroad arrivals buckets in a stable display order for the popup. The backend
-// sends only the non-empty buckets (any subset of Inbound/Outbound/Trains), so
-// this orders the ones that have trains and never fabricates empties: Inbound
-// first (toward the NYC terminal, the common ask), then Outbound, then the
-// residual "Trains" bucket (for trips whose direction the backend could neither
-// read from direction_id nor infer from the MNR stop-progression heuristic).
-// Returns [[name, arrivals], ...]. Any unexpected key is appended rather than
-// dropped, so a backend change can never silently hide trains.
+// Arrivals buckets in a stable display order for a station popup. The backends
+// send only the non-empty buckets, so this orders the ones that have trains and
+// never fabricates empties. Returns [[name, arrivals], ...]. Any unexpected key
+// is appended rather than dropped, so a backend change can never silently hide
+// trains. Shared by the railroad and PATH orderings below, which differ only in
+// their bucket-name lists.
+function orderedBuckets(order, directions) {
+  const present = directions || {};
+  const known = order.filter((name) => (present[name] || []).length);
+  const extra = Object.keys(present).filter(
+    (name) => !order.includes(name) && (present[name] || []).length,
+  );
+  return [...known, ...extra].map((name) => [name, present[name]]);
+}
+
+// Railroad buckets: Inbound first (toward the NYC terminal, the common ask),
+// then Outbound, then the residual "Trains" bucket (for trips whose direction
+// the backend could neither read from direction_id nor infer from the MNR
+// stop-progression heuristic).
 const RAILROAD_BUCKET_ORDER = ["Inbound", "Outbound", "Trains"];
 
 function orderedRailroadBuckets(directions) {
-  const present = directions || {};
-  const known = RAILROAD_BUCKET_ORDER.filter((name) => (present[name] || []).length);
-  const extra = Object.keys(present).filter(
-    (name) => !RAILROAD_BUCKET_ORDER.includes(name) && (present[name] || []).length,
-  );
-  return [...known, ...extra].map((name) => [name, present[name]]);
+  return orderedBuckets(RAILROAD_BUCKET_ORDER, directions);
 }
 
 // Rider-facing head text for a railroad TRAIN popup: "LIRR · Babylon Branch"
@@ -389,6 +395,84 @@ function airtrainStationPopupHtml(station, routes, minutes) {
     html += band
       ? `<div>${name}: every ~${band.headway_min} min <span class="popup-sub">(scheduled)</span></div>`
       : `<div>${name}: <span class="popup-sub">schedule unavailable</span></div>`;
+  }
+  return html;
+}
+
+// ---- PATH (phase 13c: map layer over the 13a/13b endpoints) ----
+
+// PATH buckets: "To New York" first (the dominant commute ask, mirroring the
+// railroad's Inbound-first choice), then "To New Jersey", then the residual
+// "Trains" bucket for trips the bridge feed served without a direction_id.
+const PATH_BUCKET_ORDER = ["To New York", "To New Jersey", "Trains"];
+
+function orderedPathBuckets(directions) {
+  return orderedBuckets(PATH_BUCKET_ORDER, directions);
+}
+
+// Neutral slate for a PATH route the color table doesn't know; belongs to no
+// real PATH route color, so a fallback is visually honest about being one.
+const PATH_FALLBACK_COLOR = "#546e7a";
+
+// /api/path-routes serves route_color verbatim from routes.txt: bare hex, no
+// "#", possibly null. Validate before prefixing rather than trusting the feed,
+// so a malformed value falls back instead of reaching a style attribute.
+function pathColor(hex, fallback = PATH_FALLBACK_COLOR) {
+  return /^[0-9a-fA-F]{6}$/.test(hex ?? "") ? `#${hex}` : fallback;
+}
+
+// Rider-facing head text for a PATH train popup: the route's rider-facing name
+// ("Newark - World Trade Center") when known, else the route id, else just
+// "PATH". Returns PLAIN text; the caller escapes it (the railroad precedent).
+function formatPathHead(routeId, name) {
+  if (name) return name;
+  if (routeId) return `PATH route ${routeId}`;
+  return "PATH";
+}
+
+// PATH train popup HTML. `name` is the rider-facing route name (null when
+// unknown) and `color` a css color, both resolved by the caller from the
+// /api/path-routes tables so this stays pure. Two deliberate omissions against
+// the subway train popup: no trip id line, because PATH bridge trip ids are
+// unstable across upstream refreshes and display-poor (the API contract says
+// clients never show or key on them), and no alerts block, because PATH
+// publishes no alerts feed. Every feed-derived string is escaped.
+function pathTrainPopupHtml(train, name, color) {
+  return (
+    `<b style="color:${color}">${esc(formatPathHead(train.route_id, name))}</b>` +
+    ` <span class="popup-sub">PATH</span>` +
+    (train.stop_name ? `<br>Next stop: ${esc(train.stop_name)}` : "") +
+    (train.direction ? `<br>${esc(train.direction)}` : "") +
+    `<br><span class="popup-sub">scheduled position (no GPS)</span>`
+  );
+}
+
+// PATH station arrivals popup HTML, the railroad renderer's shape minus
+// train_num (the bridge feed carries none). `colorFor(routeId)` resolves a
+// route's css badge color and `nameFor(routeId)` its rider-facing name; map.js
+// closes both over the /api/path-routes tables, keeping this pure and
+// node-testable. An empty directions dict renders the shared "No trains"
+// treatment. Every feed-derived string is escaped.
+function pathArrivalsHtml(station, body, now, colorFor = () => PATH_FALLBACK_COLOR, nameFor = () => null) {
+  const header =
+    `<b>${esc(station.name ?? station.id)}</b> ` +
+    `<span class="popup-sub">PATH</span>`;
+  const buckets = orderedPathBuckets(body.directions);
+  if (!buckets.length) return `${header}<div class="arr-none">No trains</div>`;
+  let html = header;
+  for (const [dir, arrivals] of buckets) {
+    html += `<div class="arr-dir">${esc(dir)}</div>`;
+    html += arrivals
+      .map((a) => {
+        const route = a.route_id ?? "";
+        const badge =
+          `<span class="arr-badge" style="background:${colorFor(a.route_id)};color:#fff">` +
+          `${esc(route || "?")}</span>`;
+        const routeName = a.route_id ? nameFor(a.route_id) : null;
+        const label = routeName ? ` ${esc(routeName)}` : "";
+        return `${badge}${label} ${esc(formatCountdown(a.arrival - now))}`;
+      })
+      .join("<br>");
   }
   return html;
 }
@@ -525,5 +609,7 @@ if (typeof module !== "undefined" && module.exports) {
     RAILROAD_ROUTE_MAX_SLICE, RAILROAD_ROUTE_ACCEPT_DIST, RAILROAD_BUCKET_ORDER,
     LINE_COLORS, DARK_TEXT_LINES, FEED_STALE_AFTER_S,
     selectHeadwayBand, airtrainStationPopupHtml, retryUntil,
+    PATH_BUCKET_ORDER, PATH_FALLBACK_COLOR, orderedPathBuckets, pathColor,
+    formatPathHead, pathTrainPopupHtml, pathArrivalsHtml,
   };
 }

@@ -171,6 +171,68 @@ const airtrain = () => ({
   ],
 });
 
+// PATH static layer (13a shapes). Two parent stations (WTC first, so
+// pathStations.getLayers()[0] is a deterministic click target) and two routes,
+// each with the modal polyline per direction (so 4 polylines total).
+const pathStops = () => [
+  { id: "26734", name: "World Trade Center", lat: 40.71271, lon: -74.01193 },
+  { id: "26733", name: "Newark", lat: 40.73454, lon: -74.16375 },
+];
+
+const pathRoutes = () => [
+  {
+    id: "862", name: "Newark - World Trade Center", color: "d93a30", text_color: "ffffff",
+    shape: [
+      [[40.73454, -74.16375], [40.7334, -74.0629], [40.71271, -74.01193]],
+      [[40.71271, -74.01193], [40.7334, -74.0629], [40.73454, -74.16375]],
+    ],
+  },
+  {
+    id: "859", name: "Hoboken - 33rd", color: "4d92fb", text_color: "ffffff",
+    shape: [
+      [[40.73573, -74.02944], [40.74913, -73.98816]],
+      [[40.74913, -73.98816], [40.73573, -74.02944]],
+    ],
+  },
+];
+
+// The PATH realtime feed: envelope key is `trains` (not `data`), every train
+// schedule-placed at its next station with null prev anchors, exactly as 13b
+// serves it. `gen` varies the trip ids: the bridge's ids churn 100% across
+// upstream refreshes, so the churn e2e test serves gen "a" then gen "b" (fully
+// disjoint ids, same physical picture) and expects an unchanged marker count.
+const path = (gen = "a") => ({
+  fetched_at: FROZEN_S,
+  feed_timestamp: FROZEN_S - 5,
+  trains: [
+    {
+      trip_id: `path-${gen}-1`, route_id: "862",
+      latitude: 40.71271, longitude: -74.01193, stop_id: "26734",
+      stop_name: "World Trade Center", direction: "To New York",
+      prev_lat: null, prev_lon: null, prev_time: null, next_time: FROZEN_S + 120,
+    },
+    {
+      trip_id: `path-${gen}-2`, route_id: "862",
+      latitude: 40.73454, longitude: -74.16375, stop_id: "26733",
+      stop_name: "Newark", direction: "To New Jersey",
+      prev_lat: null, prev_lon: null, prev_time: null, next_time: FROZEN_S + 300,
+    },
+  ],
+});
+
+// PATH station arrivals for WTC: both directional buckets present. The first
+// To New York arrival is at +90s, the same countdown-tick boundary the subway
+// fixture uses ("2 min" on open, "1 min" one second later).
+const pathArrivals = () => ({
+  fetched_at: FROZEN_S,
+  stop_id: "26734",
+  stop_name: "World Trade Center",
+  directions: {
+    "To New Jersey": [{ route_id: "862", trip_id: "path-a-2", arrival: FROZEN_S + 300 }],
+    "To New York": [{ route_id: "859", trip_id: "path-a-9", arrival: FROZEN_S + 90 }],
+  },
+});
+
 // Service alerts default to an EMPTY list so every existing scenario's popup
 // expectations are untouched by the new /api/alerts fetch. The alerts scenario
 // overrides this per-test with a fixture that matches the station under test.
@@ -191,5 +253,9 @@ module.exports = {
   railroadArrivals,
   busRoute,
   airtrain,
+  pathStops,
+  pathRoutes,
+  path,
+  pathArrivals,
   alerts,
 };

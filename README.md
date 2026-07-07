@@ -83,15 +83,30 @@ countdown.
   own toggleable layer, and a station popup shows each serving branch's scheduled
   headway for the current New York time, labeled "(scheduled)".
 
-PATH (Port Authority Trans-Hudson) has its static foundation in: the backend
-downloads and caches PATH's static GTFS in its own warmup group and serves the
-13 parent-station markers from `GET /api/path-stops` (`[{id, name, lat, lon}]`)
-and the seven routes with their rider-facing names, colors, and modal route
-geometry from `GET /api/path-routes` (`[{id, name, color, text_color, shape}]`).
-Realtime PATH trains are a later phase (PATH publishes no official GTFS-RT feed;
-a community bridge feed will be consumed later), and PATH will have no service
-alerts feed initially. PATH data is courtesy of PANYNJ, published via Trillium,
-and subject to their license terms. PATH stop ids stay in their own namespace:
+PATH (Port Authority Trans-Hudson) is on the map as its own toggleable layer:
+route polylines in each route's own color, clickable station dots with live
+arrival popups, and trains drawn at the station they are approaching. The
+backend downloads and caches PATH's static GTFS in its own warmup group and
+serves the 13 parent-station markers from `GET /api/path-stops`
+(`[{id, name, lat, lon}]`) and the seven routes with their rider-facing names,
+colors, and modal route geometry from `GET /api/path-routes`
+(`[{id, name, color, text_color, shape}]`). Realtime trains come from a
+community bridge feed (PATH publishes no official GTFS-RT feed):
+
+- `GET /api/path`: `{fetched_at, feed_timestamp, trains}`, every train
+  schedule-placed at its next station (the bridge carries no vehicle
+  positions), with null glide anchors for now.
+- `GET /api/path-arrivals/{stop_id}`: `{fetched_at, stop_id, stop_name,
+  directions}` with buckets `To New York` / `To New Jersey` plus a residual
+  `Trains` bucket, only the non-empty ones (`{}` means nothing upcoming).
+
+Two PATH-specific caveats. Bridge trip ids are UNSTABLE across upstream
+refreshes, so the frontend rebuilds the PATH train layer wholesale on every
+poll instead of diffing marker identity on trip_id (which would churn every
+marker), and trip ids are never displayed. And PATH publishes no service
+alerts feed, so PATH is the one system on the map whose popups carry no
+alerts block. PATH data is courtesy of PANYNJ, published via Trillium, and
+subject to their license terms. PATH stop ids stay in their own namespace:
 they are numeric and collide with MTA numeric ids across systems.
 
 Service alerts are polled on their own slower loop and served from an in-memory
@@ -379,6 +394,19 @@ warnings.
   verified UNSTABLE across refreshes, so nothing keys on PATH trip ids), and
   PATH has no service alerts feed initially. Data courtesy of PANYNJ via
   Trillium, subject to their license terms.
+- [x] **13b. PATH (realtime backend)**: the community GTFS-RT bridge feed is
+  polled and decoded into trains placed at their next station (the bridge
+  carries no vehicle positions) and a per-station arrivals index, served from
+  `/api/path` and `/api/path-arrivals/{stop_id}`. No cross-poll identity and
+  null glide anchors by design: bridge trip ids churn 100% when the upstream
+  refreshes, so every poll decodes independently (gliding is 13d).
+- [x] **13c. PATH (frontend layer)**: PATH joins the map as its own toggleable
+  layer group trio: route polylines in each route's color, clickable station
+  dots reusing the shared live-arrivals popup machinery (buckets ordered
+  To New York, To New Jersey, Trains), and trains drawn at their placed
+  stations. The train layer is rebuilt wholesale each poll rather than diffed
+  on trip_id (unstable, see 13b), a failed poll keeps last-known markers, and
+  PATH popups carry no alerts block because PATH has no alerts feed.
 
 ## Notes
 

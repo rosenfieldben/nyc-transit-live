@@ -843,12 +843,28 @@ async function loadPathStops() {
 // railroad's squares: PATH trains sit at the same Manhattan stations as subway
 // trains, so shape (not just color, which varies per route on both modes) is
 // what keeps them apart at a glance.
+//
+// Anchored ABOVE the station point rather than centered on it. Every PATH
+// train is placed at exactly its station's coordinates (no GPS, no gliding
+// until 13d), so a centered diamond on the higher marker pane would cover the
+// station dot and steal every click meant for the arrivals popup; with ~50
+// trains over 13 stations, that blocked arrivals at essentially every station.
+// Floating the diamond just above the dot, tip pointing at it like a map pin,
+// keeps BOTH click targets alive: the dot for arrivals, the diamond for the
+// train. popupAnchor lifts the train popup to the diamond rather than the
+// station point beneath it.
 function pathIcon(train) {
   const color = pathRouteColors.get(train.route_id) ?? PATH_FALLBACK_COLOR;
   const html =
     `<svg viewBox="0 0 16 16"><path d="M8 1.5 L14.5 8 L8 14.5 L1.5 8 Z" ` +
     `fill="${color}" stroke="#fff" stroke-width="1.5"/></svg>`;
-  return L.divIcon({ className: "path-marker", html, iconSize: [16, 16], iconAnchor: [8, 8] });
+  return L.divIcon({
+    className: "path-marker",
+    html,
+    iconSize: [16, 16],
+    iconAnchor: [8, 20],
+    popupAnchor: [0, -20],
+  });
 }
 
 function applyPath(data) {

@@ -141,17 +141,19 @@ class RailroadStationArrivals(BaseModel):
     directions: dict[str, list[RailroadArrival]]
 
 
-# PATH realtime (13b): trains placed at their next station from the community
-# bridge feed, plus a per-station arrivals index. PATH ids stay in their own
-# namespace (numeric PATH stop ids collide with MTA numeric ids across
-# systems). Bridge trip ids are UNSTABLE across upstream refreshes and
-# display-poor (see path_static's module docstring): they are carried for
-# shape parity with the other systems only, and the frontend must never key
-# on or display them. prev_* is always null in 13b (no carry-forward until
-# 13d's synthetic identity); the fields exist so 13d fills them without a
-# model change, the same forward-compatibility the railroad phase 1 used.
+# PATH realtime (13b placement + 13d identity): trains placed at their next
+# station from the community bridge feed, plus a per-station arrivals index.
+# PATH ids stay in their own namespace (numeric PATH stop ids collide with MTA
+# numeric ids across systems). The bridge's own trip ids are UNSTABLE across
+# upstream refreshes and display-poor (see path_static's module docstring), so
+# 13d dropped them from this payload entirely: `id` is the backend-minted
+# synthetic identity (feeds.match_path_identities), stable across polls, which
+# the frontend keys its markers on. prev_* is populated only after an observed
+# advance (the matcher's branch 2) and drives the same glide contract the
+# subway v2 payload feeds trainLatLng; a freshly-minted identity carries null
+# anchors and renders placed at its station.
 class PathTrain(BaseModel):
-    trip_id: str
+    id: str
     route_id: str | None
     latitude: float  # next/current station, the static placement (no GPS in this feed)
     longitude: float

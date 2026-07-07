@@ -824,8 +824,11 @@ PATH_ROUTES = [
 # route), shared by the lifespan smoke test and the warmup state-machine tests
 # so a change to the loaded table shape is edited in exactly one place.
 PATH_STATIC_DATA = {
-    "stops": {"26733": {"id": "26733", "name": "Newark", "lat": 40.7, "lon": -74.2}},
-    "child_to_parent": {"781718": "26733"},
+    "stops": {
+        "26733": {"id": "26733", "name": "Newark", "lat": 40.7, "lon": -74.2},
+        "26734": {"id": "26734", "name": "World Trade Center", "lat": 40.71, "lon": -74.01},
+    },
+    "child_to_parent": {"781718": "26733", "781750": "26734"},
     "trips": {"p1": {"route_id": "862", "direction_id": "0", "shape_id": "s1"}},
     "shapes": {"s1": [[40.7, -74.2], [40.71, -74.1]]},
     "routes": {
@@ -836,6 +839,9 @@ PATH_STATIC_DATA = {
             "text_color": "ffffff",
         }
     },
+    # Child platform ids, as the real stop_times.txt lists them; the warmup
+    # must resolve them to parents when it builds the station order.
+    "stop_times": {"p1": ["781750", "781718"]},
 }
 
 
@@ -926,6 +932,10 @@ PATH_TRAINS = [
 PATH_ARRIVALS = {
     "26733": {"To New Jersey": [{"route_id": "862", "trip_id": "5c0e8a4d-uuid", "arrival": 1500.0}]}
 }
+# The SERVED shape (13d): what _refresh_path stores after the identity
+# matcher, i.e. what /api/path actually returns. A stable minted `id`, no
+# bridge trip hash.
+PATH_SERVED_TRAINS = [{**{k: v for k, v in PATH_TRAINS[0].items() if k != "trip_id"}, "id": "t-1"}]
 
 
 async def test_path_feed_warming_up_503(client):
@@ -935,19 +945,28 @@ async def test_path_feed_warming_up_503(client):
 
 
 async def test_path_feed_envelope_uses_trains_key(client, cache):
-    cache["path"].update(data=PATH_TRAINS, fetched_at=1001.0, feed_timestamp=996.0, error=None)
+    cache["path"].update(
+        data=PATH_SERVED_TRAINS, fetched_at=1001.0, feed_timestamp=996.0, error=None
+    )
     res = await client.get("/api/path")
     assert res.status_code == 200
-    # The envelope key is `trains` (not the MTA feeds' `data`).
-    assert res.json() == {"fetched_at": 1001.0, "feed_timestamp": 996.0, "trains": PATH_TRAINS}
+    # The envelope key is `trains` (not the MTA feeds' `data`), and the served
+    # trains carry the stable synthetic id, never the bridge hash.
+    assert res.json() == {
+        "fetched_at": 1001.0,
+        "feed_timestamp": 996.0,
+        "trains": PATH_SERVED_TRAINS,
+    }
 
 
 async def test_path_feed_stale_data_beats_subsequent_error(client, cache):
-    cache["path"].update(data=PATH_TRAINS, fetched_at=1001.0, feed_timestamp=996.0, error=None)
+    cache["path"].update(
+        data=PATH_SERVED_TRAINS, fetched_at=1001.0, feed_timestamp=996.0, error=None
+    )
     app_module._note_failure(cache["path"], 502, "Upstream PATH bridge feed error: boom")
     res = await client.get("/api/path")
     assert res.status_code == 200
-    assert res.json()["trains"] == PATH_TRAINS  # last-known data still served
+    assert res.json()["trains"] == PATH_SERVED_TRAINS  # last-known data still served
 
 
 async def test_path_feed_never_filled_serves_recorded_error(client, cache):
@@ -959,12 +978,15 @@ async def test_path_feed_never_filled_serves_recorded_error(client, cache):
 
 @pytest.fixture
 def path_rt_state(cache):
-    """Prime the PATH static stops + arrivals index without running the lifespan."""
+    """Prime the PATH static stops + arrivals index + 13d identity state
+    without running the lifespan (which is what normally seeds them)."""
     app_module.app.state.path_stops = {
         "26733": {"id": "26733", "name": "Newark", "lat": 40.73454, "lon": -74.16375},
         "26734": {"id": "26734", "name": "World Trade Center", "lat": 40.71271, "lon": -74.01193},
     }
     app_module.app.state.path_arrivals = PATH_ARRIVALS
+    app_module.app.state.path_identity = app_module.new_path_identity_state("t")
+    app_module.app.state.path_station_order = {}
     return cache
 
 
@@ -1034,7 +1056,13 @@ async def test_path_refresh_success_fills_cache_arrivals_and_health(client, path
         await app_module._refresh_path(app_module.app, client=None)
     finally:
         app_module.fetch_path_trains = orig
-    assert cache["path"]["data"] == PATH_TRAINS
+    # The cache holds the SERVED shape: the matcher's stable id in place of
+    # the bridge trip hash, everything else straight from the decode.
+    served = cache["path"]["data"]
+    assert [{k: v for k, v in t.items() if k != "id"} for t in served] == [
+        {k: v for k, v in t.items() if k != "trip_id"} for t in PATH_TRAINS
+    ]
+    assert all(t["id"] and "trip_id" not in t for t in served)
     assert cache["path"]["feed_timestamp"] == 996.0
     assert cache["path"]["error"] is None
     assert app_module.app.state.path_arrivals == PATH_ARRIVALS
@@ -1044,6 +1072,29 @@ async def test_path_refresh_success_fills_cache_arrivals_and_health(client, path
         "failed": [],
         "unresolved": 0,
     }
+
+
+async def test_path_refresh_carries_identity_across_churned_polls(client, path_rt_state, cache):
+    # The point of 13d: two polls whose bridge hashes are fully disjoint but
+    # whose content is the same physical train must serve the SAME stable id,
+    # because _refresh_path threads the matcher state across polls.
+    hashes = iter(["hash-gen-1", "hash-gen-2"])
+
+    async def churning(client_arg, stops_arg):
+        train = dict(PATH_TRAINS[0], trip_id=next(hashes))
+        return [train], PATH_ARRIVALS, 996.0, 0
+
+    orig = app_module.fetch_path_trains
+    app_module.fetch_path_trains = churning
+    try:
+        await app_module._refresh_path(app_module.app, client=None)
+        first_id = cache["path"]["data"][0]["id"]
+        await app_module._refresh_path(app_module.app, client=None)
+        second_id = cache["path"]["data"][0]["id"]
+    finally:
+        app_module.fetch_path_trains = orig
+    assert first_id == second_id
+    assert first_id.startswith("t-")  # the fixture's epoch, not a bridge hash
 
 
 async def test_path_refresh_unresolved_drift_logs_on_transition_only(
@@ -1208,11 +1259,14 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
             ]
             assert app.state.railroad_routes["MNR"] == []
             # PATH warmup filled its own namespaced fields (never merged into
-            # the MTA stop tables) and built the modal route geometry.
-            assert app.state.path_stops == {
-                "26733": {"id": "26733", "name": "Newark", "lat": 40.7, "lon": -74.2}
+            # the MTA stop tables), built the modal route geometry, and built
+            # the 13d station order (child platform ids resolved to parents).
+            assert app.state.path_stops == PATH_STATIC_DATA["stops"]
+            assert app.state.path_static["child_to_parent"] == {
+                "781718": "26733",
+                "781750": "26734",
             }
-            assert app.state.path_static["child_to_parent"] == {"781718": "26733"}
+            assert app.state.path_station_order == {("862", "0"): ["26734", "26733"]}
             assert app.state.path_routes == [
                 {
                     "id": "862",
@@ -1238,7 +1292,11 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
             # replaced, single-feed health recorded (the PATH static warmup
             # already populated path_stops above, so the refresher was not on
             # its warming path).
-            assert app.state.feed_cache["path"]["data"] == PATH_TRAINS
+            served = app.state.feed_cache["path"]["data"]
+            assert [{k: v for k, v in t.items() if k != "id"} for t in served] == [
+                {k: v for k, v in t.items() if k != "trip_id"} for t in PATH_TRAINS
+            ]
+            assert all(t["id"] for t in served)
             assert app.state.feed_cache["path"]["feed_timestamp"] == 1003.0
             assert app.state.path_arrivals == PATH_ARRIVALS
             assert app.state.path_feed_health == {
@@ -1393,9 +1451,12 @@ async def test_path_static_warmup_loading_to_ready(monkeypatch):
     await app_module._warm_path_static(app)
     assert app.state.path_static_status == "ready"
     assert app.state.path_stops == PATH_STATIC_DATA["stops"]
-    assert app.state.path_static["child_to_parent"] == {"781718": "26733"}
+    assert app.state.path_static["child_to_parent"] == {"781718": "26733", "781750": "26734"}
     assert app.state.path_routes[0]["id"] == "862"
     assert app.state.path_routes[0]["color"] == "d93a30"
+    # The 13d successor relation, built from stop_times with the child ids
+    # resolved to the parent stations the realtime bridge uses.
+    assert app.state.path_station_order == {("862", "0"): ["26734", "26733"]}
 
 
 async def test_path_static_warmup_empty_result_is_failed_then_recovers(monkeypatch):

@@ -487,3 +487,365 @@ def test_golden_duplicate_pair_identical_content_differing_write_time():
     trains_b, arrivals_b, ts_b, _ = feeds._decode_path_feed(raw_b, stops, now)
     assert trains_a == trains_b and arrivals_a == arrivals_b
     assert ts_a != ts_b  # only the bridge's write time differs
+
+
+# ---------------- match_path_identities (13d synthetic identity) ----------------
+#
+# The matcher is pure and clock-free, so these tests drive whole generations
+# through it directly. Trains below are decode-shaped dicts (trip_id present,
+# prev_* null), exactly what _decode_path_feed emits and the matcher consumes.
+
+# Coordinates arbitrary but distinct per station, so anchor assertions can
+# tell stations apart. Order: WTC > EXP > GRV (the 862 New Jersey-bound run).
+_STATIONS = {
+    "26734": (40.71271, -74.01193),  # World Trade Center
+    "26727": (40.71676, -74.03238),  # Exchange Place
+    "26728": (40.71966, -74.04245),  # Grove Street
+}
+ORDER = {("862", "0"): ["26734", "26727", "26728"]}
+TOL = feeds.PATH_MATCH_TOLERANCE_S
+
+
+def _mtrain(stop, at, route="862", direction="To New Jersey", trip="raw"):
+    lat, lon = _STATIONS[stop]
+    return {
+        "trip_id": trip,  # the unstable bridge hash; the matcher must never rely on it
+        "route_id": route,
+        "latitude": lat,
+        "longitude": lon,
+        "stop_id": stop,
+        "stop_name": stop,
+        "direction": direction,
+        "prev_lat": None,
+        "prev_lon": None,
+        "prev_time": None,
+        "next_time": at,
+    }
+
+
+def _match(state, trains, order=ORDER):
+    return feeds.match_path_identities(state, trains, order)
+
+
+def _state():
+    return feeds.new_path_identity_state("t")
+
+
+def test_matcher_serves_stable_id_and_never_the_bridge_hash():
+    served, state = _match(_state(), [_mtrain("26727", 1000.0, trip="hash-a")])
+    assert [set(t) for t in served] == [
+        {
+            "id",
+            "route_id",
+            "latitude",
+            "longitude",
+            "stop_id",
+            "stop_name",
+            "direction",
+            "prev_lat",
+            "prev_lon",
+            "prev_time",
+            "next_time",
+        }
+    ]
+    assert served[0]["id"] == "t-1"  # epoch-prefixed mint, not derived from the hash
+    assert "hash-a" not in str(served)
+
+
+def test_matcher_same_stop_carry_within_tolerance():
+    served1, state = _match(_state(), [_mtrain("26727", 1000.0, trip="gen1")])
+    # Upstream refresh: new hash, prediction drifted 8s (the probe's worst case).
+    served2, state = _match(state, [_mtrain("26727", 1008.0, trip="gen2")])
+    assert served2[0]["id"] == served1[0]["id"]
+    assert served2[0]["next_time"] == 1008.0  # fresher prediction served
+    assert served2[0]["prev_lat"] is None  # no advance happened: anchors stay null
+    assert state["seq"] == 1  # nothing new was minted
+
+
+def test_matcher_same_stop_beyond_tolerance_resets():
+    served1, state = _match(_state(), [_mtrain("26727", 1000.0)])
+    served2, state = _match(state, [_mtrain("26727", 1000.0 + TOL + 1)])
+    assert served2[0]["id"] != served1[0]["id"]
+
+
+def test_matcher_ambiguous_candidates_reset_instead_of_guessing():
+    # Two prior trains inside one window at the same slot: guessing could glide
+    # a marker along the wrong journey, so both claims must reset.
+    served1, state = _match(
+        _state(),
+        [_mtrain("26727", 1000.0, trip="x"), _mtrain("26727", 1030.0, trip="y")],
+    )
+    served2, state = _match(state, [_mtrain("26727", 1015.0, trip="z")])
+    assert served2[0]["id"] not in {t["id"] for t in served1}
+
+
+def test_matcher_one_candidate_claimed_by_two_new_trains_resets_both():
+    served1, state = _match(_state(), [_mtrain("26727", 1000.0)])
+    served2, state = _match(
+        state,
+        [_mtrain("26727", 990.0, trip="x"), _mtrain("26727", 1010.0, trip="y")],
+    )
+    prior = served1[0]["id"]
+    assert all(t["id"] != prior for t in served2)
+
+
+def test_matcher_duplicate_generation_is_a_strict_noop():
+    # The bridge re-serves identical content between upstream refreshes (only
+    # its write time advances). Every identity must carry with ZERO anchor
+    # changes and zero mints, or a stalled upstream would slowly churn the map.
+    gen = [_mtrain("26727", 1000.0, trip="a"), _mtrain("26728", 1200.0, trip="b")]
+    served1, state = _match(_state(), gen)
+    seq_before = state["seq"]
+    served2, state = _match(state, [dict(t) for t in gen])
+    assert [t["id"] for t in served2] == [t["id"] for t in served1]
+    assert [(t["prev_lat"], t["prev_lon"], t["prev_time"]) for t in served2] == [
+        (t["prev_lat"], t["prev_lon"], t["prev_time"]) for t in served1
+    ]
+    assert state["seq"] == seq_before
+
+
+def test_matcher_untimed_placements_compare_equal_only_to_each_other():
+    # The no-times placement fallback has nothing to window on: identical
+    # untimed re-serves carry (delta zero), a timed vs untimed pair never does.
+    served1, state = _match(_state(), [_mtrain("26727", None)])
+    served2, state = _match(state, [_mtrain("26727", None)])
+    assert served2[0]["id"] == served1[0]["id"]
+    served3, state = _match(state, [_mtrain("26727", 1000.0)])
+    assert served3[0]["id"] != served2[0]["id"]
+
+
+def test_matcher_clean_advance_carries_identity_and_sets_anchors():
+    # The train finished EXP and now shows at GRV: identity carries via the
+    # station order, and the prev anchor becomes EXP (position + its predicted
+    # arrival there), exactly what trainLatLng needs to glide EXP -> GRV.
+    served1, state = _match(_state(), [_mtrain("26727", 1000.0, trip="gen1")])
+    served2, state = _match(state, [_mtrain("26728", 1180.0, trip="gen2")])
+    assert served2[0]["id"] == served1[0]["id"]
+    exp_lat, exp_lon = _STATIONS["26727"]
+    assert (served2[0]["prev_lat"], served2[0]["prev_lon"]) == (exp_lat, exp_lon)
+    assert served2[0]["prev_time"] == 1000.0
+    assert served2[0]["next_time"] == 1180.0
+
+
+def test_matcher_advance_needs_the_immediate_predecessor():
+    # WTC is two stations behind GRV: a skip is not an advance the order can
+    # vouch for, so identity resets rather than fabricating a two-hop glide.
+    served1, state = _match(_state(), [_mtrain("26734", 1000.0)])
+    served2, state = _match(state, [_mtrain("26728", 1400.0)])
+    assert served2[0]["id"] != served1[0]["id"]
+    assert served2[0]["prev_lat"] is None
+
+
+def test_matcher_advance_requires_direction_and_order():
+    # No direction: the order cannot be looked up, so no advance (fresh id).
+    served1, state = _match(_state(), [_mtrain("26727", 1000.0, direction=None)])
+    served2, state = _match(state, [_mtrain("26728", 1180.0, direction=None)])
+    assert served2[0]["id"] != served1[0]["id"]
+    # Direction present but no station order loaded (pre-13d cache): same reset.
+    served1, state = _match(_state(), [_mtrain("26727", 1000.0)], order={})
+    served2, state = _match(state, [_mtrain("26728", 1180.0)], order={})
+    assert served2[0]["id"] != served1[0]["id"]
+
+
+def test_matcher_lockstep_advances_do_not_swap_identities():
+    # The review-flagged case: two trains advancing simultaneously, one WTC ->
+    # EXP and one EXP -> GRV. Each new train sees exactly one vanished train
+    # at ITS OWN predecessor, so both carry and the anchors prove no swap.
+    gen1 = [_mtrain("26727", 1000.0, trip="lead"), _mtrain("26734", 1010.0, trip="chase")]
+    served1, state = _match(_state(), gen1)
+    lead_id = served1[0]["id"]
+    chase_id = served1[1]["id"]
+    gen2 = [_mtrain("26728", 1300.0, trip="n1"), _mtrain("26727", 1310.0, trip="n2")]
+    served2, state = _match(state, gen2)
+    by_stop = {t["stop_id"]: t for t in served2}
+    assert by_stop["26728"]["id"] == lead_id
+    assert by_stop["26727"]["id"] == chase_id
+    assert (by_stop["26728"]["prev_lat"], by_stop["26728"]["prev_lon"]) == _STATIONS["26727"]
+    assert (by_stop["26727"]["prev_lat"], by_stop["26727"]["prev_lon"]) == _STATIONS["26734"]
+
+
+def test_matcher_two_vanished_candidates_at_the_predecessor_reset():
+    # Two prior trains at EXP (a real double-berth or a data wobble) both
+    # vanish while one train appears at GRV: the advance cannot know which one
+    # moved, so it must reset rather than guess (the only heuristic branch
+    # stays unique-or-nothing).
+    gen1 = [_mtrain("26727", 1000.0, trip="x"), _mtrain("26727", 2000.0, trip="y")]
+    served1, state = _match(_state(), gen1)
+    served2, state = _match(state, [_mtrain("26728", 1300.0)])
+    assert served2[0]["id"] not in {t["id"] for t in served1}
+    assert served2[0]["prev_lat"] is None
+
+
+def test_matcher_advance_only_from_the_immediately_previous_generation():
+    # A train absent for a full generation is a terminal arrival or a data
+    # gap, not an advance in progress (mid-system trains reappear at their
+    # next stop in the very next generation), so it must not anchor one.
+    served1, state = _match(_state(), [_mtrain("26727", 1000.0)])
+    served_gap, state = _match(state, [])  # the train vanishes for a generation
+    served2, state = _match(state, [_mtrain("26728", 1300.0)])
+    assert served2[0]["id"] != served1[0]["id"]
+    assert served2[0]["prev_lat"] is None
+
+
+def test_matcher_same_stop_rematch_survives_a_short_absence_then_expires():
+    # A single-poll bridge blip must not reset identity: the absent identity
+    # stays matchable for PATH_IDENTITY_EXPIRY_GENERATIONS - 1 generations.
+    served1, state = _match(_state(), [_mtrain("26727", 1000.0)])
+    sid = served1[0]["id"]
+    served2, state = _match(state, [])  # absent once
+    served3, state = _match(state, [_mtrain("26727", 1000.0)])
+    assert served3[0]["id"] == sid
+
+    # Absent for the full expiry run (PATH_IDENTITY_EXPIRY_GENERATIONS
+    # consecutive matched generations): the identity is gone, and a fresh id
+    # mints even at an identical prediction.
+    for _ in range(feeds.PATH_IDENTITY_EXPIRY_GENERATIONS):
+        _served, state = _match(state, [])
+    served_after, state = _match(state, [_mtrain("26727", 1000.0)])
+    assert served_after[0]["id"] != sid
+
+
+def test_matcher_anchors_persist_across_same_stop_polls_after_an_advance():
+    # Mid-glide the bridge re-serves the same generation: the train stays at
+    # GRV with its EXP anchor intact, so the frontend keeps interpolating the
+    # same segment instead of snapping back to the station.
+    _s1, state = _match(_state(), [_mtrain("26727", 1000.0)])
+    served2, state = _match(state, [_mtrain("26728", 1300.0)])
+    served3, state = _match(state, [_mtrain("26728", 1300.0)])
+    assert served3[0]["id"] == served2[0]["id"]
+    assert (served3[0]["prev_lat"], served3[0]["prev_lon"]) == _STATIONS["26727"]
+    assert served3[0]["prev_time"] == 1000.0
+
+
+def test_matcher_tolerance_pins_the_probe_margins():
+    # Probe, 2026-07-07, 40 polls / 10 upstream generations / 238 transitions:
+    # same-stop nearest-arrival matching hit 98.7% unique, 0.0% ambiguous;
+    # worst prediction drift 8s; minimum same-(route, direction, stop) headway
+    # 2256s off-peak, roughly 240s at peak. The tolerance must dominate the
+    # drift by a wide margin while staying a small fraction of the tightest
+    # headway, or two REAL trains could fall inside one window and a future
+    # schedule compression must fail here loudly rather than silently merge.
+    assert feeds.PATH_MATCH_TOLERANCE_S == 60
+    assert feeds.PATH_MATCH_TOLERANCE_S >= 8 * 5  # 7.5x the worst observed drift
+    assert feeds.PATH_MATCH_TOLERANCE_S * 3 <= 240  # still 4x under peak headway
+    assert feeds.PATH_MATCH_TOLERANCE_S * 30 <= 2256  # 37x under the off-peak floor
+
+
+# ---------------- matcher goldens over the captured fixtures ----------------
+#
+# These run the matcher over the REAL committed pairs. Station order is
+# deliberately {} here: it only enriches advances with anchors (pinned by the
+# synthetic tests above); what the real captures must pin is identity carry
+# and the tolerance margin against genuine bridge behavior.
+
+
+def _golden_decode(name):
+    raw = (FIXTURES / name).read_bytes()
+    feed = pb.FeedMessage()
+    feed.ParseFromString(raw)
+    now = float(feed.header.timestamp)
+    trains, arrivals, _ts, _unresolved = feeds._decode_path_feed(raw, _golden_stops(), now)
+    return trains, arrivals
+
+
+def _golden_match_pair(name_a, name_b):
+    trains_a, _ = _golden_decode(name_a)
+    trains_b, _ = _golden_decode(name_b)
+    state = feeds.new_path_identity_state("g")
+    served_a, state = feeds.match_path_identities(state, trains_a, {})
+    seq_after_a = state["seq"]
+    served_b, state = feeds.match_path_identities(state, trains_b, {})
+    return served_a, served_b, state["seq"] - seq_after_a
+
+
+def _golden_min_same_slot_headway(names):
+    """Smallest gap between distinct predicted arrivals sharing a
+    (route, direction bucket, stop) WITHIN one payload: the real quantity the
+    matching window must stay under (pooling across payloads would instead
+    measure the same train's prediction drift)."""
+    gaps = []
+    for name in names:
+        _trains, arrivals = _golden_decode(name)
+        times: dict[tuple, list[float]] = {}
+        for stop_id, buckets in arrivals.items():
+            for bucket, rows in buckets.items():
+                for row in rows:
+                    times.setdefault((row["route_id"], bucket, stop_id), []).append(row["arrival"])
+        for arrs in times.values():
+            arrs.sort()
+            gaps.extend(b - a for a, b in zip(arrs, arrs[1:]) if b > a)
+    return min(gaps) if gaps else None
+
+
+@golden
+def test_golden_churn_pair_carries_nearly_every_identity():
+    # The pair whose trip ids churned 100%: the matcher must reconstruct the
+    # picture from stable fields alone. Measured on the committed capture:
+    # 52 of 53 identities carried (0.981); the remainder are trains that
+    # advanced or appeared between generations, which mint fresh ids here
+    # because the goldens run without a station order.
+    served_a, served_b, minted_b = _golden_match_pair("path_rt_gen_a.pb", "path_rt_gen_b.pb")
+    ids_a = {t["id"] for t in served_a}
+    ids_b = {t["id"] for t in served_b}
+    carry = len(ids_a & ids_b) / min(len(ids_a), len(ids_b))
+    assert carry >= 0.95
+    assert minted_b <= 3  # only the advance/appear tail mints
+
+
+@golden
+def test_golden_duplicate_pair_carries_every_identity_with_zero_changes():
+    # A re-served generation must be a strict no-op: total carry, zero mints,
+    # zero anchor changes, or a stalled upstream would slowly churn the map.
+    served_a, served_b, minted_b = _golden_match_pair("path_rt_dup_a.pb", "path_rt_dup_b.pb")
+    assert {t["id"] for t in served_a} == {t["id"] for t in served_b}
+    assert minted_b == 0
+    anchors = lambda served: {  # noqa: E731
+        t["id"]: (t["prev_lat"], t["prev_lon"], t["prev_time"]) for t in served
+    }
+    assert anchors(served_a) == anchors(served_b)
+
+
+@golden
+def test_golden_tolerance_sits_well_under_the_real_headway_floor():
+    # The committed captures' tightest same-(route, direction, stop) headway
+    # is 406s (off-peak), nearly 7x the 60s window: two REAL consecutive
+    # trains can never fall inside one match window at this service level.
+    # The rush golden below re-pins this against compressed peak headways.
+    headway = _golden_min_same_slot_headway(["path_rt_gen_a.pb", "path_rt_gen_b.pb"])
+    assert headway is not None
+    assert headway > 2 * feeds.PATH_MATCH_TOLERANCE_S
+
+
+# ---------------- rush-hour goldens (13d) ----------------
+#
+# Captured by `gen_path_rt_fixture.py rush` DURING a weekday 7-9am or 5-7pm
+# America/New_York window, because peak service is where headways compress
+# toward the matcher's tolerance and where a future schedule change must fail
+# loudly. Gated on its own guard: the pair does not exist until someone runs
+# the capture inside such a window with egress to the bridge host.
+
+golden_rush = golden_fixture_guard(
+    FIXTURES / "path_rt_rush_a.pb", "backend/scripts/gen_path_rt_fixture.py rush"
+)
+
+
+@golden_rush
+def test_golden_rush_pair_carries_identities_at_peak_service():
+    served_a, served_b, _minted = _golden_match_pair("path_rt_rush_a.pb", "path_rt_rush_b.pb")
+    ids_a = {t["id"] for t in served_a}
+    ids_b = {t["id"] for t in served_b}
+    assert min(len(ids_a), len(ids_b)) >= 1
+    carry = len(ids_a & ids_b) / min(len(ids_a), len(ids_b))
+    assert carry >= 0.9
+
+
+@golden_rush
+def test_golden_rush_headways_still_dominate_the_tolerance():
+    # THE tolerance rationale, pinned against real peak service: PATH's rush
+    # headways (roughly 240s) must stay comfortably above the 60s window. If
+    # PATH ever compresses service toward sub-2-minute headways this fails
+    # loudly, and PATH_MATCH_TOLERANCE_S must be revisited before trusting
+    # same-stop matches again.
+    headway = _golden_min_same_slot_headway(["path_rt_rush_a.pb", "path_rt_rush_b.pb"])
+    assert headway is not None
+    assert headway > 2 * feeds.PATH_MATCH_TOLERANCE_S

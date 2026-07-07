@@ -95,17 +95,25 @@ community bridge feed (PATH publishes no official GTFS-RT feed):
 
 - `GET /api/path`: `{fetched_at, feed_timestamp, trains}`, every train
   schedule-placed at its next station (the bridge carries no vehicle
-  positions), with null glide anchors for now.
+  positions). Each train carries a stable synthetic `id` minted by the
+  backend's identity matcher, and `prev_*` glide anchors populated after an
+  observed advance to the next station (the same contract the subway v2
+  payload feeds the glide); the bridge's own trip hash never reaches the
+  payload.
 - `GET /api/path-arrivals/{stop_id}`: `{fetched_at, stop_id, stop_name,
   directions}` with buckets `To New York` / `To New Jersey` plus a residual
   `Trains` bucket, only the non-empty ones (`{}` means nothing upcoming).
 
 Two PATH-specific caveats. Bridge trip ids are UNSTABLE across upstream
-refreshes, so the frontend rebuilds the PATH train layer wholesale on every
-poll instead of diffing marker identity on trip_id (which would churn every
-marker), and trip ids are never displayed. And PATH publishes no service
-alerts feed, so PATH is the one system on the map whose popups carry no
-alerts block. PATH data is courtesy of PANYNJ, published via Trillium, and
+refreshes, so nothing may key on them: the backend synthesizes cross-poll
+identity instead, matching each generation on stable fields (same stop and
+route/direction with a nearby arrival prediction, or a unique advance to the
+next station in the static stop order) and resetting identity rather than
+guessing when a match is ambiguous. The frontend still rebuilds the PATH
+train layer wholesale on every poll (keyed diffing on the stable ids lands
+with gliding in the next phase), and trip hashes are never displayed. And
+PATH publishes no service alerts feed, so PATH is the one system on the map
+whose popups carry no alerts block. PATH data is courtesy of PANYNJ, published via Trillium, and
 subject to their license terms. PATH stop ids stay in their own namespace:
 they are numeric and collide with MTA numeric ids across systems.
 
@@ -407,6 +415,16 @@ warnings.
   stations. The train layer is rebuilt wholesale each poll rather than diffed
   on trip_id (unstable, see 13b), a failed poll keeps last-known markers, and
   PATH popups carry no alerts block because PATH has no alerts feed.
+- [x] **13d-1. PATH synthetic identity (backend)**: /api/path trains carry a
+  stable backend-minted `id` and prev glide anchors. A pure, clock-free
+  matcher joins each decoded generation to the last by same-stop
+  nearest-arrival within 60s (bilateral-unique, ties reset identity) or by a
+  unique advance to the immediate successor in the static station order
+  (built from stop_times.txt with child platform ids resolved to the parent
+  stations the bridge uses). Identities expire after 3 absent generations;
+  duplicate re-served generations carry everything unchanged. The bridge's
+  unstable trip hash is dropped from the payload. Frontend gliding over
+  these ids is 13d-2.
 
 ## Notes
 

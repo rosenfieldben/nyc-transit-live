@@ -1138,11 +1138,12 @@ def _decode_path_feed(
     and drop a trip whose only timed stops are all past. There is no
     not-yet-started filter: the bridge emits only live next-arrival
     predictions (no start_date/start_time to derive one from), so the subway
-    phantom problem cannot arise. prev_* is ALWAYS null in this phase: the
-    carry-forward anchor memory keys on trip ids, and PATH bridge trip ids do
-    not survive an upstream refresh (see path_static's module docstring), so
-    an anchor keyed on them would silently mismatch; 13d owns a synthetic
-    identity before any anchor is trustworthy.
+    phantom problem cannot arise. prev_* is ALWAYS null at the decode level:
+    the carry-forward anchor memory the other systems use keys on trip ids,
+    and PATH bridge trip ids do not survive an upstream refresh (see
+    path_static's module docstring), so an anchor keyed on them would
+    silently mismatch. match_path_identities (13d) owns anchors instead,
+    filling them only after a synthetic identity match.
 
     ARRIVALS are bucketed by direction_id ("To New York" / "To New Jersey",
     see _PATH_DIRECTION), with "Trains" as the residual for a direction-less
@@ -1268,6 +1269,231 @@ async def fetch_path_trains(
     resp = await client.get(PATH_RT_URL, headers={"User-Agent": PATH_USER_AGENT})
     resp.raise_for_status()
     return _decode_path_feed(resp.content, path_stops, now)
+
+
+# Same-stop identity window (13d). The live probe (2026-07-07, 40 polls, 10
+# upstream generations, 238 train-transitions) measured at most 8s of
+# prediction drift across an upstream refresh, and a minimum headway between
+# consecutive arrivals at the same (route, direction, stop) of 2256s off-peak;
+# PATH's peak headways are roughly 4 minutes (240s). 60s therefore sits two
+# orders of magnitude under the off-peak headway and still 3x under peak,
+# while being 7x the worst observed drift: wide enough to never drop a real
+# carry, narrow enough that two distinct trains cannot fall inside one window.
+PATH_MATCH_TOLERANCE_S = 60.0
+
+# An identity absent from this many consecutive matched generations is
+# dropped. Terminal arrivals simply vanish from the bridge, so most expiries
+# are one poll behind reality; 3 generations (~60s of polls) also rides out a
+# single-poll bridge blip without letting a stale identity linger long enough
+# to same-stop match the NEXT train at that stop (headways above dwarf it).
+PATH_IDENTITY_EXPIRY_GENERATIONS = 3
+
+# The matcher works from the trains' rider-facing direction labels (the only
+# direction field the decode output carries), but the static station order is
+# keyed by GTFS direction_id; this inverts _PATH_DIRECTION to bridge the two.
+_PATH_DIRECTION_ID = {label: str(did) for did, label in _PATH_DIRECTION.items()}
+
+
+def new_path_identity_state(epoch: str) -> dict:
+    """Fresh matcher state. `epoch` prefixes every minted id so ids from two
+    process lifetimes can never collide: a restarted backend re-mints from
+    seq 1, and without the prefix a browser holding markers keyed on the old
+    process's ids would silently splice them onto unrelated trains."""
+    return {"epoch": epoch, "seq": 0, "identities": {}}
+
+
+def _path_time_delta(a: float | None, b: float | None) -> float:
+    # Two untimed placements at the same stop are the same train re-served
+    # (the no-times fallback), so they compare equal; a timed vs untimed pair
+    # is incomparable and never matches.
+    if a is None and b is None:
+        return 0.0
+    if a is None or b is None:
+        return float("inf")
+    return abs(a - b)
+
+
+def match_path_identities(
+    state: dict, trains: list[dict], station_order: dict[tuple[str, str | None], list[str]]
+) -> tuple[list[dict], dict]:
+    """Assign stable synthetic identities to one decoded PATH generation.
+
+    Returns (served_trains, new_state). served_trains is what /api/path
+    serves: each train rebuilt with a stable `id` and WITHOUT the bridge's
+    trip_id (unstable by construction and meaningless to riders; the field
+    set is constructed explicitly so a future decode field can never leak
+    into the payload unreviewed). new_state replaces `state` for the next
+    poll. Pure and clock-free: no wall clock, no randomness, so the goldens
+    drive it with committed captures and fixed inputs.
+
+    WHY synthetic identity at all: bridge trip ids churn 100% when the
+    upstream refreshes (path_static's module docstring), so the frontend
+    cannot diff markers or keep popups alive across polls without an
+    identity the backend derives from stable fields instead. The live probe
+    this design is built on (2026-07-07, 238 train-transitions over 10
+    upstream generations) measured branch 1 below taking 98.7% of traffic
+    with zero ambiguity; the 1.3% remainder were all advances (branch 2).
+
+    Branch 1, SAME-STOP: a new train matches a known identity at the same
+    (route_id, direction, stop_id) when their arrival predictions differ by
+    at most PATH_MATCH_TOLERANCE_S, and the pairing is unique BOTH ways
+    (exactly one candidate in the new train's window, and that candidate in
+    exactly one new train's window). Any tie resets identity instead of
+    guessing: a wrong carry glides a marker along the wrong journey, while a
+    reset merely re-places a marker at its station, so ambiguity always
+    resolves to the cheap failure. A matched train KEEPS the identity's
+    existing prev anchors (it is still the same journey; this is also what
+    makes a duplicate re-served generation a strict no-op at delta zero) and
+    refreshes everything else from the new decode.
+
+    Branch 2, ADVANCE: a still-unmatched new train at stop Y carries the
+    identity of a train that was present in the previous generation, is now
+    gone, and sat at Y's immediate predecessor X in the static station order
+    for the same (route, direction), again only when the pairing is unique
+    both ways. Its prev anchor becomes X (the identity's last placement and
+    predicted arrival time there), which is exactly the anchor pair the
+    frontend glide interpolates against. This is the only heuristic branch:
+    uniqueness is what keeps two trains advancing in lockstep from swapping
+    identities, because each new train sees exactly one vanished predecessor
+    at its own X (X to Y, and W to X, are different stop pairs).
+
+    Otherwise a fresh identity is minted (epoch-prefixed sequence number,
+    never derived from bridge hashes) with null anchors: the train appears
+    placed at its station, the 13c behavior. Identities absent for
+    PATH_IDENTITY_EXPIRY_GENERATIONS matched generations are dropped;
+    terminal arrivals simply vanish.
+    """
+    identities: dict[str, dict] = state["identities"]
+
+    def slot(train_or_snap: dict) -> tuple:
+        return (train_or_snap["route_id"], train_or_snap["direction"], train_or_snap["stop_id"])
+
+    pool_by_slot: dict[tuple, list[str]] = defaultdict(list)
+    for sid, snap in identities.items():
+        pool_by_slot[slot(snap)].append(sid)
+
+    assigned: dict[int, str] = {}  # train index -> identity id
+    advanced: set[int] = set()  # train indexes matched via branch 2
+    matched_sids: set[str] = set()
+
+    # Branch 1: same-slot bilateral-unique nearest-arrival match.
+    new_by_slot: dict[tuple, list[int]] = defaultdict(list)
+    for i, train in enumerate(trains):
+        new_by_slot[slot(train)].append(i)
+    for key, idxs in new_by_slot.items():
+        cands = pool_by_slot.get(key)
+        if not cands:
+            continue
+        in_window: dict[int, list[str]] = {
+            i: [
+                sid
+                for sid in cands
+                if _path_time_delta(trains[i]["next_time"], identities[sid]["next_time"])
+                <= PATH_MATCH_TOLERANCE_S
+            ]
+            for i in idxs
+        }
+        claims: dict[str, list[int]] = defaultdict(list)
+        for i, sids in in_window.items():
+            for sid in sids:
+                claims[sid].append(i)
+        for i, sids in in_window.items():
+            if len(sids) == 1 and len(claims[sids[0]]) == 1:
+                assigned[i] = sids[0]
+                matched_sids.add(sids[0])
+
+    # Branch 2: advance match against identities that were present last
+    # generation and vanished this one. Identities already missing a
+    # generation or more are excluded: a train mid-system always appears in
+    # the very next generation at its next stop, so an older absence is a
+    # terminal arrival or a data gap, not an advance in progress.
+    vanished = {
+        sid for sid, snap in identities.items() if snap["missing"] == 0 and sid not in matched_sids
+    }
+    adv_window: dict[int, list[str]] = {}
+    adv_claims: dict[str, list[int]] = defaultdict(list)
+    for i, train in enumerate(trains):
+        if i in assigned:
+            continue
+        direction_id = _PATH_DIRECTION_ID.get(train["direction"] or "")
+        if direction_id is None or not train["route_id"]:
+            continue
+        order = station_order.get((train["route_id"], direction_id))
+        if not order or train["stop_id"] not in order:
+            continue
+        position = order.index(train["stop_id"])
+        if position == 0:
+            continue  # first station of the run has no predecessor to advance from
+        predecessor = order[position - 1]
+        cands = [
+            sid
+            for sid in sorted(vanished)
+            if identities[sid]["route_id"] == train["route_id"]
+            and identities[sid]["direction"] == train["direction"]
+            and identities[sid]["stop_id"] == predecessor
+        ]
+        if cands:
+            adv_window[i] = cands
+            for sid in cands:
+                adv_claims[sid].append(i)
+    for i, sids in adv_window.items():
+        if len(sids) == 1 and len(adv_claims[sids[0]]) == 1:
+            assigned[i] = sids[0]
+            matched_sids.add(sids[0])
+            advanced.add(i)
+
+    # Rebuild the served list and the next state.
+    seq = state["seq"]
+    next_identities: dict[str, dict] = {}
+    served: list[dict] = []
+    for i, train in enumerate(trains):
+        matched = assigned.get(i)
+        if matched is None:
+            seq += 1
+            train_id = f"{state['epoch']}-{seq}"
+            prev = (None, None, None)
+        elif i in advanced:
+            train_id = matched
+            old = identities[train_id]
+            prev = (old["latitude"], old["longitude"], old["next_time"])
+        else:
+            train_id = matched
+            old = identities[train_id]
+            prev = (old["prev_lat"], old["prev_lon"], old["prev_time"])
+        served.append(
+            {
+                "id": train_id,
+                "route_id": train["route_id"],
+                "latitude": train["latitude"],
+                "longitude": train["longitude"],
+                "stop_id": train["stop_id"],
+                "stop_name": train["stop_name"],
+                "direction": train["direction"],
+                "prev_lat": prev[0],
+                "prev_lon": prev[1],
+                "prev_time": prev[2],
+                "next_time": train["next_time"],
+            }
+        )
+        next_identities[train_id] = {
+            "route_id": train["route_id"],
+            "direction": train["direction"],
+            "stop_id": train["stop_id"],
+            "next_time": train["next_time"],
+            "latitude": train["latitude"],
+            "longitude": train["longitude"],
+            "prev_lat": prev[0],
+            "prev_lon": prev[1],
+            "prev_time": prev[2],
+            "missing": 0,
+        }
+    for sid, snap in identities.items():
+        if sid in next_identities:
+            continue
+        if snap["missing"] + 1 >= PATH_IDENTITY_EXPIRY_GENERATIONS:
+            continue  # expired: gone long enough that no branch may claim it
+        next_identities[sid] = {**snap, "missing": snap["missing"] + 1}
+    return served, {"epoch": state["epoch"], "seq": seq, "identities": next_identities}
 
 
 # ---- Service alerts ----

@@ -229,10 +229,12 @@ def test_railroad_station_arrivals_validates_handler_shape():
     )
 
 
-def test_decoded_path_train_keys_cover_model():
-    # Tie PathTrain to the live decode path: a synthetic bridge-style entity
-    # (one next-arrival stop, the shape the real feed serves) must emit exactly
-    # the model's field set, so decode/model drift fails here.
+def test_matched_path_train_keys_cover_model():
+    # Tie PathTrain to the live serving path: decode a synthetic bridge-style
+    # entity, thread it through the 13d identity matcher (what /api/path
+    # actually serves), and the result must emit exactly the model's field
+    # set. In particular the bridge's unstable trip hash must NOT survive to
+    # the payload, and the minted `id` must.
     from google.transit import gtfs_realtime_pb2 as pb
 
     feed = pb.FeedMessage()
@@ -248,9 +250,11 @@ def test_decoded_path_train_keys_cover_model():
     stops = {"26733": {"id": "26733", "name": "Newark", "lat": 40.73454, "lon": -74.16375}}
     trains, arrivals, _, _ = feeds._decode_path_feed(feed.SerializeToString(), stops, 1000.0)
     assert trains, "decode produced no trains"
-    assert all(set(t) == set(PathTrain.model_fields) for t in trains)
-    for t in trains:
+    served, _state = feeds.match_path_identities(feeds.new_path_identity_state("t"), trains, {})
+    assert all(set(t) == set(PathTrain.model_fields) for t in served)
+    for t in served:
         PathTrain.model_validate(t)
+        assert "uuid-1" not in str(t)  # the bridge hash never reaches the payload
     for buckets in arrivals.values():
         for rows in buckets.values():
             for row in rows:
@@ -260,7 +264,7 @@ def test_decoded_path_train_keys_cover_model():
 
 def test_path_feed_and_arrivals_envelopes_validate():
     train = {
-        "trip_id": "uuid-1",
+        "id": "t-1",
         "route_id": "862",
         "latitude": 40.73454,
         "longitude": -74.16375,

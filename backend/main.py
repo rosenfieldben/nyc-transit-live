@@ -7,6 +7,7 @@ import asyncio
 import contextlib
 import logging
 import re
+import secrets
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -32,6 +33,8 @@ from feeds import (
     fetch_service_alerts,
     fetch_subway_trains,
     fetch_vehicle_positions,
+    match_path_identities,
+    new_path_identity_state,
 )
 from models import (
     AirTrainData,
@@ -290,10 +293,12 @@ async def _refresh_path(app: FastAPI, client: httpx.AsyncClient) -> None:
     Same cache contract as the other systems: a failed poll keeps the
     last-known trains AND arrivals (the error only surfaces to clients while
     the cache has never filled), and both are replaced only on a poll that
-    decoded. Deliberately NO carry_forward_prev here: the anchor memory keys
+    decoded. Deliberately NO carry_forward_prev here: that anchor memory keys
     on trip ids, and PATH bridge trip ids do not survive an upstream refresh
-    (see path_static's module docstring), so every poll decodes independently
-    and prev_* stays null until 13d introduces a synthetic identity.
+    (see path_static's module docstring). Identity and anchors come from
+    match_path_identities instead (13d), which each successful poll threads
+    its state through; a failed poll leaves that state untouched too, since a
+    failure is not a generation and must not expire identities.
     """
     entry = app.state.feed_cache["path"]
     stops = getattr(app.state, "path_stops", None)
@@ -345,7 +350,15 @@ async def _refresh_path(app: FastAPI, client: httpx.AsyncClient) -> None:
     # content is a re-served identical generation, which is NORMAL for PATH
     # (the bridge regenerates faster than the upstream refreshes), so content
     # sameness across polls is never treated as staleness.
-    entry.update(data=trains, fetched_at=time.time(), feed_timestamp=feed_timestamp, error=None)
+    # Thread the decode through the synthetic identity matcher: the served
+    # trains carry a stable `id` (and anchors on an advance) instead of the
+    # bridge's unstable trip hash, which never leaves the backend.
+    served, app.state.path_identity = match_path_identities(
+        app.state.path_identity,
+        trains,
+        getattr(app.state, "path_station_order", None) or {},
+    )
+    entry.update(data=served, fetched_at=time.time(), feed_timestamp=feed_timestamp, error=None)
     # Replace the arrivals index only on success, so a failed poll keeps the
     # last-known arrivals on the same fetched_at, consistent with the cache.
     app.state.path_arrivals = arrivals
@@ -523,6 +536,13 @@ async def _warm_path_static(app: FastAPI) -> None:
         app.state.path_routes = path_static.build_path_route_shapes(
             data["trips"], data["shapes"], data["routes"]
         )
+        # The advance matcher's successor relation. .get(): a cached zip from
+        # before 13d parses without a stop_times table, and the group must
+        # still reach ready (matching degrades to same-stop only, which
+        # load_path_static already warned about).
+        app.state.path_station_order = path_static.build_path_station_order(
+            data["trips"], data.get("stop_times") or {}, data["child_to_parent"]
+        )
         _set_static_status(app, "path_static_status", "ready")
         return
 
@@ -548,10 +568,21 @@ async def lifespan(app: FastAPI):
     # app.state fields, never merged into a shared namespace: numeric PATH stop
     # ids collide with MTA numeric ids across systems, the same reason the
     # alerts join is system-scoped.
-    app.state.path_static = {}  # {stops, child_to_parent, trips, shapes, routes} or {}
+    app.state.path_static = {}  # {stops, child_to_parent, trips, shapes, routes, stop_times} or {}
     app.state.path_stops = {}
     app.state.path_routes = []
+    # Ordered parent stations per (route_id, direction_id), the advance
+    # matcher's successor relation; empty until the warmup builds it (the
+    # matcher just never advance-matches meanwhile).
+    app.state.path_station_order = {}
     app.state.path_static_status = "loading"
+    # 13d synthetic identity state, carried across polls by _refresh_path. The
+    # epoch is minted per process so ids can never collide across restarts (a
+    # browser holding markers keyed on the old process's ids must not see them
+    # silently rebound to unrelated trains). A failed poll leaves the state
+    # untouched: failures are not generations, so they neither expire
+    # identities nor advance anchors.
+    app.state.path_identity = new_path_identity_state(secrets.token_hex(3))
     # AirTrain JFK is a committed static fixture (data/airtrain_jfk.json), not a
     # network download, so it loads SYNCHRONOUSLY here and is ready the instant the
     # server accepts requests (no warmup task, no "loading" state, no 503). Loading
@@ -797,9 +828,11 @@ async def get_path_routes(response: Response) -> list[dict]:
 async def get_path() -> dict:
     """Cached PATH trains from the community bridge feed: {fetched_at,
     feed_timestamp, trains}. Every train is schedule-placed at its next
-    station (the bridge carries no vehicle positions) with null prev_*
-    anchors: PATH bridge trip ids do not survive an upstream refresh, so no
-    cross-poll identity or gliding exists yet (13d). feed_timestamp is the
+    station (the bridge carries no vehicle positions) and carries a stable
+    synthetic `id` from match_path_identities (13d); prev_* anchors are
+    populated only after an observed advance, exactly the subway v2 glide
+    contract. The bridge's own trip hash is deliberately NOT served: it is
+    unstable by construction and meaningless to riders. feed_timestamp is the
     bridge's write time, which advances even when the content is a re-served
     identical generation (normal for PATH, not staleness).
 

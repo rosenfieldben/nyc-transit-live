@@ -8,7 +8,8 @@ Two layers, matching test_feeds_railroad.py:
     written by backend/scripts/gen_path_rt_fixture.py with the capture rules
     documented there) plus the committed parent-stops snapshot
     (path_stops.json). They skip loudly until the fixtures are captured,
-    which needs egress to the bridge host.
+    which needs egress to the bridge host; in CI a missing fixture fails
+    instead.
 
 The churn and duplicate pairs are the PATH-specific risk: bridge trip ids
 churn 100% when the upstream refreshes (recorded in path_static's module
@@ -26,6 +27,7 @@ from google.protobuf.message import DecodeError
 from google.transit import gtfs_realtime_pb2 as pb
 
 import feeds
+from conftest import golden_fixture_guard
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -383,11 +385,11 @@ async def test_fetch_propagates_decode_error_for_the_caller_to_record():
 # path_stops.json, and path_rt_gen_a_expected.json are captured by
 # backend/scripts/gen_path_rt_fixture.py (capture rules documented there) and
 # verified manually before committing. They skip until captured, which needs
-# egress to the bridge host.
+# egress to the bridge host. In CI a missing fixture fails instead; see
+# conftest.golden_fixture_guard.
 
-golden = pytest.mark.skipif(
-    not (FIXTURES / "path_rt_gen_a.pb").exists(),
-    reason="PATH realtime fixtures not captured; run backend/scripts/gen_path_rt_fixture.py",
+golden = golden_fixture_guard(
+    FIXTURES / "path_rt_gen_a.pb", "backend/scripts/gen_path_rt_fixture.py"
 )
 
 

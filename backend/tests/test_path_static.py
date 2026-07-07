@@ -9,7 +9,7 @@ Two layers, matching the house discipline:
     trim rule documented there) and assert the live-verified facts: 13 parent
     stations, 51 child platforms, the 7 routes and their colors, and modal
     shape selection over the real variant spreads. They skip loudly when the
-    fixture has not been generated yet.
+    fixture has not been generated yet; in CI a missing fixture fails instead.
 """
 
 import csv
@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 
 import path_static
+from conftest import golden_fixture_guard
 
 pytestmark = pytest.mark.anyio
 
@@ -591,12 +592,10 @@ async def test_persistently_empty_feed_returns_empty(path_paths):
 # backend/scripts/gen_path_fixture.py (trim rule documented there: stops and
 # routes in full, trips cut to 3 modal + 1 per variant shape per (route,
 # direction), shapes cut to the referenced ids). These tests skip until the
-# fixture is generated, which needs egress to data.trilliumtransit.com.
+# fixture is generated, which needs egress to data.trilliumtransit.com. In CI
+# a missing fixture fails instead; see conftest.golden_fixture_guard.
 
-golden = pytest.mark.skipif(
-    not (FIXTURE_DIR / "stops.txt").exists(),
-    reason="PATH golden fixture not generated; run backend/scripts/gen_path_fixture.py",
-)
+golden = golden_fixture_guard(FIXTURE_DIR / "stops.txt", "backend/scripts/gen_path_fixture.py")
 
 EXPECTED_ROUTE_COLORS = {
     "859": "4d92fb",  # Hoboken - 33rd

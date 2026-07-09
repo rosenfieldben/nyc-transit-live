@@ -247,3 +247,87 @@ async def test_fetch_raises_when_all_feeds_fail():
     by_url = {url: httpx.ConnectError("down") for url in feeds.ALERT_FEED_URLS.values()}
     with pytest.raises(RuntimeError, match="All alert feeds failed"):
         await feeds.fetch_service_alerts(_FakeClient(by_url))
+
+
+# ---- merge_alert_generations (per-system retention across partial outages) ----
+#
+# Pure and clock-injected, so every case fixes `now` and the prior retention clock
+# explicitly rather than sleeping. CAP is the retention ceiling under test.
+
+CAP = 1800
+
+
+def _al(alert_id, system, ends_at=None):
+    """A minimal alert dict carrying only the fields the merge reads."""
+    return {"id": alert_id, "system": system, "ends_at": ends_at}
+
+
+def test_merge_no_failures_replaces_wholesale_and_retains_nothing():
+    prev = [_al("old", "subway")]
+    fresh = [_al("new", "subway"), _al("b", "bus")]
+    merged, retained = feeds.merge_alert_generations(prev, fresh, [], {}, 5000, CAP)
+    assert merged == fresh  # fresh is authoritative; the stale "old" is gone
+    assert retained == {}
+
+
+def test_merge_retains_a_failed_systems_alerts():
+    prev = [_al("m1", "MNR"), _al("s1", "subway")]
+    fresh = [_al("s2", "subway")]  # subway decoded, MNR down this poll
+    merged, retained = feeds.merge_alert_generations(prev, fresh, ["MNR"], {}, 5000, CAP)
+    assert {a["id"] for a in merged} == {"s2", "m1"}  # fresh subway + carried-forward MNR
+    assert set(retained) == {"MNR"}
+    assert retained["MNR"] == 5000  # newly down: the retention clock starts at now
+
+
+def test_merge_expiry_during_outage_drops_expired_keeps_live():
+    prev = [_al("expired", "MNR", ends_at=1200), _al("live", "MNR", ends_at=None)]
+    # now is past the expired alert's ends_at: it drops (same rule the decode uses),
+    # while the open-ended one is still carried.
+    merged, retained = feeds.merge_alert_generations(prev, [], ["MNR"], {"MNR": 1000}, 1500, CAP)
+    assert {a["id"] for a in merged} == {"live"}
+    assert set(retained) == {"MNR"}
+
+
+def test_merge_retention_cap_drops_system_after_max_age():
+    prev = [_al("open", "MNR", ends_at=None)]  # open-ended: only the cap can clear it
+    started = 1000
+    # One second before the cap: still retained.
+    merged, retained = feeds.merge_alert_generations(
+        prev, [], ["MNR"], {"MNR": started}, started + CAP - 1, CAP
+    )
+    assert {a["id"] for a in merged} == {"open"} and set(retained) == {"MNR"}
+    # At the cap: dropped, and no longer reported retained (the caller still flags
+    # MNR degraded via last_error).
+    merged, retained = feeds.merge_alert_generations(
+        prev, [], ["MNR"], {"MNR": started}, started + CAP, CAP
+    )
+    assert merged == [] and retained == {}
+
+
+def test_merge_recovery_replaces_retained_with_fresh_and_clears_since():
+    prev = [_al("carried", "MNR", ends_at=None)]
+    fresh = [_al("fresh_mnr", "MNR", ends_at=None)]  # MNR decoded again this poll
+    merged, retained = feeds.merge_alert_generations(prev, fresh, [], {"MNR": 1000}, 2000, CAP)
+    assert {a["id"] for a in merged} == {"fresh_mnr"}  # fresh wins, the carried one is gone
+    assert retained == {}  # recovered: retained_since cleared
+
+
+def test_merge_failed_system_with_no_prior_alerts_retains_nothing():
+    # MNR is down but had nothing to carry: merged is just the fresh alerts and MNR
+    # is not reported retained (the caller records health only). prev None is treated
+    # as empty, exercising the pre-first-poll path.
+    fresh = [_al("s1", "subway")]
+    merged, retained = feeds.merge_alert_generations(None, fresh, ["MNR"], {}, 5000, CAP)
+    assert merged == fresh
+    assert retained == {}
+
+
+def test_merge_retained_since_survives_polls_and_epoch_zero_is_kept():
+    # The cap measures from the ORIGINAL down time threaded back in, not from this
+    # poll, and a 0.0 (epoch) start must not be reset by a truthiness bug.
+    prev = [_al("open", "MNR", ends_at=None)]
+    merged, retained = feeds.merge_alert_generations(prev, [], ["MNR"], {"MNR": 0.0}, 1700, CAP)
+    assert {a["id"] for a in merged} == {"open"}
+    assert retained["MNR"] == 0.0  # preserved, not bumped to 1700
+    merged, _ = feeds.merge_alert_generations(prev, [], ["MNR"], {"MNR": 0.0}, CAP, CAP)
+    assert merged == []  # one cap-span past epoch zero, it drops

@@ -9,7 +9,7 @@ import math
 import os
 import time
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -1681,3 +1681,80 @@ async def fetch_service_alerts(client: httpx.AsyncClient) -> tuple[list[dict], i
         joined = "; ".join(f"{key}: {reason}" for key, reason in feed_errors.items())
         raise RuntimeError(f"All alert feeds failed: {joined}")
     return alerts, suppressed, sorted(feed_errors)
+
+
+# How long a failed alert system's alerts are carried forward before they drop.
+# A stale vehicle position is still roughly where the vehicle is, but a stale
+# "delays right now" alert becomes active misinformation the longer the feed is
+# down, so retention is bounded: after this, the system's alerts drop and only
+# the health surface still reports the outage. 30 minutes is comfortably longer
+# than any brief upstream blip while staying short of the horizon where a
+# service alert is likely to have changed on the ground.
+ALERT_RETENTION_MAX_S = 1800
+
+
+def merge_alert_generations(
+    prev_alerts: list[dict] | None,
+    fresh_alerts: list[dict],
+    failed_systems: Iterable[str],
+    prev_retained_since: Mapping[str, float],
+    now: float,
+    max_retention_s: float,
+) -> tuple[list[dict], dict[str, float]]:
+    """Merge the previous served alert index with this poll's fresh alerts so a
+    single alert feed going down retains that system's alerts instead of silently
+    deleting them (railroad arrivals already retain per system; alerts did not).
+
+    Pure and clock-injected: `now` and `prev_retained_since` are passed in, never
+    read from a wall clock or module state, so the whole retention decision is a
+    deterministic function of its inputs. Returns
+    (merged_alerts, retained_since) where retained_since maps each system CURRENTLY
+    served from carried-forward (not fresh) alerts to the instant its retention
+    began; its keys are exactly the systems serving retained alerts, and the caller
+    records the timestamps into the per-system health surface.
+
+    Per system:
+      - NOT failed this poll: its alerts come exclusively from fresh_alerts, which
+        replace wholesale (fresh is authoritative; a decoded feed is ground truth).
+      - failed this poll: its alerts are carried forward from prev_alerts, with two
+        guards:
+        1. Re-filter each carried alert against `now` with the SAME activity rule
+           _decode_alerts applies (active while now is before ends_at; open-ended
+           when ends_at is None), so an alert that expired DURING the outage drops
+           instead of being pinned alive by the outage. starts_at need not be
+           rechecked: a retained alert was active at some prior now <= now, so its
+           start has already passed.
+        2. Cap total retention age at max_retention_s measured from when the
+           system first went down (prev_retained_since, or now for a newly-failed
+           system). This is the guard that eventually clears an OPEN-ENDED alert
+           (ends_at None), which guard 1 can never expire on its own.
+
+    fresh_alerts carries alerts only from systems that decoded (a failed feed
+    contributes none), so fresh and failed are disjoint by construction; the
+    fresh filter below is defensive belt-and-suspenders, not a live dedup.
+    """
+    failed = set(failed_systems)
+    merged = [a for a in fresh_alerts if a.get("system") not in failed]
+
+    prev_by_system: dict[str | None, list[dict]] = defaultdict(list)
+    for alert in prev_alerts or []:
+        prev_by_system[alert.get("system")].append(alert)
+
+    retained_since: dict[str, float] = {}
+    for system in failed:
+        # Explicit None check, not truthiness: a retention-start timestamp can be
+        # 0.0 (epoch), which `or now` would wrongly reset every poll.
+        started = prev_retained_since.get(system)
+        if started is None:
+            started = now
+        if now - started >= max_retention_s:
+            continue  # capped: drop this system's alerts; health still flags it
+        carried = [
+            alert
+            for alert in prev_by_system.get(system, [])
+            if alert.get("ends_at") is None or now < alert["ends_at"]
+        ]
+        if carried:
+            merged.extend(carried)
+            retained_since[system] = started
+    return merged, retained_since

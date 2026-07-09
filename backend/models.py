@@ -329,12 +329,27 @@ class RailroadFeedHealth(BaseModel):
     failed: list[str]  # systems that failed the last poll (e.g. ["MNR"])
 
 
+class AlertSystemHealth(BaseModel):
+    # Per-alert-feed freshness, so a partial outage (one of the four feeds down)
+    # is visible even though the poll as a whole still succeeds.
+    fresh_at: float | None  # last poll this system decoded (null before its first)
+    # Set while a down system's alerts are being carried forward from its last good
+    # poll; null when the system is fresh or once the retention cap has dropped them.
+    retained_since: float | None
+    last_error: FeedError | None  # this system's failure this poll, null when fresh
+
+
 class AlertStatus(BaseModel):
     fetched_at: float | None
     age_s: float | None  # seconds since the alert poll last succeeded
     last_error: FeedError | None
     active: int  # active alerts currently in the index
     suppressed_planned: int  # not-yet-active planned alerts held back this poll
+    # Per-system alert-feed health and the systems failing right now. Defaulted so
+    # pre-retention /api/status fixtures validate unchanged; the live handler always
+    # populates them once the alerts cache exists.
+    systems: dict[str, AlertSystemHealth] | None = None
+    degraded_systems: list[str] = []
 
 
 class StatusResponse(BaseModel):

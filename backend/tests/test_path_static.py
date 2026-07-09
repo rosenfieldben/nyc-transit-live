@@ -244,6 +244,9 @@ ST_CHILD_TO_PARENT = {
     "781750": "26734",  # World Trade Center platform
     "781730": "26731",  # Journal Square platform
 }
+# The marker set build_path_station_order filters against (real data keeps
+# every child_to_parent target here; the phantom test below drops one).
+ST_PARENTS = set(ST_CHILD_TO_PARENT.values())
 
 
 def st_rows(trip_id, stop_ids, start=1):
@@ -297,7 +300,9 @@ def test_station_order_resolves_child_platforms_to_parents():
     # without the resolution would contain zero feed-visible ids, so every
     # entry must be a parent id and none may be a child id.
     stop_times = {"long": ["781718", "781730", "781750"]}
-    order = path_static.build_path_station_order(ST_TRIPS, stop_times, ST_CHILD_TO_PARENT)
+    order = path_static.build_path_station_order(
+        ST_TRIPS, stop_times, ST_CHILD_TO_PARENT, ST_PARENTS
+    )
     assert order == {("862", "0"): ["26733", "26731", "26734"]}
     for stations in order.values():
         assert not any(sid in ST_CHILD_TO_PARENT for sid in stations)  # no child id survives
@@ -311,7 +316,9 @@ def test_station_order_longest_trip_wins_per_route_and_direction():
         "short": ["781730", "781750"],
         "back": ["781750", "781730", "781718"],
     }
-    order = path_static.build_path_station_order(ST_TRIPS, stop_times, ST_CHILD_TO_PARENT)
+    order = path_static.build_path_station_order(
+        ST_TRIPS, stop_times, ST_CHILD_TO_PARENT, ST_PARENTS
+    )
     assert order[("862", "0")] == ["26733", "26731", "26734"]  # from "long", not "short"
     assert order[("862", "1")] == ["26734", "26731", "26733"]  # directions stay separate
 
@@ -325,7 +332,7 @@ def test_station_order_length_tie_breaks_to_smallest_trip_id():
         "b": ["781750", "781730"],
         "a": ["781718", "781730"],
     }
-    order = path_static.build_path_station_order(trips, stop_times, ST_CHILD_TO_PARENT)
+    order = path_static.build_path_station_order(trips, stop_times, ST_CHILD_TO_PARENT, ST_PARENTS)
     assert order == {("862", "0"): ["26733", "26731"]}  # trip "a" (smallest id) picked
 
 
@@ -333,8 +340,31 @@ def test_station_order_drops_unresolvable_entries_and_repeat_visits():
     # An unmapped platform contributes nothing, and a second platform of an
     # already-seen station must not make the station its own predecessor.
     stop_times = {"long": ["781718", "99999", "781719", "781730"]}
-    order = path_static.build_path_station_order(ST_TRIPS, stop_times, ST_CHILD_TO_PARENT)
+    order = path_static.build_path_station_order(
+        ST_TRIPS, stop_times, ST_CHILD_TO_PARENT, ST_PARENTS
+    )
     assert order == {("862", "0"): ["26733", "26731"]}
+
+
+def test_station_order_drops_a_phantom_parent_not_in_the_marker_set():
+    # The seam a phase-13 review surfaced: a location_type=1 station skipped
+    # from the marker set for a malformed coordinate still populates
+    # child_to_parent, so without the marker filter it would enter the order
+    # as a phantom the realtime feed never places a train at. Dropping it
+    # links the phantom's renderable neighbors directly, so the matcher can
+    # glide identity ACROSS the unrenderable station instead of resetting at
+    # the next real one. Journal Square (26731) is the phantom here.
+    stop_times = {"long": ["781718", "781730", "781750"]}  # Newark, JSQ, WTC
+    without_jsq = ST_PARENTS - {"26731"}
+    order = path_static.build_path_station_order(
+        ST_TRIPS, stop_times, ST_CHILD_TO_PARENT, without_jsq
+    )
+    assert order == {("862", "0"): ["26733", "26734"]}  # Newark -> WTC, JSQ dropped
+    # With the full marker set the phantom is a real station and stays.
+    full = path_static.build_path_station_order(
+        ST_TRIPS, stop_times, ST_CHILD_TO_PARENT, ST_PARENTS
+    )
+    assert full == {("862", "0"): ["26733", "26731", "26734"]}
 
 
 def test_station_order_drops_sub_two_station_orders_and_unknown_trips():
@@ -342,7 +372,9 @@ def test_station_order_drops_sub_two_station_orders_and_unknown_trips():
         "long": ["781718", "781719"],  # both resolve to Newark: 1 station, no edge
         "ghost": ["781718", "781730"],  # trip absent from trips.txt: no route to key by
     }
-    order = path_static.build_path_station_order(ST_TRIPS, stop_times, ST_CHILD_TO_PARENT)
+    order = path_static.build_path_station_order(
+        ST_TRIPS, stop_times, ST_CHILD_TO_PARENT, ST_PARENTS
+    )
     assert order == {}
 
 
@@ -841,7 +873,7 @@ def test_golden_station_order_matches_live_verified_862_sequence():
     parents, child_to_parent = path_static._parse_stops(_fixture("stops.txt"))
     trips = path_static._parse_trips(_fixture("trips.txt"))
     stop_times = path_static._parse_stop_times(_fixture("stop_times.txt"))
-    order = path_static.build_path_station_order(trips, stop_times, child_to_parent)
+    order = path_static.build_path_station_order(trips, stop_times, child_to_parent, parents)
     # Route 862 direction 0 (New Jersey-bound), verified live 2026-07-07: the
     # sequence the advance matcher walks for the Newark - World Trade Center line.
     names = [parents[sid]["name"] for sid in order[("862", "0")]]
@@ -864,7 +896,7 @@ def test_golden_station_orders_are_feed_visible_parent_ids():
     parents, child_to_parent = path_static._parse_stops(_fixture("stops.txt"))
     trips = path_static._parse_trips(_fixture("trips.txt"))
     stop_times = path_static._parse_stop_times(_fixture("stop_times.txt"))
-    order = path_static.build_path_station_order(trips, stop_times, child_to_parent)
+    order = path_static.build_path_station_order(trips, stop_times, child_to_parent, parents)
     assert order  # at least one (route, direction) produced a walkable order
     for (route_id, direction_id), stations in order.items():
         assert len(stations) >= 2

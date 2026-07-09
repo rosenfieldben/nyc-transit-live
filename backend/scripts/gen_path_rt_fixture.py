@@ -227,6 +227,7 @@ def rush_main() -> int:
         static.get("trips") or {},
         static.get("stop_times") or {},
         static.get("child_to_parent") or {},
+        static.get("stops") or {},
     )
     decoded = []
     for raw in churn:

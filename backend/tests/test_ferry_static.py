@@ -546,7 +546,10 @@ EXPECTED_ROUTE_NAMES = {
     "AS": "Astoria",
     "ER": "East River",
     "GI": "Governors Island Shuttle",
-    "RR": "Rockaway",
+    "RES": "Rockaway East",
+    "RR": "Rockaway Rocket",
+    "RS": "Rockaway-Soundview",
+    "RWS": "Rockaway West",
     "SB": "South Brooklyn",
     "SG": "St. George",
 }

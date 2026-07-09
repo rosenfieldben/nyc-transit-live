@@ -32,8 +32,7 @@ committing, per house rules.
 
 The utility URL 302-redirects to the resource zip; urllib.request follows
 redirects by default (unlike httpx, which the loader configures explicitly).
-Requires egress to nycferry.connexionz.net (a HANDOFF item: Ben runs this and
-commits the goldens; CI stays red on the gated tests until then, by design).
+Requires https egress to nycferry.connexionz.net.
 
 Run:  python backend/scripts/gen_ferry_fixture.py
 """
@@ -49,11 +48,13 @@ import zipfile
 from collections import Counter, defaultdict
 from pathlib import Path
 
-SOURCE_URL = "http://nycferry.connexionz.net/rtt/public/utility/gtfs.aspx"
+SOURCE_URL = "https://nycferry.connexionz.net/rtt/public/utility/gtfs.aspx"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 OUT_DIR = REPO_ROOT / "backend" / "tests" / "fixtures" / "ferry_gtfs"
 
-# Facts probed live 2026-07-07; regeneration fails loudly if the feed drifts.
+# Facts probed live 2026-07-07, re-verified against the live feed 2026-07-09
+# (which corrected RR's truncated name and captured the three names the probe
+# had listed by color only); regeneration fails loudly if the feed drifts.
 EXPECTED_STOPS = 50
 EXPECTED_ROUTE_COLORS = {
     "AS": "FF6B00",
@@ -66,13 +67,15 @@ EXPECTED_ROUTE_COLORS = {
     "SB": "FFD100",
     "SG": "D0006F",
 }
-# The long_names the probe captured verbatim (RES/RS/RWS were listed by color
-# only, so they are not asserted by name).
+# All nine long_names verbatim from the live feed.
 EXPECTED_ROUTE_NAMES = {
     "AS": "Astoria",
     "ER": "East River",
     "GI": "Governors Island Shuttle",
-    "RR": "Rockaway",
+    "RES": "Rockaway East",
+    "RR": "Rockaway Rocket",
+    "RS": "Rockaway-Soundview",
+    "RWS": "Rockaway West",
     "SB": "South Brooklyn",
     "SG": "St. George",
 }
@@ -85,7 +88,7 @@ OTHER_KEEP = 1  # trips kept for every non-modal shape per (route, direction)
 
 def _ssl_context() -> ssl.SSLContext:
     # Verify against certifi's CA bundle when present (matches the other
-    # generators); ignored for the http:// URL, kept for a possible https move.
+    # generators); fall back to the system default CAs without it.
     try:
         import certifi
 

@@ -43,12 +43,14 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _STATIC_DIR = PROJECT_ROOT / "data" / "gtfs_static"
 
-# Verified 2026-07-07: the utility URL 302-REDIRECTS to the resource zip
-# (~44 KB). httpx does NOT follow redirects by default, so _download_zip sets
-# follow_redirects=True; requesting this final resource URL directly would also
-# work, but following keeps the loader honest if Connexionz moves the target.
-# Only http:// was verified reachable; https was NOT, so do not "upgrade" it.
-FERRY_STATIC_URL = "http://nycferry.connexionz.net/rtt/public/utility/gtfs.aspx"
+# Verified 2026-07-09: the utility URL 302-REDIRECTS to the resource zip
+# (~44 KB) on the same host, over https end-to-end. (An earlier note claimed
+# only http:// was reachable; that was an artifact of a probe environment that
+# blocked plain http, not of the server.) httpx does NOT follow redirects by
+# default, so _download_zip sets follow_redirects=True; requesting the final
+# resource URL directly would also work, but following keeps the loader honest
+# if Connexionz moves the target.
+FERRY_STATIC_URL = "https://nycferry.connexionz.net/rtt/public/utility/gtfs.aspx"
 FERRY_STATIC_ZIP = _STATIC_DIR / "gtfs_ferry.zip"
 
 # Re-download the static GTFS when the cached copy is older than this, the same

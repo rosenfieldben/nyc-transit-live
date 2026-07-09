@@ -717,6 +717,60 @@ def test_matcher_anchors_persist_across_same_stop_polls_after_an_advance():
     assert served3[0]["prev_time"] == 1000.0
 
 
+def test_matcher_pins_the_steal_boundary_inside_the_tolerance_window():
+    # DOCUMENTED EXPOSURE, deliberately pinned: if a DISTINCT train arrives at
+    # the same (route, direction, stop) within PATH_MATCH_TOLERANCE_S of a
+    # departed train's stored prediction, branch 1 hands it the departed
+    # train's identity and the truly-advanced train mints fresh. This is the
+    # trade the tolerance rationale bounds: real same-slot headways are 406s+
+    # off-peak and 240s at rush (the golden headway floors), so a follower
+    # inside the 60s window cannot occur at today's service levels. If the
+    # tolerance is ever raised, THIS is the boundary that widens; the goldens
+    # fail first only when the schedule compresses, so both guards matter.
+    served1, state = _match(_state(), [_mtrain("26727", 1000.0, trip="t1")])
+    t1 = served1[0]["id"]
+    # T1 advanced EXP -> GRV while a follower appears at EXP inside the window.
+    served2, state = _match(
+        state,
+        [_mtrain("26728", 1300.0, trip="adv"), _mtrain("26727", 1000.0 + TOL - 1, trip="new")],
+    )
+    by_stop = {t["stop_id"]: t for t in served2}
+    assert by_stop["26727"]["id"] == t1  # the follower stole the identity
+    assert by_stop["26728"]["id"] != t1  # the truly-advanced train minted fresh
+
+    # The same shape one REAL peak headway (240s) behind instead: no steal.
+    # Branch 1 rejects the follower, branch 2 carries the advanced train with
+    # its EXP anchor, and the follower mints fresh. This is where actual PATH
+    # service lives, which is why the exposure above is acceptable.
+    served1, state = _match(_state(), [_mtrain("26727", 1000.0)])
+    t1 = served1[0]["id"]
+    served2, state = _match(state, [_mtrain("26728", 1300.0), _mtrain("26727", 1240.0)])
+    by_stop = {t["stop_id"]: t for t in served2}
+    assert by_stop["26728"]["id"] == t1
+    assert (by_stop["26728"]["prev_lat"], by_stop["26728"]["prev_lon"]) == _STATIONS["26727"]
+    assert by_stop["26727"]["id"] != t1
+
+
+def test_matcher_pins_the_terminate_plus_appear_false_advance():
+    # DOCUMENTED RESIDUAL of branch 2, deliberately pinned: these inputs are
+    # BY CONSTRUCTION indistinguishable from the clean advance two tests up,
+    # but here the physical story is different: the EXP train terminated
+    # (short-turned) while an unrelated train appeared at GRV in the same
+    # generation. The matcher cannot tell "moved" from "died while another was
+    # born at the successor", so the appearing train inherits the terminated
+    # identity and a fabricated EXP -> GRV glide anchor. Plausible around
+    # short-turn territory (861/1024 end at Journal Square while through
+    # trains continue); the cost is one cosmetic wrong glide segment that the
+    # next advance replaces. Pinned so a future fix (e.g. terminal-awareness)
+    # changes this test knowingly instead of silently.
+    served1, state = _match(_state(), [_mtrain("26727", 1000.0, trip="dies")])
+    ended = served1[0]["id"]
+    served2, state = _match(state, [_mtrain("26728", 1500.0, trip="born")])
+    assert served2[0]["id"] == ended  # the misattribution, accepted by design
+    assert (served2[0]["prev_lat"], served2[0]["prev_lon"]) == _STATIONS["26727"]
+    assert served2[0]["prev_time"] == 1000.0
+
+
 def test_matcher_tolerance_pins_the_probe_margins():
     # Probe, 2026-07-07, 40 polls / 10 upstream generations / 238 transitions:
     # same-stop nearest-arrival matching hit 98.7% unique, 0.0% ambiguous;

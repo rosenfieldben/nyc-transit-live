@@ -1355,7 +1355,12 @@ def match_path_identities(
     frontend glide interpolates against. This is the only heuristic branch:
     uniqueness is what keeps two trains advancing in lockstep from swapping
     identities, because each new train sees exactly one vanished predecessor
-    at its own X (X to Y, and W to X, are different stop pairs).
+    at its own X (X to Y, and W to X, are different stop pairs). One residual
+    it cannot remove: a train TERMINATING at X while an unrelated train
+    appears at Y in the same generation is observationally identical to an
+    advance, so the appearing train inherits the ended identity and one
+    cosmetic wrong glide (pinned in tests as accepted behavior; the next
+    advance replaces the anchor).
 
     Otherwise a fresh identity is minted (epoch-prefixed sequence number,
     never derived from bridge hashes) with null anchors: the train appears

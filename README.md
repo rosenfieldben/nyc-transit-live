@@ -135,8 +135,14 @@ yet (realtime placement is a later phase). Two endpoints:
 
 Ferry stop ids are short numerics that collide with MTA and PATH ids, so ferry
 data stays in its own namespace. The static feed comes from NYC Ferry's
-Connexionz endpoint; attribution is to NYC Ferry, and the specific reuse terms
-are still to be confirmed with the agency (a human handoff, not asserted here).
+Connexionz endpoint, published on their Developer Tools page
+(https://www.ferry.nyc/developer-tools/) and used under its Developer Terms:
+NYC Ferry grants a non-exclusive, revocable right to integrate the GTFS into
+sites and applications, and retains all rights and title in the data
+(confirmed 2026-07-09). Attribution here is courtesy, not a stated
+requirement. NYC Ferry's trademarks and logos stay reserved, so the map uses
+its own markers; the route colors are fine because they are data in
+routes.txt, not branding.
 
 Service alerts are polled on their own slower loop and served from an in-memory
 index (the map surfaces are the popup blocks and the agency-wide banner
@@ -468,8 +474,9 @@ warnings.
   a `wheelchair` accessibility flag) and `/api/ferry-routes` (the nine routes
   with names, colors, and modal route geometry). Static only: realtime ferry
   placement is a later phase. The trips table carries the trip to route map that
-  join needs. Data comes via NYC Ferry's Connexionz endpoint; reuse terms are
-  still to be confirmed with the agency.
+  join needs. Data comes via NYC Ferry's Connexionz endpoint under the Developer
+  Terms on ferry.nyc/developer-tools/ (a revocable right to integrate the GTFS
+  into sites and applications; NYC Ferry retains all rights).
 
 ## Notes
 

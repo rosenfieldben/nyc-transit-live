@@ -223,6 +223,28 @@ class PathRoute(BaseModel):
     shape: list[list[list[float]]]
 
 
+# NYC Ferry static (14a): station markers and route geometry. Flatter than
+# PATH (no parent/child split), and the marker carries a wheelchair flag that
+# is display-relevant to a later phase. Ferry stop ids are short numerics that
+# collide with MTA and PATH ids, so ferry data stays in its own namespace.
+class FerryStop(BaseModel):
+    id: str
+    name: str | None
+    lat: float
+    lon: float
+    wheelchair: bool  # GTFS wheelchair_boarding == 1 (accessible), else False
+
+
+class FerryRoute(BaseModel):
+    id: str
+    name: str | None  # route_long_name from routes.txt, null when absent
+    color: str | None  # route_color hex (no '#') verbatim from routes.txt
+    text_color: str | None  # route_text_color hex, same treatment
+    # The modal polyline(s) for the route: one per direction that survives the
+    # reverse-direction dedup, as [[lat, lon], ...] lists.
+    shape: list[list[list[float]]]
+
+
 # AirTrain JFK: a static-only mode (no realtime feed exists). The whole dataset
 # ships as one committed fixture, so a single /api/airtrain endpoint returns
 # AirTrainData. Headways are SCHEDULED reference bands, never live countdowns.
@@ -324,6 +346,9 @@ class StatusResponse(BaseModel):
     subway_static: str | None
     railroad_static: str | None
     path_static: str | None
+    # Defaulted so pre-14a /api/status fixtures validate unchanged; the live
+    # handler always populates it.
+    ferry_static: str | None = None
     subway_feeds: SubwayFeedHealth | None
     railroad_feeds: RailroadFeedHealth | None
     path_feeds: PathFeedHealth | None

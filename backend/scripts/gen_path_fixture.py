@@ -155,10 +155,11 @@ def _station_order(
     st_cols: list[str],
     stop_times: list[dict],
     child_to_parent: dict[str, str],
+    parents: dict[str, dict],
 ) -> dict:
     parsed_trips = path_static._parse_trips(_rows_to_stream(trips_cols, trips))
     parsed_st = path_static._parse_stop_times(_rows_to_stream(st_cols, stop_times))
-    return path_static.build_path_station_order(parsed_trips, parsed_st, child_to_parent)
+    return path_static.build_path_station_order(parsed_trips, parsed_st, child_to_parent, parents)
 
 
 def main() -> int:
@@ -261,11 +262,14 @@ def main() -> int:
     kept_stop_times = [r for r in stop_times if (r.get("trip_id") or "").strip() in kept_ids]
 
     parsed_stops = path_static._parse_stops(_rows_to_stream(stops_cols, stops))
+    parent_markers = parsed_stops[0]
     child_to_parent = parsed_stops[1]
-    stop_names = {sid: row["name"] for sid, row in parsed_stops[0].items()}
-    full_order = _station_order(trips_cols, trips, st_cols, stop_times, child_to_parent)
+    stop_names = {sid: row["name"] for sid, row in parent_markers.items()}
+    full_order = _station_order(
+        trips_cols, trips, st_cols, stop_times, child_to_parent, parent_markers
+    )
     trimmed_order = _station_order(
-        trips_cols, kept_trips, st_cols, kept_stop_times, child_to_parent
+        trips_cols, kept_trips, st_cols, kept_stop_times, child_to_parent, parent_markers
     )
     if trimmed_order != full_order:
         problems.append("trimmed stop_times change a station order; adjust the longest-trip keep")

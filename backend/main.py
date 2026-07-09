@@ -541,7 +541,7 @@ async def _warm_path_static(app: FastAPI) -> None:
         # still reach ready (matching degrades to same-stop only, which
         # load_path_static already warned about).
         app.state.path_station_order = path_static.build_path_station_order(
-            data["trips"], data.get("stop_times") or {}, data["child_to_parent"]
+            data["trips"], data.get("stop_times") or {}, data["child_to_parent"], data["stops"]
         )
         _set_static_status(app, "path_static_status", "ready")
         return
@@ -866,12 +866,13 @@ async def get_path_arrivals(stop_id: str) -> dict:
     Modeled on /api/railroad-arrivals minus the system segment (PATH is a
     single system). Bucket keys are "To New York" / "To New Jersey" (from the
     realtime direction_id) with "Trains" as the direction-less residual,
-    present only when populated; an empty {} means nothing upcoming. Rows
-    carry a trip_id for shape parity only: PATH trip ids are unstable across
-    upstream refreshes and display-poor, so clients must never key on or show
-    them. 503 while the PATH cache has never filled (consistent with the
-    other arrivals endpoints); 404 for a malformed or unknown stop id (regex
-    plus membership in the static parent stops)."""
+    present only when populated; an empty {} means nothing upcoming. Rows are
+    {route_id, arrival} only: unlike RailroadArrival they carry NO trip id,
+    since the 13d cleanup dropped the bridge's unstable, display-poor hash
+    from every served payload (see PathArrival). 503 while the PATH cache has
+    never filled (consistent with the other arrivals endpoints); 404 for a
+    malformed or unknown stop id (regex plus membership in the static parent
+    stops)."""
     entry = app.state.feed_cache["path"]
     _require_filled_cache(entry)
     stops = getattr(app.state, "path_stops", None) or {}

@@ -228,6 +228,7 @@ def build_path_station_order(
     trips: dict[str, dict],
     stop_times: dict[str, list[str]],
     child_to_parent: dict[str, str],
+    parents: dict[str, dict] | set[str],
 ) -> dict[tuple[str, str | None], list[str]]:
     """Ordered PARENT-station list per (route_id, direction_id), for the 13d
     advance matcher's successor relation (feeds.match_path_identities).
@@ -243,6 +244,20 @@ def build_path_station_order(
     dropped, and repeat visits keep only the first occurrence (a well-formed
     run visits each station once; several platforms of one station must not
     make the station its own predecessor).
+
+    `parents` is the MARKER set (load_path_static's stops, or any container
+    supporting `in`): a resolved parent not in it is dropped from the order.
+    WHY: _parse_stops skips a location_type=1 row with a malformed coordinate
+    from the marker set, but its children still populate child_to_parent, so
+    without this filter a coordinate-skipped station would enter the order as
+    a "phantom" the realtime feed never places a train at (the decode drops
+    ids not in the marker set). The matcher would then read the phantom as a
+    predecessor, never find a vanished identity there, and reset identity at
+    the next real station instead of gliding through. Dropping it links the
+    phantom's renderable neighbors directly, so identity carries across the
+    unrenderable station. Real feeds never trip this (a golden asserts every
+    child_to_parent target is a marker parent), but the parser is
+    deliberately lenient about malformed rows, so the order must be too.
 
     Orders shorter than 2 stations are dropped: a successor relation needs at
     least one edge. A pure transform (no zip read, no network), like
@@ -261,15 +276,15 @@ def build_path_station_order(
 
     order: dict[tuple[str, str | None], list[str]] = {}
     for key, (_length, trip_id) in best.items():
-        parents: list[str] = []
+        ordered: list[str] = []
         seen: set[str] = set()
         for stop_id in stop_times[trip_id]:
             parent = child_to_parent.get(stop_id)
-            if parent and parent not in seen:
-                parents.append(parent)
+            if parent and parent in parents and parent not in seen:
+                ordered.append(parent)
                 seen.add(parent)
-        if len(parents) >= 2:
-            order[key] = parents
+        if len(ordered) >= 2:
+            order[key] = ordered
     return order
 
 

@@ -229,27 +229,31 @@ def test_header_timestamp_none_when_omitted():
 
 
 def test_arrivals_bucketed_by_direction_with_trains_residual():
+    # Distinct route ids identify the rows: arrival rows deliberately carry no
+    # trip id (see test_arrival_rows_carry_route_and_absolute_time below).
     feed = pb.FeedMessage()
-    _path_entity(feed, "NJ", direction_id=0, stops=[("26727", NOW + 120)])
-    _path_entity(feed, "NY", direction_id=1, stops=[("26727", NOW + 180)])
-    _path_entity(feed, "NODIR", stops=[("26727", NOW + 240)])
+    _path_entity(feed, "NJ", route_id="861", direction_id=0, stops=[("26727", NOW + 120)])
+    _path_entity(feed, "NY", route_id="862", direction_id=1, stops=[("26727", NOW + 180)])
+    _path_entity(feed, "NODIR", route_id="859", stops=[("26727", NOW + 240)])
     _, arrivals, _ = _decode(feed)
-    buckets = {k: [a["trip_id"] for a in v] for k, v in arrivals["26727"].items()}
+    buckets = {k: [a["route_id"] for a in v] for k, v in arrivals["26727"].items()}
     assert buckets == {
-        "To New Jersey": ["NJ"],
-        "To New York": ["NY"],
-        "Trains": ["NODIR"],
+        "To New Jersey": ["861"],
+        "To New York": ["862"],
+        "Trains": ["859"],
     }
 
 
-def test_arrival_rows_carry_route_trip_and_absolute_time():
+def test_arrival_rows_carry_route_and_absolute_time_and_never_the_bridge_hash():
     feed = pb.FeedMessage()
     _path_entity(feed, "1a2b-uuid", route_id="859", direction_id=1, stops=[("26727", NOW + 90)])
     _, arrivals, _ = _decode(feed)
     row = arrivals["26727"]["To New York"][0]
-    # trip_id is carried for shape parity with the railroad arrivals only:
-    # bridge ids are unstable and display-poor, never keyed on or shown.
-    assert row == {"route_id": "859", "trip_id": "1a2b-uuid", "arrival": NOW + 90}
+    # {route_id, arrival} ONLY: the bridge hash is unstable and display-poor,
+    # and since the 13d cleanup it appears in no served payload at all (the
+    # trains side carries the matcher's synthetic id instead). The exact-dict
+    # equality is the pin: a reintroduced hash fails here.
+    assert row == {"route_id": "859", "arrival": NOW + 90}
 
 
 def test_arrivals_sorted_and_capped_per_bucket():

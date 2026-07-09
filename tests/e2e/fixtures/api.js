@@ -256,8 +256,10 @@ const pathArrivals = () => ({
   stop_id: "26734",
   stop_name: "World Trade Center",
   directions: {
-    "To New Jersey": [{ route_id: "862", trip_id: "path-a-2", arrival: FROZEN_S + 300 }],
-    "To New York": [{ route_id: "859", trip_id: "path-a-9", arrival: FROZEN_S + 90 }],
+    // Rows are {route_id, arrival} only: the bridge hash reaches no payload
+    // (PathArrival dropped trip_id in the 13d cleanup).
+    "To New Jersey": [{ route_id: "862", arrival: FROZEN_S + 300 }],
+    "To New York": [{ route_id: "859", arrival: FROZEN_S + 90 }],
   },
 });
 

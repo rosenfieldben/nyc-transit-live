@@ -220,6 +220,22 @@ def _trip_start_ts(trip) -> float | None:
 # Next this many upcoming trains kept per station and direction for arrivals.
 ARRIVALS_PER_DIRECTION = 6
 
+
+def _trim_arrivals(arrivals: dict) -> dict[str, dict[str, list[dict]]]:
+    """Sort every station bucket soonest-first and cap it at
+    ARRIVALS_PER_DIRECTION. Shared by the subway, railroad, and PATH decoders,
+    which each grew an identical copy of this block phase by phase (the
+    cleanup queued in 13b): the popup only ever shows the next few trains, so
+    anything past the cap is payload weight with no reader."""
+    trimmed: dict[str, dict[str, list[dict]]] = {}
+    for station_id, buckets in arrivals.items():
+        trimmed[station_id] = {}
+        for direction, arrs in buckets.items():
+            arrs.sort(key=lambda a: a["arrival"])
+            trimmed[station_id][direction] = arrs[:ARRIVALS_PER_DIRECTION]
+    return trimmed
+
+
 # GTFS-RT schedule relationships that mean "ignore this": a CANCELED trip isn't
 # running; a DELETED trip has been removed and must not render as a ghost train;
 # a SKIPPED/NO_DATA stop carries no real prediction. We drop them from both
@@ -436,15 +452,8 @@ def _aggregate_feeds(
                     feed_trip_ids.add(arr["trip_id"])
         arrival_trips |= feed_trip_ids
 
-    # Keep the soonest arrivals per direction; the rest are noise on a popup.
-    trimmed: dict[str, dict[str, list[dict]]] = {}
-    for station_id, dirs in arrivals.items():
-        trimmed[station_id] = {}
-        for direction, arrs in dirs.items():
-            arrs.sort(key=lambda a: a["arrival"])
-            trimmed[station_id][direction] = arrs[:ARRIVALS_PER_DIRECTION]
     feed_timestamp = min(timestamps) if timestamps else None
-    return trains, trimmed, feed_timestamp, feed_errors
+    return trains, _trim_arrivals(arrivals), feed_timestamp, feed_errors
 
 
 def carry_forward_prev(
@@ -967,14 +976,7 @@ def _decode_railroad_feed(
             }
         )
 
-    # Keep the soonest arrivals per bucket; the rest are noise on a popup.
-    trimmed: dict[str, dict[str, list[dict]]] = {}
-    for station_id, buckets in arrivals.items():
-        trimmed[station_id] = {}
-        for direction, arrs in buckets.items():
-            arrs.sort(key=lambda a: a["arrival"])
-            trimmed[station_id][direction] = arrs[:ARRIVALS_PER_DIRECTION]
-    return trains, trimmed
+    return trains, _trim_arrivals(arrivals)
 
 
 def _decode_railroad_placements(
@@ -1149,9 +1151,11 @@ def _decode_path_feed(
     see _PATH_DIRECTION), with "Trains" as the residual for a direction-less
     trip, matching the railroad bucket discipline (keys present only when
     populated, sorted soonest-first, capped at ARRIVALS_PER_DIRECTION). Rows
-    carry trip_id for shape parity with the railroad arrivals, but PATH trip
-    ids are display-poor AND unstable across upstream refreshes: the frontend
-    must never key on them or show them.
+    are {route_id, arrival} ONLY: the bridge's trip hash is unstable across
+    upstream refreshes and display-poor, so since the 13d cleanup it appears
+    in no served payload at all (the trains side dropped it for the matcher's
+    synthetic id; the shape parity with railroad rows was not worth keeping
+    the one remaining leak).
 
     feed_timestamp is the bridge's WRITE time, a fair "is the bridge alive"
     signal. It advances even when the entity content is unchanged, because the
@@ -1220,7 +1224,7 @@ def _decode_path_feed(
         if chosen_time is not None:
             bucket = direction or "Trains"
             arrivals[chosen.stop_id][bucket].append(
-                {"route_id": route_id, "trip_id": trip_id, "arrival": float(chosen_time)}
+                {"route_id": route_id, "arrival": float(chosen_time)}
             )
         trains.append(
             {
@@ -1238,14 +1242,7 @@ def _decode_path_feed(
             }
         )
 
-    # Keep the soonest arrivals per bucket; the rest are noise on a popup.
-    trimmed: dict[str, dict[str, list[dict]]] = {}
-    for station_id, buckets in arrivals.items():
-        trimmed[station_id] = {}
-        for direction_key, arrs in buckets.items():
-            arrs.sort(key=lambda a: a["arrival"])
-            trimmed[station_id][direction_key] = arrs[:ARRIVALS_PER_DIRECTION]
-    return trains, trimmed, _header_timestamp(feed), unresolved_entities
+    return trains, _trim_arrivals(arrivals), _header_timestamp(feed), unresolved_entities
 
 
 async def fetch_path_trains(

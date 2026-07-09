@@ -147,7 +147,7 @@ test("railroadArrivalsHtml shows the route name from nameFor and escapes it", ()
 });
 
 test("orderedPathBuckets keeps a stable To New York, To New Jersey, Trains order", () => {
-  const arr = (n) => [{ route_id: "862", trip_id: `t${n}`, arrival: n }];
+  const arr = (n) => [{ route_id: "862", arrival: n }];
   assert.deepEqual(PATH_BUCKET_ORDER, ["To New York", "To New Jersey", "Trains"]);
   // Full set: fixed display order regardless of input key order.
   assert.deepEqual(
@@ -220,8 +220,8 @@ test("pathArrivalsHtml renders buckets in order with badge colors and countdowns
   const station = { id: "26734", name: "World Trade Center" };
   const body = {
     directions: {
-      "To New Jersey": [{ route_id: "862", trip_id: "b", arrival: 400 }],
-      "To New York": [{ route_id: "859", trip_id: "a", arrival: 100 }],
+      "To New Jersey": [{ route_id: "862", arrival: 400 }],
+      "To New York": [{ route_id: "859", arrival: 100 }],
     },
   };
   const colorFor = (id) => ({ 859: "#4d92fb", 862: "#d93a30" })[id];
@@ -242,7 +242,7 @@ test("pathArrivalsHtml renders No trains for an empty directions dict and escape
 
   const hostile = pathArrivalsHtml(
     { id: "26733", name: "New<script>ark" },
-    { directions: { "To New York": [{ route_id: "8<img>", trip_id: "t", arrival: 100 }] } },
+    { directions: { "To New York": [{ route_id: "8<img>", arrival: 100 }] } },
     40,
     undefined,
     () => "Ho<script>boken",

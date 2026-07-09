@@ -176,8 +176,10 @@ class PathFeed(BaseModel):
 
 
 class PathArrival(BaseModel):
+    # Deliberately NO trip id, unlike RailroadArrival: the bridge's hashes are
+    # unstable across upstream refreshes and display-poor, and since the 13d
+    # cleanup they appear in no served payload anywhere.
     route_id: str | None
-    trip_id: str  # unstable + display-poor: parity with RailroadArrival only, never key on it
     arrival: float  # absolute epoch seconds
 
 

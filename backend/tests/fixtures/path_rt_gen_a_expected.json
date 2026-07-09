@@ -4,25 +4,21 @@
 "To New Jersey": [
 {
 "arrival": 1783297654.0,
-"route_id": "861",
-"trip_id": "33bb257ef5cdd67b8e1b611d73f2392d"
+"route_id": "861"
 },
 {
 "arrival": 1783297772.0,
-"route_id": "859",
-"trip_id": "c4708d2d809cb0e9dab480a0c00394a5"
+"route_id": "859"
 }
 ],
 "To New York": [
 {
 "arrival": 1783297678.0,
-"route_id": "859",
-"trip_id": "4f41a8b3c416d01f68812cc835ff5d59"
+"route_id": "859"
 },
 {
 "arrival": 1783298055.0,
-"route_id": "861",
-"trip_id": "14f12da7a1656e761206a6544238adb1"
+"route_id": "861"
 }
 ]
 },
@@ -30,25 +26,21 @@
 "To New Jersey": [
 {
 "arrival": 1783297564.0,
-"route_id": "861",
-"trip_id": "ad12b083078611d4737efe173ba679ba"
+"route_id": "861"
 },
 {
 "arrival": 1783297682.0,
-"route_id": "859",
-"trip_id": "3de18e383cd3db3a339e1972e4aef9c7"
+"route_id": "859"
 }
 ],
 "To New York": [
 {
 "arrival": 1783297525.0,
-"route_id": "861",
-"trip_id": "77cb2dec820137f07a59fdbe98e6d1d0"
+"route_id": "861"
 },
 {
 "arrival": 1783297786.0,
-"route_id": "859",
-"trip_id": "a0f436ff7432e015c417b90fb40f1791"
+"route_id": "859"
 }
 ]
 },
@@ -56,23 +48,19 @@
 "To New Jersey": [
 {
 "arrival": 1783297464.0,
-"route_id": "861",
-"trip_id": "914e4f785ddc74ede6f078cf15276dc2"
+"route_id": "861"
 },
 {
 "arrival": 1783297620.0,
-"route_id": "859",
-"trip_id": "1bfa23b15af1c4021ee9fd91ebbe1a35"
+"route_id": "859"
 },
 {
 "arrival": 1783298040.0,
-"route_id": "861",
-"trip_id": "cb4c6e12b8b5bca43eeb1e4ec8b20ef6"
+"route_id": "861"
 },
 {
 "arrival": 1783298220.0,
-"route_id": "859",
-"trip_id": "41e76558e9353f22ba67e31276ed4fee"
+"route_id": "859"
 }
 ]
 },
@@ -80,25 +68,21 @@
 "To New Jersey": [
 {
 "arrival": 1783297744.0,
-"route_id": "861",
-"trip_id": "8c9895169a230e3c7d1aec91c29686fc"
+"route_id": "861"
 },
 {
 "arrival": 1783297862.0,
-"route_id": "859",
-"trip_id": "07a8f0c34c625ae7e4d9e2f6adb3acc2"
+"route_id": "859"
 }
 ],
 "To New York": [
 {
 "arrival": 1783297606.0,
-"route_id": "859",
-"trip_id": "f6ae54bbbba1533c62232c988a624ecf"
+"route_id": "859"
 },
 {
 "arrival": 1783297965.0,
-"route_id": "861",
-"trip_id": "097f35eb88a05f2e0d619d304958b8f4"
+"route_id": "861"
 }
 ]
 },
@@ -106,25 +90,21 @@
 "To New Jersey": [
 {
 "arrival": 1783297834.0,
-"route_id": "861",
-"trip_id": "a9a6f330235989921a2cfee75a56e759"
+"route_id": "861"
 },
 {
 "arrival": 1783297952.0,
-"route_id": "859",
-"trip_id": "ea0d75afb946d65b977dd1b10d83346c"
+"route_id": "859"
 }
 ],
 "To New York": [
 {
 "arrival": 1783297516.0,
-"route_id": "859",
-"trip_id": "1063c98be17c31266bff6e99152a56ce"
+"route_id": "859"
 },
 {
 "arrival": 1783297875.0,
-"route_id": "861",
-"trip_id": "eb6c1173bdd0ab3261c5beaeb4d4b38f"
+"route_id": "861"
 }
 ]
 },
@@ -132,25 +112,21 @@
 "To New Jersey": [
 {
 "arrival": 1783297623.0,
-"route_id": "862",
-"trip_id": "22796ec63db5ea6f922dc7a0ef7dcc72"
+"route_id": "862"
 },
 {
 "arrival": 1783297722.0,
-"route_id": "860",
-"trip_id": "c97b6a07f90f694b408e4ba800a230ce"
+"route_id": "860"
 }
 ],
 "To New York": [
 {
 "arrival": 1783297667.0,
-"route_id": "862",
-"trip_id": "1d4b8990bd898f896e18879bcca9a072"
+"route_id": "862"
 },
 {
 "arrival": 1783297758.0,
-"route_id": "860",
-"trip_id": "30449265398e861ca3c862fef0cfd271"
+"route_id": "860"
 }
 ]
 },
@@ -158,25 +134,21 @@
 "To New Jersey": [
 {
 "arrival": 1783297803.0,
-"route_id": "862",
-"trip_id": "422d246f0e372b8d0fdb159ad30a1212"
+"route_id": "862"
 },
 {
 "arrival": 1783297933.0,
-"route_id": "861",
-"trip_id": "3603b95cc09ffeedbb61764b7f5a8e3b"
+"route_id": "861"
 }
 ],
 "To New York": [
 {
 "arrival": 1783297515.0,
-"route_id": "862",
-"trip_id": "c7a8a2c48e74ccef55d7343bc3693073"
+"route_id": "862"
 },
 {
 "arrival": 1783297812.0,
-"route_id": "861",
-"trip_id": "ff981e0f6c557f2226956af011fa571a"
+"route_id": "861"
 }
 ]
 },
@@ -184,25 +156,21 @@
 "To New Jersey": [
 {
 "arrival": 1783297748.0,
-"route_id": "862",
-"trip_id": "5130142f918fedffea76b1415de72157"
+"route_id": "862"
 },
 {
 "arrival": 1783298327.0,
-"route_id": "862",
-"trip_id": "8cf8dd95ff881ad8598da53218cb090d"
+"route_id": "862"
 }
 ],
 "To New York": [
 {
 "arrival": 1783297662.0,
-"route_id": "862",
-"trip_id": "7e5434c30bc1c4f793bf9a5c90bfefc6"
+"route_id": "862"
 },
 {
 "arrival": 1783298142.0,
-"route_id": "862",
-"trip_id": "437f71fa6c228ddbda3e926f3a9f8ca8"
+"route_id": "862"
 }
 ]
 },
@@ -210,23 +178,19 @@
 "To New York": [
 {
 "arrival": 1783297620.0,
-"route_id": "859",
-"trip_id": "4c6e3e1bce8a57fee0455ab750574c37"
+"route_id": "859"
 },
 {
 "arrival": 1783297920.0,
-"route_id": "860",
-"trip_id": "3e01bf8a36b1d48a05768ecdd7ef8c21"
+"route_id": "860"
 },
 {
 "arrival": 1783298220.0,
-"route_id": "859",
-"trip_id": "a85ab30bb87246ee1db47c18c44986c9"
+"route_id": "859"
 },
 {
 "arrival": 1783298520.0,
-"route_id": "860",
-"trip_id": "502196fbecb666f6de4c5336d3ed2ce8"
+"route_id": "860"
 }
 ]
 },
@@ -234,35 +198,29 @@
 "To New Jersey": [
 {
 "arrival": 1783297667.0,
-"route_id": "862",
-"trip_id": "d0f329f15d62fd9eb6b932c73032fde3"
+"route_id": "862"
 },
 {
 "arrival": 1783298073.0,
-"route_id": "862",
-"trip_id": "daecca1dfb61937091eb1432219700f4"
+"route_id": "862"
 }
 ],
 "To New York": [
 {
 "arrival": 1783297560.0,
-"route_id": "861",
-"trip_id": "3a316f99aa9b5792e060243f3779c640"
+"route_id": "861"
 },
 {
 "arrival": 1783297768.0,
-"route_id": "862",
-"trip_id": "aff0570c0f38a44a5302fd02ea4efa61"
+"route_id": "862"
 },
 {
 "arrival": 1783298160.0,
-"route_id": "861",
-"trip_id": "f7a738852a3ef9dd84584ddfba2e712b"
+"route_id": "861"
 },
 {
 "arrival": 1783298322.0,
-"route_id": "862",
-"trip_id": "21b9a25c21d6e21e148fd207374d9581"
+"route_id": "862"
 }
 ]
 },
@@ -270,25 +228,21 @@
 "To New Jersey": [
 {
 "arrival": 1783297723.0,
-"route_id": "861",
-"trip_id": "04bfb013b128d18820ca8b3df58acc9b"
+"route_id": "861"
 },
 {
 "arrival": 1783297902.0,
-"route_id": "860",
-"trip_id": "590158d4a5e8d9d14dfba665756d85bc"
+"route_id": "860"
 }
 ],
 "To New York": [
 {
 "arrival": 1783297578.0,
-"route_id": "860",
-"trip_id": "e3961cbdee4f3cbbb7cbee7f407cd42f"
+"route_id": "860"
 },
 {
 "arrival": 1783298022.0,
-"route_id": "861",
-"trip_id": "cf0c03b277b896276dec16a6bcaba577"
+"route_id": "861"
 }
 ]
 },
@@ -296,13 +250,11 @@
 "To New York": [
 {
 "arrival": 1783297560.0,
-"route_id": "862",
-"trip_id": "80d7f42e570fba64cb333eb0ce05a351"
+"route_id": "862"
 },
 {
 "arrival": 1783298040.0,
-"route_id": "862",
-"trip_id": "0bd36c1629017321d9824d937ab3e8d1"
+"route_id": "862"
 }
 ]
 },
@@ -310,28 +262,23 @@
 "To New Jersey": [
 {
 "arrival": 1783297500.0,
-"route_id": "860",
-"trip_id": "73484a37b152b25630a6e5fb698373d0"
+"route_id": "860"
 },
 {
 "arrival": 1783297860.0,
-"route_id": "862",
-"trip_id": "d1759b422db2796863568e10a6449732"
+"route_id": "862"
 },
 {
 "arrival": 1783298100.0,
-"route_id": "860",
-"trip_id": "4aad94a3b587834cd2ebaf7f98a9b10f"
+"route_id": "860"
 },
 {
 "arrival": 1783298340.0,
-"route_id": "862",
-"trip_id": "7e00b428879f51cd9f5a9aead4bf5acf"
+"route_id": "862"
 },
 {
 "arrival": 1783298700.0,
-"route_id": "860",
-"trip_id": "e3ba13d2b2ae1bb272fc95ae107a1114"
+"route_id": "860"
 }
 ]
 }

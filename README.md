@@ -1,7 +1,8 @@
 # NYC Transit Live
 
-A live map of NYC subways, buses, and commuter rail (LIRR + Metro-North), built
-on the MTA's public real-time feeds.
+A live map of NYC subways, buses, commuter rail (LIRR + Metro-North), PATH,
+and AirTrain JFK, built on the MTA's public real-time feeds plus the PANYNJ
+static data and a community PATH bridge feed.
 Buses report true GPS positions and move on the map; subways are placed at their
 next station using real-time arrival data joined against the static schedule,
 then glide between stations as time passes, following the actual route geometry.
@@ -121,7 +122,8 @@ subject to their license terms. PATH stop ids stay in their own namespace:
 they are numeric and collide with MTA numeric ids across systems.
 
 Service alerts are polled on their own slower loop and served from an in-memory
-index (there is no map surface for them yet; that is a later phase):
+index (the map surfaces are the popup blocks and the agency-wide banner
+described above):
 
 - `GET /api/alerts`: `{fetched_at, alerts: [...]}`, one entry per alert active now
   across the keyless subway/bus/LIRR/MNR alert feeds: `{id, system, header,
@@ -225,12 +227,18 @@ arrival countdowns and the staleness window are deterministic (no sleeps).
   lines, etc.). These carry trip/arrival updates, not GPS, so trains are shown
   at their next station.
 - **Commuter rail** — MTA keyless GTFS-RT feeds for the LIRR and Metro-North.
-  These do report real GPS, so phase 1 shows the trains that carry a vehicle
-  position at their true lat/lon; trains without a position are omitted (station
-  placement from the trip updates is a planned phase 2).
+  These do report real GPS, so trains with a vehicle position render at their
+  true lat/lon; trains without one are placed at their next station from the
+  trip updates and glide between stations (hollow markers, so the two are
+  visually distinct).
+- **PATH**: the community GTFS-RT bridge feed (jamespfennell's
+  path-train-gtfs-realtime, sourced from the PANYNJ API; no official feed
+  exists), decoded into placed trains with backend-synthesized identity, plus
+  PANYNJ static GTFS via Trillium for stations, geometry, and the station
+  order. Subject to PANYNJ license terms.
 - **Static GTFS** — stop coordinates and route shapes, downloaded into
-  `data/gtfs_static/` and loaded into memory by background warmup tasks (subway
-  and railroad, each independent), off the startup critical path. A group's load
+  `data/gtfs_static/` and loaded into memory by background warmup tasks (subway,
+  railroad, and PATH, each an independent group), off the startup critical path. A group's load
   retries automatically on failure, so a degraded network at boot self-heals
   rather than stranding the map until the next deploy.
 - **AirTrain JFK**: 511NY open-data static GTFS, with no real-time feed. Committed

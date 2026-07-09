@@ -95,6 +95,52 @@ const RAILROAD_ROUTE_MAX_SLICE = 0.3;
 // show up as straight-chord fallback on segments that should glide.
 const RAILROAD_ROUTE_ACCEPT_DIST = 0.0025;
 
+// PATH's longest real inter-station gap, Journal Square to Harrison, is about
+// 0.071 in the isotropic basis: too long for the subway cap (0.05) but far
+// short of the railroad's branch-scale gaps (0.3 admits Montauk-length runs
+// PATH never has). 0.15 admits every real PATH segment with 2x headroom while
+// still rejecting a far misprojection; PATH lines are simple end-to-end runs
+// with no loops, so the nearest lobe is always the right one.
+const PATH_ROUTE_MAX_SLICE = 0.15;
+// Same starting tolerance as the subway/railroad projection; loosen only if
+// PATH station coordinates prove to sit off the modeled track, which would
+// show up as straight-chord fallback on segments that should glide.
+const PATH_ROUTE_ACCEPT_DIST = 0.0025;
+
+// PATH's slice picker. WHY not computeRouteSlice directly: PATH keeps BOTH
+// direction polylines for most routes (the reverse shape is a parallel track
+// a few meters offset, so the added-geometry dedup keeps it), and
+// computeRouteSlice projects each endpoint onto its own nearest polyline
+// independently. With twin polylines that near each other, the two endpoints
+// can each win on a different twin by a micro-distance coin flip (observed
+// live: 0.00057 vs 0.00058), which fails the same-polyline requirement and
+// drops the glide to the straight chord for no reason. This variant scores
+// each polyline with BOTH endpoints together and slices along the best one,
+// so twins can never split a segment; the acceptDist and maxSlice gates are
+// unchanged, and picking the reverse-direction twin is harmless because the
+// arc is walked in the sign of (s1 - s0). The other systems keep
+// computeRouteSlice: their reverse shapes mostly collapse in the dedup, so
+// the split cannot occur there and their behavior must not change.
+function computePathRouteSlice(
+  train,
+  geom,
+  { maxSlice = PATH_ROUTE_MAX_SLICE, acceptDist = PATH_ROUTE_ACCEPT_DIST } = {},
+) {
+  if (train.prev_lat == null || !geom) return null;
+  let best = null;
+  for (const poly of geom) {
+    const p0 = projectOntoRoute([poly], train.prev_lat, train.prev_lon, acceptDist);
+    const p1 = projectOntoRoute([poly], train.latitude, train.longitude, acceptDist);
+    if (!p0 || !p1) continue;
+    if (Math.abs(p1.s - p0.s) > maxSlice) continue;
+    const score = Math.max(p0.dist, p1.dist);
+    if (best === null || score < best.score) {
+      best = { score, points: poly.points, cum: poly.cum, s0: p0.s, s1: p1.s };
+    }
+  }
+  return best && { points: best.points, cum: best.cum, s0: best.s0, s1: best.s1 };
+}
+
 // minClockOffset = the minimum observed (clientNow - fetched_at), approximating
 // browser-vs-server skew plus minimal latency. Used to skew-correct the
 // arrivals countdown (map.js, which compares absolute MTA timestamps to the
@@ -611,5 +657,6 @@ if (typeof module !== "undefined" && module.exports) {
     selectHeadwayBand, airtrainStationPopupHtml, retryUntil,
     PATH_BUCKET_ORDER, PATH_FALLBACK_COLOR, orderedPathBuckets, pathColor,
     formatPathHead, pathTrainPopupHtml, pathArrivalsHtml,
+    PATH_ROUTE_MAX_SLICE, PATH_ROUTE_ACCEPT_DIST, computePathRouteSlice,
   };
 }

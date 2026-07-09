@@ -85,7 +85,9 @@ countdown.
 
 PATH (Port Authority Trans-Hudson) is on the map as its own toggleable layer:
 route polylines in each route's own color, clickable station dots with live
-arrival popups, and trains drawn at the station they are approaching. The
+arrival popups, and trains that glide along the route geometry between
+stations once the backend has observed an advance (a train not yet observed
+moving sits placed at the station it is approaching). The
 backend downloads and caches PATH's static GTFS in its own warmup group and
 serves the 13 parent-station markers from `GET /api/path-stops`
 (`[{id, name, lat, lon}]`) and the seven routes with their rider-facing names,
@@ -109,11 +111,12 @@ refreshes, so nothing may key on them: the backend synthesizes cross-poll
 identity instead, matching each generation on stable fields (same stop and
 route/direction with a nearby arrival prediction, or a unique advance to the
 next station in the static stop order) and resetting identity rather than
-guessing when a match is ambiguous. The frontend still rebuilds the PATH
-train layer wholesale on every poll (keyed diffing on the stable ids lands
-with gliding in the next phase), and trip hashes are never displayed. And
-PATH publishes no service alerts feed, so PATH is the one system on the map
-whose popups carry no alerts block. PATH data is courtesy of PANYNJ, published via Trillium, and
+guessing when a match is ambiguous. The frontend keys its PATH markers on
+those stable ids (the same diffing the other systems use), so markers and
+open popups survive polls, and anchored trains glide between stations along
+the drawn polylines under PATH's own slice tolerances; trip hashes are never
+displayed. And PATH publishes no service alerts feed, so PATH is the one
+system on the map whose popups carry no alerts block. PATH data is courtesy of PANYNJ, published via Trillium, and
 subject to their license terms. PATH stop ids stay in their own namespace:
 they are numeric and collide with MTA numeric ids across systems.
 
@@ -425,6 +428,14 @@ warnings.
   duplicate re-served generations carry everything unchanged. The bridge's
   unstable trip hash is dropped from the payload. Frontend gliding over
   these ids is 13d-2.
+- [x] **13d-2. PATH gliding (frontend)**: applyPath moves from the 13c
+  wholesale rebuild to keyed diffing on the backend's stable ids, so markers
+  and open popups survive polls. Anchored trains join the shared animateTrains
+  glide path, interpolating along the same polylines the layer draws (a PATH
+  entry in the subway-style interpolation index) under PATH's own slice cap
+  (Journal Square to Harrison outgrows the subway cap; railroad-scale slack
+  would surrender misprojection protection for nothing). Anchorless trains sit
+  placed, as before.
 
 ## Notes
 

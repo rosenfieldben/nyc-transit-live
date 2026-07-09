@@ -26,6 +26,9 @@ const {
   formatRailroadHead,
   PATH_BUCKET_ORDER,
   PATH_FALLBACK_COLOR,
+  PATH_ROUTE_MAX_SLICE,
+  PATH_ROUTE_ACCEPT_DIST,
+  computePathRouteSlice,
   orderedPathBuckets,
   pathColor,
   formatPathHead,
@@ -475,6 +478,71 @@ test("a railroad-scale segment is admitted by the railroad cap, rejected by the 
   assert.equal(computeRouteSlice(train, geom), null); // subway default (0.05) rejects
   const slice = computeRouteSlice(train, geom, { maxSlice: RAILROAD_ROUTE_MAX_SLICE });
   assert.ok(slice && Math.abs(slice.s1 - slice.s0) > 0.14); // railroad cap admits
+});
+
+test("the PATH slice cap sits between the subway and railroad caps", () => {
+  // PATH's longest real gap (Journal Square to Harrison, ~0.071) exceeds the
+  // subway cap, but PATH never has railroad branch-scale gaps, so a cap as
+  // loose as the railroad's would give up misprojection protection for
+  // nothing. Both orderings matter.
+  assert.ok(PATH_ROUTE_MAX_SLICE > ROUTE_MAX_SLICE);
+  assert.ok(PATH_ROUTE_MAX_SLICE < RAILROAD_ROUTE_MAX_SLICE);
+  assert.equal(PATH_ROUTE_ACCEPT_DIST, 0.0025); // same projection tolerance as the others
+});
+
+test("a PATH-scale segment is admitted by the PATH cap, rejected by the subway default", () => {
+  // ~0.071 in the isotropic basis: the magnitude of Journal Square to
+  // Harrison, PATH's longest real inter-station gap. The subway default
+  // rejects it (falls back to the chord); the PATH cap admits it so the NJ
+  // side glides along the track geometry.
+  const geom = geomFrom([[0, 0], [0.071, 0]]); // arc length 0.071 (lat units)
+  const train = { prev_lat: 0, prev_lon: 0, latitude: 0.071, longitude: 0 };
+  assert.equal(computeRouteSlice(train, geom), null); // subway default (0.05) rejects
+  const slice = computeRouteSlice(train, geom, { maxSlice: PATH_ROUTE_MAX_SLICE });
+  assert.ok(slice && Math.abs(slice.s1 - slice.s0) > 0.07); // PATH cap admits
+});
+
+test("computePathRouteSlice cannot let twin direction polylines split a segment", () => {
+  // The live-observed failure computeRouteSlice has on PATH geometry: the two
+  // direction polylines are parallel tracks a few meters apart, and each
+  // endpoint independently picks whichever twin is micro-closer. Here prev
+  // sits nearer twin A (lon 0.0001) and next nearer twin B (lon 0.0009), so
+  // the same-polyline rule kills the generic slice; the PATH picker scores
+  // each twin with both endpoints together and glides anyway.
+  const twinA = [[0, 0], [0.02, 0]];
+  const twinB = [[0, 0.001], [0.02, 0.001]];
+  const geom = geomFrom(twinA, twinB);
+  const train = { prev_lat: 0, prev_lon: 0.0001, latitude: 0.02, longitude: 0.0009 };
+  assert.equal(computeRouteSlice(train, geom, { maxSlice: PATH_ROUTE_MAX_SLICE }), null);
+  const slice = computePathRouteSlice(train, geom);
+  assert.ok(slice, "the PATH picker must slice a twin the generic rule split");
+  assert.ok(Math.abs(slice.s1 - slice.s0) > 0.019); // the full segment, one twin
+});
+
+test("computePathRouteSlice keeps the acceptDist and maxSlice gates", () => {
+  const geom = geomFrom([[0, 0], [0.2, 0]]);
+  // Off-track endpoint: nothing within tolerance, chord fallback (null).
+  assert.equal(
+    computePathRouteSlice({ prev_lat: 0.01, prev_lon: 0, latitude: 0.2, longitude: 0 }, geom),
+    null,
+  );
+  // Over-long arc: beyond the PATH cap, rejected like the generic rule.
+  assert.equal(
+    computePathRouteSlice({ prev_lat: 0, prev_lon: 0, latitude: 0.2, longitude: 0 }, geom),
+    null,
+  );
+  // No anchors or no geometry: null, the placed fallback.
+  assert.equal(computePathRouteSlice({ prev_lat: null, latitude: 0.1, longitude: 0 }, geom), null);
+  assert.equal(
+    computePathRouteSlice({ prev_lat: 0, prev_lon: 0, latitude: 0.1, longitude: 0 }, undefined),
+    null,
+  );
+  // A PATH-scale segment (Journal Square to Harrison magnitude) is admitted.
+  const ok = computePathRouteSlice(
+    { prev_lat: 0, prev_lon: 0, latitude: 0.071, longitude: 0 },
+    geomFrom([[0, 0], [0.071, 0]]),
+  );
+  assert.ok(ok && Math.abs(ok.s1 - ok.s0) > 0.07);
 });
 
 test("trainLatLng follows the route slice, not the chord, when _route is present", () => {

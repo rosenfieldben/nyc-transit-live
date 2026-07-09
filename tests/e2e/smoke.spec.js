@@ -539,45 +539,70 @@ test("15. PATH cold start: dots and lines appear without a reload once 503s heal
   expect(warmed).toEqual({ pathStops: 3, pathRoutes: 3 }); // one request per attempt, then stopped
 });
 
-test("16. PATH churn: wholesale rebuild across disjoint-id and identical-id polls", async ({ page }) => {
-  // The pinned 13c behavior: the bridge's trip ids churn 100% on an upstream
-  // refresh, and the frontend rebuilds the layer wholesale instead of diffing
-  // on trip_id. Count stability alone cannot distinguish a wholesale rebuild
-  // from a (forbidden) trip_id-keyed diff, so this pins BOTH regimes: churned
-  // ids keep the count with no error, and an IDENTICAL payload still replaces
-  // every marker DOM node, which a keyed diff would have reused.
-  const genA = fx.path("a").trains.map((t) => t.trip_id);
-  const genB = fx.path("b").trains.map((t) => t.trip_id);
-  expect(genA.filter((id) => genB.includes(id))).toEqual([]); // fully disjoint ids
-
+test("16. PATH identity: markers persist across polls, an advance glides, popups survive", async ({ page }) => {
+  // 13c rebuilt this layer wholesale every poll because only unstable bridge
+  // hashes existed; 13d's backend serves a stable `id`, so this test pins the
+  // INVERSION: the same DOM nodes survive the next poll, an anchored advance
+  // GLIDES along the route polyline instead of teleporting or churning, an
+  // open popup lives through the poll, and the anchorless train stays placed.
   const pageErrors = [];
   const ctx = await boot(page);
   page.on("pageerror", (err) => pageErrors.push(String(err)));
   await waitForPathReady(page);
 
-  // Poll 2: same physical picture, 100% churned trip ids (an upstream refresh).
-  ctx.overrides.path = (route, fixtures) => json(route, fixtures.path("b"));
-  await page.clock.runFor(15_000);
-  await expect(pathMarkers(page)).toHaveCount(2);
-  await expect(page.locator("#status")).toContainText("2 PATH");
-  await expect(page.locator("#status")).not.toHaveClass(/error/);
-
-  // Poll 3: byte-identical to poll 2 (normal for PATH: the bridge regenerates
-  // faster than the upstream refreshes). Tag the current marker elements, then
-  // let the poll fire: a wholesale rebuild replaces every element, so no tag
-  // survives; a trip_id-keyed diff would keep the tagged elements alive.
+  // Tag the current marker DOM nodes so reuse (not rebuild) is observable.
   await page.evaluate(() => {
-    for (const el of document.querySelectorAll(".path-marker")) el.dataset.stale = "1";
+    for (const el of document.querySelectorAll(".path-marker")) el.dataset.original = "1";
   });
+  // Open the anchorless WTC train's popup; it must survive the next poll.
+  await page.evaluate(() => {
+    pathTrainRecords.get("p-1").marker.openPopup();
+  });
+  await expect(popup(page)).toContainText("scheduled position (no GPS)");
+
+  // Next poll: p-2 advanced Newark -> WTC with the matcher's anchor pair;
+  // p-1 unchanged (still anchorless).
+  ctx.overrides.path = (route, fixtures) => json(route, fixtures.pathAdvanced());
   await page.clock.runFor(15_000);
+
+  // No add/remove churn: same count, every original DOM node still present.
   await expect(pathMarkers(page)).toHaveCount(2);
   expect(
-    await page.evaluate(() => document.querySelectorAll('.path-marker[data-stale="1"]').length),
-  ).toBe(0);
+    await page.evaluate(() => document.querySelectorAll('.path-marker[data-original="1"]').length),
+  ).toBe(2);
+  // The popup survived the poll (in 13c popups died every poll by design).
+  expect(await page.evaluate(() => pathTrainRecords.get("p-1").marker.isPopupOpen())).toBe(true);
 
+  const latLng = (id) =>
+    page.evaluate((trainId) => {
+      const pos = pathTrainRecords.get(trainId).marker.getLatLng();
+      return [pos.lat, pos.lng];
+    }, id);
+
+  // The anchored train sits strictly between Newark and WTC right after the
+  // poll (f = 0.25 of its 60s segment)...
+  const between = ([lat, lng]) =>
+    lat > 40.71271 && lat < 40.73454 && lng > -74.16375 && lng < -74.01193;
+  const before = await latLng("p-2");
+  expect(between(before)).toBe(true);
+
+  // ...and keeps moving as the fake clock advances (animateTrains runs on
+  // rAF, which page.clock drives). At the glide midpoint (+30s, f = 0.5) the
+  // 862 POLYLINE position is still on the long western segment (lat ~40.734),
+  // while the straight chord's midpoint would be at lat ~40.723: asserting
+  // lat stays high proves the marker follows the route geometry admitted by
+  // the PATH slice cap, not the chord.
+  await page.clock.runFor(15_000);
+  const mid = await latLng("p-2");
+  expect(between(mid)).toBe(true);
+  expect(mid[1]).toBeGreaterThan(before[1]); // progressing east toward WTC
+  expect(mid[0]).toBeGreaterThan(40.73); // on the polyline, not the chord
+
+  // The anchorless train never moved: placed exactly at its station.
+  expect(await latLng("p-1")).toEqual([40.71271, -74.01193]);
   expect(pageErrors).toEqual([]);
-  expect(ctx.counts.path).toBe(3); // exactly the three polls
 });
+
 
 test("17. PATH click targets: the station dot opens arrivals, the diamond above it opens the train", async ({ page }) => {
   // Regression pin for the occlusion bug: every PATH train is placed at
@@ -589,7 +614,7 @@ test("17. PATH click targets: the station dot opens arrivals, the diamond above 
   await boot(page);
   await waitForPathReady(page);
 
-  // WTC has a train placed on it in the fixtures (path-a-1 shares its coords).
+  // WTC has a train placed on it in the fixtures (p-1 shares its coords).
   // Zoom in so neighboring fixture markers cannot straddle the click point.
   await page.evaluate(() => {
     map.setView([40.71271, -74.01193], 14);

@@ -196,26 +196,54 @@ const pathRoutes = () => [
   },
 ];
 
-// The PATH realtime feed: envelope key is `trains` (not `data`), every train
-// schedule-placed at its next station with null prev anchors, exactly as 13b
-// serves it. `gen` varies the trip ids: the bridge's ids churn 100% across
-// upstream refreshes, so the churn e2e test serves gen "a" then gen "b" (fully
-// disjoint ids, same physical picture) and expects an unchanged marker count.
-const path = (gen = "a") => ({
+// The PATH realtime feed, SERVED shape (13d): envelope key is `trains` (not
+// `data`), and every train carries the backend-minted stable `id`; the
+// bridge's unstable trip hash never reaches this payload (matcher contract),
+// so the e2e stubs stopped modeling disjoint raw ids when the backend took
+// identity over. Anchors are null in the steady state (trains sit placed).
+const path = () => ({
   fetched_at: FROZEN_S,
   feed_timestamp: FROZEN_S - 5,
   trains: [
     {
-      trip_id: `path-${gen}-1`, route_id: "862",
+      id: "p-1", route_id: "862",
       latitude: 40.71271, longitude: -74.01193, stop_id: "26734",
       stop_name: "World Trade Center", direction: "To New York",
       prev_lat: null, prev_lon: null, prev_time: null, next_time: FROZEN_S + 120,
     },
     {
-      trip_id: `path-${gen}-2`, route_id: "862",
+      id: "p-2", route_id: "862",
       latitude: 40.73454, longitude: -74.16375, stop_id: "26733",
-      stop_name: "Newark", direction: "To New Jersey",
-      prev_lat: null, prev_lon: null, prev_time: null, next_time: FROZEN_S + 300,
+      stop_name: "Newark", direction: "To New York",
+      prev_lat: null, prev_lon: null, prev_time: null, next_time: FROZEN_S + 15,
+    },
+  ],
+});
+
+// The NEXT poll after path(): p-2 advanced Newark -> World Trade Center and
+// gained the glide anchor pair (prev = Newark, prev_time = its predicted
+// arrival there), exactly what the matcher's branch 2 emits; p-1 is
+// unchanged. next_time is FROZEN_S + 60 so the fake clock lands the glide
+// midpoint (f = 0.5) at +30s, where the 862 polyline position (lat ~40.734,
+// still on the long first segment) is far from the straight chord's midpoint
+// (lat ~40.723): the e2e can therefore assert route-following, not just
+// movement.
+const pathAdvanced = () => ({
+  fetched_at: FROZEN_S + 15,
+  feed_timestamp: FROZEN_S + 10,
+  trains: [
+    {
+      id: "p-1", route_id: "862",
+      latitude: 40.71271, longitude: -74.01193, stop_id: "26734",
+      stop_name: "World Trade Center", direction: "To New York",
+      prev_lat: null, prev_lon: null, prev_time: null, next_time: FROZEN_S + 120,
+    },
+    {
+      id: "p-2", route_id: "862",
+      latitude: 40.71271, longitude: -74.01193, stop_id: "26734",
+      stop_name: "World Trade Center", direction: "To New York",
+      prev_lat: 40.73454, prev_lon: -74.16375, prev_time: FROZEN_S,
+      next_time: FROZEN_S + 60,
     },
   ],
 });
@@ -256,6 +284,7 @@ module.exports = {
   pathStops,
   pathRoutes,
   path,
+  pathAdvanced,
   pathArrivals,
   alerts,
 };

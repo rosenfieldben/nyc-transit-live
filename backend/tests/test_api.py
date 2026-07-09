@@ -1928,3 +1928,68 @@ async def test_status_reports_alert_system_health(client, status_env, alerts_cac
     assert alerts_status["degraded_systems"] == []
     assert alerts_status["systems"]["subway"]["retained_since"] is None
     assert alerts_status["systems"]["subway"]["last_error"] is None
+
+
+# The pure merge's cap is unit-tested in test_feeds_alerts; these prove the
+# main-level glue actually THREADS the prior retention clock (health's
+# retained_since) into it, so the cap measures from the ORIGINAL down time rather
+# than resetting every poll. Regression target: a `prev_retained_since = {}` or an
+# is-not-None-to-truthiness slip would keep an open-ended (ends_at None) alert
+# forever and still ship green without these. The clock is pinned so the boundary
+# is exact; MNR fails while the other three decode (a partial, still-successful poll).
+MNR_OPEN_ALERT = {**ALERT, "id": "mnr:open", "ends_at": None}
+
+
+def _seed_retained_mnr(alerts_cache, retained_since):
+    alerts_cache.update(alerts=[MNR_OPEN_ALERT], fetched_at=0.0, active=1, suppressed=0)
+    for health in alerts_cache["health"].values():
+        health["fresh_at"] = 0.0
+    alerts_cache["health"]["MNR"]["retained_since"] = retained_since
+    alerts_cache["health"]["MNR"]["last_error"] = {"status": 502, "detail": "down"}
+
+
+async def _poll_mnr_still_down(monkeypatch, now):
+    async def mnr_down(client_arg):
+        return [], 0, ["MNR"]  # the other three decoded zero, MNR still failing
+
+    monkeypatch.setattr(app_module, "fetch_service_alerts", mnr_down)
+    monkeypatch.setattr(app_module.time, "time", lambda: now)
+    await app_module._refresh_alerts(app_module.app, client=None)
+
+
+async def test_alerts_retention_cap_drops_open_ended_alert_from_original_start(
+    alerts_cache, monkeypatch
+):
+    now = 100_000.0
+    cap = app_module.ALERT_RETENTION_MAX_S
+    # Down since one second PAST the cap: threading the original start means this
+    # poll caps and drops. Resetting the clock to `now` each poll would keep it.
+    _seed_retained_mnr(alerts_cache, retained_since=now - cap - 1)
+    await _poll_mnr_still_down(monkeypatch, now)
+    assert alerts_cache["alerts"] == []  # open-ended alert dropped by the cap
+    assert alerts_cache["active"] == 0
+    assert alerts_cache["health"]["MNR"]["retained_since"] is None
+    assert alerts_cache["health"]["MNR"]["last_error"]["status"] == 502  # still degraded
+    assert alerts_cache["error"] is None  # a partial failure is still a successful poll
+
+
+async def test_alerts_retention_just_under_cap_keeps_alert(alerts_cache, monkeypatch):
+    now = 100_000.0
+    cap = app_module.ALERT_RETENTION_MAX_S
+    # Down since just under the cap: still retained, and the original start is
+    # carried forward unchanged (not bumped to now).
+    started = now - cap + 120
+    _seed_retained_mnr(alerts_cache, retained_since=started)
+    await _poll_mnr_still_down(monkeypatch, now)
+    assert {a["id"] for a in alerts_cache["alerts"]} == {"mnr:open"}
+    assert alerts_cache["health"]["MNR"]["retained_since"] == started
+
+
+async def test_alerts_retention_epoch_zero_start_is_not_reset(alerts_cache, monkeypatch):
+    # A 0.0 (epoch) start must be threaded through as-is: at now == cap it drops.
+    # A truthiness slip (`started or now`) would treat 0.0 as now and never cap.
+    cap = float(app_module.ALERT_RETENTION_MAX_S)
+    _seed_retained_mnr(alerts_cache, retained_since=0.0)
+    await _poll_mnr_still_down(monkeypatch, cap)
+    assert alerts_cache["alerts"] == []
+    assert alerts_cache["health"]["MNR"]["retained_since"] is None

@@ -17,10 +17,12 @@ bridge feed. REALTIME TRIP IDS ARE UNSTABLE: the bridge feed was probed live on
 2026-07-05 and its trip ids showed 100% churn across upstream refreshes,
 including 29 of 50 trains whose ids changed while their arrival payloads were
 byte-identical. Nothing in this module or any later PATH phase may key anything
-on PATH trip ids. The static trips table parsed here is used ONLY as an
-internal grouping input for the modal shape selection and is never joined to
-realtime; later phases must synthesize train identity from stable fields
-(route, direction, next stop, nearest arrival time) instead.
+on PATH trip ids. The static trips table parsed here is used ONLY as internal
+grouping input (modal shape selection, and picking the representative trip for
+the 13d station order) and is never joined to realtime;
+feeds.match_path_identities synthesizes train identity from stable fields
+(route, direction, next stop, nearest arrival time) instead, walking this
+module's build_path_station_order output for its advance matching.
 
 The realtime bridge references PARENT station ids, so the parent stations
 (location_type=1) are the marker set; the child platform to parent map is built
@@ -192,6 +194,84 @@ def _parse_shapes(raw: IO[bytes]) -> dict[str, list]:
     return shapes
 
 
+def _parse_stop_times(raw: IO[bytes]) -> dict[str, list[str]]:
+    """stop_times.txt -> trip_id -> stop ids ordered by stop_sequence.
+
+    The stop ids here are CHILD PLATFORM ids (7817xx, 7947xx), NOT the parent
+    station ids the realtime bridge uses; callers must resolve them through
+    the child_to_parent map before joining anything realtime-facing (see
+    build_path_station_order). Rows with a blank trip_id/stop_id or a
+    non-integer stop_sequence are skipped; a duplicate (trip, sequence) keeps
+    the first row seen, matching the first-writer-wins discipline of the
+    other parsers.
+    """
+    raw_seqs: dict[str, dict[int, str]] = defaultdict(dict)
+    reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
+    for row in reader:
+        trip_id = (row.get("trip_id") or "").strip()
+        stop_id = (row.get("stop_id") or "").strip()
+        if not trip_id or not stop_id:
+            continue
+        try:
+            seq = int((row.get("stop_sequence") or "").strip())
+        except ValueError:
+            continue
+        raw_seqs[trip_id].setdefault(seq, stop_id)
+    return {
+        trip_id: [stop_id for _seq, stop_id in sorted(seqs.items())]
+        for trip_id, seqs in raw_seqs.items()
+    }
+
+
+def build_path_station_order(
+    trips: dict[str, dict],
+    stop_times: dict[str, list[str]],
+    child_to_parent: dict[str, str],
+) -> dict[tuple[str, str | None], list[str]]:
+    """Ordered PARENT-station list per (route_id, direction_id), for the 13d
+    advance matcher's successor relation (feeds.match_path_identities).
+
+    For each (route_id, direction_id) the representative trip is the one with
+    the MOST stop_times rows (the full-length run; short-turn variants stop
+    early), ties broken to the smallest trip_id so the pick is deterministic
+    across regenerations. Every sequence entry is resolved through
+    child_to_parent BEFORE the order is built: stop_times.txt lists child
+    platform ids, which the realtime bridge never uses, so an unresolved
+    sequence would contain zero feed-visible ids and the matcher's
+    predecessor lookups would all miss. Entries with no parent mapping are
+    dropped, and repeat visits keep only the first occurrence (a well-formed
+    run visits each station once; several platforms of one station must not
+    make the station its own predecessor).
+
+    Orders shorter than 2 stations are dropped: a successor relation needs at
+    least one edge. A pure transform (no zip read, no network), like
+    build_path_route_shapes, so the lifespan builds it from app.state
+    without re-parsing.
+    """
+    best: dict[tuple[str, str | None], tuple[int, str]] = {}
+    for trip_id, seq in stop_times.items():
+        trip = trips.get(trip_id)
+        if not trip or not trip.get("route_id"):
+            continue
+        key = (trip["route_id"], trip.get("direction_id"))
+        rank = (-len(seq), trip_id)  # most stops wins; ties to smallest trip_id
+        if key not in best or rank < (-best[key][0], best[key][1]):
+            best[key] = (len(seq), trip_id)
+
+    order: dict[tuple[str, str | None], list[str]] = {}
+    for key, (_length, trip_id) in best.items():
+        parents: list[str] = []
+        seen: set[str] = set()
+        for stop_id in stop_times[trip_id]:
+            parent = child_to_parent.get(stop_id)
+            if parent and parent not in seen:
+                parents.append(parent)
+                seen.add(parent)
+        if len(parents) >= 2:
+            order[key] = parents
+    return order
+
+
 def _parse_routes(raw: IO[bytes]) -> dict[str, dict]:
     """routes.txt -> route_id -> {long_name, short_name, color, text_color},
     each a stripped string or None when blank. Rows with no route_id are
@@ -219,10 +299,14 @@ def _parse_routes(raw: IO[bytes]) -> dict[str, dict]:
 
 def _parse_zip(zip_path: Path) -> dict:
     """Parse the PATH GTFS zip into {stops, child_to_parent, trips, shapes,
-    routes} in a single open. stops/trips/shapes are required members (a
-    missing one raises KeyError for load_path_static to recover from);
-    routes.txt is optional and yields an empty table when absent, the same
-    rider-facing-convenience leniency as the railroads."""
+    routes, stop_times} in a single open. stops/trips/shapes are required
+    members (a missing one raises KeyError for load_path_static to recover
+    from); routes.txt is optional and yields an empty table when absent, the
+    same rider-facing-convenience leniency as the railroads. stop_times.txt
+    is optional too, but for a different reason: a cached zip downloaded
+    before 13d lacks the member, and degrading to an empty table (which only
+    disables the advance-match branch of the identity matcher) beats wedging
+    the whole PATH group on an otherwise good cache."""
     with zipfile.ZipFile(zip_path) as zf:
         with zf.open("stops.txt") as raw:
             stops, child_to_parent = _parse_stops(raw)
@@ -237,12 +321,20 @@ def _parse_zip(zip_path: Path) -> dict:
         else:
             with member as raw:
                 routes = _parse_routes(raw)
+        try:
+            member = zf.open("stop_times.txt")
+        except KeyError:
+            stop_times: dict[str, list[str]] = {}
+        else:
+            with member as raw:
+                stop_times = _parse_stop_times(raw)
     return {
         "stops": stops,
         "child_to_parent": child_to_parent,
         "trips": trips,
         "shapes": shapes,
         "routes": routes,
+        "stop_times": stop_times,
     }
 
 
@@ -330,8 +422,8 @@ def build_path_route_shapes(
 async def load_path_static() -> dict:
     """Ensure/refresh the PATH GTFS zip and parse it.
 
-    Returns {stops, child_to_parent, trips, shapes, routes} on success, or {}
-    on any failure. Lenient by design, matching load_railroad_static: a
+    Returns {stops, child_to_parent, trips, shapes, routes, stop_times} on
+    success, or {} on any failure. Lenient by design, matching load_railroad_static: a
     download or parse failure logs and yields an EMPTY result rather than
     raising, because the warmup task in main.py owns retrying. PATH is a
     single system, so the caller treats an empty result as the whole group
@@ -367,13 +459,19 @@ async def load_path_static() -> dict:
         except Exception as exc:
             logger.warning("PATH static GTFS unavailable (%s); skipping", exc)
             return {}
+    if not data["stop_times"]:
+        # Advance matching (13d) degrades to same-stop-only until the cache
+        # refreshes with a zip that carries the member; worth one line so an
+        # operator can tell degraded matching from a code bug.
+        logger.warning("PATH static GTFS has no stop_times.txt; advance matching disabled")
     logger.info(
         "Loaded PATH static GTFS: %d parent stations, %d child platforms, "
-        "%d trips, %d shapes, %d routes",
+        "%d trips, %d shapes, %d routes, %d trips with stop_times",
         len(data["stops"]),
         len(data["child_to_parent"]),
         len(data["trips"]),
         len(data["shapes"]),
         len(data["routes"]),
+        len(data["stop_times"]),
     )
     return data

@@ -35,6 +35,7 @@ DEAD_URL = "http://127.0.0.1:9/path-nj-us.zip"
 STOPS_COLS = ["stop_id", "stop_name", "stop_lat", "stop_lon", "location_type", "parent_station"]
 TRIPS_COLS = ["route_id", "service_id", "trip_id", "trip_headsign", "direction_id", "shape_id"]
 SHAPES_COLS = ["shape_id", "shape_pt_sequence", "shape_pt_lat", "shape_pt_lon"]
+STOP_TIMES_COLS = ["trip_id", "stop_id", "stop_sequence"]
 ROUTES_COLS = [
     "route_id",
     "route_short_name",
@@ -149,9 +150,12 @@ def write_path_zip(
     trips=TRIP_ROWS,
     shapes=DEFAULT_SHAPE_ROWS,
     routes=ROUTE_ROWS,
+    stop_times=None,
     members=None,
 ):
-    """Write a minimal PATH GTFS zip; `members` overrides the file map entirely."""
+    """Write a minimal PATH GTFS zip; `members` overrides the file map entirely.
+    stop_times is optional (13d): most zips in these tests predate the member,
+    which is exactly the leniency _parse_zip must keep."""
     if members is None:
         members = {
             "stops.txt": csv_stream(STOPS_COLS, stops).getvalue(),
@@ -159,6 +163,8 @@ def write_path_zip(
             "shapes.txt": csv_stream(SHAPES_COLS, shapes).getvalue(),
             "routes.txt": csv_stream(ROUTES_COLS, routes).getvalue(),
         }
+        if stop_times is not None:
+            members["stop_times.txt"] = csv_stream(STOP_TIMES_COLS, stop_times).getvalue()
     with zipfile.ZipFile(path, "w") as zf:
         for name, content in members.items():
             zf.writestr(name, content)
@@ -225,6 +231,119 @@ def test_parse_stops_skips_blank_stop_id():
     rows = [{"stop_id": "", "stop_name": "NoId", "location_type": "1", "parent_station": "1"}]
     parents, child_to_parent = path_static._parse_stops(csv_stream(STOPS_COLS, rows))
     assert parents == {} and child_to_parent == {}
+
+
+# ---------------- _parse_stop_times + build_path_station_order (13d) ----------------
+
+# Child platform ids resolving to two-plus parents, the real feed's shape:
+# stop_times.txt NEVER lists parent ids, so everything below goes through the
+# child_to_parent resolution the matcher depends on.
+ST_CHILD_TO_PARENT = {
+    "781718": "26733",  # Newark platform
+    "781719": "26733",
+    "781750": "26734",  # World Trade Center platform
+    "781730": "26731",  # Journal Square platform
+}
+
+
+def st_rows(trip_id, stop_ids, start=1):
+    return [
+        {"trip_id": trip_id, "stop_id": sid, "stop_sequence": str(start + i)}
+        for i, sid in enumerate(stop_ids)
+    ]
+
+
+def test_parse_stop_times_orders_by_sequence_not_file_order():
+    rows = [
+        {"trip_id": "t1", "stop_id": "781750", "stop_sequence": "3"},
+        {"trip_id": "t1", "stop_id": "781718", "stop_sequence": "1"},
+        {"trip_id": "t1", "stop_id": "781730", "stop_sequence": "2"},
+    ]
+    parsed = path_static._parse_stop_times(csv_stream(STOP_TIMES_COLS, rows))
+    assert parsed == {"t1": ["781718", "781730", "781750"]}
+
+
+def test_parse_stop_times_skips_malformed_and_blank_rows():
+    rows = [
+        {"trip_id": "t1", "stop_id": "781718", "stop_sequence": "1"},
+        {"trip_id": "t1", "stop_id": "781730", "stop_sequence": "two"},  # non-integer seq
+        {"trip_id": "", "stop_id": "781750", "stop_sequence": "3"},  # blank trip
+        {"trip_id": "t1", "stop_id": "", "stop_sequence": "4"},  # blank stop
+        {"trip_id": "t1", "stop_id": "781750", "stop_sequence": "5"},
+    ]
+    parsed = path_static._parse_stop_times(csv_stream(STOP_TIMES_COLS, rows))
+    assert parsed == {"t1": ["781718", "781750"]}
+
+
+def test_parse_stop_times_duplicate_sequence_first_writer_wins():
+    rows = [
+        {"trip_id": "t1", "stop_id": "781718", "stop_sequence": "1"},
+        {"trip_id": "t1", "stop_id": "781750", "stop_sequence": "1"},  # duplicate seq
+    ]
+    parsed = path_static._parse_stop_times(csv_stream(STOP_TIMES_COLS, rows))
+    assert parsed == {"t1": ["781718"]}
+
+
+ST_TRIPS = {
+    "long": {"route_id": "862", "direction_id": "0", "shape_id": "s1", "headsign": None},
+    "short": {"route_id": "862", "direction_id": "0", "shape_id": "s2", "headsign": None},
+    "back": {"route_id": "862", "direction_id": "1", "shape_id": "s1", "headsign": None},
+}
+
+
+def test_station_order_resolves_child_platforms_to_parents():
+    # THE 13d TRAP, pinned: stop_times.txt lists child platform ids (7817xx),
+    # never the parent ids (267xx) the realtime bridge uses. An order built
+    # without the resolution would contain zero feed-visible ids, so every
+    # entry must be a parent id and none may be a child id.
+    stop_times = {"long": ["781718", "781730", "781750"]}
+    order = path_static.build_path_station_order(ST_TRIPS, stop_times, ST_CHILD_TO_PARENT)
+    assert order == {("862", "0"): ["26733", "26731", "26734"]}
+    for stations in order.values():
+        assert not any(sid in ST_CHILD_TO_PARENT for sid in stations)  # no child id survives
+
+
+def test_station_order_longest_trip_wins_per_route_and_direction():
+    # The short-turn variant must not define the order: the run with the most
+    # stops is the full-length pattern.
+    stop_times = {
+        "long": ["781718", "781730", "781750"],
+        "short": ["781730", "781750"],
+        "back": ["781750", "781730", "781718"],
+    }
+    order = path_static.build_path_station_order(ST_TRIPS, stop_times, ST_CHILD_TO_PARENT)
+    assert order[("862", "0")] == ["26733", "26731", "26734"]  # from "long", not "short"
+    assert order[("862", "1")] == ["26734", "26731", "26733"]  # directions stay separate
+
+
+def test_station_order_length_tie_breaks_to_smallest_trip_id():
+    trips = {
+        "b": {"route_id": "862", "direction_id": "0", "shape_id": None, "headsign": None},
+        "a": {"route_id": "862", "direction_id": "0", "shape_id": None, "headsign": None},
+    }
+    stop_times = {
+        "b": ["781750", "781730"],
+        "a": ["781718", "781730"],
+    }
+    order = path_static.build_path_station_order(trips, stop_times, ST_CHILD_TO_PARENT)
+    assert order == {("862", "0"): ["26733", "26731"]}  # trip "a" (smallest id) picked
+
+
+def test_station_order_drops_unresolvable_entries_and_repeat_visits():
+    # An unmapped platform contributes nothing, and a second platform of an
+    # already-seen station must not make the station its own predecessor.
+    stop_times = {"long": ["781718", "99999", "781719", "781730"]}
+    order = path_static.build_path_station_order(ST_TRIPS, stop_times, ST_CHILD_TO_PARENT)
+    assert order == {("862", "0"): ["26733", "26731"]}
+
+
+def test_station_order_drops_sub_two_station_orders_and_unknown_trips():
+    stop_times = {
+        "long": ["781718", "781719"],  # both resolve to Newark: 1 station, no edge
+        "ghost": ["781718", "781730"],  # trip absent from trips.txt: no route to key by
+    }
+    order = path_static.build_path_station_order(ST_TRIPS, stop_times, ST_CHILD_TO_PARENT)
+    assert order == {}
 
 
 # ---------------- _parse_routes: names + colors, no route_desc ----------------
@@ -320,14 +439,29 @@ def test_parse_shapes_ordered_by_sequence_and_rounded():
 # ---------------- _parse_zip ----------------
 
 
-def test_parse_zip_returns_five_tables(tmp_path):
+def test_parse_zip_returns_six_tables(tmp_path):
     path = tmp_path / "g.zip"
-    write_path_zip(path)
+    write_path_zip(
+        path,
+        stop_times=[{"trip_id": "t1", "stop_id": "781718", "stop_sequence": "1"}],
+    )
     data = path_static._parse_zip(path)
-    assert set(data) == {"stops", "child_to_parent", "trips", "shapes", "routes"}
+    assert set(data) == {"stops", "child_to_parent", "trips", "shapes", "routes", "stop_times"}
     assert data["stops"]["26734"]["name"] == "World Trade Center"
     assert data["child_to_parent"]["781718"] == "26733"
     assert data["routes"]["862"]["color"] == "d93a30"
+    assert data["stop_times"] == {"t1": ["781718"]}
+
+
+def test_parse_zip_missing_stop_times_degrades_to_empty(tmp_path):
+    # A cached zip downloaded before 13d has no stop_times.txt; it must still
+    # parse (advance matching just stays disabled) rather than wedging the
+    # whole PATH group on an otherwise good cache.
+    path = tmp_path / "g.zip"
+    write_path_zip(path)
+    data = path_static._parse_zip(path)
+    assert data["stop_times"] == {}
+    assert "26733" in data["stops"] and "t1" in data["trips"]
 
 
 def test_parse_zip_missing_routes_degrades_to_empty(tmp_path):
@@ -687,3 +821,52 @@ def test_golden_modal_spread_is_exercised():
             by_route[t["route_id"]].add(t["shape_id"])
     assert len(by_route["1024"]) == 18
     assert len(by_route["862"]) == 10
+
+
+# ---------------- goldens over the trimmed stop_times (13d) ----------------
+#
+# stop_times.txt joins the committed fixture in 13d (gen_path_fixture.py trims
+# it to the kept trips and verifies the trimmed tables reproduce the full
+# feed's station orders before writing). Gated on its own guard because the
+# 13a fixture files can exist without it (a pre-13d checkout regenerated only
+# four tables); in CI a missing member fails instead of skipping.
+
+golden_stop_times = golden_fixture_guard(
+    FIXTURE_DIR / "stop_times.txt", "backend/scripts/gen_path_fixture.py"
+)
+
+
+@golden_stop_times
+def test_golden_station_order_matches_live_verified_862_sequence():
+    parents, child_to_parent = path_static._parse_stops(_fixture("stops.txt"))
+    trips = path_static._parse_trips(_fixture("trips.txt"))
+    stop_times = path_static._parse_stop_times(_fixture("stop_times.txt"))
+    order = path_static.build_path_station_order(trips, stop_times, child_to_parent)
+    # Route 862 direction 0 (New Jersey-bound), verified live 2026-07-07: the
+    # sequence the advance matcher walks for the Newark - World Trade Center line.
+    names = [parents[sid]["name"] for sid in order[("862", "0")]]
+    assert names == [
+        "World Trade Center",
+        "Exchange Place",
+        "Grove Street",
+        "Journal Square",
+        "Harrison",
+        "Newark",
+    ]
+
+
+@golden_stop_times
+def test_golden_station_orders_are_feed_visible_parent_ids():
+    # THE TRAP, against the real tables: stop_times.txt carries child platform
+    # ids, and an order built without child_to_parent resolution would contain
+    # zero ids the realtime bridge ever references. Every entry must be a
+    # known parent station and never a child platform id.
+    parents, child_to_parent = path_static._parse_stops(_fixture("stops.txt"))
+    trips = path_static._parse_trips(_fixture("trips.txt"))
+    stop_times = path_static._parse_stop_times(_fixture("stop_times.txt"))
+    order = path_static.build_path_station_order(trips, stop_times, child_to_parent)
+    assert order  # at least one (route, direction) produced a walkable order
+    for (route_id, direction_id), stations in order.items():
+        assert len(stations) >= 2
+        assert all(sid in parents for sid in stations)
+        assert not any(sid in child_to_parent for sid in stations)

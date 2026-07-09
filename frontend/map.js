@@ -41,7 +41,7 @@ const airtrainStationLayer = L.layerGroup().addTo(map); // 10 clickable stations
 // system toggles as one.
 const pathRouteLines = L.layerGroup().addTo(map); // route geometry, both directions per route
 const pathStations = L.layerGroup().addTo(map); // 13 clickable parent stations
-const pathTrains = L.layerGroup().addTo(map); // trains placed at their next station
+const pathTrains = L.layerGroup().addTo(map); // trains gliding between (or placed at) stations
 
 function bindToggle(checkboxId, layers) {
   const box = document.getElementById(checkboxId);
@@ -758,6 +758,18 @@ async function loadAirtrain() {
 const pathRouteColors = new Map();
 const pathRouteNames = new Map();
 
+// route_id -> [{ points, cum }], the geometry PATH trains glide along: the
+// same interpolation index structure the subway uses (routeIndex), built from
+// the same shape list the polylines below draw. Populated by loadPathRoutes
+// and read by applyPath; empty until the static loader lands, during which a
+// train with anchors glides the straight chord (the subway's fallback too).
+const pathRouteIndex = new Map();
+
+// PATH's inter-station gaps outgrow the subway cap (Journal Square to
+// Harrison is ~0.071 isotropic) but never reach railroad branch scale, so the
+// glide uses PATH's own tolerances from helpers.js.
+const PATH_SLICE_OPTS = { maxSlice: PATH_ROUTE_MAX_SLICE, acceptDist: PATH_ROUTE_ACCEPT_DIST };
+
 async function loadPathRoutes() {
   let routes;
   try {
@@ -774,6 +786,12 @@ async function loadPathRoutes() {
     const color = pathColor(route.color);
     pathRouteColors.set(route.id, color);
     if (route.name) pathRouteNames.set(route.id, route.name);
+    // The same shapes feed the glide index (13d): one build per load, so the
+    // interpolation and the drawn line can never disagree about geometry.
+    pathRouteIndex.set(
+      route.id,
+      route.shape.map((points) => ({ points, cum: polylineCumLengths(points) })),
+    );
     // Every entry of the shape list draws (the modal polyline per direction,
     // usually two per route); non-interactive like the AirTrain guideways so
     // clicks fall through to the station dots.
@@ -867,34 +885,76 @@ function pathIcon(train) {
   });
 }
 
+function pathTrainPopup(record) {
+  const t = record.latest;
+  // No routeAlertsBlock prepend (the subway trainPopup's alert join): PATH
+  // has no alerts feed. Reads record.latest so the popup a rider holds open
+  // across polls always renders the newest placement, like the other systems.
+  return pathTrainPopupHtml(
+    t,
+    pathRouteNames.get(t.route_id) || null,
+    pathRouteColors.get(t.route_id) ?? PATH_FALLBACK_COLOR,
+  );
+}
+
+// Stable backend id -> { marker, routeId, latest, fState, _segId }. 13c had no
+// such map on purpose: only raw bridge trip ids existed then, and they churn
+// 100% across upstream refreshes, so applyPath rebuilt the whole layer every
+// poll rather than key markers on them (phantom add/remove churn, popups dying
+// every poll, all documented here at the time). 13d's backend now owns a
+// synthetic cross-poll identity (feeds.match_path_identities) and serves its
+// stable `id` instead of the hash, which is what makes keyed diffing safe:
+// markers persist, popups survive polls, and anchored trains glide.
+const pathTrainRecords = new Map();
+
 function applyPath(data) {
-  // WHOLESALE REBUILD, deliberately unlike every other apply*: PATH bridge trip
-  // ids churn 100% when the upstream refreshes (recorded in path_static.py's
-  // module docstring), so the keyed diffing the bus/subway/railroad paths use
-  // would see every train as removed AND re-added on such a poll: phantom
-  // add/remove churn over what is physically the same handful of trains.
-  // Rebuilding ~50 markers is cheap, and a failed /api/path poll never reaches
-  // here (refreshSource keeps last-known markers on error, like the other
-  // systems). Cost accepted knowingly: an open PATH train popup survives at
-  // most one poll, since without stable identity there is nothing to reattach
-  // it to. 13d may add a synthetic cross-poll identity; until then nothing
-  // keys on trip_id.
-  pathTrains.clearLayers();
+  // Skew-corrected now, the same basis as the other apply* paths; anchored
+  // trains interpolate prev -> next via trainLatLng, anchorless trains sit
+  // placed at their station (trainLatLng's own fallback), exactly the payload
+  // contract /api/path documents.
+  const now = Date.now() / 1000 - (minClockOffset ?? 0);
+  const seen = new Set();
   for (const train of data) {
-    // Marker at the placed (next/current) station, the railroad position-less
-    // precedent: the bridge feed carries no vehicle positions, no prev anchors
-    // (null in 13b by design), so there is no interpolation and no gliding.
-    L.marker([train.latitude, train.longitude], { icon: pathIcon(train) })
-      .bindPopup(() =>
-        // No routeAlertsBlock prepend here either (the subway trainPopup's
-        // alert join): PATH has no alerts feed.
-        pathTrainPopupHtml(
-          train,
-          pathRouteNames.get(train.route_id) || null,
-          pathRouteColors.get(train.route_id) ?? PATH_FALLBACK_COLOR,
-        ),
-      )
-      .addTo(pathTrains);
+    seen.add(train.id);
+    const record = pathTrainRecords.get(train.id);
+    if (record) {
+      // Same slice caching as the subway/railroad paths: recompute only when
+      // the (route, anchor, next stop) segment changes. computePathRouteSlice
+      // (not computeRouteSlice) because PATH keeps twin direction polylines
+      // that must never split a segment between them.
+      const segId = `${train.route_id}|${train.prev_time}|${train.stop_id}`;
+      train._route =
+        record._segId === segId && record.latest._route
+          ? record.latest._route
+          : computePathRouteSlice(train, pathRouteIndex.get(train.route_id), PATH_SLICE_OPTS);
+      record._segId = segId;
+      record.latest = train;
+      record.marker.setLatLng(trainLatLng(train, now, record.fState));
+      if (record.routeId !== train.route_id) {
+        record.marker.setIcon(pathIcon(train));
+        record.routeId = train.route_id;
+      }
+      if (record.marker.isPopupOpen()) record.marker.getPopup().update();
+    } else {
+      const newRecord = { routeId: train.route_id, latest: train, fState: {} };
+      newRecord._segId = `${train.route_id}|${train.prev_time}|${train.stop_id}`;
+      train._route = computePathRouteSlice(train, pathRouteIndex.get(train.route_id), PATH_SLICE_OPTS);
+      newRecord.marker = L.marker(trainLatLng(train, now, newRecord.fState), {
+        icon: pathIcon(train),
+      })
+        .bindPopup(() => pathTrainPopup(newRecord))
+        .addTo(pathTrains);
+      pathTrainRecords.set(train.id, newRecord);
+    }
+  }
+  // Identities the backend expired (terminal arrivals) leave the map; the
+  // matcher's stability guarantee is what keeps this sweep from ever churning
+  // a train that merely changed bridge hashes.
+  for (const [id, record] of pathTrainRecords) {
+    if (!seen.has(id)) {
+      pathTrains.removeLayer(record.marker);
+      pathTrainRecords.delete(id);
+    }
   }
 }
 
@@ -955,10 +1015,12 @@ const TRAIN_TICK_MS = 100;
 let lastTrainTick = 0;
 
 function animateTrains(ts) {
-  // Glides both subway trains and placed railroad trains between polls. GPS
-  // railroad trains are not animated here: they move by their reported position
-  // in applyRailroads. Each layer is gated on its own visibility; rAF keeps
-  // rescheduling so animation resumes on re-toggle.
+  // Glides subway trains, placed railroad trains, and PATH trains between
+  // polls. GPS railroad trains are not animated here: they move by their
+  // reported position in applyRailroads. Anchorless PATH trains cost one
+  // trainLatLng fallback each and stay put, so no per-record gate is needed.
+  // Each layer is gated on its own visibility; rAF keeps rescheduling so
+  // animation resumes on re-toggle.
   if (ts - lastTrainTick >= TRAIN_TICK_MS) {
     lastTrainTick = ts;
     const now = Date.now() / 1000 - (minClockOffset ?? 0);
@@ -972,6 +1034,11 @@ function animateTrains(ts) {
         if (record.placed) {
           record.marker.setLatLng(trainLatLng(record.latest, now, record.fState));
         }
+      }
+    }
+    if (map.hasLayer(pathTrains)) {
+      for (const record of pathTrainRecords.values()) {
+        record.marker.setLatLng(trainLatLng(record.latest, now, record.fState));
       }
     }
   }

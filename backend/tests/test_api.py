@@ -374,6 +374,15 @@ async def test_status_reports_path_static(client, status_env):
     assert res.json()["path_static"] == "failed"
 
 
+async def test_status_reports_ferry_static(client, status_env):
+    # NYC Ferry is a single-system static group like PATH, so its warmup state
+    # is likewise reported in the snapshot.
+    app_module.app.state.ferry_static_status = "ready"
+    res = await client.get("/api/status")
+    assert res.status_code == 200
+    assert res.json()["ferry_static"] == "ready"
+
+
 # ---------------- upstream error sanitization (no key/URL leakage) ----------------
 
 
@@ -912,6 +921,113 @@ async def test_path_routes_ready_but_empty_is_no_cache(client):
     assert res.headers.get("cache-control") == "no-cache"
 
 
+# ---------------- /api/ferry-stops and /api/ferry-routes (14a) ----------------
+
+FERRY_STOPS = {
+    "18": {
+        "id": "18",
+        "name": "Wall St/Pier 11",
+        "lat": 40.70355,
+        "lon": -74.00512,
+        "wheelchair": True,
+    },
+    "2": {
+        "id": "2",
+        "name": "South Williamsburg",
+        "lat": 40.70951,
+        "lon": -73.96769,
+        "wheelchair": False,
+    },
+}
+FERRY_ROUTES = [
+    {
+        "id": "ER",
+        "name": "East River",
+        "color": "00839C",
+        "text_color": "FFFFFF",
+        "shape": [[[40.70951, -73.96769], [40.70355, -74.00512]]],
+    }
+]
+
+# One load_ferry_static() return shape (flat stops, one route + shape + trip),
+# shared by the lifespan smoke test and the warmup tests.
+FERRY_STATIC_DATA = {
+    "stops": {
+        "18": {
+            "id": "18",
+            "name": "Wall St/Pier 11",
+            "lat": 40.70355,
+            "lon": -74.00512,
+            "wheelchair": True,
+        },
+    },
+    "trips": {"f1": {"route_id": "ER", "direction_id": "0", "shape_id": "s1", "headsign": None}},
+    "shapes": {"s1": [[40.70951, -73.96769], [40.70355, -74.00512]]},
+    "routes": {
+        "ER": {
+            "long_name": "East River",
+            "short_name": None,
+            "color": "00839C",
+            "text_color": "FFFFFF",
+        }
+    },
+}
+
+
+async def test_ferry_stops_503_while_loading(client):
+    app_module.app.state.ferry_static_status = "loading"
+    res = await client.get("/api/ferry-stops")
+    assert res.status_code == 503
+    assert "loading" in res.json()["detail"].lower()
+
+
+async def test_ferry_stops_served_with_max_age_when_ready(client):
+    app_module.app.state.ferry_static_status = "ready"
+    app_module.app.state.ferry_stops = FERRY_STOPS
+    res = await client.get("/api/ferry-stops")
+    assert res.status_code == 200
+    assert res.json() == list(FERRY_STOPS.values())  # includes the wheelchair flag
+    assert "max-age" in res.headers.get("cache-control", "")
+
+
+async def test_ferry_stops_no_cache_empty_when_failed(client):
+    app_module.app.state.ferry_static_status = "failed"
+    app_module.app.state.ferry_stops = FERRY_STOPS
+    res = await client.get("/api/ferry-stops")
+    assert res.status_code == 200
+    assert res.json() == []
+    assert res.headers.get("cache-control") == "no-cache"
+
+
+async def test_ferry_routes_served_with_branding_when_ready(client):
+    app_module.app.state.ferry_static_status = "ready"
+    app_module.app.state.ferry_routes = FERRY_ROUTES
+    res = await client.get("/api/ferry-routes")
+    assert res.status_code == 200
+    assert res.json() == FERRY_ROUTES
+    assert "max-age" in res.headers.get("cache-control", "")
+
+
+async def test_ferry_routes_no_cache_empty_when_failed(client):
+    app_module.app.state.ferry_static_status = "failed"
+    app_module.app.state.ferry_routes = FERRY_ROUTES
+    res = await client.get("/api/ferry-routes")
+    assert res.status_code == 200
+    assert res.json() == []
+    assert res.headers.get("cache-control") == "no-cache"
+
+
+async def test_ferry_routes_ready_but_empty_is_no_cache(client):
+    # Same guard as /api/path-routes: ready is gated on stops, so a degraded
+    # feed can be ready with empty geometry; that empty list is served no-cache.
+    app_module.app.state.ferry_static_status = "ready"
+    app_module.app.state.ferry_routes = []
+    res = await client.get("/api/ferry-routes")
+    assert res.status_code == 200
+    assert res.json() == []
+    assert res.headers.get("cache-control") == "no-cache"
+
+
 # ---------------- /api/path and /api/path-arrivals (13b realtime) ----------------
 
 PATH_TRAINS = [
@@ -1194,6 +1310,9 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
     async def fake_load_path_static():
         return PATH_STATIC_DATA  # no network; shared module-level fixture shape
 
+    async def fake_load_ferry_static():
+        return FERRY_STATIC_DATA  # no network; shared module-level fixture shape
+
     async def fake_ensure_index():
         return None
 
@@ -1208,6 +1327,7 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
         app_module.railroad_static, "load_railroad_static", fake_load_railroad_static
     )
     monkeypatch.setattr(app_module.path_static, "load_path_static", fake_load_path_static)
+    monkeypatch.setattr(app_module.ferry_static, "load_ferry_static", fake_load_ferry_static)
     monkeypatch.setattr(bus_static, "ensure_index", fake_ensure_index)
 
     app = app_module.app
@@ -1218,6 +1338,7 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
         assert app.state.subway_static_status == "loading"
         assert app.state.railroad_static_status == "loading"
         assert app.state.path_static_status == "loading"
+        assert app.state.ferry_static_status == "loading"
         assert app.state.subway_stops is None
         assert app.state.path_stops == {}
         assert app.state.railroad_positions == {}
@@ -1230,12 +1351,15 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
                     app.state.subway_static_status == "ready"
                     and app.state.railroad_static_status == "ready"
                     and app.state.path_static_status == "ready"
+                    and app.state.ferry_static_status == "ready"
                 ):
                     break
                 await asyncio.sleep(0.01)
             assert app.state.subway_static_status == "ready"
             assert app.state.railroad_static_status == "ready"
             assert app.state.path_static_status == "ready"
+            assert app.state.ferry_static_status == "ready"
+            assert app.state.ferry_stops == FERRY_STATIC_DATA["stops"]
             # The warmup filled the same fields the old synchronous load did.
             assert app.state.subway_stops == {"101N": {"name": "Alpha", "lat": 40.7, "lon": -74.0}}
             assert app.state.railroad_static["LIRR"]["trips"] == {
@@ -1483,6 +1607,52 @@ async def test_path_static_warmup_empty_result_is_failed_then_recovers(monkeypat
             await asyncio.sleep(0.005)
         assert app.state.path_static_status == "ready"
         assert app.state.path_stops == PATH_STATIC_DATA["stops"]
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_ferry_static_warmup_loading_to_ready(monkeypatch):
+    async def fake_load():
+        return FERRY_STATIC_DATA
+
+    monkeypatch.setattr(app_module.ferry_static, "load_ferry_static", fake_load)
+    app = _fake_app(ferry_static_status="loading")
+    await app_module._warm_ferry_static(app)
+    assert app.state.ferry_static_status == "ready"
+    assert app.state.ferry_stops == FERRY_STATIC_DATA["stops"]
+    # The full tables (including the trip -> route map 14b joins against) stay
+    # on app.state for the later phase to consume without re-parsing.
+    assert app.state.ferry_static["trips"]["f1"]["route_id"] == "ER"
+    assert app.state.ferry_routes[0]["id"] == "ER"
+    assert app.state.ferry_routes[0]["color"] == "00839C"
+
+
+async def test_ferry_static_warmup_empty_result_is_failed_then_recovers(monkeypatch):
+    # Single-system, same as PATH: an empty load drives FAILED (endpoints serve
+    # no-cache []), and a later retry with data recovers to READY.
+    monkeypatch.setattr(app_module, "STATIC_RETRY_S", 0.01)
+    gate = {"ok": False}
+
+    async def gated_load():
+        return FERRY_STATIC_DATA if gate["ok"] else {}
+
+    monkeypatch.setattr(app_module.ferry_static, "load_ferry_static", gated_load)
+    app = _fake_app(ferry_static_status="loading")
+    task = asyncio.create_task(app_module._warm_ferry_static(app))
+    try:
+        for _ in range(200):
+            if app.state.ferry_static_status == "failed":
+                break
+            await asyncio.sleep(0.005)
+        assert app.state.ferry_static_status == "failed"
+        gate["ok"] = True
+        for _ in range(200):
+            if app.state.ferry_static_status == "ready":
+                break
+            await asyncio.sleep(0.005)
+        assert app.state.ferry_static_status == "ready"
+        assert app.state.ferry_stops == FERRY_STATIC_DATA["stops"]
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)

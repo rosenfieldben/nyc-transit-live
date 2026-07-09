@@ -1,0 +1,72 @@
+route_id,service_id,trip_id,trip_headsign,trip_short_name,direction_id,block_id,shape_id
+AS,1,1000,East 90th St,4210,1,42,107
+AS,1,1001,East 90th St,4311,1,43,107
+AS,1,1002,East 90th St,4106,1,41,107
+AS,1,1008,Wall St./Pier 11,4101,0,41,108
+AS,1,1009,Wall St./Pier 11,4201,0,42,108
+AS,1,1010,Wall St./Pier 11,4302,0,43,108
+SB,1,1155,Governors Island,3201,0,32,137
+SB,1,1169,Red Hook/Atlantic Basin,3215,0,32,142
+SB,1,1174,East 34th Street,3101,1,31,143
+SB,1,1175,East 34th Street,3202,1,32,136
+SB,2,1193,Bay Ridge,3201,0,32,156
+SB,2,1194,Bay Ridge,3102,0,31,156
+SB,2,1195,Bay Ridge,3203,0,32,156
+SB,2,1214,East 34th Street,3101,1,31,157
+SB,2,1215,East 34th Street,3202,1,32,157
+SB,2,1216,East 34th Street,3103,1,31,157
+RES,1,1234,Rockaway,10101,0,101,44
+RES,1,1235,Rockaway,10201,0,102,44
+RES,1,1236,Rockaway,10103,0,101,44
+RES,1,1247,Rockaway East,10102,1,101,132
+RES,1,1248,Rockaway East,10202,1,102,132
+RES,1,1249,Rockaway East,10104,1,101,132
+RWS,1,1260,Rockaway,20101,0,201,27
+RWS,1,1368,Rockaway West,20102,1,201,35
+RWS,2,1461,Rockaway,20101,0,201,4
+RWS,2,1462,Rockaway,20103,0,201,4
+RWS,2,1463,Rockaway,20105,0,201,4
+RWS,2,1525,Rockaway West,20102,1,201,2
+RWS,2,1526,Rockaway West,20104,1,201,2
+RWS,2,1527,Rockaway West,20106,1,201,2
+GI,2,1552,Governors Island,7101,0,71,76
+GI,2,1553,Governors Island,7103,0,71,76
+GI,2,1554,Governors Island,7105,0,71,76
+GI,2,1566,Wall St./Pier 11,7102,1,71,75
+GI,2,1567,Wall St./Pier 11,7104,1,71,75
+GI,2,1568,Wall St./Pier 11,7106,1,71,75
+RS,2,1800,Wall St./Pier 11,2906,1,29,147
+RS,2,1804,Rockaway,2907,0,29,146
+RR,2,1806,Rockaway,9101,0,91,131
+RR,2,1807,Rockaway,9103,0,91,131
+RR,2,1808,Rockaway,9105,0,91,131
+RR,2,1809,Long Island City,9102,1,91,130
+RR,2,1810,Long Island City,9104,1,91,130
+RR,2,1811,Long Island City,9106,1,91,130
+ER,1,305,East 34th Street,1101,1,11,141
+ER,1,307,East 34th Street (E R A),1501,1,15,133
+ER,1,308,East 34th Street (E R B),1601,1,16,134
+ER,1,309,East 34th Street (E R A),1103,1,11,133
+ER,1,311,East 34th Street (E R A),1303,1,13,133
+ER,1,325,East 34th Street,1607,1,16,9
+ER,1,353,Wall St./Pier 11 (E R A),1102,0,11,69
+ER,1,354,Wall St/Pier 11 (E R B),1201,0,12,135
+ER,1,356,Wall St/Pier 11 (E R B),1401,0,14,135
+ER,1,358,Wall St/Pier 11 (E R B),1602,0,16,135
+ER,1,398,Wall St./Pier 11,1308,0,13,12
+RS,1,556,Ferry Point Park,2401,1,24,145
+RS,1,557,Ferry Point Park,2501,1,25,145
+RS,1,558,Ferry Point Park,2601,1,26,145
+RS,1,575,Rockaway,2101,0,21,144
+RS,1,600,Rockaway,2201,0,22,144
+RS,1,602,Rockaway,2301,0,23,144
+RS,1,638,Wall St./Pier 11,2307,0,23,149
+RS,2,640,Ferry Point Park,2401,1,24,148
+SG,1,748,Wall St./Pier 11,8301,0,83,150
+SG,1,750,Wall St./Pier 11,8401,0,84,138
+SG,1,751,Wall St./Pier 11,8102,0,81,138
+SG,1,752,Wall St./Pier 11,8202,0,82,138
+SG,1,919,Midtown West/W 39th St-Pier 79,8101,1,81,16
+SG,1,920,Midtown West/W 39th St-Pier 79,8201,1,82,139
+SG,1,921,Midtown West/W 39th St-Pier 79,8302,1,83,139
+SG,1,922,Midtown West/W 39th St-Pier 79,8402,1,84,139

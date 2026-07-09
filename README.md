@@ -121,6 +121,29 @@ system on the map whose popups carry no alerts block. PATH data is courtesy of P
 subject to their license terms. PATH stop ids stay in their own namespace:
 they are numeric and collide with MTA numeric ids across systems.
 
+NYC Ferry is a static foundation for now: the backend downloads and caches the
+ferry static GTFS in its own warmup group (modeled on the PATH group) and
+serves the landing markers and route geometry, but no ferry trains ride the map
+yet (realtime placement is a later phase). Two endpoints:
+
+- `GET /api/ferry-stops`: `[{id, name, lat, lon, wheelchair}]`, one entry per
+  landing. `wheelchair` reflects the GTFS `wheelchair_boarding` flag (true only
+  when the feed marks the landing accessible).
+- `GET /api/ferry-routes`: `[{id, name, color, text_color, shape}]`, the nine
+  routes with their rider-facing names, colors verbatim from the feed, and the
+  modal route geometry (same modal-shape-per-direction selection PATH uses).
+
+Ferry stop ids are short numerics that collide with MTA and PATH ids, so ferry
+data stays in its own namespace. The static feed comes from NYC Ferry's
+Connexionz endpoint, published on their Developer Tools page
+(https://www.ferry.nyc/developer-tools/) and used under its Developer Terms:
+NYC Ferry grants a non-exclusive, revocable right to integrate the GTFS into
+sites and applications, and retains all rights and title in the data
+(confirmed 2026-07-09). Attribution here is courtesy, not a stated
+requirement. NYC Ferry's trademarks and logos stay reserved, so the map uses
+its own markers; the route colors are fine because they are data in
+routes.txt, not branding.
+
 Service alerts are polled on their own slower loop and served from an in-memory
 index (the map surfaces are the popup blocks and the agency-wide banner
 described above):
@@ -142,7 +165,8 @@ nyc-transit-live/
 │   ├── bus_static.py        # background-built on-disk index of bus route shapes
 │   ├── airtrain_static.py   # load the committed AirTrain JFK fixture (no network)
 │   ├── path_static.py       # download/parse the PATH static GTFS (PANYNJ via Trillium)
-│   ├── scripts/             # one-off generators (gen_airtrain_fixture.py, gen_path_fixture.py)
+│   ├── ferry_static.py      # download/parse the NYC Ferry static GTFS (via Connexionz)
+│   ├── scripts/             # one-off generators (gen_airtrain_fixture.py, gen_path_fixture.py, gen_ferry_fixture.py)
 │   ├── tests/               # pytest suite (run from backend/)
 │   ├── requirements.txt     # lower-bound deps for local dev
 │   ├── requirements.lock    # pinned deps installed by Railway and CI
@@ -444,6 +468,15 @@ warnings.
   (Journal Square to Harrison outgrows the subway cap; railroad-scale slack
   would surrender misprojection protection for nothing). Anchorless trains sit
   placed, as before.
+- [x] **14a. NYC Ferry (static foundation)**: the NYC Ferry static GTFS (stops,
+  routes, shapes, trips) is downloaded, cached, and served from its own warmup
+  group (modeled on the PATH group) via `/api/ferry-stops` (landing markers with
+  a `wheelchair` accessibility flag) and `/api/ferry-routes` (the nine routes
+  with names, colors, and modal route geometry). Static only: realtime ferry
+  placement is a later phase. The trips table carries the trip to route map that
+  join needs. Data comes via NYC Ferry's Connexionz endpoint under the Developer
+  Terms on ferry.nyc/developer-tools/ (a revocable right to integrate the GTFS
+  into sites and applications; NYC Ferry retains all rights).
 
 ## Notes
 

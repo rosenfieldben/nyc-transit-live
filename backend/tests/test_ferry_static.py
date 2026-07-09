@@ -453,6 +453,28 @@ async def test_fresh_but_empty_cache_redownloads_and_recovers(ferry_paths, monke
     assert "18" in data["stops"]
 
 
+async def test_unusable_cache_and_failed_redownload_returns_empty(ferry_paths):
+    # The recovery arm's OTHER outcome (the twin of the two -recovers tests
+    # above): a fresh corrupt cache invalidates and re-downloads, but the dead
+    # URL fails too, so the loader returns {} rather than raising. Guards the
+    # lenient contract on the second exit; a regression that re-raised there
+    # would otherwise stay green because every other download test lets the
+    # recovery download succeed.
+    ferry_paths.write_bytes(b"this is not a zip archive")  # fresh mtime, dead URL
+    data = await ferry_static.load_ferry_static()
+    assert data == {}
+
+
+async def test_persistently_empty_feed_returns_empty(ferry_paths):
+    # Fresh empty-stops cache + a dead URL: the recovery re-download also fails,
+    # so the result is {} and the warmup marks the single-system ferry group
+    # failed. The cache invalidation still fired, so the NEXT warm retry
+    # re-downloads (this is the empty-stops path into the same second exit).
+    write_ferry_zip(ferry_paths, stops=[])  # fresh, valid zip, no stops
+    data = await ferry_static.load_ferry_static()
+    assert data == {}
+
+
 # ---------------- redirect-following download (the ferry-specific quirk) ----------------
 
 

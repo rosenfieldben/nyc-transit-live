@@ -564,10 +564,10 @@ async def lifespan(app: FastAPI):
     app.state.railroad_stops = {}
     app.state.railroad_routes = {}
     app.state.railroad_static_status = "loading"
-    # PATH static foundation (phase 13a; realtime is a later phase). Own
-    # app.state fields, never merged into a shared namespace: numeric PATH stop
-    # ids collide with MTA numeric ids across systems, the same reason the
-    # alerts join is system-scoped.
+    # PATH static (13a) feeding the realtime decode and identity matcher (13b,
+    # 13d). Own app.state fields, never merged into a shared namespace: numeric
+    # PATH stop ids collide with MTA numeric ids across systems, the same
+    # reason the alerts join is system-scoped.
     app.state.path_static = {}  # {stops, child_to_parent, trips, shapes, routes, stop_times} or {}
     app.state.path_stops = {}
     app.state.path_routes = []

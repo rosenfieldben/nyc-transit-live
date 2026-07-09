@@ -37,7 +37,7 @@ NOW = 1000.0
 PATH_STOPS = {
     "26733": {"id": "26733", "name": "Newark", "lat": 40.73454, "lon": -74.16375},
     "26734": {"id": "26734", "name": "World Trade Center", "lat": 40.71271, "lon": -74.01193},
-    "26727": {"id": "26727", "name": "Journal Square", "lat": 40.73342, "lon": -74.06289},
+    "26727": {"id": "26727", "name": "Exchange Place", "lat": 40.71676, "lon": -74.03238},
 }
 
 _SKIPPED = pb.TripUpdate.StopTimeUpdate.ScheduleRelationship.SKIPPED
@@ -269,7 +269,7 @@ def test_arrivals_sorted_and_capped_per_bucket():
 
 def _generation(trip_ids, header_ts):
     """A bridge generation: same service picture (route 862 to NY at Newark,
-    route 859 to NJ at Journal Square) under the given trip ids."""
+    route 859 to NJ at Exchange Place) under the given trip ids."""
     feed = pb.FeedMessage()
     feed.header.gtfs_realtime_version = "2.0"
     feed.header.timestamp = header_ts

@@ -12,9 +12,9 @@ alerts join).
 The static feed is published by Trillium on behalf of the Port Authority of
 New York and New Jersey (PANYNJ) and is subject to PANYNJ license terms.
 
-PATH has no official GTFS-Realtime feed; a later phase will consume a community
-bridge feed. REALTIME TRIP IDS ARE UNSTABLE: the bridge feed was probed live on
-2026-07-05 and its trip ids showed 100% churn across upstream refreshes,
+PATH has no official GTFS-Realtime feed; feeds.fetch_path_trains consumes the
+community bridge feed instead (13b). REALTIME TRIP IDS ARE UNSTABLE: the bridge
+feed was probed live on 2026-07-05 and showed 100% id churn across upstream refreshes,
 including 29 of 50 trains whose ids changed while their arrival payloads were
 byte-identical. Nothing in this module or any later PATH phase may key anything
 on PATH trip ids. The static trips table parsed here is used ONLY as internal
@@ -25,8 +25,9 @@ feeds.match_path_identities synthesizes train identity from stable fields
 module's build_path_station_order output for its advance matching.
 
 The realtime bridge references PARENT station ids, so the parent stations
-(location_type=1) are the marker set; the child platform to parent map is built
-now because later phases need it.
+(location_type=1) are the marker set; the child platform to parent map exists
+because stop_times.txt speaks in platform ids and build_path_station_order
+(13d) must fold them up to the station level the bridge uses.
 """
 
 from __future__ import annotations
@@ -112,9 +113,9 @@ def _parse_stops(raw: IO[bytes]) -> tuple[dict[str, dict], dict[str, str]]:
     rows with a missing or malformed coordinate are skipped.
 
     child_to_parent: child stop_id -> parent stop_id for every row carrying a
-    parent_station. Built now because later phases need to fold platform-level
-    references up to the station level; a child row needs no usable coordinate
-    to be mapped.
+    parent_station. build_path_station_order resolves stop_times' platform ids
+    through it up to the station level the bridge uses; a child row needs no
+    usable coordinate to be mapped.
     """
     parents: dict[str, dict] = {}
     child_to_parent: dict[str, str] = {}

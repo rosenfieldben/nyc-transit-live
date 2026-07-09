@@ -124,26 +124,29 @@ def _overlap(a: set[str], b: set[str]) -> float:
 
 
 def _min_same_slot_headway(payloads: list[bytes], stops: dict) -> float | None:
-    """Smallest gap between consecutive predicted arrivals sharing a
-    (route_id, direction bucket, stop) across the given payloads: the quantity
-    the matcher's PATH_MATCH_TOLERANCE_S must stay well under, since two
-    distinct trains one headway apart at the same stop must never fall inside
-    one matching window."""
-    times: dict[tuple, list[float]] = {}
+    """Smallest gap between distinct predicted arrivals sharing a
+    (route_id, direction bucket, stop) WITHIN one payload: the quantity the
+    matcher's PATH_MATCH_TOLERANCE_S must stay well under, since two distinct
+    trains one headway apart at the same stop must never fall inside one
+    matching window. Computed per payload and NEVER pooled across them:
+    pooling would measure the same train's prediction drifting a few seconds
+    between generations, a number that says nothing about headways (the
+    committed goldens compute it the same per-payload way)."""
+    gaps = []
     for raw in payloads:
         feed = pb.FeedMessage()
         feed.ParseFromString(raw)
         _trains, arrivals, _ts, _unresolved = feeds._decode_path_feed(
             raw, stops, float(feed.header.timestamp)
         )
+        times: dict[tuple, list[float]] = {}
         for stop_id, buckets in arrivals.items():
             for bucket, rows in buckets.items():
                 for row in rows:
                     times.setdefault((row["route_id"], bucket, stop_id), []).append(row["arrival"])
-    gaps = []
-    for arrs in times.values():
-        arrs.sort()
-        gaps.extend(b - a for a, b in zip(arrs, arrs[1:]) if b > a)
+        for arrs in times.values():
+            arrs.sort()
+            gaps.extend(b - a for a, b in zip(arrs, arrs[1:]) if b > a)
     return min(gaps) if gaps else None
 
 

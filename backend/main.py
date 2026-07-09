@@ -688,6 +688,21 @@ def _serve_cached(name: str, data_key: str = "data") -> dict:
     )
 
 
+def _require_filled_cache(entry: dict) -> None:
+    """Warming gate shared by the arrivals endpoints: until the feed's cache
+    has filled once there is no per-station index worth serving, so surface
+    the recorded upstream error when there is one, else the generic warming
+    503. Same contract _serve_cached keeps for the feed endpoints; the three
+    arrivals endpoints each carried an identical inline copy until the
+    13d-era cleanup."""
+    if entry["data"] is None:
+        if entry["error"]:
+            raise HTTPException(entry["error"]["status"], entry["error"]["detail"])
+        raise HTTPException(
+            status_code=503, detail="Feed cache is warming up; try again in a few seconds."
+        )
+
+
 def _static_endpoint_ready(status: str, response: Response, warming_detail: str) -> bool:
     """Shared warming behavior for the static-derived (decorative) endpoints.
 
@@ -858,12 +873,7 @@ async def get_path_arrivals(stop_id: str) -> dict:
     other arrivals endpoints); 404 for a malformed or unknown stop id (regex
     plus membership in the static parent stops)."""
     entry = app.state.feed_cache["path"]
-    if entry["data"] is None:  # no successful PATH poll yet
-        if entry["error"]:
-            raise HTTPException(entry["error"]["status"], entry["error"]["detail"])
-        raise HTTPException(
-            status_code=503, detail="Feed cache is warming up; try again in a few seconds."
-        )
+    _require_filled_cache(entry)
     stops = getattr(app.state, "path_stops", None) or {}
     if not _PATH_STATION_ID_RE.match(stop_id) or stop_id not in stops:
         raise HTTPException(status_code=404, detail=f"Unknown PATH station {stop_id}.")
@@ -934,12 +944,7 @@ async def get_subway_arrivals(station_id: str) -> dict:
     fills it (consistent with _serve_cached); 404 for an unknown or malformed
     station id."""
     entry = app.state.feed_cache["subways"]
-    if entry["data"] is None:  # no successful subway poll yet
-        if entry["error"]:
-            raise HTTPException(entry["error"]["status"], entry["error"]["detail"])
-        raise HTTPException(
-            status_code=503, detail="Feed cache is warming up; try again in a few seconds."
-        )
+    _require_filled_cache(entry)
     stations = getattr(app.state, "subway_stations", None) or {}
     if not _STATION_ID_RE.match(station_id) or station_id not in stations:
         raise HTTPException(status_code=404, detail=f"Unknown station {station_id}.")
@@ -1011,12 +1016,7 @@ async def get_railroad_arrivals(system: str, stop_id: str) -> dict:
     if system not in _RAILROAD_SYSTEMS:
         raise HTTPException(status_code=404, detail=f"Unknown system {system}.")
     entry = app.state.feed_cache["railroads"]
-    if entry["data"] is None:  # no successful railroad poll yet
-        if entry["error"]:
-            raise HTTPException(entry["error"]["status"], entry["error"]["detail"])
-        raise HTTPException(
-            status_code=503, detail="Feed cache is warming up; try again in a few seconds."
-        )
+    _require_filled_cache(entry)
     stops = (getattr(app.state, "railroad_stops", None) or {}).get(system) or {}
     if not _RAILROAD_STATION_ID_RE.match(stop_id) or stop_id not in stops:
         raise HTTPException(status_code=404, detail=f"Unknown {system} station {stop_id}.")

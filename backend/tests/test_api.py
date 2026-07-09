@@ -929,9 +929,7 @@ PATH_TRAINS = [
         "next_time": 1500.0,
     }
 ]
-PATH_ARRIVALS = {
-    "26733": {"To New Jersey": [{"route_id": "862", "trip_id": "5c0e8a4d-uuid", "arrival": 1500.0}]}
-}
+PATH_ARRIVALS = {"26733": {"To New Jersey": [{"route_id": "862", "arrival": 1500.0}]}}
 # The SERVED shape (13d): what _refresh_path stores after the identity
 # matcher, i.e. what /api/path actually returns. A stable minted `id`, no
 # bridge trip hash.
@@ -1005,9 +1003,8 @@ async def test_path_arrivals_known_station(client, path_rt_state, cache):
     assert body["stop_id"] == "26733"
     assert body["stop_name"] == "Newark"
     assert body["fetched_at"] == 1234.0
-    assert body["directions"] == {
-        "To New Jersey": [{"route_id": "862", "trip_id": "5c0e8a4d-uuid", "arrival": 1500.0}]
-    }
+    # Rows are {route_id, arrival} only: the bridge hash reaches no payload.
+    assert body["directions"] == {"To New Jersey": [{"route_id": "862", "arrival": 1500.0}]}
 
 
 async def test_path_arrivals_empty_when_nothing_upcoming(client, path_rt_state, cache):

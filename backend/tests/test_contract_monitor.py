@@ -254,6 +254,16 @@ def test_evaluate_subway_healthy_is_pass():
     assert cm._evaluate_subway(obs, now, cm.REALTIME_STALE_S).status == cm.PASS
 
 
+def test_evaluate_subway_no_header_timestamp_is_warn():
+    now = 1000.0
+    # A live feed that decoded and carries entities but omitted its header
+    # timestamp: freshness cannot be judged, so it is a WARN, not a pass.
+    obs = [_obs("a", 5, now), _obs("b", 5, None)]
+    result = cm._evaluate_subway(obs, now, cm.REALTIME_STALE_S)
+    assert result.status == cm.WARN
+    assert "no header timestamp: b" in result.detail
+
+
 # ---------------------------------------------------------------------------
 # Railroad realtime
 # ---------------------------------------------------------------------------
@@ -301,6 +311,32 @@ def test_railroad_realtime_mnr_header_not_used_for_freshness():
     assert result.status == cm.PASS
 
 
+def test_railroad_realtime_stale_lirr_header_is_warn():
+    # LIRR's header DOES track publish time, so a stale one is a real signal.
+    old = _rt_feed(entities=[_trip_update("e", "t")], header_ts=1000.0)
+    fetch = FakeFetcher({"lirr": old})
+    result = cm.check_railroad_realtime(
+        fetch,
+        NO_SLEEP,
+        1000.0 + cm.REALTIME_STALE_S + 60,
+        {"LIRR": {}},
+        feed_urls={"LIRR": "lirr"},
+    )
+    assert result.status == cm.WARN
+    assert "older than" in result.detail
+
+
+def test_railroad_realtime_lirr_missing_header_is_warn():
+    # A LIRR feed that omits its header timestamp: freshness cannot be judged.
+    headerless = _rt_feed(entities=[_trip_update("e", "t")])  # no header_ts
+    fetch = FakeFetcher({"lirr": headerless})
+    result = cm.check_railroad_realtime(
+        fetch, NO_SLEEP, 10_000.0, {"LIRR": {}}, feed_urls={"LIRR": "lirr"}
+    )
+    assert result.status == cm.WARN
+    assert "omitted its header timestamp" in result.detail
+
+
 # ---------------------------------------------------------------------------
 # PATH realtime
 # ---------------------------------------------------------------------------
@@ -336,12 +372,27 @@ def test_path_realtime_stale_bridge_is_fail():
 
 
 def test_path_realtime_unresolved_stops_is_fail():
-    # No stops resolve against an empty table, so the resolution rate collapses.
+    # A NON-empty but mismatched parent table (real stations, wrong ids): the
+    # golden feed's stop ids resolve against none of them, so the resolution rate
+    # collapses and the check FAILs. (Empty stops is a different case, below: it
+    # means the static load failed and resolution is skipped, not FAILed.)
+    raw = (FIX / "path_rt_gen_a.pb").read_bytes()
+    mismatched = {"99999": {"id": "99999", "name": "Nowhere", "lat": 40.7, "lon": -74.0}}
+    fetch = FakeFetcher({"u": raw})
+    result = cm.check_path_realtime(fetch, NO_SLEEP, PATH_GOLDEN_TS + 30, mismatched, url="u")
+    assert result.status == cm.FAIL
+    assert "resolved" in result.detail
+
+
+def test_path_realtime_skips_resolution_when_static_unavailable():
+    # An empty stops table means the PATH static load failed (its own check
+    # reports why). The resolution band must be skipped with a note, not FAILed,
+    # so the operator is not misdirected to a realtime id mismatch.
     raw = (FIX / "path_rt_gen_a.pb").read_bytes()
     fetch = FakeFetcher({"u": raw})
     result = cm.check_path_realtime(fetch, NO_SLEEP, PATH_GOLDEN_TS + 30, {}, url="u")
-    assert result.status == cm.FAIL
-    assert "resolved" in result.detail
+    assert result.status == cm.PASS
+    assert "static parent table unavailable" in result.detail
 
 
 def test_path_realtime_vehicle_entity_warns_on_shape_change():
@@ -427,16 +478,45 @@ def test_ferry_realtime_join_below_floor_is_fail():
 
 
 def test_ferry_realtime_deadheads_excluded_from_join():
-    # 9 real trips (all join) plus one empty-trip-id deadhead. The deadhead must
-    # not count against the join rate, so this stays a PASS at 9/9.
-    trips = {f"t{i}": {"route_id": "ER"} for i in range(9)}
-    entities = [_trip_update(f"e{i}", f"t{i}") for i in range(9)]
+    # 8 real trips (all join) plus one empty-trip-id deadhead. The counts are
+    # chosen to DISTINGUISH exclusion from inclusion: excluding the deadhead is
+    # 8/8 = 1.0 = PASS, but including it would be 8/9 = 0.89 < 0.90 = FAIL. So a
+    # green here can only mean the deadhead was excluded, as intended.
+    trips = {f"t{i}": {"route_id": "ER"} for i in range(8)}
+    entities = [_trip_update(f"e{i}", f"t{i}") for i in range(8)]
     entities.append(_trip_update("dead", ""))  # deadhead: empty trip id
     fetch = FakeFetcher({"a": _rt_feed(), "t": _rt_feed(entities=entities)})
     result = cm.check_ferry_realtime(
         fetch, NO_SLEEP, _et(2026, 7, 10, 12, 0), trips, urls=_ferry_rt_urls()
     )
     assert result.status == cm.PASS
+
+
+def test_ferry_realtime_all_empty_trip_ids_during_service_is_warn():
+    # Every in-service trip update carries an empty trip_id (namespace drift, or
+    # an all-deadhead snapshot): the route join is impossible for all of them, so
+    # the check must surface it rather than pass silently.
+    trips = {"t0": {"route_id": "ER"}}
+    entities = [_trip_update(f"e{i}", "") for i in range(5)]
+    fetch = FakeFetcher({"a": _rt_feed(), "t": _rt_feed(entities=entities)})
+    result = cm.check_ferry_realtime(
+        fetch, NO_SLEEP, _et(2026, 7, 10, 12, 0), trips, urls=_ferry_rt_urls()
+    )
+    assert result.status == cm.WARN
+    assert "none carry a trip_id" in result.detail
+
+
+def test_ferry_realtime_skips_join_when_static_trips_unavailable():
+    # A failed ferry static load hands an empty trips table to the realtime
+    # check. With no table the join cannot be assessed, so it must NOT emit a
+    # 0%-joined FAIL that would misattribute a static blip to a realtime break.
+    entities = [_trip_update(f"e{i}", f"t{i}") for i in range(5)]
+    fetch = FakeFetcher({"a": _rt_feed(), "t": _rt_feed(entities=entities)})
+    result = cm.check_ferry_realtime(
+        fetch, NO_SLEEP, _et(2026, 7, 10, 12, 0), {}, urls=_ferry_rt_urls()
+    )
+    assert result.status == cm.PASS
+    assert "static trips table unavailable" in result.detail
 
 
 def test_ferry_realtime_endpoint_down_is_fail():
@@ -497,6 +577,15 @@ def test_bus_realtime_empty_feed_is_warn():
     fetch = FakeFetcher({"u": _rt_feed(header_ts=1000.0)})
     result = cm.check_bus_realtime(fetch, NO_SLEEP, 1030.0, "k", url="u")
     assert result.status == cm.WARN
+
+
+def test_bus_realtime_stale_header_is_warn():
+    # Vehicles present but the header is older than the freshness window.
+    feed = _rt_feed(entities=[_vehicle("bus1")], header_ts=1000.0)
+    fetch = FakeFetcher({"u": feed})
+    result = cm.check_bus_realtime(fetch, NO_SLEEP, 1000.0 + cm.REALTIME_STALE_S + 60, "k", url="u")
+    assert result.status == cm.WARN
+    assert "older than" in result.detail
 
 
 # ---------------------------------------------------------------------------
@@ -683,6 +772,45 @@ def test_feed_end_date_absent_is_none():
         assert cm._feed_end_date_status(zf, set(zf.namelist()), 1000.0, tz) is None
 
 
+def test_feed_end_date_far_future_sentinel_does_not_crash():
+    # A "never expires" sentinel (99991231) overflows datetime.max when the
+    # one-day grace is added. That must be swallowed to None (healthy), not raised
+    # as an OverflowError that would abort the whole monitor run.
+    now = _et(2026, 7, 10, 12, 0)
+    assert _end_date_status("99991231", now) is None
+
+
+def _subway_zip_with_feed_info(end_date):
+    return _zip_bytes(
+        {
+            "stops.txt": _subway_stops_csv(120),
+            "shapes.txt": b"shape_id\n",
+            "feed_info.txt": f"feed_end_date\n{end_date}\n".encode(),
+        }
+    )
+
+
+def test_static_check_folds_expired_feed_info_into_fail():
+    # End to end (not just the helper): a static zip whose feed_end_date is past
+    # must make check_*_static return FAIL, proving _apply_end_status folds the
+    # end-date result into the real check Result.
+    now = _et(2026, 7, 10, 12, 0)
+    past = _yyyymmdd(now - 10 * 86400, feeds.NYC_TZ)
+    fetch = FakeFetcher({"u": _subway_zip_with_feed_info(past)})
+    result, _parsed = cm.check_subway_static(fetch, NO_SLEEP, now, url="u")
+    assert result.status == cm.FAIL
+    assert "past" in result.detail
+
+
+def test_static_check_folds_soon_expiring_feed_info_into_warn():
+    now = _et(2026, 7, 10, 12, 0)
+    soon = _yyyymmdd(now + 10 * 86400, feeds.NYC_TZ)
+    fetch = FakeFetcher({"u": _subway_zip_with_feed_info(soon)})
+    result, _parsed = cm.check_subway_static(fetch, NO_SLEEP, now, url="u")
+    assert result.status == cm.WARN
+    assert "within" in result.detail
+
+
 # ---------------------------------------------------------------------------
 # Production /api/status
 # ---------------------------------------------------------------------------
@@ -714,12 +842,64 @@ def test_production_healthy_is_all_pass():
     assert all(r.status == cm.PASS for r in results)
 
 
-def test_production_static_not_ready_is_fail():
+def test_production_failed_static_is_fail():
     fetch = FakeFetcher({"https://app.example/api/status": _status_json(path_static="failed")})
     results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example/")
     statics = next(r for r in results if r.name == "production:statics")
     assert statics.status == cm.FAIL
     assert "path_static" in statics.detail
+
+
+def test_production_loading_static_is_warn_not_fail():
+    # "loading" is the normal cold-start / redeploy transient the app's own
+    # /healthz tolerates, so it must WARN, not FAIL: a 6-hourly probe must not
+    # flap red just because it landed mid-warmup.
+    fetch = FakeFetcher({"https://app.example/api/status": _status_json(subway_static="loading")})
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
+    statics = next(r for r in results if r.name == "production:statics")
+    assert statics.status == cm.WARN
+    assert "subway_static" in statics.detail
+
+
+def test_production_non_object_json_is_fail():
+    # Valid JSON but not an object (a bare null/list/number) must FAIL only its
+    # own line, not raise an AttributeError that aborts the whole run.
+    for body in (b"null", b"[]", b"42", b'"a string"'):
+        fetch = FakeFetcher({"https://app.example/api/status": body})
+        results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
+        assert len(results) == 1 and results[0].status == cm.FAIL
+
+
+def test_production_empty_feeds_map_is_warn():
+    # A healthy deployment always reports its live feeds; an empty map means a
+    # broken startup, which the "0 feeds fresh" PASS would otherwise hide.
+    fetch = FakeFetcher({"https://app.example/api/status": _status_json(feeds={})})
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
+    feedline = next(r for r in results if r.name == "production:feeds")
+    assert feedline.status == cm.WARN
+    assert "no feeds" in feedline.detail
+
+
+def test_production_malformed_nested_shapes_do_not_crash():
+    # A proxy/error page could return a status object whose feeds/alerts are the
+    # wrong JSON type. The check must coerce and WARN, not raise .items()/.get()
+    # and abort the run. A non-empty list for feeds is the only .items()-crashing
+    # case (an empty list is falsy and handled by the empty-map branch).
+    body = json.dumps(
+        {
+            "subway_static": "ready",
+            "railroad_static": "ready",
+            "path_static": "ready",
+            "ferry_static": "ready",
+            "feeds": [1, 2, 3],
+            "alerts": [],
+        }
+    ).encode()
+    fetch = FakeFetcher({"https://app.example/api/status": body})
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
+    assert results[0].status == cm.PASS  # reachable
+    feedline = next(r for r in results if r.name == "production:feeds")
+    assert feedline.status == cm.WARN  # coerced to empty, surfaced not crashed
 
 
 def test_production_stale_feed_is_warn():

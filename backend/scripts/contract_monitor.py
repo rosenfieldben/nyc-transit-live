@@ -474,7 +474,19 @@ def check_path_realtime(
         statuses.append(FAIL)
         details.append(f"bridge write time older than {int(stale_s)}s")
 
-    if trip_updates:
+    if not trip_updates:
+        # PATH runs ~20 hours and even the small hours carry a few trains, so an
+        # entirely empty bridge feed is worth a look, but bands to WARN: one
+        # empty snapshot should not page anyone.
+        statuses.append(WARN)
+        details.append("bridge feed carried no trip updates")
+    elif not stops:
+        # The static parent table did not load (its own static check reports the
+        # reason). Stop resolution cannot be assessed without it, so do NOT emit
+        # a 0%-resolved FAIL: that would misdirect an operator toward a realtime
+        # id mismatch when the real cause is a monitor-side static-fetch blip.
+        details.append("stop resolution not checked (static parent table unavailable)")
+    else:
         # unresolved counts entities whose stop ids match no known parent station
         # (a static-vs-bridge id mismatch); a SKIPPED/NO_DATA stop at a known
         # station is not counted. So resolved is the share NOT id-mismatched.
@@ -486,14 +498,12 @@ def check_path_realtime(
                 f"only {resolved}/{len(trip_updates)} entities resolved "
                 f"({rate:.0%} < {resolve_floor:.0%})"
             )
-    else:
-        # PATH runs ~20 hours and even the small hours carry a few trains, so an
-        # entirely empty bridge feed is worth a look, but bands to WARN: one
-        # empty snapshot should not page anyone.
-        statuses.append(WARN)
-        details.append("bridge feed carried no trip updates")
 
     if not statuses:
+        # A note with no status (resolution skipped because the static table was
+        # unavailable) still belongs in the PASS line so the operator sees why.
+        if details:
+            return Result("path-realtime", PASS, "; ".join(details))
         return Result(
             "path-realtime", PASS, f"{len(trip_updates)} trains, stop ids resolved, fresh"
         )
@@ -563,11 +573,27 @@ def check_ferry_realtime(
                 if in_service:
                     statuses.append(WARN)
                     details.append("no trip updates during service hours")
-                else:
-                    details.append("no trip updates (outside service hours, expected)")
+                # Outside service hours an empty feed is the normal closed state;
+                # the "(closed)" summary already conveys it, so no note is added.
             elif in_service:
                 joinable = [e for e in trip_updates if e.trip_update.trip.trip_id]
-                if joinable:
+                if not trips:
+                    # The static trips table did not load (its own static check
+                    # reports why). The route join cannot be assessed without it,
+                    # so do NOT emit a 0%-joined FAIL that would misattribute a
+                    # monitor-side static-fetch blip to a realtime namespace break.
+                    details.append("route join not checked (static trips table unavailable)")
+                elif not joinable:
+                    # Trip updates are present but NONE carry a trip_id, so the
+                    # route join (the only way to color a ferry trip, whose
+                    # realtime route_id is empty) is impossible for every one of
+                    # them. Surface it rather than passing silently: this is the
+                    # namespace drift the join floor exists to catch. WARN, not
+                    # FAIL, to stay non-flapping if a rare all-deadhead lull
+                    # (every trip carrying an empty trip id) ever occurs.
+                    statuses.append(WARN)
+                    details.append(f"{len(trip_updates)} trip updates but none carry a trip_id")
+                else:
                     resolved = sum(
                         1
                         for e in joinable
@@ -583,7 +609,11 @@ def check_ferry_realtime(
 
     if not statuses:
         note = "in service" if in_service else "closed"
-        return Result("ferry-realtime", PASS, f"endpoints decodable ({note})")
+        base = f"endpoints decodable ({note})"
+        # Surface any status-less note (e.g. the join skipped because the static
+        # trips table was unavailable) alongside the healthy summary.
+        detail = base + ("; " + "; ".join(details) if details else "")
+        return Result("ferry-realtime", PASS, detail)
     return Result("ferry-realtime", _worst(statuses), "; ".join(details))
 
 
@@ -740,9 +770,15 @@ def _feed_end_date_status(
         return None
     try:
         end_day = datetime(int(end[:4]), int(end[4:6]), int(end[6:8]), tzinfo=tz)
-    except (ValueError, IndexError):
-        return None  # malformed date is not this check's contract to police
-    end_ts = (end_day + timedelta(days=1)).timestamp()  # valid through end of day
+        # Valid through the END of that day (a one-day grace) so the last service
+        # day is not flagged. A far-future "never expires" sentinel (e.g.
+        # 99991231) pushes end_day + one day past datetime.max, and .timestamp()
+        # on an extreme year can also overflow; either way the feed is
+        # unambiguously not expiring soon, so treat it as healthy (no line)
+        # rather than let the OverflowError propagate and abort the whole run.
+        end_ts = (end_day + timedelta(days=1)).timestamp()
+    except (ValueError, IndexError, OverflowError, OSError):
+        return None  # malformed or beyond-range date is not this check's to police
     if end_ts < now:
         return (FAIL, f"feed_end_date {end} is in the past")
     if end_ts - now < FEED_END_WARN_DAYS * 86400:
@@ -960,9 +996,11 @@ def check_production(
 ) -> list[Result]:
     """The live deployment via MONITOR_STATUS_URL + /api/status. WARN-skipped as a
     single line when the variable is unset. When set, returns a line each for:
-    reachability (FAIL on non-200/non-JSON), every static group ready (FAIL if
-    not), per-feed poll freshness (WARN, see PRODUCTION_FEED_STALE_S for why not
-    FAIL), and degraded alert systems (WARN when non-empty)."""
+    reachability (FAIL on non-200/non-JSON/non-object), each static group's state
+    (FAIL only on a definitively FAILED warmup; a still-loading or absent group is
+    a tolerated transient WARN, matching /healthz and the non-flapping design),
+    per-feed poll freshness (WARN, see PRODUCTION_FEED_STALE_S for why not FAIL),
+    and degraded alert systems (WARN when non-empty)."""
     if not status_url:
         return [Result("production", WARN, "skipped (MONITOR_STATUS_URL not set)")]
     url = status_url.rstrip("/") + "/api/status"
@@ -973,38 +1011,70 @@ def check_production(
         data = json.loads(res.content)
     except (ValueError, UnicodeDecodeError) as exc:
         return [Result("production:status", FAIL, f"/api/status non-JSON ({_sanitize(exc)})")]
+    if not isinstance(data, dict):
+        # Valid JSON but not an object (null, a list, a bare number/string from a
+        # proxy or error page). Fail only this line rather than letting the later
+        # data.get(...) raise and abort the whole run, discarding every other
+        # check's Result.
+        return [Result("production:status", FAIL, "/api/status returned non-object JSON")]
 
     results = [Result("production:status", PASS, "/api/status reachable")]
 
     static_fields = ("subway_static", "railroad_static", "path_static", "ferry_static")
-    not_ready = [f for f in static_fields if data.get(f) != "ready"]
-    if not_ready:
+    # FAIL only on a definitively "failed" warmup (it retries but stays down). A
+    # "loading" or absent group is the normal cold-start / redeploy transient the
+    # app's own /healthz tolerates, so it is a WARN, not a page: a 6-hourly probe
+    # must not flap red just because it landed mid-warmup.
+    failed = [f for f in static_fields if data.get(f) == "failed"]
+    warming = [f for f in static_fields if data.get(f) not in ("ready", "failed")]
+    if failed:
         results.append(
             Result(
                 "production:statics",
                 FAIL,
-                "not ready: " + ", ".join(f"{f}={data.get(f)!r}" for f in not_ready),
+                "failed: " + ", ".join(f"{f}={data.get(f)!r}" for f in failed),
+            )
+        )
+    elif warming:
+        results.append(
+            Result(
+                "production:statics",
+                WARN,
+                "not yet ready: " + ", ".join(f"{f}={data.get(f)!r}" for f in warming),
             )
         )
     else:
         results.append(Result("production:statics", PASS, "all static groups ready"))
 
-    feeds_map = data.get("feeds") or {}
-    stale = []
-    for name, entry in feeds_map.items():
-        age = (entry or {}).get("age_s")
-        if age is None or age > stale_s:
-            stale.append(f"{name}={age}")
-    if stale:
-        results.append(Result("production:feeds", WARN, "stale/absent: " + ", ".join(stale)))
+    # isinstance guards below: /api/status is our own modeled endpoint, but a
+    # proxy or error page in front of the deployment could return a differently
+    # shaped JSON object. Coercing an unexpected type to empty keeps a malformed
+    # body from raising (the same crash class as the non-object guard above); the
+    # empty then surfaces as a WARN rather than aborting every other check.
+    feeds_raw = data.get("feeds")
+    feeds_map = feeds_raw if isinstance(feeds_raw, dict) else {}
+    if not feeds_map:
+        # A healthy running deployment always reports its live feeds here; an
+        # empty, absent, or wrong-typed map means the feed cache never populated
+        # (a broken startup), which the "0 feeds fresh" PASS would otherwise hide.
+        results.append(Result("production:feeds", WARN, "no feeds reported by /api/status"))
     else:
-        results.append(Result("production:feeds", PASS, f"{len(feeds_map)} feeds fresh"))
+        stale = []
+        for name, entry in feeds_map.items():
+            age = entry.get("age_s") if isinstance(entry, dict) else None
+            if age is None or age > stale_s:
+                stale.append(f"{name}={age}")
+        if stale:
+            results.append(Result("production:feeds", WARN, "stale/absent: " + ", ".join(stale)))
+        else:
+            results.append(Result("production:feeds", PASS, f"{len(feeds_map)} feeds fresh"))
 
-    degraded = ((data.get("alerts") or {}).get("degraded_systems")) or []
+    alerts_obj = data.get("alerts")
+    degraded_raw = alerts_obj.get("degraded_systems") if isinstance(alerts_obj, dict) else None
+    degraded = degraded_raw if isinstance(degraded_raw, list) else []
     if degraded:
-        results.append(
-            Result("production:alerts", WARN, "degraded alert systems: " + ", ".join(degraded))
-        )
+        names = ", ".join(str(s) for s in degraded)
+        results.append(Result("production:alerts", WARN, "degraded alert systems: " + names))
     else:
         results.append(Result("production:alerts", PASS, "no degraded alert systems"))
 

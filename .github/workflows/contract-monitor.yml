@@ -1,0 +1,59 @@
+name: Contract monitor
+
+# Scheduled liveness check against the REAL upstream feeds and the production
+# deployment, using the production decoders (see backend/scripts/contract_monitor.py).
+# This is deliberately SEPARATE from ci.yml and is never a gate on it: CI stays
+# hermetic (goldens pin decode behavior against captured bytes), and this job is
+# the other half that notices when live reality drifts out from under those
+# goldens. It runs on a schedule and on demand only, never on push or
+# pull_request, so it can never block a merge.
+#
+# Alerting is the run status itself: the script exits non-zero when any check
+# FAILs, which fails this workflow, and GitHub's own scheduled-workflow-failure
+# notifications reach the repo admins. WARNs never fail the run (they surface in
+# the logs and the job summary). There is deliberately no issue-creation or other
+# automation here.
+
+on:
+  schedule:
+    # Every 6 hours. Frequent enough to catch a drift within a quarter day, rare
+    # enough that a courteous single fetch per source is a negligible load on the
+    # community-hosted feeds (PATH bridge, NYC Ferry Connexionz).
+    - cron: "17 */6 * * *"
+  workflow_dispatch: {}
+
+# A single scheduled monitor should never pile up: if a run is somehow still
+# going when the next fires, skip rather than stack.
+concurrency:
+  group: contract-monitor
+  cancel-in-progress: false
+
+# Read-only: the monitor only fetches and reports. It needs no write access to
+# the repo, so it is granted none.
+permissions:
+  contents: read
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          # Matches the runtime pinned in nixpacks.toml and ci.yml, so the monitor
+          # decodes with the same Python the deployment runs.
+          python-version: "3.12"
+      # requirements.lock is the exact pinned runtime set Railway deploys, so the
+      # monitor exercises the same decoder library versions as production. No dev
+      # deps: this job runs the script, not the test suite.
+      - run: pip install -r backend/requirements.lock
+      - name: Run contract monitor
+        working-directory: backend
+        env:
+          # Repository variable pointing at the deployment base URL (the monitor
+          # appends /api/status). When unset, the production section WARN-skips.
+          MONITOR_STATUS_URL: ${{ vars.MONITOR_STATUS_URL }}
+          # Optional secret for the keyed bus feed. When unset, the bus check
+          # WARN-skips (it cannot reach the feed without a key).
+          MTA_BUS_API_KEY: ${{ secrets.MTA_BUS_API_KEY }}
+        run: python scripts/contract_monitor.py

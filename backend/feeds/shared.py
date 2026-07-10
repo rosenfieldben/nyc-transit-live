@@ -26,8 +26,11 @@ from google.transit import gtfs_realtime_pb2
 logger = logging.getLogger("feeds")
 
 
-# The .env file lives in the project root, one level up from backend/.
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+# The .env file lives in the project root, one level up from backend/. Three
+# .parent hops (not two) because this file is now nested in the feeds/ package:
+# shared.py -> feeds/ -> backend/ -> project root. (Before the split, feeds.py
+# sat directly in backend/ and used two.)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
 

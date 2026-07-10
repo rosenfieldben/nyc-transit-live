@@ -83,8 +83,9 @@ def _ssl_context() -> ssl.SSLContext:
 
 
 def _poll(paths: tuple[str, ...], ctx: ssl.SSLContext) -> bytes:
-    """GET the first of `paths` (https, then http) that succeeds; raise the last
-    error if all fail. The decoder falls back the same way for the same host."""
+    """GET the first of `paths` (https, then http) that succeeds; if all fail,
+    raise the FIRST (https) error, the more informative one, the same way
+    feeds.ferry._fetch_ferry_endpoint falls back for the same host."""
     last_exc: Exception | None = None
     for url in paths:
         try:
@@ -170,6 +171,12 @@ def main() -> int:
     )
     if not boats:
         print("FAILED: ferry_vp_a decoded zero boats; re-run during active service.")
+        return 1
+    if not arrivals:
+        # Symmetric with the boats guard: a between-sailings lull can carry
+        # trip_updates whose stops are all past, decoding to {} and pinning
+        # NOTHING about the dock dwell the arrivals golden exists to capture.
+        print("FAILED: ferry_tu_a decoded zero arrivals; re-run during active service.")
         return 1
     if join_misses:
         print(

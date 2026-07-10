@@ -264,6 +264,29 @@ def test_arrivals_missing_arrival_uses_departure_for_sort():
     assert row["arrival"] is None and row["departure"] == NOW + 90
 
 
+def test_arrivals_mixed_null_and_present_arrivals_sort_without_raising():
+    # Two boats on the SAME dock and route where one row has arrival=None (an
+    # origin dock, departure only) and the other has an arrival. The trim sorts
+    # the bucket, so the sort key must fall back to departure for the None-arrival
+    # row instead of comparing None < a float (a TypeError that would blank the
+    # whole dock). This directly exercises the crash-prevention branch in
+    # _trim_ferry_arrivals; an arrival-only sort key would raise here.
+    feed = _feed()
+    _add_trip_update(feed, trip_id="T-ER-1", stops=[("18", None, NOW + 90)])  # departure only
+    _add_trip_update(feed, trip_id="T-SB-1", stops=[("18", NOW + 40, NOW + 60)])  # different route
+    # Put both on route ER via a trips map so they share ONE bucket and the sort
+    # actually compares the two rows.
+    trips = {"T-ER-1": {"route_id": "ER"}, "T-SB-1": {"route_id": "ER"}}
+    arrivals, *_ = feeds._decode_ferry_arrivals(feed.SerializeToString(), trips, ROUTES, NOW)
+    rows = arrivals["18"]["East River"]
+    assert len(rows) == 2
+    # Sorted soonest-first by the effective time (arrival when present, else
+    # departure): the arrival-present row (NOW+40) precedes the departure-only
+    # row (NOW+90).
+    assert rows[0]["arrival"] == NOW + 40
+    assert rows[1]["arrival"] is None and rows[1]["departure"] == NOW + 90
+
+
 def test_arrivals_past_stop_dropped():
     # A stop whose latest time is well past (beyond the 60s grace) is not indexed.
     feed = _feed()
@@ -273,12 +296,15 @@ def test_arrivals_past_stop_dropped():
 
 
 def test_arrivals_dwelling_boat_kept_via_departure():
-    # Arrival just passed but departure is still upcoming (a boat dwelling at the
-    # dock): the LATEST time is upcoming, so it stays.
+    # Arrival is PAST the 60s just-passed grace (NOW-100 < NOW-60) but departure
+    # is still upcoming (a boat dwelling at the dock). Only the LATEST-time rule
+    # (_stop_time = max of arrival/departure) keeps it: an arrival-only check
+    # would drop this row, so this pins the dwell rule, not just the grace.
     feed = _feed()
-    _add_trip_update(feed, trip_id="T-ER-1", stops=[("18", NOW - 30, NOW + 90)])
+    _add_trip_update(feed, trip_id="T-ER-1", stops=[("18", NOW - 100, NOW + 90)])
     arrivals, *_ = _arrivals(feed)
-    assert arrivals["18"]["East River"][0]["departure"] == NOW + 90
+    row = arrivals["18"]["East River"][0]
+    assert row["arrival"] == NOW - 100 and row["departure"] == NOW + 90
 
 
 def test_arrivals_deadhead_dropped_and_counted():

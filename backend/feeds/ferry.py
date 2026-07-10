@@ -33,6 +33,7 @@ Two drop rules, deliberately different in severity:
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 import httpx
@@ -49,10 +50,11 @@ from feeds.shared import (
 )
 
 # The two realtime endpoints share this host and path base with the 14a static
-# utility URL. https is tried first (14a verified this host serves https end to
-# end) and http is the fallback only if https fails, mirroring the tolerance the
-# static loader keeps for the same host. Split out so a probe or a host move is a
-# one-line change and so tests can point a fake transport at them.
+# utility URL. The 14b probe reached them over http, and 14a settled on https for
+# the same host (its static loader is https-only), so this tries https first and
+# falls back to http only if https fails, keeping both schemes working. Split out
+# so a probe or a host move is a one-line change and so tests can point a fake
+# transport at them.
 FERRY_RT_HOST = "nycferry.connexionz.net/rtt/public/utility/gtfsrealtime.aspx"
 FERRY_VEHICLE_ENDPOINT = "vehicleposition"
 FERRY_TRIPUPDATE_ENDPOINT = "tripupdate"
@@ -259,9 +261,9 @@ def _trim_ferry_arrivals(
 
 async def _fetch_ferry_endpoint(client: httpx.AsyncClient, endpoint: str) -> bytes:
     """GET one ferry realtime endpoint and return the raw protobuf bytes. https
-    first, then http on failure (the host serves both; 14a settled on https for
-    the same host, and the http fallback only fires if https fails). Redirects
-    are followed (the sibling static utility URL 302s; the realtime endpoints may
+    first, then http on failure (the 14b probe used http and 14a used https for
+    the same host; the http fallback only fires if https fails). Redirects are
+    followed (the sibling static utility URL 302s; the realtime endpoints may
     too). Raises the https error if both attempts fail; a DecodeError on the body
     surfaces later, at the decode, exactly like the other single-fetch feeds."""
     last_exc: httpx.HTTPError | None = None
@@ -294,8 +296,15 @@ async def fetch_ferry_data(
     now = time.time()
     trips = (ferry_static or {}).get("trips") or {}
     routes = (ferry_static or {}).get("routes") or {}
-    vehicle_raw = await _fetch_ferry_endpoint(client, FERRY_VEHICLE_ENDPOINT)
-    tripupdate_raw = await _fetch_ferry_endpoint(client, FERRY_TRIPUPDATE_ENDPOINT)
+    # Fetch both endpoints concurrently (they share one host), so the poll pays
+    # the slower round trip, not their sum, matching fetch_railroad_trains'
+    # gather. The contract is all-or-nothing, so the default gather (no
+    # return_exceptions) is exactly right: the first leg to fail propagates and
+    # the other is cancelled, and the caller retains last-known.
+    vehicle_raw, tripupdate_raw = await asyncio.gather(
+        _fetch_ferry_endpoint(client, FERRY_VEHICLE_ENDPOINT),
+        _fetch_ferry_endpoint(client, FERRY_TRIPUPDATE_ENDPOINT),
+    )
     boats, feed_timestamp, boat_deadheads, boat_join_misses = _decode_ferry_vehicles(
         vehicle_raw, trips, routes, now
     )

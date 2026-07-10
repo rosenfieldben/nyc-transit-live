@@ -1477,6 +1477,12 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
     async def fake_fetch_path(client, stops):
         return PATH_TRAINS, PATH_ARRIVALS, 1003.0, 0
 
+    async def fake_fetch_ferry(client, ferry_static):
+        # Stubbed like every other fetcher: ferry static warms to "ready" below,
+        # so without this the poll loop would call the real fetch_ferry_data and
+        # hit the network, breaking this test's no-network contract.
+        return [], {}, 1004.0
+
     async def fake_load_railroad_static():
         # No network. LIRR carries stops/trips/shapes/routes; MNR failed (None).
         return {
@@ -1505,6 +1511,7 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
     monkeypatch.setattr(app_module, "fetch_subway_trains", fake_fetch_subways)
     monkeypatch.setattr(app_module, "fetch_railroad_trains", fake_fetch_railroads)
     monkeypatch.setattr(app_module, "fetch_path_trains", fake_fetch_path)
+    monkeypatch.setattr(app_module, "fetch_ferry_data", fake_fetch_ferry)
     monkeypatch.setattr(
         app_module.railroad_static, "load_railroad_static", fake_load_railroad_static
     )
@@ -1608,6 +1615,12 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
                 "failed": [],
                 "unresolved": 0,
             }
+            # The same poll cycle refreshed the ferry realtime feed via the
+            # stubbed fetch (no network): it returned no boats, a valid empty
+            # poll, so the cache filled with [] and health recorded ok.
+            assert app.state.feed_cache["ferry"]["data"] == []
+            assert app.state.feed_cache["ferry"]["feed_timestamp"] == 1004.0
+            assert app.state.ferry_feed_health == {"total": 1, "ok": 1, "failed": []}
             res = await c.get("/api/status")
             assert res.status_code == 200
             assert res.json()["feeds"]["buses"]["fetched_at"] is not None
@@ -1615,6 +1628,7 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
             assert res.json()["subway_static"] == "ready"
             assert res.json()["railroad_static"] == "ready"
             assert res.json()["path_static"] == "ready"
+            assert res.json()["ferry_static"] == "ready"
         tasks = (
             app.state.feed_poll_task,
             app.state.bus_index_task,

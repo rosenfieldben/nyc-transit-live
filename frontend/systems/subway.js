@@ -34,9 +34,9 @@ function trainPopup(record) {
 const lineRenderer = L.canvas({ padding: 0.3 });
 const routeIndex = new Map(); // route_id -> [{ points, cum }] for interpolation
 
-// The static loaders below each return true only once they have populated
-// their layer from a NON-EMPTY payload, and false otherwise, so retryUntil can
-// keep asking. WHY an empty 200 is not success: while a static group's warmup has
+// Every system's static loader (this one and its siblings in the other system
+// scripts) returns true only once it has populated its layer from a NON-EMPTY
+// payload, and false otherwise, so retryUntil can keep asking. WHY an empty 200 is not success: while a static group's warmup has
 // FAILED (and is retrying server-side), its endpoints serve [] under Cache-Control
 // no-cache, precisely so a browser will come back and see the healed state; and
 // while it is still LOADING they 503. None of these endpoints has a legitimately

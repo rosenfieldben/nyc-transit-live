@@ -82,6 +82,15 @@
           integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
           crossorigin=""></script>
   <script src="helpers.js"></script>
+  <!-- Ordered plain scripts sharing one global scope (no bundler): shared map
+       infrastructure first, then one file per system, then map.js as the entry
+       that wires the poll loop and kickoff. -->
+  <script src="systems/shared.js"></script>
+  <script src="systems/buses.js"></script>
+  <script src="systems/subway.js"></script>
+  <script src="systems/railroad.js"></script>
+  <script src="systems/airtrain.js"></script>
+  <script src="systems/path.js"></script>
   <script src="map.js"></script>
 </body>
 </html>

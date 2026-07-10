@@ -102,6 +102,7 @@ async def get_status(request: Request) -> dict:
         "subway_feeds": getattr(app.state, "subway_feed_health", None),
         "railroad_feeds": getattr(app.state, "railroad_feed_health", None),
         "path_feeds": getattr(app.state, "path_feed_health", None),
+        "ferry_feeds": getattr(app.state, "ferry_feed_health", None),
         "alerts": alerts,
     }
 

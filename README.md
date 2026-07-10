@@ -121,10 +121,9 @@ system on the map whose popups carry no alerts block. PATH data is courtesy of P
 subject to their license terms. PATH stop ids stay in their own namespace:
 they are numeric and collide with MTA numeric ids across systems.
 
-NYC Ferry is a static foundation for now: the backend downloads and caches the
-ferry static GTFS in its own warmup group (modeled on the PATH group) and
-serves the landing markers and route geometry, but no ferry trains ride the map
-yet (realtime placement is a later phase). Two endpoints:
+NYC Ferry serves both a static foundation and live boats. The backend downloads
+and caches the ferry static GTFS in its own warmup group (modeled on the PATH
+group) and polls the two realtime endpoints each cycle. The endpoints:
 
 - `GET /api/ferry-stops`: `[{id, name, lat, lon, wheelchair}]`, one entry per
   landing. `wheelchair` reflects the GTFS `wheelchair_boarding` flag (true only
@@ -132,6 +131,23 @@ yet (realtime placement is a later phase). Two endpoints:
 - `GET /api/ferry-routes`: `[{id, name, color, text_color, shape}]`, the nine
   routes with their rider-facing names, colors verbatim from the feed, and the
   modal route geometry (same modal-shape-per-direction selection PATH uses).
+- `GET /api/ferry`: `{fetched_at, feed_timestamp, boats}`, the live boats from
+  the VehiclePositions feed. Each boat carries its real GPS position, hull label,
+  trip_id, route_id, raw speed, and `status` (STOPPED_AT when docked, otherwise
+  under way). Both realtime feeds carry an empty route_id, so a boat's route is
+  recovered by joining its trip_id through the static trip-to-route map; a boat
+  whose trip_id does not join keeps its position with a null route rather than
+  being dropped, and a deadheading boat (empty trip_id) is dropped. `bearing` is
+  omitted because the feed only ever reports 0.0.
+- `GET /api/ferry-arrivals/{stop_id}`: `{fetched_at, stop_id, stop_name, routes}`,
+  upcoming boats at a dock grouped by route name (the feed has no direction_id).
+  Each row carries the arrival and departure times (docks report both as a dwell).
+
+Ferry endpoints land dark for now: no frontend layer draws them yet (a later
+phase). Ferries stop running overnight, so the realtime feeds return empty then;
+an empty successful poll correctly clears the boats (they went home), while a
+failed poll keeps the last-known set, the standard success-replaces /
+failure-retains split.
 
 Ferry stop ids are short numerics that collide with MTA and PATH ids, so ferry
 data stays in its own namespace. The static feed comes from NYC Ferry's
@@ -522,6 +538,16 @@ Two optional pieces of config sharpen it, both safe to leave unset:
   join needs. Data comes via NYC Ferry's Connexionz endpoint under the Developer
   Terms on ferry.nyc/developer-tools/ (a revocable right to integrate the GTFS
   into sites and applications; NYC Ferry retains all rights).
+- [x] **14b. NYC Ferry (realtime decoder + arrivals)**: the two ferry realtime
+  feeds (VehiclePositions + TripUpdates) are polled each cycle and decoded into
+  live GPS boats (`/api/ferry`) and a per-dock arrivals index grouped by route
+  (`/api/ferry-arrivals/{stop_id}`). Both feeds carry an empty route_id, so route
+  is recovered by joining trip_id through 14a's static trip-to-route map; a
+  positioned boat that does not join keeps a null route (never dropped), while a
+  deadheading boat (empty trip_id) is dropped. `bearing` is omitted (always 0.0);
+  `status` and raw `speed` are passed through. An empty overnight poll clears the
+  boats (success-replaces), unlike a failed poll (retains last-known). Endpoints
+  land dark until the frontend layer (14c). No ferry alerts yet (a follow-up).
 
 ## Notes
 

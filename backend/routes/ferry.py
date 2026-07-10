@@ -1,13 +1,23 @@
-"""NYC Ferry endpoints (14a static foundation): stop markers and route geometry."""
+"""NYC Ferry endpoints: stop markers and route geometry (14a static foundation),
+plus live boats and per-dock arrivals (14b realtime)."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request, Response
+import re
 
-from cache import _static_endpoint_ready
-from models import FerryRoute, FerryStop
+from fastapi import APIRouter, HTTPException, Request, Response
+
+from cache import _require_filled_cache, _serve_cached, _static_endpoint_ready
+from models import FerryFeed, FerryRoute, FerryStationArrivals, FerryStop
 
 router = APIRouter()
+
+# NYC Ferry stop ids are short numerics (e.g. "18"); allow up to 6 digits for
+# headroom. Like the other station-id regexes this is only a cheap malformed-input
+# pre-filter: membership in app.state.ferry_stops is the real gate. Ferry ids live
+# in their own namespace (they collide numerically with MTA and PATH ids), so this
+# never mixes with those regexes.
+_FERRY_STOP_ID_RE = re.compile(r"^[0-9]{1,6}$")
 
 
 @router.get("/api/ferry-stops", response_model=list[FerryStop])
@@ -48,3 +58,46 @@ async def get_ferry_routes(request: Request, response: Response) -> list[dict]:
     if not routes:
         response.headers["Cache-Control"] = "no-cache"
     return routes
+
+
+@router.get("/api/ferry", response_model=FerryFeed)
+async def get_ferry(request: Request) -> dict:
+    """Cached live NYC Ferry boats from the VehiclePositions feed: {fetched_at,
+    feed_timestamp, boats}. Each boat carries its real GPS position, hull label,
+    trip_id, route_id (from the static trip -> route join, null on a miss), speed,
+    current_status, and updated_at; bearing is omitted (the feed reports only
+    0.0).
+
+    An empty boats list is a VALID served state (overnight the boats go home), not
+    a warming 503: a successful poll that decoded zero boats fills the cache with
+    [], which serves normally. 503 only until the FIRST successful poll fills the
+    cache. The envelope key is `boats` via _serve_cached's data_key, so the
+    warming / never-filled contract stays shared with the other feed endpoints."""
+    return _serve_cached(request.app, "ferry", data_key="boats")
+
+
+@router.get("/api/ferry-arrivals/{stop_id}", response_model=FerryStationArrivals)
+async def get_ferry_arrivals(request: Request, stop_id: str) -> dict:
+    """Upcoming boats at a NYC Ferry dock, grouped by route, from the in-memory
+    index refreshed each ferry poll.
+
+    Modeled on /api/path-arrivals (single system, no direction segment). Bucket
+    keys are route long names (the feed carries no direction_id, and route reads
+    better at a multi-route dock), present only when populated; an empty {} means
+    nothing upcoming, and a join-missed trip lands in a "Ferry" residual bucket.
+    Rows carry route_id, trip_id, arrival, and departure (docks report both as a
+    dwell). 503 while the ferry cache has never filled (consistent with the other
+    arrivals endpoints); 404 for a malformed or unknown stop id (regex plus
+    membership in the static ferry stops)."""
+    app = request.app
+    entry = app.state.feed_cache["ferry"]
+    _require_filled_cache(entry)
+    stops = getattr(app.state, "ferry_stops", None) or {}
+    if not _FERRY_STOP_ID_RE.match(stop_id) or stop_id not in stops:
+        raise HTTPException(status_code=404, detail=f"Unknown NYC Ferry stop {stop_id}.")
+    return {
+        "fetched_at": entry["fetched_at"],
+        "stop_id": stop_id,
+        "stop_name": stops[stop_id]["name"],
+        "routes": (getattr(app.state, "ferry_arrivals", None) or {}).get(stop_id, {}),
+    }

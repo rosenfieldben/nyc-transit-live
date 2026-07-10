@@ -321,7 +321,13 @@ group's warmup state (`subway_static` / `railroad_static`: loading, ready, or
 failed-and-retrying). The `alerts` entry reports the alert poll's `age_s`, its
 last error if any, the `active` alert count in the index, and `suppressed_planned`
 (not-yet-active planned work the last poll held back), so upcoming service work is
-visible even though it is excluded from `/api/alerts`.
+visible even though it is excluded from `/api/alerts`. It also carries per-system
+health under `systems` (each alert feed's last-decode time, whether its alerts are
+currently `retained` from a down feed, and any current error) plus a
+`degraded_systems` list: one of the four alert feeds going down is a successful
+poll overall, so its alerts are carried forward (bounded by an activity re-filter
+and a retention cap) rather than silently deleted, and this is where that partial
+outage shows.
 
 `GET /healthz` is the readiness probe (Railway's healthcheck points here). It
 returns 503 when the app can't serve fresh data: no feed is fresh, the bus route

@@ -26,6 +26,8 @@ import path_static
 import railroad_static
 import static_data
 from feeds import (
+    ALERT_FEED_URLS,
+    ALERT_RETENTION_MAX_S,
     RAILROAD_FEED_URLS,
     SUBWAY_FEED_URLS,
     carry_forward_prev,
@@ -35,6 +37,7 @@ from feeds import (
     fetch_subway_trains,
     fetch_vehicle_positions,
     match_path_identities,
+    merge_alert_generations,
     new_path_identity_state,
 )
 from models import (
@@ -136,7 +139,22 @@ def _fresh_alerts_entry() -> dict:
     # a poll decoded zero active alerts); active/suppressed are the counts /api/status
     # reports. Same last-known-on-failure rule as the feed cache: a failed poll keeps
     # the last index and its fetched_at, replacing them only on a poll that decoded.
-    return {"alerts": None, "fetched_at": None, "error": None, "active": 0, "suppressed": 0}
+    # health = per-system freshness, so a PARTIAL outage (one feed down, not all) is
+    # visible instead of silently thinning the index: fresh_at is the last decode,
+    # retained_since marks a system whose alerts are being carried forward from a
+    # down feed (null when fresh or once the retention cap drops them), last_error
+    # flags a system failing this poll. Keyed by the same four alert systems.
+    return {
+        "alerts": None,
+        "fetched_at": None,
+        "error": None,
+        "active": 0,
+        "suppressed": 0,
+        "health": {
+            system: {"fresh_at": None, "retained_since": None, "last_error": None}
+            for system in ALERT_FEED_URLS
+        },
+    }
 
 
 def _note_failure(entry: dict, status: int, detail: str, log: bool = True) -> None:
@@ -392,12 +410,25 @@ async def _refresh_alerts(app: FastAPI, client: httpx.AsyncClient) -> None:
     """Refresh the active-alerts index. Same cache contract as the feeds: a failed
     poll keeps the last-known index and its fetched_at (the error is recorded but
     only surfaces to clients while the index has never filled), and the index is
-    replaced only on a poll that decoded. A partial failure (some feeds down, not
-    all) is a SUCCESS: fetch_service_alerts already dropped the failed systems'
-    alerts and returned, so the poll succeeds and the error clears."""
+    replaced only on a poll that decoded.
+
+    A partial failure (some feeds down, not all) is still a SUCCESSFUL poll, but it
+    no longer silently drops the down systems' alerts. It USED TO: fetch_service_alerts
+    returns only the systems that decoded, so replacing the index wholesale deleted a
+    down system's alerts while recording success, an asymmetry with the railroad
+    arrivals that already retain per system. Now the poll carries the down systems'
+    alerts forward through merge_alert_generations (bounded by an activity re-filter
+    and a retention cap), and records per-system health so the partial outage is
+    visible in /api/status even though the poll succeeds.
+
+    The all-feeds-failed path is unchanged: fetch_service_alerts raises RuntimeError,
+    the last-known index is kept, and the poll-level error is recorded. Per-system
+    health is left as its last partial-poll value there; the poll-level 502 is the
+    authoritative total-outage signal (there is no per-system detail to record,
+    since the all-failed RuntimeError carries no per-feed breakdown)."""
     entry = app.state.alerts_cache
     try:
-        alerts, suppressed, _failed = await fetch_service_alerts(client)
+        alerts, suppressed, failed = await fetch_service_alerts(client)
     except RuntimeError as exc:
         # Every alert feed failed this poll; keep the last-known index. Unlike the
         # single-fetch refreshers (buses/subways), there is no httpx.HTTPError to catch
@@ -406,11 +437,37 @@ async def _refresh_alerts(app: FastAPI, client: httpx.AsyncClient) -> None:
         # all-failed RuntimeError ever propagates.
         _note_failure(entry, 502, _sanitize_upstream(exc))
         return
+
+    now = time.time()
+    failed_set = set(failed)
+    health = entry["health"]
+    # Thread the prior retention clock through the pure merge so the cap measures
+    # total time down, not time-since-this-poll.
+    prev_retained_since = {
+        system: h["retained_since"]
+        for system, h in health.items()
+        if h["retained_since"] is not None
+    }
+    merged, retained_since = merge_alert_generations(
+        entry["alerts"], alerts, failed_set, prev_retained_since, now, ALERT_RETENTION_MAX_S
+    )
+    for system, h in health.items():
+        if system in failed_set:
+            # No per-system upstream string exists to sanitize: fetch_service_alerts'
+            # fixed signature returns only the failed feed KEYS, not their errors, so
+            # the marker is generic (and URL-free by construction). fresh_at is kept
+            # so an operator can see how long ago the system last decoded.
+            h["last_error"] = {"status": 502, "detail": "alert feed unavailable this poll"}
+            h["retained_since"] = retained_since.get(system)
+        else:
+            h["fresh_at"] = now
+            h["retained_since"] = None
+            h["last_error"] = None
     entry.update(
-        alerts=alerts,
-        fetched_at=time.time(),
+        alerts=merged,
+        fetched_at=now,
         error=None,
-        active=len(alerts),
+        active=len(merged),
         suppressed=suppressed,
     )
 
@@ -1151,12 +1208,22 @@ async def get_status() -> dict:
     alerts = None
     if alerts_entry is not None:
         fetched_at = alerts_entry["fetched_at"]
+        # Per-system health (14a-style visibility): `systems` exposes each alert
+        # feed's last-decode time, whether its alerts are currently retained from a
+        # down feed, and any current failure; `degraded_systems` is the sorted set
+        # of systems failing right now, so a partial outage the poll-level fields
+        # (which stay green on a partial failure) would hide is still surfaced.
+        health = alerts_entry.get("health", {})
         alerts = {
             "fetched_at": fetched_at,
             "age_s": round(now - fetched_at, 1) if fetched_at is not None else None,
             "last_error": alerts_entry["error"],
             "active": alerts_entry["active"],
             "suppressed_planned": alerts_entry["suppressed"],
+            "systems": health,
+            "degraded_systems": sorted(
+                system for system, h in health.items() if h["last_error"] is not None
+            ),
         }
     return {
         "feeds": feeds,

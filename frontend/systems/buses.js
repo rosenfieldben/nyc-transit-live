@@ -1,8 +1,8 @@
 // Bus layer: markers, the on-demand route line, and the per-poll apply. A plain
 // <script> after systems/shared.js; reads the shared map/layers/helpers globals.
 
-// esc, routeColor, lineColor, staleness and friends live in helpers.js,
-// loaded just before this script.
+// esc, routeColor, lineColor, staleness and friends live in helpers.js, loaded
+// (with systems/shared.js) before this script, so they are globals here.
 
 /* ---------------- Buses ---------------- */
 

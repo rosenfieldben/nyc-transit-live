@@ -65,7 +65,7 @@ function setStatus(text, isError = false) {
 }
 
 
-/* ----- Subway stations + live arrivals (click a station for countdowns) ----- */
+/* ----- Station popups + live arrivals, shared by subway, railroad and PATH ----- */
 
 // Canvas-rendered so ~470 circle markers stay cheap and hit-testable; on its
 // own pane (above the route-line canvas) so station clicks land here.

@@ -356,6 +356,45 @@ used as a freshness signal. The frontend judges staleness from the difference of
 those two server-side values, so the browser clock never causes false "stale"
 warnings.
 
+### Live upstream contract monitor
+
+The test suite is hermetic: golden fixtures pin every decoder against captured
+bytes, so a green pipeline proves the code still parses yesterday's data but says
+nothing about whether the live feeds still look like those captures. A moved feed
+URL, an upstream schema change, a dead community bridge, or an expired static feed
+would all pass CI and only surface as a broken map in production.
+
+`backend/scripts/contract_monitor.py` closes that gap. On a schedule
+(`.github/workflows/contract-monitor.yml`, every 6 hours plus manual dispatch) it
+fetches every upstream source and the production `/api/status`, and decodes each
+with the **same** production functions the app runs (`feeds._decode_feed`,
+`_decode_railroad_feed`, `_decode_path_feed`, `_decode_alerts`, the
+`path_static` / `ferry_static` / `railroad_static` / `static_data` parsers), so a
+pass means the real code paths still work against today's data. Each check reports
+`PASS`, `WARN`, or `FAIL`: `FAIL` means a human should look today, `WARN` is
+notable but expected in some conditions. Judgements are banded, not exact, and
+know which emptiness is normal (railroads run thin overnight, the ferry is closed
+at night, zero active alerts is good news), so the monitor does not flap. It fetches
+each source once with a single retry before declaring a failure, and sends the
+community-hosted PATH bridge and NYC Ferry feeds the app's courteous User-Agent.
+
+The workflow is separate from CI and is triggered only by its schedule and manual
+dispatch, never on push or pull request, so it can never gate a merge. The run
+status is the alert: a `FAIL` exits non-zero, which fails the run and triggers
+GitHub's scheduled-failure notifications to the repo admins; `WARN`s surface in
+the logs and the job summary without failing the run.
+
+Two optional pieces of config sharpen it, both safe to leave unset:
+
+- `MONITOR_STATUS_URL` (a repository **variable**, the deployment's base URL):
+  when set, the monitor also checks the live `/api/status` (static groups ready,
+  feeds fresh, no degraded alert systems). When unset, that section is skipped
+  with a `WARN`.
+- `MTA_BUS_API_KEY` (a repository **secret**): when set, the monitor also checks
+  the keyed bus feed. The key rides as a query parameter and every error string is
+  scrubbed, so it never reaches the logs. When unset, the bus check is skipped
+  with a `WARN`.
+
 ## Build phases
 
 - [x] **1. Backend proves data flows** — `/api/buses` returns live JSON.

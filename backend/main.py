@@ -50,6 +50,7 @@ from cache import (
 )
 from feeds import (
     ALERT_RETENTION_MAX_S,
+    fetch_ferry_data,
     fetch_path_trains,
     fetch_railroad_trains,
     fetch_service_alerts,
@@ -62,6 +63,7 @@ from pollers import (
     _poll_feeds,
     _refresh_alerts,
     _refresh_buses,
+    _refresh_ferry,
     _refresh_path,
     _refresh_railroads,
     _refresh_subways,
@@ -166,6 +168,7 @@ async def lifespan(app: FastAPI):
         "subways": _fresh_entry(),
         "railroads": _fresh_entry(),
         "path": _fresh_entry(),
+        "ferry": _fresh_entry(),
     }
     # Active service-alerts index, refreshed by its own slower poll (_poll_alerts).
     app.state.alerts_cache = _fresh_alerts_entry()
@@ -179,6 +182,10 @@ async def lifespan(app: FastAPI):
     # until the first one; a failed poll keeps the last-known index). Its own
     # field, never merged with the MTA indexes: PATH ids collide numerically.
     app.state.path_arrivals = {}
+    # Per-dock NYC Ferry arrivals, rebuilt by each successful ferry poll (empty
+    # until the first one; a failed poll keeps the last-known index). Its own
+    # field, never merged: ferry ids collide numerically with MTA and PATH ids.
+    app.state.ferry_arrivals = {}
     # Per-trip previous-poll position, used to carry a prev interpolation anchor
     # forward when the feed pruned the just-departed stop (see carry_forward_prev).
     app.state.subway_positions = {}
@@ -191,6 +198,9 @@ async def lifespan(app: FastAPI):
     app.state.railroad_feed_health = None
     # Same, for the single PATH bridge feed.
     app.state.path_feed_health = None
+    # Same, for the NYC Ferry realtime feeds (VehiclePositions + TripUpdates,
+    # polled as one all-or-nothing feed).
+    app.state.ferry_feed_health = None
     # Background warmups: static GTFS (each group retries on failure) and the bus
     # route index. Startup never waits on any of them.
     app.state.subway_static_task = asyncio.create_task(_warm_subway_static(app))
@@ -290,6 +300,7 @@ __all__ = [
     "fetch_subway_trains",
     "fetch_railroad_trains",
     "fetch_path_trains",
+    "fetch_ferry_data",
     "fetch_service_alerts",
     "new_path_identity_state",
     "load_subway_stops",
@@ -312,6 +323,7 @@ __all__ = [
     "_refresh_subways",
     "_refresh_railroads",
     "_refresh_path",
+    "_refresh_ferry",
     "_refresh_alerts",
     "_poll_feeds",
     "_poll_alerts",

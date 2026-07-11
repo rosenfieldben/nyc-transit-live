@@ -25,6 +25,17 @@ from feeds.buses import (
     VEHICLE_POSITIONS_URL,
     fetch_vehicle_positions,
 )
+from feeds.ferry import (
+    FERRY_RT_HOST,
+    FERRY_TRIPUPDATE_ENDPOINT,
+    FERRY_VEHICLE_ENDPOINT,
+    _decode_ferry_arrivals,
+    _decode_ferry_vehicles,
+    _ferry_route_for_trip,
+    _status_name,
+    _trim_ferry_arrivals,
+    fetch_ferry_data,
+)
 from feeds.path import (
     _PATH_DIRECTION,
     _PATH_DIRECTION_ID,
@@ -124,6 +135,15 @@ __all__ = [
     "logger",
     "VEHICLE_POSITIONS_URL",
     "fetch_vehicle_positions",
+    "FERRY_RT_HOST",
+    "FERRY_VEHICLE_ENDPOINT",
+    "FERRY_TRIPUPDATE_ENDPOINT",
+    "_status_name",
+    "_ferry_route_for_trip",
+    "_decode_ferry_vehicles",
+    "_decode_ferry_arrivals",
+    "_trim_ferry_arrivals",
+    "fetch_ferry_data",
     "_SUBWAY_BASE",
     "SUBWAY_FEED_URLS",
     "_platform_direction",

@@ -64,10 +64,12 @@ def cache():
         "subways": app_module._fresh_entry(),
         "railroads": app_module._fresh_entry(),
         "path": app_module._fresh_entry(),
+        "ferry": app_module._fresh_entry(),
     }
     app_module.app.state.subway_feed_health = None
     app_module.app.state.railroad_feed_health = None
     app_module.app.state.path_feed_health = None
+    app_module.app.state.ferry_feed_health = None
     return app_module.app.state.feed_cache
 
 
@@ -381,6 +383,17 @@ async def test_status_reports_ferry_static(client, status_env):
     res = await client.get("/api/status")
     assert res.status_code == 200
     assert res.json()["ferry_static"] == "ready"
+
+
+async def test_status_reports_ferry_feed_health_and_cache_entry(client, cache, status_env):
+    # The ferry realtime feed rides the feeds map like the others, and its
+    # single-feed health surfaces alongside subway_feeds/railroad_feeds/path_feeds.
+    app_module.app.state.ferry_feed_health = {"total": 1, "ok": 1, "failed": []}
+    res = await client.get("/api/status")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ferry_feeds"] == {"total": 1, "ok": 1, "failed": []}
+    assert "ferry" in body["feeds"]  # the cache entry surfaces with the other feeds
 
 
 # ---------------- upstream error sanitization (no key/URL leakage) ----------------
@@ -1028,6 +1041,175 @@ async def test_ferry_routes_ready_but_empty_is_no_cache(client):
     assert res.headers.get("cache-control") == "no-cache"
 
 
+# ---------------- /api/ferry and /api/ferry-arrivals (14b realtime) ----------------
+
+FERRY_BOATS = [
+    {
+        "id": "H1",
+        "label": "H201",
+        "trip_id": "T-ER-1",
+        "route_id": "ER",
+        "latitude": 40.703,
+        "longitude": -74.011,
+        "speed": 6.5,
+        "status": "IN_TRANSIT_TO",
+        "updated_at": 1000.0,
+    }
+]
+FERRY_ARRIVALS_INDEX = {
+    "18": {
+        "East River": [
+            {"route_id": "ER", "trip_id": "T-ER-1", "arrival": 1500.0, "departure": 1560.0}
+        ]
+    }
+}
+
+
+async def test_ferry_feed_warming_up_503(client):
+    res = await client.get("/api/ferry")
+    assert res.status_code == 503
+    assert "warming up" in res.json()["detail"]
+
+
+async def test_ferry_feed_serves_boats_envelope(client, cache):
+    cache["ferry"].update(data=FERRY_BOATS, fetched_at=1001.0, feed_timestamp=996.0, error=None)
+    res = await client.get("/api/ferry")
+    assert res.status_code == 200
+    # The envelope key is `boats` (not the MTA feeds' `data`); bearing is absent.
+    assert res.json() == {"fetched_at": 1001.0, "feed_timestamp": 996.0, "boats": FERRY_BOATS}
+    assert "bearing" not in res.json()["boats"][0]
+
+
+async def test_ferry_feed_empty_boats_is_served_not_503(client, cache):
+    # Overnight the boats go home: an empty list is a VALID served state once the
+    # cache has filled, not a warming 503.
+    cache["ferry"].update(data=[], fetched_at=1001.0, feed_timestamp=996.0, error=None)
+    res = await client.get("/api/ferry")
+    assert res.status_code == 200
+    assert res.json()["boats"] == []
+
+
+async def test_ferry_arrivals_503_while_cache_never_filled(client):
+    res = await client.get("/api/ferry-arrivals/18")
+    assert res.status_code == 503
+
+
+async def test_ferry_arrivals_404_unknown_stop(client, cache):
+    cache["ferry"].update(data=FERRY_BOATS, fetched_at=1001.0, feed_timestamp=996.0, error=None)
+    app_module.app.state.ferry_stops = FERRY_STOPS
+    res = await client.get("/api/ferry-arrivals/999")  # well-formed but not a stop
+    assert res.status_code == 404
+
+
+async def test_ferry_arrivals_404_malformed_stop(client, cache):
+    cache["ferry"].update(data=FERRY_BOATS, fetched_at=1001.0, feed_timestamp=996.0, error=None)
+    app_module.app.state.ferry_stops = FERRY_STOPS
+    res = await client.get("/api/ferry-arrivals/not-a-number")
+    assert res.status_code == 404
+
+
+async def test_ferry_arrivals_served_for_known_stop(client, cache):
+    cache["ferry"].update(data=FERRY_BOATS, fetched_at=1001.0, feed_timestamp=996.0, error=None)
+    app_module.app.state.ferry_stops = FERRY_STOPS
+    app_module.app.state.ferry_arrivals = FERRY_ARRIVALS_INDEX
+    res = await client.get("/api/ferry-arrivals/18")
+    assert res.status_code == 200
+    assert res.json() == {
+        "fetched_at": 1001.0,
+        "stop_id": "18",
+        "stop_name": "Wall St/Pier 11",
+        "routes": FERRY_ARRIVALS_INDEX["18"],
+    }
+
+
+async def test_ferry_arrivals_empty_when_nothing_upcoming(client, cache):
+    # A known dock with no rows in the index returns an empty routes dict, not 404.
+    cache["ferry"].update(data=FERRY_BOATS, fetched_at=1001.0, feed_timestamp=996.0, error=None)
+    app_module.app.state.ferry_stops = FERRY_STOPS
+    app_module.app.state.ferry_arrivals = {}
+    res = await client.get("/api/ferry-arrivals/18")
+    assert res.status_code == 200
+    assert res.json()["routes"] == {}
+
+
+async def test_ferry_refresh_empty_success_replaces_boats(client, cache, monkeypatch):
+    # THE reviewer-flagged divergence: an empty successful poll REPLACES the
+    # boats (they went home), unlike a failed poll which retains last-known.
+    cache["ferry"].update(data=FERRY_BOATS, fetched_at=1.0, feed_timestamp=1.0, error=None)
+
+    async def empty(client_arg, static_arg):
+        return [], {}, 997.0
+
+    monkeypatch.setattr(app_module, "fetch_ferry_data", empty)
+    app_module.app.state.ferry_static_status = "ready"
+    app_module.app.state.ferry_static = FERRY_STATIC_DATA
+    await app_module._refresh_ferry(app_module.app, client=None)
+    assert cache["ferry"]["data"] == []  # replaced, not retained
+    assert cache["ferry"]["error"] is None
+    assert cache["ferry"]["feed_timestamp"] == 997.0
+    assert app_module.app.state.ferry_feed_health == {"total": 1, "ok": 1, "failed": []}
+
+
+async def test_ferry_refresh_failure_retains_last_known(client, cache, monkeypatch):
+    cache["ferry"].update(data=FERRY_BOATS, fetched_at=1.0, feed_timestamp=1.0, error=None)
+    app_module.app.state.ferry_arrivals = FERRY_ARRIVALS_INDEX
+
+    async def boom(client_arg, static_arg):
+        raise httpx.ConnectError("ferry host down")
+
+    monkeypatch.setattr(app_module, "fetch_ferry_data", boom)
+    app_module.app.state.ferry_static_status = "ready"
+    app_module.app.state.ferry_static = FERRY_STATIC_DATA
+    await app_module._refresh_ferry(app_module.app, client=None)
+    assert cache["ferry"]["data"] == FERRY_BOATS  # last-known kept on failure
+    assert cache["ferry"]["error"]["status"] == 502
+    assert app_module.app.state.ferry_arrivals == FERRY_ARRIVALS_INDEX  # index untouched
+    assert app_module.app.state.ferry_feed_health == {"total": 1, "ok": 0, "failed": ["ferry"]}
+
+
+async def test_ferry_refresh_replaces_arrivals_on_success(client, cache, monkeypatch):
+    app_module.app.state.ferry_arrivals = {"18": {"East River": [{"trip_id": "old"}]}}
+
+    async def ok(client_arg, static_arg):
+        return FERRY_BOATS, FERRY_ARRIVALS_INDEX, 996.0
+
+    monkeypatch.setattr(app_module, "fetch_ferry_data", ok)
+    app_module.app.state.ferry_static_status = "ready"
+    app_module.app.state.ferry_static = FERRY_STATIC_DATA
+    await app_module._refresh_ferry(app_module.app, client=None)
+    assert cache["ferry"]["data"] == FERRY_BOATS
+    assert app_module.app.state.ferry_arrivals == FERRY_ARRIVALS_INDEX  # fully replaced
+
+
+async def test_ferry_refresh_warming_while_static_not_ready(client, cache, monkeypatch):
+    called = False
+
+    async def fake(client_arg, static_arg):
+        nonlocal called
+        called = True
+        return [], {}, 1.0
+
+    monkeypatch.setattr(app_module, "fetch_ferry_data", fake)
+    app_module.app.state.ferry_static_status = "loading"
+    await app_module._refresh_ferry(app_module.app, client=None)
+    assert not called  # the trip -> route join needs the static, so no fetch yet
+    assert cache["ferry"]["error"]["status"] == 503
+
+
+async def test_ferry_refresh_undecodable_body_records_502(client, cache, monkeypatch):
+    from google.protobuf.message import DecodeError
+
+    async def undecodable(client_arg, static_arg):
+        raise DecodeError("not a protobuf")
+
+    monkeypatch.setattr(app_module, "fetch_ferry_data", undecodable)
+    app_module.app.state.ferry_static_status = "ready"
+    app_module.app.state.ferry_static = FERRY_STATIC_DATA
+    await app_module._refresh_ferry(app_module.app, client=None)
+    assert cache["ferry"]["error"]["status"] == 502
+    assert app_module.app.state.ferry_feed_health == {"total": 1, "ok": 0, "failed": ["ferry"]}
+
+
 # ---------------- /api/path and /api/path-arrivals (13b realtime) ----------------
 
 PATH_TRAINS = [
@@ -1295,6 +1477,12 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
     async def fake_fetch_path(client, stops):
         return PATH_TRAINS, PATH_ARRIVALS, 1003.0, 0
 
+    async def fake_fetch_ferry(client, ferry_static):
+        # Stubbed like every other fetcher: ferry static warms to "ready" below,
+        # so without this the poll loop would call the real fetch_ferry_data and
+        # hit the network, breaking this test's no-network contract.
+        return [], {}, 1004.0
+
     async def fake_load_railroad_static():
         # No network. LIRR carries stops/trips/shapes/routes; MNR failed (None).
         return {
@@ -1323,6 +1511,7 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
     monkeypatch.setattr(app_module, "fetch_subway_trains", fake_fetch_subways)
     monkeypatch.setattr(app_module, "fetch_railroad_trains", fake_fetch_railroads)
     monkeypatch.setattr(app_module, "fetch_path_trains", fake_fetch_path)
+    monkeypatch.setattr(app_module, "fetch_ferry_data", fake_fetch_ferry)
     monkeypatch.setattr(
         app_module.railroad_static, "load_railroad_static", fake_load_railroad_static
     )
@@ -1426,6 +1615,12 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
                 "failed": [],
                 "unresolved": 0,
             }
+            # The same poll cycle refreshed the ferry realtime feed via the
+            # stubbed fetch (no network): it returned no boats, a valid empty
+            # poll, so the cache filled with [] and health recorded ok.
+            assert app.state.feed_cache["ferry"]["data"] == []
+            assert app.state.feed_cache["ferry"]["feed_timestamp"] == 1004.0
+            assert app.state.ferry_feed_health == {"total": 1, "ok": 1, "failed": []}
             res = await c.get("/api/status")
             assert res.status_code == 200
             assert res.json()["feeds"]["buses"]["fetched_at"] is not None
@@ -1433,6 +1628,7 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
             assert res.json()["subway_static"] == "ready"
             assert res.json()["railroad_static"] == "ready"
             assert res.json()["path_static"] == "ready"
+            assert res.json()["ferry_static"] == "ready"
         tasks = (
             app.state.feed_poll_task,
             app.state.bus_index_task,

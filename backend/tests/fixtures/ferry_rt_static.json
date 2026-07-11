@@ -1,0 +1,4398 @@
+{
+"routes": {
+"AS": {
+"color": "FF6B00",
+"long_name": "Astoria",
+"short_name": "AS",
+"text_color": "FFFFFF"
+},
+"ER": {
+"color": "00839C",
+"long_name": "East River",
+"short_name": "ER",
+"text_color": "FFFFFF"
+},
+"GI": {
+"color": "9795A0",
+"long_name": "Governors Island Shuttle",
+"short_name": "GI",
+"text_color": "FFFFFF"
+},
+"RES": {
+"color": "00A1E1",
+"long_name": "Rockaway East",
+"short_name": "RES",
+"text_color": "FFFFFF"
+},
+"RR": {
+"color": "FF8672",
+"long_name": "Rockaway Rocket",
+"short_name": "RR",
+"text_color": "FFFFFF"
+},
+"RS": {
+"color": "4E008E",
+"long_name": "Rockaway-Soundview",
+"short_name": "RS",
+"text_color": "FFFFFF"
+},
+"RWS": {
+"color": "00A1E1",
+"long_name": "Rockaway West",
+"short_name": "RWS",
+"text_color": "FFFFFF"
+},
+"SB": {
+"color": "FFD100",
+"long_name": "South Brooklyn",
+"short_name": "SB",
+"text_color": "FFFFFF"
+},
+"SG": {
+"color": "D0006F",
+"long_name": "St. George",
+"short_name": "SG",
+"text_color": "FFFFFF"
+}
+},
+"trips": {
+"1000": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"1001": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"1002": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"1003": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"1004": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"1005": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"1006": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"1007": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"1008": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1009": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1010": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1011": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1012": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1013": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1014": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1015": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1016": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1017": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1018": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1019": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1020": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1021": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1022": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1023": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1024": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1025": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1026": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1027": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1028": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"1029": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"1030": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"1031": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"1032": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"1131": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"1132": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"1133": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"1134": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"1135": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"1136": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"1137": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"1138": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"1139": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"1140": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"1141": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1142": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1143": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1144": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1145": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1146": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1147": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1148": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1149": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1150": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1151": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1152": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1153": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1154": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1155": {
+"direction_id": "0",
+"headsign": "Governors Island",
+"route_id": "SB",
+"shape_id": "137"
+},
+"1156": {
+"direction_id": "0",
+"headsign": "Governors Island",
+"route_id": "SB",
+"shape_id": "137"
+},
+"1157": {
+"direction_id": "0",
+"headsign": "Governors Island",
+"route_id": "SB",
+"shape_id": "137"
+},
+"1158": {
+"direction_id": "0",
+"headsign": "Governors Island",
+"route_id": "SB",
+"shape_id": "137"
+},
+"1159": {
+"direction_id": "0",
+"headsign": "Governors Island",
+"route_id": "SB",
+"shape_id": "137"
+},
+"1160": {
+"direction_id": "0",
+"headsign": "Governors Island",
+"route_id": "SB",
+"shape_id": "137"
+},
+"1161": {
+"direction_id": "0",
+"headsign": "Governors Island",
+"route_id": "SB",
+"shape_id": "137"
+},
+"1162": {
+"direction_id": "0",
+"headsign": "Governors Island",
+"route_id": "SB",
+"shape_id": "137"
+},
+"1163": {
+"direction_id": "0",
+"headsign": "Governors Island",
+"route_id": "SB",
+"shape_id": "137"
+},
+"1164": {
+"direction_id": "0",
+"headsign": "Governors Island",
+"route_id": "SB",
+"shape_id": "137"
+},
+"1165": {
+"direction_id": "0",
+"headsign": "Governors Island",
+"route_id": "SB",
+"shape_id": "137"
+},
+"1166": {
+"direction_id": "0",
+"headsign": "Governors Island",
+"route_id": "SB",
+"shape_id": "137"
+},
+"1167": {
+"direction_id": "0",
+"headsign": "Governors Island",
+"route_id": "SB",
+"shape_id": "137"
+},
+"1168": {
+"direction_id": "0",
+"headsign": "Governors Island",
+"route_id": "SB",
+"shape_id": "137"
+},
+"1169": {
+"direction_id": "0",
+"headsign": "Red Hook/Atlantic Basin",
+"route_id": "SB",
+"shape_id": "142"
+},
+"1170": {
+"direction_id": "0",
+"headsign": "Red Hook/Atlantic Basin",
+"route_id": "SB",
+"shape_id": "142"
+},
+"1171": {
+"direction_id": "0",
+"headsign": "Red Hook/Atlantic Basin",
+"route_id": "SB",
+"shape_id": "142"
+},
+"1172": {
+"direction_id": "0",
+"headsign": "Red Hook/Atlantic Basin",
+"route_id": "SB",
+"shape_id": "142"
+},
+"1173": {
+"direction_id": "0",
+"headsign": "Red Hook/Atlantic Basin",
+"route_id": "SB",
+"shape_id": "142"
+},
+"1174": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "143"
+},
+"1175": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "136"
+},
+"1176": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "136"
+},
+"1177": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "136"
+},
+"1178": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "136"
+},
+"1179": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "136"
+},
+"1180": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "136"
+},
+"1181": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "136"
+},
+"1182": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "136"
+},
+"1183": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "136"
+},
+"1184": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "136"
+},
+"1185": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "136"
+},
+"1186": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "136"
+},
+"1187": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "136"
+},
+"1188": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "136"
+},
+"1189": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "143"
+},
+"1190": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "143"
+},
+"1191": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "143"
+},
+"1192": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "143"
+},
+"1193": {
+"direction_id": "0",
+"headsign": "Bay Ridge",
+"route_id": "SB",
+"shape_id": "156"
+},
+"1194": {
+"direction_id": "0",
+"headsign": "Bay Ridge",
+"route_id": "SB",
+"shape_id": "156"
+},
+"1195": {
+"direction_id": "0",
+"headsign": "Bay Ridge",
+"route_id": "SB",
+"shape_id": "156"
+},
+"1196": {
+"direction_id": "0",
+"headsign": "Bay Ridge",
+"route_id": "SB",
+"shape_id": "156"
+},
+"1197": {
+"direction_id": "0",
+"headsign": "Bay Ridge",
+"route_id": "SB",
+"shape_id": "156"
+},
+"1198": {
+"direction_id": "0",
+"headsign": "Bay Ridge",
+"route_id": "SB",
+"shape_id": "156"
+},
+"1199": {
+"direction_id": "0",
+"headsign": "Bay Ridge",
+"route_id": "SB",
+"shape_id": "156"
+},
+"1200": {
+"direction_id": "0",
+"headsign": "Bay Ridge",
+"route_id": "SB",
+"shape_id": "156"
+},
+"1201": {
+"direction_id": "0",
+"headsign": "Bay Ridge",
+"route_id": "SB",
+"shape_id": "156"
+},
+"1202": {
+"direction_id": "0",
+"headsign": "Bay Ridge",
+"route_id": "SB",
+"shape_id": "156"
+},
+"1203": {
+"direction_id": "0",
+"headsign": "Bay Ridge",
+"route_id": "SB",
+"shape_id": "156"
+},
+"1204": {
+"direction_id": "0",
+"headsign": "Bay Ridge",
+"route_id": "SB",
+"shape_id": "156"
+},
+"1205": {
+"direction_id": "0",
+"headsign": "Bay Ridge",
+"route_id": "SB",
+"shape_id": "156"
+},
+"1206": {
+"direction_id": "0",
+"headsign": "Bay Ridge",
+"route_id": "SB",
+"shape_id": "156"
+},
+"1207": {
+"direction_id": "0",
+"headsign": "Bay Ridge",
+"route_id": "SB",
+"shape_id": "156"
+},
+"1208": {
+"direction_id": "0",
+"headsign": "Bay Ridge",
+"route_id": "SB",
+"shape_id": "156"
+},
+"1209": {
+"direction_id": "0",
+"headsign": "Bay Ridge",
+"route_id": "SB",
+"shape_id": "156"
+},
+"1210": {
+"direction_id": "0",
+"headsign": "Bay Ridge",
+"route_id": "SB",
+"shape_id": "156"
+},
+"1211": {
+"direction_id": "0",
+"headsign": "Bay Ridge",
+"route_id": "SB",
+"shape_id": "156"
+},
+"1212": {
+"direction_id": "0",
+"headsign": "Bay Ridge",
+"route_id": "SB",
+"shape_id": "156"
+},
+"1213": {
+"direction_id": "0",
+"headsign": "Bay Ridge",
+"route_id": "SB",
+"shape_id": "156"
+},
+"1214": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "157"
+},
+"1215": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "157"
+},
+"1216": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "157"
+},
+"1217": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "157"
+},
+"1218": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "157"
+},
+"1219": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "157"
+},
+"1220": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "157"
+},
+"1221": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "157"
+},
+"1222": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "157"
+},
+"1223": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "157"
+},
+"1224": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "157"
+},
+"1225": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "157"
+},
+"1226": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "157"
+},
+"1227": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "157"
+},
+"1228": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "157"
+},
+"1229": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "157"
+},
+"1230": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "157"
+},
+"1231": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "157"
+},
+"1232": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "157"
+},
+"1233": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "SB",
+"shape_id": "157"
+},
+"1234": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1235": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1236": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1237": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1238": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1239": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1240": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1241": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1242": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1243": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1244": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1245": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1246": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1247": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1248": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1249": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1250": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1251": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1252": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1253": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1254": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1255": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1256": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1257": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1258": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1259": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1260": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "27"
+},
+"1305": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "27"
+},
+"1357": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "27"
+},
+"1358": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "27"
+},
+"1359": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "27"
+},
+"1360": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "27"
+},
+"1361": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "27"
+},
+"1362": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "27"
+},
+"1363": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "27"
+},
+"1364": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "27"
+},
+"1365": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "27"
+},
+"1366": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "27"
+},
+"1367": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "27"
+},
+"1368": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "35"
+},
+"1369": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "35"
+},
+"1370": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "35"
+},
+"1371": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "35"
+},
+"1372": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "35"
+},
+"1373": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "35"
+},
+"1374": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "35"
+},
+"1375": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "35"
+},
+"1376": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "35"
+},
+"1378": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "35"
+},
+"1379": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "35"
+},
+"1380": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "35"
+},
+"1381": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "35"
+},
+"1382": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1383": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1384": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1385": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1386": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1387": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1388": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1389": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1390": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1391": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1392": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1393": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1394": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1395": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1396": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1397": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1398": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1399": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1400": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1401": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1402": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1403": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1404": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1405": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1406": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1407": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1408": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RES",
+"shape_id": "44"
+},
+"1409": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1410": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1411": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1412": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1413": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1439": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1440": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1441": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1442": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1443": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1444": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1445": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1446": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1447": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1448": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1449": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1450": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1451": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1452": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1453": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1454": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1455": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1456": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1457": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1458": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1459": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1460": {
+"direction_id": "1",
+"headsign": "Rockaway East",
+"route_id": "RES",
+"shape_id": "132"
+},
+"1461": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "4"
+},
+"1462": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "4"
+},
+"1463": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "4"
+},
+"1464": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "4"
+},
+"1465": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "4"
+},
+"1466": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "4"
+},
+"1467": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "4"
+},
+"1468": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "4"
+},
+"1469": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "4"
+},
+"1470": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "4"
+},
+"1471": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "4"
+},
+"1472": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "4"
+},
+"1473": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "4"
+},
+"1474": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "4"
+},
+"1512": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "4"
+},
+"1513": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "4"
+},
+"1514": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "4"
+},
+"1515": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "4"
+},
+"1516": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "4"
+},
+"1517": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "4"
+},
+"1518": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "4"
+},
+"1519": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "4"
+},
+"1520": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "4"
+},
+"1521": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "4"
+},
+"1522": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "4"
+},
+"1523": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "4"
+},
+"1524": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RWS",
+"shape_id": "4"
+},
+"1525": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "2"
+},
+"1526": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "2"
+},
+"1527": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "2"
+},
+"1528": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "2"
+},
+"1529": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "2"
+},
+"1530": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "2"
+},
+"1531": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "2"
+},
+"1532": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "2"
+},
+"1533": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "2"
+},
+"1534": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "2"
+},
+"1535": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "2"
+},
+"1536": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "2"
+},
+"1537": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "2"
+},
+"1538": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "2"
+},
+"1539": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "2"
+},
+"1540": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "2"
+},
+"1541": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "2"
+},
+"1542": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "2"
+},
+"1543": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "2"
+},
+"1544": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "2"
+},
+"1545": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "2"
+},
+"1546": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "2"
+},
+"1547": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "2"
+},
+"1548": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "2"
+},
+"1549": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "2"
+},
+"1550": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "2"
+},
+"1551": {
+"direction_id": "1",
+"headsign": "Rockaway West",
+"route_id": "RWS",
+"shape_id": "2"
+},
+"1552": {
+"direction_id": "0",
+"headsign": "Governors Island",
+"route_id": "GI",
+"shape_id": "76"
+},
+"1553": {
+"direction_id": "0",
+"headsign": "Governors Island",
+"route_id": "GI",
+"shape_id": "76"
+},
+"1554": {
+"direction_id": "0",
+"headsign": "Governors Island",
+"route_id": "GI",
+"shape_id": "76"
+},
+"1555": {
+"direction_id": "0",
+"headsign": "Governors Island",
+"route_id": "GI",
+"shape_id": "76"
+},
+"1556": {
+"direction_id": "0",
+"headsign": "Governors Island",
+"route_id": "GI",
+"shape_id": "76"
+},
+"1557": {
+"direction_id": "0",
+"headsign": "Governors Island",
+"route_id": "GI",
+"shape_id": "76"
+},
+"1558": {
+"direction_id": "0",
+"headsign": "Governors Island",
+"route_id": "GI",
+"shape_id": "76"
+},
+"1559": {
+"direction_id": "0",
+"headsign": "Governors Island",
+"route_id": "GI",
+"shape_id": "76"
+},
+"1560": {
+"direction_id": "0",
+"headsign": "Governors Island",
+"route_id": "GI",
+"shape_id": "76"
+},
+"1561": {
+"direction_id": "0",
+"headsign": "Governors Island",
+"route_id": "GI",
+"shape_id": "76"
+},
+"1562": {
+"direction_id": "0",
+"headsign": "Governors Island",
+"route_id": "GI",
+"shape_id": "76"
+},
+"1563": {
+"direction_id": "0",
+"headsign": "Governors Island",
+"route_id": "GI",
+"shape_id": "76"
+},
+"1564": {
+"direction_id": "0",
+"headsign": "Governors Island",
+"route_id": "GI",
+"shape_id": "76"
+},
+"1565": {
+"direction_id": "0",
+"headsign": "Governors Island",
+"route_id": "GI",
+"shape_id": "76"
+},
+"1566": {
+"direction_id": "1",
+"headsign": "Wall St./Pier 11",
+"route_id": "GI",
+"shape_id": "75"
+},
+"1567": {
+"direction_id": "1",
+"headsign": "Wall St./Pier 11",
+"route_id": "GI",
+"shape_id": "75"
+},
+"1568": {
+"direction_id": "1",
+"headsign": "Wall St./Pier 11",
+"route_id": "GI",
+"shape_id": "75"
+},
+"1569": {
+"direction_id": "1",
+"headsign": "Wall St./Pier 11",
+"route_id": "GI",
+"shape_id": "75"
+},
+"1570": {
+"direction_id": "1",
+"headsign": "Wall St./Pier 11",
+"route_id": "GI",
+"shape_id": "75"
+},
+"1571": {
+"direction_id": "1",
+"headsign": "Wall St./Pier 11",
+"route_id": "GI",
+"shape_id": "75"
+},
+"1572": {
+"direction_id": "1",
+"headsign": "Wall St./Pier 11",
+"route_id": "GI",
+"shape_id": "75"
+},
+"1573": {
+"direction_id": "1",
+"headsign": "Wall St./Pier 11",
+"route_id": "GI",
+"shape_id": "75"
+},
+"1576": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"1577": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"1593": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1594": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1595": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "AS",
+"shape_id": "108"
+},
+"1644": {
+"direction_id": "1",
+"headsign": "Wall St./Pier 11",
+"route_id": "GI",
+"shape_id": "75"
+},
+"1700": {
+"direction_id": "1",
+"headsign": "Wall St./Pier 11",
+"route_id": "GI",
+"shape_id": "75"
+},
+"1721": {
+"direction_id": "1",
+"headsign": "Wall St./Pier 11",
+"route_id": "GI",
+"shape_id": "75"
+},
+"1795": {
+"direction_id": "1",
+"headsign": "Wall St./Pier 11",
+"route_id": "GI",
+"shape_id": "75"
+},
+"1796": {
+"direction_id": "1",
+"headsign": "Wall St./Pier 11",
+"route_id": "GI",
+"shape_id": "75"
+},
+"1797": {
+"direction_id": "1",
+"headsign": "Wall St./Pier 11",
+"route_id": "GI",
+"shape_id": "75"
+},
+"1798": {
+"direction_id": "1",
+"headsign": "Wall St./Pier 11",
+"route_id": "GI",
+"shape_id": "75"
+},
+"1799": {
+"direction_id": "1",
+"headsign": "Wall St./Pier 11",
+"route_id": "GI",
+"shape_id": "75"
+},
+"1800": {
+"direction_id": "1",
+"headsign": "Wall St./Pier 11",
+"route_id": "RS",
+"shape_id": "147"
+},
+"1801": {
+"direction_id": "1",
+"headsign": "Wall St./Pier 11",
+"route_id": "RS",
+"shape_id": "147"
+},
+"1802": {
+"direction_id": "1",
+"headsign": "Wall St./Pier 11",
+"route_id": "RS",
+"shape_id": "147"
+},
+"1803": {
+"direction_id": "1",
+"headsign": "Wall St./Pier 11",
+"route_id": "RS",
+"shape_id": "147"
+},
+"1804": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "146"
+},
+"1805": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "146"
+},
+"1806": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RR",
+"shape_id": "131"
+},
+"1807": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RR",
+"shape_id": "131"
+},
+"1808": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RR",
+"shape_id": "131"
+},
+"1809": {
+"direction_id": "1",
+"headsign": "Long Island City",
+"route_id": "RR",
+"shape_id": "130"
+},
+"1810": {
+"direction_id": "1",
+"headsign": "Long Island City",
+"route_id": "RR",
+"shape_id": "130"
+},
+"1811": {
+"direction_id": "1",
+"headsign": "Long Island City",
+"route_id": "RR",
+"shape_id": "130"
+},
+"305": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "ER",
+"shape_id": "141"
+},
+"306": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "ER",
+"shape_id": "141"
+},
+"307": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"308": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"309": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"310": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"311": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"312": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"313": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"314": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"315": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"316": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"317": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"318": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"319": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"320": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"321": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"322": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"323": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"324": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"325": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "ER",
+"shape_id": "9"
+},
+"326": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "ER",
+"shape_id": "9"
+},
+"327": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "ER",
+"shape_id": "9"
+},
+"328": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "ER",
+"shape_id": "9"
+},
+"329": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "ER",
+"shape_id": "9"
+},
+"330": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "ER",
+"shape_id": "9"
+},
+"331": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "ER",
+"shape_id": "9"
+},
+"332": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "ER",
+"shape_id": "9"
+},
+"333": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "ER",
+"shape_id": "9"
+},
+"334": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"335": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"336": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"337": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"338": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"339": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"340": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"341": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"342": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"343": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"344": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"345": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"346": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"347": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"348": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"349": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "ER",
+"shape_id": "9"
+},
+"350": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "ER",
+"shape_id": "9"
+},
+"351": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "ER",
+"shape_id": "9"
+},
+"352": {
+"direction_id": "1",
+"headsign": "East 34th Street",
+"route_id": "ER",
+"shape_id": "9"
+},
+"353": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"354": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"355": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"356": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"357": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"358": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"359": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"360": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"361": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"362": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"363": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"364": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"365": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"366": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"367": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"368": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"369": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"370": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"371": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"397": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"398": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "ER",
+"shape_id": "12"
+},
+"400": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "ER",
+"shape_id": "12"
+},
+"401": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "ER",
+"shape_id": "12"
+},
+"402": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "ER",
+"shape_id": "12"
+},
+"403": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "ER",
+"shape_id": "12"
+},
+"404": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "ER",
+"shape_id": "12"
+},
+"405": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "ER",
+"shape_id": "12"
+},
+"406": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "ER",
+"shape_id": "12"
+},
+"407": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "ER",
+"shape_id": "12"
+},
+"408": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"409": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"410": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"411": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"413": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"414": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"415": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"416": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"417": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"418": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"419": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"420": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"421": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"422": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"423": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"424": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "ER",
+"shape_id": "12"
+},
+"425": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "ER",
+"shape_id": "12"
+},
+"426": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "ER",
+"shape_id": "12"
+},
+"437": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"448": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"449": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"450": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"451": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"452": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"453": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"454": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"455": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"456": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"457": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"458": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"459": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"460": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"461": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"462": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"463": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"464": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"465": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"466": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"467": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"468": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"469": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"470": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"471": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"472": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"473": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"474": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"475": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"476": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"477": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"478": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"479": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"480": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"481": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"482": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"483": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"484": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"485": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"486": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"487": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"488": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"489": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"490": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"491": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"492": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"493": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"494": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"495": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"496": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"497": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R B)",
+"route_id": "ER",
+"shape_id": "134"
+},
+"498": {
+"direction_id": "1",
+"headsign": "East 34th Street (E R A)",
+"route_id": "ER",
+"shape_id": "133"
+},
+"499": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"500": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"501": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"502": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"503": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"504": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"505": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"506": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"507": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"508": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"509": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"510": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"511": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"512": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"513": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"514": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"515": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"516": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"517": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"518": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"519": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"520": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"521": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"522": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"523": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"524": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"525": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"526": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"527": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"528": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"529": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"530": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"531": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"532": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"533": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"534": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"538": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"542": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"543": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"544": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"545": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"546": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"547": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"548": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"549": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"550": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"551": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"552": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"553": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"554": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11 (E R A)",
+"route_id": "ER",
+"shape_id": "69"
+},
+"555": {
+"direction_id": "0",
+"headsign": "Wall St/Pier 11 (E R B)",
+"route_id": "ER",
+"shape_id": "135"
+},
+"556": {
+"direction_id": "1",
+"headsign": "Ferry Point Park",
+"route_id": "RS",
+"shape_id": "145"
+},
+"557": {
+"direction_id": "1",
+"headsign": "Ferry Point Park",
+"route_id": "RS",
+"shape_id": "145"
+},
+"558": {
+"direction_id": "1",
+"headsign": "Ferry Point Park",
+"route_id": "RS",
+"shape_id": "145"
+},
+"559": {
+"direction_id": "1",
+"headsign": "Ferry Point Park",
+"route_id": "RS",
+"shape_id": "145"
+},
+"560": {
+"direction_id": "1",
+"headsign": "Ferry Point Park",
+"route_id": "RS",
+"shape_id": "145"
+},
+"561": {
+"direction_id": "1",
+"headsign": "Ferry Point Park",
+"route_id": "RS",
+"shape_id": "145"
+},
+"562": {
+"direction_id": "1",
+"headsign": "Ferry Point Park",
+"route_id": "RS",
+"shape_id": "145"
+},
+"563": {
+"direction_id": "1",
+"headsign": "Ferry Point Park",
+"route_id": "RS",
+"shape_id": "145"
+},
+"564": {
+"direction_id": "1",
+"headsign": "Ferry Point Park",
+"route_id": "RS",
+"shape_id": "145"
+},
+"565": {
+"direction_id": "1",
+"headsign": "Ferry Point Park",
+"route_id": "RS",
+"shape_id": "145"
+},
+"566": {
+"direction_id": "1",
+"headsign": "Ferry Point Park",
+"route_id": "RS",
+"shape_id": "145"
+},
+"567": {
+"direction_id": "1",
+"headsign": "Ferry Point Park",
+"route_id": "RS",
+"shape_id": "145"
+},
+"568": {
+"direction_id": "1",
+"headsign": "Ferry Point Park",
+"route_id": "RS",
+"shape_id": "145"
+},
+"569": {
+"direction_id": "1",
+"headsign": "Ferry Point Park",
+"route_id": "RS",
+"shape_id": "145"
+},
+"570": {
+"direction_id": "1",
+"headsign": "Ferry Point Park",
+"route_id": "RS",
+"shape_id": "145"
+},
+"571": {
+"direction_id": "1",
+"headsign": "Ferry Point Park",
+"route_id": "RS",
+"shape_id": "145"
+},
+"572": {
+"direction_id": "1",
+"headsign": "Ferry Point Park",
+"route_id": "RS",
+"shape_id": "145"
+},
+"573": {
+"direction_id": "1",
+"headsign": "Wall St./Pier 11",
+"route_id": "RS",
+"shape_id": "147"
+},
+"574": {
+"direction_id": "1",
+"headsign": "Wall St./Pier 11",
+"route_id": "RS",
+"shape_id": "147"
+},
+"575": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "144"
+},
+"600": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "144"
+},
+"602": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "144"
+},
+"606": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "144"
+},
+"608": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "144"
+},
+"610": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "144"
+},
+"616": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "144"
+},
+"617": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "144"
+},
+"618": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "144"
+},
+"619": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "144"
+},
+"620": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "144"
+},
+"621": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "144"
+},
+"623": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "144"
+},
+"625": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "144"
+},
+"627": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "144"
+},
+"629": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "144"
+},
+"635": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "144"
+},
+"637": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "144"
+},
+"638": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "RS",
+"shape_id": "149"
+},
+"639": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "RS",
+"shape_id": "149"
+},
+"640": {
+"direction_id": "1",
+"headsign": "Ferry Point Park",
+"route_id": "RS",
+"shape_id": "148"
+},
+"641": {
+"direction_id": "1",
+"headsign": "Wall St./Pier 11",
+"route_id": "RS",
+"shape_id": "147"
+},
+"650": {
+"direction_id": "1",
+"headsign": "Ferry Point Park",
+"route_id": "RS",
+"shape_id": "145"
+},
+"651": {
+"direction_id": "1",
+"headsign": "Wall St./Pier 11",
+"route_id": "RS",
+"shape_id": "147"
+},
+"652": {
+"direction_id": "1",
+"headsign": "Ferry Point Park",
+"route_id": "RS",
+"shape_id": "145"
+},
+"654": {
+"direction_id": "1",
+"headsign": "Wall St./Pier 11",
+"route_id": "RS",
+"shape_id": "147"
+},
+"656": {
+"direction_id": "1",
+"headsign": "Ferry Point Park",
+"route_id": "RS",
+"shape_id": "145"
+},
+"664": {
+"direction_id": "1",
+"headsign": "Wall St./Pier 11",
+"route_id": "RS",
+"shape_id": "147"
+},
+"666": {
+"direction_id": "1",
+"headsign": "Ferry Point Park",
+"route_id": "RS",
+"shape_id": "145"
+},
+"668": {
+"direction_id": "1",
+"headsign": "Wall St./Pier 11",
+"route_id": "RS",
+"shape_id": "147"
+},
+"670": {
+"direction_id": "1",
+"headsign": "Ferry Point Park",
+"route_id": "RS",
+"shape_id": "145"
+},
+"682": {
+"direction_id": "1",
+"headsign": "Wall St./Pier 11",
+"route_id": "RS",
+"shape_id": "147"
+},
+"684": {
+"direction_id": "1",
+"headsign": "Ferry Point Park",
+"route_id": "RS",
+"shape_id": "145"
+},
+"685": {
+"direction_id": "1",
+"headsign": "Wall St./Pier 11",
+"route_id": "RS",
+"shape_id": "147"
+},
+"686": {
+"direction_id": "1",
+"headsign": "Ferry Point Park",
+"route_id": "RS",
+"shape_id": "145"
+},
+"688": {
+"direction_id": "1",
+"headsign": "Ferry Point Park",
+"route_id": "RS",
+"shape_id": "145"
+},
+"692": {
+"direction_id": "1",
+"headsign": "Ferry Point Park",
+"route_id": "RS",
+"shape_id": "145"
+},
+"694": {
+"direction_id": "1",
+"headsign": "Wall St./Pier 11",
+"route_id": "RS",
+"shape_id": "147"
+},
+"696": {
+"direction_id": "1",
+"headsign": "Ferry Point Park",
+"route_id": "RS",
+"shape_id": "145"
+},
+"700": {
+"direction_id": "1",
+"headsign": "Ferry Point Park",
+"route_id": "RS",
+"shape_id": "145"
+},
+"704": {
+"direction_id": "1",
+"headsign": "Ferry Point Park",
+"route_id": "RS",
+"shape_id": "145"
+},
+"705": {
+"direction_id": "1",
+"headsign": "Ferry Point Park",
+"route_id": "RS",
+"shape_id": "145"
+},
+"707": {
+"direction_id": "1",
+"headsign": "Ferry Point Park",
+"route_id": "RS",
+"shape_id": "145"
+},
+"708": {
+"direction_id": "1",
+"headsign": "Wall St./Pier 11",
+"route_id": "RS",
+"shape_id": "147"
+},
+"709": {
+"direction_id": "1",
+"headsign": "Wall St./Pier 11",
+"route_id": "RS",
+"shape_id": "147"
+},
+"710": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "144"
+},
+"711": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "146"
+},
+"712": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "144"
+},
+"713": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "146"
+},
+"714": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "144"
+},
+"715": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "146"
+},
+"716": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "144"
+},
+"717": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "146"
+},
+"718": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "144"
+},
+"720": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "146"
+},
+"724": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "144"
+},
+"725": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "146"
+},
+"726": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "144"
+},
+"727": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "146"
+},
+"728": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "144"
+},
+"729": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "146"
+},
+"730": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "144"
+},
+"731": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "146"
+},
+"732": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "144"
+},
+"734": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "146"
+},
+"740": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "144"
+},
+"742": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "144"
+},
+"744": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "144"
+},
+"745": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "144"
+},
+"746": {
+"direction_id": "0",
+"headsign": "Rockaway",
+"route_id": "RS",
+"shape_id": "144"
+},
+"747": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "RS",
+"shape_id": "149"
+},
+"748": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "150"
+},
+"750": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"751": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"752": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"753": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"754": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"755": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"756": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"757": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"758": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"759": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"762": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"763": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"775": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"856": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"857": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"858": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"859": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"860": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"861": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"862": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"863": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"919": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "16"
+},
+"920": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"921": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"922": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"923": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"924": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"925": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"926": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"927": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"928": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"929": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"930": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"931": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"934": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"935": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"936": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"937": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"938": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"939": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"940": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"941": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"942": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"943": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"947": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"948": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"949": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"950": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"951": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"952": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"953": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"954": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"955": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"956": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"957": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"958": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"959": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"960": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"961": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"962": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"963": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"964": {
+"direction_id": "0",
+"headsign": "Wall St./Pier 11",
+"route_id": "SG",
+"shape_id": "138"
+},
+"965": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"966": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"967": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"968": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"969": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"970": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"971": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"972": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"973": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"974": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"975": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"976": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"977": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"982": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"983": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"984": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"985": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"986": {
+"direction_id": "1",
+"headsign": "Midtown West/W 39th St-Pier 79",
+"route_id": "SG",
+"shape_id": "139"
+},
+"987": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"988": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"989": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"990": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"991": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"992": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"995": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"996": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"997": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"998": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+},
+"999": {
+"direction_id": "1",
+"headsign": "East 90th St",
+"route_id": "AS",
+"shape_id": "107"
+}
+}
+}

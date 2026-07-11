@@ -245,6 +245,62 @@ class FerryRoute(BaseModel):
     shape: list[list[list[float]]]
 
 
+# NYC Ferry realtime (14b): live GPS boats from the VehiclePositions feed and a
+# per-dock arrivals index from the TripUpdates feed. Both feeds carry an empty
+# route_id, so route_id is recovered by joining trip_id through 14a's static
+# trip -> route map; a boat whose trip_id does not join keeps its position with
+# route_id null (never dropped over a metadata miss). Ferry ids stay in their own
+# namespace (short numerics collide with MTA and PATH ids).
+class FerryBoat(BaseModel):
+    id: str  # vehicle descriptor id, stable across polls
+    label: str | None  # hull name (e.g. "H201"), null when absent
+    trip_id: str  # a real, stable schedule id (unlike PATH's unstable hashes)
+    route_id: str | None  # from the static trip -> route join, null on a miss
+    latitude: float  # real GPS position (not a station projection)
+    longitude: float
+    # Raw feed speed, unit undocumented (0-13 observed, plausibly m/s): passed
+    # through without conversion rather than served in a guessed unit. Null when
+    # the feed omits it.
+    speed: float | None
+    # VehicleStopStatus enum name (STOPPED_AT when docked, IN_TRANSIT_TO /
+    # INCOMING_AT under way), null when the feed omits it. bearing is deliberately
+    # absent: the feed always reports 0.0, so serving it would be a lie.
+    status: str | None
+    updated_at: float | None  # per-vehicle content time, advances each poll
+
+
+class FerryFeed(BaseModel):
+    fetched_at: float | None  # this server's poll time
+    feed_timestamp: float | None  # the VehiclePositions feed header time
+    boats: list[FerryBoat]
+
+
+class FerryArrival(BaseModel):
+    route_id: str | None  # from the static trip -> route join, null on a miss
+    trip_id: str  # real schedule id, exposed (unlike PathArrival)
+    # Docks report BOTH times (a dwell): arrival is when the boat reaches the
+    # dock, departure when it leaves. Either may be null (an origin dock has no
+    # arrival, a terminal no departure), but never both on a kept row.
+    arrival: float | None
+    departure: float | None
+
+
+class FerryStationArrivals(BaseModel):
+    fetched_at: float | None
+    stop_id: str
+    stop_name: str | None
+    # Bucketed BY ROUTE NAME (the feed carries no direction_id, and route reads
+    # better at a multi-route dock), present only when populated; an empty dict
+    # means nothing upcoming. A join-missed trip lands in a "Ferry" residual bucket.
+    routes: dict[str, list[FerryArrival]]
+
+
+class FerryFeedHealth(BaseModel):
+    total: int  # 1: the two ferry endpoints are polled as one all-or-nothing feed
+    ok: int
+    failed: list[str]  # ["ferry"] when the last poll failed, else []
+
+
 # AirTrain JFK: a static-only mode (no realtime feed exists). The whole dataset
 # ships as one committed fixture, so a single /api/airtrain endpoint returns
 # AirTrainData. Headways are SCHEDULED reference bands, never live countdowns.
@@ -367,6 +423,9 @@ class StatusResponse(BaseModel):
     subway_feeds: SubwayFeedHealth | None
     railroad_feeds: RailroadFeedHealth | None
     path_feeds: PathFeedHealth | None
+    # Defaulted so pre-14b /api/status fixtures validate unchanged; the live
+    # handler always populates it once the first ferry poll runs.
+    ferry_feeds: FerryFeedHealth | None = None
     # Alert feed health (None only before the lifespan sets it, e.g. a bare test app).
     # Defaulted so pre-alerts /api/status callers and fixtures validate unchanged;
     # the live handler always populates it.

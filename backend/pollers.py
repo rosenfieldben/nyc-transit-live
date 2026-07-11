@@ -257,6 +257,60 @@ async def _refresh_path(app: FastAPI, client: httpx.AsyncClient) -> None:
     app.state.path_arrivals = arrivals
 
 
+async def _refresh_ferry(app: FastAPI, client: httpx.AsyncClient) -> None:
+    """Refresh the NYC Ferry boats + arrivals from the two realtime endpoints.
+
+    Same cache contract as the other systems with ONE deliberate divergence,
+    flagged for reviewers: an EMPTY successful poll REPLACES the boats. NYC Ferry
+    stops running roughly 22:30-06:00 ET, and the feeds then return zero entities
+    with fresh headers. That empty decode is VALID DATA (the boats went home), so
+    it replaces the cache like any other successful poll and the map correctly
+    empties; only a FAILED poll (HTTP or decode error, below) keeps the last-known
+    boats via _note_failure. This is the standard success-replaces /
+    failure-retains split, but it matters more here than for a rail system, where
+    an empty feed would be unusual: for ferries an empty feed is the nightly norm
+    and must never linger as stale daytime boats.
+
+    ferry_static is a hard dependency: the decode joins each realtime trip_id
+    through 14a's static trip -> route map, so the poll waits for that warmup, the
+    same quiet warming path the PATH refresher takes while its static loads.
+    """
+    entry = app.state.feed_cache["ferry"]
+    if getattr(app.state, "ferry_static_status", None) != "ready":
+        # 14a static not ready: the trip -> route join cannot run. Same log=False
+        # warming path as the PATH/subway refreshers (the single transition log
+        # belongs to _set_static_status, not the 20s poll loop).
+        _note_failure(
+            entry,
+            503,
+            "Static NYC Ferry GTFS is still loading; it will retry automatically. "
+            "Try again shortly.",
+            log=False,
+        )
+        return
+    try:
+        boats, arrivals, feed_timestamp = await main.fetch_ferry_data(
+            client, getattr(app.state, "ferry_static", {})
+        )
+    except httpx.HTTPError as exc:
+        app.state.ferry_feed_health = {"total": 1, "ok": 0, "failed": ["ferry"]}
+        _note_failure(entry, 502, f"Upstream NYC Ferry feed error: {_sanitize_upstream(exc)}")
+        return
+    except DecodeError:
+        # HTTP 200 with a non-protobuf body (CDN error page, maintenance HTML).
+        app.state.ferry_feed_health = {"total": 1, "ok": 0, "failed": ["ferry"]}
+        _note_failure(entry, 502, "Upstream NYC Ferry feed returned undecodable data")
+        return
+    app.state.ferry_feed_health = {"total": 1, "ok": 1, "failed": []}
+    # feed_timestamp is the VehiclePositions header time (the boats' feed); a
+    # failed poll keeps the last-known timestamp, same as the other caches. An
+    # empty boats list REPLACES the cache here on purpose (see the docstring).
+    entry.update(data=boats, fetched_at=time.time(), feed_timestamp=feed_timestamp, error=None)
+    # Replace the arrivals index only on success, so a failed poll keeps the
+    # last-known arrivals on the same fetched_at, consistent with the cache.
+    app.state.ferry_arrivals = arrivals
+
+
 async def _poll_feeds(app: FastAPI) -> None:
     """Refresh the feeds every POLL_INTERVAL_S for the app's lifetime.
 
@@ -272,6 +326,7 @@ async def _poll_feeds(app: FastAPI) -> None:
                     _refresh_subways(app, client),
                     _refresh_railroads(app, client),
                     _refresh_path(app, client),
+                    _refresh_ferry(app, client),
                 )
             except Exception:
                 logger.exception("feed poll cycle failed unexpectedly")

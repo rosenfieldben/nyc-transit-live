@@ -63,6 +63,14 @@
       <svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="4.5" fill="#3d5a80" stroke="#fff" stroke-width="1.5"/></svg>
       PATH station (click for arrivals); trains are diamonds
     </div>
+    <div class="legend-row">
+      <svg viewBox="0 0 22 14"><rect x="1" y="3" width="20" height="8" rx="4" fill="#00839c" stroke="#fff" stroke-width="1.5"/></svg>
+      NYC Ferry boat (live GPS); dimmed when at a dock
+    </div>
+    <div class="legend-row">
+      <svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="4.5" fill="#0e7490" stroke="#fff" stroke-width="1.5"/></svg>
+      Ferry dock (click for arrivals)
+    </div>
     <div class="legend-note">Color indicates route &middot; click a bus to draw its route</div>
     <div id="route-banner" hidden>
       <span id="route-banner-label"></span>
@@ -75,6 +83,7 @@
       <label><input type="checkbox" id="toggle-railroads" checked> Railroads</label>
       <label><input type="checkbox" id="toggle-airtrain" checked> AirTrain JFK</label>
       <label><input type="checkbox" id="toggle-path" checked> PATH</label>
+      <label><input type="checkbox" id="toggle-ferries" checked> Ferries</label>
     </div>
     <div id="status">Loading&hellip;</div>
   </div>
@@ -91,6 +100,7 @@
   <script src="systems/railroad.js"></script>
   <script src="systems/airtrain.js"></script>
   <script src="systems/path.js"></script>
+  <script src="systems/ferry.js"></script>
   <script src="map.js"></script>
 </body>
 </html>

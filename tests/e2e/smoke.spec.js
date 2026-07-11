@@ -32,6 +32,7 @@ const busMarkers = (page) => page.locator(".bus-marker");
 const trainMarkers = (page) => page.locator(".train-marker");
 const railroadMarkers = (page) => page.locator(".railroad-marker");
 const pathMarkers = (page) => page.locator(".path-marker");
+const ferryMarkers = (page) => page.locator(".ferry-marker");
 const popup = (page) => page.locator(".leaflet-popup-content");
 
 // Wait until the first poll and the one-shot static loads (stations, route names)
@@ -650,4 +651,186 @@ test("17. PATH click targets: the station dot opens arrivals, the diamond above 
   await expect(page.locator(".leaflet-popup")).toHaveCount(1);
   await expect(popup(page)).toContainText("scheduled position (no GPS)");
   await expect(popup(page)).toContainText("To New York"); // the train's direction line
+});
+
+// Wait until the ferry static loaders (docks, route lines + name/color tables)
+// and the first /api/ferry poll have all landed. Ferry loads independently of
+// waitForReady's layers, so ferry tests wait on its own state.
+async function waitForFerryReady(page) {
+  await expect(ferryMarkers(page)).toHaveCount(3);
+  await page.waitForFunction(
+    () =>
+      typeof ferryDocks !== "undefined" &&
+      ferryDocks.getLayers().length === 2 &&
+      ferryRouteLines.getLayers().length === 2 && // 2 routes x 1 modal polyline
+      ferryRouteNames.size === 2,
+  );
+}
+
+test("18. Ferry boot: lines, docks and boats render; the toggle hides all three layers", async ({ page }) => {
+  const ctx = await boot(page);
+  await waitForReady(page);
+  await waitForFerryReady(page);
+  expect(ctx.leaks).toEqual([]); // the four ferry endpoints are all mocked locally
+
+  const status = page.locator("#status");
+  await expect(status).toContainText("3 ferries");
+  await expect(status).not.toHaveClass(/error/);
+
+  const layerState = () =>
+    page.evaluate(() => ({
+      lines: map.hasLayer(ferryRouteLines),
+      docks: map.hasLayer(ferryDocks),
+      boats: map.hasLayer(ferryBoats),
+    }));
+  expect(await layerState()).toEqual({ lines: true, docks: true, boats: true });
+
+  await page.locator("#toggle-ferries").uncheck();
+  await expect(ferryMarkers(page)).toHaveCount(0);
+  expect(await layerState()).toEqual({ lines: false, docks: false, boats: false });
+  // Other modes are untouched by the ferry toggle.
+  await expect(busMarkers(page)).toHaveCount(2);
+
+  await page.locator("#toggle-ferries").check();
+  await expect(ferryMarkers(page)).toHaveCount(3);
+  expect(await layerState()).toEqual({ lines: true, docks: true, boats: true });
+});
+
+test("19. Ferry dock popup: route buckets, a dwelling boat shown departing, wheelchair marker, ticking", async ({ page }) => {
+  const ctx = await boot(page);
+  await waitForFerryReady(page);
+
+  // Open Wall St/Pier 11 (first dock in the fixture, accessible, two route buckets).
+  await page.evaluate(() => ferryDocks.getLayers()[0].openPopup());
+  await expect(popup(page)).toContainText("Wall St/Pier 11");
+  await expect(popup(page)).toContainText("NYC Ferry");
+  await expect(popup(page)).toContainText("East River");
+  await expect(popup(page)).toContainText("South Brooklyn");
+  // East River boat arrives in +90s ("2 min"); the South Brooklyn boat is dwelling
+  // (arrival 30s past, departure +90s ahead), so its row reads "departs 2 min".
+  await expect(popup(page)).toContainText("departs 2 min");
+  expect(ctx.counts.ferryArrivals).toBe(1);
+
+  const html = await popup(page).innerHTML();
+  // Buckets are alphabetical, the accessible dock shows the marker, and NYC Ferry
+  // has no alerts feed so no alert block may prepend.
+  expect(html.indexOf("East River")).toBeLessThan(html.indexOf("South Brooklyn"));
+  expect(html).toContain("popup-access");
+  expect(html).not.toContain("alert-block");
+
+  // The shared 1s tick repaints from the cached body with no new fetch: the
+  // arriving row crosses +90s -> +89s (2 min -> 1 min).
+  await page.clock.runFor(1_000);
+  await expect(popup(page)).toContainText("1 min");
+  expect(ctx.counts.ferryArrivals).toBe(1);
+});
+
+test("20. Ferry boats: STOPPED_AT renders docked, a null-route boat reads Unassigned, no speed", async ({ page }) => {
+  await boot(page);
+  await waitForFerryReady(page);
+
+  // Status-aware rendering: H2 is STOPPED_AT -> ferry-docked (dimmed); H1 is under
+  // way -> ferry-active. This is the current_status field earning its passage.
+  const classes = await page.evaluate(() => ({
+    h2: ferryBoatRecords.get("H2").marker.getElement().className,
+    h1: ferryBoatRecords.get("H1").marker.getElement().className,
+  }));
+  expect(classes.h2).toContain("ferry-docked");
+  expect(classes.h1).toContain("ferry-active");
+
+  // The null-route boat (H3) is kept on the map (14b deliberately) and reads
+  // "Unassigned"; its popup shows the hull label and status but never a speed.
+  await page.evaluate(() => ferryBoatRecords.get("H3").marker.openPopup());
+  await expect(popup(page)).toContainText("Unassigned");
+  await expect(popup(page)).toContainText("Boat H099");
+  await expect(popup(page)).toContainText("Under way");
+  const html = await popup(page).innerHTML();
+  expect(html.toLowerCase()).not.toContain("speed");
+  expect(html).not.toContain("4.0"); // the speed value never renders
+});
+
+test("21. Ferry boats: a boat moves between polls without remove/add churn (id-keyed)", async ({ page }) => {
+  const ctx = await boot(page);
+  await waitForFerryReady(page);
+
+  // Tag the current boat DOM nodes so reuse (not rebuild) is observable.
+  await page.evaluate(() => {
+    for (const el of document.querySelectorAll(".ferry-marker")) el.dataset.original = "1";
+  });
+  const before = await page.evaluate(() => {
+    const p = ferryBoatRecords.get("H1").marker.getLatLng();
+    return [p.lat, p.lng];
+  });
+
+  // Next poll: H1 moved to a new GPS position; H2/H3 unchanged.
+  ctx.overrides.ferry = (route, fixtures) => json(route, fixtures.ferryMoved());
+  await page.clock.runFor(15_000);
+
+  // No add/remove churn: same count, every original DOM node still present.
+  await expect(ferryMarkers(page)).toHaveCount(3);
+  expect(
+    await page.evaluate(() => document.querySelectorAll('.ferry-marker[data-original="1"]').length),
+  ).toBe(3);
+  // H1's SAME marker moved to the reported position (railroad GPS precedent).
+  const after = await page.evaluate(() => {
+    const p = ferryBoatRecords.get("H1").marker.getLatLng();
+    return [p.lat, p.lng];
+  });
+  expect(after).toEqual([40.708, -73.985]);
+  expect(after[0]).not.toEqual(before[0]);
+});
+
+test("22. Ferry poll split: an empty 200 clears boats, a 502 keeps last-known", async ({ page }) => {
+  const ctx = await boot(page);
+  await waitForFerryReady(page);
+  const status = page.locator("#status");
+
+  // A 502 (transient failure) keeps the last-known boats and surfaces the error,
+  // exactly like the other feeds.
+  ctx.overrides.ferry = (route) =>
+    json(route, { detail: "Upstream NYC Ferry feed error (HTTP 502)" }, 502);
+  await page.clock.runFor(15_000);
+  await expect(ferryMarkers(page)).toHaveCount(3); // failure retains last-known
+  await expect(status).toContainText("ferries: Upstream NYC Ferry feed error (HTTP 502)");
+  await expect(status).toHaveClass(/error/);
+
+  // A successful EMPTY poll (the boats went home) clears them IMMEDIATELY: the one
+  // deliberate divergence from the other feeds' transient-blip grace, mirroring
+  // 14b's server-side empty-replaces / failure-retains split. No stale window walk.
+  ctx.overrides.ferry = (route, fixtures) => json(route, fixtures.ferryEnvelope([], fx.FROZEN_S + 60));
+  await page.clock.runFor(15_000);
+  await expect(ferryMarkers(page)).toHaveCount(0); // empty-success replaces
+  await expect(status).toContainText("0 ferries");
+});
+
+test("23. Ferry cold start: docks and lines appear without a reload once 503s heal", async ({ page }) => {
+  // Mirror of the PATH cold-start spec for BOTH ferry static loaders: the first
+  // two requests to each return the backend's warming 503, the third serves the
+  // fixture. retryUntil's setTimeout backoff fires on clock.runFor.
+  const warmed = { ferryStops: 0, ferryRoutes: 0 };
+  const warming = (key, healed) => (route) => {
+    warmed[key] += 1;
+    if (warmed[key] <= 2) return json(route, { detail: "Static NYC Ferry GTFS is still loading." }, 503);
+    return json(route, healed());
+  };
+  await boot(page, (ctx) => {
+    ctx.overrides.ferryStops = warming("ferryStops", () => fx.ferryStops());
+    ctx.overrides.ferryRoutes = warming("ferryRoutes", () => fx.ferryRoutes());
+  });
+
+  // Live boats arrive normally; the static docks and lines do not (503s).
+  await expect(ferryMarkers(page)).toHaveCount(3);
+  const layerCounts = () =>
+    page.evaluate(() => ({
+      docks: ferryDocks.getLayers().length,
+      lines: ferryRouteLines.getLayers().length,
+    }));
+  await expect.poll(layerCounts).toEqual({ docks: 0, lines: 0 });
+
+  const baseMs = await page.evaluate(() => STATIC_RETRY_BASE_MS);
+  await page.clock.runFor(baseMs); // attempt 2: still 503
+  await expect.poll(layerCounts).toEqual({ docks: 0, lines: 0 });
+  await page.clock.runFor(baseMs * 2); // attempt 3: fixtures land
+  await expect.poll(layerCounts).toEqual({ docks: 2, lines: 2 });
+  expect(warmed).toEqual({ ferryStops: 3, ferryRoutes: 3 }); // one request per attempt, then stopped
 });

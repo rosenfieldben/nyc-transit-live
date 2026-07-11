@@ -34,6 +34,13 @@ const {
   formatPathHead,
   pathTrainPopupHtml,
   pathArrivalsHtml,
+  FERRY_FALLBACK_COLOR,
+  orderedFerryBuckets,
+  ferryArrivalDisplay,
+  ferryBoatIconState,
+  ferryStatusText,
+  ferryBoatPopupHtml,
+  ferryArrivalsHtml,
   ROUTE_MAX_SLICE,
   RAILROAD_ROUTE_MAX_SLICE,
   FEED_STALE_AFTER_S,
@@ -816,6 +823,138 @@ test("bannerAlerts excludes route-only, stop-only, and route+stop alerts", () =>
 test("bannerAlerts handles an empty or missing list", () => {
   assert.deepEqual(bannerAlerts([]), []);
   assert.deepEqual(bannerAlerts(undefined), []);
+});
+
+// ---- NYC Ferry helpers (phase 14c) ----
+
+test("orderedFerryBuckets sorts route-name buckets alphabetically, dropping empties", () => {
+  const arr = (n) => Array.from({ length: n }, (_, i) => ({ route_id: "ER", arrival: i }));
+  assert.deepEqual(
+    orderedFerryBuckets({ "South Brooklyn": arr(1), Astoria: arr(2), "East River": arr(1) }).map(
+      (b) => b[0],
+    ),
+    ["Astoria", "East River", "South Brooklyn"],
+  );
+  // A bucket with no rows is omitted, not rendered empty.
+  assert.deepEqual(orderedFerryBuckets({ Astoria: [], "East River": arr(1) }).map((b) => b[0]), [
+    "East River",
+  ]);
+  assert.deepEqual(orderedFerryBuckets({}), []);
+  assert.deepEqual(orderedFerryBuckets(undefined), []);
+});
+
+test("ferryArrivalDisplay counts down to arrival, then to departure once dwelling", () => {
+  // Before the boat reaches the dock: arrival countdown.
+  assert.deepEqual(ferryArrivalDisplay({ arrival: 120, departure: 180 }, 40), {
+    mode: "arriving",
+    seconds: 80,
+  });
+  // Dwelling (arrival already passed, departure still ahead): departure countdown.
+  assert.deepEqual(ferryArrivalDisplay({ arrival: 30, departure: 180 }, 40), {
+    mode: "departing",
+    seconds: 140,
+  });
+  // Origin dock (no arrival, only a departure): departure countdown.
+  assert.deepEqual(ferryArrivalDisplay({ arrival: null, departure: 90 }, 40), {
+    mode: "departing",
+    seconds: 50,
+  });
+  // Terminal dock (only an arrival) that has just passed: keep the arrival
+  // countdown rather than dropping the row (it renders "now").
+  assert.deepEqual(ferryArrivalDisplay({ arrival: 20, departure: null }, 40), {
+    mode: "arriving",
+    seconds: -20,
+  });
+  // Exactly at the arrival instant is still "arriving" (not yet dwelling).
+  assert.equal(ferryArrivalDisplay({ arrival: 40, departure: 90 }, 40).mode, "arriving");
+});
+
+test("ferryBoatIconState maps STOPPED_AT to docked and everything else to active", () => {
+  assert.equal(ferryBoatIconState("STOPPED_AT"), "docked");
+  assert.equal(ferryBoatIconState("IN_TRANSIT_TO"), "active");
+  assert.equal(ferryBoatIconState("INCOMING_AT"), "active");
+  assert.equal(ferryBoatIconState(null), "active"); // unknown/missing: not frozen-looking
+  assert.equal(ferryBoatIconState("FUTURE_ENUM"), "active");
+});
+
+test("ferryStatusText maps known statuses to plain words, omits the unknown", () => {
+  assert.equal(ferryStatusText("STOPPED_AT"), "At dock");
+  assert.equal(ferryStatusText("INCOMING_AT"), "Arriving at dock");
+  assert.equal(ferryStatusText("IN_TRANSIT_TO"), "Under way");
+  assert.equal(ferryStatusText(null), null); // omitted rather than asserted
+  assert.equal(ferryStatusText("FUTURE_ENUM"), null);
+});
+
+test("ferryBoatPopupHtml shows label, route name, and status; escapes; no speed", () => {
+  const html = ferryBoatPopupHtml(
+    { label: "H201", status: "IN_TRANSIT_TO", speed: 6.5 },
+    "East River",
+    "#00839c",
+  );
+  assert.ok(html.includes("East River"));
+  assert.ok(html.includes("#00839c"));
+  assert.ok(html.includes("Boat H201"));
+  assert.ok(html.includes("Under way"));
+  assert.ok(html.includes("NYC Ferry"));
+  // Speed is deliberately never shown (14b: unit uncertain).
+  assert.ok(!html.includes("6.5"));
+  assert.ok(!html.toLowerCase().includes("speed"));
+});
+
+test("ferryBoatPopupHtml labels a null-route boat Unassigned and omits an unknown status", () => {
+  const html = ferryBoatPopupHtml({ label: "H099", status: null }, null, FERRY_FALLBACK_COLOR);
+  assert.ok(html.includes("Unassigned"));
+  assert.ok(html.includes(FERRY_FALLBACK_COLOR));
+  assert.ok(html.includes("Boat H099"));
+  // Unknown status -> no status line at all (ferryStatusText returned null).
+  assert.ok(!html.includes("At dock") && !html.includes("Under way"));
+});
+
+test("ferryBoatPopupHtml escapes hostile route name and label", () => {
+  const html = ferryBoatPopupHtml({ label: "H<b>1", status: null }, "East<script>River", "#000");
+  assert.ok(html.includes("East&lt;script&gt;River") && !html.includes("<script>"));
+  assert.ok(html.includes("H&lt;b&gt;1") && !html.includes("H<b>1"));
+});
+
+test("ferryArrivalsHtml buckets by route name with arriving/departing countdowns", () => {
+  const station = { id: "18", name: "Wall St/Pier 11", wheelchair: true };
+  const body = {
+    routes: {
+      "South Brooklyn": [{ route_id: "SB", arrival: 30, departure: 180 }], // dwelling -> departs
+      "East River": [{ route_id: "ER", arrival: 120, departure: 200 }], // arriving
+    },
+  };
+  const colorFor = (id) => ({ ER: "#00839c", SB: "#ffd100" })[id];
+  const html = ferryArrivalsHtml(station, body, 40, colorFor);
+  assert.ok(html.includes("Wall St/Pier 11"));
+  assert.ok(html.includes("NYC Ferry"));
+  assert.ok(html.includes("&#9855;")); // wheelchair accessibility marker
+  assert.ok(html.indexOf("East River") < html.indexOf("South Brooklyn")); // alphabetical
+  assert.ok(html.includes("#00839c") && html.includes("#ffd100")); // route-colored headings
+  assert.ok(html.includes("1 min")); // East River arriving in (120-40)=80s -> "1 min"
+  assert.ok(html.includes("departs 2 min")); // South Brooklyn dwelling, departs in (180-40)=140s
+});
+
+test("ferryArrivalsHtml omits the accessibility marker when not accessible and renders No boats", () => {
+  const noAccess = ferryArrivalsHtml(
+    { id: "2", name: "South Williamsburg", wheelchair: false },
+    { routes: { "East River": [{ route_id: "ER", arrival: 90, departure: 150 }] } },
+    30,
+  );
+  assert.ok(!noAccess.includes("&#9855;"));
+  const empty = ferryArrivalsHtml({ id: "18", name: "Wall St/Pier 11", wheelchair: true }, { routes: {} }, 0);
+  assert.ok(empty.includes("Wall St/Pier 11"));
+  assert.ok(empty.includes("arr-none") && empty.includes("No boats"));
+});
+
+test("ferryArrivalsHtml escapes a hostile route-bucket name and station name", () => {
+  const html = ferryArrivalsHtml(
+    { id: "18", name: "Pier<script>11" },
+    { routes: { "East<b>River": [{ route_id: "ER", arrival: 90, departure: null }] } },
+    30,
+  );
+  assert.ok(html.includes("Pier&lt;script&gt;11") && !html.includes("Pier<script>11"));
+  assert.ok(html.includes("East&lt;b&gt;River") && !html.includes("East<b>River"));
 });
 
 // ---- Static-loader retry helper (phase 12d) ----

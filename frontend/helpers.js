@@ -523,6 +523,125 @@ function pathArrivalsHtml(station, body, now, colorFor = () => PATH_FALLBACK_COL
   return html;
 }
 
+// ---- NYC Ferry (phase 14c: map layer over the 14a/14b endpoints) ----
+
+// Neutral blue-gray for a boat whose route the color table doesn't know (a 14b
+// join miss, kept on the map and labeled "Unassigned"): belongs to no real NYC
+// Ferry route color, so a fallback reads as honestly being one. Distinct from
+// PATH's slate so a stray unassigned boat isn't mistaken for a PATH marker.
+const FERRY_FALLBACK_COLOR = "#78909c";
+
+// Ferry arrivals bucket order: the /api/ferry-arrivals feed has NO direction_id,
+// so buckets are ROUTE NAMES (a dynamic set, unlike the fixed direction lists the
+// other systems use). Sort them alphabetically for a stable, predictable popup;
+// only buckets that actually carry boats are returned (the backend sends only
+// populated ones, and this filters defensively). Returns [[routeName, rows], ...].
+function orderedFerryBuckets(routes) {
+  const present = routes || {};
+  return Object.keys(present)
+    .filter((name) => (present[name] || []).length)
+    .sort()
+    .map((name) => [name, present[name]]);
+}
+
+// Pick the countdown a ferry arrivals ROW should show. Before the boat reaches
+// the dock, count down to its ARRIVAL. Once it has arrived and is dwelling at
+// the dock (arrival already passed but departure still ahead), or the dock is an
+// origin with no arrival at all, count down to its DEPARTURE instead: at that
+// point the rider cares when it LEAVES, not that it technically docked a moment
+// ago. This is the dwell data (both times, from 14b) earning its passage.
+// Returns { mode: "arriving" | "departing", seconds }, and never drops a row: a
+// terminal dock with only an arrival keeps the arrival countdown even once past.
+function ferryArrivalDisplay(row, now) {
+  const arrival = row.arrival;
+  const departure = row.departure;
+  if (arrival != null && arrival - now >= 0) {
+    return { mode: "arriving", seconds: arrival - now };
+  }
+  if (departure != null) {
+    return { mode: "departing", seconds: departure - now };
+  }
+  return { mode: "arriving", seconds: arrival != null ? arrival - now : null };
+}
+
+// Map a boat's GTFS current_status to the icon variant. STOPPED_AT means the boat
+// is sitting at a dock (render docked/dimmed); everything else (IN_TRANSIT_TO,
+// INCOMING_AT, or a missing/unknown status) means under way (render active). The
+// default is deliberately "active": a boat with GPS that is not explicitly
+// STOPPED_AT should not be frozen-looking, and an unknown future enum value is
+// safer shown moving than parked.
+function ferryBoatIconState(status) {
+  return status === "STOPPED_AT" ? "docked" : "active";
+}
+
+// Plain-words status for a boat popup, or null when the feed omits/uses an
+// unknown status (the popup then shows no status line rather than asserting a
+// guess). The three values 14b observed map to rider-facing phrases.
+function ferryStatusText(status) {
+  switch (status) {
+    case "STOPPED_AT":
+      return "At dock";
+    case "INCOMING_AT":
+      return "Arriving at dock";
+    case "IN_TRANSIT_TO":
+      return "Under way";
+    default:
+      return null;
+  }
+}
+
+// Ferry BOAT popup HTML. `name` is the route long name (null when the boat did
+// not join a route: 14b keeps it on the map, and here it reads "Unassigned" in
+// the neutral fallback color) and `color` a css color, both resolved by the
+// caller from the /api/ferry-routes tables so this stays pure and node-testable.
+// Deliberate omissions: NO speed line (14b documents the feed's speed unit as
+// uncertain, so a number could mislead; a followup adds it once the unit is
+// confirmed), and NO alerts block (ferry alerts are a queued follow-up, endpoint
+// verified but unwired, the same current state as the PATH popups). Every
+// feed-derived string is escaped.
+function ferryBoatPopupHtml(boat, name, color) {
+  const routeText = name || "Unassigned";
+  const status = ferryStatusText(boat.status);
+  return (
+    `<b style="color:${color}">${esc(routeText)}</b>` +
+    ` <span class="popup-sub">NYC Ferry</span>` +
+    (boat.label ? `<br>Boat ${esc(boat.label)}` : "") +
+    (status ? `<br>${esc(status)}` : "")
+  );
+}
+
+// Ferry DOCK arrivals popup HTML. Buckets are route names (orderedFerryBuckets);
+// each row is a countdown, shown as "departs …" when the boat is dwelling or the
+// dock is an origin (ferryArrivalDisplay), else the plain arrival countdown. The
+// bucket heading is colored by its route (all rows in a bucket share a route, so
+// the color comes from the first row's route_id via colorFor). The station's
+// `wheelchair` flag surfaces as a small accessibility marker in the header, the
+// first such display in the app. An empty routes dict renders "No boats". Every
+// feed-derived string is escaped; colorFor returns a validated css color.
+function ferryArrivalsHtml(station, body, now, colorFor = () => FERRY_FALLBACK_COLOR) {
+  const access = station.wheelchair
+    ? ' <span class="popup-access" title="Wheelchair accessible">&#9855;</span>'
+    : "";
+  const header =
+    `<b>${esc(station.name ?? station.id)}</b> ` +
+    `<span class="popup-sub">NYC Ferry</span>${access}`;
+  const buckets = orderedFerryBuckets(body.routes);
+  if (!buckets.length) return `${header}<div class="arr-none">No boats</div>`;
+  let html = header;
+  for (const [routeName, rows] of buckets) {
+    const color = rows[0] && rows[0].route_id ? colorFor(rows[0].route_id) : FERRY_FALLBACK_COLOR;
+    html += `<div class="arr-dir" style="color:${color}">${esc(routeName)}</div>`;
+    html += rows
+      .map((row) => {
+        const d = ferryArrivalDisplay(row, now);
+        const prefix = d.mode === "departing" ? "departs " : "";
+        return `${prefix}${esc(formatCountdown(d.seconds))}`;
+      })
+      .join("<br>");
+  }
+  return html;
+}
+
 // ---- Service alerts in the station popups (phase 12b) ----
 
 // Index the active-alerts list into two lookups, each keyed by "system|id": one by
@@ -658,5 +777,7 @@ if (typeof module !== "undefined" && module.exports) {
     PATH_BUCKET_ORDER, PATH_FALLBACK_COLOR, orderedPathBuckets, pathColor,
     formatPathHead, pathTrainPopupHtml, pathArrivalsHtml,
     PATH_ROUTE_MAX_SLICE, PATH_ROUTE_ACCEPT_DIST, computePathRouteSlice,
+    FERRY_FALLBACK_COLOR, orderedFerryBuckets, ferryArrivalDisplay, ferryBoatIconState,
+    ferryStatusText, ferryBoatPopupHtml, ferryArrivalsHtml,
   };
 }

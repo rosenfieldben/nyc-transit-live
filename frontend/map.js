@@ -28,6 +28,11 @@ const sources = {
   subways: { url: "/api/subways", apply: applyTrains, label: "trains", count: 0, error: null, fetchedAt: null, feedTimestamp: null, emptyRunStart: null },
   railroads: { url: "/api/railroads", apply: applyRailroads, label: "railroad", count: 0, error: null, fetchedAt: null, feedTimestamp: null, emptyRunStart: null },
   path: { url: "/api/path", apply: applyPath, label: "PATH", dataKey: "trains", count: 0, error: null, fetchedAt: null, feedTimestamp: null, emptyRunStart: null },
+  // Ferry boats carry the `boats` envelope key, and clearOnEmpty flips the empty
+  // handling: a successful empty poll REPLACES the boats immediately (see the
+  // refreshSource branch) rather than riding out the transient-blip grace the
+  // other feeds use, preserving 14b's empty-replaces / failure-retains split.
+  ferry: { url: "/api/ferry", apply: applyFerryBoats, label: "ferries", dataKey: "boats", clearOnEmpty: true, count: 0, error: null, fetchedAt: null, feedTimestamp: null, emptyRunStart: null },
 };
 
 async function refreshSource(source) {
@@ -42,6 +47,21 @@ async function refreshSource(source) {
     source.feedTimestamp = body.feed_timestamp ?? null; // server-side staleness signal
     noteClockOffset(source.fetchedAt); // skew baseline for the arrivals countdown
     const data = body[source.dataKey ?? "data"] ?? [];
+    if (data.length === 0 && source.clearOnEmpty) {
+      // Ferry: the backend serves an empty 200 ONLY when it successfully decoded
+      // zero boats (overnight, the boats went home); a transient upstream problem
+      // is a FAILED poll instead, which the catch below keeps last-known. So there
+      // is no blip to ride out and no ghost-boats risk: apply the empty set
+      // immediately (applyFerryBoats' sweep clears the markers). This is the one
+      // deliberate divergence from the other feeds' transient grace, mirroring the
+      // server-side empty-replaces / failure-retains split 14b implements. An empty
+      // ferry poll is a NORMAL nightly state, so it records no error.
+      source.apply([]);
+      source.count = 0;
+      source.error = null;
+      source.emptyRunStart = null;
+      return;
+    }
     if (data.length === 0) {
       // Empty successful poll. Keep last-known markers only while the empty run is
       // TRANSIENT (a blip); once it has lasted FEED_STALE_AFTER_S by server
@@ -107,6 +127,8 @@ retryUntil(loadRailroadStations, staticRetryOpts);
 retryUntil(loadAirtrain, staticRetryOpts);
 retryUntil(loadPathRoutes, staticRetryOpts);
 retryUntil(loadPathStops, staticRetryOpts);
+retryUntil(loadFerryRoutes, staticRetryOpts);
+retryUntil(loadFerryStops, staticRetryOpts);
 loadAlerts();
 refreshAll();
 setInterval(refreshAll, POLL_INTERVAL_MS);

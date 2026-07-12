@@ -189,7 +189,7 @@ index (the map surfaces are the popup blocks and the agency-wide banner
 described above):
 
 - `GET /api/alerts`: `{fetched_at, alerts: [...]}`, one entry per alert active now
-  across the keyless subway/bus/LIRR/MNR alert feeds: `{id, system, header,
+  across the keyless subway/bus/LIRR/MNR and NYC Ferry alert feeds: `{id, system, header,
   description, effect, cause, routes, stops, starts_at, ends_at}`. `routes`/`stops`
   are the deduped selectors from the alert's informed_entity list (subway stop
   selectors are parent-station ids, the same id space as `/api/subway-stops`);
@@ -364,7 +364,7 @@ last error if any, the `active` alert count in the index, and `suppressed_planne
 visible even though it is excluded from `/api/alerts`. It also carries per-system
 health under `systems` (each alert feed's last-decode time, whether its alerts are
 currently `retained` from a down feed, and any current error) plus a
-`degraded_systems` list: one of the four alert feeds going down is a successful
+`degraded_systems` list: one of the alert feeds going down is a successful
 poll overall, so its alerts are carried forward (bounded by an activity re-filter
 and a retention cap) rather than silently deleted, and this is where that partial
 outage shows.
@@ -571,7 +571,7 @@ Two optional pieces of config sharpen it, both safe to leave unset:
   deadheading boat (empty trip_id) is dropped. `bearing` is omitted (always 0.0);
   `status` and raw `speed` are passed through. An empty overnight poll clears the
   boats (success-replaces), unlike a failed poll (retains last-known). Endpoints
-  land dark until the frontend layer (14c). No ferry alerts yet (a follow-up).
+  land dark until the frontend layer (14c). No ferry alerts yet (added in 14d).
 - [x] **14c. NYC Ferry (frontend layer)**: a toggleable ferry layer draws the
   route polylines, clickable docks with live arrival popups (bucketed by route,
   counting down to arrival or to departure when a boat is dwelling, and surfacing
@@ -579,8 +579,17 @@ Two optional pieces of config sharpen it, both safe to leave unset:
   the app), and moving GPS boat markers keyed on their stable vehicle id (a
   boat-hull shape that dims when STOPPED_AT a dock). An empty poll clears the
   boats immediately, preserving 14b's server-side empty-replaces / failure-retains
-  split on the client. No speed shown (unit uncertain) and no ferry-alerts join
-  yet (both queued follow-ups).
+  split on the client. No speed shown (unit uncertain, a queued follow-up); ferry
+  alerts follow in 14d.
+- [x] **14d. NYC Ferry service alerts**: ferries join the same `/api/alerts`
+  pipeline as the MTA systems. The backend adds NYC Ferry's keyless Connexionz
+  GTFS-RT alert feed to `ALERT_FEED_URLS`; the generic gather, per-system
+  retention, health map, and `degraded_systems` all extend with no other change,
+  and the pure GTFS-RT decode needs none. On the map, a dock popup prepends alerts
+  that name that dock's stop and a boat popup prepends alerts that name that boat's
+  route. Docks show stop-scoped alerts only for now (no dock-to-routes mapping yet,
+  a shared follow-up); a route-scoped ferry alert still reaches riders on every boat
+  of that route.
 
 ## Notes
 

@@ -43,8 +43,8 @@ logger = logging.getLogger("main")
 POLL_INTERVAL_S = 20
 
 # Service alerts poll on their OWN slower loop: alerts change far more slowly than
-# vehicle positions, and the subway alerts feed alone is ~400 KB, so re-pulling all
-# four every 20s would be wasteful. A separate lifespan task on this cadence keeps
+# vehicle positions, and the subway alerts feed alone is ~400 KB, so re-pulling them
+# all every 20s would be wasteful. A separate lifespan task on this cadence keeps
 # the position poll lean and independent (an alert-feed outage never stalls it).
 ALERT_POLL_INTERVAL_S = 60
 

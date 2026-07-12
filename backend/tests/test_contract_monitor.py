@@ -739,10 +739,12 @@ def _zip_with_feed_info(end_date):
     return _zip_bytes({"stops.txt": b"stop_id\n", "feed_info.txt": body})
 
 
-def _end_date_status(end_date, now):
+def _end_date_status(end_date, now, key="unittest"):
+    # key defaults to a feed that is never in ACKNOWLEDGED_EXPIRED_FEEDS, so the
+    # banding tests below see the plain (un-acknowledged) FAIL/WARN/PASS behavior.
     tz = feeds.NYC_TZ
     with zipfile.ZipFile(io.BytesIO(_zip_with_feed_info(end_date))) as zf:
-        return cm._feed_end_date_status(zf, set(zf.namelist()), now, tz)
+        return cm._feed_end_date_status(key, zf, set(zf.namelist()), now, tz)
 
 
 def test_feed_end_date_future_is_pass():
@@ -769,7 +771,7 @@ def test_feed_end_date_past_is_fail():
 def test_feed_end_date_absent_is_none():
     tz = feeds.NYC_TZ
     with zipfile.ZipFile(io.BytesIO(_zip_bytes({"stops.txt": b"stop_id\n"}))) as zf:
-        assert cm._feed_end_date_status(zf, set(zf.namelist()), 1000.0, tz) is None
+        assert cm._feed_end_date_status("unittest", zf, set(zf.namelist()), 1000.0, tz) is None
 
 
 def test_feed_end_date_far_future_sentinel_does_not_crash():
@@ -778,6 +780,116 @@ def test_feed_end_date_far_future_sentinel_does_not_crash():
     # as an OverflowError that would abort the whole monitor run.
     now = _et(2026, 7, 10, 12, 0)
     assert _end_date_status("99991231", now) is None
+
+
+# ---------------------------------------------------------------------------
+# ACKNOWLEDGED_EXPIRED_FEEDS: an acknowledged expired feed downgrades to WARN
+# ---------------------------------------------------------------------------
+
+
+def test_feed_end_date_acknowledged_expired_is_warn_with_reason(monkeypatch):
+    # An expired feed listed in ACKNOWLEDGED_EXPIRED_FEEDS for its exact end date
+    # downgrades FAIL -> WARN and carries the reason text, so the condition is still
+    # surfaced every run rather than silenced. Uses a synthetic entry so the test
+    # holds independently of whatever real acknowledgments the allowlist carries.
+    now = _et(2026, 7, 10, 12, 0)
+    end = _yyyymmdd(now - 10 * 86400, feeds.NYC_TZ)
+    reason = "2026-07-10: upstream frozen, topology verified live"
+    monkeypatch.setitem(cm.ACKNOWLEDGED_EXPIRED_FEEDS, ("acktest", end), reason)
+    status, detail = _end_date_status(end, now, key="acktest")
+    assert status == cm.WARN
+    assert reason in detail
+    assert end in detail  # still names the expired date, just downgraded
+
+
+def test_feed_end_date_acknowledgment_pinned_to_exact_date(monkeypatch):
+    # The acknowledgment is pinned to the EXACT expired date: a different past date
+    # for the same feed still FAILs, so a future republish that later expires cannot
+    # be silently covered by a stale acknowledgment.
+    now = _et(2026, 7, 10, 12, 0)
+    acked = _yyyymmdd(now - 10 * 86400, feeds.NYC_TZ)
+    other = _yyyymmdd(now - 40 * 86400, feeds.NYC_TZ)
+    monkeypatch.setitem(cm.ACKNOWLEDGED_EXPIRED_FEEDS, ("acktest", acked), "reason")
+    status, detail = _end_date_status(other, now, key="acktest")
+    assert status == cm.FAIL
+    assert "acknowledged" not in detail
+
+
+def test_feed_end_date_acknowledgment_scoped_to_feed_key(monkeypatch):
+    # The acknowledgment is scoped to ITS feed: the same expired date on a DIFFERENT
+    # feed key FAILs, so acknowledging one feed never downgrades another.
+    now = _et(2026, 7, 10, 12, 0)
+    end = _yyyymmdd(now - 10 * 86400, feeds.NYC_TZ)
+    monkeypatch.setitem(cm.ACKNOWLEDGED_EXPIRED_FEEDS, ("acktest", end), "reason")
+    status, _detail = _end_date_status(end, now, key="otherfeed")
+    assert status == cm.FAIL
+
+
+def test_feed_end_date_unacknowledged_past_is_fail():
+    # Existing behavior pinned: a past date for a feed with NO acknowledgment FAILs
+    # and carries no acknowledgment text.
+    now = _et(2026, 7, 10, 12, 0)
+    end = _yyyymmdd(now - 10 * 86400, feeds.NYC_TZ)
+    status, detail = _end_date_status(end, now, key="unlisted")
+    assert status == cm.FAIL
+    assert "acknowledged" not in detail
+
+
+def test_feed_end_date_acknowledgment_does_not_touch_soon_expiring_warn(monkeypatch):
+    # Acknowledgment applies only to ALREADY-past dates. A feed whose date is still
+    # in the future but within the warn window gets the plain "within N days" WARN,
+    # never the acknowledgment reason (its exact past date is not the future one).
+    now = _et(2026, 7, 10, 12, 0)
+    soon = _yyyymmdd(now + 10 * 86400, feeds.NYC_TZ)
+    monkeypatch.setitem(cm.ACKNOWLEDGED_EXPIRED_FEEDS, ("acktest", soon), "reason")
+    status, detail = _end_date_status(soon, now, key="acktest")
+    assert status == cm.WARN
+    assert "within" in detail
+    assert "acknowledged" not in detail
+
+
+def test_path_expired_feed_is_acknowledged_as_warn():
+    # Pins the live acknowledgment this change exists for: PATH's expired 20260601
+    # feed_end_date downgrades to WARN carrying the reason, not FAIL. When Trillium
+    # republishes and the entry is removed from ACKNOWLEDGED_EXPIRED_FEEDS, this test
+    # fails on purpose, the reminder to re-verify and drop it.
+    assert ("path", "20260601") in cm.ACKNOWLEDGED_EXPIRED_FEEDS
+    now = _et(2026, 7, 12, 12, 0)  # after 20260601
+    status, detail = _end_date_status("20260601", now, key="path")
+    assert status == cm.WARN
+    assert cm.ACKNOWLEDGED_EXPIRED_FEEDS[("path", "20260601")] in detail
+
+
+def test_check_path_static_acknowledged_expired_feed_is_warn_not_fail():
+    # End to end through check_path_static (proving the "path" key is threaded to
+    # _feed_end_date_status and the WARN folds into the Result): an otherwise-healthy
+    # PATH zip carrying the expired 20260601 feed_end_date returns WARN, not FAIL,
+    # and still yields the parsed tables the realtime check needs.
+    members = _fixture_txt_members("path_gtfs")
+    members["feed_info.txt"] = b"feed_end_date\n20260601\n"
+    now = _et(2026, 7, 12, 12, 0)  # after 20260601
+    fetch = FakeFetcher({"u": _zip_bytes(members)})
+    result, parsed = cm.check_path_static(fetch, NO_SLEEP, now, url="u")
+    assert result.status == cm.WARN
+    assert "20260601" in result.detail
+    assert parsed is not None and parsed["stops"]["26733"]["name"].startswith("Newark")
+
+
+def test_check_path_static_acknowledged_expired_plus_structural_fail_is_fail():
+    # The acknowledgment must not weaken OTHER failure modes on the same feed. A PATH
+    # zip that is BOTH acknowledged-expired (20260601) AND structurally broken (here
+    # the 26733=Newark identity check fails) must still FAIL: the ack only appends a
+    # WARN via _apply_end_status, and _worst folds it with the concurrent FAIL rather
+    # than letting the downgrade mask a genuine break. Renaming 26733 keeps the zip
+    # parseable (so this exercises the fold, not the early unparseable-return path).
+    members = _fixture_txt_members("path_gtfs")
+    members["feed_info.txt"] = b"feed_end_date\n20260601\n"
+    members["stops.txt"] = members["stops.txt"].replace(b"26733,,,Newark,", b"26733,,,Elsewhere,")
+    now = _et(2026, 7, 12, 12, 0)  # after 20260601
+    fetch = FakeFetcher({"u": _zip_bytes(members)})
+    result, _parsed = cm.check_path_static(fetch, NO_SLEEP, now, url="u")
+    assert result.status == cm.FAIL
+    assert "26733" in result.detail  # the structural failure, not silenced by the ack WARN
 
 
 def _subway_zip_with_feed_info(end_date):

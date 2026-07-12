@@ -746,14 +746,41 @@ def _parse_subway_bytes(raw: bytes) -> dict:
     return {"stops": stops, "stations": stations, "shapes": shapes}
 
 
+# Static feeds we have explicitly, individually acknowledged as expired-but-live:
+# the upstream publisher has not republished, its last-published file is genuinely
+# past its feed_end_date, yet the schedule/topology it ships is still correct and
+# no code change on our side can fix the date. For such a feed a past feed_end_date
+# downgrades from FAIL to WARN, so the monitor still SHOWS the condition on every
+# run (it is not silenced) but stops crying wolf with a red FAIL nothing can clear.
+#
+# Keyed on (feed key, the EXACT expired end date) on purpose: the acknowledgment is
+# pinned to the specific stale file. When the upstream finally republishes, its new
+# feed_end_date will not be in this map, so it FAILs again and forces a fresh human
+# look. Remove an entry once its feed republishes. Each value is a dated reason.
+#
+# This is a hand-maintained allowlist, not a policy knob. FOLLOWUP: if it ever grows
+# past two or three entries, that is the signal the FAIL policy itself needs
+# rethinking (a general staleness grace, a different cadence), not another entry.
+ACKNOWLEDGED_EXPIRED_FEEDS: dict[tuple[str, str], str] = {
+    ("path", "20260601"): (
+        "2026-07-12: Trillium has not republished the PATH GTFS since May 2025;"
+        " the path-realtime stop-id join resolved live stop ids against this"
+        " topology at 100% on that date and FAILs below its resolve floor on any"
+        " poll that carries trains, which remains the real guard"
+    ),
+}
+
+
 def _feed_end_date_status(
-    zf: zipfile.ZipFile, members: set[str], now: float, tz
+    key: str, zf: zipfile.ZipFile, members: set[str], now: float, tz
 ) -> tuple[str, str] | None:
     """(status, detail) from feed_info.txt's feed_end_date, or None when the zip
     ships no feed_info/feed_end_date (the check is 'where provided'). An end date
-    already past means the published schedule has expired (FAIL); one within
-    FEED_END_WARN_DAYS is about to (WARN). The date is treated as valid through
-    the END of that day (a one-day grace) so the last service day is not flagged.
+    already past means the published schedule has expired (FAIL, or WARN when this
+    feed+date pair is in ACKNOWLEDGED_EXPIRED_FEEDS); one within FEED_END_WARN_DAYS
+    is about to (WARN). The date is treated as valid through the END of that day (a
+    one-day grace) so the last service day is not flagged. `key` is the feed's short
+    identifier (e.g. "path") used only to look up an acknowledgment.
 
     No production module parses feed_info today, so this small reader is
     monitor-local; it does not fork any existing parser. FOLLOWUP: promote it to
@@ -780,6 +807,13 @@ def _feed_end_date_status(
     except (ValueError, IndexError, OverflowError, OSError):
         return None  # malformed or beyond-range date is not this check's to police
     if end_ts < now:
+        ack = ACKNOWLEDGED_EXPIRED_FEEDS.get((key, end))
+        if ack is not None:
+            # Explicitly acknowledged expired-but-live feed: still surfaced, but as
+            # WARN not FAIL. The acknowledgment is pinned to this exact end date, so
+            # a future republish that expires is a different (key, date) pair and
+            # FAILs normally.
+            return (WARN, f"feed_end_date {end} is in the past (acknowledged: {ack})")
         return (FAIL, f"feed_end_date {end} is in the past")
     if end_ts - now < FEED_END_WARN_DAYS * 86400:
         return (WARN, f"feed_end_date {end} is within {FEED_END_WARN_DAYS} days")
@@ -817,7 +851,7 @@ def check_subway_static(
     try:
         with zipfile.ZipFile(io.BytesIO(res.content)) as zf:
             members = set(zf.namelist())
-            end_status = _feed_end_date_status(zf, members, now, tz)
+            end_status = _feed_end_date_status("subway", zf, members, now, tz)
         parsed = _parse_subway_bytes(res.content)
     except (zipfile.BadZipFile, KeyError, UnicodeDecodeError) as exc:
         return Result("subway-static", FAIL, f"unparseable ({_sanitize(exc)})"), None
@@ -860,7 +894,9 @@ def check_railroad_static(
             with zipfile.ZipFile(io.BytesIO(res.content)) as zf:
                 members = set(zf.namelist())
                 stops = railroad_static._parse_stops(zf)
-                end_status = _feed_end_date_status(zf, members, now, tz)
+                # Per-system key (lirr/mnr) so the two railroad feeds can be
+                # acknowledged independently if one ever needs it; neither is today.
+                end_status = _feed_end_date_status(system.lower(), zf, members, now, tz)
         except (zipfile.BadZipFile, KeyError, UnicodeDecodeError) as exc:
             statuses.append(FAIL)
             details.append(f"{system} unparseable ({_sanitize(exc)})")
@@ -897,7 +933,14 @@ def check_path_static(
     try:
         with zipfile.ZipFile(io.BytesIO(res.content)) as zf:
             members = set(zf.namelist())
-            end_status = _feed_end_date_status(zf, members, now, tz)
+            # The "path" key can resolve an ACKNOWLEDGED_EXPIRED_FEEDS entry that
+            # downgrades an expired PATH feed_end_date to WARN. That acknowledgment is
+            # only honest because check_path_realtime independently verifies, on every
+            # poll that carries trains, that live PATH stop ids still resolve against
+            # this static topology above the resolve floor. If that realtime check is
+            # ever removed or weakened, this acknowledgment must go with it: the WARN
+            # would no longer have a real guard behind it.
+            end_status = _feed_end_date_status("path", zf, members, now, tz)
         parsed = _parse_zip_bytes(path_static._parse_zip, res.content, "gtfs_path.zip")
     except (zipfile.BadZipFile, KeyError, UnicodeDecodeError) as exc:
         return Result("path-static", FAIL, f"unparseable ({_sanitize(exc)})"), None
@@ -942,7 +985,7 @@ def check_ferry_static(
     try:
         with zipfile.ZipFile(io.BytesIO(res.content)) as zf:
             members = set(zf.namelist())
-            end_status = _feed_end_date_status(zf, members, now, tz)
+            end_status = _feed_end_date_status("ferry", zf, members, now, tz)
         parsed = _parse_zip_bytes(ferry_static._parse_zip, res.content, "gtfs_ferry.zip")
     except (zipfile.BadZipFile, KeyError, UnicodeDecodeError) as exc:
         return Result("ferry-static", FAIL, f"unparseable ({_sanitize(exc)})"), None

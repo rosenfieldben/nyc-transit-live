@@ -697,8 +697,33 @@ test("18. Ferry boot: lines, docks and boats render; the toggle hides all three 
 });
 
 test("19. Ferry dock popup: route buckets, a dwelling boat shown departing, wheelchair marker, ticking", async ({ page }) => {
-  const ctx = await boot(page);
+  // Seed alerts whose selectors WOULD match this dock if ferry ever joined the
+  // alerts store: one under a ferry system tag naming the dock's stop id ("18"), and
+  // one naming the East River route present in this dock's arrivals. NYC Ferry alerts
+  // are a queued follow-up (unwired), so the dock popup must stay clean even with a
+  // matching alert in the store. Without seeded matching data the no-alert-block
+  // assertion below would be vacuous: an empty alerts index can never render a block,
+  // so it could not catch a future render that wrongly grew a stationAlertsBlock join.
+  const alertsFixture = {
+    fetched_at: fx.FROZEN_S,
+    alerts: [
+      { id: "ferry-stop", system: "ferry", header: "Ferry stop alert must never render", description: null,
+        effect: "UNKNOWN_EFFECT", cause: "UNKNOWN_CAUSE", routes: [], stops: ["18"],
+        starts_at: fx.FROZEN_S - 600, ends_at: null },
+      { id: "ferry-route", system: "ferry", header: "Ferry route alert must never render", description: null,
+        effect: "UNKNOWN_EFFECT", cause: "UNKNOWN_CAUSE", routes: ["ER"], stops: [],
+        starts_at: fx.FROZEN_S - 600, ends_at: null },
+    ],
+  };
+  const ctx = await boot(page, (c) => {
+    c.overrides.alerts = (route) => json(route, alertsFixture);
+  });
   await waitForFerryReady(page);
+  // The alerts must be indexed BEFORE the popup renders, or the absence assertion
+  // passes trivially against a not-yet-loaded store.
+  await page.waitForFunction(
+    () => typeof alertsIndex !== "undefined" && alertsIndex.byStop.has("ferry|18"),
+  );
 
   // Open Wall St/Pier 11 (first dock in the fixture, accessible, two route buckets).
   await page.evaluate(() => ferryDocks.getLayers()[0].openPopup());
@@ -716,7 +741,12 @@ test("19. Ferry dock popup: route buckets, a dwelling boat shown departing, whee
   // has no alerts feed so no alert block may prepend.
   expect(html.indexOf("East River")).toBeLessThan(html.indexOf("South Brooklyn"));
   expect(html).toContain("popup-access");
+  // NYC Ferry has no alerts feed, so no alert block may prepend even though the store
+  // now holds alerts that WOULD match this dock by stop id and by route. This fails if
+  // a ferry dock render ever grows a stationAlertsBlock join.
   expect(html).not.toContain("alert-block");
+  expect(html).not.toContain("Ferry stop alert must never render");
+  expect(html).not.toContain("Ferry route alert must never render");
 
   // The shared 1s tick repaints from the cached body with no new fetch: the
   // arriving row crosses +90s -> +89s (2 min -> 1 min).
@@ -833,4 +863,75 @@ test("23. Ferry cold start: docks and lines appear without a reload once 503s he
   await page.clock.runFor(baseMs * 2); // attempt 3: fixtures land
   await expect.poll(layerCounts).toEqual({ docks: 2, lines: 2 });
   expect(warmed).toEqual({ ferryStops: 3, ferryRoutes: 3 }); // one request per attempt, then stopped
+});
+
+test("24. Ferry boat that docks mid-session re-icons and refreshes its held-open popup", async ({ page }) => {
+  // The cross-poll update path: a boat that changes status between polls must
+  // re-icon (ferry-active -> ferry-docked), and a popup a rider left open must
+  // re-render from the boat's newest status. Neither is exercised by the move-only
+  // fixture pair (ferry -> ferryMoved hold every status constant), so a regression
+  // dropping the setIcon or getPopup().update() call would otherwise pass green.
+  const ctx = await boot(page);
+  await waitForFerryReady(page);
+
+  // H1 is under way; open its popup and confirm the live status text and active icon.
+  await page.evaluate(() => ferryBoatRecords.get("H1").marker.openPopup());
+  await expect(popup(page)).toContainText("Under way");
+  const classOf = (id) =>
+    page.evaluate((bid) => ferryBoatRecords.get(bid).marker.getElement().className, id);
+  expect(await classOf("H1")).toContain("ferry-active");
+
+  // Next poll: H1 has docked (IN_TRANSIT_TO -> STOPPED_AT), H2/H3 unchanged.
+  ctx.overrides.ferry = (route, fixtures) => json(route, fixtures.ferryDocked());
+  await page.clock.runFor(15_000);
+
+  // The SAME marker re-iconed to the docked state...
+  await page.waitForFunction(() =>
+    ferryBoatRecords.get("H1").marker.getElement().className.includes("ferry-docked"),
+  );
+  // ...and the popup the rider left open re-rendered to the new status with no reopen
+  // (ferryBoatPopup reads record.latest, refreshed via getPopup().update()).
+  await expect(popup(page)).toContainText("At dock");
+});
+
+test("25. Ferry boat color self-heals once routes load after the boat is first seen", async ({ page }) => {
+  // The cold-load color race: the small live-boats payload can resolve before
+  // /api/ferry-routes (a backend cold start, or just losing the race), so a boat is
+  // first seen while ferryRouteColors is still empty and is created with the neutral
+  // fallback. It must recolor itself on the first poll after the routes land, NOT
+  // stay gray forever. The re-icon guard keys on the RESOLVED color precisely for
+  // this: the boat's route_id never changes across these polls, only the color the
+  // now-loaded routes table resolves it to. Serve ferry-routes a warming 503 twice,
+  // then heal, while live boats poll normally throughout.
+  let routeCalls = 0;
+  const ctx = await boot(page, (c) => {
+    c.overrides.ferryRoutes = (route) => {
+      routeCalls += 1;
+      if (routeCalls <= 2) return json(route, { detail: "Static NYC Ferry GTFS is still loading." }, 503);
+      return json(route, fx.ferryRoutes());
+    };
+  });
+
+  // Boats render before the routes: H1 (route ER) wears the neutral fallback color.
+  await expect(ferryMarkers(page)).toHaveCount(3);
+  const fillOf = (id) =>
+    page.evaluate(
+      (bid) => ferryBoatRecords.get(bid).marker.getElement().querySelector("rect").getAttribute("fill"),
+      id,
+    );
+  await expect.poll(() => fillOf("H1")).toBe("#78909c"); // FERRY_FALLBACK_COLOR, routes not loaded
+
+  // Let the ferry-routes retry backoff heal exactly as the cold-start spec (test 23)
+  // does: attempt 2 at +base (still 503), attempt 3 at +2*base serves the fixture.
+  // Separate runFor calls let each attempt's fetch settle before the next is scheduled.
+  const baseMs = await page.evaluate(() => STATIC_RETRY_BASE_MS);
+  await page.clock.runFor(baseMs); // attempt 2: still 503
+  await page.clock.runFor(baseMs * 2); // attempt 3: routes fixture lands
+  await page.waitForFunction(() => ferryRouteColors.has("ER"));
+  await page.clock.runFor(15_000); // next ferry poll re-icons H1 with the now-known color
+
+  // Same boat, same route_id "ER" the whole time, but it recolored to the real ER
+  // color: the guard keyed on the resolved color, not the unchanged id.
+  await expect.poll(() => fillOf("H1")).toBe("#00839c"); // ER route_color, self-healed
+  expect(routeCalls).toBe(3); // two 503s then one healed load, then the loader stopped
 });

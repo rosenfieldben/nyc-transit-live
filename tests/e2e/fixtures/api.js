@@ -314,6 +314,23 @@ const ferryMoved = () =>
     FROZEN_S + 15,
   );
 
+// A later poll where H1 has DOCKED (IN_TRANSIT_TO -> STOPPED_AT at Wall St/Pier 11):
+// exercises the cross-poll re-icon branch (ferry-active -> ferry-docked, keyed on the
+// changed icon state) and, with a boat popup held open, the record.latest refresh
+// (getPopup().update()). H2/H3 are unchanged so only H1 re-icons.
+const ferryDocked = () =>
+  ferryEnvelope(
+    [
+      { id: "H1", label: "H201", trip_id: "t-er-1", route_id: "ER",
+        latitude: 40.70355, longitude: -74.00512, speed: 0.0, status: "STOPPED_AT", updated_at: FROZEN_S + 12 },
+      { id: "H2", label: "H202", trip_id: "t-sb-1", route_id: "SB",
+        latitude: 40.70355, longitude: -74.00512, speed: 0.0, status: "STOPPED_AT", updated_at: FROZEN_S + 10 },
+      { id: "H3", label: "H099", trip_id: "t-x-1", route_id: null,
+        latitude: 40.69, longitude: -73.98, speed: 4.0, status: "IN_TRANSIT_TO", updated_at: FROZEN_S + 11 },
+    ],
+    FROZEN_S + 15,
+  );
+
 // Ferry dock arrivals for Wall St/Pier 11: two route-name buckets. East River is a
 // normal arriving boat (+90s -> "2 min"); South Brooklyn is a DWELLING boat
 // (arrival 30s past, departure +90s ahead), so its row renders "departs 2 min".
@@ -357,6 +374,7 @@ module.exports = {
   ferryEnvelope,
   ferry,
   ferryMoved,
+  ferryDocked,
   ferryArrivals,
   alerts,
 };

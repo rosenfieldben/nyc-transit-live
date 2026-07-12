@@ -125,12 +125,14 @@ function ferryBoatPopup(record) {
   return ferryBoatPopupHtml(b, ferryRouteNames.get(b.route_id) || null, ferryColorFor(b.route_id));
 }
 
-// Stable vehicle id -> { marker, routeId, iconState, latest }. Boats are the
+// Stable vehicle id -> { marker, color, iconState, latest }. Boats are the
 // BUSES model, not the PATH model: 14b vehicle ids are stable across polls, so
 // markers are keyed on id and moved to their reported GPS position each poll (the
 // railroad GPS precedent), never rebuilt. There is no glide interpolation and no
-// animateTrains entry: a boat moves by its reported position, and the css
-// transform transition (style.css) makes that step read as motion.
+// animateTrains entry: a boat snaps to its reported position each poll, the way
+// the bus and railroad GPS markers do (a smooth inter-poll glide is a follow-up:
+// it would need a zoom-event hook, since a css transition on the marker element
+// makes Leaflet slide every boat across the map after a zoom).
 const ferryBoatRecords = new Map();
 
 function applyFerryBoats(data) {
@@ -140,27 +142,35 @@ function applyFerryBoats(data) {
     const record = ferryBoatRecords.get(boat.id);
     if (record) {
       record.marker.setLatLng([boat.latitude, boat.longitude]);
-      // Re-icon only when a VISUAL input changed: the route color, or the
-      // docked/active state (not the raw status string, so a STOPPED_AT that
-      // stays STOPPED_AT never churns the icon). setIcon recreates the element,
-      // which would interrupt the css position transition, so it is avoided on
-      // the common move-only poll, the same discipline as the bus markers.
+      // Re-icon only when a VISUAL input changed: the RESOLVED route color, or the
+      // docked/active state (not the raw status string, so a STOPPED_AT that stays
+      // STOPPED_AT never churns the icon). Keying on the resolved color rather than
+      // the raw route_id is deliberate, and the one place the ferry model diverges
+      // from the buses precedent's always-available color hash: ferryColorFor reads
+      // ferryRouteColors, which loadFerryRoutes fills ASYNCHRONOUSLY, so a boat first
+      // seen before /api/ferry-routes resolves is created with the neutral fallback.
+      // Keying on route_id would then never recolor it once the routes land (the id
+      // never changed), stranding it gray; keying on the color re-icons it on the
+      // first poll after the routes populate. setIcon recreates the marker element
+      // (DOM churn), so it is still skipped on a poll where neither input changed.
       const iconState = ferryBoatIconState(boat.status);
-      if (record.routeId !== boat.route_id || record.iconState !== iconState) {
-        record.marker.setIcon(ferryBoatIcon(boat, ferryColorFor(boat.route_id)));
-        record.routeId = boat.route_id;
+      const color = ferryColorFor(boat.route_id);
+      if (record.color !== color || record.iconState !== iconState) {
+        record.marker.setIcon(ferryBoatIcon(boat, color));
+        record.color = color;
         record.iconState = iconState;
       }
       record.latest = boat;
       if (record.marker.isPopupOpen()) record.marker.getPopup().update();
     } else {
+      const color = ferryColorFor(boat.route_id);
       const newRecord = {
-        routeId: boat.route_id,
+        color,
         iconState: ferryBoatIconState(boat.status),
         latest: boat,
       };
       newRecord.marker = L.marker([boat.latitude, boat.longitude], {
-        icon: ferryBoatIcon(boat, ferryColorFor(boat.route_id)),
+        icon: ferryBoatIcon(boat, color),
       })
         .bindPopup(() => ferryBoatPopup(newRecord))
         .addTo(ferryBoats);

@@ -143,11 +143,27 @@ group) and polls the two realtime endpoints each cycle. The endpoints:
   upcoming boats at a dock grouped by route name (the feed has no direction_id).
   Each row carries the arrival and departure times (docks report both as a dwell).
 
-Ferry endpoints land dark for now: no frontend layer draws them yet (a later
-phase). Ferries stop running overnight, so the realtime feeds return empty then;
-an empty successful poll correctly clears the boats (they went home), while a
-failed poll keeps the last-known set, the standard success-replaces /
-failure-retains split.
+The map draws ferries as its own toggleable layer: route polylines, clickable
+docks with live arrival popups, and moving GPS boat markers (a boat-hull shape,
+distinct from every rail marker, that dims when the boat is STOPPED_AT a dock and
+stays bright when under way). Boat popups show the hull label, route, and status
+in plain words; a dock popup buckets its upcoming boats by route, counting down
+to arrival, or to departure when a boat is dwelling at the dock, and surfaces the
+dock's wheelchair-accessibility flag (the first accessibility display in the
+app). Boats are keyed on their stable vehicle id and moved to their reported
+position each poll (no schedule interpolation, unlike the subway/PATH glide).
+There is no ferry-alerts join yet: the alert endpoint is verified but unwired, a
+queued follow-up, so ferry popups carry no alert block (the current PATH state).
+Speed is intentionally not shown: 14b documents the feed's speed unit as
+uncertain, so a number could mislead until the unit is confirmed.
+
+Ferries stop running overnight, so the realtime feeds return empty then; an empty
+successful poll correctly clears the boats (they went home), while a failed poll
+keeps the last-known set, the standard success-replaces / failure-retains split.
+The frontend preserves that split rather than undoing it: an empty ferry poll
+clears the boat markers immediately (a backend empty means the boats are gone,
+because a transient problem is a failed poll instead), unlike the other feeds'
+brief keep-last-known grace for a flickering upstream.
 
 Ferry stop ids are short numerics that collide with MTA and PATH ids, so ferry
 data stays in its own namespace. The static feed comes from NYC Ferry's
@@ -548,6 +564,15 @@ Two optional pieces of config sharpen it, both safe to leave unset:
   `status` and raw `speed` are passed through. An empty overnight poll clears the
   boats (success-replaces), unlike a failed poll (retains last-known). Endpoints
   land dark until the frontend layer (14c). No ferry alerts yet (a follow-up).
+- [x] **14c. NYC Ferry (frontend layer)**: a toggleable ferry layer draws the
+  route polylines, clickable docks with live arrival popups (bucketed by route,
+  counting down to arrival or to departure when a boat is dwelling, and surfacing
+  the dock's wheelchair-accessibility flag, the first accessibility display in
+  the app), and moving GPS boat markers keyed on their stable vehicle id (a
+  boat-hull shape that dims when STOPPED_AT a dock). An empty poll clears the
+  boats immediately, preserving 14b's server-side empty-replaces / failure-retains
+  split on the client. No speed shown (unit uncertain) and no ferry-alerts join
+  yet (both queued follow-ups).
 
 ## Notes
 

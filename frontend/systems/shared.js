@@ -38,6 +38,11 @@ const airtrainStationLayer = L.layerGroup().addTo(map); // 10 clickable stations
 const pathRouteLines = L.layerGroup().addTo(map); // route geometry, both directions per route
 const pathStations = L.layerGroup().addTo(map); // 13 clickable parent stations
 const pathTrains = L.layerGroup().addTo(map); // trains gliding between (or placed at) stations
+// NYC Ferry gets its own three groups (the same trio shape) so the whole system
+// toggles as one: route geometry, clickable docks, and live GPS boats.
+const ferryRouteLines = L.layerGroup().addTo(map); // route geometry, modal polyline per direction
+const ferryDocks = L.layerGroup().addTo(map); // clickable landing docks
+const ferryBoats = L.layerGroup().addTo(map); // live GPS boat markers
 
 function bindToggle(checkboxId, layers) {
   const box = document.getElementById(checkboxId);
@@ -56,6 +61,7 @@ bindToggle("toggle-stations", [stationLayer]);
 bindToggle("toggle-railroads", [railroadLayer, railroadRouteLinesLayer, railroadStationLayer]);
 bindToggle("toggle-airtrain", [airtrainRouteLinesLayer, airtrainStationLayer]);
 bindToggle("toggle-path", [pathRouteLines, pathStations, pathTrains]);
+bindToggle("toggle-ferries", [ferryRouteLines, ferryDocks, ferryBoats]);
 
 const statusEl = document.getElementById("status");
 

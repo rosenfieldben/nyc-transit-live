@@ -263,6 +263,87 @@ const pathArrivals = () => ({
   },
 });
 
+// NYC Ferry static layer (14a). Two docks: Wall St/Pier 11 (accessible, first so
+// ferryDocks.getLayers()[0] is a deterministic click target) and South
+// Williamsburg (not accessible, so the wheelchair-marker branch is exercised both
+// ways). Two routes, each with one modal polyline.
+const ferryStops = () => [
+  { id: "18", name: "Wall St/Pier 11", lat: 40.70355, lon: -74.00512, wheelchair: true },
+  { id: "2", name: "South Williamsburg", lat: 40.70951, lon: -73.96769, wheelchair: false },
+];
+
+const ferryRoutes = () => [
+  { id: "ER", name: "East River", color: "00839c", text_color: "ffffff",
+    shape: [[[40.70951, -73.96769], [40.70355, -74.00512]]] },
+  { id: "SB", name: "South Brooklyn", color: "ffd100", text_color: "000000",
+    shape: [[[40.70355, -74.00512], [40.68, -74.02]]] },
+];
+
+// A ferry realtime envelope: the `boats` key (not `data`), 5s-fresh like envelope().
+const ferryEnvelope = (boats, fetchedAt = FROZEN_S) => ({
+  fetched_at: fetchedAt,
+  feed_timestamp: fetchedAt - 5,
+  boats,
+});
+
+// Three boats spanning the render states: an under-way route boat (active), a
+// STOPPED_AT boat (docked/dimmed), and a null-route boat (Unassigned, neutral).
+// No bearing field (14b omits it). Stable ids so the next poll keys by id.
+const ferry = () =>
+  ferryEnvelope([
+    { id: "H1", label: "H201", trip_id: "t-er-1", route_id: "ER",
+      latitude: 40.706, longitude: -73.99, speed: 6.5, status: "IN_TRANSIT_TO", updated_at: FROZEN_S - 3 },
+    { id: "H2", label: "H202", trip_id: "t-sb-1", route_id: "SB",
+      latitude: 40.70355, longitude: -74.00512, speed: 0.0, status: "STOPPED_AT", updated_at: FROZEN_S - 2 },
+    { id: "H3", label: "H099", trip_id: "t-x-1", route_id: null,
+      latitude: 40.69, longitude: -73.98, speed: 4.0, status: "IN_TRANSIT_TO", updated_at: FROZEN_S - 4 },
+  ]);
+
+// The NEXT poll: H1 moved to a new position (same id -> the same marker moves,
+// id-keyed diffing); H2 and H3 are unchanged.
+const ferryMoved = () =>
+  ferryEnvelope(
+    [
+      { id: "H1", label: "H201", trip_id: "t-er-1", route_id: "ER",
+        latitude: 40.708, longitude: -73.985, speed: 7.0, status: "IN_TRANSIT_TO", updated_at: FROZEN_S + 12 },
+      { id: "H2", label: "H202", trip_id: "t-sb-1", route_id: "SB",
+        latitude: 40.70355, longitude: -74.00512, speed: 0.0, status: "STOPPED_AT", updated_at: FROZEN_S + 10 },
+      { id: "H3", label: "H099", trip_id: "t-x-1", route_id: null,
+        latitude: 40.69, longitude: -73.98, speed: 4.0, status: "IN_TRANSIT_TO", updated_at: FROZEN_S + 11 },
+    ],
+    FROZEN_S + 15,
+  );
+
+// A later poll where H1 has DOCKED (IN_TRANSIT_TO -> STOPPED_AT at Wall St/Pier 11):
+// exercises the cross-poll re-icon branch (ferry-active -> ferry-docked, keyed on the
+// changed icon state) and, with a boat popup held open, the record.latest refresh
+// (getPopup().update()). H2/H3 are unchanged so only H1 re-icons.
+const ferryDocked = () =>
+  ferryEnvelope(
+    [
+      { id: "H1", label: "H201", trip_id: "t-er-1", route_id: "ER",
+        latitude: 40.70355, longitude: -74.00512, speed: 0.0, status: "STOPPED_AT", updated_at: FROZEN_S + 12 },
+      { id: "H2", label: "H202", trip_id: "t-sb-1", route_id: "SB",
+        latitude: 40.70355, longitude: -74.00512, speed: 0.0, status: "STOPPED_AT", updated_at: FROZEN_S + 10 },
+      { id: "H3", label: "H099", trip_id: "t-x-1", route_id: null,
+        latitude: 40.69, longitude: -73.98, speed: 4.0, status: "IN_TRANSIT_TO", updated_at: FROZEN_S + 11 },
+    ],
+    FROZEN_S + 15,
+  );
+
+// Ferry dock arrivals for Wall St/Pier 11: two route-name buckets. East River is a
+// normal arriving boat (+90s -> "2 min"); South Brooklyn is a DWELLING boat
+// (arrival 30s past, departure +90s ahead), so its row renders "departs 2 min".
+const ferryArrivals = () => ({
+  fetched_at: FROZEN_S,
+  stop_id: "18",
+  stop_name: "Wall St/Pier 11",
+  routes: {
+    "East River": [{ route_id: "ER", trip_id: "t-er-1", arrival: FROZEN_S + 90, departure: FROZEN_S + 120 }],
+    "South Brooklyn": [{ route_id: "SB", trip_id: "t-sb-1", arrival: FROZEN_S - 30, departure: FROZEN_S + 90 }],
+  },
+});
+
 // Service alerts default to an EMPTY list so every existing scenario's popup
 // expectations are untouched by the new /api/alerts fetch. The alerts scenario
 // overrides this per-test with a fixture that matches the station under test.
@@ -288,5 +369,12 @@ module.exports = {
   path,
   pathAdvanced,
   pathArrivals,
+  ferryStops,
+  ferryRoutes,
+  ferryEnvelope,
+  ferry,
+  ferryMoved,
+  ferryDocked,
+  ferryArrivals,
   alerts,
 };

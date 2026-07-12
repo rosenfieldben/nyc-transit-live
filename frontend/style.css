@@ -129,9 +129,38 @@ html, body {
   height: 16px;
 }
 
+/* NYC Ferry boat markers: a horizontal hull shape. Boats snap to their reported
+   GPS position each poll (the railroad GPS precedent), the same way the bus
+   markers relocate. The transition is on the inner svg, matching .bus-marker svg,
+   NOT on the marker element: Leaflet re-applies the marker element's transform on
+   every zoom (and removes its .leaflet-zoom-anim guard before that reposition), so
+   a transition there would slide every boat across the map after each zoom. The
+   svg transform is inert today (no bearing to rotate, unlike buses), so this is a
+   consistency/no-surprise rule that would animate a future rotation without the
+   zoom hazard. */
+.ferry-marker svg {
+  width: 22px;
+  height: 14px;
+  transition: transform 0.5s ease;
+}
+/* current_status earns its passage: a STOPPED_AT boat is dimmed so it reads as
+   parked at a dock, while an under-way boat stays full opacity and active. */
+.ferry-docked {
+  opacity: 0.55;
+}
+.ferry-active {
+  opacity: 1;
+}
+
 .popup-sub {
   color: #777;
   font-size: 11px;
+}
+
+/* Accessibility marker in a dock popup (the wheelchair_boarding flag): a quiet
+   inline glyph, the first accessibility display in the app. */
+.popup-access {
+  color: #1565c0;
 }
 
 /* Station arrivals popup */

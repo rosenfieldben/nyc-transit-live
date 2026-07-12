@@ -551,6 +551,18 @@ def test_alerts_realtime_undecodable_is_fail():
     assert result.status == cm.FAIL
 
 
+def test_alerts_realtime_default_feeds_include_ferry_and_count_five():
+    # The alerts-realtime check ITERATES ALERT_FEED_URLS rather than hardcoding four,
+    # so adding "ferry" makes it check the fifth feed and the count in the detail moves
+    # to 5. Run with the default (real) feed set, every feed decodable.
+    assert "ferry" in cm.feeds.ALERT_FEED_URLS
+    valid = _rt_feed()
+    fetch = FakeFetcher({url: valid for url in cm.feeds.ALERT_FEED_URLS.values()})
+    result = cm.check_alerts_realtime(fetch, NO_SLEEP, 1.0)  # default feed_urls
+    assert result.status == cm.PASS
+    assert "5 alert feeds decodable" in result.detail
+
+
 # ---------------------------------------------------------------------------
 # Bus realtime (key-gated, secret-safe)
 # ---------------------------------------------------------------------------

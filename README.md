@@ -33,9 +33,10 @@ quiet block above the countdowns (the railroad station popups do the same). The
 alerts come from the `/api/alerts` store; an alert applies to a station when it
 selects that station's stop id, or a route currently arriving there, within the
 same system (numeric ids collide across modes, so the join is system-scoped).
-Clicking a bus, a subway train, or a railroad train shows the alerts for that
-vehicle's route the same way, and agency-wide alerts (which name no route and no
-stop) appear in a dismissible banner over the map rather than in any one popup.
+Clicking a bus, a subway train, a railroad train, or a ferry boat shows the alerts
+for that vehicle's route the same way, and agency-wide alerts (which name no route
+and no stop) appear in a dismissible banner over the map rather than in any one
+popup.
 Alerts are decorative: a failed or stale alerts fetch never blocks the arrivals.
 Route-line severity styling is deferred: the MTA stamps `UNKNOWN_EFFECT` on live
 alerts, so a real severity signal needs a future backend phase to decode the
@@ -152,10 +153,17 @@ to arrival, or to departure when a boat is dwelling at the dock, and surfaces th
 dock's wheelchair-accessibility flag (the first accessibility display in the
 app). Boats are keyed on their stable vehicle id and moved to their reported
 position each poll (no schedule interpolation, unlike the subway/PATH glide).
-There is no ferry-alerts join yet: the alert endpoint is verified but unwired, a
-queued follow-up, so ferry popups carry no alert block (the current PATH state).
-Speed is intentionally not shown: 14b documents the feed's speed unit as
-uncertain, so a number could mislead until the unit is confirmed.
+Ferry service alerts are wired into the same `/api/alerts` pipeline as the MTA
+systems: a dock popup prepends alerts that name that dock's stop, and a boat popup
+prepends alerts that name that boat's route (an agency-wide ferry alert joins the
+shared banner). Docks show stop-scoped alerts only for now, not route-scoped ones,
+because there is no dock-to-routes mapping yet (that routes-per-station index is a
+shared follow-up wanted by subway stations too, and should land once for all
+systems); a route-scoped ferry alert still reaches riders on every boat of that
+route. A ferry alert-feed failure marks only the ferry system degraded in
+`/api/status` (per-system retention), it never breaks the poll. Speed is
+intentionally not shown: 14b documents the feed's speed unit as uncertain, so a
+number could mislead until the unit is confirmed.
 
 Ferries stop running overnight, so the realtime feeds return empty then; an empty
 successful poll correctly clears the boats (they went home), while a failed poll

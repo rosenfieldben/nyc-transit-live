@@ -82,11 +82,19 @@ async function loadFerryStops() {
       marker: m,
       body: null,
       url: `/api/ferry-arrivals/${encodeURIComponent(stop.id)}`,
-      // No alerts prepend: NYC Ferry alerts are a queued follow-up (the alert
-      // endpoint is verified but unwired), so there is nothing to join, exactly
-      // the current PATH state. The countdown tick, refresh, and supersession
-      // machinery are all inherited from bindStationPopup / openStationArrivals.
+      // Prepend STOP-scoped ferry alerts, joined on (ferry, stop_id) through the
+      // shared alertsIndex. matchStationAlerts can ALSO match route-scoped alerts via
+      // the routes present in a station's arrivals, but we pass NO route ids here on
+      // purpose. DELIBERATE SCOPE LIMIT: a dock shows route-scoped alerts only through
+      // a real dock->routes mapping, and none exists yet. That mapping is the same
+      // routes-per-station index already queued as a followup for subway stations; it
+      // should land once, for all systems, in its own PR, not be faked per-dock from
+      // the current arrivals here. Until then a route-scoped ferry alert still reaches
+      // riders on every boat of that route (the boat popup joins by route). The
+      // countdown tick, refresh, and supersession machinery are inherited from
+      // bindStationPopup / openStationArrivals.
       render: (s, b) =>
+        alertsBlockHtml(matchStationAlerts(alertsIndex, "ferry", s.id, [])) +
         ferryArrivalsHtml(
           s,
           b,
@@ -120,9 +128,14 @@ function ferryBoatIcon(boat, color) {
 
 function ferryBoatPopup(record) {
   const b = record.latest;
-  // Reads record.latest so a popup a rider holds open across polls always renders
-  // the newest status/route, like the other systems.
-  return ferryBoatPopupHtml(b, ferryRouteNames.get(b.route_id) || null, ferryColorFor(b.route_id));
+  // Reads record.latest so a popup a rider holds open across polls always renders the
+  // newest status/route, like the other systems. Prepend ROUTE-scoped ferry alerts,
+  // joined on (ferry, route_id) exactly as the subway train popup joins by route; a
+  // null-route boat matches nothing (matchRouteAlerts guards on a falsy route id).
+  return (
+    routeAlertsBlock("ferry", b.route_id) +
+    ferryBoatPopupHtml(b, ferryRouteNames.get(b.route_id) || null, ferryColorFor(b.route_id))
+  );
 }
 
 // Stable vehicle id -> { marker, color, iconState, latest }. Boats are the

@@ -359,7 +359,7 @@ async def _refresh_alerts(app: FastAPI, client: httpx.AsyncClient) -> None:
     except RuntimeError as exc:
         # Every alert feed failed this poll; keep the last-known index. Unlike the
         # single-fetch refreshers (buses/subways), there is no httpx.HTTPError to catch
-        # here: fetch_service_alerts gathers the four feeds with return_exceptions=True,
+        # here: fetch_service_alerts gathers every feed with return_exceptions=True,
         # so a per-feed HTTP or decode error is captured inside it and only the
         # all-failed RuntimeError ever propagates.
         _note_failure(entry, 502, _sanitize_upstream(exc))

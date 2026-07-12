@@ -197,6 +197,80 @@ def test_enum_name_falls_back_to_int_for_unknown_value():
     assert feeds._enum_name(feeds._ALERT_EFFECT, 99999) == "99999"
 
 
+# ---- ferry alert decode tolerance (wiring ferries into the alert pipeline) ----
+#
+# _decode_alerts is pure GTFS-RT with no agency-specific handling, so the ferry feed
+# needs no decoder change; these pin that tolerance with synthetic feeds rather than a
+# captured golden (a populated ferry alert is rare and its content changes). They
+# assert the ferry feed key flows through unchanged: a plain alert decodes, ferry
+# route/stop selectors land under system "ferry" with those keys, and a selector-less
+# alert is systemwide.
+
+
+def test_decode_ferry_plain_alert_is_systemwide():
+    # A minimal ferry alert: header + description only, NO informed_entity and no
+    # agency-specific extensions. It decodes, is tagged system "ferry", and carries
+    # no route/stop, the systemwide convention (the frontend banner, not a popup).
+    raw = _alert_feed(
+        [
+            {
+                "id": "f1",
+                "periods": [(900, None)],
+                "header": [("Ferry Point Park landing closed", "en")],
+                "description": [("Power outage; the Rockaway/Soundview route skips it.", "en")],
+            }
+        ]
+    )
+    (alert,), suppressed = feeds._decode_alerts(raw, "ferry", NOW)
+    assert suppressed == 0
+    assert alert["system"] == "ferry"
+    assert alert["header"] == "Ferry Point Park landing closed"
+    assert alert["description"].startswith("Power outage")
+    assert alert["routes"] == [] and alert["stops"] == []  # selector-less: systemwide
+
+
+def test_decode_ferry_route_and_stop_selectors_land_under_ferry():
+    # Ferry route ids (ER) and ferry stop ids (18) land under system "ferry" with
+    # those exact keys, the same id space /api/ferry and /api/ferry-stops use, so the
+    # frontend join on (ferry, route_id) / (ferry, stop_id) matches.
+    raw = _alert_feed(
+        [
+            {"id": "route", "routes": ["ER"], "periods": [(0, None)]},
+            {"id": "stop", "stops": ["18"], "periods": [(0, None)]},
+        ]
+    )
+    alerts, _ = feeds._decode_alerts(raw, "ferry", NOW)
+    by_id = {a["id"]: a for a in alerts}
+    assert by_id["route"]["system"] == "ferry"
+    assert by_id["route"]["routes"] == ["ER"] and by_id["route"]["stops"] == []
+    assert by_id["stop"]["system"] == "ferry"
+    assert by_id["stop"]["stops"] == ["18"] and by_id["stop"]["routes"] == []
+
+
+def test_decode_ferry_real_world_shape_route_scoped():
+    # Pinned to the shape actually observed live on 2026-07-12, the first populated
+    # ferry alert: route-scoped (route "RS", no stop), an unset start (open on the
+    # left), a far-future end, and UNKNOWN effect/cause. Synthetic bytes, real shape.
+    raw = _alert_feed(
+        [
+            {
+                "id": "1",
+                "routes": ["RS"],
+                "periods": [(None, 4134002399)],  # no start; far-future end
+                "header": [("Service Alert - Ferry Point Park - Temporary Closure", "en")],
+                "effect": pb.Alert.Effect.Value("UNKNOWN_EFFECT"),
+                "cause": pb.Alert.Cause.Value("UNKNOWN_CAUSE"),
+            }
+        ]
+    )
+    (alert,), suppressed = feeds._decode_alerts(raw, "ferry", NOW)
+    assert suppressed == 0
+    assert alert["system"] == "ferry"
+    assert alert["routes"] == ["RS"] and alert["stops"] == []
+    assert alert["starts_at"] is None and alert["ends_at"] == 4134002399
+    assert alert["effect"] == "UNKNOWN_EFFECT" and alert["cause"] == "UNKNOWN_CAUSE"
+
+
 # ---- fetch aggregation (per-feed degrade, all-failed raise) ----
 
 
@@ -235,9 +309,10 @@ async def test_fetch_degrades_on_partial_failure():
         feeds.ALERT_FEED_URLS["bus"]: httpx.ConnectError("boom"),
         feeds.ALERT_FEED_URLS["LIRR"]: _one_active("1"),
         feeds.ALERT_FEED_URLS["MNR"]: b"not-a-protobuf-\xff\xfe",  # DecodeError
+        feeds.ALERT_FEED_URLS["ferry"]: _one_active("RS"),  # the fifth feed decodes
     }
     alerts, suppressed, failed = await feeds.fetch_service_alerts(_FakeClient(by_url))
-    assert {a["system"] for a in alerts} == {"subway", "LIRR"}
+    assert {a["system"] for a in alerts} == {"subway", "LIRR", "ferry"}
     assert suppressed == 0
     assert failed == ["MNR", "bus"]
 

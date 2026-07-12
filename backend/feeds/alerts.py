@@ -1,4 +1,4 @@
-"""Service alerts: the four keyless GTFS-RT alert feeds, the active-now window
+"""Service alerts: the keyless GTFS-RT alert feeds, the active-now window
 logic, the per-alert decode, the fetch aggregation, and the per-system
 retention merge that carries a down feed's alerts forward across a partial
 outage."""
@@ -16,16 +16,27 @@ from google.transit import gtfs_realtime_pb2
 
 from feeds.shared import _RAILROAD_BASE, logger
 
-# Keyless GTFS-RT Service Alerts feeds, camsys-published on the same %2F-encoded
-# base as the railroad feeds. Keyed by the system this app serves so each decoded
-# alert can be tagged with its system. Deliberately NOT camsys%2Fall-alerts: that
-# bundle mixes in agencies this app does not map (Access-A-Ride, bridges/tunnels,
-# outer systems), which would surface alerts with no marker or route to attach to.
+# Keyless GTFS-RT Service Alerts feeds. The four MTA feeds are camsys-published on
+# the same %2F-encoded base as the railroad feeds. Keyed by the system this app
+# serves so each decoded alert can be tagged with its system. Deliberately NOT
+# camsys%2Fall-alerts: that bundle mixes in agencies this app does not map
+# (Access-A-Ride, bridges/tunnels, outer systems), which would surface alerts with
+# no marker or route to attach to.
+#
+# "ferry" is a DIFFERENT host and publisher: NYC Ferry's Connexionz GTFS-RT alert
+# endpoint (https, the same host and scheme as the 14a static and 14b realtime ferry
+# feeds), not camsys. It slots in here because the decode below is pure GTFS-RT with
+# no agency-specific handling, and the gather/retention/health machinery is keyed
+# generically by system, so a fifth feed needs only this entry. Verified 2026-07-09
+# as a valid ServiceAlert feed; it returns application/x-protobuf directly (no
+# redirect), so the generic fetch handles it. A decode failure marks only "ferry"
+# degraded (per-system retention), it never breaks the poll.
 ALERT_FEED_URLS = {
     "subway": _RAILROAD_BASE + "/camsys%2Fsubway-alerts",
     "bus": _RAILROAD_BASE + "/camsys%2Fbus-alerts",
     "LIRR": _RAILROAD_BASE + "/camsys%2Flirr-alerts",
     "MNR": _RAILROAD_BASE + "/camsys%2Fmnr-alerts",
+    "ferry": "https://nycferry.connexionz.net/rtt/public/utility/gtfsrealtime.aspx/alert",
 }
 
 
@@ -165,14 +176,14 @@ def _decode_alerts(raw: bytes, feed_key: str, now: float) -> tuple[list[dict], i
 
 
 async def fetch_service_alerts(client: httpx.AsyncClient) -> tuple[list[dict], int, list[str]]:
-    """Fetch all four alert feeds concurrently; return
+    """Fetch every configured alert feed concurrently; return
     (active alerts, suppressed_count, failed_feeds).
 
     Mirrors fetch_subway_trains: per-feed failures (a fetch error or undecodable
     protobuf) are logged and skipped so one bad feed does not drop every alert,
     and this raises only when EVERY feed fails. failed_feeds is the sorted list of
     feed keys that dropped this poll, empty on a fully successful poll. The caller
-    owns the client. `now` is captured once so all four feeds filter against the
+    owns the client. `now` is captured once so all feeds filter against the
     same instant.
     """
     now = time.time()

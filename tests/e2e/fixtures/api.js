@@ -349,6 +349,23 @@ const ferryArrivals = () => ({
 // overrides this per-test with a fixture that matches the station under test.
 const alerts = () => ({ fetched_at: FROZEN_S, alerts: [] });
 
+// Two ferry service alerts for the ferry alert-join test: one STOP-scoped (dock
+// "18", Wall St/Pier 11) and one ROUTE-scoped (route "ER", East River). The dock
+// popup must render the stop one only; the route one must appear on an ER boat's
+// popup and NOT the dock (the deliberate scope limit). Selectors use the same ferry
+// stop/route id space as ferryStops()/ferryRoutes() above and the boats in ferry().
+const ferryAlerts = () => ({
+  fetched_at: FROZEN_S,
+  alerts: [
+    { id: "ferry-stop", system: "ferry", header: "Wall St/Pier 11 landing closed", description: null,
+      effect: "NO_SERVICE", cause: "MAINTENANCE", routes: [], stops: ["18"],
+      starts_at: FROZEN_S - 600, ends_at: null },
+    { id: "ferry-route", system: "ferry", header: "East River route reroute", description: null,
+      effect: "DETOUR", cause: "CONSTRUCTION", routes: ["ER"], stops: [],
+      starts_at: FROZEN_S - 600, ends_at: null },
+  ],
+});
+
 module.exports = {
   FROZEN_MS,
   FROZEN_S,
@@ -377,4 +394,5 @@ module.exports = {
   ferryDocked,
   ferryArrivals,
   alerts,
+  ferryAlerts,
 };

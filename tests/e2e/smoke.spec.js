@@ -697,33 +697,8 @@ test("18. Ferry boot: lines, docks and boats render; the toggle hides all three 
 });
 
 test("19. Ferry dock popup: route buckets, a dwelling boat shown departing, wheelchair marker, ticking", async ({ page }) => {
-  // Seed alerts whose selectors WOULD match this dock if ferry ever joined the
-  // alerts store: one under a ferry system tag naming the dock's stop id ("18"), and
-  // one naming the East River route present in this dock's arrivals. NYC Ferry alerts
-  // are a queued follow-up (unwired), so the dock popup must stay clean even with a
-  // matching alert in the store. Without seeded matching data the no-alert-block
-  // assertion below would be vacuous: an empty alerts index can never render a block,
-  // so it could not catch a future render that wrongly grew a stationAlertsBlock join.
-  const alertsFixture = {
-    fetched_at: fx.FROZEN_S,
-    alerts: [
-      { id: "ferry-stop", system: "ferry", header: "Ferry stop alert must never render", description: null,
-        effect: "UNKNOWN_EFFECT", cause: "UNKNOWN_CAUSE", routes: [], stops: ["18"],
-        starts_at: fx.FROZEN_S - 600, ends_at: null },
-      { id: "ferry-route", system: "ferry", header: "Ferry route alert must never render", description: null,
-        effect: "UNKNOWN_EFFECT", cause: "UNKNOWN_CAUSE", routes: ["ER"], stops: [],
-        starts_at: fx.FROZEN_S - 600, ends_at: null },
-    ],
-  };
-  const ctx = await boot(page, (c) => {
-    c.overrides.alerts = (route) => json(route, alertsFixture);
-  });
+  const ctx = await boot(page);
   await waitForFerryReady(page);
-  // The alerts must be indexed BEFORE the popup renders, or the absence assertion
-  // passes trivially against a not-yet-loaded store.
-  await page.waitForFunction(
-    () => typeof alertsIndex !== "undefined" && alertsIndex.byStop.has("ferry|18"),
-  );
 
   // Open Wall St/Pier 11 (first dock in the fixture, accessible, two route buckets).
   await page.evaluate(() => ferryDocks.getLayers()[0].openPopup());
@@ -737,16 +712,10 @@ test("19. Ferry dock popup: route buckets, a dwelling boat shown departing, whee
   expect(ctx.counts.ferryArrivals).toBe(1);
 
   const html = await popup(page).innerHTML();
-  // Buckets are alphabetical, the accessible dock shows the marker, and NYC Ferry
-  // has no alerts feed so no alert block may prepend.
+  // Buckets are alphabetical and the accessible dock shows the marker. Ferry alert
+  // rendering (dock stop-scoped, boat route-scoped) has its own test below.
   expect(html.indexOf("East River")).toBeLessThan(html.indexOf("South Brooklyn"));
   expect(html).toContain("popup-access");
-  // NYC Ferry has no alerts feed, so no alert block may prepend even though the store
-  // now holds alerts that WOULD match this dock by stop id and by route. This fails if
-  // a ferry dock render ever grows a stationAlertsBlock join.
-  expect(html).not.toContain("alert-block");
-  expect(html).not.toContain("Ferry stop alert must never render");
-  expect(html).not.toContain("Ferry route alert must never render");
 
   // The shared 1s tick repaints from the cached body with no new fetch: the
   // arriving row crosses +90s -> +89s (2 min -> 1 min).
@@ -934,4 +903,54 @@ test("25. Ferry boat color self-heals once routes load after the boat is first s
   // color: the guard keyed on the resolved color, not the unchanged id.
   await expect.poll(() => fillOf("H1")).toBe("#00839c"); // ER route_color, self-healed
   expect(routeCalls).toBe(3); // two 503s then one healed load, then the loader stopped
+});
+
+test("26. Ferry alerts: stop-scoped shows at the dock, route-scoped on the boat but not the dock", async ({ page }) => {
+  // /api/alerts carries a STOP-scoped ferry alert (dock 18) and a ROUTE-scoped one
+  // (route ER). Ferries now join the shared alert pipeline: docks render stop-scoped
+  // alerts only (the scope limit), boats render route-scoped alerts by route.
+  const ctx = await boot(page, (c) => {
+    c.overrides.alerts = (route, fixtures) => json(route, fixtures.ferryAlerts());
+  });
+  await waitForFerryReady(page);
+  // Index the alerts before opening popups, or the assertions race a not-yet-loaded
+  // store (the popups render from alertsIndex as of open time).
+  await page.waitForFunction(
+    () =>
+      typeof alertsIndex !== "undefined" &&
+      alertsIndex.byStop.has("ferry|18") &&
+      alertsIndex.byRoute.has("ferry|ER"),
+  );
+
+  // Dock 18 (Wall St/Pier 11): the STOP-scoped alert renders; the ROUTE-scoped one
+  // does NOT, even though route ER is present in this dock's arrivals (scope limit).
+  await page.evaluate(() => ferryDocks.getLayers()[0].openPopup());
+  await expect(popup(page)).toContainText("Wall St/Pier 11 landing closed");
+  const dockHtml = await popup(page).innerHTML();
+  expect(dockHtml).toContain("alert-block");
+  expect(dockHtml).not.toContain("East River route reroute"); // route-scoped: not at the dock
+
+  // Close the dock popup before opening a boat popup. A real boat-marker click fires
+  // the map's closePopupOnClick; the programmatic openPopup below does not, so without
+  // this both popups stay open and the popup locator would match two elements. The
+  // clock flush clears Leaflet's fade-out removal so the closed popup leaves the DOM.
+  await page.evaluate(() => map.closePopup());
+  await page.clock.runFor(250);
+
+  // Boat H1 is on route ER: its popup renders the ROUTE-scoped alert...
+  await page.evaluate(() => ferryBoatRecords.get("H1").marker.openPopup());
+  await expect(page.locator(".leaflet-popup")).toHaveCount(1);
+  await expect(popup(page)).toContainText("East River route reroute");
+  const boatHtml = await popup(page).innerHTML();
+  expect(boatHtml).toContain("alert-block");
+  // ...and the stop-scoped dock alert does not leak onto the boat (route join only).
+  expect(boatHtml).not.toContain("Wall St/Pier 11 landing closed");
+
+  // A null-route boat (H3) matches no route alert, so no block at all.
+  await page.evaluate(() => map.closePopup());
+  await page.clock.runFor(250);
+  await page.evaluate(() => ferryBoatRecords.get("H3").marker.openPopup());
+  await expect(page.locator(".leaflet-popup")).toHaveCount(1);
+  const nullBoatHtml = await popup(page).innerHTML();
+  expect(nullBoatHtml).not.toContain("alert-block");
 });

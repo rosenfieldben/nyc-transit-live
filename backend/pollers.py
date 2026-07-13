@@ -43,8 +43,8 @@ logger = logging.getLogger("main")
 POLL_INTERVAL_S = 20
 
 # Service alerts poll on their OWN slower loop: alerts change far more slowly than
-# vehicle positions, and the subway alerts feed alone is ~400 KB, so re-pulling all
-# four every 20s would be wasteful. A separate lifespan task on this cadence keeps
+# vehicle positions, and the subway alerts feed alone is ~400 KB, so re-pulling them
+# all every 20s would be wasteful. A separate lifespan task on this cadence keeps
 # the position poll lean and independent (an alert-feed outage never stalls it).
 ALERT_POLL_INTERVAL_S = 60
 
@@ -359,7 +359,7 @@ async def _refresh_alerts(app: FastAPI, client: httpx.AsyncClient) -> None:
     except RuntimeError as exc:
         # Every alert feed failed this poll; keep the last-known index. Unlike the
         # single-fetch refreshers (buses/subways), there is no httpx.HTTPError to catch
-        # here: fetch_service_alerts gathers the four feeds with return_exceptions=True,
+        # here: fetch_service_alerts gathers every feed with return_exceptions=True,
         # so a per-feed HTTP or decode error is captured inside it and only the
         # all-failed RuntimeError ever propagates.
         _note_failure(entry, 502, _sanitize_upstream(exc))

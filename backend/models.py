@@ -330,12 +330,12 @@ class AirTrainData(BaseModel):
     routes: list[AirTrainRoute]
 
 
-# Service alerts. One polled feed per system (subway/bus/LIRR/MNR); the decode
-# keeps only alerts active now and tags each with its system. Text is verbatim
+# Service alerts. One polled feed per system (subway/bus/LIRR/MNR/ferry); the
+# decode keeps only alerts active now and tags each with its system. Text is verbatim
 # from the feed (route tokens like [Q] included); 12b owns rendering.
 class Alert(BaseModel):
     id: str
-    system: str  # feed this came from: subway | bus | LIRR | MNR
+    system: str  # feed this came from: subway | bus | LIRR | MNR | ferry
     header: str | None
     description: str | None
     effect: str  # GTFS-RT Effect enum name (e.g. NO_SERVICE, DETOUR)
@@ -386,7 +386,7 @@ class RailroadFeedHealth(BaseModel):
 
 
 class AlertSystemHealth(BaseModel):
-    # Per-alert-feed freshness, so a partial outage (one of the four feeds down)
+    # Per-alert-feed freshness, so a partial outage (one of the alert feeds down)
     # is visible even though the poll as a whole still succeeds.
     fresh_at: float | None  # last poll this system decoded (null before its first)
     # Set while a down system's alerts are being carried forward from its last good

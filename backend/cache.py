@@ -52,7 +52,7 @@ def _fresh_alerts_entry() -> dict:
     # visible instead of silently thinning the index: fresh_at is the last decode,
     # retained_since marks a system whose alerts are being carried forward from a
     # down feed (null when fresh or once the retention cap drops them), last_error
-    # flags a system failing this poll. Keyed by the same four alert systems.
+    # flags a system failing this poll. Keyed by the same alert systems (ALERT_FEED_URLS).
     return {
         "alerts": None,
         "fetched_at": None,

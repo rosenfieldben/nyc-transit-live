@@ -2072,6 +2072,42 @@ async def test_alerts_partial_failure_retains_down_system(client, alerts_cache, 
     assert alerts_status["systems"]["subway"]["last_error"] is None
 
 
+async def test_alerts_ferry_feed_failure_marks_ferry_degraded(client, alerts_cache, monkeypatch):
+    # The PR 51 per-system retention machinery, exercised with the FIFTH key: a ferry
+    # alert-feed failure retains ferry's alert and marks ferry degraded, while the MTA
+    # systems (here subway) stay fresh. Adding "ferry" to ALERT_FEED_URLS needed no
+    # retention change; this proves the generic machinery extends to it, and is the
+    # safety net named in the design (a ferry decode/fetch failure surfaces in
+    # degraded_systems rather than breaking the poll).
+    ferry_alert = {**ALERT, "id": "ferry:1", "system": "ferry"}
+    alerts_cache.update(
+        alerts=[SUBWAY_ALERT, ferry_alert], fetched_at=1000.0, active=2, suppressed=0
+    )
+    for health in alerts_cache["health"].values():
+        health["fresh_at"] = 1000.0
+
+    fresh_subway = {**SUBWAY_ALERT, "id": "subway:2"}
+
+    async def partial(client_arg):
+        return [fresh_subway], 0, ["ferry"]  # MTA decoded, ferry down this poll
+
+    monkeypatch.setattr(app_module, "fetch_service_alerts", partial)
+    await app_module._refresh_alerts(app_module.app, client=None)
+
+    # Ferry's alert is carried forward (not silently dropped); the MTA system is fresh.
+    assert {a["id"] for a in alerts_cache["alerts"]} == {"subway:2", "ferry:1"}
+    assert alerts_cache["error"] is None  # a partial failure is still a successful poll
+    assert alerts_cache["health"]["ferry"]["retained_since"] is not None
+    assert alerts_cache["health"]["ferry"]["last_error"]["status"] == 502
+    assert alerts_cache["health"]["subway"]["retained_since"] is None
+    assert alerts_cache["health"]["subway"]["last_error"] is None
+
+    res = await client.get("/api/status")
+    alerts_status = res.json()["alerts"]
+    assert alerts_status["degraded_systems"] == ["ferry"]
+    assert alerts_status["systems"]["ferry"]["retained_since"] is not None
+
+
 async def test_alerts_recovery_clears_retention(client, alerts_cache, monkeypatch):
     # MNR is currently retained from a prior outage.
     alerts_cache.update(alerts=[ALERT], fetched_at=1000.0, active=1, suppressed=0)
@@ -2113,14 +2149,14 @@ async def test_alerts_all_failed_leaves_per_system_health_untouched(
 
 
 async def test_status_reports_alert_system_health(client, status_env, alerts_cache):
-    # All four systems fresh: the health map is exposed and nothing is degraded.
+    # All systems fresh: the health map is exposed and nothing is degraded.
     now = time.time()
     alerts_cache.update(alerts=[ALERT], fetched_at=now - 5, active=1, suppressed=0)
     for health in alerts_cache["health"].values():
         health["fresh_at"] = now - 5
     res = await client.get("/api/status")
     alerts_status = res.json()["alerts"]
-    assert set(alerts_status["systems"]) == {"subway", "bus", "LIRR", "MNR"}
+    assert set(alerts_status["systems"]) == {"subway", "bus", "LIRR", "MNR", "ferry"}
     assert alerts_status["degraded_systems"] == []
     assert alerts_status["systems"]["subway"]["retained_since"] is None
     assert alerts_status["systems"]["subway"]["last_error"] is None

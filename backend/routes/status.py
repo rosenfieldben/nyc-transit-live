@@ -18,7 +18,7 @@ router = APIRouter()
 @router.get("/api/alerts", response_model=AlertFeed)
 async def get_alerts(request: Request) -> dict:
     """Active service alerts from the in-memory index: {fetched_at, alerts: [...]},
-    one entry per alert active now across the subway/bus/LIRR/MNR feeds.
+    one entry per alert active now across the subway/bus/LIRR/MNR and NYC Ferry feeds.
 
     Same envelope treatment as the other live feeds (no explicit Cache-Control; the
     frontend polls it, and _serve_cached sets none either). An index that decoded

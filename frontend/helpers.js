@@ -596,9 +596,11 @@ function ferryStatusText(status) {
 // caller from the /api/ferry-routes tables so this stays pure and node-testable.
 // Deliberate omissions: NO speed line (14b documents the feed's speed unit as
 // uncertain, so a number could mislead; a followup adds it once the unit is
-// confirmed), and NO alerts block (ferry alerts are a queued follow-up, endpoint
-// verified but unwired, the same current state as the PATH popups). Every
-// feed-derived string is escaped.
+// confirmed), and NO alerts block IN THIS FUNCTION: route-scoped ferry alerts are
+// shown, but the caller (ferryBoatPopup) prepends them via routeAlertsBlock so this
+// stays a pure, node-testable HTML builder, exactly as the subway/bus popup HTML
+// helpers keep their route-alert prepend in the caller. Every feed-derived string
+// is escaped.
 function ferryBoatPopupHtml(boat, name, color) {
   const routeText = name || "Unassigned";
   const status = ferryStatusText(boat.status);

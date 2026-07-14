@@ -46,6 +46,8 @@ from typing import IO
 
 import httpx
 
+from static_routes import fold_stop_routes
+
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -286,6 +288,22 @@ def build_path_station_order(
         if len(ordered) >= 2:
             order[key] = ordered
     return order
+
+
+def derive_path_station_routes(
+    trips: dict[str, dict],
+    stop_times: dict[str, list[str]],
+    child_to_parent: dict[str, str],
+) -> dict[str, list[str]]:
+    """Pure: parent station_id -> sorted [route_id] serving it. stop_times speaks
+    in child platform ids, so they fold up to parent stations through
+    child_to_parent (the same fold build_path_station_order does), leaving the
+    index keyed by the parent-station markers get_path_stops serves. Delegates
+    the join to static_routes.fold_stop_routes after pulling route_id out of each
+    trip record. No zip read, so the warmup builds it from app.state.path_static
+    without re-parsing, like build_path_route_shapes and build_path_station_order."""
+    trip_routes = {trip_id: t.get("route_id") for trip_id, t in trips.items()}
+    return fold_stop_routes(trip_routes, stop_times, child_to_parent)
 
 
 def _parse_routes(raw: IO[bytes]) -> dict[str, dict]:

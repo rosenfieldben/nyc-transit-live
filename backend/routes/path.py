@@ -32,7 +32,11 @@ async def get_path_stops(request: Request, response: Response) -> list[dict]:
     if not _static_endpoint_ready(status, response, "Static PATH GTFS is still loading."):
         return []
     stops = getattr(app.state, "path_stops", None) or {}
-    return list(stops.values())
+    station_routes = getattr(app.state, "path_station_routes", None) or {}
+    # Merge the routes-per-station index (H5) onto each parent-station dict
+    # without mutating the cached app.state stops. Empty when the derive found
+    # none (or a pre-H5 cached zip lacked stop_times).
+    return [{**s, "routes": station_routes.get(sid, [])} for sid, s in stops.items()]
 
 
 @router.get("/api/path-routes", response_model=list[PathRoute])

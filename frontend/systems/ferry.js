@@ -82,19 +82,18 @@ async function loadFerryStops() {
       marker: m,
       body: null,
       url: `/api/ferry-arrivals/${encodeURIComponent(stop.id)}`,
-      // Prepend STOP-scoped ferry alerts, joined on (ferry, stop_id) through the
-      // shared alertsIndex. matchStationAlerts can ALSO match route-scoped alerts via
-      // the routes present in a station's arrivals, but we pass NO route ids here on
-      // purpose. DELIBERATE SCOPE LIMIT: a dock shows route-scoped alerts only through
-      // a real dock->routes mapping, and none exists yet. That mapping is the same
-      // routes-per-station index already queued as a followup for subway stations; it
-      // should land once, for all systems, in its own PR, not be faked per-dock from
-      // the current arrivals here. Until then a route-scoped ferry alert still reaches
-      // riders on every boat of that route (the boat popup joins by route). The
-      // countdown tick, refresh, and supersession machinery are inherited from
+      // Prepend a dock's ferry alerts, joined through the shared alertsIndex: the
+      // UNION of STOP-scoped alerts (ferry, stop_id) and ROUTE-scoped alerts for
+      // every route serving this dock. s.routes is the routes-per-station index the
+      // backend now derives from stop_times (H5), so a route-scoped ferry alert
+      // reaches the DOCK, not only the boats on that route. This is the same static
+      // routes-per-station join subway and railroad stations use through
+      // stationAlertsBlock; ferry keeps its own call because its arrivals shape
+      // (route-name buckets) differs from the directions shape that helper reads.
+      // The countdown tick, refresh, and supersession machinery are inherited from
       // bindStationPopup / openStationArrivals.
       render: (s, b) =>
-        alertsBlockHtml(matchStationAlerts(alertsIndex, "ferry", s.id, [])) +
+        alertsBlockHtml(matchStationAlerts(alertsIndex, "ferry", s.id, s.routes ?? [])) +
         ferryArrivalsHtml(
           s,
           b,

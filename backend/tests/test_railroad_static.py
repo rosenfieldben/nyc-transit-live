@@ -129,15 +129,69 @@ def age_file(path, days):
 # ---------------- _parse_system (direct, no network) ----------------
 
 
-def test_parse_system_returns_four_tables(tmp_path):
+def test_parse_system_returns_five_tables(tmp_path):
     path = tmp_path / "g.zip"
     write_railroad_zip(path)
     data = railroad_static._parse_system(path)
-    assert set(data) == {"stops", "trips", "shapes", "routes"}
+    assert set(data) == {"stops", "trips", "shapes", "routes", "stop_times"}
     # Full-precision coords (no rounding for stops).
     assert data["stops"]["8"] == {"name": "Hicksville", "lat": 40.768, "lon": -73.531}
     assert data["stops"]["12"]["lat"] == 40.7005
     assert data["routes"]["5"]["long_name"] == "Montauk Branch"
+    # stop_times.txt is optional (the default synthetic zip omits it); a missing
+    # member degrades to an empty table, not a load failure.
+    assert data["stop_times"] == {}
+
+
+# ---------------- _parse_stop_times + derive_railroad_stop_routes (H5) ----------------
+#
+# The railroads have no committed trimmed GTFS fixture (the tests build synthetic
+# zips inline), so the routes-per-station index is covered with synthetic tables
+# here rather than a golden over a trim.
+
+STOP_TIMES_COLS = ["trip_id", "stop_id", "arrival_time", "departure_time", "stop_sequence"]
+
+
+def test_parse_stop_times_optional_member_present(tmp_path):
+    path = tmp_path / "g.zip"
+    write_railroad_zip(
+        path,
+        members={
+            "stops.txt": csv_text(STOPS_COLS, STOP_ROWS),
+            "trips.txt": csv_text(TRIPS_COLS, TRIP_ROWS),
+            "shapes.txt": csv_text(SHAPES_COLS, DEFAULT_SHAPE_ROWS),
+            "routes.txt": csv_text(ROUTES_COLS, ROUTE_ROWS),
+            "stop_times.txt": csv_text(
+                STOP_TIMES_COLS,
+                [
+                    {"trip_id": "GO5_1", "stop_id": "12", "stop_sequence": "1"},
+                    {"trip_id": "GO5_1", "stop_id": "8", "stop_sequence": "2"},
+                ],
+            ),
+        },
+    )
+    data = railroad_static._parse_system(path)
+    assert data["stop_times"] == {"GO5_1": ["12", "8"]}
+
+
+def test_derive_railroad_stop_routes_joins_flat_stops():
+    trips = {
+        "GO5_1": {"route_id": "5", "direction_id": "0", "shape_id": "5", "headsign": None},
+        "GO8_1": {"route_id": "8", "direction_id": "1", "shape_id": None, "headsign": None},
+    }
+    stop_times = {
+        "GO5_1": ["12", "8"],  # route 5 serves Jamaica + Hicksville
+        "GO8_1": ["12"],  # route 8 serves Jamaica
+    }
+    idx = railroad_static.derive_railroad_stop_routes(trips, stop_times)
+    # Flat railroad stops join directly; Jamaica (12) is served by both routes.
+    assert idx == {"12": ["5", "8"], "8": ["5"]}
+
+
+def test_derive_railroad_stop_routes_ignores_routeless_trips():
+    trips = {"t": {"route_id": None, "direction_id": None, "shape_id": None, "headsign": None}}
+    idx = railroad_static.derive_railroad_stop_routes(trips, {"t": ["12"]})
+    assert idx == {}
 
 
 def test_parse_routes_reads_names_blank_to_none(tmp_path):

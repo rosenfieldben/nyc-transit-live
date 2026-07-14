@@ -203,10 +203,19 @@ async function loadAlerts() {
 
 // The alerts block for a station popup: match the current index (read fresh as a
 // global, so a popup re-render picks up whatever the store holds now) against the
-// station, scoped by system, plus the route ids present in its current arrivals.
-// Returns "" when nothing matches, so no empty container is rendered.
+// station, scoped by system, plus every route that serves the station. Returns ""
+// when nothing matches, so no empty container is rendered.
+//
+// The served-routes set is the UNION of two sources (H5): the static
+// routes-per-station index the backend now derives from stop_times (station.routes),
+// and the route ids present in the station's CURRENT arrivals. The static list is
+// the complete, always-present set, so a route-scoped alert reaches the station even
+// with no imminent train; the arrivals ids are folded in too so a station whose
+// static routes failed to load still shows alerts for routes with a live train (and
+// so a brand-new route running before the next static refresh is covered). Either
+// source alone is a strict subset of the intent, so both feed matchStationAlerts.
 function stationAlertsBlock(system, station, body) {
-  const routeIds = new Set();
+  const routeIds = new Set(station.routes ?? []);
   for (const arrivals of Object.values(body?.directions ?? {})) {
     for (const arr of arrivals ?? []) if (arr.route_id) routeIds.add(arr.route_id);
   }

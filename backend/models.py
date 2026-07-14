@@ -99,6 +99,10 @@ class SubwayStop(BaseModel):
     name: str | None
     lat: float
     lon: float
+    # Route ids serving this station (H5), derived from stop_times -> trips; the
+    # station popup joins route-scoped alerts for these. Defaults to [] so an
+    # older client and a pre-index warmup both stay valid.
+    routes: list[str] = []
 
 
 class RailroadStop(BaseModel):
@@ -107,6 +111,7 @@ class RailroadStop(BaseModel):
     name: str | None
     lat: float
     lon: float
+    routes: list[str] = []  # route ids serving this stop (H5)
 
 
 class Arrival(BaseModel):
@@ -211,6 +216,7 @@ class PathStop(BaseModel):
     name: str | None
     lat: float
     lon: float
+    routes: list[str] = []  # route ids serving this station (H5)
 
 
 class PathRoute(BaseModel):
@@ -233,6 +239,7 @@ class FerryStop(BaseModel):
     lat: float
     lon: float
     wheelchair: bool  # GTFS wheelchair_boarding == 1 (accessible), else False
+    routes: list[str] = []  # route ids serving this dock (H5)
 
 
 class FerryRoute(BaseModel):

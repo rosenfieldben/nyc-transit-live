@@ -288,6 +288,58 @@ def test_parse_trips_skips_blank_id_first_writer_wins():
     assert trips["t"]["route_id"] == "ER"  # first-writer-wins
 
 
+# ---------------- _parse_stop_times + derive_ferry_stop_routes (H5) ----------------
+#
+# The committed trim (fixtures/ferry_gtfs/) carries NO stop_times.txt, unlike
+# PATH's, so the routes-per-station index cannot be pinned by a golden over the
+# trim the way PATH's is. Adding stop_times.txt to the ferry trim is a fixture
+# regeneration (gen_ferry_fixture.py), a standard handoff, so H5 covers the ferry
+# derivation with synthetic tables here instead and leaves the golden for later.
+
+STOP_TIMES_COLS = ["trip_id", "stop_id", "arrival_time", "departure_time", "stop_sequence"]
+
+
+def test_parse_stop_times_collects_stops_per_trip():
+    rows = [
+        {"trip_id": "t1", "stop_id": "18", "stop_sequence": "1"},
+        {"trip_id": "t1", "stop_id": "2", "stop_sequence": "2"},
+        {"trip_id": "", "stop_id": "18", "stop_sequence": "1"},  # blank trip: skipped
+        {"trip_id": "t2", "stop_id": "", "stop_sequence": "1"},  # blank stop: skipped
+    ]
+    parsed = ferry_static._parse_stop_times(csv_stream(STOP_TIMES_COLS, rows))
+    assert parsed == {"t1": ["18", "2"]}
+
+
+def test_derive_ferry_stop_routes_joins_flat_stops_to_routes():
+    trips = {
+        "t1": {"route_id": "ER", "direction_id": "0", "shape_id": None, "headsign": None},
+        "t2": {"route_id": "SB", "direction_id": "0", "shape_id": None, "headsign": None},
+    }
+    stop_times = {
+        "t1": ["18", "2"],  # ER serves both docks
+        "t2": ["18"],  # SB serves Wall St only
+    }
+    idx = ferry_static.derive_ferry_stop_routes(trips, stop_times)
+    # Flat: stop ids join directly, routes per dock de-duplicated and sorted.
+    assert idx == {"18": ["ER", "SB"], "2": ["ER"]}
+
+
+def test_derive_ferry_stop_routes_ignores_routeless_trips():
+    trips = {"t": {"route_id": None, "direction_id": None, "shape_id": None, "headsign": None}}
+    idx = ferry_static.derive_ferry_stop_routes(trips, {"t": ["18"]})
+    assert idx == {}
+
+
+def test_parse_zip_missing_stop_times_degrades_to_empty(ferry_paths):
+    # The committed ferry trim (and any pre-H5 cached zip) has no stop_times.txt;
+    # the zip must still parse, with an empty routes-per-station index, exactly
+    # as PATH degrades. write_ferry_zip's default members omit stop_times.txt.
+    write_ferry_zip(ferry_paths)
+    data = ferry_static._parse_zip(ferry_paths)
+    assert data["stop_times"] == {}
+    assert ferry_static.derive_ferry_stop_routes(data["trips"], data["stop_times"]) == {}
+
+
 # ---------------- _parse_shapes ----------------
 
 

@@ -32,7 +32,12 @@ async def get_ferry_stops(request: Request, response: Response) -> list[dict]:
     if not _static_endpoint_ready(status, response, "Static NYC Ferry GTFS is still loading."):
         return []
     stops = getattr(app.state, "ferry_stops", None) or {}
-    return list(stops.values())
+    station_routes = getattr(app.state, "ferry_station_routes", None) or {}
+    # Merge the routes-per-station index (H5) onto each stop dict without
+    # mutating the cached app.state stops. Empty from the committed trim (no
+    # stop_times.txt); the live feed populates it. A route-scoped ferry alert
+    # now reaches the DOCK via these routes, not only the boats on that route.
+    return [{**s, "routes": station_routes.get(sid, [])} for sid, s in stops.items()]
 
 
 @router.get("/api/ferry-routes", response_model=list[FerryRoute])

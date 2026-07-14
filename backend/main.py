@@ -77,6 +77,7 @@ from routes import status as status_routes
 from routes import subway as subway_routes
 from static_data import (
     load_subway_route_shapes,
+    load_subway_station_routes,
     load_subway_stations,
     load_subway_stops,
 )
@@ -124,10 +125,16 @@ async def lifespan(app: FastAPI):
     app.state.subway_stops = None
     app.state.subway_routes = []
     app.state.subway_stations = {}
+    # Routes-per-station index (H5): parent station_id -> [route_id] serving it,
+    # so a station popup can surface a route-scoped alert even with no imminent
+    # train there. Enrichment only, so an empty index (a failed derive) just
+    # omits the routes; it never gates the markers.
+    app.state.subway_station_routes = {}
     app.state.subway_static_status = "loading"
     app.state.railroad_static = {}  # {system: {stops, trips, shapes, routes} | None}
     app.state.railroad_stops = {}
     app.state.railroad_routes = {}
+    app.state.railroad_station_routes = {}  # {system: {stop_id: [route_id]}} (H5)
     app.state.railroad_static_status = "loading"
     # PATH static (13a) feeding the realtime decode and identity matcher (13b,
     # 13d). Own app.state fields, never merged into a shared namespace: numeric
@@ -136,6 +143,7 @@ async def lifespan(app: FastAPI):
     app.state.path_static = {}  # {stops, child_to_parent, trips, shapes, routes, stop_times} or {}
     app.state.path_stops = {}
     app.state.path_routes = []
+    app.state.path_station_routes = {}  # {stop_id: [route_id]} (H5)
     # Ordered parent stations per (route_id, direction_id), the advance
     # matcher's successor relation; empty until the warmup builds it (the
     # matcher just never advance-matches meanwhile).
@@ -156,6 +164,7 @@ async def lifespan(app: FastAPI):
     app.state.ferry_static = {}  # {stops, trips, shapes, routes} or {}
     app.state.ferry_stops = {}
     app.state.ferry_routes = []
+    app.state.ferry_station_routes = {}  # {stop_id: [route_id]} (H5)
     app.state.ferry_static_status = "loading"
     # AirTrain JFK is a committed static fixture (data/airtrain_jfk.json), not a
     # network download, so it loads SYNCHRONOUSLY here and is ready the instant the
@@ -352,6 +361,7 @@ __all__ = [
     "load_subway_stops",
     "load_subway_stations",
     "load_subway_route_shapes",
+    "load_subway_station_routes",
     "_fresh_entry",
     "_fresh_alerts_entry",
     "_feed_age",

@@ -704,24 +704,22 @@ function compareAlerts(a, b) {
 
 // Alerts affecting one station popup, deduped and sorted. An alert applies when
 // alert.system === system AND either (a) the station's id is in alert.stops, or
-// (b) alert.routes intersects the routes actually present in this station's current
-// arrivals (arrivalRouteIds, the route ids already rendered in the countdown rows).
-// Everything is scoped by `system`, so a numeric id shared across modes never leaks.
+// (b) alert.routes intersects `routeIds`, the routes serving this station. Everything
+// is scoped by `system`, so a numeric id shared across modes never leaks.
 //
-// KNOWN LIMITATION of the route match (b): arrivalRouteIds only holds routes with a
-// train in the CURRENT arrivals window, so a route that serves the station but has no
-// imminent train there drops out. That is a fully SUSPENDED route, but also a long
-// late-night headway or a between-trains moment, so a route-only alert for such a
-// route will not surface at that station. In practice the stop-level selectors (a)
-// cover this, because MTA alerts commonly enumerate the affected stations; a static
-// routes-per-station join is out of scope until a phase needs it.
+// `routeIds` is the caller's union of the STATIC routes-per-station index (every
+// route serving the stop, from stop_times, H5) and the routes present in the CURRENT
+// arrivals. The static side closes the gap the old arrivals-only match left open: a
+// route that serves the station but has no imminent train there (a suspended route, a
+// long late-night headway, a between-trains moment) still surfaces its route-scoped
+// alert, instead of relying on the stop-level selectors (a) to enumerate it.
 //
 // Deterministic sort so the block is stable across refreshes: open-ended alerts (no
 // end) first, then by starts_at (earliest first, a null start sorts first), then id.
-function matchStationAlerts(index, system, stationId, arrivalRouteIds) {
+function matchStationAlerts(index, system, stationId, routeIds) {
   const matched = new Map(); // id -> alert; an alert matching by BOTH stop and route appears once
   for (const alert of index.byStop.get(`${system}|${stationId}`) ?? []) matched.set(alert.id, alert);
-  for (const routeId of arrivalRouteIds ?? []) {
+  for (const routeId of routeIds ?? []) {
     for (const alert of index.byRoute.get(`${system}|${routeId}`) ?? []) matched.set(alert.id, alert);
   }
   return [...matched.values()].sort(compareAlerts);

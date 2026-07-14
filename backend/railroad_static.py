@@ -25,6 +25,8 @@ from pathlib import Path
 
 import httpx
 
+from static_routes import fold_stop_routes
+
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -190,17 +192,52 @@ def _parse_routes(zf: zipfile.ZipFile) -> dict[str, dict]:
     return routes
 
 
+def _parse_stop_times(zf: zipfile.ZipFile) -> dict[str, list[str]]:
+    """stop_times.txt -> trip_id -> [stop_id]. Only membership matters for the
+    routes-per-station index (which stops a trip visits), so rows are collected
+    unsorted. Railroad stop_ids are flat (no parent/child split), so these join
+    straight to the stop markers. Treated as OPTIONAL, like routes.txt: a
+    repackaged zip without it yields an empty table so the system still loads
+    (the index just comes up empty), rather than failing the whole load."""
+    trip_stops: dict[str, list[str]] = defaultdict(list)
+    try:
+        member = zf.open("stop_times.txt")
+    except KeyError:
+        return {}  # optional member absent: no routes-per-station, not a failure
+    with member as raw:
+        reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
+        for row in reader:
+            trip_id = (row.get("trip_id") or "").strip()
+            stop_id = (row.get("stop_id") or "").strip()
+            if not trip_id or not stop_id:
+                continue
+            trip_stops[trip_id].append(stop_id)
+    return dict(trip_stops)
+
+
+def derive_railroad_stop_routes(
+    trips: dict[str, dict], stop_times: dict[str, list[str]]
+) -> dict[str, list[str]]:
+    """Pure: stop_id -> sorted [route_id] serving it, for ONE railroad system.
+    Railroad stops are flat (no parent/child fold), so the stop_times stop ids
+    join directly. Delegates the join to static_routes.fold_stop_routes after
+    pulling route_id out of each trip record."""
+    trip_routes = {trip_id: t.get("route_id") for trip_id, t in trips.items()}
+    return fold_stop_routes(trip_routes, stop_times)
+
+
 def _parse_system(zip_path: Path) -> dict:
-    """Parse one railroad GTFS zip into {stops, trips, shapes, routes} in a single
-    open. stops/trips/shapes are required members (a missing one raises for
-    _load_one to recover from); routes.txt is optional and yields an empty table
-    when absent."""
+    """Parse one railroad GTFS zip into {stops, trips, shapes, routes, stop_times}
+    in a single open. stops/trips/shapes are required members (a missing one
+    raises for _load_one to recover from); routes.txt and stop_times.txt are
+    optional and yield an empty table when absent."""
     with zipfile.ZipFile(zip_path) as zf:
         return {
             "stops": _parse_stops(zf),
             "trips": _parse_trips(zf),
             "shapes": _parse_shapes(zf),
             "routes": _parse_routes(zf),
+            "stop_times": _parse_stop_times(zf),
         }
 
 

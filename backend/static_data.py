@@ -16,6 +16,8 @@ from pathlib import Path
 
 import httpx
 
+from static_routes import fold_stop_routes
+
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -230,3 +232,89 @@ def load_subway_route_shapes() -> list[dict]:
     except Exception as exc:
         logger.warning("Could not load subway route shapes (%s); skipping route lines", exc)
         return []
+
+
+def _parse_trip_routes(zf: zipfile.ZipFile) -> dict[str, str | None]:
+    """trips.txt -> trip_id -> route_id. Subway needs only the route per trip for
+    the routes-per-station index (not direction/shape/headsign like the shape
+    builders), so this is a minimal parse. First-writer-wins on a duplicate
+    trip_id; a blank route_id is kept as None (contributes no route)."""
+    trip_routes: dict[str, str | None] = {}
+    with zf.open("trips.txt") as raw:
+        reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
+        for row in reader:
+            trip_id = (row.get("trip_id") or "").strip()
+            if not trip_id or trip_id in trip_routes:
+                continue
+            trip_routes[trip_id] = (row.get("route_id") or "").strip() or None
+    return trip_routes
+
+
+def _parse_trip_stops(zf: zipfile.ZipFile) -> dict[str, list[str]]:
+    """stop_times.txt -> trip_id -> [child platform stop_id]. Order does not
+    matter for the routes-per-station index (only which stops a trip visits), so
+    rows are collected unsorted. The stop ids are platform ids (101N/101S) that
+    must fold up to a parent station (101) before indexing; that fold happens in
+    derive_subway_station_routes. Rows with a blank trip_id/stop_id are skipped.
+    Streamed row by row: the real stop_times.txt is tens of MB, but only the
+    compact per-trip stop lists are retained, not the raw rows."""
+    trip_stops: dict[str, list[str]] = defaultdict(list)
+    with zf.open("stop_times.txt") as raw:
+        reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
+        for row in reader:
+            trip_id = (row.get("trip_id") or "").strip()
+            stop_id = (row.get("stop_id") or "").strip()
+            if not trip_id or not stop_id:
+                continue
+            trip_stops[trip_id].append(stop_id)
+    return dict(trip_stops)
+
+
+def _parse_child_to_parent(zf: zipfile.ZipFile) -> dict[str, str]:
+    """stops.txt -> child_stop_id -> parent_station_id for every row carrying a
+    parent_station (101N -> 101). Platform ids in stop_times fold up through this
+    to the parent-station markers get_subway_stops serves and subway service
+    alerts scope to."""
+    child_to_parent: dict[str, str] = {}
+    with zf.open("stops.txt") as raw:
+        reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
+        for row in reader:
+            stop_id = (row.get("stop_id") or "").strip()
+            parent = (row.get("parent_station") or "").strip()
+            if stop_id and parent:
+                child_to_parent[stop_id] = parent
+    return child_to_parent
+
+
+def derive_subway_station_routes(
+    trip_routes: dict[str, str | None],
+    trip_stops: dict[str, list[str]],
+    child_to_parent: dict[str, str],
+) -> dict[str, list[str]]:
+    """Pure: parent station_id -> sorted [route_id] serving it. Folds child
+    platform ids (101N/101S) up to their parent station (101), the id space the
+    markers and alerts use, via static_routes.fold_stop_routes. No zip read, so
+    the warmup can call it on already-parsed tables and a synthetic test can
+    exercise it directly."""
+    return fold_stop_routes(trip_routes, trip_stops, child_to_parent)
+
+
+def load_subway_station_routes() -> dict[str, list[str]]:
+    """Routes-per-station index (parent station_id -> [route_id]) from the cached
+    static GTFS, joining stop_times -> trips -> route_id and folding platforms up
+    to parents. Assumes the zip exists (call after load_subway_stops ensured it).
+    Purely enriches station popups with the routes that serve a stop, so a
+    route-scoped service alert reaches the station even when no train is imminent
+    there; any parse problem logs and returns {} rather than raising, exactly
+    like the decorative route-line and station-marker loaders."""
+    try:
+        with zipfile.ZipFile(SUBWAY_GTFS_ZIP) as zf:
+            trip_routes = _parse_trip_routes(zf)
+            trip_stops = _parse_trip_stops(zf)
+            child_to_parent = _parse_child_to_parent(zf)
+        index = derive_subway_station_routes(trip_routes, trip_stops, child_to_parent)
+        logger.info("Loaded subway routes-per-station index (%d stations)", len(index))
+        return index
+    except Exception as exc:
+        logger.warning("Could not load subway station routes (%s); station popups omit routes", exc)
+        return {}

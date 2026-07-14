@@ -500,6 +500,7 @@ def subway_state(cache):
     app_module.app.state.subway_stations = {
         "A01": {"name": "Alpha", "lat": 40.7, "lon": -74.0},
     }
+    app_module.app.state.subway_station_routes = {"A01": ["1", "2"]}  # H5
     app_module.app.state.subway_arrivals = {
         "A01": {"Northbound": [{"route_id": "1", "trip_id": "t1", "arrival": 1000.0}]}
     }
@@ -509,8 +510,19 @@ def subway_state(cache):
 async def test_subway_stops_lists_stations(client, subway_state):
     res = await client.get("/api/subway-stops")
     assert res.status_code == 200
-    assert res.json() == [{"id": "A01", "name": "Alpha", "lat": 40.7, "lon": -74.0}]
+    # routes serving the station ride along (H5).
+    assert res.json() == [
+        {"id": "A01", "name": "Alpha", "lat": 40.7, "lon": -74.0, "routes": ["1", "2"]}
+    ]
     assert "max-age" in res.headers.get("cache-control", "")
+
+
+async def test_subway_stops_routes_default_empty_when_index_absent(client, subway_state):
+    # A ready static group whose routes-per-station index failed to build still
+    # serves markers; the routes field just comes back empty, never missing.
+    app_module.app.state.subway_station_routes = {}
+    res = await client.get("/api/subway-stops")
+    assert res.json() == [{"id": "A01", "name": "Alpha", "lat": 40.7, "lon": -74.0, "routes": []}]
 
 
 async def test_subway_arrivals_warming_up_503(client, subway_state):
@@ -568,6 +580,11 @@ def railroad_state(cache):
         "LIRR": {"12": {"name": "Jamaica", "lat": 40.7, "lon": -73.8}},
         "MNR": {"1": {"name": "Grand Central", "lat": 40.75, "lon": -73.97}},
     }
+    # Routes-per-station index per system (H5), scoped so LIRR/MNR ids never mix.
+    app_module.app.state.railroad_station_routes = {
+        "LIRR": {"12": ["5", "8"]},
+        "MNR": {"1": ["1"]},
+    }
     app_module.app.state.railroad_arrivals = {
         "LIRR": {
             "12": {
@@ -591,8 +608,22 @@ async def test_railroad_stops_lists_stations_per_system(client, railroad_state):
     res = await client.get("/api/railroad-stops")
     assert res.status_code == 200
     assert res.json() == [
-        {"system": "LIRR", "id": "12", "name": "Jamaica", "lat": 40.7, "lon": -73.8},
-        {"system": "MNR", "id": "1", "name": "Grand Central", "lat": 40.75, "lon": -73.97},
+        {
+            "system": "LIRR",
+            "id": "12",
+            "name": "Jamaica",
+            "lat": 40.7,
+            "lon": -73.8,
+            "routes": ["5", "8"],
+        },
+        {
+            "system": "MNR",
+            "id": "1",
+            "name": "Grand Central",
+            "lat": 40.75,
+            "lon": -73.97,
+            "routes": ["1"],
+        },
     ]
     assert "max-age" in res.headers.get("cache-control", "")
 
@@ -877,10 +908,23 @@ async def test_path_stops_503_while_loading(client):
 async def test_path_stops_served_with_max_age_when_ready(client):
     app_module.app.state.path_static_status = "ready"
     app_module.app.state.path_stops = PATH_STOPS
+    # Routes-per-station index (H5): Newark serves 862 + the Harrison shuttle.
+    app_module.app.state.path_station_routes = {"26733": ["74320", "862"], "26734": ["862"]}
     res = await client.get("/api/path-stops")
     assert res.status_code == 200
-    assert res.json() == list(PATH_STOPS.values())
+    assert res.json() == [
+        {**PATH_STOPS["26733"], "routes": ["74320", "862"]},
+        {**PATH_STOPS["26734"], "routes": ["862"]},
+    ]
     assert "max-age" in res.headers.get("cache-control", "")
+
+
+async def test_path_stops_routes_default_empty_when_index_absent(client):
+    app_module.app.state.path_static_status = "ready"
+    app_module.app.state.path_stops = PATH_STOPS
+    app_module.app.state.path_station_routes = {}
+    res = await client.get("/api/path-stops")
+    assert res.json() == [{**s, "routes": []} for s in PATH_STOPS.values()]
 
 
 async def test_path_stops_no_cache_empty_when_failed(client):
@@ -997,10 +1041,26 @@ async def test_ferry_stops_503_while_loading(client):
 async def test_ferry_stops_served_with_max_age_when_ready(client):
     app_module.app.state.ferry_static_status = "ready"
     app_module.app.state.ferry_stops = FERRY_STOPS
+    # Routes-per-station index (H5): dock 18 is served by ER + SB, dock 2 by ER.
+    app_module.app.state.ferry_station_routes = {"18": ["ER", "SB"], "2": ["ER"]}
     res = await client.get("/api/ferry-stops")
     assert res.status_code == 200
-    assert res.json() == list(FERRY_STOPS.values())  # includes the wheelchair flag
+    # Each dock carries its wheelchair flag AND the routes serving it (H5).
+    assert res.json() == [
+        {**FERRY_STOPS["18"], "routes": ["ER", "SB"]},
+        {**FERRY_STOPS["2"], "routes": ["ER"]},
+    ]
     assert "max-age" in res.headers.get("cache-control", "")
+
+
+async def test_ferry_stops_routes_default_empty_when_index_absent(client):
+    # The committed trim carries no stop_times.txt, so the derive comes up empty;
+    # the dock still serves with an empty routes list, never a missing field.
+    app_module.app.state.ferry_static_status = "ready"
+    app_module.app.state.ferry_stops = FERRY_STOPS
+    app_module.app.state.ferry_station_routes = {}
+    res = await client.get("/api/ferry-stops")
+    assert res.json() == [{**s, "routes": []} for s in FERRY_STOPS.values()]
 
 
 async def test_ferry_stops_no_cache_empty_when_failed(client):
@@ -1507,6 +1567,9 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
     monkeypatch.setattr(app_module, "load_subway_stops", fake_stops)
     monkeypatch.setattr(app_module, "load_subway_route_shapes", lambda: [])
     monkeypatch.setattr(app_module, "load_subway_stations", lambda: {})
+    # Patched so the lifespan warmup stays hermetic (the real loader parses the
+    # committed 36 MB subway zip); the routes-per-station wiring is unit-tested above.
+    monkeypatch.setattr(app_module, "load_subway_station_routes", lambda: {})
     monkeypatch.setattr(app_module, "fetch_vehicle_positions", fake_fetch_buses)
     monkeypatch.setattr(app_module, "fetch_subway_trains", fake_fetch_subways)
     monkeypatch.setattr(app_module, "fetch_railroad_trains", fake_fetch_railroads)
@@ -1660,12 +1723,15 @@ async def test_subway_static_warmup_loading_to_ready(monkeypatch):
     monkeypatch.setattr(app_module, "load_subway_stops", fake_stops)
     monkeypatch.setattr(app_module, "load_subway_route_shapes", lambda: routes)
     monkeypatch.setattr(app_module, "load_subway_stations", lambda: SUBWAY_STOPS)
+    # Patched to stay hermetic: the real loader parses the committed 36 MB zip.
+    monkeypatch.setattr(app_module, "load_subway_station_routes", lambda: {"101": ["1"]})
     app = _fake_app(subway_static_status="loading")
     await app_module._warm_subway_static(app)
     assert app.state.subway_static_status == "ready"
     assert app.state.subway_stops == SUBWAY_STOPS
     assert app.state.subway_routes == [{"route": "1", "polylines": []}]
     assert app.state.subway_stations == SUBWAY_STOPS
+    assert app.state.subway_station_routes == {"101": ["1"]}  # routes-per-station wired (H5)
 
 
 async def test_subway_static_warmup_retries_after_failure(monkeypatch):
@@ -1681,6 +1747,7 @@ async def test_subway_static_warmup_retries_after_failure(monkeypatch):
     monkeypatch.setattr(app_module, "load_subway_stops", gated_stops)
     monkeypatch.setattr(app_module, "load_subway_route_shapes", lambda: [])
     monkeypatch.setattr(app_module, "load_subway_stations", lambda: {})
+    monkeypatch.setattr(app_module, "load_subway_station_routes", lambda: {})  # hermetic
     app = _fake_app(subway_static_status="loading")
     task = asyncio.create_task(app_module._warm_subway_static(app))
     try:

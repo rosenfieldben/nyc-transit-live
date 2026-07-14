@@ -77,8 +77,18 @@ async def get_railroad_stops(request: Request, response: Response) -> list[dict]
     if not _static_endpoint_ready(status, response, "Static railroad GTFS is still loading."):
         return []
     by_system = getattr(app.state, "railroad_stops", None) or {}
+    routes_by_system = getattr(app.state, "railroad_station_routes", None) or {}
     return [
-        {"system": system, "id": sid, "name": s["name"], "lat": s["lat"], "lon": s["lon"]}
+        {
+            "system": system,
+            "id": sid,
+            "name": s["name"],
+            "lat": s["lat"],
+            "lon": s["lon"],
+            # Routes serving this stop (H5), scoped to the system (LIRR/MNR ids
+            # are independent namespaces). Empty when the derive found none.
+            "routes": (routes_by_system.get(system) or {}).get(sid, []),
+        }
         for system, stops in by_system.items()
         if stops
         for sid, s in stops.items()

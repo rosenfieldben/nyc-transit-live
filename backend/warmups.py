@@ -54,6 +54,11 @@ async def _warm_subway_static(app: FastAPI) -> None:
             stops = await main.load_subway_stops()
             routes = main.load_subway_route_shapes()  # reuse the zip the stops load ensured
             stations = main.load_subway_stations()
+            # Off the event loop: this one parses the full stop_times.txt (~36 MB,
+            # millions of rows), so running it inline would block every other warmup,
+            # the pollers, and /healthz for the length of the parse. The lighter
+            # sibling loaders (stops/shapes/stations) stay inline as before.
+            station_routes = await asyncio.to_thread(main.load_subway_station_routes)
         except Exception as exc:
             _set_static_status(app, "subway_static_status", "failed", exc)
             await asyncio.sleep(main.STATIC_RETRY_S)
@@ -61,6 +66,7 @@ async def _warm_subway_static(app: FastAPI) -> None:
         app.state.subway_stops = stops
         app.state.subway_routes = routes
         app.state.subway_stations = stations
+        app.state.subway_station_routes = station_routes
         _set_static_status(app, "subway_static_status", "ready")
         return
 
@@ -90,6 +96,17 @@ async def _warm_railroad_static(app: FastAPI) -> None:
                 railroad_static.build_railroad_route_shapes(d["trips"], d["shapes"], d["routes"])
                 if d
                 else []
+            )
+            for system, d in data.items()
+        }
+        # Routes-per-station index per system (H5). .get("stop_times"): a cached
+        # zip from before H5 parses without the table, so the derive comes up
+        # empty and station popups just omit routes, rather than the load failing.
+        app.state.railroad_station_routes = {
+            system: (
+                railroad_static.derive_railroad_stop_routes(d["trips"], d.get("stop_times") or {})
+                if d
+                else {}
             )
             for system, d in data.items()
         }
@@ -134,6 +151,12 @@ async def _warm_path_static(app: FastAPI) -> None:
         app.state.path_station_order = path_static.build_path_station_order(
             data["trips"], data.get("stop_times") or {}, data["child_to_parent"], data["stops"]
         )
+        # Routes-per-station index (H5). Same .get("stop_times") leniency as the
+        # station order: a pre-13d cached zip has no stop_times, so the index
+        # comes up empty and station popups omit routes, rather than failing.
+        app.state.path_station_routes = path_static.derive_path_station_routes(
+            data["trips"], data.get("stop_times") or {}, data["child_to_parent"]
+        )
         _set_static_status(app, "path_static_status", "ready")
         return
 
@@ -168,6 +191,13 @@ async def _warm_ferry_static(app: FastAPI) -> None:
         app.state.ferry_stops = data["stops"]
         app.state.ferry_routes = ferry_static.build_ferry_route_shapes(
             data["trips"], data["shapes"], data["routes"]
+        )
+        # Routes-per-station index (H5). .get("stop_times"): a cached zip parsed
+        # before H5 (or the committed trim, which carries no stop_times) yields
+        # an empty index, so dock popups just omit the served routes rather than
+        # the load failing.
+        app.state.ferry_station_routes = ferry_static.derive_ferry_stop_routes(
+            data["trips"], data.get("stop_times") or {}
         )
         _set_static_status(app, "ferry_static_status", "ready")
         return

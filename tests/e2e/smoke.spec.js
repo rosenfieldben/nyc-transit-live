@@ -1,7 +1,8 @@
-// Hermetic frontend smoke suite. One chromium browser, all network intercepted
-// (mock.js): the two unpkg Leaflet URLs from vendored dist bytes, every /api/*
-// from the handcrafted fixtures. A frozen clock (page.clock) makes the arrival
-// countdowns and the empty-feed staleness window deterministic; no sleeps.
+// Hermetic frontend smoke suite. One chromium browser; the webServer serves the
+// static frontend (including the self-hosted Leaflet under vendor/leaflet) and
+// mock.js fulfills every /api/* from the handcrafted fixtures and stubs the basemap
+// tiles, so nothing leaves the machine. A frozen clock (page.clock) makes the
+// arrival countdowns and the empty-feed staleness window deterministic; no sleeps.
 const { test, expect } = require("@playwright/test");
 const fx = require("./fixtures/api");
 const { installMocks, json, emptyFeedAt } = require("./mock");

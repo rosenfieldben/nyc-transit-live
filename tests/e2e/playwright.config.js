@@ -1,8 +1,9 @@
 // Playwright config for the hermetic frontend smoke suite. One browser
 // (chromium), a handful of focused specs, no retries so a flake shows as a
 // failure rather than being papered over. The webServer serves the static
-// frontend; every /api/* request and the two unpkg Leaflet URLs are intercepted
-// per-test by page.route (mock.js), so a CI run needs no network at test time.
+// frontend (including the self-hosted Leaflet under vendor/leaflet); every /api/*
+// request is intercepted per-test by page.route (mock.js), so a CI run needs no
+// network at test time.
 const { defineConfig, devices } = require("@playwright/test");
 
 const PORT = 5173;

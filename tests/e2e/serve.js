@@ -1,9 +1,10 @@
 // Minimal static file server for the e2e suite: serves the buildless frontend/
-// (index.html, map.js, helpers.js, style.css) so Playwright can load the real
-// app. It intentionally does NOT run the Python backend or proxy anything: every
-// /api/* request and the two unpkg Leaflet URLs are intercepted in the browser by
-// page.route (see mock.js), so this server only ever answers for the static
-// files. Zero dependencies, keeping the app's no-build character.
+// (index.html, map.js, helpers.js, style.css, and the self-hosted Leaflet under
+// vendor/leaflet) so Playwright can load the real app. It intentionally does NOT
+// run the Python backend or proxy anything: every /api/* request is intercepted in
+// the browser by page.route (see mock.js). Leaflet is no longer a CDN URL to
+// intercept; it is served from vendor/leaflet by this server, exactly as production
+// serves it. Zero dependencies, keeping the app's no-build character.
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -12,10 +13,12 @@ const ROOT = path.resolve(__dirname, "..", "..", "frontend");
 const PORT = Number(process.env.E2E_PORT || 5173);
 
 // Only the content types the frontend actually serves; anything else is octet.
+// .png is here for the vendored Leaflet marker/layer images under vendor/leaflet.
 const TYPES = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
+  ".png": "image/png",
 };
 
 const server = http.createServer((req, res) => {

@@ -15,6 +15,19 @@ async function boot(page, beforeGoto) {
   // can seed an override (e.g. a non-empty /api/alerts) that the page's very first
   // fetch picks up. Existing scenarios pass no hook and are unaffected.
   if (beforeGoto) beforeGoto(ctx);
+  // Capture any Content-Security-Policy violation. serve.js emits the SAME security
+  // headers as the production backend (H3), so the browser enforces the real CSP
+  // here; a violation means the CSP would break the real app. Chromium logs each as
+  // a console error ("Refused to apply inline style ...", etc.); afterEach fails the
+  // test if any were seen. The fix for a violation is the CSP (with a comment naming
+  // the feature that needed the relaxation), never loosening or skipping the check.
+  page.__cspViolations = [];
+  page.on("console", (msg) => {
+    const t = msg.text();
+    if (/content security policy|refused to (?:load|apply|execute|connect|run)/i.test(t)) {
+      page.__cspViolations.push(t);
+    }
+  });
   // install() alone lets fake time keep flowing; pauseAt() freezes it at FROZEN so
   // the first poll, the clock-skew baseline, and the countdowns are all computed at
   // exactly FROZEN. Tests move time forward explicitly with page.clock.runFor.
@@ -23,6 +36,12 @@ async function boot(page, beforeGoto) {
   await page.goto("/");
   return ctx;
 }
+
+// Every scenario runs under the production security headers (serve.js mirrors them),
+// so none may trip the CSP. A violation is a CSP bug to fix, not a test to relax.
+test.afterEach(async ({ page }) => {
+  expect(page.__cspViolations ?? []).toEqual([]);
+});
 
 // Buses, subway trains, and railroad trains are divIcon markers, so they show up
 // in the DOM and are directly countable. Station dots and route lines are canvas

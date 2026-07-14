@@ -2225,3 +2225,38 @@ async def test_alerts_retention_epoch_zero_start_is_not_reset(alerts_cache, monk
     await _poll_mnr_still_down(monkeypatch, cap)
     assert alerts_cache["alerts"] == []
     assert alerts_cache["health"]["MNR"]["retained_since"] is None
+
+
+# ---------------- security headers (H3) ----------------
+
+_EXPECTED_CSP = (
+    "default-src 'self'; "
+    "img-src 'self' data: https://tile.openstreetmap.org; "
+    "connect-src 'self'; "
+    "style-src 'self' 'unsafe-inline'"
+)
+
+
+async def test_security_headers_on_frontend_document(client):
+    # The HTML/static surface carries the full security-header suite. Pins the exact
+    # CSP string (the e2e serve.js mirrors it; the Playwright suite is the proof it
+    # does not break the app). style-src 'unsafe-inline' is required for the popup
+    # inline styles; script-src stays strict via default-src 'self'.
+    res = await client.get("/")
+    assert res.status_code == 200
+    assert res.headers["content-security-policy"] == _EXPECTED_CSP
+    assert res.headers["x-content-type-options"] == "nosniff"
+    assert res.headers["referrer-policy"] == "strict-origin-when-cross-origin"
+    assert res.headers["permissions-policy"] == "geolocation=(), camera=(), microphone=()"
+    # No HSTS: Railway terminates TLS, so the app does not assert transport policy.
+    assert "strict-transport-security" not in res.headers
+
+
+async def test_security_headers_scoped_off_non_frontend(client):
+    # A document CSP is meaningless on JSON/docs responses and would break the
+    # CDN-backed Swagger UI, so the middleware skips /api, /healthz, and the docs
+    # paths. openapi.json is a stable, state-independent non-frontend path.
+    res = await client.get("/openapi.json")
+    assert res.status_code == 200
+    assert "content-security-policy" not in res.headers
+    assert "permissions-policy" not in res.headers

@@ -262,6 +262,18 @@ nyc-transit-live/
    node --test "frontend/*.test.js"      # from the repo root
    ```
 
+The backend serves the frontend document and its static assets with a strict set
+of security headers: a `Content-Security-Policy` that keeps scripts, styles, and
+connections same-origin (allowing only the OSM basemap tile origin as an image
+source), plus `X-Content-Type-Options: nosniff`, `Referrer-Policy:
+strict-origin-when-cross-origin`, and a `Permissions-Policy` disabling geolocation,
+camera, and microphone. The strict CSP is feasible because the frontend has no build
+step and no CDN dependency (Leaflet is self-hosted). `style-src` allows
+`'unsafe-inline'` because the popup and marker HTML use inline `style` attributes for
+route colors; `script-src` stays strict. There is no HSTS (Railway terminates TLS),
+and the JSON APIs and `/docs` are exempt. The Playwright e2e mirrors these headers so
+a CSP that would break the app fails the suite.
+
 ### End-to-end smoke suite (Playwright)
 
 A small hermetic Playwright suite exercises the real frontend in chromium: map

@@ -21,6 +21,23 @@ const TYPES = {
   ".png": "image/png",
 };
 
+// Frontend security headers, MIRRORING backend/main.py's security_headers middleware
+// (its _SECURITY_HEADERS). The backend is the source of truth; these must stay in
+// sync, and a backend test pins the exact CSP string. They are set here so the
+// Playwright browser enforces the same CSP against the real app (this static server
+// stands in for production's static mount); without them the e2e would never
+// exercise the CSP, so "the suite passes" would say nothing about it.
+const SECURITY_HEADERS = {
+  "Content-Security-Policy":
+    "default-src 'self'; " +
+    "img-src 'self' data: https://tile.openstreetmap.org; " +
+    "connect-src 'self'; " +
+    "style-src 'self' 'unsafe-inline'",
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "strict-origin-when-cross-origin",
+  "Permissions-Policy": "geolocation=(), camera=(), microphone=()",
+};
+
 const server = http.createServer((req, res) => {
   // Strip the query string and default "/" to index.html.
   let rel = decodeURIComponent((req.url || "/").split("?")[0]);
@@ -36,7 +53,10 @@ const server = http.createServer((req, res) => {
       res.writeHead(404).end("not found");
       return;
     }
-    res.writeHead(200, { "Content-Type": TYPES[path.extname(filePath)] || "application/octet-stream" });
+    res.writeHead(200, {
+      "Content-Type": TYPES[path.extname(filePath)] || "application/octet-stream",
+      ...SECURITY_HEADERS,
+    });
     res.end(body);
   });
 });

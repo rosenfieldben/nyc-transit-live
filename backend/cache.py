@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 
 from fastapi import HTTPException, Response
 
@@ -26,6 +27,29 @@ logger = logging.getLogger("main")
 # server-captured timestamps (fetched_at - feed_timestamp), so the browser
 # clock is never involved; the frontend mirrors this in helpers.js.
 FEED_STALE_AFTER_S = 90
+
+
+# THE THREE TIMESTAMPS (the freshness contract, canonical description; the
+# models and the frontend reference this by name rather than restating it):
+#
+#   feed_timestamp = the UPSTREAM GENERATION time (the MTA/GTFS/bridge clock):
+#       when the provider produced this content. Stored in the cache entry.
+#   fetched_at     = OUR LAST SUCCESSFUL POLL time (this server's clock): when we
+#       last decoded a good response from the provider. Stored in the cache entry;
+#       a failed poll keeps the previous value (last-known-on-failure).
+#   served_at      = THIS RESPONSE's time (this server's clock): stamped fresh in
+#       the handler at response build, and DELIBERATELY NOT stored in the cache
+#       entry, because its whole job is to keep moving while fetched_at holds.
+#
+# Each GAP is a different failure's signature, all comparing same-clock pairs so
+# no browser skew enters:
+#   fetched_at - feed_timestamp  = upstream lag (the provider's own feed stalled).
+#   served_at  - fetched_at      = server cache age (OUR poller stopped; we keep
+#                                  serving frozen last-known data). This gap is the
+#                                  one the frontend was previously blind to: on a
+#                                  first load against an already-stale cache it read
+#                                  ~zero, so stale looked fresh. served_at makes it
+#                                  explicit and skew-free.
 
 
 def _feed_age(entry: dict) -> float | None:
@@ -88,12 +112,14 @@ def _sanitize_upstream(exc: BaseException) -> str:
     return _URL_RE.sub("<feed url>", str(exc))
 
 
-def _serve_cached(app, name: str, data_key: str = "data") -> dict:
-    """Serve {fetched_at, feed_timestamp, <data_key>} from the cache. Stale-but-present
-    data is still served; the frontend judges staleness from the fetched_at /
-    feed_timestamp pair (upstream lag) plus its own skew-corrected poll age
-    (now - fetched_at), so a stuck poller serving frozen data still surfaces.
-    Errors only reach clients while the cache has never successfully filled.
+def _serve_cached(app, name: str, response: Response, data_key: str = "data") -> dict:
+    """Serve {fetched_at, feed_timestamp, served_at, <data_key>} from the cache.
+    Stale-but-present data is still served; the frontend judges staleness from the
+    fetched_at / feed_timestamp pair (upstream lag) plus the served_at / fetched_at
+    pair (server cache age), so a stuck poller serving frozen data still surfaces.
+    served_at is stamped HERE at response build (never stored in the cache entry);
+    see THE THREE TIMESTAMPS above. Errors only reach clients while the cache has
+    never successfully filled.
 
     data_key names the payload field in the envelope: the MTA feeds use "data"
     (the default), the PATH feed uses "trains" (its PathFeed model). Keeping the
@@ -101,12 +127,22 @@ def _serve_cached(app, name: str, data_key: str = "data") -> dict:
     (a header, a reworded 503) reaches every feed endpoint, PATH included.
 
     The app is passed in (not a module global) so this can live in the leaf cache
-    module; the route handlers hand it request.app."""
+    module; the route handlers hand it request.app and their own response.
+
+    Cache-Control no-store: a live feed response must never be reused from a shared
+    or browser heuristic cache. A cached copy is both a staleness lie (its served_at
+    would freeze at the moment it was stored) and calibration poison (the frontend
+    calibrates its clock skew off served_at, so a replayed old served_at would skew
+    every countdown). The warming/static no-cache and static max-age schemes live on
+    the disjoint static endpoints and are untouched.
+    """
     entry = app.state.feed_cache[name]
     if entry["data"] is not None:
+        response.headers["Cache-Control"] = "no-store"
         return {
             "fetched_at": entry["fetched_at"],
             "feed_timestamp": entry["feed_timestamp"],
+            "served_at": time.time(),
             data_key: entry["data"],
         }
     if entry["error"]:

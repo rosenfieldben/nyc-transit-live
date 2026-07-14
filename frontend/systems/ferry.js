@@ -94,6 +94,7 @@ async function loadFerryStops() {
       // bindStationPopup / openStationArrivals.
       render: (s, b) =>
         alertsBlockHtml(matchStationAlerts(alertsIndex, "ferry", s.id, s.routes ?? [])) +
+        staleAlertsMarker() + // "alerts may be out of date" when the alerts feed is stale (R1)
         ferryArrivalsHtml(
           s,
           b,

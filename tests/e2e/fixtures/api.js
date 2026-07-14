@@ -12,10 +12,14 @@
 const FROZEN_MS = Date.UTC(2026, 6, 2, 12, 0, 0); // 2026-07-02T12:00:00Z
 const FROZEN_S = FROZEN_MS / 1000;
 
-// A successful feed envelope: content 5s old at poll time (fresh).
-const envelope = (data, fetchedAt = FROZEN_S) => ({
+// A successful feed envelope: content 5s old at poll time (fresh). served_at (R1) is
+// the response build time; it defaults to fetchedAt (served the instant it was
+// polled, so zero server cache age), and a stale-serve stub passes served_at AHEAD of
+// fetched_at to model a backend still serving a poll that is already N seconds old.
+const envelope = (data, fetchedAt = FROZEN_S, servedAt = fetchedAt) => ({
   fetched_at: fetchedAt,
   feed_timestamp: fetchedAt - 5,
+  served_at: servedAt,
   data,
 });
 
@@ -208,6 +212,7 @@ const pathRoutes = () => [
 const path = () => ({
   fetched_at: FROZEN_S,
   feed_timestamp: FROZEN_S - 5,
+  served_at: FROZEN_S,
   trains: [
     {
       id: "p-1", route_id: "862",
@@ -235,6 +240,7 @@ const path = () => ({
 const pathAdvanced = () => ({
   fetched_at: FROZEN_S + 15,
   feed_timestamp: FROZEN_S + 10,
+  served_at: FROZEN_S + 15,
   trains: [
     {
       id: "p-1", route_id: "862",
@@ -292,9 +298,10 @@ const ferryRoutes = () => [
 ];
 
 // A ferry realtime envelope: the `boats` key (not `data`), 5s-fresh like envelope().
-const ferryEnvelope = (boats, fetchedAt = FROZEN_S) => ({
+const ferryEnvelope = (boats, fetchedAt = FROZEN_S, servedAt = fetchedAt) => ({
   fetched_at: fetchedAt,
   feed_timestamp: fetchedAt - 5,
+  served_at: servedAt,
   boats,
 });
 
@@ -359,7 +366,7 @@ const ferryArrivals = () => ({
 // Service alerts default to an EMPTY list so every existing scenario's popup
 // expectations are untouched by the new /api/alerts fetch. The alerts scenario
 // overrides this per-test with a fixture that matches the station under test.
-const alerts = () => ({ fetched_at: FROZEN_S, alerts: [] });
+const alerts = () => ({ fetched_at: FROZEN_S, served_at: FROZEN_S, alerts: [] });
 
 // Two ferry service alerts for the ferry alert-join test: one STOP-scoped (dock
 // "18", Wall St/Pier 11) and one ROUTE-scoped (route "ER", East River). Dock 18 is

@@ -147,7 +147,15 @@ async function openStationArrivals({ refresh = false } = {}) {
     return;
   }
   if (seq !== stationSeq) return;
-  noteClockOffset(body.fetched_at); // keep the skew baseline fresh
+  // NOTE: the skew baseline is NOT calibrated here. The arrivals endpoints carry
+  // no served_at (only the five vehicle feeds do, R1), and calibrating off their
+  // fetched_at was the audit poison this PR removes. The 15s vehicle-feed poll keeps
+  // minClockOffset fresh. BOUNDED BOOT RACE: a client whose wall clock is materially
+  // wrong that opens a station popup in the sub-second window before the first
+  // vehicle poll resolves sees an uncalibrated countdown (and possibly a false age
+  // line); it self-corrects on the very next 1s tick once a poll lands. The complete
+  // fix (served_at on the arrivals endpoints, or gating the countdown on a settled
+  // baseline) is deferred to R3's cold-start work.
   if (openStation === open) openStation.body = body;
   renderStation();
   if (!marker.isPopupOpen()) return;
@@ -181,11 +189,34 @@ function bindStationPopup(marker, makeDescriptor) {
 // Starts empty, so a popup opened before the first fetch simply shows no alerts.
 let alertsIndex = indexAlerts([]);
 
+// R1 alerts freshness: served_at of the LAST SUCCESSFUL alerts fetch, and the last
+// banner set. The alerts loop swallows failures (below), so without an explicit
+// freshness signal the banner and popups silently imply the alert set is current
+// when the feed may have stopped updating. alertsStale() gates the honesty marker on
+// alertsServedAt; lastBannerAlerts lets tickAlertBanner re-render the marker while
+// polls are failing (loadAlerts only re-renders on success).
+let alertsServedAt = null;
+let lastBannerAlerts = [];
+
+// The skew-corrected client clock, matching the arrivals-countdown basis.
+function alertsClockNow() {
+  return Date.now() / 1000 - (minClockOffset ?? 0);
+}
+
+// The muted "alerts may be out of date" marker, or "" when the alerts feed is fresh.
+// Honesty, not alarm: shared by the banner and every popup alert block so a stale
+// alerts feed is disclosed everywhere the alert set is shown (or implied absent).
+function staleAlertsMarker() {
+  return alertsStale(alertsServedAt, alertsClockNow())
+    ? `<div class="alert-stale">alerts may be out of date</div>`
+    : "";
+}
 
 // Poll /api/alerts on the alerts cadence. WHY a failed or non-200 fetch is swallowed
 // and keeps the last-known index: alerts are a decorative overlay, so their
 // staleness or absence must never surface an error or delay the arrivals a rider
-// clicked for. There is no user-facing alerts error state, by design.
+// clicked for. There is no user-facing alerts ERROR state, by design; the freshness
+// marker (R1) is the one honest hedge that the index may have stopped updating.
 async function loadAlerts() {
   try {
     const res = await fetch("/api/alerts");
@@ -193,12 +224,26 @@ async function loadAlerts() {
     const body = await res.json();
     const list = body.alerts ?? [];
     alertsIndex = indexAlerts(list);
+    // This fetch succeeded, so the index is fresh as of served_at. Fall back to the
+    // skew-corrected client now if an older backend omits served_at (both live on
+    // the server-time axis alertsStale compares against).
+    alertsServedAt = body.served_at ?? alertsClockNow();
+    lastBannerAlerts = bannerAlerts(list);
     // The banner re-renders every poll (unlike popups, which render on open), so a
     // resolved agency-wide alert disappears on the next poll and a new one appears.
-    renderAlertBanner(bannerAlerts(list));
+    renderAlertBanner(lastBannerAlerts);
   } catch {
     // network error: keep the last-known index + banner, no user-facing error
   }
+}
+
+// Re-render the banner from the last-known alerts so the "may be out of date" marker
+// appears (or clears) as time crosses ALERTS_STALE_AFTER_S even while the alerts poll
+// is FAILING (loadAlerts only re-renders on success). The stale flag is folded into
+// the banner's dedup key, so this is a no-op until the flag actually flips. Driven by
+// the 15s refreshAll tick in map.js.
+function tickAlertBanner() {
+  renderAlertBanner(lastBannerAlerts);
 }
 
 // The alerts block for a station popup: match the current index (read fresh as a
@@ -219,7 +264,11 @@ function stationAlertsBlock(system, station, body) {
   for (const arrivals of Object.values(body?.directions ?? {})) {
     for (const arr of arrivals ?? []) if (arr.route_id) routeIds.add(arr.route_id);
   }
-  return alertsBlockHtml(matchStationAlerts(alertsIndex, system, station.id, routeIds));
+  // Append the alerts-freshness marker (R1): if the alerts feed itself is stale it
+  // shows even when this station currently matches no alerts (the block is ""), so a
+  // rider is never shown an empty-looking station while the alert feed is down.
+  return alertsBlockHtml(matchStationAlerts(alertsIndex, system, station.id, routeIds)) +
+    staleAlertsMarker();
 }
 
 // The alerts block for a route surface (bus / subway train / railroad train popup):
@@ -229,7 +278,7 @@ function stationAlertsBlock(system, station, body) {
 // not a live stream. A newly-arrived alert appears the next time the popup opens or
 // updates, the same contract the arrivals popups follow.
 function routeAlertsBlock(system, routeId) {
-  return alertsBlockHtml(matchRouteAlerts(alertsIndex, system, routeId));
+  return alertsBlockHtml(matchRouteAlerts(alertsIndex, system, routeId)) + staleAlertsMarker();
 }
 
 // Agency-wide (selector-less) alerts get a dismissible banner over the map instead
@@ -251,23 +300,40 @@ let lastBannerKey = null;
 function renderAlertBanner(alerts) {
   const el = document.getElementById("alert-banner");
   const shown = alerts.filter((a) => a.header && !dismissedAlertIds.has(alertKey(a)));
-  const key = shown.map(alertKey).join("\n");
+  // R1: the banner also carries the alerts-freshness marker, so a stale alerts feed
+  // is disclosed even when there are no agency-wide alerts to show. Fold the stale
+  // flag into the dedup key, or the marker would never paint/clear on an unchanged
+  // alert set (the key is otherwise just the shown ids).
+  const stale = alertsStale(alertsServedAt, alertsClockNow());
+  const key = (stale ? "S|" : "F|") + shown.map(alertKey).join("\n");
   if (key === lastBannerKey) return; // unchanged since the last render: leave the DOM alone
   lastBannerKey = key;
-  if (!shown.length) {
-    el.replaceChildren(); // nothing to show: no banner strip in the DOM
+  if (!shown.length && !stale) {
+    el.replaceChildren(); // nothing to show and alerts are current: no banner strip
     return;
   }
   const rows = shown.map((a) => `<div class="alert-banner-row">${esc(a.header)}</div>`).join("");
+  const staleRow = stale
+    ? `<div class="alert-banner-row alert-stale">alerts may be out of date</div>`
+    : "";
+  // The dismiss button only appears when there ARE dismissible alerts; it clears the
+  // shown alerts but never the freshness marker (dismissing incidents must not hide
+  // the honesty hedge that the feed is down).
+  const dismiss = shown.length
+    ? `<button type="button" id="alert-banner-dismiss" title="Dismiss">&times;</button>`
+    : "";
   el.innerHTML =
     `<div class="alert-banner-strip">` +
-    `<div class="alert-banner-rows">${rows}</div>` +
-    `<button type="button" id="alert-banner-dismiss" title="Dismiss">&times;</button>` +
+    `<div class="alert-banner-rows">${rows}${staleRow}</div>` +
+    dismiss +
     `</div>`;
-  el.querySelector("#alert-banner-dismiss").addEventListener("click", () => {
-    for (const alert of shown) dismissedAlertIds.add(alertKey(alert));
-    renderAlertBanner(alerts); // re-render: the dismissed ids drop out, emptying the strip
-  });
+  const dismissBtn = el.querySelector("#alert-banner-dismiss");
+  if (dismissBtn) {
+    dismissBtn.addEventListener("click", () => {
+      for (const alert of shown) dismissedAlertIds.add(alertKey(alert));
+      renderAlertBanner(alerts); // re-render: dismissed ids drop out (marker, if any, stays)
+    });
+  }
 }
 
 

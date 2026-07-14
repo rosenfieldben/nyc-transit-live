@@ -57,14 +57,20 @@ class RailroadTrain(BaseModel):
 
 
 class BusFeed(BaseModel):
+    # The three freshness timestamps; see THE THREE TIMESTAMPS in cache.py for the
+    # canonical contract. feed_timestamp = upstream generation, fetched_at = our
+    # last successful poll, served_at = this response's build time (moves while
+    # fetched_at holds, so a stuck poller is visible).
     fetched_at: float | None  # this server's poll time
     feed_timestamp: float | None  # the feed's content time (MTA's clock)
+    served_at: float  # this response's build time (see cache.py)
     data: list[Vehicle]
 
 
 class SubwayFeed(BaseModel):
     fetched_at: float | None
     feed_timestamp: float | None  # oldest content time across subway feeds
+    served_at: float  # this response's build time (see cache.py)
     data: list[Train]
 
 
@@ -74,6 +80,7 @@ class RailroadFeed(BaseModel):
     # does not track publish time, so it is not used as a freshness signal (see
     # feeds.RAILROAD_FRESHNESS_SYSTEMS).
     feed_timestamp: float | None
+    served_at: float  # this response's build time (see cache.py)
     data: list[RailroadTrain]
 
 
@@ -177,6 +184,7 @@ class PathFeed(BaseModel):
     # the entity content is unchanged, so it signals "bridge alive", not
     # "upstream refreshed". Unchanged content across polls is normal for PATH.
     feed_timestamp: float | None
+    served_at: float  # this response's build time (see cache.py)
     trains: list[PathTrain]
 
 
@@ -279,6 +287,7 @@ class FerryBoat(BaseModel):
 class FerryFeed(BaseModel):
     fetched_at: float | None  # this server's poll time
     feed_timestamp: float | None  # the VehiclePositions feed header time
+    served_at: float  # this response's build time (see cache.py)
     boats: list[FerryBoat]
 
 
@@ -355,6 +364,7 @@ class Alert(BaseModel):
 
 class AlertFeed(BaseModel):
     fetched_at: float | None
+    served_at: float  # this response's build time (see cache.py)
     alerts: list[Alert]
 
 
@@ -416,6 +426,7 @@ class AlertStatus(BaseModel):
 
 
 class StatusResponse(BaseModel):
+    served_at: float  # this snapshot's build time (see cache.py)
     feeds: dict[str, FeedStatus]
     bus_route_index: BusIndexStatus
     static_subway_gtfs: StaticGtfsStatus | None

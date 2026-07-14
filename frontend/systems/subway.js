@@ -76,7 +76,9 @@ async function loadRouteLines() {
 function subwayArrivalsHtml(station, body) {
   // Skew-corrected now, reusing the staleness baseline from helpers.js.
   const now = Date.now() / 1000 - (minClockOffset ?? 0);
-  let html = `<b>${esc(station.name ?? station.id)}</b>`;
+  // "as of Xm ago" when a failed refresh has left these rows stale (R1); empty
+  // while fresh, so a live popup is unchanged.
+  let html = `<b>${esc(station.name ?? station.id)}</b>` + feedAgeLine(body.fetched_at, now);
   for (const dir of ["Northbound", "Southbound"]) {
     const arrivals = body.directions?.[dir] ?? [];
     html += `<div class="arr-dir">${dir}</div>`;

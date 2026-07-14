@@ -1028,3 +1028,73 @@ test("27. alerts: a route-scoped alert reaches a station it serves with no immin
   // Route Z does not serve this station: absent.
   await expect(popup(page)).not.toContainText("[Z] alert not serving Times Sq");
 });
+
+test("28. honest freshness: a backend cache 200s old on first load reads stale, countdowns unshifted (R1)", async ({ page }) => {
+  // THE AUDIT SCENARIO end-to-end. The first poll hits a backend whose cache is
+  // already 200s old: served_at is FROZEN_S (the response was just built) but
+  // fetched_at is FROZEN_S - 200 (the last successful upstream poll). Before R1 the
+  // frontend calibrated its clock off fetched_at, which (a) made the poll-age term
+  // read ~zero so stale looked fresh, and (b) shifted every countdown by 200s.
+  //
+  // ALL FIVE vehicle feeds are served stale, not just buses: minClockOffset is the
+  // MINIMUM offset across the feeds, so a single fresh feed would pin it to ~0 and
+  // make the countdown assertion pass regardless of which timestamp calibration used.
+  // With every feed 200s stale, the old fetched_at calibration would drive
+  // minClockOffset to 200 and shift the asserted subway countdown to "5 min"; only
+  // the served_at calibration keeps it "2 min".
+  const stale = (data, key) => ({
+    fetched_at: fx.FROZEN_S - 200, feed_timestamp: fx.FROZEN_S - 205, served_at: fx.FROZEN_S, [key]: data,
+  });
+  await boot(page, (c) => {
+    c.overrides.buses = (route) => json(route, stale(fx.buses().data, "data"));
+    c.overrides.subways = (route) => json(route, stale(fx.subways().data, "data"));
+    c.overrides.railroads = (route) => json(route, stale(fx.railroads().data, "data"));
+    c.overrides.path = (route) => json(route, stale(fx.path().trains, "trains"));
+    c.overrides.ferry = (route) => json(route, stale(fx.ferry().boats, "boats"));
+  });
+  await waitForReady(page);
+
+  const status = page.locator("#status");
+  // (a) fixed: the 200s server cache age (served_at - fetched_at) is surfaced
+  // immediately on the first load and takes the error styling ("trains" is the
+  // subway source's status-line label).
+  await expect(status).toContainText("trains: as of 3m ago");
+  await expect(status).toHaveClass(/error/);
+
+  // (b) fixed: calibrating off served_at keeps minClockOffset ~0, so the subway
+  // countdown is UNSHIFTED. Times Sq's first Northbound arrival is at +90s, which
+  // must still read "2 min" (the old 200s clock shift would have made it "5 min").
+  await page.evaluate(() => stationLayer.getLayers()[0].openPopup());
+  await expect(popup(page)).toContainText("Times Sq-42 St");
+  await expect(popup(page)).toContainText("2 min");
+});
+
+test("29. honest freshness: an alerts outage past the threshold shows the banner marker (R1)", async ({ page }) => {
+  // The alerts loop swallows failures by design (no error state). R1's honesty
+  // marker is the one signal that the alert index has stopped updating. Boot with a
+  // fresh empty alerts response (served_at = FROZEN_S) so the last-success timestamp
+  // is set, then take the alerts feed down and let time cross ALERTS_STALE_AFTER_S.
+  const ctx = await boot(page, (c) => {
+    c.overrides.alerts = (route, fixtures) => json(route, fixtures.alerts());
+  });
+  await waitForReady(page);
+  // Drive the first alerts poll and wait for its served_at to register (the boot
+  // poll is fire-and-forget), so the outage has a last-success baseline.
+  await page.evaluate(() => loadAlerts());
+  await page.waitForFunction(() => typeof alertsServedAt !== "undefined" && alertsServedAt !== null);
+
+  const banner = page.locator("#alert-banner");
+  await expect(banner).toBeEmpty(); // fresh, no alerts, no marker
+
+  // The alerts feed goes down: every later poll fails, so the last successful
+  // served_at (FROZEN_S) stops advancing.
+  ctx.overrides.alerts = (route) => json(route, { detail: "Alerts upstream error (HTTP 502)" }, 502);
+  // Jump the clock past ALERTS_STALE_AFTER_S (300s), so the alert index is now 310s
+  // old. A failed poll keeps the last success (the swallow-failures design), then the
+  // 15s refreshAll drives tickAlertBanner in production; invoke both directly here,
+  // as test 11 drives loadAlerts directly, to keep the test deterministic.
+  await page.clock.fastForward(310_000);
+  await page.evaluate(() => loadAlerts()); // fails (502): keeps the last-success served_at
+  await page.evaluate(() => tickAlertBanner());
+  await expect(banner).toContainText("alerts may be out of date");
+});

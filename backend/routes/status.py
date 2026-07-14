@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
 import bus_static
@@ -16,17 +16,26 @@ router = APIRouter()
 
 
 @router.get("/api/alerts", response_model=AlertFeed)
-async def get_alerts(request: Request) -> dict:
-    """Active service alerts from the in-memory index: {fetched_at, alerts: [...]},
-    one entry per alert active now across the subway/bus/LIRR/MNR and NYC Ferry feeds.
+async def get_alerts(request: Request, response: Response) -> dict:
+    """Active service alerts from the in-memory index: {fetched_at, served_at,
+    alerts: [...]}, one entry per alert active now across the subway/bus/LIRR/MNR
+    and NYC Ferry feeds.
 
-    Same envelope treatment as the other live feeds (no explicit Cache-Control; the
-    frontend polls it, and _serve_cached sets none either). An index that decoded
-    zero active alerts serves an empty list, NOT an error; a 503 surfaces only until
-    the first successful poll fills the index (mirrors _serve_cached's warming path)."""
+    served_at is stamped here at response build (see THE THREE TIMESTAMPS in
+    cache.py); the frontend tracks it to hedge the banner/popups when the alerts
+    feed itself has gone stale, since the alerts poll swallows failures. no-store
+    for the same reason as the live feeds: a cached copy would freeze served_at and
+    lie about freshness. An index that decoded zero active alerts serves an empty
+    list, NOT an error; a 503 surfaces only until the first successful poll fills
+    the index (mirrors _serve_cached's warming path)."""
     entry = request.app.state.alerts_cache
     if entry["alerts"] is not None:
-        return {"fetched_at": entry["fetched_at"], "alerts": entry["alerts"]}
+        response.headers["Cache-Control"] = "no-store"
+        return {
+            "fetched_at": entry["fetched_at"],
+            "served_at": time.time(),
+            "alerts": entry["alerts"],
+        }
     if entry["error"]:
         raise HTTPException(entry["error"]["status"], entry["error"]["detail"])
     raise HTTPException(
@@ -35,11 +44,14 @@ async def get_alerts(request: Request) -> dict:
 
 
 @router.get("/api/status", response_model=StatusResponse)
-async def get_status(request: Request) -> dict:
+async def get_status(request: Request, response: Response) -> dict:
     """Operational snapshot: per-feed cache freshness and last recorded error,
     bus route index state, static subway GTFS age, and each static group's warmup
-    state (loading / ready / failed). No secrets, no filesystem paths."""
+    state (loading / ready / failed). No secrets, no filesystem paths. A top-level
+    served_at (this response's build time; see THE THREE TIMESTAMPS in cache.py) and
+    no-store, matching the live feeds: status is a live operational read."""
     app = request.app
+    response.headers["Cache-Control"] = "no-store"
     now = time.time()
     feeds = {}
     for name, entry in getattr(app.state, "feed_cache", {}).items():
@@ -83,6 +95,11 @@ async def get_status(request: Request) -> dict:
             ),
         }
     return {
+        # served_at = when this snapshot was built (this server's clock), so a
+        # client can tell a live status read from a replayed cached one and can
+        # skew-correct the ages below. The per-feed fetched_at/age_s/feed_age_s
+        # remain server-derived (no browser clock involved).
+        "served_at": now,
         "feeds": feeds,
         "bus_route_index": {
             "status": bus_static.status(),

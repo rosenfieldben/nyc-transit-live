@@ -66,9 +66,9 @@ async def get_path_routes(request: Request, response: Response) -> list[dict]:
 
 
 @router.get("/api/path", response_model=PathFeed)
-async def get_path(request: Request) -> dict:
+async def get_path(request: Request, response: Response) -> dict:
     """Cached PATH trains from the community bridge feed: {fetched_at,
-    feed_timestamp, trains}. Every train is schedule-placed at its next
+    feed_timestamp, served_at, trains}. Every train is schedule-placed at its next
     station (the bridge carries no vehicle positions) and carries a stable
     synthetic `id` from match_path_identities (13d); prev_* anchors are
     populated only after an observed advance, exactly the subway v2 glide
@@ -79,9 +79,10 @@ async def get_path(request: Request) -> dict:
 
     The envelope key is `trains` (not the `data` the MTA feeds use), served via
     _serve_cached's data_key so the warming / never-filled contract stays in
-    one place shared with the MTA feed endpoints.
+    one place shared with the MTA feed endpoints. served_at is stamped per
+    response (see THE THREE TIMESTAMPS in cache.py).
     """
-    return _serve_cached(request.app, "path", data_key="trains")
+    return _serve_cached(request.app, "path", response, data_key="trains")
 
 
 @router.get("/api/path-arrivals/{stop_id}", response_model=PathStationArrivals)

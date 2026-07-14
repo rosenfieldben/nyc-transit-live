@@ -590,25 +590,48 @@ function ferryStatusText(status) {
   }
 }
 
+// GTFS-RT Position.speed is meters per second; boat popups show it in knots, the
+// convention for vessels. 1 m/s = 1.94384 kn.
+const MS_TO_KNOTS = 1.94384;
+// Below this the reading is GPS jitter, not travel: a boat sitting at a dock still
+// reports a few tenths of a knot of drift. 0.5 m/s is ~1 kn, comfortably above that
+// noise and well below any real ferry cruising speed (10-25 kn).
+const FERRY_SPEED_FLOOR_MS = 0.5;
+
+// A boat's speed as an "N.N kn" string, or null when it should not be shown. Shown
+// ONLY for an under-way boat (IN_TRANSIT_TO) moving above the jitter floor: a docked
+// boat, or one whose reading is sub-floor drift, shows no speed rather than a
+// misleading fraction of a knot. Pure and node-testable; the popup renders the line
+// only when this returns a value.
+function ferrySpeedKnots(status, speedMs) {
+  if (status !== "IN_TRANSIT_TO") return null;
+  if (typeof speedMs !== "number" || !Number.isFinite(speedMs) || speedMs < FERRY_SPEED_FLOOR_MS) {
+    return null;
+  }
+  return `${(speedMs * MS_TO_KNOTS).toFixed(1)} kn`;
+}
+
 // Ferry BOAT popup HTML. `name` is the route long name (null when the boat did
 // not join a route: 14b keeps it on the map, and here it reads "Unassigned" in
 // the neutral fallback color) and `color` a css color, both resolved by the
 // caller from the /api/ferry-routes tables so this stays pure and node-testable.
-// Deliberate omissions: NO speed line (14b documents the feed's speed unit as
-// uncertain, so a number could mislead; a followup adds it once the unit is
-// confirmed), and NO alerts block IN THIS FUNCTION: route-scoped ferry alerts are
-// shown, but the caller (ferryBoatPopup) prepends them via routeAlertsBlock so this
-// stays a pure, node-testable HTML builder, exactly as the subway/bus popup HTML
-// helpers keep their route-alert prepend in the caller. Every feed-derived string
-// is escaped.
+// Speed is shown in knots for an under-way boat above the jitter floor (H4; see
+// ferrySpeedKnots): the GTFS-RT unit is meters per second, confirmed by the observed
+// 0-13 m/s = 0-25 kn range matching NYC Ferry hull speeds. NO alerts block IN THIS
+// FUNCTION: route-scoped ferry alerts are shown, but the caller (ferryBoatPopup)
+// prepends them via routeAlertsBlock so this stays a pure HTML builder, exactly as
+// the subway/bus popup HTML helpers keep their route-alert prepend in the caller.
+// Every feed-derived string is escaped.
 function ferryBoatPopupHtml(boat, name, color) {
   const routeText = name || "Unassigned";
   const status = ferryStatusText(boat.status);
+  const speed = ferrySpeedKnots(boat.status, boat.speed);
   return (
     `<b style="color:${color}">${esc(routeText)}</b>` +
     ` <span class="popup-sub">NYC Ferry</span>` +
     (boat.label ? `<br>Boat ${esc(boat.label)}` : "") +
-    (status ? `<br>${esc(status)}` : "")
+    (status ? `<br>${esc(status)}` : "") +
+    (speed ? `<br>${esc(speed)}` : "")
   );
 }
 
@@ -780,6 +803,6 @@ if (typeof module !== "undefined" && module.exports) {
     formatPathHead, pathTrainPopupHtml, pathArrivalsHtml,
     PATH_ROUTE_MAX_SLICE, PATH_ROUTE_ACCEPT_DIST, computePathRouteSlice,
     FERRY_FALLBACK_COLOR, orderedFerryBuckets, ferryArrivalDisplay, ferryBoatIconState,
-    ferryStatusText, ferryBoatPopupHtml, ferryArrivalsHtml,
+    ferryStatusText, ferrySpeedKnots, ferryBoatPopupHtml, ferryArrivalsHtml,
   };
 }

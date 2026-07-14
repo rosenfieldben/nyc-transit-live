@@ -744,7 +744,7 @@ test("19. Ferry dock popup: route buckets, a dwelling boat shown departing, whee
   expect(ctx.counts.ferryArrivals).toBe(1);
 });
 
-test("20. Ferry boats: STOPPED_AT renders docked, a null-route boat reads Unassigned, no speed", async ({ page }) => {
+test("20. Ferry boats: STOPPED_AT renders docked, a null-route boat reads Unassigned and shows knots under way", async ({ page }) => {
   await boot(page);
   await waitForFerryReady(page);
 
@@ -758,14 +758,26 @@ test("20. Ferry boats: STOPPED_AT renders docked, a null-route boat reads Unassi
   expect(classes.h1).toContain("ferry-active");
 
   // The null-route boat (H3) is kept on the map (14b deliberately) and reads
-  // "Unassigned"; its popup shows the hull label and status but never a speed.
+  // "Unassigned"; under way at 4.0 m/s it shows its speed in knots (H4): 7.8 kn.
   await page.evaluate(() => ferryBoatRecords.get("H3").marker.openPopup());
   await expect(popup(page)).toContainText("Unassigned");
   await expect(popup(page)).toContainText("Boat H099");
   await expect(popup(page)).toContainText("Under way");
-  const html = await popup(page).innerHTML();
-  expect(html.toLowerCase()).not.toContain("speed");
-  expect(html).not.toContain("4.0"); // the speed value never renders
+  await expect(popup(page)).toContainText("7.8 kn");
+  const h3Html = await popup(page).innerHTML();
+  expect(h3Html).not.toContain("4.0"); // the raw m/s value is never surfaced
+
+  // The docked boat (H2, STOPPED_AT) shows no speed: dock jitter is noise, not
+  // motion. Read H2's own popup element directly rather than the shared
+  // .leaflet-popup-content locator: opening a second popup under the frozen clock
+  // leaves the first one's fade-out node briefly in the DOM.
+  const h2Html = await page.evaluate(() => {
+    const rec = ferryBoatRecords.get("H2");
+    rec.marker.openPopup();
+    return rec.marker.getPopup().getElement().querySelector(".leaflet-popup-content").innerHTML;
+  });
+  expect(h2Html).toContain("At dock");
+  expect(h2Html).not.toContain("kn");
 });
 
 test("21. Ferry boats: a boat moves between polls without remove/add churn (id-keyed)", async ({ page }) => {

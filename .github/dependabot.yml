@@ -1,6 +1,6 @@
-# Dependabot keeps the GitHub Actions in CI and the Python deps current. Updates
-# are grouped so each ecosystem opens one batched PR per week instead of a
-# separate PR per package.
+# Dependabot keeps the GitHub Actions in CI, the Python deps, and the dev-only npm
+# deps current. Updates are grouped so each ecosystem opens one batched PR per week
+# instead of a separate PR per package.
 version: 2
 updates:
   - package-ecosystem: "pip"
@@ -17,4 +17,15 @@ updates:
       interval: "weekly"
     groups:
       actions:
+        patterns: ["*"]
+  # The only npm surface is the dev-only Playwright dependency: package.json at the
+  # repo root exists solely so CI and local dev can install @playwright/test for the
+  # e2e smoke suite. The app itself is buildless and ships no npm packages, so this
+  # entry stays small (one grouped weekly PR), same shape as the others.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      npm:
         patterns: ["*"]

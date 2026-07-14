@@ -600,6 +600,21 @@ Two optional pieces of config sharpen it, both safe to leave unset:
   stations involves fiddly matching against the static schedule, and the subway
   feeds use NYC-specific protobuf extensions. Expect to iterate.
 
+## Contributing
+
+Issues are welcome, and larger changes are best discussed in an issue first; to
+report a security problem, see [SECURITY.md](SECURITY.md) instead of opening a
+public issue. Contributions are accepted under the terms of the Apache-2.0
+license, per its Section 5.
+
 ## License
 
-Personal project. MTA data is subject to the MTA's terms and conditions.
+The code in this repository is licensed under the Apache License, Version 2.0;
+see [LICENSE](LICENSE).
+
+The transit DATA served through this code is a separate matter that no code
+license changes: it remains governed by each provider's own terms, including the
+MTA's terms and conditions, PANYNJ's terms for the PATH data (published via
+Trillium), NYC Ferry's Developer Terms, and 511NY / NYSDOT's open-data terms for
+the AirTrain JFK schedule. Apache-2.0 covers this project's own source, not the
+underlying agency data.

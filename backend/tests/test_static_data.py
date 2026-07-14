@@ -201,3 +201,112 @@ def test_variant_dedup_keeps_branch_drops_express(gtfs_zip):
     polylines = routes[0]["polylines"]
     assert len(polylines) == 2  # trunk + branch; express deduped away
     assert sorted(len(p) for p in polylines) == [18, 20]
+
+
+# ---------------- routes-per-station index (H5) ----------------
+#
+# The subway has no committed trimmed GTFS fixture (these tests build synthetic
+# zips), and the real stop_times.txt is tens of MB, so the routes-per-station
+# index is covered with synthetic tables here rather than a golden.
+
+TRIPS_COLS = ["route_id", "trip_id", "service_id", "trip_headsign", "direction_id", "shape_id"]
+STOP_TIMES_COLS = ["trip_id", "stop_id", "arrival_time", "departure_time", "stop_sequence"]
+
+# Two parent stations (101, 103) with N/S child platforms, the real subway shape.
+ROUTE_STOP_ROWS = [
+    {
+        "stop_id": "101",
+        "stop_name": "Alpha",
+        "stop_lat": "40.7",
+        "stop_lon": "-74.0",
+        "location_type": "1",
+        "parent_station": "",
+    },
+    {
+        "stop_id": "101N",
+        "stop_name": "Alpha",
+        "stop_lat": "40.7",
+        "stop_lon": "-74.0",
+        "location_type": "0",
+        "parent_station": "101",
+    },
+    {
+        "stop_id": "101S",
+        "stop_name": "Alpha",
+        "stop_lat": "40.7",
+        "stop_lon": "-74.0",
+        "location_type": "0",
+        "parent_station": "101",
+    },
+    {
+        "stop_id": "103",
+        "stop_name": "Beta",
+        "stop_lat": "40.71",
+        "stop_lon": "-74.01",
+        "location_type": "1",
+        "parent_station": "",
+    },
+    {
+        "stop_id": "103N",
+        "stop_name": "Beta",
+        "stop_lat": "40.71",
+        "stop_lon": "-74.01",
+        "location_type": "0",
+        "parent_station": "103",
+    },
+]
+
+
+def test_derive_subway_station_routes_folds_platforms_to_parents():
+    # THE FOLD, pinned: stop_times lists platform ids (101N/101S), so the index
+    # must be keyed by the PARENT station (101) the markers serve, never a
+    # platform. Route 1 visits both stations; route 2 only the first.
+    trip_routes = {"t1": "1", "t2": "2"}
+    trip_stops = {"t1": ["101N", "103N"], "t2": ["101S"]}
+    child_to_parent = {"101N": "101", "101S": "101", "103N": "103"}
+    idx = static_data.derive_subway_station_routes(trip_routes, trip_stops, child_to_parent)
+    assert idx == {"101": ["1", "2"], "103": ["1"]}
+    assert not (set(idx) & set(child_to_parent))  # no platform id leaks in as a key
+
+
+def test_derive_subway_station_routes_ignores_routeless_trips():
+    idx = static_data.derive_subway_station_routes({"t": None}, {"t": ["101N"]}, {"101N": "101"})
+    assert idx == {}
+
+
+def test_load_subway_station_routes_end_to_end(gtfs_zip):
+    write_gtfs_zip(
+        gtfs_zip,
+        members={
+            "stops.txt": csv_text(STOPS_COLS, ROUTE_STOP_ROWS),
+            "trips.txt": csv_text(
+                TRIPS_COLS,
+                [
+                    {"route_id": "1", "trip_id": "t1"},
+                    {"route_id": "2", "trip_id": "t2"},
+                ],
+            ),
+            "stop_times.txt": csv_text(
+                STOP_TIMES_COLS,
+                [
+                    {"trip_id": "t1", "stop_id": "101N", "stop_sequence": "1"},
+                    {"trip_id": "t1", "stop_id": "103N", "stop_sequence": "2"},
+                    {"trip_id": "t2", "stop_id": "101S", "stop_sequence": "1"},
+                ],
+            ),
+        },
+    )
+    idx = static_data.load_subway_station_routes()
+    assert idx == {"101": ["1", "2"], "103": ["1"]}
+
+
+def test_load_subway_station_routes_missing_tables_returns_empty(gtfs_zip):
+    # A zip without trips/stop_times (route lines and markers can still load) must
+    # yield an empty index, not raise: the routes are popup enrichment only.
+    write_gtfs_zip(gtfs_zip)  # default: stops.txt only
+    assert static_data.load_subway_station_routes() == {}
+
+
+def test_load_subway_station_routes_bad_zip_returns_empty(gtfs_zip):
+    gtfs_zip.write_bytes(b"corrupt")
+    assert static_data.load_subway_station_routes() == {}

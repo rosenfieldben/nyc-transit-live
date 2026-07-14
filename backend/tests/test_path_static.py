@@ -378,6 +378,40 @@ def test_station_order_drops_sub_two_station_orders_and_unknown_trips():
     assert order == {}
 
 
+# ---------------- derive_path_station_routes (H5) ----------------
+
+
+def test_derive_path_station_routes_folds_platforms_to_parents():
+    # The 13d trap again, from the other direction: stop_times lists child
+    # platform ids (7817xx), so the index must be keyed by the PARENT stations
+    # (267xx) the markers serve, never the platforms.
+    stop_times = {
+        "long": ["781718", "781730", "781750"],  # Newark, Journal Sq, WTC on 862
+        "back": ["781750", "781718"],  # WTC, Newark on 862 dir 1
+    }
+    idx = path_static.derive_path_station_routes(ST_TRIPS, stop_times, ST_CHILD_TO_PARENT)
+    assert idx == {"26733": ["862"], "26731": ["862"], "26734": ["862"]}
+    # No child platform id leaks in as a key.
+    assert not (set(idx) & set(ST_CHILD_TO_PARENT))
+
+
+def test_derive_path_station_routes_unions_and_sorts_routes_per_station():
+    trips = {
+        "a": {"route_id": "862", "direction_id": "0", "shape_id": None, "headsign": None},
+        "b": {"route_id": "861", "direction_id": "0", "shape_id": None, "headsign": None},
+    }
+    stop_times = {"a": ["781730"], "b": ["781730"]}  # both visit Journal Square (26731)
+    idx = path_static.derive_path_station_routes(trips, stop_times, ST_CHILD_TO_PARENT)
+    # Two routes serve the one station, de-duplicated and sorted.
+    assert idx == {"26731": ["861", "862"]}
+
+
+def test_derive_path_station_routes_ignores_routeless_trips():
+    trips = {"x": {"route_id": None, "direction_id": None, "shape_id": None, "headsign": None}}
+    idx = path_static.derive_path_station_routes(trips, {"x": ["781718"]}, ST_CHILD_TO_PARENT)
+    assert idx == {}  # a trip with no route says nothing about which route serves a stop
+
+
 # ---------------- _parse_routes: names + colors, no route_desc ----------------
 
 
@@ -902,3 +936,25 @@ def test_golden_station_orders_are_feed_visible_parent_ids():
         assert len(stations) >= 2
         assert all(sid in parents for sid in stations)
         assert not any(sid in child_to_parent for sid in stations)
+
+
+@golden_stop_times
+def test_golden_routes_per_station_matches_live_feed():
+    # H5 routes-per-station index over the real trim: every one of the 13 parent
+    # stations is served by at least one route, the index is keyed by parent
+    # ids (never child platforms), and the exact route sets are the ones the
+    # live feed produced (verified 2026-07-07). WTC and Newark are the Newark -
+    # WTC line's endpoints; the Sixth-Avenue Manhattan stations share the same
+    # four Hudson-crossing routes.
+    parents, child_to_parent = path_static._parse_stops(_fixture("stops.txt"))
+    trips = path_static._parse_trips(_fixture("trips.txt"))
+    stop_times = path_static._parse_stop_times(_fixture("stop_times.txt"))
+    idx = path_static.derive_path_station_routes(trips, stop_times, child_to_parent)
+    assert set(idx) == set(parents)  # every station served
+    assert set(idx) <= set(parents) and not (set(idx) & set(child_to_parent))
+    assert idx["26733"] == ["74320", "862"]  # Newark: WTC line + Harrison shuttle
+    assert idx["26734"] == ["77285", "860", "862"]  # World Trade Center
+    assert idx["26731"] == ["1024", "861", "862"]  # Journal Square
+    # Every route id in the index is a real route in routes.txt.
+    routes_table = path_static._parse_routes(_fixture("routes.txt"))
+    assert {r for served in idx.values() for r in served} <= set(routes_table)

@@ -38,6 +38,8 @@ from typing import IO
 
 import httpx
 
+from static_routes import fold_stop_routes
+
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -216,12 +218,43 @@ def _parse_trips(raw: IO[bytes]) -> dict[str, dict]:
     return trips
 
 
+def _parse_stop_times(raw: IO[bytes]) -> dict[str, list[str]]:
+    """stop_times.txt -> trip_id -> [stop_id]. Only membership matters for the
+    routes-per-station index (which stops a trip visits), so rows are collected
+    unsorted. NYC Ferry stops are FLAT (no parent/child split), so these ids join
+    straight to the stop markers. Rows with a blank trip_id/stop_id are skipped."""
+    trip_stops: dict[str, list[str]] = defaultdict(list)
+    reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
+    for row in reader:
+        trip_id = (row.get("trip_id") or "").strip()
+        stop_id = (row.get("stop_id") or "").strip()
+        if not trip_id or not stop_id:
+            continue
+        trip_stops[trip_id].append(stop_id)
+    return dict(trip_stops)
+
+
+def derive_ferry_stop_routes(
+    trips: dict[str, dict], stop_times: dict[str, list[str]]
+) -> dict[str, list[str]]:
+    """Pure: stop_id -> sorted [route_id] serving it. Ferry stops are flat (no
+    parent/child fold), so the stop_times stop ids join directly. Delegates the
+    join to static_routes.fold_stop_routes after pulling route_id out of each
+    trip record. No zip read, so the warmup builds it from app.state.ferry_static
+    without re-parsing, like build_ferry_route_shapes."""
+    trip_routes = {trip_id: t.get("route_id") for trip_id, t in trips.items()}
+    return fold_stop_routes(trip_routes, stop_times)
+
+
 def _parse_zip(zip_path: Path) -> dict:
-    """Parse the NYC Ferry GTFS zip into {stops, trips, shapes, routes} in a
-    single open. stops/trips/shapes are required members (a missing one raises
-    KeyError for load_ferry_static to recover from); routes.txt is optional and
-    yields an empty table when absent, the same rider-facing-convenience
-    leniency as PATH and the railroads."""
+    """Parse the NYC Ferry GTFS zip into {stops, trips, shapes, routes,
+    stop_times} in a single open. stops/trips/shapes are required members (a
+    missing one raises KeyError for load_ferry_static to recover from);
+    routes.txt and stop_times.txt are optional and yield an empty table when
+    absent, the same rider-facing-convenience leniency as PATH and the
+    railroads. (The committed trim carries no stop_times.txt yet, so the index
+    comes up empty from the fixture; the live feed does carry it. See the
+    routes-per-station note in the H5 handoff.)"""
     with zipfile.ZipFile(zip_path) as zf:
         with zf.open("stops.txt") as raw:
             stops = _parse_stops(raw)
@@ -236,7 +269,20 @@ def _parse_zip(zip_path: Path) -> dict:
         else:
             with member as raw:
                 routes = _parse_routes(raw)
-    return {"stops": stops, "trips": trips, "shapes": shapes, "routes": routes}
+        try:
+            member = zf.open("stop_times.txt")
+        except KeyError:
+            stop_times: dict[str, list[str]] = {}
+        else:
+            with member as raw:
+                stop_times = _parse_stop_times(raw)
+    return {
+        "stops": stops,
+        "trips": trips,
+        "shapes": shapes,
+        "routes": routes,
+        "stop_times": stop_times,
+    }
 
 
 # A second direction's modal shape is kept only if it adds more than this

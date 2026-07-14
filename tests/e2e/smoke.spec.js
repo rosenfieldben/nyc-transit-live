@@ -937,10 +937,12 @@ test("25. Ferry boat color self-heals once routes load after the boat is first s
   expect(routeCalls).toBe(3); // two 503s then one healed load, then the loader stopped
 });
 
-test("26. Ferry alerts: stop-scoped shows at the dock, route-scoped on the boat but not the dock", async ({ page }) => {
+test("26. Ferry alerts: a dock joins stop AND its served-route alerts; a boat joins by route", async ({ page }) => {
   // /api/alerts carries a STOP-scoped ferry alert (dock 18) and a ROUTE-scoped one
-  // (route ER). Ferries now join the shared alert pipeline: docks render stop-scoped
-  // alerts only (the scope limit), boats render route-scoped alerts by route.
+  // (route ER). Ferries join the shared alert pipeline: a dock renders the UNION of
+  // its stop-scoped alerts and the route-scoped alerts for every route serving it
+  // (H5, from the routes-per-station index on the stop); a boat renders its own
+  // route's alerts.
   const ctx = await boot(page, (c) => {
     c.overrides.alerts = (route, fixtures) => json(route, fixtures.ferryAlerts());
   });
@@ -951,16 +953,22 @@ test("26. Ferry alerts: stop-scoped shows at the dock, route-scoped on the boat 
     () =>
       typeof alertsIndex !== "undefined" &&
       alertsIndex.byStop.has("ferry|18") &&
-      alertsIndex.byRoute.has("ferry|ER"),
+      alertsIndex.byRoute.has("ferry|ER") &&
+      alertsIndex.byRoute.has("ferry|SV"),
   );
 
-  // Dock 18 (Wall St/Pier 11): the STOP-scoped alert renders; the ROUTE-scoped one
-  // does NOT, even though route ER is present in this dock's arrivals (scope limit).
+  // Dock 18 (Wall St/Pier 11) is served by ER, SB, and SV (its routes-per-station
+  // list), so BOTH the stop-scoped alert AND the route-scoped alerts for its routes
+  // render here (H5, the acceptance test: this used to be a deliberate scope limit).
+  // The SV alert is the load-bearing one: SV has no boat or arrival in the fixtures,
+  // so it can reach the dock ONLY through the static routes-per-station index, which
+  // proves the join is NOT reading the arrivals' route ids.
   await page.evaluate(() => ferryDocks.getLayers()[0].openPopup());
   await expect(popup(page)).toContainText("Wall St/Pier 11 landing closed");
+  await expect(popup(page)).toContainText("East River route reroute");
+  await expect(popup(page)).toContainText("Soundview route suspended"); // static-only route
   const dockHtml = await popup(page).innerHTML();
   expect(dockHtml).toContain("alert-block");
-  expect(dockHtml).not.toContain("East River route reroute"); // route-scoped: not at the dock
 
   // Close the dock popup before opening a boat popup. A real boat-marker click fires
   // the map's closePopupOnClick; the programmatic openPopup below does not, so without
@@ -975,8 +983,10 @@ test("26. Ferry alerts: stop-scoped shows at the dock, route-scoped on the boat 
   await expect(popup(page)).toContainText("East River route reroute");
   const boatHtml = await popup(page).innerHTML();
   expect(boatHtml).toContain("alert-block");
-  // ...and the stop-scoped dock alert does not leak onto the boat (route join only).
+  // ...and neither the stop-scoped dock alert nor a different route's alert (SV)
+  // leaks onto the boat: a boat joins by its own route only.
   expect(boatHtml).not.toContain("Wall St/Pier 11 landing closed");
+  expect(boatHtml).not.toContain("Soundview route suspended");
 
   // A null-route boat (H3) matches no route alert, so no block at all.
   await page.evaluate(() => map.closePopup());
@@ -985,4 +995,36 @@ test("26. Ferry alerts: stop-scoped shows at the dock, route-scoped on the boat 
   await expect(page.locator(".leaflet-popup")).toHaveCount(1);
   const nullBoatHtml = await popup(page).innerHTML();
   expect(nullBoatHtml).not.toContain("alert-block");
+});
+
+test("27. alerts: a route-scoped alert reaches a station it serves with no imminent train (H5)", async ({ page }) => {
+  // Times Sq (127) serves routes 1/2/3 (its routes-per-station list), but the
+  // arrivals fixture only has imminent 1 and 2 trains. A route-scoped alert on
+  // route "3" must still surface: this is the case the static routes-per-station
+  // join closes (before H5, a route with no imminent train dropped out). A route
+  // "Z" alert that does NOT serve the station must NOT appear.
+  const alertsFixture = {
+    fetched_at: fx.FROZEN_S,
+    alerts: [
+      { id: "route-3", system: "subway", header: "[3] suspended overnight", description: null,
+        effect: "NO_SERVICE", cause: "MAINTENANCE", routes: ["3"], stops: [],
+        starts_at: fx.FROZEN_S - 600, ends_at: null },
+      { id: "route-Z", system: "subway", header: "[Z] alert not serving Times Sq", description: null,
+        effect: "DETOUR", cause: "CONSTRUCTION", routes: ["Z"], stops: [],
+        starts_at: fx.FROZEN_S - 600, ends_at: null },
+    ],
+  };
+  await boot(page, (ctx) => {
+    ctx.overrides.alerts = (route) => json(route, alertsFixture);
+  });
+  await waitForReady(page);
+  await page.waitForFunction(
+    () => typeof alertsIndex !== "undefined" && alertsIndex.byRoute.has("subway|3"),
+  );
+
+  await page.evaluate(() => stationLayer.getLayers()[0].openPopup()); // Times Sq (id 127)
+  // Route 3 serves the station (static index) even with no imminent 3 train: shown.
+  await expect(popup(page)).toContainText("[3] suspended overnight");
+  // Route Z does not serve this station: absent.
+  await expect(popup(page)).not.toContainText("[Z] alert not serving Times Sq");
 });

@@ -708,9 +708,10 @@ test("matchStationAlerts matches by stop id", () => {
   assert.deepEqual(got.map((a) => a.id), ["s1"]);
 });
 
-test("matchStationAlerts matches by a route present in the arrivals", () => {
+test("matchStationAlerts matches by a route serving the station", () => {
   const idx = indexAlerts(ALERTS);
-  // Station id not in any stop selector, but route Q is in the arrivals rows.
+  // Station id not in any stop selector, but route Q serves it (routeIds is the
+  // caller's union of the static routes-per-station index and the arrivals, H5).
   const got = matchStationAlerts(idx, "subway", "somewhere-else", ["Q"]);
   assert.deepEqual(got.map((a) => a.id), ["s2"]);
 });
@@ -807,21 +808,23 @@ test("matchRouteAlerts sorts deterministically like the station matcher", () => 
   assert.deepEqual(matchRouteAlerts(indexAlerts(alerts), "bus", "X").map((a) => a.id), ["a", "c", "b", "d"]);
 });
 
-// Pins the ferry alert scoping: docks join STOP-scoped alerts only, boats join by
-// ROUTE. The ferry dock render passes NO arrival route ids to matchStationAlerts on
-// purpose (the deliberate scope limit: no dock->routes mapping exists yet), so a
-// route-scoped ferry alert must NOT surface at a dock even though its route is real;
-// it surfaces on the boats via matchRouteAlerts instead. Guards against a future
-// change that starts threading the arrivals' route ids into the dock join.
-test("ferry alert scope: dock join (empty route ids) is stop-only; boat join is route", () => {
+// Pins the ferry alert scoping after H5: a DOCK joins the UNION of stop-scoped
+// alerts and route-scoped alerts for every route serving it (the ferry render passes
+// the dock's routes-per-station list, s.routes, as the route ids); a BOAT joins by
+// its own route. So a route-scoped ferry alert now reaches the dock, and also every
+// boat of that route.
+test("ferry alert scope: a dock joins stop AND its served routes; a boat joins by route", () => {
   const idx = indexAlerts([
     { id: "dock", system: "ferry", header: "Wall St/Pier 11 closed", routes: [], stops: ["18"], starts_at: 1, ends_at: null },
     { id: "route", system: "ferry", header: "Rockaway/Soundview reroute", routes: ["ER"], stops: [], starts_at: 1, ends_at: null },
   ]);
-  // Dock at stop 18 with NO arrival route ids: the stop-scoped alert matches, the
-  // route-scoped one does not, even though ER is a genuine ferry route.
+  // Dock at stop 18 served by route ER: BOTH the stop-scoped and the route-scoped
+  // alert surface (union), deduped and sorted by id.
+  assert.deepEqual(matchStationAlerts(idx, "ferry", "18", ["ER"]).map((a) => a.id), ["dock", "route"]);
+  // Degraded case (the routes-per-station derive came up empty, e.g. the committed
+  // trim has no stop_times): with no route ids the dock falls back to stop-only.
   assert.deepEqual(matchStationAlerts(idx, "ferry", "18", []).map((a) => a.id), ["dock"]);
-  // The route-scoped alert reaches riders on every ER boat instead.
+  // The route-scoped alert also reaches riders on every ER boat.
   assert.deepEqual(matchRouteAlerts(idx, "ferry", "ER").map((a) => a.id), ["route"]);
   // A null-route boat matches nothing.
   assert.deepEqual(matchRouteAlerts(idx, "ferry", null), []);

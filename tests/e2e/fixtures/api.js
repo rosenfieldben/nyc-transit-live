@@ -93,9 +93,13 @@ const railroads = () =>
     },
   ]);
 
+// routes: the H5 routes-per-station index. Times Sq serves 1/2/3; the arrivals
+// fixture only has imminent 1 and 2 trains, so route "3" is present ONLY in this
+// static list, which is exactly the "serves the station but no imminent train" case
+// the routes-per-station join closes (test 27).
 const subwayStops = () => [
-  { id: "127", name: "Times Sq-42 St", lat: 40.7554, lon: -73.9874 },
-  { id: "A31", name: "Canal St", lat: 40.7227, lon: -74.0057 },
+  { id: "127", name: "Times Sq-42 St", lat: 40.7554, lon: -73.9874, routes: ["1", "2", "3"] },
+  { id: "A31", name: "Canal St", lat: 40.7227, lon: -74.0057, routes: ["A", "C", "E"] },
 ];
 
 const subwayRoutes = () => [
@@ -267,9 +271,17 @@ const pathArrivals = () => ({
 // ferryDocks.getLayers()[0] is a deterministic click target) and South
 // Williamsburg (not accessible, so the wheelchair-marker branch is exercised both
 // ways). Two routes, each with one modal polyline.
+// routes: the H5 routes-per-station index the backend derives from stop_times.
+// Wall St/Pier 11 is served by ER, SB, and SV (Soundview); South Williamsburg by
+// ER only. SV has NO boat and NO arrival in these fixtures on purpose: it appears
+// ONLY in this static list, so a route-scoped SV alert rendering at the dock proves
+// the join reads the static index and not the arrivals (test 26). ER and SB also
+// appear in the dock's arrivals; SV is the one that isolates the static path.
 const ferryStops = () => [
-  { id: "18", name: "Wall St/Pier 11", lat: 40.70355, lon: -74.00512, wheelchair: true },
-  { id: "2", name: "South Williamsburg", lat: 40.70951, lon: -73.96769, wheelchair: false },
+  { id: "18", name: "Wall St/Pier 11", lat: 40.70355, lon: -74.00512, wheelchair: true,
+    routes: ["ER", "SB", "SV"] },
+  { id: "2", name: "South Williamsburg", lat: 40.70951, lon: -73.96769, wheelchair: false,
+    routes: ["ER"] },
 ];
 
 const ferryRoutes = () => [
@@ -350,10 +362,10 @@ const ferryArrivals = () => ({
 const alerts = () => ({ fetched_at: FROZEN_S, alerts: [] });
 
 // Two ferry service alerts for the ferry alert-join test: one STOP-scoped (dock
-// "18", Wall St/Pier 11) and one ROUTE-scoped (route "ER", East River). The dock
-// popup must render the stop one only; the route one must appear on an ER boat's
-// popup and NOT the dock (the deliberate scope limit). Selectors use the same ferry
-// stop/route id space as ferryStops()/ferryRoutes() above and the boats in ferry().
+// "18", Wall St/Pier 11) and one ROUTE-scoped (route "ER", East River). Dock 18 is
+// served by route ER (its ferryStops routes list), so its popup renders BOTH alerts
+// (H5 union); the route one also appears on an ER boat's popup. Selectors use the
+// same ferry stop/route id space as ferryStops()/ferryRoutes() above and ferry().
 const ferryAlerts = () => ({
   fetched_at: FROZEN_S,
   alerts: [
@@ -362,6 +374,12 @@ const ferryAlerts = () => ({
       starts_at: FROZEN_S - 600, ends_at: null },
     { id: "ferry-route", system: "ferry", header: "East River route reroute", description: null,
       effect: "DETOUR", cause: "CONSTRUCTION", routes: ["ER"], stops: [],
+      starts_at: FROZEN_S - 600, ends_at: null },
+    // Scoped to SV (Soundview), which serves dock 18 in its static routes list but
+    // has no boat/arrival in these fixtures: this alert can reach the dock ONLY
+    // through the routes-per-station index, isolating it from any arrivals match.
+    { id: "ferry-route-sv", system: "ferry", header: "Soundview route suspended", description: null,
+      effect: "NO_SERVICE", cause: "MAINTENANCE", routes: ["SV"], stops: [],
       starts_at: FROZEN_S - 600, ends_at: null },
   ],
 });

@@ -166,9 +166,16 @@ def test_railroad_route_builder_output_covers_model():
     assert railroad_static.build_railroad_route_shapes(trips, shapes)[0]["name"] is None
 
 
-SUBWAY_STOP = {"id": "A01", "name": "Alpha", "lat": 40.7, "lon": -74.0}
+SUBWAY_STOP = {"id": "A01", "name": "Alpha", "lat": 40.7, "lon": -74.0, "routes": ["1", "2"]}
 ARRIVAL = {"route_id": "1", "trip_id": "t1", "arrival": 1000.0}
-RAILROAD_STOP = {"system": "LIRR", "id": "12", "name": "Jamaica", "lat": 40.7, "lon": -73.8}
+RAILROAD_STOP = {
+    "system": "LIRR",
+    "id": "12",
+    "name": "Jamaica",
+    "lat": 40.7,
+    "lon": -73.8,
+    "routes": ["5"],
+}
 RAILROAD_ARRIVAL = {"route_id": "5", "trip_id": "t1", "arrival": 1000.0, "train_num": "704"}
 
 

@@ -46,8 +46,18 @@ async def get_subway_stops(request: Request, response: Response) -> list[dict]:
     if not _static_endpoint_ready(status, response, "Static subway GTFS is still loading."):
         return []
     stations = getattr(app.state, "subway_stations", None) or {}
+    station_routes = getattr(app.state, "subway_station_routes", None) or {}
     return [
-        {"id": sid, "name": s["name"], "lat": s["lat"], "lon": s["lon"]}
+        {
+            "id": sid,
+            "name": s["name"],
+            "lat": s["lat"],
+            "lon": s["lon"],
+            # Routes serving this station (H5), so a station popup can join
+            # route-scoped alerts for every route here, not only routes with an
+            # imminent train. Empty when the derive found none or was skipped.
+            "routes": station_routes.get(sid, []),
+        }
         for sid, s in stations.items()
     ]
 

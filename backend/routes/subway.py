@@ -17,10 +17,11 @@ _STATION_ID_RE = re.compile(r"^[A-Za-z0-9]{1,6}$")
 
 
 @router.get("/api/subways", response_model=SubwayFeed)
-async def get_subways(request: Request) -> dict:
-    """Cached train placements: {fetched_at, data: [{trip_id, route_id,
-    latitude, longitude, stop_id, stop_name, direction}, ...]}."""
-    return _serve_cached(request.app, "subways")
+async def get_subways(request: Request, response: Response) -> dict:
+    """Cached train placements: {fetched_at, feed_timestamp, served_at, data:
+    [{trip_id, route_id, latitude, longitude, stop_id, stop_name, direction},
+    ...]}. served_at is stamped per response (see THE THREE TIMESTAMPS in cache.py)."""
+    return _serve_cached(request.app, "subways", response)
 
 
 @router.get("/api/subway-routes", response_model=list[SubwayRoute])

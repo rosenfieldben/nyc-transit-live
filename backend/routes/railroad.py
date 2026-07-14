@@ -23,14 +23,15 @@ _RAILROAD_SYSTEMS = frozenset({"LIRR", "MNR"})
 
 
 @router.get("/api/railroads", response_model=RailroadFeed)
-async def get_railroads(request: Request) -> dict:
-    """Cached LIRR + Metro-North trains: {fetched_at, feed_timestamp, data:
-    [{system, trip_id, route_id, latitude, longitude, bearing, train_num, ...},
-    ...]}. Includes both GPS-positioned trains and schedule-placed trains
+async def get_railroads(request: Request, response: Response) -> dict:
+    """Cached LIRR + Metro-North trains: {fetched_at, feed_timestamp, served_at,
+    data: [{system, trip_id, route_id, latitude, longitude, bearing, train_num,
+    ...}, ...]}. Includes both GPS-positioned trains and schedule-placed trains
     positioned at their next station (the latter only when static railroad stops
     are loaded for that system); a placed train carries null bearing and filled
-    direction/next_time/prev_* anchors."""
-    return _serve_cached(request.app, "railroads")
+    direction/next_time/prev_* anchors. served_at is stamped per response (see THE
+    THREE TIMESTAMPS in cache.py)."""
+    return _serve_cached(request.app, "railroads", response)
 
 
 @router.get("/api/railroad-routes", response_model=list[RailroadRoute])

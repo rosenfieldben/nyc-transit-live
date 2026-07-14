@@ -5,6 +5,7 @@ manually per test and no real MTA endpoint is ever contacted.
 """
 
 import asyncio
+import itertools
 import json
 import logging
 import time
@@ -95,9 +96,37 @@ async def test_successful_refresh_serves_envelope(client, cache):
     cache["subways"].update(data=TRAINS, fetched_at=1001.0, feed_timestamp=996.0, error=None)
     res = await client.get("/api/buses")
     assert res.status_code == 200
-    assert res.json() == {"fetched_at": 1000.0, "feed_timestamp": 995.0, "data": BUSES}
+    # served_at (R1) is stamped at response build, so it is present and at/after
+    # the poll time; the rest of the envelope is exact. A live feed is no-store.
+    body = res.json()
+    assert body.pop("served_at") >= 1000.0
+    assert body == {"fetched_at": 1000.0, "feed_timestamp": 995.0, "data": BUSES}
+    assert res.headers.get("cache-control") == "no-store"
     res = await client.get("/api/subways")
-    assert res.json() == {"fetched_at": 1001.0, "feed_timestamp": 996.0, "data": TRAINS}
+    body = res.json()
+    assert body.pop("served_at") >= 1001.0
+    assert body == {"fetched_at": 1001.0, "feed_timestamp": 996.0, "data": TRAINS}
+    assert res.headers.get("cache-control") == "no-store"
+
+
+async def test_served_at_advances_while_fetched_at_holds(client, cache, monkeypatch):
+    # The core served_at invariant (R1): served_at moves on every response even
+    # though the cache entry (data + fetched_at) is frozen. This is precisely the
+    # signature of a stuck poller serving frozen last-known data, which the old
+    # model was blind to. Drive it with an advancing clock so two fast sequential
+    # requests get strictly increasing served_at while fetched_at stays put.
+    cache["buses"].update(data=BUSES, fetched_at=1000.0, feed_timestamp=995.0, error=None)
+    # A monotonic clock: every time.time() call returns a strictly larger value
+    # (unbounded because the request path calls it more than once). served_at is
+    # whichever tick the handler grabbed, so assert it STRICTLY INCREASES across
+    # the two requests rather than pinning exact values.
+    clock = itertools.count(2000.0, 0.001)
+    monkeypatch.setattr(app_module.time, "time", lambda: next(clock))
+    first = (await client.get("/api/buses")).json()
+    second = (await client.get("/api/buses")).json()
+    assert first["fetched_at"] == second["fetched_at"] == 1000.0  # poll time frozen
+    assert second["served_at"] > first["served_at"] > 1000.0  # response time advances
+    assert second["served_at"] > second["fetched_at"]  # the stuck-poller gap widens
 
 
 async def test_stale_data_beats_subsequent_error(client, cache):
@@ -107,7 +136,12 @@ async def test_stale_data_beats_subsequent_error(client, cache):
     app_module._note_failure(cache["buses"], 502, "Upstream MTA feed error: boom")
     res = await client.get("/api/buses")
     assert res.status_code == 200
-    assert res.json() == {"fetched_at": 1000.0, "feed_timestamp": 995.0, "data": BUSES}
+    body = res.json()
+    # served_at keeps advancing even though the poll is now failing (fetched_at
+    # frozen): that widening served_at - fetched_at gap is exactly the stuck-poller
+    # staleness the frontend now reads.
+    assert body.pop("served_at") >= 1000.0
+    assert body == {"fetched_at": 1000.0, "feed_timestamp": 995.0, "data": BUSES}
 
 
 async def test_never_filled_cache_serves_recorded_503(client, cache):
@@ -140,7 +174,10 @@ async def test_railroads_successful_envelope(client, cache):
     cache["railroads"].update(data=RAILROADS, fetched_at=1001.0, feed_timestamp=None, error=None)
     res = await client.get("/api/railroads")
     assert res.status_code == 200
-    assert res.json() == {"fetched_at": 1001.0, "feed_timestamp": None, "data": RAILROADS}
+    body = res.json()
+    assert body.pop("served_at") >= 1001.0
+    assert body == {"fetched_at": 1001.0, "feed_timestamp": None, "data": RAILROADS}
+    assert res.headers.get("cache-control") == "no-store"
 
 
 async def test_railroads_stale_data_beats_subsequent_error(client, cache):
@@ -301,6 +338,10 @@ async def test_status_warming_state(client, status_env):
     }
     assert body["bus_route_index"] == {"status": "building", "partial": False}
     assert body["static_subway_gtfs"] is None
+    # R1: status carries a top-level served_at (this snapshot's build time) and is
+    # no-store, since it is a live operational read like the feeds.
+    assert isinstance(body["served_at"], float)
+    assert res.headers.get("cache-control") == "no-store"
 
 
 async def test_status_reports_ages_errors_and_gtfs_mtime(
@@ -1136,8 +1177,11 @@ async def test_ferry_feed_serves_boats_envelope(client, cache):
     res = await client.get("/api/ferry")
     assert res.status_code == 200
     # The envelope key is `boats` (not the MTA feeds' `data`); bearing is absent.
-    assert res.json() == {"fetched_at": 1001.0, "feed_timestamp": 996.0, "boats": FERRY_BOATS}
-    assert "bearing" not in res.json()["boats"][0]
+    body = res.json()
+    assert body.pop("served_at") >= 1001.0
+    assert body == {"fetched_at": 1001.0, "feed_timestamp": 996.0, "boats": FERRY_BOATS}
+    assert "bearing" not in body["boats"][0]
+    assert res.headers.get("cache-control") == "no-store"
 
 
 async def test_ferry_feed_empty_boats_is_served_not_503(client, cache):
@@ -1308,11 +1352,14 @@ async def test_path_feed_envelope_uses_trains_key(client, cache):
     assert res.status_code == 200
     # The envelope key is `trains` (not the MTA feeds' `data`), and the served
     # trains carry the stable synthetic id, never the bridge hash.
-    assert res.json() == {
+    body = res.json()
+    assert body.pop("served_at") >= 1001.0
+    assert body == {
         "fetched_at": 1001.0,
         "feed_timestamp": 996.0,
         "trains": PATH_SERVED_TRAINS,
     }
+    assert res.headers.get("cache-control") == "no-store"
 
 
 async def test_path_feed_stale_data_beats_subsequent_error(client, cache):
@@ -2044,7 +2091,10 @@ async def test_alerts_served_from_seeded_index(client, alerts_cache):
     alerts_cache.update(alerts=[ALERT], fetched_at=1000.0, active=1, suppressed=2)
     res = await client.get("/api/alerts")
     assert res.status_code == 200
-    assert res.json() == {"fetched_at": 1000.0, "alerts": [ALERT]}
+    body = res.json()
+    assert body.pop("served_at") >= 1000.0  # R1: stamped at response build
+    assert body == {"fetched_at": 1000.0, "alerts": [ALERT]}
+    assert res.headers.get("cache-control") == "no-store"
 
 
 async def test_alerts_empty_index_is_empty_list_not_error(client, alerts_cache):
@@ -2052,7 +2102,9 @@ async def test_alerts_empty_index_is_empty_list_not_error(client, alerts_cache):
     alerts_cache.update(alerts=[], fetched_at=1000.0, active=0, suppressed=0)
     res = await client.get("/api/alerts")
     assert res.status_code == 200
-    assert res.json() == {"fetched_at": 1000.0, "alerts": []}
+    body = res.json()
+    assert body.pop("served_at") >= 1000.0
+    assert body == {"fetched_at": 1000.0, "alerts": []}
 
 
 async def test_alerts_warming_before_first_poll_returns_503(client, alerts_cache):

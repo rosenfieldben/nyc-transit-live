@@ -11,6 +11,9 @@ const {
   routeColor,
   lineColor,
   staleness,
+  feedAgeLine,
+  alertsStale,
+  ALERTS_STALE_AFTER_S,
   emptyFeedDecision,
   noteClockOffset,
   formatCountdown,
@@ -316,41 +319,143 @@ test("isPlacedRailroad keys off stop_id (the authoritative placed-vs-GPS signal)
   );
 });
 
-// `now` is passed explicitly for determinism; minClockOffset is null here
-// (nothing calls noteClockOffset before these), so the poll-age term is exactly
-// now - fetchedAt.
+// `now` is passed explicitly for determinism; minClockOffset is null here (nothing
+// calls noteClockOffset before these), so the client-elapsed term reduces to
+// now - servedAt. R1 model: sources now carry servedAt, and the poll-age term is
+// server cache age (servedAt - fetchedAt) + client elapsed (now - servedAt), both
+// skew-clean. The wording moved from "X data Nm old" to "X: as of Nm ago".
 test("staleness flags upstream lag (skew-free) at/over the threshold", () => {
   const now = 10_000;
-  // Fresh: content 15s old at a poll 5s ago.
-  assert.equal(staleness({ label: "buses", fetchedAt: now - 5, feedTimestamp: now - 15 }, now), null);
-  // Upstream stale: content was 100s old at the (recent) last poll. The diff of
-  // the two server timestamps drives this, so the browser clock can't skew it.
+  // Fresh: content 15s old at a poll 5s ago, served just now.
   assert.equal(
-    staleness({ label: "buses", fetchedAt: now - 5, feedTimestamp: now - 105 }, now),
-    "buses data 100s old",
+    staleness({ label: "buses", fetchedAt: now - 5, servedAt: now, feedTimestamp: now - 15 }, now),
+    null,
+  );
+  // Upstream stale: content was 100s old at the (recent) last poll. The diff of the
+  // two server timestamps drives this, so the browser clock can't skew it.
+  assert.equal(
+    staleness(
+      { label: "buses", fetchedAt: now - 5, servedAt: now, feedTimestamp: now - 105 },
+      now,
+    ),
+    "buses: as of 100s ago",
   );
 })
 
-test("staleness flags a stuck backend via poll age even when upstream lag is tiny", () => {
+test("staleness flags a stuck backend via the server cache-age term (R1)", () => {
   const now = 10_000;
-  // Backend stopped polling 200s ago; content was fresh (5s) at that last poll.
-  // Upstream-lag alone (5s) would stay silent — poll-age (200s) must flag it.
+  // The stuck-backend / audit shape: the last successful poll was 200s ago
+  // (fetched_at = now - 200), but the backend is still SERVING now (served_at = now),
+  // so served_at - fetched_at = 200s of server cache age. Upstream lag alone (5s)
+  // would stay silent. This is the exact gap the old fetched_at-only model was blind
+  // to on a first load.
   assert.equal(
-    staleness({ label: "trains", fetchedAt: now - 200, feedTimestamp: now - 205 }, now),
-    "trains data 3m old",
+    staleness(
+      { label: "trains", fetchedAt: now - 200, servedAt: now, feedTimestamp: now - 205 },
+      now,
+    ),
+    "trains: as of 3m ago",
   );
   // Works with a missing feed_timestamp too (upstream lag unknown -> 0).
   assert.equal(
-    staleness({ label: "buses", fetchedAt: now - 200, feedTimestamp: null }, now),
-    "buses data 3m old",
+    staleness(
+      { label: "buses", fetchedAt: now - 200, servedAt: now, feedTimestamp: null },
+      now,
+    ),
+    "buses: as of 3m ago",
+  );
+  // Fallback: a response predating served_at still flags via the old single term.
+  assert.equal(
+    staleness({ label: "buses", fetchedAt: now - 200, servedAt: null, feedTimestamp: null }, now),
+    "buses: as of 3m ago",
   );
 })
 
 test("staleness is null when fresh or never fetched", () => {
   const now = 10_000;
-  assert.equal(staleness({ label: "buses", fetchedAt: null, feedTimestamp: now }, now), null);
-  assert.equal(staleness({ label: "buses", fetchedAt: now - 5, feedTimestamp: now - 5 }, now), null);
-  assert.equal(staleness({ label: "buses", fetchedAt: now - 5, feedTimestamp: null }, now), null);
+  assert.equal(
+    staleness({ label: "buses", fetchedAt: null, servedAt: now, feedTimestamp: now }, now),
+    null,
+  );
+  assert.equal(
+    staleness(
+      { label: "buses", fetchedAt: now - 5, servedAt: now - 5, feedTimestamp: now - 5 },
+      now,
+    ),
+    null,
+  );
+  assert.equal(
+    staleness({ label: "buses", fetchedAt: now - 5, servedAt: now, feedTimestamp: null }, now),
+    null,
+  );
+})
+
+test("R1 regression: a first load against a 200s-stale backend cache reads stale", () => {
+  // THE AUDIT SCENARIO, pinned. A first page load hits a backend whose cache is
+  // already 200s old: fetched_at = now - 200 (last successful poll), served_at = now
+  // (this response was just built), feed_timestamp = now - 205. The client clock ==
+  // the server clock (no real skew).
+  const now = 10_000;
+  const src = { label: "buses", fetchedAt: now - 200, servedAt: now, feedTimestamp: now - 205 };
+  // BEFORE R1, noteClockOffset(fetched_at) recorded offset 200, which cancelled the
+  // poll-age term (stale looked FRESH) and shifted every countdown by 200s. R1
+  // calibrates off served_at, so the offset from this same response is ~0 (the
+  // countdown-unshifted half is pinned end-to-end by the Playwright stale-serve test).
+  noteClockOffset(src.servedAt, now); // clean: served_at == client now -> offset ~0
+  // The server cache-age term (served_at - fetched_at = 200s) flags stale on the very
+  // first observation, skew-free and independent of any calibration state.
+  assert.equal(staleness(src, now), "buses: as of 3m ago");
+})
+
+test("staleness uses the server cache-age term, not now - fetchedAt, when client elapsed clamps (R1)", () => {
+  // When served_at == now (the usual case) the new two-part poll age reduces
+  // algebraically to now - fetchedAt, so it is indistinguishable from the old single
+  // term. This case forces them APART to prove the server cache-age term is live: a
+  // served_at 10s AHEAD of the injected now (mild clock jitter) makes clientElapsed
+  // (now - served_at = -10) clamp to 0, so pollAge is the pure server cache age
+  // (served_at - fetched_at = 110), NOT now - fetchedAt (100). The old formula would
+  // have said "100s ago"; the new one says 110.
+  const now = 10_000;
+  assert.equal(
+    staleness(
+      { label: "buses", fetchedAt: now - 100, servedAt: now + 10, feedTimestamp: now - 105 },
+      now,
+    ),
+    "buses: as of 110s ago",
+  );
+  // The same clamp stops a just-served response from reading as negatively stale: a
+  // fresh poll served an instant "after" the eval clock is still fresh (age 0).
+  assert.equal(
+    staleness({ label: "buses", fetchedAt: now - 1, servedAt: now + 1, feedTimestamp: now - 1 }, now),
+    null,
+  );
+})
+
+test("feedAgeLine is empty while fresh and shows 'as of Xm ago' once stale", () => {
+  const now = 10_000;
+  // Fresh (under the threshold) and a null fetched_at both render nothing, so a live
+  // popup is unchanged.
+  assert.equal(feedAgeLine(now - 30, now), "");
+  assert.equal(feedAgeLine(null, now), "");
+  // Past FEED_STALE_AFTER_S (a failed refresh keeping last-known rows), the age line
+  // appears: seconds under two minutes, whole minutes above.
+  assert.match(feedAgeLine(now - 100, now), /popup-stale/);
+  assert.match(feedAgeLine(now - 100, now), /as of 100s ago/);
+  assert.match(feedAgeLine(now - 200, now), /as of 3m ago/);
+})
+
+test("alertsStale gates on the last successful fetch's served_at and the threshold", () => {
+  const now = 10_000;
+  // No successful fetch yet (null servedAt): never stale, so boot shows no false marker.
+  assert.equal(alertsStale(null, now), false);
+  // Just fetched: fresh.
+  assert.equal(alertsStale(now - 10, now), false);
+  // Exactly at and past the threshold: stale.
+  assert.equal(alertsStale(now - ALERTS_STALE_AFTER_S, now), true);
+  assert.equal(alertsStale(now - (ALERTS_STALE_AFTER_S + 60), now), true);
+  // Higher bar than the feed threshold (alerts change slowly): a gap the feeds would
+  // already flag is still fresh for alerts.
+  assert.equal(alertsStale(now - (FEED_STALE_AFTER_S + 1), now), false);
 })
 
 test("emptyFeedDecision keeps last-known on the first empty poll and records the run start", () => {

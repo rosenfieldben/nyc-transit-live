@@ -23,16 +23,19 @@ const STATIC_RETRY_CAP_MS = 30000;
 // (null when the last poll carried data); drives emptyFeedDecision's time bound.
 // path's dataKey: its envelope carries `trains` where the MTA feeds carry `data`
 // (the backend keeps the shared warming contract under a different key).
+// servedAt: the response's build time (R1), fed to noteClockOffset for a clean
+// skew baseline and to staleness() for the server cache-age term. Distinct from
+// fetchedAt (the backend's last poll) precisely so a stuck poller shows up.
 const sources = {
-  buses: { url: "/api/buses", apply: applyBuses, label: "buses", count: 0, error: null, fetchedAt: null, feedTimestamp: null, emptyRunStart: null },
-  subways: { url: "/api/subways", apply: applyTrains, label: "trains", count: 0, error: null, fetchedAt: null, feedTimestamp: null, emptyRunStart: null },
-  railroads: { url: "/api/railroads", apply: applyRailroads, label: "railroad", count: 0, error: null, fetchedAt: null, feedTimestamp: null, emptyRunStart: null },
-  path: { url: "/api/path", apply: applyPath, label: "PATH", dataKey: "trains", count: 0, error: null, fetchedAt: null, feedTimestamp: null, emptyRunStart: null },
+  buses: { url: "/api/buses", apply: applyBuses, label: "buses", count: 0, error: null, fetchedAt: null, feedTimestamp: null, servedAt: null, emptyRunStart: null },
+  subways: { url: "/api/subways", apply: applyTrains, label: "trains", count: 0, error: null, fetchedAt: null, feedTimestamp: null, servedAt: null, emptyRunStart: null },
+  railroads: { url: "/api/railroads", apply: applyRailroads, label: "railroad", count: 0, error: null, fetchedAt: null, feedTimestamp: null, servedAt: null, emptyRunStart: null },
+  path: { url: "/api/path", apply: applyPath, label: "PATH", dataKey: "trains", count: 0, error: null, fetchedAt: null, feedTimestamp: null, servedAt: null, emptyRunStart: null },
   // Ferry boats carry the `boats` envelope key, and clearOnEmpty flips the empty
   // handling: a successful empty poll REPLACES the boats immediately (see the
   // refreshSource branch) rather than riding out the transient-blip grace the
   // other feeds use, preserving 14b's empty-replaces / failure-retains split.
-  ferry: { url: "/api/ferry", apply: applyFerryBoats, label: "ferries", dataKey: "boats", clearOnEmpty: true, count: 0, error: null, fetchedAt: null, feedTimestamp: null, emptyRunStart: null },
+  ferry: { url: "/api/ferry", apply: applyFerryBoats, label: "ferries", dataKey: "boats", clearOnEmpty: true, count: 0, error: null, fetchedAt: null, feedTimestamp: null, servedAt: null, emptyRunStart: null },
 };
 
 async function refreshSource(source) {
@@ -45,7 +48,12 @@ async function refreshSource(source) {
     const body = await res.json();
     source.fetchedAt = body.fetched_at ?? null;
     source.feedTimestamp = body.feed_timestamp ?? null; // server-side staleness signal
-    noteClockOffset(source.fetchedAt); // skew baseline for the arrivals countdown
+    source.servedAt = body.served_at ?? null; // this response's build time (R1)
+    // Calibrate the skew baseline off served_at, NOT fetched_at: served_at is the
+    // instant the response left the server, so (clientNow - served_at) is skew plus
+    // latency only. Using fetched_at folded in the server cache age, which cancelled
+    // the staleness signal and shifted every countdown (the audit finding).
+    noteClockOffset(source.servedAt);
     const data = body[source.dataKey ?? "data"] ?? [];
     if (data.length === 0 && source.clearOnEmpty) {
       // Ferry: the backend serves an empty 200 ONLY when it successfully decoded
@@ -103,7 +111,11 @@ async function refreshAll() {
   const problems = Object.values(sources)
     .filter((s) => s.error)
     .map((s) => `${s.label}: ${s.error}`)
-    .concat(Object.values(sources).map(staleness).filter(Boolean));
+    // Wrap in an arrow so staleness gets its default now = Date.now()/1000: a bare
+    // .map(staleness) would pass the array INDEX as the `now` argument (the
+    // .map(parseInt) footgun), leaving the client-elapsed term and the served_at-
+    // absent fallback branch reading a nonsense clock.
+    .concat(Object.values(sources).map((s) => staleness(s)).filter(Boolean));
   const now = new Date().toLocaleTimeString();
   if (problems.length) setStatus(`${counts} · ${now} — ${problems.join("; ")}`, true);
   else setStatus(`${counts} · updated ${now}`);
@@ -112,6 +124,12 @@ async function refreshAll() {
   // list (not just the countdowns) stays current on the same ~15s cadence as the
   // markers. openStationArrivals reads the open descriptor, so it is kind-agnostic.
   if (openStation) openStationArrivals({ refresh: true });
+
+  // Re-render the alert banner so its "may be out of date" marker (R1) appears or
+  // clears as the alerts feed crosses ALERTS_STALE_AFTER_S even while its own 60s
+  // poll is failing (loadAlerts re-renders only on success). A no-op until the
+  // stale flag flips, via the banner's dedup key.
+  tickAlertBanner();
 }
 
 // Static loaders retry until they populate, so a visitor who lands during a

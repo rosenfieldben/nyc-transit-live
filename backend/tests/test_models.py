@@ -64,13 +64,19 @@ def test_train_model_matches_real_decode_output_exactly():
 
 
 def test_feed_envelopes_validate():
-    # feed_timestamp is a required field (may be None) alongside fetched_at.
-    BusFeed.model_validate({"fetched_at": 1000.0, "feed_timestamp": 995.0, "data": [VEHICLE]})
-    BusFeed.model_validate({"fetched_at": None, "feed_timestamp": None, "data": []})
+    # feed_timestamp is a required field (may be None) alongside fetched_at, and
+    # served_at (R1) is required and non-null (stamped at every response build).
+    BusFeed.model_validate(
+        {"fetched_at": 1000.0, "feed_timestamp": 995.0, "served_at": 1001.0, "data": [VEHICLE]}
+    )
+    BusFeed.model_validate(
+        {"fetched_at": None, "feed_timestamp": None, "served_at": 1001.0, "data": []}
+    )
     SubwayFeed.model_validate(
         {
             "fetched_at": 1000.0,
             "feed_timestamp": 996.0,
+            "served_at": 1001.0,
             "data": [
                 {
                     "trip_id": "70000_1..N01R",
@@ -135,8 +141,12 @@ def test_railroad_feed_envelope_validates():
         "prev_time": None,
         "next_time": None,
     }
-    RailroadFeed.model_validate({"fetched_at": 1000.0, "feed_timestamp": None, "data": [sample]})
-    RailroadFeed.model_validate({"fetched_at": None, "feed_timestamp": None, "data": []})
+    RailroadFeed.model_validate(
+        {"fetched_at": 1000.0, "feed_timestamp": None, "served_at": 1001.0, "data": [sample]}
+    )
+    RailroadFeed.model_validate(
+        {"fetched_at": None, "feed_timestamp": None, "served_at": 1001.0, "data": []}
+    )
 
 
 def test_railroad_route_model_validates_sample():
@@ -284,8 +294,12 @@ def test_path_feed_and_arrivals_envelopes_validate():
         "next_time": 1500.0,
     }
     # The PATH envelope key is `trains` (not the MTA feeds' `data`).
-    PathFeed.model_validate({"fetched_at": 1000.0, "feed_timestamp": 996.0, "trains": [train]})
-    PathFeed.model_validate({"fetched_at": None, "feed_timestamp": None, "trains": []})
+    PathFeed.model_validate(
+        {"fetched_at": 1000.0, "feed_timestamp": 996.0, "served_at": 1001.0, "trains": [train]}
+    )
+    PathFeed.model_validate(
+        {"fetched_at": None, "feed_timestamp": None, "served_at": 1001.0, "trains": []}
+    )
     PathStationArrivals.model_validate(
         {
             "fetched_at": 1234.0,
@@ -305,6 +319,7 @@ def test_status_model_validates_handler_shape():
     # Mirrors what get_status builds, including a recorded error and null GTFS.
     StatusResponse.model_validate(
         {
+            "served_at": 1000.0,  # R1: top-level snapshot build time
             "feeds": {
                 "buses": {
                     "fetched_at": 1000.0,

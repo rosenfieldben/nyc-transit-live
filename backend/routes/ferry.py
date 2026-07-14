@@ -66,9 +66,9 @@ async def get_ferry_routes(request: Request, response: Response) -> list[dict]:
 
 
 @router.get("/api/ferry", response_model=FerryFeed)
-async def get_ferry(request: Request) -> dict:
+async def get_ferry(request: Request, response: Response) -> dict:
     """Cached live NYC Ferry boats from the VehiclePositions feed: {fetched_at,
-    feed_timestamp, boats}. Each boat carries its real GPS position, hull label,
+    feed_timestamp, served_at, boats}. Each boat carries its real GPS position, hull label,
     trip_id, route_id (from the static trip -> route join, null on a miss), speed,
     current_status, and updated_at; bearing is omitted (the feed reports only
     0.0).
@@ -77,8 +77,9 @@ async def get_ferry(request: Request) -> dict:
     a warming 503: a successful poll that decoded zero boats fills the cache with
     [], which serves normally. 503 only until the FIRST successful poll fills the
     cache. The envelope key is `boats` via _serve_cached's data_key, so the
-    warming / never-filled contract stays shared with the other feed endpoints."""
-    return _serve_cached(request.app, "ferry", data_key="boats")
+    warming / never-filled contract stays shared with the other feed endpoints.
+    served_at is stamped per response (see THE THREE TIMESTAMPS in cache.py)."""
+    return _serve_cached(request.app, "ferry", response, data_key="boats")
 
 
 @router.get("/api/ferry-arrivals/{stop_id}", response_model=FerryStationArrivals)

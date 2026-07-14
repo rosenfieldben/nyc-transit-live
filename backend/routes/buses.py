@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 
 import bus_static
 from cache import _serve_cached
@@ -14,10 +14,11 @@ router = APIRouter()
 
 
 @router.get("/api/buses", response_model=BusFeed)
-async def get_buses(request: Request) -> dict:
-    """Cached bus positions: {fetched_at, data: [{id, route_id, latitude,
-    longitude, bearing}, ...]}. Refreshed by the background poller."""
-    return _serve_cached(request.app, "buses")
+async def get_buses(request: Request, response: Response) -> dict:
+    """Cached bus positions: {fetched_at, feed_timestamp, served_at, data: [{id,
+    route_id, latitude, longitude, bearing}, ...]}. Refreshed by the background
+    poller; served_at is stamped per response (see THE THREE TIMESTAMPS in cache.py)."""
+    return _serve_cached(request.app, "buses", response)
 
 
 @router.get("/api/bus-route/{route_id}", response_model=RouteGeometry)

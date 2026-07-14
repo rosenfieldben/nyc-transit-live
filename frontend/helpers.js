@@ -141,34 +141,76 @@ function computePathRouteSlice(
   return best && { points: best.points, cum: best.cum, s0: best.s0, s1: best.s1 };
 }
 
-// minClockOffset = the minimum observed (clientNow - fetched_at), approximating
-// browser-vs-server skew plus minimal latency. Used to skew-correct the
+// minClockOffset = the minimum observed (clientNow - SERVED_AT), approximating
+// browser-vs-server skew plus minimal latency. It calibrates off served_at (the
+// instant the response left the server), NOT fetched_at (the backend's last poll):
+// a response served from a poll N seconds ago would inflate a fetched_at-based
+// offset by N, which then (a) cancelled the poll-age staleness term, so a stale
+// backend looked fresh, and (b) shifted every arrivals countdown by N. served_at
+// is skew + latency only, so this offset is clean. Used to skew-correct the
 // arrivals countdown (map.js, which compares absolute MTA timestamps to the
-// browser clock) and the poll-age term of staleness() below.
+// browser clock) and the client-elapsed term of staleness() below.
 let minClockOffset = null;
 
-function noteClockOffset(fetchedAt) {
-  if (fetchedAt == null) return;
-  const offset = Date.now() / 1000 - fetchedAt;
+// `now` is injected only for testability (noteClockOffset otherwise reads the wall
+// clock, unlike staleness which always takes an explicit now).
+function noteClockOffset(servedAt, now = Date.now() / 1000) {
+  if (servedAt == null) return;
+  const offset = now - servedAt;
   if (minClockOffset == null || offset < minClockOffset) minClockOffset = offset;
 }
 
 // Two independent staleness signals, flag if EITHER crosses the threshold:
 //   1. upstream lag = fetched_at - feed_timestamp — both server-recorded, so
 //      this is clock-skew free; detects the MTA feed itself going stale.
-//   2. poll age = now - fetched_at (skew-corrected via minClockOffset) — detects
-//      OUR backend having stopped polling, where it keeps serving frozen
-//      last-good data so the upstream-lag term alone would stay constant and
-//      silent. `now` is injected for testability (defaults to the wall clock).
+//   2. poll age = how long ago the data behind this response was actually polled
+//      upstream, detecting OUR backend having stopped polling while it keeps
+//      serving frozen last-good data (upstream lag alone would stay constant and
+//      silent). Two skew-clean parts:
+//        - server cache age (served_at - fetched_at): both server clocks, so it is
+//          skew-free BY CONSTRUCTION and honest on the very first observation,
+//          before any client calibration settles. This is the term the old model
+//          was blind to.
+//        - client elapsed since the response arrived (now - served_at, skew-
+//          corrected by the now-clean minClockOffset), clamped to >= 0 (the data
+//          cannot be fresher than when it was served).
+//      When served_at is absent (a response predating the served_at contract),
+//      fall back to the old single term so a stuck backend is still caught.
+// `now` is injected for testability (defaults to the wall clock).
 function staleness(source, now = Date.now() / 1000) {
   if (source.fetchedAt == null) return null;
   const upstreamLag =
     source.feedTimestamp == null ? 0 : source.fetchedAt - source.feedTimestamp;
-  const pollAge = now - source.fetchedAt - (minClockOffset ?? 0);
+  let pollAge;
+  if (source.servedAt == null) {
+    pollAge = now - source.fetchedAt - (minClockOffset ?? 0);
+  } else {
+    const cacheAge = source.servedAt - source.fetchedAt;
+    const clientElapsed = now - source.servedAt - (minClockOffset ?? 0);
+    pollAge = cacheAge + Math.max(clientElapsed, 0);
+  }
   const age = Math.max(upstreamLag, pollAge, 0);
   if (age < FEED_STALE_AFTER_S) return null;
-  const human = age < 120 ? `${Math.round(age)}s` : `${Math.round(age / 60)}m`;
-  return `${source.label} data ${human} old`;
+  return `${source.label}: as of ${humanizeAge(age)} ago`;
+}
+
+// A compact age string: seconds under two minutes, whole minutes above. Shared by
+// the status-line staleness and the popup age line so the two read the same.
+function humanizeAge(age) {
+  return age < 120 ? `${Math.round(age)}s` : `${Math.round(age / 60)}m`;
+}
+
+// The "as of Xm ago" age line for a station/dock popup whose arrivals data has
+// gone stale: when a background refresh fails the last-known rows keep ticking
+// (see openStationArrivals), so past FEED_STALE_AFTER_S the popup must say how old
+// they are rather than imply liveness. Empty while fresh, so a live popup shows
+// nothing. `now` is the skew-corrected clock the caller already computes for its
+// countdowns; fetchedAt is the arrivals body's poll time. Pure and node-testable.
+function feedAgeLine(fetchedAt, now) {
+  if (fetchedAt == null) return "";
+  const age = now - fetchedAt;
+  if (age < FEED_STALE_AFTER_S) return "";
+  return `<div class="popup-stale">as of ${humanizeAge(age)} ago</div>`;
 }
 
 // Decide what a successful-but-EMPTY poll should do. Keeping the last-known
@@ -368,7 +410,8 @@ function formatRailroadHead(system, routeId, name) {
 function railroadArrivalsHtml(station, body, now, nameFor = () => null) {
   const header =
     `<b>${esc(station.name ?? station.id)}</b> ` +
-    `<span class="popup-sub">${esc(station.system ?? "")}</span>`;
+    `<span class="popup-sub">${esc(station.system ?? "")}</span>` +
+    feedAgeLine(body.fetched_at, now); // "as of Xm ago" when the rows are stale (R1)
   const buckets = orderedRailroadBuckets(body.directions);
   if (!buckets.length) return `${header}<div class="arr-none">No trains</div>`;
   let html = header;
@@ -502,7 +545,8 @@ function pathTrainPopupHtml(train, name, color) {
 function pathArrivalsHtml(station, body, now, colorFor = () => PATH_FALLBACK_COLOR, nameFor = () => null) {
   const header =
     `<b>${esc(station.name ?? station.id)}</b> ` +
-    `<span class="popup-sub">PATH</span>`;
+    `<span class="popup-sub">PATH</span>` +
+    feedAgeLine(body.fetched_at, now); // "as of Xm ago" when the rows are stale (R1)
   const buckets = orderedPathBuckets(body.directions);
   if (!buckets.length) return `${header}<div class="arr-none">No trains</div>`;
   let html = header;
@@ -649,7 +693,8 @@ function ferryArrivalsHtml(station, body, now, colorFor = () => FERRY_FALLBACK_C
     : "";
   const header =
     `<b>${esc(station.name ?? station.id)}</b> ` +
-    `<span class="popup-sub">NYC Ferry</span>${access}`;
+    `<span class="popup-sub">NYC Ferry</span>${access}` +
+    feedAgeLine(body.fetched_at, now); // "as of Xm ago" when the rows are stale (R1)
   const buckets = orderedFerryBuckets(body.routes);
   if (!buckets.length) return `${header}<div class="arr-none">No boats</div>`;
   let html = header;
@@ -668,6 +713,25 @@ function ferryArrivalsHtml(station, body, now, colorFor = () => FERRY_FALLBACK_C
 }
 
 // ---- Service alerts in the station popups (phase 12b) ----
+
+// Alerts staleness threshold (R1). The alerts feed polls every 60s (vs 15s for the
+// vehicle feeds) and its content changes slowly: a service alert persists for hours,
+// so a slightly old alert index is far less misleading than slightly old vehicle
+// positions. The honesty bar is therefore higher than the 90s feed bar: only after
+// five missed polls do we hedge that the alert set may be out of date. The alerts
+// loop swallows failures by design (it never surfaces an error or blocks arrivals),
+// so this marker is the one honest signal that the index may have stopped updating.
+const ALERTS_STALE_AFTER_S = 300;
+
+// True when the last successful alerts fetch (its served_at) is older than the
+// threshold. `now` is the skew-corrected client clock. A null servedAt (no
+// successful fetch yet, e.g. during boot) is NOT stale: the app simply shows no
+// alerts, not a false "out of date". Pure and node-testable; the banner and popup
+// alert blocks gate their "alerts may be out of date" marker on this.
+function alertsStale(servedAt, now) {
+  if (servedAt == null) return false;
+  return now - servedAt >= ALERTS_STALE_AFTER_S;
+}
 
 // Index the active-alerts list into two lookups, each keyed by "system|id": one by
 // stop selector, one by route selector. WHY the key embeds the system: numeric ids
@@ -796,6 +860,7 @@ if (typeof module !== "undefined" && module.exports) {
     indexAlerts, matchStationAlerts, matchRouteAlerts, bannerAlerts, alertsBlockHtml,
     RAILROAD_ROUTE_MAX_SLICE, RAILROAD_ROUTE_ACCEPT_DIST, RAILROAD_BUCKET_ORDER,
     LINE_COLORS, DARK_TEXT_LINES, FEED_STALE_AFTER_S,
+    feedAgeLine, humanizeAge, alertsStale, ALERTS_STALE_AFTER_S,
     selectHeadwayBand, airtrainStationPopupHtml, retryUntil,
     PATH_BUCKET_ORDER, PATH_FALLBACK_COLOR, orderedPathBuckets, pathColor,
     formatPathHead, pathTrainPopupHtml, pathArrivalsHtml,

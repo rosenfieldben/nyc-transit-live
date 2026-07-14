@@ -201,6 +201,23 @@ html, body {
   margin-top: 3px;
 }
 
+/* R1 freshness markers, quiet and italic. The "as of Xm ago" line on a station/dock
+   popup whose arrivals refresh has failed (.popup-stale), and the "alerts may be out
+   of date" marker on the banner and popup alert blocks (.alert-stale). Honesty, not
+   alarm: low-emphasis so they never compete with the live data they hedge. */
+.popup-stale {
+  margin-top: 2px;
+  color: #999;
+  font-size: 11px;
+  font-style: italic;
+}
+
+.alert-stale {
+  color: #888;
+  font-size: 11px;
+  font-style: italic;
+}
+
 /* Agency-wide alerts banner: a quiet but noticeable strip across the top of the map.
    #alert-banner is just a positioning anchor and is empty (no visible box) until
    map.js injects .alert-banner-strip. No MTA branding.

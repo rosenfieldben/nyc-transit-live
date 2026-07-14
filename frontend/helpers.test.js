@@ -39,6 +39,7 @@ const {
   ferryArrivalDisplay,
   ferryBoatIconState,
   ferryStatusText,
+  ferrySpeedKnots,
   ferryBoatPopupHtml,
   ferryArrivalsHtml,
   ROUTE_MAX_SLICE,
@@ -905,7 +906,32 @@ test("ferryStatusText maps known statuses to plain words, omits the unknown", ()
   assert.equal(ferryStatusText("FUTURE_ENUM"), null);
 });
 
-test("ferryBoatPopupHtml shows label, route name, and status; escapes; no speed", () => {
+test("ferrySpeedKnots converts m/s to knots only for an under-way boat above the floor", () => {
+  // 6.5 m/s * 1.94384 = 12.6 kn (one decimal), under way -> shown.
+  assert.equal(ferrySpeedKnots("IN_TRANSIT_TO", 6.5), "12.6 kn");
+  // 4.0 m/s * 1.94384 = 7.8 kn.
+  assert.equal(ferrySpeedKnots("IN_TRANSIT_TO", 4.0), "7.8 kn");
+  // At the floor (0.5 m/s = 0.97 kn) it still shows, rounded to 1.0 kn.
+  assert.equal(ferrySpeedKnots("IN_TRANSIT_TO", 0.5), "1.0 kn");
+  // Below the floor is dock jitter, not motion -> omitted.
+  assert.equal(ferrySpeedKnots("IN_TRANSIT_TO", 0.2), null);
+  // Only IN_TRANSIT_TO shows speed; docked/arriving boats do not.
+  assert.equal(ferrySpeedKnots("STOPPED_AT", 6.5), null);
+  assert.equal(ferrySpeedKnots("INCOMING_AT", 6.5), null);
+  // Missing or non-numeric speed -> omitted, never "NaN kn".
+  assert.equal(ferrySpeedKnots("IN_TRANSIT_TO", null), null);
+  assert.equal(ferrySpeedKnots("IN_TRANSIT_TO", undefined), null);
+  assert.equal(ferrySpeedKnots("IN_TRANSIT_TO", "6.5"), null);
+  // A numeric-but-non-finite reading (a raw protobuf float can be NaN/Infinity)
+  // is caught by the Number.isFinite guard, not the typeof or floor checks:
+  // typeof NaN === "number" and NaN < FLOOR is false, so this is the only clause
+  // standing between a garbage feed value and a rendered "NaN kn"/"Infinity kn".
+  assert.equal(ferrySpeedKnots("IN_TRANSIT_TO", NaN), null);
+  assert.equal(ferrySpeedKnots("IN_TRANSIT_TO", Infinity), null);
+  assert.equal(ferrySpeedKnots("IN_TRANSIT_TO", -Infinity), null);
+});
+
+test("ferryBoatPopupHtml shows label, route name, status, and under-way speed in knots; escapes", () => {
   const html = ferryBoatPopupHtml(
     { label: "H201", status: "IN_TRANSIT_TO", speed: 6.5 },
     "East River",
@@ -916,9 +942,21 @@ test("ferryBoatPopupHtml shows label, route name, and status; escapes; no speed"
   assert.ok(html.includes("Boat H201"));
   assert.ok(html.includes("Under way"));
   assert.ok(html.includes("NYC Ferry"));
-  // Speed is deliberately never shown (14b: unit uncertain).
+  // Under way above the floor: speed shown in knots (H4). 6.5 m/s = 12.6 kn.
+  assert.ok(html.includes("12.6 kn"));
+  // The raw m/s value is never surfaced.
   assert.ok(!html.includes("6.5"));
-  assert.ok(!html.toLowerCase().includes("speed"));
+});
+
+test("ferryBoatPopupHtml omits speed for a docked boat", () => {
+  const html = ferryBoatPopupHtml(
+    { label: "H202", status: "STOPPED_AT", speed: 0.3 },
+    "East River",
+    "#00839c",
+  );
+  assert.ok(html.includes("At dock"));
+  // Docked boat: no speed line at all (dock jitter is noise, not motion).
+  assert.ok(!html.includes("kn"));
 });
 
 test("ferryBoatPopupHtml labels a null-route boat Unassigned and omits an unknown status", () => {

@@ -11,8 +11,10 @@ warmup dependency of this decoder. Verified live 2026-07-09 (boats in service):
   - Vehicle ids are STABLE across polls and labels carry hull names (H201).
   - current_status is populated (STOPPED_AT when docked, IN_TRANSIT_TO under
     way): exposed raw, it is display gold for 14c.
-  - speed is populated (0-13 observed, plausibly m/s): passed through RAW with
-    the unit left undocumented rather than converted to a guessed unit.
+  - speed is populated (0-13 observed): GTFS-RT Position.speed is defined as
+    meters per second, and that 0-13 m/s range is 0-25 kn, matching NYC Ferry's
+    hull speeds (~25 kn max), the sanity check that Connexionz follows the spec.
+    Passed through RAW in m/s; the frontend converts to knots for display (H4).
   - bearing is ALWAYS 0.0 (unpopulated): omitted from the payload entirely
     rather than served as a lie.
   - Trip ids are real, stable schedule ids (25/25 assigned trips joined the
@@ -158,9 +160,10 @@ def _decode_ferry_vehicles(
                 "route_id": route_id,
                 "latitude": pos.latitude,
                 "longitude": pos.longitude,
-                # speed is passed through RAW: it is populated but its unit is not
-                # documented by the feed (0-13 observed, plausibly m/s), so a
-                # conversion would be a guess. 14c decides how to present it.
+                # speed is passed through RAW in m/s (the GTFS-RT Position.speed
+                # unit; the 0-13 m/s = 0-25 kn range matches NYC Ferry hull speeds,
+                # confirming Connexionz follows the spec). The frontend converts to
+                # knots for the boat popup (H4).
                 "speed": pos.speed if pos.HasField("speed") else None,
                 "status": _status_name(vehicle),
                 # Per-vehicle content time (advances each poll); the boat's own

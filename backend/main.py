@@ -247,6 +247,52 @@ app = FastAPI(title="NYC Transit Live", version="0.3.0", lifespan=lifespan)
 # compresses ~5-10x; only bodies over ~1 KB are worth the CPU.
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
+# Content-Security-Policy for the frontend document. default-src 'self' locks every
+# resource to same-origin (script-src inherits it, so it stays strict: every script
+# is a same-origin file, no inline <script>, no CDN since H2 self-hosted Leaflet).
+# The narrow relaxations, each justified:
+#   - img-src: the OSM basemap tile origin (frontend/systems/shared.js) plus data:
+#     (a common, low-risk allowance; no data: image is used today).
+#   - connect-src 'self': the /api/* polling, all same-origin.
+#   - style-src adds 'unsafe-inline'. Verified necessary: the app renders inline
+#     style="" attributes in its popup/marker HTML (route colors, the arr-badge
+#     backgrounds, the bus-bearing SVG rotation), and without 'unsafe-inline' the
+#     browser refuses them ("Refused to apply inline style ..."). This relaxes only
+#     STYLES, never scripts; tightening it would mean moving those inline styles to
+#     classes or CSS custom properties, a rendering refactor left as a followup.
+# NO HSTS: Railway terminates TLS, so the app must not assert transport policy above
+# the platform.
+_CSP = (
+    "default-src 'self'; "
+    "img-src 'self' data: https://tile.openstreetmap.org; "
+    "connect-src 'self'; "
+    "style-src 'self' 'unsafe-inline'"
+)
+
+# Security headers apply to the browser-rendered frontend (index.html and its static
+# assets), not to the JSON APIs or FastAPI's own /docs: a document CSP is meaningless
+# on a fetched JSON response and would needlessly break the CDN-backed Swagger UI.
+_NON_FRONTEND_PREFIXES = ("/api", "/healthz", "/docs", "/redoc", "/openapi.json")
+
+_SECURITY_HEADERS = {
+    "Content-Security-Policy": _CSP,
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": "geolocation=(), camera=(), microphone=()",
+}
+
+
+@app.middleware("http")
+async def security_headers(request, call_next):
+    """Set the frontend security headers (CSP + friends) on the HTML/static surface.
+    The e2e static server (tests/e2e/serve.js) mirrors these exact values so the
+    Playwright browser enforces the same CSP against the real app; keep them in sync."""
+    response = await call_next(request)
+    if not request.url.path.startswith(_NON_FRONTEND_PREFIXES):
+        response.headers.update(_SECURITY_HEADERS)
+    return response
+
+
 # One APIRouter per concern (see routes/); each carries the full /api/* paths, so
 # no prefix. Order does not matter (paths are disjoint); the static mount below is
 # last so /api/* wins.

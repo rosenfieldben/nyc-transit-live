@@ -216,13 +216,14 @@ nyc-transit-live/
 │   ├── map.js               # Leaflet map, polls backend, draws markers
 │   ├── helpers.js           # pure helpers shared with map.js (node-testable)
 │   ├── helpers.test.js      # node --test suite for the helpers
-│   └── style.css
+│   ├── style.css
+│   └── vendor/leaflet/      # self-hosted Leaflet 1.9.4 (js, css, images, LICENSE)
 ├── tests/e2e/               # hermetic Playwright smoke suite (dev/test only)
 │   ├── smoke.spec.js        # the scenarios; all network intercepted
-│   ├── mock.js              # /api/* fixtures + vendored Leaflet interception
+│   ├── mock.js              # /api/* fixtures + basemap-tile stub
 │   ├── serve.js             # tiny static server for frontend/ (no backend)
 │   ├── playwright.config.js # chromium only, starts the static server
-│   └── fixtures/            # handcrafted JSON payloads + vendored leaflet dist
+│   └── fixtures/            # handcrafted JSON payloads
 ├── data/
 │   ├── airtrain_jfk.json    # committed AirTrain JFK fixture (geometry + scheduled headways)
 │   ├── gtfs_static/         # downloaded static subway GTFS (gitignored)
@@ -277,11 +278,10 @@ npx playwright test --config tests/e2e/playwright.config.js
 It is **hermetic by design**: the config starts a tiny static server for
 `frontend/` (the Python backend is never launched), and every request is
 intercepted in the browser. All `/api/*` calls are answered from the handcrafted
-fixtures in `tests/e2e/fixtures/`, and the two unpkg Leaflet URLs are fulfilled
-from byte-identical vendored copies of `leaflet@1.9.4` under
-`tests/e2e/fixtures/vendor/` (serving the exact bytes keeps the SRI `integrity`
-attributes in `index.html` valid). Nothing leaves the machine, so CI needs no
-network at test time. Time is frozen with Playwright's clock control, so the
+fixtures in `tests/e2e/fixtures/`; Leaflet is self-hosted under
+`frontend/vendor/leaflet/` and served by that static server exactly as production
+serves it (there is no CDN URL left to intercept), and the basemap tiles are
+stubbed. Nothing leaves the machine, so CI needs no network at test time. Time is frozen with Playwright's clock control, so the
 arrival countdowns and the staleness window are deterministic (no sleeps).
 
 ## Data sources
@@ -611,6 +611,11 @@ license, per its Section 5.
 
 The code in this repository is licensed under the Apache License, Version 2.0;
 see [LICENSE](LICENSE).
+
+Vendored third-party assets carry their own licenses in their own directories.
+Leaflet (the map library) is self-hosted under `frontend/vendor/leaflet/` and
+stays under its BSD-2-Clause license; see `frontend/vendor/leaflet/LICENSE`.
+Apache-2.0 covers this project's own code, not those vendored files.
 
 The transit DATA served through this code is a separate matter that no code
 license changes: it remains governed by each provider's own terms, including the

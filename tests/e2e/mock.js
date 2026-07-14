@@ -1,21 +1,17 @@
-// Network interception for the hermetic smoke suite. Every request the app makes
-// is fulfilled locally: the two unpkg Leaflet URLs from vendored, byte-identical
-// dist files (which satisfies the SRI integrity attributes in index.html), and
-// every /api/* endpoint from the handcrafted fixtures. Nothing leaves the machine,
-// so CI needs no network at test time.
+// Network interception for the hermetic smoke suite. The app's own static files
+// (including the self-hosted Leaflet under frontend/vendor/leaflet, H2) are served
+// same-origin by the webServer and pass straight through the guard below; every
+// /api/* endpoint is fulfilled from the handcrafted fixtures, and the basemap tiles
+// are stubbed. Nothing leaves the machine, so CI needs no network at test time.
+// (Before H2, Leaflet loaded from unpkg and was intercepted here from a vendored
+// copy; self-hosting removed both the CDN dependency and that interception.)
 //
 // installMocks returns a mutable ctx: ctx.counts tracks how many times each
 // endpoint was hit (so a test can assert "no new fetch"), and ctx.overrides lets
 // a test swap in a per-endpoint handler between polls to simulate an empty feed, a
 // 502, or a delayed response. Handlers read ctx.overrides at REQUEST time, so a
 // test can mutate it after navigation and have the next poll pick it up.
-const fs = require("node:fs");
-const path = require("node:path");
 const fx = require("./fixtures/api");
-
-const VENDOR = path.join(__dirname, "fixtures", "vendor");
-const LEAFLET_JS = fs.readFileSync(path.join(VENDOR, "leaflet.js"));
-const LEAFLET_CSS = fs.readFileSync(path.join(VENDOR, "leaflet.css"));
 
 // A 1x1 transparent PNG. The basemap tile layer would otherwise reach out to
 // tile.openstreetmap.org; the tiles are decorative and never asserted on, so we
@@ -51,13 +47,10 @@ async function installMocks(page) {
     return route.abort();
   });
 
-  // Leaflet: vendored dist bytes, unchanged, so the SRI hashes in index.html match.
-  await page.route("https://unpkg.com/leaflet@1.9.4/dist/leaflet.js", (route) =>
-    route.fulfill({ contentType: "text/javascript; charset=utf-8", body: LEAFLET_JS }),
-  );
-  await page.route("https://unpkg.com/leaflet@1.9.4/dist/leaflet.css", (route) =>
-    route.fulfill({ contentType: "text/css; charset=utf-8", body: LEAFLET_CSS }),
-  );
+  // No Leaflet interception: H2 self-hosted Leaflet under frontend/vendor/leaflet,
+  // so index.html loads it same-origin from the webServer and the guard above passes
+  // it through, exactly as production serves it. Before H2 it loaded from unpkg and
+  // was fulfilled here from a vendored copy; both are gone with the CDN.
 
   // Basemap tiles: stub so nothing reaches the network (see TILE_PNG). The app
   // uses the subdomain-less tile.openstreetmap.org host.

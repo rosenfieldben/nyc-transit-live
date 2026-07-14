@@ -4,9 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>NYC Transit Live</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-        crossorigin="">
+  <!-- Leaflet is self-hosted from vendor/leaflet (H2): the unpkg CDN was the last
+       external single point of failure for map initialization (a CDN outage or a
+       network block left the map unable to boot at all), and byte-identical copies
+       already existed for the e2e suite. Local files carry no SRI integrity or
+       crossorigin attributes: those guard a third-party CDN, and here the file's
+       integrity is the repository's own. Leaflet stays BSD-2-Clause; its license
+       rides along at vendor/leaflet/LICENSE. -->
+  <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -87,9 +92,8 @@
     </div>
     <div id="status">Loading&hellip;</div>
   </div>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-          crossorigin=""></script>
+  <!-- Self-hosted Leaflet (see the stylesheet comment in <head>). -->
+  <script src="vendor/leaflet/leaflet.js"></script>
   <script src="helpers.js"></script>
   <!-- Ordered plain scripts sharing one global scope (no bundler): shared map
        infrastructure first, then one file per system, then map.js as the entry

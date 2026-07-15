@@ -47,7 +47,10 @@ const routeIndex = new Map(); // route_id -> [{ points, cum }] for interpolation
 async function loadRouteLines() {
   let routes;
   try {
-    const res = await fetch("/api/subway-routes");
+    // AbortSignal.timeout (R2) bounds the fetch; an abort lands in the catch below
+    // and returns false, so a wedged static fetch just reports "not populated yet"
+    // and retryUntil reschedules it, exactly like a warming 503 or a network error.
+    const res = await fetch("/api/subway-routes", { signal: AbortSignal.timeout(FETCH_DEADLINE_MS) });
     if (!res.ok) return false;
     routes = await res.json();
   } catch {
@@ -104,7 +107,7 @@ function subwayArrivalsHtml(station, body) {
 async function loadStations() {
   let stations;
   try {
-    const res = await fetch("/api/subway-stops");
+    const res = await fetch("/api/subway-stops", { signal: AbortSignal.timeout(FETCH_DEADLINE_MS) });
     if (!res.ok) return false; // warming 503 (or transient error): retry
     stations = await res.json();
   } catch {

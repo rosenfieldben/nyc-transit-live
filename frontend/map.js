@@ -26,21 +26,30 @@ const STATIC_RETRY_CAP_MS = 30000;
 // servedAt: the response's build time (R1), fed to noteClockOffset for a clean
 // skew baseline and to staleness() for the server cache-age term. Distinct from
 // fetchedAt (the backend's last poll) precisely so a stuck poller shows up.
+// inFlight (R2): true while this source's own refresh is running, so refreshAll
+// skips a source already in flight instead of stacking a second fetch. It replaces
+// the old whole-cycle `refreshing` lock: each source is now gated independently, so
+// one slow source (bounded by AbortSignal.timeout) cannot freeze the others.
 const sources = {
-  buses: { url: "/api/buses", apply: applyBuses, label: "buses", count: 0, error: null, fetchedAt: null, feedTimestamp: null, servedAt: null, emptyRunStart: null },
-  subways: { url: "/api/subways", apply: applyTrains, label: "trains", count: 0, error: null, fetchedAt: null, feedTimestamp: null, servedAt: null, emptyRunStart: null },
-  railroads: { url: "/api/railroads", apply: applyRailroads, label: "railroad", count: 0, error: null, fetchedAt: null, feedTimestamp: null, servedAt: null, emptyRunStart: null },
-  path: { url: "/api/path", apply: applyPath, label: "PATH", dataKey: "trains", count: 0, error: null, fetchedAt: null, feedTimestamp: null, servedAt: null, emptyRunStart: null },
+  buses: { url: "/api/buses", apply: applyBuses, label: "buses", count: 0, error: null, fetchedAt: null, feedTimestamp: null, servedAt: null, emptyRunStart: null, inFlight: false },
+  subways: { url: "/api/subways", apply: applyTrains, label: "trains", count: 0, error: null, fetchedAt: null, feedTimestamp: null, servedAt: null, emptyRunStart: null, inFlight: false },
+  railroads: { url: "/api/railroads", apply: applyRailroads, label: "railroad", count: 0, error: null, fetchedAt: null, feedTimestamp: null, servedAt: null, emptyRunStart: null, inFlight: false },
+  path: { url: "/api/path", apply: applyPath, label: "PATH", dataKey: "trains", count: 0, error: null, fetchedAt: null, feedTimestamp: null, servedAt: null, emptyRunStart: null, inFlight: false },
   // Ferry boats carry the `boats` envelope key, and clearOnEmpty flips the empty
   // handling: a successful empty poll REPLACES the boats immediately (see the
   // refreshSource branch) rather than riding out the transient-blip grace the
   // other feeds use, preserving 14b's empty-replaces / failure-retains split.
-  ferry: { url: "/api/ferry", apply: applyFerryBoats, label: "ferries", dataKey: "boats", clearOnEmpty: true, count: 0, error: null, fetchedAt: null, feedTimestamp: null, servedAt: null, emptyRunStart: null },
+  ferry: { url: "/api/ferry", apply: applyFerryBoats, label: "ferries", dataKey: "boats", clearOnEmpty: true, count: 0, error: null, fetchedAt: null, feedTimestamp: null, servedAt: null, emptyRunStart: null, inFlight: false },
 };
 
 async function refreshSource(source) {
+  source.inFlight = true;
   try {
-    const res = await fetch(source.url);
+    // AbortSignal.timeout bounds the WHOLE fetch (the browser fetch has no built-in
+    // whole-request timeout, so a trickling upstream would otherwise hang forever).
+    // A timeout aborts the request and rejects into the catch below like any other
+    // failed poll: last-known markers stay, the R1 staleness surfaces do the rest.
+    const res = await fetch(source.url, { signal: AbortSignal.timeout(FETCH_DEADLINE_MS) });
     if (!res.ok) {
       const body = await res.json().catch(() => null);
       throw new Error(body?.detail ?? `HTTP ${res.status}`);
@@ -90,21 +99,33 @@ async function refreshSource(source) {
     source.emptyRunStart = null; // a non-empty poll ends the empty run
   } catch (err) {
     // Keep last known markers on screen; just surface the problem. A failed poll
-    // neither starts nor advances the empty run (emptyRunStart is left as is).
-    source.error = err.message;
+    // neither starts nor advances the empty run (emptyRunStart is left as is). An
+    // AbortSignal.timeout rejection (we cut off a wedged fetch at FETCH_DEADLINE_MS)
+    // arrives here like any other failure; map its engine-specific DOMException
+    // wording ("signal timed out" in Chromium) to a stable, plain "timed out" so the
+    // status line reads the same across browsers. No new error state: a timed-out
+    // fetch is just a failed poll.
+    source.error = err.name === "TimeoutError" ? "timed out" : err.message;
+  } finally {
+    // Cleared here (not per-return) because the success path and both empty
+    // branches return early out of the try: finally is the one place that always
+    // runs, so the source is reliably freed for the next tick's shouldRefresh check.
+    source.inFlight = false;
   }
 }
 
-let refreshing = false; // don't let a slow poll overlap the next tick
-
 async function refreshAll() {
-  if (refreshing) return;
-  refreshing = true;
-  try {
-    await Promise.all(Object.values(sources).map(refreshSource));
-  } finally {
-    refreshing = false;
-  }
+  // No global lock (R2): the old `refreshing` flag gated the whole cycle, so a
+  // single wedged fetch that never resolved kept it true forever and every later
+  // tick early-returned, freezing the map. Now each source is gated on its own
+  // inFlight flag (shouldRefresh): fire a refresh for every source NOT already in
+  // flight, and leave the ones still running to be picked up on a later tick once
+  // they settle or hit their AbortSignal.timeout. We await only the sources fired
+  // THIS tick so the status tail below observes their settled state; this await
+  // gates just this invocation's tail, never the next tick (a separate call gated
+  // per-source), so an overlapping slow tick can no longer starve the loop.
+  const fired = Object.values(sources).filter(shouldRefresh);
+  await Promise.all(fired.map(refreshSource));
   const counts = Object.values(sources)
     .map((s) => `${s.count.toLocaleString()} ${s.label}`)
     .join(" · ");

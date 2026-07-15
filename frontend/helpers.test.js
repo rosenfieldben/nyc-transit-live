@@ -15,6 +15,7 @@ const {
   alertsStale,
   ALERTS_STALE_AFTER_S,
   emptyFeedDecision,
+  shouldRefresh,
   noteClockOffset,
   formatCountdown,
   trainLatLng,
@@ -500,6 +501,31 @@ test("emptyFeedDecision holds last-known without starting a run when fetched_at 
   assert.equal(d.applyEmpty, false);
   assert.equal(d.error, "feed empty, showing last known");
   assert.equal(d.emptyRunStart, null);
+});
+
+test("shouldRefresh gates a source only on its own inFlight flag (R2)", () => {
+  // The per-source gate that replaced the whole-cycle `refreshing` lock: a source
+  // NOT in flight is eligible, one already in flight is skipped this tick. This is
+  // exactly what stops a single wedged source from freezing the others.
+  assert.equal(shouldRefresh({ inFlight: false }), true);
+  assert.equal(shouldRefresh({ inFlight: true }), false);
+  // A brand-new descriptor (inFlight undefined before the first tick) is eligible.
+  assert.equal(shouldRefresh({}), true);
+});
+
+test("shouldRefresh is independent per source (one wedged source does not gate another)", () => {
+  // The property the old global lock lacked: filtering the descriptors by
+  // shouldRefresh leaves the healthy sources eligible even while one is stuck in
+  // flight, so refreshAll keeps polling the others.
+  const sources = {
+    buses: { inFlight: true }, // wedged
+    subways: { inFlight: false },
+    railroads: { inFlight: false },
+  };
+  const eligible = Object.entries(sources)
+    .filter(([, s]) => shouldRefresh(s))
+    .map(([k]) => k);
+  assert.deepEqual(eligible, ["subways", "railroads"]);
 });
 
 test("noteClockOffset accepts a timestamp without throwing", () => {

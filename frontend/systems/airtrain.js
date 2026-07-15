@@ -38,7 +38,7 @@ function nyMinutesSinceMidnight(date = new Date()) {
 async function loadAirtrain() {
   let data;
   try {
-    const res = await fetch("/api/airtrain");
+    const res = await fetch("/api/airtrain", { signal: AbortSignal.timeout(FETCH_DEADLINE_MS) });
     if (!res.ok) return false;
     data = await res.json();
   } catch {

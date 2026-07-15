@@ -51,14 +51,21 @@ async def _warm_subway_static(app: FastAPI) -> None:
     /healthz reports the failure until a retry succeeds."""
     while True:
         try:
-            stops = await main.load_subway_stops()
-            routes = main.load_subway_route_shapes()  # reuse the zip the stops load ensured
-            stations = main.load_subway_stations()
-            # Off the event loop: this one parses the full stop_times.txt (~36 MB,
-            # millions of rows), so running it inline would block every other warmup,
-            # the pollers, and /healthz for the length of the parse. The lighter
-            # sibling loaders (stops/shapes/stations) stay inline as before.
-            station_routes = await asyncio.to_thread(main.load_subway_station_routes)
+            # Whole-attempt deadline (see main.STATIC_ATTEMPT_DEADLINE_S). It bounds
+            # the download and the inline parses; the to_thread parse below can outlive
+            # it (a Python thread cannot be force-cancelled), which is fine because a
+            # CPU-bound parse finishes on its own, unlike a network transfer that can
+            # trickle forever. A timeout raises TimeoutError, caught by `except
+            # Exception` below and driven down the same failed-then-retry path.
+            async with asyncio.timeout(main.STATIC_ATTEMPT_DEADLINE_S):
+                stops = await main.load_subway_stops()
+                routes = main.load_subway_route_shapes()  # reuse the zip the stops load ensured
+                stations = main.load_subway_stations()
+                # Off the event loop: this one parses the full stop_times.txt (~36 MB,
+                # millions of rows), so running it inline would block every other warmup,
+                # the pollers, and /healthz for the length of the parse. The lighter
+                # sibling loaders (stops/shapes/stations) stay inline as before.
+                station_routes = await asyncio.to_thread(main.load_subway_station_routes)
         except Exception as exc:
             _set_static_status(app, "subway_static_status", "failed", exc)
             await asyncio.sleep(main.STATIC_RETRY_S)
@@ -80,7 +87,12 @@ async def _warm_railroad_static(app: FastAPI) -> None:
     retry path. Fills the derived stops and route geometry the handlers read."""
     while True:
         try:
-            data = await railroad_static.load_railroad_static()
+            # Whole-attempt deadline (main.STATIC_ATTEMPT_DEADLINE_S): a backstop over
+            # the per-transfer asyncio.timeout each downloader already holds, so a
+            # wedged attempt cannot stall this retry loop forever. A timeout raises
+            # TimeoutError, caught below and retried like any other load failure.
+            async with asyncio.timeout(main.STATIC_ATTEMPT_DEADLINE_S):
+                data = await railroad_static.load_railroad_static()
         except Exception as exc:
             _set_static_status(app, "railroad_static_status", "failed", exc)
             await asyncio.sleep(main.STATIC_RETRY_S)
@@ -125,7 +137,13 @@ async def _warm_path_static(app: FastAPI) -> None:
     ready-with-cache-headers is only ever reached with real data."""
     while True:
         try:
-            data = await path_static.load_path_static()
+            # Whole-attempt deadline (main.STATIC_ATTEMPT_DEADLINE_S): the OUTER
+            # ceiling layered over path_static's own per-transfer
+            # asyncio.timeout(_DOWNLOAD_DEADLINE_S) (13a). Both stay: the inner bounds
+            # just the download, this bounds the whole attempt. A timeout raises
+            # TimeoutError, caught below and retried like any other load failure.
+            async with asyncio.timeout(main.STATIC_ATTEMPT_DEADLINE_S):
+                data = await path_static.load_path_static()
         except Exception as exc:
             _set_static_status(app, "path_static_status", "failed", exc)
             await asyncio.sleep(main.STATIC_RETRY_S)
@@ -173,7 +191,12 @@ async def _warm_ferry_static(app: FastAPI) -> None:
     re-parsing."""
     while True:
         try:
-            data = await ferry_static.load_ferry_static()
+            # Whole-attempt deadline (main.STATIC_ATTEMPT_DEADLINE_S): a backstop over
+            # ferry_static's own per-transfer asyncio.timeout, so a wedged attempt
+            # cannot stall this retry loop forever. A timeout raises TimeoutError,
+            # caught below and retried like any other load failure.
+            async with asyncio.timeout(main.STATIC_ATTEMPT_DEADLINE_S):
+                data = await ferry_static.load_ferry_static()
         except Exception as exc:
             _set_static_status(app, "ferry_static_status", "failed", exc)
             await asyncio.sleep(main.STATIC_RETRY_S)

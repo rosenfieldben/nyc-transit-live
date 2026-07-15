@@ -127,7 +127,13 @@ async function openStationArrivals({ refresh = false } = {}) {
   }
   let body;
   try {
-    const res = await fetch(url);
+    // AbortSignal.timeout bounds this arrivals fetch (R2); an abort rejects into the
+    // catch below, which on a background refresh keeps the last-known arrivals
+    // ticking rather than wedging the popup on "Loading…". This whole-fetch deadline
+    // is ORTHOGONAL to the stationSeq guard: seq discards a fetch superseded by a
+    // new click or a popup close (a user-scoped supersession), while the timeout cuts
+    // off a fetch that simply never lands. A timeout is not a seq bump.
+    const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_DEADLINE_MS) });
     if (seq !== stationSeq) return; // superseded by another station click or a close
     if (!res.ok) {
       if (!refresh) {
@@ -219,7 +225,11 @@ function staleAlertsMarker() {
 // marker (R1) is the one honest hedge that the index may have stopped updating.
 async function loadAlerts() {
   try {
-    const res = await fetch("/api/alerts");
+    // AbortSignal.timeout bounds the alerts fetch (R2). A timeout aborts into the
+    // catch below and is swallowed like every other alerts failure: alerts are a
+    // decorative overlay, so a wedged fetch must keep the last-known index silently,
+    // never surface an error or block the arrivals a rider clicked for.
+    const res = await fetch("/api/alerts", { signal: AbortSignal.timeout(FETCH_DEADLINE_MS) });
     if (!res.ok) return; // keep the last-known index + banner silently
     const body = await res.json();
     const list = body.alerts ?? [];

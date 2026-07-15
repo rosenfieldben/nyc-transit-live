@@ -48,6 +48,56 @@ POLL_INTERVAL_S = 20
 # the position poll lean and independent (an alert-feed outage never stalls it).
 ALERT_POLL_INTERVAL_S = 60
 
+# A whole-task deadline for ONE system's refresh, applied per-coroutine INSIDE the
+# gather (see _poll_feeds). The httpx client timeout=30 bounds the gap between bytes,
+# not the whole exchange, so a trickling upstream that dribbles a byte every few
+# seconds can keep a single refresh alive indefinitely; and because the cycle awaits
+# all five refreshers together, that one wedged refresh freezes every system's
+# fetched_at with it. This is the hard ceiling on a single refresh: when it fires,
+# the timeout surfaces as a TimeoutError that _bounded_refresh routes to the same
+# _note_failure path every other failure takes (last-known data kept, the error
+# recorded for /api/status and the R1 stale surfaces), while the other four
+# refreshers finish the cycle normally.
+#
+# WHY 45s when the poll cadence is 20s: the deadline is deliberately generous
+# relative to the cadence. The loop sleeps AFTER the cycle, so a slow-but-finishing
+# refresh merely stretches the next tick a little (harmless); only a truly wedged
+# refresh should ever be aborted. 45s exceeds any healthy fetch (a full subway
+# multi-feed pull is low single-digit seconds) by a wide margin, so it never aborts
+# a healthy-but-slow cycle during an upstream slowdown, while still guaranteeing
+# every cycle is finite. This does NOT replace the httpx per-op timeout=30: that
+# guards a stalled SOCKET (no bytes for 30s) and this guards a whole request that
+# keeps trickling under that floor; they catch different failure shapes, so both stay.
+REFRESH_DEADLINE_S = 45
+
+
+async def _bounded_refresh(entry: dict, coro) -> None:
+    """Run one refresh coroutine under the whole-task REFRESH_DEADLINE_S. A timeout is
+    converted here into the same last-known-on-failure record every other failure
+    takes, so the gather sees a NORMAL return for this system and the other systems
+    still finish the cycle. Only TimeoutError is caught: an unexpected error still
+    propagates to the loop's cycle-level handler exactly as before.
+
+    The refreshers' only await is the upstream fetch, and everything after it (the
+    entry.update, the feed_health and arrivals writes) is synchronous, so a deadline
+    can only cancel the fetch, never a half-applied update: last-known state is left
+    intact for _note_failure to preserve.
+
+    Only the cache entry's error is recorded here; the per-system feed_health dict
+    (a secondary /api/status signal) is deliberately left at its last value, because
+    this generic wrapper does not know each system's health shape and the recorded
+    504 is the authoritative failure indicator either way."""
+    try:
+        async with asyncio.timeout(REFRESH_DEADLINE_S):
+            await coro
+    except TimeoutError:
+        _note_failure(
+            entry,
+            504,
+            f"Upstream did not complete within the {REFRESH_DEADLINE_S}s refresh "
+            "deadline; keeping last-known data.",
+        )
+
 
 async def _refresh_buses(app: FastAPI, client: httpx.AsyncClient) -> None:
     entry = app.state.feed_cache["buses"]
@@ -321,12 +371,19 @@ async def _poll_feeds(app: FastAPI) -> None:
     async with httpx.AsyncClient(timeout=30) as client:
         while True:
             try:
+                # Each refresh is wrapped in its OWN deadline (see _bounded_refresh)
+                # so a wedged upstream bounds only its system: a timeout becomes a
+                # last-known-on-failure record on that one entry, and the other four
+                # complete this cycle. gather keeps NO return_exceptions, so an
+                # unexpected (non-timeout) error still fails the whole cycle into the
+                # handler below, unchanged.
+                cache = app.state.feed_cache
                 await asyncio.gather(
-                    _refresh_buses(app, client),
-                    _refresh_subways(app, client),
-                    _refresh_railroads(app, client),
-                    _refresh_path(app, client),
-                    _refresh_ferry(app, client),
+                    _bounded_refresh(cache["buses"], _refresh_buses(app, client)),
+                    _bounded_refresh(cache["subways"], _refresh_subways(app, client)),
+                    _bounded_refresh(cache["railroads"], _refresh_railroads(app, client)),
+                    _bounded_refresh(cache["path"], _refresh_path(app, client)),
+                    _bounded_refresh(cache["ferry"], _refresh_ferry(app, client)),
                 )
             except Exception:
                 logger.exception("feed poll cycle failed unexpectedly")
@@ -409,7 +466,11 @@ async def _poll_alerts(app: FastAPI) -> None:
     async with httpx.AsyncClient(timeout=30) as client:
         while True:
             try:
-                await _refresh_alerts(app, client)
+                # Same whole-task deadline as the feed refreshers (REFRESH_DEADLINE_S
+                # < the 60s alerts cadence): a trickling alerts feed can no longer
+                # wedge this loop forever, and a timeout keeps the last-known index
+                # via the existing _note_failure path.
+                await _bounded_refresh(app.state.alerts_cache, _refresh_alerts(app, client))
             except Exception:
                 logger.exception("alert poll cycle failed unexpectedly")
             await asyncio.sleep(ALERT_POLL_INTERVAL_S)

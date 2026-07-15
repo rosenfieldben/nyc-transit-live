@@ -122,9 +122,17 @@ STATIC_RETRY_S = 300  # module-level so tests can shorten it
 # timed-out attempt raises TimeoutError, which the warmups' existing `except Exception`
 # catches and drives down the same failed-then-retry path as any other load failure.
 #
-# WHY 120s (matching the inner transfer deadline, not the 20s poll cadence): a static
-# GTFS download is tens of MB and runs OFF the request path, retrying on failure, so a
-# generous ceiling is right; the goal is finiteness, not speed. NOTE the subway
+# WHY 300s, not 120s (the inner per-transfer deadline) and not the 20s poll cadence: a
+# static GTFS download is tens of MB and runs OFF the request path, retrying on failure,
+# so a generous ceiling is right; the goal is finiteness, not speed. It must exceed the
+# inner deadline with margin, because one legitimate attempt can incur MORE than one
+# 120s transfer: load_path_static re-downloads after an unusable/empty parse (a second
+# _download_zip in the same attempt), and load_railroad_static downloads LIRR and MNR
+# (concurrently, but each can itself re-download). If the outer ceiling equalled the
+# inner 120s, a healthy-but-slow attempt whose individual transfers each finished
+# within their own 120s could still be aborted by the outer timeout mid-second-download
+# and sent into a spurious retry. 300s clears two sequential 120s transfers plus the
+# parse between them, so only a genuinely wedged attempt is cut off. NOTE the subway
 # limit: load_subway_station_routes parses ~36 MB of stop_times in a THREAD
 # (asyncio.to_thread), and a Python thread cannot be force-cancelled, so this deadline
 # effectively bounds the DOWNLOAD and the inline parses (the parts that can trickle or
@@ -134,7 +142,7 @@ STATIC_RETRY_S = 300  # module-level so tests can shorten it
 # Kept here (the composition root) alongside STATIC_RETRY_S for the same reason: it is
 # the name tests shorten (monkeypatch.setattr(main, "STATIC_ATTEMPT_DEADLINE_S", ...)),
 # and the warmups read main.STATIC_ATTEMPT_DEADLINE_S so that patch stays effective.
-STATIC_ATTEMPT_DEADLINE_S = 120
+STATIC_ATTEMPT_DEADLINE_S = 300
 
 
 @asynccontextmanager

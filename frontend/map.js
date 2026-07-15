@@ -125,6 +125,14 @@ async function refreshAll() {
   // gates just this invocation's tail, never the next tick (a separate call gated
   // per-source), so an overlapping slow tick can no longer starve the loop.
   const fired = Object.values(sources).filter(shouldRefresh);
+  // If EVERY source is still in flight (fired is empty, e.g. a backend-wide slowdown
+  // has all five fetches trickling toward their deadline at once), there is no new
+  // poll result this tick, so skip the whole tail: repainting would either paint a
+  // false-green "updated <now>" over a hung map (no error is recorded until the
+  // in-flight fetches actually abort) or fire a duplicate popup refresh. The in-flight
+  // fetches hit their AbortSignal.timeout, record their errors, and a later tick whose
+  // fired set is non-empty (once they free up) repaints the honest state.
+  if (!fired.length) return;
   await Promise.all(fired.map(refreshSource));
   const counts = Object.values(sources)
     .map((s) => `${s.count.toLocaleString()} ${s.label}`)

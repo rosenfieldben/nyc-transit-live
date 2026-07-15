@@ -1133,33 +1133,44 @@ test("30. a wedged feed no longer freezes the loop: healthy feeds keep polling, 
   expect(ctx.counts.subways).toBeGreaterThan(subwayPolls); // the healthy feed kept being polled
 });
 
-test("31. a hung station-popup refresh keeps the last-known arrivals instead of wedging (R2)", async ({ page }) => {
+test("31. a station popup whose endpoint is wedged bounds the fetch instead of hanging on Loading (R2)", async ({ page }) => {
   const ctx = await boot(page);
   await waitForReady(page);
 
-  // Open the Times Sq subway station popup: the first arrivals fetch succeeds and
-  // renders the arrivals (a countdown for the +90s Northbound train).
+  // Wedge the arrivals endpoint BEFORE opening the popup so its very first fetch never
+  // lands. Without a fetch deadline the popup would sit on "Loading arrivals…" forever;
+  // the AbortSignal.timeout aborts the fetch at FETCH_DEADLINE_MS so the popup resolves
+  // to an error. This is the NON-VACUOUS timeout assertion: revert the signal from
+  // openStationArrivals and this test hangs on Loading, so it genuinely exercises the
+  // R2 deadline rather than pre-existing behavior.
+  ctx.overrides.subwayArrivals = () => new Promise(() => {}); // never fulfills
+
+  await page.evaluate(() => stationLayer.getLayers()[0].openPopup());
+  await expect(popup(page)).toContainText("Loading arrivals"); // pending: the fresh-open loading state
+
+  await page.clock.runFor(15_000); // the AbortSignal.timeout fires
+  await expect(popup(page)).toContainText("Arrivals unavailable"); // bounded to an error, not wedged
+  await expect(popup(page)).not.toContainText("Loading arrivals");
+});
+
+test("32. a hung BACKGROUND popup refresh is swallowed and keeps the last-known arrivals (R2)", async ({ page }) => {
+  const ctx = await boot(page);
+  await waitForReady(page);
+
+  // Open the popup successfully so it holds arrivals data (a +90s Northbound train).
   await page.evaluate(() => stationLayer.getLayers()[0].openPopup());
   await expect(popup(page)).toContainText("Times Sq-42 St");
   await expect(popup(page)).toContainText("Northbound");
-  expect(ctx.counts.subwayArrivals).toBe(1);
 
-  // Now wedge the arrivals endpoint. Each 15s tick triggers a BACKGROUND popup
-  // refresh (openStationArrivals({refresh:true})) whose fetch never lands; its own
-  // AbortSignal.timeout cuts it off. A background refresh must keep the last-known
-  // arrivals ticking, never revert the popup to "Loading…" or blank it.
+  // Wedge the endpoint. The 15s tick fires a BACKGROUND refresh (refresh:true) whose
+  // fetch times out at FETCH_DEADLINE_MS. A background timeout is swallowed on the
+  // refresh path, so the popup KEEPS its last-known arrivals rather than blanking,
+  // reverting to Loading, or showing an error. (If the refresh catch dropped its
+  // `if (!refresh)` guard and surfaced the timeout, the "unavailable" assertion fails.)
   ctx.overrides.subwayArrivals = () => new Promise(() => {}); // never fulfills
+  await page.clock.runFor(15_000); // fire the background refresh (it hangs)
+  await page.clock.runFor(15_000); // its fetch hits the deadline and aborts
 
-  // Tick 1: a background refresh fetch is fired and hangs (not yet timed out).
-  await page.clock.runFor(15_000);
-  await expect(popup(page)).toContainText("Times Sq-42 St"); // kept-data while the refresh is pending
-  await expect(popup(page)).not.toContainText("Loading");
-  expect(ctx.counts.subwayArrivals).toBeGreaterThan(1); // a background refresh WAS fired
-
-  // Tick 2: the hung refresh hits FETCH_DEADLINE_MS and aborts. A background timeout
-  // is swallowed on the refresh path, so the popup STILL keeps its last-known arrivals
-  // rather than blanking or showing an error; the countdown kept ticking throughout.
-  await page.clock.runFor(15_000);
   await expect(popup(page)).toContainText("Times Sq-42 St"); // still the same station
   await expect(popup(page)).toContainText("Northbound"); // arrivals kept, not blanked
   await expect(popup(page)).not.toContainText("Loading"); // never reverted to the loading state

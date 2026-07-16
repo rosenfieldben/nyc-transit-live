@@ -71,6 +71,20 @@ function isPlacedRailroad(t) {
 // Staleness threshold, mirroring the backend FEED_STALE_AFTER_S.
 const FEED_STALE_AFTER_S = 90;
 
+// Whole-fetch deadline for every live browser fetch (R2). The browser fetch has
+// no built-in whole-request timeout, so a wedged or trickling upstream would
+// otherwise leave a request pending forever; each fetch passes
+// AbortSignal.timeout(FETCH_DEADLINE_MS) so a stuck request is cut off and becomes
+// an ordinary failed poll (keep-last-known + the R1 staleness surfaces), never a
+// permanent hang. 15s matches the POLL_INTERVAL_MS cadence: a wedged source is
+// aborted at about the time the next tick fires, so it retries on a later tick
+// instead of holding a slot indefinitely. AbortSignal.timeout is a modern-baseline
+// API (Chromium-tested here; supported across current evergreen browsers). This
+// lives in helpers.js, loaded before every systems/*.js and map.js, so the constant
+// is in scope for the static loaders and the shared.js fetches at call time (a const
+// in map.js would not be a binding those earlier files can see).
+const FETCH_DEADLINE_MS = 15000;
+
 // Longitude is compressed by latitude; scale lon deltas so planar distances are
 // roughly isotropic across NYC. We only need internally consistent arc-length,
 // not true meters, so a single fixed factor at the city's latitude is plenty.
@@ -238,6 +252,17 @@ function emptyFeedDecision(emptyRunStart, fetchedAt) {
     return { applyEmpty: true, error: "feed empty", emptyRunStart: start };
   }
   return { applyEmpty: false, error: "feed empty, showing last known", emptyRunStart: start };
+}
+
+// Per-source refresh gate (R2). refreshAll fires a refresh only for sources that
+// are NOT already in flight, so a single slow source (bounded by its own
+// AbortSignal.timeout) can never starve the others the way the old whole-cycle
+// `refreshing` lock did. A source clears its own inFlight flag in refreshSource's
+// finally, so this stays a pure function of the descriptor: given the row, is it
+// eligible to be refreshed this tick. Pure and node-testable; the fetch/apply it
+// gates stays in map.js (browser fetch + DOM).
+function shouldRefresh(source) {
+  return !source.inFlight;
 }
 
 function _segLen(aLat, aLon, bLat, bLon) {
@@ -859,7 +884,7 @@ if (typeof module !== "undefined" && module.exports) {
     railroadArrivalsHtml, formatRailroadHead, ROUTE_ACCEPT_DIST, ROUTE_MAX_SLICE,
     indexAlerts, matchStationAlerts, matchRouteAlerts, bannerAlerts, alertsBlockHtml,
     RAILROAD_ROUTE_MAX_SLICE, RAILROAD_ROUTE_ACCEPT_DIST, RAILROAD_BUCKET_ORDER,
-    LINE_COLORS, DARK_TEXT_LINES, FEED_STALE_AFTER_S,
+    LINE_COLORS, DARK_TEXT_LINES, FEED_STALE_AFTER_S, FETCH_DEADLINE_MS, shouldRefresh,
     feedAgeLine, humanizeAge, alertsStale, ALERTS_STALE_AFTER_S,
     selectHeadwayBand, airtrainStationPopupHtml, retryUntil,
     PATH_BUCKET_ORDER, PATH_FALLBACK_COLOR, orderedPathBuckets, pathColor,

@@ -1098,3 +1098,81 @@ test("29. honest freshness: an alerts outage past the threshold shows the banner
   await page.evaluate(() => tickAlertBanner());
   await expect(banner).toContainText("alerts may be out of date");
 });
+
+test("30. a wedged feed no longer freezes the loop: healthy feeds keep polling, the hung one times out (R2)", async ({ page }) => {
+  // Wedge /api/buses so its fetch never lands. Under the OLD whole-cycle `refreshing`
+  // lock this kept `refreshing === true` forever, so every later 15s tick early-
+  // returned and the WHOLE map froze. With per-source inFlight only the bus feed is
+  // affected; the others keep polling, and the wedged fetch is cut off by its own
+  // AbortSignal.timeout (FETCH_DEADLINE_MS) instead of hanging indefinitely.
+  const ctx = await boot(page);
+  await waitForReady(page);
+  const status = page.locator("#status");
+
+  ctx.overrides.buses = () => new Promise(() => {}); // never fulfills -> hangs forever
+
+  // Tick 1: buses hangs; the subway feed drops to a single train (a visible change).
+  ctx.overrides.subways = (route, fixtures) =>
+    json(route, fixtures.envelope(fixtures.subways().data.slice(0, 1), fx.FROZEN_S + 15));
+  await page.clock.runFor(15_000);
+  // The healthy subway feed updated (2 -> 1) even though buses is wedged: the loop
+  // did NOT freeze. The bus markers stay last-known (their fetch never resolved).
+  await expect(trainMarkers(page)).toHaveCount(1);
+  await expect(busMarkers(page)).toHaveCount(2);
+  const subwayPolls = ctx.counts.subways;
+
+  // Tick 2: buses still wedged; subways back to two trains. The bus fetch started at
+  // tick 1 now hits FETCH_DEADLINE_MS (15s) and aborts, surfacing the hung feed's
+  // error (its R1 error state) in the status line while last-known markers stay put.
+  ctx.overrides.subways = (route, fixtures) => json(route, fixtures.subways());
+  await page.clock.runFor(15_000);
+  await expect(trainMarkers(page)).toHaveCount(2); // a later tick still polled the healthy feed
+  await expect(status).toContainText("timed out"); // the wedged feed timed out and surfaced it
+  await expect(status).toHaveClass(/error/);
+  await expect(busMarkers(page)).toHaveCount(2); // last-known kept, never blanked
+  expect(ctx.counts.subways).toBeGreaterThan(subwayPolls); // the healthy feed kept being polled
+});
+
+test("31. a station popup whose endpoint is wedged bounds the fetch instead of hanging on Loading (R2)", async ({ page }) => {
+  const ctx = await boot(page);
+  await waitForReady(page);
+
+  // Wedge the arrivals endpoint BEFORE opening the popup so its very first fetch never
+  // lands. Without a fetch deadline the popup would sit on "Loading arrivals…" forever;
+  // the AbortSignal.timeout aborts the fetch at FETCH_DEADLINE_MS so the popup resolves
+  // to an error. This is the NON-VACUOUS timeout assertion: revert the signal from
+  // openStationArrivals and this test hangs on Loading, so it genuinely exercises the
+  // R2 deadline rather than pre-existing behavior.
+  ctx.overrides.subwayArrivals = () => new Promise(() => {}); // never fulfills
+
+  await page.evaluate(() => stationLayer.getLayers()[0].openPopup());
+  await expect(popup(page)).toContainText("Loading arrivals"); // pending: the fresh-open loading state
+
+  await page.clock.runFor(15_000); // the AbortSignal.timeout fires
+  await expect(popup(page)).toContainText("Arrivals unavailable"); // bounded to an error, not wedged
+  await expect(popup(page)).not.toContainText("Loading arrivals");
+});
+
+test("32. a hung BACKGROUND popup refresh is swallowed and keeps the last-known arrivals (R2)", async ({ page }) => {
+  const ctx = await boot(page);
+  await waitForReady(page);
+
+  // Open the popup successfully so it holds arrivals data (a +90s Northbound train).
+  await page.evaluate(() => stationLayer.getLayers()[0].openPopup());
+  await expect(popup(page)).toContainText("Times Sq-42 St");
+  await expect(popup(page)).toContainText("Northbound");
+
+  // Wedge the endpoint. The 15s tick fires a BACKGROUND refresh (refresh:true) whose
+  // fetch times out at FETCH_DEADLINE_MS. A background timeout is swallowed on the
+  // refresh path, so the popup KEEPS its last-known arrivals rather than blanking,
+  // reverting to Loading, or showing an error. (If the refresh catch dropped its
+  // `if (!refresh)` guard and surfaced the timeout, the "unavailable" assertion fails.)
+  ctx.overrides.subwayArrivals = () => new Promise(() => {}); // never fulfills
+  await page.clock.runFor(15_000); // fire the background refresh (it hangs)
+  await page.clock.runFor(15_000); // its fetch hits the deadline and aborts
+
+  await expect(popup(page)).toContainText("Times Sq-42 St"); // still the same station
+  await expect(popup(page)).toContainText("Northbound"); // arrivals kept, not blanked
+  await expect(popup(page)).not.toContainText("Loading"); // never reverted to the loading state
+  await expect(popup(page)).not.toContainText("unavailable"); // a timed-out background refresh stays quiet
+});

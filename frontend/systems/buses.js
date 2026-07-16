@@ -90,7 +90,13 @@ async function toggleBusRoute(bus, marker) {
 
   let geometry;
   try {
-    const res = await fetch(`/api/bus-route/${encodeURIComponent(bus.route_id)}`);
+    // AbortSignal.timeout bounds this click-driven fetch too (R2). Like the station
+    // popup, the timeout (a fetch that never lands) is orthogonal to the busRouteSeq
+    // guard (a fetch superseded by a newer click/clear); an abort rejects into the
+    // catch below and shows the same "unavailable" note a network error does.
+    const res = await fetch(`/api/bus-route/${encodeURIComponent(bus.route_id)}`, {
+      signal: AbortSignal.timeout(FETCH_DEADLINE_MS),
+    });
     if (requestId !== busRouteSeq) return; // superseded by a newer click/clear
     if (!res.ok) {
       const body = await res.json().catch(() => null);

@@ -22,7 +22,7 @@ function ferryColorFor(routeId) {
 async function loadFerryRoutes() {
   let routes;
   try {
-    const res = await fetch("/api/ferry-routes");
+    const res = await fetch("/api/ferry-routes", { signal: AbortSignal.timeout(FETCH_DEADLINE_MS) });
     if (!res.ok) return false; // warming 503 (or transient error): retry
     routes = await res.json();
   } catch {
@@ -54,7 +54,7 @@ async function loadFerryRoutes() {
 async function loadFerryStops() {
   let stops;
   try {
-    const res = await fetch("/api/ferry-stops");
+    const res = await fetch("/api/ferry-stops", { signal: AbortSignal.timeout(FETCH_DEADLINE_MS) });
     if (!res.ok) return false; // warming 503 (or transient error): retry
     stops = await res.json();
   } catch {

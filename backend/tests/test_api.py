@@ -1753,6 +1753,123 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
         assert task.done()
 
 
+# ---------------- whole-request deadlines (R2) ----------------
+
+
+async def test_poll_cycle_deadline_bounds_a_wedged_refresh(monkeypatch, cache):
+    # R2: a single upstream that never completes must not freeze the whole cycle.
+    # httpx's per-read timeout can't stop a trickle, so each refresh runs under its
+    # own REFRESH_DEADLINE_S inside the gather. Wedge the bus feed (it fills once,
+    # then blocks forever) and assert: the healthy systems keep advancing across
+    # cycles, and the wedged one records a sanitized 504 while KEEPING its last-known
+    # data. Shrink the deadline + cadence so this resolves in well under a second.
+    import pollers
+
+    monkeypatch.setattr(pollers, "REFRESH_DEADLINE_S", 0.2)
+    monkeypatch.setattr(pollers, "POLL_INTERVAL_S", 0.01)
+
+    app = app_module.app
+    app.state.subway_stops = {"101N": {"name": "Alpha", "lat": 40.7, "lon": -74.0}}
+    app.state.path_stops = {}  # PATH takes its warming shortcut (no path_identity needed)
+    app.state.ferry_static_status = "loading"  # ferry takes its warming shortcut too
+
+    hang = asyncio.Event()  # never set: the bus fetch blocks on it forever
+    calls = {"bus": 0}
+
+    async def bus_fetch(client):
+        calls["bus"] += 1
+        if calls["bus"] == 1:
+            return BUSES, 1000.0  # first cycle fills the cache (the last-known data)
+        await hang.wait()  # every later cycle wedges past the deadline
+
+    async def sub_fetch(stops, client):
+        return TRAINS, {}, 1001.0, []
+
+    async def rr_fetch(client, stops):
+        return RAILROADS, {}, 1002.0, []
+
+    monkeypatch.setattr(app_module, "fetch_vehicle_positions", bus_fetch)
+    monkeypatch.setattr(app_module, "fetch_subway_trains", sub_fetch)
+    monkeypatch.setattr(app_module, "fetch_railroad_trains", rr_fetch)
+
+    task = asyncio.create_task(pollers._poll_feeds(app))
+    try:
+        for _ in range(300):  # wait for cycle 1 to fill the bus cache
+            if cache["buses"]["data"] is not None:
+                break
+            await asyncio.sleep(0.005)
+        assert cache["buses"]["data"] == BUSES
+        assert cache["subways"]["data"] == TRAINS
+        bus_fetched_at = cache["buses"]["fetched_at"]
+        subways_fetched_at = cache["subways"]["fetched_at"]
+
+        for _ in range(300):  # wait for a later cycle to time the bus refresh out
+            if cache["buses"]["error"] and cache["subways"]["fetched_at"] > subways_fetched_at:
+                break
+            await asyncio.sleep(0.005)
+
+        # The wedged system: a sanitized 504, last-known data kept, poll time held.
+        assert cache["buses"]["error"]["status"] == 504
+        assert "deadline" in cache["buses"]["error"]["detail"]
+        assert "http" not in cache["buses"]["error"]["detail"].lower()  # no URL leak
+        assert cache["buses"]["data"] == BUSES  # last-known kept
+        assert cache["buses"]["fetched_at"] == bus_fetched_at  # a failed poll never advances it
+        # The healthy systems finished their cycles and kept advancing (the whole
+        # cycle was NOT frozen by the wedged bus feed).
+        assert cache["subways"]["data"] == TRAINS
+        assert cache["subways"]["fetched_at"] > subways_fetched_at
+        assert cache["railroads"]["data"] == RAILROADS
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_alerts_loop_deadline_bounds_a_wedged_refresh(monkeypatch):
+    # R2: the alerts loop gets the same whole-task deadline (REFRESH_DEADLINE_S is
+    # under the 60s alerts cadence). Wedge the alerts fetch after it fills once and
+    # assert the loop records a sanitized 504 while keeping the last-known index.
+    import pollers
+
+    monkeypatch.setattr(pollers, "REFRESH_DEADLINE_S", 0.2)
+    monkeypatch.setattr(pollers, "ALERT_POLL_INTERVAL_S", 0.01)
+
+    app = app_module.app
+    app.state.alerts_cache = app_module._fresh_alerts_entry()
+
+    hang = asyncio.Event()
+    calls = {"n": 0}
+
+    async def alerts_fetch(client):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return [], 0, []  # a successful empty poll fills the index
+        await hang.wait()  # every later poll wedges past the deadline
+
+    monkeypatch.setattr(app_module, "fetch_service_alerts", alerts_fetch)
+
+    task = asyncio.create_task(pollers._poll_alerts(app))
+    try:
+        for _ in range(300):  # wait for the first poll to fill the index
+            if app.state.alerts_cache["fetched_at"] is not None:
+                break
+            await asyncio.sleep(0.005)
+        assert app.state.alerts_cache["alerts"] == []
+        fetched_at = app.state.alerts_cache["fetched_at"]
+
+        for _ in range(300):  # wait for a later poll to time out
+            if app.state.alerts_cache["error"]:
+                break
+            await asyncio.sleep(0.005)
+
+        assert app.state.alerts_cache["error"]["status"] == 504
+        assert "deadline" in app.state.alerts_cache["error"]["detail"]
+        assert app.state.alerts_cache["alerts"] == []  # last-known index kept
+        assert app.state.alerts_cache["fetched_at"] == fetched_at  # not advanced by the failed poll
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
 # ---------------- background static warmup state machine ----------------
 
 SUBWAY_STOPS = {"101N": {"name": "Alpha", "lat": 40.7, "lon": -74.0}}
@@ -1838,6 +1955,48 @@ async def test_subway_static_warmup_cancels_cleanly_during_retry_sleep(monkeypat
     # Finishes well within STATIC_RETRY_S (3600s); wait_for raises if it hung.
     await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), timeout=5)
     assert task.cancelled()
+
+
+async def test_subway_static_warmup_attempt_deadline_then_recovers(monkeypatch):
+    # R2: a warmup attempt that never completes must not stall the retry loop
+    # forever. The load runs under STATIC_ATTEMPT_DEADLINE_S; a timeout raises
+    # TimeoutError, which the existing `except Exception` catches and drives down the
+    # same failed -> retry path as any other load failure. Shrink the attempt
+    # deadline (and the retry interval) so the first attempt times out fast, then let
+    # the retry succeed. Mirrors test_subway_static_warmup_retries_after_failure but
+    # the failure is a DEADLINE, not a raised error.
+    monkeypatch.setattr(app_module, "STATIC_ATTEMPT_DEADLINE_S", 0.05)
+    monkeypatch.setattr(app_module, "STATIC_RETRY_S", 0.01)
+    gate = {"ok": False}
+    hang = asyncio.Event()  # never set: the first attempt blocks past the deadline
+
+    async def gated_stops():
+        if not gate["ok"]:
+            await hang.wait()  # exceeds STATIC_ATTEMPT_DEADLINE_S -> TimeoutError
+        return SUBWAY_STOPS
+
+    monkeypatch.setattr(app_module, "load_subway_stops", gated_stops)
+    monkeypatch.setattr(app_module, "load_subway_route_shapes", lambda: [])
+    monkeypatch.setattr(app_module, "load_subway_stations", lambda: {})
+    monkeypatch.setattr(app_module, "load_subway_station_routes", lambda: {})  # hermetic
+    app = _fake_app(subway_static_status="loading")
+    task = asyncio.create_task(app_module._warm_subway_static(app))
+    try:
+        for _ in range(200):  # wait until the first attempt has TIMED OUT into failed
+            if app.state.subway_static_status == "failed":
+                break
+            await asyncio.sleep(0.005)
+        assert app.state.subway_static_status == "failed"
+        gate["ok"] = True  # let the next retry complete within the deadline
+        for _ in range(200):
+            if app.state.subway_static_status == "ready":
+                break
+            await asyncio.sleep(0.005)
+        assert app.state.subway_static_status == "ready"
+        assert app.state.subway_stops == SUBWAY_STOPS
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 async def test_subway_refresh_warming_does_not_log_per_poll(client, cache, caplog):

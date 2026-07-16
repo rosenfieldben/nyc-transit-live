@@ -12,7 +12,7 @@ const railroadRouteNames = new Map();
 async function loadRailroadRoutes() {
   let routes;
   try {
-    const res = await fetch("/api/railroad-routes");
+    const res = await fetch("/api/railroad-routes", { signal: AbortSignal.timeout(FETCH_DEADLINE_MS) });
     if (!res.ok) return false; // warming 503 (or transient error): retry
     routes = await res.json();
   } catch {
@@ -56,7 +56,7 @@ async function loadRailroadRoutes() {
 async function loadRailroadStations() {
   let stations;
   try {
-    const res = await fetch("/api/railroad-stops");
+    const res = await fetch("/api/railroad-stops", { signal: AbortSignal.timeout(FETCH_DEADLINE_MS) });
     if (!res.ok) return false; // warming 503 (or transient error): retry
     stations = await res.json();
   } catch {

@@ -112,6 +112,38 @@ FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 # read main.STATIC_RETRY_S so that patch stays effective.
 STATIC_RETRY_S = 300  # module-level so tests can shorten it
 
+# Whole-ATTEMPT deadline for one static warmup (see warmups._warm_*). Each downloader
+# already wraps just its transfer in its own asyncio.timeout(_DOWNLOAD_DEADLINE_S)
+# (static_data / railroad_static / path_static / ferry_static); this is the OUTER
+# ceiling on a whole attempt, so a warmup that wedges anywhere the transfer deadline
+# does not cover (a redirect chain, a second download, an inline parse that awaits)
+# still cannot stall its retry loop forever. Both layers stay: the inner one gives a
+# clean per-transfer failure, this one is the backstop over the whole attempt. A
+# timed-out attempt raises TimeoutError, which the warmups' existing `except Exception`
+# catches and drives down the same failed-then-retry path as any other load failure.
+#
+# WHY 300s, not 120s (the inner per-transfer deadline) and not the 20s poll cadence: a
+# static GTFS download is tens of MB and runs OFF the request path, retrying on failure,
+# so a generous ceiling is right; the goal is finiteness, not speed. It must exceed the
+# inner deadline with margin, because one legitimate attempt can incur MORE than one
+# 120s transfer: load_path_static re-downloads after an unusable/empty parse (a second
+# _download_zip in the same attempt), and load_railroad_static downloads LIRR and MNR
+# (concurrently, but each can itself re-download). If the outer ceiling equalled the
+# inner 120s, a healthy-but-slow attempt whose individual transfers each finished
+# within their own 120s could still be aborted by the outer timeout mid-second-download
+# and sent into a spurious retry. 300s clears two sequential 120s transfers plus the
+# parse between them, so only a genuinely wedged attempt is cut off. NOTE the subway
+# limit: load_subway_station_routes parses ~36 MB of stop_times in a THREAD
+# (asyncio.to_thread), and a Python thread cannot be force-cancelled, so this deadline
+# effectively bounds the DOWNLOAD and the inline parses (the parts that can trickle or
+# await), not that thread parse, whose await may be abandoned while the thread runs to
+# completion in the background. That is acceptable: a CPU-bound parse finishes on its
+# own; it is the network transfer that can hang indefinitely, and that is bounded.
+# Kept here (the composition root) alongside STATIC_RETRY_S for the same reason: it is
+# the name tests shorten (monkeypatch.setattr(main, "STATIC_ATTEMPT_DEADLINE_S", ...)),
+# and the warmups read main.STATIC_ATTEMPT_DEADLINE_S so that patch stays effective.
+STATIC_ATTEMPT_DEADLINE_S = 300
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

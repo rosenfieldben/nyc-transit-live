@@ -948,7 +948,9 @@ def _status_json(**overrides):
         "path_static": "ready",
         "ferry_static": "ready",
         "feeds": {"subway": {"age_s": 5.0}, "buses": {"age_s": 8.0}},
-        "alerts": {"degraded_systems": []},
+        # age_s is part of a healthy alerts payload: the poll-level age is what
+        # catches a TOTAL outage, where the per-system map freezes and looks fine.
+        "alerts": {"age_s": 30.0, "degraded_systems": []},
     }
     base.update(overrides)
     return json.dumps(base).encode()
@@ -1103,13 +1105,51 @@ def test_production_feed_age_bands_at_the_exact_edges(age, expected):
     assert feedline.status == getattr(cm, expected)
 
 
-@pytest.mark.parametrize("age", [None, "recent", True], ids=["null", "string", "bool"])
-def test_production_feed_without_a_usable_age_is_fail(age):
-    # A feed present in the payload but carrying no numeric age has never polled, or
-    # the field changed shape. Either way that is a deploy regression, so it fails at
-    # once rather than being folded into the staleness bands. True is excluded
-    # explicitly because bool is a subclass of int and would otherwise read as age 1.
+def test_production_never_polled_feed_is_warn_not_a_permanent_fail():
+    # REVIEW FIX (was a critical false FAIL): age_s is null exactly when fetched_at is
+    # None, i.e. the feed has NEVER had a successful poll. A deployment carrying no
+    # bus API key serves buses.age_s = null FOREVER, and the app supports that
+    # explicitly (the README promises a missing key does not take down the map, and
+    # /healthz stays healthy). Failing on it painted a healthy deployment red on
+    # every 6-hourly run, indefinitely. It is also boot-order dependent: the same
+    # upstream outage walks PASS -> WARN -> FAIL if it starts AFTER boot.
+    feeds_map = {"subway": {"age_s": 5.0}, "buses": {"age_s": None}}
+    fetch = FakeFetcher({"https://app.example/api/status": _status_json(feeds=feeds_map)})
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
+    feedline = next(r for r in results if r.name == "production:feeds")
+    assert feedline.status == cm.WARN
+    assert "never polled" in feedline.detail and "buses" in feedline.detail
+
+
+def test_production_no_feed_has_ever_polled_is_fail():
+    # The other side of that line: EVERY feed unpolled is not a tolerated subset, it
+    # means the cache never populated at all, which really is a broken startup.
+    feeds_map = {"subway": {"age_s": None}, "buses": {"age_s": None}}
+    fetch = FakeFetcher({"https://app.example/api/status": _status_json(feeds=feeds_map)})
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
+    feedline = next(r for r in results if r.name == "production:feeds")
+    assert feedline.status == cm.FAIL
+    assert "ever polled" in feedline.detail
+
+
+@pytest.mark.parametrize("age", ["recent", True, [], {}], ids=["string", "bool", "list", "dict"])
+def test_production_feed_with_a_nonnumeric_age_is_fail(age):
+    # Present but not a number: the field changed shape, a real payload regression
+    # (distinct from the null above). True is excluded explicitly because bool is a
+    # subclass of int and would otherwise read as age 1.
     feeds_map = {"subway": {"age_s": 5.0}, "buses": {"age_s": age}}
+    fetch = FakeFetcher({"https://app.example/api/status": _status_json(feeds=feeds_map)})
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
+    feedline = next(r for r in results if r.name == "production:feeds")
+    assert feedline.status == cm.FAIL
+    assert "buses" in feedline.detail
+
+
+def test_production_negative_feed_age_is_fail_not_silently_fresh():
+    # REVIEW FIX: a negative age means fetched_at is AHEAD of served_at (a clock step
+    # or a restored backup). Without an explicit check it passes every band and reads
+    # as fresh, which is the monitor going BLIND rather than loud.
+    feeds_map = {"subway": {"age_s": 5.0}, "buses": {"age_s": -4000.0}}
     fetch = FakeFetcher({"https://app.example/api/status": _status_json(feeds=feeds_map)})
     results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
     feedline = next(r for r in results if r.name == "production:feeds")
@@ -1121,6 +1161,7 @@ def test_production_degraded_alerts_is_warn_while_alerts_are_retained():
     # Still a WARN: the backend carries a down system's last-known alerts forward,
     # so riders keep seeing them and the outage is covered.
     alerts = {
+        "age_s": 30.0,  # the poll itself is healthy; the per-system fields are what vary
         "degraded_systems": ["LIRR"],
         "systems": {"LIRR": {"fresh_at": 900.0, "retained_since": 900.0, "last_error": {}}},
     }
@@ -1137,6 +1178,7 @@ def test_production_alerts_retained_past_the_horizon_is_fail():
     # alerts, so the coverage the WARN was predicated on is gone: riders now see
     # nothing for that system, which is a FAIL.
     alerts = {
+        "age_s": 30.0,  # the poll itself is healthy; the per-system fields are what vary
         "degraded_systems": ["LIRR"],
         "systems": {"LIRR": {"fresh_at": 900.0, "retained_since": 900.0, "last_error": {}}},
     }
@@ -1154,6 +1196,7 @@ def test_production_degraded_system_stale_without_retention_clock_is_fail():
     # A system failing without ever establishing a retention clock: retained_since is
     # null, so rule 1 cannot catch it; the fresh_at edge does.
     alerts = {
+        "age_s": 30.0,  # the poll itself is healthy; the per-system fields are what vary
         "degraded_systems": ["MNR"],
         "systems": {"MNR": {"fresh_at": 100.0, "retained_since": None, "last_error": {}}},
     }
@@ -1165,12 +1208,62 @@ def test_production_degraded_system_stale_without_retention_clock_is_fail():
     assert alertline.status == cm.FAIL and "MNR" in alertline.detail
 
 
+def test_production_total_alerts_outage_is_fail_not_pass():
+    # REVIEW FIX (was a high-severity blind spot): on the all-feeds-failed path,
+    # pollers._refresh_alerts records the poll error and RETURNS before touching
+    # `health`, so degraded_systems comes back EMPTY and every per-system field stays
+    # frozen at its last healthy value. Reading only the per-system data therefore
+    # reported PASS during a total alerts outage. The poll's own age_s is the only
+    # field that moves, so it is checked first.
+    alerts = {
+        "age_s": 99000.0,  # the poll itself has not succeeded in a day
+        "last_error": {"status": 502, "detail": "alert feed unavailable"},
+        "degraded_systems": [],  # frozen: looks healthy
+        "systems": {"subway": {"fresh_at": 1000.0, "retained_since": None, "last_error": None}},
+    }
+    fetch = FakeFetcher(
+        {"https://app.example/api/status": _status_json(alerts=alerts, served_at=100000.0)}
+    )
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
+    alertline = next(r for r in results if r.name == "production:alerts")
+    assert alertline.status == cm.FAIL
+    assert "frozen" in alertline.detail  # and it says WHY the per-system data lied
+
+
+def test_production_degraded_system_that_never_decoded_is_fail():
+    # REVIEW FIX (high): a system broken since process start has fresh_at = null, so
+    # the isinstance guard skipped exactly that case and left it permanently WARN,
+    # unable to ever escalate. There are no retained alerts protecting riders here
+    # and no retention clock either, so it is the worst state to be lenient about.
+    alerts = {
+        "age_s": 30.0,
+        "degraded_systems": ["ferry"],
+        "systems": {"ferry": {"fresh_at": None, "retained_since": None, "last_error": {}}},
+    }
+    fetch = FakeFetcher(
+        {"https://app.example/api/status": _status_json(alerts=alerts, served_at=2000.0)}
+    )
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
+    alertline = next(r for r in results if r.name == "production:alerts")
+    assert alertline.status == cm.FAIL
+    assert "never decoded" in alertline.detail
+
+
+def test_production_missing_alerts_object_is_fail():
+    # The app always emits this object; PASS here would report health never checked.
+    fetch = FakeFetcher({"https://app.example/api/status": _status_json(alerts=None)})
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
+    alertline = next(r for r in results if r.name == "production:alerts")
+    assert alertline.status == cm.FAIL
+
+
 def test_production_alerts_without_served_at_do_not_fail_on_age():
     # No served_at means no skew-free way to age the deployment's timestamps, and a
     # monitor must not FAIL on a number it cannot compute honestly. It degrades to
     # the WARN the degraded list alone justifies (an older backend, or a proxy that
     # stripped the field, must not turn the run red on arithmetic it cannot do).
     alerts = {
+        "age_s": 30.0,  # healthy poll age, so the check reaches the served_at logic
         "degraded_systems": ["LIRR"],
         "systems": {"LIRR": {"fresh_at": 1.0, "retained_since": 1.0}},  # ancient
     }
@@ -1178,23 +1271,38 @@ def test_production_alerts_without_served_at_do_not_fail_on_age():
     results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
     alertline = next(r for r in results if r.name == "production:alerts")
     assert alertline.status == cm.WARN
+    # Pin the BRANCH, not just the status: this must be the "could not check" WARN,
+    # naming the missing field, and not the ordinary retained-grace WARN. Otherwise a
+    # regression that silently aged against the runner clock would still read WARN
+    # here and the test would not notice.
+    assert "served_at missing" in alertline.detail
+    assert "LIRR" in alertline.detail
 
 
 def test_production_alert_ages_use_served_at_not_the_runner_clock():
     # fresh_at and retained_since are stamped by the DEPLOYMENT, so they must be
-    # compared against the payload's own served_at. Here the runner's clock is wildly
-    # skewed from the deployment's; a check that mixed them would compute a ~1e6s age
-    # and fail. Same-clock pairs only, matching the app's own freshness discipline.
+    # compared against the payload's own served_at. Same-clock pairs only, matching
+    # the app's own freshness discipline.
+    #
+    # The runner clock here is deliberately FAR AHEAD of the deployment's, which is
+    # what makes this test non-vacuous: any substitution of `now` for served_at
+    # computes an age of ~5e6s, blows past the 1800s horizon, and FAILs. (An
+    # earlier version of this test put the deployment stamps in the runner's future,
+    # so mixing clocks produced a NEGATIVE age that sailed under the horizon and the
+    # test passed either way.)
     alerts = {
+        "age_s": 30.0,  # healthy poll age, so the check reaches the served_at logic
         "degraded_systems": ["LIRR"],
-        "systems": {"LIRR": {"fresh_at": 999_000.0, "retained_since": 999_000.0}},
+        "systems": {"LIRR": {"fresh_at": 100.0, "retained_since": 100.0}},
     }
     fetch = FakeFetcher(
-        {"https://app.example/api/status": _status_json(alerts=alerts, served_at=999_100.0)}
+        {"https://app.example/api/status": _status_json(alerts=alerts, served_at=200.0)}
     )
-    results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")  # now=1000
+    results = cm.check_production(fetch, NO_SLEEP, 5_000_000.0, "https://app.example")
     alertline = next(r for r in results if r.name == "production:alerts")
     assert alertline.status == cm.WARN  # 100s of retention, nowhere near the horizon
+    assert "still retained" in alertline.detail  # the grace message, not an expiry
+    assert "coverage lost" not in alertline.detail
 
 
 def test_production_non_200_is_fail():
@@ -1285,6 +1393,11 @@ def test_exit_code_is_zero_for_all_warn_and_one_for_any_fail(monkeypatch, tmp_pa
 
     monkeypatch.setattr(cm, "make_httpx_fetcher", fake_fetcher)
     monkeypatch.setattr(cm.time, "sleep", lambda _s: None)
+    # Unset before the FIRST main() call, not just before step 3: this suite runs
+    # inside Actions, where GITHUB_STEP_SUMMARY points at the real job summary file,
+    # and every main() below would otherwise append three synthetic result tables to
+    # the CI run's own summary.
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
 
     # 1. An all-WARN run exits 0. Force one by stubbing run_all to a WARN-only list,
     #    which keeps the assertion about main()'s exit rule rather than about which

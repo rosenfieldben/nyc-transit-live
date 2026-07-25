@@ -464,7 +464,7 @@ the logs and the job summary without failing the run.
 Config:
 
 - `MONITOR_STATUS_URL` (a repository **variable**) is **required**. Set it under
-  Settings → Secrets and variables → Actions → Variables. Either form works: the
+  Settings -> Secrets and variables -> Actions -> Variables. Either form works: the
   deployment's base URL (`https://your-app.up.railway.app`) or the full status URL
   (`https://your-app.up.railway.app/api/status`), with or without a trailing slash.
   Leaving it unset is a `FAIL`, not a skip: an unmonitored deployment must not be
@@ -482,11 +482,23 @@ The production section's bands are deliberately two-tiered so the red light stay
 meaningful. A static group in any state but `ready` is a `FAIL`, because a mode
 that is not ready is dark for riders. A feed's poll age is a `PASS` under 10
 minutes, a `WARN` from 10 to 30 (upstream blips at that scale recover on their
-own), and a `FAIL` past 30; a feed present but reporting no age at all, or no feeds
-reported whatsoever, is a `FAIL` at once, since that is a deploy regression rather
-than an upstream mood. A degraded alert system stays a `WARN` while the backend is
-still carrying its alerts forward, and becomes a `FAIL` once that retention horizon
-has passed and riders are genuinely seeing nothing for it.
+own), and a `FAIL` past 30.
+
+Two things are a `FAIL` immediately rather than aging into a threshold, because
+they are deploy regressions rather than upstream moods: no feeds reported at all,
+and an age that is present but unusable (a non-number, or a negative value, which
+means the deployment's clock stepped). A feed reporting a **null** age has simply
+never had a successful poll, which is not the same thing and is only a `WARN`: a
+deployment with no bus API key serves `buses.age_s = null` forever by design, and
+failing on it would paint a healthy map red on every run. When **every** feed is
+null, though, nothing has ever polled, the cache never populated, and that is the
+broken startup, so it fails.
+
+A degraded alert system stays a `WARN` while the backend is still carrying its
+alerts forward, and becomes a `FAIL` once that retention horizon has passed and
+riders are genuinely seeing nothing for it. The alerts poll's own age is checked
+first and on the same band, because on a total alerts outage the per-system health
+map freezes at its last healthy values and would otherwise read green.
 
 ## Build phases
 

@@ -50,9 +50,19 @@ jobs:
       - name: Run contract monitor
         working-directory: backend
         env:
-          # Repository variable pointing at the deployment base URL (the monitor
-          # appends /api/status). When unset, the production section WARN-skips.
+          # Repository variable holding the deployment base URL, or the full
+          # /api/status URL (both forms accepted). REQUIRED: when unset, the
+          # production section FAILs and the run exits 1, because an unmonitored
+          # deployment must not be able to look the same as a healthy one.
           MONITOR_STATUS_URL: ${{ vars.MONITOR_STATUS_URL }}
+          # The deliberate opt-out for a fork or a run with no deployment: any
+          # non-empty value turns the section into an explicit WARN instead. This
+          # mapping is REQUIRED for the opt-out to work at all. Actions does not
+          # export repository variables into the process environment; only the names
+          # listed in this block reach it, so without this line the variable the
+          # README documents (and the FAIL message itself recommends) would be inert
+          # and the FAIL would be inescapable in CI.
+          MONITOR_SKIP_PRODUCTION: ${{ vars.MONITOR_SKIP_PRODUCTION }}
           # Optional secret for the keyed bus feed. When unset, the bus check
           # WARN-skips (it cannot reach the feed without a key).
           MTA_BUS_API_KEY: ${{ secrets.MTA_BUS_API_KEY }}

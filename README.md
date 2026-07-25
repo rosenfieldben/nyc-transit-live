@@ -401,9 +401,13 @@ steady, each with ±10% jitter), while `railway.json` sets `healthcheckTimeout` 
 300s. The schedule as a whole is unbounded on purpose (it keeps retrying a genuinely
 down upstream forever, at the 300s steady rung); what has to fit in the window is the
 *early* part, so that a transient first-attempt failure gets more attempts before the
-deploy is judged. Concretely, the first two retries land 15s and 45s in, comfortably
-inside 300s. The retry interval used to be a flat 300s, which matched the window
-exactly and so gave a cold-start blip no real second chance at all.
+deploy is judged. Concretely, the first two retries are scheduled 15s and then 30s
+after the attempt before them fails, so with attempts that fail fast (a refused
+connection, a DNS miss, the cold-start case these rungs exist for) both land inside
+300s. The retry interval used to be a flat 300s, which matched the window exactly and
+so gave a cold-start blip no real second chance at all. Note the *sleeps* are what
+this schedule governs: a slow attempt can still consume the window on its own, which
+is `STATIC_ATTEMPT_DEADLINE_S`'s job to bound, not this one's.
 
 The coupling runs both ways: lengthening the early rungs requires raising
 `healthcheckTimeout`, and lowering `healthcheckTimeout` requires shortening them.

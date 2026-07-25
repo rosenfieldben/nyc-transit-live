@@ -70,8 +70,8 @@ from feeds.shared import (
 # REALTIME endpoints of THIS process only. Three other places hold the same host:
 # the ferry ALERT feed (feeds/alerts.py), the 14a static utility URL
 # (ferry_static.py), and the contract monitor's own _FERRY_RT_BASE
-# (scripts/contract_monitor.py), which polls the tripupdate endpoint on its own
-# schedule and already carries a FOLLOWUP to import from here instead. So pointing
+# (scripts/contract_monitor.py), which polls the alert AND tripupdate endpoints off
+# it on its own schedule and already carries a FOLLOWUP to import from here. So pointing
 # this at a mirror does NOT redirect any of them; folding the monitor onto this
 # constant is R4 work, deliberately not smuggled in here.
 FERRY_RT_BASE = os.getenv(
@@ -298,21 +298,37 @@ async def _fetch_ferry_endpoint(client: httpx.AsyncClient, endpoint: str) -> byt
     endpoints may too). httpx.HTTPError propagates for the caller to record, and a
     DecodeError on the body surfaces later, at the decode, exactly like the other
     single-fetch feeds."""
+    url = f"{FERRY_RT_BASE}/{endpoint}"
     try:
-        resp = await client.get(f"{FERRY_RT_BASE}/{endpoint}", follow_redirects=True)
-    except httpx.InvalidURL as exc:
-        # A malformed FERRY_RT_BASE is now reachable because the base is operator
-        # config, and httpx.InvalidURL is NOT an httpx.HTTPError (it derives
-        # straight from Exception), so it would sail past every ferry handler:
-        # _refresh_ferry catches httpx.HTTPError and DecodeError, _bounded_refresh
-        # catches TimeoutError, and it would land in the poll loop's generic
-        # "cycle failed unexpectedly" log while the cache recorded NOTHING. That is
-        # the same silent-failure shape this PR deletes elsewhere, so re-raise it
-        # as a RequestError (an HTTPError) carrying the reason: a config typo then
-        # shows up as an honest recorded feed error in /api/status instead of a
-        # traceback every poll. The value is read once at import, so this repeats
-        # until the config is fixed, which is exactly the intended loudness.
-        raise httpx.RequestError(f"Invalid FERRY_RT_BASE ({FERRY_RT_BASE!r}): {exc}") from exc
+        resp = await client.get(url, follow_redirects=True)
+    except httpx.HTTPError:
+        # Already a recordable feed error (connect, timeout, protocol, status):
+        # _refresh_ferry catches these, so let them through untouched.
+        raise
+    except Exception as exc:
+        # Everything else here is a MALFORMED-URL failure, reachable because the
+        # base is operator config. None of those classes is an httpx.HTTPError, so
+        # unconverted they sail past every ferry handler (_refresh_ferry catches
+        # httpx.HTTPError and DecodeError, _bounded_refresh catches TimeoutError)
+        # and land in the poll loop's generic "cycle failed unexpectedly" while the
+        # cache records NOTHING: the same silent-failure shape this PR deletes
+        # elsewhere, reintroduced by making the URL configurable.
+        #
+        # Caught BY EXCLUSION rather than by naming classes, because the set is
+        # bigger than it looks and not all of it is httpx's: a bad port raises
+        # httpx.InvalidURL, but a host label starting "xn--" that is not valid
+        # punycode raises idna.IDNAError straight out of httpx.URL.host, and idna
+        # is httpx's transitive dependency, not ours to import. asyncio.CancelledError
+        # derives from BaseException, so R2's attempt deadline is NOT swallowed here.
+        #
+        # The offending value goes to the LOG, not into the exception text. The
+        # recorded detail is served publicly by /api/status, and cache._sanitize_upstream
+        # only redacts a lowercase "http(s)://..." run, so a base that is malformed
+        # precisely BECAUSE it does not look like a URL (a stray scheme, an unexpanded
+        # variable, a value carrying a query-string secret) would be republished
+        # verbatim by the very code path meant to keep upstream URLs out of responses.
+        logger.error("FERRY_RT_BASE is not a usable base URL (%r): %s", FERRY_RT_BASE, exc)
+        raise httpx.RequestError(f"Invalid ferry base URL: {exc}") from exc
     resp.raise_for_status()
     return resp.content
 

@@ -2205,9 +2205,10 @@ async def test_fail_and_wait_sleeps_the_delay_it_reported(monkeypatch):
 async def test_every_warmup_failure_path_advances_the_schedule(monkeypatch, warm, field, patch):
     # EVERY failure path must thread the attempt counter through _fail_and_wait, or
     # that path silently pins itself to the first rung and retries every 15s forever
-    # against a dead upstream. This covers all seven: each group's raise path plus
-    # the empty-result path the three single-system groups add. A path that forgot to
-    # reassign `attempt` shows up here as a repeated first rung instead of a rising one.
+    # against a dead upstream. This covers all seven: each of the four groups' raise
+    # path, plus the empty-result path that PATH, ferry, and (since R3) railroad each
+    # add. A path that forgot to reassign `attempt` shows up here as a repeated first
+    # rung instead of a rising one.
     attempts = []
     real_delay = warmups._retry_delay
 
@@ -2262,13 +2263,15 @@ async def test_escalating_to_a_longer_rung_logs_once_per_step(monkeypatch, caplo
     # this the log would claim a 15s cadence for an outage that has settled onto the
     # 300s one. Each escalation logs exactly once (bounded by the schedule length),
     # and jitter alone never logs.
-    real_delay = warmups._retry_delay
+    # _retry_delay is stubbed to 0 so the test does not sleep; _rung is NOT stubbed,
+    # so the escalation decision still runs against the real schedule. monkeypatch
+    # undoes this at teardown, so no manual restore is needed (or wanted: a manual
+    # one reads as load-bearing and would mask a real leak).
     monkeypatch.setattr(warmups, "_retry_delay", lambda attempt, rand=None: 0.0)
     app = _fake_app(subway_static_status="loading")
     with caplog.at_level(logging.WARNING, logger=app_module.logger.name):
         for attempt in range(6):
             await warmups._fail_and_wait(app, "subway_static_status", RuntimeError("down"), attempt)
-    monkeypatch.setattr(warmups, "_retry_delay", real_delay)
 
     transitions = [r for r in caplog.records if "failed to load" in r.getMessage()]
     escalations = [r for r in caplog.records if "backing off" in r.getMessage()]

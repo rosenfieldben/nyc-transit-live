@@ -21,6 +21,7 @@ silently wrong map.
 import contextlib
 import importlib
 import json
+import logging
 import os
 from pathlib import Path
 
@@ -440,20 +441,49 @@ async def test_fetch_endpoint_never_retries_on_another_scheme(error, pinned_base
 
 
 @pytest.mark.anyio
-async def test_fetch_endpoint_turns_a_malformed_base_into_a_recordable_error(monkeypatch):
-    # A malformed override is now reachable because the base is operator config, and
-    # httpx.InvalidURL is NOT an httpx.HTTPError, so it would sail past every ferry
-    # handler and land in the poll loop's generic "cycle failed unexpectedly" while
-    # the cache recorded nothing. It must arrive as an HTTPError the poller records.
-    monkeypatch.setattr(feeds.ferry, "FERRY_RT_BASE", "https://ferry.test:not-a-port/rt")
+@pytest.mark.parametrize(
+    "bad_base",
+    [
+        # A bad port raises httpx.InvalidURL...
+        "https://ferry.test:not-a-port/rt",
+        # ...but a host label starting "xn--" that is not valid punycode raises
+        # idna.IDNAError straight out of httpx.URL.host, which is neither an
+        # httpx.HTTPError NOR an httpx.InvalidURL. Naming exception classes missed
+        # this one, which is why the guard catches by exclusion instead.
+        "https://xn--.example/rt",
+        "https://xn--a.example/rt",
+    ],
+    ids=["bad_port", "bad_punycode", "bad_codepoint"],
+)
+async def test_fetch_endpoint_turns_a_malformed_base_into_a_recordable_error(monkeypatch, bad_base):
+    # A malformed override is reachable because the base is operator config, and none
+    # of the classes it raises is an httpx.HTTPError, so unconverted it sails past
+    # every ferry handler and lands in the poll loop's generic "cycle failed
+    # unexpectedly" while the cache records nothing. It must arrive as an HTTPError
+    # the poller records. Driven through a REAL httpx client so the exception classes
+    # are the ones httpx actually raises, not ones a stub asserts into existence.
+    monkeypatch.setattr(feeds.ferry, "FERRY_RT_BASE", bad_base)
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(httpx.HTTPError):  # NOT a bare InvalidURL/IDNAError
+            await feeds.ferry._fetch_ferry_endpoint(client, feeds.FERRY_VEHICLE_ENDPOINT)
 
-    class _RealUrlClient:
-        async def get(self, url, follow_redirects=False):
-            raise httpx.InvalidURL("Invalid port: 'not-a-port'")
 
-    with pytest.raises(httpx.HTTPError) as caught:  # NOT a bare InvalidURL
-        await feeds.ferry._fetch_ferry_endpoint(_RealUrlClient(), feeds.FERRY_VEHICLE_ENDPOINT)
-    assert "FERRY_RT_BASE" in str(caught.value)  # the recorded detail names the cause
+@pytest.mark.anyio
+async def test_malformed_base_value_is_logged_but_never_put_in_the_served_error(
+    monkeypatch, caplog
+):
+    # The recorded detail is served publicly by /api/status, and _sanitize_upstream
+    # only redacts a lowercase http(s):// run, so a base malformed precisely because
+    # it does not look like a URL would be republished verbatim. Keep the value in
+    # the log (where an operator needs it) and out of the exception text.
+    secret_base = "HTTPS://ferry.test:bad/rt?token=hunter2"
+    monkeypatch.setattr(feeds.ferry, "FERRY_RT_BASE", secret_base)
+    with caplog.at_level(logging.ERROR, logger="main"):
+        async with httpx.AsyncClient() as client:
+            with pytest.raises(httpx.HTTPError) as caught:
+                await feeds.ferry._fetch_ferry_endpoint(client, feeds.FERRY_VEHICLE_ENDPOINT)
+    assert "hunter2" not in str(caught.value)  # nothing to leak through /api/status
+    assert "hunter2" in caplog.text  # but the operator can still see what is wrong
 
 
 @pytest.mark.anyio
@@ -485,14 +515,22 @@ async def test_fetch_uses_the_configured_base_for_both_endpoints(monkeypatch):
 @contextlib.contextmanager
 def _reloaded_with_env(value):
     """Reload feeds.ferry with FERRY_RT_BASE set to `value` (None to unset it), then
-    put every binding back exactly as it was.
+    restore the environment and the FERRY_RT_BASE bindings.
 
     The constant is module-level (the PATH_RT_URL shape), so re-running its
     os.getenv means reloading the module. That is global mutable state shared with
     the rest of the session, and feeds/__init__.py holds a SEPARATE binding made at
     package import, so a naive restore ("delete the var and reload") would pin the
     module to the hardcoded default and silently desync it from both os.environ and
-    the package attribute for every later test. Capture and restore all three."""
+    the package attribute for every later test.
+
+    SCOPE, deliberately narrow: this restores os.environ and the two FERRY_RT_BASE
+    bindings, NOT everything reload touches. reload rebinds every function in
+    feeds.ferry, and the names feeds/__init__.py imported still point at the
+    pre-reload function objects. That is harmless here because those functions read
+    their module globals through the same (reloaded in place) module dict, so
+    behavior does not fork; it is called out so nobody reads this as a general
+    module-state undo."""
     before_env = os.environ.get("FERRY_RT_BASE")
     before_module = feeds.ferry.FERRY_RT_BASE
     before_package = feeds.FERRY_RT_BASE
@@ -540,14 +578,22 @@ def test_ferry_rt_base_defaults_to_https_when_unset():
         assert base == "https://nycferry.connexionz.net/rtt/public/utility/gtfsrealtime.aspx"
 
 
-def test_ferry_rt_base_restore_leaves_module_and_package_in_sync():
-    # Guards the helper above: a reload that leaked would desync feeds.ferry from
-    # feeds (a separate binding), and nothing else in the suite would notice.
-    before_module, before_package = feeds.ferry.FERRY_RT_BASE, feeds.FERRY_RT_BASE
-    with _reloaded_with_env("https://elsewhere.example/rt"):
-        pass
-    assert feeds.ferry.FERRY_RT_BASE == before_module
-    assert feeds.FERRY_RT_BASE == before_package
+def test_ferry_rt_base_restore_leaves_the_environment_and_bindings_consistent():
+    # Guards the helper above. Asserting only that the two module attributes match
+    # what was captured would be TAUTOLOGICAL: the finally block ends by assigning
+    # exactly those two names, so it could not fail however badly the helper leaked.
+    # The load-bearing checks are therefore (a) os.environ is back, which is what
+    # would otherwise poison every later test, and (b) the restored attributes agree
+    # with what a FRESH read of the environment derives, which is what proves the
+    # assignment restored the truth rather than merely overwriting the symptom.
+    before_env = os.environ.get("FERRY_RT_BASE")
+    with _reloaded_with_env("https://elsewhere.example/rt") as inside:
+        assert inside == "https://elsewhere.example/rt"  # the helper really took effect
+
+    assert os.environ.get("FERRY_RT_BASE") == before_env  # environment handed back
+    expected = before_env or "https://nycferry.connexionz.net/rtt/public/utility/gtfsrealtime.aspx"
+    assert feeds.ferry.FERRY_RT_BASE == expected.rstrip("/")
+    assert feeds.FERRY_RT_BASE == feeds.ferry.FERRY_RT_BASE  # the two bindings agree
 
 
 # ---------------- gated goldens over the real captured feeds ----------------

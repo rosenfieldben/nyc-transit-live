@@ -69,10 +69,18 @@ def _describe(exc: BaseException | None) -> str:
     argument-less exceptions the warmups actually hit, the important one being the
     R2 attempt deadline: str(TimeoutError()) is "", which would log a bare "failed
     to load ()" and name no cause at all. Fall back to the class name so every
-    failure says something."""
+    failure says something.
+
+    str(exc) is called EAGERLY here, where the old lazy "%s" left it to the logging
+    machinery, so a pathological __str__ that raises would now propagate out of
+    _fail_and_wait and kill the retry loop for good. A describer that can itself
+    fail is worse than a vague message, so it degrades to the class name."""
     if exc is None:
         return "unknown"
-    return str(exc) or type(exc).__name__
+    try:
+        return str(exc) or type(exc).__name__
+    except Exception:
+        return type(exc).__name__
 
 
 def _retry_delay(attempt: int, rand: Callable[[], float] = random.random) -> float:

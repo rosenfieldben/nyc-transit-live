@@ -36,6 +36,7 @@ Two drop rules, deliberately different in severity:
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 
 import httpx
@@ -51,13 +52,27 @@ from feeds.shared import (
     logger,
 )
 
-# The two realtime endpoints share this host and path base with the 14a static
-# utility URL. The 14b probe reached them over http, and 14a settled on https for
-# the same host (its static loader is https-only), so this tries https first and
-# falls back to http only if https fails, keeping both schemes working. Split out
-# so a probe or a host move is a one-line change and so tests can point a fake
-# transport at them.
-FERRY_RT_HOST = "nycferry.connexionz.net/rtt/public/utility/gtfsrealtime.aspx"
+# The two realtime endpoints share this base URL with the 14a static utility URL,
+# which is https-only. https is MANDATORY here too (R3). This used to be a bare
+# host that _fetch_ferry_endpoint tried over https and then http, because the 14b
+# probe had reached it over http; that fallback is gone because httpx.HTTPError is
+# the SUPERSET covering certificate failures, connect errors, and 4xx/5xx status
+# errors, so ANY https problem, including an attacker-induced one, silently
+# downgraded the transport and masked the real failure.
+#
+# The env override is the honest version of the flexibility the fallback was
+# pretending to provide, mirroring PATH_RT_URL: an operator who someday genuinely
+# needs a different host (or, explicitly and owning that choice, plain http) sets
+# it in config, and the code never chooses insecurity on its own. rstrip("/")
+# because the endpoint is joined onto this base, so a trailing slash in an
+# override would otherwise produce a double slash (PATH_RT_URL needs no such
+# guard: it is used whole, with nothing appended). Scope: this moves the two
+# REALTIME endpoints only. The ferry ALERT feed (feeds/alerts.py) and the 14a
+# static utility URL (ferry_static.py) live on the same host but keep their own
+# https constants, so pointing this at a mirror does not silently redirect them.
+FERRY_RT_BASE = os.getenv(
+    "FERRY_RT_BASE", "https://nycferry.connexionz.net/rtt/public/utility/gtfsrealtime.aspx"
+).rstrip("/")
 FERRY_VEHICLE_ENDPOINT = "vehicleposition"
 FERRY_TRIPUPDATE_ENDPOINT = "tripupdate"
 
@@ -263,23 +278,25 @@ def _trim_ferry_arrivals(
 
 
 async def _fetch_ferry_endpoint(client: httpx.AsyncClient, endpoint: str) -> bytes:
-    """GET one ferry realtime endpoint and return the raw protobuf bytes. https
-    first, then http on failure (the 14b probe used http and 14a used https for
-    the same host; the http fallback only fires if https fails). Redirects are
-    followed (the sibling static utility URL 302s; the realtime endpoints may
-    too). Raises the https error if both attempts fail; a DecodeError on the body
-    surfaces later, at the decode, exactly like the other single-fetch feeds."""
-    last_exc: httpx.HTTPError | None = None
-    for scheme in ("https", "http"):
-        url = f"{scheme}://{FERRY_RT_HOST}/{endpoint}"
-        try:
-            resp = await client.get(url, follow_redirects=True)
-            resp.raise_for_status()
-            return resp.content
-        except httpx.HTTPError as exc:
-            last_exc = last_exc or exc  # keep the https error, the more informative one
-    assert last_exc is not None  # unreachable: the loop returns on success or sets last_exc
-    raise last_exc
+    """GET one ferry realtime endpoint and return the raw protobuf bytes.
+
+    ONE request, over whatever scheme FERRY_RT_BASE names (https by default). It
+    used to try https and then retry the same endpoint over http on any
+    httpx.HTTPError, a fallback dating to the 14b probe reaching this host over
+    http. That is gone (R3): httpx.HTTPError covers certificate and connect
+    failures as well as 4xx/5xx, so the fallback silently downgraded transport on
+    exactly the failures that most deserve to be surfaced, and it masked the real
+    https error behind a second, unrelated one. An https failure is now an
+    ordinary failed poll, handled by the standard machinery (the caller records
+    it, the cache keeps last-known, R1 shows the staleness, R2 bounds the wait).
+
+    Redirects are followed (the sibling static utility URL 302s; the realtime
+    endpoints may too). httpx.HTTPError propagates for the caller to record, and a
+    DecodeError on the body surfaces later, at the decode, exactly like the other
+    single-fetch feeds."""
+    resp = await client.get(f"{FERRY_RT_BASE}/{endpoint}", follow_redirects=True)
+    resp.raise_for_status()
+    return resp.content
 
 
 async def fetch_ferry_data(

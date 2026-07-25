@@ -21,6 +21,7 @@ silently wrong map.
 import json
 from pathlib import Path
 
+import httpx
 import pytest
 from google.transit import gtfs_realtime_pb2 as pb
 
@@ -353,6 +354,132 @@ def test_arrivals_sorted_and_capped_per_route():
     arrivals_times = [r["arrival"] for r in rows]
     assert arrivals_times == sorted(arrivals_times)  # soonest-first
     assert arrivals_times[0] == NOW + 60  # the earliest survived the cap
+
+
+# ---------------- fetch transport: https is mandatory (R3) ----------------
+#
+# The helper used to try https and then RETRY the same endpoint over http on any
+# httpx.HTTPError. Because that exception class covers certificate and connect
+# failures as well as 4xx/5xx, the fallback downgraded transport on exactly the
+# failures that most deserve surfacing. These tests pin the replacement: exactly
+# ONE request per endpoint, on the configured (https) scheme, and a failure that
+# propagates untouched to the caller.
+
+
+class _FakeFerryResp:
+    def __init__(self, content):
+        self.content = content
+
+    def raise_for_status(self):
+        pass
+
+
+class _FakeFerryClient:
+    """Records every request so a test can assert the COUNT and the SCHEME. The
+    ferry helper passes follow_redirects, so the signature accepts it."""
+
+    def __init__(self, content=b"", error=None):
+        self._content = content
+        self._error = error
+        self.urls: list[str] = []
+
+    async def get(self, url, follow_redirects=False):
+        self.urls.append(url)
+        if self._error is not None:
+            raise self._error
+        return _FakeFerryResp(self._content)
+
+
+@pytest.mark.anyio
+async def test_fetch_endpoint_makes_one_https_request():
+    client = _FakeFerryClient(b"payload")
+    raw = await feeds.ferry._fetch_ferry_endpoint(client, feeds.FERRY_VEHICLE_ENDPOINT)
+    assert raw == b"payload"
+    assert client.urls == [f"{feeds.FERRY_RT_BASE}/{feeds.FERRY_VEHICLE_ENDPOINT}"]
+    assert client.urls[0].startswith("https://")
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "error",
+    [
+        # The three shapes the old fallback treated identically, all httpx.HTTPError:
+        # a server error, a transport/connect failure, and the certificate failure an
+        # attacker could induce to force the downgrade.
+        httpx.HTTPStatusError("500", request=httpx.Request("GET", "https://x/y"), response=None),
+        httpx.ConnectError("connection refused"),
+        httpx.ConnectError("certificate verify failed"),
+    ],
+    ids=["status_5xx", "connect_error", "certificate_error"],
+)
+async def test_fetch_endpoint_never_retries_on_another_scheme(error):
+    # THE R3 INVARIANT: an https failure raises, and NO second attempt is made on
+    # any scheme. Before R3 each of these silently produced a plaintext retry.
+    client = _FakeFerryClient(error=error)
+    with pytest.raises(httpx.HTTPError):
+        await feeds.ferry._fetch_ferry_endpoint(client, feeds.FERRY_VEHICLE_ENDPOINT)
+    assert len(client.urls) == 1  # exactly one attempt, no fallback
+    assert not any(url.startswith("http://") for url in client.urls)
+
+
+@pytest.mark.anyio
+async def test_fetch_ferry_data_propagates_http_error_for_the_caller_to_record():
+    # The whole-poll contract (matching the PATH fetch precedent): the error
+    # reaches pollers._refresh_ferry, which records it and keeps last-known.
+    client = _FakeFerryClient(error=httpx.ConnectError("ferry down"))
+    with pytest.raises(httpx.HTTPError):
+        await feeds.fetch_ferry_data(client, {"trips": TRIPS, "routes": ROUTES})
+    # Both endpoints are gathered, so either may have been dispatched before the
+    # first failure cancelled the other; what matters is that no attempt used http.
+    assert not any(url.startswith("http://") for url in client.urls)
+
+
+@pytest.mark.anyio
+async def test_fetch_uses_the_configured_base_for_both_endpoints(monkeypatch):
+    # The helper reads the module global at call time, so an override (env or
+    # otherwise) reaches every endpoint rather than only one of them.
+    monkeypatch.setattr(feeds.ferry, "FERRY_RT_BASE", "https://ferry.example/base")
+    client = _FakeFerryClient(_feed().SerializeToString())
+    await feeds.fetch_ferry_data(client, {"trips": TRIPS, "routes": ROUTES})
+    assert sorted(client.urls) == [
+        "https://ferry.example/base/tripupdate",
+        "https://ferry.example/base/vehicleposition",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("env_value", "expected"),
+    [
+        ("https://mirror.example/rt", "https://mirror.example/rt"),
+        # A trailing slash is stripped: the endpoint is joined onto this base, so
+        # keeping it would build a double slash. PATH_RT_URL needs no such guard
+        # because it is used whole, with nothing appended.
+        ("https://mirror.example/rt/", "https://mirror.example/rt"),
+    ],
+    ids=["plain", "trailing_slash"],
+)
+def test_ferry_rt_base_env_override_is_read_at_import(monkeypatch, env_value, expected):
+    # The override is the honest replacement for the deleted fallback, so pin that
+    # it is actually wired to the environment (the constant is module-level, the
+    # PATH_RT_URL shape, so this reloads the module to re-run the os.getenv).
+    import importlib
+
+    monkeypatch.setenv("FERRY_RT_BASE", env_value)
+    try:
+        reloaded = importlib.reload(feeds.ferry)
+        assert reloaded.FERRY_RT_BASE == expected
+    finally:
+        # Restore the unset-env default for every later test (and for the package
+        # attribute, which binds at import): reload once more with the var gone.
+        monkeypatch.delenv("FERRY_RT_BASE", raising=False)
+        importlib.reload(feeds.ferry)
+
+
+def test_ferry_rt_base_defaults_to_https():
+    # The default must never be plaintext: an operator who needs http has to set
+    # the override explicitly and own that choice.
+    assert feeds.ferry.FERRY_RT_BASE.startswith("https://")
+    assert feeds.FERRY_RT_BASE.startswith("https://")
 
 
 # ---------------- gated goldens over the real captured feeds ----------------

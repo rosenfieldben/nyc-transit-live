@@ -388,8 +388,23 @@ key (which only stops the bus feed) doesn't take down an otherwise-working subwa
 map. A still-**loading** static group or bus index during cold start does not
 flap it (the load runs in the background, off the healthcheck critical path);
 only the failed states, which retry, degrade it until a retry succeeds. Railroad
-static failure is deliberately lenient (that system degrades to GPS-only) rather
-than a healthz reason.
+static failure is deliberately lenient (a system that fails degrades to GPS-only)
+rather than a healthz reason. That leniency is per system, not absolute: a load
+where *every* railroad system came back empty is treated as a failed attempt and
+retried, because a total failure marked ready would never be retried at all.
+
+**Deployment invariant: the warmup retry schedule must fit inside the healthcheck
+window.** A failed static warmup retries on a backoff schedule
+(`STATIC_RETRY_SCHEDULE_S` in `backend/main.py`, currently 15s, 30s, 60s, then 300s
+steady, each with ±10% jitter), while `railway.json` sets `healthcheckTimeout` to
+300s. The early rungs exist precisely so a transient first-attempt failure gets two
+more attempts *inside* the deployment window; the retry interval used to be a flat
+300s, which matched the window exactly and so gave a cold-start blip no real second
+chance. Anyone lengthening the first two rungs must raise `healthcheckTimeout` to
+match, and anyone lowering `healthcheckTimeout` must shorten them. `railway.json` is
+JSON and cannot carry a comment, so this is the note of record. (Distinct from
+`STATIC_ATTEMPT_DEADLINE_S`, which bounds how long a single attempt may run rather
+than how long to wait between attempts.)
 
 While a static group is still loading, its decorative endpoints
 (`/api/subway-stops`, `/api/subway-routes`, `/api/railroad-stops`,
@@ -524,6 +539,9 @@ Two optional pieces of config sharpen it, both safe to leave unset:
   backend's failed-warmup no-cache semantics; a non-empty railroad payload counts
   as success even if one system is missing, because the backend's lenient
   per-system warmup settles that state and frontend retries cannot improve it.
+  (R3 narrowed that leniency: a railroad load where *every* system came back empty
+  is a failed attempt the backend retries, so the payload the frontend sees stays
+  empty and its own retry loop keeps asking until the backend heals.)
   Live-data polling already self-healed and is untouched.
 - [x] **13a. PATH (static foundation)**: the PATH static GTFS (stops, routes,
   shapes, trips) is downloaded, cached, and served from its own warmup group via

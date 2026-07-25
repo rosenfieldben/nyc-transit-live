@@ -26,7 +26,7 @@ from feeds.buses import (
     fetch_vehicle_positions,
 )
 from feeds.ferry import (
-    FERRY_RT_HOST,
+    FERRY_RT_BASE,
     FERRY_TRIPUPDATE_ENDPOINT,
     FERRY_VEHICLE_ENDPOINT,
     _decode_ferry_arrivals,
@@ -135,7 +135,7 @@ __all__ = [
     "logger",
     "VEHICLE_POSITIONS_URL",
     "fetch_vehicle_positions",
-    "FERRY_RT_HOST",
+    "FERRY_RT_BASE",
     "FERRY_VEHICLE_ENDPOINT",
     "FERRY_TRIPUPDATE_ENDPOINT",
     "_status_name",

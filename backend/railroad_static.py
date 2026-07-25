@@ -366,6 +366,15 @@ async def load_railroad_static() -> dict[str, dict | None]:
     systems load concurrently to keep cold-start under the healthcheck window;
     _load_one swallows its own exceptions and returns None, so a plain gather
     (no return_exceptions) preserves the per-system None semantics.
+
+    NOTE the caller now reads the AGGREGATE (warmups._warm_railroad_static, R3): a
+    result where EVERY system is None counts as a failed attempt and retries,
+    where a partial result (one system None) still reaches ready. That judgment
+    deliberately lives in the warmup, not here: this function's per-system None
+    contract is load-bearing both for the single-failure case (the surviving
+    system must still be served) and for the tests that assert it, so nothing
+    about the return shape changed. Only the interpretation of an all-None result
+    moved, from "ready, fully degraded, never retried" to "failed, retry".
     """
     systems = list(RAILROAD_STATIC_URLS)
     results = await asyncio.gather(*(_load_one(system) for system in systems))

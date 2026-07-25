@@ -739,13 +739,21 @@ function ferryArrivalsHtml(station, body, now, colorFor = () => FERRY_FALLBACK_C
 
 // ---- Service alerts in the station popups (phase 12b) ----
 
-// Alerts staleness threshold (R1). The alerts feed polls every 60s (vs 15s for the
-// vehicle feeds) and its content changes slowly: a service alert persists for hours,
-// so a slightly old alert index is far less misleading than slightly old vehicle
-// positions. The honesty bar is therefore higher than the 90s feed bar: only after
-// five missed polls do we hedge that the alert set may be out of date. The alerts
+// Alerts staleness threshold. The alerts feed polls every 60s (vs 15s for the vehicle
+// feeds) and its content changes slowly: a service alert persists for hours, so a
+// slightly old alert index is far less misleading than slightly old vehicle
+// positions. The honesty bar is therefore higher than the 90s feed bar. The alerts
 // loop swallows failures by design (it never surfaces an error or blocks arrivals),
 // so this marker is the one honest signal that the index may have stopped updating.
+//
+// WHAT THE 300s IS MEASURED AGAINST changed in C1, so read it as five missed BACKEND
+// polls, not five missed client fetches. The comment here used to say "five missed
+// polls" while the gate keyed on served_at, i.e. on the client's own fetches; it now
+// keys on the backend's fetched_at, which advances only on a poll that decoded. Both
+// cadences are 60s (ALERT_POLL_INTERVAL_S here and in pollers.py), so the count is
+// unchanged, but the quantity is now genuinely the age of the DATA and includes any
+// time the backend spent failing or timing out (up to REFRESH_DEADLINE_S per poll).
+// That is the point: it is the number riders care about.
 const ALERTS_STALE_AFTER_S = 300;
 
 // True when the alert DATA is older than the threshold, judged from the payload's

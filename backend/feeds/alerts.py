@@ -289,12 +289,24 @@ def merge_alert_generations(
         replace wholesale (fresh is authoritative; a decoded feed is ground truth).
       - failed this poll: its alerts are carried forward from prev_alerts, with two
         guards:
-        1. Re-filter each carried alert against `now` with the SAME activity rule
-           _decode_alerts applies (active while now is before ends_at; open-ended
-           when ends_at is None), so an alert that expired DURING the outage drops
-           instead of being pinned alive by the outage. starts_at need not be
-           rechecked: a retained alert was active at some prior now <= now, so its
-           start has already passed.
+        1. Re-filter each carried alert against `now` on its ends_at (active while
+           now is before ends_at; open-ended when ends_at is None), so an alert that
+           expired DURING the outage drops instead of being pinned alive by the
+           outage.
+
+           THIS IS NOT QUITE THE SAME RULE _decode_alerts APPLIES, and the docstring
+           used to claim it was. A carried alert has only its collapsed ends_at here,
+           not its original active_period list, so a MULTI-PERIOD alert whose
+           effective end spans a gap between periods (see _alert_window_status: the
+           effective end is the latest end among periods not yet ended) is carried
+           through that gap, where a poll that actually decoded would have classified
+           it "future" and suppressed it. The exposure is bounded: it needs an outage
+           AND a multi-period alert AND now to fall in a gap, and guard 2 caps the
+           whole thing at max_retention_s. Carrying the periods themselves would fix
+           it properly and belongs with the per-system envelope work, not here.
+           starts_at is deliberately not rechecked either: it is the earliest covering
+           start at decode time, so for a gap it reads as long past and would not
+           catch this case anyway.
         2. Cap total retention age at max_retention_s measured from when the
            system first went down (prev_retained_since, or now for a newly-failed
            system). This is the guard that eventually clears an OPEN-ENDED alert

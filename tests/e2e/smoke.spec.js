@@ -1110,6 +1110,42 @@ test("29. honest freshness: /api/alerts keeps 200ing a FROZEN fetched_at and the
   await expect(banner).toContainText("alerts may be out of date");
 });
 
+test("29a. a FAILING alerts poll is swallowed and tickAlertBanner still paints the marker (C1)", async ({ page }) => {
+  // REVIEW FIX. Replacing the old spec 29 removed the only end-to-end coverage of two
+  // things it happened to exercise: loadAlerts' `if (!res.ok) return` swallow, and
+  // tickAlertBanner painting the marker while polls are FAILING (loadAlerts re-renders
+  // only on success, so on a dead feed the 15s tick is the only thing that can paint).
+  // The new spec 29 covers the honest 200-with-frozen-fetched_at shape and needed to,
+  // but a non-200 is still reachable: it is exactly what /api/alerts serves while the
+  // index has NEVER filled, which the backend's never-filled guard preserves. So both
+  // shapes need a spec, not one or the other.
+  const polledAt = fx.FROZEN_S;
+  const ctx = await boot(page, (c) => {
+    c.overrides.alerts = (route) =>
+      json(route, { fetched_at: polledAt, served_at: polledAt, alerts: [] });
+  });
+  await waitForReady(page);
+  await page.evaluate(() => loadAlerts());
+  await page.waitForFunction(
+    () => typeof alertsFetchedAt !== "undefined" && alertsFetchedAt !== null,
+  );
+
+  const banner = page.locator("#alert-banner");
+  await expect(banner).toBeEmpty();
+
+  // Now the endpoint fails outright rather than serving a stale 200.
+  ctx.overrides.alerts = (route) =>
+    json(route, { detail: "Alerts upstream error (HTTP 502)" }, 502);
+  await page.clock.fastForward(310_000);
+  await page.evaluate(() => loadAlerts()); // swallowed: keeps the last-known timestamp
+  // The swallow must not have reset the timestamp forward, and must not have thrown:
+  // the recorded fetched_at is still the last SUCCESSFUL poll's.
+  expect(await page.evaluate(() => alertsFetchedAt)).toBe(polledAt);
+  // loadAlerts did not re-render (it returned early), so only the tick can paint here.
+  await page.evaluate(() => tickAlertBanner());
+  await expect(banner).toContainText("alerts may be out of date");
+});
+
 test("29b. an agency-wide alert reworded under the same id updates the banner text (C1)", async ({ page }) => {
   // The banner skips rebuilding when its dedup key is unchanged, and the key used to
   // be the shown ids alone. The MTA revises an ongoing incident's wording in place

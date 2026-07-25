@@ -2838,6 +2838,43 @@ async def test_alerts_total_outage_reports_every_system_degraded(
     assert alerts_status["last_error"]["status"] == 502
 
 
+async def test_alerts_deadline_timeout_takes_the_same_outage_path_as_an_all_failed_poll(
+    client, status_env, alerts_cache, monkeypatch
+):
+    # REVIEW FIX. A trickling feed that outruns REFRESH_DEADLINE_S is the shape that
+    # deadline exists to catch, and it used to be handled OUTSIDE _refresh_alerts by
+    # _bounded_refresh, which can only record the error. So the most likely total
+    # outage in production skipped every bit of machinery above: the index stayed
+    # byte-frozen, expired alerts kept being served, the retention cap never fired,
+    # and degraded_systems still read empty. A timeout must be indistinguishable from
+    # an all-feeds-failed poll to everything downstream.
+    import pollers
+
+    monkeypatch.setattr(pollers, "REFRESH_DEADLINE_S", 0.05)
+    alerts_cache.update(
+        alerts=[MNR_ENDING_ALERT, SUBWAY_OPEN_ALERT], fetched_at=1000.0, active=2, suppressed=0
+    )
+    for health in alerts_cache["health"].values():
+        health["fresh_at"] = 1000.0
+
+    async def trickle(client_arg):
+        await asyncio.sleep(10)  # never lands inside the deadline
+
+    monkeypatch.setattr(app_module, "fetch_service_alerts", trickle)
+    # Past the MNR alert's ends_at (2000), so the re-filter has something to drop.
+    monkeypatch.setattr(app_module.time, "time", lambda: 2500.0)
+    await app_module._refresh_alerts(app_module.app, client=None)
+
+    assert alerts_cache["error"]["status"] == 504  # still reported as a deadline
+    assert "deadline" in alerts_cache["error"]["detail"]
+    assert alerts_cache["fetched_at"] == 1000.0  # last poll that decoded
+    # ...and now the outage machinery actually ran:
+    assert {a["id"] for a in alerts_cache["alerts"]} == {"subway:open"}  # expired dropped
+    assert alerts_cache["active"] == 1
+    res = await client.get("/api/status")
+    assert set(res.json()["alerts"]["degraded_systems"]) == set(alerts_cache["health"])
+
+
 async def test_alerts_total_outage_before_the_first_success_stays_warming(
     client, alerts_cache, monkeypatch
 ):

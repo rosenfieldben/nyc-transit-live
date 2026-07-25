@@ -2263,11 +2263,17 @@ async def test_escalating_to_a_longer_rung_logs_once_per_step(monkeypatch, caplo
     # this the log would claim a 15s cadence for an outage that has settled onto the
     # 300s one. Each escalation logs exactly once (bounded by the schedule length),
     # and jitter alone never logs.
-    # _retry_delay is stubbed to 0 so the test does not sleep; _rung is NOT stubbed,
-    # so the escalation decision still runs against the real schedule. monkeypatch
-    # undoes this at teardown, so no manual restore is needed (or wanted: a manual
-    # one reads as load-bearing and would mask a real leak).
-    monkeypatch.setattr(warmups, "_retry_delay", lambda attempt, rand=None: 0.0)
+    # Sleep is stubbed out rather than the delay, so _retry_delay and _rung both run
+    # for real and the NUMBER each line reports is exercised, not just how many lines
+    # there are. Jitter is dropped (delay == the exact rung) so the reported cadence
+    # can be asserted verbatim: a version that interpolated the previous rung, or the
+    # uncapped schedule entry, would still emit the right COUNT of lines and only a
+    # text assertion catches it. monkeypatch undoes both at teardown.
+    async def _no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(warmups.asyncio, "sleep", _no_sleep)
+    monkeypatch.setattr(warmups, "_retry_delay", lambda attempt, rand=None: warmups._rung(attempt))
     app = _fake_app(subway_static_status="loading")
     with caplog.at_level(logging.WARNING, logger=app_module.logger.name):
         for attempt in range(6):
@@ -2276,9 +2282,16 @@ async def test_escalating_to_a_longer_rung_logs_once_per_step(monkeypatch, caplo
     transitions = [r for r in caplog.records if "failed to load" in r.getMessage()]
     escalations = [r for r in caplog.records if "backing off" in r.getMessage()]
     assert len(transitions) == 1  # still exactly one transition line, as before
-    # Three escalations for a four-rung schedule (15 -> 30 -> 60 -> 300); attempts 4
+    # The transition names the FIRST rung, which is the whole reason the escalations
+    # have to exist.
+    first_rung = app_module.STATIC_RETRY_SCHEDULE_S[0]
+    assert f"retrying in {first_rung:.0f}s" in transitions[0].getMessage()
+    # One escalation per step up, each naming the rung it just moved TO; attempts 4
     # and 5 sit on the same final rung and stay silent, so this cannot become spam.
-    assert len(escalations) == len(app_module.STATIC_RETRY_SCHEDULE_S) - 1
+    assert [r.getMessage() for r in escalations] == [
+        f"subway_static_status still failing (down); backing off, next retry in {rung:.0f}s"
+        for rung in app_module.STATIC_RETRY_SCHEDULE_S[1:]
+    ]
 
 
 def test_failure_log_never_reports_an_empty_reason():

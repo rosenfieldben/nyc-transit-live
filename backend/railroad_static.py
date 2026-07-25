@@ -334,9 +334,25 @@ async def _load_one(system: str) -> dict | None:
             )
     try:
         data = _parse_system(zip_path)
-    except (zipfile.BadZipFile, KeyError, UnicodeDecodeError):
-        # Unusable cache: corrupt zip, a missing member (stops/trips/shapes), or
-        # undecodable text. Refetch once rather than staying wedged.
+        if not data["stops"]:
+            # A zip that parses cleanly but yields ZERO stops is unusable in exactly
+            # the way the handler below exists for: no stop can be placed, so the
+            # system contributes nothing. It reaches here only from an upstream bad
+            # publish (an empty or header-only stops.txt), since every structural
+            # failure already raises one of the caught classes.
+            #
+            # This MUST invalidate the cache rather than just return the empty parse.
+            # The warmup treats an all-systems-empty load as a failed attempt and
+            # retries (R3), but the retry re-parses whatever is on disk, and a
+            # just-downloaded zip is fresh by mtime, so without unlinking here every
+            # later attempt would re-parse the same bad bytes forever: a retry loop
+            # that pays the cost of retrying and can never heal. Raising into the
+            # recovery below makes the retry actually re-fetch.
+            raise ValueError("stops.txt parsed to zero usable stops")
+    except (zipfile.BadZipFile, KeyError, UnicodeDecodeError, ValueError):
+        # Unusable cache: corrupt zip, a missing member (stops/trips/shapes),
+        # undecodable text, or a clean parse with nothing in it. Refetch once
+        # rather than staying wedged.
         logger.warning("Cached %s static GTFS is unusable; re-downloading", system)
         zip_path.unlink(missing_ok=True)
         try:

@@ -365,8 +365,14 @@ async def test_missing_cache_with_failed_download_returns_none(rail_paths):
     [
         lambda path: path.write_bytes(b"this is not a zip archive"),
         lambda path: write_railroad_zip(path, members={"agency.txt": "agency_id\nLI\n"}),
+        # A zip that PARSES CLEANLY but yields zero stops (an upstream bad publish:
+        # header-only stops.txt). It has to invalidate the cache like the structural
+        # failures above, not just return the empty parse: the warmup now treats an
+        # all-systems-empty load as a failed attempt and retries, and a retry that
+        # re-parses the same fresh-by-mtime bytes could never heal.
+        lambda path: write_railroad_zip(path, stops=[]),
     ],
-    ids=["corrupt-zip", "zip-missing-stops.txt"],
+    ids=["corrupt-zip", "zip-missing-stops.txt", "zip-parses-to-zero-stops"],
 )
 async def test_unusable_fresh_cache_redownloads_exactly_once(
     rail_paths, monkeypatch, make_bad_cache

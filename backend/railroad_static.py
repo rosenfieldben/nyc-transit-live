@@ -368,8 +368,9 @@ async def load_railroad_static() -> dict[str, dict | None]:
     (no return_exceptions) preserves the per-system None semantics.
 
     NOTE the caller now reads the AGGREGATE (warmups._warm_railroad_static, R3): a
-    result where EVERY system is None counts as a failed attempt and retries,
-    where a partial result (one system None) still reaches ready. That judgment
+    result where EVERY system came back unusable (None, or parsed but carrying no
+    stops) counts as a failed attempt and retries, while a partial result (one
+    system usable) still reaches ready. That judgment
     deliberately lives in the warmup, not here: this function's per-system None
     contract is load-bearing both for the single-failure case (the surviving
     system must still be served) and for the tests that assert it, so nothing

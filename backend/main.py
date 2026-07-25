@@ -105,11 +105,13 @@ FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 # Static GTFS loads in the background, off the startup critical path (the durable
 # version of the old _DOWNLOAD_DEADLINE_S stopgap). Each group runs its own warmup
 # task with a "loading" -> "ready" | "failed" state machine: on failure it sleeps
-# STATIC_RETRY_S and retries until it succeeds or the app shuts down, so a degraded
-# network at boot self-heals instead of stranding the map until the next deploy.
-# Kept here (the composition root) rather than in warmups, because it is the name
-# tests shorten (monkeypatch.setattr(main, "STATIC_RETRY_S", ...)); the warmups
-# read main.STATIC_RETRY_S so that patch stays effective.
+# and retries until it succeeds or the app shuts down, so a degraded network at boot
+# self-heals instead of stranding the map until the next deploy. How long it sleeps
+# is the BACKOFF SCHEDULE below, which rises to this value and then holds; this
+# constant is both that steady-state interval and the ceiling every earlier rung is
+# capped at. Kept here (the composition root) rather than in warmups, because it is
+# the name tests shorten (monkeypatch.setattr(main, "STATIC_RETRY_S", ...)); the
+# warmups read main.STATIC_RETRY_S so that patch stays effective.
 STATIC_RETRY_S = 300  # module-level so tests can shorten it
 
 # The backoff schedule for the sleep BETWEEN warmup attempts (warmups._retry_delay

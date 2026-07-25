@@ -67,9 +67,13 @@ from feeds.shared import (
 # because the endpoint is joined onto this base, so a trailing slash in an
 # override would otherwise produce a double slash (PATH_RT_URL needs no such
 # guard: it is used whole, with nothing appended). Scope: this moves the two
-# REALTIME endpoints only. The ferry ALERT feed (feeds/alerts.py) and the 14a
-# static utility URL (ferry_static.py) live on the same host but keep their own
-# https constants, so pointing this at a mirror does not silently redirect them.
+# REALTIME endpoints of THIS process only. Three other places hold the same host:
+# the ferry ALERT feed (feeds/alerts.py), the 14a static utility URL
+# (ferry_static.py), and the contract monitor's own _FERRY_RT_BASE
+# (scripts/contract_monitor.py), which polls the tripupdate endpoint on its own
+# schedule and already carries a FOLLOWUP to import from here instead. So pointing
+# this at a mirror does NOT redirect any of them; folding the monitor onto this
+# constant is R4 work, deliberately not smuggled in here.
 FERRY_RT_BASE = os.getenv(
     "FERRY_RT_BASE", "https://nycferry.connexionz.net/rtt/public/utility/gtfsrealtime.aspx"
 ).rstrip("/")
@@ -294,7 +298,21 @@ async def _fetch_ferry_endpoint(client: httpx.AsyncClient, endpoint: str) -> byt
     endpoints may too). httpx.HTTPError propagates for the caller to record, and a
     DecodeError on the body surfaces later, at the decode, exactly like the other
     single-fetch feeds."""
-    resp = await client.get(f"{FERRY_RT_BASE}/{endpoint}", follow_redirects=True)
+    try:
+        resp = await client.get(f"{FERRY_RT_BASE}/{endpoint}", follow_redirects=True)
+    except httpx.InvalidURL as exc:
+        # A malformed FERRY_RT_BASE is now reachable because the base is operator
+        # config, and httpx.InvalidURL is NOT an httpx.HTTPError (it derives
+        # straight from Exception), so it would sail past every ferry handler:
+        # _refresh_ferry catches httpx.HTTPError and DecodeError, _bounded_refresh
+        # catches TimeoutError, and it would land in the poll loop's generic
+        # "cycle failed unexpectedly" log while the cache recorded NOTHING. That is
+        # the same silent-failure shape this PR deletes elsewhere, so re-raise it
+        # as a RequestError (an HTTPError) carrying the reason: a config typo then
+        # shows up as an honest recorded feed error in /api/status instead of a
+        # traceback every poll. The value is read once at import, so this repeats
+        # until the config is fixed, which is exactly the intended loudness.
+        raise httpx.RequestError(f"Invalid FERRY_RT_BASE ({FERRY_RT_BASE!r}): {exc}") from exc
     resp.raise_for_status()
     return resp.content
 

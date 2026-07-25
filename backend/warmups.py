@@ -47,18 +47,32 @@ def _set_static_status(
 ) -> None:
     """Set a static group's status, logging only on a TRANSITION so a long retry
     loop (or the per-poll checks that read this) never spams the log. `field` is
-    one of "subway_static_status", "railroad_static_status", or
-    "path_static_status". retry_in_s is the delay actually scheduled for the next
-    attempt: the retry interval is a backoff schedule now, not a flat constant, so
-    the log must report the real wait rather than the steady-state ceiling."""
+    one of "subway_static_status", "railroad_static_status", "path_static_status",
+    or "ferry_static_status". retry_in_s is the delay actually scheduled for the
+    next attempt: the retry interval is a backoff schedule now, not a flat
+    constant, so the log must report the real wait rather than the steady-state
+    ceiling. Because this logs only the TRANSITION, the delay it names is the FIRST
+    rung; _fail_and_wait logs each later escalation, so the whole schedule stays
+    visible without one line per attempt."""
     if getattr(app.state, field, None) == status:
         return
     setattr(app.state, field, status)
     if status == "failed":
         delay = main.STATIC_RETRY_S if retry_in_s is None else retry_in_s
-        logger.warning("%s failed to load (%s); retrying in %.0fs", field, exc, delay)
+        logger.warning("%s failed to load (%s); retrying in %.0fs", field, _describe(exc), delay)
     elif status == "ready":
         logger.info("%s ready", field)
+
+
+def _describe(exc: BaseException | None) -> str:
+    """A non-empty reason for the failure log. str(exc) is EMPTY for several
+    argument-less exceptions the warmups actually hit, the important one being the
+    R2 attempt deadline: str(TimeoutError()) is "", which would log a bare "failed
+    to load ()" and name no cause at all. Fall back to the class name so every
+    failure says something."""
+    if exc is None:
+        return "unknown"
+    return str(exc) or type(exc).__name__
 
 
 def _retry_delay(attempt: int, rand: Callable[[], float] = random.random) -> float:
@@ -76,9 +90,17 @@ def _retry_delay(attempt: int, rand: Callable[[], float] = random.random) -> flo
     preserves STATIC_RETRY_S as the single ceiling knob and the documented
     monkeypatch surface: a test that shrinks it to 0.01 shrinks every rung with
     it, so the warmup state-machine tests keep driving retries instantly."""
+    return _rung(attempt) * (0.9 + 0.2 * rand())
+
+
+def _rung(attempt: int) -> float:
+    """The scheduled interval for retry number `attempt` BEFORE jitter: the
+    schedule entry, held at the last one once the schedule runs out, capped at the
+    steady-state ceiling. Separate from _retry_delay so an escalation can be
+    detected by comparing rungs, which jitter would otherwise blur."""
     schedule = main.STATIC_RETRY_SCHEDULE_S or (main.STATIC_RETRY_S,)
-    rung = schedule[min(attempt, len(schedule) - 1)]
-    return min(rung, main.STATIC_RETRY_S) * (0.9 + 0.2 * rand())
+    rung = schedule[min(max(attempt, 0), len(schedule) - 1)]
+    return min(rung, main.STATIC_RETRY_S)
 
 
 async def _fail_and_wait(app: FastAPI, field: str, exc: BaseException, attempt: int) -> int:
@@ -91,9 +113,25 @@ async def _fail_and_wait(app: FastAPI, field: str, exc: BaseException, attempt: 
     empty-result path. Routing them all through here is what keeps a timed-out
     attempt and a returned-nothing attempt indistinguishable from the retry
     loop's point of view, and keeps the transition logging in exactly one place
-    (so neither path can double-log)."""
+    (so neither path can double-log).
+
+    Logging: _set_static_status fires only on the loading -> failed TRANSITION, so
+    on its own it would report the FIRST rung (about 15s) and never speak again,
+    leaving the log claiming a 15s cadence through an outage that has long since
+    settled onto the 300s one. So each ESCALATION to a longer rung logs once too.
+    That is bounded by the length of the schedule (a handful of lines per outage,
+    then silence), which keeps the no-per-attempt-spam rule intact while making the
+    real cadence honest."""
     delay = _retry_delay(attempt)
     _set_static_status(app, field, "failed", exc, retry_in_s=delay)
+    # Compare the RUNGS, not the jittered delays, so jitter alone never logs.
+    if attempt and _rung(attempt) > _rung(attempt - 1):
+        logger.warning(
+            "%s still failing (%s); backing off, next retry in %.0fs",
+            field,
+            _describe(exc),
+            delay,
+        )
     await asyncio.sleep(delay)
     return attempt + 1
 
@@ -140,9 +178,10 @@ async def _warm_railroad_static(app: FastAPI) -> None:
     raising), and that PARTIAL result still reaches ready: one system down is a
     real degraded state worth serving, since the other system's stops still place
     its trains. What does NOT reach ready is a load where EVERY system came back
-    None (below): that is a total failure wearing a success's clothes, and it used
-    to be marked ready and never retried, so a boot-time outage that cleared a
-    minute later stayed broken until the next deploy. Fills the derived stops and
+    empty (below), whether that is None or a parse that yielded no stops: that is a
+    total failure wearing a success's clothes, and it used to be marked ready and
+    never retried, so a boot-time outage that cleared a minute later stayed broken
+    until the next deploy. Fills the derived stops and
     route geometry the handlers read."""
     attempt = 0
     while True:
@@ -156,7 +195,7 @@ async def _warm_railroad_static(app: FastAPI) -> None:
         except Exception as exc:
             attempt = await _fail_and_wait(app, "railroad_static_status", exc, attempt)
             continue
-        if not any(d is not None for d in data.values()):
+        if not any(d and d.get("stops") for d in data.values()):
             # EVERY system failed. The loader is deliberately lenient per system and
             # never raises for this (its per-system None contract is load-bearing for
             # the single-failure case), so the AGGREGATE judgment lives here, in the
@@ -165,6 +204,13 @@ async def _warm_railroad_static(app: FastAPI) -> None:
             # routed through _fail_and_wait so it is indistinguishable from a raised
             # error or an R2 deadline timeout, and logged exactly once by the shared
             # transition guard.
+            #
+            # The test is EMPTINESS, not None-ness, deliberately matching those
+            # siblings: a system that downloaded and parsed but yielded zero stops is
+            # just as unusable as one that returned None (it places no trains and its
+            # endpoint would serve [] under a one-hour cache header), so it must not
+            # be the thing that rescues the group from retrying. `d and d.get("stops")`
+            # covers both shapes at once.
             attempt = await _fail_and_wait(
                 app,
                 "railroad_static_status",

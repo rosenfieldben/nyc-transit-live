@@ -313,8 +313,9 @@ arrival countdowns and the staleness window are deterministic (no sleeps).
   order. Subject to PANYNJ license terms.
 - **Static GTFS** — stop coordinates and route shapes, downloaded into
   `data/gtfs_static/` and loaded into memory by background warmup tasks (subway,
-  railroad, and PATH, each an independent group), off the startup critical path. A group's load
-  retries automatically on failure, so a degraded network at boot self-heals
+  railroad, PATH, and ferry, each an independent group), off the startup critical
+  path. A group's load retries automatically on failure, on a backoff schedule that
+  starts at 15s and settles at 5 minutes, so a degraded network at boot self-heals
   rather than stranding the map until the next deploy.
 - **AirTrain JFK**: 511NY open-data static GTFS, with no real-time feed. Committed
   once as `data/airtrain_jfk.json` and never fetched at runtime, so this layer is
@@ -368,8 +369,8 @@ downloaded last-writer-wins.
 freshness — both `age_s` (since this server last polled) and `feed_age_s` (how
 stale the feed's own content was at poll time) — the last recorded poll error
 if any, the bus route index state, the static subway GTFS age, and each static
-group's warmup state (`subway_static` / `railroad_static`: loading, ready, or
-failed-and-retrying). The `alerts` entry reports the alert poll's `age_s`, its
+group's warmup state (`subway_static` / `railroad_static` / `path_static` /
+`ferry_static`: loading, ready, or failed-and-retrying). The `alerts` entry reports the alert poll's `age_s`, its
 last error if any, the `active` alert count in the index, and `suppressed_planned`
 (not-yet-active planned work the last poll held back), so upcoming service work is
 visible even though it is excluded from `/api/alerts`. It also carries per-system
@@ -393,18 +394,24 @@ rather than a healthz reason. That leniency is per system, not absolute: a load
 where *every* railroad system came back empty is treated as a failed attempt and
 retried, because a total failure marked ready would never be retried at all.
 
-**Deployment invariant: the warmup retry schedule must fit inside the healthcheck
+**Deployment invariant: the first retry rungs must fit well inside the healthcheck
 window.** A failed static warmup retries on a backoff schedule
 (`STATIC_RETRY_SCHEDULE_S` in `backend/main.py`, currently 15s, 30s, 60s, then 300s
 steady, each with ±10% jitter), while `railway.json` sets `healthcheckTimeout` to
-300s. The early rungs exist precisely so a transient first-attempt failure gets two
-more attempts *inside* the deployment window; the retry interval used to be a flat
-300s, which matched the window exactly and so gave a cold-start blip no real second
-chance. Anyone lengthening the first two rungs must raise `healthcheckTimeout` to
-match, and anyone lowering `healthcheckTimeout` must shorten them. `railway.json` is
-JSON and cannot carry a comment, so this is the note of record. (Distinct from
-`STATIC_ATTEMPT_DEADLINE_S`, which bounds how long a single attempt may run rather
-than how long to wait between attempts.)
+300s. The schedule as a whole is unbounded on purpose (it keeps retrying a genuinely
+down upstream forever, at the 300s steady rung); what has to fit in the window is the
+*early* part, so that a transient first-attempt failure gets more attempts before the
+deploy is judged. Concretely, the first two retries land 15s and 45s in, comfortably
+inside 300s. The retry interval used to be a flat 300s, which matched the window
+exactly and so gave a cold-start blip no real second chance at all.
+
+The coupling runs both ways: lengthening the early rungs requires raising
+`healthcheckTimeout`, and lowering `healthcheckTimeout` requires shortening them.
+`backend/tests/test_api.py::test_static_warmup_retries_land_inside_the_healthcheck_window`
+reads the timeout straight out of `railway.json` and fails on either mistake.
+`railway.json` is JSON and cannot carry a comment, so this is the note of record.
+(Distinct from `STATIC_ATTEMPT_DEADLINE_S`, which bounds how long a single attempt may
+run rather than how long to wait between attempts.)
 
 While a static group is still loading, its decorative endpoints
 (`/api/subway-stops`, `/api/subway-routes`, `/api/railroad-stops`,

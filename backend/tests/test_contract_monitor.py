@@ -27,6 +27,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
+import pytest
 from google.transit import gtfs_realtime_pb2 as pb
 
 import feeds
@@ -947,17 +948,69 @@ def _status_json(**overrides):
         "path_static": "ready",
         "ferry_static": "ready",
         "feeds": {"subway": {"age_s": 5.0}, "buses": {"age_s": 8.0}},
-        "alerts": {"degraded_systems": []},
+        # age_s is part of a healthy alerts payload: the poll-level age is what
+        # catches a TOTAL outage, where the per-system map freezes and looks fine.
+        "alerts": {"age_s": 30.0, "degraded_systems": []},
     }
     base.update(overrides)
     return json.dumps(base).encode()
 
 
-def test_production_skipped_when_url_unset():
+def test_production_unset_url_is_fail_not_a_silent_skip():
+    # R4 CHANGED THIS: an unset MONITOR_STATUS_URL used to WARN-skip the whole
+    # production section, so a completely unmonitored deployment looked exactly like
+    # a healthy one (green). Silence must be chosen, never defaulted.
     fetch = FakeFetcher({})
     results = cm.check_production(fetch, NO_SLEEP, 1000.0, None)
+    assert len(results) == 1 and results[0].status == cm.FAIL
+    assert not fetch.calls  # still no request attempted
+    detail = results[0].detail
+    # The message has to TEACH, since whoever sees it may not know the variable.
+    assert "MONITOR_STATUS_URL" in detail  # names the variable
+    assert "base URL" in detail  # says what it holds
+    assert "Secrets and variables" in detail and "Variables" in detail  # says where
+    assert "MONITOR_SKIP_PRODUCTION" in detail  # offers the legitimate way out
+
+
+def test_production_explicit_skip_is_warn():
+    # The escape hatch for the legitimate cases (a fork, a local dispatch run with
+    # no deployment). It is a WARN, and it says out loud that it was deliberate, so
+    # the summary never implies production was checked when it was not.
+    fetch = FakeFetcher({})
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, None, skip=True)
+    assert len(results) == 1 and results[0].status == cm.WARN
+    assert "MONITOR_SKIP_PRODUCTION" in results[0].detail
+    assert not fetch.calls
+
+
+def test_production_explicit_skip_wins_even_with_a_url_set():
+    # Opting out is unconditional: it must not silently start probing just because
+    # a stale variable is still lying around in the environment.
+    fetch = FakeFetcher({"https://app.example/api/status": _status_json()})
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example", skip=True)
     assert len(results) == 1 and results[0].status == cm.WARN
     assert not fetch.calls
+
+
+@pytest.mark.parametrize(
+    "configured",
+    [
+        "https://app.example",  # the documented base form
+        "https://app.example/",  # base with a trailing slash
+        "https://app.example/api/status",  # the full status URL an operator pastes
+        "https://app.example/api/status/",  # ...with a trailing slash
+    ],
+    ids=["base", "base-slash", "full-status", "full-status-slash"],
+)
+def test_production_accepts_both_url_forms(configured):
+    # THE 2026-07-24 INCIDENT: the variable holds a base and the monitor appends
+    # /api/status, but the instinct is to paste the status URL you were just
+    # looking at, which produced /api/status/api/status and a baffling 404 FAIL.
+    # Every form must resolve to the same single request.
+    fetch = FakeFetcher({"https://app.example/api/status": _status_json()})
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, configured)
+    assert [call[0] for call in fetch.calls] == ["https://app.example/api/status"]
+    assert all(r.status == cm.PASS for r in results)
 
 
 def test_production_healthy_is_all_pass():
@@ -974,14 +1027,17 @@ def test_production_failed_static_is_fail():
     assert "path_static" in statics.detail
 
 
-def test_production_loading_static_is_warn_not_fail():
-    # "loading" is the normal cold-start / redeploy transient the app's own
-    # /healthz tolerates, so it must WARN, not FAIL: a 6-hourly probe must not
-    # flap red just because it landed mid-warmup.
-    fetch = FakeFetcher({"https://app.example/api/status": _status_json(subway_static="loading")})
+@pytest.mark.parametrize("state", ["loading", "failed", None, "unexpected"])
+def test_production_any_not_ready_static_is_fail(state):
+    # R4 CHANGED THIS: "loading" used to be a tolerated WARN on the grounds that a
+    # probe must not flap red mid-warmup. But a static group that is not ready means
+    # a whole mode is dark for riders (no stops, no lines, and for subway/PATH/ferry
+    # no vehicles, since those pollers gate on the static), and a probe cannot know
+    # whether the not-ready it is seeing is transient. Any state but "ready" fails.
+    fetch = FakeFetcher({"https://app.example/api/status": _status_json(subway_static=state)})
     results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
     statics = next(r for r in results if r.name == "production:statics")
-    assert statics.status == cm.WARN
+    assert statics.status == cm.FAIL
     assert "subway_static" in statics.detail
 
 
@@ -994,13 +1050,14 @@ def test_production_non_object_json_is_fail():
         assert len(results) == 1 and results[0].status == cm.FAIL
 
 
-def test_production_empty_feeds_map_is_warn():
-    # A healthy deployment always reports its live feeds; an empty map means a
-    # broken startup, which the "0 feeds fresh" PASS would otherwise hide.
+def test_production_empty_feeds_map_is_fail():
+    # R4 CHANGED THIS (WARN -> FAIL): a healthy deployment always reports its live
+    # feeds, so an empty map is a deploy regression (broken startup or a payload
+    # shape change), not an upstream mood. It does not age into a threshold.
     fetch = FakeFetcher({"https://app.example/api/status": _status_json(feeds={})})
     results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
     feedline = next(r for r in results if r.name == "production:feeds")
-    assert feedline.status == cm.WARN
+    assert feedline.status == cm.FAIL
     assert "no feeds" in feedline.detail
 
 
@@ -1023,24 +1080,229 @@ def test_production_malformed_nested_shapes_do_not_crash():
     results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
     assert results[0].status == cm.PASS  # reachable
     feedline = next(r for r in results if r.name == "production:feeds")
-    assert feedline.status == cm.WARN  # coerced to empty, surfaced not crashed
+    # R4: the coerced-to-empty case now fails with the same reasoning as an
+    # explicitly empty map. Still surfaced, still not crashed, which is the point.
+    assert feedline.status == cm.FAIL
 
 
-def test_production_stale_feed_is_warn():
-    feeds_map = {"subway": {"age_s": 5.0}, "buses": {"age_s": 9999.0}}
+@pytest.mark.parametrize(
+    ("age", "expected"),
+    [
+        (599.0, "PASS"),  # just inside the fresh band
+        (601.0, "WARN"),  # just past PRODUCTION_FEED_STALE_S: worth a look
+        (1799.0, "WARN"),  # still only worth a look
+        (1801.0, "FAIL"),  # past PRODUCTION_FEED_FAIL_S: an outage, not a blip
+    ],
+    ids=["599-pass", "601-warn", "1799-warn", "1801-fail"],
+)
+def test_production_feed_age_bands_at_the_exact_edges(age, expected):
+    # The two edges exist so a flapping upstream cannot train the operator to ignore
+    # FAILs: everything between 600s and 1800s is a WARN nobody has to act on.
+    feeds_map = {"subway": {"age_s": 5.0}, "buses": {"age_s": age}}
+    fetch = FakeFetcher({"https://app.example/api/status": _status_json(feeds=feeds_map)})
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
+    feedline = next(r for r in results if r.name == "production:feeds")
+    assert feedline.status == getattr(cm, expected)
+
+
+def test_production_never_polled_feed_is_warn_not_a_permanent_fail():
+    # REVIEW FIX (was a critical false FAIL): age_s is null exactly when fetched_at is
+    # None, i.e. the feed has NEVER had a successful poll. A deployment carrying no
+    # bus API key serves buses.age_s = null FOREVER, and the app supports that
+    # explicitly (the README promises a missing key does not take down the map, and
+    # /healthz stays healthy). Failing on it painted a healthy deployment red on
+    # every 6-hourly run, indefinitely. It is also boot-order dependent: the same
+    # upstream outage walks PASS -> WARN -> FAIL if it starts AFTER boot.
+    feeds_map = {"subway": {"age_s": 5.0}, "buses": {"age_s": None}}
     fetch = FakeFetcher({"https://app.example/api/status": _status_json(feeds=feeds_map)})
     results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
     feedline = next(r for r in results if r.name == "production:feeds")
     assert feedline.status == cm.WARN
+    assert "never polled" in feedline.detail and "buses" in feedline.detail
 
 
-def test_production_degraded_alerts_is_warn():
+def test_production_no_feed_has_ever_polled_is_fail():
+    # The other side of that line: EVERY feed unpolled is not a tolerated subset, it
+    # means the cache never populated at all, which really is a broken startup.
+    feeds_map = {"subway": {"age_s": None}, "buses": {"age_s": None}}
+    fetch = FakeFetcher({"https://app.example/api/status": _status_json(feeds=feeds_map)})
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
+    feedline = next(r for r in results if r.name == "production:feeds")
+    assert feedline.status == cm.FAIL
+    assert "ever polled" in feedline.detail
+
+
+@pytest.mark.parametrize("age", ["recent", True, [], {}], ids=["string", "bool", "list", "dict"])
+def test_production_feed_with_a_nonnumeric_age_is_fail(age):
+    # Present but not a number: the field changed shape, a real payload regression
+    # (distinct from the null above). True is excluded explicitly because bool is a
+    # subclass of int and would otherwise read as age 1.
+    feeds_map = {"subway": {"age_s": 5.0}, "buses": {"age_s": age}}
+    fetch = FakeFetcher({"https://app.example/api/status": _status_json(feeds=feeds_map)})
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
+    feedline = next(r for r in results if r.name == "production:feeds")
+    assert feedline.status == cm.FAIL
+    assert "buses" in feedline.detail
+
+
+def test_production_negative_feed_age_is_fail_not_silently_fresh():
+    # REVIEW FIX: a negative age means fetched_at is AHEAD of served_at (a clock step
+    # or a restored backup). Without an explicit check it passes every band and reads
+    # as fresh, which is the monitor going BLIND rather than loud.
+    feeds_map = {"subway": {"age_s": 5.0}, "buses": {"age_s": -4000.0}}
+    fetch = FakeFetcher({"https://app.example/api/status": _status_json(feeds=feeds_map)})
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
+    feedline = next(r for r in results if r.name == "production:feeds")
+    assert feedline.status == cm.FAIL
+    assert "buses" in feedline.detail
+
+
+def test_production_degraded_alerts_is_warn_while_alerts_are_retained():
+    # Still a WARN: the backend carries a down system's last-known alerts forward,
+    # so riders keep seeing them and the outage is covered.
+    alerts = {
+        "age_s": 30.0,  # the poll itself is healthy; the per-system fields are what vary
+        "degraded_systems": ["LIRR"],
+        "systems": {"LIRR": {"fresh_at": 900.0, "retained_since": 900.0, "last_error": {}}},
+    }
     fetch = FakeFetcher(
-        {"https://app.example/api/status": _status_json(alerts={"degraded_systems": ["LIRR"]})}
+        {"https://app.example/api/status": _status_json(alerts=alerts, served_at=1000.0)}
     )
     results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
     alertline = next(r for r in results if r.name == "production:alerts")
     assert alertline.status == cm.WARN and "LIRR" in alertline.detail
+
+
+def test_production_alerts_retained_past_the_horizon_is_fail():
+    # Past PRODUCTION_ALERT_RETENTION_MAX_S the backend has DROPPED the retained
+    # alerts, so the coverage the WARN was predicated on is gone: riders now see
+    # nothing for that system, which is a FAIL.
+    alerts = {
+        "age_s": 30.0,  # the poll itself is healthy; the per-system fields are what vary
+        "degraded_systems": ["LIRR"],
+        "systems": {"LIRR": {"fresh_at": 900.0, "retained_since": 900.0, "last_error": {}}},
+    }
+    # served_at - retained_since = 1801s, one second past the horizon.
+    fetch = FakeFetcher(
+        {"https://app.example/api/status": _status_json(alerts=alerts, served_at=2701.0)}
+    )
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
+    alertline = next(r for r in results if r.name == "production:alerts")
+    assert alertline.status == cm.FAIL
+    assert "LIRR" in alertline.detail and "retention horizon" in alertline.detail
+
+
+def test_production_degraded_system_stale_without_retention_clock_is_fail():
+    # A system failing without ever establishing a retention clock: retained_since is
+    # null, so rule 1 cannot catch it; the fresh_at edge does.
+    alerts = {
+        "age_s": 30.0,  # the poll itself is healthy; the per-system fields are what vary
+        "degraded_systems": ["MNR"],
+        "systems": {"MNR": {"fresh_at": 100.0, "retained_since": None, "last_error": {}}},
+    }
+    fetch = FakeFetcher(
+        {"https://app.example/api/status": _status_json(alerts=alerts, served_at=2000.0)}
+    )
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
+    alertline = next(r for r in results if r.name == "production:alerts")
+    assert alertline.status == cm.FAIL and "MNR" in alertline.detail
+
+
+def test_production_total_alerts_outage_is_fail_not_pass():
+    # REVIEW FIX (was a high-severity blind spot): on the all-feeds-failed path,
+    # pollers._refresh_alerts records the poll error and RETURNS before touching
+    # `health`, so degraded_systems comes back EMPTY and every per-system field stays
+    # frozen at its last healthy value. Reading only the per-system data therefore
+    # reported PASS during a total alerts outage. The poll's own age_s is the only
+    # field that moves, so it is checked first.
+    alerts = {
+        "age_s": 99000.0,  # the poll itself has not succeeded in a day
+        "last_error": {"status": 502, "detail": "alert feed unavailable"},
+        "degraded_systems": [],  # frozen: looks healthy
+        "systems": {"subway": {"fresh_at": 1000.0, "retained_since": None, "last_error": None}},
+    }
+    fetch = FakeFetcher(
+        {"https://app.example/api/status": _status_json(alerts=alerts, served_at=100000.0)}
+    )
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
+    alertline = next(r for r in results if r.name == "production:alerts")
+    assert alertline.status == cm.FAIL
+    assert "frozen" in alertline.detail  # and it says WHY the per-system data lied
+
+
+def test_production_degraded_system_that_never_decoded_is_fail():
+    # REVIEW FIX (high): a system broken since process start has fresh_at = null, so
+    # the isinstance guard skipped exactly that case and left it permanently WARN,
+    # unable to ever escalate. There are no retained alerts protecting riders here
+    # and no retention clock either, so it is the worst state to be lenient about.
+    alerts = {
+        "age_s": 30.0,
+        "degraded_systems": ["ferry"],
+        "systems": {"ferry": {"fresh_at": None, "retained_since": None, "last_error": {}}},
+    }
+    fetch = FakeFetcher(
+        {"https://app.example/api/status": _status_json(alerts=alerts, served_at=2000.0)}
+    )
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
+    alertline = next(r for r in results if r.name == "production:alerts")
+    assert alertline.status == cm.FAIL
+    assert "never decoded" in alertline.detail
+
+
+def test_production_missing_alerts_object_is_fail():
+    # The app always emits this object; PASS here would report health never checked.
+    fetch = FakeFetcher({"https://app.example/api/status": _status_json(alerts=None)})
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
+    alertline = next(r for r in results if r.name == "production:alerts")
+    assert alertline.status == cm.FAIL
+
+
+def test_production_alerts_without_served_at_do_not_fail_on_age():
+    # No served_at means no skew-free way to age the deployment's timestamps, and a
+    # monitor must not FAIL on a number it cannot compute honestly. It degrades to
+    # the WARN the degraded list alone justifies (an older backend, or a proxy that
+    # stripped the field, must not turn the run red on arithmetic it cannot do).
+    alerts = {
+        "age_s": 30.0,  # healthy poll age, so the check reaches the served_at logic
+        "degraded_systems": ["LIRR"],
+        "systems": {"LIRR": {"fresh_at": 1.0, "retained_since": 1.0}},  # ancient
+    }
+    fetch = FakeFetcher({"https://app.example/api/status": _status_json(alerts=alerts)})
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
+    alertline = next(r for r in results if r.name == "production:alerts")
+    assert alertline.status == cm.WARN
+    # Pin the BRANCH, not just the status: this must be the "could not check" WARN,
+    # naming the missing field, and not the ordinary retained-grace WARN. Otherwise a
+    # regression that silently aged against the runner clock would still read WARN
+    # here and the test would not notice.
+    assert "served_at missing" in alertline.detail
+    assert "LIRR" in alertline.detail
+
+
+def test_production_alert_ages_use_served_at_not_the_runner_clock():
+    # fresh_at and retained_since are stamped by the DEPLOYMENT, so they must be
+    # compared against the payload's own served_at. Same-clock pairs only, matching
+    # the app's own freshness discipline.
+    #
+    # The runner clock here is deliberately FAR AHEAD of the deployment's, which is
+    # what makes this test non-vacuous: any substitution of `now` for served_at
+    # computes an age of ~5e6s, blows past the 1800s horizon, and FAILs. (An
+    # earlier version of this test put the deployment stamps in the runner's future,
+    # so mixing clocks produced a NEGATIVE age that sailed under the horizon and the
+    # test passed either way.)
+    alerts = {
+        "age_s": 30.0,  # healthy poll age, so the check reaches the served_at logic
+        "degraded_systems": ["LIRR"],
+        "systems": {"LIRR": {"fresh_at": 100.0, "retained_since": 100.0}},
+    }
+    fetch = FakeFetcher(
+        {"https://app.example/api/status": _status_json(alerts=alerts, served_at=200.0)}
+    )
+    results = cm.check_production(fetch, NO_SLEEP, 5_000_000.0, "https://app.example")
+    alertline = next(r for r in results if r.name == "production:alerts")
+    assert alertline.status == cm.WARN  # 100s of retention, nowhere near the horizon
+    assert "still retained" in alertline.detail  # the grace message, not an expiry
+    assert "coverage lost" not in alertline.detail
 
 
 def test_production_non_200_is_fail():
@@ -1089,6 +1351,83 @@ def test_run_all_is_hermetic_and_names_every_check():
     ):
         assert expected in names
     assert fetch.calls > 0  # it did try to fetch, via the injected fake only
+
+
+def test_run_all_unset_status_url_produces_a_production_fail():
+    # The wiring end of the change: run_all must pass the unset variable through so
+    # the section fails, rather than the old silent WARN-skip.
+    class AllFail:
+        def __call__(self, url, headers=None, params=None):
+            return cm.FetchResult(500, b"")
+
+    results = cm.run_all(AllFail(), NO_SLEEP, 1000.0, env={})
+    production = [r for r in results if r.name.startswith("production")]
+    assert len(production) == 1
+    assert production[0].status == cm.FAIL
+    assert "MONITOR_STATUS_URL" in production[0].detail
+
+
+def test_run_all_honors_the_explicit_skip_variable():
+    # Any non-empty value opts out, the usual shell-variable convention.
+    class AllFail:
+        def __call__(self, url, headers=None, params=None):
+            return cm.FetchResult(500, b"")
+
+    for value in ("1", "true", "yes"):
+        results = cm.run_all(AllFail(), NO_SLEEP, 1000.0, env={"MONITOR_SKIP_PRODUCTION": value})
+        production = [r for r in results if r.name.startswith("production")]
+        assert len(production) == 1 and production[0].status == cm.WARN
+
+
+def test_exit_code_is_zero_for_all_warn_and_one_for_any_fail(monkeypatch, tmp_path, capsys):
+    # THE INVARIANT THIS PR RESTS ON: WARN never fails the run, FAIL always does.
+    # Pinned at the main() level (not by re-deriving it from a Result list) so that
+    # whoever next touches Result handling cannot regress the distinction silently.
+    # The unset-variable case is included because that is precisely the run that used
+    # to exit 0 while checking nothing at all.
+    def fake_fetcher():
+        def _fetch(url, headers=None, params=None):
+            return cm.FetchResult(500, b"")
+
+        return _fetch
+
+    monkeypatch.setattr(cm, "make_httpx_fetcher", fake_fetcher)
+    monkeypatch.setattr(cm.time, "sleep", lambda _s: None)
+    # Unset before the FIRST main() call, not just before step 3: this suite runs
+    # inside Actions, where GITHUB_STEP_SUMMARY points at the real job summary file,
+    # and every main() below would otherwise append three synthetic result tables to
+    # the CI run's own summary.
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+
+    # 1. An all-WARN run exits 0. Force one by stubbing run_all to a WARN-only list,
+    #    which keeps the assertion about main()'s exit rule rather than about which
+    #    checks happen to warn today.
+    monkeypatch.setattr(cm, "run_all", lambda *a, **k: [cm.Result("x", cm.WARN, "w")])
+    monkeypatch.delenv("MONITOR_STATUS_URL", raising=False)
+    assert cm.main() == 0
+
+    # 2. A run containing any FAIL exits 1, even alongside passes and warns.
+    monkeypatch.setattr(
+        cm,
+        "run_all",
+        lambda *a, **k: [
+            cm.Result("a", cm.PASS, "p"),
+            cm.Result("b", cm.WARN, "w"),
+            cm.Result("c", cm.FAIL, "f"),
+        ],
+    )
+    assert cm.main() == 1
+
+    # 3. And the real unset-variable path exits 1 through the genuine run_all, which
+    #    is the regression this PR exists to prevent.
+    monkeypatch.undo()
+    monkeypatch.setattr(cm, "make_httpx_fetcher", fake_fetcher)
+    monkeypatch.setattr(cm.time, "sleep", lambda _s: None)
+    monkeypatch.delenv("MONITOR_STATUS_URL", raising=False)
+    monkeypatch.delenv("MONITOR_SKIP_PRODUCTION", raising=False)
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    assert cm.main() == 1
+    assert "MONITOR_STATUS_URL" in capsys.readouterr().out
 
 
 def test_format_summary_table_escapes_pipes():

@@ -205,13 +205,30 @@ FERRY_JOIN_FLOOR = 0.90
 # reissue every few weeks and a month of runway is plenty of warning.
 FEED_END_WARN_DAYS = 30
 
-# Production /api/status per-feed poll-age threshold, same 10 minute reasoning
-# as the direct feed freshness. Reported at WARN (not FAIL): the deployment's
-# feed set depends on its own config (for example a bus key it may not carry),
-# and the direct upstream checks above are the authoritative FAIL signal; the
-# production section corroborates without flapping the whole run red on a
-# transient deploy-side poll hiccup.
+# Production /api/status per-feed poll-age BANDS. Two edges, not one, because a
+# single threshold forces a choice between crying wolf and saying nothing:
+#
+#   < 600s          PASS. Normal.
+#   600s to 1800s   WARN. Worth a look. Upstream blips at this scale recover on
+#                   their own, and the direct upstream checks above are the
+#                   authoritative signal for whether the provider is down.
+#   > 1800s         FAIL. Half an hour of no successful poll is not a blip, it is
+#                   an outage a person should see today.
+#
+# The GAP between the two edges is the point: it is what keeps a flapping upstream
+# from training the operator to ignore FAILs. A monitor whose red light is usually
+# noise is worse than no monitor, so FAIL is reserved for "this is really broken".
 PRODUCTION_FEED_STALE_S = 600.0
+PRODUCTION_FEED_FAIL_S = 1800.0
+
+# Mirrors feeds.alerts.ALERT_RETENTION_MAX_S (1800). MIRRORED, not imported: this
+# script runs standalone in CI against the PUBLIC deployment with no app package on
+# sys.path, which is what lets it catch a bad deploy rather than testing the code it
+# was built from. The coupling is real, so if the backend's retention horizon moves,
+# move this with it: past that horizon the backend has DROPPED a down system's
+# retained alerts, so riders are no longer seeing them and the outage stops being
+# invisible-but-covered.
+PRODUCTION_ALERT_RETENTION_MAX_S = 1800.0
 
 # Static count floors, all set well below the real numbers so ordinary feed
 # churn never trips them; they exist to catch a gutted or truncated feed.
@@ -1029,24 +1046,74 @@ def _check_members(
 # ---------------------------------------------------------------------------
 
 
+def _resolve_status_url(configured: str) -> str:
+    """Accept either operator form of MONITOR_STATUS_URL and return the /api/status
+    URL to fetch.
+
+    The variable holds the deployment BASE url and this appends the path, but the
+    natural instinct is to paste the full status URL you just looked at, which
+    produced /api/status/api/status and a baffling 404 FAIL (hit 2026-07-24, and
+    the setup instructions themselves said it the wrong way round twice). Both
+    forms are now correct, because being strict here buys nothing: there is exactly
+    one path this monitor ever wants, and guessing it right is not a test of the
+    operator's attention."""
+    # .strip() first: a pasted repository variable very often carries a trailing
+    # newline or space, and without this the value would be non-empty (so it passes
+    # the unset check) but produce a request to a URL with whitespace in it, i.e. a
+    # permanent FAIL that looks like the deployment is down rather than like a typo.
+    # Case-insensitive suffix test for the same reason the two forms are accepted at
+    # all: /API/STATUS is the same intent, and rejecting it teaches nothing.
+    trimmed = configured.strip().rstrip("/")
+    if trimmed.lower().endswith("/api/status"):
+        return trimmed
+    return trimmed + "/api/status"
+
+
 def check_production(
     fetch: Fetcher,
     sleep: Callable[[float], None],
     now: float,
     status_url: str | None,
     *,
+    skip: bool = False,
     stale_s: float = PRODUCTION_FEED_STALE_S,
+    fail_s: float = PRODUCTION_FEED_FAIL_S,
 ) -> list[Result]:
-    """The live deployment via MONITOR_STATUS_URL + /api/status. WARN-skipped as a
-    single line when the variable is unset. When set, returns a line each for:
-    reachability (FAIL on non-200/non-JSON/non-object), each static group's state
-    (FAIL only on a definitively FAILED warmup; a still-loading or absent group is
-    a tolerated transient WARN, matching /healthz and the non-flapping design),
-    per-feed poll freshness (WARN, see PRODUCTION_FEED_STALE_S for why not FAIL),
-    and degraded alert systems (WARN when non-empty)."""
-    if not status_url:
-        return [Result("production", WARN, "skipped (MONITOR_STATUS_URL not set)")]
-    url = status_url.rstrip("/") + "/api/status"
+    """The live deployment via MONITOR_STATUS_URL (either form, see
+    _resolve_status_url). Returns a line each for: reachability (FAIL on
+    non-200/non-JSON/non-object), each static group's state (FAIL unless ready),
+    per-feed poll freshness (PASS/WARN/FAIL on the bands above), and alert-system
+    degradation (WARN, escalating to FAIL past the retention horizon).
+
+    SILENCE MUST BE CHOSEN, NEVER DEFAULTED. An unset MONITOR_STATUS_URL used to
+    WARN-skip this entire section, which meant a completely unmonitored production
+    looked the same as a healthy one: green. That is the one failure a monitor may
+    never have, because it is invisible precisely when it matters. So an unset
+    variable is now a FAIL, and the legitimate reasons to have no deployment to
+    check (a fork, a local dispatch run) get an EXPLICIT opt-out that says so out
+    loud in the summary."""
+    if skip:
+        return [
+            Result(
+                "production", WARN, "production checks explicitly skipped (MONITOR_SKIP_PRODUCTION)"
+            )
+        ]
+    # .strip() in the emptiness test too: a variable set to whitespace is set as far
+    # as Actions is concerned but names no deployment, and without this it would pass
+    # here and then request the nonsense URL "/api/status".
+    if not (status_url or "").strip():
+        return [
+            Result(
+                "production",
+                FAIL,
+                "MONITOR_STATUS_URL is not set, so the deployment is UNMONITORED. Set it to the "
+                "deployment base URL (for example https://your-app.up.railway.app; the full "
+                "/api/status URL is accepted too) under Settings -> Secrets and variables -> "
+                "Actions -> Variables. To run without a deployment on purpose, set "
+                "MONITOR_SKIP_PRODUCTION=1.",
+            )
+        ]
+    url = _resolve_status_url(status_url)
     res, detail = _fetch_retrying(fetch, url, sleep)
     if res is None:
         return [Result("production:status", FAIL, f"/api/status unreachable ({detail})")]
@@ -1064,26 +1131,26 @@ def check_production(
     results = [Result("production:status", PASS, "/api/status reachable")]
 
     static_fields = ("subway_static", "railroad_static", "path_static", "ferry_static")
-    # FAIL only on a definitively "failed" warmup (it retries but stays down). A
-    # "loading" or absent group is the normal cold-start / redeploy transient the
-    # app's own /healthz tolerates, so it is a WARN, not a page: a 6-hourly probe
-    # must not flap red just because it landed mid-warmup.
-    failed = [f for f in static_fields if data.get(f) == "failed"]
-    warming = [f for f in static_fields if data.get(f) not in ("ready", "failed")]
-    if failed:
+    # ANY group not "ready" is a FAIL, not just a definitively "failed" one. A
+    # static group that is not ready means a whole mode is dark for riders: no
+    # stops, no route lines, and for subway/PATH/ferry no vehicles at all, because
+    # their pollers gate on the static being loaded. "Loading" is only benign if you
+    # know it is transient, and a probe that sees it cannot know that.
+    #
+    # ACCEPTED COST, stated so the next person knows it was chosen: a scheduled run
+    # that lands inside a redeploy's warmup window now goes red where it used to go
+    # yellow. That is the deliberate trade. A cold start reaches ready in seconds
+    # against a warm cache, the schedule is 6-hourly, and the alternative (tolerating
+    # not-ready) is exactly the blind spot this PR exists to close. If redeploy-window
+    # flapping ever shows up in practice, the fix is to re-check after a delay, not to
+    # go back to calling a dark system yellow.
+    not_ready = [f for f in static_fields if data.get(f) != "ready"]
+    if not_ready:
         results.append(
             Result(
                 "production:statics",
                 FAIL,
-                "failed: " + ", ".join(f"{f}={data.get(f)!r}" for f in failed),
-            )
-        )
-    elif warming:
-        results.append(
-            Result(
-                "production:statics",
-                WARN,
-                "not yet ready: " + ", ".join(f"{f}={data.get(f)!r}" for f in warming),
+                "not ready: " + ", ".join(f"{f}={data.get(f)!r}" for f in not_ready),
             )
         )
     else:
@@ -1093,35 +1160,186 @@ def check_production(
     # proxy or error page in front of the deployment could return a differently
     # shaped JSON object. Coercing an unexpected type to empty keeps a malformed
     # body from raising (the same crash class as the non-object guard above); the
-    # empty then surfaces as a WARN rather than aborting every other check.
+    # empty then surfaces as the FAIL immediately below, so a wrong-shaped payload
+    # is reported as a regression rather than aborting every other check.
     feeds_raw = data.get("feeds")
     feeds_map = feeds_raw if isinstance(feeds_raw, dict) else {}
     if not feeds_map:
-        # A healthy running deployment always reports its live feeds here; an
-        # empty, absent, or wrong-typed map means the feed cache never populated
-        # (a broken startup), which the "0 feeds fresh" PASS would otherwise hide.
-        results.append(Result("production:feeds", WARN, "no feeds reported by /api/status"))
+        # A healthy running deployment always reports its live feeds here; an empty,
+        # absent, or wrong-typed map means the feed cache never populated (a broken
+        # startup or a payload shape change), which the "0 feeds fresh" PASS would
+        # otherwise hide. That is a DEPLOY regression, not an upstream mood, so it
+        # fails at once rather than aging into a threshold.
+        results.append(Result("production:feeds", FAIL, "no feeds reported by /api/status"))
     else:
-        stale = []
-        for name, entry in feeds_map.items():
+        # age_s is computed server-side (served_at minus that feed's last successful
+        # poll), so it is already free of any clock skew between this runner and the
+        # deployment. Do not recompute it here from the monitor's own clock.
+        never, aged, stale, invalid = [], [], [], []
+        for name, entry in sorted(feeds_map.items()):
             age = entry.get("age_s") if isinstance(entry, dict) else None
-            if age is None or age > stale_s:
+            if age is None:
+                # NULL age means fetched_at is None: this feed has NEVER had a
+                # successful poll (routes/status.py only computes age_s once
+                # fetched_at is set). That is NOT a deploy regression, and treating
+                # it as one was a false FAIL: a deployment carrying no bus API key
+                # serves buses.age_s = null FOREVER, which the app explicitly
+                # supports (the README promises a missing key does not take down an
+                # otherwise-working map, and /healthz stays healthy on it). Failing
+                # there would paint a healthy deployment red on every 6-hourly run,
+                # forever, which is precisely the cry-wolf outcome the two-edge band
+                # exists to prevent. It is also boot-order dependent: the same
+                # upstream outage would walk PASS -> WARN -> FAIL if it began after
+                # boot, so failing on it would make the verdict depend on when the
+                # process happened to start. WARN, unless NOTHING has ever polled.
+                never.append(name)
+            elif not isinstance(age, (int, float)) or isinstance(age, bool):
+                # Present but not a number: the field changed shape. A real payload
+                # regression, unlike the null above.
+                invalid.append(f"{name}={age!r}")
+            elif age < 0:
+                # A negative age means fetched_at is AHEAD of served_at: a clock step
+                # or a restored backup. Without this it would pass every band and
+                # read as fresh, which is the monitor going blind rather than loud.
+                invalid.append(f"{name}={age}")
+            elif age > fail_s:
+                aged.append(f"{name}={age}")
+            elif age > stale_s:
                 stale.append(f"{name}={age}")
-        if stale:
-            results.append(Result("production:feeds", WARN, "stale/absent: " + ", ".join(stale)))
+        # Every feed unpolled is a different animal from one or two: nothing has ever
+        # succeeded, so the cache never populated at all, which IS a broken startup.
+        nothing_ever_polled = len(never) == len(feeds_map)
+        if invalid or aged or nothing_ever_polled:
+            parts = []
+            if nothing_ever_polled:
+                parts.append("no feed has ever polled: " + ", ".join(never))
+            if invalid:
+                parts.append("unusable age: " + ", ".join(invalid))
+            if aged:
+                parts.append(f"older than {fail_s:.0f}s: " + ", ".join(aged))
+            if stale:
+                parts.append(f"older than {stale_s:.0f}s: " + ", ".join(stale))
+            if never and not nothing_ever_polled:
+                parts.append("never polled: " + ", ".join(never))
+            results.append(Result("production:feeds", FAIL, "; ".join(parts)))
+        elif stale or never:
+            parts = []
+            if stale:
+                parts.append(f"older than {stale_s:.0f}s: " + ", ".join(stale))
+            if never:
+                parts.append("never polled: " + ", ".join(never))
+            results.append(Result("production:feeds", WARN, "; ".join(parts)))
         else:
             results.append(Result("production:feeds", PASS, f"{len(feeds_map)} feeds fresh"))
 
+    results.append(_check_production_alerts(data))
+    return results
+
+
+def _check_production_alerts(data: dict) -> Result:
+    """The alerts line: WARN while a down system's alerts are still being carried
+    forward, FAIL once that carry-forward has stopped protecting riders.
+
+    A degraded alert system is normally NOT urgent: the backend retains the down
+    system's last-known alerts, so riders keep seeing them and the outage is covered.
+    Two things end that grace, and both are a FAIL:
+
+      1. retained_since older than PRODUCTION_ALERT_RETENTION_MAX_S. Past that
+         horizon the backend has dropped the retained alerts, so the coverage the
+         WARN was predicated on is gone and riders now see nothing for that system.
+      2. A degraded system whose last successful decode (fresh_at) is older than the
+         same horizon. This catches a system that is failing without ever having
+         established a retention clock.
+
+    Ages are computed against the payload's own served_at, NOT this runner's clock:
+    fresh_at and retained_since are stamped by the deployment, so mixing in the
+    monitor's clock would fold host skew into a 30 minute threshold.
+
+    THE PER-SYSTEM FIELDS ARE NOT ENOUGH ON THEIR OWN, which is why the poll-level
+    age is checked first. On the all-feeds-failed path, pollers._refresh_alerts
+    records the poll error and RETURNS before it touches `health`, so every
+    per-system field stays frozen at its last healthy value: degraded_systems comes
+    back empty and every system still looks freshly decoded. A total alerts outage
+    would therefore read PASS off the per-system data alone, which is the worst
+    failure available to a monitor. The poll's own age_s and last_error are the only
+    fields that move in that case, so they are the first thing consulted."""
     alerts_obj = data.get("alerts")
-    degraded_raw = alerts_obj.get("degraded_systems") if isinstance(alerts_obj, dict) else None
+    if not isinstance(alerts_obj, dict):
+        # The app always emits this object; a missing or wrong-typed one is a payload
+        # regression, and returning PASS here would report health we never checked.
+        return Result("production:alerts", FAIL, "no alerts object reported by /api/status")
+    degraded_raw = alerts_obj.get("degraded_systems")
     degraded = degraded_raw if isinstance(degraded_raw, list) else []
+    systems_raw = alerts_obj.get("systems")
+    systems = systems_raw if isinstance(systems_raw, dict) else {}
+
+    # POLL-LEVEL first: this is what catches a TOTAL outage, where the per-system map
+    # is frozen and looks healthy. Same two-edge band as the feeds, for the same
+    # anti-flapping reason.
+    poll_age = alerts_obj.get("age_s")
+    if poll_age is None:
+        return Result("production:alerts", WARN, "alerts have never polled")
+    if isinstance(poll_age, (int, float)) and not isinstance(poll_age, bool):
+        if poll_age < 0 or poll_age > PRODUCTION_FEED_FAIL_S:
+            return Result(
+                "production:alerts",
+                FAIL,
+                f"alerts poll is {poll_age}s old (past {PRODUCTION_FEED_FAIL_S:.0f}s), so the "
+                "per-system health below is frozen and cannot be trusted",
+            )
+    else:
+        return Result("production:alerts", FAIL, f"alerts age_s is unusable ({poll_age!r})")
+
+    served_at = data.get("served_at")
+    horizon = PRODUCTION_ALERT_RETENTION_MAX_S
+    expired = []
+    if isinstance(served_at, (int, float)) and not isinstance(served_at, bool):
+        for name, health in sorted(systems.items()):
+            if not isinstance(health, dict):
+                continue
+            retained_since = health.get("retained_since")
+            fresh_at = health.get("fresh_at")
+            if isinstance(retained_since, (int, float)) and not isinstance(retained_since, bool):
+                if served_at - retained_since > horizon:
+                    expired.append(f"{name} retained {served_at - retained_since:.0f}s")
+                    continue
+            if name in degraded:
+                if fresh_at is None:
+                    # Degraded AND never successfully decoded: broken since process
+                    # start, so there are no retained alerts to protect riders and no
+                    # retention clock either. The isinstance guard below would skip
+                    # exactly this case, leaving it permanently WARN and unable to
+                    # ever escalate, which is the worst state to be lenient about.
+                    expired.append(f"{name} has never decoded")
+                elif (
+                    isinstance(fresh_at, (int, float))
+                    and not isinstance(fresh_at, bool)
+                    and served_at - fresh_at > horizon
+                ):
+                    expired.append(f"{name} last decoded {served_at - fresh_at:.0f}s ago")
+    elif degraded:
+        # No skew-free way to age the deployment's timestamps, so the escalation
+        # cannot be assessed. Say so rather than implying it was checked and passed.
+        return Result(
+            "production:alerts",
+            WARN,
+            "degraded alert systems (" + ", ".join(str(s) for s in degraded) + "); "
+            "served_at missing so the retention horizon could not be checked",
+        )
+
+    if expired:
+        return Result(
+            "production:alerts",
+            FAIL,
+            f"alert coverage lost (past the {horizon:.0f}s retention horizon): "
+            + ", ".join(expired),
+        )
     if degraded:
         names = ", ".join(str(s) for s in degraded)
-        results.append(Result("production:alerts", WARN, "degraded alert systems: " + names))
-    else:
-        results.append(Result("production:alerts", PASS, "no degraded alert systems"))
-
-    return results
+        return Result(
+            "production:alerts", WARN, "degraded alert systems (alerts still retained): " + names
+        )
+    return Result("production:alerts", PASS, "no degraded alert systems")
 
 
 # ---------------------------------------------------------------------------
@@ -1151,7 +1369,16 @@ def run_all(
     results.append(check_alerts_realtime(fetch, sleep, now))
     results.append(check_bus_realtime(fetch, sleep, now, env.get("MTA_BUS_API_KEY")))
 
-    results += check_production(fetch, sleep, now, env.get("MONITOR_STATUS_URL"))
+    # MONITOR_SKIP_PRODUCTION is read as "set to anything non-empty", the usual
+    # shell-variable convention, so =1, =true, or =yes all work and only an unset or
+    # empty value means "do check production".
+    results += check_production(
+        fetch,
+        sleep,
+        now,
+        env.get("MONITOR_STATUS_URL"),
+        skip=bool(env.get("MONITOR_SKIP_PRODUCTION")),
+    )
     return results
 
 

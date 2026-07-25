@@ -36,6 +36,7 @@ Two drop rules, deliberately different in severity:
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 
 import httpx
@@ -51,13 +52,31 @@ from feeds.shared import (
     logger,
 )
 
-# The two realtime endpoints share this host and path base with the 14a static
-# utility URL. The 14b probe reached them over http, and 14a settled on https for
-# the same host (its static loader is https-only), so this tries https first and
-# falls back to http only if https fails, keeping both schemes working. Split out
-# so a probe or a host move is a one-line change and so tests can point a fake
-# transport at them.
-FERRY_RT_HOST = "nycferry.connexionz.net/rtt/public/utility/gtfsrealtime.aspx"
+# The two realtime endpoints share this base URL with the 14a static utility URL,
+# which is https-only. https is MANDATORY here too (R3). This used to be a bare
+# host that _fetch_ferry_endpoint tried over https and then http, because the 14b
+# probe had reached it over http; that fallback is gone because httpx.HTTPError is
+# the SUPERSET covering certificate failures, connect errors, and 4xx/5xx status
+# errors, so ANY https problem, including an attacker-induced one, silently
+# downgraded the transport and masked the real failure.
+#
+# The env override is the honest version of the flexibility the fallback was
+# pretending to provide, mirroring PATH_RT_URL: an operator who someday genuinely
+# needs a different host (or, explicitly and owning that choice, plain http) sets
+# it in config, and the code never chooses insecurity on its own. rstrip("/")
+# because the endpoint is joined onto this base, so a trailing slash in an
+# override would otherwise produce a double slash (PATH_RT_URL needs no such
+# guard: it is used whole, with nothing appended). Scope: this moves the two
+# REALTIME endpoints of THIS process only. Three other places hold the same host:
+# the ferry ALERT feed (feeds/alerts.py), the 14a static utility URL
+# (ferry_static.py), and the contract monitor's own _FERRY_RT_BASE
+# (scripts/contract_monitor.py), which polls the alert AND tripupdate endpoints off
+# it on its own schedule and already carries a FOLLOWUP to import from here. So pointing
+# this at a mirror does NOT redirect any of them; folding the monitor onto this
+# constant is R4 work, deliberately not smuggled in here.
+FERRY_RT_BASE = os.getenv(
+    "FERRY_RT_BASE", "https://nycferry.connexionz.net/rtt/public/utility/gtfsrealtime.aspx"
+).rstrip("/")
 FERRY_VEHICLE_ENDPOINT = "vehicleposition"
 FERRY_TRIPUPDATE_ENDPOINT = "tripupdate"
 
@@ -263,23 +282,55 @@ def _trim_ferry_arrivals(
 
 
 async def _fetch_ferry_endpoint(client: httpx.AsyncClient, endpoint: str) -> bytes:
-    """GET one ferry realtime endpoint and return the raw protobuf bytes. https
-    first, then http on failure (the 14b probe used http and 14a used https for
-    the same host; the http fallback only fires if https fails). Redirects are
-    followed (the sibling static utility URL 302s; the realtime endpoints may
-    too). Raises the https error if both attempts fail; a DecodeError on the body
-    surfaces later, at the decode, exactly like the other single-fetch feeds."""
-    last_exc: httpx.HTTPError | None = None
-    for scheme in ("https", "http"):
-        url = f"{scheme}://{FERRY_RT_HOST}/{endpoint}"
-        try:
-            resp = await client.get(url, follow_redirects=True)
-            resp.raise_for_status()
-            return resp.content
-        except httpx.HTTPError as exc:
-            last_exc = last_exc or exc  # keep the https error, the more informative one
-    assert last_exc is not None  # unreachable: the loop returns on success or sets last_exc
-    raise last_exc
+    """GET one ferry realtime endpoint and return the raw protobuf bytes.
+
+    ONE request, over whatever scheme FERRY_RT_BASE names (https by default). It
+    used to try https and then retry the same endpoint over http on any
+    httpx.HTTPError, a fallback dating to the 14b probe reaching this host over
+    http. That is gone (R3): httpx.HTTPError covers certificate and connect
+    failures as well as 4xx/5xx, so the fallback silently downgraded transport on
+    exactly the failures that most deserve to be surfaced, and it masked the real
+    https error behind a second, unrelated one. An https failure is now an
+    ordinary failed poll, handled by the standard machinery (the caller records
+    it, the cache keeps last-known, R1 shows the staleness, R2 bounds the wait).
+
+    Redirects are followed (the sibling static utility URL 302s; the realtime
+    endpoints may too). httpx.HTTPError propagates for the caller to record, and a
+    DecodeError on the body surfaces later, at the decode, exactly like the other
+    single-fetch feeds."""
+    url = f"{FERRY_RT_BASE}/{endpoint}"
+    try:
+        resp = await client.get(url, follow_redirects=True)
+    except httpx.HTTPError:
+        # Already a recordable feed error (connect, timeout, protocol, status):
+        # _refresh_ferry catches these, so let them through untouched.
+        raise
+    except Exception as exc:
+        # Everything else here is a MALFORMED-URL failure, reachable because the
+        # base is operator config. None of those classes is an httpx.HTTPError, so
+        # unconverted they sail past every ferry handler (_refresh_ferry catches
+        # httpx.HTTPError and DecodeError, _bounded_refresh catches TimeoutError)
+        # and land in the poll loop's generic "cycle failed unexpectedly" while the
+        # cache records NOTHING: the same silent-failure shape this PR deletes
+        # elsewhere, reintroduced by making the URL configurable.
+        #
+        # Caught BY EXCLUSION rather than by naming classes, because the set is
+        # bigger than it looks and not all of it is httpx's: a bad port raises
+        # httpx.InvalidURL, but a host label starting "xn--" that is not valid
+        # punycode raises idna.IDNAError straight out of httpx.URL.host, and idna
+        # is httpx's transitive dependency, not ours to import. asyncio.CancelledError
+        # derives from BaseException, so R2's attempt deadline is NOT swallowed here.
+        #
+        # The offending value goes to the LOG, not into the exception text. The
+        # recorded detail is served publicly by /api/status, and cache._sanitize_upstream
+        # only redacts a lowercase "http(s)://..." run, so a base that is malformed
+        # precisely BECAUSE it does not look like a URL (a stray scheme, an unexpanded
+        # variable, a value carrying a query-string secret) would be republished
+        # verbatim by the very code path meant to keep upstream URLs out of responses.
+        logger.error("FERRY_RT_BASE is not a usable base URL (%r): %s", FERRY_RT_BASE, exc)
+        raise httpx.RequestError(f"Invalid ferry base URL: {exc}") from exc
+    resp.raise_for_status()
+    return resp.content
 
 
 async def fetch_ferry_data(

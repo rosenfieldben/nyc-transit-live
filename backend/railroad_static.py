@@ -334,9 +334,25 @@ async def _load_one(system: str) -> dict | None:
             )
     try:
         data = _parse_system(zip_path)
-    except (zipfile.BadZipFile, KeyError, UnicodeDecodeError):
-        # Unusable cache: corrupt zip, a missing member (stops/trips/shapes), or
-        # undecodable text. Refetch once rather than staying wedged.
+        if not data["stops"]:
+            # A zip that parses cleanly but yields ZERO stops is unusable in exactly
+            # the way the handler below exists for: no stop can be placed, so the
+            # system contributes nothing. It reaches here only from an upstream bad
+            # publish (an empty or header-only stops.txt), since every structural
+            # failure already raises one of the caught classes.
+            #
+            # This MUST invalidate the cache rather than just return the empty parse.
+            # The warmup treats an all-systems-empty load as a failed attempt and
+            # retries (R3), but the retry re-parses whatever is on disk, and a
+            # just-downloaded zip is fresh by mtime, so without unlinking here every
+            # later attempt would re-parse the same bad bytes forever: a retry loop
+            # that pays the cost of retrying and can never heal. Raising into the
+            # recovery below makes the retry actually re-fetch.
+            raise ValueError("stops.txt parsed to zero usable stops")
+    except (zipfile.BadZipFile, KeyError, UnicodeDecodeError, ValueError):
+        # Unusable cache: corrupt zip, a missing member (stops/trips/shapes),
+        # undecodable text, or a clean parse with nothing in it. Refetch once
+        # rather than staying wedged.
         logger.warning("Cached %s static GTFS is unusable; re-downloading", system)
         zip_path.unlink(missing_ok=True)
         try:
@@ -366,6 +382,16 @@ async def load_railroad_static() -> dict[str, dict | None]:
     systems load concurrently to keep cold-start under the healthcheck window;
     _load_one swallows its own exceptions and returns None, so a plain gather
     (no return_exceptions) preserves the per-system None semantics.
+
+    NOTE the caller now reads the AGGREGATE (warmups._warm_railroad_static, R3): a
+    result where EVERY system came back unusable (None, or parsed but carrying no
+    stops) counts as a failed attempt and retries, while a partial result (one
+    system usable) still reaches ready. That judgment
+    deliberately lives in the warmup, not here: this function's per-system None
+    contract is load-bearing both for the single-failure case (the surviving
+    system must still be served) and for the tests that assert it, so nothing
+    about the return shape changed. Only the interpretation of an all-None result
+    moved, from "ready, fully degraded, never retried" to "failed, retry".
     """
     systems = list(RAILROAD_STATIC_URLS)
     results = await asyncio.gather(*(_load_one(system) for system in systems))

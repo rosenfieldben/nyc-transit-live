@@ -105,12 +105,49 @@ FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 # Static GTFS loads in the background, off the startup critical path (the durable
 # version of the old _DOWNLOAD_DEADLINE_S stopgap). Each group runs its own warmup
 # task with a "loading" -> "ready" | "failed" state machine: on failure it sleeps
-# STATIC_RETRY_S and retries until it succeeds or the app shuts down, so a degraded
-# network at boot self-heals instead of stranding the map until the next deploy.
-# Kept here (the composition root) rather than in warmups, because it is the name
-# tests shorten (monkeypatch.setattr(main, "STATIC_RETRY_S", ...)); the warmups
-# read main.STATIC_RETRY_S so that patch stays effective.
+# and retries until it succeeds or the app shuts down, so a degraded network at boot
+# self-heals instead of stranding the map until the next deploy. How long it sleeps
+# is the BACKOFF SCHEDULE below, which rises to this value and then holds; this
+# constant is both that steady-state interval and the ceiling every earlier rung is
+# capped at. Kept here (the composition root) rather than in warmups, because it is
+# the name tests shorten (monkeypatch.setattr(main, "STATIC_RETRY_S", ...)); the
+# warmups read main.STATIC_RETRY_S so that patch stays effective.
 STATIC_RETRY_S = 300  # module-level so tests can shorten it
+
+# The backoff schedule for the sleep BETWEEN warmup attempts (warmups._retry_delay
+# walks it, then holds at the last rung, with jitter).
+#
+# WHY the early rungs exist: Railway's healthcheckTimeout is 300s (railway.json)
+# and this used to be a FLAT STATIC_RETRY_S sleep, also 300s, so a transient
+# first-attempt failure (a DNS blip, a slow upstream at boot) got its second
+# attempt only at the very edge of the deployment window: effectively zero second
+# chances inside it. Retrying at 15s and 30s puts two more attempts comfortably
+# inside the window, which is where a cold start actually needs them. Anyone
+# raising these rungs must raise healthcheckTimeout with them (recorded in the
+# README deployment section, since JSON has no comments).
+#
+# WHY the last rung stays STATIC_RETRY_S: once the early retries have failed, the
+# upstream is probably genuinely down, and hammering it helps nobody; 5 minutes is
+# the right steady-state hum. Every rung is CAPPED at STATIC_RETRY_S (see
+# _retry_delay), so that constant remains the single ceiling knob and the
+# documented monkeypatch surface: shrinking it shrinks the whole schedule, which
+# is what the warmup state-machine tests rely on.
+#
+# WHY jitter (+-10%, applied in _retry_delay): all four warmup tasks start
+# together in lifespan, so a shared upstream outage would otherwise have them
+# retry in lockstep forever, a self-inflicted stampede every rung. NOTE this is
+# the opposite call from the frontend's retryUntil, which documents "no jitter"
+# because determinism keeps its tests exact (frontend/helpers.js). The two differ
+# because the situations do: the browser runs ONE retry loop per visitor against a
+# server built to serve many, while here four tasks in one process hammer the same
+# handful of upstreams together. The jitter source is injected (_retry_delay's
+# `rand`), so the backend keeps exact tests too.
+#
+# NOT to be merged with STATIC_ATTEMPT_DEADLINE_S: this governs the sleep BETWEEN
+# attempts, that one bounds the duration OF an attempt. They are different clocks
+# on different failures, and collapsing them would silently couple "how long we
+# wait for a hung download" to "how often we retry a dead one".
+STATIC_RETRY_SCHEDULE_S = (15, 30, 60, STATIC_RETRY_S)
 
 # Whole-ATTEMPT deadline for one static warmup (see warmups._warm_*). Each downloader
 # already wraps just its transfer in its own asyncio.timeout(_DOWNLOAD_DEADLINE_S)
@@ -262,7 +299,8 @@ async def lifespan(app: FastAPI):
     app.state.feed_poll_task.cancel()
     app.state.alert_poll_task.cancel()
     # cancel() during a warmup's retry sleep raises CancelledError inside the
-    # sleep, so shutdown never waits out a mid-retry STATIC_RETRY_S.
+    # sleep, so shutdown never waits out a mid-retry backoff delay (whichever
+    # STATIC_RETRY_SCHEDULE_S rung that attempt had reached).
     app.state.subway_static_task.cancel()
     app.state.railroad_static_task.cancel()
     app.state.path_static_task.cancel()
@@ -381,6 +419,7 @@ __all__ = [
     "ferry_static",
     "railroad_static",
     "STATIC_RETRY_S",
+    "STATIC_RETRY_SCHEDULE_S",
     "FEED_STALE_AFTER_S",
     "ALERT_RETENTION_MAX_S",
     "fetch_vehicle_positions",

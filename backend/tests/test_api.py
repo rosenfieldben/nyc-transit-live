@@ -10,6 +10,7 @@ import json
 import logging
 import time
 import types
+from pathlib import Path
 
 import httpx
 import pytest
@@ -17,6 +18,7 @@ import pytest
 import bus_static
 import feeds
 import main as app_module
+import warmups
 
 pytestmark = pytest.mark.anyio
 
@@ -408,9 +410,10 @@ async def test_status_reports_path_feed_health_and_cache_entry(client, cache, st
 
 
 async def test_status_reports_path_static(client, status_env):
-    # PATH is the only static group that can loop in "failed" forever (single
-    # system), so its warmup state must be visible in the operational snapshot
-    # alongside subway_static and railroad_static.
+    # PATH can loop in "failed" indefinitely (single system, so an empty load is a
+    # total failure), so its warmup state must be visible in the operational
+    # snapshot alongside subway_static and railroad_static. Railroad joins it there
+    # only when EVERY system came back empty (R3); a partial load still reaches ready.
     app_module.app.state.path_static_status = "failed"
     res = await client.get("/api/status")
     assert res.status_code == 200
@@ -1933,9 +1936,12 @@ async def test_subway_static_warmup_retries_after_failure(monkeypatch):
 
 
 async def test_subway_static_warmup_cancels_cleanly_during_retry_sleep(monkeypatch):
-    # Parked in the retry sleep (loader always fails, interval set huge): a cancel
-    # must complete promptly rather than wait out STATIC_RETRY_S (the clean-
-    # shutdown-during-retry invariant).
+    # Parked in the retry sleep (loader always fails, ceiling set huge): a cancel
+    # must complete promptly rather than wait the delay out (the clean-shutdown-
+    # during-retry invariant). With the backoff schedule the first rung is 15s,
+    # well above the 5s assertion timeout below, so the test still fails if a
+    # cancel during the sleep stopped working; the huge STATIC_RETRY_S keeps every
+    # LATER rung long too, so this holds no matter which rung it parks on.
     monkeypatch.setattr(app_module, "STATIC_RETRY_S", 3600)
 
     async def always_fails():
@@ -1952,7 +1958,7 @@ async def test_subway_static_warmup_cancels_cleanly_during_retry_sleep(monkeypat
         await asyncio.sleep(0.005)
     assert app.state.subway_static_status == "failed"
     task.cancel()
-    # Finishes well within STATIC_RETRY_S (3600s); wait_for raises if it hung.
+    # Finishes well within the parked delay (15s at minimum); wait_for raises if it hung.
     await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), timeout=5)
     assert task.cancelled()
 
@@ -2025,11 +2031,321 @@ async def test_railroad_static_warmup_loading_to_ready(monkeypatch):
     monkeypatch.setattr(app_module.railroad_static, "load_railroad_static", fake_load)
     app = _fake_app(railroad_static_status="loading")
     await app_module._warm_railroad_static(app)
+    # A PARTIAL result still reaches ready, and R3 deliberately did not change that:
+    # one system down is a real degraded state worth serving, because the surviving
+    # system's stops still place its trains. Only the ALL-systems-None case became a
+    # failed attempt (see the test below); this pins the boundary between them.
     assert app.state.railroad_static_status == "ready"  # ready even with a None system
     assert app.state.railroad_stops["LIRR"] == {"1": {"name": "Aville", "lat": 40.7, "lon": -74.0}}
     assert app.state.railroad_stops["MNR"] is None
     assert app.state.railroad_routes["LIRR"][0]["name"] == "Montauk Branch"
     assert app.state.railroad_routes["MNR"] == []
+
+
+async def test_railroad_static_warmup_all_systems_none_is_failed_then_recovers(monkeypatch, caplog):
+    # R3: a load where EVERY system came back None used to be marked ready and never
+    # retried, so a boot-time outage that cleared a minute later stayed broken until
+    # the next deploy. It is now a failed attempt that retries like any other.
+    monkeypatch.setattr(app_module, "STATIC_RETRY_S", 0.01)  # caps every schedule rung
+    gate = {"ok": False}
+    healthy = {
+        "LIRR": {
+            "stops": {"1": {"name": "Aville", "lat": 40.7, "lon": -74.0}},
+            "trips": {"t1": {"route_id": "5", "shape_id": "s1"}},
+            "shapes": {"s1": [[40.7, -74.0], [40.71, -74.01]]},
+            "routes": {"5": {"long_name": "Montauk Branch", "short_name": None}},
+        },
+        "MNR": None,
+    }
+
+    async def gated_load():
+        return healthy if gate["ok"] else {"LIRR": None, "MNR": None}
+
+    monkeypatch.setattr(app_module.railroad_static, "load_railroad_static", gated_load)
+    app = _fake_app(railroad_static_status="loading")
+    with caplog.at_level(logging.WARNING, logger=app_module.logger.name):
+        task = asyncio.create_task(app_module._warm_railroad_static(app))
+        try:
+            for _ in range(200):  # wait until the all-None attempt is marked failed
+                if app.state.railroad_static_status == "failed":
+                    break
+                await asyncio.sleep(0.005)
+            assert app.state.railroad_static_status == "failed"
+            # A total failure must not publish empty state: nothing was assigned, so
+            # the handlers keep reporting the failed group rather than serving blanks.
+            assert getattr(app.state, "railroad_static", None) is None
+            gate["ok"] = True  # the next retry loads
+            for _ in range(200):
+                if app.state.railroad_static_status == "ready":
+                    break
+                await asyncio.sleep(0.005)
+            assert app.state.railroad_static_status == "ready"
+            assert app.state.railroad_stops["LIRR"] == {
+                "1": {"name": "Aville", "lat": 40.7, "lon": -74.0}
+            }
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    # NO DOUBLE-LOGGING: many attempts failed while gated, but the transition-only
+    # guard in _set_static_status (which every failure path reaches through the one
+    # shared _fail_and_wait) logged the failure exactly once.
+    failures = [r for r in caplog.records if "railroad_static_status failed" in r.getMessage()]
+    assert len(failures) == 1
+
+
+async def test_railroad_static_warmup_all_systems_parsed_but_empty_is_also_failed(monkeypatch):
+    # The aggregate test is EMPTINESS, not None-ness, matching the PATH and ferry
+    # empty-result paths. A system that downloaded and parsed but yielded ZERO stops
+    # places no trains and would serve [] under a one-hour cache header, so it must
+    # not be the thing that rescues the group from retrying just by being non-None.
+    monkeypatch.setattr(app_module, "STATIC_RETRY_S", 0.01)
+
+    async def parsed_but_empty():
+        return {
+            "LIRR": {"stops": {}, "trips": {}, "shapes": {}, "routes": {}},
+            "MNR": None,
+        }
+
+    monkeypatch.setattr(app_module.railroad_static, "load_railroad_static", parsed_but_empty)
+    app = _fake_app(railroad_static_status="loading")
+    task = asyncio.create_task(app_module._warm_railroad_static(app))
+    try:
+        for _ in range(200):
+            if app.state.railroad_static_status == "failed":
+                break
+            await asyncio.sleep(0.005)
+        assert app.state.railroad_static_status == "failed"  # never settles as ready
+        assert getattr(app.state, "railroad_static", None) is None
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+# ---------------- warmup retry backoff schedule (R3) ----------------
+
+
+def test_retry_delay_walks_the_schedule_then_holds_at_the_last_rung():
+    # rand fixed at the midpoint, so jitter contributes exactly 1.0 and the rungs
+    # themselves are what is asserted.
+    def mid():
+        return 0.5
+
+    rungs = [warmups._retry_delay(attempt, rand=mid) for attempt in range(6)]
+    assert rungs[:4] == list(app_module.STATIC_RETRY_SCHEDULE_S)
+    assert rungs[0] == 15  # the first retry is 15s, not the old flat 300s
+    # Past the end of the schedule it holds at the steady-state rung forever rather
+    # than growing without bound.
+    assert rungs[4] == rungs[5] == app_module.STATIC_RETRY_S
+
+
+def test_retry_delay_jitter_stays_within_ten_percent():
+    # The bounds are exact at the extremes of the injected source, so a stampede
+    # across the four warmup tasks is broken up without the delay drifting far.
+    assert warmups._retry_delay(0, rand=lambda: 0.0) == 15 * 0.9
+    assert warmups._retry_delay(0, rand=lambda: 1.0) == pytest.approx(15 * 1.1)
+    for attempt in range(6):
+        nominal = min(
+            app_module.STATIC_RETRY_SCHEDULE_S[min(attempt, 3)], app_module.STATIC_RETRY_S
+        )
+        sampled = warmups._retry_delay(attempt)  # the real random source
+        assert 0.9 * nominal <= sampled <= 1.1 * nominal
+
+
+def test_retry_delay_caps_every_rung_at_static_retry_s(monkeypatch):
+    # STATIC_RETRY_S stays the single ceiling knob AND the documented monkeypatch
+    # surface: shrinking it shrinks every rung, which is exactly what lets the
+    # warmup state-machine tests above drive retries instantly.
+    monkeypatch.setattr(app_module, "STATIC_RETRY_S", 0.01)
+    for attempt in range(6):
+        assert warmups._retry_delay(attempt, rand=lambda: 0.5) == 0.01
+
+
+async def test_fail_and_wait_sleeps_the_delay_it_reported(monkeypatch):
+    # _fail_and_wait must actually WAIT the delay it computed, and hand that same
+    # delay to the status log: a version that recorded the failure but skipped (or
+    # shortened) the sleep would turn a backoff into a hot loop against a dead
+    # upstream, and one that logged a different number than it slept would be a
+    # quieter lie. Capture both sides and assert they agree.
+    slept = []
+    reported = {}
+
+    async def fake_sleep(seconds):
+        slept.append(seconds)
+
+    def fake_status(app, field, status, exc=None, retry_in_s=None):
+        reported["status"] = status
+        reported["retry_in_s"] = retry_in_s
+        setattr(app.state, field, status)
+
+    monkeypatch.setattr(warmups.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(warmups, "_set_static_status", fake_status)
+    app = _fake_app(subway_static_status="loading")
+
+    nxt = await warmups._fail_and_wait(app, "subway_static_status", RuntimeError("down"), 0)
+
+    assert nxt == 1  # the attempt index advances, or the schedule never progresses
+    assert len(slept) == 1
+    assert reported["status"] == "failed"
+    assert slept[0] == reported["retry_in_s"]  # slept exactly what it announced
+    assert 0.9 * 15 <= slept[0] <= 1.1 * 15  # and that is the first rung
+
+
+@pytest.mark.parametrize(
+    ("warm", "field", "patch"),
+    [
+        ("_warm_subway_static", "subway_static_status", "subway_raise"),
+        ("_warm_railroad_static", "railroad_static_status", "railroad_raise"),
+        ("_warm_railroad_static", "railroad_static_status", "railroad_empty"),
+        ("_warm_path_static", "path_static_status", "path_raise"),
+        ("_warm_path_static", "path_static_status", "path_empty"),
+        ("_warm_ferry_static", "ferry_static_status", "ferry_raise"),
+        ("_warm_ferry_static", "ferry_static_status", "ferry_empty"),
+    ],
+)
+async def test_every_warmup_failure_path_advances_the_schedule(monkeypatch, warm, field, patch):
+    # EVERY failure path must thread the attempt counter through _fail_and_wait, or
+    # that path silently pins itself to the first rung and retries every 15s forever
+    # against a dead upstream. This covers all seven: each of the four groups' raise
+    # path, plus the empty-result path that PATH, ferry, and (since R3) railroad each
+    # add. A path that forgot to reassign `attempt` shows up here as a repeated first
+    # rung instead of a rising one.
+    attempts = []
+    real_delay = warmups._retry_delay
+
+    def recording(attempt, rand=None):
+        attempts.append(attempt)
+        return 0.0 if len(attempts) < 4 else real_delay(attempt, rand=lambda: 0.5)
+
+    monkeypatch.setattr(warmups, "_retry_delay", recording)
+
+    async def raiser():
+        raise RuntimeError("down")
+
+    async def empty_dict():
+        return {}
+
+    async def railroad_empty():
+        return {"LIRR": None, "MNR": None}
+
+    if patch == "subway_raise":
+        monkeypatch.setattr(app_module, "load_subway_stops", raiser)
+    elif patch == "railroad_raise":
+        monkeypatch.setattr(app_module.railroad_static, "load_railroad_static", raiser)
+    elif patch == "railroad_empty":
+        monkeypatch.setattr(app_module.railroad_static, "load_railroad_static", railroad_empty)
+    elif patch == "path_raise":
+        monkeypatch.setattr(app_module.path_static, "load_path_static", raiser)
+    elif patch == "path_empty":
+        monkeypatch.setattr(app_module.path_static, "load_path_static", empty_dict)
+    elif patch == "ferry_raise":
+        monkeypatch.setattr(app_module.ferry_static, "load_ferry_static", raiser)
+    elif patch == "ferry_empty":
+        monkeypatch.setattr(app_module.ferry_static, "load_ferry_static", empty_dict)
+
+    app = _fake_app(**{field: "loading"})
+    task = asyncio.create_task(getattr(app_module, warm)(app))
+    try:
+        for _ in range(400):  # let it fail several times over
+            if len(attempts) >= 4:
+                break
+            await asyncio.sleep(0.005)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    # Strictly increasing from zero: this path walks the schedule rather than
+    # resetting to (or sticking on) the first rung.
+    assert attempts[:4] == [0, 1, 2, 3]
+
+
+async def test_escalating_to_a_longer_rung_logs_once_per_step(monkeypatch, caplog):
+    # The transition-only status log fires once, naming the FIRST rung, so without
+    # this the log would claim a 15s cadence for an outage that has settled onto the
+    # 300s one. Each escalation logs exactly once (bounded by the schedule length),
+    # and jitter alone never logs.
+    # Sleep is stubbed out rather than the delay, so _retry_delay and _rung both run
+    # for real and the NUMBER each line reports is exercised, not just how many lines
+    # there are. Jitter is dropped (delay == the exact rung) so the reported cadence
+    # can be asserted verbatim: a version that interpolated the previous rung, or the
+    # uncapped schedule entry, would still emit the right COUNT of lines and only a
+    # text assertion catches it. monkeypatch undoes both at teardown.
+    async def _no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(warmups.asyncio, "sleep", _no_sleep)
+    monkeypatch.setattr(warmups, "_retry_delay", lambda attempt, rand=None: warmups._rung(attempt))
+    app = _fake_app(subway_static_status="loading")
+    with caplog.at_level(logging.WARNING, logger=app_module.logger.name):
+        for attempt in range(6):
+            await warmups._fail_and_wait(app, "subway_static_status", RuntimeError("down"), attempt)
+
+    transitions = [r for r in caplog.records if "failed to load" in r.getMessage()]
+    escalations = [r for r in caplog.records if "backing off" in r.getMessage()]
+    assert len(transitions) == 1  # still exactly one transition line, as before
+    # The transition names the FIRST rung, which is the whole reason the escalations
+    # have to exist.
+    first_rung = app_module.STATIC_RETRY_SCHEDULE_S[0]
+    assert f"retrying in {first_rung:.0f}s" in transitions[0].getMessage()
+    # One escalation per step up, each naming the rung it just moved TO; attempts 4
+    # and 5 sit on the same final rung and stay silent, so this cannot become spam.
+    assert [r.getMessage() for r in escalations] == [
+        f"subway_static_status still failing (down); backing off, next retry in {rung:.0f}s"
+        for rung in app_module.STATIC_RETRY_SCHEDULE_S[1:]
+    ]
+
+
+def test_failure_log_never_reports_an_empty_reason():
+    # str(TimeoutError()) is "", and the R2 attempt deadline raises exactly that, so
+    # a naive "%s" would log "failed to load ()" and name no cause for the single
+    # most interesting failure. Every exception must describe itself.
+    assert warmups._describe(TimeoutError()) == "TimeoutError"
+    assert warmups._describe(RuntimeError("boom")) == "boom"
+    assert warmups._describe(None) == "unknown"
+
+
+async def test_static_warmup_retries_land_inside_the_healthcheck_window(monkeypatch):
+    # THE COLD-START COLLISION THIS PINS: railway.json sets healthcheckTimeout, and
+    # the retry interval used to be a FLAT STATIC_RETRY_S equal to it. A transient
+    # first-attempt failure therefore got its next attempt only at the very edge of
+    # the deployment window, i.e. no real second chance inside it. The schedule's
+    # early rungs must fit two more attempts comfortably inside that window.
+    #
+    # The window is READ FROM railway.json rather than hardcoded, so this guards the
+    # coupling in BOTH directions the README documents: lengthening the early rungs
+    # fails here, and so does lowering healthcheckTimeout underneath them.
+    railway = json.loads((Path(__file__).resolve().parents[2] / "railway.json").read_text())
+    HEALTHCHECK_TIMEOUT_S = railway["deploy"]["healthcheckTimeout"]
+    real_delay = warmups._retry_delay
+    delays = []
+
+    def recording(attempt, rand=None):
+        # Compute the REAL scheduled delay (jitter pinned mid-range so the assertion
+        # is exact), record it, then return 0 so the wait is simulated, not slept.
+        delay = real_delay(attempt, rand=lambda: 0.5)
+        delays.append(delay)
+        return 0.0
+
+    monkeypatch.setattr(warmups, "_retry_delay", recording)
+    calls = {"n": 0}
+
+    async def flaky_stops():
+        calls["n"] += 1
+        if calls["n"] <= 2:  # two transient cold-start failures, then healthy
+            raise RuntimeError("cold-start blip")
+        return SUBWAY_STOPS
+
+    monkeypatch.setattr(app_module, "load_subway_stops", flaky_stops)
+    monkeypatch.setattr(app_module, "load_subway_route_shapes", lambda: [])
+    monkeypatch.setattr(app_module, "load_subway_stations", lambda: {})
+    monkeypatch.setattr(app_module, "load_subway_station_routes", lambda: {})  # hermetic
+    app = _fake_app(subway_static_status="loading")
+    await app_module._warm_subway_static(app)  # terminates: the third attempt loads
+
+    assert app.state.subway_static_status == "ready"
+    assert delays == [15, 30]  # the first two rungs, not two flat 300s waits
+    # Both retries started, and the group reached ready, well inside the window the
+    # old flat interval only just reached with its FIRST retry.
+    assert sum(delays) <= HEALTHCHECK_TIMEOUT_S / 2
 
 
 async def test_path_static_warmup_loading_to_ready(monkeypatch):

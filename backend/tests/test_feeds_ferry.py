@@ -18,9 +18,14 @@ directly below so a regression in either surfaces as a test failure, not a
 silently wrong map.
 """
 
+import contextlib
+import importlib
 import json
+import logging
+import os
 from pathlib import Path
 
+import httpx
 import pytest
 from google.transit import gtfs_realtime_pb2 as pb
 
@@ -353,6 +358,242 @@ def test_arrivals_sorted_and_capped_per_route():
     arrivals_times = [r["arrival"] for r in rows]
     assert arrivals_times == sorted(arrivals_times)  # soonest-first
     assert arrivals_times[0] == NOW + 60  # the earliest survived the cap
+
+
+# ---------------- fetch transport: https is mandatory (R3) ----------------
+#
+# The helper used to try https and then RETRY the same endpoint over http on any
+# httpx.HTTPError. Because that exception class covers certificate and connect
+# failures as well as 4xx/5xx, the fallback downgraded transport on exactly the
+# failures that most deserve surfacing. These tests pin the replacement: exactly
+# ONE request per endpoint, on the configured (https) scheme, and a failure that
+# propagates untouched to the caller.
+
+
+class _FakeFerryResp:
+    def __init__(self, content):
+        self.content = content
+
+    def raise_for_status(self):
+        pass
+
+
+class _FakeFerryClient:
+    """Records every request so a test can assert the COUNT and the SCHEME. The
+    ferry helper passes follow_redirects, so the signature accepts it."""
+
+    def __init__(self, content=b"", error=None):
+        self._content = content
+        self._error = error
+        self.urls: list[str] = []
+
+    async def get(self, url, follow_redirects=False):
+        self.urls.append(url)
+        if self._error is not None:
+            raise self._error
+        return _FakeFerryResp(self._content)
+
+
+# Every fetch test pins the base rather than reading the ambient one. FERRY_RT_BASE
+# is an env override by design, so a developer or CI box that legitimately sets it
+# (to a mirror, or to the plain http the docstring says an operator may choose) must
+# not turn these into failures: they assert what the CODE does with a base, not what
+# this machine happens to be configured for. The env wiring itself is covered
+# separately, below, by reloading the module under a controlled environment.
+_PINNED_BASE = "https://ferry.test/rt"
+
+
+@pytest.fixture
+def pinned_base(monkeypatch):
+    monkeypatch.setattr(feeds.ferry, "FERRY_RT_BASE", _PINNED_BASE)
+    return _PINNED_BASE
+
+
+@pytest.mark.anyio
+async def test_fetch_endpoint_makes_one_https_request(pinned_base):
+    client = _FakeFerryClient(b"payload")
+    raw = await feeds.ferry._fetch_ferry_endpoint(client, feeds.FERRY_VEHICLE_ENDPOINT)
+    assert raw == b"payload"
+    assert client.urls == [f"{pinned_base}/{feeds.FERRY_VEHICLE_ENDPOINT}"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "error",
+    [
+        # The three shapes the old fallback treated identically, all httpx.HTTPError:
+        # a server error, a transport/connect failure, and the certificate failure an
+        # attacker could induce to force the downgrade.
+        httpx.HTTPStatusError("500", request=httpx.Request("GET", "https://x/y"), response=None),
+        httpx.ConnectError("connection refused"),
+        httpx.ConnectError("certificate verify failed"),
+    ],
+    ids=["status_5xx", "connect_error", "certificate_error"],
+)
+async def test_fetch_endpoint_never_retries_on_another_scheme(error, pinned_base):
+    # THE R3 INVARIANT: an https failure raises, and NO second attempt is made on
+    # any scheme. Before R3 each of these silently produced a plaintext retry.
+    client = _FakeFerryClient(error=error)
+    with pytest.raises(httpx.HTTPError):
+        await feeds.ferry._fetch_ferry_endpoint(client, feeds.FERRY_VEHICLE_ENDPOINT)
+    assert len(client.urls) == 1  # exactly one attempt, no fallback
+    assert not any(url.startswith("http://") for url in client.urls)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "bad_base",
+    [
+        # A bad port raises httpx.InvalidURL...
+        "https://ferry.test:not-a-port/rt",
+        # ...but a host label starting "xn--" that is not valid punycode raises
+        # idna.IDNAError straight out of httpx.URL.host, which is neither an
+        # httpx.HTTPError NOR an httpx.InvalidURL. Naming exception classes missed
+        # this one, which is why the guard catches by exclusion instead.
+        "https://xn--.example/rt",
+        "https://xn--a.example/rt",
+    ],
+    ids=["bad_port", "bad_punycode", "bad_codepoint"],
+)
+async def test_fetch_endpoint_turns_a_malformed_base_into_a_recordable_error(monkeypatch, bad_base):
+    # A malformed override is reachable because the base is operator config, and none
+    # of the classes it raises is an httpx.HTTPError, so unconverted it sails past
+    # every ferry handler and lands in the poll loop's generic "cycle failed
+    # unexpectedly" while the cache records nothing. It must arrive as an HTTPError
+    # the poller records. Driven through a REAL httpx client so the exception classes
+    # are the ones httpx actually raises, not ones a stub asserts into existence.
+    monkeypatch.setattr(feeds.ferry, "FERRY_RT_BASE", bad_base)
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(httpx.HTTPError):  # NOT a bare InvalidURL/IDNAError
+            await feeds.ferry._fetch_ferry_endpoint(client, feeds.FERRY_VEHICLE_ENDPOINT)
+
+
+@pytest.mark.anyio
+async def test_malformed_base_value_is_logged_but_never_put_in_the_served_error(
+    monkeypatch, caplog
+):
+    # The recorded detail is served publicly by /api/status, and _sanitize_upstream
+    # only redacts a lowercase http(s):// run, so a base malformed precisely because
+    # it does not look like a URL would be republished verbatim. Keep the value in
+    # the log (where an operator needs it) and out of the exception text.
+    secret_base = "HTTPS://ferry.test:bad/rt?token=hunter2"
+    monkeypatch.setattr(feeds.ferry, "FERRY_RT_BASE", secret_base)
+    with caplog.at_level(logging.ERROR, logger="main"):
+        async with httpx.AsyncClient() as client:
+            with pytest.raises(httpx.HTTPError) as caught:
+                await feeds.ferry._fetch_ferry_endpoint(client, feeds.FERRY_VEHICLE_ENDPOINT)
+    assert "hunter2" not in str(caught.value)  # nothing to leak through /api/status
+    assert "hunter2" in caplog.text  # but the operator can still see what is wrong
+
+
+@pytest.mark.anyio
+async def test_fetch_ferry_data_propagates_http_error_for_the_caller_to_record(pinned_base):
+    # The whole-poll contract (matching the PATH fetch precedent): the error
+    # reaches pollers._refresh_ferry, which records it and keeps last-known.
+    client = _FakeFerryClient(error=httpx.ConnectError("ferry down"))
+    with pytest.raises(httpx.HTTPError):
+        await feeds.fetch_ferry_data(client, {"trips": TRIPS, "routes": ROUTES})
+    # Both endpoints are gathered and each makes exactly one attempt, so a poll that
+    # fails outright costs 2 requests. Under the deleted fallback it cost 4.
+    assert len(client.urls) == 2
+    assert not any(url.startswith("http://") for url in client.urls)
+
+
+@pytest.mark.anyio
+async def test_fetch_uses_the_configured_base_for_both_endpoints(monkeypatch):
+    # The helper reads the module global at call time, so an override (env or
+    # otherwise) reaches every endpoint rather than only one of them.
+    monkeypatch.setattr(feeds.ferry, "FERRY_RT_BASE", "https://ferry.example/base")
+    client = _FakeFerryClient(_feed().SerializeToString())
+    await feeds.fetch_ferry_data(client, {"trips": TRIPS, "routes": ROUTES})
+    assert sorted(client.urls) == [
+        "https://ferry.example/base/tripupdate",
+        "https://ferry.example/base/vehicleposition",
+    ]
+
+
+@contextlib.contextmanager
+def _reloaded_with_env(value):
+    """Reload feeds.ferry with FERRY_RT_BASE set to `value` (None to unset it), then
+    restore the environment and the FERRY_RT_BASE bindings.
+
+    The constant is module-level (the PATH_RT_URL shape), so re-running its
+    os.getenv means reloading the module. That is global mutable state shared with
+    the rest of the session, and feeds/__init__.py holds a SEPARATE binding made at
+    package import, so a naive restore ("delete the var and reload") would pin the
+    module to the hardcoded default and silently desync it from both os.environ and
+    the package attribute for every later test.
+
+    SCOPE, deliberately narrow: this restores os.environ and the two FERRY_RT_BASE
+    bindings, NOT everything reload touches. reload rebinds every function in
+    feeds.ferry, and the names feeds/__init__.py imported still point at the
+    pre-reload function objects. That is harmless here because those functions read
+    their module globals through the same (reloaded in place) module dict, so
+    behavior does not fork; it is called out so nobody reads this as a general
+    module-state undo."""
+    before_env = os.environ.get("FERRY_RT_BASE")
+    before_module = feeds.ferry.FERRY_RT_BASE
+    before_package = feeds.FERRY_RT_BASE
+    try:
+        if value is None:
+            os.environ.pop("FERRY_RT_BASE", None)
+        else:
+            os.environ["FERRY_RT_BASE"] = value
+        importlib.reload(feeds.ferry)
+        yield feeds.ferry.FERRY_RT_BASE
+    finally:
+        if before_env is None:
+            os.environ.pop("FERRY_RT_BASE", None)
+        else:
+            os.environ["FERRY_RT_BASE"] = before_env
+        importlib.reload(feeds.ferry)
+        feeds.ferry.FERRY_RT_BASE = before_module
+        feeds.FERRY_RT_BASE = before_package
+
+
+@pytest.mark.parametrize(
+    ("env_value", "expected"),
+    [
+        ("https://mirror.example/rt", "https://mirror.example/rt"),
+        # A trailing slash is stripped: the endpoint is joined onto this base, so
+        # keeping it would build a double slash. PATH_RT_URL needs no such guard
+        # because it is used whole, with nothing appended.
+        ("https://mirror.example/rt/", "https://mirror.example/rt"),
+    ],
+    ids=["plain", "trailing_slash"],
+)
+def test_ferry_rt_base_env_override_is_read_at_import(env_value, expected):
+    # The override is the honest replacement for the deleted fallback, so pin that
+    # it is actually wired to the environment.
+    with _reloaded_with_env(env_value) as base:
+        assert base == expected
+
+
+def test_ferry_rt_base_defaults_to_https_when_unset():
+    # THE DEFAULT must never be plaintext: an operator who needs http has to set the
+    # override explicitly and own that choice. Asserting this needs the var actually
+    # UNSET, or the test would only be describing this machine's configuration.
+    with _reloaded_with_env(None) as base:
+        assert base.startswith("https://")
+        assert base == "https://nycferry.connexionz.net/rtt/public/utility/gtfsrealtime.aspx"
+
+
+def test_ferry_rt_base_restore_leaves_the_environment_and_bindings_consistent():
+    # Guards the helper above. Asserting only that the two module attributes match
+    # what was captured would be TAUTOLOGICAL: the finally block ends by assigning
+    # exactly those two names, so it could not fail however badly the helper leaked.
+    # The load-bearing checks are therefore (a) os.environ is back, which is what
+    # would otherwise poison every later test, and (b) the restored attributes agree
+    # with what a FRESH read of the environment derives, which is what proves the
+    # assignment restored the truth rather than merely overwriting the symptom.
+    before_env = os.environ.get("FERRY_RT_BASE")
+    with _reloaded_with_env("https://elsewhere.example/rt") as inside:
+        assert inside == "https://elsewhere.example/rt"  # the helper really took effect
+
+    assert os.environ.get("FERRY_RT_BASE") == before_env  # environment handed back
+    expected = before_env or "https://nycferry.connexionz.net/rtt/public/utility/gtfsrealtime.aspx"
+    assert feeds.ferry.FERRY_RT_BASE == expected.rstrip("/")
+    assert feeds.FERRY_RT_BASE == feeds.ferry.FERRY_RT_BASE  # the two bindings agree
 
 
 # ---------------- gated goldens over the real captured feeds ----------------

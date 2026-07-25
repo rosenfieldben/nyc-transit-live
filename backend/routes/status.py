@@ -108,10 +108,12 @@ async def get_status(request: Request, response: Response) -> dict:
         "static_subway_gtfs": static_gtfs,
         "subway_static": getattr(app.state, "subway_static_status", None),
         "railroad_static": getattr(app.state, "railroad_static_status", None),
-        # PATH is the only static group that stays "failed" until a retry
-        # succeeds (single system, so an empty load is a full failure, not a
-        # lenient GPS-only degradation), so its warmup state must be visible in
-        # the operational snapshot the way every other group's is.
+        # PATH stays "failed" until a retry succeeds (single system, so an empty
+        # load is a full failure, not a lenient GPS-only degradation), so its
+        # warmup state must be visible in the operational snapshot the way every
+        # other group's is. Railroad reaches that same failed-and-retrying state
+        # only when EVERY system came back empty (R3); a partial load still
+        # settles as ready, which is the lenient degradation described above.
         "path_static": getattr(app.state, "path_static_status", None),
         # Same single-system rationale as PATH: an empty ferry load is a full
         # failure, so the warmup state must be visible in the snapshot.

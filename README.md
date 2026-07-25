@@ -313,8 +313,9 @@ arrival countdowns and the staleness window are deterministic (no sleeps).
   order. Subject to PANYNJ license terms.
 - **Static GTFS** — stop coordinates and route shapes, downloaded into
   `data/gtfs_static/` and loaded into memory by background warmup tasks (subway,
-  railroad, and PATH, each an independent group), off the startup critical path. A group's load
-  retries automatically on failure, so a degraded network at boot self-heals
+  railroad, PATH, and ferry, each an independent group), off the startup critical
+  path. A group's load retries automatically on failure, on a backoff schedule that
+  starts at 15s and settles at 5 minutes, so a degraded network at boot self-heals
   rather than stranding the map until the next deploy.
 - **AirTrain JFK**: 511NY open-data static GTFS, with no real-time feed. Committed
   once as `data/airtrain_jfk.json` and never fetched at runtime, so this layer is
@@ -368,8 +369,8 @@ downloaded last-writer-wins.
 freshness — both `age_s` (since this server last polled) and `feed_age_s` (how
 stale the feed's own content was at poll time) — the last recorded poll error
 if any, the bus route index state, the static subway GTFS age, and each static
-group's warmup state (`subway_static` / `railroad_static`: loading, ready, or
-failed-and-retrying). The `alerts` entry reports the alert poll's `age_s`, its
+group's warmup state (`subway_static` / `railroad_static` / `path_static` /
+`ferry_static`: loading, ready, or failed-and-retrying). The `alerts` entry reports the alert poll's `age_s`, its
 last error if any, the `active` alert count in the index, and `suppressed_planned`
 (not-yet-active planned work the last poll held back), so upcoming service work is
 visible even though it is excluded from `/api/alerts`. It also carries per-system
@@ -388,8 +389,33 @@ key (which only stops the bus feed) doesn't take down an otherwise-working subwa
 map. A still-**loading** static group or bus index during cold start does not
 flap it (the load runs in the background, off the healthcheck critical path);
 only the failed states, which retry, degrade it until a retry succeeds. Railroad
-static failure is deliberately lenient (that system degrades to GPS-only) rather
-than a healthz reason.
+static failure is deliberately lenient (a system that fails degrades to GPS-only)
+rather than a healthz reason. That leniency is per system, not absolute: a load
+where *every* railroad system came back empty is treated as a failed attempt and
+retried, because a total failure marked ready would never be retried at all.
+
+**Deployment invariant: the first retry rungs must fit well inside the healthcheck
+window.** A failed static warmup retries on a backoff schedule
+(`STATIC_RETRY_SCHEDULE_S` in `backend/main.py`, currently 15s, 30s, 60s, then 300s
+steady, each with ±10% jitter), while `railway.json` sets `healthcheckTimeout` to
+300s. The schedule as a whole is unbounded on purpose (it keeps retrying a genuinely
+down upstream forever, at the 300s steady rung); what has to fit in the window is the
+*early* part, so that a transient first-attempt failure gets more attempts before the
+deploy is judged. Concretely, the first two retries are scheduled 15s and then 30s
+after the attempt before them fails, so with attempts that fail fast (a refused
+connection, a DNS miss, the cold-start case these rungs exist for) both land inside
+300s. The retry interval used to be a flat 300s, which matched the window exactly and
+so gave a cold-start blip no real second chance at all. Note the *sleeps* are what
+this schedule governs: a slow attempt can still consume the window on its own, which
+is `STATIC_ATTEMPT_DEADLINE_S`'s job to bound, not this one's.
+
+The coupling runs both ways: lengthening the early rungs requires raising
+`healthcheckTimeout`, and lowering `healthcheckTimeout` requires shortening them.
+`backend/tests/test_api.py::test_static_warmup_retries_land_inside_the_healthcheck_window`
+reads the timeout straight out of `railway.json` and fails on either mistake.
+`railway.json` is JSON and cannot carry a comment, so this is the note of record.
+(Distinct from `STATIC_ATTEMPT_DEADLINE_S`, which bounds how long a single attempt may
+run rather than how long to wait between attempts.)
 
 While a static group is still loading, its decorative endpoints
 (`/api/subway-stops`, `/api/subway-routes`, `/api/railroad-stops`,
@@ -524,6 +550,9 @@ Two optional pieces of config sharpen it, both safe to leave unset:
   backend's failed-warmup no-cache semantics; a non-empty railroad payload counts
   as success even if one system is missing, because the backend's lenient
   per-system warmup settles that state and frontend retries cannot improve it.
+  (R3 narrowed that leniency: a railroad load where *every* system came back empty
+  is a failed attempt the backend retries, so the payload the frontend sees stays
+  empty and its own retry loop keeps asking until the backend heals.)
   Live-data polling already self-healed and is untouched.
 - [x] **13a. PATH (static foundation)**: the PATH static GTFS (stops, routes,
   shapes, trips) is downloaded, cached, and served from its own warmup group via

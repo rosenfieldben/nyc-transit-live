@@ -58,11 +58,14 @@ import ferry_static  # noqa: E402
 
 FIXTURES = REPO_ROOT / "backend" / "tests" / "fixtures"
 
-# The two realtime endpoints (same host/path base as the decoder). https first,
-# http fallback, mirroring feeds.ferry._fetch_ferry_endpoint.
-_HOST = feeds.FERRY_RT_HOST
-VP_PATHS = (f"https://{_HOST}/vehicleposition", f"http://{_HOST}/vehicleposition")
-TU_PATHS = (f"https://{_HOST}/tripupdate", f"http://{_HOST}/tripupdate")
+# The two realtime endpoints (same base URL as the decoder, env-overridable
+# through it). ONE scheme, whatever FERRY_RT_BASE names: the https-then-http
+# fallback this used to mirror is gone from feeds.ferry._fetch_ferry_endpoint (R3),
+# because falling back on any https error silently downgraded the transport, so
+# the generator must not resurrect it either.
+_BASE = feeds.FERRY_RT_BASE
+VP_URL = f"{_BASE}/vehicleposition"
+TU_URL = f"{_BASE}/tripupdate"
 
 # NYC Ferry daily service window in ET; a capture outside it would be empty.
 SERVICE_START = dt_time(6, 0)
@@ -82,20 +85,15 @@ def _ssl_context() -> ssl.SSLContext:
         return ssl.create_default_context()
 
 
-def _poll(paths: tuple[str, ...], ctx: ssl.SSLContext) -> bytes:
-    """GET the first of `paths` (https, then http) that succeeds; if all fail,
-    raise the FIRST (https) error, the more informative one, the same way
-    feeds.ferry._fetch_ferry_endpoint falls back for the same host."""
-    last_exc: Exception | None = None
-    for url in paths:
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "nyc-transit-live"})
-            with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:  # noqa: S310
-                return resp.read()
-        except Exception as exc:  # noqa: BLE001 - try the next scheme, keep the first error
-            last_exc = last_exc or exc
-    assert last_exc is not None
-    raise last_exc
+def _poll(url: str, ctx: ssl.SSLContext) -> bytes:
+    """GET `url` once and return the body, raising on any failure, the same
+    single-attempt rule feeds.ferry._fetch_ferry_endpoint follows (R3). This used
+    to try https and then http; a capture that silently fell back to plaintext
+    would bake a different transport into the fixtures than the one the app
+    actually uses, so it now fails loudly instead."""
+    req = urllib.request.Request(url, headers={"User-Agent": "nyc-transit-live"})
+    with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:  # noqa: S310
+        return resp.read()
 
 
 def _service_window_open() -> bool:
@@ -144,8 +142,8 @@ def main() -> int:
         return 1
 
     print("Capturing ferry_vp_a + ferry_tu_a (simultaneous) ...")
-    vp_a = _poll(VP_PATHS, ctx)
-    tu_a = _poll(TU_PATHS, ctx)
+    vp_a = _poll(VP_URL, ctx)
+    tu_a = _poll(TU_URL, ctx)
     vp_a_vehicles, _ = _entity_counts(vp_a)
     _, tu_a_trips = _entity_counts(tu_a)
     if vp_a_vehicles == 0 or tu_a_trips == 0:
@@ -157,7 +155,7 @@ def main() -> int:
 
     print(f"Waiting {SECOND_SNAPSHOT_DELAY_S}s for the second VehiclePositions snapshot ...")
     time.sleep(SECOND_SNAPSHOT_DELAY_S)
-    vp_b = _poll(VP_PATHS, ctx)
+    vp_b = _poll(VP_URL, ctx)
 
     # Freeze `now` to ferry_vp_a's header timestamp, the same freeze the path/
     # railroad goldens use, so the decode is deterministic.

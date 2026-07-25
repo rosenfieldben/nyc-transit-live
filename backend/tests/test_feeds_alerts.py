@@ -87,12 +87,32 @@ def test_window_one_open_ended_period_makes_the_whole_alert_open_ended():
     assert feeds._alert_window_status([(950, None), (900, 1100)], NOW) == ("active", 900, None)
 
 
-def test_window_not_yet_started_period_extends_the_effective_end():
-    # Active now until 1100, then running again 2000-3000. Not-yet-ended is broader
-    # than covering on purpose: reporting 1100 would drop the alert during the gap and
-    # resurrect it at 2000, so the effective end spans to 3000 and it survives.
+def test_window_not_yet_started_period_does_not_extend_the_effective_end():
+    # REVIEW FIX, and this test asserted the OPPOSITE before. The max is over the
+    # COVERING periods only. Including not-yet-STARTED ones reached past the overlap
+    # bug being fixed and reported an end far beyond the window actually in effect:
+    # on real captured MNR data (lmm:planned_work:32622 in fixtures/alerts_mnr.pb,
+    # five periods) it overshot by 24 DAYS, and ends_at is a public field the client
+    # sorts and displays.
     status, start, end = feeds._alert_window_status([(900, 1100), (2000, 3000)], NOW)
-    assert (status, start, end) == ("active", 900, 3000)
+    assert (status, start, end) == ("active", 900, 1100)
+
+
+def test_window_unstarted_open_ended_period_does_not_make_the_alert_open_ended():
+    # The same overreach in its worst form: an open-ended period that has NOT STARTED
+    # made ends_at null outright, so the retention re-filter could never expire the
+    # alert (only the 1800s cap could) and compareAlerts' open-ended-first rule
+    # promoted an alert with 50 seconds left above genuinely indefinite ones in every
+    # popup and the banner.
+    status, start, end = feeds._alert_window_status([(900, 1050), (2000, None)], NOW)
+    assert (status, start, end) == ("active", 900, 1050)
+
+
+def test_window_covering_open_ended_period_still_makes_the_alert_open_ended():
+    # The narrowing must not lose the real case: an open-ended period that DOES cover
+    # now still means the alert never self-expires.
+    status, start, end = feeds._alert_window_status([(900, 1050), (950, None)], NOW)
+    assert (status, start, end) == ("active", 900, None)
 
 
 def test_window_all_periods_ended_is_still_ended():

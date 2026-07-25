@@ -391,7 +391,12 @@ async def _poll_feeds(app: FastAPI) -> None:
 
 
 def _apply_alert_generation(
-    entry: dict, fresh_alerts: list[dict], failed_systems: set[str], now: float
+    entry: dict,
+    fresh_alerts: list[dict],
+    failed_systems: set[str],
+    now: float,
+    *,
+    write_index: bool = True,
 ) -> None:
     """Merge this poll's fresh alerts into the served index and rewrite per-system
     health. Shared by the partial-failure and the total-outage paths so the expiry
@@ -401,6 +406,15 @@ def _apply_alert_generation(
     Writes only the CONTENT fields (alerts, active) plus health. fetched_at, error
     and suppressed stay with the caller because they differ by path: fetched_at means
     "the last poll that decoded", so a total outage must not advance it.
+
+    write_index=False rewrites health WITHOUT touching the served index, for the one
+    caller whose index has never filled. Health must still be written there: a process
+    that starts while every feed is down is exactly when an operator needs to see five
+    degraded systems, and skipping this left /api/status reporting last_error null for
+    all of them, i.e. the same "everything looks healthy while nothing works" that this
+    change exists to remove. The index itself must stay None, because writing the
+    merge's empty result would turn a warming deployment into one confidently serving
+    "no active alerts".
 
     SAFE TO RUN ON CONSECUTIVE FAILING POLLS, which is what the total-outage path
     needs. The retention cap compares `now` against the retention START threaded out
@@ -438,7 +452,8 @@ def _apply_alert_generation(
             h["fresh_at"] = now
             h["retained_since"] = None
             h["last_error"] = None
-    entry.update(alerts=merged, active=len(merged))
+    if write_index:
+        entry.update(alerts=merged, active=len(merged))
 
 
 async def _refresh_alerts(app: FastAPI, client: httpx.AsyncClient) -> None:
@@ -510,9 +525,12 @@ async def _refresh_alerts(app: FastAPI, client: httpx.AsyncClient) -> None:
             _note_failure(entry, 502, _sanitize_upstream(exc))
         if entry["alerts"] is None:
             # NEVER FILLED: there is no index to re-filter, and writing the merge's
-            # empty result would flip /api/alerts from its warming 503 to a 200
+            # empty result would flip /api/alerts from its warming state to a 200
             # serving "no active alerts", which is the same false-green this change
-            # exists to remove. Stay warming until a poll actually decodes.
+            # exists to remove. But per-system health is still written, or a process
+            # that started while every feed was down would report five perfectly
+            # healthy systems for as long as the outage lasted.
+            _apply_alert_generation(entry, [], set(entry["health"]), time.time(), write_index=False)
             return
         # Run the ordinary machinery with nothing fresh and every system failed.
         # health is seeded from ALERT_FEED_URLS (cache._fresh_alerts_entry), so its

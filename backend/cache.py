@@ -71,12 +71,19 @@ def _fresh_alerts_entry() -> dict:
     # alerts = the active-alert index (None until the first successful poll, [] once
     # a poll decoded zero active alerts); active/suppressed are the counts /api/status
     # reports. Same last-known-on-failure rule as the feed cache: a failed poll keeps
-    # the last index and its fetched_at, replacing them only on a poll that decoded.
-    # health = per-system freshness, so a PARTIAL outage (one feed down, not all) is
+    # the last index and its fetched_at, and only a poll that decoded ever ADDS to it.
+    # A failed poll can still SHRINK the content, though, because the expiry re-filter
+    # and the retention cap re-run over the existing index: an alert whose own ends_at
+    # passed during an outage drops rather than being pinned alive by the outage. See
+    # pollers._refresh_alerts, which owns that rule and explains why the shrinkage is
+    # honesty rather than data loss.
+    # health = per-system freshness, so an outage (one feed down, or all of them) is
     # visible instead of silently thinning the index: fresh_at is the last decode,
     # retained_since marks a system whose alerts are being carried forward from a
     # down feed (null when fresh or once the retention cap drops them), last_error
     # flags a system failing this poll. Keyed by the same alert systems (ALERT_FEED_URLS).
+    # On a TOTAL outage every system is marked, so degraded_systems is truthful then
+    # too; it is not a partial-outage-only signal.
     return {
         "alerts": None,
         "fetched_at": None,

@@ -751,9 +751,17 @@ function ferryArrivalsHtml(station, body, now, colorFor = () => FERRY_FALLBACK_C
 // polls" while the gate keyed on served_at, i.e. on the client's own fetches; it now
 // keys on the backend's fetched_at, which advances only on a poll that decoded. Both
 // cadences are 60s (ALERT_POLL_INTERVAL_S here and in pollers.py), so the count is
-// unchanged, but the quantity is now genuinely the age of the DATA and includes any
-// time the backend spent failing or timing out (up to REFRESH_DEADLINE_S per poll).
-// That is the point: it is the number riders care about.
+// unchanged, but the quantity is now the age of the DATA and includes any time the
+// backend spent failing or timing out (up to REFRESH_DEADLINE_S per poll).
+//
+// KNOWN LIMIT, stated because an earlier draft of this comment overclaimed: this
+// catches a TOTAL alerts outage, not a PARTIAL one. fetched_at is poll-level, and a
+// poll where four of five feeds decode is a SUCCESS that advances it, so a single
+// system being down for hours never trips this marker even after the backend's
+// retention cap has dropped that system's alerts entirely. /api/alerts carries no
+// per-system freshness for the client to key on, and adding it is the per-system
+// envelope work (C2), not something this threshold can fix. Until then the partial
+// case is visible only to an operator, via degraded_systems on /api/status.
 const ALERTS_STALE_AFTER_S = 300;
 
 // True when the alert DATA is older than the threshold, judged from the payload's
@@ -771,8 +779,31 @@ const ALERTS_STALE_AFTER_S = 300;
 // measuring DELIVERY (did a response arrive) when the honest question is about DATA
 // (has the index been refreshed). fetched_at only advances on a poll that decoded,
 // so a 200 whose fetched_at has not moved is precisely the outage signature.
-function alertsStale(fetchedAt, now) {
-  if (fetchedAt == null) return false;
+// sinceAt is the fallback age basis for the case where the client has NEVER received a
+// fetched_at: the instant it first tried. Without it, a null fetchedAt returned the
+// healthy answer forever, so a backend whose alert index never filled (every feed down
+// since boot, so /api/alerts serves an error and loadAlerts swallows it) showed riders
+// a confident, alert-free map with no hedge, indefinitely. That is the same
+// never-defaulted silence this whole change is about, just at the other end of the
+// wire. A boot grace period is still right, so the null case ages against sinceAt on
+// the same threshold rather than disclosing immediately; pass null for sinceAt to get
+// the old unbounded-grace behavior.
+// The alerts freshness basis extracted from an /api/alerts body: the backend's
+// fetched_at, or null when a body omits it entirely. THE POINT OF THIS BEING A
+// FUNCTION is that it makes the field CHOICE testable. A node test that hands
+// alertsStale a fetched_at proves only arithmetic, because the test picked the field
+// itself; a revert to served_at would sail past it. This is where the choice lives,
+// so this is what a test has to pin.
+function alertsFreshnessBasis(body) {
+  const fetchedAt = body == null ? null : body.fetched_at;
+  return typeof fetchedAt === "number" ? fetchedAt : null;
+}
+
+function alertsStale(fetchedAt, now, sinceAt = null) {
+  if (fetchedAt == null) {
+    if (sinceAt == null) return false;
+    return now - sinceAt >= ALERTS_STALE_AFTER_S;
+  }
   return now - fetchedAt >= ALERTS_STALE_AFTER_S;
 }
 
@@ -936,7 +967,7 @@ if (typeof module !== "undefined" && module.exports) {
     hashString, bannerRenderKey,
     RAILROAD_ROUTE_MAX_SLICE, RAILROAD_ROUTE_ACCEPT_DIST, RAILROAD_BUCKET_ORDER,
     LINE_COLORS, DARK_TEXT_LINES, FEED_STALE_AFTER_S, FETCH_DEADLINE_MS, shouldRefresh,
-    feedAgeLine, humanizeAge, alertsStale, ALERTS_STALE_AFTER_S,
+    feedAgeLine, humanizeAge, alertsStale, alertsFreshnessBasis, ALERTS_STALE_AFTER_S,
     selectHeadwayBand, airtrainStationPopupHtml, retryUntil,
     PATH_BUCKET_ORDER, PATH_FALLBACK_COLOR, orderedPathBuckets, pathColor,
     formatPathHead, pathTrainPopupHtml, pathArrivalsHtml,

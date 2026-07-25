@@ -209,6 +209,13 @@ let alertsIndex = indexAlerts([]);
 let alertsFetchedAt = null;
 let lastBannerAlerts = [];
 
+// When this client first ASKED for alerts. It is the age basis while alertsFetchedAt
+// is still null, so a backend that has never filled its index (every feed down since
+// boot, so /api/alerts errors and loadAlerts swallows it) discloses after the same
+// threshold instead of showing a confident alert-free map forever. Stamped once, at
+// the first attempt, not per attempt, or it would reset the grace period every poll.
+let alertsFirstAttemptAt = null;
+
 // The skew-corrected client clock, matching the arrivals-countdown basis.
 function alertsClockNow() {
   return Date.now() / 1000 - (minClockOffset ?? 0);
@@ -218,7 +225,7 @@ function alertsClockNow() {
 // Honesty, not alarm: shared by the banner and every popup alert block so a stale
 // alerts feed is disclosed everywhere the alert set is shown (or implied absent).
 function staleAlertsMarker() {
-  return alertsStale(alertsFetchedAt, alertsClockNow())
+  return alertsStale(alertsFetchedAt, alertsClockNow(), alertsFirstAttemptAt)
     ? `<div class="alert-stale">alerts may be out of date</div>`
     : "";
 }
@@ -229,6 +236,9 @@ function staleAlertsMarker() {
 // clicked for. There is no user-facing alerts ERROR state, by design; the freshness
 // marker (R1) is the one honest hedge that the index may have stopped updating.
 async function loadAlerts() {
+  // Stamped BEFORE the fetch and only once, so the never-filled grace period is
+  // measured from the client's first attempt and cannot be reset by later attempts.
+  if (alertsFirstAttemptAt == null) alertsFirstAttemptAt = alertsClockNow();
   try {
     // AbortSignal.timeout bounds the alerts fetch (R2). A timeout aborts into the
     // catch below and is swallowed like every other alerts failure: alerts are a
@@ -251,7 +261,7 @@ async function loadAlerts() {
     // global shared with the arrivals countdowns and the status line, so feeding it
     // from here would change non-alert surfaces. It stays calibrated by served_at on
     // the feed responses, exactly as R1 arranged; this line only consumes the axis.
-    alertsFetchedAt = body.fetched_at ?? alertsClockNow();
+    alertsFetchedAt = alertsFreshnessBasis(body) ?? alertsClockNow();
     lastBannerAlerts = bannerAlerts(list);
     // The banner re-renders every poll (unlike popups, which render on open), so a
     // resolved agency-wide alert disappears on the next poll and a new one appears.
@@ -310,11 +320,20 @@ function routeAlertsBlock(system, routeId) {
 // alert and in-memory for the session: dismissing hides the currently-shown alerts,
 // a later poll re-showing the SAME ones keeps them hidden, but a NEW one (never
 // dismissed) reopens the banner. So a rider can clear a standing incident without
-// losing the next, distinct one, and a page reload starts fresh. The key is
-// "system|id", scoped like every other alert join, so a bare id reused across two
-// feeds cannot make dismissing one hide an unrelated agency-wide alert.
+// losing the next, distinct one, and a page reload starts fresh. The key is scoped by
+// system like every other alert join, so a bare id reused across two feeds cannot make
+// dismissing one hide an unrelated agency-wide alert.
+//
+// THE DISMISSAL KEY INCLUDES THE HEADER TEXT, for the same reason the render key does
+// and with more at stake. The MTA revises an ongoing incident in place under one id,
+// so an id-only dismissal meant that once a rider cleared "Delays on the 4 line", the
+// SAME id later reading "All subway service suspended" stayed suppressed for the rest
+// of the session. Agency-wide alerts have no route or stop selectors, so the banner is
+// their only surface: there is no popup that would have shown it instead. Rewording
+// therefore un-dismisses, which is the safe direction to err in. A rider who dismisses
+// an unchanged alert still keeps it hidden, because an unchanged alert hashes the same.
 const dismissedAlertIds = new Set();
-const alertKey = (a) => `${a.system}|${a.id}`;
+const alertKey = (a) => `${a.system}|${a.id}|${hashString(String(a.header ?? ""))}`;
 
 // Signature of the last-rendered banner, so an unchanged banner is NOT rebuilt every
 // 60s poll: reassigning innerHTML would drop any text the rider has selected and
@@ -330,7 +349,7 @@ function renderAlertBanner(alerts) {
   // alert set; C1 folded in a hash of each alert's HEADER TEXT too, so a revision of
   // an ongoing incident under the same id re-renders instead of leaving stale wording
   // on screen. See bannerRenderKey().
-  const stale = alertsStale(alertsFetchedAt, alertsClockNow());
+  const stale = alertsStale(alertsFetchedAt, alertsClockNow(), alertsFirstAttemptAt);
   const key = bannerRenderKey(shown, stale);
   if (key === lastBannerKey) return; // unchanged since the last render: leave the DOM alone
   lastBannerKey = key;

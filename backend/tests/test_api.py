@@ -2875,6 +2875,74 @@ async def test_alerts_deadline_timeout_takes_the_same_outage_path_as_an_all_fail
     assert set(res.json()["alerts"]["degraded_systems"]) == set(alerts_cache["health"])
 
 
+async def test_one_slow_alert_feed_does_not_fail_the_other_four(monkeypatch):
+    # REVIEW FIX, and this was a REGRESSION the first review round introduced. Bounding
+    # the whole fetch meant one trickling feed cancelled the four responses that had
+    # already landed, so the caller saw only a timeout and marked every system failed:
+    # four healthy feeds' alerts went into retention and were deleted half an hour
+    # later, and /api/status blamed five phantom upstream outages instead of the one
+    # slow feed. The deadline is now PER FEED, so a slow feed is an ordinary per-feed
+    # failure and the rest of the poll succeeds. Exercises the real
+    # fetch_service_alerts, not a stub, since the defect lived in its gather.
+    from google.transit import gtfs_realtime_pb2 as pb
+
+    monkeypatch.setattr(feeds.alerts, "ALERT_FEED_DEADLINE_S", 0.05)
+
+    empty_feed = pb.FeedMessage()
+    empty_feed.header.gtfs_realtime_version = "2.0"
+    body = empty_feed.SerializeToString()
+
+    class _Resp:
+        content = body
+
+        def raise_for_status(self):
+            return None
+
+    class SlowSubwayClient:
+        async def get(self, url, **kwargs):
+            if "subway" in url:
+                await asyncio.sleep(10)  # never lands inside the per-feed deadline
+            return _Resp()
+
+    alerts, suppressed, failed = await feeds.fetch_service_alerts(SlowSubwayClient())
+    # The four healthy feeds decoded; ONLY the slow one is reported failed.
+    assert failed == ["subway"]
+    assert suppressed == 0
+    assert alerts == []
+
+
+async def test_a_timed_out_alert_feed_records_a_readable_reason(monkeypatch):
+    # str(TimeoutError()) is the EMPTY STRING, so without an explicit description a
+    # timed-out feed would be logged and recorded with no cause at all (the same trap
+    # R3 hit on the warmup path).
+    detail = feeds.alerts._describe_feed_error(TimeoutError())
+    assert detail and "no response within" in detail
+    # And any other exception with an empty str() still names its type.
+    assert feeds.alerts._describe_feed_error(RuntimeError()) == "RuntimeError"
+    assert feeds.alerts._describe_feed_error(RuntimeError("boom")) == "boom"
+
+
+async def test_alerts_never_filled_outage_still_reports_every_system_degraded(
+    client, status_env, alerts_cache, monkeypatch
+):
+    # REVIEW FIX. The never-filled guard skipped the health write along with the index
+    # write, so a process that STARTED while every feed was down reported five
+    # perfectly healthy systems: degraded_systems [] and every last_error null, for as
+    # long as the outage lasted. That is the same "looks healthy while nothing works"
+    # this change exists to remove, just at boot instead of mid-life.
+    assert alerts_cache["alerts"] is None
+
+    await _total_outage_poll(monkeypatch, 1000.0)
+
+    assert alerts_cache["alerts"] is None  # index still unfilled, as before
+    res = await client.get("/api/status")
+    alerts_status = res.json()["alerts"]
+    assert set(alerts_status["degraded_systems"]) == set(alerts_cache["health"])
+    # fresh_at stays null: nothing has ever decoded, and claiming otherwise would be
+    # the opposite lie.
+    assert all(h["fresh_at"] is None for h in alerts_cache["health"].values())
+
+
 async def test_alerts_total_outage_before_the_first_success_stays_warming(
     client, alerts_cache, monkeypatch
 ):
@@ -2915,9 +2983,15 @@ async def test_alerts_partial_failure_after_a_total_one_does_not_double_charge_r
     # retention START) are idempotent, so the second pass must reach the same answer
     # rather than compounding: subway recovers and is replaced by fresh data, while
     # MNR's clock still reads the original outage start.
+    # The MNR alert is OPEN-ENDED on purpose. REVIEW FIX: this test used to carry the
+    # ends_at=2000 alert, and its closing assertion at cap+1 (t=2801) was therefore
+    # VACUOUS: the expiry re-filter drops that alert on its own ends_at at any t>2000,
+    # so the assertion held no matter where the retention clock started. Only an alert
+    # that can never self-expire makes the cap the sole possible explanation.
     cap = float(app_module.ALERT_RETENTION_MAX_S)
+    mnr_open = {**ALERT, "id": "mnr:open", "system": "MNR", "ends_at": None}
     alerts_cache.update(
-        alerts=[MNR_ENDING_ALERT, SUBWAY_OPEN_ALERT], fetched_at=1000.0, active=2, suppressed=0
+        alerts=[mnr_open, SUBWAY_OPEN_ALERT], fetched_at=1000.0, active=2, suppressed=0
     )
     for health in alerts_cache["health"].values():
         health["fresh_at"] = 1000.0
@@ -2934,17 +3008,24 @@ async def test_alerts_partial_failure_after_a_total_one_does_not_double_charge_r
     monkeypatch.setattr(app_module.time, "time", lambda: 1500.0)
     await app_module._refresh_alerts(app_module.app, client=None)
 
-    # MNR still carried (its alert has not reached ends_at 2000 yet) and its retention
-    # clock still points at the ORIGINAL total-outage start, not at 1500.
-    assert {a["id"] for a in alerts_cache["alerts"]} == {"subway:fresh", "mnr:ending"}
+    # MNR still carried, and its retention clock still points at the ORIGINAL
+    # total-outage start rather than being restamped to 1500.
+    assert {a["id"] for a in alerts_cache["alerts"]} == {"subway:fresh", "mnr:open"}
     assert alerts_cache["health"]["MNR"]["retained_since"] == 1000.0
     assert alerts_cache["health"]["subway"]["retained_since"] is None  # recovered
     assert alerts_cache["error"] is None  # a partial failure is a successful poll
 
-    # And the cap still measures from 1000.0: one second past it, MNR drops.
-    monkeypatch.setattr(app_module.time, "time", lambda: 1000.0 + cap + 1)
+    # The cap still measures from 1000.0, not from 1500.0. Both edges are asserted, so
+    # a clock that HAD restarted at 1500 would fail the first of them: at 1000+cap-1
+    # the alert is still carried, and at 1000+cap exactly it drops. A restarted clock
+    # would still be 499s short of its cap at that second and keep the alert.
+    monkeypatch.setattr(app_module.time, "time", lambda: 1000.0 + cap - 1)
+    await app_module._refresh_alerts(app_module.app, client=None)
+    assert {a["id"] for a in alerts_cache["alerts"]} == {"subway:fresh", "mnr:open"}
+    monkeypatch.setattr(app_module.time, "time", lambda: 1000.0 + cap)
     await app_module._refresh_alerts(app_module.app, client=None)
     assert {a["id"] for a in alerts_cache["alerts"]} == {"subway:fresh"}
+    assert alerts_cache["health"]["MNR"]["retained_since"] is None
 
 
 async def test_status_reports_alert_system_health(client, status_env, alerts_cache):

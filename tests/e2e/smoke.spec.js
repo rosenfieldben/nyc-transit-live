@@ -1163,15 +1163,21 @@ test("29b. an agency-wide alert reworded under the same id updates the banner te
     starts_at: fx.FROZEN_S - 600,
     ends_at: null,
   });
-  const respond = (header) => (route) =>
+  // fetched_at is a parameter, not a constant. REVIEW FIX: both responses used to
+  // carry the identical frozen fetched_at and the spec never advanced the clock, so
+  // the alert age was 0 at BOTH renders and the "marker must not appear" assertion
+  // below could not have failed for any implementation. The second response now
+  // advances fetched_at along with the clock, which is what a healthy poll during a
+  // rewording actually looks like, so the assertion has something to rule out.
+  const respond = (header, polledAt) => (route) =>
     json(route, {
-      fetched_at: fx.FROZEN_S,
-      served_at: fx.FROZEN_S,
+      fetched_at: polledAt,
+      served_at: polledAt,
       alerts: [wide(header)],
     });
 
   const ctx = await boot(page, (c) => {
-    c.overrides.alerts = respond("Systemwide: reduced service");
+    c.overrides.alerts = respond("Systemwide: reduced service", fx.FROZEN_S);
   });
   await waitForReady(page);
   await page.evaluate(() => loadAlerts());
@@ -1179,12 +1185,60 @@ test("29b. an agency-wide alert reworded under the same id updates the banner te
   const banner = page.locator("#alert-banner");
   await expect(banner).toContainText("Systemwide: reduced service");
 
-  // Upstream revises the text under the same id. fetched_at advances (this is a
-  // healthy poll, not an outage), so the marker must NOT appear; only the text moves.
-  ctx.overrides.alerts = respond("Systemwide: reduced service on 4 lines");
+  // Upstream revises the text under the same id, 310s later. The clock advances PAST
+  // ALERTS_STALE_AFTER_S and fetched_at advances with it, because this is a healthy
+  // poll and not an outage: the text must change and the marker must NOT appear. With
+  // a frozen fetched_at the same elapsed time would trip the marker (spec 29), so the
+  // negative assertion is now discriminating rather than decorative.
+  await page.clock.fastForward(310_000);
+  ctx.overrides.alerts = respond("Systemwide: reduced service on 4 lines", fx.FROZEN_S + 310);
   await page.evaluate(() => loadAlerts());
   await expect(banner).toContainText("Systemwide: reduced service on 4 lines");
   await expect(banner).not.toContainText("alerts may be out of date");
+});
+
+test("29c. a dismissed agency-wide alert REAPPEARS when its wording escalates (C1)", async ({ page }) => {
+  // REVIEW FIX, and the rider-facing half of the rewording problem. The render key
+  // learned to notice a reworded alert, but the DISMISSAL set still keyed on
+  // system|id alone, so once a rider cleared "Delays on the 4 line" the same id later
+  // reading "All subway service suspended" stayed suppressed for the rest of the
+  // session. Agency-wide alerts carry no route or stop selectors, so the banner is
+  // their ONLY surface: there is no popup that would have shown it instead.
+  const wide = (header) => ({
+    id: "wide-1",
+    system: "subway",
+    header,
+    description: null,
+    effect: "SIGNIFICANT_DELAYS",
+    cause: "MAINTENANCE",
+    routes: [],
+    stops: [],
+    starts_at: fx.FROZEN_S - 600,
+    ends_at: null,
+  });
+  const respond = (header) => (route) =>
+    json(route, { fetched_at: fx.FROZEN_S, served_at: fx.FROZEN_S, alerts: [wide(header)] });
+
+  const ctx = await boot(page, (c) => {
+    c.overrides.alerts = respond("Delays on the 4 line");
+  });
+  await waitForReady(page);
+  await page.evaluate(() => loadAlerts());
+
+  const banner = page.locator("#alert-banner");
+  await expect(banner).toContainText("Delays on the 4 line");
+  await banner.locator("#alert-banner-dismiss").click();
+  await expect(banner).toBeEmpty();
+
+  // The SAME alert re-served unchanged stays dismissed: clearing a standing incident
+  // must not be undone by the next poll.
+  await page.evaluate(() => loadAlerts());
+  await expect(banner).toBeEmpty();
+
+  // Now the MTA escalates the wording in place, under the same id. It must come back.
+  ctx.overrides.alerts = respond("All subway service suspended");
+  await page.evaluate(() => loadAlerts());
+  await expect(banner).toContainText("All subway service suspended");
 });
 
 test("30. a wedged feed no longer freezes the loop: healthy feeds keep polling, the hung one times out (R2)", async ({ page }) => {

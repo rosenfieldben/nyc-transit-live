@@ -461,16 +461,32 @@ status is the alert: a `FAIL` exits non-zero, which fails the run and triggers
 GitHub's scheduled-failure notifications to the repo admins; `WARN`s surface in
 the logs and the job summary without failing the run.
 
-Two optional pieces of config sharpen it, both safe to leave unset:
+Config:
 
-- `MONITOR_STATUS_URL` (a repository **variable**, the deployment's base URL):
-  when set, the monitor also checks the live `/api/status` (static groups ready,
-  feeds fresh, no degraded alert systems). When unset, that section is skipped
-  with a `WARN`.
+- `MONITOR_STATUS_URL` (a repository **variable**) is **required**. Set it under
+  Settings → Secrets and variables → Actions → Variables. Either form works: the
+  deployment's base URL (`https://your-app.up.railway.app`) or the full status URL
+  (`https://your-app.up.railway.app/api/status`), with or without a trailing slash.
+  Leaving it unset is a `FAIL`, not a skip: an unmonitored deployment must not be
+  able to look the same as a healthy one.
+- `MONITOR_SKIP_PRODUCTION` (a repository **variable**, any non-empty value) is the
+  deliberate way to run without a deployment, for a fork or a local
+  `workflow_dispatch`. It yields a `WARN` that says the skip was explicit. The
+  principle: silence must be chosen, never defaulted.
 - `MTA_BUS_API_KEY` (a repository **secret**): when set, the monitor also checks
   the keyed bus feed. The key rides as a query parameter and every error string is
   scrubbed, so it never reaches the logs. When unset, the bus check is skipped
   with a `WARN`.
+
+The production section's bands are deliberately two-tiered so the red light stays
+meaningful. A static group in any state but `ready` is a `FAIL`, because a mode
+that is not ready is dark for riders. A feed's poll age is a `PASS` under 10
+minutes, a `WARN` from 10 to 30 (upstream blips at that scale recover on their
+own), and a `FAIL` past 30; a feed present but reporting no age at all, or no feeds
+reported whatsoever, is a `FAIL` at once, since that is a deploy regression rather
+than an upstream mood. A degraded alert system stays a `WARN` while the backend is
+still carrying its alerts forward, and becomes a `FAIL` once that retention horizon
+has passed and riders are genuinely seeing nothing for it.
 
 ## Build phases
 

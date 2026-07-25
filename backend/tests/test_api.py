@@ -2723,13 +2723,16 @@ async def test_alerts_recovery_clears_retention(client, alerts_cache, monkeypatc
     assert res.json()["alerts"]["degraded_systems"] == []
 
 
-async def test_alerts_all_failed_leaves_per_system_health_untouched(
+async def test_alerts_all_failed_keeps_a_live_alert_and_its_last_decode_time(
     client, alerts_cache, monkeypatch
 ):
-    # The all-feeds-failed path is unchanged: index kept, poll-level 502 recorded,
-    # and the per-system health is NOT rewritten (the RuntimeError carries no
-    # per-feed breakdown; the poll-level error is the total-outage signal).
-    alerts_cache.update(alerts=[ALERT], fetched_at=1000.0, active=1, suppressed=0)
+    # C1 REWROTE THIS TEST. It used to assert the all-failed path left per-system
+    # health UNTOUCHED, which was the finding: the frozen map kept reporting the last
+    # happy value while every feed was down. Health is now rewritten. What must still
+    # hold is the rest of the cache contract: a live (open-ended) alert survives, and
+    # fresh_at keeps the LAST DECODE time rather than advancing, so an operator can
+    # see how long the system has actually been dark.
+    alerts_cache.update(alerts=[ALERT], fetched_at=1000.0, active=1, suppressed=7)
     alerts_cache["health"]["subway"]["fresh_at"] = 500.0
 
     async def boom(client_arg):
@@ -2737,9 +2740,174 @@ async def test_alerts_all_failed_leaves_per_system_health_untouched(
 
     monkeypatch.setattr(app_module, "fetch_service_alerts", boom)
     await app_module._refresh_alerts(app_module.app, client=None)
-    assert alerts_cache["alerts"] == [ALERT]
+    assert alerts_cache["alerts"] == [ALERT]  # open-ended: nothing to expire
     assert alerts_cache["error"]["status"] == 502
-    assert alerts_cache["health"]["subway"]["fresh_at"] == 500.0
+    assert alerts_cache["health"]["subway"]["fresh_at"] == 500.0  # NOT advanced
+    assert alerts_cache["fetched_at"] == 1000.0  # last poll that decoded
+    assert alerts_cache["suppressed"] == 7  # describes that same last decode
+
+
+# ---------------- C1: a total outage no longer freezes the index ----------------
+# The finding, verified end to end: the all-failed path used to return before any
+# merge, so the index was BYTE-FROZEN. Alerts that expired mid-outage stayed visible,
+# the retention cap never fired, and per-system health kept its last happy value while
+# /api/alerts served all of it as a 200 with a fresh served_at. These pin each half.
+
+# MNR ends at 2000; subway is open-ended. Both are live at now=1500, and only the MNR
+# one has expired by now=2500.
+MNR_ENDING_ALERT = {**ALERT, "id": "mnr:ending", "system": "MNR", "ends_at": 2000.0}
+SUBWAY_OPEN_ALERT = {**ALERT, "id": "subway:open", "system": "subway", "ends_at": None}
+
+
+async def _total_outage_poll(monkeypatch, now):
+    async def boom(client_arg):
+        raise RuntimeError("All alert feeds failed: every feed timed out")
+
+    monkeypatch.setattr(app_module, "fetch_service_alerts", boom)
+    monkeypatch.setattr(app_module.time, "time", lambda: now)
+    await app_module._refresh_alerts(app_module.app, client=None)
+
+
+async def test_alerts_expiring_during_a_total_outage_drops_from_the_index(
+    client, alerts_cache, monkeypatch
+):
+    alerts_cache.update(
+        alerts=[MNR_ENDING_ALERT, SUBWAY_OPEN_ALERT], fetched_at=1000.0, active=2, suppressed=0
+    )
+    for health in alerts_cache["health"].values():
+        health["fresh_at"] = 1000.0
+
+    # Mid-outage but before the MNR alert's ends_at: both still served.
+    await _total_outage_poll(monkeypatch, 1500.0)
+    assert {a["id"] for a in alerts_cache["alerts"]} == {"mnr:ending", "subway:open"}
+
+    # The outage PERSISTS across the alert's own end time. The expired one drops even
+    # though no feed has decoded since; the open-ended one stays.
+    await _total_outage_poll(monkeypatch, 2500.0)
+    assert {a["id"] for a in alerts_cache["alerts"]} == {"subway:open"}
+    assert alerts_cache["active"] == 1
+    # Still a failed poll throughout: the index shrank, it was not refreshed.
+    assert alerts_cache["error"]["status"] == 502
+    assert alerts_cache["fetched_at"] == 1000.0
+    # And the rider-facing endpoint serves the SHRUNKEN index, not the frozen one.
+    res = await client.get("/api/alerts")
+    assert res.status_code == 200
+    assert [a["id"] for a in res.json()["alerts"]] == ["subway:open"]
+
+
+async def test_alerts_retention_cap_fires_during_a_total_outage(alerts_cache, monkeypatch):
+    # The cap is the ONLY thing that can ever clear an open-ended alert, and it could
+    # not fire at all while the all-failed path returned early: a systemwide alert
+    # would have been served forever behind a permanently dead feed.
+    cap = float(app_module.ALERT_RETENTION_MAX_S)
+    alerts_cache.update(alerts=[SUBWAY_OPEN_ALERT], fetched_at=1000.0, active=1, suppressed=0)
+    for health in alerts_cache["health"].values():
+        health["fresh_at"] = 1000.0
+
+    await _total_outage_poll(monkeypatch, 1000.0)  # outage begins: retention starts
+    assert alerts_cache["health"]["subway"]["retained_since"] == 1000.0
+    await _total_outage_poll(monkeypatch, 1000.0 + cap - 1)  # just under: still served
+    assert {a["id"] for a in alerts_cache["alerts"]} == {"subway:open"}
+    await _total_outage_poll(monkeypatch, 1000.0 + cap)  # at the cap: dropped
+    assert alerts_cache["alerts"] == []
+    assert alerts_cache["health"]["subway"]["retained_since"] is None
+    assert alerts_cache["health"]["subway"]["last_error"]["status"] == 502  # still degraded
+
+
+async def test_alerts_total_outage_reports_every_system_degraded(
+    client, status_env, alerts_cache, monkeypatch
+):
+    # THE BLIND SPOT R4 HAD TO WORK AROUND, closed at the source. Cross-reference:
+    # test_contract_monitor.test_production_total_alerts_outage_is_fail_not_pass
+    # exists because this map used to read fully healthy during a total outage, which
+    # forced the monitor to consult the POLL age first to notice anything was wrong.
+    # The monitor keeps that check (defence in depth, and it catches a frozen poller
+    # too), but degraded_systems is now truthful here on its own.
+    alerts_cache.update(alerts=[SUBWAY_OPEN_ALERT], fetched_at=1000.0, active=1, suppressed=0)
+    for health in alerts_cache["health"].values():
+        health["fresh_at"] = 1000.0
+
+    await _total_outage_poll(monkeypatch, 1200.0)
+    systems = set(alerts_cache["health"])
+    assert {s for s, h in alerts_cache["health"].items() if h["retained_since"] == 1200.0} == {
+        "subway"  # only the system with alerts to carry records a retention clock
+    }
+    res = await client.get("/api/status")
+    alerts_status = res.json()["alerts"]
+    assert set(alerts_status["degraded_systems"]) == systems  # every feed, not none
+    assert alerts_status["last_error"]["status"] == 502
+
+
+async def test_alerts_total_outage_before_the_first_success_stays_warming(
+    client, alerts_cache, monkeypatch
+):
+    # The index has NEVER filled, so there is nothing to re-filter. Writing the
+    # merge's empty result would flip /api/alerts from its warming 503 to a 200
+    # serving "no active alerts", which is the same false-green this change removes.
+    assert alerts_cache["alerts"] is None
+
+    await _total_outage_poll(monkeypatch, 1000.0)
+    assert alerts_cache["alerts"] is None  # still unfilled, NOT []
+    assert alerts_cache["error"]["status"] == 502
+    # The endpoint keeps its existing never-filled behavior: the recorded error
+    # surfaces (502), and specifically NOT a 200 carrying an empty alerts list, which
+    # is what writing the merge result here would have produced.
+    res = await client.get("/api/alerts")
+    assert res.status_code == 502
+    assert res.status_code != 200
+
+
+async def test_alerts_retention_clock_survives_consecutive_total_outages(alerts_cache, monkeypatch):
+    # Aimed at the review concern: retained_since must be threaded, not restamped,
+    # or every failing poll would restart the clock and the cap could never fire.
+    alerts_cache.update(alerts=[SUBWAY_OPEN_ALERT], fetched_at=1000.0, active=1, suppressed=0)
+    for health in alerts_cache["health"].values():
+        health["fresh_at"] = 1000.0
+
+    for now in (1000.0, 1060.0, 1120.0, 1180.0):
+        await _total_outage_poll(monkeypatch, now)
+        assert alerts_cache["health"]["subway"]["retained_since"] == 1000.0  # never bumped
+
+
+async def test_alerts_partial_failure_after_a_total_one_does_not_double_charge_retention(
+    alerts_cache, monkeypatch
+):
+    # The other half of the review concern. The total-outage path now WRITES a merged
+    # index, so a later partial failure re-runs the merge over already-shrunk content.
+    # Both the expiry re-filter (absolute ends_at) and the cap (measured from the
+    # retention START) are idempotent, so the second pass must reach the same answer
+    # rather than compounding: subway recovers and is replaced by fresh data, while
+    # MNR's clock still reads the original outage start.
+    cap = float(app_module.ALERT_RETENTION_MAX_S)
+    alerts_cache.update(
+        alerts=[MNR_ENDING_ALERT, SUBWAY_OPEN_ALERT], fetched_at=1000.0, active=2, suppressed=0
+    )
+    for health in alerts_cache["health"].values():
+        health["fresh_at"] = 1000.0
+
+    await _total_outage_poll(monkeypatch, 1000.0)
+    assert alerts_cache["health"]["MNR"]["retained_since"] == 1000.0
+
+    fresh_subway = {**SUBWAY_OPEN_ALERT, "id": "subway:fresh"}
+
+    async def only_mnr_down(client_arg):
+        return [fresh_subway], 0, ["MNR"]
+
+    monkeypatch.setattr(app_module, "fetch_service_alerts", only_mnr_down)
+    monkeypatch.setattr(app_module.time, "time", lambda: 1500.0)
+    await app_module._refresh_alerts(app_module.app, client=None)
+
+    # MNR still carried (its alert has not reached ends_at 2000 yet) and its retention
+    # clock still points at the ORIGINAL total-outage start, not at 1500.
+    assert {a["id"] for a in alerts_cache["alerts"]} == {"subway:fresh", "mnr:ending"}
+    assert alerts_cache["health"]["MNR"]["retained_since"] == 1000.0
+    assert alerts_cache["health"]["subway"]["retained_since"] is None  # recovered
+    assert alerts_cache["error"] is None  # a partial failure is a successful poll
+
+    # And the cap still measures from 1000.0: one second past it, MNR drops.
+    monkeypatch.setattr(app_module.time, "time", lambda: 1000.0 + cap + 1)
+    await app_module._refresh_alerts(app_module.app, client=None)
+    assert {a["id"] for a in alerts_cache["alerts"]} == {"subway:fresh"}
 
 
 async def test_status_reports_alert_system_health(client, status_env, alerts_cache):

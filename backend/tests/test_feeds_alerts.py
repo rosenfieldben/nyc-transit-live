@@ -63,6 +63,44 @@ def test_window_future_wins_over_ended_for_counting():
     assert feeds._alert_window_status([(100, 200), (1100, 1200)], NOW)[0] == "future"
 
 
+# ---- overlapping periods: the effective end is the LATEST, not the earliest ----
+# C1 BUG FIX. The end used to come from the earliest-STARTING covering period, so
+# whenever periods overlap and the earlier one also ends earlier, ends_at came back
+# too small and every downstream expiry check (the retention re-filter during an
+# outage, the client's open-ended-first sort) treated a live alert as finished.
+
+
+def test_window_overlapping_periods_report_the_latest_end():
+    # Both cover NOW. The earliest-starting period ends at 1100, the other at 5000.
+    # The alert is plainly active until 5000, and reporting 1100 expired it early.
+    status, start, end = feeds._alert_window_status([(0, 1100), (950, 5000)], NOW)
+    assert status == "active"
+    assert start == 0  # starts_at is unchanged: still the earliest covering start
+    assert end == 5000  # was 1100 before the fix
+
+
+def test_window_one_open_ended_period_makes_the_whole_alert_open_ended():
+    # A bounded period that covers now alongside an open-ended one: the alert must
+    # never self-expire, so a bounded end must not be reported over the open one.
+    # Order is reversed in the second call to prove the result is order-independent.
+    assert feeds._alert_window_status([(900, 1100), (950, None)], NOW) == ("active", 900, None)
+    assert feeds._alert_window_status([(950, None), (900, 1100)], NOW) == ("active", 900, None)
+
+
+def test_window_not_yet_started_period_extends_the_effective_end():
+    # Active now until 1100, then running again 2000-3000. Not-yet-ended is broader
+    # than covering on purpose: reporting 1100 would drop the alert during the gap and
+    # resurrect it at 2000, so the effective end spans to 3000 and it survives.
+    status, start, end = feeds._alert_window_status([(900, 1100), (2000, 3000)], NOW)
+    assert (status, start, end) == ("active", 900, 3000)
+
+
+def test_window_all_periods_ended_is_still_ended():
+    # The latest-end rule must not resurrect a fully elapsed alert: with nothing
+    # covering and nothing upcoming, this is "ended" and carries no bounds at all.
+    assert feeds._alert_window_status([(100, 200), (300, 400)], NOW) == ("ended", None, None)
+
+
 # ---- synthetic-protobuf decode (_decode_alerts) ----
 
 

@@ -14,6 +14,8 @@ const {
   feedAgeLine,
   alertsStale,
   ALERTS_STALE_AFTER_S,
+  hashString,
+  bannerRenderKey,
   emptyFeedDecision,
   shouldRefresh,
   noteClockOffset,
@@ -445,11 +447,11 @@ test("feedAgeLine is empty while fresh and shows 'as of Xm ago' once stale", () 
   assert.match(feedAgeLine(now - 200, now), /as of 3m ago/);
 })
 
-test("alertsStale gates on the last successful fetch's served_at and the threshold", () => {
+test("alertsStale gates on the backend's last successful poll (fetched_at) and the threshold", () => {
   const now = 10_000;
-  // No successful fetch yet (null servedAt): never stale, so boot shows no false marker.
+  // No successful poll yet (null fetchedAt): never stale, so boot shows no false marker.
   assert.equal(alertsStale(null, now), false);
-  // Just fetched: fresh.
+  // Just polled: fresh.
   assert.equal(alertsStale(now - 10, now), false);
   // Exactly at and past the threshold: stale.
   assert.equal(alertsStale(now - ALERTS_STALE_AFTER_S, now), true);
@@ -457,6 +459,59 @@ test("alertsStale gates on the last successful fetch's served_at and the thresho
   // Higher bar than the feed threshold (alerts change slowly): a gap the feeds would
   // already flag is still fresh for alerts.
   assert.equal(alertsStale(now - (FEED_STALE_AFTER_S + 1), now), false);
+})
+
+test("C1 audit scenario: 200s with a FROZEN fetched_at and an advancing served_at go stale", () => {
+  // THE FINDING, reproduced as the sequence the client actually sees. The alert feeds
+  // are down but the backend keeps answering 200 from its last-known index, so every
+  // response carries a NEW served_at (stamped at response build) and the SAME
+  // fetched_at (the last poll that decoded). Under R1 the marker keyed on served_at,
+  // which advanced on every poll, so the gate reset forever and the honesty hedge
+  // could not fire during the exact outage it exists for. Keying on fetched_at, the
+  // same sequence crosses the threshold on schedule.
+  const polledAt = 1000; // the last poll that decoded; never advances again
+  const responses = [0, 60, 120, 180, 240, 300, 360].map((elapsed) => ({
+    fetched_at: polledAt,
+    served_at: polledAt + elapsed, // fresh by construction, on every response
+    clientNow: polledAt + elapsed,
+  }));
+  const byServedAt = responses.map((r) => alertsStale(r.served_at, r.clientNow));
+  const byFetchedAt = responses.map((r) => alertsStale(r.fetched_at, r.clientNow));
+  // served_at NEVER trips, no matter how long the outage runs: that was the bug.
+  assert.deepEqual(byServedAt, [false, false, false, false, false, false, false]);
+  // fetched_at trips exactly at ALERTS_STALE_AFTER_S (300) and stays tripped.
+  assert.deepEqual(byFetchedAt, [false, false, false, false, false, true, true]);
+})
+
+test("bannerRenderKey re-renders on a wording change under the same id", () => {
+  const alert = { system: "subway", id: "wide-1", header: "Systemwide: reduced service" };
+  const revised = { ...alert, header: "Systemwide: reduced service on 4 lines" };
+  // Same id, revised wording: the keys must DIFFER, or the banner keeps the old text.
+  assert.notEqual(bannerRenderKey([alert], false), bannerRenderKey([revised], false));
+  // Identical content: same key, so an unchanged banner is not needlessly rebuilt
+  // (reassigning innerHTML would drop any text the rider has selected).
+  assert.equal(bannerRenderKey([alert], false), bannerRenderKey([{ ...alert }], false));
+  // The stale flag still participates, so the marker paints and clears on its own.
+  assert.notEqual(bannerRenderKey([alert], true), bannerRenderKey([alert], false));
+  // A null header is handled rather than throwing, and differs from empty-string text.
+  assert.equal(typeof bannerRenderKey([{ ...alert, header: null }], false), "string");
+  // Order and identity still matter: two alerts vs one, and a different id.
+  assert.notEqual(bannerRenderKey([alert, revised], false), bannerRenderKey([alert], false));
+  assert.notEqual(bannerRenderKey([{ ...alert, id: "wide-2" }], false), bannerRenderKey([alert], false));
+  // Scoped by system like every other alert join: the same id under two feeds differs.
+  assert.notEqual(bannerRenderKey([{ ...alert, system: "bus" }], false), bannerRenderKey([alert], false));
+  assert.equal(bannerRenderKey([], false), "F|"); // empty, fresh
+})
+
+test("hashString is deterministic, unsigned, and separates similar text", () => {
+  assert.equal(hashString("abc"), hashString("abc"));
+  assert.notEqual(hashString("abc"), hashString("abd"));
+  assert.notEqual(hashString(""), hashString("a"));
+  // Hex of an UNSIGNED 32-bit value: JS bitwise ops are signed, so without the >>> 0
+  // the hash would sometimes render with a leading "-".
+  for (const text of ["Systemwide: reduced service", "[Q] delays", "éè", "x".repeat(500)]) {
+    assert.match(hashString(text), /^[0-9a-f]{1,8}$/);
+  }
 })
 
 test("emptyFeedDecision keeps last-known on the first empty poll and records the run start", () => {

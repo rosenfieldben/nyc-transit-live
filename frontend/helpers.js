@@ -748,14 +748,24 @@ function ferryArrivalsHtml(station, body, now, colorFor = () => FERRY_FALLBACK_C
 // so this marker is the one honest signal that the index may have stopped updating.
 const ALERTS_STALE_AFTER_S = 300;
 
-// True when the last successful alerts fetch (its served_at) is older than the
-// threshold. `now` is the skew-corrected client clock. A null servedAt (no
-// successful fetch yet, e.g. during boot) is NOT stale: the app simply shows no
-// alerts, not a false "out of date". Pure and node-testable; the banner and popup
-// alert blocks gate their "alerts may be out of date" marker on this.
-function alertsStale(servedAt, now) {
-  if (servedAt == null) return false;
-  return now - servedAt >= ALERTS_STALE_AFTER_S;
+// True when the alert DATA is older than the threshold, judged from the payload's
+// fetched_at: the backend's last poll that actually decoded. `now` is the skew-
+// corrected client clock, i.e. already on the same server-time axis as fetched_at.
+// A null fetchedAt (no successful fetch yet, e.g. during boot) is NOT stale: the app
+// simply shows no alerts, not a false "out of date". Pure and node-testable; the
+// banner and popup alert blocks gate their "alerts may be out of date" marker on this.
+//
+// C1 CHANGED THE SIGNAL FROM served_at TO fetched_at, correcting the R1 choice.
+// served_at is stamped at response build, so the served_at of a stale cache is fresh
+// BY CONSTRUCTION: while the alert feeds were down the backend kept 200ing its frozen
+// index with an ever-advancing served_at, which reset this gate on every poll. The
+// marker therefore could not fire during the exact outage it exists to hedge. It was
+// measuring DELIVERY (did a response arrive) when the honest question is about DATA
+// (has the index been refreshed). fetched_at only advances on a poll that decoded,
+// so a 200 whose fetched_at has not moved is precisely the outage signature.
+function alertsStale(fetchedAt, now) {
+  if (fetchedAt == null) return false;
+  return now - fetchedAt >= ALERTS_STALE_AFTER_S;
 }
 
 // Index the active-alerts list into two lookups, each keyed by "system|id": one by
@@ -836,6 +846,38 @@ function bannerAlerts(alerts) {
     .sort(compareAlerts);
 }
 
+// A small deterministic string hash (FNV-1a, 32-bit, hex). Used only to keep the
+// banner's dedup key bounded when it folds in alert TEXT; nothing security-relevant
+// rides on it. Written out rather than pulled in so the frontend stays dependency
+// free, and >>> 0 keeps every step unsigned (JS bitwise ops are signed 32-bit).
+function hashString(text) {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16);
+}
+
+// The banner's render-dedup key: the stale flag, then one line per shown alert
+// carrying its system, id, and a hash of its header TEXT.
+//
+// C1 ADDED THE CONTENT HASH. The key used to be the shown ids alone, so an alert
+// whose WORDING changed under the same id compared equal and the banner was left
+// untouched, showing the superseded text indefinitely. That is a real upstream
+// pattern: the MTA revises an ongoing incident's description in place rather than
+// issuing a new id. Hashing rather than embedding the full text keeps the key short;
+// the tradeoff is that a 32-bit collision between two wordings of the SAME id would
+// still skip the re-render, which is a far smaller exposure than never re-rendering.
+function bannerRenderKey(shown, stale) {
+  return (
+    (stale ? "S|" : "F|") +
+    (shown ?? [])
+      .map((a) => `${a.system}|${a.id}|${hashString(String(a.header ?? ""))}`)
+      .join("\n")
+  );
+}
+
 // Compact alerts block for a station popup: one escaped header line per alert, or ""
 // when there is nothing to show (so the caller renders NO container at all). Header
 // text only in this phase (description/effect omitted); the text is kept verbatim
@@ -883,6 +925,7 @@ if (typeof module !== "undefined" && module.exports) {
     computeRouteSlice, railroadColor, isPlacedRailroad, orderedRailroadBuckets,
     railroadArrivalsHtml, formatRailroadHead, ROUTE_ACCEPT_DIST, ROUTE_MAX_SLICE,
     indexAlerts, matchStationAlerts, matchRouteAlerts, bannerAlerts, alertsBlockHtml,
+    hashString, bannerRenderKey,
     RAILROAD_ROUTE_MAX_SLICE, RAILROAD_ROUTE_ACCEPT_DIST, RAILROAD_BUCKET_ORDER,
     LINE_COLORS, DARK_TEXT_LINES, FEED_STALE_AFTER_S, FETCH_DEADLINE_MS, shouldRefresh,
     feedAgeLine, humanizeAge, alertsStale, ALERTS_STALE_AFTER_S,

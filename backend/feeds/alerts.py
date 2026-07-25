@@ -54,7 +54,8 @@ def _alert_window_status(
     """Classify an alert's active_period list against `now`, returning
     (status, starts_at, ends_at):
 
-      "active": some period covers now; starts_at/ends_at are that period's bounds
+      "active": some period covers now. starts_at is the earliest covering period's
+                start; ends_at is the EFFECTIVE end for expiry (see below).
       "future": no period covers now but at least one starts after now (planned work)
       "ended":  no period covers now and none is still upcoming (all elapsed)
 
@@ -64,24 +65,50 @@ def _alert_window_status(
     covers now on the half-open interval [start, end), matching the GTFS-RT spec.
     "future" is split out from "ended" because only not-yet-active planned work is
     worth counting for /api/status; a fully elapsed alert is just gone.
+
+    THE EFFECTIVE END IS THE LATEST end among periods NOT YET ENDED, and None when
+    any of them is open-ended. It used to be the end of the earliest covering
+    period, which expired an alert prematurely whenever periods OVERLAP: given
+    [(0, 100), (50, 500)] at now=60 both cover, the earliest-started is (0, 100), so
+    ends_at came back 100 and every downstream expiry check (the retention
+    re-filter, the client's sort) treated a live alert as finished at 100 instead of
+    500. The rule is now: an alert is active if ANY period is active, and it does
+    not expire until every period it has is done, so the earlier end of an
+    overlapping pair can no longer win.
+
+    Not-yet-ended is deliberately broader than covering: it includes a period that
+    has not STARTED yet, so an alert active now with a further period later
+    ([(0, 100), (200, 300)] at now=50) reports 300 and survives the gap rather than
+    being dropped at 100 and resurrected at 200. Retention is about whether an alert
+    is still relevant, and one that runs again shortly is.
     """
     if not periods:
         return "active", None, None
     covering: list[tuple[int | None, int | None]] = []
+    unended_ends: list[int | None] = []
     has_future = False
     for start, end in periods:
         started = start is None or now >= start
         not_ended = end is None or now < end
+        if not_ended:
+            unended_ends.append(end)
         if started and not_ended:
             covering.append((start, end))
-        elif start is not None and now < start:
+        elif not started:
             has_future = True  # begins later: planned, not yet active
     if covering:
-        # When several periods cover now, report the one that started earliest (the
-        # alert has been active longest); an open start sorts first.
+        # starts_at still reports the EARLIEST covering start (the alert has been
+        # active longest); an open start sorts first. Only the end changed.
         covering.sort(key=lambda p: float("-inf") if p[0] is None else p[0])
-        start, end = covering[0]
-        return "active", start, end
+        start = covering[0][0]
+        # covering is a subset of the not-yet-ended periods, so unended_ends is
+        # non-empty here. One open-ended period makes the whole alert open-ended.
+        effective_end = (
+            None
+            if any(e is None for e in unended_ends)
+            else max(e for e in unended_ends if e is not None)
+        )
+        return "active", start, effective_end
     return ("future", None, None) if has_future else ("ended", None, None)
 
 

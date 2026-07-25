@@ -1069,34 +1069,86 @@ test("28. honest freshness: a backend cache 200s old on first load reads stale, 
   await expect(popup(page)).toContainText("2 min");
 });
 
-test("29. honest freshness: an alerts outage past the threshold shows the banner marker (R1)", async ({ page }) => {
-  // The alerts loop swallows failures by design (no error state). R1's honesty
-  // marker is the one signal that the alert index has stopped updating. Boot with a
-  // fresh empty alerts response (served_at = FROZEN_S) so the last-success timestamp
-  // is set, then take the alerts feed down and let time cross ALERTS_STALE_AFTER_S.
+test("29. honest freshness: /api/alerts keeps 200ing a FROZEN fetched_at and the banner marker appears (C1)", async ({ page }) => {
+  // C1 REPLACED THIS SPEC, WHICH TESTED THE WRONG SHAPE. It used to stub /api/alerts
+  // returning 502, but that response is essentially unreachable in production: the
+  // backend swallows alert-poll failures and keeps serving its last-known index, so
+  // once the index has ever filled the endpoint answers 200 forever (a 502 surfaces
+  // only while the index has NEVER filled). The old spec therefore proved the marker
+  // fires for a case riders do not hit, and passed while the real outage went
+  // undisclosed.
+  //
+  // The TRUE shape, and the audit finding: the feeds are down, the backend keeps
+  // 200ing, each response carries a NEW served_at (stamped at response build) and the
+  // SAME fetched_at (the last poll that decoded). Under R1 the marker keyed on
+  // served_at, which advanced every poll, so it could never fire. It now keys on
+  // fetched_at.
+  const polledAt = fx.FROZEN_S; // the last poll that decoded; frozen from here on
   const ctx = await boot(page, (c) => {
-    c.overrides.alerts = (route, fixtures) => json(route, fixtures.alerts());
+    c.overrides.alerts = (route) =>
+      json(route, { fetched_at: polledAt, served_at: polledAt, alerts: [] });
   });
   await waitForReady(page);
-  // Drive the first alerts poll and wait for its served_at to register (the boot
-  // poll is fire-and-forget), so the outage has a last-success baseline.
+  // Drive the first alerts poll and wait for its fetched_at to register (the boot
+  // poll is fire-and-forget), so the outage has a baseline.
   await page.evaluate(() => loadAlerts());
-  await page.waitForFunction(() => typeof alertsServedAt !== "undefined" && alertsServedAt !== null);
+  await page.waitForFunction(
+    () => typeof alertsFetchedAt !== "undefined" && alertsFetchedAt !== null,
+  );
 
   const banner = page.locator("#alert-banner");
   await expect(banner).toBeEmpty(); // fresh, no alerts, no marker
 
-  // The alerts feed goes down: every later poll fails, so the last successful
-  // served_at (FROZEN_S) stops advancing.
-  ctx.overrides.alerts = (route) => json(route, { detail: "Alerts upstream error (HTTP 502)" }, 502);
-  // Jump the clock past ALERTS_STALE_AFTER_S (300s), so the alert index is now 310s
-  // old. A failed poll keeps the last success (the swallow-failures design), then the
-  // 15s refreshAll drives tickAlertBanner in production; invoke both directly here,
-  // as test 11 drives loadAlerts directly, to keep the test deterministic.
+  // The alert feeds go down. The endpoint still answers 200 and still says the index
+  // is fine; only fetched_at gives it away by not moving. served_at ADVANCES with the
+  // clock here, which is what defeated the old signal.
   await page.clock.fastForward(310_000);
-  await page.evaluate(() => loadAlerts()); // fails (502): keeps the last-success served_at
+  ctx.overrides.alerts = (route) =>
+    json(route, { fetched_at: polledAt, served_at: polledAt + 310, alerts: [] });
+  await page.evaluate(() => loadAlerts()); // a SUCCESSFUL 200 carrying stale data
   await page.evaluate(() => tickAlertBanner());
   await expect(banner).toContainText("alerts may be out of date");
+});
+
+test("29b. an agency-wide alert reworded under the same id updates the banner text (C1)", async ({ page }) => {
+  // The banner skips rebuilding when its dedup key is unchanged, and the key used to
+  // be the shown ids alone. The MTA revises an ongoing incident's wording in place
+  // rather than issuing a new id, so the banner kept showing superseded text forever.
+  // The key now folds in a hash of the header, so a revision re-renders.
+  const wide = (header) => ({
+    id: "wide-1", // the SAME id throughout: that is the whole point
+    system: "subway",
+    header,
+    description: null,
+    effect: "SIGNIFICANT_DELAYS",
+    cause: "MAINTENANCE",
+    routes: [],
+    stops: [],
+    starts_at: fx.FROZEN_S - 600,
+    ends_at: null,
+  });
+  const respond = (header) => (route) =>
+    json(route, {
+      fetched_at: fx.FROZEN_S,
+      served_at: fx.FROZEN_S,
+      alerts: [wide(header)],
+    });
+
+  const ctx = await boot(page, (c) => {
+    c.overrides.alerts = respond("Systemwide: reduced service");
+  });
+  await waitForReady(page);
+  await page.evaluate(() => loadAlerts());
+
+  const banner = page.locator("#alert-banner");
+  await expect(banner).toContainText("Systemwide: reduced service");
+
+  // Upstream revises the text under the same id. fetched_at advances (this is a
+  // healthy poll, not an outage), so the marker must NOT appear; only the text moves.
+  ctx.overrides.alerts = respond("Systemwide: reduced service on 4 lines");
+  await page.evaluate(() => loadAlerts());
+  await expect(banner).toContainText("Systemwide: reduced service on 4 lines");
+  await expect(banner).not.toContainText("alerts may be out of date");
 });
 
 test("30. a wedged feed no longer freezes the loop: healthy feeds keep polling, the hung one times out (R2)", async ({ page }) => {

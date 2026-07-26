@@ -28,6 +28,34 @@ logger = logging.getLogger("main")
 # clock is never involved; the frontend mirrors this in helpers.js.
 FEED_STALE_AFTER_S = 90
 
+# How long ONE failed subsystem's data is carried forward inside an aggregate
+# envelope before it is dropped (C2). Ten minutes, and the reasoning is the same
+# shape as the alerts retention cap but at a much shorter horizon because vehicle
+# positions decay faster than service alerts: a ten-minute-old train position,
+# rendered AS stale, is honest context a rider can use, while an hour-old one is a
+# ghost. Past this the data goes and only the system's SystemFreshness block
+# remains, still reporting the outage. Absence plus an explanation beats a
+# confident wrong position.
+FEED_RETENTION_MAX_S = 600
+
+# WHETHER A FAILED SUBSYSTEM'S DATA IS ACTUALLY CARRIED FORWARD. Off in C2 PR1,
+# ON in PR2, and the split is deliberate rather than timid.
+#
+# Retention is only honest once the client RENDERS the retained data as stale,
+# which is PR2's job (per-system dimming plus the "as of Xm ago" line, driven by
+# the SystemFreshness blocks this PR ships). Turning it on here would mean a
+# window where a failed group's trains sit on the map at full opacity with no
+# staleness marker, because nothing reads the blocks yet: the map would gain
+# ghost trains where it previously showed honest absence, which is worse than the
+# defect being fixed. The retention cap's own justification in FEED_RETENTION_MAX_S
+# above is explicitly conditional on the data being "rendered AS stale".
+#
+# With this off, PR1 is genuinely dark: the per-system freshness blocks are
+# published (so PR2 has a contract to build against and an operator can already
+# see the truth on /api/status), while the DATA behaves exactly as it did before.
+# PR2 flips this to True in the same change that starts rendering it.
+FEED_RETENTION_ENABLED = False
+
 
 # THE THREE TIMESTAMPS (the freshness contract, canonical description; the
 # models and the frontend reference this by name rather than restating it):
@@ -50,6 +78,22 @@ FEED_STALE_AFTER_S = 90
 #                                  first load against an already-stale cache it read
 #                                  ~zero, so stale looked fresh. served_at makes it
 #                                  explicit and skew-free.
+#
+# THE PER-SYSTEM RULE (C2), for the AGGREGATE endpoints only (subways: 8 feed
+# groups; railroads: LIRR + MNR; alerts: 5 systems). Those fan out over several
+# upstream systems, and a partial failure is still a SUCCESSFUL poll, so:
+#
+#   an aggregate's top-level fetched_at means "THIS POLL RAN".
+#   each system's own fetched_at means "THIS SYSTEM'S DATA IS THIS OLD".
+#
+# They are equal on a healthy poll and DIVERGE EXACTLY WHEN SOMETHING IS WRONG,
+# which is what makes the pair informative. Before C2 only the aggregate existed,
+# so one failed subway group advanced the same timestamp as the seven healthy
+# ones and its riders were served retained data wearing a fresh clock (or, worse,
+# no data and no explanation). The per-system block is models.SystemFreshness and
+# travels IN the data envelope, because the client that needs it never fetches
+# /api/status. Anything reading an aggregate fetched_at as DATA freshness now has
+# a truthful alternative and should be using it.
 
 
 def _feed_age(entry: dict) -> float | None:
@@ -119,7 +163,9 @@ def _sanitize_upstream(exc: BaseException) -> str:
     return _URL_RE.sub("<feed url>", str(exc))
 
 
-def _serve_cached(app, name: str, response: Response, data_key: str = "data") -> dict:
+def _serve_cached(
+    app, name: str, response: Response, data_key: str = "data", with_systems: bool = False
+) -> dict:
     """Serve {fetched_at, feed_timestamp, served_at, <data_key>} from the cache.
     Stale-but-present data is still served; the frontend judges staleness from the
     fetched_at / feed_timestamp pair (upstream lag) plus the served_at / fetched_at
@@ -146,12 +192,20 @@ def _serve_cached(app, name: str, response: Response, data_key: str = "data") ->
     entry = app.state.feed_cache[name]
     if entry["data"] is not None:
         response.headers["Cache-Control"] = "no-store"
-        return {
+        body = {
             "fetched_at": entry["fetched_at"],
             "feed_timestamp": entry["feed_timestamp"],
             "served_at": time.time(),
             data_key: entry["data"],
         }
+        # OPT-IN, not automatic: only the AGGREGATE feeds have subsystems. Buses,
+        # PATH and ferry are each a single upstream, so their top-level fetched_at
+        # already means what a per-system block would say, and adding an empty or
+        # one-entry block to their envelopes would be noise the client has to
+        # special-case. See THE PER-SYSTEM RULE above.
+        if with_systems:
+            body["systems"] = entry.get("systems")
+        return body
     if entry["error"]:
         raise HTTPException(entry["error"]["status"], entry["error"]["detail"])
     raise HTTPException(
@@ -191,3 +245,54 @@ def _static_endpoint_ready(status: str, response: Response, warming_detail: str)
         return True
     response.headers["Cache-Control"] = "no-cache"  # failed: never cache the empty
     return False
+
+
+def _system_fetched_at(entry: dict, system: str) -> float | None:
+    """One system's own poll time out of an aggregate cache entry, falling back to
+    the aggregate's when no per-system block has been written yet (C2).
+
+    Used by the per-station arrivals endpoints, which serve ONE system's data and
+    must therefore date it with that system's clock. Stamping the aggregate there
+    was the defect: a healthy sibling keeps the aggregate advancing, so a retained
+    system's arrivals were served wearing a fresh timestamp and the client had no
+    way to tell. The fallback keeps the pre-C2 answer for an entry seeded directly
+    or read before the first poll, so the endpoint never returns null where it
+    previously returned a number.
+    """
+    block = (entry.get("systems") or {}).get(system)
+    if block is None:
+        return entry["fetched_at"]
+    return block["fetched_at"]
+
+
+def _oldest_contributing_fetched_at(
+    entry: dict, arrivals_by_system: dict, station_id: str
+) -> float | None:
+    """The oldest poll time among the systems actually contributing arrivals at one
+    station, falling back to the aggregate's (C2).
+
+    For a UNION of several systems' data there is no single per-system clock to
+    report, and reporting the newest (or the aggregate, which tracks the newest)
+    would let one fresh group vouch for a stale one sharing the same platform. The
+    worst contributor is the only answer that cannot overstate freshness.
+
+    A group with no arrivals at this station does not participate: a down SIR feed
+    must not age a Manhattan station's popup it was never going to appear in.
+    """
+    systems = entry.get("systems") or {}
+    contributing = [
+        systems[system]["fetched_at"]
+        for system, station_map in arrivals_by_system.items()
+        if station_id in (station_map or {}) and system in systems
+    ]
+    usable = [ts for ts in contributing if ts is not None]
+    if not usable:
+        # Either no per-system data yet (pre-first-poll, or a directly seeded entry)
+        # or every contributor has never decoded. The aggregate is the pre-C2 answer
+        # and keeps the endpoint from regressing to null.
+        return entry["fetched_at"]
+    if len(usable) < len(contributing):
+        # A contributor exists that has NEVER decoded, so its data cannot be dated.
+        # Do not let the others speak for it.
+        return None
+    return min(usable)

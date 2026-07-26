@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -279,3 +279,122 @@ def carry_forward_prev(
             "anchor": anchor,
         }
     return new_positions
+
+
+def merge_system_generations(
+    fresh_by_system: dict[str, list[dict]],
+    prev_by_system: dict[str, list[dict]] | None,
+    failed_systems: Iterable[str],
+    prev_retained_since: Mapping[str, float],
+    now: float,
+    max_retention_s: float,
+) -> tuple[dict[str, list[dict]], dict[str, float]]:
+    """Merge one poll's per-system items with the previous poll's, carrying a
+    FAILED system's items forward instead of letting them vanish from the
+    aggregate (C2). The direct sibling of merge_alert_generations, deliberately
+    the same shape so the two retention stories read alike.
+
+    Pure and clock-injected: `now` and `prev_retained_since` are passed in, never
+    read from a wall clock or module state. Returns (merged_by_system,
+    retained_since), where retained_since maps each system CURRENTLY served from
+    carried-forward items to the instant its retention began.
+
+    RETENTION KEYS ON MEMBERSHIP IN failed_systems, NEVER ON AN EMPTY LIST, and
+    that distinction is the whole correctness of this function. The decoders
+    classify a feed as failed ONLY at the exception boundary (a fetch error or an
+    undecodable protobuf); an HTTP 200 carrying a well-formed zero-entity feed is
+    a SUCCESS. So a system that genuinely has no vehicles running right now, which
+    is ordinary overnight, reports an empty list on a healthy poll and MUST have
+    its previous items replaced, not retained. Keying on emptiness would resurrect
+    last night's trains every night. Keying on key-absence would be just as wrong:
+    a railroad system that decodes but has no static stops loaded contributes no
+    entries while never appearing in failed_systems.
+
+    Per system:
+      - NOT failed this poll: its items come exclusively from fresh_by_system,
+        replacing wholesale, including when that means replacing with nothing.
+      - failed this poll: its items are carried forward from prev_by_system,
+        capped at max_retention_s measured from when the system FIRST went down
+        (prev_retained_since, or now for a newly-failed one). Past the cap the
+        items are dropped and only the caller's per-system freshness block still
+        reports the outage.
+
+    The items are NOT copied here: this returns the same dicts it was handed. A
+    caller that mutates merged items in place (the anchor carry does) must copy
+    them first, or it will edit objects a previous response already exposed.
+    """
+    failed = set(failed_systems)
+    merged: dict[str, list[dict]] = {
+        system: items for system, items in fresh_by_system.items() if system not in failed
+    }
+
+    retained_since: dict[str, float] = {}
+    # SORTED, not set order. Iterating the set inserted retained systems into `merged`
+    # in a hash-randomized order, and the combine helpers dedup a cross-group trip in
+    # dict order, so which group owned a duplicated trip (and which arrivals won a
+    # trim tie) varied between processes. Sorting makes the merge deterministic.
+    for system in sorted(failed):
+        # Explicit None check, not truthiness: a retention-start timestamp can be
+        # 0.0 (epoch), which `or now` would wrongly reset every poll.
+        started = prev_retained_since.get(system)
+        if started is None:
+            started = now
+        if now - started >= max_retention_s:
+            continue  # capped: drop this system's items; freshness still reports it
+        # RECORDED WHETHER OR NOT ANYTHING WAS CARRIED. This used to sit inside
+        # `if carried:`, which made retained_since mean "we are serving carried
+        # items" and broke the clock for any system that went down holding an EMPTY
+        # list: nothing was carried, so no clock was recorded, so the next poll saw
+        # no previous start and restarted from `now` forever. A caller merging two
+        # kinds of data for one system (trains and arrivals) then got two different
+        # answers, and the cap could never fire for the kind that had been empty.
+        # The field now means "this system has been failing since X and is still
+        # inside the retention window", which is a property of the SYSTEM and so is
+        # the same for every kind of data merged under it.
+        retained_since[system] = started
+        carried = (prev_by_system or {}).get(system) or []
+        if carried:
+            merged[system] = carried
+    return merged, retained_since
+
+
+def drop_expired_arrivals(
+    arrivals_by_system: dict[str, dict[str, dict[str, list[dict]]]],
+    now: float,
+    only: Iterable[str],
+) -> dict[str, dict[str, dict[str, list[dict]]]]:
+    """Drop arrivals whose predicted time has already passed, per system.
+
+    REQUIRED WHENEVER ARRIVALS ARE RETAINED, and the reason is a nasty interaction
+    rather than mere tidiness. A retained system's arrivals keep their ORIGINAL
+    absolute times, and _trim_arrivals sorts each station bucket soonest-first
+    before capping it at ARRIVALS_PER_DIRECTION. An expired time is the smallest
+    number in the bucket, so every stale retained row sorts AHEAD of every live one
+    and fills the cap: a single failed feed group could evict all the fresh
+    arrivals from a station it shares with healthy groups, leaving a rider looking
+    at six departures that already happened and none of the ones that have not.
+    Pruning first means a retained bucket can only ever pad out what is left after
+    the live rows, never displace them.
+
+    APPLIED ONLY TO THE SYSTEMS IN `only` (the retained ones). It must NOT touch
+    fresh data: the decoders deliberately keep a stop up to a minute past its time
+    (a train dwelling or just-departed is still the right answer for that station),
+    and a blanket prune here would silently override that grace for every system.
+    """
+    retained = set(only)
+    pruned: dict[str, dict[str, dict[str, list[dict]]]] = {}
+    for system, stations in arrivals_by_system.items():
+        if system not in retained:
+            pruned[system] = stations
+            continue
+        kept_stations: dict[str, dict[str, list[dict]]] = {}
+        for station_id, buckets in (stations or {}).items():
+            kept_buckets = {
+                direction: [a for a in arrs if a.get("arrival") is None or a["arrival"] >= now]
+                for direction, arrs in buckets.items()
+            }
+            kept_buckets = {d: arrs for d, arrs in kept_buckets.items() if arrs}
+            if kept_buckets:
+                kept_stations[station_id] = kept_buckets
+        pruned[system] = kept_stations
+    return pruned

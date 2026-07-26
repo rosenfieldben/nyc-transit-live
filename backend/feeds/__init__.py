@@ -93,7 +93,9 @@ from feeds.shared import (
     _trim_arrivals,
     _trip_start_ts,
     carry_forward_prev,
+    drop_expired_arrivals,
     logger,
+    merge_system_generations,
 )
 from feeds.subway import (
     _SUBWAY_BASE,
@@ -102,6 +104,8 @@ from feeds.subway import (
     _decode_feed,
     _decode_trains,
     _platform_direction,
+    combine_group_arrivals,
+    combine_group_trains,
     fetch_subway_trains,
 )
 
@@ -132,6 +136,10 @@ __all__ = [
     "_DROP_TRIP_RELATIONSHIPS",
     "_DROP_STOP_RELATIONSHIPS",
     "carry_forward_prev",
+    "combine_group_arrivals",
+    "combine_group_trains",
+    "merge_system_generations",
+    "drop_expired_arrivals",
     "logger",
     "VEHICLE_POSITIONS_URL",
     "fetch_vehicle_positions",

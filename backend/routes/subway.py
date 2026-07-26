@@ -6,7 +6,12 @@ import re
 
 from fastapi import APIRouter, HTTPException, Request, Response
 
-from cache import _require_filled_cache, _serve_cached, _static_endpoint_ready
+from cache import (
+    _oldest_contributing_fetched_at,
+    _require_filled_cache,
+    _serve_cached,
+    _static_endpoint_ready,
+)
 from models import StationArrivals, SubwayFeed, SubwayRoute, SubwayStop
 
 router = APIRouter()
@@ -21,7 +26,7 @@ async def get_subways(request: Request, response: Response) -> dict:
     """Cached train placements: {fetched_at, feed_timestamp, served_at, data:
     [{trip_id, route_id, latitude, longitude, stop_id, stop_name, direction},
     ...]}. served_at is stamped per response (see THE THREE TIMESTAMPS in cache.py)."""
-    return _serve_cached(request.app, "subways", response)
+    return _serve_cached(request.app, "subways", response, with_systems=True)
 
 
 @router.get("/api/subway-routes", response_model=list[SubwayRoute])
@@ -77,7 +82,18 @@ async def get_subway_arrivals(request: Request, station_id: str) -> dict:
         raise HTTPException(status_code=404, detail=f"Unknown station {station_id}.")
     station_arrivals = (getattr(app.state, "subway_arrivals", None) or {}).get(station_id, {})
     return {
-        "fetched_at": entry["fetched_at"],
+        # THE OLDEST CONTRIBUTING GROUP'S poll time, not the aggregate's (C2). A
+        # railroad station belongs to exactly one system, but a subway station is
+        # served by several feed groups at once, so there is no single per-system
+        # clock to copy: the honest answer for a UNION is the worst of its parts. If
+        # the ACE feed is down and its retained arrivals are still being shown here
+        # alongside fresh NQRW ones, this reports the ACE age, so the popup cannot
+        # claim to be fresher than the stalest thing in it.
+        "fetched_at": _oldest_contributing_fetched_at(
+            entry,
+            getattr(app.state, "subway_arrivals_by_system", None) or {},
+            station_id,
+        ),
         "station_id": station_id,
         "station_name": stations[station_id]["name"],
         "directions": {

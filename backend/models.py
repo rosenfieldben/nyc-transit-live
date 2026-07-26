@@ -67,11 +67,49 @@ class BusFeed(BaseModel):
     data: list[Vehicle]
 
 
+class SystemFreshness(BaseModel):
+    """One subsystem's own freshness inside an aggregate envelope (C2).
+
+    THE ONE PER-SYSTEM CONTRACT, defined here and consumed everywhere. An
+    aggregate endpoint fans out over several upstream systems (subway: 8 feed
+    groups; railroad: LIRR + MNR; alerts: 5 systems) and a partial failure is
+    still a SUCCESSFUL poll, so the envelope's top-level fetched_at only means
+    "this poll ran". It says nothing about whether any particular system's data
+    was refreshed. This block is what does: each system reports the age of ITS
+    OWN data, and the two timestamps diverge exactly when something is wrong.
+
+    NO ERROR TEXT LIVES HERE, deliberately. `ok` plus the age carry the whole
+    rider-facing signal, and sanitized failure detail stays in /api/status, which
+    keeps the leak surface exactly where it already was rather than widening it
+    to every live envelope.
+    """
+
+    # This system's last poll that DECODED. Frozen while the system is failing,
+    # which is the entire point: compare it with the envelope's fetched_at to see
+    # how far behind this system has fallen.
+    fetched_at: float | None
+    # False while the system failed its most recent poll. NOTE the deliberate
+    # difference from *FeedHealth.ok in this module, which is an integer COUNT of
+    # healthy feeds; this is a per-system boolean. They are different models with
+    # different audiences: those are operator counts on /api/status, this is the
+    # rider-facing per-system flag on the live envelopes.
+    ok: bool
+    # Set while this system's data is being carried forward from its last good
+    # poll. Null when the system is fresh AND null once the retention cap has
+    # dropped the data, so it is not the complement of `ok`: a long-failed system
+    # reports ok=False with retained_since=None and no data at all.
+    retained_since: float | None
+
+
 class SubwayFeed(BaseModel):
     fetched_at: float | None
     feed_timestamp: float | None  # oldest content time across subway feeds
     served_at: float  # this response's build time (see cache.py)
     data: list[Train]
+    # Keyed by feed group ("ACE", "BDFM", ...). Optional so the field can be
+    # added without breaking a client that predates it; absent only on an
+    # envelope built before the first poll recorded any group.
+    systems: dict[str, SystemFreshness] | None = None
 
 
 class RailroadFeed(BaseModel):
@@ -82,6 +120,7 @@ class RailroadFeed(BaseModel):
     feed_timestamp: float | None
     served_at: float  # this response's build time (see cache.py)
     data: list[RailroadTrain]
+    systems: dict[str, SystemFreshness] | None = None  # keyed "LIRR" / "MNR"
 
 
 class RouteGeometry(BaseModel):
@@ -366,6 +405,11 @@ class AlertFeed(BaseModel):
     fetched_at: float | None
     served_at: float  # this response's build time (see cache.py)
     alerts: list[Alert]
+    # Keyed by alert system ("subway", "bus", "LIRR", "MNR", "ferry"), projected
+    # from the health map C1 made truthful. Carried HERE rather than left on
+    # /api/status because the client never fetches /api/status: without this, a
+    # partial alerts outage was invisible to the rider-facing freshness marker.
+    systems: dict[str, SystemFreshness] | None = None
 
 
 class FeedError(BaseModel):

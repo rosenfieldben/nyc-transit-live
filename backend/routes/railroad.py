@@ -7,7 +7,7 @@ import re
 
 from fastapi import APIRouter, HTTPException, Request, Response
 
-from cache import _require_filled_cache, _serve_cached, _static_endpoint_ready
+from cache import _require_filled_cache, _serve_cached, _static_endpoint_ready, _system_fetched_at
 from models import RailroadFeed, RailroadRoute, RailroadStationArrivals, RailroadStop
 
 router = APIRouter()
@@ -31,7 +31,7 @@ async def get_railroads(request: Request, response: Response) -> dict:
     are loaded for that system); a placed train carries null bearing and filled
     direction/next_time/prev_* anchors. served_at is stamped per response (see THE
     THREE TIMESTAMPS in cache.py)."""
-    return _serve_cached(request.app, "railroads", response)
+    return _serve_cached(request.app, "railroads", response, with_systems=True)
 
 
 @router.get("/api/railroad-routes", response_model=list[RailroadRoute])
@@ -128,7 +128,13 @@ async def get_railroad_arrivals(request: Request, system: str, stop_id: str) -> 
         (getattr(app.state, "railroad_arrivals", None) or {}).get(system, {}).get(stop_id, {})
     )
     return {
-        "fetched_at": entry["fetched_at"],
+        # THIS SYSTEM'S OWN poll time, not the aggregate's (C2). The audit's sharpest
+        # sub-claim: a retained MNR arrival used to be stamped with the envelope's
+        # fetched_at, which a healthy LIRR keeps advancing, so a rider reading an MNR
+        # popup during an MNR outage saw countdowns presented as current while the
+        # data behind them was frozen. Falls back to the aggregate only before the
+        # first poll has written a per-system block.
+        "fetched_at": _system_fetched_at(entry, system),
         "system": system,
         "stop_id": stop_id,
         "stop_name": stops[stop_id]["name"],

@@ -756,6 +756,16 @@ test("20. Ferry boats: STOPPED_AT renders docked, a null-route boat reads Unassi
   }));
   expect(classes.h2).toContain("ferry-docked");
   expect(classes.h1).toContain("ferry-active");
+  // The dimming itself, pinned numerically. C2 moved it off the css class onto the
+  // marker opacity (an inline opacity written for staleness would have overridden a
+  // class rule and un-dimmed every docked boat), so the class alone no longer proves
+  // a docked boat looks docked.
+  const opacity = await page.evaluate(() => ({
+    h2: ferryBoatRecords.get("H2").marker.options.opacity,
+    h1: ferryBoatRecords.get("H1").marker.options.opacity,
+  }));
+  expect(opacity.h2).toBeCloseTo(0.55);
+  expect(opacity.h1).toBe(1);
 
   // The null-route boat (H3) is kept on the map (14b deliberately) and reads
   // "Unassigned"; under way at 4.0 m/s it shows its speed in knots (H4): 7.8 kn.
@@ -1317,4 +1327,279 @@ test("32. a hung BACKGROUND popup refresh is swallowed and keeps the last-known 
   await expect(popup(page)).toContainText("Northbound"); // arrivals kept, not blanked
   await expect(popup(page)).not.toContainText("Loading"); // never reverted to the loading state
   await expect(popup(page)).not.toContainText("unavailable"); // a timed-out background refresh stays quiet
+});
+
+/* ---- C2 partial-outage contract specs ----------------------------------------
+   Named "C2a" through "C2e" so the C6 contract suite can grow around them rather
+   than renumber them. Each one drives a PARTIAL outage: a poll that SUCCEEDS while
+   one subsystem is down, which is the case every whole-source freshness signal in
+   the app was blind to before C2. The map still carries the down system's data
+   (retention, FEED_RETENTION_ENABLED), so each spec's real question is whether that
+   data is rendered as what it is.
+------------------------------------------------------------------------------- */
+
+// Marker opacity is the dimming signal (Leaflet writes it inline on the marker
+// element via setOpacity). Reading it back per marker id keeps the assertions about
+// WHICH markers dimmed, not just how many.
+const markerOpacities = (page, selector) =>
+  page.$$eval(selector, (els) => els.map((el) => el.style.opacity || "1"));
+
+test("C2a. railroad partial outage: MNR dims and ages while LIRR stays live (C2)", async ({ page }) => {
+  // MNR's feed goes down and stays down; LIRR keeps decoding. The ENVELOPE's
+  // fetched_at advances the whole time (the poll succeeds), so before C2 nothing on
+  // the client could tell: both systems' markers stayed full-opacity and the status
+  // line stayed silent while MNR's trains froze in place.
+  const ctx = await boot(page);
+  await waitForReady(page);
+  const status = page.locator("#status");
+
+  // First the healthy baseline, so the dimming below is a CHANGE rather than the
+  // state the page happened to load in.
+  ctx.overrides.railroads = (route, fixtures) => json(route, fixtures.railroadsWithSystems({}));
+  await page.clock.runFor(15_000);
+  expect(await markerOpacities(page, ".railroad-marker")).toEqual(["1", "1"]);
+  await expect(status).not.toHaveClass(/error/);
+
+  // MNR goes down. Its block freezes at FROZEN_S while the envelope advances 400s.
+  ctx.overrides.railroads = (route, fixtures) =>
+    json(route, fixtures.railroadsWithSystems({
+      fetchedAt: fx.FROZEN_S + 400,
+      mnrAt: fx.FROZEN_S,
+      mnrOk: false,
+      mnrRetainedSince: fx.FROZEN_S + 15,
+    }));
+  await page.clock.fastForward(400_000);
+  // Asserted by train identity, not by DOM order: which marker is which matters here,
+  // and marker order is Leaflet's business.
+  await expect
+    .poll(async () =>
+      page.evaluate(() =>
+        Object.fromEntries(
+          [...railroads.entries()].map(([key, r]) => [key, r.marker.options.opacity ?? 1]),
+        ),
+      ),
+    )
+    .toEqual({ "MNR|mnr-gps-1": 0.45, "LIRR|lirr-placed-1": 1 });
+  // A GPS train is dimmed exactly like a placed one: both are drawn from the same
+  // feed, so a stale MNR dims its live-GPS trains too.
+  expect((await markerOpacities(page, ".railroad-marker")).sort()).toEqual(["0.45", "1"]);
+
+  // The status line NAMES MNR and leaves LIRR out of it. The age is MNR's own: the
+  // response was served 400s after MNR last decoded and the client has been sitting
+  // on it for the 15s since, so 415s, which rounds to 7m.
+  await expect(status).toContainText("railroad: MNR as of 7m ago");
+  await expect(status).toHaveClass(/error/);
+  expect(await status.textContent()).not.toContain("LIRR");
+
+  // The MNR train's popup says how old its data is; the LIRR one says nothing.
+  await page.evaluate(() => railroads.get("MNR|mnr-gps-1").marker.openPopup());
+  await expect(popup(page)).toContainText("as of 7m ago");
+  // The healthy system's popup carries no age line at all. Asserted on the rendered
+  // markup rather than by opening a second popup, which would race the first one's
+  // teardown in the DOM.
+  const lirrHtml = await page.evaluate(() => railroadPopup(railroads.get("LIRR|lirr-placed-1")));
+  expect(lirrHtml).not.toContain("popup-stale");
+  const mnrHtml = await page.evaluate(() => railroadPopup(railroads.get("MNR|mnr-gps-1")));
+  expect(mnrHtml).toContain("popup-stale");
+
+  // Past the backend's retention cap the MNR data GOES (the backend stops serving
+  // it), and the status line must keep naming the outage so the disappearance is
+  // explained for as long as it lasts.
+  ctx.overrides.railroads = (route, fixtures) =>
+    json(route, fixtures.railroadsWithSystems({
+      data: fixtures.railroads().data.filter((t) => t.system === "LIRR"),
+      fetchedAt: fx.FROZEN_S + 1000,
+      mnrAt: fx.FROZEN_S,
+      mnrOk: false,
+      mnrRetainedSince: null, // the cap fired: nothing retained any more
+    }));
+  await page.clock.fastForward(600_000);
+  await expect(railroadMarkers(page)).toHaveCount(1); // MNR's marker is gone
+  await expect(status).toContainText("railroad: MNR as of"); // still explained
+});
+
+test("C2b. retention pairing: retained data is ALREADY dimmed on its first frame (C2)", async ({ page }) => {
+  // THE SPEC THAT PINS THE GATE. FEED_RETENTION_ENABLED and this rendering ship in
+  // one commit: if retention were on with the dimming missing, a failed group's
+  // trains would sit on the map looking exactly as live as the healthy ones. Here the
+  // page's VERY FIRST poll already carries retained ACE data, so there is no earlier
+  // frame in which the marker existed undimmed; if the dimming ran only in a later
+  // sweep, this fails.
+  await boot(page, (c) => {
+    c.overrides.subways = (route, fixtures) =>
+      json(route, fixtures.subwaysWithSystems({
+        fetchedAt: fx.FROZEN_S,
+        aceAt: fx.FROZEN_S - 300, // ACE decoded 5 minutes ago and is being retained
+        aceOk: false,
+        aceRetainedSince: fx.FROZEN_S - 285,
+      }));
+  });
+  await waitForReady(page);
+
+  // Both trains are on the map (retention kept the ACE one), and the ACE train is dim
+  // from the moment it is created, while the 1-7+S train is not.
+  const opacities = await page.evaluate(() =>
+    [...trains.entries()].map(([id, r]) => [id, r.marker.options.opacity ?? 1]),
+  );
+  expect(new Map(opacities).get("sub-2")).toBeCloseTo(0.45); // route A -> ACE group
+  expect(new Map(opacities).get("sub-1")).toBe(1); // route 1 -> 1-7+S group
+  // The inline style is what a rider actually sees, so assert the rendered DOM too.
+  const inline = await page.$$eval(".train-marker", (els) =>
+    els.map((el) => el.style.opacity || "1").sort(),
+  );
+  expect(inline).toEqual(["0.45", "1"]);
+});
+
+test("C2c. subway group outage: the failed group's routes flag, the others stay live (C2)", async ({ page }) => {
+  // The subway's systems are FEED GROUPS, and a train names no group: the client
+  // joins through the per-system route coverage the payload carries. Route "A" rides
+  // ACE, route "1" rides 1-7+S, so a down ACE must dim exactly the A train.
+  const ctx = await boot(page);
+  await waitForReady(page);
+  const status = page.locator("#status");
+
+  ctx.overrides.subways = (route, fixtures) =>
+    json(route, fixtures.subwaysWithSystems({
+      fetchedAt: fx.FROZEN_S + 240,
+      aceAt: fx.FROZEN_S,
+      aceOk: false,
+      aceRetainedSince: fx.FROZEN_S + 15,
+    }));
+  await page.clock.fastForward(240_000);
+
+  await expect
+    .poll(async () =>
+      page.evaluate(() =>
+        Object.fromEntries([...trains.entries()].map(([id, r]) => [id, r.marker.options.opacity ?? 1])),
+      ),
+    )
+    .toEqual({ "sub-1": 1, "sub-2": 0.45 });
+
+  // The status line names the GROUP, with the noun that makes it read right, and does
+  // not name the healthy one.
+  await expect(status).toContainText("trains: ACE group as of 4m ago");
+  expect(await status.textContent()).not.toContain("1-7+S");
+
+  // The route -> group inversion is what made that possible.
+  expect(await page.evaluate(() => [...subwayGroupsByRoute.entries()])).toEqual([
+    ["1", ["1-7+S"]],
+    ["A", ["ACE"]],
+  ]);
+
+  // A stale group's train also FREEZES rather than gliding on: the A train's position
+  // must not advance while its feed is dead, even though its anchors invite it to.
+  const before = await page.evaluate(() => trains.get("sub-2").marker.getLatLng().lat);
+  await page.clock.fastForward(30_000);
+  const after = await page.evaluate(() => trains.get("sub-2").marker.getLatLng().lat);
+  expect(after).toBe(before);
+});
+
+test("C2d. alerts partial outage: one frozen system trips the marker at threshold (C2)", async ({ page }) => {
+  // THE F1 FIX. Four alert systems keep decoding and one is down. That is a
+  // SUCCESSFUL poll, so the envelope's fetched_at advances every minute and the C1
+  // marker (which keyed on it) could never fire, even after the backend's retention
+  // cap had dropped the down system's alerts entirely. The basis is now the OLDEST
+  // system's fetched_at.
+  const ctx = await boot(page, (c) => {
+    c.overrides.alerts = (route, fixtures) => json(route, fixtures.alertsWithSystems({}));
+  });
+  await waitForReady(page);
+  await page.evaluate(() => loadAlerts());
+  await page.waitForFunction(() => typeof alertsFetchedAt !== "undefined" && alertsFetchedAt !== null);
+
+  const banner = page.locator("#alert-banner");
+  await expect(banner).toBeEmpty(); // all five fresh: no marker
+
+  // The ferry alert feed goes down. Everything else keeps polling, so both the
+  // envelope's fetched_at AND served_at advance; only ferry's block stands still.
+  const frozenAt = fx.FROZEN_S;
+  ctx.overrides.alerts = (route, fixtures) =>
+    json(route, fixtures.alertsWithSystems({
+      fetchedAt: frozenAt + 310,
+      servedAt: frozenAt + 310,
+      frozen: "ferry",
+      frozenAt,
+    }));
+  await page.clock.fastForward(310_000);
+  await page.evaluate(() => loadAlerts());
+  await page.evaluate(() => tickAlertBanner());
+  await expect(banner).toContainText("alerts may be out of date");
+
+  // And the banner otherwise renders normally: an agency-wide alert still shows, with
+  // the marker alongside it rather than replacing it.
+  ctx.overrides.alerts = (route, fixtures) =>
+    json(route, fixtures.alertsWithSystems({
+      alerts: [{
+        id: "sys-1", system: "subway", header: "Reduced service systemwide", description: null,
+        effect: "REDUCED_SERVICE", cause: "MAINTENANCE", routes: [], stops: [],
+        starts_at: frozenAt - 600, ends_at: null,
+      }],
+      fetchedAt: frozenAt + 320,
+      servedAt: frozenAt + 320,
+      frozen: "ferry",
+      frozenAt,
+    }));
+  await page.evaluate(() => loadAlerts());
+  await expect(banner).toContainText("Reduced service systemwide");
+  await expect(banner).toContainText("alerts may be out of date");
+});
+
+test("C2e. PATH staleness: gliding halts and markers dim, then recovery resumes (C2)", async ({ page }) => {
+  // PATH is a SINGLE-FEED source: it carries no systems block, so it flows through the
+  // synthesized-system path of ingestSystems. The point of this spec is that the
+  // synthesis does not accidentally exempt it from the rules the aggregates follow.
+  const ctx = await boot(page);
+  await waitForReady(page);
+
+  // Give p-2 the glide anchors, so it is a train that WOULD move if the clock ran.
+  ctx.overrides.path = (route, fixtures) => json(route, fixtures.pathAdvanced());
+  await page.clock.runFor(15_000);
+  await page.waitForFunction(() => pathTrainRecords.get("p-2")?.latest.prev_lat != null);
+  await page.clock.runFor(1_000); // let the animation tick place it mid-glide
+  const gliding = await page.evaluate(() => pathTrainRecords.get("p-2").marker.getLatLng().lat);
+
+  // The feed wedges: the backend keeps serving, but its fetched_at stops moving.
+  // served_at advances with each response, which is exactly the shape that used to
+  // hide a dead feed (R1's finding) and now cannot.
+  ctx.overrides.path = (route, fixtures) => {
+    const body = fixtures.pathAdvanced();
+    return json(route, { ...body, served_at: fx.FROZEN_S + 200 });
+  };
+  await page.clock.fastForward(200_000);
+
+  // Dimmed, and the glide is FROZEN: no dead reckoning on a dead feed. Two further
+  // seconds of animation ticks must not move it at all.
+  // BOTH PATH trains dim, and that is the correct answer rather than a coarse one:
+  // PATH has exactly one system, so every PATH marker shares its freshness.
+  await expect.poll(() => markerOpacities(page, ".path-marker")).toEqual(["0.45", "0.45"]);
+  const frozen = await page.evaluate(() => pathTrainRecords.get("p-2").marker.getLatLng().lat);
+  await page.clock.fastForward(2_000);
+  expect(await page.evaluate(() => pathTrainRecords.get("p-2").marker.getLatLng().lat)).toBe(frozen);
+  expect(frozen).not.toBe(gliding); // it did keep gliding while the feed was healthy
+
+  // The popup discloses the age, and the status line names the source (a single-feed
+  // source words it exactly as it did pre-C2: no system name, because its one system
+  // IS the source).
+  await page.evaluate(() => pathTrainRecords.get("p-2").marker.openPopup());
+  await expect(popup(page)).toContainText("as of 3m ago");
+  await expect(page.locator("#status")).toContainText("PATH: as of 3m ago");
+
+  // Recovery: a fresh poll un-dims and the glide resumes.
+  ctx.overrides.path = (route, fixtures) => {
+    const body = fixtures.pathAdvanced();
+    const at = fx.FROZEN_S + 215;
+    return json(route, {
+      ...body,
+      fetched_at: at,
+      feed_timestamp: at - 5,
+      served_at: at,
+      trains: body.trains.map((t) =>
+        t.id === "p-2" ? { ...t, prev_time: at - 30, next_time: at + 30 } : t,
+      ),
+    });
+  };
+  await page.clock.fastForward(15_000);
+  await expect.poll(() => markerOpacities(page, ".path-marker")).toEqual(["1", "1"]);
+  await page.clock.runFor(1_000);
+  expect(await page.evaluate(() => pathTrainRecords.get("p-2").marker.getLatLng().lat)).not.toBe(frozen);
 });

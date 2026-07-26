@@ -24,9 +24,67 @@ function trainPopup(record) {
     `<b style="color:${lineColor(t.route_id)}">${esc(t.route_id ?? "?")} train</b>` +
     `<br>Next stop: ${esc(t.stop_name ?? t.stop_id ?? "unknown")}` +
     (t.direction ? `<br>${esc(t.direction)}` : "") +
-    `<br><span class="popup-sub">Trip ${esc(t.trip_id ?? "?")}</span>`
+    `<br><span class="popup-sub">Trip ${esc(t.trip_id ?? "?")}</span>` +
+    // C2: how old this train's own feed group is, when that group has gone stale.
+    // A dimmed marker says "not current"; this says how far from current.
+    stalePopupLine(subwaySystemAge(t))
   );
 }
+
+// route_id -> the feed group(s) whose served data covers it, inverted from the
+// per-system `routes` coverage the subways payload carries (C2). A subway train
+// names no group, so this is the only handle from a marker to the block that
+// describes its freshness. A list rather than a single group because two groups
+// claiming one route (an upstream relabel mid-outage) must resolve to the WORST of
+// them, never to whichever happened to be inverted last.
+let subwayGroupsByRoute = new Map();
+// Whether the payload does route coverage at all. False against a backend that
+// sends `systems` without `routes`, which is the one case where a train's group is
+// unknowable; see subwaySystemAge for what that falls back to.
+let subwayRouteCoverage = false;
+
+// Wired as the subways source's onSystems hook in map.js, so the inversion happens
+// exactly once per poll where the block arrives, not per marker.
+function noteSubwaySystems(systems) {
+  const byRoute = new Map();
+  let covered = false;
+  for (const [group, system] of Object.entries(systems ?? {})) {
+    if (!Array.isArray(system.routes)) continue;
+    covered = true;
+    for (const routeId of system.routes) {
+      const groups = byRoute.get(routeId);
+      if (groups) groups.push(group);
+      else byRoute.set(routeId, [group]);
+    }
+  }
+  subwayGroupsByRoute = byRoute;
+  subwayRouteCoverage = covered;
+}
+
+// The age of the feed group behind one train: the worst age among the groups whose
+// coverage lists its route.
+//
+// THE FALL-BACK DIRECTION IS DELIBERATE. When the payload carries no route coverage
+// at all (an older backend), every train falls back to the source's WORST system,
+// so a partial outage over-dims rather than under-dims. Under-dimming is how
+// retained data would end up looking live, which is precisely what the retention
+// gate exists to prevent, so the safe direction is to say "some of this may be old"
+// when we cannot say which. With coverage present, a route that appears in NO
+// group's list has no data on the map to describe, so it reads as not stale.
+function subwaySystemAge(train) {
+  if (!subwayRouteCoverage) return worstSystemAge("subways");
+  let worst = null;
+  for (const group of subwayGroupsByRoute.get(train.route_id) ?? []) {
+    const age = systemAgeOf("subways", group);
+    if (age != null && (worst == null || age > worst)) worst = age;
+  }
+  return worst;
+}
+
+// Re-dim every subway marker from its own group's current age (C2).
+staleTreatments.push(() => {
+  for (const record of trains.values()) dimMarker(record.marker, subwaySystemAge(record.latest));
+});
 
 // Static route geometry, fetched once at startup (not polled). Canvas
 // renderer keeps ~22k points cheap; lines are decorative, so failures are
@@ -161,7 +219,11 @@ function applyTrains(data) {
           : computeRouteSlice(train, routeIndex.get(train.route_id));
       record._segId = segId;
       record.latest = train;
-      record.marker.setLatLng(trainLatLng(train, now, record.fState));
+      // Placed through the freeze clock, not the raw one: a retained group's trains
+      // must not advance on a poll that only re-served them (C2).
+      const age = subwaySystemAge(train);
+      record.marker.setLatLng(trainLatLng(train, glideClock(now, age), record.fState));
+      dimMarker(record.marker, age);
       if (record.routeId !== train.route_id) {
         record.marker.setIcon(trainIcon(train));
         record.routeId = train.route_id;
@@ -171,7 +233,16 @@ function applyTrains(data) {
       const newRecord = { routeId: train.route_id, latest: train, fState: {} };
       newRecord._segId = `${train.route_id}|${train.prev_time}|${train.stop_id}`;
       train._route = computeRouteSlice(train, routeIndex.get(train.route_id));
-      newRecord.marker = L.marker(trainLatLng(train, now, newRecord.fState), { icon: trainIcon(train) })
+      const age = subwaySystemAge(train);
+      newRecord.marker = L.marker(trainLatLng(train, glideClock(now, age), newRecord.fState), {
+        icon: trainIcon(train),
+        // Dimmed AT CREATION, not by the sweep afterwards: a retained train first
+        // seen during an outage (a reload mid-outage) must be dim on the very first
+        // frame it exists, never full-opacity for a beat. This is the invariant the
+        // "C2b" e2e spec pins, and the reason the retention flag and this rendering
+        // ship in one commit.
+        opacity: markerOpacity(age),
+      })
         .bindPopup(() => trainPopup(newRecord))
         .addTo(subwayLayer);
       trains.set(train.trip_id, newRecord);

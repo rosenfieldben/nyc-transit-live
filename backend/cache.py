@@ -38,23 +38,24 @@ FEED_STALE_AFTER_S = 90
 # confident wrong position.
 FEED_RETENTION_MAX_S = 600
 
-# WHETHER A FAILED SUBSYSTEM'S DATA IS ACTUALLY CARRIED FORWARD. Off in C2 PR1,
-# ON in PR2, and the split is deliberate rather than timid.
+# WHETHER A FAILED SUBSYSTEM'S DATA IS ACTUALLY CARRIED FORWARD.
 #
-# Retention is only honest once the client RENDERS the retained data as stale,
-# which is PR2's job (per-system dimming plus the "as of Xm ago" line, driven by
-# the SystemFreshness blocks this PR ships). Turning it on here would mean a
-# window where a failed group's trains sit on the map at full opacity with no
-# staleness marker, because nothing reads the blocks yet: the map would gain
-# ghost trains where it previously showed honest absence, which is worse than the
-# defect being fixed. The retention cap's own justification in FEED_RETENTION_MAX_S
-# above is explicitly conditional on the data being "rendered AS stale".
+# ON as of C2 PR2, and THIS FLAG MUST ONLY EVER MOVE IN THE SAME COMMIT AS THE
+# CLIENT-SIDE STALE RENDERING. Retention is honest only when the retained data is
+# drawn AS stale (dimmed markers, an "as of Xm ago" popup line, a status line that
+# names the degraded system, and a glide that freezes instead of dead-reckoning a
+# dead feed). PR1 shipped the per-system blocks with this off precisely because
+# nothing read them yet: turning it on then would have put a failed group's trains
+# on the map at full opacity with no staleness marker, trading honest absence for
+# ghost trains, which is worse than the defect being fixed. PR2 flips it here and
+# lands that rendering in the same commit, so the two can never be separated by a
+# revert of one half. The retention cap in FEED_RETENTION_MAX_S above states the
+# same condition ("rendered AS stale") as its own justification.
 #
-# With this off, PR1 is genuinely dark: the per-system freshness blocks are
-# published (so PR2 has a contract to build against and an operator can already
-# see the truth on /api/status), while the DATA behaves exactly as it did before.
-# PR2 flips this to True in the same change that starts rendering it.
-FEED_RETENTION_ENABLED = False
+# If a future change ever needs to disable the dimming, disable retention with it.
+# The e2e spec "C2b" pins the pairing: the first frame retained data appears, it is
+# already dimmed.
+FEED_RETENTION_ENABLED = True
 
 
 # THE THREE TIMESTAMPS (the freshness contract, canonical description; the

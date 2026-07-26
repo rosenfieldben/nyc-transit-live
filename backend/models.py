@@ -99,6 +99,21 @@ class SystemFreshness(BaseModel):
     # dropped the data, so it is not the complement of `ok`: a long-failed system
     # reports ok=False with retained_since=None and no data at all.
     retained_since: float | None
+    # WHICH ROUTES THIS SYSTEM'S CURRENT DATA COVERS. Populated by the SUBWAY only,
+    # and it is not a freshness field: it is the join key the client needs to point
+    # this block at the markers it describes. A subway train carries a route_id and
+    # nothing that names its feed group, so without this the client could know that
+    # the ACE group is stale and still have no way to tell which trains were its.
+    # The alternative was duplicating the backend's group table in JavaScript, which
+    # would then drift from SUBWAY_FEED_URLS silently.
+    #
+    # Derived per poll from the by-group partition (the routes actually present in
+    # this system's served data), so it needs no hand-maintained table and stays
+    # true for retained data: a carried-forward group still lists its routes, and a
+    # group the retention cap has emptied lists none, which is correct because it has
+    # no markers left to describe. Null on the railroad and alerts blocks, whose
+    # entities already carry their own system name.
+    routes: list[str] | None = None
 
 
 class SubwayFeed(BaseModel):

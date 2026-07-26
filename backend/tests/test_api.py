@@ -2610,7 +2610,9 @@ async def test_alerts_served_from_seeded_index(client, alerts_cache):
         "fetched_at": 1000.0,
         "alerts": [ALERT],
         "systems": {
-            s: {"fetched_at": None, "ok": True, "retained_since": None}
+            # routes is null on the alerts blocks: route coverage is the SUBWAY's
+            # join key (its trains name no system), and an alert already names its own.
+            s: {"fetched_at": None, "ok": True, "retained_since": None, "routes": None}
             for s in feeds.ALERT_FEED_URLS
         },
     }
@@ -2628,7 +2630,9 @@ async def test_alerts_empty_index_is_empty_list_not_error(client, alerts_cache):
         "fetched_at": 1000.0,
         "alerts": [],
         "systems": {
-            s: {"fetched_at": None, "ok": True, "retained_since": None}
+            # routes is null on the alerts blocks: route coverage is the SUBWAY's
+            # join key (its trains name no system), and an alert already names its own.
+            s: {"fetched_at": None, "ok": True, "retained_since": None, "routes": None}
             for s in feeds.ALERT_FEED_URLS
         },
     }
@@ -3203,16 +3207,10 @@ async def test_security_headers_scoped_off_non_frontend(client):
 C2_GROUPS = ("ACE", "NQRW")
 
 
-@pytest.fixture(autouse=True)
-def _c2_retention_on(request, monkeypatch):
-    """The retention tests exercise the machinery PR2 switches on. PR1 ships it
-    OFF (see cache.FEED_RETENTION_ENABLED), so they enable it explicitly rather
-    than the flag quietly deciding what the suite proves."""
-    if request.node.name.startswith("test_c2_") and "gate_off" not in request.node.name:
-        import pollers
-
-        monkeypatch.setattr(pollers, "FEED_RETENTION_ENABLED", True)
-    yield
+# PR1 shipped the retention flag OFF, so these tests used to switch it on through an
+# autouse fixture. PR2 ships it ON (paired with the client-side stale rendering), so
+# they now run against the SHIPPED default and the fixture is gone: the one test that
+# needs the other setting turns it off itself, by name.
 
 
 @pytest.fixture(autouse=True)
@@ -3277,6 +3275,7 @@ async def test_c2_partial_subway_outage_retains_the_failed_group_with_a_frozen_s
         "fetched_at": 1000.0,
         "ok": True,
         "retained_since": None,
+        "routes": ["A"],  # the coverage the client inverts into route -> group
     }
 
     # ACE goes down; NQRW keeps decoding with a NEW train.
@@ -3291,8 +3290,21 @@ async def test_c2_partial_subway_outage_retains_the_failed_group_with_a_frozen_s
     # ACE's train is still served, NQRW's has been replaced.
     assert {t["trip_id"] for t in cache["subways"]["data"]} == {"ace-1", "nqrw-2"}
     systems = cache["subways"]["systems"]
-    assert systems["ACE"] == {"fetched_at": 1000.0, "ok": False, "retained_since": 1060.0}
-    assert systems["NQRW"] == {"fetched_at": 1060.0, "ok": True, "retained_since": None}
+    # routes is the per-system coverage the client inverts into route -> group, so it
+    # can point this block at the markers it describes. ACE keeps listing its route
+    # while its train is retained; NQRW lists its own.
+    assert systems["ACE"] == {
+        "fetched_at": 1000.0,
+        "ok": False,
+        "retained_since": 1060.0,
+        "routes": ["A"],
+    }
+    assert systems["NQRW"] == {
+        "fetched_at": 1060.0,
+        "ok": True,
+        "retained_since": None,
+        "routes": ["N"],
+    }
     # The AGGREGATE advanced (the poll ran), which is exactly why the per-system
     # block has to exist: on its own the envelope timestamp says nothing is wrong.
     assert cache["subways"]["fetched_at"] == 1060.0
@@ -3367,6 +3379,9 @@ async def test_c2_a_healthy_but_EMPTY_group_replaces_rather_than_retains(
         "fetched_at": 1060.0,  # it decoded, so it is fresh
         "ok": True,
         "retained_since": None,
+        # It covers no routes because it is genuinely running nothing, which is how a
+        # rider sees absence rather than retained-stale markers.
+        "routes": [],
     }
 
 
@@ -3398,6 +3413,7 @@ async def test_c2_recovery_replaces_retained_data_and_clears_retained_since(
         "fetched_at": 1120.0,
         "ok": True,
         "retained_since": None,
+        "routes": ["A"],
     }
 
 
@@ -3515,25 +3531,28 @@ async def test_c2_alerts_envelope_mirrors_the_health_map(client, alerts_cache):
         "fetched_at": 1000.0,
         "ok": True,
         "retained_since": None,
+        "routes": None,  # alerts name their own system; no route join needed
     }
     assert body["systems"]["MNR"] == {
         "fetched_at": 900.0,  # fresh_at maps to fetched_at
         "ok": False,  # derived from last_error
         "retained_since": 950.0,
+        "routes": None,
     }
     # No error TEXT leaks into the public envelope; detail stays on /api/status.
     assert "detail" not in str(body["systems"]["MNR"])
 
 
 async def test_c2_gate_off_publishes_survivors_only(client, cache, monkeypatch):
-    # PR1 SHIPS THE RETENTION OFF. The freshness blocks are published (PR2 builds
-    # against them, and an operator can already see the truth), but the DATA behaves
-    # exactly as it did before C2: a failed group's trains are simply absent.
-    # Retention only becomes honest once the client renders it as stale, which is
-    # PR2; turning it on here would put ghost trains on the map at full opacity.
+    # PR2 SHIPS THE RETENTION ON, paired with the client-side stale rendering in the
+    # same commit (see the flag's comment in cache.py). This test keeps the OFF path
+    # honest: the gate still exists, and with it off the data behaves exactly as it
+    # did before C2, a failed group's trains simply absent. Without this the gate
+    # would rot into a constant nothing reads.
     import pollers
 
-    assert pollers.FEED_RETENTION_ENABLED is False  # the shipped default
+    assert pollers.FEED_RETENTION_ENABLED is True  # the shipped default as of PR2
+    monkeypatch.setattr(pollers, "FEED_RETENTION_ENABLED", False)
     app_module.app.state.subway_stops = {"127N": {"name": "T", "lat": 40.7, "lon": -73.9}}
     monkeypatch.setattr(app_module.time, "time", lambda: 1000.0)
     monkeypatch.setattr(
@@ -3676,3 +3695,64 @@ async def test_c2_retention_clock_survives_an_empty_carried_list(client, cache, 
     await app_module._refresh_subways(app_module.app, client=None)
     # The clock is recorded even though nothing was carried for TRAINS.
     assert cache["subways"]["systems"]["ACE"]["retained_since"] == 1020.0
+
+
+async def test_c2_route_coverage_is_derived_from_the_served_by_group_data(
+    client, cache, monkeypatch
+):
+    # PR2's one permitted backend addition. The client needs route -> feed group to
+    # know which markers a stale group's block describes (a subway train names no
+    # group), and deriving it from the served by-group data means there is no
+    # hand-maintained table to drift from SUBWAY_FEED_URLS.
+    import pollers
+
+    assert pollers._routes_by_system(
+        {
+            "ACE": [
+                {"route_id": "C", "trip_id": "c1"},
+                {"route_id": "A", "trip_id": "a1"},
+                {"route_id": "A", "trip_id": "a2"},  # deduped
+                {"trip_id": "no-route"},  # contributes nothing
+            ],
+            "G": [],  # decoded, nothing running: covers no routes
+        }
+        # Sorted, so the payload is stable poll to poll and a diff is meaningful.
+    ) == {"ACE": ["A", "C"], "G": []}
+
+    # End to end: a group serving TWO routes lists both, and the block a failed group
+    # publishes still lists the routes of the trains it is retaining, which is what
+    # makes those markers dimmable rather than silently un-attributable.
+    monkeypatch.setattr(app_module.time, "time", lambda: 1000.0)
+    two_routes = [_train("ACE", "ace-1"), {**TRAINS[0], "trip_id": "ace-2", "route_id": "E"}]
+    monkeypatch.setattr(
+        app_module,
+        "fetch_subway_trains",
+        _subway_fetch({"ACE": two_routes, "NQRW": [_train("NQRW", "nqrw-1")]}, []),
+    )
+    await app_module._refresh_subways(app_module.app, client=None)
+    assert cache["subways"]["systems"]["ACE"]["routes"] == ["A", "E"]
+
+    monkeypatch.setattr(app_module.time, "time", lambda: 1060.0)
+    monkeypatch.setattr(
+        app_module,
+        "fetch_subway_trains",
+        _subway_fetch({"NQRW": [_train("NQRW", "nqrw-2")]}, ["ACE"]),
+    )
+    await app_module._refresh_subways(app_module.app, client=None)
+    body = (await client.get("/api/subways")).json()
+    assert body["systems"]["ACE"] == {
+        "fetched_at": 1000.0,
+        "ok": False,
+        "retained_since": 1060.0,
+        "routes": ["A", "E"],  # still named, because those trains are still served
+    }
+    # And the railroad envelope publishes null coverage: its trains carry `system`,
+    # so there is nothing for the client to join on.
+    app_module.app.state.railroad_stops = {"MNR": {"1": {"name": "G", "lat": 40.7, "lon": -73.9}}}
+
+    async def railroads(client_arg, stops_arg):
+        return [{**RAILROADS[0], "system": "MNR", "trip_id": "m1"}], {}, 990.0, []
+
+    monkeypatch.setattr(app_module, "fetch_railroad_trains", railroads)
+    await app_module._refresh_railroads(app_module.app, client=None)
+    assert cache["railroads"]["systems"]["MNR"]["routes"] is None

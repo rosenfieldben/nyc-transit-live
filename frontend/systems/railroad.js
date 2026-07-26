@@ -131,9 +131,22 @@ function railroadPopup(record) {
     // Placed trains carry a next/current station; GPS trains do not.
     (isPlacedRailroad(t) && t.stop_name ? `<br>Next stop: ${esc(t.stop_name)}` : "") +
     (t.direction ? `<br>${esc(t.direction)}` : "") +
-    `<br><span class="popup-sub">${isPlacedRailroad(t) ? "scheduled (no GPS)" : "live GPS"}</span>`
+    `<br><span class="popup-sub">${isPlacedRailroad(t) ? "scheduled (no GPS)" : "live GPS"}</span>` +
+    // C2: how old this train's own SYSTEM is when LIRR or MNR has gone stale. The
+    // train already names its system, so unlike the subway there is no route
+    // mapping to consult.
+    stalePopupLine(systemAgeOf("railroads", t.system))
   );
 }
+
+// Re-dim every railroad marker from its own system's current age (C2). GPS and
+// placed trains are treated alike: both are drawn from the same feed, so a stale
+// LIRR dims its GPS trains as readily as its scheduled ones.
+staleTreatments.push(() => {
+  for (const record of railroads.values()) {
+    dimMarker(record.marker, systemAgeOf("railroads", record.latest.system));
+  }
+});
 
 // Keyed by (system, trip_id): LIRR and MNR trip_id namespaces are independent, so
 // trip_id alone would collide (the backend dedups by the same composite). Placed
@@ -179,9 +192,17 @@ function applyRailroads(data) {
         record._segId = segId;
       }
       record.latest = train;
+      const age = systemAgeOf("railroads", train.system);
+      // A placed train is glided through the freeze clock so a retained system's
+      // trains stop advancing (C2). A GPS train has no interpolation to freeze: it
+      // sits at its last reported position, which for retained data is the position
+      // it last reported, so re-applying it is already the frozen answer.
       record.marker.setLatLng(
-        placed ? trainLatLng(train, now, record.fState) : [train.latitude, train.longitude],
+        placed
+          ? trainLatLng(train, glideClock(now, age), record.fState)
+          : [train.latitude, train.longitude],
       );
+      dimMarker(record.marker, age);
       // Re-skin when the route color or the GPS/placed status flips (a placed
       // train can pick up a GPS position on a later poll, or lose one).
       if (record.routeId !== train.route_id || record.placed !== placed) {
@@ -200,9 +221,14 @@ function applyRailroads(data) {
           RAILROAD_SLICE_OPTS,
         );
       }
+      const age = systemAgeOf("railroads", train.system);
       newRecord.marker = L.marker(
-        placed ? trainLatLng(train, now, newRecord.fState) : [train.latitude, train.longitude],
-        { icon: railroadIcon(train) },
+        placed
+          ? trainLatLng(train, glideClock(now, age), newRecord.fState)
+          : [train.latitude, train.longitude],
+        // Dimmed at creation for the same reason as the subway: retained data must
+        // never render live, not even for one frame (the "C2b" spec).
+        { icon: railroadIcon(train), opacity: markerOpacity(age) },
       )
         .bindPopup(() => railroadPopup(newRecord))
         .addTo(railroadLayer);

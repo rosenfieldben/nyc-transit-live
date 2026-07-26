@@ -52,6 +52,14 @@ const {
   ROUTE_MAX_SLICE,
   RAILROAD_ROUTE_MAX_SLICE,
   FEED_STALE_AFTER_S,
+  ingestSystems,
+  systemAges,
+  staleAge,
+  markerOpacity,
+  glideClock,
+  stalePopupLine,
+  STALE_MARKER_OPACITY,
+  FERRY_DOCKED_OPACITY,
 } = require("./helpers.js");
 
 test("trainLatLng interpolates along prev->next and clamps to [0,1]", () => {
@@ -1310,4 +1318,303 @@ test("retryUntil with a loader-shaped fn: false on empty payload, true on popula
   }, { baseMs: 1000, capMs: 30000, sleep });
   assert.deepEqual(populated, [{ id: "127" }]); // populated exactly once, no double-add
   assert.deepEqual(waits, [1000, 2000]);
+});
+
+/* ---------------- Per-system freshness (C2) ---------------- */
+
+test("C2 ingestSystems reads an aggregate block and synthesizes one for a single feed", () => {
+  // The aggregate shape: one entry per subsystem, carried through verbatim.
+  const aggregate = ingestSystems(
+    {
+      fetched_at: 1000,
+      systems: {
+        LIRR: { fetched_at: 1000, ok: true, retained_since: null },
+        MNR: { fetched_at: 640, ok: false, retained_since: 700 },
+      },
+    },
+    "railroads",
+  );
+  assert.deepEqual(Object.keys(aggregate).sort(), ["LIRR", "MNR"]);
+  assert.equal(aggregate.MNR.fetchedAt, 640);
+  assert.equal(aggregate.MNR.ok, false);
+  assert.equal(aggregate.MNR.retainedSince, 700);
+
+  // The single-feed shape (buses, PATH, ferry): no block, so ONE system named after
+  // the source stands in, carrying the envelope's own fetched_at. Naming every system
+  // of a source is just naming the source, so the status line words a single-feed
+  // source exactly as it did pre-C2 (pinned by the healthy/all-stale test below).
+  const single = ingestSystems({ fetched_at: 1000 }, "path");
+  assert.deepEqual(Object.keys(single), ["path"]);
+  assert.equal(single.path.fetchedAt, 1000);
+  assert.equal(single.path.ok, true);
+});
+
+test("C2 ingestSystems tolerates malformed blocks without dimming the whole map", () => {
+  // A block entry with no numeric fetched_at: unknown age (null), NOT stale. The
+  // system is still reported through `ok`.
+  const missing = ingestSystems(
+    { fetched_at: 1000, systems: { SIR: { ok: false, retained_since: null } } },
+    "subways",
+  );
+  assert.equal(missing.SIR.fetchedAt, null);
+  assert.equal(missing.SIR.ok, false);
+  // A missing `ok` reads as healthy: a malformed field must not dim everything.
+  const noOk = ingestSystems({ fetched_at: 1000, systems: { G: { fetched_at: 1000 } } }, "subways");
+  assert.equal(noOk.G.ok, true);
+  // A non-numeric fetched_at (a string from a bad serializer) is treated as absent.
+  const junk = ingestSystems({ fetched_at: 1000, systems: { L: { fetched_at: "1000" } } }, "s");
+  assert.equal(junk.L.fetchedAt, null);
+  // An EMPTY systems object falls back to the synthesized single system rather than
+  // leaving the source with no freshness at all.
+  const empty = ingestSystems({ fetched_at: 1000, systems: {} }, "subways");
+  assert.deepEqual(Object.keys(empty), ["subways"]);
+  assert.equal(empty.subways.fetchedAt, 1000);
+  // So do a null block and a missing body.
+  assert.deepEqual(Object.keys(ingestSystems({ fetched_at: 1000, systems: null }, "x")), ["x"]);
+  assert.equal(ingestSystems(null, "x").x.fetchedAt, null);
+  // routes is null unless the payload actually carries an array (see the coverage
+  // fail-safe in subwaySystemAge).
+  assert.equal(empty.subways.routes, null);
+  assert.deepEqual(
+    ingestSystems({ systems: { ACE: { fetched_at: 1, routes: ["A", "C"] } } }, "subways").ACE.routes,
+    ["A", "C"],
+  );
+});
+
+test("C2 systemAges ages each system separately and keeps the upstream lag a source floor", () => {
+  const now = 20_000;
+  const source = {
+    label: "railroad",
+    fetchedAt: now,
+    servedAt: now,
+    feedTimestamp: now - 5,
+    systems: ingestSystems(
+      {
+        fetched_at: now,
+        systems: {
+          LIRR: { fetched_at: now, ok: true, retained_since: null },
+          MNR: { fetched_at: now - 400, ok: false, retained_since: now - 400 },
+          // Never decoded since boot: no age to compute.
+          FUTURE: { fetched_at: null, ok: false, retained_since: null },
+        },
+      },
+      "railroads",
+    ),
+  };
+  const ages = systemAges(source, now);
+  assert.equal(ages.LIRR, 5); // upstream lag is the floor, so a fresh system reads 5
+  assert.equal(ages.MNR, 400); // its own poll age, which the envelope's hides
+  assert.equal(ages.FUTURE, null);
+});
+
+test("C2 the healthy aggregate case reads EXACTLY as the pre-C2 whole-source case", () => {
+  // On a healthy poll every system's fetched_at equals the envelope's, so the worst
+  // per-system age is the age R1 computed. This is the assertion that pins "the
+  // common case does not get noisier".
+  const now = 20_000;
+  const healthy = (systems) => ({
+    label: "trains",
+    systemNoun: "group",
+    fetchedAt: now,
+    servedAt: now,
+    feedTimestamp: now - 5,
+    systems,
+  });
+  const block = {
+    fetched_at: now,
+    systems: { ACE: { fetched_at: now, ok: true }, G: { fetched_at: now, ok: true } },
+  };
+  assert.equal(staleness(healthy(ingestSystems(block, "subways")), now), null);
+  // And a source whose systems are ALL stale words it exactly as before: no names,
+  // because naming every system is just naming the source.
+  const stuck = { fetched_at: now - 200, systems: { ACE: { fetched_at: now - 200, ok: true }, G: { fetched_at: now - 200, ok: true } } };
+  const source = { ...healthy(ingestSystems(stuck, "subways")), fetchedAt: now - 200, feedTimestamp: now - 205 };
+  assert.equal(staleness(source, now), "trains: as of 3m ago");
+});
+
+test("C2 staleness names a DEGRADED subsystem while the healthy ones stay quiet", () => {
+  const now = 20_000;
+  const railroads = {
+    label: "railroad",
+    fetchedAt: now,
+    servedAt: now,
+    feedTimestamp: now - 5,
+    systems: ingestSystems(
+      {
+        fetched_at: now,
+        systems: {
+          LIRR: { fetched_at: now, ok: true, retained_since: null },
+          MNR: { fetched_at: now - 360, ok: false, retained_since: now - 360 },
+        },
+      },
+      "railroads",
+    ),
+  };
+  // The spec's example: MNR named, LIRR silent, the age MNR's own.
+  assert.equal(staleness(railroads, now), "railroad: MNR as of 6m ago");
+  // The subway's systems are feed GROUPS, so systemNoun makes the phrase read right.
+  const subways = {
+    label: "trains",
+    systemNoun: "group",
+    fetchedAt: now,
+    servedAt: now,
+    feedTimestamp: now - 5,
+    systems: ingestSystems(
+      {
+        fetched_at: now,
+        systems: {
+          ACE: { fetched_at: now - 240, ok: false, retained_since: now - 240 },
+          G: { fetched_at: now, ok: true, retained_since: null },
+        },
+      },
+      "subways",
+    ),
+  };
+  assert.equal(staleness(subways, now), "trains: ACE group as of 4m ago");
+});
+
+test("C2 staleness stays silent for a system that merely failed its LAST poll", () => {
+  // A single failed poll is routine (a feed hiccups, the next poll recovers). Naming
+  // it immediately would make the status line chatter constantly, so a degraded
+  // system is named only once its age crosses the threshold. 30s < 90s: silent.
+  const now = 20_000;
+  const source = {
+    label: "railroad",
+    fetchedAt: now,
+    servedAt: now,
+    feedTimestamp: now - 5,
+    systems: ingestSystems(
+      {
+        fetched_at: now,
+        systems: {
+          LIRR: { fetched_at: now, ok: true },
+          MNR: { fetched_at: now - 30, ok: false, retained_since: now - 30 },
+        },
+      },
+      "railroads",
+    ),
+  };
+  assert.equal(staleness(source, now), null);
+});
+
+test("C2 staleness reports a system that has NEVER decoded, which has no age", () => {
+  const now = 20_000;
+  const source = {
+    label: "trains",
+    systemNoun: "group",
+    fetchedAt: now,
+    servedAt: now,
+    feedTimestamp: now - 5,
+    systems: ingestSystems(
+      {
+        fetched_at: now,
+        systems: {
+          ACE: { fetched_at: now, ok: true },
+          // Down since boot: nothing to age against, so it cannot be "as of Xm ago".
+          SIR: { fetched_at: null, ok: false },
+        },
+      },
+      "subways",
+    ),
+  };
+  assert.equal(staleness(source, now), "trains: SIR group not reporting");
+});
+
+test("C2 the empty-success rule survives: a healthy system with no data is not stale", () => {
+  // A subway group that decoded and had NO trains running (a real overnight state)
+  // reports ok with a current fetched_at, so its age is ~0 and nothing dims. Absence
+  // must render as absence, never as retained-stale (the ferry precedent, inverted).
+  const now = 20_000;
+  const source = {
+    label: "trains",
+    fetchedAt: now,
+    servedAt: now,
+    feedTimestamp: now,
+    systems: ingestSystems(
+      { fetched_at: now, systems: { SIR: { fetched_at: now, ok: true, routes: [] } } },
+      "subways",
+    ),
+  };
+  assert.equal(staleness(source, now), null);
+  assert.equal(staleAge(systemAges(source, now).SIR), false);
+});
+
+test("C2 staleAge and markerOpacity share the threshold boundary", () => {
+  assert.equal(staleAge(null), false); // unknown age is not stale
+  assert.equal(staleAge(FEED_STALE_AFTER_S - 0.001), false);
+  assert.equal(staleAge(FEED_STALE_AFTER_S), true); // >= , matching staleness()
+  assert.equal(markerOpacity(0), 1);
+  assert.equal(markerOpacity(null), 1);
+  assert.equal(markerOpacity(FEED_STALE_AFTER_S), STALE_MARKER_OPACITY);
+  assert.ok(STALE_MARKER_OPACITY > 0 && STALE_MARKER_OPACITY < 1); // dim, not invisible
+});
+
+test("C2 markerOpacity COMPOUNDS staleness with a marker's own resting opacity", () => {
+  // The ferry layer's docked dimming used to be a css class, which an inline opacity
+  // written for staleness would have overridden: every docked boat would have been
+  // silently un-dimmed the moment C2 started setting opacities. It is now a base that
+  // multiplies, so a docked boat on a stale feed is dimmed for BOTH reasons.
+  assert.equal(markerOpacity(null, FERRY_DOCKED_OPACITY), FERRY_DOCKED_OPACITY);
+  assert.equal(markerOpacity(0, FERRY_DOCKED_OPACITY), FERRY_DOCKED_OPACITY);
+  assert.equal(
+    markerOpacity(FEED_STALE_AFTER_S, FERRY_DOCKED_OPACITY),
+    FERRY_DOCKED_OPACITY * STALE_MARKER_OPACITY,
+  );
+  // A base of 1 (every other layer) leaves the rule exactly as it reads without one.
+  assert.equal(markerOpacity(FEED_STALE_AFTER_S, 1), markerOpacity(FEED_STALE_AFTER_S));
+});
+
+test("C2 glideClock passes a fresh system through and FREEZES a stale one", () => {
+  const now = 20_000;
+  // Fresh: the live clock, untouched, so normal gliding is bit-for-bit unchanged.
+  assert.equal(glideClock(now, null), now);
+  assert.equal(glideClock(now, 10), now);
+  assert.equal(glideClock(now, FEED_STALE_AFTER_S - 0.001), now);
+  // Stale: pinned at the instant the data crossed the threshold.
+  assert.equal(glideClock(now, FEED_STALE_AFTER_S), now);
+  assert.equal(glideClock(now, FEED_STALE_AFTER_S + 50), now - 50);
+  // AND IT STAYS PINNED. Ten seconds later the age has also grown by ten, so the
+  // frozen clock is the same number: the marker does not creep forward.
+  const frozen = glideClock(now, FEED_STALE_AFTER_S + 50);
+  assert.equal(glideClock(now + 10, FEED_STALE_AFTER_S + 60), frozen);
+  assert.equal(glideClock(now + 600, FEED_STALE_AFTER_S + 650), frozen);
+});
+
+test("C2 stalePopupLine renders the shared age line only once stale", () => {
+  assert.equal(stalePopupLine(null), "");
+  assert.equal(stalePopupLine(10), "");
+  assert.equal(stalePopupLine(240), '<div class="popup-stale">as of 4m ago</div>');
+  // Same markup and wording as the arrivals-body line, which is the point of sharing
+  // the renderer.
+  assert.equal(stalePopupLine(240), feedAgeLine(10_000 - 240, 10_000));
+});
+
+test("C2 alertsFreshnessBasis is the WORST system's fetched_at (the F1 partial case)", () => {
+  // The F1 finding: four systems advancing and one frozen is a SUCCESSFUL poll, so
+  // the envelope's fetched_at kept advancing and the marker could never fire. The
+  // oldest system is the honest basis.
+  const body = {
+    fetched_at: 5000,
+    systems: {
+      subway: { fetched_at: 5000, ok: true, retained_since: null },
+      bus: { fetched_at: 5000, ok: true, retained_since: null },
+      LIRR: { fetched_at: 5000, ok: true, retained_since: null },
+      MNR: { fetched_at: 5000, ok: true, retained_since: null },
+      ferry: { fetched_at: 4600, ok: false, retained_since: 4600 },
+    },
+  };
+  assert.equal(alertsFreshnessBasis(body), 4600);
+  // Which is what makes the marker fire: 5000 would have read fresh at now = 4900.
+  assert.equal(alertsStale(alertsFreshnessBasis(body), 4600 + ALERTS_STALE_AFTER_S), true);
+  assert.equal(alertsStale(body.fetched_at, 4600 + ALERTS_STALE_AFTER_S), false);
+  // A system that has never decoded returns null, which ages against the client's
+  // first-attempt time instead: its alerts are missing rather than merely old.
+  assert.equal(
+    alertsFreshnessBasis({ fetched_at: 5000, systems: { subway: { fetched_at: null } } }),
+    null,
+  );
+  // No systems block at all: the envelope's fetched_at, exactly as C1 left it.
+  assert.equal(alertsFreshnessBasis({ fetched_at: 5000 }), 5000);
+  assert.equal(alertsFreshnessBasis({ fetched_at: 5000, systems: {} }), 5000);
+  assert.equal(alertsFreshnessBasis({ served_at: 5000 }), null); // never served_at
 });

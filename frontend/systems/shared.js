@@ -71,6 +71,81 @@ function setStatus(text, isError = false) {
 }
 
 
+/* ---------------- Per-system freshness (C2) ---------------- */
+
+// "<sourceKey>|<systemName>" -> that system's current age in seconds (null when it
+// has never decoded), plus the subset of those keys that are stale right now. The
+// index is rebuilt from the `sources` descriptors, which is the ONE place the
+// per-system blocks are ingested (refreshSource), so every rendering surface below
+// reads the same numbers the status line does.
+//
+// Rebuilt on a clock, not only on a poll: a system crosses FEED_STALE_AFTER_S by
+// time passing, not by a response arriving, so the animation tick refreshes it too
+// (see animateTrains). The stale SET is compared as a string signature and the
+// marker sweep runs only when it changes, so the common case (nothing stale, or
+// nothing newly stale) costs one small string compare per tick rather than an
+// opacity write per marker.
+let systemAgeIndex = new Map();
+let staleSystemSignature = "";
+
+function refreshSystemFreshness() {
+  const now = Date.now() / 1000; // RAW clock: systemAges applies the skew correction
+  const ages = new Map();
+  const stale = [];
+  for (const [sourceKey, source] of Object.entries(sources)) {
+    for (const [name, age] of Object.entries(systemAges(source, now))) {
+      const key = `${sourceKey}|${name}`;
+      ages.set(key, age);
+      if (staleAge(age)) stale.push(key);
+    }
+  }
+  systemAgeIndex = ages;
+  const signature = stale.sort().join(",");
+  const changed = signature !== staleSystemSignature;
+  staleSystemSignature = signature;
+  return changed;
+}
+
+// One system's age, for a marker's dimming / popup line / glide freeze. Unknown
+// systems return null (not stale): a marker whose system cannot be identified must
+// not be asserted stale, and the status line still names the outage either way.
+function systemAgeOf(sourceKey, systemName) {
+  if (systemName == null) return null;
+  return systemAgeIndex.get(`${sourceKey}|${systemName}`) ?? null;
+}
+
+// The worst age across a source's systems, the fail-safe for a marker whose own
+// system is unidentifiable (see subwaySystemAge): over-dimming says "some of this
+// may be old", which is true, where under-dimming would present retained data as
+// live, the exact defect the retention gate exists to prevent.
+function worstSystemAge(sourceKey) {
+  let worst = null;
+  for (const [key, age] of systemAgeIndex) {
+    if (!key.startsWith(`${sourceKey}|`)) continue;
+    if (age != null && (worst == null || age > worst)) worst = age;
+  }
+  return worst;
+}
+
+// Each system file registers a sweep that re-dims its own markers; applyStaleTreatment
+// runs them all when the stale set changes or a poll lands. Declared here (before the
+// system files load) so their top-level pushes land in an existing array.
+const staleTreatments = [];
+
+function applyStaleTreatment() {
+  for (const sweep of staleTreatments) sweep();
+}
+
+// setOpacity rather than a css class on the element: Leaflet stores it in the
+// marker's options and re-applies it when the layer is re-added, so a marker dimmed
+// while its layer is toggled off comes back still dimmed. getElement() is null in
+// that state, which a class-based approach would have to guard.
+// `base` is the marker's own resting opacity, which staleness compounds with rather
+// than replaces (only the ferry layer has one; see markerOpacity).
+function dimMarker(marker, age, base = 1) {
+  marker.setOpacity(markerOpacity(age, base));
+}
+
 /* ----- Station popups + live arrivals, shared by subway, railroad and PATH ----- */
 
 // Canvas-rendered so ~470 circle markers stay cheap and hit-testable; on its
@@ -252,16 +327,21 @@ async function loadAlerts() {
     // Record the BACKEND'S last successful poll, not this fetch's arrival. A 200
     // whose fetched_at has not advanced since the previous poll means the backend is
     // serving an index it could not refresh, and that must age the marker rather
-    // than reset it. Fall back to the skew-corrected client now only if a backend
-    // omits fetched_at entirely (both live on the server-time axis alertsStale
-    // compares against); a null fetched_at from a never-filled index cannot reach
-    // here, because that path serves an error rather than a 200.
+    // than reset it. As of C2 the basis is the WORST per-system fetched_at, so a
+    // partial outage ages it too (see alertsFreshnessBasis).
+    //
+    // NO FALLBACK TO THE CLIENT CLOCK. This used to read `?? alertsClockNow()` for a
+    // backend that omitted fetched_at entirely, which C2 turned into a bug: null now
+    // ALSO means "a system has never decoded", and mapping that to now would have
+    // reported a permanently missing alert system as perfectly fresh. Null instead
+    // ages against the client's first-attempt time (alertsStale's sinceAt branch),
+    // which is the same honesty rule the never-filled-index case already used.
     //
     // minClockOffset is deliberately NOT calibrated from this response: it is a
     // global shared with the arrivals countdowns and the status line, so feeding it
     // from here would change non-alert surfaces. It stays calibrated by served_at on
     // the feed responses, exactly as R1 arranged; this line only consumes the axis.
-    alertsFetchedAt = alertsFreshnessBasis(body) ?? alertsClockNow();
+    alertsFetchedAt = alertsFreshnessBasis(body);
     lastBannerAlerts = bannerAlerts(list);
     // The banner re-renders every poll (unlike popups, which render on open), so a
     // resolved agency-wide alert disappears on the next poll and a new one appears.
@@ -398,22 +478,37 @@ function animateTrains(ts) {
   // animation resumes on re-toggle.
   if (ts - lastTrainTick >= TRAIN_TICK_MS) {
     lastTrainTick = ts;
+    // A system goes stale by time passing, not by a response arriving, so the
+    // freshness index is rebuilt here as well as on each poll: crossing the
+    // threshold mid-interval must dim the markers and freeze the glide without
+    // waiting up to 15s for the next poll. The sweep runs only when the stale set
+    // actually changes (C2).
+    if (refreshSystemFreshness()) applyStaleTreatment();
     const now = Date.now() / 1000 - (minClockOffset ?? 0);
+    // glideClock freezes a stale system's interpolation where it stood when the data
+    // aged out, instead of dead-reckoning a marker forward on a dead feed. A fresh
+    // system gets `now` back unchanged, so healthy gliding is untouched.
     if (map.hasLayer(subwayLayer)) {
       for (const record of trains.values()) {
-        record.marker.setLatLng(trainLatLng(record.latest, now, record.fState));
+        const at = glideClock(now, subwaySystemAge(record.latest));
+        record.marker.setLatLng(trainLatLng(record.latest, at, record.fState));
       }
     }
     if (map.hasLayer(railroadLayer)) {
       for (const record of railroads.values()) {
         if (record.placed) {
-          record.marker.setLatLng(trainLatLng(record.latest, now, record.fState));
+          const at = glideClock(now, systemAgeOf("railroads", record.latest.system));
+          record.marker.setLatLng(trainLatLng(record.latest, at, record.fState));
         }
       }
     }
     if (map.hasLayer(pathTrains)) {
+      // PATH is single-feed, so its system is the synthesized one named after the
+      // source: it flows through the SAME freeze rule as the aggregates rather than
+      // being exempted by having no systems block (see ingestSystems).
+      const at = glideClock(now, systemAgeOf("path", "path"));
       for (const record of pathTrainRecords.values()) {
-        record.marker.setLatLng(trainLatLng(record.latest, now, record.fState));
+        record.marker.setLatLng(trainLatLng(record.latest, at, record.fState));
       }
     }
   }

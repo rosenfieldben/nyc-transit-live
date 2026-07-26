@@ -22,8 +22,13 @@ async def get_alerts(request: Request, response: Response) -> dict:
     and NYC Ferry feeds.
 
     served_at is stamped here at response build (see THE THREE TIMESTAMPS in
-    cache.py); the frontend tracks it to hedge the banner/popups when the alerts
-    feed itself has gone stale, since the alerts poll swallows failures. no-store
+    cache.py). THE FRESHNESS HEDGE KEYS ON fetched_at, NOT served_at: the frontend
+    ages the banner/popup "alerts may be out of date" marker against fetched_at,
+    because that only advances on a poll that decoded, while served_at is stamped per
+    response and so is fresh by construction even when this index is one the poller
+    could not refresh. The docstring used to say served_at here, which was the bug.
+    Do not drop fetched_at from this payload; the client has no second request to get
+    it from. no-store
     for the same reason as the live feeds: a cached copy would freeze served_at and
     lie about freshness. An index that decoded zero active alerts serves an empty
     list, NOT an error; a 503 surfaces only until the first successful poll fills

@@ -54,7 +54,8 @@ def _alert_window_status(
     """Classify an alert's active_period list against `now`, returning
     (status, starts_at, ends_at):
 
-      "active": some period covers now; starts_at/ends_at are that period's bounds
+      "active": some period covers now. starts_at is the earliest covering period's
+                start; ends_at is the EFFECTIVE end for expiry (see below).
       "future": no period covers now but at least one starts after now (planned work)
       "ended":  no period covers now and none is still upcoming (all elapsed)
 
@@ -64,6 +65,36 @@ def _alert_window_status(
     covers now on the half-open interval [start, end), matching the GTFS-RT spec.
     "future" is split out from "ended" because only not-yet-active planned work is
     worth counting for /api/status; a fully elapsed alert is just gone.
+
+    THE EFFECTIVE END IS THE LATEST end among the periods COVERING now, and None when
+    any of those is open-ended. It used to be the end of the EARLIEST-STARTING covering
+    period, which expired an alert prematurely whenever periods OVERLAP: given
+    [(0, 100), (50, 500)] at now=60 both cover, the earliest-started is (0, 100), so
+    ends_at came back 100 and every downstream expiry check (the retention re-filter,
+    the client's sort) treated a live alert as finished at 100 instead of 500. Taking
+    the latest end among covering periods fixes exactly that.
+
+    THE MAX IS OVER THE COVERING SET, NOT OVER EVERY NOT-YET-ENDED PERIOD, which is a
+    correction to this function's first attempt at the fix. Including periods that have
+    not STARTED reached further than the bug being fixed and broke three things:
+
+      a. It overshot the window actually in effect. On real captured data
+         (alert lmm:planned_work:32622 in tests/fixtures/alerts_mnr.pb, five periods)
+         it reported an end 24 DAYS past the window the alert was actually serving,
+         and ends_at is a PUBLIC field the client sorts and displays.
+      b. An open-ended period that had not started yet made ends_at null outright, so
+         guard 1 of merge_alert_generations could never expire the alert and
+         compareAlerts promoted a nearly-finished alert above genuinely indefinite
+         ones in every popup and the banner.
+      c. It carried an alert through the GAP between two periods, where a poll that
+         decoded would have classified it "future" and suppressed it, so during an
+         outage riders could see a weekend service change presented as in effect on a
+         Wednesday.
+
+    Dropping an alert at the end of its current period and letting the next decode
+    bring it back when its next period opens is both simpler and what the decode
+    already does; a retained alert should not outlive the window a live poll would
+    have given it.
     """
     if not periods:
         return "active", None, None
@@ -74,14 +105,18 @@ def _alert_window_status(
         not_ended = end is None or now < end
         if started and not_ended:
             covering.append((start, end))
-        elif start is not None and now < start:
+        elif not started:
             has_future = True  # begins later: planned, not yet active
     if covering:
-        # When several periods cover now, report the one that started earliest (the
-        # alert has been active longest); an open start sorts first.
+        # starts_at reports the EARLIEST covering start (the alert has been active
+        # longest); an open start sorts first. The end is the LATEST covering end.
         covering.sort(key=lambda p: float("-inf") if p[0] is None else p[0])
-        start, end = covering[0]
-        return "active", start, end
+        start = covering[0][0]
+        ends = [end for _, end in covering]
+        effective_end = (
+            None if any(e is None for e in ends) else max(e for e in ends if e is not None)
+        )
+        return "active", start, effective_end
     return ("future", None, None) if has_future else ("ended", None, None)
 
 
@@ -175,23 +210,55 @@ def _decode_alerts(raw: bytes, feed_key: str, now: float) -> tuple[list[dict], i
     return alerts, suppressed
 
 
+# Whole-request deadline for ONE alert feed. Deliberately under the caller's
+# REFRESH_DEADLINE_S (45s in pollers.py) so this fires first and a slow feed degrades
+# to an ordinary per-feed failure, instead of the caller's backstop firing and having
+# to call the whole poll a total outage. Generous next to a healthy fetch (these feeds
+# answer in low single-digit seconds, the subway one being the largest at ~400 KB).
+ALERT_FEED_DEADLINE_S = 20.0
+
+
+def _describe_feed_error(exc: BaseException) -> str:
+    """A readable reason for a failed feed. Not just str(exc): str(TimeoutError()) is
+    the EMPTY STRING, so a timed-out feed would otherwise be recorded and logged with
+    no cause at all (the same trap R3 hit on the warmup path). Every branch here is
+    guaranteed to produce something an operator can act on."""
+    if isinstance(exc, TimeoutError):
+        return f"no response within {ALERT_FEED_DEADLINE_S:.0f}s"
+    return str(exc) or exc.__class__.__name__
+
+
 async def fetch_service_alerts(client: httpx.AsyncClient) -> tuple[list[dict], int, list[str]]:
     """Fetch every configured alert feed concurrently; return
     (active alerts, suppressed_count, failed_feeds).
 
-    Mirrors fetch_subway_trains: per-feed failures (a fetch error or undecodable
-    protobuf) are logged and skipped so one bad feed does not drop every alert,
-    and this raises only when EVERY feed fails. failed_feeds is the sorted list of
-    feed keys that dropped this poll, empty on a fully successful poll. The caller
+    Mirrors fetch_subway_trains: per-feed failures (a fetch error, a timeout, or an
+    undecodable protobuf) are logged and skipped so one bad feed does not drop every
+    alert, and this raises only when EVERY feed fails. failed_feeds is the sorted list
+    of feed keys that dropped this poll, empty on a fully successful poll. The caller
     owns the client. `now` is captured once so all feeds filter against the
     same instant.
+
+    EACH FEED CARRIES ITS OWN DEADLINE, and that is load-bearing for the "one bad feed
+    does not drop every alert" promise. These five run in ONE gather, so a deadline
+    applied around the whole call cannot distinguish a single trickling feed from a
+    total outage: it cancels the four responses that already landed and the caller,
+    seeing only a timeout, has to treat every system as failed. That put four healthy
+    feeds' alerts into retention and deleted them half an hour later. Bounding each
+    feed separately keeps a slow feed a PER-FEED failure, which the machinery below
+    already handles correctly, and leaves the caller's whole-refresh deadline as a
+    backstop that can now only fire when essentially everything is slow.
     """
     now = time.time()
 
     async def fetch(url: str) -> bytes:
-        resp = await client.get(url)
-        resp.raise_for_status()
-        return resp.content
+        # A whole-request deadline per feed. The client's own timeout=30 bounds the gap
+        # between BYTES; this bounds the exchange, so a feed that dribbles forever under
+        # that floor still fails on its own rather than holding up the poll.
+        async with asyncio.timeout(ALERT_FEED_DEADLINE_S):
+            resp = await client.get(url)
+            resp.raise_for_status()
+            return resp.content
 
     keys = list(ALERT_FEED_URLS)
     results = await asyncio.gather(
@@ -204,7 +271,7 @@ async def fetch_service_alerts(client: httpx.AsyncClient) -> tuple[list[dict], i
     feed_errors: dict[str, str] = {}
     for key, result in zip(keys, results):
         if isinstance(result, BaseException):
-            feed_errors[key] = str(result)
+            feed_errors[key] = _describe_feed_error(result)
             continue
         try:
             decoded, feed_suppressed = _decode_alerts(result, key, now)
@@ -262,12 +329,24 @@ def merge_alert_generations(
         replace wholesale (fresh is authoritative; a decoded feed is ground truth).
       - failed this poll: its alerts are carried forward from prev_alerts, with two
         guards:
-        1. Re-filter each carried alert against `now` with the SAME activity rule
-           _decode_alerts applies (active while now is before ends_at; open-ended
-           when ends_at is None), so an alert that expired DURING the outage drops
-           instead of being pinned alive by the outage. starts_at need not be
-           rechecked: a retained alert was active at some prior now <= now, so its
-           start has already passed.
+        1. Re-filter each carried alert against `now` on its ends_at (active while
+           now is before ends_at; open-ended when ends_at is None), so an alert that
+           expired DURING the outage drops instead of being pinned alive by the
+           outage.
+
+           THIS IS NOT QUITE THE SAME RULE _decode_alerts APPLIES, and the docstring
+           used to claim it was. A carried alert has only its collapsed ends_at here,
+           not its original active_period list, so a MULTI-PERIOD alert whose
+           effective end spans a gap between periods (see _alert_window_status: the
+           effective end is the latest end among periods not yet ended) is carried
+           through that gap, where a poll that actually decoded would have classified
+           it "future" and suppressed it. The exposure is bounded: it needs an outage
+           AND a multi-period alert AND now to fall in a gap, and guard 2 caps the
+           whole thing at max_retention_s. Carrying the periods themselves would fix
+           it properly and belongs with the per-system envelope work, not here.
+           starts_at is deliberately not rechecked either: it is the earliest covering
+           start at decode time, so for a gap it reads as long past and would not
+           catch this case anyway.
         2. Cap total retention age at max_retention_s measured from when the
            system first went down (prev_retained_since, or now for a newly-failed
            system). This is the guard that eventually clears an OPEN-ENDED alert

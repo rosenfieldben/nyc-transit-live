@@ -390,40 +390,40 @@ async def _poll_feeds(app: FastAPI) -> None:
             await asyncio.sleep(POLL_INTERVAL_S)
 
 
-async def _refresh_alerts(app: FastAPI, client: httpx.AsyncClient) -> None:
-    """Refresh the active-alerts index. Same cache contract as the feeds: a failed
-    poll keeps the last-known index and its fetched_at (the error is recorded but
-    only surfaces to clients while the index has never filled), and the index is
-    replaced only on a poll that decoded.
+def _apply_alert_generation(
+    entry: dict,
+    fresh_alerts: list[dict],
+    failed_systems: set[str],
+    now: float,
+    *,
+    write_index: bool = True,
+) -> None:
+    """Merge this poll's fresh alerts into the served index and rewrite per-system
+    health. Shared by the partial-failure and the total-outage paths so the expiry
+    re-filter, the retention cap and the health surface behave identically in both:
+    a total outage is simply the case where nothing is fresh and EVERY system failed.
 
-    A partial failure (some feeds down, not all) is still a SUCCESSFUL poll, but it
-    no longer silently drops the down systems' alerts. It USED TO: fetch_service_alerts
-    returns only the systems that decoded, so replacing the index wholesale deleted a
-    down system's alerts while recording success, an asymmetry with the railroad
-    arrivals that already retain per system. Now the poll carries the down systems'
-    alerts forward through merge_alert_generations (bounded by an activity re-filter
-    and a retention cap), and records per-system health so the partial outage is
-    visible in /api/status even though the poll succeeds.
+    Writes only the CONTENT fields (alerts, active) plus health. fetched_at, error
+    and suppressed stay with the caller because they differ by path: fetched_at means
+    "the last poll that decoded", so a total outage must not advance it.
 
-    The all-feeds-failed path is unchanged: fetch_service_alerts raises RuntimeError,
-    the last-known index is kept, and the poll-level error is recorded. Per-system
-    health is left as its last partial-poll value there; the poll-level 502 is the
-    authoritative total-outage signal (there is no per-system detail to record,
-    since the all-failed RuntimeError carries no per-feed breakdown)."""
-    entry = app.state.alerts_cache
-    try:
-        alerts, suppressed, failed = await main.fetch_service_alerts(client)
-    except RuntimeError as exc:
-        # Every alert feed failed this poll; keep the last-known index. Unlike the
-        # single-fetch refreshers (buses/subways), there is no httpx.HTTPError to catch
-        # here: fetch_service_alerts gathers every feed with return_exceptions=True,
-        # so a per-feed HTTP or decode error is captured inside it and only the
-        # all-failed RuntimeError ever propagates.
-        _note_failure(entry, 502, _sanitize_upstream(exc))
-        return
+    write_index=False rewrites health WITHOUT touching the served index, for the one
+    caller whose index has never filled. Health must still be written there: a process
+    that starts while every feed is down is exactly when an operator needs to see five
+    degraded systems, and skipping this left /api/status reporting last_error null for
+    all of them, i.e. the same "everything looks healthy while nothing works" that this
+    change exists to remove. The index itself must stay None, because writing the
+    merge's empty result would turn a warming deployment into one confidently serving
+    "no active alerts".
 
-    now = time.time()
-    failed_set = set(failed)
+    SAFE TO RUN ON CONSECUTIVE FAILING POLLS, which is what the total-outage path
+    needs. The retention cap compares `now` against the retention START threaded out
+    of health (prev_retained_since below), not against the previous poll, and the
+    expiry re-filter drops on absolute ends_at. Both are therefore idempotent: a
+    partial failure following a total one re-runs the same arithmetic over an
+    already-shrunk index and reaches the same answer. No retention is double-charged
+    and no retention clock restarts.
+    """
     health = entry["health"]
     # Thread the prior retention clock through the pure merge so the cap measures
     # total time down, not time-since-this-poll.
@@ -433,10 +433,15 @@ async def _refresh_alerts(app: FastAPI, client: httpx.AsyncClient) -> None:
         if h["retained_since"] is not None
     }
     merged, retained_since = merge_alert_generations(
-        entry["alerts"], alerts, failed_set, prev_retained_since, now, ALERT_RETENTION_MAX_S
+        entry["alerts"],
+        fresh_alerts,
+        failed_systems,
+        prev_retained_since,
+        now,
+        ALERT_RETENTION_MAX_S,
     )
     for system, h in health.items():
-        if system in failed_set:
+        if system in failed_systems:
             # No per-system upstream string exists to sanitize: fetch_service_alerts'
             # fixed signature returns only the failed feed KEYS, not their errors, so
             # the marker is generic (and URL-free by construction). fresh_at is kept
@@ -447,13 +452,107 @@ async def _refresh_alerts(app: FastAPI, client: httpx.AsyncClient) -> None:
             h["fresh_at"] = now
             h["retained_since"] = None
             h["last_error"] = None
-    entry.update(
-        alerts=merged,
-        fetched_at=now,
-        error=None,
-        active=len(merged),
-        suppressed=suppressed,
-    )
+    if write_index:
+        entry.update(alerts=merged, active=len(merged))
+
+
+async def _refresh_alerts(app: FastAPI, client: httpx.AsyncClient) -> None:
+    """Refresh the active-alerts index. Same cache contract as the feeds: a failed
+    poll keeps the last-known index and its fetched_at (the error is recorded but
+    only surfaces to clients while the index has never filled).
+
+    THE INDEX CONTENT MAY ALSO SHRINK ON A FAILED POLL. This used to say the index is
+    replaced only on a poll that decoded, and that was the finding: a total outage
+    left the index BYTE-FROZEN, so alerts that expired mid-outage stayed visible,
+    the retention cap never fired, and per-system health kept reporting its last
+    happy value while /api/alerts served the whole thing as a 200. Now a failed poll
+    still never ADDS anything (there is nothing fresh to add) but it does re-run the
+    expiry re-filter and the retention cap over the existing index, so content can
+    shrink. That shrinkage is honesty, not data loss: what drops is exactly the
+    alerts whose own ends_at has passed, plus systems held past
+    ALERT_RETENTION_MAX_S, and the alternative is showing riders alerts that have
+    demonstrably finished.
+
+    A partial failure (some feeds down, not all) is still a SUCCESSFUL poll, but it
+    no longer silently drops the down systems' alerts. It USED TO: fetch_service_alerts
+    returns only the systems that decoded, so replacing the index wholesale deleted a
+    down system's alerts while recording success, an asymmetry with the railroad
+    arrivals that already retain per system. Now the poll carries the down systems'
+    alerts forward through merge_alert_generations (bounded by an activity re-filter
+    and a retention cap), and records per-system health so the partial outage is
+    visible in /api/status even though the poll succeeds.
+
+    On the all-feeds-failed path the poll-level 502 is still recorded and fetched_at
+    still holds the last poll that decoded, but per-system health is no longer left at
+    its last partial-poll value: every system is marked failed, so degraded_systems
+    tells the truth during a total outage. That closes the blind spot AT THE SOURCE
+    which R4's monitor had to work around by consulting the poll age first, because
+    the frozen per-system map used to read fully healthy while every feed was down."""
+    entry = app.state.alerts_cache
+    try:
+        # THIS REFRESHER OWNS ITS OWN DEADLINE rather than riding _bounded_refresh the
+        # way the feed refreshers do (see _poll_alerts, which calls this directly).
+        # REVIEW FIX: the generic wrapper catches the TimeoutError OUTSIDE this
+        # function, so it could only call _note_failure; the total-outage machinery
+        # below never ran and the index stayed byte-frozen. A trickling alerts feed is
+        # exactly the shape REFRESH_DEADLINE_S exists to catch, so that route left the
+        # headline defect of this change unfixed for the most likely way it happens.
+        # Bounding the fetch here means both total-outage shapes, an all-feeds error
+        # and a deadline, land on one path. One deadline, not two: nesting this inside
+        # _bounded_refresh's identical 45s window would be a race over which fires.
+        # Everything after this await is synchronous, so bounding the fetch bounds the
+        # whole refresh.
+        async with asyncio.timeout(REFRESH_DEADLINE_S):
+            alerts, suppressed, failed = await main.fetch_service_alerts(client)
+    except (RuntimeError, TimeoutError) as exc:
+        # Every alert feed failed this poll, or the whole fetch outran the deadline.
+        # Either way keep the last-known index. Unlike the single-fetch refreshers
+        # (buses/subways), there is no httpx.HTTPError to catch here:
+        # fetch_service_alerts gathers every feed with return_exceptions=True, so a
+        # per-feed HTTP or decode error is captured inside it and only the all-failed
+        # RuntimeError ever propagates. CancelledError is a BaseException, so a real
+        # cancellation (app shutdown) still passes straight through.
+        if isinstance(exc, TimeoutError):
+            # Same status and wording _bounded_refresh used, so /api/status and the R1
+            # stale surfaces read identically to before for this failure.
+            _note_failure(
+                entry,
+                504,
+                f"Upstream did not complete within the {REFRESH_DEADLINE_S}s refresh "
+                "deadline; keeping last-known data.",
+            )
+        else:
+            _note_failure(entry, 502, _sanitize_upstream(exc))
+        if entry["alerts"] is None:
+            # NEVER FILLED: there is no index to re-filter, and writing the merge's
+            # empty result would flip /api/alerts from its warming state to a 200
+            # serving "no active alerts", which is the same false-green this change
+            # exists to remove. But per-system health is still written, or a process
+            # that started while every feed was down would report five perfectly
+            # healthy systems for as long as the outage lasted.
+            _apply_alert_generation(entry, [], set(entry["health"]), time.time(), write_index=False)
+            return
+        # Run the ordinary machinery with nothing fresh and every system failed.
+        # health is seeded from ALERT_FEED_URLS (cache._fresh_alerts_entry), so its
+        # key set IS the full system list; taking it from the map we are about to
+        # rewrite keeps the failed set and the health write consistent by
+        # construction rather than by a second import agreeing with the first.
+        _apply_alert_generation(entry, [], set(entry["health"]), time.time())
+        # suppressed is deliberately left alone: like fetched_at it describes the last
+        # poll that DECODED, and this poll decoded nothing to recount. NOTE the
+        # asymmetry this creates in /api/status, which the review flagged: `active` is
+        # recomputed here from the shrunk index while `suppressed_planned` still comes
+        # from the last decode, so during a long outage the two counts can be up to
+        # ALERT_RETENTION_MAX_S apart. That is the lesser of the two evils. `active`
+        # MUST match what /api/alerts is actually serving or status would misreport the
+        # live index, whereas suppressed_planned counts not-yet-active work that only a
+        # decode can observe, so freezing it is the honest option. fetched_at is the
+        # field that dates both, which is why it must not advance on this path.
+        return
+
+    now = time.time()
+    _apply_alert_generation(entry, alerts, set(failed), now)
+    entry.update(fetched_at=now, error=None, suppressed=suppressed)
 
 
 async def _poll_alerts(app: FastAPI) -> None:
@@ -468,9 +567,13 @@ async def _poll_alerts(app: FastAPI) -> None:
             try:
                 # Same whole-task deadline as the feed refreshers (REFRESH_DEADLINE_S
                 # < the 60s alerts cadence): a trickling alerts feed can no longer
-                # wedge this loop forever, and a timeout keeps the last-known index
-                # via the existing _note_failure path.
-                await _bounded_refresh(app.state.alerts_cache, _refresh_alerts(app, client))
+                # wedge this loop forever, and a timeout keeps the last-known index.
+                # The deadline lives INSIDE _refresh_alerts rather than in
+                # _bounded_refresh here, because a timeout has to run the alert-specific
+                # outage machinery (expiry re-filter, retention cap, per-system health)
+                # and the generic wrapper cannot: it catches the timeout outside the
+                # refresher, where the only thing it can do is record the error.
+                await _refresh_alerts(app, client)
             except Exception:
                 logger.exception("alert poll cycle failed unexpectedly")
             await asyncio.sleep(ALERT_POLL_INTERVAL_S)

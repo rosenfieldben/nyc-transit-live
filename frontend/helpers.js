@@ -739,23 +739,72 @@ function ferryArrivalsHtml(station, body, now, colorFor = () => FERRY_FALLBACK_C
 
 // ---- Service alerts in the station popups (phase 12b) ----
 
-// Alerts staleness threshold (R1). The alerts feed polls every 60s (vs 15s for the
-// vehicle feeds) and its content changes slowly: a service alert persists for hours,
-// so a slightly old alert index is far less misleading than slightly old vehicle
-// positions. The honesty bar is therefore higher than the 90s feed bar: only after
-// five missed polls do we hedge that the alert set may be out of date. The alerts
+// Alerts staleness threshold. The alerts feed polls every 60s (vs 15s for the vehicle
+// feeds) and its content changes slowly: a service alert persists for hours, so a
+// slightly old alert index is far less misleading than slightly old vehicle
+// positions. The honesty bar is therefore higher than the 90s feed bar. The alerts
 // loop swallows failures by design (it never surfaces an error or blocks arrivals),
 // so this marker is the one honest signal that the index may have stopped updating.
+//
+// WHAT THE 300s IS MEASURED AGAINST changed in C1, so read it as five missed BACKEND
+// polls, not five missed client fetches. The comment here used to say "five missed
+// polls" while the gate keyed on served_at, i.e. on the client's own fetches; it now
+// keys on the backend's fetched_at, which advances only on a poll that decoded. Both
+// cadences are 60s (ALERT_POLL_INTERVAL_S here and in pollers.py), so the count is
+// unchanged, but the quantity is now the age of the DATA and includes any time the
+// backend spent failing or timing out (up to REFRESH_DEADLINE_S per poll).
+//
+// KNOWN LIMIT, stated because an earlier draft of this comment overclaimed: this
+// catches a TOTAL alerts outage, not a PARTIAL one. fetched_at is poll-level, and a
+// poll where four of five feeds decode is a SUCCESS that advances it, so a single
+// system being down for hours never trips this marker even after the backend's
+// retention cap has dropped that system's alerts entirely. /api/alerts carries no
+// per-system freshness for the client to key on, and adding it is the per-system
+// envelope work (C2), not something this threshold can fix. Until then the partial
+// case is visible only to an operator, via degraded_systems on /api/status.
 const ALERTS_STALE_AFTER_S = 300;
 
-// True when the last successful alerts fetch (its served_at) is older than the
-// threshold. `now` is the skew-corrected client clock. A null servedAt (no
-// successful fetch yet, e.g. during boot) is NOT stale: the app simply shows no
-// alerts, not a false "out of date". Pure and node-testable; the banner and popup
-// alert blocks gate their "alerts may be out of date" marker on this.
-function alertsStale(servedAt, now) {
-  if (servedAt == null) return false;
-  return now - servedAt >= ALERTS_STALE_AFTER_S;
+// True when the alert DATA is older than the threshold, judged from the payload's
+// fetched_at: the backend's last poll that actually decoded. `now` is the skew-
+// corrected client clock, i.e. already on the same server-time axis as fetched_at.
+// A null fetchedAt (no successful fetch yet, e.g. during boot) is NOT stale: the app
+// simply shows no alerts, not a false "out of date". Pure and node-testable; the
+// banner and popup alert blocks gate their "alerts may be out of date" marker on this.
+//
+// C1 CHANGED THE SIGNAL FROM served_at TO fetched_at, correcting the R1 choice.
+// served_at is stamped at response build, so the served_at of a stale cache is fresh
+// BY CONSTRUCTION: while the alert feeds were down the backend kept 200ing its frozen
+// index with an ever-advancing served_at, which reset this gate on every poll. The
+// marker therefore could not fire during the exact outage it exists to hedge. It was
+// measuring DELIVERY (did a response arrive) when the honest question is about DATA
+// (has the index been refreshed). fetched_at only advances on a poll that decoded,
+// so a 200 whose fetched_at has not moved is precisely the outage signature.
+// sinceAt is the fallback age basis for the case where the client has NEVER received a
+// fetched_at: the instant it first tried. Without it, a null fetchedAt returned the
+// healthy answer forever, so a backend whose alert index never filled (every feed down
+// since boot, so /api/alerts serves an error and loadAlerts swallows it) showed riders
+// a confident, alert-free map with no hedge, indefinitely. That is the same
+// never-defaulted silence this whole change is about, just at the other end of the
+// wire. A boot grace period is still right, so the null case ages against sinceAt on
+// the same threshold rather than disclosing immediately; pass null for sinceAt to get
+// the old unbounded-grace behavior.
+// The alerts freshness basis extracted from an /api/alerts body: the backend's
+// fetched_at, or null when a body omits it entirely. THE POINT OF THIS BEING A
+// FUNCTION is that it makes the field CHOICE testable. A node test that hands
+// alertsStale a fetched_at proves only arithmetic, because the test picked the field
+// itself; a revert to served_at would sail past it. This is where the choice lives,
+// so this is what a test has to pin.
+function alertsFreshnessBasis(body) {
+  const fetchedAt = body == null ? null : body.fetched_at;
+  return typeof fetchedAt === "number" ? fetchedAt : null;
+}
+
+function alertsStale(fetchedAt, now, sinceAt = null) {
+  if (fetchedAt == null) {
+    if (sinceAt == null) return false;
+    return now - sinceAt >= ALERTS_STALE_AFTER_S;
+  }
+  return now - fetchedAt >= ALERTS_STALE_AFTER_S;
 }
 
 // Index the active-alerts list into two lookups, each keyed by "system|id": one by
@@ -836,6 +885,38 @@ function bannerAlerts(alerts) {
     .sort(compareAlerts);
 }
 
+// A small deterministic string hash (FNV-1a, 32-bit, hex). Used only to keep the
+// banner's dedup key bounded when it folds in alert TEXT; nothing security-relevant
+// rides on it. Written out rather than pulled in so the frontend stays dependency
+// free, and >>> 0 keeps every step unsigned (JS bitwise ops are signed 32-bit).
+function hashString(text) {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16);
+}
+
+// The banner's render-dedup key: the stale flag, then one line per shown alert
+// carrying its system, id, and a hash of its header TEXT.
+//
+// C1 ADDED THE CONTENT HASH. The key used to be the shown ids alone, so an alert
+// whose WORDING changed under the same id compared equal and the banner was left
+// untouched, showing the superseded text indefinitely. That is a real upstream
+// pattern: the MTA revises an ongoing incident's description in place rather than
+// issuing a new id. Hashing rather than embedding the full text keeps the key short;
+// the tradeoff is that a 32-bit collision between two wordings of the SAME id would
+// still skip the re-render, which is a far smaller exposure than never re-rendering.
+function bannerRenderKey(shown, stale) {
+  return (
+    (stale ? "S|" : "F|") +
+    (shown ?? [])
+      .map((a) => `${a.system}|${a.id}|${hashString(String(a.header ?? ""))}`)
+      .join("\n")
+  );
+}
+
 // Compact alerts block for a station popup: one escaped header line per alert, or ""
 // when there is nothing to show (so the caller renders NO container at all). Header
 // text only in this phase (description/effect omitted); the text is kept verbatim
@@ -883,9 +964,10 @@ if (typeof module !== "undefined" && module.exports) {
     computeRouteSlice, railroadColor, isPlacedRailroad, orderedRailroadBuckets,
     railroadArrivalsHtml, formatRailroadHead, ROUTE_ACCEPT_DIST, ROUTE_MAX_SLICE,
     indexAlerts, matchStationAlerts, matchRouteAlerts, bannerAlerts, alertsBlockHtml,
+    hashString, bannerRenderKey,
     RAILROAD_ROUTE_MAX_SLICE, RAILROAD_ROUTE_ACCEPT_DIST, RAILROAD_BUCKET_ORDER,
     LINE_COLORS, DARK_TEXT_LINES, FEED_STALE_AFTER_S, FETCH_DEADLINE_MS, shouldRefresh,
-    feedAgeLine, humanizeAge, alertsStale, ALERTS_STALE_AFTER_S,
+    feedAgeLine, humanizeAge, alertsStale, alertsFreshnessBasis, ALERTS_STALE_AFTER_S,
     selectHeadwayBand, airtrainStationPopupHtml, retryUntil,
     PATH_BUCKET_ORDER, PATH_FALLBACK_COLOR, orderedPathBuckets, pathColor,
     formatPathHead, pathTrainPopupHtml, pathArrivalsHtml,

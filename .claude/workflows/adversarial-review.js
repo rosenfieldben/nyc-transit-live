@@ -41,9 +41,28 @@ const VERIFY_RESERVE = 4 * AGENT_TOKEN_ESTIMATE
 const BATCH_SIZE = 5
 const CHEAP_MODEL = 'haiku'
 
-const range = (args && args.range) || 'main...HEAD'
-const changedLines = (args && args.changedLines) || 300
-const focus = (args && args.focus) || ''
+// Coerce a JSON-STRING args into an object. The Workflow contract says to pass args
+// as a real JSON value, but a caller who passes the JSON-encoded string instead gets
+// a silent downgrade rather than an error: every field reads undefined, so the run
+// falls back to MIN_DIMENSIONS and drops the caller's focus text without a word. That
+// happened on the first real run of this script (2 dimensions instead of 5, focus
+// never delivered), and a review that quietly reviews less than asked is the worst
+// failure mode available to a review tool.
+function resolveArgs(raw) {
+  if (typeof raw === 'string') {
+    try {
+      return JSON.parse(raw)
+    } catch {
+      return {}
+    }
+  }
+  return raw || {}
+}
+
+const input = resolveArgs(args)
+const range = input.range || 'main...HEAD'
+const changedLines = input.changedLines || 300
+const focus = input.focus || ''
 
 const DIMENSION_CATALOG = [
   {
@@ -87,6 +106,9 @@ log(
     dimensions.map((d) => d.key).join(', ') +
     ')'
 )
+// Say out loud whether the focus arrived, so a dropped or mistyped args field is
+// visible in the run rather than inferred later from thin findings.
+log(focus ? 'focus: ' + focus : 'focus: (none supplied)')
 
 const FINDINGS_SCHEMA = {
   type: 'object',
@@ -151,12 +173,16 @@ const VERDICT_SCHEMA = {
       items: {
         type: 'object',
         properties: {
+          // REQUIRED, and the schema enforces it: this is how a verdict is matched to
+          // the finding it judges. Matching on `summary` broke whenever a verifier
+          // reworded the claim, which is every time.
+          finding_id: { type: 'string' },
           summary: { type: 'string' },
           real: { type: 'boolean' },
           verdict: { type: 'string', enum: ['CONFIRMED', 'PLAUSIBLE', 'REFUTED'] },
           evidence: { type: 'string' },
         },
-        required: ['summary', 'real', 'verdict', 'evidence'],
+        required: ['finding_id', 'summary', 'real', 'verdict', 'evidence'],
       },
     },
   },
@@ -235,8 +261,18 @@ for (const d of triageDropped) log('  dropped: ' + d.summary + ' (' + d.reason +
 // RULE 4: BUDGET AWARE. If the remaining target cannot cover individual
 // verification, demote everything to batches and SAY SO. A silent cap reads as
 // full coverage.
-let solo = survivors.filter((s) => s.needs_own_verifier)
-let batched = survivors.filter((s) => !s.needs_own_verifier)
+// Stamp a STABLE ID on every survivor and make the verifier echo it back. Verdicts
+// used to be matched to findings by their `summary` string, which broke the moment a
+// verifier reworded the claim it was handed, and they reword constantly (they are
+// summarising what they found, not copying the input). On the first real run EVERY
+// verdict missed its finding, so all of them fell through to the dead-verifier
+// fallback and came back PLAUSIBLE, including one the verifier had explicitly
+// REFUTED. A review tool that reports a refuted finding as surviving is worse than
+// one that reports nothing.
+const withIds = survivors.map((s, i) => ({ ...s, finding_id: 'F' + (i + 1) }))
+
+let solo = withIds.filter((s) => s.needs_own_verifier)
+let batched = withIds.filter((s) => !s.needs_own_verifier)
 
 if (budget.total && budget.remaining() < VERIFY_RESERVE + solo.length * AGENT_TOKEN_ESTIMATE) {
   log(
@@ -265,7 +301,10 @@ const verifyPreamble =
   'actually produces the claimed failure. Default to REFUTED when you cannot ' +
   'demonstrate the failure; a plausible-sounding finding that does not reproduce is ' +
   'worse than no finding, because it costs the author a real investigation. Quote the ' +
-  'line that settles it in evidence.'
+  'line that settles it in evidence.\n\nECHO EACH FINDING\'S finding_id BACK VERBATIM ' +
+  'in its verdict. That field is how your verdict is matched to the finding it judges; ' +
+  'a verdict with a missing or altered finding_id is discarded as unverified, and you ' +
+  'may reword the summary freely as long as the id is exact.'
 
 const verdictSets = await parallel(
   [
@@ -302,16 +341,26 @@ const verdictSets = await parallel(
 )
 
 const verdicts = verdictSets.filter(Boolean).flatMap((v) => v.verdicts || [])
-const bySummary = new Map(verdicts.map((v) => [v.summary, v]))
+const byId = new Map(verdicts.filter((v) => v.finding_id).map((v) => [v.finding_id, v]))
+const unmatched = verdicts.length - byId.size
+if (unmatched > 0) {
+  // Loud, because this is the failure that silently mislabels a whole review.
+  log('WARNING: ' + unmatched + ' verdict(s) carried no usable finding_id and were discarded')
+}
 
 const confirmed = []
 const refuted = []
-for (const s of survivors) {
-  const v = bySummary.get(s.summary)
+const unverified = []
+for (const s of withIds) {
+  const v = byId.get(s.finding_id)
   if (!v) {
-    // No verdict came back. Report it as unverified rather than dropping it: an
-    // agent that died is not evidence the finding was wrong.
-    confirmed.push({ ...s, verdict: 'PLAUSIBLE', evidence: 'verifier returned no verdict' })
+    // No verdict came back. Kept rather than dropped (an agent that died is not
+    // evidence the finding was wrong), but in its OWN bucket, never mixed into
+    // confirmed. Unverified findings used to be pushed into confirmed carrying a
+    // PLAUSIBLE label, so when the id matching broke, a whole review of unjudged
+    // findings read exactly like a review of confirmed ones and the breakage was
+    // invisible in the result. A separate bucket makes that impossible to miss.
+    unverified.push({ ...s, verdict: 'UNVERIFIED', evidence: 'verifier returned no verdict' })
   } else if (v.real) {
     confirmed.push({ ...s, verdict: v.verdict, evidence: v.evidence })
   } else {
@@ -327,19 +376,30 @@ log(
     ' confirmed, ' +
     refuted.length +
     ' refuted, ' +
+    unverified.length +
+    ' UNVERIFIED, ' +
     triageDropped.length +
     ' dropped in triage'
 )
+if (unverified.length && !confirmed.length && !refuted.length) {
+  // Nothing was judged at all: treat it as a broken run, not a clean review.
+  log('WARNING: the verify phase produced NO usable verdicts; findings below are unjudged')
+}
 
 return {
   confirmed,
   refuted,
+  unverified,
   dropped_in_triage: triageDropped,
   cost_shape: {
     dimensions: dimensions.length,
+    changed_lines: changedLines,
+    focus_supplied: Boolean(focus),
     candidates: candidates.length,
     solo_verifiers: solo.length,
     batched_verifiers: batches.length,
+    verdicts_returned: verdicts.length,
+    verdicts_unmatched: unmatched,
     agents_total: dimensions.length + 1 + solo.length + batches.length,
   },
 }

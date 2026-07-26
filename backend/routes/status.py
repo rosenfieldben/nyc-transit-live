@@ -40,6 +40,21 @@ async def get_alerts(request: Request, response: Response) -> dict:
             "fetched_at": entry["fetched_at"],
             "served_at": time.time(),
             "alerts": entry["alerts"],
+            # C2: the per-system block, projected from the health map C1 made
+            # truthful. It rides HERE rather than only on /api/status because the
+            # client never fetches /api/status: without it a partial alerts outage
+            # (one feed down, four healthy) is a successful poll that advances the
+            # top-level fetched_at, so the rider-facing freshness marker could not
+            # see it. fresh_at is this system's last decode, which is exactly the
+            # per-system fetched_at the shared contract asks for.
+            "systems": {
+                system: {
+                    "fetched_at": health["fresh_at"],
+                    "ok": health["last_error"] is None,
+                    "retained_since": health["retained_since"],
+                }
+                for system, health in (entry.get("health") or {}).items()
+            },
         }
     if entry["error"]:
         raise HTTPException(entry["error"]["status"], entry["error"]["detail"])

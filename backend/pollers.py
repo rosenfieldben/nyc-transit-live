@@ -16,22 +16,27 @@ merge_alert_generations, the feed-URL sets) are imported straight from feeds.
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import time
+from collections.abc import Iterable
 
 import httpx
 from fastapi import FastAPI
 from google.protobuf.message import DecodeError
 
 import main
-from cache import _note_failure, _sanitize_upstream
+from cache import FEED_RETENTION_MAX_S, _note_failure, _sanitize_upstream
 from feeds import (
     ALERT_RETENTION_MAX_S,
     RAILROAD_FEED_URLS,
     SUBWAY_FEED_URLS,
     carry_forward_prev,
+    combine_group_arrivals,
+    combine_group_trains,
     match_path_identities,
     merge_alert_generations,
+    merge_system_generations,
 )
 
 # Log through the "main" logger (not __name__) so records and main.py's logging
@@ -117,6 +122,86 @@ async def _refresh_buses(app: FastAPI, client: httpx.AsyncClient) -> None:
     entry.update(data=data, fetched_at=time.time(), feed_timestamp=feed_timestamp, error=None)
 
 
+def _merge_feed_systems(
+    entry: dict,
+    prev_by_system: dict,
+    fresh_by_system: dict,
+    failed_systems: list[str],
+    now: float,
+) -> tuple[dict, dict[str, float]]:
+    """Merge one poll's per-system data with the previous poll's, retaining a
+    failed system's data (C2). Thin glue over the pure merge_system_generations:
+    it threads the retention clock out of the cache entry and stores this poll's
+    by-system data back under prev_key for the next poll to retain from.
+
+    Called once per kind of data (trains, arrivals), each handed ITS OWN previous
+    generation, because the two live in different places: trains in the cache
+    entry, arrivals in the app-state index the endpoint reads. Both return the same
+    retained_since, because the retention clock is a property of the SYSTEM rather
+    than of the data kind: it is threaded from entry["systems"], written once.
+    Gating one kind on the other's result was a bug worth naming here, since it
+    reads plausible: a system with no retained TRAINS (it had none running, or the
+    process just started) would have had its arrivals dropped as if the cap had
+    fired, even though its retention had never begun.
+
+    THE RETAINED DATA IS DEEP-COPIED. carry_forward_prev mutates the train dicts
+    it is handed (it writes prev_* anchors in place), and retained trains come
+    straight out of the entry that a previous response already serialized. Without
+    the copy this poll would be editing objects an earlier response handed out,
+    and the retained trains would silently acquire fresh anchors on every poll
+    they survived, which is the opposite of frozen.
+    """
+    prev_retained = {
+        system: block["retained_since"]
+        for system, block in (entry.get("systems") or {}).items()
+        if block.get("retained_since") is not None
+    }
+    merged, retained_since = merge_system_generations(
+        fresh_by_system,
+        prev_by_system,
+        failed_systems,
+        prev_retained,
+        now,
+        FEED_RETENTION_MAX_S,
+    )
+    failed = set(failed_systems)
+    merged = {
+        system: (copy.deepcopy(items) if system in failed else items)
+        for system, items in merged.items()
+    }
+    return merged, retained_since
+
+
+def _system_freshness(
+    prev: dict | None,
+    all_systems: Iterable[str],
+    failed_systems: list[str],
+    retained_since: dict[str, float],
+    now: float,
+) -> dict[str, dict]:
+    """Build the per-system freshness block published in the aggregate envelope.
+
+    fetched_at is THIS SYSTEM'S last poll that decoded, so it freezes while the
+    system is failing while the envelope's own fetched_at keeps advancing; that
+    divergence is the entire signal (see THE PER-SYSTEM RULE in cache.py). Shape
+    matches models.SystemFreshness, and deliberately carries no error text: `ok`
+    plus the age are the whole public signal, and sanitized detail stays on
+    /api/status.
+    """
+    failed = set(failed_systems)
+    previous = prev or {}
+    blocks: dict[str, dict] = {}
+    for system in all_systems:
+        was = previous.get(system) or {}
+        blocks[system] = {
+            # A failed system keeps its last decode time; a healthy one stamps now.
+            "fetched_at": was.get("fetched_at") if system in failed else now,
+            "ok": system not in failed,
+            "retained_since": retained_since.get(system),
+        }
+    return blocks
+
+
 async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
     entry = app.state.feed_cache["subways"]
     stops = app.state.subway_stops
@@ -134,9 +219,14 @@ async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
         return
     total_feeds = len(SUBWAY_FEED_URLS)
     try:
-        trains, arrivals, feed_timestamp, failed_feeds = await main.fetch_subway_trains(
-            stops, client
-        )
+        (
+            trains,
+            arrivals,
+            feed_timestamp,
+            failed_feeds,
+            trains_by_group,
+            arrivals_by_group,
+        ) = await main.fetch_subway_trains(stops, client)
     except RuntimeError as exc:
         # Every subway feed failed this poll.
         app.state.subway_feed_health = {
@@ -163,13 +253,37 @@ async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
         "ok": total_feeds - len(failed_feeds),
         "failed": failed_feeds,
     }
+    now = time.time()
+    # C2: carry a FAILED group's trains and arrivals forward instead of publishing
+    # survivors only, so its riders see stale-but-labelled data rather than an empty
+    # map. The merge runs BEFORE carry_forward_prev, deliberately: that helper
+    # rebuilds its anchor memory from exactly the list it is handed, so a retained
+    # train left out of that list would lose its anchor and re-enter as a first
+    # sighting the moment the group recovered.
+    merged_trains_by_group, retained_since = _merge_feed_systems(
+        entry, entry.get("trains_by_system") or {}, trains_by_group, failed_feeds, now
+    )
+    merged_arrivals_by_group, _ = _merge_feed_systems(
+        entry,
+        getattr(app.state, "subway_arrivals_by_system", None) or {},
+        arrivals_by_group,
+        failed_feeds,
+        now,
+    )
+    entry["trains_by_system"] = merged_trains_by_group
+    app.state.subway_arrivals_by_system = merged_arrivals_by_group
+    trains = combine_group_trains(merged_trains_by_group)
+    arrivals = combine_group_arrivals(merged_arrivals_by_group)
+    entry["systems"] = _system_freshness(
+        entry.get("systems"), SUBWAY_FEED_URLS, failed_feeds, retained_since, now
+    )
     # Carry each trip's previous-poll stop forward as its prev interpolation anchor
     # when the feed pruned the departed stop (mutates trains in place), then remember
     # this poll's positions for the next one.
     app.state.subway_positions = carry_forward_prev(
         trains, getattr(app.state, "subway_positions", {})
     )
-    entry.update(data=trains, fetched_at=time.time(), feed_timestamp=feed_timestamp, error=None)
+    entry.update(data=trains, fetched_at=now, feed_timestamp=feed_timestamp, error=None)
     # Replace the arrivals index only on success, so a failed poll keeps the
     # last-known arrivals on the same fetched_at, consistent with the cache.
     app.state.subway_arrivals = arrivals
@@ -206,6 +320,27 @@ async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
         "ok": total_feeds - len(failed_feeds),
         "failed": failed_feeds,
     }
+    now = time.time()
+    # C2: retain a failed SYSTEM's trains rather than publishing the survivor only,
+    # so a down MNR leaves stale-but-labelled markers instead of an empty map. Unlike
+    # the subway the decode already tags every train with its system, so the
+    # partition is a group-by rather than a change to the decoder. Runs BEFORE
+    # carry_forward_prev for the same anchor-memory reason as the subway.
+    fresh_by_system: dict[str, list[dict]] = {system: [] for system in RAILROAD_FEED_URLS}
+    for train in trains:
+        fresh_by_system.setdefault(train["system"], []).append(train)
+    for system in failed_feeds:
+        # Only DECODING systems may appear: an empty list here would read as
+        # "decoded, nothing running" and replace the retained data.
+        fresh_by_system.pop(system, None)
+    merged_by_system, retained_since = _merge_feed_systems(
+        entry, entry.get("trains_by_system") or {}, fresh_by_system, failed_feeds, now
+    )
+    entry["trains_by_system"] = merged_by_system
+    trains = [train for system_trains in merged_by_system.values() for train in system_trains]
+    entry["systems"] = _system_freshness(
+        entry.get("systems"), RAILROAD_FEED_URLS, failed_feeds, retained_since, now
+    )
     # Carry each placed train's prev station forward across polls (the feeds prune
     # the just-departed stop, so the decode leaves prev_* null), giving the gliding
     # increment a previous-station anchor. GPS trains have next_time None, so the
@@ -218,16 +353,34 @@ async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
         key=lambda t: (t["system"], t["trip_id"]),
     )
     # feed_timestamp comes from LIRR's header only (MNR's lagging shared clock is
-    # excluded; see feeds.RAILROAD_FRESHNESS_SYSTEMS); a failed poll keeps the
-    # last-known timestamp, same as the subway cache.
-    entry.update(data=trains, fetched_at=time.time(), feed_timestamp=feed_timestamp, error=None)
-    # Replace only the systems that decoded this poll (arrivals_by_system omits a
-    # transiently-failed system), so its last-known arrivals survive while the
-    # others refresh. Same "a failed poll never blanks a working index" rule as
-    # the subway arrivals, applied per system since the two are independent.
-    railroad_arrivals = getattr(app.state, "railroad_arrivals", None) or {}
-    railroad_arrivals.update(arrivals_by_system)
-    app.state.railroad_arrivals = railroad_arrivals
+    # excluded; see feeds.RAILROAD_FRESHNESS_SYSTEMS). A TOTAL failure returns above
+    # and keeps the last-known timestamp; on a PARTIAL failure the surviving systems
+    # decide it, and when the only freshness-bearing system (LIRR) is the one that
+    # failed it comes back None. Keep the last-known rather than writing that None
+    # over it: /api/status reads an unknown feed age as healthy, so blanking it turns
+    # a real outage into a green light.
+    entry.update(
+        data=trains,
+        fetched_at=now,
+        feed_timestamp=feed_timestamp if feed_timestamp is not None else entry["feed_timestamp"],
+        error=None,
+    )
+    # Replace only the systems that decoded this poll, so a transiently-failed
+    # system's last-known arrivals survive while the others refresh. Same "a failed
+    # poll never blanks a working index" rule as the subway arrivals, applied per
+    # system since the two are independent. NOTE this deliberately keys on the
+    # FAILURE LIST, not on a system's absence from arrivals_by_system: a system that
+    # decoded but has no static stops loaded contributes no arrivals while never
+    # appearing in failed_feeds, and key-absence retention would silently serve its
+    # stale arrivals forever while /api/status counted it healthy.
+    merged_arrivals, _ = _merge_feed_systems(
+        entry,
+        getattr(app.state, "railroad_arrivals", None) or {},
+        arrivals_by_system,
+        failed_feeds,
+        now,
+    )
+    app.state.railroad_arrivals = merged_arrivals
 
 
 async def _refresh_path(app: FastAPI, client: httpx.AsyncClient) -> None:

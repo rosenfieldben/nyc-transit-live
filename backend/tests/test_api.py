@@ -102,12 +102,21 @@ async def test_successful_refresh_serves_envelope(client, cache):
     # the poll time; the rest of the envelope is exact. A live feed is no-store.
     body = res.json()
     assert body.pop("served_at") >= 1000.0
+    # Buses are a SINGLE upstream, so their envelope gains no systems block: the
+    # top-level fetched_at already means what a per-system one would (C2 opt-in).
     assert body == {"fetched_at": 1000.0, "feed_timestamp": 995.0, "data": BUSES}
     assert res.headers.get("cache-control") == "no-store"
     res = await client.get("/api/subways")
     body = res.json()
     assert body.pop("served_at") >= 1001.0
-    assert body == {"fetched_at": 1001.0, "feed_timestamp": 996.0, "data": TRAINS}
+    # The subway envelope DOES carry one (8 feed groups). It is null here because
+    # this entry was seeded directly rather than by a poll.
+    assert body == {
+        "fetched_at": 1001.0,
+        "feed_timestamp": 996.0,
+        "data": TRAINS,
+        "systems": None,
+    }
     assert res.headers.get("cache-control") == "no-store"
 
 
@@ -178,7 +187,14 @@ async def test_railroads_successful_envelope(client, cache):
     assert res.status_code == 200
     body = res.json()
     assert body.pop("served_at") >= 1001.0
-    assert body == {"fetched_at": 1001.0, "feed_timestamp": None, "data": RAILROADS}
+    # systems is null on a directly-seeded entry (no poll wrote it); the railroad
+    # envelope carries the key because it aggregates LIRR + MNR.
+    assert body == {
+        "fetched_at": 1001.0,
+        "feed_timestamp": None,
+        "data": RAILROADS,
+        "systems": None,
+    }
     assert res.headers.get("cache-control") == "no-store"
 
 
@@ -193,14 +209,30 @@ async def test_railroads_stale_data_beats_subsequent_error(client, cache):
 async def test_railroad_refresh_records_partial_feed_health(client, cache, monkeypatch):
     # One system fails, one returns data: the entry error stays clear, but the
     # partial outage is recorded for /api/status (parallel to the subway case).
+    #
+    # C2 MADE THIS FAKE'S OLD FORM SELF-CONTRADICTORY: it declared MNR failed while
+    # returning MNR trains, which the real fetch_railroad_trains cannot do (it only
+    # ever returns trains from systems that decoded). The pre-C2 poller published
+    # whatever came back, so the contradiction was invisible; now a failed system's
+    # data comes from retention, not from the fetch, so a fake that lies about which
+    # system decoded gets a different (and correct) answer. The fake is honest now:
+    # LIRR decodes, MNR does not.
+    lirr_train = {**RAILROADS[0], "system": "LIRR", "trip_id": "lirr-1"}
+
     async def partial(client_arg, stops_arg):
-        return RAILROADS, {}, 996.0, ["MNR"]
+        return [lirr_train], {}, 996.0, ["MNR"]
 
     monkeypatch.setattr(app_module, "fetch_railroad_trains", partial)
     await app_module._refresh_railroads(app_module.app, client=None)
     assert cache["railroads"]["error"] is None
-    assert cache["railroads"]["data"] == RAILROADS
+    # The surviving system is published; MNR contributes nothing because there is no
+    # previous generation to retain (this is the first poll).
+    assert cache["railroads"]["data"] == [lirr_train]
     assert cache["railroads"]["feed_timestamp"] == 996.0  # threaded through from the fetch
+    # And the per-system block tells the truth about which one is behind.
+    systems = cache["railroads"]["systems"]
+    assert systems["LIRR"]["ok"] is True and systems["LIRR"]["fetched_at"] is not None
+    assert systems["MNR"]["ok"] is False and systems["MNR"]["fetched_at"] is None
     total = len(feeds.RAILROAD_FEED_URLS)
     assert app_module.app.state.railroad_feed_health == {
         "total": total,
@@ -486,7 +518,7 @@ async def test_subway_refresh_records_partial_feed_health(client, cache, monkeyp
     # A poll where some feed groups failed still returns data; the entry error
     # stays clear, but the partial outage must be recorded for /api/status.
     async def partial(stops, client_arg):
-        return TRAINS, {}, 996.0, ["BDFM"]
+        return TRAINS, {}, 996.0, ["BDFM"], {"ACE": TRAINS}, {"ACE": {}}
 
     monkeypatch.setattr(app_module, "fetch_subway_trains", partial)
     app_module.app.state.subway_stops = {"101N": {}}
@@ -504,7 +536,7 @@ async def test_subway_refresh_records_partial_feed_health(client, cache, monkeyp
 
 async def test_subway_refresh_records_full_feed_health(client, cache, monkeypatch):
     async def full(stops, client_arg):
-        return TRAINS, {}, 996.0, []
+        return TRAINS, {}, 996.0, [], {"ACE": TRAINS}, {"ACE": {}}
 
     monkeypatch.setattr(app_module, "fetch_subway_trains", full)
     app_module.app.state.subway_stops = {"101N": {}}
@@ -1579,7 +1611,7 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
         return BUSES, 1000.0
 
     async def fake_fetch_subways(stops, client):
-        return TRAINS, {}, 1001.0, []
+        return TRAINS, {}, 1001.0, [], {"ACE": TRAINS}, {"ACE": {}}
 
     async def fake_fetch_railroads(client, stops):
         return RAILROADS, {}, 1002.0, []
@@ -1786,7 +1818,7 @@ async def test_poll_cycle_deadline_bounds_a_wedged_refresh(monkeypatch, cache):
         await hang.wait()  # every later cycle wedges past the deadline
 
     async def sub_fetch(stops, client):
-        return TRAINS, {}, 1001.0, []
+        return TRAINS, {}, 1001.0, [], {"ACE": TRAINS}, {"ACE": {}}
 
     async def rr_fetch(client, stops):
         return RAILROADS, {}, 1002.0, []
@@ -2568,7 +2600,15 @@ async def test_alerts_served_from_seeded_index(client, alerts_cache):
     assert res.status_code == 200
     body = res.json()
     assert body.pop("served_at") >= 1000.0  # R1: stamped at response build
-    assert body == {"fetched_at": 1000.0, "alerts": [ALERT]}
+    # Every alert system is present from the seeded health map, even before a poll.
+    assert body == {
+        "fetched_at": 1000.0,
+        "alerts": [ALERT],
+        "systems": {
+            s: {"fetched_at": None, "ok": True, "retained_since": None}
+            for s in feeds.ALERT_FEED_URLS
+        },
+    }
     assert res.headers.get("cache-control") == "no-store"
 
 
@@ -2579,7 +2619,14 @@ async def test_alerts_empty_index_is_empty_list_not_error(client, alerts_cache):
     assert res.status_code == 200
     body = res.json()
     assert body.pop("served_at") >= 1000.0
-    assert body == {"fetched_at": 1000.0, "alerts": []}
+    assert body == {
+        "fetched_at": 1000.0,
+        "alerts": [],
+        "systems": {
+            s: {"fetched_at": None, "ok": True, "retained_since": None}
+            for s in feeds.ALERT_FEED_URLS
+        },
+    }
 
 
 async def test_alerts_warming_before_first_poll_returns_503(client, alerts_cache):
@@ -3140,3 +3187,283 @@ async def test_security_headers_scoped_off_non_frontend(client):
     assert res.status_code == 200
     assert "content-security-policy" not in res.headers
     assert "permissions-policy" not in res.headers
+
+
+# ---------------- C2: per-system freshness and retention ----------------
+# The central contract defect: an aggregate endpoint treated partial failure as
+# success, published survivors only, and advanced ONE fetched_at, so a failed
+# subway group's trains silently vanished and retained railroad arrivals wore the
+# aggregate's fresh clock. These pin each half of the fix.
+
+C2_GROUPS = ("ACE", "NQRW")
+
+
+@pytest.fixture(autouse=True)
+def _c2_subway_stops(request):
+    """The subway refresher early-returns a 503 without static stops, so every C2
+    subway test needs them seeded before it can reach the fetch at all."""
+    if request.node.name.startswith("test_c2_"):
+        app_module.app.state.subway_stops = {
+            "127N": {"name": "Times Sq", "lat": 40.75, "lon": -73.98}
+        }
+        app_module.app.state.subway_stations = {
+            "127": {"name": "Times Sq", "lat": 40.75, "lon": -73.98}
+        }
+    yield
+
+
+def _subway_fetch(trains_by_group, failed, feed_ts=996.0):
+    """A fake fetch_subway_trains honest about which groups decoded: only decoding
+    groups appear in the by-group maps, which is what the real decoder does."""
+
+    async def fetch(stops_arg, client_arg):
+        arrivals_by_group = {
+            group: {
+                "127": {
+                    "Northbound": [
+                        {
+                            "route_id": g_trains[0]["route_id"],
+                            "trip_id": g_trains[0]["trip_id"],
+                            "arrival": 1200.0,
+                        }
+                    ]
+                }
+            }
+            for group, g_trains in trains_by_group.items()
+            if g_trains
+        }
+        flat = [t for g in trains_by_group.values() for t in g]
+        return flat, {}, feed_ts, failed, trains_by_group, arrivals_by_group
+
+    return fetch
+
+
+def _train(group, trip):
+    return {**TRAINS[0], "trip_id": trip, "route_id": group[0]}
+
+
+async def test_c2_partial_subway_outage_retains_the_failed_group_with_a_frozen_stamp(
+    client, cache, monkeypatch
+):
+    # A healthy poll for both groups, then ACE fails. ACE's trains must SURVIVE in
+    # the aggregate (pre-C2 they vanished with no explanation), stamped with ACE's
+    # own frozen fetched_at while NQRW's advances.
+    monkeypatch.setattr(app_module.time, "time", lambda: 1000.0)
+    monkeypatch.setattr(
+        app_module,
+        "fetch_subway_trains",
+        _subway_fetch({"ACE": [_train("ACE", "ace-1")], "NQRW": [_train("NQRW", "nqrw-1")]}, []),
+    )
+    await app_module._refresh_subways(app_module.app, client=None)
+    assert {t["trip_id"] for t in cache["subways"]["data"]} == {"ace-1", "nqrw-1"}
+    assert cache["subways"]["systems"]["ACE"] == {
+        "fetched_at": 1000.0,
+        "ok": True,
+        "retained_since": None,
+    }
+
+    # ACE goes down; NQRW keeps decoding with a NEW train.
+    monkeypatch.setattr(app_module.time, "time", lambda: 1060.0)
+    monkeypatch.setattr(
+        app_module,
+        "fetch_subway_trains",
+        _subway_fetch({"NQRW": [_train("NQRW", "nqrw-2")]}, ["ACE"]),
+    )
+    await app_module._refresh_subways(app_module.app, client=None)
+
+    # ACE's train is still served, NQRW's has been replaced.
+    assert {t["trip_id"] for t in cache["subways"]["data"]} == {"ace-1", "nqrw-2"}
+    systems = cache["subways"]["systems"]
+    assert systems["ACE"] == {"fetched_at": 1000.0, "ok": False, "retained_since": 1060.0}
+    assert systems["NQRW"] == {"fetched_at": 1060.0, "ok": True, "retained_since": None}
+    # The AGGREGATE advanced (the poll ran), which is exactly why the per-system
+    # block has to exist: on its own the envelope timestamp says nothing is wrong.
+    assert cache["subways"]["fetched_at"] == 1060.0
+    res = await client.get("/api/subways")
+    assert res.json()["systems"]["ACE"]["ok"] is False
+
+
+async def test_c2_retention_cap_ages_the_data_out_while_freshness_keeps_reporting(
+    client, cache, monkeypatch
+):
+    # Past FEED_RETENTION_MAX_S the retained data goes, because a ten-minute-old
+    # position rendered as current is a ghost. The system's block must STILL report
+    # the outage: absence plus an explanation, never silent absence.
+    import cache as cache_module
+
+    cap = float(cache_module.FEED_RETENTION_MAX_S)
+    monkeypatch.setattr(app_module.time, "time", lambda: 1000.0)
+    monkeypatch.setattr(
+        app_module,
+        "fetch_subway_trains",
+        _subway_fetch({"ACE": [_train("ACE", "ace-1")], "NQRW": [_train("NQRW", "nqrw-1")]}, []),
+    )
+    await app_module._refresh_subways(app_module.app, client=None)
+
+    # ACE first FAILS at 1060, so that is when its retention clock starts: the cap
+    # measures from the outage, not from the last healthy poll.
+    ace_down = _subway_fetch({"NQRW": [_train("NQRW", "nqrw-2")]}, ["ACE"])
+    monkeypatch.setattr(app_module, "fetch_subway_trains", ace_down)
+    monkeypatch.setattr(app_module.time, "time", lambda: 1060.0)
+    await app_module._refresh_subways(app_module.app, client=None)
+    assert cache["subways"]["systems"]["ACE"]["retained_since"] == 1060.0
+
+    monkeypatch.setattr(app_module.time, "time", lambda: 1060.0 + cap - 1)
+    await app_module._refresh_subways(app_module.app, client=None)
+    assert "ace-1" in {t["trip_id"] for t in cache["subways"]["data"]}  # just inside
+
+    monkeypatch.setattr(app_module.time, "time", lambda: 1060.0 + cap)
+    await app_module._refresh_subways(app_module.app, client=None)
+    data = {t["trip_id"] for t in cache["subways"]["data"]}
+    assert "ace-1" not in data  # aged out
+    assert data == {"nqrw-2"}
+    systems = cache["subways"]["systems"]
+    assert systems["ACE"]["ok"] is False  # still reporting
+    assert systems["ACE"]["retained_since"] is None  # nothing left to retain
+    assert systems["ACE"]["fetched_at"] == 1000.0  # and still dated honestly
+
+
+async def test_c2_a_healthy_but_EMPTY_group_replaces_rather_than_retains(
+    client, cache, monkeypatch
+):
+    # THE INVARIANT THE HANDOFF ASKED FOR. The decoders classify a feed as failed
+    # only at the exception boundary, so an HTTP 200 with zero entities is a
+    # SUCCESS: a group with nothing running (ordinary overnight) reports an empty
+    # list and must REPLACE its previous trains. Retaining on emptiness would
+    # resurrect last night's trains every night; the ferry precedent is the same
+    # rule with the opposite default, which is why this needs pinning.
+    monkeypatch.setattr(app_module.time, "time", lambda: 1000.0)
+    monkeypatch.setattr(
+        app_module,
+        "fetch_subway_trains",
+        _subway_fetch({"ACE": [_train("ACE", "ace-1")]}, []),
+    )
+    await app_module._refresh_subways(app_module.app, client=None)
+    assert {t["trip_id"] for t in cache["subways"]["data"]} == {"ace-1"}
+
+    # ACE decodes cleanly and reports NOTHING RUNNING: no failure, empty list.
+    monkeypatch.setattr(app_module.time, "time", lambda: 1060.0)
+    monkeypatch.setattr(app_module, "fetch_subway_trains", _subway_fetch({"ACE": []}, []))
+    await app_module._refresh_subways(app_module.app, client=None)
+    assert cache["subways"]["data"] == []  # replaced, NOT retained
+    assert cache["subways"]["systems"]["ACE"] == {
+        "fetched_at": 1060.0,  # it decoded, so it is fresh
+        "ok": True,
+        "retained_since": None,
+    }
+
+
+async def test_c2_recovery_replaces_retained_data_and_clears_retained_since(
+    client, cache, monkeypatch
+):
+    monkeypatch.setattr(app_module.time, "time", lambda: 1000.0)
+    monkeypatch.setattr(
+        app_module,
+        "fetch_subway_trains",
+        _subway_fetch({"ACE": [_train("ACE", "ace-1")]}, []),
+    )
+    await app_module._refresh_subways(app_module.app, client=None)
+    monkeypatch.setattr(app_module.time, "time", lambda: 1060.0)
+    monkeypatch.setattr(app_module, "fetch_subway_trains", _subway_fetch({}, ["ACE"]))
+    await app_module._refresh_subways(app_module.app, client=None)
+    assert cache["subways"]["systems"]["ACE"]["retained_since"] == 1060.0
+
+    # ACE comes back with fresh data.
+    monkeypatch.setattr(app_module.time, "time", lambda: 1120.0)
+    monkeypatch.setattr(
+        app_module,
+        "fetch_subway_trains",
+        _subway_fetch({"ACE": [_train("ACE", "ace-9")]}, []),
+    )
+    await app_module._refresh_subways(app_module.app, client=None)
+    assert {t["trip_id"] for t in cache["subways"]["data"]} == {"ace-9"}
+    assert cache["subways"]["systems"]["ACE"] == {
+        "fetched_at": 1120.0,
+        "ok": True,
+        "retained_since": None,
+    }
+
+
+async def test_c2_total_subway_failure_is_unchanged(client, cache, monkeypatch):
+    # C2 must have changed ONLY the partial path. A total failure still keeps
+    # last-known everything and records the poll error, exactly as before.
+    monkeypatch.setattr(app_module.time, "time", lambda: 1000.0)
+    monkeypatch.setattr(
+        app_module,
+        "fetch_subway_trains",
+        _subway_fetch({"ACE": [_train("ACE", "ace-1")]}, []),
+    )
+    await app_module._refresh_subways(app_module.app, client=None)
+    before = dict(cache["subways"])
+
+    async def boom(stops_arg, client_arg):
+        raise RuntimeError("All subway feeds failed: everything is down")
+
+    monkeypatch.setattr(app_module, "fetch_subway_trains", boom)
+    monkeypatch.setattr(app_module.time, "time", lambda: 2000.0)
+    await app_module._refresh_subways(app_module.app, client=None)
+    assert cache["subways"]["data"] == before["data"]  # last-known kept
+    assert cache["subways"]["fetched_at"] == before["fetched_at"]  # NOT advanced
+    assert cache["subways"]["systems"] == before["systems"]  # untouched
+    assert cache["subways"]["error"]["status"] == 502
+
+
+async def test_c2_railroad_arrivals_carry_their_own_systems_frozen_timestamp(
+    client, cache, monkeypatch
+):
+    # THE AUDIT'S SHARPEST SUB-CLAIM: a retained MNR arrival used to be stamped
+    # with the aggregate fetched_at, which a healthy LIRR keeps advancing, so the
+    # popup presented frozen countdowns as current.
+    app_module.app.state.railroad_stops = {
+        "MNR": {"1": {"name": "Grand Central", "lat": 40.75, "lon": -73.97}},
+        "LIRR": {"2": {"name": "Jamaica", "lat": 40.70, "lon": -73.80}},
+    }
+    mnr = {**RAILROADS[0], "system": "MNR", "trip_id": "mnr-1"}
+    lirr = {**RAILROADS[0], "system": "LIRR", "trip_id": "lirr-1"}
+
+    async def both(client_arg, stops_arg):
+        return [mnr, lirr], {"MNR": {"1": {"Trains": []}}, "LIRR": {"2": {"Trains": []}}}, 990.0, []
+
+    monkeypatch.setattr(app_module, "fetch_railroad_trains", both)
+    monkeypatch.setattr(app_module.time, "time", lambda: 1000.0)
+    await app_module._refresh_railroads(app_module.app, client=None)
+
+    async def lirr_only(client_arg, stops_arg):
+        return [lirr], {"LIRR": {"2": {"Trains": []}}}, 990.0, ["MNR"]
+
+    monkeypatch.setattr(app_module, "fetch_railroad_trains", lirr_only)
+    monkeypatch.setattr(app_module.time, "time", lambda: 1300.0)
+    await app_module._refresh_railroads(app_module.app, client=None)
+
+    # The aggregate advanced to 1300; MNR's own clock is still 1000.
+    assert cache["railroads"]["fetched_at"] == 1300.0
+    mnr_res = await client.get("/api/railroad-arrivals/MNR/1")
+    assert mnr_res.json()["fetched_at"] == 1000.0  # frozen, and honest about it
+    lirr_res = await client.get("/api/railroad-arrivals/LIRR/2")
+    assert lirr_res.json()["fetched_at"] == 1300.0  # fresh
+    # And MNR's train is retained rather than vanishing.
+    assert {t["trip_id"] for t in cache["railroads"]["data"]} == {"mnr-1", "lirr-1"}
+
+
+async def test_c2_alerts_envelope_mirrors_the_health_map(client, alerts_cache):
+    # The client never fetches /api/status, so the per-system block has to ride on
+    # /api/alerts. It is a projection of the health map C1 made truthful.
+    alerts_cache.update(alerts=[ALERT], fetched_at=1000.0, active=1, suppressed=0)
+    for system, health in alerts_cache["health"].items():
+        health["fresh_at"] = 1000.0
+    alerts_cache["health"]["MNR"].update(
+        fresh_at=900.0, retained_since=950.0, last_error={"status": 502, "detail": "down"}
+    )
+    body = (await client.get("/api/alerts")).json()
+    assert body["systems"]["subway"] == {
+        "fetched_at": 1000.0,
+        "ok": True,
+        "retained_since": None,
+    }
+    assert body["systems"]["MNR"] == {
+        "fetched_at": 900.0,  # fresh_at maps to fetched_at
+        "ok": False,  # derived from last_error
+        "retained_since": 950.0,
+    }
+    # No error TEXT leaks into the public envelope; detail stays on /api/status.
+    assert "detail" not in str(body["systems"]["MNR"])

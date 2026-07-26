@@ -183,24 +183,85 @@ def _decode_trains(raw: bytes, stops: dict[str, dict], feed_key: str, now: float
     return _decode_feed(raw, stops, feed_key, now)[0]
 
 
+def combine_group_arrivals(
+    arrivals_by_group: dict[str, dict[str, dict[str, list[dict]]]],
+) -> dict[str, dict[str, list[dict]]]:
+    """Flatten per-group arrival indexes into the one station index the endpoint
+    serves, sorted and capped.
+
+    Split out of _aggregate_feeds so the POLLER can rebuild the flat index after
+    substituting a failed group's retained arrivals for its (absent) fresh ones
+    (C2). There is exactly one implementation, so a healthy poll flattening only
+    fresh groups produces byte-identical output to the pre-C2 code, and a partial
+    poll differs only by which groups went in.
+
+    Cross-group trip dedup is applied here, in the caller's group order, matching
+    the original single pass: a trip appearing in two feeds is kept once, owned by
+    whichever group is seen first.
+    """
+    arrivals: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
+    arrival_trips: set[str] = set()
+    for group_arrivals in arrivals_by_group.values():
+        # Within one group a trip's arrivals at different stations are all kept,
+        # so trip ids are marked seen only after the whole group is merged.
+        group_trip_ids: set[str] = set()
+        for station_id, dirs in group_arrivals.items():
+            for direction, arrs in dirs.items():
+                for arr in arrs:
+                    if arr["trip_id"] in arrival_trips:
+                        continue
+                    arrivals[station_id][direction].append(arr)
+                    group_trip_ids.add(arr["trip_id"])
+        arrival_trips |= group_trip_ids
+    return _trim_arrivals(arrivals)
+
+
+def combine_group_trains(trains_by_group: dict[str, list[dict]]) -> list[dict]:
+    """Flatten per-group train lists into the one list the endpoint serves,
+    deduping trips across groups in the caller's group order. The train half of
+    combine_group_arrivals, and split out for the same reason."""
+    trains: list[dict] = []
+    seen_trips: set[str] = set()
+    for group_trains in trains_by_group.values():
+        for train in group_trains:
+            if train["trip_id"] in seen_trips:
+                continue
+            seen_trips.add(train["trip_id"])
+            trains.append(train)
+    return trains
+
+
 def _aggregate_feeds(
     results: list, stops: dict[str, dict], now: float
-) -> tuple[list[dict], dict[str, dict[str, list[dict]]], float | None, dict[str, str]]:
+) -> tuple[
+    list[dict],
+    dict[str, dict[str, list[dict]]],
+    float | None,
+    dict[str, str],
+    dict[str, list[dict]],
+    dict[str, dict[str, dict[str, list[dict]]]],
+]:
     """Decode every feed result, dedup trips across feeds, and merge arrivals.
 
     `results` is aligned with SUBWAY_FEED_URLS; each item is decoded protobuf
     bytes or an exception from the fetch. Returns
-    (trains, arrivals, feed_timestamp, feed_errors), where feed_timestamp is the
-    OLDEST content time across successfully decoded feeds and feed_errors maps
-    each failed feed-group key to its raw failure reason (empty when every feed
-    decoded).
+    (trains, arrivals, feed_timestamp, feed_errors, trains_by_group,
+    arrivals_by_group), where feed_timestamp is the OLDEST content time across
+    successfully decoded feeds and feed_errors maps each failed feed-group key to
+    its raw failure reason (empty when every feed decoded).
+
+    THE BY-GROUP VIEWS ARE THE SOURCE OF TRUTH and the flat ones are derived from
+    them (C2). The group dimension used to be discarded here, which is why a
+    failed group's trains could only vanish: nothing downstream knew which trains
+    had been its. Only a group that DECODED appears in the by-group maps, so a
+    key's absence means "did not decode this poll" and a key mapping to an empty
+    list means "decoded, nothing running" (see merge_system_generations, which
+    must key on the failure list rather than on either of those).
     """
-    trains: list[dict] = []
-    seen_trips: set[str] = set()
-    arrivals: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
-    arrival_trips: set[str] = set()
     timestamps: list[float] = []
     feed_errors: dict[str, str] = {}
+    trains_by_group: dict[str, list[dict]] = {}
+    arrivals_by_group: dict[str, dict[str, dict[str, list[dict]]]] = {}
     for feed_key, result in zip(SUBWAY_FEED_URLS, results):
         if isinstance(result, BaseException):
             feed_errors[feed_key] = str(result)
@@ -212,34 +273,33 @@ def _aggregate_feeds(
             continue
         if feed_ts is not None:
             timestamps.append(feed_ts)
-        for train in feed_trains:
-            if train["trip_id"] in seen_trips:
-                continue
-            seen_trips.add(train["trip_id"])
-            trains.append(train)
-        # Merge arrivals, skipping any trip already contributed by an earlier
-        # feed (insurance against a trip appearing in two feeds). Within one
-        # feed a trip's arrivals at different stations are all kept, so trip
-        # ids are marked seen only after the whole feed is merged.
-        feed_trip_ids: set[str] = set()
-        for station_id, dirs in feed_arrivals.items():
-            for direction, arrs in dirs.items():
-                for arr in arrs:
-                    if arr["trip_id"] in arrival_trips:
-                        continue
-                    arrivals[station_id][direction].append(arr)
-                    feed_trip_ids.add(arr["trip_id"])
-        arrival_trips |= feed_trip_ids
+        trains_by_group[feed_key] = feed_trains
+        arrivals_by_group[feed_key] = feed_arrivals
 
     feed_timestamp = min(timestamps) if timestamps else None
-    return trains, _trim_arrivals(arrivals), feed_timestamp, feed_errors
+    return (
+        combine_group_trains(trains_by_group),
+        combine_group_arrivals(arrivals_by_group),
+        feed_timestamp,
+        feed_errors,
+        trains_by_group,
+        arrivals_by_group,
+    )
 
 
 async def fetch_subway_trains(
     stops: dict[str, dict], client: httpx.AsyncClient
-) -> tuple[list[dict], dict[str, dict[str, list[dict]]], float | None, list[str]]:
+) -> tuple[
+    list[dict],
+    dict[str, dict[str, list[dict]]],
+    float | None,
+    list[str],
+    dict[str, list[dict]],
+    dict[str, dict[str, dict[str, list[dict]]]],
+]:
     """Fetch all subway feeds concurrently; return (train placements,
-    per-station arrivals index, feed_timestamp, failed_feeds).
+    per-station arrivals index, feed_timestamp, failed_feeds, trains_by_group,
+    arrivals_by_group).
 
     failed_feeds is the sorted list of feed-group keys that failed this poll (a
     fetch error or an undecodable protobuf), empty on a fully successful poll.
@@ -247,6 +307,10 @@ async def fetch_subway_trains(
     whole line group. Individual feed failures are logged and skipped so one bad
     feed doesn't take out the endpoint; this raises only when every feed fails.
     The caller owns the client (the polling task holds one for its lifetime).
+
+    The last two elements are the by-group views (C2). They are what lets the
+    poller retain a failed group's data instead of publishing survivors only; the
+    first two remain exactly what they always were, derived from them.
     """
     now = time.time()
 
@@ -260,7 +324,9 @@ async def fetch_subway_trains(
         return_exceptions=True,
     )
 
-    trains, arrivals, feed_timestamp, feed_errors = _aggregate_feeds(results, stops, now)
+    trains, arrivals, feed_timestamp, feed_errors, trains_by_group, arrivals_by_group = (
+        _aggregate_feeds(results, stops, now)
+    )
     if feed_errors:
         logger.warning(
             "%d of %d subway feeds failed: %s",
@@ -271,4 +337,11 @@ async def fetch_subway_trains(
     if len(feed_errors) == len(SUBWAY_FEED_URLS):
         joined = "; ".join(f"{key}: {reason}" for key, reason in feed_errors.items())
         raise RuntimeError(f"All subway feeds failed: {joined}")
-    return trains, arrivals, feed_timestamp, sorted(feed_errors)
+    return (
+        trains,
+        arrivals,
+        feed_timestamp,
+        sorted(feed_errors),
+        trains_by_group,
+        arrivals_by_group,
+    )

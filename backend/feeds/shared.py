@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -279,3 +279,66 @@ def carry_forward_prev(
             "anchor": anchor,
         }
     return new_positions
+
+
+def merge_system_generations(
+    fresh_by_system: dict[str, list[dict]],
+    prev_by_system: dict[str, list[dict]] | None,
+    failed_systems: Iterable[str],
+    prev_retained_since: Mapping[str, float],
+    now: float,
+    max_retention_s: float,
+) -> tuple[dict[str, list[dict]], dict[str, float]]:
+    """Merge one poll's per-system items with the previous poll's, carrying a
+    FAILED system's items forward instead of letting them vanish from the
+    aggregate (C2). The direct sibling of merge_alert_generations, deliberately
+    the same shape so the two retention stories read alike.
+
+    Pure and clock-injected: `now` and `prev_retained_since` are passed in, never
+    read from a wall clock or module state. Returns (merged_by_system,
+    retained_since), where retained_since maps each system CURRENTLY served from
+    carried-forward items to the instant its retention began.
+
+    RETENTION KEYS ON MEMBERSHIP IN failed_systems, NEVER ON AN EMPTY LIST, and
+    that distinction is the whole correctness of this function. The decoders
+    classify a feed as failed ONLY at the exception boundary (a fetch error or an
+    undecodable protobuf); an HTTP 200 carrying a well-formed zero-entity feed is
+    a SUCCESS. So a system that genuinely has no vehicles running right now, which
+    is ordinary overnight, reports an empty list on a healthy poll and MUST have
+    its previous items replaced, not retained. Keying on emptiness would resurrect
+    last night's trains every night. Keying on key-absence would be just as wrong:
+    a railroad system that decodes but has no static stops loaded contributes no
+    entries while never appearing in failed_systems.
+
+    Per system:
+      - NOT failed this poll: its items come exclusively from fresh_by_system,
+        replacing wholesale, including when that means replacing with nothing.
+      - failed this poll: its items are carried forward from prev_by_system,
+        capped at max_retention_s measured from when the system FIRST went down
+        (prev_retained_since, or now for a newly-failed one). Past the cap the
+        items are dropped and only the caller's per-system freshness block still
+        reports the outage.
+
+    The items are NOT copied here: this returns the same dicts it was handed. A
+    caller that mutates merged items in place (the anchor carry does) must copy
+    them first, or it will edit objects a previous response already exposed.
+    """
+    failed = set(failed_systems)
+    merged: dict[str, list[dict]] = {
+        system: items for system, items in fresh_by_system.items() if system not in failed
+    }
+
+    retained_since: dict[str, float] = {}
+    for system in failed:
+        # Explicit None check, not truthiness: a retention-start timestamp can be
+        # 0.0 (epoch), which `or now` would wrongly reset every poll.
+        started = prev_retained_since.get(system)
+        if started is None:
+            started = now
+        if now - started >= max_retention_s:
+            continue  # capped: drop this system's items; freshness still reports it
+        carried = (prev_by_system or {}).get(system) or []
+        if carried:
+            merged[system] = carried
+            retained_since[system] = started
+    return merged, retained_since

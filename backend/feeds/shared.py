@@ -329,7 +329,11 @@ def merge_system_generations(
     }
 
     retained_since: dict[str, float] = {}
-    for system in failed:
+    # SORTED, not set order. Iterating the set inserted retained systems into `merged`
+    # in a hash-randomized order, and the combine helpers dedup a cross-group trip in
+    # dict order, so which group owned a duplicated trip (and which arrivals won a
+    # trim tie) varied between processes. Sorting makes the merge deterministic.
+    for system in sorted(failed):
         # Explicit None check, not truthiness: a retention-start timestamp can be
         # 0.0 (epoch), which `or now` would wrongly reset every poll.
         started = prev_retained_since.get(system)
@@ -337,8 +341,60 @@ def merge_system_generations(
             started = now
         if now - started >= max_retention_s:
             continue  # capped: drop this system's items; freshness still reports it
+        # RECORDED WHETHER OR NOT ANYTHING WAS CARRIED. This used to sit inside
+        # `if carried:`, which made retained_since mean "we are serving carried
+        # items" and broke the clock for any system that went down holding an EMPTY
+        # list: nothing was carried, so no clock was recorded, so the next poll saw
+        # no previous start and restarted from `now` forever. A caller merging two
+        # kinds of data for one system (trains and arrivals) then got two different
+        # answers, and the cap could never fire for the kind that had been empty.
+        # The field now means "this system has been failing since X and is still
+        # inside the retention window", which is a property of the SYSTEM and so is
+        # the same for every kind of data merged under it.
+        retained_since[system] = started
         carried = (prev_by_system or {}).get(system) or []
         if carried:
             merged[system] = carried
-            retained_since[system] = started
     return merged, retained_since
+
+
+def drop_expired_arrivals(
+    arrivals_by_system: dict[str, dict[str, dict[str, list[dict]]]],
+    now: float,
+    only: Iterable[str],
+) -> dict[str, dict[str, dict[str, list[dict]]]]:
+    """Drop arrivals whose predicted time has already passed, per system.
+
+    REQUIRED WHENEVER ARRIVALS ARE RETAINED, and the reason is a nasty interaction
+    rather than mere tidiness. A retained system's arrivals keep their ORIGINAL
+    absolute times, and _trim_arrivals sorts each station bucket soonest-first
+    before capping it at ARRIVALS_PER_DIRECTION. An expired time is the smallest
+    number in the bucket, so every stale retained row sorts AHEAD of every live one
+    and fills the cap: a single failed feed group could evict all the fresh
+    arrivals from a station it shares with healthy groups, leaving a rider looking
+    at six departures that already happened and none of the ones that have not.
+    Pruning first means a retained bucket can only ever pad out what is left after
+    the live rows, never displace them.
+
+    APPLIED ONLY TO THE SYSTEMS IN `only` (the retained ones). It must NOT touch
+    fresh data: the decoders deliberately keep a stop up to a minute past its time
+    (a train dwelling or just-departed is still the right answer for that station),
+    and a blanket prune here would silently override that grace for every system.
+    """
+    retained = set(only)
+    pruned: dict[str, dict[str, dict[str, list[dict]]]] = {}
+    for system, stations in arrivals_by_system.items():
+        if system not in retained:
+            pruned[system] = stations
+            continue
+        kept_stations: dict[str, dict[str, list[dict]]] = {}
+        for station_id, buckets in (stations or {}).items():
+            kept_buckets = {
+                direction: [a for a in arrs if a.get("arrival") is None or a["arrival"] >= now]
+                for direction, arrs in buckets.items()
+            }
+            kept_buckets = {d: arrs for d, arrs in kept_buckets.items() if arrs}
+            if kept_buckets:
+                kept_stations[station_id] = kept_buckets
+        pruned[system] = kept_stations
+    return pruned

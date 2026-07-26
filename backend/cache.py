@@ -38,6 +38,24 @@ FEED_STALE_AFTER_S = 90
 # confident wrong position.
 FEED_RETENTION_MAX_S = 600
 
+# WHETHER A FAILED SUBSYSTEM'S DATA IS ACTUALLY CARRIED FORWARD. Off in C2 PR1,
+# ON in PR2, and the split is deliberate rather than timid.
+#
+# Retention is only honest once the client RENDERS the retained data as stale,
+# which is PR2's job (per-system dimming plus the "as of Xm ago" line, driven by
+# the SystemFreshness blocks this PR ships). Turning it on here would mean a
+# window where a failed group's trains sit on the map at full opacity with no
+# staleness marker, because nothing reads the blocks yet: the map would gain
+# ghost trains where it previously showed honest absence, which is worse than the
+# defect being fixed. The retention cap's own justification in FEED_RETENTION_MAX_S
+# above is explicitly conditional on the data being "rendered AS stale".
+#
+# With this off, PR1 is genuinely dark: the per-system freshness blocks are
+# published (so PR2 has a contract to build against and an operator can already
+# see the truth on /api/status), while the DATA behaves exactly as it did before.
+# PR2 flips this to True in the same change that starts rendering it.
+FEED_RETENTION_ENABLED = False
+
 
 # THE THREE TIMESTAMPS (the freshness contract, canonical description; the
 # models and the frontend reference this by name rather than restating it):

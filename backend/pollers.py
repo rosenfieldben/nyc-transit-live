@@ -26,7 +26,12 @@ from fastapi import FastAPI
 from google.protobuf.message import DecodeError
 
 import main
-from cache import FEED_RETENTION_MAX_S, _note_failure, _sanitize_upstream
+from cache import (
+    FEED_RETENTION_ENABLED,
+    FEED_RETENTION_MAX_S,
+    _note_failure,
+    _sanitize_upstream,
+)
 from feeds import (
     ALERT_RETENTION_MAX_S,
     RAILROAD_FEED_URLS,
@@ -34,6 +39,7 @@ from feeds import (
     carry_forward_prev,
     combine_group_arrivals,
     combine_group_trains,
+    drop_expired_arrivals,
     match_path_identities,
     merge_alert_generations,
     merge_system_generations,
@@ -128,6 +134,7 @@ def _merge_feed_systems(
     fresh_by_system: dict,
     failed_systems: list[str],
     now: float,
+    retain: bool | None = None,
 ) -> tuple[dict, dict[str, float]]:
     """Merge one poll's per-system data with the previous poll's, retaining a
     failed system's data (C2). Thin glue over the pure merge_system_generations:
@@ -151,6 +158,10 @@ def _merge_feed_systems(
     and the retained trains would silently acquire fresh anchors on every poll
     they survived, which is the opposite of frozen.
     """
+    # Resolved HERE, not as a parameter default: a default binds at definition time,
+    # so the flag's value would be frozen at import and no override could reach it.
+    if retain is None:
+        retain = FEED_RETENTION_ENABLED
     prev_retained = {
         system: block["retained_since"]
         for system, block in (entry.get("systems") or {}).items()
@@ -158,7 +169,7 @@ def _merge_feed_systems(
     }
     merged, retained_since = merge_system_generations(
         fresh_by_system,
-        prev_by_system,
+        prev_by_system if retain else {},
         failed_systems,
         prev_retained,
         now,
@@ -170,6 +181,29 @@ def _merge_feed_systems(
         for system, items in merged.items()
     }
     return merged, retained_since
+
+
+def _mark_all_systems_failed(entry: dict) -> None:
+    """Flip every per-system `ok` to False after a TOTAL poll failure.
+
+    The total-failure paths return early, keeping the whole last-known envelope
+    (pre-C2 behavior, deliberately unchanged), so without this the per-system block
+    that envelope carries still reports ok: True for every system when not one of
+    them decoded. The aggregate error and the frozen aggregate fetched_at already
+    say the poll failed; this makes the per-system half say it too, which is the
+    half the client reads.
+
+    Each system's fetched_at is left alone: it is already honest ("this system's
+    data is from then"), and a total outage does not change when the data was
+    fetched. retained_since is left alone because no merge ran on this path, and
+    restarting that clock here would be the same defect the write-ordering comments
+    in the refreshers guard against.
+
+    A no-op before the first successful poll: with no block there is nothing to
+    correct, and the warming cache serves 503 rather than an envelope.
+    """
+    for block in (entry.get("systems") or {}).values():
+        block["ok"] = False
 
 
 def _system_freshness(
@@ -234,6 +268,7 @@ async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
             "ok": 0,
             "failed": sorted(SUBWAY_FEED_URLS),
         }
+        _mark_all_systems_failed(entry)
         _note_failure(entry, 502, _sanitize_upstream(exc))
         return
     except httpx.HTTPError as exc:
@@ -242,6 +277,7 @@ async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
             "ok": 0,
             "failed": sorted(SUBWAY_FEED_URLS),
         }
+        _mark_all_systems_failed(entry)
         _note_failure(entry, 502, f"Upstream MTA feed error: {_sanitize_upstream(exc)}")
         return
     # Partial failures still return data, so without this a vanished line group
@@ -271,9 +307,18 @@ async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
         now,
     )
     entry["trains_by_system"] = merged_trains_by_group
+    # Prune arrivals whose time has already passed BEFORE combining. A retained
+    # group's rows keep their original absolute times, and the trim sorts
+    # soonest-first, so an expired row is the smallest number in its bucket and
+    # would fill the per-direction cap ahead of every live arrival: one failed
+    # group could evict the healthy groups' fresh rows from a shared station.
+    merged_arrivals_by_group = drop_expired_arrivals(merged_arrivals_by_group, now, failed_feeds)
     app.state.subway_arrivals_by_system = merged_arrivals_by_group
     trains = combine_group_trains(merged_trains_by_group)
     arrivals = combine_group_arrivals(merged_arrivals_by_group)
+    # AFTER both merges, never between them: this write resets retained_since, and
+    # a merge running afterwards would read the reset value as "no previous
+    # retention", restart the clock at `now`, and never reach the cap.
     entry["systems"] = _system_freshness(
         entry.get("systems"), SUBWAY_FEED_URLS, failed_feeds, retained_since, now
     )
@@ -303,6 +348,7 @@ async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
             "ok": 0,
             "failed": sorted(RAILROAD_FEED_URLS),
         }
+        _mark_all_systems_failed(entry)
         _note_failure(entry, 502, _sanitize_upstream(exc))
         return
     except httpx.HTTPError as exc:
@@ -311,6 +357,7 @@ async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
             "ok": 0,
             "failed": sorted(RAILROAD_FEED_URLS),
         }
+        _mark_all_systems_failed(entry)
         _note_failure(entry, 502, f"Upstream MTA feed error: {_sanitize_upstream(exc)}")
         return
     # Partial failures still return data; record which systems dropped so
@@ -338,6 +385,29 @@ async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
     )
     entry["trains_by_system"] = merged_by_system
     trains = [train for system_trains in merged_by_system.values() for train in system_trains]
+    # The arrivals merge runs HERE, before the systems write below, and that
+    # ordering is load-bearing. The write resets retained_since; a merge running
+    # after it would read the reset value as "no previous retention", restart the
+    # clock at `now` every poll, and never reach the cap. Same rule as the subway
+    # refresher, which happened to have it right by accident.
+    #
+    # Keys on the FAILURE LIST, not on a system's absence from arrivals_by_system: a
+    # system that decoded but has no static stops loaded contributes no arrivals
+    # while never appearing in failed_feeds, and key-absence retention would serve
+    # its stale arrivals forever while /api/status counted it healthy.
+    merged_arrivals, _ = _merge_feed_systems(
+        entry,
+        getattr(app.state, "railroad_arrivals", None) or {},
+        arrivals_by_system,
+        failed_feeds,
+        now,
+        # NOT gated: railroad arrivals already retained per system BEFORE C2 (the
+        # old code updated only the decoded systems' keys), so switching this off
+        # with the flag would REGRESS main rather than preserve it. C2 only makes
+        # that existing retention bounded, deterministic and honestly dated.
+        retain=True,
+    )
+    app.state.railroad_arrivals = drop_expired_arrivals(merged_arrivals, now, failed_feeds)
     entry["systems"] = _system_freshness(
         entry.get("systems"), RAILROAD_FEED_URLS, failed_feeds, retained_since, now
     )
@@ -365,22 +435,6 @@ async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
         feed_timestamp=feed_timestamp if feed_timestamp is not None else entry["feed_timestamp"],
         error=None,
     )
-    # Replace only the systems that decoded this poll, so a transiently-failed
-    # system's last-known arrivals survive while the others refresh. Same "a failed
-    # poll never blanks a working index" rule as the subway arrivals, applied per
-    # system since the two are independent. NOTE this deliberately keys on the
-    # FAILURE LIST, not on a system's absence from arrivals_by_system: a system that
-    # decoded but has no static stops loaded contributes no arrivals while never
-    # appearing in failed_feeds, and key-absence retention would silently serve its
-    # stale arrivals forever while /api/status counted it healthy.
-    merged_arrivals, _ = _merge_feed_systems(
-        entry,
-        getattr(app.state, "railroad_arrivals", None) or {},
-        arrivals_by_system,
-        failed_feeds,
-        now,
-    )
-    app.state.railroad_arrivals = merged_arrivals
 
 
 async def _refresh_path(app: FastAPI, client: httpx.AsyncClient) -> None:

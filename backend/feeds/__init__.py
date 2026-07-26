@@ -93,6 +93,7 @@ from feeds.shared import (
     _trim_arrivals,
     _trip_start_ts,
     carry_forward_prev,
+    drop_expired_arrivals,
     logger,
     merge_system_generations,
 )
@@ -138,6 +139,7 @@ __all__ = [
     "combine_group_arrivals",
     "combine_group_trains",
     "merge_system_generations",
+    "drop_expired_arrivals",
     "logger",
     "VEHICLE_POSITIONS_URL",
     "fetch_vehicle_positions",

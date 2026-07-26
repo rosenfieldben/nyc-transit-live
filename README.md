@@ -497,8 +497,16 @@ broken startup, so it fails.
 A degraded alert system stays a `WARN` while the backend is still carrying its
 alerts forward, and becomes a `FAIL` once that retention horizon has passed and
 riders are genuinely seeing nothing for it. The alerts poll's own age is checked
-first and on the same band, because on a total alerts outage the per-system health
-map freezes at its last healthy values and would otherwise read green.
+first and on the same band. That ordering originally existed because a total
+outage froze the per-system health map at its last healthy values, so the
+per-system data alone would have read green; the backend no longer freezes it, and
+`degraded_systems` is truthful during a total outage. The ordering stays for two
+reasons that outlive the fix: the poll age dates every per-system field below it,
+and it is the one signal that still moves when the poller has stopped running
+altogether, which is a shape the per-system fields cannot show. A never-polled
+index is a `WARN` (a warming deployment), except when every system is
+simultaneously degraded, which means the deployment has never once reached an
+alert feed and cannot heal on its own: that is a `FAIL`.
 
 ## Build phases
 

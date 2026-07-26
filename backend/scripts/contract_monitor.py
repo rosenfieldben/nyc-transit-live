@@ -1255,14 +1255,23 @@ def _check_production_alerts(data: dict) -> Result:
     fresh_at and retained_since are stamped by the deployment, so mixing in the
     monitor's clock would fold host skew into a 30 minute threshold.
 
-    THE PER-SYSTEM FIELDS ARE NOT ENOUGH ON THEIR OWN, which is why the poll-level
-    age is checked first. On the all-feeds-failed path, pollers._refresh_alerts
-    records the poll error and RETURNS before it touches `health`, so every
-    per-system field stays frozen at its last healthy value: degraded_systems comes
-    back empty and every system still looks freshly decoded. A total alerts outage
-    would therefore read PASS off the per-system data alone, which is the worst
-    failure available to a monitor. The poll's own age_s and last_error are the only
-    fields that move in that case, so they are the first thing consulted."""
+    THE POLL-LEVEL AGE IS CHECKED FIRST, and the reason has CHANGED. It used to be
+    that the per-system map could not be trusted at all during a total outage:
+    pollers._refresh_alerts recorded the poll error and RETURNED before touching
+    `health`, so every per-system field stayed frozen at its last healthy value,
+    degraded_systems came back empty, and a total outage read PASS off the per-system
+    data alone. C1 fixed that at the source; the app now marks every system failed on
+    that path, so degraded_systems is truthful during a total outage and is in fact the
+    most informative thing in the payload, because it names which feeds are down.
+
+    The ordering stays, for two reasons that survive the fix. First, the poll age DATES
+    the whole payload: per-system fields describe the last poll that decoded, so
+    knowing how old that poll is comes before reading anything it produced. Second it
+    is defence in depth against a shape this function cannot otherwise see, a poller
+    that has stopped running entirely, where every field including health is frozen by
+    definition. Do not delete this check on the grounds that health is now truthful:
+    health being truthful is a property of the CURRENT app, and this monitor exists
+    precisely to catch a deployment that is not behaving as the current app should."""
     alerts_obj = data.get("alerts")
     if not isinstance(alerts_obj, dict):
         # The app always emits this object; a missing or wrong-typed one is a payload
@@ -1273,20 +1282,40 @@ def _check_production_alerts(data: dict) -> Result:
     systems_raw = alerts_obj.get("systems")
     systems = systems_raw if isinstance(systems_raw, dict) else {}
 
-    # POLL-LEVEL first: this is what catches a TOTAL outage, where the per-system map
-    # is frozen and looks healthy. Same two-edge band as the feeds, for the same
-    # anti-flapping reason.
+    # POLL-LEVEL first: it dates every per-system field below, and it is the one signal
+    # that still moves if the poller has stopped entirely. Same two-edge band as the
+    # feeds, for the same anti-flapping reason.
     poll_age = alerts_obj.get("age_s")
     if poll_age is None:
-        return Result("production:alerts", WARN, "alerts have never polled")
-    if isinstance(poll_age, (int, float)) and not isinstance(poll_age, bool):
-        if poll_age < 0 or poll_age > PRODUCTION_FEED_FAIL_S:
+        # NEVER POLLED. On its own this is a warming deployment, which is why it warns.
+        # But a never-polled index whose systems are ALL degraded is not warming, it is
+        # a deployment that has never once reached an alert feed: a revoked key, a DNS
+        # failure, rotated upstream URLs. That cannot heal on its own and must not sit
+        # at WARN forever. (This escalation only fires on a payload the post-C1 app
+        # produces; an older deployment reports no per-system errors here and still
+        # warns, so it cannot raise a false alarm during a rollout.)
+        if degraded and len(degraded) == len(systems) and systems:
             return Result(
                 "production:alerts",
                 FAIL,
-                f"alerts poll is {poll_age}s old (past {PRODUCTION_FEED_FAIL_S:.0f}s), so the "
-                "per-system health below is frozen and cannot be trusted",
+                "alerts have never polled AND every system is degraded ("
+                + ", ".join(str(s) for s in sorted(degraded))
+                + "), so this deployment has never reached an alert feed",
             )
+        return Result("production:alerts", WARN, "alerts have never polled")
+    if isinstance(poll_age, (int, float)) and not isinstance(poll_age, bool):
+        if poll_age < 0 or poll_age > PRODUCTION_FEED_FAIL_S:
+            # The message names the per-system detail rather than telling the operator
+            # to distrust it. Before C1 the health map really was frozen here and the
+            # message said so; now it is truthful and is the fastest route to WHICH
+            # feeds are down, so pointing away from it was actively unhelpful.
+            detail = (
+                f"alerts poll is {poll_age}s old (past {PRODUCTION_FEED_FAIL_S:.0f}s), so the "
+                "alert index is not being refreshed"
+            )
+            if degraded:
+                detail += "; degraded: " + ", ".join(str(s) for s in sorted(degraded))
+            return Result("production:alerts", FAIL, detail)
     else:
         return Result("production:alerts", FAIL, f"alerts age_s is unusable ({poll_age!r})")
 

@@ -1209,16 +1209,44 @@ def test_production_degraded_system_stale_without_retention_clock_is_fail():
 
 
 def test_production_total_alerts_outage_is_fail_not_pass():
-    # REVIEW FIX (was a high-severity blind spot): on the all-feeds-failed path,
-    # pollers._refresh_alerts records the poll error and RETURNS before touching
-    # `health`, so degraded_systems comes back EMPTY and every per-system field stays
-    # frozen at its last healthy value. Reading only the per-system data therefore
-    # reported PASS during a total alerts outage. The poll's own age_s is the only
-    # field that moves, so it is checked first.
+    # C1b REWROTE THIS TEST, which had stopped guarding anything real. It used to build
+    # degraded_systems: [] with every per-system last_error null, on the premise that
+    # the app froze its health map during a total outage. C1 removed that premise: the
+    # app now marks every system failed, so this test was pinning a payload no
+    # deployment can emit any more, while reading like the total-outage regression test.
+    #
+    # The invariant that still matters is the ordering: a poll that has not succeeded
+    # in a day is a FAIL on the POLL AGE, before and regardless of anything the
+    # per-system fields say. So the payload here is the one the app really produces.
     alerts = {
         "age_s": 99000.0,  # the poll itself has not succeeded in a day
         "last_error": {"status": 502, "detail": "alert feed unavailable"},
-        "degraded_systems": [],  # frozen: looks healthy
+        "degraded_systems": ["LIRR", "MNR", "bus", "ferry", "subway"],
+        "systems": {
+            s: {"fresh_at": 1000.0, "retained_since": 1000.0, "last_error": {"status": 502}}
+            for s in ("subway", "bus", "LIRR", "MNR", "ferry")
+        },
+    }
+    fetch = FakeFetcher(
+        {"https://app.example/api/status": _status_json(alerts=alerts, served_at=100000.0)}
+    )
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
+    alertline = next(r for r in results if r.name == "production:alerts")
+    assert alertline.status == cm.FAIL
+    assert "not being refreshed" in alertline.detail  # names the real problem
+    # And it POINTS AT the per-system detail rather than telling the operator to
+    # distrust it: naming which feeds are down is the fastest route to a diagnosis.
+    assert "degraded: LIRR, MNR, bus, ferry, subway" in alertline.detail
+
+
+def test_production_stale_poll_still_fails_when_no_system_is_degraded():
+    # The poll-age check must not become conditional on the per-system data. A poller
+    # that has stopped running leaves BOTH frozen, so a stale poll age with an empty
+    # degraded list is exactly the shape that needs catching, and it must still FAIL
+    # (just without a degraded list to name).
+    alerts = {
+        "age_s": 99000.0,
+        "degraded_systems": [],
         "systems": {"subway": {"fresh_at": 1000.0, "retained_since": None, "last_error": None}},
     }
     fetch = FakeFetcher(
@@ -1227,7 +1255,49 @@ def test_production_total_alerts_outage_is_fail_not_pass():
     results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
     alertline = next(r for r in results if r.name == "production:alerts")
     assert alertline.status == cm.FAIL
-    assert "frozen" in alertline.detail  # and it says WHY the per-system data lied
+    assert "not being refreshed" in alertline.detail
+    assert "degraded:" not in alertline.detail  # nothing to name, so nothing claimed
+
+
+def test_production_never_polled_with_every_system_degraded_is_fail():
+    # C1b ADDITION. A never-polled index is normally a warming deployment (WARN). But
+    # never-polled AND every system degraded is a deployment that has never once
+    # reached an alert feed (revoked key, DNS failure, rotated URLs). That cannot heal
+    # on its own, so it must not sit at WARN indefinitely. This shape only became
+    # observable once C1 made the app write health on the never-filled path.
+    alerts = {
+        "age_s": None,  # never polled
+        "degraded_systems": ["LIRR", "MNR", "bus", "ferry", "subway"],
+        "systems": {
+            s: {"fresh_at": None, "retained_since": None, "last_error": {"status": 502}}
+            for s in ("subway", "bus", "LIRR", "MNR", "ferry")
+        },
+    }
+    fetch = FakeFetcher({"https://app.example/api/status": _status_json(alerts=alerts)})
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
+    alertline = next(r for r in results if r.name == "production:alerts")
+    assert alertline.status == cm.FAIL
+    assert "never reached an alert feed" in alertline.detail
+
+
+def test_production_never_polled_while_still_warming_is_only_warn():
+    # The other side of that line, and the reason the escalation is conditional: a
+    # genuinely warming deployment reports no per-system errors yet. It must stay WARN,
+    # or every cold start would go red. An older deployment predating C1 reports this
+    # same shape during a total outage, so a rollout cannot raise a false alarm either.
+    alerts = {
+        "age_s": None,
+        "degraded_systems": [],
+        "systems": {
+            s: {"fresh_at": None, "retained_since": None, "last_error": None}
+            for s in ("subway", "bus", "LIRR", "MNR", "ferry")
+        },
+    }
+    fetch = FakeFetcher({"https://app.example/api/status": _status_json(alerts=alerts)})
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
+    alertline = next(r for r in results if r.name == "production:alerts")
+    assert alertline.status == cm.WARN
+    assert "never polled" in alertline.detail
 
 
 def test_production_degraded_system_that_never_decoded_is_fail():

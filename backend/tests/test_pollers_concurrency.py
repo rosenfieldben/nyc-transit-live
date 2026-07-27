@@ -166,12 +166,17 @@ async def test_c4_a_failing_child_does_not_orphan_its_slow_sibling(cache, monkey
 
 
 async def _wait_for(predicate, turns: int = 500) -> None:
-    """Yield until `predicate` holds. Bounded so a broken predicate fails the test
-    through the caller's wait_for rather than hanging."""
+    """Yield until `predicate` holds, then return; RAISE if it never does.
+
+    It used to return silently on exhaustion, which made every caller's
+    `await asyncio.wait_for(_wait_for(...))` assert nothing at all: a cycle that
+    never completed looked identical to one that did.
+    """
     for _ in range(turns):
         if predicate():
             return
         await asyncio.sleep(0)
+    raise AssertionError(f"condition never held after {turns} event-loop turns")
 
 
 async def test_c4_shutdown_cancels_children_and_is_not_swallowed(cache, monkeypatch):
@@ -253,7 +258,10 @@ async def test_c4_alerts_cycle_joins_its_child_and_survives_its_failure(monkeypa
     assert entry["error"]["status"] == 500
     assert "alerts" in entry["error"]["detail"]
     assert calls[0] == 0
-    assert clock.pending_children[0] == []  # nothing left over from the generation
+    # No pending-children assertion here, deliberately: _poll_alerts creates no tasks
+    # (its single child is awaited directly), so such a check could never fail and
+    # would only look like coverage. The join it has is the await itself, which is
+    # what `clock.cycles == 0` above proves.
 
 
 # ---------------- the ferry pair ----------------
@@ -345,7 +353,13 @@ async def test_c4_ferry_pair_records_exactly_one_sanitized_failure(cache, monkey
     assert "Upstream NYC Ferry feed error" in error["detail"]
     assert "500" in error["detail"]
     assert "nycferry.example" not in error["detail"]  # sanitized
-    assert "ExceptionGroup" not in error["detail"]
+    # The detail is ONE cause's message, not a summary of both legs. Asserting the
+    # absence of the token "ExceptionGroup" would have been theatre: recorded details
+    # are built from str(exc), where that token never appears even for a real group.
+    # The endpoint names DO appear in a group's message, so their absence is the
+    # assertion with teeth.
+    assert FERRY_VEHICLE_ENDPOINT not in error["detail"]
+    assert error["detail"].count("Server error") == 1
     assert cache["ferry"]["data"] == [{"id": "H1"}]  # last-known kept
     assert client.cancelled == [FERRY_VEHICLE_ENDPOINT]  # sibling cancelled, not leaked
 
@@ -403,3 +417,103 @@ async def test_c4_a_child_that_escapes_the_wrapper_still_cannot_orphan_its_sibli
     assert isinstance(raised.value.exceptions[0], _NotAnException)
     assert sibling_cancelled.is_set()  # cancelled, not left running
     assert clock.cycles == 0  # and it never reached the sleep
+
+
+async def test_c4_an_unclassified_failure_degrades_every_operator_surface(cache, monkeypatch):
+    # REVIEW FIX. Recording entry["error"] alone was a false green: /api/status builds
+    # degraded_systems from the PER-SYSTEM last_error and never reads entry["error"],
+    # C2's blocks kept reporting ok: true so the client would not dim, and the
+    # contract monitor reads neither. A source could stop polling entirely while
+    # every operator surface stayed healthy, which is the exact shape this audit arc
+    # exists to delete.
+    clock = _CycleClock(pollers.POLL_INTERVAL_S)
+    monkeypatch.setattr(pollers.asyncio, "sleep", clock.sleep)
+
+    # Seed the two aggregate envelopes as healthy, the way a good poll leaves them.
+    cache["subways"]["systems"] = {
+        group: {"fetched_at": 1000.0, "ok": True, "retained_since": None, "routes": ["A"]}
+        for group in ("ACE", "BDFM")
+    }
+    app_module.app.state.subway_feed_health = {"total": 8, "ok": 8, "failed": []}
+    app_module.app.state.ferry_feed_health = {"total": 1, "ok": 1, "failed": []}
+
+    async def unclassified(app, client):
+        raise TypeError("a bug in our own code, not the upstream's")
+
+    async def idle(app, client):
+        return None
+
+    monkeypatch.setattr(pollers, "_refresh_subways", unclassified)
+    monkeypatch.setattr(pollers, "_refresh_ferry", unclassified)
+    for name in ("_refresh_buses", "_refresh_railroads", "_refresh_path"):
+        monkeypatch.setattr(pollers, name, idle)
+
+    loop_task = asyncio.create_task(pollers._poll_feeds(app_module.app))
+    try:
+        await asyncio.wait_for(_wait_for(lambda: clock.cycles >= 1), timeout=5)
+    finally:
+        loop_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await loop_task
+
+    # The error, as before.
+    assert cache["subways"]["error"]["status"] == 500
+    # THE TYPE, NOT THE MESSAGE: the detail is served publicly and str(exc) of an
+    # unclassified exception is arbitrary text.
+    assert "TypeError" in cache["subways"]["error"]["detail"]
+    assert "a bug in our own code" not in cache["subways"]["error"]["detail"]
+    # And every per-system surface now says so too.
+    assert all(block["ok"] is False for block in cache["subways"]["systems"].values())
+    assert app_module.app.state.subway_feed_health["ok"] == 0
+    assert len(app_module.app.state.subway_feed_health["failed"]) == 8
+    assert app_module.app.state.ferry_feed_health == {"total": 1, "ok": 0, "failed": ["ferry"]}
+
+
+async def test_c4_a_spurious_cancellation_is_recorded_instead_of_vanishing(cache, monkeypatch):
+    # REVIEW FIX. A TaskGroup DISCARDS a child that ends cancelled: no error, no log,
+    # the cycle reports success and sleeps. So a refresher that raises a bare
+    # CancelledError with nobody cancelling it would stop polling that system forever
+    # while its cache showed no error at all. Task.cancelling() tells the two apart.
+    clock = _CycleClock(pollers.POLL_INTERVAL_S)
+    monkeypatch.setattr(pollers.asyncio, "sleep", clock.sleep)
+    app_module.app.state.path_feed_health = {"total": 1, "ok": 1, "failed": []}
+
+    async def cancels_itself(app, client):
+        raise asyncio.CancelledError("nobody asked for this")
+
+    async def idle(app, client):
+        return None
+
+    monkeypatch.setattr(pollers, "_refresh_path", cancels_itself)
+    for name in ("_refresh_buses", "_refresh_subways", "_refresh_railroads", "_refresh_ferry"):
+        monkeypatch.setattr(pollers, name, idle)
+
+    loop_task = asyncio.create_task(pollers._poll_feeds(app_module.app))
+    try:
+        await asyncio.wait_for(_wait_for(lambda: clock.cycles >= 1), timeout=5)
+    finally:
+        loop_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await loop_task
+
+    # The cycle survived (the group discards a cancelled child), and the failure is
+    # visible rather than silent.
+    assert cache["path"]["error"]["status"] == 500
+    assert "CancelledError" in cache["path"]["error"]["detail"]
+    assert app_module.app.state.path_feed_health == {"total": 1, "ok": 0, "failed": ["PATH"]}
+
+
+def test_c4_first_leaf_picks_the_first_failure_and_descends_nested_groups():
+    # REVIEW FIX. Which cause wins when BOTH legs fail was arbitrary and unpinned:
+    # every existing test produced a one-element group, so exceptions[0] could have
+    # been exceptions[-1] with the suite still green. A TaskGroup appends in
+    # COMPLETION order, so the first entry is the failure that cancelled the other,
+    # which is the one worth recording.
+    from feeds.ferry import _first_leaf
+
+    first = httpx.ConnectError("the leg that failed first")
+    second = RuntimeError("the sibling, losing the race")
+    assert _first_leaf(ExceptionGroup("pair", [first, second])) is first
+    # A nested group must never reach a handler as an opaque repr.
+    nested = ExceptionGroup("outer", [ExceptionGroup("inner", [first]), second])
+    assert _first_leaf(nested) is first

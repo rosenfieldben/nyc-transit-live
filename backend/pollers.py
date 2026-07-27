@@ -33,6 +33,7 @@ from cache import (
     _sanitize_upstream,
 )
 from feeds import (
+    ALERT_FEED_URLS,
     ALERT_RETENTION_MAX_S,
     RAILROAD_FEED_URLS,
     SUBWAY_FEED_URLS,
@@ -118,7 +119,43 @@ async def _bounded_refresh(entry: dict, coro) -> None:
         )
 
 
-async def _total_refresh(name: str, entry: dict, coro) -> None:
+# How many upstream feeds each source fans out over, for the health surface an
+# unclassified failure has to mark. Buses are absent on purpose: that source
+# publishes no per-feed health dict, so there is nothing to mark beyond its error.
+_FEED_HEALTH_TOTALS = {"subways": len(SUBWAY_FEED_URLS), "railroads": len(RAILROAD_FEED_URLS)}
+_SINGLE_FEED_HEALTH = {"path": "PATH", "ferry": "ferry"}
+
+
+def _feed_degrader(app: FastAPI, name: str, entry: dict):
+    """The per-source "mark everything down" hook handed to _total_refresh.
+
+    Built HERE, at the cycle, because the shape is per source: the subway fans out
+    over eight feed groups, the railroad over two, PATH and ferry over one each, and
+    the bus feed publishes no health dict at all. It marks the same two surfaces every
+    classified failure path in this module marks by hand: the app-state health dict
+    and, where the envelope has one, the per-system block C2 publishes.
+    """
+
+    def mark() -> None:
+        if name in _FEED_HEALTH_TOTALS:
+            total = _FEED_HEALTH_TOTALS[name]
+            urls = SUBWAY_FEED_URLS if name == "subways" else RAILROAD_FEED_URLS
+            setattr(
+                app.state,
+                f"{name[:-1]}_feed_health",  # subways -> subway_feed_health
+                {"total": total, "ok": 0, "failed": sorted(urls)},
+            )
+        elif name in _SINGLE_FEED_HEALTH:
+            label = _SINGLE_FEED_HEALTH[name]
+            setattr(app.state, f"{name}_feed_health", {"total": 1, "ok": 0, "failed": [label]})
+        # The per-system freshness block, where this envelope has one. Same helper the
+        # total-failure paths use, so a rider sees the same dimming either way.
+        _mark_all_systems_failed(entry)
+
+    return mark
+
+
+async def _total_refresh(name: str, entry: dict, coro, mark_degraded=None) -> None:
     """Run one source's refresh so it CANNOT raise into the poll cycle (C4).
 
     THE CONTRACT: a child's failure is that SYSTEM'S failure, never the cycle's.
@@ -138,18 +175,54 @@ async def _total_refresh(name: str, entry: dict, coro) -> None:
     cancellation would hang the group and then the lifespan. It is a BaseException in
     3.8+, so `except Exception` below would not catch it anyway; naming it explicitly
     is a guard against anyone widening that clause later.
+
+    BUT NOT EVERY CancelledError IS OUR SHUTDOWN, and the difference matters because
+    a TaskGroup DISCARDS a child that ends cancelled: no error, no log, the cycle
+    reports success and sleeps. So a refresher (or a library under it) that raises a
+    bare CancelledError while nobody asked it to would silently stop polling that
+    system forever, with the cache showing no error at all. Task.cancelling() is the
+    discriminator the runtime gives us: nonzero exactly when a cancellation was
+    actually requested of this task. When it is zero the cancellation is spurious and
+    gets recorded like any other unclassified failure; it is re-raised either way,
+    because swallowing a real one is the worse mistake.
+
+    mark_degraded IS NOT OPTIONAL POLISH. Recording entry["error"] alone leaves every
+    PER-SYSTEM surface claiming health: /api/status builds degraded_systems from the
+    per-system last_error and never looks at entry["error"], C2's blocks keep
+    reporting ok: true so the client will not dim, and the contract monitor reads
+    neither. An unclassified failure would therefore stop a system polling while every
+    operator surface stayed green, which is the exact false-green this audit arc
+    exists to remove. The hook comes from the CALLER because only it knows the shape:
+    a generic wrapper cannot know that the subway has eight groups and the ferry has
+    one (this is the same reasoning _bounded_refresh documents for leaving health
+    alone, and the reason that decision is revisited here rather than copied).
     """
     try:
         await coro
     except asyncio.CancelledError:
+        task = asyncio.current_task()
+        if task is None or task.cancelling() == 0:
+            logger.exception("%s refresh raised CancelledError with no cancellation pending", name)
+            _note_failure(entry, 500, f"Internal error refreshing {name} (CancelledError)")
+            if mark_degraded is not None:
+                mark_degraded()
         raise
     except Exception as exc:
         # 500, not 502: 502 means "the upstream misbehaved", and by construction this
-        # is a failure nobody classified, which is far more likely to be ours. The
-        # detail goes through the same sanitizer as every other recorded error
-        # because /api/status serves it.
+        # is a failure nobody classified, which is far more likely to be ours.
+        #
+        # THE TYPE, NOT THE MESSAGE. This detail is served publicly by /api/status and,
+        # while a cache has never filled, by the feed endpoint itself, and str(exc) of
+        # an arbitrary exception is arbitrary text: a filesystem path, a config value,
+        # a chunk of upstream body. _sanitize_upstream only strips URLs, which is the
+        # right tool for an httpx error and not for this. The class name says as much
+        # as a reader outside the logs can act on, cannot be empty (which
+        # `f"...: {exc}"` can), and the full exception with its traceback is one line
+        # above in the log.
         logger.exception("%s refresh failed unexpectedly", name)
-        _note_failure(entry, 500, f"Internal error refreshing {name}: {_sanitize_upstream(exc)}")
+        _note_failure(entry, 500, f"Internal error refreshing {name} ({type(exc).__name__})")
+        if mark_degraded is not None:
+            mark_degraded()
 
 
 async def _refresh_buses(app: FastAPI, client: httpx.AsyncClient) -> None:
@@ -710,7 +783,10 @@ async def _poll_feeds(app: FastAPI) -> None:
                         entry = cache[name]
                         group.create_task(
                             _total_refresh(
-                                name, entry, _bounded_refresh(entry, refresh(app, client))
+                                name,
+                                entry,
+                                _bounded_refresh(entry, refresh(app, client)),
+                                _feed_degrader(app, name, entry),
                             )
                         )
             except Exception:
@@ -919,7 +995,26 @@ async def _poll_alerts(app: FastAPI) -> None:
                 # outage machinery (expiry re-filter, retention cap, per-system health)
                 # and the generic wrapper cannot: it catches the timeout outside the
                 # refresher, where the only thing it can do is record the error.
-                await _total_refresh("alerts", app.state.alerts_cache, _refresh_alerts(app, client))
+                entry = app.state.alerts_cache
+                await _total_refresh(
+                    "alerts",
+                    entry,
+                    _refresh_alerts(app, client),
+                    # An unclassified failure is a TOTAL outage as far as the health
+                    # map is concerned, and running the shared generation applier is
+                    # what keeps the expiry re-filter and the retention cap honest on
+                    # a poll that died halfway. write_index is False while the index
+                    # has never filled, for the same reason the total-outage path
+                    # gives: writing the merge's empty result would turn a warming
+                    # deployment into one confidently serving "no active alerts".
+                    lambda: _apply_alert_generation(
+                        entry,
+                        [],
+                        set(ALERT_FEED_URLS),
+                        time.time(),
+                        write_index=entry["alerts"] is not None,
+                    ),
+                )
             except Exception:
                 # Defensive and, as in _poll_feeds, unreachable by construction now
                 # that the child is total: what is left is a bug in this cycle itself.

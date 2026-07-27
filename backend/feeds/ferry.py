@@ -348,6 +348,13 @@ def _first_leaf(group: BaseExceptionGroup) -> BaseException:
     str(). Descends rather than taking exceptions[0] directly so a nested group can
     never reach a handler as an opaque repr; the recursion terminates because a group
     with no exceptions cannot be raised.
+
+    WHEN BOTH LEGS FAIL, THIS PICKS THE ONE THAT FAILED FIRST, because a TaskGroup
+    appends to its error list in completion order. That is the right one to record:
+    the first failure is what cancelled the other leg, so the second is usually that
+    cancellation losing a race rather than an independent fault. The discarded
+    sibling is not lost, only unrecorded: the whole group rides on the re-raised
+    exception's __cause__ and lands in the logged traceback.
     """
     first = group.exceptions[0]
     return _first_leaf(first) if isinstance(first, BaseExceptionGroup) else first
@@ -396,6 +403,28 @@ async def fetch_ferry_data(
                 _fetch_ferry_endpoint(client, FERRY_TRIPUPDATE_ENDPOINT)
             )
     except ExceptionGroup as group_error:
+        # KNOWN LIMIT, MEASURED, AND DELIBERATELY NOT PAPERED OVER. CPython's
+        # TaskGroup discards an external cancellation while it already has an error
+        # pending, so a REFRESH_DEADLINE_S expiry (or a shutdown) that lands in the
+        # window between one leg failing and the other finishing its unwind is
+        # dropped, and this handler then reports the leg's error instead. Reproduced:
+        # a 50ms deadline around a group whose sibling takes 300ms to unwind returns
+        # the leg's error after 300ms and records a 502 rather than the 504.
+        #
+        # It is not fixed here because the obvious discriminator does not work.
+        # Task.cancelling() reads 1 for EVERY group failure (the group cancels its
+        # parent to deliver the error and does not restore the count), so branching on
+        # it would turn every ordinary ferry failure into a spurious cancellation;
+        # only the difference between 1 and 2 distinguishes the two, which is a
+        # CPython implementation detail this code should not be reading.
+        #
+        # The exposure is bounded by how long the sibling takes to unwind, which for
+        # an httpx request is a connection close, and no failure is lost: the poll is
+        # still recorded, only with the upstream label instead of the deadline one.
+        # It is the price of structured concurrency, which waits for its children to
+        # actually STOP where gather returned at once and leaked them. Carried as a
+        # followup rather than solved with a fragile heuristic.
+        #
         # ONE failure, one cause. The caller routes on the exception TYPE
         # (httpx.HTTPError, FeedDecodeError) and records str(exc) into an error that
         # /api/status serves, so handing it a group would both miss every handler and

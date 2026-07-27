@@ -6,9 +6,12 @@ line-length = 100
 # The interpreter floor, so the linter knows which builtins exist. Without it ruff
 # assumes the oldest supported Python and reports ExceptionGroup / BaseExceptionGroup
 # as undefined names (they are 3.11 builtins, used by the ferry TaskGroup unwrap).
-# Matches the runtime pinned in nixpacks.toml and both CI workflows; the app has
-# required 3.11+ since asyncio.timeout and now also uses asyncio.TaskGroup.
-target-version = "py312"
+# Set to the FLOOR the code documents (3.11), not the version deployed (3.12,
+# nixpacks.toml). Those differ on purpose: the deploy pin is what we run, the floor is
+# what the code claims to support, and this dev container runs 3.11 itself. Pinning
+# the linter to 3.12 would green-light 3.12-only syntax that cannot be parsed where
+# the code says it must run.
+target-version = "py311"
 
 [lint]
 # pycodestyle errors/warnings, pyflakes, and import sorting.

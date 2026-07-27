@@ -533,7 +533,20 @@ async def fetch_railroad_trains(
         stops = (railroad_stops or {}).get(system)
         if not stops:
             continue
-        placed, arrivals = _decode_railroad_feed(result, system, stops, now)
+        try:
+            placed, arrivals = _decode_railroad_feed(result, system, stops, now)
+        except DecodeError as exc:
+            # UNREACHABLE AS WRITTEN, and guarded anyway. raw_by_system holds only
+            # bytes that already decoded in the GPS pass above and parse_feed is
+            # deterministic, so this cannot be the first pass to reject a system.
+            # Without the guard, though, the reasoning that keeps it safe lives in a
+            # comment rather than in the code, and a DecodeError escaping here would
+            # leave fetch_railroad_trains entirely (its caller catches RuntimeError
+            # and httpx.HTTPError, not this) and be recorded nowhere. It routes to
+            # the same per-system entry the GPS pass uses, so a system still fails
+            # at most once per poll.
+            feed_errors[system] = f"undecodable protobuf ({exc})"
+            continue
         arrivals_by_system[system] = arrivals
         for train in placed:
             key = (system, train["trip_id"])

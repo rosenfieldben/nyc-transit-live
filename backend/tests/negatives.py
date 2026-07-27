@@ -34,10 +34,21 @@ GARBAGE_BODY = b"<html><body>503 Service Unavailable</body></html>"
 def truncated(name: str, size: int = 40) -> bytes:
     """The first `size` bytes of a committed golden fixture.
 
-    40 bytes lands inside the first entity of every fixture used here, so the
-    parser sees a valid header tag followed by a length that runs off the end.
+    WHERE 40 BYTES LANDS DIFFERS BY FIXTURE, and the earlier claim here that it
+    always cuts mid-entity was wrong: the subway capture's header alone is 123
+    bytes, so 40 cuts mid-HEADER, while the PATH and ferry captures have short
+    headers and 40 reaches into their first entity. Both are real dropped-stream
+    shapes and both must be rejected, so callers that care about the distinction
+    pass an explicit size (see MID_ENTITY_SIZE) rather than relying on a default
+    meaning the same thing everywhere.
     """
     return (FIXTURES / name).read_bytes()[:size]
+
+
+# Past the subway capture's 123-byte header, so this truncation cuts inside an
+# ENTITY rather than the header: the two halves of a dropped stream, both of which
+# must be rejected.
+MID_ENTITY_SIZE = 300
 
 
 def golden(name: str) -> bytes:
@@ -63,11 +74,16 @@ def entity_without_header() -> bytes:
     """Wire bytes that PARSE but leave the message uninitialized.
 
     Field 2 (entity) length-delimited, holding a FeedEntity whose only field is
-    its required id. protobuf parses this happily, and IsInitialized() is False
-    because FeedHeader.gtfs_realtime_version is `required` in proto2 and no header
-    was present. Hand-assembled rather than serialized, because the protobuf API
-    refuses to SERIALIZE an uninitialized message: the only way to get these bytes
-    is to write them, which is itself the point (an upstream that emits them is
-    not using a normal protobuf writer either).
+    its required id. protobuf parses this happily and the message has NO header,
+    which is what parse_feed rejects.
+
+    Hand-assembled rather than serialized only because it is shorter to write than
+    to build. It is NOT an exotic shape, and an earlier version of this comment
+    claimed it was: protobuf serializes messages missing `required` fields on
+    request (SerializePartialToString in Python, and by default in Go, protobuf-js
+    and Java's buildPartial), so bodies like this are exactly what a real producer
+    can emit. That mistaken belief is what once justified checking IsInitialized()
+    here, which is recursive and threw away good feeds over one bad entity; see
+    parse_feed rule 3.
     """
     return b"\x12\x03\x0a\x01x"

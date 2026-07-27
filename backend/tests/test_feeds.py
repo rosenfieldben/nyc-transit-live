@@ -1,5 +1,6 @@
 """Unit tests for the pure GTFS-RT decoding logic in feeds.py."""
 
+import json
 import time
 from datetime import datetime
 from types import SimpleNamespace
@@ -855,16 +856,20 @@ def test_parse_feed_rejects_the_empty_body_that_used_to_parse_clean():
 
 
 def test_parse_feed_rejects_malformed_and_truncated_bodies():
+    # THESE ALREADY RAISED BEFORE C3 (protobuf's own parser rejects them), so they
+    # pin no new behavior. They are here because the strict parser must not REGRESS
+    # them: rule 2 re-raises protobuf's DecodeError as FeedDecodeError, and a
+    # mistake there would turn a rejection into a pass-through.
+    #
     # Not protobuf at all (a CDN error page served as 200).
     with pytest.raises(FeedDecodeError):
         parse_feed(negatives.GARBAGE_BODY)
-    # A real capture cut off mid-message: valid tags, then a length that runs off
-    # the end. This is the shape an upstream actually emits on a dropped stream.
+    # A real capture cut off mid-stream, at both truncation depths: inside the
+    # header for a fixture with a long one, and inside an ENTITY past it.
     for name in ("subway_1_7_s.pb", "path_rt_gen_a.pb", "ferry_vp_a.pb"):
-        with pytest.raises(FeedDecodeError):
-            parse_feed(negatives.truncated(name))
-        with pytest.raises(FeedDecodeError):
-            parse_feed(negatives.truncated(name, 1))
+        for size in (1, 40, negatives.MID_ENTITY_SIZE):
+            with pytest.raises(FeedDecodeError):
+                parse_feed(negatives.truncated(name, size))
 
 
 def test_parse_feed_rejects_a_message_that_parses_without_a_header():
@@ -948,8 +953,10 @@ async def test_c3_an_empty_200_on_one_subway_group_fails_that_group_only():
 
 @pytest.mark.anyio
 async def test_c3_a_truncated_body_on_one_subway_group_fails_that_group_only():
-    # Same routing for the other negative shape: a real capture cut off
-    # mid-message, which is what a dropped upstream stream actually looks like.
+    # Same routing for the other negative shape. This one held before C3 too (a
+    # truncated body always raised DecodeError); it is kept because the routing is
+    # what must stay true now that a SECOND shape reaches the same handler, and a
+    # regression here would mean the new failure type escaped the per-group catch.
     raw = _live_feed("100_1..N01R", "A01N", 60)
     poisoned = SUBWAY_FEED_URLS["JZ"]
     client = _PerUrlClient({poisoned: negatives.truncated("subway_1_7_s.pb")}, raw)
@@ -972,3 +979,48 @@ async def test_c3_a_VALID_EMPTY_subway_group_still_decodes_as_present_and_empty(
     assert failed == []  # nothing failed
     assert by_group["G"] == []  # decoded, nothing running
     assert arrivals_by_group["G"] == {}
+
+
+def test_c3_one_malformed_entity_does_not_discard_a_good_feed():
+    # REVIEW FIX (high), and the reason rule 3 checks the HEADER rather than
+    # IsInitialized(). IsInitialized() is recursive: it walks every entity and
+    # fails the whole message if any one of them is missing a proto2 `required`
+    # field. Using it meant one bad entity in a 260-entity feed discarded the
+    # entire group, with an error claiming the header was missing while it sat
+    # right there. Nothing stops a producer emitting that shape either
+    # (SerializePartialToString and its equivalents in Go, protobuf-js and Java
+    # all serialize a message with required fields absent).
+    raw = negatives.golden("subway_1_7_s.pb")
+    # A FeedEntity carrying only is_deleted: its `required` id is absent.
+    bad = raw + b"\x12\x02\x10\x00"
+
+    lenient = pb.FeedMessage()
+    lenient.ParseFromString(bad)
+    assert lenient.IsInitialized() is False  # the trap
+    assert lenient.FindInitializationErrors() == ["entity[259].id"]
+    assert lenient.header.gtfs_realtime_version  # while the header is right there
+
+    feed = parse_feed(bad)  # accepted: the BODY is fine, one entity is not
+    assert len(feed.entity) == len(lenient.entity)
+
+    # And the decoders still skip the unusable entity exactly as they did before
+    # C3, so the good 259 are served rather than the whole group being dropped.
+    stops = json.loads((negatives.FIXTURES / "subway_1_7_s_stops.json").read_text())
+    good_trains, _, _ = _decode_feed(raw, stops, "1-7+S", 1781380197)
+    bad_trains, _, _ = _decode_feed(bad, stops, "1-7+S", 1781380197)
+    assert bad_trains == good_trains
+    assert len(good_trains) == 95
+
+
+def test_c3_a_header_present_but_empty_is_still_rejected():
+    # The header must be a real one: gtfs_realtime_version is required INSIDE it,
+    # so a body that produces an empty header submessage is a header in name only
+    # and is the same "decoded into nothing meaningful" failure as an empty body.
+    # Field 1 (header), length 0.
+    empty_header = b"\x0a\x00"
+    lenient = pb.FeedMessage()
+    lenient.ParseFromString(empty_header)
+    assert lenient.HasField("header") is True  # present...
+    assert lenient.header.gtfs_realtime_version == ""  # ...and empty
+    with pytest.raises(FeedDecodeError, match="no feed header"):
+        parse_feed(empty_header)

@@ -109,20 +109,34 @@ def parse_feed(raw: bytes) -> gtfs_realtime_pb2.FeedMessage:
        bytes for a bare gtfs_realtime_version).
     2. A protobuf DecodeError (malformed bytes, or a body truncated mid-message)
        is re-raised as FeedDecodeError, so this boundary has ONE failure type.
-    3. A message that parses but is NOT IsInitialized() raises. FeedHeader's
-       gtfs_realtime_version is `required` in proto2, so an initialized message
-       provably has a real header; an uninitialized one is a body that decoded
-       into nothing meaningful while wearing a 200.
+    3. A message that parses but carries NO FEED HEADER raises. A body that
+       decoded into nothing meaningful while wearing a 200 is the same failure as
+       an empty one, just with a few stray bytes in front.
+
+       NOT IsInitialized(), WHICH IS THE TRAP. That call is RECURSIVE: it walks
+       every entity and fails the whole message if any one of them is missing a
+       proto2 `required` field. Using it made one malformed entity discard an
+       entire good feed. Reproduced against the committed subway capture: 259
+       valid entities plus one entity with no id, and the whole group was
+       rejected (with a message claiming the header was missing while it sat
+       right there, version "1.0"). Producers really do emit that shape, because
+       nothing enforces proto2 `required` on the way out: Python's own
+       SerializePartialToString, Go's runtime, protobuf-js and Java's
+       buildPartial all serialize it happily. The decoders already skip an entity
+       they cannot use, so per-entity junk must stay their business; this
+       boundary judges the BODY.
     4. AN INITIALIZED MESSAGE WITH ZERO ENTITIES RETURNS NORMALLY. Valid-empty is
        real data, not an error: the ferry feed genuinely empties overnight when
        the boats go home, and what an empty feed MEANS stays each decoder's
        business (the ferry replaces its boats, the other feeds ride out a
        transient blip). This function rejects garbage; it never judges a quiet
        feed.
-    5. No timestamp policing. Header-clock anomalies already have per-decoder
-       handling (the subway's feed-clock logic, the railroad's freshness-
-       authoritative systems), and centralizing that here would change semantics
-       this parser must leave alone.
+    5. No timestamp policing. What a header timestamp means is per-system (the
+       railroad trusts only its freshness-authoritative systems' clocks and
+       ignores MNR's lagging shared header; PATH's advances on every bridge write
+       by design), so a rule here would have to be wrong for someone. A missing
+       timestamp stays None and the poll-age term carries the freshness signal,
+       exactly as before C3.
     """
     if not raw:
         raise FeedDecodeError("empty body served as 200 (no protobuf header)")
@@ -131,7 +145,9 @@ def parse_feed(raw: bytes) -> gtfs_realtime_pb2.FeedMessage:
         feed.ParseFromString(raw)
     except DecodeError as exc:
         raise FeedDecodeError(f"malformed protobuf ({exc})") from exc
-    if not feed.IsInitialized():
+    # The header itself, not the whole message: see rule 3. gtfs_realtime_version
+    # is required INSIDE the header, so an empty one is a header in name only.
+    if not feed.HasField("header") or not feed.header.gtfs_realtime_version:
         raise FeedDecodeError("protobuf parsed but has no feed header")
     return feed
 

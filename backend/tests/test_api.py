@@ -3801,14 +3801,18 @@ async def test_c3_bus_empty_200_records_the_error_and_keeps_last_known(client, c
     # data.
     monkeypatch.setenv("BUS_TIME_API_KEY", "test-key")
     cache["buses"].update(data=BUSES, fetched_at=500.0, feed_timestamp=499.0)
-    app_module._note_failure(cache["buses"], 502, "an earlier failure")
+    # A DIFFERENT prior error (503, config), so the assertions below can tell "this
+    # poll recorded its own failure" from "nothing happened and the old error was
+    # still sitting there". REVIEW FIX: seeding an identical 502 made both readings
+    # pass.
+    app_module._note_failure(cache["buses"], 503, "an earlier configuration failure")
 
     await app_module._refresh_buses(app_module.app, client=_BytesClient(b""))
 
     assert cache["buses"]["data"] == BUSES  # last-known kept
     assert cache["buses"]["fetched_at"] == 500.0  # NOT advanced
-    assert cache["buses"]["error"] is not None  # and the error did NOT clear
-    assert cache["buses"]["error"]["status"] == 502
+    assert cache["buses"]["error"]["status"] == 502  # THIS poll's failure, recorded
+    assert "undecodable" in cache["buses"]["error"]["detail"]
 
 
 async def test_c3_bus_valid_empty_200_is_a_successful_quiet_poll(client, cache, monkeypatch):
@@ -3863,6 +3867,29 @@ async def test_c3_ferry_empty_BODY_fails_while_valid_empty_still_replaces(client
     cache["ferry"].update(data=FERRY_BOATS, fetched_at=1.0, feed_timestamp=1.0, error=None)
     await app_module._refresh_ferry(app_module.app, client=_BytesClient(b""))
     assert cache["ferry"]["data"] == FERRY_BOATS  # retained, NOT replaced
+    assert cache["ferry"]["error"]["status"] == 502
+    assert app_module.app.state.ferry_feed_health == {"total": 1, "ok": 0, "failed": ["ferry"]}
+
+
+async def test_c3_ferry_empty_body_on_the_VEHICLE_endpoint_alone_fails_the_poll(client, cache):
+    # REVIEW FIX (high). Every other ferry test here poisons the tripupdate leg or
+    # both, so the ARRIVALS decoder's strict parse satisfied them all and the
+    # VEHICLE decoder's was never pinned: reverting it to ParseFromString left the
+    # whole suite green while an empty 200 on .../vehicleposition replaced the
+    # boats with nothing and recorded no error, which is the audited bug exactly.
+    # fetch_ferry_data decodes vehicles FIRST, so this is the leg that must raise.
+    app_module.app.state.ferry_static_status = "ready"
+    app_module.app.state.ferry_static = FERRY_STATIC_DATA
+    cache["ferry"].update(data=FERRY_BOATS, fetched_at=1.0, feed_timestamp=1.0, error=None)
+
+    from feeds.ferry import FERRY_VEHICLE_ENDPOINT
+
+    poisoned = _BytesClient(
+        content=_header_only_feed(timestamp=997),  # a VALID tripupdate leg
+        by_endpoint={FERRY_VEHICLE_ENDPOINT: b""},
+    )
+    await app_module._refresh_ferry(app_module.app, client=poisoned)
+    assert cache["ferry"]["data"] == FERRY_BOATS  # kept, NOT replaced by nothing
     assert cache["ferry"]["error"]["status"] == 502
     assert app_module.app.state.ferry_feed_health == {"total": 1, "ok": 0, "failed": ["ferry"]}
 

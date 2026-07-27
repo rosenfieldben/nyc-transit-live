@@ -985,10 +985,20 @@ async def test_c3_an_empty_200_on_one_railroad_system_fails_that_system_only():
     # cleared the standing error. It now joins the per-system failed list, which is
     # what C2's retention and freshness block key on, so a rider sees MNR's last
     # known trains dimmed rather than an empty map half.
+    # Real stops for LIRR, so the SECOND (placement) decode pass actually runs:
+    # it is skipped entirely for a system with no static stops, which left the
+    # placement decoder's own strict parse unexercised. REVIEW FIX.
+    stops = {"LIRR": json.loads((FIXTURES / "railroad_lirr_stops.json").read_text())}
     client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": b""})
-    trains, _, _, failed = await feeds.fetch_railroad_trains(client, {})
+    trains, arrivals, _, failed = await feeds.fetch_railroad_trains(client, stops)
     assert failed == ["MNR"]
-    assert trains and all(t["system"] == "LIRR" for t in trains)
+    assert trains  # not vacuous: there ARE trains, and every one of them is LIRR
+    assert all(t["system"] == "LIRR" for t in trains)
+    # The KEY's presence is the proof the placement pass ran for LIRR (only that
+    # loop sets it); the index itself is empty because the captured arrival times
+    # are long past relative to the wall clock this live path uses.
+    assert "LIRR" in arrivals
+    assert "MNR" not in arrivals  # it never decoded, so it never reached that pass
 
 
 @pytest.mark.anyio
@@ -998,7 +1008,13 @@ async def test_c3_a_VALID_EMPTY_railroad_system_is_healthy_with_no_trains():
     # absence rather than retaining and dimming trains that genuinely are not out.
     header_only = pb.FeedMessage()
     header_only.header.gtfs_realtime_version = "2.0"
+    stops = {"LIRR": json.loads((FIXTURES / "railroad_lirr_stops.json").read_text())}
     client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": header_only.SerializeToString()})
-    trains, _, _, failed = await feeds.fetch_railroad_trains(client, {})
+    trains, arrivals, _, failed = await feeds.fetch_railroad_trains(client, stops)
     assert failed == []
+    assert trains  # not vacuous: an all() over an empty list would pass either way
     assert all(t["system"] == "LIRR" for t in trains)
+    # MNR decoded but has no static stops in this call, so the placement pass skips
+    # it; LIRR has stops, so its key IS present. Either way MNR is not in the
+    # failed list, which is the distinction under test.
+    assert "LIRR" in arrivals

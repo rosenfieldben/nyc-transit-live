@@ -435,7 +435,7 @@ warnings.
 
 #### The strict parse boundary
 
-Every realtime decoder goes through one parser, `feeds.parse_feed`. It exists
+Every realtime decoder in the app goes through one parser, `feeds.parse_feed`. It exists
 because `FeedMessage.ParseFromString(b"")` SUCCEEDS: it returns an uninitialized
 message with no header and zero entities and raises nothing, so an HTTP 200
 carrying an empty body used to decode as a healthy feed that happened to be quiet.
@@ -453,6 +453,15 @@ failed poll that keeps last-known.
 Failures route at each source's own granularity: one poisoned subway group, alert
 feed or railroad system degrades only itself (and surfaces through the per-system
 block below), while the single-feed sources record a failed poll and keep last-known.
+
+Per-ENTITY junk is deliberately not this boundary's business: a feed whose header is
+valid but which carries one unusable entity is still served, and the decoders skip
+that entity as they always have. The parser judges the body.
+
+KNOWN GAP: the contract monitor has its own parse for the checks that only count
+entities, so the bus and ferry realtime checks (which invoke no production decoder)
+still read an empty 200 as a healthy quiet feed. The subway, railroad, PATH and
+alerts checks run the production decoders and so inherit the strict parse.
 
 #### Per-system freshness
 

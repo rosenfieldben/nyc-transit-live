@@ -365,13 +365,26 @@ async def _load_ferry():
 class Loader:
     """One static loader's seams, so the shared cases below stay one copy."""
 
-    def __init__(self, name, module, key, set_path, load, served, raises_on_cold_failure=False):
+    def __init__(
+        self,
+        name,
+        module,
+        key,
+        set_path,
+        load,
+        served,
+        validate,
+        required,
+        raises_on_cold_failure=False,
+    ):
         self.name = name
         self.module = module
         self.key = key
         self.set_path = set_path
         self.load = load
         self.served = served
+        self.validate = validate
+        self.required = required
         self.raises_on_cold_failure = raises_on_cold_failure
 
 
@@ -383,6 +396,8 @@ LOADERS = [
         _subway_paths,
         _load_subway,
         lambda data: "101" in data,
+        static_data.validate_subway_archive,
+        static_data._REQUIRED_MEMBERS,
         # The subway loader RAISES rather than returning empty: its warmup treats
         # the exception as the failed attempt, where the other three read an empty
         # result the same way.
@@ -395,6 +410,8 @@ LOADERS = [
         _railroad_paths,
         _load_railroad,
         lambda data: bool(data) and "101" in data["stops"],
+        railroad_static.validate_railroad_archive,
+        railroad_static._REQUIRED_MEMBERS,
     ),
     Loader(
         "path",
@@ -403,6 +420,8 @@ LOADERS = [
         _path_paths,
         _load_path,
         lambda data: "101" in data.get("stops", {}),
+        path_static.validate_path_archive,
+        path_static._REQUIRED_MEMBERS,
     ),
     Loader(
         "ferry",
@@ -411,6 +430,8 @@ LOADERS = [
         _ferry_paths,
         _load_ferry,
         lambda data: "101" in data.get("stops", {}),
+        ferry_static.validate_ferry_archive,
+        ferry_static._REQUIRED_MEMBERS,
     ),
 ]
 LOADER_IDS = [loader.name for loader in LOADERS]
@@ -618,3 +639,64 @@ async def test_status_static_archives_is_empty_before_any_download():
     async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
         body = (await client.get("/api/status")).json()
     assert body["static_archives"] == {}
+
+
+# The member set each validator enforces, WRITTEN OUT HERE rather than read from
+# the module under test. That distinction is the whole value of this block: an
+# earlier version derived the parametrization from _REQUIRED_MEMBERS, and deleting
+# stop_times.txt from the ferry tuple left the suite fully green, because the case
+# for that member simply stopped being generated. A test that asks the code what
+# it should do cannot notice the code doing less.
+EXPECTED_REQUIRED = {
+    # No stop_times.txt: the subway and the railroads read it only for the
+    # routes-per-station popup enrichment, which already degrades to an empty
+    # index, so requiring it would turn a small degradation into a whole system
+    # missing from the map. PATH walks it for 13d advance matching and ferry for
+    # the H5 dock/route join, where its absence is a silent wrong answer.
+    "subway": ("shapes.txt", "stops.txt", "trips.txt"),
+    "railroad": ("routes.txt", "shapes.txt", "stops.txt", "trips.txt"),
+    "path": ("routes.txt", "shapes.txt", "stop_times.txt", "stops.txt", "trips.txt"),
+    "ferry": ("routes.txt", "shapes.txt", "stop_times.txt", "stops.txt", "trips.txt"),
+}
+
+# Every (loader, required member) pair, so a shrunk requirement list fails by name
+# rather than silently. An explicit product, because a loop inside one test would
+# stop at the first member and leave the rest unpinned.
+REQUIRED_PAIRS = [
+    (loader, member) for loader in LOADERS for member in EXPECTED_REQUIRED[loader.name]
+]
+REQUIRED_IDS = [f"{loader.name}-{member}" for loader, member in REQUIRED_PAIRS]
+
+
+@pytest.mark.parametrize("loader", LOADERS, ids=LOADER_IDS)
+def test_required_member_set_is_exactly_what_is_declared(loader):
+    # Catches a member being ADDED as well as removed: a widened requirement can
+    # take a system down at cold start against a publication that dropped it, so
+    # the set is a decision worth failing on rather than absorbing.
+    assert tuple(sorted(loader.required)) == EXPECTED_REQUIRED[loader.name]
+
+
+def _write(tmp_path: Path, payload: bytes) -> Path:
+    """Land bytes on disk, since validate_archive opens a path (like the real callers)."""
+    archive = tmp_path / "candidate.zip"
+    archive.write_bytes(payload)
+    return archive
+
+
+@pytest.mark.parametrize(("loader", "member"), REQUIRED_PAIRS, ids=REQUIRED_IDS)
+def test_validator_rejects_an_archive_missing_a_required_member(tmp_path, loader, member):
+    # Each loader's required set, pinned member by member. Without this, dropping
+    # a member from a _REQUIRED_MEMBERS tuple stays green: the load-level tests all
+    # publish complete archives, and the parsers deliberately tolerate the optional
+    # members at read time, so nothing else notices the gate relaxing.
+    with pytest.raises(static_shared.StaticValidationError) as raised:
+        static_shared.validate_archive(
+            _write(tmp_path, good_archive(drop=(member,))), loader.validate
+        )
+    assert member in str(raised.value)
+
+
+@pytest.mark.parametrize("loader", LOADERS, ids=LOADER_IDS)
+def test_validator_accepts_a_complete_archive(tmp_path, loader):
+    # The converse, so the test above cannot pass by rejecting everything.
+    static_shared.validate_archive(_write(tmp_path, good_archive()), loader.validate)

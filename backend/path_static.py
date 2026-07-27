@@ -32,21 +32,23 @@ because stop_times.txt speaks in platform ids and build_path_station_order
 
 from __future__ import annotations
 
-import asyncio
 import csv
 import io
 import logging
-import os
-import tempfile
 import time
 import zipfile
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import IO
 
-import httpx
-
 from static_routes import fold_stop_routes
+from static_shared import (
+    cached_archive_is_valid,
+    parse_member,
+    require_members,
+    require_parsed,
+    staged_fetch,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -63,43 +65,68 @@ PATH_STATIC_ZIP = _STATIC_DIR / "gtfs_path.zip"
 # coordinates change rarely.
 MAX_AGE_DAYS = 30
 
-# Whole-transfer deadline: httpx's timeout is per socket read, so this bounds
-# the WHOLE transfer, stopping a trickling response from stalling the download
-# indefinitely. The load runs in a background warmup task (main.py
-# _warm_path_static) that retries on failure, so this is a per-attempt ceiling,
-# not a startup gate. The zip is ~1.2 MB, so 120s is generous.
-_DOWNLOAD_DEADLINE_S = 120
+# Members the PATH load READS and cannot degrade around. stop_times.txt is on
+# this list, unlike the subway's and the railroads', because for PATH it is not
+# enrichment: build_path_station_order (13d) walks it to produce the station
+# order the identity matcher uses for advance matching, which is how a train that
+# moved between polls is recognized as the same train. The cost of listing it is
+# that a pre-13d cache (published before the member existed) no longer serves as
+# a fallback and is re-downloaded instead; every such cache is long past
+# MAX_AGE_DAYS by now, so it would have been re-downloaded regardless.
+_REQUIRED_MEMBERS = ("stops.txt", "trips.txt", "shapes.txt", "routes.txt", "stop_times.txt")
+
+
+def validate_path_archive(zf: zipfile.ZipFile) -> None:
+    """Can we serve PATH from this archive? Raises StaticValidationError if not.
+
+    Deliberately STRICTER than _parse_zip, which tolerates a missing routes.txt or
+    stop_times.txt at parse time. That leniency is about surviving an archive
+    already on disk; this decides whether to ACCEPT a new publication, and one
+    missing a member it should have is worth rejecting while the previous archive
+    still serves.
+    """
+    require_members(zf, _REQUIRED_MEMBERS)
+    # Nonempty through the loader's own parsers, so "validated" means "the load
+    # will produce something", not "the files exist". PATH's parent-station gate
+    # is the check 13a's review grew here; it is third-audit finding 4's gate
+    # under another name, and the subway is the loader that never had one.
+    require_parsed(
+        lambda: parse_member(zf, "stops.txt", _parse_stops)[0], "stops.txt", "parent stations"
+    )
+    require_parsed(lambda: parse_member(zf, "routes.txt", _parse_routes), "routes.txt", "routes")
+
+
+def validate_path_publication(zf: zipfile.ZipFile) -> None:
+    """The gate a NEW archive must pass before it may replace the cached one.
+
+    Strictly stronger than validate_path_archive, and the difference is the whole
+    point: it runs the REAL parse of every table the load reads, so an archive that
+    would fail the load can never be promoted over a working one.
+
+    Without this the pipeline had a hole exactly the shape of the bug it exists to
+    fix. A publication with clean stops.txt and routes.txt but an undecodable byte
+    in a table the light validator only checks for PRESENCE passed validation, was
+    renamed over the last-known-good, and was then deleted by the residual arm in
+    the loader below: one bad publication, and both the new archive and the good one
+    it replaced were gone.
+
+    The cost lands where it belongs. This runs once per download attempt, while the
+    light validator runs on every load, so the expensive tables (stop_times.txt at 154k rows
+    among them) are parsed twice only when something is actually being published.
+    """
+    validate_path_archive(zf)
+    _parse_open(zf)
 
 
 async def _download_zip() -> None:
-    """Download the PATH GTFS zip atomically into its cache path."""
-    dest = PATH_STATIC_ZIP
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    # Sweep temp files orphaned by an earlier hard kill mid-download. Scoped to
-    # this stem so it can't disturb the other systems' archives in the same dir.
-    for stale in dest.parent.glob(f"{dest.stem}.*.part"):
-        stale.unlink(missing_ok=True)
-    # Unique temp name in the same dir so the final rename stays atomic and
-    # concurrent downloads are last-writer-wins.
-    fd, tmp_name = tempfile.mkstemp(dir=dest.parent, prefix=f"{dest.stem}.", suffix=".part")
-    os.close(fd)
-    tmp = Path(tmp_name)
-    logger.info("Downloading PATH static GTFS from %s", PATH_STATIC_URL)
-    try:
-        # httpx's timeout is per socket read; bound the whole transfer so a
-        # trickling response can't stall indefinitely.
-        async with asyncio.timeout(_DOWNLOAD_DEADLINE_S):
-            async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
-                async with client.stream("GET", PATH_STATIC_URL) as resp:
-                    resp.raise_for_status()
-                    with tmp.open("wb") as f:
-                        async for chunk in resp.aiter_bytes():
-                            f.write(chunk)
-        tmp.replace(dest)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
-    logger.info("Downloaded PATH static GTFS to %s", dest)
+    """Stage, validate, then promote the PATH archive (see static_shared)."""
+    await staged_fetch(
+        PATH_STATIC_URL,
+        PATH_STATIC_ZIP,
+        validate_path_publication,
+        key="path",
+        label="PATH static GTFS",
+    )
 
 
 # The parsers take file-like binary streams (what ZipFile.open yields) so tests
@@ -333,35 +360,41 @@ def _parse_routes(raw: IO[bytes]) -> dict[str, dict]:
 
 def _parse_zip(zip_path: Path) -> dict:
     """Parse the PATH GTFS zip into {stops, child_to_parent, trips, shapes,
-    routes, stop_times} in a single open. stops/trips/shapes are required
-    members (a missing one raises KeyError for load_path_static to recover
-    from); routes.txt is optional and yields an empty table when absent, the
-    same rider-facing-convenience leniency as the railroads. stop_times.txt
-    is optional too, but for a different reason: a cached zip downloaded
-    before 13d lacks the member, and degrading to an empty table (which only
-    disables the advance-match branch of the identity matcher) beats wedging
-    the whole PATH group on an otherwise good cache."""
+    routes, stop_times} in a single open.
+
+    Kept lenient about routes.txt and stop_times.txt (each yields an empty table
+    when absent) even though validate_path_archive now requires both. The two
+    answer different questions and the split is deliberate: the validator decides
+    whether to ACCEPT an archive, this decides how to read one that is already
+    here, and a parser that tolerates a missing optional member stays usable by
+    the tests and the fixture tooling that feed it hand-built zips."""
     with zipfile.ZipFile(zip_path) as zf:
-        with zf.open("stops.txt") as raw:
-            stops, child_to_parent = _parse_stops(raw)
-        with zf.open("trips.txt") as raw:
-            trips = _parse_trips(raw)
-        with zf.open("shapes.txt") as raw:
-            shapes = _parse_shapes(raw)
-        try:
-            member = zf.open("routes.txt")
-        except KeyError:
-            routes: dict[str, dict] = {}
-        else:
-            with member as raw:
-                routes = _parse_routes(raw)
-        try:
-            member = zf.open("stop_times.txt")
-        except KeyError:
-            stop_times: dict[str, list[str]] = {}
-        else:
-            with member as raw:
-                stop_times = _parse_stop_times(raw)
+        return _parse_open(zf)
+
+
+def _parse_open(zf: zipfile.ZipFile) -> dict:
+    """The parse itself, over an already-open archive, so validate_path_publication
+    can run the REAL load against a staged file that has no cache path yet."""
+    with zf.open("stops.txt") as raw:
+        stops, child_to_parent = _parse_stops(raw)
+    with zf.open("trips.txt") as raw:
+        trips = _parse_trips(raw)
+    with zf.open("shapes.txt") as raw:
+        shapes = _parse_shapes(raw)
+    try:
+        member = zf.open("routes.txt")
+    except KeyError:
+        routes: dict[str, dict] = {}
+    else:
+        with member as raw:
+            routes = _parse_routes(raw)
+    try:
+        member = zf.open("stop_times.txt")
+    except KeyError:
+        stop_times: dict[str, list[str]] = {}
+    else:
+        with member as raw:
+            stop_times = _parse_stop_times(raw)
     return {
         "stops": stops,
         "child_to_parent": child_to_parent,
@@ -464,40 +497,47 @@ async def load_path_static() -> dict:
     failing (there is no other system to stay up for).
     """
     zip_path = PATH_STATIC_ZIP
-    fresh = zip_path.exists() and time.time() - zip_path.stat().st_mtime < MAX_AGE_DAYS * 86400
+    # FRESH NOW MEANS VALID AND RECENT (C5). 13a's empty-valid-cache re-download
+    # lived here: a cache that parsed to zero parent stations was unlinked and
+    # refetched, because a fresh mtime would otherwise wedge the single-system
+    # PATH group on a transiently-empty upstream until MAX_AGE_DAYS. That special
+    # case is now the general rule from two directions: validate_path_archive
+    # refuses to promote such a publication, and cached_archive_is_valid rejects
+    # one already on disk before it is parsed, so the retry re-fetches by itself.
+    usable = zip_path.exists() and cached_archive_is_valid(zip_path, validate_path_archive)
+    fresh = usable and time.time() - zip_path.stat().st_mtime < MAX_AGE_DAYS * 86400
     if not fresh:
         try:
             await _download_zip()
         except Exception as exc:
-            if not zip_path.exists():
+            if not usable:
                 logger.warning("PATH static GTFS download failed (%s); no cached copy", exc)
                 return {}
-            logger.warning("PATH static GTFS re-download failed (%s); using stale cached copy", exc)
+            # Serving old while new is bad, INCLUDING past MAX_AGE_DAYS: the age
+            # policy exists to pick up upstream's corrections, so it yields to
+            # validity rather than dropping a working system. staged_fetch
+            # recorded the reason for /api/status.
+            logger.warning("PATH static GTFS re-download failed (%s); using the cached copy", exc)
     try:
-        data: dict | None = _parse_zip(zip_path)
-    except (zipfile.BadZipFile, KeyError, UnicodeDecodeError):
-        data = None
-    # data is None for a corrupt/missing-member/undecodable cache, and a valid
-    # parse that yields zero parent stations is treated as unusable too: the
-    # warmup marks the single-system PATH group "failed" on empty stops (main.py
-    # _warm_path_static), and without invalidating here an already fresh cache
-    # would never be re-downloaded, so a transiently-empty upstream would wedge
-    # the group until MAX_AGE_DAYS forced a refetch even after it self-corrected.
-    # Refetching now lets the next warm retry pick up a corrected feed.
-    if data is None or not data["stops"]:
-        logger.warning("Cached PATH static GTFS is unusable or empty; re-downloading")
+        data = _parse_zip(zip_path)
+    except (zipfile.BadZipFile, KeyError, UnicodeDecodeError, csv.Error) as exc:
+        # The residual below the CACHED-archive validator, which is lighter than
+        # the one every publication passes. Reaching here means the bytes on disk
+        # were fully parseable when they were promoted and are not now (rot, a
+        # truncated write), or predate C5 entirely. Unlink is right in exactly that
+        # case and only that case: this file IS the cache, nothing better sits
+        # behind it, and keeping it would wedge every retry on the same bytes. A
+        # freshly promoted archive cannot land here, because
+        # validate_path_publication ran this same parse before the rename.
+        logger.warning("Cached PATH static GTFS is unparseable (%s); discarding", exc)
         zip_path.unlink(missing_ok=True)
-        try:
-            await _download_zip()
-            data = _parse_zip(zip_path)
-        except Exception as exc:
-            logger.warning("PATH static GTFS unavailable (%s); skipping", exc)
-            return {}
+        return {}
     if not data["stop_times"]:
-        # Advance matching (13d) degrades to same-stop-only until the cache
-        # refreshes with a zip that carries the member; worth one line so an
-        # operator can tell degraded matching from a code bug.
-        logger.warning("PATH static GTFS has no stop_times.txt; advance matching disabled")
+        # The member is required (so it is present) but a header-only table still
+        # parses to nothing, and advance matching (13d) degrades to same-stop-only
+        # until a publication carries rows again. Worth one line so an operator can
+        # tell degraded matching from a code bug.
+        logger.warning("PATH stop_times.txt has no usable rows; advance matching disabled")
     logger.info(
         "Loaded PATH static GTFS: %d parent stations, %d child platforms, "
         "%d trips, %d shapes, %d routes, %d trips with stop_times",

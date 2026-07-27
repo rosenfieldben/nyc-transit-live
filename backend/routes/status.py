@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 
 import bus_static
 import static_data
+import static_shared
 from cache import FEED_STALE_AFTER_S, _feed_age
 from models import AlertFeed, StatusResponse
 
@@ -66,8 +67,10 @@ async def get_alerts(request: Request, response: Response) -> dict:
 @router.get("/api/status", response_model=StatusResponse)
 async def get_status(request: Request, response: Response) -> dict:
     """Operational snapshot: per-feed cache freshness and last recorded error,
-    bus route index state, static subway GTFS age, and each static group's warmup
-    state (loading / ready / failed). No secrets, no filesystem paths. A top-level
+    bus route index state, static subway GTFS age, each static group's warmup
+    state (loading / ready / failed), and each static ARCHIVE's download honesty
+    (when it was last promoted, why the last download was rejected, how many have
+    been rejected since). No secrets, no filesystem paths. A top-level
     served_at (this response's build time; see THE THREE TIMESTAMPS in cache.py) and
     no-store, matching the live feeds: status is a live operational read."""
     app = request.app
@@ -138,6 +141,15 @@ async def get_status(request: Request, response: Response) -> dict:
         # Same single-system rationale as PATH: an empty ferry load is a full
         # failure, so the warmup state must be visible in the snapshot.
         "ferry_static": getattr(app.state, "ferry_static_status", None),
+        # Per-ARCHIVE download honesty (C5), beside the group states above rather
+        # than inside them: a group state answers "can I serve this system", these
+        # answer "how old is the archive I am serving it from, and why". Read
+        # together they make the deliberate ready-but-stale state legible, the one
+        # a loader enters when a fresh download fails validation and the cached
+        # archive keeps serving past MAX_AGE_DAYS. The contract monitor needs none
+        # of this: it watches the same publications from the upstream side, so the
+        # two vantage points stay independent on purpose.
+        "static_archives": static_shared.archive_status(),
         "subway_feeds": getattr(app.state, "subway_feed_health", None),
         "railroad_feeds": getattr(app.state, "railroad_feed_health", None),
         "path_feeds": getattr(app.state, "path_feed_health", None),

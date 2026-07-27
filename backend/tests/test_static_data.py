@@ -24,9 +24,27 @@ DEAD_URL = "http://127.0.0.1:9/gtfs_subway.zip"
 STOPS_COLS = ["stop_id", "stop_name", "stop_lat", "stop_lon", "location_type", "parent_station"]
 SHAPES_COLS = ["shape_id", "shape_pt_sequence", "shape_pt_lat", "shape_pt_lon"]
 
+# The real subway shape, and C5's parent-station gate now depends on it: 101 is the
+# PARENT station (location_type 1, the clickable marker) and 101N is a platform
+# under it (the id realtime references). A stops.txt of platform rows alone is a
+# publication validate_subway_archive rejects, so a fixture without a parent row
+# would be testing an archive the loader would never accept.
 STOP_ROWS = [
-    {"stop_id": "101", "stop_name": "Alpha", "stop_lat": "40.7", "stop_lon": "-74.0"},
-    {"stop_id": "101N", "stop_name": "Alpha", "stop_lat": "40.7", "stop_lon": "-74.0"},
+    {
+        "stop_id": "101",
+        "stop_name": "Alpha",
+        "stop_lat": "40.7",
+        "stop_lon": "-74.0",
+        "location_type": "1",
+    },
+    {
+        "stop_id": "101N",
+        "stop_name": "Alpha",
+        "stop_lat": "40.7",
+        "stop_lon": "-74.0",
+        "location_type": "0",
+        "parent_station": "101",
+    },
 ]
 
 
@@ -40,7 +58,13 @@ def csv_text(columns, rows):
 
 
 def write_gtfs_zip(path, stop_rows=STOP_ROWS, shape_rows=None, members=None):
-    """Write a minimal GTFS zip; `members` overrides the file map entirely."""
+    """Write a minimal GTFS zip; `members` overrides the file map entirely.
+
+    Deliberately still minimal (stops.txt, plus shapes.txt when asked): the
+    single-table loaders and the missing-member tests below are what it exists
+    for. Anything handed to load_subway_stops goes through write_loadable_gtfs_zip
+    instead, because that path now runs the validator.
+    """
     if members is None:
         members = {"stops.txt": csv_text(STOPS_COLS, stop_rows)}
         if shape_rows is not None:
@@ -48,6 +72,24 @@ def write_gtfs_zip(path, stop_rows=STOP_ROWS, shape_rows=None, members=None):
     with zipfile.ZipFile(path, "w") as zf:
         for name, content in members.items():
             zf.writestr(name, content)
+
+
+def write_loadable_gtfs_zip(path, stop_rows=STOP_ROWS, shape_rows=()):
+    """Write a zip that passes validate_subway_archive (C5 seam).
+
+    The validator requires trips.txt and shapes.txt to be PRESENT (the subway load
+    reads both), so every archive a cache-lifecycle test hands the loader carries
+    them. Header-only is enough and keeps each test's subject unchanged: an empty
+    shapes.txt yields the same [] route lines a missing one used to.
+    """
+    write_gtfs_zip(
+        path,
+        members={
+            "stops.txt": csv_text(STOPS_COLS, stop_rows),
+            "trips.txt": csv_text(TRIPS_COLS, ()),
+            "shapes.txt": csv_text(SHAPES_COLS, shape_rows),
+        },
+    )
 
 
 @pytest.fixture
@@ -68,7 +110,7 @@ def age_file(path, days):
 
 
 async def test_fresh_cache_parsed_without_downloading(gtfs_zip, monkeypatch):
-    write_gtfs_zip(gtfs_zip)
+    write_loadable_gtfs_zip(gtfs_zip)
 
     async def fail(*args):  # any download attempt is a test failure
         raise AssertionError("should not download with a fresh cache")
@@ -79,7 +121,7 @@ async def test_fresh_cache_parsed_without_downloading(gtfs_zip, monkeypatch):
 
 
 async def test_stale_cache_with_failed_download_falls_back(gtfs_zip):
-    write_gtfs_zip(gtfs_zip)
+    write_loadable_gtfs_zip(gtfs_zip)
     age_file(gtfs_zip, days=40)  # past MAX_AGE_DAYS; the dead URL fails fast
     stops = await static_data.load_subway_stops()
     assert "101N" in stops
@@ -105,7 +147,7 @@ async def test_unusable_fresh_cache_redownloads_exactly_once(gtfs_zip, monkeypat
 
     async def fake_download():
         calls.append(1)
-        write_gtfs_zip(gtfs_zip)
+        write_loadable_gtfs_zip(gtfs_zip)
 
     monkeypatch.setattr(static_data, "_download_zip", fake_download)
     stops = await static_data.load_subway_stops()
@@ -118,7 +160,7 @@ async def test_malformed_coordinate_rows_skipped(gtfs_zip):
         {"stop_id": "BAD1", "stop_name": "NoCoords", "stop_lat": "", "stop_lon": ""},
         {"stop_id": "BAD2", "stop_name": "Garbage", "stop_lat": "north", "stop_lon": "-74.0"},
     ]
-    write_gtfs_zip(gtfs_zip, stop_rows=rows)
+    write_loadable_gtfs_zip(gtfs_zip, stop_rows=rows)
     stops = await static_data.load_subway_stops()
     assert "101N" in stops
     assert "BAD1" not in stops and "BAD2" not in stops
@@ -303,7 +345,7 @@ def test_load_subway_station_routes_end_to_end(gtfs_zip):
 def test_load_subway_station_routes_missing_tables_returns_empty(gtfs_zip):
     # A zip without trips/stop_times (route lines and markers can still load) must
     # yield an empty index, not raise: the routes are popup enrichment only.
-    write_gtfs_zip(gtfs_zip)  # default: stops.txt only
+    write_gtfs_zip(gtfs_zip)  # default: stops.txt only, no trips/stop_times
     assert static_data.load_subway_station_routes() == {}
 
 

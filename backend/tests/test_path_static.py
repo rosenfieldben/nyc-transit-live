@@ -170,6 +170,24 @@ def write_path_zip(
             zf.writestr(name, content)
 
 
+# One stop_time referencing the child platform of a parent station in STOP_ROWS,
+# enough for build_path_station_order to have something to walk.
+DEFAULT_STOP_TIME_ROWS = [{"trip_id": "t1", "stop_id": "781718", "stop_sequence": "1"}]
+
+
+def write_loadable_path_zip(path, **kwargs):
+    """Write a zip that passes validate_path_archive (C5 seam).
+
+    The validator requires stop_times.txt, which 13d's advance matching walks, so
+    every archive a cache-lifecycle test hands load_path_static carries one. The
+    _parse_zip tests above keep using write_path_zip without it on purpose: the
+    parser's leniency about the member is exactly what they pin, and the validator
+    is a separate question (accept a publication vs read one already here).
+    """
+    kwargs.setdefault("stop_times", DEFAULT_STOP_TIME_ROWS)
+    write_path_zip(path, **kwargs)
+
+
 @pytest.fixture
 def path_paths(tmp_path, monkeypatch):
     """Point the loader at a tmp zip path and a dead URL by default."""
@@ -688,7 +706,7 @@ def test_short_name_fallback_when_no_long_name():
 
 
 async def test_fresh_cache_parsed_without_downloading(path_paths, monkeypatch):
-    write_path_zip(path_paths)
+    write_loadable_path_zip(path_paths)
 
     async def fail():  # any download attempt is a test failure
         raise AssertionError("should not download with a fresh cache")
@@ -700,7 +718,7 @@ async def test_fresh_cache_parsed_without_downloading(path_paths, monkeypatch):
 
 
 async def test_stale_cache_with_failed_download_falls_back(path_paths):
-    write_path_zip(path_paths)
+    write_loadable_path_zip(path_paths)
     age_file(path_paths, days=40)  # past MAX_AGE_DAYS; the dead URL fails fast
     data = await path_static.load_path_static()
     assert data and "26733" in data["stops"]
@@ -730,7 +748,7 @@ async def test_unusable_fresh_cache_redownloads_exactly_once(
 
     async def fake_download():
         calls.append(True)
-        write_path_zip(path_paths)
+        write_loadable_path_zip(path_paths)
 
     monkeypatch.setattr(path_static, "_download_zip", fake_download)
     data = await path_static.load_path_static()
@@ -764,12 +782,12 @@ async def test_fresh_but_empty_cache_redownloads_and_recovers(path_paths, monkey
     # so the loader re-downloads once instead of trusting the fresh mtime and
     # wedging until MAX_AGE_DAYS. Without this a transiently-empty upstream would
     # never be refetched even after it self-corrected.
-    write_path_zip(path_paths, stops=EMPTY_PARENT_STOPS)  # fresh, valid, no parents
+    write_loadable_path_zip(path_paths, stops=EMPTY_PARENT_STOPS)  # fresh, valid, no parents
     calls = []
 
     async def fake_download():
         calls.append(True)
-        write_path_zip(path_paths)  # upstream corrected: now has parent stations
+        write_loadable_path_zip(path_paths)  # upstream corrected: now has parent stations
 
     monkeypatch.setattr(path_static, "_download_zip", fake_download)
     data = await path_static.load_path_static()
@@ -781,7 +799,7 @@ async def test_persistently_empty_feed_returns_empty(path_paths):
     # Fresh empty cache + a dead URL: the recovery re-download also fails, so the
     # result is {} and the warmup marks the group failed (single-system PATH). The
     # cache invalidation still fired, so the NEXT warm retry re-downloads again.
-    write_path_zip(path_paths, stops=EMPTY_PARENT_STOPS)  # fresh, valid, no parents
+    write_loadable_path_zip(path_paths, stops=EMPTY_PARENT_STOPS)  # fresh, valid, no parents
     data = await path_static.load_path_static()
     assert data == {}
 

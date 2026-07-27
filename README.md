@@ -205,6 +205,7 @@ nyc-transit-live/
 │   ├── airtrain_static.py   # load the committed AirTrain JFK fixture (no network)
 │   ├── path_static.py       # download/parse the PATH static GTFS (PANYNJ via Trillium)
 │   ├── ferry_static.py      # download/parse the NYC Ferry static GTFS (via Connexionz)
+│   ├── static_shared.py     # stage/validate/promote pipeline shared by the four static loaders
 │   ├── scripts/             # one-off generators (gen_airtrain_fixture.py, gen_path_fixture.py, gen_ferry_fixture.py)
 │   ├── tests/               # pytest suite (run from backend/)
 │   ├── requirements.txt     # lower-bound deps for local dev
@@ -363,6 +364,31 @@ loaded tables and their loading/ready/failed status in per-process memory too,
 so the same single-worker assumption applies; the on-disk zips are shared and
 downloaded last-writer-wins.
 
+### Static archives cannot destroy their own last-known-good
+
+Every static GTFS download stages, validates, then promotes. The download lands
+in a temp file beside the cached archive, that staged file is validated with the
+loader's own parsers, and only a passing archive is renamed over the cache. A bad
+upstream publication (a truncated zip, an HTML error page saved as `.zip`, a
+`stops.txt` with headers and no rows, a damaged deflate stream) is deleted at the
+stage file and the cached archive keeps serving, byte-untouched.
+
+Each loader carries two validators, and the asymmetry is the point. A **new
+publication** is checked with the full parse of every table the load reads,
+because promoting is irreversible: the archive it replaces is gone. A **cached
+archive** is checked with a lighter parse at load time, because that runs on every
+load and there is nothing behind it to protect anyway. A cached archive that fails
+its check is treated as absent, which forces a fresh staged download rather than
+serving garbage.
+
+That makes one state deliberate and worth recognizing: a group can be `ready`
+while its archive is older than the 30-day refresh threshold. It is reachable
+ONLY by a download that was attempted and failed validation, never by skipping a
+download, and `static_archives` in `/api/status` is where the reason shows. The
+converse is equally deliberate: with no valid cached archive, a failing download
+is `failed`-and-retrying and never `ready`. Ready always means "serving
+validated data".
+
 ## Monitoring
 
 `GET /api/status` returns an always-200 operational snapshot: per-feed cache
@@ -370,7 +396,13 @@ freshness — both `age_s` (since this server last polled) and `feed_age_s` (how
 stale the feed's own content was at poll time) — the last recorded poll error
 if any, the bus route index state, the static subway GTFS age, and each static
 group's warmup state (`subway_static` / `railroad_static` / `path_static` /
-`ferry_static`: loading, ready, or failed-and-retrying). The `alerts` entry reports the alert poll's `age_s`, its
+`ferry_static`: loading, ready, or failed-and-retrying). Beside those,
+`static_archives` reports each downloaded ARCHIVE (`subway`, `railroad_LIRR`,
+`railroad_MNR`, `path`, `ferry`): when a download last passed validation and was
+promoted, why the last one was rejected, and how many have been rejected since.
+A group state answers "can I serve this system"; these answer "how old is the
+archive I am serving it from, and why", which together make the deliberate
+ready-but-stale state legible. The `alerts` entry reports the alert poll's `age_s`, its
 last error if any, the `active` alert count in the index, and `suppressed_planned`
 (not-yet-active planned work the last poll held back), so upcoming service work is
 visible even though it is excluded from `/api/alerts`. It also carries per-system

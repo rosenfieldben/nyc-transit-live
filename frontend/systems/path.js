@@ -161,6 +161,10 @@ function pathSystemAge() {
   return systemAgeOf("path", "path");
 }
 
+function pathSystemStaleAt() {
+  return systemStaleAtOf("path", "path");
+}
+
 // Re-dim every PATH train from its source's age (C2).
 staleTreatments.push(() => {
   for (const record of pathTrainRecords.values()) dimMarker(record.marker, pathSystemAge());
@@ -200,7 +204,9 @@ function applyPath(data) {
       record.latest = train;
       // Frozen glide clock while the feed is stale, so an anchored train stops
       // advancing along its route instead of dead-reckoning on a dead feed (C2).
-      record.marker.setLatLng(trainLatLng(train, glideClock(now, pathSystemAge()), record.fState));
+      record.marker.setLatLng(
+        trainLatLng(train, glideClock(now, pathSystemStaleAt()), record.fState),
+      );
       dimMarker(record.marker, pathSystemAge());
       if (record.routeId !== train.route_id) {
         record.marker.setIcon(pathIcon(train));
@@ -211,10 +217,13 @@ function applyPath(data) {
       const newRecord = { routeId: train.route_id, latest: train, fState: {} };
       newRecord._segId = `${train.route_id}|${train.prev_time}|${train.stop_id}`;
       train._route = computePathRouteSlice(train, pathRouteIndex.get(train.route_id), PATH_SLICE_OPTS);
-      newRecord.marker = L.marker(trainLatLng(train, glideClock(now, pathSystemAge()), newRecord.fState), {
-        icon: pathIcon(train),
-        opacity: markerOpacity(pathSystemAge()), // dim on the first frame, as elsewhere
-      })
+      newRecord.marker = L.marker(
+        trainLatLng(train, glideClock(now, pathSystemStaleAt()), newRecord.fState),
+        {
+          icon: pathIcon(train),
+          opacity: markerOpacity(pathSystemAge()), // dim on the first frame, as elsewhere
+        },
+      )
         .bindPopup(() => pathTrainPopup(newRecord))
         .addTo(pathTrains);
       pathTrainRecords.set(train.id, newRecord);

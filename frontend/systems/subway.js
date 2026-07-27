@@ -61,24 +61,44 @@ function noteSubwaySystems(systems) {
   subwayRouteCoverage = covered;
 }
 
-// The age of the feed group behind one train: the worst age among the groups whose
-// coverage lists its route.
+// The freshness of the feed group behind one train: the worst age and the earliest
+// freeze deadline among the groups whose coverage lists its route.
 //
-// THE FALL-BACK DIRECTION IS DELIBERATE. When the payload carries no route coverage
-// at all (an older backend), every train falls back to the source's WORST system,
-// so a partial outage over-dims rather than under-dims. Under-dimming is how
-// retained data would end up looking live, which is precisely what the retention
-// gate exists to prevent, so the safe direction is to say "some of this may be old"
-// when we cannot say which. With coverage present, a route that appears in NO
-// group's list has no data on the map to describe, so it reads as not stale.
-function subwaySystemAge(train) {
-  if (!subwayRouteCoverage) return worstSystemAge("subways");
-  let worst = null;
-  for (const group of subwayGroupsByRoute.get(train.route_id) ?? []) {
+// THE FALL-BACK DIRECTION IS DELIBERATE, and it now covers BOTH ways the join can
+// come up empty: a payload with no route coverage at all (an older backend), and a
+// train whose route matches no group's list. Either way the train falls back to the
+// source's WORST system, so a partial outage over-dims rather than under-dims.
+// Under-dimming is how retained data ends up looking live, which is precisely what
+// the retention gate exists to prevent, so the safe answer when we cannot say WHICH
+// group is stale is to say some of this may be old.
+//
+// REVIEW FIX. The second case used to return "not stale", justified by the claim
+// that a route in no group's list has no data on the map to describe. That is false
+// for a train with a NULL route_id: the decoder emits those (a trip with no route in
+// the feed), the payload's coverage lists deliberately skip them, and the train is
+// on the map all the same. It rendered full opacity, unfrozen and with no age line,
+// right next to its dimmed siblings from the same dead group.
+function subwaySystemFreshness(train) {
+  const groups = subwayRouteCoverage ? (subwayGroupsByRoute.get(train.route_id) ?? []) : [];
+  if (!groups.length) return worstSystemFreshness("subways");
+  const worst = { age: null, staleAt: null };
+  for (const group of groups) {
     const age = systemAgeOf("subways", group);
-    if (age != null && (worst == null || age > worst)) worst = age;
+    const staleAt = systemStaleAtOf("subways", group);
+    if (age != null && (worst.age == null || age > worst.age)) worst.age = age;
+    if (staleAt != null && (worst.staleAt == null || staleAt < worst.staleAt)) {
+      worst.staleAt = staleAt;
+    }
   }
   return worst;
+}
+
+function subwaySystemAge(train) {
+  return subwaySystemFreshness(train).age;
+}
+
+function subwaySystemStaleAt(train) {
+  return subwaySystemFreshness(train).staleAt;
 }
 
 // Re-dim every subway marker from its own group's current age (C2).
@@ -221,9 +241,9 @@ function applyTrains(data) {
       record.latest = train;
       // Placed through the freeze clock, not the raw one: a retained group's trains
       // must not advance on a poll that only re-served them (C2).
-      const age = subwaySystemAge(train);
-      record.marker.setLatLng(trainLatLng(train, glideClock(now, age), record.fState));
-      dimMarker(record.marker, age);
+      const fresh = subwaySystemFreshness(train);
+      record.marker.setLatLng(trainLatLng(train, glideClock(now, fresh.staleAt), record.fState));
+      dimMarker(record.marker, fresh.age);
       if (record.routeId !== train.route_id) {
         record.marker.setIcon(trainIcon(train));
         record.routeId = train.route_id;
@@ -233,16 +253,19 @@ function applyTrains(data) {
       const newRecord = { routeId: train.route_id, latest: train, fState: {} };
       newRecord._segId = `${train.route_id}|${train.prev_time}|${train.stop_id}`;
       train._route = computeRouteSlice(train, routeIndex.get(train.route_id));
-      const age = subwaySystemAge(train);
-      newRecord.marker = L.marker(trainLatLng(train, glideClock(now, age), newRecord.fState), {
-        icon: trainIcon(train),
-        // Dimmed AT CREATION, not by the sweep afterwards: a retained train first
-        // seen during an outage (a reload mid-outage) must be dim on the very first
-        // frame it exists, never full-opacity for a beat. This is the invariant the
-        // "C2b" e2e spec pins, and the reason the retention flag and this rendering
-        // ship in one commit.
-        opacity: markerOpacity(age),
-      })
+      const fresh = subwaySystemFreshness(train);
+      newRecord.marker = L.marker(
+        trainLatLng(train, glideClock(now, fresh.staleAt), newRecord.fState),
+        {
+          icon: trainIcon(train),
+          // Dimmed AT CREATION, not by the sweep afterwards: a retained train first
+          // seen during an outage (a reload mid-outage) must be dim on the very
+          // first frame it exists, never full-opacity for a beat. This is the
+          // invariant the "C2b" e2e spec pins, and the reason the retention flag and
+          // this rendering ship in one commit.
+          opacity: markerOpacity(fresh.age),
+        },
+      )
         .bindPopup(() => trainPopup(newRecord))
         .addTo(subwayLayer);
       trains.set(train.trip_id, newRecord);

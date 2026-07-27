@@ -199,7 +199,11 @@ function applyRailroads(data) {
       // it last reported, so re-applying it is already the frozen answer.
       record.marker.setLatLng(
         placed
-          ? trainLatLng(train, glideClock(now, age), record.fState)
+          ? trainLatLng(
+              train,
+              glideClock(now, systemStaleAtOf("railroads", train.system)),
+              record.fState,
+            )
           : [train.latitude, train.longitude],
       );
       dimMarker(record.marker, age);
@@ -224,7 +228,11 @@ function applyRailroads(data) {
       const age = systemAgeOf("railroads", train.system);
       newRecord.marker = L.marker(
         placed
-          ? trainLatLng(train, glideClock(now, age), newRecord.fState)
+          ? trainLatLng(
+              train,
+              glideClock(now, systemStaleAtOf("railroads", train.system)),
+              newRecord.fState,
+            )
           : [train.latitude, train.longitude],
         // Dimmed at creation for the same reason as the subway: retained data must
         // never render live, not even for one frame (the "C2b" spec).

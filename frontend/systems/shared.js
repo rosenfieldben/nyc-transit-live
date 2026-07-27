@@ -85,44 +85,77 @@ function setStatus(text, isError = false) {
 // marker sweep runs only when it changes, so the common case (nothing stale, or
 // nothing newly stale) costs one small string compare per tick rather than an
 // opacity write per marker.
-let systemAgeIndex = new Map();
+let systemFreshnessIndex = new Map(); // "<source>|<system>" -> { age, staleAt }
 let staleSystemSignature = "";
 
+// Rebuild the index. Deliberately does NOT touch the stale-set signature: that is
+// change-detection state owned by the animation tick, and consuming a transition
+// here (this runs mid-poll, per source) would make the tick miss the sweep. REVIEW
+// FIX: it used to do both, so a fast source's poll could swallow a slow source's
+// transition and leave those markers undimmed until the tail of refreshAll.
 function refreshSystemFreshness() {
   const now = Date.now() / 1000; // RAW clock: systemAges applies the skew correction
-  const ages = new Map();
-  const stale = [];
+  const index = new Map();
   for (const [sourceKey, source] of Object.entries(sources)) {
-    for (const [name, age] of Object.entries(systemAges(source, now))) {
-      const key = `${sourceKey}|${name}`;
-      ages.set(key, age);
-      if (staleAge(age)) stale.push(key);
+    // A source with no payload yet has nothing to say about any system. Skipping it
+    // also keeps the synthesized-name mismatch in sourceSystems' boot fallback (it
+    // names by label, this indexes by key) out of the index entirely.
+    if (!source.systems) continue;
+    const ages = systemAges(source, now);
+    const staleAts = systemStaleAts(source);
+    for (const name of Object.keys(ages)) {
+      index.set(`${sourceKey}|${name}`, { age: ages[name], staleAt: staleAts[name] });
     }
   }
-  systemAgeIndex = ages;
+  systemFreshnessIndex = index;
+}
+
+// True when the set of stale systems CHANGED since the last call. Separate from the
+// rebuild above so exactly one caller (the animation tick) owns the transition.
+function staleSetChanged() {
+  const stale = [];
+  for (const [key, entry] of systemFreshnessIndex) if (staleAge(entry.age)) stale.push(key);
   const signature = stale.sort().join(",");
   const changed = signature !== staleSystemSignature;
   staleSystemSignature = signature;
   return changed;
 }
 
-// One system's age, for a marker's dimming / popup line / glide freeze. Unknown
-// systems return null (not stale): a marker whose system cannot be identified must
-// not be asserted stale, and the status line still names the outage either way.
-function systemAgeOf(sourceKey, systemName) {
-  if (systemName == null) return null;
-  return systemAgeIndex.get(`${sourceKey}|${systemName}`) ?? null;
+// One system's freshness, for a marker's dimming / popup line / glide freeze.
+//
+// AN UNKNOWN SYSTEM FALLS BACK TO THE SOURCE'S WORST, which is the fail-safe
+// direction: over-dimming says "some of this may be old", which is true, while
+// under-dimming would present retained data as live, the exact defect the retention
+// gate exists to prevent. REVIEW FIX, and it is not hypothetical: models.py lets an
+// aggregate envelope serve `systems: null` (a rollback, or a browser holding the new
+// frontend against the old backend), and ingestSystems then synthesizes ONE system
+// named after the source while the railroad layer looks its systems up by
+// train.system. Every railroad marker missed, so none of them ever dimmed while the
+// status line said the whole source was stale.
+function systemFreshnessOf(sourceKey, systemName) {
+  const entry =
+    systemName == null ? null : systemFreshnessIndex.get(`${sourceKey}|${systemName}`);
+  return entry ?? worstSystemFreshness(sourceKey);
 }
 
-// The worst age across a source's systems, the fail-safe for a marker whose own
-// system is unidentifiable (see subwaySystemAge): over-dimming says "some of this
-// may be old", which is true, where under-dimming would present retained data as
-// live, the exact defect the retention gate exists to prevent.
-function worstSystemAge(sourceKey) {
-  let worst = null;
-  for (const [key, age] of systemAgeIndex) {
+function systemAgeOf(sourceKey, systemName) {
+  return systemFreshnessOf(sourceKey, systemName).age;
+}
+
+function systemStaleAtOf(sourceKey, systemName) {
+  return systemFreshnessOf(sourceKey, systemName).staleAt;
+}
+
+// The worst of a source's systems: the largest age and the EARLIEST freeze deadline,
+// both being the pessimistic answer.
+function worstSystemFreshness(sourceKey) {
+  const worst = { age: null, staleAt: null };
+  for (const [key, entry] of systemFreshnessIndex) {
     if (!key.startsWith(`${sourceKey}|`)) continue;
-    if (age != null && (worst == null || age > worst)) worst = age;
+    if (entry.age != null && (worst.age == null || entry.age > worst.age)) worst.age = entry.age;
+    if (entry.staleAt != null && (worst.staleAt == null || entry.staleAt < worst.staleAt)) {
+      worst.staleAt = entry.staleAt;
+    }
   }
   return worst;
 }
@@ -483,21 +516,22 @@ function animateTrains(ts) {
     // threshold mid-interval must dim the markers and freeze the glide without
     // waiting up to 15s for the next poll. The sweep runs only when the stale set
     // actually changes (C2).
-    if (refreshSystemFreshness()) applyStaleTreatment();
+    refreshSystemFreshness();
+    if (staleSetChanged()) applyStaleTreatment();
     const now = Date.now() / 1000 - (minClockOffset ?? 0);
-    // glideClock freezes a stale system's interpolation where it stood when the data
-    // aged out, instead of dead-reckoning a marker forward on a dead feed. A fresh
-    // system gets `now` back unchanged, so healthy gliding is untouched.
+    // glideClock pins a marker at its system's freeze deadline instead of
+    // dead-reckoning it forward on a feed that is not being refreshed. A system with
+    // no deadline gets `now` back unchanged, so healthy gliding is untouched.
     if (map.hasLayer(subwayLayer)) {
       for (const record of trains.values()) {
-        const at = glideClock(now, subwaySystemAge(record.latest));
+        const at = glideClock(now, subwaySystemStaleAt(record.latest));
         record.marker.setLatLng(trainLatLng(record.latest, at, record.fState));
       }
     }
     if (map.hasLayer(railroadLayer)) {
       for (const record of railroads.values()) {
         if (record.placed) {
-          const at = glideClock(now, systemAgeOf("railroads", record.latest.system));
+          const at = glideClock(now, systemStaleAtOf("railroads", record.latest.system));
           record.marker.setLatLng(trainLatLng(record.latest, at, record.fState));
         }
       }
@@ -506,7 +540,7 @@ function animateTrains(ts) {
       // PATH is single-feed, so its system is the synthesized one named after the
       // source: it flows through the SAME freeze rule as the aggregates rather than
       // being exempted by having no systems block (see ingestSystems).
-      const at = glideClock(now, systemAgeOf("path", "path"));
+      const at = glideClock(now, systemStaleAtOf("path", "path"));
       for (const record of pathTrainRecords.values()) {
         record.marker.setLatLng(trainLatLng(record.latest, at, record.fState));
       }

@@ -54,6 +54,7 @@ const {
   FEED_STALE_AFTER_S,
   ingestSystems,
   systemAges,
+  systemStaleAts,
   staleAge,
   markerOpacity,
   glideClock,
@@ -1522,8 +1523,16 @@ test("C2 staleness reports a system that has NEVER decoded, which has no age", (
 
 test("C2 the empty-success rule survives: a healthy system with no data is not stale", () => {
   // A subway group that decoded and had NO trains running (a real overnight state)
-  // reports ok with a current fetched_at, so its age is ~0 and nothing dims. Absence
-  // must render as absence, never as retained-stale (the ferry precedent, inverted).
+  // reports ok with a current fetched_at, so its age is ~0, nothing dims and nothing
+  // freezes. Absence renders as absence, never as retained-stale (the ferry
+  // precedent, inverted).
+  //
+  // SCOPE, stated because an earlier version of this test implied more: the rule that
+  // an empty HEALTHY group must not be retained is enforced in the backend merge and
+  // owned by test_c2_a_healthy_but_EMPTY_group_replaces_rather_than_retains. The
+  // client half is that an empty coverage list is still coverage, which is a
+  // noteSubwaySystems behavior and is pinned by the "C2c2" e2e spec; nothing here
+  // reads `routes`, so a fixture field for it would be decoration.
   const now = 20_000;
   const source = {
     label: "trains",
@@ -1531,12 +1540,13 @@ test("C2 the empty-success rule survives: a healthy system with no data is not s
     servedAt: now,
     feedTimestamp: now,
     systems: ingestSystems(
-      { fetched_at: now, systems: { SIR: { fetched_at: now, ok: true, routes: [] } } },
+      { fetched_at: now, systems: { SIR: { fetched_at: now, ok: true } } },
       "subways",
     ),
   };
   assert.equal(staleness(source, now), null);
   assert.equal(staleAge(systemAges(source, now).SIR), false);
+  assert.equal(glideClock(now, systemStaleAts(source).SIR), now); // still gliding
 });
 
 test("C2 staleAge and markerOpacity share the threshold boundary", () => {
@@ -1564,20 +1574,83 @@ test("C2 markerOpacity COMPOUNDS staleness with a marker's own resting opacity",
   assert.equal(markerOpacity(FEED_STALE_AFTER_S, 1), markerOpacity(FEED_STALE_AFTER_S));
 });
 
-test("C2 glideClock passes a fresh system through and FREEZES a stale one", () => {
+test("C2 systemStaleAts gives each system the instant its glide must stop", () => {
   const now = 20_000;
-  // Fresh: the live clock, untouched, so normal gliding is bit-for-bit unchanged.
+  const source = (extra, systems) => ({
+    label: "trains",
+    fetchedAt: now,
+    servedAt: now,
+    feedTimestamp: now - 5,
+    ...extra,
+    systems: ingestSystems({ fetched_at: now, systems }, "subways"),
+  });
+  // The ordinary case: this system may be interpolated until its own poll age
+  // reaches the threshold.
+  let at = systemStaleAts(
+    source({}, { ACE: { fetched_at: now - 30, ok: true }, G: { fetched_at: now, ok: true } }),
+  );
+  assert.equal(at.ACE, now - 30 + FEED_STALE_AFTER_S);
+  assert.equal(at.G, now + FEED_STALE_AFTER_S);
+
+  // RETAINED data stops being predictable the moment retention starts, before the
+  // age threshold: the anchors behind the interpolation are known dead from then.
+  at = systemStaleAts(
+    source({}, { ACE: { fetched_at: now - 30, ok: false, retained_since: now - 10 } }),
+  );
+  assert.equal(at.ACE, now - 10);
+
+  // UPSTREAM CONTENT ALREADY PAST THE THRESHOLD when it was polled: nothing may
+  // advance past the observation itself. This is the case the age-based freeze got
+  // wrong, because the lag term does not grow between polls.
+  at = systemStaleAts(
+    source({ feedTimestamp: now - 300 }, { ACE: { fetched_at: now, ok: true } }),
+  );
+  assert.equal(at.ACE, now);
+
+  // Never decoded: no anchor, so no deadline.
+  at = systemStaleAts(source({}, { SIR: { fetched_at: null, ok: false } }));
+  assert.equal(at.SIR, null);
+});
+
+test("C2 glideClock passes a fresh system through and PINS a stale one for good", () => {
+  const now = 20_000;
+  // No deadline, or one still ahead: the live clock, untouched, so normal gliding is
+  // bit-for-bit unchanged.
   assert.equal(glideClock(now, null), now);
-  assert.equal(glideClock(now, 10), now);
-  assert.equal(glideClock(now, FEED_STALE_AFTER_S - 0.001), now);
-  // Stale: pinned at the instant the data crossed the threshold.
-  assert.equal(glideClock(now, FEED_STALE_AFTER_S), now);
-  assert.equal(glideClock(now, FEED_STALE_AFTER_S + 50), now - 50);
-  // AND IT STAYS PINNED. Ten seconds later the age has also grown by ten, so the
-  // frozen clock is the same number: the marker does not creep forward.
-  const frozen = glideClock(now, FEED_STALE_AFTER_S + 50);
-  assert.equal(glideClock(now + 10, FEED_STALE_AFTER_S + 60), frozen);
-  assert.equal(glideClock(now + 600, FEED_STALE_AFTER_S + 650), frozen);
+  assert.equal(glideClock(now, now + 10), now);
+  // Past the deadline: pinned AT it.
+  assert.equal(glideClock(now, now - 50), now - 50);
+  // AND IT STAYS PINNED, however far the clock runs. REVIEW FIX: the old signature
+  // took the AGE and subtracted (age - threshold), which only held still while the
+  // age grew with the clock. It does not when the upstream-lag term dominates, and
+  // markers dead-reckoned at full speed while dimmed. An absolute instant cannot
+  // drift, which is why this test can advance `now` alone.
+  const deadline = now - 50;
+  assert.equal(glideClock(now + 10, deadline), deadline);
+  assert.equal(glideClock(now + 600, deadline), deadline);
+  assert.equal(glideClock(now + 86_400, deadline), deadline);
+});
+
+test("C2 a lag-stale source freezes too: the regression the age-based freeze had", () => {
+  // The exact shape the review reproduced. The backend keeps polling successfully
+  // (poll age ~0) but the upstream header is 300s behind, so the source is stale on
+  // the lag term alone and `age` is a CONSTANT across the poll interval. The old
+  // `now - (age - threshold)` therefore advanced 1:1 with the clock: a full-speed
+  // glide, permanently backdated. The deadline is now the observation itself.
+  const now = 20_000;
+  const source = {
+    label: "trains",
+    fetchedAt: now,
+    servedAt: now,
+    feedTimestamp: now - 300,
+    systems: ingestSystems({ fetched_at: now, systems: { ACE: { fetched_at: now, ok: true } } }, "subways"),
+  };
+  assert.equal(systemAges(source, now).ACE, 300); // stale, and constant with `now`
+  assert.equal(systemAges(source, now + 30).ACE, 300);
+  const at = systemStaleAts(source).ACE;
+  assert.equal(glideClock(now, at), now);
+  assert.equal(glideClock(now + 30, at), now); // frozen, not creeping
+  assert.equal(glideClock(now + 300, at), now);
 });
 
 test("C2 stalePopupLine renders the shared age line only once stale", () => {

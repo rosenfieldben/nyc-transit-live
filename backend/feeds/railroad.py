@@ -13,7 +13,6 @@ from datetime import datetime, timedelta
 
 import httpx
 from google.protobuf.message import DecodeError
-from google.transit import gtfs_realtime_pb2
 
 from feeds.shared import (
     _DROP_STOP_RELATIONSHIPS,
@@ -26,6 +25,7 @@ from feeds.shared import (
     _stop_time,
     _trim_arrivals,
     logger,
+    parse_feed,
 )
 
 RAILROAD_FEED_URLS = {
@@ -67,8 +67,9 @@ def _decode_railroad_vehicles(
     yet); it is kept for parity with the subway decoders and frozen by the golden
     test.
     """
-    feed = gtfs_realtime_pb2.FeedMessage()
-    feed.ParseFromString(raw)
+    # parse_feed rejects an empty or malformed body (C3); fetch_railroad_trains
+    # catches it per SYSTEM, so a poisoned LIRR leaves MNR untouched.
+    feed = parse_feed(raw)
 
     # trip_id -> route_id from this feed's trip_updates, to fill an empty vehicle
     # route_id in the separate-entity (LIRR) layout. The combined-entity (MNR)
@@ -256,8 +257,11 @@ def _decode_railroad_feed(
     residual bucket for trips whose direction could be neither read nor inferred.
     Each bucket is sorted by arrival time and capped at ARRIVALS_PER_DIRECTION.
     """
-    feed = gtfs_realtime_pb2.FeedMessage()
-    feed.ParseFromString(raw)
+    # parse_feed for the same reason as the vehicle decode above. This pass only
+    # ever sees bytes that ALREADY decoded in the GPS pass (raw_by_system holds
+    # exactly those), so it cannot be the first to reject a system; the strict
+    # parse here is belt and braces, and keeps the two decoders' contracts equal.
+    feed = parse_feed(raw)
 
     # Trip ids a positioned vehicle entity carries. For LIRR the vehicle entity
     # shares its trip_id with the matching trip_update, so this set skips placing

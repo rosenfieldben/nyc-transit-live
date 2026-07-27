@@ -4,9 +4,8 @@ decode into bounded {id, route_id, latitude, longitude, bearing} markers."""
 from __future__ import annotations
 
 import httpx
-from google.transit import gtfs_realtime_pb2
 
-from feeds.shared import _api_key, _header_timestamp, _in_nyc
+from feeds.shared import _api_key, _header_timestamp, _in_nyc, parse_feed
 
 VEHICLE_POSITIONS_URL = "https://gtfsrt.prod.obanyc.com/vehiclePositions"
 
@@ -23,8 +22,11 @@ async def fetch_vehicle_positions(client: httpx.AsyncClient) -> tuple[list[dict]
     resp.raise_for_status()
     raw = resp.content
 
-    feed = gtfs_realtime_pb2.FeedMessage()
-    feed.ParseFromString(raw)
+    # parse_feed, not ParseFromString: an empty 200 used to decode as a healthy
+    # feed with zero vehicles, clearing the error and blanking the map (C3). The
+    # FeedDecodeError it raises is a DecodeError subclass, so _refresh_buses'
+    # existing handler records it as a failed poll and keeps last-known.
+    feed = parse_feed(raw)
 
     vehicles: list[dict] = []
     for entity in feed.entity:

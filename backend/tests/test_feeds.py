@@ -5,12 +5,14 @@ from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
+from google.protobuf.message import DecodeError
 from google.transit import gtfs_realtime_pb2 as pb
 
 from feeds import (
     ARRIVALS_PER_DIRECTION,
     NYC_TZ,
     SUBWAY_FEED_URLS,
+    FeedDecodeError,
     _aggregate_feeds,
     _decode_feed,
     _decode_trains,
@@ -19,7 +21,9 @@ from feeds import (
     carry_forward_prev,
     fetch_subway_trains,
     fetch_vehicle_positions,
+    parse_feed,
 )
+from tests import negatives
 
 # Fixed "now": 2026-06-10 12:00:00 New York time.
 NOON = datetime(2026, 6, 10, 12, 0, 0, tzinfo=NYC_TZ)
@@ -828,3 +832,143 @@ def test_carry_forward_multi_poll_continuous_glide():
     p4 = mk_train("t1", "S3", *S3, next_time=1100.0)
     carry_forward_prev([p4], m3)
     assert (p4["prev_lat"], p4["prev_lon"], p4["prev_time"]) == (*S2, 1005.0)
+
+
+# ---------------- The strict parse boundary (C3) ----------------
+
+
+def test_parse_feed_rejects_the_empty_body_that_used_to_parse_clean():
+    # THE AUDIT'S FINDING, pinned at the boundary. ParseFromString(b"") returns 0
+    # and raises nothing, leaving an uninitialized message with no header and zero
+    # entities, so an HTTP 200 with an empty body decoded as a healthy quiet feed:
+    # it cleared the standing error and replaced live data with an empty
+    # generation. The lenient behavior is asserted here too, so this test states
+    # WHAT was wrong rather than only that it is now caught.
+    lenient = pb.FeedMessage()
+    assert lenient.ParseFromString(negatives.EMPTY_BODY) == 0  # no exception
+    assert lenient.IsInitialized() is False
+    assert len(lenient.entity) == 0
+
+    with pytest.raises(FeedDecodeError) as exc:
+        parse_feed(negatives.EMPTY_BODY)
+    assert "empty body" in str(exc.value)
+
+
+def test_parse_feed_rejects_malformed_and_truncated_bodies():
+    # Not protobuf at all (a CDN error page served as 200).
+    with pytest.raises(FeedDecodeError):
+        parse_feed(negatives.GARBAGE_BODY)
+    # A real capture cut off mid-message: valid tags, then a length that runs off
+    # the end. This is the shape an upstream actually emits on a dropped stream.
+    for name in ("subway_1_7_s.pb", "path_rt_gen_a.pb", "ferry_vp_a.pb"):
+        with pytest.raises(FeedDecodeError):
+            parse_feed(negatives.truncated(name))
+        with pytest.raises(FeedDecodeError):
+            parse_feed(negatives.truncated(name, 1))
+
+
+def test_parse_feed_rejects_a_message_that_parses_without_a_header():
+    # Parses cleanly, but proto2's required gtfs_realtime_version was never set,
+    # so IsInitialized() is False: a body that decoded into nothing meaningful
+    # while wearing a 200.
+    raw = negatives.entity_without_header()
+    lenient = pb.FeedMessage()
+    lenient.ParseFromString(raw)  # no exception from the lenient parser
+    assert lenient.IsInitialized() is False
+    assert len(lenient.entity) == 1  # it even has an entity, and is still garbage
+
+    with pytest.raises(FeedDecodeError) as exc:
+        parse_feed(raw)
+    assert "no feed header" in str(exc.value)
+
+
+def test_parse_feed_passes_a_VALID_EMPTY_feed_through_untouched():
+    # THE LINE C3 DRAWS. A feed with a real header and zero entities is DATA, not
+    # an error: the ferry empties overnight when the boats go home. The parser
+    # rejects garbage and never judges a quiet feed; what empty MEANS stays each
+    # decoder's business.
+    feed = parse_feed(negatives.header_only())
+    assert feed.IsInitialized() is True
+    assert len(feed.entity) == 0
+    # With a header timestamp too, since a real quiet feed carries one.
+    stamped = parse_feed(negatives.header_only(timestamp=1_700_000_000))
+    assert stamped.header.timestamp == 1_700_000_000
+
+
+def test_parse_feed_returns_a_real_feed_unchanged():
+    # The positive control: a committed capture parses to the same entity count
+    # the lenient parser produced, so the strictness costs nothing on real bytes.
+    raw = negatives.golden("subway_1_7_s.pb")
+    lenient = pb.FeedMessage()
+    lenient.ParseFromString(raw)
+    assert len(parse_feed(raw).entity) == len(lenient.entity)
+
+
+def test_FeedDecodeError_is_a_DecodeError_so_existing_handlers_catch_it():
+    # The routing depends on this: every caller already routes a DecodeError to the
+    # right place for its source (per group, per feed, per system, or a recorded
+    # poll failure), and subclassing carries the new empty-body case down those
+    # exact paths. If this ever stops being true, an empty 200 escapes every
+    # handler and reaches the poll loop's generic catch instead.
+    assert issubclass(FeedDecodeError, DecodeError)
+    with pytest.raises(DecodeError):
+        parse_feed(negatives.EMPTY_BODY)
+
+
+class _PerUrlClient:
+    """Returns different bytes per URL, so one feed group can be poisoned while
+    the others stay healthy."""
+
+    def __init__(self, by_url: dict, default: bytes):
+        self._by_url = by_url
+        self._default = default
+
+    async def get(self, url):
+        return _FakeResp(self._by_url.get(url, self._default))
+
+
+@pytest.mark.anyio
+async def test_c3_an_empty_200_on_one_subway_group_fails_that_group_only():
+    # THE ROUTING THIS PR IS ABOUT. Before C3 an empty body decoded as a healthy
+    # feed with zero trains, so the group silently contributed nothing and was
+    # reported as fine. It now joins failed_feeds, which is the same list C2's
+    # per-system block is built from, so the outage reaches the rider as a dimmed
+    # group instead of vanishing trains.
+    raw = _live_feed("100_1..N01R", "A01N", 60)
+    poisoned = SUBWAY_FEED_URLS["ACE"]
+    client = _PerUrlClient({poisoned: negatives.EMPTY_BODY}, raw)
+    trains, arrivals, _, failed, by_group, _ = await fetch_subway_trains(STOPS, client)
+
+    assert failed == ["ACE"]  # exactly one group, named
+    assert "ACE" not in by_group  # it did not decode, so it publishes nothing
+    assert len(by_group) == len(SUBWAY_FEED_URLS) - 1  # every survivor advanced
+    assert len(trains) == 1  # the survivors' (identical) train still served
+    assert arrivals["A01"]["Northbound"]
+
+
+@pytest.mark.anyio
+async def test_c3_a_truncated_body_on_one_subway_group_fails_that_group_only():
+    # Same routing for the other negative shape: a real capture cut off
+    # mid-message, which is what a dropped upstream stream actually looks like.
+    raw = _live_feed("100_1..N01R", "A01N", 60)
+    poisoned = SUBWAY_FEED_URLS["JZ"]
+    client = _PerUrlClient({poisoned: negatives.truncated("subway_1_7_s.pb")}, raw)
+    _, _, _, failed, by_group, _ = await fetch_subway_trains(STOPS, client)
+    assert failed == ["JZ"]
+    assert "JZ" not in by_group
+
+
+@pytest.mark.anyio
+async def test_c3_a_VALID_EMPTY_subway_group_still_decodes_as_present_and_empty():
+    # THE OTHER SIDE OF THE LINE, and the one C3 must not disturb: a group that
+    # decoded and is simply running nothing is PRESENT with an empty list, not
+    # failed. C2's retention keys on the failure list rather than on key absence
+    # precisely so this stays distinguishable, and the rider sees absence rather
+    # than retained-stale markers.
+    raw = _live_feed("100_1..N01R", "A01N", 60)
+    quiet = SUBWAY_FEED_URLS["G"]
+    client = _PerUrlClient({quiet: negatives.header_only(timestamp=int(time.time()))}, raw)
+    _, _, _, failed, by_group, arrivals_by_group = await fetch_subway_trains(STOPS, client)
+    assert failed == []  # nothing failed
+    assert by_group["G"] == []  # decoded, nothing running
+    assert arrivals_by_group["G"] == {}

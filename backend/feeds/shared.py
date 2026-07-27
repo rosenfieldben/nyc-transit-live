@@ -19,6 +19,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
+from google.protobuf.message import DecodeError
 from google.transit import gtfs_realtime_pb2
 
 # The submodules all log through this one logger. Named "feeds" (not __name__)
@@ -75,6 +76,64 @@ def _api_key() -> str:
             "project root and add your MTA Bus Time key."
         )
     return key
+
+
+class FeedDecodeError(DecodeError):
+    """One failure type for the whole parse boundary (C3).
+
+    A SUBCLASS of protobuf's DecodeError on purpose. Every caller already routes
+    a DecodeError to the right place for its source (a per-group entry in the
+    subway's failed set, a per-feed entry in the alerts' one, a per-system entry
+    in the railroad's, a recorded poll failure for the single-feed sources), so
+    subclassing carries the newly-detected empty-body case down those exact same
+    paths with no routing change and no chance of a handler being missed. Callers
+    that want to name this boundary specifically can catch FeedDecodeError; the
+    ones that catch DecodeError keep working, which is the point.
+    """
+
+
+def parse_feed(raw: bytes) -> gtfs_realtime_pb2.FeedMessage:
+    """Parse GTFS-Realtime bytes STRICTLY, raising FeedDecodeError on garbage.
+
+    THE BUG THIS EXISTS FOR: FeedMessage.ParseFromString(b"") SUCCEEDS. It returns
+    0, leaves the message uninitialized with no header and zero entities, and
+    raises nothing. So an HTTP 200 carrying an empty (or truncated-to-empty) body
+    was decoded as a healthy feed that happened to be quiet: it cleared the
+    standing error and replaced live data with an empty generation, in every
+    decoder. A silent upstream failure looked exactly like a quiet feed.
+
+    The rules, and why each one:
+
+    1. EMPTY BYTES raise. That is the exact signature above, and no real feed is
+       zero bytes: even a feed with nothing to report carries its header (seven
+       bytes for a bare gtfs_realtime_version).
+    2. A protobuf DecodeError (malformed bytes, or a body truncated mid-message)
+       is re-raised as FeedDecodeError, so this boundary has ONE failure type.
+    3. A message that parses but is NOT IsInitialized() raises. FeedHeader's
+       gtfs_realtime_version is `required` in proto2, so an initialized message
+       provably has a real header; an uninitialized one is a body that decoded
+       into nothing meaningful while wearing a 200.
+    4. AN INITIALIZED MESSAGE WITH ZERO ENTITIES RETURNS NORMALLY. Valid-empty is
+       real data, not an error: the ferry feed genuinely empties overnight when
+       the boats go home, and what an empty feed MEANS stays each decoder's
+       business (the ferry replaces its boats, the other feeds ride out a
+       transient blip). This function rejects garbage; it never judges a quiet
+       feed.
+    5. No timestamp policing. Header-clock anomalies already have per-decoder
+       handling (the subway's feed-clock logic, the railroad's freshness-
+       authoritative systems), and centralizing that here would change semantics
+       this parser must leave alone.
+    """
+    if not raw:
+        raise FeedDecodeError("empty body served as 200 (no protobuf header)")
+    feed = gtfs_realtime_pb2.FeedMessage()
+    try:
+        feed.ParseFromString(raw)
+    except DecodeError as exc:
+        raise FeedDecodeError(f"malformed protobuf ({exc})") from exc
+    if not feed.IsInitialized():
+        raise FeedDecodeError("protobuf parsed but has no feed header")
+    return feed
 
 
 def _header_timestamp(feed) -> float | None:

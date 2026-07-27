@@ -85,6 +85,7 @@ from feeds.shared import (
     RAILROAD_LON_MAX,
     RAILROAD_LON_MIN,
     TRIP_START_GRACE_S,
+    FeedDecodeError,
     _api_key,
     _header_timestamp,
     _in_nyc,
@@ -96,6 +97,7 @@ from feeds.shared import (
     drop_expired_arrivals,
     logger,
     merge_system_generations,
+    parse_feed,
 )
 from feeds.subway import (
     _SUBWAY_BASE,
@@ -140,6 +142,9 @@ __all__ = [
     "combine_group_trains",
     "merge_system_generations",
     "drop_expired_arrivals",
+    # The strict parse boundary every decoder goes through (C3).
+    "parse_feed",
+    "FeedDecodeError",
     "logger",
     "VEHICLE_POSITIONS_URL",
     "fetch_vehicle_positions",

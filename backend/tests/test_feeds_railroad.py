@@ -976,3 +976,29 @@ def test_railroad_carry_forward_same_trip_id_independent_across_systems():
     assert (lirr["prev_lat"], lirr["prev_lon"], lirr["prev_time"]) == (*RS1, 940.0)  # from A
     assert (mnr["prev_lat"], mnr["prev_lon"], mnr["prev_time"]) == (*RS2, 940.0)  # from B, not A
     assert set(out) == {("LIRR", "99"), ("MNR", "99")}
+
+
+@pytest.mark.anyio
+async def test_c3_an_empty_200_on_one_railroad_system_fails_that_system_only():
+    # MNR serves a 200 with no body. Before C3 that decoded as MNR running zero
+    # trains, so its markers vanished while the poll reported a clean success and
+    # cleared the standing error. It now joins the per-system failed list, which is
+    # what C2's retention and freshness block key on, so a rider sees MNR's last
+    # known trains dimmed rather than an empty map half.
+    client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": b""})
+    trains, _, _, failed = await feeds.fetch_railroad_trains(client, {})
+    assert failed == ["MNR"]
+    assert trains and all(t["system"] == "LIRR" for t in trains)
+
+
+@pytest.mark.anyio
+async def test_c3_a_VALID_EMPTY_railroad_system_is_healthy_with_no_trains():
+    # The other side of the line: a header-only feed is a system with nothing
+    # running (overnight), which must stay a SUCCESS so the client shows honest
+    # absence rather than retaining and dimming trains that genuinely are not out.
+    header_only = pb.FeedMessage()
+    header_only.header.gtfs_realtime_version = "2.0"
+    client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": header_only.SerializeToString()})
+    trains, _, _, failed = await feeds.fetch_railroad_trains(client, {})
+    assert failed == []
+    assert all(t["system"] == "LIRR" for t in trains)

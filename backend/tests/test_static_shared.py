@@ -122,11 +122,28 @@ def good_archive(stops=_STOP_ROWS, drop=(), routes=_ROUTE_ROWS) -> bytes:
 # The four bad shapes the spec names, each a callable producing the published
 # bytes. HEADERS-ONLY STOPS IS THIRD-AUDIT FINDING 4'S SHAPE: a structurally
 # perfect archive whose stops table has a header row and nothing else.
+def unsupported_compression() -> bytes:
+    """A structurally valid zip whose members claim a compression method we cannot
+    decompress, by rewriting the method field in both the local and the central
+    headers. zipfile reads the directory fine (so namelist and the member checks
+    pass) and raises NotImplementedError only at zf.open, which is a different
+    escape route from BadZipFile and needs its own mapping to a rejection.
+    """
+    payload = bytearray(good_archive())
+    for signature, offset in ((b"PK\x03\x04", 8), (b"PK\x01\x02", 10)):
+        start = 0
+        while (found := payload.find(signature, start)) != -1:
+            payload[found + offset : found + offset + 2] = (99).to_bytes(2, "little")
+            start = found + 4
+    return bytes(payload)
+
+
 BAD_PUBLICATIONS = {
     "truncated-zip": lambda: good_archive()[: len(good_archive()) // 2],
     "html-error-page": lambda: b"<!doctype html><html><body>503 Service Unavailable</body></html>",
     "missing-member": lambda: good_archive(drop=("stops.txt",)),
     "headers-only-stops": lambda: good_archive(stops=[]),
+    "unsupported-compression": unsupported_compression,
 }
 
 
@@ -325,12 +342,17 @@ def _subway_paths(tmp_path, monkeypatch):
 
 
 def _railroad_paths(tmp_path, monkeypatch):
-    # Both systems point into the tmp dir; the assertions are on LIRR, and MNR
-    # riding along is what proves one system's failure does not touch the other's.
+    # ONE system for these shared cases, deliberately. With MNR riding along, its
+    # cacheless load would attempt a download in every case below, and _load_one's
+    # lenient `except Exception` would swallow the "should not download" assertion
+    # a test raises from its injected transfer, making that test pass for the wrong
+    # reason. The two-system independence is covered where it belongs, in
+    # test_railroad_static.py.
     monkeypatch.setattr(
-        railroad_static,
-        "RAILROAD_STATIC_ZIPS",
-        {"LIRR": tmp_path / "gtfs_lirr.zip", "MNR": tmp_path / "gtfs_mnr.zip"},
+        railroad_static, "RAILROAD_STATIC_ZIPS", {"LIRR": tmp_path / "gtfs_lirr.zip"}
+    )
+    monkeypatch.setattr(
+        railroad_static, "RAILROAD_STATIC_URLS", {"LIRR": "https://example.invalid/lirr.zip"}
     )
     return tmp_path / "gtfs_lirr.zip"
 
@@ -538,23 +560,26 @@ async def test_an_unservable_cache_is_treated_as_absent_and_refetched(
     data = await loader.load()
 
     assert loader.served(data)
-    # Exactly one recovery download for THIS archive, not a loop. (The railroad
-    # loader also fetches its other system, which has no cache here at all.)
-    assert calls.count(cache) == 1
+    assert calls.count(cache) == 1  # exactly one recovery download, not a loop
 
 
 @pytest.mark.parametrize("loader", LOADERS, ids=LOADER_IDS)
 async def test_a_valid_fresh_cache_is_served_without_any_download(tmp_path, monkeypatch, loader):
     # The other side of the guard: validity is an ADDITIONAL condition on
     # freshness, never a reason to re-download something already good.
+    #
+    # The absence of a download is proven by RECORDING calls, not by raising from
+    # the injected transfer. Raising is what this test did first, and it was
+    # vacuous: every loader catches a download failure and falls back to the cache,
+    # so the assertion was swallowed and the test stayed green against a loader
+    # mutated to download unconditionally.
     cache = loader.set_path(tmp_path, monkeypatch)
     cache.write_bytes(good_archive())
+    calls = []
+    _patch_download(monkeypatch, loader.module, good_archive(), calls=calls)
 
-    async def refuse(*args, **kwargs):
-        raise AssertionError("a fresh valid cache must not trigger a download")
-
-    monkeypatch.setattr(loader.module, "staged_fetch", refuse)
     assert loader.served(await loader.load())
+    assert calls == []
     assert static_shared.archive_status() == {}
 
 

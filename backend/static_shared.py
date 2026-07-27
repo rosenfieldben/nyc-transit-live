@@ -144,6 +144,15 @@ def validate_archive(path: Path, validate: Callable[[zipfile.ZipFile], None]) ->
             validate(zf)
     except zipfile.BadZipFile as exc:
         raise StaticValidationError(f"not a readable zip archive ({exc})") from exc
+    except NotImplementedError as exc:
+        # A member compressed with a method this build cannot decompress. Rare, but
+        # it belongs on THIS side of the boundary: an archive we cannot read is a
+        # rejected publication, not a crash. Without this the exception escapes
+        # cached_archive_is_valid (which catches only StaticValidationError and
+        # OSError) and every retry re-raises it against the same cached bytes.
+        raise StaticValidationError(
+            f"archive uses an unsupported compression method ({exc})"
+        ) from exc
 
 
 def cached_archive_is_valid(path: Path, validate: Callable[[zipfile.ZipFile], None]) -> bool:

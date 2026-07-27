@@ -141,12 +141,34 @@ function pathTrainPopup(record) {
   // No routeAlertsBlock prepend (the subway trainPopup's alert join): PATH
   // has no alerts feed. Reads record.latest so the popup a rider holds open
   // across polls always renders the newest placement, like the other systems.
-  return pathTrainPopupHtml(
-    t,
-    pathRouteNames.get(t.route_id) || null,
-    pathRouteColors.get(t.route_id) ?? PATH_FALLBACK_COLOR,
+  return (
+    pathTrainPopupHtml(
+      t,
+      pathRouteNames.get(t.route_id) || null,
+      pathRouteColors.get(t.route_id) ?? PATH_FALLBACK_COLOR,
+    ) +
+    // C2: PATH is single-feed, so its system is the synthesized one named after the
+    // source (ingestSystems). It gets the SAME age line as the aggregate systems
+    // rather than being exempt from staleness for lacking a systems block.
+    stalePopupLine(pathSystemAge())
   );
 }
+
+// PATH's one system. Wrapped in a function rather than inlined at four call sites so
+// the "single-feed source still goes through the per-system path" decision is stated
+// in one place.
+function pathSystemAge() {
+  return systemAgeOf("path", "path");
+}
+
+function pathSystemStaleAt() {
+  return systemStaleAtOf("path", "path");
+}
+
+// Re-dim every PATH train from its source's age (C2).
+staleTreatments.push(() => {
+  for (const record of pathTrainRecords.values()) dimMarker(record.marker, pathSystemAge());
+});
 
 // Stable backend id -> { marker, routeId, latest, fState, _segId }. 13c had no
 // such map on purpose: only raw bridge trip ids existed then, and they churn
@@ -180,7 +202,12 @@ function applyPath(data) {
           : computePathRouteSlice(train, pathRouteIndex.get(train.route_id), PATH_SLICE_OPTS);
       record._segId = segId;
       record.latest = train;
-      record.marker.setLatLng(trainLatLng(train, now, record.fState));
+      // Frozen glide clock while the feed is stale, so an anchored train stops
+      // advancing along its route instead of dead-reckoning on a dead feed (C2).
+      record.marker.setLatLng(
+        trainLatLng(train, glideClock(now, pathSystemStaleAt()), record.fState),
+      );
+      dimMarker(record.marker, pathSystemAge());
       if (record.routeId !== train.route_id) {
         record.marker.setIcon(pathIcon(train));
         record.routeId = train.route_id;
@@ -190,9 +217,13 @@ function applyPath(data) {
       const newRecord = { routeId: train.route_id, latest: train, fState: {} };
       newRecord._segId = `${train.route_id}|${train.prev_time}|${train.stop_id}`;
       train._route = computePathRouteSlice(train, pathRouteIndex.get(train.route_id), PATH_SLICE_OPTS);
-      newRecord.marker = L.marker(trainLatLng(train, now, newRecord.fState), {
-        icon: pathIcon(train),
-      })
+      newRecord.marker = L.marker(
+        trainLatLng(train, glideClock(now, pathSystemStaleAt()), newRecord.fState),
+        {
+          icon: pathIcon(train),
+          opacity: markerOpacity(pathSystemAge()), // dim on the first frame, as elsewhere
+        },
+      )
         .bindPopup(() => pathTrainPopup(newRecord))
         .addTo(pathTrains);
       pathTrainRecords.set(train.id, newRecord);

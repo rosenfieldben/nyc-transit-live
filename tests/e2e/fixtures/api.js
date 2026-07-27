@@ -23,6 +23,91 @@ const envelope = (data, fetchedAt = FROZEN_S, servedAt = fetchedAt) => ({
   data,
 });
 
+// ---- Per-system freshness blocks (C2) ----
+//
+// One entry of an aggregate envelope's `systems` map, matching models.SystemFreshness:
+// this system's own last decode, whether its last poll succeeded, since when its data
+// has been carried forward, and (subway only) which routes its served data covers.
+// Defaults describe a HEALTHY system, so a partial-outage fixture states only the
+// system that is down.
+const systemBlock = (fetchedAt, { ok = true, retainedSince = null, routes = null } = {}) => ({
+  fetched_at: fetchedAt,
+  ok,
+  retained_since: retainedSince,
+  routes,
+});
+
+// The subways envelope with per-system blocks for the two feed groups the fixtures'
+// trains belong to: route "1" rides the 1-7+S group, route "A" the ACE group.
+// `aceAt` is ACE's own last decode (pass an older stamp to model a down ACE), and
+// `aceOk` / `aceRetainedSince` complete that picture. `fetchedAt` is the ENVELOPE's,
+// which keeps advancing on a partial outage, which is the whole reason the per-system
+// blocks exist.
+const subwaysWithSystems = ({
+  data,
+  fetchedAt = FROZEN_S,
+  servedAt = fetchedAt,
+  aceAt = fetchedAt,
+  aceOk = true,
+  aceRetainedSince = null,
+  aceRoutes = ["A"],
+} = {}) => ({
+  fetched_at: fetchedAt,
+  feed_timestamp: fetchedAt - 5,
+  served_at: servedAt,
+  data: data ?? subways().data,
+  systems: {
+    "1-7+S": systemBlock(fetchedAt, { routes: ["1"] }),
+    ACE: systemBlock(aceAt, { ok: aceOk, retainedSince: aceRetainedSince, routes: aceRoutes }),
+  },
+});
+
+// The railroads envelope with per-system blocks. LIRR stays fresh at the envelope's
+// own stamp; MNR's is passed in, so a test can freeze MNR while LIRR advances.
+const railroadsWithSystems = ({
+  data,
+  fetchedAt = FROZEN_S,
+  servedAt = fetchedAt,
+  mnrAt = fetchedAt,
+  mnrOk = true,
+  mnrRetainedSince = null,
+} = {}) => ({
+  fetched_at: fetchedAt,
+  feed_timestamp: fetchedAt - 5,
+  served_at: servedAt,
+  data: data ?? railroads().data,
+  systems: {
+    LIRR: systemBlock(fetchedAt),
+    MNR: systemBlock(mnrAt, { ok: mnrOk, retainedSince: mnrRetainedSince }),
+  },
+});
+
+// The alerts envelope with per-system blocks for the five alert systems. All fresh at
+// `fetchedAt` except the one named by `frozen`, which is the partial-outage case the
+// C1 marker could not express (a poll where four of five decode is a SUCCESS, so the
+// envelope's own fetched_at keeps advancing).
+const ALERT_SYSTEMS = ["subway", "bus", "LIRR", "MNR", "ferry"];
+
+const alertsWithSystems = ({
+  alerts: list = [],
+  fetchedAt = FROZEN_S,
+  servedAt = fetchedAt,
+  frozen = null,
+  frozenAt = fetchedAt,
+} = {}) => ({
+  fetched_at: fetchedAt,
+  served_at: servedAt,
+  alerts: list,
+  systems: Object.fromEntries(
+    ALERT_SYSTEMS.map((system) => [
+      system,
+      system === frozen
+        ? systemBlock(frozenAt, { ok: false, retainedSince: frozenAt })
+        : systemBlock(fetchedAt),
+    ]),
+  ),
+});
+
 const buses = () =>
   envelope([
     { id: "MTA NYCT_101", route_id: "M15", latitude: 40.72, longitude: -73.98, bearing: 90.0 },
@@ -395,6 +480,11 @@ module.exports = {
   FROZEN_MS,
   FROZEN_S,
   envelope,
+  systemBlock,
+  subwaysWithSystems,
+  railroadsWithSystems,
+  alertsWithSystems,
+  ALERT_SYSTEMS,
   buses,
   subways,
   railroads,

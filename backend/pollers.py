@@ -206,12 +206,33 @@ def _mark_all_systems_failed(entry: dict) -> None:
         block["ok"] = False
 
 
+def _routes_by_system(data_by_system: dict[str, list[dict]]) -> dict[str, list[str]]:
+    """Which route ids each system's SERVED data covers (C2 PR2, subway only).
+
+    The client needs this to point a stale system's block at the markers it
+    describes: a subway train carries a route_id and nothing naming its feed group,
+    so without the mapping the client could know the ACE group is stale and still
+    have no way to dim its trains. Derived from the by-group partition the poller
+    already holds rather than from a hand-maintained table, so it cannot drift from
+    SUBWAY_FEED_URLS, and it stays true for retained data (a carried-forward group
+    still lists its routes; one the cap has emptied lists none, which is right
+    because it has no markers left).
+
+    Sorted for a stable payload. A train with no route_id contributes nothing.
+    """
+    return {
+        system: sorted({train["route_id"] for train in trains if train.get("route_id")})
+        for system, trains in data_by_system.items()
+    }
+
+
 def _system_freshness(
     prev: dict | None,
     all_systems: Iterable[str],
     failed_systems: list[str],
     retained_since: dict[str, float],
     now: float,
+    routes: dict[str, list[str]] | None = None,
 ) -> dict[str, dict]:
     """Build the per-system freshness block published in the aggregate envelope.
 
@@ -221,6 +242,13 @@ def _system_freshness(
     matches models.SystemFreshness, and deliberately carries no error text: `ok`
     plus the age are the whole public signal, and sanitized detail stays on
     /api/status.
+
+    `routes` is the optional per-system route coverage (see _routes_by_system);
+    only the subway passes it, because only its entities lack a system name of
+    their own. A system missing from the mapping publishes an EMPTY list rather
+    than null: null means "this envelope does not do route coverage at all" (the
+    railroad and alerts blocks), and the client's fail-safe for that is to dim on
+    the source's worst system, which would be wrong here.
     """
     failed = set(failed_systems)
     previous = prev or {}
@@ -232,6 +260,7 @@ def _system_freshness(
             "fetched_at": was.get("fetched_at") if system in failed else now,
             "ok": system not in failed,
             "retained_since": retained_since.get(system),
+            "routes": None if routes is None else routes.get(system, []),
         }
     return blocks
 
@@ -320,7 +349,15 @@ async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
     # a merge running afterwards would read the reset value as "no previous
     # retention", restart the clock at `now`, and never reach the cap.
     entry["systems"] = _system_freshness(
-        entry.get("systems"), SUBWAY_FEED_URLS, failed_feeds, retained_since, now
+        entry.get("systems"),
+        SUBWAY_FEED_URLS,
+        failed_feeds,
+        retained_since,
+        now,
+        # Route coverage comes from the MERGED trains, not the fresh ones: those are
+        # the trains actually on the map, retained ones included, and dimming has to
+        # reach exactly them.
+        _routes_by_system(merged_trains_by_group),
     )
     # Carry each trip's previous-poll stop forward as its prev interpolation anchor
     # when the feed pruned the departed stop (mutates trains in place), then remember

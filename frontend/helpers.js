@@ -174,6 +174,183 @@ function noteClockOffset(servedAt, now = Date.now() / 1000) {
   if (minClockOffset == null || offset < minClockOffset) minClockOffset = offset;
 }
 
+// ---- Per-system freshness (C2) ----
+
+// Opacity for a marker whose system's data has gone stale. Dim enough to read as
+// "not current" at a glance next to a live marker, light enough that the marker is
+// still legible and clickable: a rider looking at a partial outage should be able to
+// tell that these trains are the old ones, and still open one to see how old.
+const STALE_MARKER_OPACITY = 0.45;
+
+// ONE INGESTION PATH FOR BOTH PAYLOAD SHAPES, which is the whole point of this
+// function. The aggregate feeds carry a per-system block (subways: 8 feed groups;
+// railroads: LIRR + MNR; alerts: 5 systems); the single-feed ones (buses, PATH,
+// ferry) carry only the envelope's own fetched_at. Rather than have every consumer
+// below branch on which kind of payload it is holding, a single-feed payload gets a
+// SYNTHESIZED one-system block named after its source, so the status line, the
+// dimming, the popups and the glide freeze all read one shape and a single-feed
+// source can never quietly skip a rule the aggregates follow.
+//
+// A single-feed source therefore reads exactly as it did pre-C2 in the status line
+// ("buses: as of 3m ago", never "buses: buses as of 3m ago"), because naming every
+// system of a source is just naming the source: see staleness().
+//
+// DEFENSIVE READS, because this parses a payload: a block entry with no numeric
+// fetched_at reports a null age (unknown, not fresh and not stale) and is surfaced
+// through `ok` instead; a missing `ok` reads as healthy, so a malformed field cannot
+// dim the whole map; an EMPTY systems object falls back to the synthesized single
+// system rather than yielding a source with no freshness at all.
+function ingestSystems(body, sourceKey) {
+  const raw = body == null ? null : body.systems;
+  const names = raw != null && typeof raw === "object" ? Object.keys(raw) : [];
+  if (!names.length) {
+    const fetchedAt = body == null ? null : body.fetched_at;
+    return {
+      [sourceKey]: {
+        fetchedAt: typeof fetchedAt === "number" ? fetchedAt : null,
+        ok: true,
+        retainedSince: null,
+        routes: null,
+      },
+    };
+  }
+  const systems = {};
+  for (const name of names) {
+    const block = raw[name] ?? {};
+    systems[name] = {
+      fetchedAt: typeof block.fetched_at === "number" ? block.fetched_at : null,
+      ok: block.ok !== false,
+      retainedSince: typeof block.retained_since === "number" ? block.retained_since : null,
+      // Null means this envelope does no route coverage at all (the railroad and
+      // alerts blocks, whose entities name their own system); an array, possibly
+      // empty, means it does.
+      routes: Array.isArray(block.routes) ? block.routes : null,
+    };
+  }
+  return systems;
+}
+
+// A source's systems, falling back to the synthesized single system when a caller
+// hands over a descriptor that has not ingested a payload yet (boot) or a plain row
+// in a unit test. Keeps every consumer free of null checks.
+//
+// The fallback names its system after the source's LABEL, which is not the key
+// refreshSource ingests under; that would be a trap if the name mattered here, so
+// the freshness index deliberately skips a source with no payload yet (there is
+// nothing to say about it) and only staleness() uses this path, where the single
+// system is never named separately.
+function sourceSystems(source) {
+  return source.systems ?? ingestSystems({ fetched_at: source.fetchedAt }, source.label ?? "feed");
+}
+
+// The poll-age term of staleness(), lifted out so the per-system judgment and the
+// whole-source one cannot drift apart. `now` is the RAW client clock (the skew
+// correction happens here, via minClockOffset), matching staleness() below.
+function pollAge(fetchedAt, servedAt, now) {
+  if (fetchedAt == null) return null;
+  if (servedAt == null) return now - fetchedAt - (minClockOffset ?? 0);
+  // Server cache age is skew-free by construction; client elapsed is clamped at 0
+  // (data cannot be fresher than when it was served). See staleness().
+  return servedAt - fetchedAt + Math.max(now - servedAt - (minClockOffset ?? 0), 0);
+}
+
+// Age of EACH of a source's systems, keyed by system name; null for a system that
+// has never decoded (no fetched_at to age against).
+//
+// The upstream-lag term stays a SOURCE-level floor rather than a per-system one:
+// feed_timestamp is the oldest content time across the feeds that decoded, so it
+// cannot be attributed to one system, and if the content behind this response is
+// old then everything drawn from it is old. On a fully healthy source every
+// system's fetched_at equals the envelope's, so the worst of these ages is exactly
+// the age R1 computed, which is what keeps the healthy case rendering unchanged.
+function systemAges(source, now = Date.now() / 1000) {
+  const lag =
+    source.feedTimestamp == null || source.fetchedAt == null
+      ? 0
+      : source.fetchedAt - source.feedTimestamp;
+  const ages = {};
+  for (const [name, system] of Object.entries(sourceSystems(source))) {
+    const poll = pollAge(system.fetchedAt, source.servedAt, now);
+    ages[name] = poll == null ? null : Math.max(lag, poll, 0);
+  }
+  return ages;
+}
+
+// Is this age stale? One predicate so the marker dimming, the popup age line, the
+// glide freeze and the status line can never disagree about the boundary.
+function staleAge(age) {
+  return age != null && age >= FEED_STALE_AFTER_S;
+}
+
+// The marker opacity a system's age earns: dimmed once stale, otherwise fully
+// opaque. Pure so the dimming rule is node-testable; the Leaflet call sits in the
+// system files.
+//
+// `base` is a marker's own resting opacity, which COMPOUNDS with staleness rather
+// than being replaced by it. The ferry layer has one (a STOPPED_AT boat rides at
+// FERRY_DOCKED_OPACITY to read as parked), and a docked boat on a stale feed is
+// legitimately both. This has to be one number per marker: the docked dimming used
+// to come from a css class, and an inline opacity written for staleness would have
+// silently overridden it, un-dimming every docked boat the moment C2 started
+// setting opacities.
+function markerOpacity(age, base = 1) {
+  return base * (staleAge(age) ? STALE_MARKER_OPACITY : 1);
+}
+
+// THE INSTANT EACH SYSTEM'S GLIDE MUST STOP, on the skew-corrected clock (the same
+// axis trainLatLng runs on), or null while a system may still be interpolated.
+// Three ways a system reaches that instant:
+//
+//   1. Its data is being RETAINED. retained_since says the backend is serving a
+//      generation it could not refresh, so the anchors behind any interpolation are
+//      known dead from that moment. This fires as soon as retention starts, before
+//      the age threshold, which is the point: gliding is a PREDICTION from a fresh
+//      observation, and predicting from data we already know is not being refreshed
+//      is dead reckoning no matter how young it is. (Opacity is deliberately NOT
+//      moved here: dimming states how OLD the data is, and the app's definition of
+//      old is FEED_STALE_AFTER_S for every source alike.)
+//   2. Its own poll age reaches the threshold, at fetchedAt + FEED_STALE_AFTER_S.
+//   3. The source's upstream content was ALREADY past the threshold when it was
+//      polled (the lag term). Nothing may advance past the observation itself, so
+//      the deadline is fetchedAt.
+//
+// REVIEW FIX. This used to be glideClock(now, age) subtracting (age - threshold),
+// which only froze while the POLL term dominated: with the upstream-lag term
+// dominating, age is a constant across a poll interval, so `now - constant` advanced
+// at full speed and every marker on the source kept dead-reckoning while dimmed.
+// Expressing the freeze as an absolute instant cannot drift that way, and it needs no
+// clock, so it is a pure function of the payload.
+function systemStaleAts(source) {
+  const lag =
+    source.feedTimestamp == null || source.fetchedAt == null
+      ? 0
+      : source.fetchedAt - source.feedTimestamp;
+  const deadlines = {};
+  for (const [name, system] of Object.entries(sourceSystems(source))) {
+    if (system.fetchedAt == null) {
+      deadlines[name] = null; // never decoded: no anchor, so nothing to freeze
+      continue;
+    }
+    const aged = system.fetchedAt + (lag >= FEED_STALE_AFTER_S ? 0 : FEED_STALE_AFTER_S);
+    deadlines[name] =
+      system.retainedSince == null ? aged : Math.min(aged, system.retainedSince);
+  }
+  return deadlines;
+}
+
+// THE GLIDE FREEZE (C2). The clock an interpolated marker may use: the live clock
+// while its system may still be predicted from, pinned at that system's deadline
+// (systemStaleAts) once it may not.
+//
+// WHY freezing rather than letting the glide run: a train would keep sliding
+// confidently along its route for as long as the outage lasted, which is a worse lie
+// than the frozen position (the frozen one is at least somewhere the train really
+// was). A system with no deadline gets `now` back untouched, so normal gliding is
+// bit-for-bit unchanged.
+function glideClock(now, staleAt) {
+  return staleAt == null ? now : Math.min(now, staleAt);
+}
+
 // Two independent staleness signals, flag if EITHER crosses the threshold:
 //   1. upstream lag = fetched_at - feed_timestamp — both server-recorded, so
 //      this is clock-skew free; detects the MTA feed itself going stale.
@@ -190,22 +367,55 @@ function noteClockOffset(servedAt, now = Date.now() / 1000) {
 //          cannot be fresher than when it was served).
 //      When served_at is absent (a response predating the served_at contract),
 //      fall back to the old single term so a stuck backend is still caught.
+//
+// C2 MADE THIS PER SYSTEM. The two terms above are unchanged; what changed is what
+// they are computed against. A partial outage is a SUCCESSFUL poll, so the
+// envelope's own fetched_at keeps advancing and this phrase could never fire for
+// the system that was actually down. It now ages every system separately
+// (systemAges) and reports the worst, which is why a down MNR surfaces while a
+// healthy LIRR stays quiet.
+//
+// THE COMMON CASE MUST NOT GET NOISIER, so the wording is graded:
+//   - every system fresh: null, exactly as before.
+//   - the WHOLE source stale (one synthesized system, or every system of an
+//     aggregate): "railroad: as of 6m ago", the pre-C2 wording untouched.
+//   - a strict SUBSET stale: the degraded systems are named, worst age reported,
+//     e.g. "railroad: MNR as of 6m ago" or "trains: ACE group as of 4m ago"
+//     (source.systemNoun supplies the "group", which reads wrong for a system).
+//   - a system that has NEVER decoded cannot be aged, so it is reported by name
+//     with no age rather than silently dropped.
+// A system that merely failed its last poll is NOT named until its age crosses the
+// threshold: single failed polls are routine, and naming them would make the status
+// line chatter during normal operation.
 // `now` is injected for testability (defaults to the wall clock).
 function staleness(source, now = Date.now() / 1000) {
-  if (source.fetchedAt == null) return null;
-  const upstreamLag =
-    source.feedTimestamp == null ? 0 : source.fetchedAt - source.feedTimestamp;
-  let pollAge;
-  if (source.servedAt == null) {
-    pollAge = now - source.fetchedAt - (minClockOffset ?? 0);
-  } else {
-    const cacheAge = source.servedAt - source.fetchedAt;
-    const clientElapsed = now - source.servedAt - (minClockOffset ?? 0);
-    pollAge = cacheAge + Math.max(clientElapsed, 0);
+  const systems = sourceSystems(source);
+  const ages = systemAges(source, now);
+  const names = Object.keys(ages).sort();
+  const stale = names.filter((name) => staleAge(ages[name]));
+  // Never decoded (null age) AND reported down: no age to print, but real.
+  const blind = names.filter((name) => ages[name] == null && !systems[name].ok);
+  if (!stale.length && !blind.length) return null;
+  const noun = source.systemNoun ? ` ${source.systemNoun}` : "";
+  // Naming every system of a source is just naming the source, so fall back to the
+  // pre-C2 wording; that is also what keeps a single-feed source reading unchanged.
+  const whole = stale.length + blind.length === names.length;
+  const subject = (group) =>
+    whole && !(stale.length && blind.length)
+      ? ""
+      : `${group.map((n) => `${n}${noun}`).join(", ")} `;
+  // TWO CLAUSES, NEVER ONE. REVIEW FIX: the stale and blind sets used to be merged
+  // into a single subject that then took its age from the stale set alone, so a
+  // system which had never reported anything was announced with another system's
+  // age ("ACE group, SIR group as of 4m ago" when SIR had no data at all). They
+  // collide exactly during a broad incident, which is when the line gets read.
+  const clauses = [];
+  if (stale.length) {
+    const worst = Math.max(...stale.map((name) => ages[name]));
+    clauses.push(`${subject(stale)}as of ${humanizeAge(worst)} ago`);
   }
-  const age = Math.max(upstreamLag, pollAge, 0);
-  if (age < FEED_STALE_AFTER_S) return null;
-  return `${source.label}: as of ${humanizeAge(age)} ago`;
+  if (blind.length) clauses.push(`${subject(blind)}not reporting`);
+  return `${source.label}: ${clauses.join("; ")}`;
 }
 
 // A compact age string: seconds under two minutes, whole minutes above. Shared by
@@ -222,8 +432,15 @@ function humanizeAge(age) {
 // countdowns; fetchedAt is the arrivals body's poll time. Pure and node-testable.
 function feedAgeLine(fetchedAt, now) {
   if (fetchedAt == null) return "";
-  const age = now - fetchedAt;
-  if (age < FEED_STALE_AFTER_S) return "";
+  return stalePopupLine(now - fetchedAt);
+}
+
+// The same line from an AGE rather than a timestamp, for the C2 train/boat/bus
+// popups: their staleness comes from a system block's age (already carrying the
+// server cache-age and skew terms), not from subtracting a fetched_at on the spot.
+// One renderer for both surfaces so they cannot word it or threshold it differently.
+function stalePopupLine(age) {
+  if (!staleAge(age)) return "";
   return `<div class="popup-stale">as of ${humanizeAge(age)} ago</div>`;
 }
 
@@ -633,6 +850,13 @@ function ferryArrivalDisplay(row, now) {
   return { mode: "arriving", seconds: arrival != null ? arrival - now : null };
 }
 
+// A docked boat's resting opacity: dimmed so it reads as parked at a dock rather
+// than under way. It lives here, next to the other opacity rule, because it is now an
+// input to markerOpacity rather than a css class of its own: one opacity authority
+// per marker element, so the C2 staleness dimming compounds with it instead of
+// overriding it. The .ferry-docked / .ferry-active classes remain as state markers.
+const FERRY_DOCKED_OPACITY = 0.55;
+
 // Map a boat's GTFS current_status to the icon variant. STOPPED_AT means the boat
 // is sitting at a dock (render docked/dimmed); everything else (IN_TRANSIT_TO,
 // INCOMING_AT, or a missing/unknown status) means under way (render active). The
@@ -754,14 +978,14 @@ function ferryArrivalsHtml(station, body, now, colorFor = () => FERRY_FALLBACK_C
 // unchanged, but the quantity is now the age of the DATA and includes any time the
 // backend spent failing or timing out (up to REFRESH_DEADLINE_S per poll).
 //
-// KNOWN LIMIT, stated because an earlier draft of this comment overclaimed: this
-// catches a TOTAL alerts outage, not a PARTIAL one. fetched_at is poll-level, and a
-// poll where four of five feeds decode is a SUCCESS that advances it, so a single
-// system being down for hours never trips this marker even after the backend's
-// retention cap has dropped that system's alerts entirely. /api/alerts carries no
-// per-system freshness for the client to key on, and adding it is the per-system
-// envelope work (C2), not something this threshold can fix. Until then the partial
-// case is visible only to an operator, via degraded_systems on /api/status.
+// THE PARTIAL CASE IS COVERED AS OF C2, and this is where the limit used to be
+// documented. It read: fetched_at is poll-level, a poll where four of five feeds
+// decode is a SUCCESS that advances it, so one system down for hours never tripped
+// this marker even after the backend's retention cap had dropped that system's
+// alerts entirely. That limit existed because /api/alerts carried nothing per
+// system for the client to key on. It now carries a `systems` block, so the basis
+// is the WORST (oldest) system's fetched_at rather than the envelope's: one down
+// alert system trips the marker at the same threshold. See alertsFreshnessBasis.
 const ALERTS_STALE_AFTER_S = 300;
 
 // True when the alert DATA is older than the threshold, judged from the payload's
@@ -794,7 +1018,41 @@ const ALERTS_STALE_AFTER_S = 300;
 // alertsStale a fetched_at proves only arithmetic, because the test picked the field
 // itself; a revert to served_at would sail past it. This is where the choice lives,
 // so this is what a test has to pin.
+//
+// C2 MADE IT THE WORST SYSTEM'S fetched_at when the body carries a per-system block.
+// The envelope's own fetched_at advances on any poll where at least one alert feed
+// decoded, so it hid a partial outage completely (the F1 finding); the oldest system
+// that HAS decoded is the honest basis, because the alert set a rider is looking at
+// is only as current as its least-current contributor. Falls back to the envelope
+// fetched_at when there is no systems block at all, and returns null only when
+// nothing at all has decoded.
+//
+// A SYSTEM THAT HAS NEVER DECODED IS SKIPPED, NOT PROPAGATED AS NULL. REVIEW FIX:
+// this first returned null as soon as any one system reported a non-numeric
+// fetched_at, which threw away four known-old timestamps because a fifth was
+// missing, and null re-bases the whole hedge on the client's first-attempt time.
+// That was wrong in BOTH directions: a freshly loaded tab showed no hedge for the
+// full threshold during a total freeze that the envelope timestamp used to disclose
+// at once, and a tab open for hours latched the hedge permanently on a backend where
+// four of five feeds were current. The backend really does serve that shape (a feed
+// that fails its first poll of a process keeps fresh_at null while the others
+// advance), so it is the common case, not a corner.
+//
+// KNOWN LIMIT, stated rather than papered over: a system that has never decoded
+// contributes no age, so its alerts being entirely absent does not by itself trip
+// the marker. Latching the marker forever on that signal is the behavior described
+// above, and it contradicts the rule the status line applies to feeds (a system is
+// not called out until its age crosses the threshold). It stays visible to an
+// operator through degraded_systems on /api/status.
 function alertsFreshnessBasis(body) {
+  const systems = body == null ? null : body.systems;
+  if (systems != null && typeof systems === "object") {
+    const decoded = Object.values(systems)
+      .map((system) => (system ?? {}).fetched_at)
+      .filter((value) => typeof value === "number");
+    if (decoded.length) return Math.min(...decoded);
+    if (Object.keys(systems).length) return null; // a block, but nothing decoded yet
+  }
   const fetchedAt = body == null ? null : body.fetched_at;
   return typeof fetchedAt === "number" ? fetchedAt : null;
 }
@@ -968,6 +1226,8 @@ if (typeof module !== "undefined" && module.exports) {
     RAILROAD_ROUTE_MAX_SLICE, RAILROAD_ROUTE_ACCEPT_DIST, RAILROAD_BUCKET_ORDER,
     LINE_COLORS, DARK_TEXT_LINES, FEED_STALE_AFTER_S, FETCH_DEADLINE_MS, shouldRefresh,
     feedAgeLine, humanizeAge, alertsStale, alertsFreshnessBasis, ALERTS_STALE_AFTER_S,
+    ingestSystems, systemAges, systemStaleAts, staleAge, markerOpacity, glideClock,
+    stalePopupLine, STALE_MARKER_OPACITY, FERRY_DOCKED_OPACITY,
     selectHeadwayBand, airtrainStationPopupHtml, retryUntil,
     PATH_BUCKET_ORDER, PATH_FALLBACK_COLOR, orderedPathBuckets, pathColor,
     formatPathHead, pathTrainPopupHtml, pathArrivalsHtml,

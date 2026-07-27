@@ -433,6 +433,35 @@ used as a freshness signal. The frontend judges staleness from the difference of
 those two server-side values, so the browser clock never causes false "stale"
 warnings.
 
+#### Per-system freshness
+
+An envelope's own `fetched_at` means "this poll ran". It says nothing about any
+one upstream system, because a partial failure (one subway feed group down, four
+of five alert feeds decoding) is still a SUCCESSFUL poll that advances it. The
+aggregate endpoints therefore also carry a `systems` block, one entry per
+subsystem (`/api/subways`: the 8 feed-group keys, `/api/railroads`: LIRR and MNR,
+`/api/alerts`: the 5 alert systems), each reporting that system's own last decode,
+whether its last poll succeeded, and since when its data has been carried forward.
+The two timestamps diverge exactly when something is wrong, and that divergence is
+the signal. The subway blocks also list the routes each system's served data
+covers, because a subway train names no feed group and the client needs the join
+to know which markers a stale block describes.
+
+A failed system's data is carried forward for up to `FEED_RETENTION_MAX_S` (600s)
+rather than vanishing, and the client renders it as what it is: dimmed markers, an
+"as of Xm ago" line in the popup, a status line that names the degraded system
+("railroad: MNR as of 6m ago" while LIRR stays quiet), and a glide that FREEZES
+instead of dead-reckoning a marker forward on a dead feed. Past the cap the data
+goes and only the block remains, still reporting the outage, so the disappearance
+stays explained. Retention and that rendering are deliberately coupled: see
+`FEED_RETENTION_ENABLED` in `backend/cache.py` for why the flag must never move
+without them.
+
+The single-feed sources (buses, PATH, ferry) carry no `systems` block. The client
+synthesizes a one-system block from their envelope `fetched_at`, so they go
+through the same staleness, dimming and freeze rules rather than being exempt for
+having one feed.
+
 ### Live upstream contract monitor
 
 The test suite is hermetic: golden fixtures pin every decoder against captured

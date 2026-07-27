@@ -24,9 +24,87 @@ function trainPopup(record) {
     `<b style="color:${lineColor(t.route_id)}">${esc(t.route_id ?? "?")} train</b>` +
     `<br>Next stop: ${esc(t.stop_name ?? t.stop_id ?? "unknown")}` +
     (t.direction ? `<br>${esc(t.direction)}` : "") +
-    `<br><span class="popup-sub">Trip ${esc(t.trip_id ?? "?")}</span>`
+    `<br><span class="popup-sub">Trip ${esc(t.trip_id ?? "?")}</span>` +
+    // C2: how old this train's own feed group is, when that group has gone stale.
+    // A dimmed marker says "not current"; this says how far from current.
+    stalePopupLine(subwaySystemAge(t))
   );
 }
+
+// route_id -> the feed group(s) whose served data covers it, inverted from the
+// per-system `routes` coverage the subways payload carries (C2). A subway train
+// names no group, so this is the only handle from a marker to the block that
+// describes its freshness. A list rather than a single group because two groups
+// claiming one route (an upstream relabel mid-outage) must resolve to the WORST of
+// them, never to whichever happened to be inverted last.
+let subwayGroupsByRoute = new Map();
+// Whether the payload does route coverage at all. False against a backend that
+// sends `systems` without `routes`, which is the one case where a train's group is
+// unknowable; see subwaySystemAge for what that falls back to.
+let subwayRouteCoverage = false;
+
+// Wired as the subways source's onSystems hook in map.js, so the inversion happens
+// exactly once per poll where the block arrives, not per marker.
+function noteSubwaySystems(systems) {
+  const byRoute = new Map();
+  let covered = false;
+  for (const [group, system] of Object.entries(systems ?? {})) {
+    if (!Array.isArray(system.routes)) continue;
+    covered = true;
+    for (const routeId of system.routes) {
+      const groups = byRoute.get(routeId);
+      if (groups) groups.push(group);
+      else byRoute.set(routeId, [group]);
+    }
+  }
+  subwayGroupsByRoute = byRoute;
+  subwayRouteCoverage = covered;
+}
+
+// The freshness of the feed group behind one train: the worst age and the earliest
+// freeze deadline among the groups whose coverage lists its route.
+//
+// THE FALL-BACK DIRECTION IS DELIBERATE, and it now covers BOTH ways the join can
+// come up empty: a payload with no route coverage at all (an older backend), and a
+// train whose route matches no group's list. Either way the train falls back to the
+// source's WORST system, so a partial outage over-dims rather than under-dims.
+// Under-dimming is how retained data ends up looking live, which is precisely what
+// the retention gate exists to prevent, so the safe answer when we cannot say WHICH
+// group is stale is to say some of this may be old.
+//
+// REVIEW FIX. The second case used to return "not stale", justified by the claim
+// that a route in no group's list has no data on the map to describe. That is false
+// for a train with a NULL route_id: the decoder emits those (a trip with no route in
+// the feed), the payload's coverage lists deliberately skip them, and the train is
+// on the map all the same. It rendered full opacity, unfrozen and with no age line,
+// right next to its dimmed siblings from the same dead group.
+function subwaySystemFreshness(train) {
+  const groups = subwayRouteCoverage ? (subwayGroupsByRoute.get(train.route_id) ?? []) : [];
+  if (!groups.length) return worstSystemFreshness("subways");
+  const worst = { age: null, staleAt: null };
+  for (const group of groups) {
+    const age = systemAgeOf("subways", group);
+    const staleAt = systemStaleAtOf("subways", group);
+    if (age != null && (worst.age == null || age > worst.age)) worst.age = age;
+    if (staleAt != null && (worst.staleAt == null || staleAt < worst.staleAt)) {
+      worst.staleAt = staleAt;
+    }
+  }
+  return worst;
+}
+
+function subwaySystemAge(train) {
+  return subwaySystemFreshness(train).age;
+}
+
+function subwaySystemStaleAt(train) {
+  return subwaySystemFreshness(train).staleAt;
+}
+
+// Re-dim every subway marker from its own group's current age (C2).
+staleTreatments.push(() => {
+  for (const record of trains.values()) dimMarker(record.marker, subwaySystemAge(record.latest));
+});
 
 // Static route geometry, fetched once at startup (not polled). Canvas
 // renderer keeps ~22k points cheap; lines are decorative, so failures are
@@ -161,7 +239,11 @@ function applyTrains(data) {
           : computeRouteSlice(train, routeIndex.get(train.route_id));
       record._segId = segId;
       record.latest = train;
-      record.marker.setLatLng(trainLatLng(train, now, record.fState));
+      // Placed through the freeze clock, not the raw one: a retained group's trains
+      // must not advance on a poll that only re-served them (C2).
+      const fresh = subwaySystemFreshness(train);
+      record.marker.setLatLng(trainLatLng(train, glideClock(now, fresh.staleAt), record.fState));
+      dimMarker(record.marker, fresh.age);
       if (record.routeId !== train.route_id) {
         record.marker.setIcon(trainIcon(train));
         record.routeId = train.route_id;
@@ -171,7 +253,19 @@ function applyTrains(data) {
       const newRecord = { routeId: train.route_id, latest: train, fState: {} };
       newRecord._segId = `${train.route_id}|${train.prev_time}|${train.stop_id}`;
       train._route = computeRouteSlice(train, routeIndex.get(train.route_id));
-      newRecord.marker = L.marker(trainLatLng(train, now, newRecord.fState), { icon: trainIcon(train) })
+      const fresh = subwaySystemFreshness(train);
+      newRecord.marker = L.marker(
+        trainLatLng(train, glideClock(now, fresh.staleAt), newRecord.fState),
+        {
+          icon: trainIcon(train),
+          // Dimmed AT CREATION, not by the sweep afterwards: a retained train first
+          // seen during an outage (a reload mid-outage) must be dim on the very
+          // first frame it exists, never full-opacity for a beat. This is the
+          // invariant the "C2b" e2e spec pins, and the reason the retention flag and
+          // this rendering ship in one commit.
+          opacity: markerOpacity(fresh.age),
+        },
+      )
         .bindPopup(() => trainPopup(newRecord))
         .addTo(subwayLayer);
       trains.set(train.trip_id, newRecord);

@@ -143,14 +143,15 @@ html, body {
   height: 14px;
   transition: transform 0.5s ease;
 }
-/* current_status earns its passage: a STOPPED_AT boat is dimmed so it reads as
-   parked at a dock, while an under-way boat stays full opacity and active. */
-.ferry-docked {
-  opacity: 0.55;
-}
-.ferry-active {
-  opacity: 1;
-}
+/* current_status earns its passage: a STOPPED_AT boat is dimmed so it reads as parked
+   at a dock, while an under-way boat stays full opacity and active. THE OPACITY IS NO
+   LONGER SET HERE. C2 dims a marker whose feed has gone stale by writing an inline
+   opacity on this same element, and an inline value beats a stylesheet one, so a rule
+   here would have been silently overridden and every docked boat would have read as
+   under way during an outage. The docked value now lives in FERRY_DOCKED_OPACITY
+   (helpers.js) and compounds with staleness through markerOpacity. These classes
+   remain as the state markers the icon carries and the e2e suite reads, so there is
+   deliberately no rule for them here. */
 
 .popup-sub {
   color: #777;

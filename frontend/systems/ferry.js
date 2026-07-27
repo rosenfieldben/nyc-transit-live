@@ -111,8 +111,9 @@ async function loadFerryStops() {
 // diamond, and the station rings), which matters where a Rockaway dock neighbors
 // a subway stop. NO rotation: the feed reports no usable bearing (14b: always
 // 0.0), so the shape is orientation-neutral rather than pretending to point
-// somewhere. The docked/active state comes from a css class (see style.css): a
-// STOPPED_AT boat is dimmed to read as parked, an under-way boat is full opacity.
+// somewhere. The docked/active state rides on a css class as a state MARKER, while
+// the dimming that goes with it is a marker opacity (ferryBaseOpacity): a STOPPED_AT
+// boat reads as parked, an under-way boat is full opacity.
 function ferryBoatIcon(boat, color) {
   const state = ferryBoatIconState(boat.status);
   const html =
@@ -134,9 +135,28 @@ function ferryBoatPopup(record) {
   // null-route boat matches nothing (matchRouteAlerts guards on a falsy route id).
   return (
     routeAlertsBlock("ferry", b.route_id) +
-    ferryBoatPopupHtml(b, ferryRouteNames.get(b.route_id) || null, ferryColorFor(b.route_id))
+    ferryBoatPopupHtml(b, ferryRouteNames.get(b.route_id) || null, ferryColorFor(b.route_id)) +
+    // C2: single-feed source, synthesized system, same age line as every other
+    // vehicle popup.
+    stalePopupLine(systemAgeOf("ferry", "ferry"))
   );
 }
+
+// A boat's resting opacity: dimmed while it is parked at a dock. This USED TO be a
+// css class rule (.ferry-docked), and C2 had to move it here, because the staleness
+// dimming writes an inline opacity on the same element and an inline value beats a
+// stylesheet one: every docked boat would have been silently un-dimmed. One opacity
+// authority per marker, and the two reasons to dim compound (see markerOpacity).
+function ferryBaseOpacity(boat) {
+  return ferryBoatIconState(boat.status) === "docked" ? FERRY_DOCKED_OPACITY : 1;
+}
+
+// Re-dim every boat from its source's age and its own docked state (C2).
+staleTreatments.push(() => {
+  for (const record of ferryBoatRecords.values()) {
+    dimMarker(record.marker, systemAgeOf("ferry", "ferry"), ferryBaseOpacity(record.latest));
+  }
+});
 
 // Stable vehicle id -> { marker, color, iconState, latest }. Boats are the
 // BUSES model, not the PATH model: 14b vehicle ids are stable across polls, so
@@ -174,6 +194,9 @@ function applyFerryBoats(data) {
         record.iconState = iconState;
       }
       record.latest = boat;
+      // Re-applied every poll, not only when the icon changes: a boat that docks or
+      // departs changes its resting opacity, and its feed may have gone stale.
+      dimMarker(record.marker, systemAgeOf("ferry", "ferry"), ferryBaseOpacity(boat));
       if (record.marker.isPopupOpen()) record.marker.getPopup().update();
     } else {
       const color = ferryColorFor(boat.route_id);
@@ -184,6 +207,8 @@ function applyFerryBoats(data) {
       };
       newRecord.marker = L.marker([boat.latitude, boat.longitude], {
         icon: ferryBoatIcon(boat, color),
+        // Dim on the first frame, for staleness and/or for being docked.
+        opacity: markerOpacity(systemAgeOf("ferry", "ferry"), ferryBaseOpacity(boat)),
       })
         .bindPopup(() => ferryBoatPopup(newRecord))
         .addTo(ferryBoats);

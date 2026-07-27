@@ -30,17 +30,31 @@ const STATIC_RETRY_CAP_MS = 30000;
 // skips a source already in flight instead of stacking a second fetch. It replaces
 // the old whole-cycle `refreshing` lock: each source is now gated independently, so
 // one slow source (bounded by AbortSignal.timeout) cannot freeze the others.
+// systems (C2): the per-system freshness blocks ingested from the payload, or a
+// synthesized single system for the single-feed sources (see ingestSystems). This is
+// the ONE place a payload's block is read, so every surface that judges freshness
+// (status line, marker dimming, popup age lines, glide freeze) reads the same map.
+// systemNoun is the word that makes a system name read naturally in the status line:
+// the subway's systems are feed GROUPS ("ACE group as of 4m ago"), while a railroad
+// system is just itself ("MNR as of 6m ago"), so only the subway sets it.
+// onSystems is an optional per-source hook run when a block lands, used by the subway
+// to invert the payload's route coverage into its route -> group lookup once per poll
+// rather than once per marker.
 const sources = {
-  buses: { url: "/api/buses", apply: applyBuses, label: "buses", count: 0, error: null, fetchedAt: null, feedTimestamp: null, servedAt: null, emptyRunStart: null, inFlight: false },
-  subways: { url: "/api/subways", apply: applyTrains, label: "trains", count: 0, error: null, fetchedAt: null, feedTimestamp: null, servedAt: null, emptyRunStart: null, inFlight: false },
-  railroads: { url: "/api/railroads", apply: applyRailroads, label: "railroad", count: 0, error: null, fetchedAt: null, feedTimestamp: null, servedAt: null, emptyRunStart: null, inFlight: false },
-  path: { url: "/api/path", apply: applyPath, label: "PATH", dataKey: "trains", count: 0, error: null, fetchedAt: null, feedTimestamp: null, servedAt: null, emptyRunStart: null, inFlight: false },
+  buses: { url: "/api/buses", apply: applyBuses, label: "buses", count: 0, error: null, fetchedAt: null, feedTimestamp: null, servedAt: null, systems: null, emptyRunStart: null, inFlight: false },
+  subways: { url: "/api/subways", apply: applyTrains, label: "trains", systemNoun: "group", onSystems: noteSubwaySystems, count: 0, error: null, fetchedAt: null, feedTimestamp: null, servedAt: null, systems: null, emptyRunStart: null, inFlight: false },
+  railroads: { url: "/api/railroads", apply: applyRailroads, label: "railroad", count: 0, error: null, fetchedAt: null, feedTimestamp: null, servedAt: null, systems: null, emptyRunStart: null, inFlight: false },
+  path: { url: "/api/path", apply: applyPath, label: "PATH", dataKey: "trains", count: 0, error: null, fetchedAt: null, feedTimestamp: null, servedAt: null, systems: null, emptyRunStart: null, inFlight: false },
   // Ferry boats carry the `boats` envelope key, and clearOnEmpty flips the empty
   // handling: a successful empty poll REPLACES the boats immediately (see the
   // refreshSource branch) rather than riding out the transient-blip grace the
   // other feeds use, preserving 14b's empty-replaces / failure-retains split.
-  ferry: { url: "/api/ferry", apply: applyFerryBoats, label: "ferries", dataKey: "boats", clearOnEmpty: true, count: 0, error: null, fetchedAt: null, feedTimestamp: null, servedAt: null, emptyRunStart: null, inFlight: false },
+  ferry: { url: "/api/ferry", apply: applyFerryBoats, label: "ferries", dataKey: "boats", clearOnEmpty: true, count: 0, error: null, fetchedAt: null, feedTimestamp: null, servedAt: null, systems: null, emptyRunStart: null, inFlight: false },
 };
+
+// Which key in `sources` a descriptor is, for the "<sourceKey>|<system>" freshness
+// index. Derived once rather than duplicated as a field on every row.
+const sourceKeys = new Map(Object.entries(sources).map(([key, source]) => [source, key]));
 
 async function refreshSource(source) {
   source.inFlight = true;
@@ -58,6 +72,18 @@ async function refreshSource(source) {
     source.fetchedAt = body.fetched_at ?? null;
     source.feedTimestamp = body.feed_timestamp ?? null; // server-side staleness signal
     source.servedAt = body.served_at ?? null; // this response's build time (R1)
+    // The per-system freshness blocks (C2), or one synthesized system for a
+    // single-feed source, so everything downstream reads one shape. Ingested BEFORE
+    // apply() below, because the apply paths dim and freeze from these ages and a
+    // marker created this poll has to be dim on its first frame.
+    source.systems = ingestSystems(body, sourceKeys.get(source));
+    if (source.onSystems) source.onSystems(source.systems);
+    // Rebuild the age index NOW, before apply() runs: the apply paths read it to dim
+    // and to freeze the glide, and a marker created from retained data has to be dim
+    // on the very first frame it exists. The sweep over EXISTING markers is left to
+    // the caller's tail / the animation tick, which is where a change in the stale
+    // set is detected.
+    refreshSystemFreshness();
     // Calibrate the skew baseline off served_at, NOT fetched_at: served_at is the
     // instant the response left the server, so (clientNow - served_at) is skew plus
     // latency only. Using fetched_at folded in the server cache age, which cancelled
@@ -134,6 +160,12 @@ async function refreshAll() {
   // fired set is non-empty (once they free up) repaints the honest state.
   if (!fired.length) return;
   await Promise.all(fired.map(refreshSource));
+  // Re-dim every marker from the ages this tick's responses produced (C2). Runs
+  // unconditionally rather than only when the stale set changed, because a poll can
+  // also have ADDED markers to an already-stale system through a path that did not
+  // create them (a route relabel moving a train between groups).
+  refreshSystemFreshness();
+  applyStaleTreatment();
   const counts = Object.values(sources)
     .map((s) => `${s.count.toLocaleString()} ${s.label}`)
     .join(" · ");

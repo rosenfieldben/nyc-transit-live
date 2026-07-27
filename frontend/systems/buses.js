@@ -32,9 +32,19 @@ function busPopup(record) {
     routeAlertsBlock("bus", b.route_id) +
     `<b style="color:${routeColor(b.route_id)}">${esc(b.route_id ?? "Unknown route")}</b>` +
     `<br>Bus ${esc(b.id)}<br>Heading: ${heading}` +
-    (showNote ? `<br><span class="popup-sub">${esc(note.message)}</span>` : "")
+    (showNote ? `<br><span class="popup-sub">${esc(note.message)}</span>` : "") +
+    // C2: buses are a single feed, so their system is the synthesized one named
+    // after the source. Same age line as every other vehicle popup, so the
+    // single-feed sources are not quietly exempt from the freshness rules.
+    stalePopupLine(systemAgeOf("buses", "buses"))
   );
 }
+
+// Re-dim every bus from its source's age (C2). Buses do not glide, so there is no
+// freeze clock here: a bus sits at its last reported position either way.
+staleTreatments.push(() => {
+  for (const record of buses.values()) dimMarker(record.marker, systemAgeOf("buses", "buses"));
+});
 
 /* ----- On-demand bus route line (click a bus to draw its route) ----- */
 
@@ -179,7 +189,10 @@ function applyBuses(data) {
       if (record.marker.isPopupOpen()) record.marker.getPopup().update();
     } else {
       const newRecord = { bearing: bus.bearing, routeId: bus.route_id, latest: bus };
-      newRecord.marker = L.marker([bus.latitude, bus.longitude], { icon: busIcon(bus) })
+      newRecord.marker = L.marker([bus.latitude, bus.longitude], {
+        icon: busIcon(bus),
+        opacity: markerOpacity(systemAgeOf("buses", "buses")), // dim on the first frame
+      })
         .bindPopup(() => busPopup(newRecord))
         .on("click", () => toggleBusRoute(newRecord.latest, newRecord.marker))
         .addTo(busLayer);

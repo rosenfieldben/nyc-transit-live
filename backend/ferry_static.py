@@ -89,6 +89,28 @@ def validate_ferry_archive(zf: zipfile.ZipFile) -> None:
     require_parsed(lambda: parse_member(zf, "routes.txt", _parse_routes), "routes.txt", "routes")
 
 
+def validate_ferry_publication(zf: zipfile.ZipFile) -> None:
+    """The gate a NEW archive must pass before it may replace the cached one.
+
+    Strictly stronger than validate_ferry_archive, and the difference is the whole
+    point: it runs the REAL parse of every table the load reads, so an archive that
+    would fail the load can never be promoted over a working one.
+
+    Without this the pipeline had a hole exactly the shape of the bug it exists to
+    fix. A publication with clean stops.txt and routes.txt but an undecodable byte
+    in a table the light validator only checks for PRESENCE passed validation, was
+    renamed over the last-known-good, and was then deleted by the residual arm in
+    the loader below: one bad publication, and both the new archive and the good one
+    it replaced were gone.
+
+    The cost lands where it belongs. This runs once per download attempt, while the
+    light validator runs on every load, so the expensive tables (stop_times.txt
+    among them) are parsed twice only when something is actually being published.
+    """
+    validate_ferry_archive(zf)
+    _parse_open(zf)
+
+
 async def _download_zip() -> None:
     """Stage, validate, then promote the NYC Ferry archive (see static_shared).
 
@@ -101,7 +123,7 @@ async def _download_zip() -> None:
     await staged_fetch(
         FERRY_STATIC_URL,
         FERRY_STATIC_ZIP,
-        validate_ferry_archive,
+        validate_ferry_publication,
         key="ferry",
         label="NYC Ferry static GTFS",
     )
@@ -265,26 +287,32 @@ def _parse_zip(zip_path: Path) -> dict:
     the live feed does carry it, verified again for C5. See the routes-per-station
     note in the H5 handoff.)"""
     with zipfile.ZipFile(zip_path) as zf:
-        with zf.open("stops.txt") as raw:
-            stops = _parse_stops(raw)
-        with zf.open("trips.txt") as raw:
-            trips = _parse_trips(raw)
-        with zf.open("shapes.txt") as raw:
-            shapes = _parse_shapes(raw)
-        try:
-            member = zf.open("routes.txt")
-        except KeyError:
-            routes: dict[str, dict] = {}
-        else:
-            with member as raw:
-                routes = _parse_routes(raw)
-        try:
-            member = zf.open("stop_times.txt")
-        except KeyError:
-            stop_times: dict[str, list[str]] = {}
-        else:
-            with member as raw:
-                stop_times = _parse_stop_times(raw)
+        return _parse_open(zf)
+
+
+def _parse_open(zf: zipfile.ZipFile) -> dict:
+    """The parse itself, over an already-open archive, so validate_ferry_publication
+    can run the REAL load against a staged file that has no cache path yet."""
+    with zf.open("stops.txt") as raw:
+        stops = _parse_stops(raw)
+    with zf.open("trips.txt") as raw:
+        trips = _parse_trips(raw)
+    with zf.open("shapes.txt") as raw:
+        shapes = _parse_shapes(raw)
+    try:
+        member = zf.open("routes.txt")
+    except KeyError:
+        routes: dict[str, dict] = {}
+    else:
+        with member as raw:
+            routes = _parse_routes(raw)
+    try:
+        member = zf.open("stop_times.txt")
+    except KeyError:
+        stop_times: dict[str, list[str]] = {}
+    else:
+        with member as raw:
+            stop_times = _parse_stop_times(raw)
     return {
         "stops": stops,
         "trips": trips,
@@ -408,11 +436,14 @@ async def load_ferry_static() -> dict:
     try:
         data = _parse_zip(zip_path)
     except (zipfile.BadZipFile, KeyError, UnicodeDecodeError, csv.Error) as exc:
-        # The residual below the validator: the archive passed its gates (which
-        # parse stops and routes in full) but a deeper table is unreadable. Unlink,
-        # because unlike a validation failure there is no last-known-good to
-        # protect here: this file IS the cache and it is proven unservable, so
-        # keeping it would only wedge every retry on the same bytes.
+        # The residual below the CACHED-archive validator, which is lighter than
+        # the one every publication passes. Reaching here means the bytes on disk
+        # were fully parseable when they were promoted and are not now (rot, a
+        # truncated write), or predate C5 entirely. Unlink is right in exactly that
+        # case and only that case: this file IS the cache, nothing better sits
+        # behind it, and keeping it would wedge every retry on the same bytes. A
+        # freshly promoted archive cannot land here, because
+        # validate_ferry_publication ran this same parse before the rename.
         logger.warning("Cached NYC Ferry static GTFS is unparseable (%s); discarding", exc)
         zip_path.unlink(missing_ok=True)
         return {}

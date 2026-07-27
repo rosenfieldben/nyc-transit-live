@@ -77,12 +77,34 @@ def validate_railroad_archive(zf: zipfile.ZipFile) -> None:
     require_parsed(lambda: _parse_routes(zf), "routes.txt", "routes")
 
 
+def validate_railroad_publication(zf: zipfile.ZipFile) -> None:
+    """The gate a NEW archive must pass before it may replace the cached one.
+
+    Strictly stronger than validate_railroad_archive, and the difference is the
+    whole point: it runs the REAL parse of every table the load reads, so an
+    archive that would fail the load can never be promoted over a working one.
+
+    Without this the pipeline had a hole exactly the shape of the bug it exists to
+    fix. A publication with clean stops.txt and routes.txt but, say, an
+    undecodable byte in trips.txt passed the light validator, was renamed over the
+    last-known-good, and was then deleted by _load_one's residual arm: one bad
+    publication, and both the new archive and the good one it replaced were gone.
+    Running the full parse BEFORE the rename closes it.
+
+    The cost lands where it belongs. This runs once per download attempt, while
+    the light validator runs on every load, so the expensive tables are parsed
+    twice only when something is actually being published.
+    """
+    validate_railroad_archive(zf)
+    _parse_open(zf)
+
+
 async def _download_zip(system: str) -> None:
     """Stage, validate, then promote one system's archive (see static_shared)."""
     await staged_fetch(
         RAILROAD_STATIC_URLS[system],
         RAILROAD_STATIC_ZIPS[system],
-        validate_railroad_archive,
+        validate_railroad_publication,
         key=f"railroad_{system}",
         label=f"{system} static GTFS",
     )
@@ -235,13 +257,19 @@ def _parse_system(zip_path: Path) -> dict:
     already here, and a parser that tolerates a missing optional member stays
     usable by the tests that feed it hand-built zips."""
     with zipfile.ZipFile(zip_path) as zf:
-        return {
-            "stops": _parse_stops(zf),
-            "trips": _parse_trips(zf),
-            "shapes": _parse_shapes(zf),
-            "routes": _parse_routes(zf),
-            "stop_times": _parse_stop_times(zf),
-        }
+        return _parse_open(zf)
+
+
+def _parse_open(zf: zipfile.ZipFile) -> dict:
+    """The parse itself, over an already-open archive, so validate_railroad_publication
+    can run the REAL load against a staged file that has no cache path yet."""
+    return {
+        "stops": _parse_stops(zf),
+        "trips": _parse_trips(zf),
+        "shapes": _parse_shapes(zf),
+        "routes": _parse_routes(zf),
+        "stop_times": _parse_stop_times(zf),
+    }
 
 
 # A shape variant is kept only if it adds more than this fraction of new
@@ -350,11 +378,14 @@ async def _load_one(system: str) -> dict | None:
     try:
         data = _parse_system(zip_path)
     except (zipfile.BadZipFile, KeyError, UnicodeDecodeError, csv.Error) as exc:
-        # The residual below the validator: the archive passed its gates (which
-        # parse stops and routes in full) but a deeper table is unreadable. Unlink,
-        # because unlike a validation failure there is no last-known-good to
-        # protect here: this file IS the cache and it is proven unservable, so
-        # keeping it would only wedge every retry on the same bytes.
+        # The residual below the CACHED-archive validator, which is lighter than the
+        # one every publication passes. Reaching here means the bytes on disk were
+        # fully parseable when they were promoted and are not now (rot, a truncated
+        # write) or predate C5 entirely. Unlink is right in exactly that case and
+        # only that case: this file IS the cache, nothing better sits behind it, and
+        # keeping it would wedge every retry on the same bytes. A freshly promoted
+        # archive cannot land here, because validate_railroad_publication ran this
+        # same parse before the rename.
         logger.warning("Cached %s static GTFS is unparseable (%s); discarding", system, exc)
         zip_path.unlink(missing_ok=True)
         return None

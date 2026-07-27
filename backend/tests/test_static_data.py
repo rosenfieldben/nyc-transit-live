@@ -24,9 +24,27 @@ DEAD_URL = "http://127.0.0.1:9/gtfs_subway.zip"
 STOPS_COLS = ["stop_id", "stop_name", "stop_lat", "stop_lon", "location_type", "parent_station"]
 SHAPES_COLS = ["shape_id", "shape_pt_sequence", "shape_pt_lat", "shape_pt_lon"]
 
+# The real subway shape, and C5's parent-station gate now depends on it: 101 is the
+# PARENT station (location_type 1, the clickable marker) and 101N is a platform
+# under it (the id realtime references). A stops.txt of platform rows alone is a
+# publication validate_subway_archive rejects, so a fixture without a parent row
+# would be testing an archive the loader would never accept.
 STOP_ROWS = [
-    {"stop_id": "101", "stop_name": "Alpha", "stop_lat": "40.7", "stop_lon": "-74.0"},
-    {"stop_id": "101N", "stop_name": "Alpha", "stop_lat": "40.7", "stop_lon": "-74.0"},
+    {
+        "stop_id": "101",
+        "stop_name": "Alpha",
+        "stop_lat": "40.7",
+        "stop_lon": "-74.0",
+        "location_type": "1",
+    },
+    {
+        "stop_id": "101N",
+        "stop_name": "Alpha",
+        "stop_lat": "40.7",
+        "stop_lon": "-74.0",
+        "location_type": "0",
+        "parent_station": "101",
+    },
 ]
 
 

@@ -18,6 +18,7 @@ import asyncio
 import csv
 import hashlib
 import io
+import struct
 import types
 import zipfile
 from pathlib import Path
@@ -102,12 +103,14 @@ def _csv(columns, rows):
     return buf.getvalue()
 
 
-def good_archive(stops=_STOP_ROWS, drop=(), routes=_ROUTE_ROWS) -> bytes:
-    """A zip every one of the four validators accepts. `drop` removes members."""
+def good_archive(stops=_STOP_ROWS, drop=(), routes=_ROUTE_ROWS, trips=None) -> bytes:
+    """A zip every one of the four validators accepts. `drop` removes members;
+    `trips` substitutes raw bytes for trips.txt (used to plant an undecodable byte
+    in a table the light validator does not parse)."""
     members = {
         "stops.txt": _csv(_STOPS_COLS, stops),
         "routes.txt": _csv(_ROUTES_COLS, routes),
-        "trips.txt": _csv(_TRIPS_COLS, _TRIP_ROWS),
+        "trips.txt": _csv(_TRIPS_COLS, _TRIP_ROWS) if trips is None else trips,
         "shapes.txt": _csv(_SHAPES_COLS, _SHAPE_ROWS),
         "stop_times.txt": _csv(_STOP_TIMES_COLS, _STOP_TIME_ROWS),
     }
@@ -138,12 +141,55 @@ def unsupported_compression() -> bytes:
     return bytes(payload)
 
 
+def corrupt_deflate_stream() -> bytes:
+    """A zip whose central directory is intact but whose stops.txt deflate stream is
+    structurally damaged, which is what disk rot and a torn write actually look like.
+
+    This raises zlib.error on read, not BadZipFile, and that distinction was a real
+    permanent wedge: cached_archive_is_valid catches only StaticValidationError and
+    OSError, and the loaders call it BEFORE the freshness test, so the escaping
+    exception meant no download was ever attempted and the corrupt cache blocked its
+    own repair forever. Corrupting the first bytes of the compressed stream (rather
+    than the middle) is what makes zlib fail structurally instead of surfacing as a
+    CRC mismatch, which zipfile already reports as BadZipFile.
+    """
+    payload = bytearray(good_archive())
+    offset = payload.find(b"PK\x03\x04")
+    while offset != -1:
+        name_len, extra_len = struct.unpack("<HH", payload[offset + 26 : offset + 30])
+        name = bytes(payload[offset + 30 : offset + 30 + name_len])
+        if name == b"stops.txt":
+            data = offset + 30 + name_len + extra_len
+            payload[data : data + 3] = b"\xff\xff\xff"
+            break
+        offset = payload.find(b"PK\x03\x04", offset + 4)
+    return bytes(payload)
+
+
+def undecodable_deep_member() -> bytes:
+    """Clean stops.txt and routes.txt, an undecodable byte in trips.txt.
+
+    THE SHAPE THAT DEFEATED THE FIRST VERSION OF THIS PIPELINE. The light validator
+    only PARSES stops and routes; it checks the rest for presence. So this archive
+    passed validation, was renamed over the last-known-good, and was then deleted by
+    the loader's residual arm when the real parse hit the bad byte: one bad
+    publication and BOTH archives gone, which is precisely the bug C5 exists to
+    prevent, surviving inside C5. staged_fetch now runs the publication validator,
+    which does the full parse before the rename.
+    """
+    return good_archive(
+        trips=b"route_id,service_id,trip_id,direction_id,shape_id\nR1,wk,t1,0,\xd1\xd1\n"
+    )
+
+
 BAD_PUBLICATIONS = {
     "truncated-zip": lambda: good_archive()[: len(good_archive()) // 2],
     "html-error-page": lambda: b"<!doctype html><html><body>503 Service Unavailable</body></html>",
     "missing-member": lambda: good_archive(drop=("stops.txt",)),
     "headers-only-stops": lambda: good_archive(stops=[]),
+    "headers-only-routes": lambda: good_archive(routes=[]),
     "unsupported-compression": unsupported_compression,
+    "corrupt-deflate-stream": corrupt_deflate_stream,
 }
 
 
@@ -207,7 +253,9 @@ async def test_bad_publication_leaves_the_cache_byte_identical(tmp_path, shape):
         await static_shared.staged_fetch(
             "https://example.invalid/gtfs.zip",
             dest,
-            static_data.validate_subway_archive,
+            # The ferry validator, because it requires all five members and so
+            # rejects every shape in the table; the subway's ignores routes.txt.
+            ferry_static.validate_ferry_archive,
             key="k",
             label="test archive",
             download=publisher(BAD_PUBLICATIONS[shape]),
@@ -458,6 +506,31 @@ LOADERS = [
 ]
 LOADER_IDS = [loader.name for loader in LOADERS]
 
+# A publication shape is a rejection only for the loaders that consume the table it
+# damages. headers-only-routes is a rejection for the railroad, PATH and ferry, all of
+# which read route identity, and NOT for the subway, which never opens routes.txt (it
+# draws with its own palette). Pairing them explicitly keeps every case meaningful
+# instead of asserting a rejection that should not happen.
+ROUTES_CONSUMERS = {"railroad", "path", "ferry"}
+
+
+def _shapes_for(loader):
+    return [
+        shape
+        for shape in sorted(BAD_PUBLICATIONS)
+        if shape != "headers-only-routes" or loader.name in ROUTES_CONSUMERS
+    ]
+
+
+LOADER_SHAPES = [(loader, shape) for loader in LOADERS for shape in _shapes_for(loader)]
+LOADER_SHAPE_IDS = [f"{loader.name}-{shape}" for loader, shape in LOADER_SHAPES]
+
+# The three lenient loaders parse every table in one pass and unlink a cache they
+# cannot parse; the subway's load reads only stops.txt, so it has no deeper table to
+# fail on and no residual arm. The deep-parse regression is about that arm.
+DEEP_PARSE_LOADERS = [loader for loader in LOADERS if loader.name != "subway"]
+DEEP_PARSE_IDS = [loader.name for loader in DEEP_PARSE_LOADERS]
+
 
 def _patch_download(monkeypatch, module, payload, calls=None):
     """Replace one loader module's transfer, keeping staged_fetch and the validator real.
@@ -485,8 +558,7 @@ def age(path: Path, days: float) -> None:
     os.utime(path, (old, old))
 
 
-@pytest.mark.parametrize("loader", LOADERS, ids=LOADER_IDS)
-@pytest.mark.parametrize("shape", sorted(BAD_PUBLICATIONS))
+@pytest.mark.parametrize(("loader", "shape"), LOADER_SHAPES, ids=LOADER_SHAPE_IDS)
 async def test_loader_serves_the_cache_when_a_publication_is_rejected(
     tmp_path, monkeypatch, loader, shape
 ):
@@ -509,8 +581,7 @@ async def test_loader_serves_the_cache_when_a_publication_is_rejected(
     assert not list(tmp_path.glob("*.part"))
 
 
-@pytest.mark.parametrize("loader", LOADERS, ids=LOADER_IDS)
-@pytest.mark.parametrize("shape", sorted(BAD_PUBLICATIONS))
+@pytest.mark.parametrize(("loader", "shape"), LOADER_SHAPES, ids=LOADER_SHAPE_IDS)
 async def test_cold_start_with_a_bad_publication_never_reaches_ready(
     tmp_path, monkeypatch, loader, shape
 ):
@@ -544,8 +615,7 @@ async def test_a_good_publication_is_promoted_over_a_stale_cache(tmp_path, monke
     assert static_shared.archive_status()[loader.key]["last_promoted_at"] is not None
 
 
-@pytest.mark.parametrize("loader", LOADERS, ids=LOADER_IDS)
-@pytest.mark.parametrize("shape", sorted(BAD_PUBLICATIONS))
+@pytest.mark.parametrize(("loader", "shape"), LOADER_SHAPES, ids=LOADER_SHAPE_IDS)
 async def test_an_unservable_cache_is_treated_as_absent_and_refetched(
     tmp_path, monkeypatch, loader, shape
 ):
@@ -673,12 +743,17 @@ async def test_status_static_archives_is_empty_before_any_download():
 # for that member simply stopped being generated. A test that asks the code what
 # it should do cannot notice the code doing less.
 EXPECTED_REQUIRED = {
-    # No stop_times.txt: the subway and the railroads read it only for the
-    # routes-per-station popup enrichment, which already degrades to an empty
-    # index, so requiring it would turn a small degradation into a whole system
-    # missing from the map. PATH walks it for 13d advance matching and ferry for
-    # the H5 dock/route join, where its absence is a silent wrong answer.
-    "subway": ("shapes.txt", "stops.txt", "trips.txt"),
+    # THE RULE: require a member when its absence is a loss a rider would SEE, so
+    # keeping the last-known-good beats promoting the reduced archive. At cold start
+    # with no cache, a required member missing means the system is absent from the
+    # map entirely, so the set is not free and is not padded.
+    #
+    # The subway wants no trips.txt and no stop_times.txt: both feed only the H5
+    # routes-per-station popup enrichment, which already degrades to an empty index,
+    # and the subway route lines come from the shape_id regex rather than trips.txt.
+    # PATH and ferry DO want stop_times.txt, where it drives advance matching (13d)
+    # and the dock/route alert join (H5) rather than an enrichment.
+    "subway": ("shapes.txt", "stops.txt"),
     "railroad": ("routes.txt", "shapes.txt", "stops.txt", "trips.txt"),
     "path": ("routes.txt", "shapes.txt", "stop_times.txt", "stops.txt", "trips.txt"),
     "ferry": ("routes.txt", "shapes.txt", "stop_times.txt", "stops.txt", "trips.txt"),
@@ -725,3 +800,117 @@ def test_validator_rejects_an_archive_missing_a_required_member(tmp_path, loader
 def test_validator_accepts_a_complete_archive(tmp_path, loader):
     # The converse, so the test above cannot pass by rejecting everything.
     static_shared.validate_archive(_write(tmp_path, good_archive()), loader.validate)
+
+
+# ---------------------------------------------------------------------------
+# Regressions from the adversarial review
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("loader", DEEP_PARSE_LOADERS, ids=DEEP_PARSE_IDS)
+async def test_a_publication_that_fails_the_deep_parse_never_replaces_the_cache(
+    tmp_path, monkeypatch, loader
+):
+    """C5's own bug, found inside C5 by the adversarial review.
+
+    An archive with clean stops.txt and routes.txt but an undecodable byte in
+    trips.txt passed the light validator, was renamed over the last-known-good, and
+    was then deleted by the loader's residual arm. One bad publication destroyed
+    both archives. staged_fetch runs the publication validator now, which parses
+    everything the load parses before the rename.
+
+    The subway is excluded, and structurally so rather than by convenience: its
+    load reads only stops.txt, which the light validator already parses in full, so
+    it has no deeper table to fail on and no residual arm to destroy anything. An
+    archive with a damaged trips.txt is simply a VALID subway archive.
+    """
+    cache = loader.set_path(tmp_path, monkeypatch)
+    cache.write_bytes(good_archive())
+    age(cache, days=static_data.MAX_AGE_DAYS + 10)
+    before = sha(cache)
+    _patch_download(monkeypatch, loader.module, undecodable_deep_member())
+
+    data = await loader.load()
+
+    assert loader.served(data)  # still serving the archive it already had
+    assert cache.exists(), "the cache was deleted by a bad publication"
+    assert sha(cache) == before
+
+
+async def test_a_corrupt_cache_does_not_block_its_own_repair(tmp_path, monkeypatch):
+    """A cached archive whose deflate stream is damaged must force a re-download.
+
+    It used to raise zlib.error straight out of cached_archive_is_valid, which the
+    loaders call BEFORE the freshness test, so no download was ever attempted and
+    the retry loop could never heal. The pre-C5 code recovered from this by
+    accident (it downloaded first and parsed second), so it was a regression as
+    well as a wedge.
+    """
+    cache = _ferry_paths(tmp_path, monkeypatch)
+    cache.write_bytes(corrupt_deflate_stream())
+    calls = []
+    _patch_download(monkeypatch, ferry_static, good_archive(), calls=calls)
+
+    data = await ferry_static.load_ferry_static()
+
+    assert "101" in data.get("stops", {})
+    assert len(calls) == 1  # the repair actually ran
+
+
+def test_every_unreadable_archive_becomes_one_failure_type(tmp_path):
+    # The boundary is broad on purpose: an enumerated catch list was wrong twice
+    # (BadZipFile alone, then BadZipFile plus NotImplementedError, still missing
+    # zlib.error). Nothing below StaticValidationError may escape validate_archive.
+    def explode(_zf):
+        raise LookupError("a class nobody enumerated")
+
+    with pytest.raises(static_shared.StaticValidationError) as raised:
+        static_shared.validate_archive(_write(tmp_path, good_archive()), explode)
+    assert "LookupError" in str(raised.value)  # diagnosable from /api/status alone
+
+
+async def test_subway_rejects_a_stops_table_with_no_parent_stations(tmp_path, monkeypatch):
+    """Finding 4's symptom reached through the other subway table.
+
+    stops.txt yields the platform ids that place trains; the clickable station
+    markers come from the location_type=1 PARENT rows only. A publication of
+    nothing but platform rows once passed the gate and reached ready with every
+    station marker gone, which is the exact symptom the finding is about.
+    """
+    platforms_only = [dict(row, location_type="0") for row in _STOP_ROWS]
+    cache = _subway_paths(tmp_path, monkeypatch)
+    cache.write_bytes(good_archive())
+    age(cache, days=static_data.MAX_AGE_DAYS + 10)
+    before = sha(cache)
+    _patch_download(monkeypatch, static_data, good_archive(stops=platforms_only))
+
+    assert "101" in await static_data.load_subway_stops()  # the old archive, still serving
+    assert sha(cache) == before
+    assert "parent stations" in static_shared.archive_status()["subway"]["last_download_error"]
+
+
+async def test_a_failed_promotion_is_recorded_like_any_other_failure(tmp_path, monkeypatch):
+    # Item 5's "the failure is not silent" has to hold for a rename that cannot
+    # complete, too. The rename sits outside the download/validate try block (so a
+    # process death there leaves a sweepable stage file), which meant an OSError
+    # from it skipped _record entirely.
+    dest = tmp_path / "gtfs.zip"
+    dest.write_bytes(good_archive())
+
+    def die(self, target):
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(Path, "replace", die)
+    with pytest.raises(OSError):
+        await static_shared.staged_fetch(
+            "https://example.invalid/gtfs.zip",
+            dest,
+            accept_all,
+            key="k",
+            label="test archive",
+            download=publisher(good_archive()),
+        )
+    entry = static_shared.archive_status()["k"]
+    assert entry["failed_downloads"] == 1
+    assert entry["last_download_error"] == "OSError"
+    assert entry["last_promoted_at"] is None

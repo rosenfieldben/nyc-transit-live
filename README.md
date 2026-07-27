@@ -368,11 +368,18 @@ downloaded last-writer-wins.
 
 Every static GTFS download stages, validates, then promotes. The download lands
 in a temp file beside the cached archive, that staged file is validated with the
-loader's own parsers (required members present, stops and routes parsing to
-something usable), and only a passing archive is renamed over the cache. A bad
+loader's own parsers, and only a passing archive is renamed over the cache. A bad
 upstream publication (a truncated zip, an HTML error page saved as `.zip`, a
-`stops.txt` with headers and no rows) is deleted at the stage file and the cached
-archive keeps serving, byte-untouched.
+`stops.txt` with headers and no rows, a damaged deflate stream) is deleted at the
+stage file and the cached archive keeps serving, byte-untouched.
+
+Each loader carries two validators, and the asymmetry is the point. A **new
+publication** is checked with the full parse of every table the load reads,
+because promoting is irreversible: the archive it replaces is gone. A **cached
+archive** is checked with a lighter parse at load time, because that runs on every
+load and there is nothing behind it to protect anyway. A cached archive that fails
+its check is treated as absent, which forces a fresh staged download rather than
+serving garbage.
 
 That makes one state deliberate and worth recognizing: a group can be `ready`
 while its archive is older than the 30-day refresh threshold. It is reachable

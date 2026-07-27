@@ -135,24 +135,39 @@ def require_parsed(parse: Callable[[], object], member: str, what: str) -> None:
 def validate_archive(path: Path, validate: Callable[[zipfile.ZipFile], None]) -> None:
     """Open `path` as a zip and run the loader's validator over it.
 
-    Turns "this is not a zip at all" (an HTML error page saved as .zip, a
-    truncated transfer) into the same StaticValidationError shape the validators
-    raise, so every caller has ONE failure type at this boundary.
+    THE ONE FAILURE TYPE AT THIS BOUNDARY. Anything that goes wrong while reading
+    an archive means the archive is unreadable, so everything below
+    StaticValidationError is converted into one.
+
+    The broad `except Exception` is deliberate, and it is the fix for a real wedge
+    rather than defensive habit. An enumerated catch list looked complete twice and
+    was wrong twice: it started with BadZipFile alone, gained NotImplementedError
+    (a member compressed with a method this build cannot decompress), and still let
+    zlib.error through, which is what a zip with an intact central directory and a
+    damaged deflate stream raises on read. That mattered far more than a missing
+    error message, because cached_archive_is_valid catches only StaticValidationError
+    and OSError, and the loaders call it BEFORE the freshness test: an escaping
+    exception meant no download was ever attempted, so the corrupt cache blocked its
+    own repair forever. The set of ways a zip library can fail to read bytes is not
+    something to enumerate, so it is not enumerated.
+
+    The cost of being broad is that a genuine bug inside a validator (a TypeError,
+    say) reads as a bad archive rather than crashing. The type name goes into the
+    message and the original is chained, which is what makes that case diagnosable
+    from /api/status alone.
     """
     try:
         with zipfile.ZipFile(path) as zf:
             validate(zf)
+    except StaticValidationError:
+        raise  # already the shape-naming failure the validators raise
     except zipfile.BadZipFile as exc:
+        # Named separately only because its message is the most useful one here
+        # ("File is not a zip file", "Bad CRC-32 for file 'stops.txt'") and is
+        # library text about the archive, never about our filesystem.
         raise StaticValidationError(f"not a readable zip archive ({exc})") from exc
-    except NotImplementedError as exc:
-        # A member compressed with a method this build cannot decompress. Rare, but
-        # it belongs on THIS side of the boundary: an archive we cannot read is a
-        # rejected publication, not a crash. Without this the exception escapes
-        # cached_archive_is_valid (which catches only StaticValidationError and
-        # OSError) and every retry re-raises it against the same cached bytes.
-        raise StaticValidationError(
-            f"archive uses an unsupported compression method ({exc})"
-        ) from exc
+    except Exception as exc:
+        raise StaticValidationError(f"unreadable archive ({type(exc).__name__})") from exc
 
 
 def cached_archive_is_valid(path: Path, validate: Callable[[zipfile.ZipFile], None]) -> bool:
@@ -336,6 +351,16 @@ async def staged_fetch(
                     dest,
                 )
         raise
-    stage.replace(dest)
+    try:
+        stage.replace(dest)
+    except OSError as exc:
+        # A promotion that cannot complete is still a failed publication, and item
+        # 5's "the failure is not silent" has to hold for it too. Deliberately
+        # OUTSIDE the cleanup above: the stage file is left on disk exactly as a
+        # process death here would leave it, for step 1 of the next attempt to
+        # sweep, and the cache is untouched either way because a rename that raises
+        # did not happen.
+        _record(key, promoted=False, error=describe_failure(exc))
+        raise
     _record(key, promoted=True)
     logger.info("Promoted %s to %s", label, dest)

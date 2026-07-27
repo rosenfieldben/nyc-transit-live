@@ -32,20 +32,26 @@ SUBWAY_GTFS_URL = "https://rrgtfsfeeds.s3.amazonaws.com/gtfs_subway.zip"
 # republishes it a few times a year; station coordinates change rarely.
 MAX_AGE_DAYS = 30
 
-# Members the subway loader READS. stops.txt places every marker; shapes.txt draws
-# the route lines; trips.txt and stop_times.txt join into the routes-per-station
-# index (H5). An archive missing any of them is a broken publication, so the
-# validator below refuses to promote it and the previous archive keeps serving.
+# THE RULE FOR THIS SET, and it is the same rule in all four loaders: require a
+# member when its absence is a loss a rider would SEE, so that keeping the
+# last-known-good is better than promoting the reduced archive. Requiring more than
+# that is not free, because at cold start with no cache a required member missing
+# means the system is absent from the map entirely rather than merely reduced.
 #
-# stop_times.txt is deliberately NOT here even though the subway reads it. The
-# subway's copy is ~36 MB of the ~5.6 MB compressed archive and feeds ONLY popup
-# enrichment (which routes serve a station), and its absence is already handled
-# by returning an empty index. Requiring it would mean a cold start against a
-# publication that dropped it leaves the whole map stationless rather than merely
-# unenriched, which trades a small degradation for a total one. PATH and ferry
-# DO require it, because there it drives placement and the stop/route join
-# (13d, H5), not an enrichment.
-_REQUIRED_MEMBERS = ("stops.txt", "trips.txt", "shapes.txt")
+# stops.txt places every marker and every train. shapes.txt draws every subway
+# route line.
+#
+# trips.txt and stop_times.txt are deliberately NOT here even though the subway
+# reads both. Their only subway consumer is load_subway_station_routes (the H5
+# routes-per-station popup enrichment), which already swallows any problem and
+# returns an empty index, and the map is fully functional without it: the route
+# lines come from the shape_id regex, not from trips.txt. An earlier version of
+# this list required trips.txt while excluding stop_times.txt on exactly the
+# "it only feeds enrichment" grounds that apply to both, which was inconsistent;
+# the visible-loss rule above is the one that actually distinguishes them. PATH
+# and ferry DO require stop_times.txt, because there it drives advance matching
+# and the dock/route alert join (13d, H5) rather than an enrichment.
+_REQUIRED_MEMBERS = ("stops.txt", "shapes.txt")
 
 
 def validate_subway_archive(zf: zipfile.ZipFile) -> None:
@@ -54,10 +60,24 @@ def validate_subway_archive(zf: zipfile.ZipFile) -> None:
     # THIRD-AUDIT FINDING 4'S GATE. A stops.txt with headers and no usable rows
     # parses to {} and used to be promoted to "ready" forever: every station gone
     # from the map, nothing retrying, because the archive was structurally fine.
-    # Running the loader's own parser (not a generic row count) makes this the
-    # same question load_subway_stops asks, so a promoted archive always places
-    # at least one station.
-    require_parsed(lambda: parse_member(zf, "stops.txt", _parse_stops_rows), "stops.txt", "stops")
+    # Running the loader's own parser (not a generic row count) makes this the same
+    # question the load asks.
+    #
+    # THE PARENT-STATION PREDICATE, not the all-rows one, and that choice is the
+    # gate. stops.txt yields the platform-level ids that place trains, while the
+    # clickable station markers come from the location_type=1 PARENT rows only.
+    # Gating on all rows let a stops.txt of nothing but platform rows through:
+    # trains placed, every station marker gone, promoted to ready, nothing
+    # retrying, which is finding 4's exact symptom reached by a different table.
+    # This check subsumes the all-rows one it replaced, because every parent row is
+    # also a row _parse_stops_rows keeps, so one gate carries both properties and a
+    # second would be dead weight (mutation testing is what showed it: with this
+    # line present, deleting the all-rows check changed nothing).
+    require_parsed(
+        lambda: parse_member(zf, "stops.txt", _parse_stations_rows),
+        "stops.txt",
+        "parent stations",
+    )
 
 
 async def _download_zip() -> None:
@@ -98,6 +118,35 @@ def _parse_stops_rows(raw: IO[bytes]) -> dict[str, dict]:
             "lon": lon,
         }
     return stops
+
+
+def _parse_stations_rows(raw: IO[bytes]) -> dict[str, dict]:
+    """stops.txt rows -> PARENT station_id -> name/lat/lon (location_type == 1 only).
+
+    Split out of load_subway_stations for the same reason _parse_stops_rows was
+    split out of _parse_stops: validate_subway_archive has to ask this exact
+    question of a STAGED archive, and a predicate the validator reimplements is a
+    predicate that drifts from the loader.
+    """
+    stations: dict[str, dict] = {}
+    reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
+    for row in reader:
+        if (row.get("location_type") or "").strip() != "1":
+            continue
+        station_id = (row.get("stop_id") or "").strip()
+        if not station_id:
+            continue
+        try:
+            lat = float(row.get("stop_lat") or "")
+            lon = float(row.get("stop_lon") or "")
+        except ValueError:
+            continue
+        stations[station_id] = {
+            "name": (row.get("stop_name") or "").strip() or None,
+            "lat": lat,
+            "lon": lon,
+        }
+    return stations
 
 
 def _parse_stops() -> dict[str, dict]:
@@ -163,26 +212,8 @@ def load_subway_stations() -> dict[str, dict]:
     parse problem logs and returns {} rather than raising.
     """
     try:
-        stations: dict[str, dict] = {}
         with zipfile.ZipFile(SUBWAY_GTFS_ZIP) as zf:
-            with zf.open("stops.txt") as raw:
-                reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
-                for row in reader:
-                    if (row.get("location_type") or "").strip() != "1":
-                        continue
-                    station_id = (row.get("stop_id") or "").strip()
-                    if not station_id:
-                        continue
-                    try:
-                        lat = float(row.get("stop_lat") or "")
-                        lon = float(row.get("stop_lon") or "")
-                    except ValueError:
-                        continue
-                    stations[station_id] = {
-                        "name": (row.get("stop_name") or "").strip() or None,
-                        "lat": lat,
-                        "lon": lon,
-                    }
+            stations = parse_member(zf, "stops.txt", _parse_stations_rows)
         logger.info("Loaded %d subway stations from static GTFS", len(stations))
         return stations
     except Exception as exc:

@@ -340,6 +340,26 @@ async def _fetch_ferry_endpoint(client: httpx.AsyncClient, endpoint: str) -> byt
     return resp.content
 
 
+def _first_leaf(group: BaseExceptionGroup) -> BaseException:
+    """The first non-group exception inside a (possibly nested) ExceptionGroup.
+
+    A TaskGroup reports its children's failures as a group even when only one child
+    failed, and every caller downstream routes on an exception's TYPE and records its
+    str(). Descends rather than taking exceptions[0] directly so a nested group can
+    never reach a handler as an opaque repr; the recursion terminates because a group
+    with no exceptions cannot be raised.
+
+    WHEN BOTH LEGS FAIL, THIS PICKS THE ONE THAT FAILED FIRST, because a TaskGroup
+    appends to its error list in completion order. That is the right one to record:
+    the first failure is what cancelled the other leg, so the second is usually that
+    cancellation losing a race rather than an independent fault. The discarded
+    sibling is not lost, only unrecorded: the whole group rides on the re-raised
+    exception's __cause__ and lands in the logged traceback.
+    """
+    first = group.exceptions[0]
+    return _first_leaf(first) if isinstance(first, BaseExceptionGroup) else first
+
+
 async def fetch_ferry_data(
     client: httpx.AsyncClient, ferry_static: dict
 ) -> tuple[list[dict], dict[str, dict[str, list[dict]]], float | None]:
@@ -357,15 +377,62 @@ async def fetch_ferry_data(
     now = time.time()
     trips = (ferry_static or {}).get("trips") or {}
     routes = (ferry_static or {}).get("routes") or {}
-    # Fetch both endpoints concurrently (they share one host), so the poll pays
-    # the slower round trip, not their sum, matching fetch_railroad_trains'
-    # gather. The contract is all-or-nothing, so the default gather (no
-    # return_exceptions) is exactly right: the first leg to fail propagates and
-    # the other is cancelled, and the caller retains last-known.
-    vehicle_raw, tripupdate_raw = await asyncio.gather(
-        _fetch_ferry_endpoint(client, FERRY_VEHICLE_ENDPOINT),
-        _fetch_ferry_endpoint(client, FERRY_TRIPUPDATE_ENDPOINT),
-    )
+    # Fetch both endpoints concurrently (they share one host), so the poll pays the
+    # slower round trip, not their sum.
+    #
+    # A TASKGROUP, NOT gather, AND HERE THE DEFAULT SEMANTICS ARE EXACTLY WHAT WE
+    # WANT (C4). The comment that used to sit here said gather cancels the other leg
+    # when one fails. It does not: gather propagates the first exception and leaves
+    # its siblings running, detached. So a 500 on one endpoint while the other
+    # trickled left the trickler orphaned, still holding a connection, and the next
+    # poll started a second pair beside it. A TaskGroup cancels the sibling promptly
+    # and does not exit until it has actually stopped, which is the orphan fix.
+    #
+    # Unlike the poll cycle's five independent sources, cancelling the sibling is the
+    # CORRECT behavior here: the two legs are one payload (boats plus their arrivals),
+    # so a poll that can only produce half of it has already failed and finishing the
+    # other half would be wasted work.
+    #
+    # THE ALL-OR-NOTHING POLICY IS UNCHANGED. A lone tripupdate failure still fails
+    # the whole poll. Whether it should instead serve boats with stale arrivals is a
+    # POLICY question, not a concurrency one, and is deliberately out of scope here.
+    try:
+        async with asyncio.TaskGroup() as group:
+            vehicle_task = group.create_task(_fetch_ferry_endpoint(client, FERRY_VEHICLE_ENDPOINT))
+            tripupdate_task = group.create_task(
+                _fetch_ferry_endpoint(client, FERRY_TRIPUPDATE_ENDPOINT)
+            )
+    except ExceptionGroup as group_error:
+        # KNOWN LIMIT, MEASURED, AND DELIBERATELY NOT PAPERED OVER. CPython's
+        # TaskGroup discards an external cancellation while it already has an error
+        # pending, so a REFRESH_DEADLINE_S expiry (or a shutdown) that lands in the
+        # window between one leg failing and the other finishing its unwind is
+        # dropped, and this handler then reports the leg's error instead. Reproduced:
+        # a 50ms deadline around a group whose sibling takes 300ms to unwind returns
+        # the leg's error after 300ms and records a 502 rather than the 504.
+        #
+        # It is not fixed here because the obvious discriminator does not work.
+        # Task.cancelling() reads 1 for EVERY group failure (the group cancels its
+        # parent to deliver the error and does not restore the count), so branching on
+        # it would turn every ordinary ferry failure into a spurious cancellation;
+        # only the difference between 1 and 2 distinguishes the two, which is a
+        # CPython implementation detail this code should not be reading.
+        #
+        # The exposure is bounded by how long the sibling takes to unwind, which for
+        # an httpx request is a connection close, and no failure is lost: the poll is
+        # still recorded, only with the upstream label instead of the deadline one.
+        # It is the price of structured concurrency, which waits for its children to
+        # actually STOP where gather returned at once and leaked them. Carried as a
+        # followup rather than solved with a fragile heuristic.
+        #
+        # ONE failure, one cause. The caller routes on the exception TYPE
+        # (httpx.HTTPError, FeedDecodeError) and records str(exc) into an error that
+        # /api/status serves, so handing it a group would both miss every handler and
+        # publish a group repr listing endpoints. Re-raised `from` the group, so the
+        # full picture including the sibling stays in the logged traceback while only
+        # the cause's own message reaches the recorded detail.
+        raise _first_leaf(group_error) from group_error
+    vehicle_raw, tripupdate_raw = vehicle_task.result(), tripupdate_task.result()
     boats, feed_timestamp, boat_deadheads, boat_join_misses = _decode_ferry_vehicles(
         vehicle_raw, trips, routes, now
     )

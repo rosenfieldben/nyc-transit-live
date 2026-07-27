@@ -33,6 +33,7 @@ from cache import (
     _sanitize_upstream,
 )
 from feeds import (
+    ALERT_FEED_URLS,
     ALERT_RETENTION_MAX_S,
     RAILROAD_FEED_URLS,
     SUBWAY_FEED_URLS,
@@ -59,8 +60,15 @@ POLL_INTERVAL_S = 20
 # the position poll lean and independent (an alert-feed outage never stalls it).
 ALERT_POLL_INTERVAL_S = 60
 
-# A whole-task deadline for ONE system's refresh, applied per-coroutine INSIDE the
-# gather (see _poll_feeds). The httpx client timeout=30 bounds the gap between bytes,
+# THE INTERPRETER FLOOR IS 3.11, and C4 leans on it: asyncio.TaskGroup and
+# ExceptionGroup are 3.11 builtins, as is the asyncio.timeout below that R2 added.
+# Production pins 3.12 (nixpacks.toml) and both CI workflows install 3.12, so the
+# floor is comfortably met; ruff.toml records it too, or the linter reports the
+# group builtins as undefined names.
+#
+# A whole-task deadline for ONE system's refresh, applied per-child INSIDE the poll
+# cycle's TaskGroup (see _poll_feeds). The httpx client timeout=30 bounds the gap
+# between bytes,
 # not the whole exchange, so a trickling upstream that dribbles a byte every few
 # seconds can keep a single refresh alive indefinitely; and because the cycle awaits
 # all five refreshers together, that one wedged refresh freezes every system's
@@ -85,9 +93,10 @@ REFRESH_DEADLINE_S = 45
 async def _bounded_refresh(entry: dict, coro) -> None:
     """Run one refresh coroutine under the whole-task REFRESH_DEADLINE_S. A timeout is
     converted here into the same last-known-on-failure record every other failure
-    takes, so the gather sees a NORMAL return for this system and the other systems
-    still finish the cycle. Only TimeoutError is caught: an unexpected error still
-    propagates to the loop's cycle-level handler exactly as before.
+    takes, so the cycle sees a NORMAL return for this system and the other systems
+    still finish. Only TimeoutError is caught here; anything else is caught one layer
+    out by _total_refresh, which is what keeps a surprise in one source from
+    cancelling the other four through their shared TaskGroup (C4).
 
     The refreshers' only await is the upstream fetch, and everything after it (the
     entry.update, the feed_health and arrivals writes) is synchronous, so a deadline
@@ -108,6 +117,112 @@ async def _bounded_refresh(entry: dict, coro) -> None:
             f"Upstream did not complete within the {REFRESH_DEADLINE_S}s refresh "
             "deadline; keeping last-known data.",
         )
+
+
+# How many upstream feeds each source fans out over, for the health surface an
+# unclassified failure has to mark. Buses are absent on purpose: that source
+# publishes no per-feed health dict, so there is nothing to mark beyond its error.
+_FEED_HEALTH_TOTALS = {"subways": len(SUBWAY_FEED_URLS), "railroads": len(RAILROAD_FEED_URLS)}
+_SINGLE_FEED_HEALTH = {"path": "PATH", "ferry": "ferry"}
+
+
+def _feed_degrader(app: FastAPI, name: str, entry: dict):
+    """The per-source "mark everything down" hook handed to _total_refresh.
+
+    Built HERE, at the cycle, because the shape is per source: the subway fans out
+    over eight feed groups, the railroad over two, PATH and ferry over one each, and
+    the bus feed publishes no health dict at all. It marks the same two surfaces every
+    classified failure path in this module marks by hand: the app-state health dict
+    and, where the envelope has one, the per-system block C2 publishes.
+    """
+
+    def mark() -> None:
+        if name in _FEED_HEALTH_TOTALS:
+            total = _FEED_HEALTH_TOTALS[name]
+            urls = SUBWAY_FEED_URLS if name == "subways" else RAILROAD_FEED_URLS
+            setattr(
+                app.state,
+                f"{name[:-1]}_feed_health",  # subways -> subway_feed_health
+                {"total": total, "ok": 0, "failed": sorted(urls)},
+            )
+        elif name in _SINGLE_FEED_HEALTH:
+            label = _SINGLE_FEED_HEALTH[name]
+            setattr(app.state, f"{name}_feed_health", {"total": 1, "ok": 0, "failed": [label]})
+        # The per-system freshness block, where this envelope has one. Same helper the
+        # total-failure paths use, so a rider sees the same dimming either way.
+        _mark_all_systems_failed(entry)
+
+    return mark
+
+
+async def _total_refresh(name: str, entry: dict, coro, mark_degraded=None) -> None:
+    """Run one source's refresh so it CANNOT raise into the poll cycle (C4).
+
+    THE CONTRACT: a child's failure is that SYSTEM'S failure, never the cycle's.
+    With this in place the cycle's own exceptions are exclusively cancellation and
+    bugs in the cycle plumbing itself, which is what lets the cycle join every child
+    under a TaskGroup without one source's surprise taking down the generation.
+
+    Every refresher already routes its EXPECTED failures itself (an upstream error,
+    a config error, an undecodable body) and _bounded_refresh routes the deadline.
+    What reaches here is the unexpected: a shape no handler names. Recording it as
+    this system's failure is strictly better than the pre-C4 behavior, where it
+    escaped into the cycle handler and was logged with no cache entry marked at all,
+    so /api/status showed that source as fine while it silently stopped updating.
+
+    CancelledError IS RE-RAISED, and that ordering is load-bearing. Shutdown cancels
+    the poll task, the TaskGroup cancels its children, and a child that swallowed the
+    cancellation would hang the group and then the lifespan. It is a BaseException in
+    3.8+, so `except Exception` below would not catch it anyway; naming it explicitly
+    is a guard against anyone widening that clause later.
+
+    BUT NOT EVERY CancelledError IS OUR SHUTDOWN, and the difference matters because
+    a TaskGroup DISCARDS a child that ends cancelled: no error, no log, the cycle
+    reports success and sleeps. So a refresher (or a library under it) that raises a
+    bare CancelledError while nobody asked it to would silently stop polling that
+    system forever, with the cache showing no error at all. Task.cancelling() is the
+    discriminator the runtime gives us: nonzero exactly when a cancellation was
+    actually requested of this task. When it is zero the cancellation is spurious and
+    gets recorded like any other unclassified failure; it is re-raised either way,
+    because swallowing a real one is the worse mistake.
+
+    mark_degraded IS NOT OPTIONAL POLISH. Recording entry["error"] alone leaves every
+    PER-SYSTEM surface claiming health: /api/status builds degraded_systems from the
+    per-system last_error and never looks at entry["error"], C2's blocks keep
+    reporting ok: true so the client will not dim, and the contract monitor reads
+    neither. An unclassified failure would therefore stop a system polling while every
+    operator surface stayed green, which is the exact false-green this audit arc
+    exists to remove. The hook comes from the CALLER because only it knows the shape:
+    a generic wrapper cannot know that the subway has eight groups and the ferry has
+    one (this is the same reasoning _bounded_refresh documents for leaving health
+    alone, and the reason that decision is revisited here rather than copied).
+    """
+    try:
+        await coro
+    except asyncio.CancelledError:
+        task = asyncio.current_task()
+        if task is None or task.cancelling() == 0:
+            logger.exception("%s refresh raised CancelledError with no cancellation pending", name)
+            _note_failure(entry, 500, f"Internal error refreshing {name} (CancelledError)")
+            if mark_degraded is not None:
+                mark_degraded()
+        raise
+    except Exception as exc:
+        # 500, not 502: 502 means "the upstream misbehaved", and by construction this
+        # is a failure nobody classified, which is far more likely to be ours.
+        #
+        # THE TYPE, NOT THE MESSAGE. This detail is served publicly by /api/status and,
+        # while a cache has never filled, by the feed endpoint itself, and str(exc) of
+        # an arbitrary exception is arbitrary text: a filesystem path, a config value,
+        # a chunk of upstream body. _sanitize_upstream only strips URLs, which is the
+        # right tool for an httpx error and not for this. The class name says as much
+        # as a reader outside the logs can act on, cannot be empty (which
+        # `f"...: {exc}"` can), and the full exception with its traceback is one line
+        # above in the log.
+        logger.exception("%s refresh failed unexpectedly", name)
+        _note_failure(entry, 500, f"Internal error refreshing {name} ({type(exc).__name__})")
+        if mark_degraded is not None:
+            mark_degraded()
 
 
 async def _refresh_buses(app: FastAPI, client: httpx.AsyncClient) -> None:
@@ -615,21 +730,76 @@ async def _poll_feeds(app: FastAPI) -> None:
     async with httpx.AsyncClient(timeout=30) as client:
         while True:
             try:
-                # Each refresh is wrapped in its OWN deadline (see _bounded_refresh)
-                # so a wedged upstream bounds only its system: a timeout becomes a
-                # last-known-on-failure record on that one entry, and the other four
-                # complete this cycle. gather keeps NO return_exceptions, so an
-                # unexpected (non-timeout) error still fails the whole cycle into the
-                # handler below, unchanged.
+                # A CYCLE ENDS ONLY WHEN EVERY CHILD HAS ENDED (C4). asyncio.TaskGroup
+                # is what guarantees that: the `async with` does not exit until all
+                # five tasks have completed, so a generation can never overlap its
+                # successor, and cancelling this task propagates into whatever is
+                # in flight instead of leaving it detached.
+                #
+                # THE COMMENT THAT USED TO BE HERE WAS WRONG, and the bug was real.
+                # It claimed gather "keeps NO return_exceptions, so an unexpected
+                # error still fails the whole cycle", implying the cycle ended there.
+                # gather does not cancel or await its siblings when one child raises:
+                # the first exception propagated, this loop logged it and slept, and
+                # the four orphans kept running into the NEXT generation, where they
+                # wrote their stale results into app.state after the new cycle had
+                # already started.
+                #
+                # THE INVARIANT LIVES IN TWO HALVES, and it is worth being exact
+                # about which half does what, because the obvious reading is wrong.
+                #
+                # _total_refresh is what actually removes the orphan today: with
+                # children that cannot raise, even gather waits for all five, because
+                # gather only abandons siblings when one of them RAISES. The fix for
+                # the audited bug is the totality, not the group. (Verified by
+                # mutation: with the wrapper in place and gather restored, the overlap
+                # tests still pass.)
+                #
+                # The TaskGroup is the STRUCTURAL BACKSTOP for when that assumption
+                # breaks. A BaseException (SystemExit, KeyboardInterrupt) passes
+                # straight through the wrapper by design, and a future child added
+                # without the wrapper would not be caught by review alone. In either
+                # case a group cancels its siblings and does not exit until they have
+                # stopped, where gather would detach them to write into the next
+                # generation. It also keeps the wrapper a POLICY choice (record this
+                # as the system's failure) rather than the only thing standing
+                # between the loop and a leak.
+                #
+                # Together: every source runs to completion, every failure is recorded
+                # against its own entry, and no child outlives the generation that
+                # created it under any exit path.
+                #
+                # Each refresh keeps its OWN deadline (see _bounded_refresh) so a
+                # wedged upstream still bounds only its system, exactly as R2 left it.
                 cache = app.state.feed_cache
-                await asyncio.gather(
-                    _bounded_refresh(cache["buses"], _refresh_buses(app, client)),
-                    _bounded_refresh(cache["subways"], _refresh_subways(app, client)),
-                    _bounded_refresh(cache["railroads"], _refresh_railroads(app, client)),
-                    _bounded_refresh(cache["path"], _refresh_path(app, client)),
-                    _bounded_refresh(cache["ferry"], _refresh_ferry(app, client)),
-                )
+                async with asyncio.TaskGroup() as group:
+                    for name, refresh in (
+                        ("buses", _refresh_buses),
+                        ("subways", _refresh_subways),
+                        ("railroads", _refresh_railroads),
+                        ("path", _refresh_path),
+                        ("ferry", _refresh_ferry),
+                    ):
+                        entry = cache[name]
+                        group.create_task(
+                            _total_refresh(
+                                name,
+                                entry,
+                                _bounded_refresh(entry, refresh(app, client)),
+                                _feed_degrader(app, name, entry),
+                            )
+                        )
             except Exception:
+                # DEFENSIVE, AND IT SHOULD BE UNREACHABLE. Every child is total, so
+                # what is left is a bug in this cycle's own plumbing (a KeyError on
+                # the cache map, a TaskGroup misuse). It stays because the loop dying
+                # silently is the worst outcome available: the app would keep serving
+                # last-known data forever with nothing to say why.
+                #
+                # This does NOT catch shutdown. CancelledError is a BaseException, and
+                # a TaskGroup that is cancelled raises BaseExceptionGroup rather than
+                # ExceptionGroup, so neither is an Exception and both pass straight
+                # through to the lifespan that owns them.
                 logger.exception("feed poll cycle failed unexpectedly")
             await asyncio.sleep(POLL_INTERVAL_S)
 
@@ -805,7 +975,15 @@ async def _poll_alerts(app: FastAPI) -> None:
     A separate task from _poll_feeds (own client, slower cadence): alerts change
     slowly and the feeds are large, and keeping it independent means an alert-feed
     outage never delays a position poll. Anything unexpected is logged rather than
-    allowed to kill the loop, matching _poll_feeds."""
+    allowed to kill the loop, matching _poll_feeds.
+
+    NO TASKGROUP HERE, DELIBERATELY (C4). This cycle has exactly ONE child, so the
+    await below already IS the join: there is no sibling to orphan and no generation
+    that can overlap its successor. What C4 changes here is the other half, the
+    child's totality: an unexpected error is now recorded against the alerts cache
+    rather than escaping into the cycle handler, which used to log it while leaving
+    /api/status reporting the alerts feed as fine. Adding a group around a single
+    child would be ceremony that implies a guarantee the await already provides."""
     async with httpx.AsyncClient(timeout=30) as client:
         while True:
             try:
@@ -817,7 +995,30 @@ async def _poll_alerts(app: FastAPI) -> None:
                 # outage machinery (expiry re-filter, retention cap, per-system health)
                 # and the generic wrapper cannot: it catches the timeout outside the
                 # refresher, where the only thing it can do is record the error.
-                await _refresh_alerts(app, client)
+                entry = app.state.alerts_cache
+                await _total_refresh(
+                    "alerts",
+                    entry,
+                    _refresh_alerts(app, client),
+                    # An unclassified failure is a TOTAL outage as far as the health
+                    # map is concerned, and running the shared generation applier is
+                    # what keeps the expiry re-filter and the retention cap honest on
+                    # a poll that died halfway. write_index is False while the index
+                    # has never filled, for the same reason the total-outage path
+                    # gives: writing the merge's empty result would turn a warming
+                    # deployment into one confidently serving "no active alerts".
+                    lambda: _apply_alert_generation(
+                        entry,
+                        [],
+                        set(ALERT_FEED_URLS),
+                        time.time(),
+                        write_index=entry["alerts"] is not None,
+                    ),
+                )
             except Exception:
+                # Defensive and, as in _poll_feeds, unreachable by construction now
+                # that the child is total: what is left is a bug in this cycle itself.
+                # Shutdown passes through untouched (CancelledError is a
+                # BaseException, and _total_refresh re-raises it).
                 logger.exception("alert poll cycle failed unexpectedly")
             await asyncio.sleep(ALERT_POLL_INTERVAL_S)

@@ -340,6 +340,19 @@ async def _fetch_ferry_endpoint(client: httpx.AsyncClient, endpoint: str) -> byt
     return resp.content
 
 
+def _first_leaf(group: BaseExceptionGroup) -> BaseException:
+    """The first non-group exception inside a (possibly nested) ExceptionGroup.
+
+    A TaskGroup reports its children's failures as a group even when only one child
+    failed, and every caller downstream routes on an exception's TYPE and records its
+    str(). Descends rather than taking exceptions[0] directly so a nested group can
+    never reach a handler as an opaque repr; the recursion terminates because a group
+    with no exceptions cannot be raised.
+    """
+    first = group.exceptions[0]
+    return _first_leaf(first) if isinstance(first, BaseExceptionGroup) else first
+
+
 async def fetch_ferry_data(
     client: httpx.AsyncClient, ferry_static: dict
 ) -> tuple[list[dict], dict[str, dict[str, list[dict]]], float | None]:
@@ -357,15 +370,40 @@ async def fetch_ferry_data(
     now = time.time()
     trips = (ferry_static or {}).get("trips") or {}
     routes = (ferry_static or {}).get("routes") or {}
-    # Fetch both endpoints concurrently (they share one host), so the poll pays
-    # the slower round trip, not their sum, matching fetch_railroad_trains'
-    # gather. The contract is all-or-nothing, so the default gather (no
-    # return_exceptions) is exactly right: the first leg to fail propagates and
-    # the other is cancelled, and the caller retains last-known.
-    vehicle_raw, tripupdate_raw = await asyncio.gather(
-        _fetch_ferry_endpoint(client, FERRY_VEHICLE_ENDPOINT),
-        _fetch_ferry_endpoint(client, FERRY_TRIPUPDATE_ENDPOINT),
-    )
+    # Fetch both endpoints concurrently (they share one host), so the poll pays the
+    # slower round trip, not their sum.
+    #
+    # A TASKGROUP, NOT gather, AND HERE THE DEFAULT SEMANTICS ARE EXACTLY WHAT WE
+    # WANT (C4). The comment that used to sit here said gather cancels the other leg
+    # when one fails. It does not: gather propagates the first exception and leaves
+    # its siblings running, detached. So a 500 on one endpoint while the other
+    # trickled left the trickler orphaned, still holding a connection, and the next
+    # poll started a second pair beside it. A TaskGroup cancels the sibling promptly
+    # and does not exit until it has actually stopped, which is the orphan fix.
+    #
+    # Unlike the poll cycle's five independent sources, cancelling the sibling is the
+    # CORRECT behavior here: the two legs are one payload (boats plus their arrivals),
+    # so a poll that can only produce half of it has already failed and finishing the
+    # other half would be wasted work.
+    #
+    # THE ALL-OR-NOTHING POLICY IS UNCHANGED. A lone tripupdate failure still fails
+    # the whole poll. Whether it should instead serve boats with stale arrivals is a
+    # POLICY question, not a concurrency one, and is deliberately out of scope here.
+    try:
+        async with asyncio.TaskGroup() as group:
+            vehicle_task = group.create_task(_fetch_ferry_endpoint(client, FERRY_VEHICLE_ENDPOINT))
+            tripupdate_task = group.create_task(
+                _fetch_ferry_endpoint(client, FERRY_TRIPUPDATE_ENDPOINT)
+            )
+    except ExceptionGroup as group_error:
+        # ONE failure, one cause. The caller routes on the exception TYPE
+        # (httpx.HTTPError, FeedDecodeError) and records str(exc) into an error that
+        # /api/status serves, so handing it a group would both miss every handler and
+        # publish a group repr listing endpoints. Re-raised `from` the group, so the
+        # full picture including the sibling stays in the logged traceback while only
+        # the cause's own message reaches the recorded detail.
+        raise _first_leaf(group_error) from group_error
+    vehicle_raw, tripupdate_raw = vehicle_task.result(), tripupdate_task.result()
     boats, feed_timestamp, boat_deadheads, boat_join_misses = _decode_ferry_vehicles(
         vehicle_raw, trips, routes, now
     )

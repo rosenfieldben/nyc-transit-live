@@ -3,6 +3,13 @@
 # CI runs `ruff check .` and `ruff format --check .` from this directory.
 line-length = 100
 
+# The interpreter floor, so the linter knows which builtins exist. Without it ruff
+# assumes the oldest supported Python and reports ExceptionGroup / BaseExceptionGroup
+# as undefined names (they are 3.11 builtins, used by the ferry TaskGroup unwrap).
+# Matches the runtime pinned in nixpacks.toml and both CI workflows; the app has
+# required 3.11+ since asyncio.timeout and now also uses asyncio.TaskGroup.
+target-version = "py312"
+
 [lint]
 # pycodestyle errors/warnings, pyflakes, and import sorting.
 select = ["E", "F", "I", "W"]

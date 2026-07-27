@@ -16,16 +16,18 @@ import asyncio
 import csv
 import io
 import logging
-import os
-import tempfile
 import time
 import zipfile
 from collections import defaultdict
 from pathlib import Path
 
-import httpx
-
 from static_routes import fold_stop_routes
+from static_shared import (
+    cached_archive_is_valid,
+    require_members,
+    require_parsed,
+    staged_fetch,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,45 +51,41 @@ RAILROAD_STATIC_ZIPS = {
 # MTA republishes it a few times a year; stop coordinates change rarely.
 MAX_AGE_DAYS = 30
 
-# Whole-transfer deadline per static zip: httpx's timeout is per socket read, so
-# this bounds the WHOLE transfer, stopping a trickling response from stalling the
-# download indefinitely. The load runs in a background warmup task (main.py
-# _warm_railroad_static) that retries on failure, so this is just a per-attempt
-# ceiling, not a startup gate. The MTA zips are small (S3-fast), so 120s is
-# generous.
-_DOWNLOAD_DEADLINE_S = 120
+# Members a railroad system's load READS and cannot degrade around: stops place
+# every marker and every position-less train, trips and shapes draw the route
+# lines, routes name them. stop_times.txt is excluded on purpose even though the
+# load reads it: it feeds only the routes-per-station index (H5, popup
+# enrichment), whose absence already yields an empty index, so requiring it would
+# turn a small degradation into a whole system missing from the map.
+_REQUIRED_MEMBERS = ("stops.txt", "trips.txt", "shapes.txt", "routes.txt")
+
+
+def validate_railroad_archive(zf: zipfile.ZipFile) -> None:
+    """Can we serve one railroad system from this archive? Raises on no.
+
+    Deliberately STRICTER than _parse_system, which treats routes.txt as optional
+    at parse time. That leniency is about surviving an already-cached archive;
+    this is about whether to accept a NEW publication, and a publication missing
+    its route names is a broken one worth rejecting while the previous archive
+    still serves.
+    """
+    require_members(zf, _REQUIRED_MEMBERS)
+    # Nonempty through the loader's own parsers, so "validated" means "the load
+    # will produce something" rather than "the files exist". This is the railroad's
+    # copy of third-audit finding 4's gate, the check R3 grew here first.
+    require_parsed(lambda: _parse_stops(zf), "stops.txt", "stops")
+    require_parsed(lambda: _parse_routes(zf), "routes.txt", "routes")
 
 
 async def _download_zip(system: str) -> None:
-    """Download one system's GTFS zip atomically into its cache path."""
-    url = RAILROAD_STATIC_URLS[system]
-    dest = RAILROAD_STATIC_ZIPS[system]
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    # Sweep this system's temp files orphaned by an earlier hard kill mid-download.
-    # Scoped to the system's stem so it can't disturb the other system's archive.
-    for stale in dest.parent.glob(f"{dest.stem}.*.part"):
-        stale.unlink(missing_ok=True)
-    # Unique temp name in the same dir so the final rename stays atomic and
-    # concurrent downloads are last-writer-wins.
-    fd, tmp_name = tempfile.mkstemp(dir=dest.parent, prefix=f"{dest.stem}.", suffix=".part")
-    os.close(fd)
-    tmp = Path(tmp_name)
-    logger.info("Downloading %s static GTFS from %s", system, url)
-    try:
-        # httpx's timeout is per socket read; bound the whole transfer so a
-        # trickling response can't stall indefinitely.
-        async with asyncio.timeout(_DOWNLOAD_DEADLINE_S):
-            async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
-                async with client.stream("GET", url) as resp:
-                    resp.raise_for_status()
-                    with tmp.open("wb") as f:
-                        async for chunk in resp.aiter_bytes():
-                            f.write(chunk)
-        tmp.replace(dest)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
-    logger.info("Downloaded %s static GTFS to %s", system, dest)
+    """Stage, validate, then promote one system's archive (see static_shared)."""
+    await staged_fetch(
+        RAILROAD_STATIC_URLS[system],
+        RAILROAD_STATIC_ZIPS[system],
+        validate_railroad_archive,
+        key=f"railroad_{system}",
+        label=f"{system} static GTFS",
+    )
 
 
 def _parse_stops(zf: zipfile.ZipFile) -> dict[str, dict]:
@@ -228,9 +226,14 @@ def derive_railroad_stop_routes(
 
 def _parse_system(zip_path: Path) -> dict:
     """Parse one railroad GTFS zip into {stops, trips, shapes, routes, stop_times}
-    in a single open. stops/trips/shapes are required members (a missing one
-    raises for _load_one to recover from); routes.txt and stop_times.txt are
-    optional and yield an empty table when absent."""
+    in a single open.
+
+    Kept lenient about routes.txt and stop_times.txt (each yields an empty table
+    when absent) even though validate_railroad_archive now requires routes.txt.
+    The two answer different questions and the split is deliberate: the validator
+    decides whether to ACCEPT an archive, this decides how to read one that is
+    already here, and a parser that tolerates a missing optional member stays
+    usable by the tests that feed it hand-built zips."""
     with zipfile.ZipFile(zip_path) as zf:
         return {
             "stops": _parse_stops(zf),
@@ -321,46 +324,40 @@ async def _load_one(system: str) -> dict | None:
     returns None rather than raising, so one system can never block the other.
     """
     zip_path = RAILROAD_STATIC_ZIPS[system]
-    fresh = zip_path.exists() and time.time() - zip_path.stat().st_mtime < MAX_AGE_DAYS * 86400
+    # FRESH NOW MEANS VALID AND RECENT (C5). R3's invalidate-on-empty-parse lived
+    # here: it raised on a clean parse yielding zero stops and unlinked the cache,
+    # because a just-downloaded bad zip is fresh by mtime and every later attempt
+    # would otherwise re-parse the same bad bytes forever. That special case is now
+    # the general rule from two directions: validate_railroad_archive refuses to
+    # promote such a publication at all, and cached_archive_is_valid rejects one
+    # already on disk before it is parsed, so the retry re-fetches by itself.
+    usable = zip_path.exists() and cached_archive_is_valid(zip_path, validate_railroad_archive)
+    fresh = usable and time.time() - zip_path.stat().st_mtime < MAX_AGE_DAYS * 86400
     if not fresh:
         try:
             await _download_zip(system)
         except Exception as exc:
-            if not zip_path.exists():
+            if not usable:
                 logger.warning("%s static GTFS download failed (%s); no cached copy", system, exc)
                 return None
+            # Serving old while new is bad, INCLUDING past MAX_AGE_DAYS: the age
+            # policy exists to pick up upstream's corrections, so it yields to
+            # validity rather than dropping a working system. staged_fetch recorded
+            # the reason for /api/status.
             logger.warning(
-                "%s static GTFS re-download failed (%s); using stale cached copy", system, exc
+                "%s static GTFS re-download failed (%s); using the cached copy", system, exc
             )
     try:
         data = _parse_system(zip_path)
-        if not data["stops"]:
-            # A zip that parses cleanly but yields ZERO stops is unusable in exactly
-            # the way the handler below exists for: no stop can be placed, so the
-            # system contributes nothing. It reaches here only from an upstream bad
-            # publish (an empty or header-only stops.txt), since every structural
-            # failure already raises one of the caught classes.
-            #
-            # This MUST invalidate the cache rather than just return the empty parse.
-            # The warmup treats an all-systems-empty load as a failed attempt and
-            # retries (R3), but the retry re-parses whatever is on disk, and a
-            # just-downloaded zip is fresh by mtime, so without unlinking here every
-            # later attempt would re-parse the same bad bytes forever: a retry loop
-            # that pays the cost of retrying and can never heal. Raising into the
-            # recovery below makes the retry actually re-fetch.
-            raise ValueError("stops.txt parsed to zero usable stops")
-    except (zipfile.BadZipFile, KeyError, UnicodeDecodeError, ValueError):
-        # Unusable cache: corrupt zip, a missing member (stops/trips/shapes),
-        # undecodable text, or a clean parse with nothing in it. Refetch once
-        # rather than staying wedged.
-        logger.warning("Cached %s static GTFS is unusable; re-downloading", system)
+    except (zipfile.BadZipFile, KeyError, UnicodeDecodeError, csv.Error) as exc:
+        # The residual below the validator: the archive passed its gates (which
+        # parse stops and routes in full) but a deeper table is unreadable. Unlink,
+        # because unlike a validation failure there is no last-known-good to
+        # protect here: this file IS the cache and it is proven unservable, so
+        # keeping it would only wedge every retry on the same bytes.
+        logger.warning("Cached %s static GTFS is unparseable (%s); discarding", system, exc)
         zip_path.unlink(missing_ok=True)
-        try:
-            await _download_zip(system)
-            data = _parse_system(zip_path)
-        except Exception as exc:
-            logger.warning("%s static GTFS unavailable (%s); skipping", system, exc)
-            return None
+        return None
     logger.info(
         "Loaded %s static GTFS: %d stops, %d trips, %d shapes, %d routes",
         system,

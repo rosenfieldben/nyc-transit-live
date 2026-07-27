@@ -2,21 +2,25 @@
 
 from __future__ import annotations
 
-import asyncio
 import csv
 import io
 import logging
-import os
 import re
-import tempfile
 import time
 import zipfile
 from collections import defaultdict
 from pathlib import Path
-
-import httpx
+from typing import IO
 
 from static_routes import fold_stop_routes
+from static_shared import (
+    StaticValidationError,
+    cached_archive_is_valid,
+    parse_member,
+    require_members,
+    require_parsed,
+    staged_fetch,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,102 +32,123 @@ SUBWAY_GTFS_URL = "https://rrgtfsfeeds.s3.amazonaws.com/gtfs_subway.zip"
 # republishes it a few times a year; station coordinates change rarely.
 MAX_AGE_DAYS = 30
 
-# Whole-transfer deadline for the subway zip: httpx's timeout is per socket read,
-# so this bounds the WHOLE transfer, stopping a trickling response from stalling
-# the download indefinitely. The load runs in a background warmup task (main.py
-# _warm_subway_static) that retries on failure, so this is just a per-attempt
-# ceiling, not a startup gate. The MTA zips are small (S3-fast), so 120s is
-# generous. Duplicated in railroad_static rather than shared: the two modules are
-# kept intentionally separate.
-_DOWNLOAD_DEADLINE_S = 120
+# Members the subway loader READS. stops.txt places every marker; shapes.txt draws
+# the route lines; trips.txt and stop_times.txt join into the routes-per-station
+# index (H5). An archive missing any of them is a broken publication, so the
+# validator below refuses to promote it and the previous archive keeps serving.
+#
+# stop_times.txt is deliberately NOT here even though the subway reads it. The
+# subway's copy is ~36 MB of the ~5.6 MB compressed archive and feeds ONLY popup
+# enrichment (which routes serve a station), and its absence is already handled
+# by returning an empty index. Requiring it would mean a cold start against a
+# publication that dropped it leaves the whole map stationless rather than merely
+# unenriched, which trades a small degradation for a total one. PATH and ferry
+# DO require it, because there it drives placement and the stop/route join
+# (13d, H5), not an enrichment.
+_REQUIRED_MEMBERS = ("stops.txt", "trips.txt", "shapes.txt")
+
+
+def validate_subway_archive(zf: zipfile.ZipFile) -> None:
+    """Can we serve the subway from this archive? Raises StaticValidationError if not."""
+    require_members(zf, _REQUIRED_MEMBERS)
+    # THIRD-AUDIT FINDING 4'S GATE. A stops.txt with headers and no usable rows
+    # parses to {} and used to be promoted to "ready" forever: every station gone
+    # from the map, nothing retrying, because the archive was structurally fine.
+    # Running the loader's own parser (not a generic row count) makes this the
+    # same question load_subway_stops asks, so a promoted archive always places
+    # at least one station.
+    require_parsed(lambda: parse_member(zf, "stops.txt", _parse_stops_rows), "stops.txt", "stops")
 
 
 async def _download_zip() -> None:
-    SUBWAY_GTFS_ZIP.parent.mkdir(parents=True, exist_ok=True)
-    # Sweep temp files orphaned by an earlier hard kill mid-download.
-    for stale in SUBWAY_GTFS_ZIP.parent.glob("*.part"):
-        stale.unlink(missing_ok=True)
-    # Unique temp name so concurrent workers (uvicorn --workers N all run
-    # lifespan) can't interleave writes into one file; same directory keeps
-    # the final rename atomic, making concurrent downloads last-writer-wins.
-    fd, tmp_name = tempfile.mkstemp(
-        dir=SUBWAY_GTFS_ZIP.parent, prefix="gtfs_subway.", suffix=".part"
+    """Stage, validate, then promote the subway archive (see static_shared)."""
+    await staged_fetch(
+        SUBWAY_GTFS_URL,
+        SUBWAY_GTFS_ZIP,
+        validate_subway_archive,
+        key="subway",
+        label="static subway GTFS",
     )
-    os.close(fd)
-    tmp = Path(tmp_name)
-    logger.info("Downloading static subway GTFS from %s", SUBWAY_GTFS_URL)
-    try:
-        # httpx's timeout is per socket read; bound the whole transfer so a
-        # trickling response can't stall startup indefinitely.
-        async with asyncio.timeout(_DOWNLOAD_DEADLINE_S):
-            async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
-                async with client.stream("GET", SUBWAY_GTFS_URL) as resp:
-                    resp.raise_for_status()
-                    with tmp.open("wb") as f:
-                        async for chunk in resp.aiter_bytes():
-                            f.write(chunk)
-        tmp.replace(SUBWAY_GTFS_ZIP)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
-    logger.info("Downloaded static subway GTFS to %s", SUBWAY_GTFS_ZIP)
 
 
-def _parse_stops() -> dict[str, dict]:
-    """Read stops.txt straight out of the cached zip: stop_id -> name/lat/lon.
+def _parse_stops_rows(raw: IO[bytes]) -> dict[str, dict]:
+    """stops.txt rows -> stop_id -> name/lat/lon.
+
+    Split out from _parse_stops so the validator can run this exact parse over a
+    STAGED archive, which has no cache path to read from yet.
 
     Realtime feeds reference platform-level stop ids (e.g. "R16N"); stops.txt
     contains those alongside parent stations, all with coordinates. Rows with
     missing or malformed coordinates are skipped.
     """
     stops: dict[str, dict] = {}
-    with zipfile.ZipFile(SUBWAY_GTFS_ZIP) as zf:
-        with zf.open("stops.txt") as raw:
-            reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
-            for row in reader:
-                stop_id = (row.get("stop_id") or "").strip()
-                if not stop_id:
-                    continue
-                try:
-                    lat = float(row.get("stop_lat") or "")
-                    lon = float(row.get("stop_lon") or "")
-                except ValueError:
-                    continue
-                stops[stop_id] = {
-                    "name": (row.get("stop_name") or "").strip() or None,
-                    "lat": lat,
-                    "lon": lon,
-                }
+    reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
+    for row in reader:
+        stop_id = (row.get("stop_id") or "").strip()
+        if not stop_id:
+            continue
+        try:
+            lat = float(row.get("stop_lat") or "")
+            lon = float(row.get("stop_lon") or "")
+        except ValueError:
+            continue
+        stops[stop_id] = {
+            "name": (row.get("stop_name") or "").strip() or None,
+            "lat": lat,
+            "lon": lon,
+        }
     return stops
+
+
+def _parse_stops() -> dict[str, dict]:
+    """Read stops.txt straight out of the cached zip: stop_id -> name/lat/lon."""
+    with zipfile.ZipFile(SUBWAY_GTFS_ZIP) as zf:
+        return parse_member(zf, "stops.txt", _parse_stops_rows)
 
 
 async def load_subway_stops() -> dict[str, dict]:
     """Load the station lookup, downloading the static GTFS if missing or stale.
 
-    Falls back to a stale cached copy if the re-download fails; raises only if
-    no usable copy can be obtained at all.
+    Falls back to the cached copy when a re-download fails or publishes something
+    unservable; raises only if no usable copy can be obtained at all, which is the
+    warmup's signal to stay failed-and-retrying rather than reach ready.
     """
-    fresh = (
-        SUBWAY_GTFS_ZIP.exists()
-        and time.time() - SUBWAY_GTFS_ZIP.stat().st_mtime < MAX_AGE_DAYS * 86400
+    # FRESH NOW MEANS VALID AND RECENT, not recent alone (C5). A cached archive
+    # that fails its own validator (pre-C5 bytes from the era when a bad
+    # publication could land, disk corruption, a hand-placed file) is treated as
+    # absent, which forces a fresh staged download instead of parsing garbage.
+    # This replaces the old parse-then-recover arm below it: nothing can reach the
+    # parse except an archive that already passed the same gates.
+    usable = SUBWAY_GTFS_ZIP.exists() and cached_archive_is_valid(
+        SUBWAY_GTFS_ZIP, validate_subway_archive
     )
+    fresh = usable and time.time() - SUBWAY_GTFS_ZIP.stat().st_mtime < MAX_AGE_DAYS * 86400
     if not fresh:
         try:
             await _download_zip()
         except Exception as exc:
-            if not SUBWAY_GTFS_ZIP.exists():
+            if not usable:
+                # No valid cache AND a failing download: failed-and-retrying, never
+                # ready. Raising is what puts the warmup on the R3 rung schedule.
                 raise
-            logger.warning("Static GTFS re-download failed (%s); using stale cached copy", exc)
-    try:
-        stops = _parse_stops()
-    except (zipfile.BadZipFile, KeyError, UnicodeDecodeError):
-        # Unusable cache: corrupt zip, missing stops.txt member (repackaged
-        # archive, wrong file at the path), or undecodable text. Refetch once
-        # rather than staying wedged until the cache ages out.
-        logger.warning("Cached static GTFS is unusable; re-downloading")
-        SUBWAY_GTFS_ZIP.unlink(missing_ok=True)
-        await _download_zip()
-        stops = _parse_stops()
+            # SERVING OLD WHILE NEW IS BAD, deliberately, INCLUDING PAST
+            # MAX_AGE_DAYS. The age policy exists to pick up upstream's
+            # corrections, so it yields to validity: an archive that is stale
+            # because upstream keeps publishing garbage is a reason to keep
+            # serving what works, not to serve nothing. The failure is not
+            # silent, and this state is not reachable by skipping a download:
+            # a download was attempted and failed, staged_fetch recorded why,
+            # and /api/status publishes last_download_error, last_promoted_at
+            # and the failure count beside this group's state.
+            logger.warning("Static GTFS re-download failed (%s); using the cached copy", exc)
+    stops = _parse_stops()
+    if not stops:
+        # Backstop for finding 4. validate_subway_archive runs THIS parse over the
+        # staged and the cached archive, so an empty result cannot get this far;
+        # the check stays because the invariant belongs to the loader, and a
+        # future loosening of the validator must fail loudly here (the warmup
+        # retries) rather than promote a stationless map to ready.
+        raise StaticValidationError("stops.txt yielded no usable stops")
     logger.info("Loaded %d subway stops from static GTFS", len(stops))
     return stops
 

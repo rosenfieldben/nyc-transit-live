@@ -449,6 +449,23 @@ class StaticGtfsStatus(BaseModel):
     age_s: float
 
 
+class StaticArchiveStatus(BaseModel):
+    """One GTFS static archive's download honesty (C5).
+
+    Answers "is what I am serving current, and if not why". last_promoted_at is
+    when a download last passed validation and replaced the cache; a null with a
+    nonzero failed_downloads means every publication seen this process has been
+    rejected and the cache predates them all. last_download_error is sanitized at
+    the source (static_shared.describe_failure): a validation failure names the
+    file shape we rejected, anything else is a type name only, never raw upstream
+    text that could carry a URL or a key.
+    """
+
+    last_promoted_at: float | None
+    last_download_error: str | None
+    failed_downloads: int
+
+
 class SubwayFeedHealth(BaseModel):
     total: int  # number of subway feed groups polled
     ok: int  # how many returned usable data on the last poll
@@ -503,6 +520,15 @@ class StatusResponse(BaseModel):
     # Defaulted so pre-14b /api/status fixtures validate unchanged; the live
     # handler always populates it once the first ferry poll runs.
     ferry_feeds: FerryFeedHealth | None = None
+    # Per-ARCHIVE download honesty (C5), keyed "subway" / "railroad_LIRR" /
+    # "railroad_MNR" / "path" / "ferry". Deliberately a SIBLING of the
+    # *_static warmup strings above rather than an expansion of them: those are
+    # plain strings the contract monitor reads by name, and a group is not an
+    # archive anyway (the railroad group covers two). Read together they answer
+    # "ready, serving an archive from Tuesday, three failed publications since".
+    # A key appears only once its archive has been downloaded at least once in
+    # this process, so the map is empty on a cold boot with a warm cache.
+    static_archives: dict[str, StaticArchiveStatus] = {}
     # Alert feed health (None only before the lifespan sets it, e.g. a bare test app).
     # Defaulted so pre-alerts /api/status callers and fixtures validate unchanged;
     # the live handler always populates it.

@@ -24,21 +24,23 @@ route_id straight off this table rather than re-parsing trips.txt.
 
 from __future__ import annotations
 
-import asyncio
 import csv
 import io
 import logging
-import os
-import tempfile
 import time
 import zipfile
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import IO
 
-import httpx
-
 from static_routes import fold_stop_routes
+from static_shared import (
+    cached_archive_is_valid,
+    parse_member,
+    require_members,
+    require_parsed,
+    staged_fetch,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +51,10 @@ _STATIC_DIR = PROJECT_ROOT / "data" / "gtfs_static"
 # (~44 KB) on the same host, over https end-to-end. (An earlier note claimed
 # only http:// was reachable; that was an artifact of a probe environment that
 # blocked plain http, not of the server.) httpx does NOT follow redirects by
-# default, so _download_zip sets follow_redirects=True; requesting the final
-# resource URL directly would also work, but following keeps the loader honest
-# if Connexionz moves the target.
+# default, so the shared transfer sets follow_redirects=True (C5 moved the flag
+# into static_shared._stream_to_file, which every loader now uses); requesting the
+# final resource URL directly would also work, but following keeps the loader
+# honest if Connexionz moves the target.
 FERRY_STATIC_URL = "https://nycferry.connexionz.net/rtt/public/utility/gtfs.aspx"
 FERRY_STATIC_ZIP = _STATIC_DIR / "gtfs_ferry.zip"
 
@@ -60,46 +63,48 @@ FERRY_STATIC_ZIP = _STATIC_DIR / "gtfs_ferry.zip"
 # year (feed_info version dates), and stop coordinates change rarely.
 MAX_AGE_DAYS = 30
 
-# Whole-transfer deadline: httpx's timeout is per socket read, so this bounds
-# the WHOLE transfer, stopping a trickling response from stalling the download
-# indefinitely. The load runs in a background warmup task (main.py
-# _warm_ferry_static) that retries on failure, so this is a per-attempt
-# ceiling, not a startup gate. The zip is ~44 KB, so 120s is very generous.
-_DOWNLOAD_DEADLINE_S = 120
+# Members the ferry load READS and cannot degrade around. stop_times.txt is on
+# this list, unlike the subway's and the railroads', because H5's routes-per-dock
+# index is how a ROUTE-scoped ferry alert reaches a DOCK: without it a rider
+# clicking a dock during a route suspension sees nothing, which is a silent wrong
+# answer rather than a missing nicety.
+_REQUIRED_MEMBERS = ("stops.txt", "trips.txt", "shapes.txt", "routes.txt", "stop_times.txt")
+
+
+def validate_ferry_archive(zf: zipfile.ZipFile) -> None:
+    """Can we serve NYC Ferry from this archive? Raises StaticValidationError if not.
+
+    Deliberately STRICTER than _parse_zip, which tolerates a missing routes.txt or
+    stop_times.txt at parse time. That leniency is about surviving an archive
+    already on disk; this decides whether to ACCEPT a new publication, and one
+    missing a member it should have is worth rejecting while the previous archive
+    still serves.
+    """
+    require_members(zf, _REQUIRED_MEMBERS)
+    # Nonempty through the loader's own parsers, so "validated" means "the load
+    # will produce something", not "the files exist". The stops gate is the check
+    # 14a's review grew here; it is third-audit finding 4's gate under another
+    # name, and the subway is the loader that never had one.
+    require_parsed(lambda: parse_member(zf, "stops.txt", _parse_stops), "stops.txt", "docks")
+    require_parsed(lambda: parse_member(zf, "routes.txt", _parse_routes), "routes.txt", "routes")
 
 
 async def _download_zip() -> None:
-    """Download the NYC Ferry GTFS zip atomically into its cache path."""
-    dest = FERRY_STATIC_ZIP
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    # Sweep temp files orphaned by an earlier hard kill mid-download. Scoped to
-    # this stem so it can't disturb the other systems' archives in the same dir.
-    for stale in dest.parent.glob(f"{dest.stem}.*.part"):
-        stale.unlink(missing_ok=True)
-    # Unique temp name in the same dir so the final rename stays atomic and
-    # concurrent downloads are last-writer-wins.
-    fd, tmp_name = tempfile.mkstemp(dir=dest.parent, prefix=f"{dest.stem}.", suffix=".part")
-    os.close(fd)
-    tmp = Path(tmp_name)
-    logger.info("Downloading NYC Ferry static GTFS from %s", FERRY_STATIC_URL)
-    try:
-        # follow_redirects=True is REQUIRED here (not just tidy): the utility
-        # URL 302s to the resource zip, and httpx returns the 302 unfollowed by
-        # default, which raise_for_status treats as success and yields an empty
-        # body. asyncio.timeout bounds the whole transfer (httpx's timeout is
-        # per socket read) so a trickling response can't stall indefinitely.
-        async with asyncio.timeout(_DOWNLOAD_DEADLINE_S):
-            async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
-                async with client.stream("GET", FERRY_STATIC_URL) as resp:
-                    resp.raise_for_status()
-                    with tmp.open("wb") as f:
-                        async for chunk in resp.aiter_bytes():
-                            f.write(chunk)
-        tmp.replace(dest)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
-    logger.info("Downloaded NYC Ferry static GTFS to %s", dest)
+    """Stage, validate, then promote the NYC Ferry archive (see static_shared).
+
+    The 302 the utility URL serves is followed by the shared transfer
+    (static_shared._stream_to_file passes follow_redirects=True), where the note
+    about why that is load-bearing rather than tidy now lives: an unfollowed 302
+    reads as a successful EMPTY body, which is exactly the silent failure the
+    staged pipeline exists to catch.
+    """
+    await staged_fetch(
+        FERRY_STATIC_URL,
+        FERRY_STATIC_ZIP,
+        validate_ferry_archive,
+        key="ferry",
+        label="NYC Ferry static GTFS",
+    )
 
 
 # The parsers take file-like binary streams (what ZipFile.open yields) so tests
@@ -248,13 +253,17 @@ def derive_ferry_stop_routes(
 
 def _parse_zip(zip_path: Path) -> dict:
     """Parse the NYC Ferry GTFS zip into {stops, trips, shapes, routes,
-    stop_times} in a single open. stops/trips/shapes are required members (a
-    missing one raises KeyError for load_ferry_static to recover from);
-    routes.txt and stop_times.txt are optional and yield an empty table when
-    absent, the same rider-facing-convenience leniency as PATH and the
-    railroads. (The committed trim carries no stop_times.txt yet, so the index
-    comes up empty from the fixture; the live feed does carry it. See the
-    routes-per-station note in the H5 handoff.)"""
+    stop_times} in a single open.
+
+    Kept lenient about routes.txt and stop_times.txt (each yields an empty table
+    when absent) even though validate_ferry_archive now requires both. The two
+    answer different questions and the split is deliberate: the validator decides
+    whether to ACCEPT an archive, this decides how to read one that is already
+    here, and a parser that tolerates a missing optional member stays usable by
+    the tests and the fixture tooling that feed it hand-built zips. (The committed
+    trim carries no stop_times.txt, so the index comes up empty from the fixture;
+    the live feed does carry it, verified again for C5. See the routes-per-station
+    note in the H5 handoff.)"""
     with zipfile.ZipFile(zip_path) as zf:
         with zf.open("stops.txt") as raw:
             stops = _parse_stops(raw)
@@ -372,38 +381,41 @@ async def load_ferry_static() -> dict:
     treats an empty result as the whole group failing.
     """
     zip_path = FERRY_STATIC_ZIP
-    fresh = zip_path.exists() and time.time() - zip_path.stat().st_mtime < MAX_AGE_DAYS * 86400
+    # FRESH NOW MEANS VALID AND RECENT (C5). The empty-valid-cache re-download
+    # 13a's review hardened lived here: a cache that parsed to zero stops was
+    # unlinked and refetched, because a fresh mtime would otherwise wedge the
+    # single-system ferry group on a transiently-empty upstream until
+    # MAX_AGE_DAYS. That special case is now the general rule from two
+    # directions: validate_ferry_archive refuses to promote such a publication,
+    # and cached_archive_is_valid rejects one already on disk before it is
+    # parsed, so the retry re-fetches by itself.
+    usable = zip_path.exists() and cached_archive_is_valid(zip_path, validate_ferry_archive)
+    fresh = usable and time.time() - zip_path.stat().st_mtime < MAX_AGE_DAYS * 86400
     if not fresh:
         try:
             await _download_zip()
         except Exception as exc:
-            if not zip_path.exists():
+            if not usable:
                 logger.warning("NYC Ferry static GTFS download failed (%s); no cached copy", exc)
                 return {}
+            # Serving old while new is bad, INCLUDING past MAX_AGE_DAYS: the age
+            # policy exists to pick up upstream's corrections, so it yields to
+            # validity rather than dropping a working system. staged_fetch
+            # recorded the reason for /api/status.
             logger.warning(
-                "NYC Ferry static GTFS re-download failed (%s); using stale cached copy", exc
+                "NYC Ferry static GTFS re-download failed (%s); using the cached copy", exc
             )
     try:
-        data: dict | None = _parse_zip(zip_path)
-    except (zipfile.BadZipFile, KeyError, UnicodeDecodeError):
-        data = None
-    # data is None for a corrupt/missing-member/undecodable cache, and a valid
-    # parse yielding zero stops is treated as unusable too: the warmup marks the
-    # single-system ferry group "failed" on empty stops, and without
-    # invalidating here an already-fresh cache would never be re-downloaded, so
-    # a transiently-empty upstream would wedge the group until MAX_AGE_DAYS
-    # forced a refetch even after it self-corrected. Refetching now lets the
-    # next warm retry pick up a corrected feed. (This is the empty-valid-cache
-    # one-time re-download 13a's review hardened.)
-    if data is None or not data["stops"]:
-        logger.warning("Cached NYC Ferry static GTFS is unusable or empty; re-downloading")
+        data = _parse_zip(zip_path)
+    except (zipfile.BadZipFile, KeyError, UnicodeDecodeError, csv.Error) as exc:
+        # The residual below the validator: the archive passed its gates (which
+        # parse stops and routes in full) but a deeper table is unreadable. Unlink,
+        # because unlike a validation failure there is no last-known-good to
+        # protect here: this file IS the cache and it is proven unservable, so
+        # keeping it would only wedge every retry on the same bytes.
+        logger.warning("Cached NYC Ferry static GTFS is unparseable (%s); discarding", exc)
         zip_path.unlink(missing_ok=True)
-        try:
-            await _download_zip()
-            data = _parse_zip(zip_path)
-        except Exception as exc:
-            logger.warning("NYC Ferry static GTFS unavailable (%s); skipping", exc)
-            return {}
+        return {}
     logger.info(
         "Loaded NYC Ferry static GTFS: %d stops, %d routes, %d shapes, %d trips",
         len(data["stops"]),

@@ -46,6 +46,7 @@ ROUTES_COLS = [
     "route_color",
     "route_text_color",
 ]
+STOP_TIMES_COLS = ["trip_id", "stop_id", "arrival_time", "departure_time", "stop_sequence"]
 
 # Ferry-shaped rows: short numeric ids, FLAT stops (no location_type, no
 # parent_station), wheelchair_boarding 1 or blank.
@@ -129,9 +130,16 @@ def csv_stream(columns, rows) -> io.BytesIO:
 
 
 def _zip_bytes(
-    stops=STOP_ROWS, trips=TRIP_ROWS, shapes=DEFAULT_SHAPE_ROWS, routes=ROUTE_ROWS, members=None
+    stops=STOP_ROWS,
+    trips=TRIP_ROWS,
+    shapes=DEFAULT_SHAPE_ROWS,
+    routes=ROUTE_ROWS,
+    stop_times=None,
+    members=None,
 ):
-    """Return a NYC Ferry GTFS zip as bytes; `members` overrides the file map."""
+    """Return a NYC Ferry GTFS zip as bytes; `members` overrides the file map.
+    stop_times is omitted unless asked for, mirroring the committed trim (which
+    carries no stop_times.txt) so the parser leniency tests keep their subject."""
     if members is None:
         members = {
             "stops.txt": csv_stream(STOPS_COLS, stops).getvalue(),
@@ -139,6 +147,8 @@ def _zip_bytes(
             "shapes.txt": csv_stream(SHAPES_COLS, shapes).getvalue(),
             "routes.txt": csv_stream(ROUTES_COLS, routes).getvalue(),
         }
+        if stop_times is not None:
+            members["stop_times.txt"] = csv_stream(STOP_TIMES_COLS, stop_times).getvalue()
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         for name, content in members.items():
@@ -148,6 +158,28 @@ def _zip_bytes(
 
 def write_ferry_zip(path, **kwargs):
     path.write_bytes(_zip_bytes(**kwargs))
+
+
+# Two stop_times on the trips in TRIP_ROWS, enough for the routes-per-dock index
+# to have something to join.
+DEFAULT_STOP_TIME_ROWS = [
+    {"trip_id": "t1", "stop_id": "18", "stop_sequence": "1"},
+    {"trip_id": "t1", "stop_id": "2", "stop_sequence": "2"},
+]
+
+
+def write_loadable_ferry_zip(path, **kwargs):
+    """Write a zip that passes validate_ferry_archive (C5 seam).
+
+    The validator requires stop_times.txt, which H5's routes-per-dock index needs
+    to route a route-scoped alert to a dock, so every archive a cache-lifecycle
+    test hands load_ferry_static carries one. The _parse_zip tests keep building
+    zips without it on purpose: the parser's leniency about the member is exactly
+    what they pin, and the validator is a separate question (accept a publication
+    vs read one already here).
+    """
+    kwargs.setdefault("stop_times", DEFAULT_STOP_TIME_ROWS)
+    write_ferry_zip(path, **kwargs)
 
 
 @pytest.fixture
@@ -296,8 +328,6 @@ def test_parse_trips_skips_blank_id_first_writer_wins():
 # regeneration (gen_ferry_fixture.py), a standard handoff, so H5 covers the ferry
 # derivation with synthetic tables here instead and leaves the golden for later.
 
-STOP_TIMES_COLS = ["trip_id", "stop_id", "arrival_time", "departure_time", "stop_sequence"]
-
 
 def test_parse_stop_times_collects_stops_per_trip():
     rows = [
@@ -438,7 +468,7 @@ def test_route_shapes_drops_route_with_only_degenerate_shapes():
 
 
 async def test_fresh_cache_parsed_without_downloading(ferry_paths, monkeypatch):
-    write_ferry_zip(ferry_paths)
+    write_loadable_ferry_zip(ferry_paths)
 
     async def fail():
         raise AssertionError("should not download with a fresh cache")
@@ -450,7 +480,7 @@ async def test_fresh_cache_parsed_without_downloading(ferry_paths, monkeypatch):
 
 
 async def test_stale_cache_with_failed_download_falls_back(ferry_paths):
-    write_ferry_zip(ferry_paths)
+    write_loadable_ferry_zip(ferry_paths)
     age_file(ferry_paths, days=40)  # past MAX_AGE_DAYS; the dead URL fails fast
     data = await ferry_static.load_ferry_static()
     assert data and "18" in data["stops"]  # stale cache still serves
@@ -480,7 +510,7 @@ async def test_unusable_fresh_cache_redownloads_exactly_once(
 
     async def fake_download():
         calls.append(True)
-        write_ferry_zip(ferry_paths)
+        write_loadable_ferry_zip(ferry_paths)
 
     monkeypatch.setattr(ferry_static, "_download_zip", fake_download)
     data = await ferry_static.load_ferry_static()
@@ -492,12 +522,12 @@ async def test_fresh_but_empty_cache_redownloads_and_recovers(ferry_paths, monke
     # A fresh cache that parses to ZERO stops is treated as unusable, so the
     # loader re-downloads once instead of trusting the fresh mtime and wedging
     # until MAX_AGE_DAYS (the empty-valid-cache guard 13a's review hardened).
-    write_ferry_zip(ferry_paths, stops=[])  # fresh, valid zip, no stops
+    write_loadable_ferry_zip(ferry_paths, stops=[])  # fresh, valid zip, no stops
     calls = []
 
     async def fake_download():
         calls.append(True)
-        write_ferry_zip(ferry_paths)  # the corrected feed
+        write_loadable_ferry_zip(ferry_paths)  # the corrected feed
 
     monkeypatch.setattr(ferry_static, "_download_zip", fake_download)
     data = await ferry_static.load_ferry_static()
@@ -522,7 +552,7 @@ async def test_persistently_empty_feed_returns_empty(ferry_paths):
     # so the result is {} and the warmup marks the single-system ferry group
     # failed. The cache invalidation still fired, so the NEXT warm retry
     # re-downloads (this is the empty-stops path into the same second exit).
-    write_ferry_zip(ferry_paths, stops=[])  # fresh, valid zip, no stops
+    write_loadable_ferry_zip(ferry_paths, stops=[])  # fresh, valid zip, no stops
     data = await ferry_static.load_ferry_static()
     assert data == {}
 
@@ -541,7 +571,9 @@ class _RedirectHandler(http.server.BaseHTTPRequestHandler):
             self.send_header("Location", "/gtfs.zip")
             self.end_headers()
         elif self.path.endswith("gtfs.zip"):
-            body = _zip_bytes()
+            # Carries stop_times.txt so the staged download passes
+            # validate_ferry_archive; this test is about the redirect, not the gate.
+            body = _zip_bytes(stop_times=DEFAULT_STOP_TIME_ROWS)
             self.send_response(200)
             self.send_header("Content-Type", "application/zip")
             self.send_header("Content-Length", str(len(body)))

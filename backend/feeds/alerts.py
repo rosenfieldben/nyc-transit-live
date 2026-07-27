@@ -14,7 +14,7 @@ import httpx
 from google.protobuf.message import DecodeError
 from google.transit import gtfs_realtime_pb2
 
-from feeds.shared import _RAILROAD_BASE, logger
+from feeds.shared import _RAILROAD_BASE, logger, parse_feed
 
 # Keyless GTFS-RT Service Alerts feeds. The four MTA feeds are camsys-published on
 # the same %2F-encoded base as the railroad feeds. Keyed by the system this app
@@ -160,8 +160,10 @@ def _decode_alerts(raw: bytes, feed_key: str, now: float) -> tuple[list[dict], i
     is being held back; fully elapsed alerts are dropped and not counted. `now` is
     frozen by the golden test for determinism.
     """
-    feed = gtfs_realtime_pb2.FeedMessage()
-    feed.ParseFromString(raw)  # caller handles DecodeError
+    # parse_feed rejects an empty or malformed body (C3); fetch_service_alerts
+    # catches it per FEED, so one poisoned system joins the failed set and the
+    # other four systems' alerts are unaffected.
+    feed = parse_feed(raw)
 
     alerts: list[dict] = []
     suppressed = 0

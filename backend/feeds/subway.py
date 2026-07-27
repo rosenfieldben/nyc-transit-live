@@ -10,7 +10,6 @@ from collections import defaultdict
 
 import httpx
 from google.protobuf.message import DecodeError
-from google.transit import gtfs_realtime_pb2
 
 from feeds.shared import (
     _DROP_STOP_RELATIONSHIPS,
@@ -22,6 +21,7 @@ from feeds.shared import (
     _trim_arrivals,
     _trip_start_ts,
     logger,
+    parse_feed,
 )
 
 # Keyless subway GTFS-RT feeds, one per line group.
@@ -69,8 +69,10 @@ def _decode_feed(
     origin in 20 minutes is a legitimate future arrival at the stations
     downstream of it — exactly what a rider clicking a station wants to see.
     """
-    feed = gtfs_realtime_pb2.FeedMessage()
-    feed.ParseFromString(raw)  # caller handles DecodeError
+    # parse_feed rejects an empty or malformed body (C3); _aggregate_feeds catches
+    # it per GROUP, so one poisoned feed degrades one line group and the survivors
+    # advance. A valid feed with zero entities still decodes normally.
+    feed = parse_feed(raw)
 
     trains: list[dict] = []
     arrivals: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))

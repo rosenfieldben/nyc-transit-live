@@ -50,6 +50,7 @@ from feeds.shared import (
     _in_nyc,
     _stop_time,
     logger,
+    parse_feed,
 )
 
 # The two realtime endpoints share this base URL with the 14a static utility URL,
@@ -143,8 +144,12 @@ def _decode_ferry_vehicles(
     Deadheads (empty trip_id) are dropped and counted; a present-but-unjoinable
     trip_id keeps the boat with route_id null and is counted separately, since a
     positioned vessel must never be dropped over a route-metadata miss."""
-    feed = gtfs_realtime_pb2.FeedMessage()
-    feed.ParseFromString(raw)  # caller handles DecodeError
+    # THE FERRY DISTINCTION, and the reason C3 draws its line where it does: an
+    # INITIALIZED header-only feed is empty SUCCESS (the boats went home overnight)
+    # and still replaces the boats, while an EMPTY BODY is now a failure that keeps
+    # last-known. Those two used to be the same thing here, so a silent upstream
+    # failure emptied the harbour at noon exactly as a real night does.
+    feed = parse_feed(raw)
 
     boats: list[dict] = []
     deadheads = 0
@@ -211,8 +216,10 @@ def _decode_ferry_arrivals(
     trip_id) and join misses (unresolvable route) are dropped/kept and counted
     exactly as in the vehicle decode; a join-missed arrival lands in the residual
     'Ferry' bucket rather than being dropped."""
-    feed = gtfs_realtime_pb2.FeedMessage()
-    feed.ParseFromString(raw)  # caller handles DecodeError
+    # Same strict parse and the same empty-success distinction as the vehicle
+    # decode above; an undecodable body fails the whole ferry poll (all-or-nothing
+    # by contract), which _refresh_ferry records while keeping last-known.
+    feed = parse_feed(raw)
 
     arrivals: dict[str, dict[str, list[dict]]] = {}
     deadheads = 0

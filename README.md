@@ -433,6 +433,36 @@ used as a freshness signal. The frontend judges staleness from the difference of
 those two server-side values, so the browser clock never causes false "stale"
 warnings.
 
+#### The strict parse boundary
+
+Every realtime decoder in the app goes through one parser, `feeds.parse_feed`. It exists
+because `FeedMessage.ParseFromString(b"")` SUCCEEDS: it returns an uninitialized
+message with no header and zero entities and raises nothing, so an HTTP 200
+carrying an empty body used to decode as a healthy feed that happened to be quiet.
+That cleared the standing error and replaced live data with an empty generation, in
+every decoder, making a silent upstream failure indistinguishable from a real lull.
+
+`parse_feed` rejects an empty body, a malformed one, a body truncated mid-message,
+and one that parses without a feed header, raising `FeedDecodeError` (a subclass of
+protobuf's `DecodeError`, so every caller's existing routing carries it). It does
+NOT reject a feed that is validly empty: a header with zero entities is real data,
+and what that means stays each decoder's business. The ferry feed genuinely empties
+overnight, and that empty still replaces its boats, while an empty BODY is now a
+failed poll that keeps last-known.
+
+Failures route at each source's own granularity: one poisoned subway group, alert
+feed or railroad system degrades only itself (and surfaces through the per-system
+block below), while the single-feed sources record a failed poll and keep last-known.
+
+Per-ENTITY junk is deliberately not this boundary's business: a feed whose header is
+valid but which carries one unusable entity is still served, and the decoders skip
+that entity as they always have. The parser judges the body.
+
+KNOWN GAP: the contract monitor has its own parse for the checks that only count
+entities, so the bus and ferry realtime checks (which invoke no production decoder)
+still read an empty 200 as a healthy quiet feed. The subway, railroad, PATH and
+alerts checks run the production decoders and so inherit the strict parse.
+
 #### Per-system freshness
 
 An envelope's own `fetched_at` means "this poll ran". It says nothing about any

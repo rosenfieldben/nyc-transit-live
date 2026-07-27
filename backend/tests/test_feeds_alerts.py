@@ -464,3 +464,32 @@ def test_merge_retained_since_survives_polls_and_epoch_zero_is_kept():
     assert retained["MNR"] == 0.0  # preserved, not bumped to 1700
     merged, _ = feeds.merge_alert_generations(prev, [], ["MNR"], {"MNR": 0.0}, CAP, CAP)
     assert merged == []  # one cap-span past epoch zero, it drops
+
+
+@pytest.mark.anyio
+async def test_c3_an_empty_200_on_one_alert_feed_fails_that_feed_only():
+    # An empty body used to decode as "this system has no alerts right now",
+    # which is indistinguishable from a healthy quiet system and is exactly the
+    # wrong answer during an outage: the system's real alerts silently vanished
+    # while /api/status reported it healthy. It now joins the failed set, which
+    # feeds the per-system health map and the retention window.
+    by_url = {url: _one_active("X") for url in feeds.ALERT_FEED_URLS.values()}
+    by_url[feeds.ALERT_FEED_URLS["MNR"]] = b""
+    alerts, _, failed = await feeds.fetch_service_alerts(_FakeClient(by_url))
+    assert failed == ["MNR"]
+    assert {a["system"] for a in alerts} == {"subway", "bus", "LIRR", "ferry"}
+
+
+@pytest.mark.anyio
+async def test_c3_a_VALID_EMPTY_alert_feed_is_a_healthy_system_with_no_alerts():
+    # The distinction the parser draws, at the alerts boundary: a header-only feed
+    # is a system with genuinely nothing to report (the common case most of the
+    # day), so it must NOT be marked failed, or every quiet system would be
+    # reported degraded and its alerts put into retention.
+    header_only = pb.FeedMessage()
+    header_only.header.gtfs_realtime_version = "2.0"
+    by_url = {url: _one_active("X") for url in feeds.ALERT_FEED_URLS.values()}
+    by_url[feeds.ALERT_FEED_URLS["MNR"]] = header_only.SerializeToString()
+    alerts, _, failed = await feeds.fetch_service_alerts(_FakeClient(by_url))
+    assert failed == []
+    assert "MNR" not in {a["system"] for a in alerts}  # healthy, and quiet

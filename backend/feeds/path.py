@@ -14,7 +14,6 @@ import time
 from collections import defaultdict
 
 import httpx
-from google.transit import gtfs_realtime_pb2
 
 from feeds.shared import (
     _DROP_STOP_RELATIONSHIPS,
@@ -22,6 +21,7 @@ from feeds.shared import (
     _header_timestamp,
     _stop_time,
     _trim_arrivals,
+    parse_feed,
 )
 
 # ---- PATH (Port Authority Trans-Hudson) ----
@@ -101,8 +101,10 @@ def _decode_path_feed(
     signal, so there is deliberately no content-unchanged staleness heuristic
     here or anywhere downstream.
     """
-    feed = gtfs_realtime_pb2.FeedMessage()
-    feed.ParseFromString(raw)  # caller handles DecodeError
+    # parse_feed rejects an empty or malformed body (C3). PATH is single-feed, so
+    # _refresh_path records the failure and keeps last-known; before this an empty
+    # 200 from the community bridge silently emptied the map.
+    feed = parse_feed(raw)
 
     trains: list[dict] = []
     arrivals: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))

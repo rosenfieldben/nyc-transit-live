@@ -20,6 +20,7 @@ import bus_static
 import feeds
 import main as app_module
 import warmups
+from tests import negatives
 
 pytestmark = pytest.mark.anyio
 
@@ -3756,3 +3757,158 @@ async def test_c2_route_coverage_is_derived_from_the_served_by_group_data(
     monkeypatch.setattr(app_module, "fetch_railroad_trains", railroads)
     await app_module._refresh_railroads(app_module.app, client=None)
     assert cache["railroads"]["systems"]["MNR"]["routes"] is None
+
+
+# ---------------- C3: the strict parse boundary at the single-feed sources ----------------
+#
+# These drive the REAL fetch functions over a fake HTTP client, so the bytes go
+# through parse_feed exactly as they do in production. Monkeypatching the fetch
+# would prove only that the poller routes an exception it was handed; the point
+# here is that an empty 200 BECOMES that exception.
+
+
+class _BytesResp:
+    def __init__(self, content):
+        self.content = content
+
+    def raise_for_status(self):
+        pass
+
+
+class _BytesClient:
+    """Serves fixed bytes for every URL, or per-endpoint bytes when given a map."""
+
+    def __init__(self, content=None, by_endpoint=None):
+        self._content = content
+        self._by_endpoint = by_endpoint or {}
+
+    async def get(self, url, **kwargs):
+        for endpoint, content in self._by_endpoint.items():
+            if endpoint in url:
+                return _BytesResp(content)
+        return _BytesResp(self._content)
+
+
+def _header_only_feed(timestamp=None):
+    """A VALID feed with a header and no entities: the quiet-feed shape."""
+    return negatives.header_only(timestamp=timestamp)
+
+
+async def test_c3_bus_empty_200_records_the_error_and_keeps_last_known(client, cache, monkeypatch):
+    # THE AUDIT'S COMPLAINT, end to end. An empty body used to decode as a
+    # successful poll with zero buses, which CLEARED the standing error and
+    # replaced every marker with nothing. The error must survive, and so must the
+    # data.
+    monkeypatch.setenv("BUS_TIME_API_KEY", "test-key")
+    cache["buses"].update(data=BUSES, fetched_at=500.0, feed_timestamp=499.0)
+    # A DIFFERENT prior error (503, config), so the assertions below can tell "this
+    # poll recorded its own failure" from "nothing happened and the old error was
+    # still sitting there". REVIEW FIX: seeding an identical 502 made both readings
+    # pass.
+    app_module._note_failure(cache["buses"], 503, "an earlier configuration failure")
+
+    await app_module._refresh_buses(app_module.app, client=_BytesClient(b""))
+
+    assert cache["buses"]["data"] == BUSES  # last-known kept
+    assert cache["buses"]["fetched_at"] == 500.0  # NOT advanced
+    assert cache["buses"]["error"]["status"] == 502  # THIS poll's failure, recorded
+    assert "undecodable" in cache["buses"]["error"]["detail"]
+
+
+async def test_c3_bus_valid_empty_200_is_a_successful_quiet_poll(client, cache, monkeypatch):
+    # The other side: a real feed with a header and no vehicles is a SUCCESS. It
+    # clears the error and advances fetched_at, exactly as before C3, because a
+    # quiet feed is data. (The empty-run grace that decides what the CLIENT does
+    # with an empty list is a separate mechanism and is untouched here.)
+    monkeypatch.setenv("BUS_TIME_API_KEY", "test-key")
+    app_module._note_failure(cache["buses"], 502, "an earlier failure")
+
+    await app_module._refresh_buses(
+        app_module.app, client=_BytesClient(_header_only_feed(timestamp=1000))
+    )
+
+    assert cache["buses"]["data"] == []  # decoded, nothing running
+    assert cache["buses"]["error"] is None  # a success clears the error
+    assert cache["buses"]["feed_timestamp"] == 1000.0
+
+
+async def test_c3_path_empty_200_records_the_error_and_keeps_last_known(client, cache):
+    app_module.app.state.path_stops = {"26734": {"name": "WTC", "lat": 40.7, "lon": -74.0}}
+    app_module.app.state.path_static_status = "ready"
+    cache["path"].update(data=PATH_TRAINS, fetched_at=500.0, feed_timestamp=499.0, error=None)
+
+    await app_module._refresh_path(app_module.app, client=_BytesClient(b""))
+
+    assert cache["path"]["data"] == PATH_TRAINS  # last-known kept
+    assert cache["path"]["fetched_at"] == 500.0
+    assert cache["path"]["error"]["status"] == 502
+    assert app_module.app.state.path_feed_health == {"total": 1, "ok": 0, "failed": ["PATH"]}
+
+
+async def test_c3_ferry_empty_BODY_fails_while_valid_empty_still_replaces(client, cache):
+    # THE FERRY PAIR, and the heart of this PR. These two used to be the same
+    # thing: both produced zero boats, so a silent upstream failure emptied the
+    # harbour at noon exactly as a real night does. They are now opposites, and
+    # the distinction is byte-exact.
+    app_module.app.state.ferry_static_status = "ready"
+    app_module.app.state.ferry_static = FERRY_STATIC_DATA
+
+    # 1. VALID EMPTY (header, no entities): the boats went home. Still a success,
+    #    still REPLACES, exactly as 14b specified and C2 PR2 renders.
+    cache["ferry"].update(data=FERRY_BOATS, fetched_at=1.0, feed_timestamp=1.0, error=None)
+    await app_module._refresh_ferry(
+        app_module.app, client=_BytesClient(_header_only_feed(timestamp=997))
+    )
+    assert cache["ferry"]["data"] == []  # replaced, not retained
+    assert cache["ferry"]["error"] is None
+    assert app_module.app.state.ferry_feed_health == {"total": 1, "ok": 1, "failed": []}
+
+    # 2. EMPTY BODY: a failure. Last-known kept, error recorded, health degraded.
+    cache["ferry"].update(data=FERRY_BOATS, fetched_at=1.0, feed_timestamp=1.0, error=None)
+    await app_module._refresh_ferry(app_module.app, client=_BytesClient(b""))
+    assert cache["ferry"]["data"] == FERRY_BOATS  # retained, NOT replaced
+    assert cache["ferry"]["error"]["status"] == 502
+    assert app_module.app.state.ferry_feed_health == {"total": 1, "ok": 0, "failed": ["ferry"]}
+
+
+async def test_c3_ferry_empty_body_on_the_VEHICLE_endpoint_alone_fails_the_poll(client, cache):
+    # REVIEW FIX (high). Every other ferry test here poisons the tripupdate leg or
+    # both, so the ARRIVALS decoder's strict parse satisfied them all and the
+    # VEHICLE decoder's was never pinned: reverting it to ParseFromString left the
+    # whole suite green while an empty 200 on .../vehicleposition replaced the
+    # boats with nothing and recorded no error, which is the audited bug exactly.
+    # fetch_ferry_data decodes vehicles FIRST, so this is the leg that must raise.
+    app_module.app.state.ferry_static_status = "ready"
+    app_module.app.state.ferry_static = FERRY_STATIC_DATA
+    cache["ferry"].update(data=FERRY_BOATS, fetched_at=1.0, feed_timestamp=1.0, error=None)
+
+    from feeds.ferry import FERRY_VEHICLE_ENDPOINT
+
+    poisoned = _BytesClient(
+        content=_header_only_feed(timestamp=997),  # a VALID tripupdate leg
+        by_endpoint={FERRY_VEHICLE_ENDPOINT: b""},
+    )
+    await app_module._refresh_ferry(app_module.app, client=poisoned)
+    assert cache["ferry"]["data"] == FERRY_BOATS  # kept, NOT replaced by nothing
+    assert cache["ferry"]["error"]["status"] == 502
+    assert app_module.app.state.ferry_feed_health == {"total": 1, "ok": 0, "failed": ["ferry"]}
+
+
+async def test_c3_ferry_one_poisoned_endpoint_fails_the_whole_poll(client, cache):
+    # Ferry is all-or-nothing by contract (both endpoints feed one payload), so an
+    # empty body on EITHER leg fails the poll rather than serving half a picture:
+    # boats with no arrivals, or arrivals with no boats, would both be a quieter
+    # lie than an honest failed poll.
+    app_module.app.state.ferry_static_status = "ready"
+    app_module.app.state.ferry_static = FERRY_STATIC_DATA
+    cache["ferry"].update(data=FERRY_BOATS, fetched_at=1.0, feed_timestamp=1.0, error=None)
+
+    from feeds.ferry import FERRY_TRIPUPDATE_ENDPOINT
+
+    poisoned = _BytesClient(
+        content=_header_only_feed(timestamp=997),
+        by_endpoint={FERRY_TRIPUPDATE_ENDPOINT: b""},
+    )
+    await app_module._refresh_ferry(app_module.app, client=poisoned)
+    assert cache["ferry"]["data"] == FERRY_BOATS  # kept
+    assert cache["ferry"]["error"]["status"] == 502

@@ -13,7 +13,6 @@ from datetime import datetime, timedelta
 
 import httpx
 from google.protobuf.message import DecodeError
-from google.transit import gtfs_realtime_pb2
 
 from feeds.shared import (
     _DROP_STOP_RELATIONSHIPS,
@@ -26,6 +25,7 @@ from feeds.shared import (
     _stop_time,
     _trim_arrivals,
     logger,
+    parse_feed,
 )
 
 RAILROAD_FEED_URLS = {
@@ -67,8 +67,9 @@ def _decode_railroad_vehicles(
     yet); it is kept for parity with the subway decoders and frozen by the golden
     test.
     """
-    feed = gtfs_realtime_pb2.FeedMessage()
-    feed.ParseFromString(raw)
+    # parse_feed rejects an empty or malformed body (C3); fetch_railroad_trains
+    # catches it per SYSTEM, so a poisoned LIRR leaves MNR untouched.
+    feed = parse_feed(raw)
 
     # trip_id -> route_id from this feed's trip_updates, to fill an empty vehicle
     # route_id in the separate-entity (LIRR) layout. The combined-entity (MNR)
@@ -256,8 +257,11 @@ def _decode_railroad_feed(
     residual bucket for trips whose direction could be neither read nor inferred.
     Each bucket is sorted by arrival time and capped at ARRIVALS_PER_DIRECTION.
     """
-    feed = gtfs_realtime_pb2.FeedMessage()
-    feed.ParseFromString(raw)
+    # parse_feed for the same reason as the vehicle decode above. This pass only
+    # ever sees bytes that ALREADY decoded in the GPS pass (raw_by_system holds
+    # exactly those), so it cannot be the first to reject a system; the strict
+    # parse here is belt and braces, and keeps the two decoders' contracts equal.
+    feed = parse_feed(raw)
 
     # Trip ids a positioned vehicle entity carries. For LIRR the vehicle entity
     # shares its trip_id with the matching trip_update, so this set skips placing
@@ -529,7 +533,20 @@ async def fetch_railroad_trains(
         stops = (railroad_stops or {}).get(system)
         if not stops:
             continue
-        placed, arrivals = _decode_railroad_feed(result, system, stops, now)
+        try:
+            placed, arrivals = _decode_railroad_feed(result, system, stops, now)
+        except DecodeError as exc:
+            # UNREACHABLE AS WRITTEN, and guarded anyway. raw_by_system holds only
+            # bytes that already decoded in the GPS pass above and parse_feed is
+            # deterministic, so this cannot be the first pass to reject a system.
+            # Without the guard, though, the reasoning that keeps it safe lives in a
+            # comment rather than in the code, and a DecodeError escaping here would
+            # leave fetch_railroad_trains entirely (its caller catches RuntimeError
+            # and httpx.HTTPError, not this) and be recorded nowhere. It routes to
+            # the same per-system entry the GPS pass uses, so a system still fails
+            # at most once per poll.
+            feed_errors[system] = f"undecodable protobuf ({exc})"
+            continue
         arrivals_by_system[system] = arrivals
         for train in placed:
             key = (system, train["trip_id"])

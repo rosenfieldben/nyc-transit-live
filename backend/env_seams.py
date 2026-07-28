@@ -44,16 +44,61 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # imports first wins the race harmlessly and the other call is a no-op.
 load_dotenv(PROJECT_ROOT / ".env")
 
-# name -> the default this process would use with nothing set. Recorded as the
-# seams are declared, so the inertness test can assert the WHOLE set against its
-# own hardcoded table: a default that drifts fails, and so does a seam added
-# without being pinned. The registry is deliberately not the test's source of
-# truth (a test that asks the code what it should be cannot notice the code
-# changing); it is only the thing the hardcoded table is compared against.
+# EVERY seam name, written out. Deliberately a static list rather than something
+# derived at runtime, for two reasons an adversarial review found the hard way:
+#
+#   1. DEFAULTS below fills as modules IMPORT, so any consumer that has not
+#      imported the whole app sees a partial set. Measured against the contract
+#      monitor's own import graph, a registry-driven check saw 11 of 16.
+#   2. PATH_RT_URL (13b) and FERRY_RT_BASE (R3) predate this module and read their
+#      environment with a bare os.getenv, so they never register at all. They are
+#      the two upstreams that were redirectable BEFORE C6, which made them exactly
+#      the ones a "have any upstreams been redirected" check must not miss.
+#
+# _record enforces membership, so declaring a seam without listing it here fails
+# at import rather than quietly widening the set behind the guard's back.
+SEAM_NAMES = (
+    # Realtime upstreams.
+    "SUBWAY_RT_BASE",
+    "RAILROAD_RT_BASE",
+    "BUS_RT_URL",
+    "ALERTS_RT_BASE",
+    "FERRY_ALERTS_URL",
+    # Static archives.
+    "SUBWAY_GTFS_URL",
+    "RAILROAD_STATIC_BASE",
+    "PATH_STATIC_URL",
+    "FERRY_STATIC_URL",
+    "BUS_STATIC_BASE",
+    # Timing.
+    "POLL_INTERVAL_S",
+    "ALERT_POLL_INTERVAL_S",
+    "FEED_RETENTION_MAX_S",
+    "STATIC_RETRY_S",
+    "STATIC_RETRY_SCHEDULE_S",
+    # Filesystem.
+    "DATA_DIR",
+    # The two predecessors, which are not declared through this module.
+    "PATH_RT_URL",
+    "FERRY_RT_BASE",
+)
+
+# name -> the default this process would use with nothing set, for the seams
+# declared THROUGH this module (so the two predecessors above are absent). Recorded
+# as the seams are declared, so the inertness test can assert the WHOLE set against
+# its own hardcoded table: a default that drifts fails, and so does a seam added
+# without being pinned. The registry is deliberately not the test's source of truth
+# (a test that asks the code what it should be cannot notice the code changing); it
+# is only the thing the hardcoded table is compared against.
 DEFAULTS: dict[str, object] = {}
 
 
 def _record(name: str, default: object) -> None:
+    if name not in SEAM_NAMES:
+        raise RuntimeError(
+            f"env seam {name} is not in SEAM_NAMES; add it there so assert_unset and the "
+            "inertness table both see it"
+        )
     if name in DEFAULTS and DEFAULTS[name] != default:
         raise RuntimeError(f"env seam {name} declared twice with different defaults")
     DEFAULTS[name] = default
@@ -133,8 +178,12 @@ def assert_unset(context: str) -> None:
 
     Not a general policy: the app is SUPPOSED to honor these. Only a caller whose
     job is to observe the real world calls this.
+
+    Checks SEAM_NAMES, not DEFAULTS: the registry is only as complete as the
+    caller's import graph, and it never contains the two predecessor overrides at
+    all. See the comment on SEAM_NAMES.
     """
-    set_here = sorted(name for name in DEFAULTS if os.getenv(name) is not None)
+    set_here = sorted(name for name in SEAM_NAMES if os.getenv(name) is not None)
     if set_here:
         raise RuntimeError(
             f"{context} must observe the real upstreams, but these overrides are set: "

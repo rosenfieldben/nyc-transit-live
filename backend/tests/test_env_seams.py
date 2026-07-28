@@ -21,6 +21,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 import bus_static
 import cache
 import env_seams
@@ -327,6 +329,65 @@ def test_a_malformed_timing_value_fails_loudly():
 # ---------------------------------------------------------------------------
 # The monitor keeps its independent vantage point
 # ---------------------------------------------------------------------------
+
+
+# The guard's coverage list, written out here too. The two predecessors are on it
+# and are NOT in EXPECTED_DEFAULTS, because they are declared with a bare os.getenv
+# rather than through env_seams; that gap is exactly what let the first version of
+# the guard miss them.
+EXPECTED_SEAM_NAMES = frozenset(EXPECTED_DEFAULTS) | {"PATH_RT_URL", "FERRY_RT_BASE"}
+
+
+def test_the_guard_covers_every_seam_including_the_two_predecessors():
+    assert frozenset(env_seams.SEAM_NAMES) == EXPECTED_SEAM_NAMES
+    assert len(env_seams.SEAM_NAMES) == len(EXPECTED_SEAM_NAMES)  # no duplicates
+
+
+def test_declaring_a_seam_outside_the_list_fails_at_import():
+    # What makes SEAM_NAMES self-enforcing: a seam added through env_seams but not
+    # listed cannot silently widen the set behind the guard's back.
+    with pytest.raises(RuntimeError, match="not in SEAM_NAMES"):
+        env_seams.url("A_SEAM_NOBODY_LISTED", "https://example.invalid")
+
+
+@pytest.mark.parametrize("name", ["PATH_RT_URL", "FERRY_RT_BASE"])
+def test_the_monitor_guard_catches_the_predecessor_overrides(name):
+    # THE HOLE AN ADVERSARIAL REVIEW FOUND. These two predate env_seams and never
+    # register in DEFAULTS, so a guard built on the registry let the monitor run
+    # happily against a redirected PATH or ferry feed: verified by running the real
+    # script, which printed PASS lines against the redirect before this was fixed.
+    result = subprocess.run(
+        [sys.executable, "scripts/contract_monitor.py"],
+        cwd=BACKEND,
+        env={**os.environ, name: "http://127.0.0.1:9999/sim"},
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode != 0
+    assert name in result.stderr
+
+
+def test_the_guard_does_not_depend_on_which_modules_are_imported():
+    # The other half of the same defect: DEFAULTS fills as modules import, so under
+    # the monitor's own import graph a registry-driven check saw 11 of 16 seams and
+    # the five timing ones were invisible. SEAM_NAMES is static, so a process that
+    # imports almost nothing still checks all of them.
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.path.insert(0, '.'); import env_seams; "
+            "env_seams.assert_unset('a bare process')",
+        ],
+        cwd=BACKEND,
+        env={**os.environ, "POLL_INTERVAL_S": "2"},
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode != 0
+    assert "POLL_INTERVAL_S" in result.stderr
 
 
 def test_the_monitor_refuses_to_run_against_a_redirected_upstream():

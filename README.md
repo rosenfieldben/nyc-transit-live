@@ -364,6 +364,19 @@ loaded tables and their loading/ready/failed status in per-process memory too,
 so the same single-worker assumption applies; the on-disk zips are shared and
 downloaded last-writer-wins.
 
+### Upstream and timing overrides
+
+Every upstream endpoint and every cadence constant can be overridden by an
+environment variable, and each override defaults to the literal it replaced, so
+setting nothing changes nothing. `backend/env_seams.py` documents the set and
+`backend/tests/test_env_seams.py` pins every default by value.
+
+Two of these are ordinary operational levers that predate the rest (`PATH_RT_URL`,
+`FERRY_RT_BASE`): pointing a feed at a mirror is a legitimate thing to want. The
+rest exist so the C6 contract tier can run the real backend process against a
+controlled upstream simulator with every cadence compressed, which is the only way
+to test the composite the three layers form rather than each layer alone.
+
 ### Static archives cannot destroy their own last-known-good
 
 Every static GTFS download stages, validates, then promotes. The download lands

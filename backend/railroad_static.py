@@ -21,6 +21,7 @@ import zipfile
 from collections import defaultdict
 from pathlib import Path
 
+import env_seams
 from static_routes import fold_stop_routes
 from static_shared import (
     cached_archive_is_valid,
@@ -38,9 +39,12 @@ _STATIC_DIR = PROJECT_ROOT / "data" / "gtfs_static"
 # (both serve 200 application/zip over https; the old plain-http
 # web.mta.info/developers/data/... paths redirect here). The module and tests
 # never depend on either URL resolving.
+# Overridable base (C6), with the per-system filenames kept as suffixes because
+# they are part of the MTA's publishing scheme rather than of the host.
+RAILROAD_STATIC_BASE = env_seams.url("RAILROAD_STATIC_BASE", "https://rrgtfsfeeds.s3.amazonaws.com")
 RAILROAD_STATIC_URLS = {
-    "LIRR": "https://rrgtfsfeeds.s3.amazonaws.com/gtfslirr.zip",
-    "MNR": "https://rrgtfsfeeds.s3.amazonaws.com/gtfsmnr.zip",
+    "LIRR": RAILROAD_STATIC_BASE + "/gtfslirr.zip",
+    "MNR": RAILROAD_STATIC_BASE + "/gtfsmnr.zip",
 }
 RAILROAD_STATIC_ZIPS = {
     "LIRR": _STATIC_DIR / "gtfs_lirr.zip",

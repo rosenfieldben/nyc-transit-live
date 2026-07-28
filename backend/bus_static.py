@@ -28,6 +28,8 @@ from pathlib import Path
 
 import httpx
 
+import env_seams
+
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -46,13 +48,18 @@ MAX_AGE_DAYS = 30
 # borough, not a total build failure.
 BUS_ZIP_DEADLINE_S = 120
 
+# Overridable base (C6). The bus index has no contract scenario of its own (its
+# staleness and partial-build behavior is a named followup micro-phase), but the
+# seam is still required: without it a contract run would fetch six real borough
+# zips from S3, and the whole point of that tier is that it touches no network.
+BUS_STATIC_BASE = env_seams.url("BUS_STATIC_BASE", "https://rrgtfsfeeds.s3.amazonaws.com")
 BUS_GTFS_URLS = {
-    "manhattan": "https://rrgtfsfeeds.s3.amazonaws.com/gtfs_m.zip",
-    "brooklyn": "https://rrgtfsfeeds.s3.amazonaws.com/gtfs_b.zip",
-    "bronx": "https://rrgtfsfeeds.s3.amazonaws.com/gtfs_bx.zip",
-    "queens": "https://rrgtfsfeeds.s3.amazonaws.com/gtfs_q.zip",
-    "staten_island": "https://rrgtfsfeeds.s3.amazonaws.com/gtfs_si.zip",
-    "mta_bus_co": "https://rrgtfsfeeds.s3.amazonaws.com/gtfs_busco.zip",
+    "manhattan": BUS_STATIC_BASE + "/gtfs_m.zip",
+    "brooklyn": BUS_STATIC_BASE + "/gtfs_b.zip",
+    "bronx": BUS_STATIC_BASE + "/gtfs_bx.zip",
+    "queens": BUS_STATIC_BASE + "/gtfs_q.zip",
+    "staten_island": BUS_STATIC_BASE + "/gtfs_si.zip",
+    "mta_bus_co": BUS_STATIC_BASE + "/gtfs_busco.zip",
 }
 
 # Route ids become cache filenames; reject anything that couldn't be a real

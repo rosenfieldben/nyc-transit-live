@@ -11,6 +11,7 @@ from collections import defaultdict
 import httpx
 from google.protobuf.message import DecodeError
 
+import env_seams
 from feeds.shared import (
     _DROP_STOP_RELATIONSHIPS,
     _DROP_TRIP_RELATIONSHIPS,
@@ -24,8 +25,13 @@ from feeds.shared import (
     parse_feed,
 )
 
-# Keyless subway GTFS-RT feeds, one per line group.
-_SUBWAY_BASE = "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs"
+# Keyless subway GTFS-RT feeds, one per line group. The base is overridable (C6:
+# the contract tier points every upstream at its simulator so the real app can be
+# driven through a controlled outage); the per-group suffixes below are part of
+# the MTA's path scheme, not of the host, so one variable moves all eight.
+_SUBWAY_BASE = env_seams.url(
+    "SUBWAY_RT_BASE", "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs"
+)
 SUBWAY_FEED_URLS = {
     "1-7+S": _SUBWAY_BASE,
     "ACE": _SUBWAY_BASE + "-ace",

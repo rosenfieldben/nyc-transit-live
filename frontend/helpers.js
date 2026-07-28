@@ -68,8 +68,57 @@ function isPlacedRailroad(t) {
   return t.stop_id != null;
 }
 
+// ---- Staleness thresholds, and the one test seam in this file (C6) ----
+//
+// WHY A SEAM EXISTS HERE AT ALL. The contract tier runs the REAL page against a
+// real backend, so it cannot monkeypatch these the way the node tests do. Waiting
+// out the production thresholds would put a single scenario at 90 or 300 seconds,
+// which no CI budget survives, so the page has to be able to start dimming sooner
+// when a test asks it to.
+//
+// THE SAFETY ARGUMENT, in full, because a query-string input into a live page
+// deserves one:
+//   1. It is COSMETIC AND CLIENT-LOCAL. It changes only when THIS visitor's own
+//      view starts dimming markers and showing "may be out of date". It alters no
+//      request, no data, and nothing any other visitor sees. A visitor who wanted
+//      their own view to dim sooner could already do it from devtools in one line,
+//      so this grants no capability that did not already exist.
+//   2. THE FLAG IS NOT AN ACCESS CONTROL and is not pretending to be one; a query
+//      parameter cannot be. It exists so the parse cannot fire by ACCIDENT: a
+//      stray or copied "?feedStaleAfterS=5" in a shared link does nothing without
+//      the companion flag, so the production page's behavior is unconditional in
+//      practice rather than one typo away from changing.
+//   3. THE PARSE IS DELIBERATELY NARROW, and this is the part worth reviewing: it
+//      reads exactly two named parameters, accepts only finite positive numbers,
+//      and returns a two-key object. It is not a general "read config from the
+//      query string" channel, and it must not be allowed to become one, because
+//      that is the change that would turn a cosmetic seam into a real surface.
+const CONTRACT_FLAG_PARAM = "contract";
+
+// Pure and node-testable: the caller passes the query string, so the inertness
+// test can assert directly that anything without the flag yields no overrides.
+function thresholdOverrides(search) {
+  const params = new URLSearchParams(search ?? "");
+  if (params.get(CONTRACT_FLAG_PARAM) !== "1") return {};
+  const out = {};
+  for (const [param, key] of [
+    ["feedStaleAfterS", "feed"],
+    ["alertsStaleAfterS", "alerts"],
+  ]) {
+    const value = Number(params.get(param));
+    if (Number.isFinite(value) && value > 0) out[key] = value;
+  }
+  return out;
+}
+
+// `location` is absent when this file is require()d by the node tests, so the
+// browser read is guarded rather than assumed.
+const THRESHOLD_OVERRIDES = thresholdOverrides(
+  typeof location === "undefined" ? "" : location.search,
+);
+
 // Staleness threshold, mirroring the backend FEED_STALE_AFTER_S.
-const FEED_STALE_AFTER_S = 90;
+const FEED_STALE_AFTER_S = THRESHOLD_OVERRIDES.feed ?? 90;
 
 // Whole-fetch deadline for every live browser fetch (R2). The browser fetch has
 // no built-in whole-request timeout, so a wedged or trickling upstream would
@@ -986,7 +1035,7 @@ function ferryArrivalsHtml(station, body, now, colorFor = () => FERRY_FALLBACK_C
 // system for the client to key on. It now carries a `systems` block, so the basis
 // is the WORST (oldest) system's fetched_at rather than the envelope's: one down
 // alert system trips the marker at the same threshold. See alertsFreshnessBasis.
-const ALERTS_STALE_AFTER_S = 300;
+const ALERTS_STALE_AFTER_S = THRESHOLD_OVERRIDES.alerts ?? 300;
 
 // True when the alert DATA is older than the threshold, judged from the payload's
 // fetched_at: the backend's last poll that actually decoded. `now` is the skew-
@@ -1227,6 +1276,7 @@ if (typeof module !== "undefined" && module.exports) {
     LINE_COLORS, DARK_TEXT_LINES, FEED_STALE_AFTER_S, FETCH_DEADLINE_MS, shouldRefresh,
     feedAgeLine, humanizeAge, alertsStale, alertsFreshnessBasis, ALERTS_STALE_AFTER_S,
     ingestSystems, systemAges, systemStaleAts, staleAge, markerOpacity, glideClock,
+    thresholdOverrides, CONTRACT_FLAG_PARAM,
     stalePopupLine, STALE_MARKER_OPACITY, FERRY_DOCKED_OPACITY,
     selectHeadwayBand, airtrainStationPopupHtml, retryUntil,
     PATH_BUCKET_ORDER, PATH_FALLBACK_COLOR, orderedPathBuckets, pathColor,

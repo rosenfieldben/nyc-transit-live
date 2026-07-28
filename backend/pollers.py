@@ -25,6 +25,7 @@ import httpx
 from fastapi import FastAPI
 from google.protobuf.message import DecodeError
 
+import env_seams
 import main
 from cache import (
     FEED_RETENTION_ENABLED,
@@ -52,13 +53,19 @@ logger = logging.getLogger("main")
 
 # The backend polls the MTA once and serves every browser client from this
 # cache, so N clients never means N upstream fetches.
-POLL_INTERVAL_S = 20
+# Overridable (C6): the contract tier compresses every cadence so a scenario that
+# has to outlive a threshold finishes in seconds instead of minutes. Unset, this is
+# the prior literal.
+POLL_INTERVAL_S = env_seams.seconds("POLL_INTERVAL_S", 20)
 
 # Service alerts poll on their OWN slower loop: alerts change far more slowly than
 # vehicle positions, and the subway alerts feed alone is ~400 KB, so re-pulling them
 # all every 20s would be wasteful. A separate lifespan task on this cadence keeps
 # the position poll lean and independent (an alert-feed outage never stalls it).
-ALERT_POLL_INTERVAL_S = 60
+# Overridable (C6): the contract tier compresses every cadence so a scenario that
+# has to outlive a threshold finishes in seconds instead of minutes. Unset, this is
+# the prior literal.
+ALERT_POLL_INTERVAL_S = env_seams.seconds("ALERT_POLL_INTERVAL_S", 60)
 
 # THE INTERPRETER FLOOR IS 3.11, and C4 leans on it: asyncio.TaskGroup and
 # ExceptionGroup are 3.11 builtins, as is the asyncio.timeout below that R2 added.

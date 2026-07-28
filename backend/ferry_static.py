@@ -33,6 +33,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import IO
 
+import env_seams
 from static_routes import fold_stop_routes
 from static_shared import (
     cached_archive_is_valid,
@@ -55,7 +56,12 @@ _STATIC_DIR = PROJECT_ROOT / "data" / "gtfs_static"
 # into static_shared._stream_to_file, which every loader now uses); requesting the
 # final resource URL directly would also work, but following keeps the loader
 # honest if Connexionz moves the target.
-FERRY_STATIC_URL = "https://nycferry.connexionz.net/rtt/public/utility/gtfs.aspx"
+# Overridable (C6), used whole. The simulator serves this path directly rather
+# than reproducing the 302, so the redirect-following test above stays the only
+# thing that pins that behavior.
+FERRY_STATIC_URL = env_seams.url(
+    "FERRY_STATIC_URL", "https://nycferry.connexionz.net/rtt/public/utility/gtfs.aspx"
+)
 FERRY_STATIC_ZIP = _STATIC_DIR / "gtfs_ferry.zip"
 
 # Re-download the static GTFS when the cached copy is older than this, the same

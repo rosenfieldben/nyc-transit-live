@@ -67,6 +67,7 @@ from google.transit import gtfs_realtime_pb2
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "backend"))
 
+import env_seams  # noqa: E402
 import feeds  # noqa: E402
 import ferry_static  # noqa: E402
 import path_static  # noqa: E402
@@ -1426,6 +1427,10 @@ def format_summary_table(results: list[Result]) -> str:
 
 
 def main() -> int:
+    # The monitor's value is that it watches the REAL upstreams from outside the
+    # app, so it refuses to start if anything has redirected them (C6 made every
+    # endpoint overridable; see backend/env_seams.assert_unset).
+    env_seams.assert_unset("the contract monitor")
     env = dict(os.environ)
     now = time.time()
     fetch = make_httpx_fetcher()

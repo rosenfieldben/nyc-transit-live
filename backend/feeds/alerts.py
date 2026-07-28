@@ -14,6 +14,7 @@ import httpx
 from google.protobuf.message import DecodeError
 from google.transit import gtfs_realtime_pb2
 
+import env_seams
 from feeds.shared import _RAILROAD_BASE, logger, parse_feed
 
 # Keyless GTFS-RT Service Alerts feeds. The four MTA feeds are camsys-published on
@@ -31,12 +32,21 @@ from feeds.shared import _RAILROAD_BASE, logger, parse_feed
 # as a valid ServiceAlert feed; it returns application/x-protobuf directly (no
 # redirect), so the generic fetch handles it. A decode failure marks only "ferry"
 # degraded (per-system retention), it never breaks the poll.
+# Two overridable seams (C6), because the five feeds sit on two hosts. ALERTS_RT_BASE
+# is its own variable rather than the shared MTA Dataservice constant so a contract
+# scenario can take the alert feeds down while the railroad realtime feeds keep
+# advancing, which is the exact partial-outage shape C1 and C2 are about.
+ALERTS_RT_BASE = env_seams.url("ALERTS_RT_BASE", _RAILROAD_BASE)
+FERRY_ALERTS_URL = env_seams.url(
+    "FERRY_ALERTS_URL",
+    "https://nycferry.connexionz.net/rtt/public/utility/gtfsrealtime.aspx/alert",
+)
 ALERT_FEED_URLS = {
-    "subway": _RAILROAD_BASE + "/camsys%2Fsubway-alerts",
-    "bus": _RAILROAD_BASE + "/camsys%2Fbus-alerts",
-    "LIRR": _RAILROAD_BASE + "/camsys%2Flirr-alerts",
-    "MNR": _RAILROAD_BASE + "/camsys%2Fmnr-alerts",
-    "ferry": "https://nycferry.connexionz.net/rtt/public/utility/gtfsrealtime.aspx/alert",
+    "subway": ALERTS_RT_BASE + "/camsys%2Fsubway-alerts",
+    "bus": ALERTS_RT_BASE + "/camsys%2Fbus-alerts",
+    "LIRR": ALERTS_RT_BASE + "/camsys%2Flirr-alerts",
+    "MNR": ALERTS_RT_BASE + "/camsys%2Fmnr-alerts",
+    "ferry": FERRY_ALERTS_URL,
 }
 
 

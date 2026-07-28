@@ -311,6 +311,14 @@ def _ferry_members() -> dict[str, str]:
     the REAL dock ids from the trim's own stops.txt, which is the whole point: the
     realtime fixture's stop ids join against real docks or against nothing, never
     against another system's stations by numeric coincidence.
+
+    WHAT THE SYNTHESIS IS NOT GOOD FOR, stated because the failure it would cause is
+    the quiet kind: one trip per route calling at every dock means the derived
+    routes-per-station index gives all 50 docks all 9 routes. Real service does not
+    look like that, and no ferry routes-per-station claim can be made at this tier
+    against it. Inventing a per-route dock subset would be no more true and would
+    read as though it were, which is the trap the Metro-North substitution fell into;
+    a correct table would have to come from the real stop_times.txt.
     """
     members = _fixture_members("ferry_gtfs")
     dock_ids = [row["stop_id"] for row in _rows(members["stops.txt"]) if row.get("stop_id")]

@@ -147,6 +147,11 @@ the 25s threshold could dim them. Nothing in the browser tier asserts the cap.
   See the standing note below. The bus REALTIME feed is exercised (and asserted
   non-empty in `test_smoke.py`), but it borrows the ferry vehicle capture, whose
   route ids are blank — so nothing route-keyed about buses is covered here.
+- **Ferry routes-per-station.** The committed ferry GTFS trim has no
+  `stop_times.txt` and the loader requires one, so the simulator synthesizes it: one
+  trip per route calling at every dock. That makes every realtime stop id resolve to
+  a real dock, which is the point, but it also gives all 50 docks all 9 routes. Any
+  routes-per-dock claim would be measuring the synthesis.
 - **Per-group subway DATA claims.** All eight group feeds serve one capture, and
   the subway decoder dedupes by trip id across groups, so exactly one group ever
   contributes a row: `/api/subways` serves 148 trains, not eight times that. Which

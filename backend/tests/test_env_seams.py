@@ -211,9 +211,27 @@ def _resolve(expr: str, env: dict[str, str]) -> str:
 
 
 def test_a_base_seam_moves_every_url_built_on_it():
+    # THE SUBWAY BASE HAS AN UNUSUAL SHAPE and the simulator will have to match it:
+    # its suffix set includes the EMPTY string, so one group ("1-7+S") maps to the
+    # bare base while the other seven append "-ace", "-bdfm" and so on with NO
+    # separating slash. Both forms are pinned here, because a harness that served
+    # only the suffixed paths would leave the 1-7+S group 404ing in a way that
+    # looks like a decoder failure.
+    out = _resolve(
+        "__import__('feeds.subway', fromlist=['x']).SUBWAY_FEED_URLS",
+        {"SUBWAY_RT_BASE": "http://127.0.0.1:9999/sim"},
+    )
+    assert "'1-7+S': 'http://127.0.0.1:9999/sim'" in out
+    assert "'BDFM': 'http://127.0.0.1:9999/sim-bdfm'" in out
+
+
+def test_a_trailing_slash_is_harmless_on_a_suffix_without_a_separator():
+    # The subway suffixes carry no leading slash, unlike the railroad and alerts
+    # ones, so rstrip("/") is what keeps "sim/" and "sim" resolving identically
+    # instead of producing "sim/-bdfm".
     out = _resolve(
         "__import__('feeds.subway', fromlist=['x']).SUBWAY_FEED_URLS['BDFM']",
-        {"SUBWAY_RT_BASE": "http://127.0.0.1:9999/sim"},
+        {"SUBWAY_RT_BASE": "http://127.0.0.1:9999/sim/"},
     )
     assert out == "http://127.0.0.1:9999/sim-bdfm"
 

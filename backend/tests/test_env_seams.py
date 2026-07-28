@@ -156,6 +156,21 @@ def test_timing_constants_unchanged():
     assert main.STATIC_RETRY_SCHEDULE_S == (15, 30, 60, 300)
 
 
+def test_timing_constants_keep_their_type():
+    # "Byte-identical" includes the type. seconds() returns the default OBJECT when
+    # nothing is set rather than float()ing it, so these stay int; == alone would
+    # not notice, because 300 == 300.0. A float would leak into log lines and into
+    # the schedule tuple, which is a cosmetic regression but a regression.
+    for value in (
+        pollers.POLL_INTERVAL_S,
+        pollers.ALERT_POLL_INTERVAL_S,
+        cache.FEED_RETENTION_MAX_S,
+        main.STATIC_RETRY_S,
+        *main.STATIC_RETRY_SCHEDULE_S,
+    ):
+        assert isinstance(value, int), f"{value!r} is {type(value).__name__}, not int"
+
+
 def test_predecessor_seams_still_hold_their_literals():
     # PATH_RT_URL (13b) and FERRY_RT_BASE (R3) predate this registry and keep their
     # bare os.getenv calls, so they are absent from DEFAULTS by design. They are

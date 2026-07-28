@@ -9,7 +9,6 @@ import re
 import time
 import zipfile
 from collections import defaultdict
-from pathlib import Path
 from typing import IO
 
 import env_seams
@@ -25,7 +24,6 @@ from static_shared import (
 
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # The data root is overridable (C6) so the contract tier can point the whole
 # cache at a tmp directory; unset, this is the same path it always was.
 DATA_DIR = env_seams.directory("DATA_DIR", "data")

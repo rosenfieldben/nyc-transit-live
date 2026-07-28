@@ -366,10 +366,17 @@ downloaded last-writer-wins.
 
 ### Upstream and timing overrides
 
-Every upstream endpoint and every cadence constant can be overridden by an
-environment variable, and each override defaults to the literal it replaced, so
-setting nothing changes nothing. `backend/env_seams.py` documents the set and
-`backend/tests/test_env_seams.py` pins every default by value.
+Every upstream endpoint, five cadence constants, and the on-disk data root can be
+overridden by an environment variable, and each override defaults to the literal
+it replaced, so setting nothing changes nothing. `SEAM_NAMES` in
+`backend/env_seams.py` is the complete list, and `backend/tests/test_env_seams.py`
+pins every default by value.
+
+Deliberately NOT overridable, so the list is not mistaken for "every constant":
+the per-refresh and per-attempt deadlines, the backend's own staleness threshold,
+the alert retention cap and feed deadline, the download deadline, and the static
+archives' max age. None is needed by a contract scenario, and an unused knob is
+still a supported surface.
 
 Two of these are ordinary operational levers that predate the rest (`PATH_RT_URL`,
 `FERRY_RT_BASE`): pointing a feed at a mirror is a legitimate thing to want. The

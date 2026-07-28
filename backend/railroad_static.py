@@ -32,7 +32,6 @@ from static_shared import (
 
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = env_seams.directory("DATA_DIR", "data")
 _STATIC_DIR = DATA_DIR / "gtfs_static"
 

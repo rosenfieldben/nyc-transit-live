@@ -74,11 +74,38 @@ test("the parse is not a general config channel", () => {
 });
 
 test("garbage values are ignored rather than propagated", () => {
-  // A non-number, a negative, or a zero must leave the production value in place,
-  // because a threshold of 0 or NaN would render every source permanently stale
-  // and a threshold below zero is meaningless.
-  for (const value of ["abc", "-5", "0", "", "NaN", "Infinity", "1e400"]) {
+  // A non-number, a negative, a zero, or a sub-second value must leave the
+  // production value in place: 0 and NaN would render every source permanently
+  // stale, and so would 1e-9, which an earlier "value > 0" test accepted while its
+  // own comment gave permanent staleness as the reason 0 was rejected.
+  for (const value of ["abc", "-5", "0", "", "NaN", "Infinity", "1e400", "0.5", "1e-9", "5e-324"]) {
     const result = thresholdOverrides(`?contract=1&feedStaleAfterS=${value}`);
     assert.deepEqual(result, {}, `value ${JSON.stringify(value)}`);
   }
+});
+
+test("the override can only ever dim SOONER, never later", () => {
+  // THE PROPERTY THE SAFETY ARGUMENT RESTS ON, and it used to be merely asserted.
+  // An unbounded positive value RAISED the thresholds, so a crafted link could
+  // suppress every staleness surface on the page and leave a visitor reading
+  // hours-old positions as if they were live. Suppressing a disclosure is a
+  // different act from accelerating one; only the second is cosmetic.
+  for (const value of ["91", "300", "99999999", "1e6"]) {
+    assert.deepEqual(
+      thresholdOverrides(`?contract=1&feedStaleAfterS=${value}`),
+      {},
+      `feed value ${JSON.stringify(value)} must not raise the threshold`,
+    );
+  }
+  for (const value of ["301", "99999999"]) {
+    assert.deepEqual(
+      thresholdOverrides(`?contract=1&alertsStaleAfterS=${value}`),
+      {},
+      `alerts value ${JSON.stringify(value)} must not raise the threshold`,
+    );
+  }
+  // The production value itself is the ceiling and is accepted, so the boundary is
+  // inclusive rather than off by one.
+  assert.deepEqual(thresholdOverrides("?contract=1&feedStaleAfterS=90"), { feed: 90 });
+  assert.deepEqual(thresholdOverrides("?contract=1&alertsStaleAfterS=300"), { alerts: 300 });
 });

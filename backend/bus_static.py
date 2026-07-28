@@ -32,7 +32,6 @@ import env_seams
 
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = env_seams.directory("DATA_DIR", "data")
 BUS_CACHE_DIR = DATA_DIR / "cache" / "bus_routes"
 MANIFEST_PATH = BUS_CACHE_DIR / "_manifest.json"

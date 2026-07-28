@@ -28,6 +28,10 @@ logger = logging.getLogger("main")
 # server-captured timestamps (fetched_at - feed_timestamp), so the browser
 # clock is never involved; the frontend mirrors this in helpers.js.
 FEED_STALE_AFTER_S = 90
+# NOT overridable, unlike the frontend constant it is mirrored by (C6 gave that one
+# a flag-gated query override so the contract tier can watch the page dim without
+# waiting 90s). The two can therefore disagree, but only inside a browser that
+# asked for it: this value still governs /healthz and /api/status for everyone.
 
 # How long ONE failed subsystem's data is carried forward inside an aggregate
 # envelope before it is dropped (C2). Ten minutes, and the reasoning is the same

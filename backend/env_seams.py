@@ -1,4 +1,4 @@
-"""Environment overrides for upstream endpoints and timing constants (C6).
+"""Environment overrides for upstream endpoints, timing constants, and the data root (C6).
 
 WHY THESE EXIST. The hermetic suites are deliberately blind to one thing: they
 never run the real backend process against a controlled upstream. pytest injects
@@ -6,8 +6,9 @@ clients, Playwright serves mock.js stubs, and each layer can be locally correct
 while the rider-facing composite lies, which is the third audit's closing
 diagnosis. The C6 contract tier closes that gap by launching the real app against
 a simulator, and to do that it has to be able to point every outbound fetch at
-the simulator and compress every cadence so a scenario finishes in seconds
-instead of minutes. These are the seams that make that possible.
+the simulator, compress every cadence so a scenario finishes in seconds instead
+of minutes, and point the on-disk cache at a tmp directory so a cold start is
+reachable at all. These are the seams that make that possible.
 
 EVERY DEFAULT IS THE PRIOR LITERAL, byte for byte. Setting nothing changes
 nothing, and tests/test_env_seams.py pins each default BY VALUE against a

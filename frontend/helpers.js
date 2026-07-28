@@ -83,6 +83,15 @@ function isPlacedRailroad(t) {
 //      request, no data, and nothing any other visitor sees. A visitor who wanted
 //      their own view to dim sooner could already do it from devtools in one line,
 //      so this grants no capability that did not already exist.
+//   1a. IT CAN ONLY EVER DIM SOONER, and that is enforced rather than asserted.
+//      The accepted range is [1, the production value]. An earlier version took any
+//      positive number, which made the sentence above FALSE in the direction that
+//      matters: "?contract=1&feedStaleAfterS=99999999" RAISED the thresholds, so a
+//      crafted link could suppress every staleness surface on the page and leave a
+//      visitor reading hours-old positions as if they were live. Suppressing a
+//      disclosure is a different act from accelerating one, and only one of them is
+//      cosmetic. The floor of 1 closes the same hole from below: 0 is rejected
+//      because everything would read permanently stale, and 1e-9 does that too.
 //   2. THE FLAG IS NOT AN ACCESS CONTROL and is not pretending to be one; a query
 //      parameter cannot be. It exists so the parse cannot fire by ACCIDENT: a
 //      stray or copied "?feedStaleAfterS=5" in a shared link does nothing without
@@ -97,16 +106,19 @@ const CONTRACT_FLAG_PARAM = "contract";
 
 // Pure and node-testable: the caller passes the query string, so the inertness
 // test can assert directly that anything without the flag yields no overrides.
+const PRODUCTION_FEED_STALE_AFTER_S = 90;
+const PRODUCTION_ALERTS_STALE_AFTER_S = 300;
+
 function thresholdOverrides(search) {
   const params = new URLSearchParams(search ?? "");
   if (params.get(CONTRACT_FLAG_PARAM) !== "1") return {};
   const out = {};
-  for (const [param, key] of [
-    ["feedStaleAfterS", "feed"],
-    ["alertsStaleAfterS", "alerts"],
+  for (const [param, key, ceiling] of [
+    ["feedStaleAfterS", "feed", PRODUCTION_FEED_STALE_AFTER_S],
+    ["alertsStaleAfterS", "alerts", PRODUCTION_ALERTS_STALE_AFTER_S],
   ]) {
     const value = Number(params.get(param));
-    if (Number.isFinite(value) && value > 0) out[key] = value;
+    if (Number.isFinite(value) && value >= 1 && value <= ceiling) out[key] = value;
   }
   return out;
 }
@@ -118,7 +130,7 @@ const THRESHOLD_OVERRIDES = thresholdOverrides(
 );
 
 // Staleness threshold, mirroring the backend FEED_STALE_AFTER_S.
-const FEED_STALE_AFTER_S = THRESHOLD_OVERRIDES.feed ?? 90;
+const FEED_STALE_AFTER_S = THRESHOLD_OVERRIDES.feed ?? PRODUCTION_FEED_STALE_AFTER_S;
 
 // Whole-fetch deadline for every live browser fetch (R2). The browser fetch has
 // no built-in whole-request timeout, so a wedged or trickling upstream would
@@ -1035,7 +1047,7 @@ function ferryArrivalsHtml(station, body, now, colorFor = () => FERRY_FALLBACK_C
 // system for the client to key on. It now carries a `systems` block, so the basis
 // is the WORST (oldest) system's fetched_at rather than the envelope's: one down
 // alert system trips the marker at the same threshold. See alertsFreshnessBasis.
-const ALERTS_STALE_AFTER_S = THRESHOLD_OVERRIDES.alerts ?? 300;
+const ALERTS_STALE_AFTER_S = THRESHOLD_OVERRIDES.alerts ?? PRODUCTION_ALERTS_STALE_AFTER_S;
 
 // True when the alert DATA is older than the threshold, judged from the payload's
 // fetched_at: the backend's last poll that actually decoded. `now` is the skew-

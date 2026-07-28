@@ -45,7 +45,6 @@ from static_shared import (
 
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = env_seams.directory("DATA_DIR", "data")
 _STATIC_DIR = DATA_DIR / "gtfs_static"
 
@@ -58,8 +57,8 @@ _STATIC_DIR = DATA_DIR / "gtfs_static"
 # final resource URL directly would also work, but following keeps the loader
 # honest if Connexionz moves the target.
 # Overridable (C6), used whole. The simulator serves this path directly rather
-# than reproducing the 302, so the redirect-following test above stays the only
-# thing that pins that behavior.
+# than reproducing the 302, so the redirect-following behavior stays pinned only
+# by tests/test_ferry_static.py's loopback redirect server.
 FERRY_STATIC_URL = env_seams.url(
     "FERRY_STATIC_URL", "https://nycferry.connexionz.net/rtt/public/utility/gtfs.aspx"
 )

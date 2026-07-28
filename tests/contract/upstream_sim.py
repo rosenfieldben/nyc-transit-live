@@ -451,6 +451,11 @@ class UpstreamSim:
         # Metro-North stations in the Hudson Valley. A wrong-but-plausible join is
         # worse than an empty one, and it is exactly what this tier exists to catch.
         self.archives["path"] = Archive("path", bodies=_publications(_fixture_members("path_gtfs")))
+        # The archive fixes the STOP join and can do nothing about the ROUTE one:
+        # both committed ferry captures carry a blank route_id on every entity, so
+        # every simulated boat and every ferry arrival is route-unknown here whatever
+        # routes.txt says. Freshness, alerts and dock resolution are exercised; route
+        # colouring and route-keyed ferry behavior are not.
         self.archives["ferry"] = Archive("ferry", bodies=_publications(_ferry_members()))
         # One Archive PER BOROUGH ZIP. They could share one (the app treats them as
         # one index), but then a single warmup cycle would bump one counter six

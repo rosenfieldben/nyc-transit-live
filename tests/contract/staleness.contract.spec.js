@@ -23,8 +23,11 @@
 
 const { test, expect } = require("@playwright/test");
 
-const SIM = "http://127.0.0.1:5175";
-const APP_ORIGIN = "http://127.0.0.1:5174";
+// Ports come from the config, which owns them and hands them to the webServer;
+// restating them here would let the two drift the first time either moves.
+const { APP_PORT, SIM_PORT } = require("./playwright.contract.config.js").metadata;
+const SIM = `http://127.0.0.1:${SIM_PORT}`;
+const APP_ORIGIN = `http://127.0.0.1:${APP_PORT}`;
 const FEED_STALE_AFTER_S = 25;
 // alertsStaleAfterS is deliberately NOT overridden: no spec here asserts alert
 // staleness (see tests/contract/README.md), and lowering it below the page's 60s

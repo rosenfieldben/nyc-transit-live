@@ -61,5 +61,9 @@ module.exports = defineConfig({
     reuseExistingServer: false,
     timeout: 60_000,
   },
+  // The specs read these back rather than restating them. They need the SIM port to
+  // drive the control endpoint and the APP origin to tell same-origin requests from
+  // external ones, and two copies of a port number is the kind of duplication that
+  // is silently wrong the first time either moves.
   metadata: { APP_PORT, SIM_PORT },
 });

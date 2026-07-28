@@ -9,9 +9,11 @@ HERMETICITY IS ASSERTED IN THREE LAYERS, because no one of them is sufficient:
 
   1. Every upstream the simulator serves is actually fetched (feeds and archives).
      Catches a seam that did not take effect, and a source that stopped polling.
-  2. Every URL seam the backend declares is answered by the simulator. Catches a
-     new upstream that registers a seam and gets no simulator route -- which layer
-     1 structurally cannot see, since it iterates the simulator's own roster.
+  2. Every path the app requests resolves to a route (no 404s), and every URL seam
+     the backend declares appears in the env the simulator hands over. The first
+     half catches a seam pointed here with no route behind it; the second catches a
+     seam nobody pointed here at all. Layer 1 sees neither, since it iterates the
+     simulator's own roster.
   3. No backend module hardcodes an upstream URL. Catches the case neither of the
      others can: a source that never registers a seam at all, whose URL is written
      literally at its use site. Both other layers start from a declaration, so
@@ -76,10 +78,36 @@ def test_every_upstream_the_app_polls_is_the_simulator(contract_app):
         app.sim.await_fetched(key)
 
 
+def test_the_simulator_answers_every_path_the_app_asks_for(contract_app):
+    # HERMETICITY, LAYER 2a: not just "a seam exists and is pointed here" but "this
+    # simulator can answer what the app BUILDS from it". The name comparison below
+    # cannot see that. A base seam whose route is missing, or a path scheme that
+    # drifts (a filename change, a new query suffix), produces a 404 -- which the app
+    # records as an ordinary download failure that no scenario inspects, and which
+    # would leave that upstream silently uncovered for the rest of the tier.
+    app = contract_app
+    app.sim.await_polls("subway:1-7+S", 2)
+    # The 404 check goes in a finally, so it REPLACES the wait's timeout rather than
+    # never running. A missing route makes both fire, and the two messages are not
+    # equally useful: "upstream mnr was fetched 0 times, the app may not be polling
+    # it" sends the reader after the poll loop, while "the app asked for
+    # /static/rail/gtfsmnr.zip and nothing routed it" names the actual defect.
+    try:
+        for key in sorted(app.sim.archives):
+            app.sim.await_fetched(key)
+    finally:
+        assert app.sim.snapshot()["not_found"] == [], (
+            "the app asked for paths this simulator does not route; each reached a "
+            "404 instead of a controlled body: "
+            f"{sorted(set(app.sim.snapshot()['not_found']))}"
+        )
+
+
 def test_the_simulator_points_at_every_url_seam_the_backend_declares():
-    # HERMETICITY, LAYER 2. Two lists maintained independently, in different
+    # HERMETICITY, LAYER 2b. Two lists maintained independently, in different
     # directories, for different reasons: the backend's static seam roster and the
-    # env this simulator hands the app.
+    # env this simulator hands the app. Names only -- whether the routes behind them
+    # answer is the test above.
     #
     # THE SPLIT IS AN EXPLICIT INVENTORY, NOT A NAMING CONVENTION. This used to
     # filter for names ending in _URL/_BASE, which nothing enforces -- env_seams
@@ -105,11 +133,12 @@ def test_the_simulator_points_at_every_url_seam_the_backend_declares():
 
 
 # Literal URLs a backend module may carry without being an upstream the app fetches
-# from. Each needs a reason, and the reason has to be that no request is made to it.
-_ALLOWED_LITERAL_URLS = {
-    # Sent as a User-Agent so PATH's bridge maintainer can see who is polling.
-    "https://github.com/rosenfieldben/nyc-transit-live",
-}
+# from. Each would need a reason, and the reason has to be that no request is made
+# to it. EMPTY TODAY, and deliberately so: the one candidate (PATH's User-Agent) is
+# embedded mid-string as "nyc-transit-live (+https://github.com/...)", which the
+# scanner never considers because the literal does not START with a scheme. An
+# allowlist entry that matches nothing documents a protection that is not operating.
+_ALLOWED_LITERAL_URLS: set[str] = set()
 
 
 def test_no_backend_module_hardcodes_an_upstream_url():
@@ -219,12 +248,16 @@ def test_the_bus_feed_is_actually_exercised(contract_app):
     """
     app = contract_app
     app.sim.await_polls("buses", 1)
-    body = app.await_status(
+    app.await_status(
         lambda _s: bool(app.get("/api/buses")["data"]),
         "the bus feed to place at least one vehicle",
     )
-    assert body is not None
+    # EVERY vehicle in the capture, not merely "some". A latitude-box assertion would
+    # be a tautology -- the decoder drops anything outside that box before serving,
+    # so it can never fail -- and the interesting regression is the decoder silently
+    # dropping vehicles, which only a count can see. 28 is what ferry_vp_a.pb holds;
+    # if the fixture is ever regenerated this number moves with it, deliberately, so
+    # that a shrinking bus layer cannot pass unnoticed.
     buses = app.get("/api/buses")["data"]
-    assert all(40.4 <= b["latitude"] <= 41.1 for b in buses), (
-        "simulated buses must sit inside the NYC box the decoder filters on"
-    )
+    assert len(buses) == 28, f"every vehicle in the capture should be placed, got {len(buses)}"
+    assert all(b["latitude"] and b["longitude"] for b in buses)

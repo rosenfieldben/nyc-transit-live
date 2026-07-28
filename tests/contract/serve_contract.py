@@ -19,6 +19,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -29,6 +30,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 APP_PORT = int(os.environ.get("CONTRACT_PORT", "5174"))
 SIM_PORT = int(os.environ.get("CONTRACT_SIM_PORT", "5175"))
+
+# How long a terminated backend gets to exit before it is killed. Generous enough
+# for uvicorn's graceful shutdown, short enough that a wedged one cannot hold
+# APP_PORT against the next run.
+SHUTDOWN_GRACE_S = 10.0
 
 
 def main() -> int:
@@ -70,27 +76,38 @@ def main() -> int:
     # Forward the shutdown signal to uvicorn instead of letting this process die
     # alone. Without this a terminated runner leaves an orphaned backend holding
     # APP_PORT, and the NEXT run finds something answering there, attaches to it,
-    # and fails on a simulator that is no longer running. That is a confusing
-    # failure to debug and it is entirely avoidable here.
-    # THE ESCALATION LIVES IN THE HANDLER, not in a finally. An earlier shape put
-    # `return process.wait()` in a try and the terminate/kill ladder in the finally,
-    # where it was unreachable: wait() only returns once the child is gone, so
-    # poll() was never None there. The one state that matters is a uvicorn whose
-    # event loop is blocked -- its SIGTERM handler is installed ON that loop, so the
-    # signal is simply never processed -- and in that state the old code would have
-    # waited forever, holding both fixed ports and never reaching sim.stop().
+    # and fails on a simulator that is no longer running.
+    #
+    # THE HANDLER DOES THE MINIMUM: ask, record when, return. It must not wait, and
+    # the reason is not style. This handler runs on the main thread, which is
+    # already inside Popen's wait holding the waitpid lock, so a nested timed wait
+    # can never reap the child; it polls for a lock it already owns, times out every
+    # time, and escalates to SIGKILL even for a child that exited instantly.
+    # Measured: with a child that exits promptly on SIGTERM, a nested wait(timeout=3)
+    # still took the SIGKILL path after the full 3 seconds. All waiting therefore
+    # happens on the main flow below, where the escalation is both reachable and
+    # bounded -- which is what the state that matters needs. A uvicorn whose event
+    # loop is blocked never processes SIGTERM at all (its handler is installed ON
+    # that loop), and something has to stop holding the two fixed ports.
+    stop_requested_at: list[float] = []
+
     def _relay(_signum, _frame):
+        if not stop_requested_at:
+            stop_requested_at.append(time.monotonic())
         process.terminate()
-        try:
-            process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            process.kill()
 
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, _relay)
 
     try:
-        return process.wait()
+        while True:
+            code = process.poll()
+            if code is not None:
+                return code
+            if stop_requested_at and time.monotonic() - stop_requested_at[0] > SHUTDOWN_GRACE_S:
+                process.kill()
+                return process.wait()
+            time.sleep(0.05)
     finally:
         sim.stop()
 

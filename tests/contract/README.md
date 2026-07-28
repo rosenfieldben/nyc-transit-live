@@ -28,8 +28,9 @@ the seam BETWEEN layers, or about a poll loop's behavior over time.
 - `upstream_sim.py` — one HTTP server standing in for every upstream, one path per
   feed. Bodies are built from the committed golden captures (only time is
   rewritten); archives come from the committed stops fixtures, and for PATH and the
-  ferry from the committed GTFS fixtures verbatim, so entity ids, stop ids and route
-  ids agree across the two halves the way they do in production. Feeds carry a MODE
+  ferry from the committed GTFS fixtures (the ferry's plus a synthesized
+  `stop_times.txt`, see below), so entity ids, stop ids and route ids agree across
+  the two halves the way they do in production. Feeds carry a MODE
   (`live` / `frozen` / `empty` / `error`); archives carry a PUBLICATION (`good` /
   `headers-only-stops` / `missing-member` / `corrupt-zip`). Both are validated on
   the way in: an unknown name is a 400 from the control endpoint, not a mystery
@@ -50,11 +51,16 @@ real data mixed into a tier whose whole premise is that a test owns every byte.
 1. **Every upstream the simulator serves is actually fetched** — feeds and archives
    both. A zero count means a seam that did not take effect, or a source that
    stopped polling.
-2. **Every URL seam the backend declares is answered by the simulator.** Layer 1
-   iterates the simulator's own roster, so it structurally cannot see a source the
-   simulator knows nothing about; this compares against `env_seams.SEAM_NAMES`. The
-   split between URL and non-URL seams is an explicit inventory rather than a name
-   suffix, because nothing enforces a naming convention and a future
+2. **Every path the app asks for resolves, and every declared seam is pointed
+   here.** Two halves, because a name comparison alone proves only that a seam
+   exists and was handed over — nothing about whether the simulator can answer what
+   the app BUILDS from it. So the simulator records every unmatched path and a smoke
+   test asserts there were none (that is what catches a base seam with no route
+   behind it, or a filename that drifted), and a second test compares
+   `env_seams.SEAM_NAMES` against the env handed over (that is what catches a seam
+   nobody pointed here at all). Layer 1 sees neither, since it iterates the
+   simulator's own roster. The URL/non-URL split is an explicit inventory rather than
+   a name suffix, because nothing enforces a naming convention and a future
    `AMTRAK_RT_ENDPOINT` would have slipped past one.
 3. **No backend module hardcodes an upstream URL.** Both layers above start from a
    declaration, so a URL written literally at its use site is invisible to both.
@@ -147,6 +153,11 @@ the 25s threshold could dim them. Nothing in the browser tier asserts the cap.
   See the standing note below. The bus REALTIME feed is exercised (and asserted
   non-empty in `test_smoke.py`), but it borrows the ferry vehicle capture, whose
   route ids are blank — so nothing route-keyed about buses is covered here.
+- **Alert-to-route joins.** One Metro-North capture is served as all five alert
+  feeds, and its route ids (1-6) collide with subway route ids. Which system is
+  degraded is real and asserted, because a feed's system comes from which feed it
+  was; anything joining an alert to a ROUTE would be measuring the coincidence.
+  Needs one capture per system.
 - **Ferry routes-per-station.** The committed ferry GTFS trim has no
   `stop_times.txt` and the loader requires one, so the simulator synthesizes it: one
   trip per route calling at every dock. That makes every realtime stop id resolve to
@@ -178,9 +189,12 @@ the 25s threshold could dim them. Nothing in the browser tier asserts the cap.
   sameness is never treated as staleness "here or anywhere downstream". A frozen
   upstream therefore keeps every liveness signal green and the page keeps its
   markers bright. That is pinned as a DECISION in
-  `test_a_frozen_upstream_leaves_every_liveness_signal_green`, with the one signal
-  that does move (`feed_age_s` outrunning `age_s`) asserted, because that is the
-  evidence any future content-staleness heuristic would key on.
+  `test_a_frozen_upstream_leaves_every_liveness_signal_green`. The one signal that
+  does move is asserted BY MAGNITUDE -- the gap between `feed_age_s` and `age_s`
+  must have grown by roughly the polls waited, measured against a baseline sampled
+  before the freeze -- because the sign alone is true of a healthy feed too (a live
+  poll shows about 0.7s against 0.0s). That gap is the evidence any future
+  content-staleness heuristic would key on.
 
 ## Two things the seams cannot reach
 
@@ -202,6 +216,7 @@ reason rule 5 gives), which can only ever LOWER them — the bound is in
 Every system phase that adds an upstream (Amtrak, NJ Transit, whatever follows)
 must add its partial-outage scenario here, and its seam to `env_seams.py`. The
 three hermeticity layers above will fail loudly if the seam is missing, if the
-simulator has no route for it, or if its URL is written literally in a module — so
+simulator has no route for it (the 404 check, not the name check — the name check
+alone would not have noticed), or if its URL is written literally in a module — so
 the wiring is enforced. Nothing enforces the SCENARIO, which is why this note
 exists: a new system with no outage scenario is silently untested at this tier.

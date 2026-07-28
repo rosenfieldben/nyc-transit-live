@@ -113,15 +113,28 @@ class ContractApp:
         """
         end = time.monotonic() + deadline_s
         last: dict = {}
+        last_error: BaseException | None = None
         while time.monotonic() < end:
             try:
                 last = read()
                 if predicate(last):
                     return last
-            except (urllib.error.URLError, TimeoutError, ConnectionError):
-                pass  # includes HTTPError: a warming or erroring endpoint, keep polling
+                last_error = None
+            except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+                # HTTPError is a URLError subclass, so a warming or erroring endpoint
+                # lands here. It is REMEMBERED rather than only swallowed: an
+                # endpoint stuck at 503 for the whole deadline is the likeliest
+                # cause of a timeout, and reporting only "timed out waiting for X"
+                # while knowing the response was 503 the entire time would point the
+                # reader at the wrong thing. Anything that is NOT a network error --
+                # a KeyError or TypeError from the predicate itself -- is deliberately
+                # not caught, so a broken predicate fails immediately and loudly.
+                last_error = exc
             time.sleep(0.05)
-        raise AssertionError(f"timed out after {deadline_s}s waiting for: {what}\n{describe(last)}")
+        reason = f"\nlast response error: {last_error!r}" if last_error is not None else ""
+        raise AssertionError(
+            f"timed out after {deadline_s}s waiting for: {what}{reason}\n{describe(last)}"
+        )
 
     def await_status(
         self, predicate: Callable[[dict], bool], what: str, deadline_s: float = 60.0

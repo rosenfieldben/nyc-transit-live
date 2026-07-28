@@ -369,6 +369,7 @@ class UpstreamSim:
     def __init__(self) -> None:
         self.feeds: dict[str, Feed] = {}
         self.archives: dict[str, Archive] = {}
+        self.not_found: list[str] = []
         self._lock = threading.Lock()
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
@@ -399,6 +400,16 @@ class UpstreamSim:
             self.feeds[f"subway:{group}"] = Feed(f"subway:{group}", subway, drift_deg=0.0002)
         self.feeds["LIRR"] = Feed("LIRR", lirr, drift_deg=0.0002)
         self.feeds["MNR"] = Feed("MNR", mnr, drift_deg=0.0002)
+        # ONE MNR CAPTURE SERVED AS ALL FIVE ALERT SYSTEMS, and the limitation that
+        # buys is worth naming because it is the same shape as the ferry/Metro-North
+        # collision this simulator fixed elsewhere. The capture's informed_entity
+        # rows carry route ids 1-6 (Metro-North's Hudson/Harlem/New Haven branches),
+        # and 1-6 are also SUBWAY route ids -- so an alert served on the subway feed
+        # joins onto subway routes by numeric coincidence. The per-system HEALTH
+        # claims this tier makes are unaffected (a feed's system comes from which
+        # feed it was, never from the alert's contents), but no alert-to-ROUTE join
+        # can be asserted here, including H5's routes-per-station union. Fixing it
+        # needs one capture per system; only alerts_mnr.pb is committed.
         for system in ALERT_FEEDS:
             self.feeds[f"alerts:{system}"] = Feed(f"alerts:{system}", alerts)
         # THE BUS FEED BORROWS THE FERRY VEHICLE CAPTURE, which is the least wrong
@@ -576,6 +587,19 @@ class UpstreamSim:
             archive.fetches += 1
             return 200, archive.bodies[archive.publication]
 
+    def record_not_found(self, path: str) -> None:
+        """Remember a path the app asked for that no route matched.
+
+        THE OTHER HALF OF HERMETICITY. Comparing seam NAMES proves a seam exists and
+        is pointed here; it says nothing about whether this simulator can answer what
+        the app actually builds from it. A base seam with no matching route, or a
+        path scheme that drifts (a filename change, a new query suffix), shows up as
+        a 404 -- which the app records as an ordinary download failure and no
+        scenario looks at. Collected here so a smoke test can assert there were none,
+        and so the failure names the exact path."""
+        with self._lock:
+            self.not_found.append(path)
+
     def snapshot(self) -> dict:
         with self._lock:
             return {
@@ -584,6 +608,7 @@ class UpstreamSim:
                     k: {"publication": a.publication, "fetches": a.fetches}
                     for k, a in self.archives.items()
                 },
+                "not_found": list(self.not_found),
             }
 
     # -- the env the app runs with -----------------------------------------
@@ -681,6 +706,7 @@ def _make_handler(sim: UpstreamSim):
                 return
             resolved = _resolve(path)
             if resolved is None:
+                sim.record_not_found(path)
                 self._send(404, b"no such upstream", "text/plain")
                 return
             kind, key = resolved

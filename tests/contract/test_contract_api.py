@@ -1,10 +1,12 @@
 """contract-api: the envelope truths, under upstream manipulation, no browser.
 
 Each scenario drives a REAL backend process against the simulator and asserts on
-what /api/* actually serves. Every one names the hermetic test that pins the same
-behavior one layer down, so a failure here localizes fast: if the hermetic test is
+what /api/* actually serves. Where a hermetic test pins the same behavior one layer
+down, the scenario names it, so a failure localizes fast: if the hermetic test is
 also red the defect is in that unit, and if it is green the defect is in the
-composite, which is the whole reason this tier exists.
+composite, which is the whole reason this tier exists. A few scenarios have no
+hermetic counterpart and say so -- they are about a poll loop over time, which is
+the thing a stub cannot be.
 
 The waits are poll-until-predicate on observables, never sleeps. See
 tests/contract/README.md for the four determinism rules this suite holds itself to.
@@ -142,19 +144,30 @@ def test_recovery_clears_the_per_system_failure(contract_app):
     app.sim.await_polls("MNR", 1)
     app.sim.set_mode("MNR", "error")
     app.sim.await_polls("MNR", 2)
-    app.await_status(
-        lambda _s: app.get("/api/railroads")["systems"]["MNR"]["ok"] is False,
+    down = app.await_railroads(
+        lambda r: r["systems"]["MNR"]["ok"] is False,
         "MNR to report failed",
     )
+    stalled_at = down["systems"]["MNR"]["fetched_at"]
 
     app.sim.set_mode("MNR", "live")
-    app.await_status(
-        lambda _s: app.get("/api/railroads")["systems"]["MNR"]["ok"] is True,
+    app.await_railroads(
+        lambda r: r["systems"]["MNR"]["ok"] is True,
         "MNR to recover once its upstream answers again",
     )
     mnr = app.get("/api/railroads")["systems"]["MNR"]
     assert mnr["retained_since"] is None
-    assert mnr["fetched_at"] is not None
+    # ADVANCED past where the outage stalled it, not merely non-None. Per-system
+    # fetched_at is never written back to None once set, so "is not None" was true
+    # before the outage, during it, and after -- it could not have caught a recovery
+    # that flipped ok back to True while leaving the timestamp frozen.
+    assert mnr["fetched_at"] > stalled_at, (
+        f"recovery must move the system's own clock forward; "
+        f"stalled at {stalled_at}, now {mnr['fetched_at']}"
+    )
+    assert [t for t in app.get("/api/railroads")["data"] if t["system"] == "MNR"], (
+        "and it must be serving real trains again, not just reporting healthy"
+    )
 
 
 # ---------------------------------------------------------------------------

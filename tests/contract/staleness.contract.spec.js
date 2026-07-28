@@ -118,25 +118,33 @@ function railroadOpacities(page, system) {
 test.afterEach(async ({ request }) => {
   const unexpected = [...blockedHosts].filter((host) => !EXPECTED_EXTERNAL_HOSTS.includes(host));
   blockedHosts = new Set();
-  expect(unexpected, "the page reached for an external host this tier does not control").toEqual(
-    [],
-  );
 
-  // Shared backend, sequential workers: leaving a feed down would silently change
-  // what the next spec observes, which is the order dependence that makes an
-  // integration suite untrustworthy.
-  //
-  // DERIVED FROM THE SIMULATOR, not from a hand-kept list. A literal naming the
-  // four keys today's specs touch is correct only until someone adds a fifth spec
-  // that drives an alerts feed or an archive and forgets to extend it; the leak
-  // then survives for the rest of the run and the next spec's baseline quietly
-  // measures the wrong thing. Restoring everything is cheap and cannot fall behind.
-  const state = await simState(request);
-  for (const [key, feed] of Object.entries(state.feeds)) {
-    if (feed.mode !== "live") await control(request, { key, mode: "live" });
-  }
-  for (const [key, archive] of Object.entries(state.archives)) {
-    if (archive.publication !== "good") await control(request, { key, publication: "good" });
+  // THE RESTORE RUNS FIRST, and the hermeticity assertion goes in the finally. The
+  // other order was a trap: a hermeticity failure threw before the restore loop, so
+  // the simulator stayed mutated and every later spec in the run measured a backend
+  // it did not set up. One real failure would have become a cascade of misleading
+  // ones.
+  try {
+    // Shared backend, sequential workers: leaving a feed down would silently change
+    // what the next spec observes, which is the order dependence that makes an
+    // integration suite untrustworthy.
+    //
+    // DERIVED FROM THE SIMULATOR, not from a hand-kept list. A literal naming the
+    // four keys today's specs touch is correct only until someone adds a fifth spec
+    // that drives an alerts feed or an archive and forgets to extend it; the leak
+    // then survives for the rest of the run and the next spec's baseline quietly
+    // measures the wrong thing. Restoring everything is cheap and cannot fall behind.
+    const state = await simState(request);
+    for (const [key, feed] of Object.entries(state.feeds)) {
+      if (feed.mode !== "live") await control(request, { key, mode: "live" });
+    }
+    for (const [key, archive] of Object.entries(state.archives)) {
+      if (archive.publication !== "good") await control(request, { key, publication: "good" });
+    }
+  } finally {
+    expect(unexpected, "the page reached for an external host this tier does not control").toEqual(
+      [],
+    );
   }
 });
 

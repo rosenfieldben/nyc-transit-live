@@ -72,8 +72,19 @@ def main() -> int:
     # APP_PORT, and the NEXT run finds something answering there, attaches to it,
     # and fails on a simulator that is no longer running. That is a confusing
     # failure to debug and it is entirely avoidable here.
-    def _relay(signum, _frame):
+    # THE ESCALATION LIVES IN THE HANDLER, not in a finally. An earlier shape put
+    # `return process.wait()` in a try and the terminate/kill ladder in the finally,
+    # where it was unreachable: wait() only returns once the child is gone, so
+    # poll() was never None there. The one state that matters is a uvicorn whose
+    # event loop is blocked -- its SIGTERM handler is installed ON that loop, so the
+    # signal is simply never processed -- and in that state the old code would have
+    # waited forever, holding both fixed ports and never reaching sim.stop().
+    def _relay(_signum, _frame):
         process.terminate()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
 
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, _relay)
@@ -81,12 +92,6 @@ def main() -> int:
     try:
         return process.wait()
     finally:
-        if process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                process.kill()
         sim.stop()
 
 

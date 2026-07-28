@@ -44,6 +44,8 @@ there, not "is it up".
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import threading
 import time
@@ -75,6 +77,25 @@ SUBWAY_GROUPS = {
 }
 
 ALERT_FEEDS = ("subway", "bus", "LIRR", "MNR", "ferry")
+
+# The six borough zips bus_static.BUS_GTFS_URLS asks for, keyed by the tail it
+# appends to BUS_STATIC_BASE. One simulator archive each; see _build_state.
+BUS_BOROUGHS = {
+    "manhattan": "gtfs_m",
+    "brooklyn": "gtfs_b",
+    "bronx": "gtfs_bx",
+    "queens": "gtfs_q",
+    "staten_island": "gtfs_si",
+    "mta_bus_co": "gtfs_busco",
+}
+
+# Every mode a feed may be put into, and every publication an archive may serve.
+# Enumerated so set_mode/set_publication can REJECT a name instead of storing it:
+# an unknown publication used to surface as a KeyError inside a handler thread,
+# which the app sees as a connection reset, i.e. a plausible transport failure
+# rather than the control-plane typo it actually is.
+MODES = ("live", "frozen", "empty", "error")
+PUBLICATIONS = ("good", "headers-only-stops", "missing-member", "corrupt-zip")
 
 
 @dataclass
@@ -117,6 +138,19 @@ def _restamp(raw: bytes, now: float, drift_deg: float = 0.0, generation: int = 0
     times, so collapsing every arrival onto a single value would leave two trains
     at one platform indistinguishable, fail the matcher's bilateral-uniqueness
     check, and churn every id on every poll. Shifting preserves it exactly.
+
+    WHAT IS DELIBERATELY NOT SHIFTED, and the consequence: trip.start_date and
+    trip.start_time. Those two feed feeds.shared._trip_start_ts, which is the sole
+    input to the TRIP_START_GRACE_S "has this trip departed yet" gate in the subway
+    and railroad decoders. Left at capture values they sit weeks in the past, so the
+    gate never fires and IS INERT THROUGHOUT THIS TIER -- deleting it would not fail
+    a single scenario here. It cannot be fixed by shifting: _trip_start_ts derives
+    the start from service-day midnight plus a prefix of the TRIP ID (centiminutes
+    after midnight), so making the gate live would mean rewriting trip ids, and trip
+    ids are the identity every matcher and every dedup in the app keys on. Rebasing
+    only start_date onto today was measured and is worse: it moves every trip to the
+    capture's time of day, which at most run times filters all 160 subway trips and
+    empties the map. The gate stays a hermetic-tier claim; see tests/contract/README.md.
     """
     feed = pb.FeedMessage()
     feed.ParseFromString(raw)
@@ -168,6 +202,14 @@ def _alerts_body(raw: bytes, now: float, ends_in_s: float | None) -> bytes:
 
 def _csv(header: str, rows: list[str]) -> str:
     return header + "\r\n" + "".join(row + "\r\n" for row in rows)
+
+
+def _rows(table: str) -> list[dict]:
+    """A committed .txt member as dicts. By header NAME, never by column index:
+    the fixtures' column orders differ (ferry routes.txt leads with route_id,
+    path trips.txt does not), and a positional read would silently pick up the
+    wrong field."""
+    return list(csv.DictReader(io.StringIO(table)))
 
 
 _STOPS_HEADER = (
@@ -260,6 +302,36 @@ def _fixture_members(dirname: str) -> dict[str, str]:
     }
 
 
+def _ferry_members() -> dict[str, str]:
+    """The committed ferry GTFS trim, plus the one member it does not carry.
+
+    ferry_static._REQUIRED_MEMBERS includes stop_times.txt and the committed trim
+    omits it (the real download's copy is enormous and the routes-per-station work
+    that needed it used a synthetic table). So one is synthesized here -- but over
+    the REAL dock ids from the trim's own stops.txt, which is the whole point: the
+    realtime fixture's stop ids join against real docks or against nothing, never
+    against another system's stations by numeric coincidence.
+    """
+    members = _fixture_members("ferry_gtfs")
+    dock_ids = [row["stop_id"] for row in _rows(members["stops.txt"]) if row.get("stop_id")]
+    # One REAL trip id per route, read from the trim's own trips.txt. Synthetic trip
+    # ids would parse fine and then fold to nothing: static_routes.fold_stop_routes
+    # joins stop_times to routes THROUGH trips.txt, so a trip id that is not in
+    # trips.txt contributes no route to any dock.
+    first_trip_per_route: dict[str, str] = {}
+    for row in _rows(members["trips.txt"]):
+        route, trip = row.get("route_id"), row.get("trip_id")
+        if route and trip:
+            first_trip_per_route.setdefault(route, trip)
+    rows = [
+        f"{trip},{dock},{seq + 1}"
+        for trip in first_trip_per_route.values()
+        for seq, dock in enumerate(dock_ids)
+    ]
+    members["stop_times.txt"] = _csv("trip_id,stop_id,stop_sequence", rows)
+    return members
+
+
 def _publications(members: dict[str, str]) -> dict[str, bytes]:
     """The four publications a static upstream can serve.
 
@@ -306,15 +378,34 @@ class UpstreamSim:
         ferry_tu = (FIXTURES / "ferry_tu_a.pb").read_bytes()
 
         for group in SUBWAY_GROUPS:
-            # Every group serves the same capture. The scenarios care about which
-            # group FAILS versus which keep advancing, not about their contents
-            # differing, and one capture keeps the sim honest about entity shape.
+            # EVERY GROUP SERVES THE SAME CAPTURE, and the consequence is stronger
+            # than "their contents do not differ". subway.combine_group_trains and
+            # combine_group_arrivals dedupe by trip_id ACROSS groups, and eight
+            # identical captures carry identical trip ids, so exactly one group ever
+            # contributes a row: /api/subways serves 148 trains, not eight times
+            # that. What this tier can therefore observe about subway groups is
+            # which one FAILS and which keep advancing (the per-system blocks, which
+            # are per-group and real); what it cannot observe is any claim about a
+            # specific group's DATA, including a failed group's retained arrivals.
+            # A scenario needing that would need eight distinct captures.
             self.feeds[f"subway:{group}"] = Feed(f"subway:{group}", subway, drift_deg=0.0002)
         self.feeds["LIRR"] = Feed("LIRR", lirr, drift_deg=0.0002)
         self.feeds["MNR"] = Feed("MNR", mnr, drift_deg=0.0002)
         for system in ALERT_FEEDS:
             self.feeds[f"alerts:{system}"] = Feed(f"alerts:{system}", alerts)
-        self.feeds["buses"] = Feed("buses", subway, drift_deg=0.0002)
+        # THE BUS FEED BORROWS THE FERRY VEHICLE CAPTURE, which is the least wrong
+        # option available and worth stating plainly. buses.fetch_vehicle_positions
+        # skips every entity without a position and then drops anything outside the
+        # NYC box; the subway capture that used to sit here has 98 vehicles and ZERO
+        # positions (correct for NYCT, which publishes none), so /api/buses served an
+        # empty list forever while every liveness signal stayed green and no test
+        # noticed. The ferry capture's 28 vehicles all carry positions in New York
+        # harbour, inside the bus box, so the decode path actually runs. What it does
+        # NOT make realistic is route identity: the capture's route_id is blank, so
+        # every simulated bus has route_id None and no route-keyed bus behavior is
+        # exercised here. test_smoke asserts the endpoint is non-empty so this cannot
+        # silently regress to the old state.
+        self.feeds["buses"] = Feed("buses", ferry_vp, drift_deg=0.0002)
         self.feeds["PATH"] = Feed("PATH", path)
         self.feeds["ferry:vehicle"] = Feed("ferry:vehicle", ferry_vp, drift_deg=0.0002)
         self.feeds["ferry:tripupdate"] = Feed("ferry:tripupdate", ferry_tu)
@@ -327,16 +418,31 @@ class UpstreamSim:
             ("subway", subway_stops, "platforms"),
             ("lirr", load("railroad_lirr_stops.json"), "flat"),
             ("mnr", load("railroad_mnr_stops.json"), "flat"),
-            # The ferry realtime fixture carries routes and trips but no stops, so
-            # its docks borrow the railroad table: the ferry scenarios are about
-            # feed freshness and alerts, never about a specific dock.
-            ("ferry", load("railroad_mnr_stops.json"), "flat"),
-            ("bus", subway_stops, "platforms"),
         ):
             self.archives[key] = Archive(
                 key, bodies=_publications(_archive_members(stop_table, shape))
             )
+        # PATH and ferry take their archives from the committed GTFS fixtures, not
+        # from a synthesized table, because both join realtime to static by ID and a
+        # synthesized id space either matches nothing or, worse, matches by accident.
+        # The ferry archive USED to borrow the Metro-North stops table on the stated
+        # grounds that "the ferry realtime fixture carries no stops"; ferry_tu_a.pb
+        # carries 24 stop ids, both id spaces are bare integers, and 21 of those 24
+        # collided with MNR station ids, so ferry arrivals resolved successfully to
+        # Metro-North stations in the Hudson Valley. A wrong-but-plausible join is
+        # worse than an empty one, and it is exactly what this tier exists to catch.
         self.archives["path"] = Archive("path", bodies=_publications(_fixture_members("path_gtfs")))
+        self.archives["ferry"] = Archive("ferry", bodies=_publications(_ferry_members()))
+        # One Archive PER BOROUGH ZIP. They could share one (the app treats them as
+        # one index), but then a single warmup cycle would bump one counter six
+        # times and await_polls' contract -- "the app has fetched this upstream N
+        # more times" -- would silently mean something else for that key. Separate
+        # keys also make the partial shape expressible: one borough corrupt, five
+        # fine, which is the failure bus_static is most likely to meet in production.
+        for borough in BUS_BOROUGHS:
+            self.archives[f"bus:{borough}"] = Archive(
+                f"bus:{borough}", bodies=_publications(_archive_members(subway_stops, "platforms"))
+            )
 
         # Alerts end this far out by default: comfortably beyond any scenario, so
         # nothing expires unless a test asks for it.
@@ -365,7 +471,14 @@ class UpstreamSim:
     # -- control -----------------------------------------------------------
 
     def set_mode(self, key: str, mode: str) -> None:
-        """live | frozen | empty | error. Freezing captures the CURRENT body."""
+        """live | frozen | empty | error. Freezing captures the CURRENT body.
+
+        Both arguments are validated. An unknown MODE used to fall through
+        serve_feed's if-chain to the healthy body, so a typo silently did nothing
+        and the scenario failed much later blaming the app for not noticing an
+        outage that never happened."""
+        if mode not in MODES:
+            raise ValueError(f"unknown mode {mode!r}; expected one of {MODES}")
         with self._lock:
             feed = self.feeds[key]
             if mode == "frozen" and feed.mode != "frozen":
@@ -375,6 +488,13 @@ class UpstreamSim:
             feed.mode = mode
 
     def set_publication(self, key: str, publication: str) -> None:
+        """Validated for the same reason set_mode is, and a sharper one: an unknown
+        name reached serve_archive as a KeyError inside a handler thread, which
+        socketserver turns into a closed socket with no response, which the app
+        records as a DOWNLOAD FAILURE. A control-plane typo was thereby disguised
+        as the product behavior a C5 scenario is trying to distinguish from it."""
+        if publication not in PUBLICATIONS:
+            raise ValueError(f"unknown publication {publication!r}; expected one of {PUBLICATIONS}")
         with self._lock:
             self.archives[key].publication = publication
 
@@ -383,6 +503,24 @@ class UpstreamSim:
             if key in self.feeds:
                 return self.feeds[key].fetches
             return self.archives[key].fetches
+
+    def await_fetched(self, key: str, count: int = 1, deadline_s: float = 60.0) -> int:
+        """Block until `key` has been fetched `count` times IN TOTAL.
+
+        Absolute, where await_polls is relative, and the distinction matters for the
+        static archives: a loader fetches its archive once at warmup and then never
+        again while it stays valid, so `await_polls(key, 1)` -- which waits for one
+        MORE fetch -- would wait out its whole deadline against a perfectly healthy
+        app."""
+        end = time.monotonic() + deadline_s
+        while time.monotonic() < end:
+            if self.fetches(key) >= count:
+                return self.fetches(key)
+            time.sleep(0.05)
+        raise AssertionError(
+            f"upstream {key} was fetched {self.fetches(key)} times in {deadline_s}s, expected "
+            f"{count}. The app may never ask for it at all."
+        )
 
     def await_polls(self, key: str, count: int, deadline_s: float = 60.0) -> int:
         """Block until the app has fetched `key` `count` more times. THE waiting
@@ -486,8 +624,9 @@ def _resolve(path: str) -> tuple[str, str] | None:
     """(kind, key) for a request path, or None for 404."""
     if path in _STATIC_ROUTES:
         return "archive", _STATIC_ROUTES[path]
-    if path.startswith("/static/bus/"):
-        return "archive", "bus"
+    for borough, stem in BUS_BOROUGHS.items():
+        if path == f"/static/bus/{stem}.zip":
+            return "archive", f"bus:{borough}"
     for group, suffix in SUBWAY_GROUPS.items():
         if path == f"/rt/subway{suffix}":
             return "feed", f"subway:{group}"
@@ -550,12 +689,26 @@ def _make_handler(sim: UpstreamSim):
                 return
             length = int(self.headers.get("Content-Length", 0))
             payload = json.loads(self.rfile.read(length) or b"{}")
-            if "mode" in payload:
-                sim.set_mode(payload["key"], payload["mode"])
-            elif "publication" in payload:
-                sim.set_publication(payload["key"], payload["publication"])
-            elif "alerts_end_in_s" in payload:
-                sim.alerts_end_in_s = payload["alerts_end_in_s"]
+            # 400 ON ANYTHING NOT ACTED ON. The browser tier's only check on a
+            # control call is response.ok(), so a 200 for an ignored payload made
+            # that assertion meaningless: a renamed field or a mistyped key would
+            # sail through and the spec would fail a minute later blaming the
+            # frontend for not reacting to an outage nobody caused.
+            try:
+                if "mode" in payload:
+                    sim.set_mode(payload["key"], payload["mode"])
+                elif "publication" in payload:
+                    sim.set_publication(payload["key"], payload["publication"])
+                elif "alerts_end_in_s" in payload:
+                    sim.alerts_end_in_s = payload["alerts_end_in_s"]
+                else:
+                    raise ValueError(
+                        f"control payload names none of mode/publication/alerts_end_in_s: "
+                        f"{sorted(payload)}"
+                    )
+            except (ValueError, KeyError) as exc:
+                self._send(400, json.dumps({"error": str(exc)}).encode(), "application/json")
+                return
             self._send(200, b'{"ok":true}', "application/json")
 
     return Handler

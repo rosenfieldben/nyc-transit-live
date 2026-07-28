@@ -12,6 +12,10 @@ tests/contract/README.md for the four determinism rules this suite holds itself 
 
 from __future__ import annotations
 
+import time
+
+from conftest import CONTRACT_TIMING
+
 
 def _system(body: dict, name: str) -> dict:
     return body["systems"][name]
@@ -91,9 +95,22 @@ def test_a_failed_feed_keeps_reporting_after_the_retention_cap_empties_it(contra
     app.sim.set_mode("MNR", "error")
     app.sim.await_polls("MNR", 2)
 
-    body = app.get("/api/railroads")
+    # THE MIDDLE STATE MUST BE OBSERVED, not assumed. Without this the closing
+    # assertions are satisfied by a system that never entered retention at all:
+    # retained_since is None both before retention starts and after the cap expires,
+    # so the `emptied` predicate below would be true on its first evaluation and a
+    # regression that dropped a failed system's data immediately would read as a
+    # working retention cap.
+    body = app.await_railroads(
+        lambda r: r["systems"]["MNR"]["retained_since"] is not None,
+        "MNR to enter retention: failed, but still carrying its last-known trains",
+    )
     assert _system(body, "MNR")["ok"] is False
     assert _system(body, "LIRR")["ok"] is True, "one system's outage must not touch the other"
+    retained_at = _system(body, "MNR")["retained_since"]
+    assert [t for t in body["data"] if t["system"] == "MNR"], (
+        "retention means the trains are STILL SERVED while the window holds"
+    )
 
     # Past the cap, MNR's carried-forward trains are gone while its block remains.
     def emptied(_status: dict) -> bool:
@@ -105,6 +122,13 @@ def test_a_failed_feed_keeps_reporting_after_the_retention_cap_empties_it(contra
         emptied,
         "MNR's retention window to expire, dropping its data while its block keeps reporting",
         deadline_s=90,
+    )
+    # The window really elapsed rather than collapsing to nothing. Compared against
+    # the compressed cap the harness configured, so this stays honest if that changes.
+    held_for = time.time() - retained_at
+    assert held_for >= float(CONTRACT_TIMING["FEED_RETENTION_MAX_S"]) * 0.5, (
+        f"the retention window collapsed: data was carried for only {held_for:.1f}s "
+        f"against a {CONTRACT_TIMING['FEED_RETENTION_MAX_S']}s cap"
     )
     rail = app.get("/api/railroads")
     assert not [t for t in rail["data"] if t["system"] == "MNR"], (
@@ -164,9 +188,21 @@ def test_a_frozen_upstream_leaves_every_liveness_signal_green(contract_app):
     app.sim.await_polls("PATH", 1)
     app.await_status(lambda s: (s.get("path_feeds") or {}).get("ok") == 1, "the first PATH poll")
     assert app.get("/api/path")["trains"], "PATH should be placing trains before the freeze"
+    # The healthy baseline for the divergence assertion at the end. Sampling it here
+    # rather than reasoning about it is the point: on a live feed feed_age_s is
+    # already a few hundred milliseconds ABOVE age_s (the body is stamped before it
+    # is fetched), so "feed_age_s > age_s" on its own is true of a healthy feed and
+    # pins nothing at all.
+    healthy_lag = app.status()["feeds"]["path"]["feed_age_s"]
 
     app.sim.set_mode("PATH", "frozen")
-    app.sim.await_polls("PATH", 1)
+    # TWO polls, not one, before snapshotting. await_polls returns when the
+    # SIMULATOR begins answering a request, which says nothing about the app having
+    # ingested it; a single poll followed by a bare read can capture the last LIVE
+    # generation, and every equality below would then compare two different bodies
+    # and fail intermittently. The poller is sequential per source, so the sim
+    # seeing a SECOND frozen fetch proves the first one was fully committed.
+    app.sim.await_polls("PATH", 2)
     frozen_at = app.get("/api/path")
 
     # Three more polls of byte-identical bodies. Poll count, not elapsed time: the
@@ -187,10 +223,21 @@ def test_a_frozen_upstream_leaves_every_liveness_signal_green(contract_app):
     assert (status.get("path_feeds") or {}).get("ok") == 1
     assert (status.get("path_feeds") or {}).get("failed") == []
     assert status["feeds"]["path"]["last_error"] is None
-    # /api/status already carries both halves of the evidence side by side:
-    # age_s is the poll age (near zero, the loop is healthy) and feed_age_s is the
-    # body's own age (growing). Their divergence IS the frozen-upstream signature.
-    assert status["feeds"]["path"]["feed_age_s"] > status["feeds"]["path"]["age_s"]
+    # /api/status carries both halves of the evidence side by side: age_s is the
+    # poll age (near zero, the loop is healthy) and feed_age_s is the body's own age.
+    # The assertion is on the MAGNITUDE of the gap, not its sign. The sign is true of
+    # a healthy feed too; what only a frozen upstream produces is a gap that has
+    # grown by roughly the elapsed polls, so this compares against the healthy
+    # baseline plus the three polls waited above.
+    lag = status["feeds"]["path"]["feed_age_s"]
+    grown_by = lag - healthy_lag
+    assert grown_by >= 3 * float(CONTRACT_TIMING["POLL_INTERVAL_S"]) * 0.5, (
+        f"the frozen body's age should have outrun the poll age by roughly the three "
+        f"polls waited; it grew by {grown_by:.1f}s (healthy lag {healthy_lag}s, now {lag}s)"
+    )
+    assert status["feeds"]["path"]["age_s"] < float(CONTRACT_TIMING["POLL_INTERVAL_S"]) * 2, (
+        "the poll age must stay small: that is what makes this invisible to the page"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -220,8 +267,11 @@ def test_one_subway_group_served_empty_fails_while_survivors_advance(contract_ap
 
     body = app.get("/api/subways")
     assert _system(body, "BDFM")["ok"] is False, "an empty 200 must fail its group, not pass it"
-    healthy = [name for name, block in body["systems"].items() if block["ok"]]
-    assert len(healthy) >= 6, f"survivors should keep advancing, only {healthy} were ok"
+    healthy = sorted(name for name, block in body["systems"].items() if block["ok"])
+    # Exactly seven: one group was poisoned and there are eight. A >= bound would
+    # leave room for a second group to fail as collateral, which is precisely the
+    # one-group-failure-bleeding-into-another shape this scenario exists to catch.
+    assert len(healthy) == 7, f"exactly the seven survivors should be ok, got {healthy}"
     assert _system(body, "ACE")["fetched_at"] > _system(body, "BDFM")["fetched_at"]
 
     # The error is recorded for the operator and does NOT clear on a later
@@ -262,7 +312,15 @@ def test_one_alert_feed_down_is_visible_per_system(contract_app):
     """
     app = contract_app
     app.sim.await_polls("alerts:MNR", 1)
-    app.await_status(lambda s: s["alerts"] is not None, "the first alerts poll to land")
+    # fetched_at, not `s["alerts"] is not None`: the alerts BLOCK exists from the
+    # instant the app answers, because lifespan creates the cache entry, so the
+    # obvious-looking predicate returns on its first evaluation and synchronises
+    # nothing. fetched_at is what a completed poll actually sets.
+    healthy = app.await_status(
+        lambda s: (s.get("alerts") or {}).get("fetched_at") is not None,
+        "the first alerts poll to land",
+    )
+    fetched_before = healthy["alerts"]["fetched_at"]
 
     app.sim.set_mode("alerts:MNR", "error")
     app.sim.await_polls("alerts:MNR", 2)
@@ -271,9 +329,14 @@ def test_one_alert_feed_down_is_visible_per_system(contract_app):
         lambda s: s["alerts"]["degraded_systems"] == ["MNR"],
         "MNR alone to be reported degraded",
     )
-    assert status["alerts"]["fetched_at"] is not None, (
-        "a partial outage is still a successful poll, which is exactly why the "
-        "per-system block has to exist"
+    # ADVANCED, not merely non-None. fetched_at is never written back to None once
+    # set, so "is not None" was a precondition that held before the outage began and
+    # could not have caught the regression its message names. What the claim needs is
+    # that the envelope keeps calling this a successful poll WHILE one feed is down,
+    # which only a moving fetched_at shows.
+    assert status["alerts"]["fetched_at"] > fetched_before, (
+        "a partial outage is still a successful poll: the envelope's fetched_at must "
+        "keep advancing, which is exactly why the per-system block has to exist"
     )
     systems = app.get("/api/alerts")["systems"]
     assert systems["MNR"]["ok"] is False
@@ -383,14 +446,15 @@ def test_finding_4_cold_start_stays_failed_then_heals(harness):
         )
         # It is failed-and-RETRYING, not failed-and-stopped: the compressed rungs
         # (1s, 2s, 3s) mean several attempts happen inside this wait, and none of
-        # them may promote.
-        first = harness.sim.fetches("subway")
+        # them may promote. await_polls IS the retry assertion -- it raises naming
+        # the upstream if the warmup ever stops asking -- so there is no follow-up
+        # `fetches > first` check here; one would be true by construction on every
+        # path that reaches it and would read as an independent check that is not.
         harness.sim.await_polls("subway", 2)
         assert app.status()["subway_static"] == "failed", (
             "a retry must not promote an archive that parses to nothing"
         )
         assert app.status()["static_archives"]["subway"]["last_promoted_at"] is None
-        assert harness.sim.fetches("subway") > first, "the warmup stopped retrying"
 
         # A corrected upstream heals it without a redeploy.
         harness.sim.set_publication("subway", "good")

@@ -56,6 +56,15 @@ BOOT_DEADLINE_S = 60.0
 
 
 def _free_port() -> int:
+    """Ask the OS for a free port, then let go of it so uvicorn can bind it.
+
+    There is a window between the close here and uvicorn's bind in launch(), and it
+    is accepted rather than closed because losing the race is LOUD, not silent:
+    uvicorn exits non-zero, _wait_for_boot's `process.poll() is not None` branch
+    fires, and the failure carries the exit code and uvicorn's own stderr. Stated
+    because everything else in this file documents its timing decision, and an
+    undocumented one invites a future reader to "fix" it with a retry loop.
+    """
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         return sock.getsockname()[1]
@@ -64,10 +73,17 @@ def _free_port() -> int:
 class ContractApp:
     """A running backend, plus the ways a scenario observes it."""
 
-    def __init__(self, base_url: str, sim: UpstreamSim, process: subprocess.Popen) -> None:
+    def __init__(
+        self, base_url: str, sim: UpstreamSim, process: subprocess.Popen, log_path: Path
+    ) -> None:
         self.base_url = base_url
         self.sim = sim
         self.process = process
+        self.log_path = log_path
+
+    def log(self, limit: int = 4000) -> str:
+        """The backend's own output, for a scenario that wants to say why it failed."""
+        return _tail(self.log_path, limit)
 
     def get(self, path: str) -> dict:
         with urllib.request.urlopen(f"{self.base_url}{path}", timeout=10) as resp:
@@ -76,25 +92,48 @@ class ContractApp:
     def status(self) -> dict:
         return self.get("/api/status")
 
+    def _await(
+        self,
+        read: Callable[[], dict],
+        predicate: Callable[[dict], bool],
+        what: str,
+        deadline_s: float,
+        describe: Callable[[dict], str],
+    ) -> dict:
+        """Poll until `predicate` holds, or fail saying what it was waiting for.
+
+        THE PREDICATE RUNS INSIDE THE RETRY GUARD, not outside it, and that is the
+        whole reason this helper exists instead of two hand-written loops. Several
+        scenarios pass predicates that make their own request (`app.get("/api/alerts")`
+        inside the lambda), and the live endpoints answer 502/503 while their cache
+        is still warming or while an upstream error is recorded -- which urllib
+        raises as HTTPError. With the predicate outside the guard, the very
+        transient these waits exist to ride out instead aborted the run with a bare
+        `HTTP Error 503` and none of the diagnostic this tier is built around.
+        """
+        end = time.monotonic() + deadline_s
+        last: dict = {}
+        while time.monotonic() < end:
+            try:
+                last = read()
+                if predicate(last):
+                    return last
+            except (urllib.error.URLError, TimeoutError, ConnectionError):
+                pass  # includes HTTPError: a warming or erroring endpoint, keep polling
+            time.sleep(0.05)
+        raise AssertionError(f"timed out after {deadline_s}s waiting for: {what}\n{describe(last)}")
+
     def await_status(
         self, predicate: Callable[[dict], bool], what: str, deadline_s: float = 60.0
     ) -> dict:
         """Poll /api/status until `predicate` holds. `what` is quoted in the
         failure, because a bare timeout in a tier like this is nearly useless."""
-        end = time.monotonic() + deadline_s
-        last: dict = {}
-        while time.monotonic() < end:
-            try:
-                last = self.status()
-            except (urllib.error.URLError, TimeoutError):
-                time.sleep(0.05)
-                continue
-            if predicate(last):
-                return last
-            time.sleep(0.05)
-        raise AssertionError(
-            f"timed out after {deadline_s}s waiting for: {what}\nlast /api/status: "
-            f"{json.dumps(last, indent=2)[:4000]}"
+        return self._await(
+            self.status,
+            predicate,
+            what,
+            deadline_s,
+            lambda last: f"last /api/status: {json.dumps(last, indent=2)[:4000]}",
         )
 
     def await_railroads(
@@ -104,26 +143,30 @@ class ContractApp:
         block lives on the live envelope rather than on /api/status, because that
         is where the CLIENT reads it, and a contract test should watch what the
         rider-facing surface says."""
-        end = time.monotonic() + deadline_s
-        last: dict = {}
-        while time.monotonic() < end:
-            last = self.get("/api/railroads")
-            if predicate(last):
-                return last
-            time.sleep(0.05)
-        raise AssertionError(
-            f"timed out after {deadline_s}s waiting for: {what}\nlast /api/railroads systems: "
-            f"{json.dumps(last.get('systems'), indent=2)}"
+        return self._await(
+            lambda: self.get("/api/railroads"),
+            predicate,
+            what,
+            deadline_s,
+            lambda last: (
+                f"last /api/railroads systems: {json.dumps(last.get('systems'), indent=2)}"
+            ),
         )
 
 
-def _wait_for_boot(base_url: str, process: subprocess.Popen) -> None:
+def _tail(log_path: Path, limit: int = 4000) -> str:
+    try:
+        return log_path.read_text(errors="replace")[-limit:]
+    except OSError:
+        return "(no log)"
+
+
+def _wait_for_boot(base_url: str, process: subprocess.Popen, log_path: Path) -> None:
     end = time.monotonic() + BOOT_DEADLINE_S
     while time.monotonic() < end:
         if process.poll() is not None:
             raise AssertionError(
-                f"backend exited during boot with code {process.returncode}:\n"
-                f"{(process.stderr.read() if process.stderr else b'').decode()[-4000:]}"
+                f"backend exited during boot with code {process.returncode}:\n{_tail(log_path)}"
             )
         try:
             # /api/status, not /healthz: status is always 200 and answers as soon
@@ -168,6 +211,20 @@ class ContractHarness:
             **env_overrides,
         }
         env.pop("PYTHONPATH", None)
+        # THE BACKEND'S OUTPUT GOES TO A FILE, NEVER TO A PIPE, and this is a
+        # correctness matter rather than a style one. A pipe nothing reads is a
+        # 64 KiB budget on how much the child may log, and the backend logs a
+        # WARNING per failed poll at the compressed 2s cadence: with the alert
+        # feeds down that is roughly 800 B/s, so the buffer fills around 70
+        # seconds in. The child then blocks forever inside write(2) ON THE EVENT
+        # LOOP THREAD -- it stops serving, stops polling, and stops responding to
+        # SIGTERM, because uvicorn's signal handling runs on the loop that is
+        # blocked. The visible result is a scenario that times out with a
+        # plausible-looking message describing the wrong failure. Nothing here
+        # ever read those pipes, so the buffering bought nothing; a file has no
+        # such limit and _tail still gives failures the log they need.
+        log_path = self.data_dir / f"backend-{port}.log"
+        log = log_path.open("wb")
         process = subprocess.Popen(
             [
                 sys.executable,
@@ -185,14 +242,15 @@ class ContractHarness:
             ],
             cwd=REPO_ROOT,
             env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=log,
+            stderr=subprocess.STDOUT,
         )
+        log.close()  # the child holds its own descriptor
         self._running.append(process)
         base_url = f"http://127.0.0.1:{port}"
         try:
-            _wait_for_boot(base_url, process)
-            yield ContractApp(base_url, self.sim, process)
+            _wait_for_boot(base_url, process, log_path)
+            yield ContractApp(base_url, self.sim, process, log_path)
         finally:
             _terminate(process)
             self._running.remove(process)
@@ -206,9 +264,19 @@ class ContractHarness:
             os.utime(archive, (old, old))
 
     def shutdown(self) -> None:
+        # Every process gets signalled even if an earlier one misbehaves. Without
+        # the guard, a TimeoutExpired escaping _terminate -- or a second Ctrl-C
+        # landing inside its 10s wait -- aborted this loop, leaving the remaining
+        # backends alive and skipping the caller's sim.stop() entirely.
+        errors: list[BaseException] = []
         for process in list(self._running):
-            _terminate(process)
+            try:
+                _terminate(process)
+            except BaseException as exc:  # noqa: BLE001 - re-raised below
+                errors.append(exc)
         self._running.clear()
+        if errors:
+            raise errors[0]
 
 
 def _terminate(process: subprocess.Popen) -> None:
@@ -236,8 +304,12 @@ def harness(tmp_path):
     try:
         yield harness
     finally:
-        harness.shutdown()
-        sim.stop()
+        # sim.stop() in its own finally: a shutdown that raises must not leave the
+        # simulator thread running and its port held for the next scenario.
+        try:
+            harness.shutdown()
+        finally:
+            sim.stop()
 
 
 @pytest.fixture

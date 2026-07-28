@@ -27,23 +27,46 @@ the seam BETWEEN layers, or about a poll loop's behavior over time.
 
 - `upstream_sim.py` — one HTTP server standing in for every upstream, one path per
   feed. Bodies are built from the committed golden captures (only time is
-  rewritten) and archives from the committed stops fixtures, so entity ids, stop
-  ids and route ids agree across the two halves the way they do in production.
-  Feeds carry a MODE (`live` / `frozen` / `empty` / `error`); archives carry a
-  PUBLICATION (`good` / `headers-only-stops` / `missing-member` / `corrupt-zip`).
+  rewritten); archives come from the committed stops fixtures, and for PATH and the
+  ferry from the committed GTFS fixtures verbatim, so entity ids, stop ids and route
+  ids agree across the two halves the way they do in production. Feeds carry a MODE
+  (`live` / `frozen` / `empty` / `error`); archives carry a PUBLICATION (`good` /
+  `headers-only-stops` / `missing-member` / `corrupt-zip`). Both are validated on
+  the way in: an unknown name is a 400 from the control endpoint, not a mystery
+  failure the app reports as a bad upstream.
 - `conftest.py` — launches the real backend as a subprocess with PR 1's env seams
   pointed at the simulator and PR 1's timing knobs compressed, against a fresh
   temp `DATA_DIR`.
 - `serve_contract.py` — the same pair as one command, because Playwright's
   `webServer` takes one command and the browser tier needs both processes.
 
-## Hermeticity is asserted, not assumed
+## Hermeticity is asserted, not assumed — in three layers
 
-`test_smoke.py` checks that every upstream the app actually polls is the
-simulator. This is not decoration. A source whose URL lacks a PR 1 seam would
-quietly reach the real internet and every scenario would still pass, flakily, at
-the mercy of the MTA's uptime. If a future system is added without its seam, that
-test fails and says which one.
+Not decoration. A source that escapes the simulator reaches the real internet, and
+every scenario still passes: flakily, at the mercy of a third party's uptime, with
+real data mixed into a tier whose whole premise is that a test owns every byte.
+`test_smoke.py` closes it three ways, because no one of them is sufficient.
+
+1. **Every upstream the simulator serves is actually fetched** — feeds and archives
+   both. A zero count means a seam that did not take effect, or a source that
+   stopped polling.
+2. **Every URL seam the backend declares is answered by the simulator.** Layer 1
+   iterates the simulator's own roster, so it structurally cannot see a source the
+   simulator knows nothing about; this compares against `env_seams.SEAM_NAMES`. The
+   split between URL and non-URL seams is an explicit inventory rather than a name
+   suffix, because nothing enforces a naming convention and a future
+   `AMTRAK_RT_ENDPOINT` would have slipped past one.
+3. **No backend module hardcodes an upstream URL.** Both layers above start from a
+   declaration, so a URL written literally at its use site is invisible to both.
+   This one parses the backend's own AST: every URL-shaped literal must flow into
+   an `env_seams.url()` call (or an `os.getenv` naming a declared seam), or sit in a
+   short allowlist with a reason. A new `AMTRAK_RT_URL = "https://..."` fails here
+   with its file and line.
+
+The browser half is default-deny: `openMap` routes `**/*`, aborts anything that is
+not the app's own origin, and `afterEach` asserts the blocked set contains nothing
+but the basemap CDN. An allow-list of one URL glob would have stopped meaning
+anything the moment a font, a CDN script, or a different tile provider appeared.
 
 ## The determinism rules
 
@@ -88,7 +111,7 @@ so every "all markers dim" check also asserts the marker set is non-empty.
 ## Budget
 
 Both halves are meant to finish well under four minutes, as separate CI jobs. As
-committed: 14 api scenarios in about 2m30s, 3 browser specs in about 1m40s. What
+committed: 16 api scenarios in about 2m50s, 3 browser specs in about 1m35s. What
 makes that reachable is PR 1's timing knobs, compressed in `CONTRACT_TIMING`: a
 scenario that has to outlive the retention window waits 20 seconds instead of ten
 minutes, a static retry walks 1s/2s/3s instead of 15s/30s/60s/300s, and the page
@@ -96,12 +119,11 @@ dims after 25 seconds instead of 90. `POLL_INTERVAL_S` is 2 rather than lower on
 purpose — below about a second the poll loop and the assertions start racing, and
 rule 3 says a flake is a bug.
 
-One more thing was load-bearing for the browser budget: the specs ABORT basemap
-tile requests and open the page with `domcontentloaded`. Leaflet appends its tiles
-during initial script execution, so they belong to the load event, and waiting them
-out cost a full minute per spec on a runner that cannot reach the tile CDN. Aborting
-them is also what makes the browser half honestly hermetic — nothing here asserts on
-imagery, and a basemap from a public CDN would be one uncontrolled input.
+One more thing was load-bearing for the browser budget: the default-deny route
+above also aborts the basemap tiles, and the specs open the page with
+`domcontentloaded`. Leaflet appends its tiles during initial script execution, so
+they belong to the load event, and waiting them out cost a full minute per spec on a
+runner that cannot reach the tile CDN.
 
 The browser tier overrides one of those back UP: `serve_contract.py` raises
 `FEED_RETENTION_MAX_S` past the length of the run. The api tier's 20s cap exists so
@@ -122,7 +144,23 @@ the 25s threshold could dim them. Nothing in the browser tier asserts the cap.
   hermetic counterpart in every spec precisely so a failure localizes: hermetic red
   means the rendering logic broke, hermetic green means the composite did.
 - **The bus route index and AirTrain.** Neither has a partial-outage story yet.
-  See the standing note below.
+  See the standing note below. The bus REALTIME feed is exercised (and asserted
+  non-empty in `test_smoke.py`), but it borrows the ferry vehicle capture, whose
+  route ids are blank — so nothing route-keyed about buses is covered here.
+- **Per-group subway DATA claims.** All eight group feeds serve one capture, and
+  the subway decoder dedupes by trip id across groups, so exactly one group ever
+  contributes a row: `/api/subways` serves 148 trains, not eight times that. Which
+  group FAILS and which keep advancing is real and asserted (the per-system blocks
+  are genuinely per-group); "the failed group's retained arrivals are still served"
+  cannot be written correctly here and would pass on another group's data. It needs
+  eight distinct captures.
+- **The not-yet-departed trip gate.** `_restamp` shifts every timestamp by one delta
+  but leaves `trip.start_date`/`start_time` at capture values, so the
+  `TRIP_START_GRACE_S` filter never fires in this tier — deleting it would fail
+  nothing here. It cannot be fixed by shifting: the schedule start is derived from a
+  prefix of the TRIP ID, so making the gate live would mean rewriting the ids every
+  matcher keys on. `upstream_sim._restamp` carries the full reasoning; the gate stays
+  a hermetic-tier claim.
 - **The alerts staleness marker, in the browser.** The composite half (a real
   one-feed alerts outage produces a per-system degraded block) is asserted in
   `test_one_alert_feed_down_is_visible_per_system`; the rendering half is asserted
@@ -150,12 +188,15 @@ again while upstream serves garbage. The second boot re-downloads for real, reje
 for real, and falls back to the archive the first boot wrote.
 
 The browser tier's staleness thresholds come from PR 1's flag-gated query seam
-(`?contract=1&feedStaleAfterS=5`), which can only ever LOWER them — the bound is in
+(`?contract=1&feedStaleAfterS=25`, and 25 rather than something smaller for the
+reason rule 5 gives), which can only ever LOWER them — the bound is in
 `frontend/helpers.js` and the inertness proof pins it.
 
 ## Standing note for future systems
 
 Every system phase that adds an upstream (Amtrak, NJ Transit, whatever follows)
 must add its partial-outage scenario here, and its seam to `env_seams.py`. The
-smoke test will fail loudly if the seam is missing. Nothing will fail if the
-scenario is missing, which is why this note exists.
+three hermeticity layers above will fail loudly if the seam is missing, if the
+simulator has no route for it, or if its URL is written literally in a module — so
+the wiring is enforced. Nothing enforces the SCENARIO, which is why this note
+exists: a new system with no outage scenario is silently untested at this tier.

@@ -24,6 +24,7 @@
 const { test, expect } = require("@playwright/test");
 
 const SIM = "http://127.0.0.1:5175";
+const APP_ORIGIN = "http://127.0.0.1:5174";
 const FEED_STALE_AFTER_S = 25;
 // alertsStaleAfterS is deliberately NOT overridden: no spec here asserts alert
 // staleness (see tests/contract/README.md), and lowering it below the page's 60s
@@ -57,24 +58,49 @@ async function awaitPolls(request, key, count) {
     .toBeGreaterThanOrEqual(start + count);
 }
 
-/** Open the map page.
+/** Open the map page under a DEFAULT-DENY network rule, and record what it blocked.
  *
- * TILES ARE ABORTED, for two reasons and in that order of importance. First,
- * hermeticity: this tier's whole claim is that every byte the app and the page
- * receive comes from something a test controls, and a basemap fetched from a
- * public CDN would quietly break that. Nothing here asserts on imagery. Second,
- * speed: Leaflet appends its tile images during initial script execution, so they
- * are part of the load event, and a runner that cannot reach the CDN waits out
- * every one of them before goto returns.
+ * The catch-all matters more than the tile CDN it was written for. An earlier
+ * version routed exactly `https://tile.openstreetmap.org/**` and aborted it, which
+ * is allow-by-default wearing a hermeticity label: the moment the basemap provider
+ * changed, or a font or analytics tag appeared in index.html, the specs would start
+ * fetching a public host mid-run with nothing failing. Here EVERY request is seen,
+ * anything not same-origin is aborted, and the blocked hosts are handed back so a
+ * spec can assert the set it expected. The hermetic tier does the same thing
+ * (tests/e2e/mock.js installs `page.route("**\/*")`), for the same reason.
  *
- * domcontentloaded rather than load for the same reason: the specs wait on their
- * own observables (markers exist, status painted), so waiting on subresources adds
+ * Two consequences beyond hermeticity: nothing here asserts on basemap imagery, and
+ * a runner that cannot reach the CDN no longer waits out every tile -- which cost a
+ * full minute per spec, because Leaflet appends its tiles during initial script
+ * execution and they belong to the load event.
+ *
+ * domcontentloaded rather than load, likewise: the specs wait on their own
+ * observables (markers exist, status painted), so waiting on subresources adds
  * nothing but latency.
  */
+let blockedHosts = new Set();
+
 async function openMap(page) {
-  await page.route("https://tile.openstreetmap.org/**", (route) => route.abort());
+  blockedHosts = new Set();
+  await page.route("**/*", (route) => {
+    const url = new URL(route.request().url());
+    if (url.origin === APP_ORIGIN) return route.continue();
+    blockedHosts.add(url.host);
+    return route.abort();
+  });
   await page.goto(PAGE, { waitUntil: "domcontentloaded" });
 }
+
+/** The only external host the page is allowed to try for. Asserted in afterEach
+ * rather than right after goto, and that timing is the point: with
+ * domcontentloaded the tiles have not been requested yet when goto returns, so an
+ * assertion there would inspect an empty set and pass no matter what. By afterEach
+ * the spec has done all its waiting and the page has had every chance to ask.
+ *
+ * Kept as an assertion rather than a comment so a NEW external dependency -- a font,
+ * a CDN script, a switched basemap provider -- fails and names its host, instead of
+ * silently becoming an uncontrolled input to a tier whose claim is that it has none. */
+const EXPECTED_EXTERNAL_HOSTS = ["tile.openstreetmap.org"];
 
 /** Opacities of every railroad marker belonging to `system`, read from the marker
  * itself rather than from a CSS class: C2 moved the dimming to an inline opacity,
@@ -90,11 +116,27 @@ function railroadOpacities(page, system) {
 }
 
 test.afterEach(async ({ request }) => {
+  const unexpected = [...blockedHosts].filter((host) => !EXPECTED_EXTERNAL_HOSTS.includes(host));
+  blockedHosts = new Set();
+  expect(unexpected, "the page reached for an external host this tier does not control").toEqual(
+    [],
+  );
+
   // Shared backend, sequential workers: leaving a feed down would silently change
   // what the next spec observes, which is the order dependence that makes an
   // integration suite untrustworthy.
-  for (const key of ["MNR", "LIRR", "subway:BDFM", "PATH"]) {
-    await control(request, { key, mode: "live" });
+  //
+  // DERIVED FROM THE SIMULATOR, not from a hand-kept list. A literal naming the
+  // four keys today's specs touch is correct only until someone adds a fifth spec
+  // that drives an alerts feed or an archive and forgets to extend it; the leak
+  // then survives for the rest of the run and the next spec's baseline quietly
+  // measures the wrong thing. Restoring everything is cheap and cannot fall behind.
+  const state = await simState(request);
+  for (const [key, feed] of Object.entries(state.feeds)) {
+    if (feed.mode !== "live") await control(request, { key, mode: "live" });
+  }
+  for (const [key, archive] of Object.entries(state.archives)) {
+    if (archive.publication !== "good") await control(request, { key, publication: "good" });
   }
 });
 
@@ -198,9 +240,17 @@ test("C6e3. PATH, a single-feed source, dims like any other and recovers", async
   // single successful fetch has to undo it. Without this half the spec would pass
   // against a frontend that dims permanently on the first failure.
   await control(request, { key: "PATH", mode: "live" });
+  // The SAME non-empty guard as the dim check above. Without it this is the one
+  // assertion in the file `[].every(...)` satisfies: a recovery that repopulates
+  // nothing -- markers swept off the map and never re-added -- would read as green,
+  // and "PATH recovers" would be reported against a page showing no PATH trains.
   await expect
-    .poll(async () => (await opacities()).every((o) => o === 1), {
-      timeout: DIM_TIMEOUT_MS,
-    })
+    .poll(
+      async () => {
+        const seen = await opacities();
+        return seen.length > 0 && seen.every((o) => o === 1);
+      },
+      { timeout: DIM_TIMEOUT_MS },
+    )
     .toBe(true);
 });

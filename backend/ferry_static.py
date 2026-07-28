@@ -46,7 +46,8 @@ from static_shared import (
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-_STATIC_DIR = PROJECT_ROOT / "data" / "gtfs_static"
+DATA_DIR = env_seams.directory("DATA_DIR", "data")
+_STATIC_DIR = DATA_DIR / "gtfs_static"
 
 # Verified 2026-07-09: the utility URL 302-REDIRECTS to the resource zip
 # (~44 KB) on the same host, over https end-to-end. (An earlier note claimed

@@ -33,7 +33,8 @@ import env_seams
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-BUS_CACHE_DIR = PROJECT_ROOT / "data" / "cache" / "bus_routes"
+DATA_DIR = env_seams.directory("DATA_DIR", "data")
+BUS_CACHE_DIR = DATA_DIR / "cache" / "bus_routes"
 MANIFEST_PATH = BUS_CACHE_DIR / "_manifest.json"
 
 # Rebuild the index when the cached one is older than this (matches the

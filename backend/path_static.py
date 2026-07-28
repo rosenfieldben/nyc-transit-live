@@ -54,7 +54,8 @@ from static_shared import (
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-_STATIC_DIR = PROJECT_ROOT / "data" / "gtfs_static"
+DATA_DIR = env_seams.directory("DATA_DIR", "data")
+_STATIC_DIR = DATA_DIR / "gtfs_static"
 
 # Verified 2026-07-05: 200, ~1.2 MB, application/zip. The http:// variant
 # redirects; use https. The module and tests never depend on the URL resolving.

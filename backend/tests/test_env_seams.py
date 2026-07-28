@@ -62,6 +62,9 @@ EXPECTED_DEFAULTS: dict[str, object] = {
     "FEED_RETENTION_MAX_S": 600,
     "STATIC_RETRY_S": 300,
     "STATIC_RETRY_SCHEDULE_S": (15, 30, 60, 300),
+    # Relative on purpose, so this table stays a fixed literal instead of an
+    # absolute path that differs per checkout (see env_seams.directory).
+    "DATA_DIR": "data",
 }
 
 
@@ -154,6 +157,22 @@ def test_timing_constants_unchanged():
     assert cache.FEED_RETENTION_MAX_S == 600
     assert main.STATIC_RETRY_S == 300
     assert main.STATIC_RETRY_SCHEDULE_S == (15, 30, 60, 300)
+
+
+def test_static_cache_paths_unchanged():
+    # PROJECT_ROOT is derived here independently rather than read off a module, so
+    # this compares the resolved paths against where they have always been rather
+    # than against the code's own idea of where that is.
+    project_root = Path(__file__).resolve().parent.parent.parent
+    static = project_root / "data" / "gtfs_static"
+    assert static_data.SUBWAY_GTFS_ZIP == static / "gtfs_subway.zip"
+    assert railroad_static.RAILROAD_STATIC_ZIPS == {
+        "LIRR": static / "gtfs_lirr.zip",
+        "MNR": static / "gtfs_mnr.zip",
+    }
+    assert path_static.PATH_STATIC_ZIP == static / "gtfs_path.zip"
+    assert ferry_static.FERRY_STATIC_ZIP == static / "gtfs_ferry.zip"
+    assert bus_static.BUS_CACHE_DIR == project_root / "data" / "cache" / "bus_routes"
 
 
 def test_timing_constants_keep_their_type():
@@ -332,3 +351,32 @@ def test_the_monitor_refuses_to_run_against_a_redirected_upstream():
 def test_assert_unset_passes_when_nothing_is_set():
     # The converse, so the guard cannot pass its own test by always raising.
     env_seams.assert_unset("a caller with a clean environment")
+
+
+def test_the_data_root_seam_moves_every_cache_path():
+    # Redirecting an archive's URL is NOT enough to test a cold start: a checkout
+    # that already holds a valid archive serves the cache and never downloads, so
+    # the finding-4 scenario (no cache, headers-only publish, never ready) could
+    # not be expressed. This is the seam that lets the harness hand the process a
+    # tmp directory, and it must move every loader at once.
+    out = _resolve(
+        "(__import__('static_data').SUBWAY_GTFS_ZIP, "
+        "__import__('ferry_static').FERRY_STATIC_ZIP, "
+        "__import__('bus_static').BUS_CACHE_DIR)",
+        {"DATA_DIR": "/tmp/c6-contract-data"},
+    )
+    assert out == (
+        "(PosixPath('/tmp/c6-contract-data/gtfs_static/gtfs_subway.zip'), "
+        "PosixPath('/tmp/c6-contract-data/gtfs_static/gtfs_ferry.zip'), "
+        "PosixPath('/tmp/c6-contract-data/cache/bus_routes'))"
+    )
+
+
+def test_a_relative_data_root_stays_under_the_checkout():
+    # The default is relative, so a relative override has to behave the same way
+    # rather than resolving against whatever the process working directory happens
+    # to be, which for the backend is backend/ and not the repo root.
+    # print() of a single Path gives str(); the tuple above goes through repr, which
+    # is why only that one carries the PosixPath wrapper.
+    out = _resolve("__import__('static_data').SUBWAY_GTFS_ZIP", {"DATA_DIR": "tmpdata"})
+    assert out == f"{BACKEND.parent}/tmpdata/gtfs_static/gtfs_subway.zip"

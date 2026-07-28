@@ -95,6 +95,28 @@ def seconds_tuple(name: str, default: tuple[float, ...]) -> tuple[float, ...]:
     return tuple(float(part) for part in raw.split(",") if part.strip())
 
 
+def directory(name: str, default_relative: str) -> Path:
+    """A filesystem root the process reads and writes under.
+
+    NEEDED BY THE CONTRACT TIER FOR A REASON THE URL SEAMS DO NOT COVER. Redirecting
+    an archive's URL is not enough to test a cold start: every static loader caches
+    under the repo's data/ directory, so a run in a checkout that already holds a
+    valid archive would serve the cache and never download at all, and the
+    finding-4 cold-start scenario (no cache, a headers-only publish, never ready)
+    could not be expressed. It would also write the simulator's archives over a
+    developer's real ones. Pointing the whole data root at a tmp directory solves
+    both at once.
+
+    The default is RELATIVE and resolved against PROJECT_ROOT, so the recorded
+    default stays a fixed literal rather than an absolute path that differs per
+    checkout, which is what lets the inertness table pin it by value. An absolute
+    value is used as given, which is how a harness hands over a tmp directory.
+    """
+    _record(name, default_relative)
+    candidate = Path(os.getenv(name, default_relative))
+    return candidate if candidate.is_absolute() else PROJECT_ROOT / candidate
+
+
 def assert_unset(context: str) -> None:
     """Refuse to run `context` with any seam set.
 

@@ -33,7 +33,8 @@ from static_shared import (
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-_STATIC_DIR = PROJECT_ROOT / "data" / "gtfs_static"
+DATA_DIR = env_seams.directory("DATA_DIR", "data")
+_STATIC_DIR = DATA_DIR / "gtfs_static"
 
 # The canonical S3 URLs the MTA developer paths 301 to, verified 2026-06-22
 # (both serve 200 application/zip over https; the old plain-http

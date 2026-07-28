@@ -29,6 +29,7 @@ from fastapi.staticfiles import StaticFiles
 
 import airtrain_static
 import bus_static
+import env_seams
 import ferry_static
 import path_static
 import railroad_static
@@ -112,7 +113,9 @@ FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 # capped at. Kept here (the composition root) rather than in warmups, because it is
 # the name tests shorten (monkeypatch.setattr(main, "STATIC_RETRY_S", ...)); the
 # warmups read main.STATIC_RETRY_S so that patch stays effective.
-STATIC_RETRY_S = 300  # module-level so tests can shorten it
+# Also overridable (C6), alongside the monkeypatch surface: the contract tier runs
+# the real process, which has no monkeypatch available to it.
+STATIC_RETRY_S = env_seams.seconds("STATIC_RETRY_S", 300)  # module-level so tests can shorten it
 
 # The backoff schedule for the sleep BETWEEN warmup attempts (warmups._retry_delay
 # walks it, then holds at the last rung, with jitter).
@@ -147,7 +150,12 @@ STATIC_RETRY_S = 300  # module-level so tests can shorten it
 # attempts, that one bounds the duration OF an attempt. They are different clocks
 # on different failures, and collapsing them would silently couple "how long we
 # wait for a hung download" to "how often we retry a dead one".
-STATIC_RETRY_SCHEDULE_S = (15, 30, 60, STATIC_RETRY_S)
+# Overridable as a comma-separated list of seconds (C6). The default still derives
+# its last rung from STATIC_RETRY_S, so shrinking that alone still shrinks the whole
+# schedule exactly as the tests below it rely on.
+STATIC_RETRY_SCHEDULE_S = env_seams.seconds_tuple(
+    "STATIC_RETRY_SCHEDULE_S", (15, 30, 60, STATIC_RETRY_S)
+)
 
 # Whole-ATTEMPT deadline for one static warmup (see warmups._warm_*). Each downloader
 # already wraps just its transfer in its own asyncio.timeout(_DOWNLOAD_DEADLINE_S)

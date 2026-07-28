@@ -5,9 +5,14 @@ from __future__ import annotations
 
 import httpx
 
+import env_seams
 from feeds.shared import _api_key, _header_timestamp, _in_nyc, parse_feed
 
-VEHICLE_POSITIONS_URL = "https://gtfsrt.prod.obanyc.com/vehiclePositions"
+# Overridable (C6). Used WHOLE, with the API key added as a query parameter
+# rather than a path suffix, so this is a full-URL seam and not a base.
+VEHICLE_POSITIONS_URL = env_seams.url(
+    "BUS_RT_URL", "https://gtfsrt.prod.obanyc.com/vehiclePositions"
+)
 
 
 async def fetch_vehicle_positions(client: httpx.AsyncClient) -> tuple[list[dict], float | None]:

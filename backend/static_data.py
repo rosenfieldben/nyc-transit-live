@@ -9,9 +9,9 @@ import re
 import time
 import zipfile
 from collections import defaultdict
-from pathlib import Path
 from typing import IO
 
+import env_seams
 from static_routes import fold_stop_routes
 from static_shared import (
     StaticValidationError,
@@ -24,9 +24,16 @@ from static_shared import (
 
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-SUBWAY_GTFS_ZIP = PROJECT_ROOT / "data" / "gtfs_static" / "gtfs_subway.zip"
-SUBWAY_GTFS_URL = "https://rrgtfsfeeds.s3.amazonaws.com/gtfs_subway.zip"
+# The data root is overridable (C6) so the contract tier can point the whole
+# cache at a tmp directory; unset, this is the same path it always was.
+DATA_DIR = env_seams.directory("DATA_DIR", "data")
+SUBWAY_GTFS_ZIP = DATA_DIR / "gtfs_static" / "gtfs_subway.zip"
+# Overridable (C6), used whole. The contract tier publishes archives from its own
+# simulator so a rejected publication and the finding-4 cold start can be driven
+# against the real warmup rather than a monkeypatched loader.
+SUBWAY_GTFS_URL = env_seams.url(
+    "SUBWAY_GTFS_URL", "https://rrgtfsfeeds.s3.amazonaws.com/gtfs_subway.zip"
+)
 
 # Re-download the static GTFS when the cached copy is older than this. The MTA
 # republishes it a few times a year; station coordinates change rarely.

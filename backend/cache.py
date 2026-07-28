@@ -15,6 +15,7 @@ import time
 
 from fastapi import HTTPException, Response
 
+import env_seams
 from feeds import ALERT_FEED_URLS
 
 # Log through the "main" logger (not __name__) so records and main.py's logging
@@ -27,6 +28,10 @@ logger = logging.getLogger("main")
 # server-captured timestamps (fetched_at - feed_timestamp), so the browser
 # clock is never involved; the frontend mirrors this in helpers.js.
 FEED_STALE_AFTER_S = 90
+# NOT overridable, unlike the frontend constant it is mirrored by (C6 gave that one
+# a flag-gated query override so the contract tier can watch the page dim without
+# waiting 90s). The two can therefore disagree, but only inside a browser that
+# asked for it: this value still governs /healthz and /api/status for everyone.
 
 # How long ONE failed subsystem's data is carried forward inside an aggregate
 # envelope before it is dropped (C2). Ten minutes, and the reasoning is the same
@@ -36,7 +41,10 @@ FEED_STALE_AFTER_S = 90
 # ghost. Past this the data goes and only the system's SystemFreshness block
 # remains, still reporting the outage. Absence plus an explanation beats a
 # confident wrong position.
-FEED_RETENTION_MAX_S = 600
+# Overridable (C6): the contract tier compresses every cadence so a scenario that
+# has to outlive a threshold finishes in seconds instead of minutes. Unset, this is
+# the prior literal.
+FEED_RETENTION_MAX_S = env_seams.seconds("FEED_RETENTION_MAX_S", 600)
 
 # WHETHER A FAILED SUBSYSTEM'S DATA IS ACTUALLY CARRIED FORWARD.
 #

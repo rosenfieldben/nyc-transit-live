@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 import httpx
 from google.protobuf.message import DecodeError
 
+import env_seams
 from feeds.shared import (
     _DROP_STOP_RELATIONSHIPS,
     _DROP_TRIP_RELATIONSHIPS,
@@ -28,9 +29,14 @@ from feeds.shared import (
     parse_feed,
 )
 
+# Overridable base (C6). Its own variable rather than a shared one, even though
+# the default is the same MTA Dataservice host the alert feeds use: a contract
+# scenario has to be able to take the ALERT feeds down while the railroad feeds
+# keep advancing, and one shared switch could not express that.
+RAILROAD_RT_BASE = env_seams.url("RAILROAD_RT_BASE", _RAILROAD_BASE)
 RAILROAD_FEED_URLS = {
-    "LIRR": _RAILROAD_BASE + "/lirr%2Fgtfs-lirr",
-    "MNR": _RAILROAD_BASE + "/mnr%2Fgtfs-mnr",
+    "LIRR": RAILROAD_RT_BASE + "/lirr%2Fgtfs-lirr",
+    "MNR": RAILROAD_RT_BASE + "/mnr%2Fgtfs-mnr",
 }
 
 

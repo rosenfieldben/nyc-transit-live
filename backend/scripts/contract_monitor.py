@@ -67,6 +67,7 @@ from google.transit import gtfs_realtime_pb2
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "backend"))
 
+import env_seams  # noqa: E402
 import feeds  # noqa: E402
 import ferry_static  # noqa: E402
 import path_static  # noqa: E402
@@ -1447,4 +1448,14 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # The monitor's value is that it watches the REAL upstreams from outside the
+    # app, so it refuses to start if anything has redirected them (C6 made every
+    # endpoint overridable; see backend/env_seams.assert_unset).
+    #
+    # AT THE ENTRY POINT, not inside main(). main() is driven directly by a unit
+    # test, and a guard in there would make that test fail whenever a developer had
+    # one of these set in their shell or .env, which the README presents as a
+    # supported way to point a feed at a mirror. The real invocation is the script,
+    # and the script is what CI runs, so guarding here loses no protection.
+    env_seams.assert_unset("the contract monitor")
     sys.exit(main())

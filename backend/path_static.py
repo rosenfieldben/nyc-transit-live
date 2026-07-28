@@ -41,6 +41,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import IO
 
+import env_seams
 from static_routes import fold_stop_routes
 from static_shared import (
     cached_archive_is_valid,
@@ -52,12 +53,15 @@ from static_shared import (
 
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-_STATIC_DIR = PROJECT_ROOT / "data" / "gtfs_static"
+DATA_DIR = env_seams.directory("DATA_DIR", "data")
+_STATIC_DIR = DATA_DIR / "gtfs_static"
 
 # Verified 2026-07-05: 200, ~1.2 MB, application/zip. The http:// variant
 # redirects; use https. The module and tests never depend on the URL resolving.
-PATH_STATIC_URL = "https://data.trilliumtransit.com/gtfs/path-nj-us/path-nj-us.zip"
+# Overridable (C6), used whole.
+PATH_STATIC_URL = env_seams.url(
+    "PATH_STATIC_URL", "https://data.trilliumtransit.com/gtfs/path-nj-us/path-nj-us.zip"
+)
 PATH_STATIC_ZIP = _STATIC_DIR / "gtfs_path.zip"
 
 # Re-download the static GTFS when the cached copy is older than this, the same

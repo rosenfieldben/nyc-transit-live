@@ -351,6 +351,89 @@ test("A1n. a first-load arrivals failure is spoken, not only drawn", async ({ pa
   await expect(page.locator("#stations-announce")).toContainText("Times Sq");
 });
 
+test("A1p. switching to a feedless station stops the tick, so no tick can speak", async ({ page }) => {
+  // ROUND 2 OF THE REVIEW FOUND THIS, and it broke the one hard rule of the phase.
+  // Only fetchPanelArrivals used to stop the countdown interval, and a feedless
+  // station never calls it, so selecting AirTrain after a subway station left the
+  // subway's one-second timer running against the AirTrain detail. Each tick
+  // re-entered the scheduled branch, which wrote the live region directly. A text
+  // dedup hid it until the scheduled text CHANGED, which it does on a headway-band
+  // boundary, and then a countdown tick spoke with no input and no network event.
+  //
+  // The clock starts at 10:59:30 New York and runs across 11:00, where the committed
+  // AirTrain bands step from seven minutes to four.
+  const ctx = await installMocks(page);
+  ctx.overrides.airtrain = (route, fixtures) => json(route, fixtures.airtrain());
+  const BAND_EDGE = Date.UTC(2026, 6, 2, 14, 59, 30); // 10:59:30 America/New_York
+  await page.clock.install({ time: new Date(BAND_EDGE) });
+  await page.clock.pauseAt(new Date(BAND_EDGE));
+  await page.goto("/");
+  await awaitRegistry(page);
+
+  // A live station first, which is what arms the tick.
+  await page.locator("#stations-search").fill("times");
+  await page.locator("#stations-results button.station-row").first().click();
+  await expect(page.locator("#stations-detail")).toContainText("Northbound");
+  expect(await page.evaluate(() => panelTimer !== null), "a live station arms the tick").toBe(true);
+
+  // Then a feedless one. The tick must stop, because there is nothing to count.
+  await page.locator("#stations-search").fill("federal");
+  await page.locator("#stations-results button.station-row").first().click();
+  await expect(page.locator("#stations-detail")).toContainText("every 7 minutes");
+  expect(await page.evaluate(() => panelTimer === null), "a feedless station stops the tick").toBe(true);
+
+  // Nothing is touching the page now. Advance across the band edge and the live
+  // region must not say a word, even though the scheduled text would change.
+  await page.evaluate(() => {
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+  });
+  const spokenBefore = await page.locator("#stations-announce").innerText();
+  await page.clock.runFor(45_000);
+  expect(await page.locator("#stations-announce").innerText(), "no tick may write the live region").toBe(
+    spokenBefore,
+  );
+  // And the detail is not being repainted by a leaked interval either.
+  await expect(page.locator("#stations-detail")).toContainText("every 7 minutes");
+
+  // BELT AND BRACES, TESTED SEPARATELY. The fix has two independent guards: the tick
+  // is stopped on a station switch (above), and the scheduled branch refuses to speak
+  // on a tick render at all. With the first guard working, nothing can deliver a tick
+  // here, so the second is invoked directly. Otherwise it would sit untested until the
+  // day someone reintroduces a timer and discovers the guard never worked.
+  await page.evaluate(() => renderStationDetail({ tick: true }));
+  expect(
+    await page.locator("#stations-announce").innerText(),
+    "a tick render of the scheduled branch must stay silent",
+  ).toBe(spokenBefore);
+});
+
+test("A1q. reopening after a failed load keeps the error, and never fakes Loading", async ({ page }) => {
+  // ROUND 2's second finding. The reopen re-render took its error argument as null,
+  // fell through to the "no body yet" branch, and painted "Loading arrivals..." over a
+  // truthful error, for a fetch that had already come back. The reopen refresh then
+  // keeps quiet on failure by design, so the fake loading line stayed while the
+  // backend was down, contradicting the error still sitting in the live region.
+  const ctx = await installMocks(page);
+  ctx.overrides.subwayArrivals = (route) =>
+    json(route, { detail: "Arrivals cache is warming up; try again in a few seconds." }, 503);
+  await open(page, { install: false });
+  await page.locator("#stations-search").fill("times");
+  await page.locator("#stations-results button.station-row").first().click();
+  const detail = page.locator("#stations-detail");
+  await expect(detail).toContainText("warming up");
+
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#stations-panel")).toBeHidden();
+  await page.locator("#stations-toggle").click();
+  await expect(page.locator("#stations-panel")).toBeVisible();
+
+  // Still the truth, and specifically NOT a loading line for a fetch that finished.
+  await expect(detail).toContainText("warming up");
+  await expect(detail).not.toContainText("Loading arrivals");
+  // No tick either: there are no countdowns to move.
+  expect(await page.evaluate(() => panelTimer === null), "an errored station arms no tick").toBe(true);
+});
+
 test("A1o. a stale payload's age is spoken, not left on screen alone", async ({ page }) => {
   // The announcement reads the countdowns aloud whether or not the feed behind them
   // is current, so the caveat has to travel with them rather than living only in the

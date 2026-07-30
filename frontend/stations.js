@@ -44,6 +44,14 @@ let panelTimer = null;
 // announcement guard compares payloads, never rendered text, so a countdown tick
 // cannot reach the live region. See announcementWorthy in helpers.js.
 let panelAnnounced = null;
+// The first-load failure for the SELECTED station, retained rather than left to the
+// rendered DOM. Round 2 of the review caught why it has to be state: reopening the
+// panel re-renders from scratch, and with the error living only in the DOM the
+// re-render replaced a truthful "Arrivals cache is warming up" with a "Loading
+// arrivals..." that never resolved while the backend stayed down. Cleared on a new
+// selection and on any successful load; a failed BACKGROUND refresh deliberately
+// leaves it alone, because that path keeps the last-known rows instead.
+let panelError = null;
 
 /* ---------------- open, close, and where focus goes ---------------- */
 
@@ -80,9 +88,14 @@ function openStationsPanel({ focusSearch = true } = {}) {
 // rather than replacing them with an error.
 function resumePanelArrivals() {
   if (!panelStation) return;
+  // No `error` argument: renderStationDetail defaults to the retained panelError, so
+  // a station that failed to load reopens still saying why, rather than reverting to
+  // a loading line for a fetch that already came back.
   renderStationDetail();
   if (!panelStation.arrivalsUrl) return;
-  startPanelTick();
+  // Only rows that count down need a tick. Arming it with nothing to count would
+  // repaint an error or a loading line once a second to no purpose.
+  if (panelBody) startPanelTick();
   fetchPanelArrivals({ refresh: true });
 }
 
@@ -257,16 +270,30 @@ function selectStation(key) {
   panelStation = entry;
   panelBody = null;
   panelAnnounced = null;
+  panelError = null;
   panelSeq++;
+  // STOP THE OLD STATION'S TICK HERE, not in the fetch. Round 2 of the review found
+  // that leaving it to fetchPanelArrivals leaks the interval whenever the new station
+  // has no feed to fetch: selecting AirTrain after a subway station left the subway's
+  // one-second timer running against the AirTrain detail, repainting it forever and
+  // driving the live region across a scheduled-headway band boundary. A station
+  // switch stops the clock unconditionally; whoever has something to count restarts it.
+  stopPanelTick();
   renderStationDetail();
   if (entry.arrivalsUrl) fetchPanelArrivals();
   syncMapToStation(entry);
 }
 
-function stopPanelArrivals() {
-  panelSeq++; // invalidate any fetch in flight for the station we are leaving
+// The countdown clock, stopped and started in exactly one place each so there is one
+// answer to "is a tick running" rather than one per caller.
+function stopPanelTick() {
   clearInterval(panelTimer);
   panelTimer = null;
+}
+
+function stopPanelArrivals() {
+  panelSeq++; // invalidate any fetch in flight for the station we are leaving
+  stopPanelTick();
 }
 
 // Fetch this station's arrivals. The same shape as openStationArrivals in
@@ -279,33 +306,34 @@ async function fetchPanelArrivals({ refresh = false } = {}) {
   const entry = panelStation;
   if (!entry || !entry.arrivalsUrl) return;
   const seq = ++panelSeq;
-  if (!refresh) {
-    clearInterval(panelTimer);
-    panelTimer = null;
-  }
+  if (!refresh) stopPanelTick();
   let body;
   try {
     const res = await fetch(entry.arrivalsUrl, { signal: AbortSignal.timeout(FETCH_DEADLINE_MS) });
     if (seq !== panelSeq) return;
     if (!res.ok) {
       // A warming backend answers 503 with a detail line; show it rather than an
-      // invented message, the same honesty the popups earned.
+      // invented message, the same honesty the popups earned. Recorded in panelError
+      // rather than only drawn, so closing and reopening the panel cannot lose it.
       if (!refresh) {
         const err = await res.json().catch(() => null);
-        renderStationDetail({
-          error: err && err.detail ? err.detail : `Arrivals unavailable (HTTP ${res.status})`,
-        });
+        panelError = err && err.detail ? err.detail : `Arrivals unavailable (HTTP ${res.status})`;
+        renderStationDetail();
       }
       return;
     }
     body = await res.json();
   } catch {
     if (seq !== panelSeq) return;
-    if (!refresh) renderStationDetail({ error: "Arrivals unavailable (network error)" });
+    if (!refresh) {
+      panelError = "Arrivals unavailable (network error)";
+      renderStationDetail();
+    }
     return;
   }
   if (seq !== panelSeq) return;
   panelBody = body;
+  panelError = null; // data arrived; whatever went wrong before is over
   renderStationDetail();
   startPanelTick();
 }
@@ -314,7 +342,7 @@ async function fetchPanelArrivals({ refresh = false } = {}) {
 // region speaks is decided by the payload comparison in renderStationDetail, never by
 // this timer firing. Cleared first so two callers cannot leave two intervals running.
 function startPanelTick() {
-  clearInterval(panelTimer);
+  stopPanelTick();
   panelTimer = setInterval(() => renderStationDetail({ tick: true }), 1000);
 }
 
@@ -333,6 +361,12 @@ function panelClockNow() {
 // AirTrain's detail view: the SCHEDULED headway bands, labeled as scheduled.
 // AirTrain publishes no realtime feed, so a countdown here would fabricate
 // precision the data does not have. This is the branch any feedless system takes.
+// RETURNS THE SPOKEN TEXT RATHER THAN SPEAKING IT. Round 2 of the review found the
+// previous shape breaking this phase's one hard rule: this function called the live
+// region directly and ignored `tick`, so a leaked countdown timer wrote the region as
+// the scheduled text crossed a headway band. Announcing is now the caller's job, under
+// the single `!tick` guard in renderStationDetail, so the rule holds structurally
+// instead of resting on two strings happening to be equal.
 function renderScheduledDetail(entry, heading) {
   const note = "Scheduled service. AirTrain JFK publishes no live tracking.";
   const noteEl = document.createElement("p");
@@ -346,8 +380,7 @@ function renderScheduledDetail(entry, heading) {
     const none = document.createElement("p");
     none.textContent = "No AirTrain branch serves this station.";
     stationsDetail.appendChild(none);
-    announcePanelState(`${entry.name}, ${entry.systemLabel}. ${note} No AirTrain branch serves this station.`);
-    return;
+    return `${entry.name}, ${entry.systemLabel}. ${note} No AirTrain branch serves this station.`;
   }
   const list = document.createElement("ul");
   list.className = "station-arrivals";
@@ -363,7 +396,7 @@ function renderScheduledDetail(entry, heading) {
     spoken.push(text);
   }
   stationsDetail.appendChild(list);
-  announcePanelState(`${entry.name}, ${entry.systemLabel}. ${note} ${spoken.join(". ")}`);
+  return `${entry.name}, ${entry.systemLabel}. ${note} ${spoken.join(". ")}`;
 }
 
 // Render the detail area for the selected station.
@@ -372,7 +405,7 @@ function renderScheduledDetail(entry, heading) {
 // It changes nothing about what is drawn; it exists so the announcement decision
 // can be skipped outright on a tick, which makes the live-region rule impossible
 // to violate by accident rather than merely unlikely.
-function renderStationDetail({ error = null, tick = false } = {}) {
+function renderStationDetail({ error = panelError, tick = false } = {}) {
   if (!stationsDetail) return;
   const entry = panelStation;
   stationsDetail.replaceChildren();
@@ -388,7 +421,8 @@ function renderStationDetail({ error = null, tick = false } = {}) {
   }
 
   if (!entry.arrivalsUrl) {
-    renderScheduledDetail(entry, heading);
+    const spoken = renderScheduledDetail(entry, heading);
+    if (!tick) announcePanelState(spoken);
     return;
   }
 
@@ -399,7 +433,7 @@ function renderStationDetail({ error = null, tick = false } = {}) {
     problem.className = "station-detail-note";
     problem.textContent = error;
     stationsDetail.appendChild(problem);
-    announcePanelState(`${entry.name}, ${entry.systemLabel}. ${error}`);
+    if (!tick) announcePanelState(`${entry.name}, ${entry.systemLabel}. ${error}`);
     return;
   }
   if (!panelBody) {

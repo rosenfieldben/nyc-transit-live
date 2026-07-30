@@ -86,11 +86,13 @@ async function loadPathStops() {
       fillOpacity: 1,
       renderer: stationRenderer,
     });
+    // Built once, used by the popup descriptor and the A1 registry alike.
+    const arrivalsUrl = `/api/path-arrivals/${encodeURIComponent(station.id)}`;
     bindStationPopup(marker, (m) => ({
       station,
       marker: m,
       body: null,
-      url: `/api/path-arrivals/${encodeURIComponent(station.id)}`,
+      url: arrivalsUrl,
       // Unlike the subway/railroad renders there is NO alerts prepend: PATH
       // publishes no service alerts feed, so there is nothing to join. The
       // countdown tick, refresh, and supersession machinery are all inherited
@@ -104,6 +106,25 @@ async function loadPathStops() {
           (routeId) => pathRouteNames.get(routeId) || null,
         ),
     })).addTo(pathStations);
+    registerStation({
+      key: `PATH|${station.id}`,
+      kind: "path",
+      systemLabel: "PATH",
+      noun: "train",
+      id: station.id,
+      name: station.name ?? station.id,
+      lat: station.lat,
+      lon: station.lon,
+      routes: station.routes ?? [],
+      wheelchair: false, // the PATH stops endpoint carries no accessibility field
+      arrivalsUrl,
+      marker,
+      layer: pathStations,
+      // Same route-name resolution the popup renderer uses, so the panel's
+      // sentences say "Newark - World Trade Center" rather than "862".
+      nameFor: (routeId) => pathRouteNames.get(routeId) || null,
+      colorFor: (routeId) => pathRouteColors.get(routeId) ?? PATH_FALLBACK_COLOR,
+    });
   }
   return true;
 }

@@ -78,13 +78,15 @@ async function loadRailroadStations() {
       fillOpacity: 1,
       renderer: stationRenderer,
     });
+    // Built once, used by the popup descriptor and the A1 registry alike.
+    const arrivalsUrl =
+      `/api/railroad-arrivals/${encodeURIComponent(station.system)}` +
+      `/${encodeURIComponent(station.id)}`;
     bindStationPopup(marker, (m) => ({
       station,
       marker: m,
       body: null,
-      url:
-        `/api/railroad-arrivals/${encodeURIComponent(station.system)}` +
-        `/${encodeURIComponent(station.id)}`,
+      url: arrivalsUrl,
       // Prepend any active alerts for this railroad station, scoped to its own
       // system (LIRR/MNR) so a colliding numeric id from another mode never leaks.
       render: (s, b) =>
@@ -96,6 +98,28 @@ async function loadRailroadStations() {
           (routeId) => railroadRouteNames.get(`${s.system}|${routeId}`) || null,
         ),
     })).addTo(railroadStationLayer);
+    registerStation({
+      // The system is part of the key AND the label: LIRR and Metro-North have
+      // independent id spaces that do collide, and a rider searching "Jamaica"
+      // needs to know which railroad they are being offered.
+      key: `${station.system}|${station.id}`,
+      kind: "railroad",
+      systemLabel: station.system === "MNR" ? "Metro-North" : station.system,
+      noun: "train",
+      id: station.id,
+      system: station.system,
+      name: station.name ?? station.id,
+      lat: station.lat,
+      lon: station.lon,
+      routes: station.routes ?? [],
+      wheelchair: false, // the railroad stops endpoint carries no accessibility field
+      arrivalsUrl,
+      marker,
+      layer: railroadStationLayer,
+      // The railroad renderer resolves route names per system; the panel needs the
+      // same resolution so its sentences say "Babylon" rather than "5".
+      nameFor: (routeId) => railroadRouteNames.get(`${station.system}|${routeId}`) || null,
+    });
   }
   return true;
 }

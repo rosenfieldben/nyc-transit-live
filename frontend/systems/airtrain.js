@@ -70,9 +70,37 @@ async function loadAirtrain() {
     // Render on stationPane (z-index 450) like the subway/rail station dots, so the
     // squares sit ABOVE route lines but BELOW the train/bus markers (markerPane 600),
     // matching the station-below-vehicles layering the rest of the map keeps.
-    L.marker([station.lat, station.lon], { icon: airtrainIcon(), pane: "stationPane" })
+    const marker = L.marker([station.lat, station.lon], {
+      icon: airtrainIcon(),
+      pane: "stationPane",
+    })
       .bindPopup(() => airtrainStationPopupHtml(station, routes, nyMinutesSinceMidnight()))
       .addTo(airtrainStationLayer);
+    registerStation({
+      key: `airtrain|${station.id}`,
+      kind: "airtrain",
+      systemLabel: "AirTrain",
+      noun: "train",
+      id: station.id,
+      name: station.name ?? station.id,
+      lat: station.lat,
+      lon: station.lon,
+      // AirTrain stations carry no routes field: the relationship runs the other
+      // way, with each ROUTE listing the stations it serves. Derived here the same
+      // way airtrainStationPopupHtml derives it, so the chips and the detail view
+      // agree about which branches call here.
+      routes: routes.filter((r) => (r.stations ?? []).includes(station.id)).map((r) => r.id),
+      wheelchair: false,
+      // NO LIVE ARRIVALS AT ALL. AirTrain publishes no realtime feed, so there is
+      // nothing to count down to and a ticking countdown would fabricate precision
+      // the data does not have. A null arrivalsUrl is how the panel knows to render
+      // the SCHEDULED headway bands instead, clearly labeled as scheduled. That is
+      // the branch any future feedless system takes, not a special case for this one.
+      arrivalsUrl: null,
+      airtrainRoutes: routes,
+      marker,
+      layer: airtrainStationLayer,
+    });
   }
   return true;
 }

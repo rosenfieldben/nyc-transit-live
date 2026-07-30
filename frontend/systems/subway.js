@@ -201,14 +201,33 @@ async function loadStations() {
       fillOpacity: 1,
       renderer: stationRenderer,
     });
+    // Built once and used twice: the popup descriptor below and the A1 station
+    // registry both need it, and two copies of a URL template is how the two
+    // surfaces would eventually poll different endpoints.
+    const arrivalsUrl = `/api/subway-arrivals/${encodeURIComponent(station.id)}`;
     bindStationPopup(marker, (m) => ({
       station,
       marker: m,
       body: null,
-      url: `/api/subway-arrivals/${encodeURIComponent(station.id)}`,
+      url: arrivalsUrl,
       // Prepend any active subway alerts affecting this station above the arrivals.
       render: (s, b) => stationAlertsBlock("subway", s, b) + subwayArrivalsHtml(s, b),
     })).addTo(stationLayer);
+    registerStation({
+      key: `subway|${station.id}`,
+      kind: "subway",
+      systemLabel: "Subway",
+      noun: "train",
+      id: station.id,
+      name: station.name ?? station.id,
+      lat: station.lat,
+      lon: station.lon,
+      routes: station.routes ?? [],
+      wheelchair: false, // the subway stops endpoint carries no accessibility field
+      arrivalsUrl,
+      marker,
+      layer: stationLayer,
+    });
   }
   return true;
 }

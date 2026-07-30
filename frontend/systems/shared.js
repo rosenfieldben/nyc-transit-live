@@ -195,6 +195,34 @@ const stationRenderer = L.canvas({ padding: 0.5, pane: "stationPane" });
 // newer state). openStation carries the station, its marker, the fetched body,
 // the arrivals fetch `url`, and a kind-specific `render(station, body)`; the
 // fetch/guard/timer skeleton below is otherwise kind-agnostic.
+/* ---------------- The station registry (A1) ---------------- */
+
+// EVERY STATION THE APP HAS LOADED, IN ONE PLACE. It did not exist before A1:
+// each loader fetched its stops, built markers, and dropped the records on the
+// floor, so the station panel had nothing to search. The loaders now register
+// what they loaded as they build each marker, which keeps the arrivals URL and
+// the marker written once per system rather than once per surface.
+//
+// Entries are appended as the loaders resolve, which they do asynchronously and
+// in a race, so the panel must tolerate a partial registry and re-read it rather
+// than snapshot it. searchStations sorts totally, so the display order never
+// depends on which loader won.
+//
+// `key` is system-qualified because station ids collide ACROSS systems: the
+// railroad and ferry id spaces are both bare integers, and the contract tier
+// measured 21 of 24 ferry dock ids colliding with Metro-North station ids. A bare
+// id would silently merge two different places.
+const stationRegistry = [];
+
+// kind drives the arrivals shaping and the vehicle noun; systemLabel is what the
+// rider sees. AirTrain has no live arrivals at all, so it registers with a null
+// arrivalsUrl and the panel renders its scheduled headways instead: system-shape
+// honesty, not a special case, and the same branch a future system with no
+// realtime feed would take.
+function registerStation(entry) {
+  stationRegistry.push(entry);
+}
+
 let stationSeq = 0;
 let stationTimer = null;
 let openStation = null; // { station, marker, body, url, render } while open

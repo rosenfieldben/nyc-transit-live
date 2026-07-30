@@ -652,17 +652,46 @@ function trainLatLng(train, now, state = {}) {
   return [prev_lat + (latitude - prev_lat) * f, prev_lon + (longitude - prev_lon) * f];
 }
 
-// Arrival countdown label from a seconds-until-arrival delta: "now" when due
-// (or past), else rounded to whole minutes.
-function formatCountdown(seconds) {
-  if (seconds == null || Number.isNaN(seconds)) return "";
-  if (seconds < 30) return "now";
+// The countdown DECISION, separated from its wording. A1 needs the same
+// thresholds spoken rather than abbreviated ("4 minutes", not "4 min", which a
+// screen reader reads as "four min"), and the one thing that must not happen is
+// two functions rounding or bucketing time differently. So the rounding lives
+// here once and both formatters below are thin wordings of this result.
+// Returns {kind: "blank" | "now" | "min" | "hm", mins, hours, rem}.
+function countdownParts(seconds) {
+  if (seconds == null || Number.isNaN(seconds)) return { kind: "blank" };
+  if (seconds < 30) return { kind: "now" };
   const mins = Math.round(seconds / 60);
-  if (mins < 100) return `${mins} min`;
   // Hours tier for the long railroad branch-end horizons (e.g. 6000s -> "1 h 40
-  // min"). This is the only change from the minutes-only version and only fires
-  // at 100+ minutes, which subway countdowns effectively never reach.
-  return `${Math.floor(mins / 60)} h ${mins % 60} min`;
+  // min"); only fires at 100+ minutes, which subway countdowns never reach.
+  if (mins < 100) return { kind: "min", mins };
+  return { kind: "hm", hours: Math.floor(mins / 60), rem: mins % 60 };
+}
+
+// Arrival countdown label from a seconds-until-arrival delta: "now" when due
+// (or past), else rounded to whole minutes. The VISUAL wording, used by every
+// popup; its output is unchanged by the countdownParts extraction above and the
+// existing tests are what prove that.
+function formatCountdown(seconds) {
+  const p = countdownParts(seconds);
+  if (p.kind === "blank") return "";
+  if (p.kind === "now") return "now";
+  if (p.kind === "min") return `${p.mins} min`;
+  return `${p.hours} h ${p.rem} min`;
+}
+
+// The SPOKEN wording of the same decision, for the A1 station panel. Units are
+// written out and pluralized, because this text is read aloud rather than
+// scanned. Sharing countdownParts is what keeps "4 min" and "in 4 minutes" from
+// ever disagreeing about which minute it is.
+function spokenCountdown(seconds) {
+  const p = countdownParts(seconds);
+  if (p.kind === "blank") return "";
+  if (p.kind === "now") return "now";
+  const unit = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  if (p.kind === "min") return `in ${unit(p.mins, "minute")}`;
+  if (!p.rem) return `in ${unit(p.hours, "hour")}`;
+  return `in ${unit(p.hours, "hour")} ${unit(p.rem, "minute")}`;
 }
 
 // Arrivals buckets in a stable display order for a station popup. The backends
@@ -1276,6 +1305,271 @@ async function retryUntil(fn, { baseMs, capMs, sleep = (ms) => new Promise((r) =
   }
 }
 
+/* ==================================================================
+   A1: the accessible station surface
+   ==================================================================
+
+   Pure logic for frontend/stations.js: a searchable list of every system's
+   stations and a text rendering of one station's live arrivals. The rendering
+   half deliberately consumes the SAME bucket ordering and countdown decision the
+   map popups use, so the two surfaces cannot drift into describing the same feed
+   differently. Everything here is pure and node-tested; the DOM lives in
+   stations.js.
+
+   This is also the architectural parent of the future terminal boards, so
+   nothing below knows what a terminal is. */
+
+// How many result rows the panel shows before it stops and says how many it is
+// holding back. Long enough that a real search is rarely truncated, short enough
+// that a screen reader is never handed hundreds of rows to walk.
+const STATION_RESULT_CAP = 50;
+
+// Fold a name to its comparison form: decomposed, diacritics stripped,
+// lowercased. Station names carry accents in the wild, and a rider typing
+// unaccented ASCII must still find them, which is why this is not just
+// toLowerCase.
+function foldStationName(name) {
+  return String(name ?? "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase();
+}
+
+// Split a query into folded tokens. Tokenizing (rather than one substring test on
+// the whole query) is what makes "grand cen" match "Grand Central": every token
+// must appear somewhere in the name, in any order.
+function stationQueryTokens(query) {
+  return foldStationName(query).split(/\s+/).filter(Boolean);
+}
+
+function stationMatchesTokens(foldedName, tokens) {
+  return tokens.every((token) => foldedName.includes(token));
+}
+
+// Search the union of every system's stations.
+//
+// Returns {prompt, rows, total, hidden}. `prompt` true means the query was empty
+// and the caller should show its "type to search" line rather than a list: 900
+// rows is not a useful answer to no question, and it is a hostile one to walk
+// with a keyboard.
+//
+// ORDERING is prefix-matches-first, then by name, then by system, so typing
+// "grand" puts "Grand Central" above "East Grand Street" and the order is total
+// (never dependent on the input order of the stop tables, which load
+// asynchronously and in a race). `rows` is capped; `hidden` is how many matches
+// were withheld, so the caller can say so honestly instead of silently
+// truncating.
+function searchStations(stations, query, cap = STATION_RESULT_CAP) {
+  const tokens = stationQueryTokens(query);
+  if (!tokens.length) return { prompt: true, rows: [], total: 0, hidden: 0 };
+  const matched = [];
+  for (const station of stations || []) {
+    const folded = foldStationName(station.name ?? station.id);
+    if (stationMatchesTokens(folded, tokens)) matched.push({ station, folded });
+  }
+  const first = tokens[0];
+  matched.sort((a, b) => {
+    const ap = a.folded.startsWith(first) ? 0 : 1;
+    const bp = b.folded.startsWith(first) ? 0 : 1;
+    if (ap !== bp) return ap - bp;
+    if (a.folded !== b.folded) return a.folded < b.folded ? -1 : 1;
+    const asys = a.station.systemLabel ?? "";
+    const bsys = b.station.systemLabel ?? "";
+    return asys < bsys ? -1 : asys > bsys ? 1 : 0;
+  });
+  return {
+    prompt: false,
+    rows: matched.slice(0, cap).map((m) => m.station),
+    total: matched.length,
+    hidden: Math.max(0, matched.length - cap),
+  };
+}
+
+// The overflow line's text, or "" when nothing was withheld. Worded as an
+// instruction rather than a count alone, because the useful thing to tell someone
+// who cannot see the list is what to DO about it.
+function stationOverflowLine(hidden) {
+  if (!hidden) return "";
+  return `${hidden} more ${hidden === 1 ? "station" : "stations"} match; keep typing to narrow`;
+}
+
+// ---- Arrivals, shaped once and rendered twice ----
+
+// Turn one arrivals payload into the structure both the popup markup and the
+// panel text are built from: {ageSeconds, buckets: [{name, rows: [...]}]}.
+//
+// `kind` selects the bucket source and ordering, and the four cases are exactly
+// the four the popups already implement: subway and railroad and PATH bucket
+// body.directions (subway by compass, the others by their own orders), ferry
+// buckets body.routes by name. The orderings come from the SAME helpers the
+// popups call, so a change to either is a change to both.
+//
+// Each row carries what a rider needs and nothing derived from the clock except
+// `seconds`: routeId, routeName (resolved by the caller), trainNum, mode
+// ("arriving" or "departing", ferry only), and seconds-until. Keeping the clock
+// out of the identity fields is what lets announcementWorthy below tell a real
+// change from a tick.
+const SUBWAY_BUCKET_ORDER = ["Northbound", "Southbound"];
+
+function shapeStationArrivals(kind, body, now, opts = {}) {
+  const nameFor = opts.nameFor || (() => null);
+  const payload = body || {};
+  let raw;
+  if (kind === "ferry") {
+    raw = orderedFerryBuckets(payload.routes);
+  } else if (kind === "railroad") {
+    raw = orderedRailroadBuckets(payload.directions);
+  } else if (kind === "path") {
+    raw = orderedPathBuckets(payload.directions);
+  } else {
+    raw = orderedBuckets(SUBWAY_BUCKET_ORDER, payload.directions);
+  }
+  const buckets = raw.map(([name, rows]) => ({
+    name,
+    rows: (rows || []).map((row) => {
+      const display = kind === "ferry" ? ferryArrivalDisplay(row, now) : null;
+      const seconds = display ? display.seconds : row.arrival - now;
+      return {
+        routeId: row.route_id ?? null,
+        routeName: row.route_id ? nameFor(row.route_id) : null,
+        trainNum: row.train_num ?? null,
+        mode: display ? display.mode : "arriving",
+        seconds,
+        // The ABSOLUTE instant this row is about, kept alongside the countdown
+        // rather than derived from it later. Two consumers need it and both would
+        // otherwise reconstruct it as now + seconds: the clock label in the
+        // sentence, and announcementWorthy, which can only tell a real change
+        // from a tick by comparing absolute times.
+        at: seconds == null || Number.isNaN(seconds) ? null : now + seconds,
+      };
+    }),
+  }));
+  return {
+    // null rather than 0 when the payload carries no fetched_at, so the caller
+    // can tell "fresh" from "unknown" the way feedAgeLine already does.
+    ageSeconds: payload.fetched_at == null ? null : now - payload.fetched_at,
+    buckets,
+  };
+}
+
+// The wall-clock label for an arrival instant, in NEW YORK time regardless of
+// where the browser is: the rider is asking about a New York train, and a
+// countdown plus a clock time in a different zone is worse than no clock time.
+// The zone is a parameter so the node tests can pin an exact string instead of
+// asserting against the runner's locale.
+function clockTimeLabel(epochSeconds, timeZone = "America/New_York") {
+  if (epochSeconds == null || Number.isNaN(epochSeconds)) return "";
+  return new Date(epochSeconds * 1000).toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone,
+  });
+}
+
+// One arrival as a sentence a screen reader can read straight through.
+//
+// The shape is "<route> <noun> <countdown>, <clock> <what the clock is>":
+// "Babylon train in 4 minutes, 8:12 AM arrival". Route NAME is preferred over
+// route id because "Babylon" is what a rider calls it and "5" is not; the id is
+// the fallback. The noun and verb carry the mode, so a ferry dwelling at its dock
+// says "departs" rather than implying it is still inbound.
+//
+// THE CLOCK LABEL SAYS WHICH INSTANT IT IS, and for most systems that is the
+// ARRIVAL, not the departure. The phase spec's example sentence reads "8:12
+// departure", but the subway, railroad and PATH arrivals endpoints carry an
+// `arrival` field and no departure, so calling it a departure would be a small
+// lie of exactly the kind this codebase spends its comments avoiding. Ferry rows
+// DO carry a departure and say so when that is the instant being counted down.
+//
+// The train number, where the feed has one, goes last as an aside: it identifies
+// the train for someone who cares and is noise for everyone else.
+function arrivalSentence(row, noun = "train", timeZone = "America/New_York") {
+  const label = row.routeName || row.routeId || "";
+  const countdown = spokenCountdown(row.seconds);
+  const departing = row.mode === "departing";
+  const parts = [label, noun, departing ? "departs" : "", countdown].filter(Boolean);
+  let sentence = parts.join(" ");
+  const clock = clockTimeLabel(row.at, timeZone);
+  if (clock) sentence += `, ${clock} ${departing ? "departure" : "arrival"}`;
+  return row.trainNum ? `${sentence}, train ${row.trainNum}` : sentence;
+}
+
+// ---- Live region discipline ----
+
+// How far a bucket's next arrival must move before it is worth interrupting
+// someone to say so. Under a minute is prediction jitter: the feeds revise
+// arrival estimates by a few seconds on every poll, and announcing that is how a
+// live region becomes something a rider turns off.
+const ANNOUNCE_LEAD_SHIFT_S = 60;
+
+// A bucket's comparable signature: which routes are present (as a SORTED
+// multiset, so a reordered payload is not a change) and when the next one
+// arrives. Sorted rather than sequential is deliberate: the backends do not
+// promise a stable row order, and announcing on a reshuffle of the same trains
+// would be noise.
+function arrivalsSignature(shaped) {
+  const buckets = {};
+  for (const bucket of (shaped && shaped.buckets) || []) {
+    // THE IDENTITY IS WHAT THE RIDER CAN SEE, which is route plus train number
+    // where the feed carries one. That choice decides the swapped-lead case: a
+    // railroad train 8412 replaced by 8414 at nearly the same minute changes the
+    // rendered sentence, so it is news and this key changes with it. The same
+    // swap on the subway, where no train number exists and every "1" train reads
+    // identically, changes nothing a rider could perceive, so the key is stable
+    // and the live region stays quiet. Announcing an invisible identity change
+    // would be indistinguishable from noise to the person listening.
+    const routes = bucket.rows
+      .map((r) => `${r.routeId ?? "?"}|${r.trainNum ?? ""}`)
+      .sort();
+    // Lead arrival as the ABSOLUTE instant the shaped row already carries.
+    // Comparing absolute times is what makes a tick a non-event: the same train
+    // an hour from now is the same instant on every tick, while `seconds` counts
+    // down by one each time.
+    const leads = bucket.rows.map((r) => r.at).filter((t) => t != null);
+    buckets[bucket.name] = { routes, lead: leads.length ? Math.min(...leads) : null };
+  }
+  return buckets;
+}
+
+// Should the live region speak?
+//
+// Announce when the ARRIVALS changed in a way a rider would care about:
+//   1. a bucket appeared or vanished (a direction started or stopped running),
+//   2. a bucket's set of routes changed (a train appeared, vanished, or the next
+//      one is on a different line),
+//   3. a bucket's next arrival moved by more than ANNOUNCE_LEAD_SHIFT_S (the
+//      wait got materially longer or shorter).
+//
+// Stay silent on everything else, and the case that matters most is the
+// countdown tick: none of the three clauses reads the clock, so a second passing
+// can never trip them. Without that, a screen reader narrates "4 minutes...
+// 3 minutes..." forever, which is hostile enough that the rider disables the
+// feature and loses the arrivals with it.
+//
+// `prev` and `next` are shaped payloads. A first render (no prev) announces once,
+// because the arrivals appearing IS the news.
+function announcementWorthy(prev, next) {
+  if (!next) return false;
+  if (!prev) return true;
+  const before = arrivalsSignature(prev);
+  const after = arrivalsSignature(next);
+  const names = new Set([...Object.keys(before), ...Object.keys(after)]);
+  for (const name of names) {
+    const a = before[name];
+    const b = after[name];
+    if (!a || !b) return true; // clause 1: a bucket came or went
+    if (a.routes.length !== b.routes.length) return true; // clause 2
+    for (let i = 0; i < a.routes.length; i++) {
+      if (a.routes[i] !== b.routes[i]) return true; // clause 2
+    }
+    if (a.lead == null !== (b.lead == null)) return true;
+    if (a.lead != null && b.lead != null && Math.abs(b.lead - a.lead) > ANNOUNCE_LEAD_SHIFT_S) {
+      return true; // clause 3
+    }
+  }
+  return false;
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     esc, routeColor, lineColor, staleness, emptyFeedDecision, noteClockOffset,
@@ -1296,5 +1590,10 @@ if (typeof module !== "undefined" && module.exports) {
     PATH_ROUTE_MAX_SLICE, PATH_ROUTE_ACCEPT_DIST, computePathRouteSlice,
     FERRY_FALLBACK_COLOR, orderedFerryBuckets, ferryArrivalDisplay, ferryBoatIconState,
     ferryStatusText, ferrySpeedKnots, ferryBoatPopupHtml, ferryArrivalsHtml,
+    // A1: the accessible station surface.
+    countdownParts, spokenCountdown, STATION_RESULT_CAP, SUBWAY_BUCKET_ORDER,
+    foldStationName, stationQueryTokens, stationMatchesTokens, searchStations,
+    stationOverflowLine, shapeStationArrivals, arrivalSentence, clockTimeLabel,
+    ANNOUNCE_LEAD_SHIFT_S, arrivalsSignature, announcementWorthy,
   };
 }

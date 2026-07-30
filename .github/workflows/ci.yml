@@ -42,7 +42,9 @@ jobs:
           node-version: "22"
           cache: npm
       # Dev-only deps for the Playwright smoke suite (the app itself is buildless);
-      # npm ci installs the exact @playwright/test pinned in package-lock.json.
+      # npm ci installs the exact @playwright/test and @axe-core/playwright pinned in
+      # package-lock.json. Nothing new to run: the config's testDir picks up
+      # a11y.spec.js with the rest, so the accessibility scan is already gated here.
       - run: npm ci
       # Chromium only, matching the single-browser smoke config; --with-deps pulls
       # the system libraries the headless browser needs on the runner.

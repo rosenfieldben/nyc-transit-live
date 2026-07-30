@@ -18,6 +18,13 @@ module.exports = defineConfig({
     baseURL: `http://127.0.0.1:${PORT}`,
     trace: "on-first-retry",
   },
+  // AS OF A1 THE LEGACY SPECS RUN WITH THE STATION PANEL OPEN. Desktop Chrome is
+  // 1280 wide, above the 1100px dock breakpoint, so the panel is docked open on
+  // load and the map is narrower than it used to be. That is deliberate: the
+  // docked-open desktop page is the product now, and the suite should test the real
+  // page rather than a configuration no rider sees. stations.spec.js pins the
+  // default in both directions. If a legacy spec ever flakes on the changed
+  // geometry, that spec gets fixed; the default does not get hidden from the tests.
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
     command: "node tests/e2e/serve.js",

@@ -1,5 +1,5 @@
 {
-  "//": "Dev/test tooling ONLY, for the hermetic Playwright e2e smoke suite under tests/e2e. The app itself has NO build step: it ships as static files in frontend/ (index.html plus plain <script> tags, no bundler). Nothing here is served to users or imported by the app; this file exists solely so CI and local dev can install @playwright/test. The frontend unit tests still run with a bare `node --test`, no dependencies.",
+  "//": "Dev/test tooling ONLY, for the hermetic Playwright e2e smoke suite under tests/e2e. The app itself has NO build step: it ships as static files in frontend/ (index.html plus plain <script> tags, no bundler). Nothing here is served to users or imported by the app; this file exists solely so CI and local dev can install @playwright/test and @axe-core/playwright (the accessibility scan in tests/e2e/a11y.spec.js, which injects axe into the page at test time only). The frontend unit tests still run with a bare `node --test`, no dependencies.",
   "name": "nyc-transit-live-e2e",
   "version": "0.0.0",
   "private": true,
@@ -9,6 +9,7 @@
     "serve": "node tests/e2e/serve.js"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.12.1",
     "@playwright/test": "1.62.0"
   }
 }

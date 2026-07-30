@@ -77,11 +77,13 @@ async function loadFerryStops() {
       fillOpacity: 1,
       renderer: stationRenderer,
     });
+    // Built once, used by the popup descriptor and the A1 registry alike.
+    const arrivalsUrl = `/api/ferry-arrivals/${encodeURIComponent(stop.id)}`;
     bindStationPopup(marker, (m) => ({
       station: stop,
       marker: m,
       body: null,
-      url: `/api/ferry-arrivals/${encodeURIComponent(stop.id)}`,
+      url: arrivalsUrl,
       // Prepend a dock's ferry alerts, joined through the shared alertsIndex: the
       // UNION of STOP-scoped alerts (ferry, stop_id) and ROUTE-scoped alerts for
       // every route serving this dock. s.routes is the routes-per-station index the
@@ -102,6 +104,26 @@ async function loadFerryStops() {
           (routeId) => ferryColorFor(routeId),
         ),
     })).addTo(ferryDocks);
+    registerStation({
+      key: `ferry|${stop.id}`,
+      kind: "ferry",
+      systemLabel: "Ferry",
+      noun: "boat",
+      id: stop.id,
+      name: stop.name ?? stop.id,
+      lat: stop.lat,
+      lon: stop.lon,
+      routes: stop.routes ?? [],
+      // THE ONE SYSTEM WITH REAL ACCESSIBILITY DATA. Ferry stops carry
+      // wheelchair_boarding from GTFS; no other stops endpoint does, so the panel
+      // shows the indicator here and stays silent elsewhere rather than implying
+      // the others are inaccessible.
+      wheelchair: stop.wheelchair === true,
+      arrivalsUrl,
+      marker,
+      layer: ferryDocks,
+      nameFor: (routeId) => ferryRouteNames.get(routeId) || null,
+    });
   }
   return true;
 }

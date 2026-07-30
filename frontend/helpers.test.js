@@ -21,6 +21,18 @@ const {
   shouldRefresh,
   noteClockOffset,
   formatCountdown,
+  spokenCountdown,
+  countdownParts,
+  clockTimeLabel,
+  STATION_RESULT_CAP,
+  foldStationName,
+  stationQueryTokens,
+  searchStations,
+  stationOverflowLine,
+  shapeStationArrivals,
+  arrivalSentence,
+  ANNOUNCE_LEAD_SHIFT_S,
+  announcementWorthy,
   trainLatLng,
   polylineCumLengths,
   pointAtArcLength,
@@ -1690,4 +1702,214 @@ test("C2 alertsFreshnessBasis is the WORST system's fetched_at (the F1 partial c
   assert.equal(alertsFreshnessBasis({ fetched_at: 5000 }), 5000);
   assert.equal(alertsFreshnessBasis({ fetched_at: 5000, systems: {} }), 5000);
   assert.equal(alertsFreshnessBasis({ served_at: 5000 }), null); // never served_at
+});
+
+/* ---------------- A1: the accessible station surface ---------------- */
+
+test("countdownParts is the one rounding decision, and both wordings agree with it", () => {
+  // The extraction's whole purpose: the visual and spoken labels must never
+  // disagree about which minute it is. Same input, same tier, every time.
+  for (const seconds of [null, 0, 29, 30, 59, 60, 90, 5940, 6000, 36000]) {
+    const parts = countdownParts(seconds);
+    const visual = formatCountdown(seconds);
+    const spoken = spokenCountdown(seconds);
+    assert.equal(visual === "", parts.kind === "blank");
+    assert.equal(spoken === "", parts.kind === "blank");
+    assert.equal(visual === "now", parts.kind === "now");
+    assert.equal(spoken === "now", parts.kind === "now");
+  }
+  // And the wordings themselves, pinned so a refactor cannot quietly reword them.
+  assert.equal(formatCountdown(240), "4 min");
+  assert.equal(spokenCountdown(240), "in 4 minutes");
+  assert.equal(spokenCountdown(60), "in 1 minute"); // singular, not "1 minutes"
+  assert.equal(spokenCountdown(6000), "in 1 hour 40 minutes");
+  // 60 minutes stays MINUTES, not "1 hour", because the hours tier begins at 100
+  // minutes and that boundary is shared with the visual label on purpose: the two
+  // wordings agreeing matters more than either one reading ideally on its own.
+  assert.equal(formatCountdown(3600), "60 min");
+  assert.equal(spokenCountdown(3600), "in 60 minutes");
+  assert.equal(spokenCountdown(7200), "in 2 hours"); // no trailing "0 minutes"
+  assert.equal(spokenCountdown(10), "now");
+  assert.equal(spokenCountdown(null), "");
+});
+
+test("station search folds case and diacritics, and tokenizes", () => {
+  assert.equal(foldStationName("Grand Céntral"), "grand central");
+  assert.equal(foldStationName("HOBOKEN"), "hoboken");
+  assert.equal(foldStationName(null), "");
+  assert.deepEqual(stationQueryTokens("  grand   CEN "), ["grand", "cen"]);
+  assert.deepEqual(stationQueryTokens("   "), []);
+
+  const stops = [
+    { id: "1", name: "Grand Central", systemLabel: "Subway" },
+    { id: "2", name: "East Grand Street", systemLabel: "Subway" },
+    { id: "3", name: "Grand Army Plaza", systemLabel: "Subway" },
+    { id: "4", name: "Astoria", systemLabel: "Ferry" },
+  ];
+  // Tokenized, so a partial second word still finds it: the spec's own example.
+  assert.deepEqual(
+    searchStations(stops, "grand cen").rows.map((r) => r.name),
+    ["Grand Central"],
+  );
+  // Diacritic-insensitive in BOTH directions: unaccented query, accented name.
+  assert.deepEqual(
+    searchStations([{ id: "5", name: "Céntral Park" }], "central").rows.map((r) => r.name),
+    ["Céntral Park"],
+  );
+  // Prefix matches sort above interior ones, then alphabetically.
+  assert.deepEqual(
+    searchStations(stops, "grand").rows.map((r) => r.name),
+    ["Grand Army Plaza", "Grand Central", "East Grand Street"],
+  );
+  // An empty query is a PROMPT, not 900 rows: the caller shows a hint instead.
+  const empty = searchStations(stops, "   ");
+  assert.equal(empty.prompt, true);
+  assert.deepEqual(empty.rows, []);
+  // No match is not a prompt: it is an honest zero.
+  const none = searchStations(stops, "zzz");
+  assert.equal(none.prompt, false);
+  assert.equal(none.total, 0);
+});
+
+test("station search caps results and reports how many it withheld", () => {
+  const many = Array.from({ length: 120 }, (_, i) => ({
+    id: String(i),
+    // Zero-padded so the alphabetical tiebreak is deterministic.
+    name: `Grand ${String(i).padStart(3, "0")}`,
+  }));
+  const capped = searchStations(many, "grand");
+  assert.equal(capped.rows.length, STATION_RESULT_CAP);
+  assert.equal(capped.total, 120);
+  assert.equal(capped.hidden, 120 - STATION_RESULT_CAP);
+  assert.equal(stationOverflowLine(capped.hidden), "70 more stations match; keep typing to narrow");
+  // Singular, and silent when nothing was withheld.
+  assert.equal(stationOverflowLine(1), "1 more station match; keep typing to narrow");
+  assert.equal(stationOverflowLine(0), "");
+  // An explicit cap is honored, so a caller (or a test) can shrink it.
+  assert.equal(searchStations(many, "grand", 3).rows.length, 3);
+  assert.equal(searchStations(many, "grand", 3).hidden, 117);
+});
+
+test("shapeStationArrivals buckets each system the way its popup already does", () => {
+  const now = 1_700_000_000;
+  // Subway: compass order, and a bucket with no trains is not fabricated.
+  const subway = shapeStationArrivals(
+    "subway",
+    { fetched_at: now - 3, directions: { Southbound: [{ route_id: "3", arrival: now + 60 }] } },
+    now,
+  );
+  assert.deepEqual(subway.buckets.map((b) => b.name), ["Southbound"]);
+  assert.equal(subway.ageSeconds, 3);
+  // Railroad: Inbound first, train_num carried, route name resolved by the caller.
+  const rail = shapeStationArrivals(
+    "railroad",
+    {
+      fetched_at: now,
+      directions: {
+        Outbound: [{ route_id: "6", arrival: now + 900 }],
+        Inbound: [{ route_id: "5", train_num: "8412", arrival: now + 240 }],
+      },
+    },
+    now,
+    { nameFor: (r) => (r === "5" ? "Babylon" : null) },
+  );
+  assert.deepEqual(rail.buckets.map((b) => b.name), ["Inbound", "Outbound"]);
+  assert.equal(rail.buckets[0].rows[0].routeName, "Babylon");
+  assert.equal(rail.buckets[0].rows[0].trainNum, "8412");
+  assert.equal(rail.buckets[0].rows[0].seconds, 240);
+  assert.equal(rail.buckets[0].rows[0].at, now + 240);
+  // Ferry: buckets are route names, and a dwelling boat counts to its DEPARTURE.
+  const ferry = shapeStationArrivals(
+    "ferry",
+    { fetched_at: now, routes: { Astoria: [{ route_id: "AS", arrival: now - 30, departure: now + 360 }] } },
+    now,
+  );
+  assert.deepEqual(ferry.buckets.map((b) => b.name), ["Astoria"]);
+  assert.equal(ferry.buckets[0].rows[0].mode, "departing");
+  assert.equal(ferry.buckets[0].rows[0].seconds, 360);
+  // No fetched_at is "unknown", not "fresh": null, so the caller can tell them apart.
+  assert.equal(shapeStationArrivals("subway", { directions: {} }, now).ageSeconds, null);
+});
+
+test("arrivalSentence reads as a sentence, and names the instant honestly", () => {
+  const now = 1_700_000_000; // 2023-11-14T22:13:20Z, 5:13 PM in New York
+  const rail = shapeStationArrivals(
+    "railroad",
+    { fetched_at: now, directions: { Inbound: [{ route_id: "5", train_num: "8412", arrival: now + 240 }] } },
+    now,
+    { nameFor: () => "Babylon" },
+  );
+  assert.equal(
+    arrivalSentence(rail.buckets[0].rows[0]),
+    "Babylon train in 4 minutes, 5:17 PM arrival, train 8412",
+  );
+  // Route id is the fallback when the name is unknown, and the noun is the caller's.
+  const subway = shapeStationArrivals(
+    "subway",
+    { fetched_at: now, directions: { Northbound: [{ route_id: "1", arrival: now + 10 }] } },
+    now,
+  );
+  assert.equal(arrivalSentence(subway.buckets[0].rows[0]), "1 train now, 5:13 PM arrival");
+  // Ferry: "departs" and a DEPARTURE label, because that is the field being counted.
+  const ferry = shapeStationArrivals(
+    "ferry",
+    { fetched_at: now, routes: { Astoria: [{ route_id: "AS", arrival: now - 30, departure: now + 360 }] } },
+    now,
+  );
+  assert.equal(
+    arrivalSentence(ferry.buckets[0].rows[0], "boat"),
+    "AS boat departs in 6 minutes, 5:19 PM departure",
+  );
+  // The zone is New York, not the runner's: the same instant in UTC reads differently.
+  assert.equal(clockTimeLabel(now, "UTC"), "10:13 PM");
+  assert.equal(clockTimeLabel(now, "America/New_York"), "5:13 PM");
+  assert.equal(clockTimeLabel(null), "");
+});
+
+test("announcementWorthy speaks on real change and stays silent on the tick", () => {
+  const now = 1_700_000_000;
+  const shape = (dirs, at = now) =>
+    shapeStationArrivals("subway", { fetched_at: at, directions: dirs }, at);
+  const base = shape({ Northbound: [{ route_id: "1", arrival: now + 240 }] });
+
+  // THE CASE THE HELPER EXISTS FOR: one second later, nothing else changed. A
+  // screen reader narrating "4 minutes... 3 minutes..." forever is why.
+  assert.equal(announcementWorthy(base, shape({ Northbound: [{ route_id: "1", arrival: now + 240 }] }, now + 1)), false);
+  // Still silent a full minute later: the tick is never the news, at any distance.
+  assert.equal(announcementWorthy(base, shape({ Northbound: [{ route_id: "1", arrival: now + 240 }] }, now + 60)), false);
+
+  // A train appears: announce.
+  assert.equal(
+    announcementWorthy(base, shape({ Northbound: [{ route_id: "1", arrival: now + 240 }, { route_id: "2", arrival: now + 90 }] })),
+    true,
+  );
+  // A train vanishes: announce.
+  assert.equal(announcementWorthy(base, shape({ Northbound: [] })), true);
+  // The route changed even though the count did not: announce.
+  assert.equal(announcementWorthy(base, shape({ Northbound: [{ route_id: "7", arrival: now + 240 }] })), true);
+  // A whole direction stopped running: announce.
+  assert.equal(announcementWorthy(base, shape({})), true);
+  // First render: the arrivals appearing IS the news.
+  assert.equal(announcementWorthy(null, base), true);
+
+  // Prediction jitter under the threshold: silent. The feeds revise estimates by
+  // a few seconds every poll and announcing that is how a live region gets muted.
+  assert.equal(
+    announcementWorthy(base, shape({ Northbound: [{ route_id: "1", arrival: now + 240 + ANNOUNCE_LEAD_SHIFT_S - 1 }] })),
+    false,
+  );
+  // Past the threshold: the wait really did change, so say so.
+  assert.equal(
+    announcementWorthy(base, shape({ Northbound: [{ route_id: "1", arrival: now + 240 + ANNOUNCE_LEAD_SHIFT_S + 1 }] })),
+    true,
+  );
+
+  // A REORDERED payload carrying the same trains is not a change. The backends do
+  // not promise a row order, so announcing on a reshuffle would be pure noise.
+  const two = shape({ Northbound: [{ route_id: "1", arrival: now + 240 }, { route_id: "2", arrival: now + 600 }] });
+  const flipped = shape({ Northbound: [{ route_id: "2", arrival: now + 600 }, { route_id: "1", arrival: now + 240 }] });
+  assert.equal(announcementWorthy(two, flipped), false);
+  // But a reorder that ALSO moves the lead arrival is a change, and is announced.
+  const sooner = shape({ Northbound: [{ route_id: "2", arrival: now + 600 }, { route_id: "1", arrival: now + 60 }] });
+  assert.equal(announcementWorthy(two, sooner), true);
 });

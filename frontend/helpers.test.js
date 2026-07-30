@@ -1913,3 +1913,55 @@ test("announcementWorthy speaks on real change and stays silent on the tick", ()
   const sooner = shape({ Northbound: [{ route_id: "2", arrival: now + 600 }, { route_id: "1", arrival: now + 60 }] });
   assert.equal(announcementWorthy(two, sooner), true);
 });
+
+test("announcementWorthy on a REPLACED lead train: visible identity decides", () => {
+  // The case the A1 review asked to settle: the lead train is a DIFFERENT train
+  // arriving at nearly the same time. Route set unchanged, delta under the
+  // threshold. Announce, or stay silent?
+  //
+  // The ruling implemented here: announce only when the rider could perceive it.
+  // The signature keys on route plus train number, so the answer differs by
+  // system, and it differs for a reason rather than by accident.
+  const now = 1_700_000_000;
+
+  // RAILROAD, which renders a train number. 8412 is pulled and 8414 runs 10
+  // seconds later: the sentence a rider hears changes from "train 8412" to
+  // "train 8414", so staying silent would leave the panel saying one thing and
+  // the live region having claimed another. Announce.
+  const railBefore = shapeStationArrivals(
+    "railroad",
+    { fetched_at: now, directions: { Inbound: [{ route_id: "5", train_num: "8412", arrival: now + 240 }] } },
+    now,
+  );
+  const railAfter = shapeStationArrivals(
+    "railroad",
+    { fetched_at: now, directions: { Inbound: [{ route_id: "5", train_num: "8414", arrival: now + 250 }] } },
+    now,
+  );
+  assert.equal(announcementWorthy(railBefore, railAfter), true);
+
+  // SUBWAY, which renders no train number. One "1" train replaced by another "1"
+  // train 10 seconds later is, to anyone reading or hearing the panel, the same
+  // sentence: "1 train in 4 minutes". Nothing perceptible changed, and announcing
+  // an identity the surface never showed is indistinguishable from noise. Silent.
+  const subBefore = shapeStationArrivals(
+    "subway",
+    { fetched_at: now, directions: { Northbound: [{ route_id: "1", trip_id: "A", arrival: now + 240 }] } },
+    now,
+  );
+  const subAfter = shapeStationArrivals(
+    "subway",
+    { fetched_at: now, directions: { Northbound: [{ route_id: "1", trip_id: "B", arrival: now + 250 }] } },
+    now,
+  );
+  assert.equal(announcementWorthy(subBefore, subAfter), false);
+
+  // And the boundary still holds under a swap: if the replacement is far enough
+  // out to change the wait, clause 3 fires regardless of visible identity.
+  const subLater = shapeStationArrivals(
+    "subway",
+    { fetched_at: now, directions: { Northbound: [{ route_id: "1", trip_id: "B", arrival: now + 240 + ANNOUNCE_LEAD_SHIFT_S + 1 }] } },
+    now,
+  );
+  assert.equal(announcementWorthy(subBefore, subLater), true);
+});

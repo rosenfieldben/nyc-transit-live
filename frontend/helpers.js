@@ -1510,7 +1510,17 @@ const ANNOUNCE_LEAD_SHIFT_S = 60;
 function arrivalsSignature(shaped) {
   const buckets = {};
   for (const bucket of (shaped && shaped.buckets) || []) {
-    const routes = bucket.rows.map((r) => String(r.routeId ?? "?")).sort();
+    // THE IDENTITY IS WHAT THE RIDER CAN SEE, which is route plus train number
+    // where the feed carries one. That choice decides the swapped-lead case: a
+    // railroad train 8412 replaced by 8414 at nearly the same minute changes the
+    // rendered sentence, so it is news and this key changes with it. The same
+    // swap on the subway, where no train number exists and every "1" train reads
+    // identically, changes nothing a rider could perceive, so the key is stable
+    // and the live region stays quiet. Announcing an invisible identity change
+    // would be indistinguishable from noise to the person listening.
+    const routes = bucket.rows
+      .map((r) => `${r.routeId ?? "?"}|${r.trainNum ?? ""}`)
+      .sort();
     // Lead arrival as the ABSOLUTE instant the shaped row already carries.
     // Comparing absolute times is what makes a tick a non-event: the same train
     // an hour from now is the same instant on every tick, while `seconds` counts

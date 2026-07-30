@@ -434,6 +434,43 @@ test("A1q. reopening after a failed load keeps the error, and never fakes Loadin
   expect(await page.evaluate(() => panelTimer === null), "an errored station arms no tick").toBe(true);
 });
 
+test("A1r. two refresh cycles of unchanged data produce not one extra announcement", async ({ page }) => {
+  // THIS SPEC EXISTS BECAUSE A DEDUP WAS REMOVED. announcePanelState used to compare
+  // the live region's own textContent against the new text and skip the write if they
+  // matched, which meant nobody could tell what that check was really preventing.
+  // It is gone; this pins what has to be true without it, and it counts WRITES rather
+  // than comparing final text, because assigning an identical string to a live region
+  // still mutates it and a screen reader still speaks.
+  await open(page);
+  await page.locator("#stations-search").fill("times");
+  await page.locator("#stations-results button.station-row").first().click();
+  await expect(page.locator("#stations-detail")).toContainText("Northbound");
+  await expect(page.locator("#stations-announce")).toContainText("Times Sq");
+
+  // Count every mutation of the region from here on. The first announcement has
+  // already happened; everything after this point is repaint and refresh.
+  await page.evaluate(() => {
+    window.__announceWrites = 0;
+    new MutationObserver(() => {
+      window.__announceWrites++;
+    }).observe(document.getElementById("stations-announce"), {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
+  });
+
+  // 31 seconds covers two full 15s background refresh cycles AND 31 countdown ticks,
+  // so both repeat paths are on trial at once: the tick that must never speak, and the
+  // refresh whose payload is byte-identical every time (the mock serves one fixture).
+  await page.clock.runFor(31_000);
+
+  // The countdowns MUST have moved, or this spec proves nothing: a page where nothing
+  // repainted would trivially report zero announcements.
+  await expect(page.locator("#stations-detail")).toContainText("in 1 minute");
+  expect(await page.evaluate(() => window.__announceWrites), "silent across both cycles").toBe(0);
+});
+
 test("A1o. a stale payload's age is spoken, not left on screen alone", async ({ page }) => {
   // The announcement reads the countdowns aloud whether or not the feed behind them
   // is current, so the caveat has to travel with them rather than living only in the

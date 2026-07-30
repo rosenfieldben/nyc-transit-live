@@ -40,9 +40,9 @@ let panelStation = null;
 let panelBody = null;
 let panelSeq = 0;
 let panelTimer = null;
-// The last SHAPED payload announced, and the shape currently rendered. The
-// announcement guard compares payloads, never rendered text, so a countdown tick
-// cannot reach the live region. See announcementWorthy in helpers.js.
+// The last SHAPED payload announced. The announcement guard compares payloads, never
+// rendered text, and it advances only when the live region was actually written. See
+// announcementWorthy in helpers.js and announceUnlessTick below.
 let panelAnnounced = null;
 // The first-load failure for the SELECTED station, retained rather than left to the
 // rendered DOM. Round 2 of the review caught why it has to be state: reopening the
@@ -364,9 +364,9 @@ function panelClockNow() {
 // RETURNS THE SPOKEN TEXT RATHER THAN SPEAKING IT. Round 2 of the review found the
 // previous shape breaking this phase's one hard rule: this function called the live
 // region directly and ignored `tick`, so a leaked countdown timer wrote the region as
-// the scheduled text crossed a headway band. Announcing is now the caller's job, under
-// the single `!tick` guard in renderStationDetail, so the rule holds structurally
-// instead of resting on two strings happening to be equal.
+// the scheduled text crossed a headway band. Announcing is the caller's job now, and
+// every caller reaches the region through announceUnlessTick, the single door where
+// the rule is enforced.
 function renderScheduledDetail(entry, heading) {
   const note = "Scheduled service. AirTrain JFK publishes no live tracking.";
   const noteEl = document.createElement("p");
@@ -422,7 +422,7 @@ function renderStationDetail({ error = panelError, tick = false } = {}) {
 
   if (!entry.arrivalsUrl) {
     const spoken = renderScheduledDetail(entry, heading);
-    if (!tick) announcePanelState(spoken);
+    announceState(spoken, tick);
     return;
   }
 
@@ -433,7 +433,7 @@ function renderStationDetail({ error = panelError, tick = false } = {}) {
     problem.className = "station-detail-note";
     problem.textContent = error;
     stationsDetail.appendChild(problem);
-    if (!tick) announcePanelState(`${entry.name}, ${entry.systemLabel}. ${error}`);
+    announceState(`${entry.name}, ${entry.systemLabel}. ${error}`, tick);
     return;
   }
   if (!panelBody) {
@@ -480,19 +480,56 @@ function renderStationDetail({ error = panelError, tick = false } = {}) {
     stationsDetail.appendChild(list);
   }
 
-  if (!tick) maybeAnnounce(shaped, staleLine);
+  announceArrivals(shaped, staleLine, tick);
 }
 
-// THE LIVE REGION, and the one hard interaction rule of this phase. The detail
-// area repaints every second; the announcement fires only when the ARRIVALS
-// changed in a way a rider would care about. announcementWorthy is the guard and
-// helpers.js documents its three clauses; what matters here is that the tick path
-// never reaches this function at all, so "4 minutes... 3 minutes..." forever is
-// structurally impossible rather than merely guarded against.
-function maybeAnnounce(shaped, staleLine = null) {
-  if (!stationsAnnounce || !panelStation) return;
+// THE ONE DOOR TO THE LIVE REGION. Every write in this file goes through here, and
+// the phase's one hard rule lives in this single line: a tick renders text and says
+// nothing. Round 2 of the review earned this shape. The rule had been copied to each
+// call site, one copy was missing, and a leaked timer walked straight through the gap;
+// with one door, a fourth writer added later cannot forget the guard, because there is
+// no other way to reach the region.
+//
+// Returns whether it spoke, so callers can keep their bookkeeping in step with what
+// the rider actually heard rather than with what was merely rendered.
+function announceUnlessTick(tick, text) {
+  if (tick || !text || !stationsAnnounce) return false;
+  stationsAnnounce.textContent = text;
+  return true;
+}
+
+// The two states with NO arrivals payload to compare: a first-load failure, and the
+// feedless scheduled view. Both render visible text, and both used to render it in
+// total silence, which meant the only station kinds that spoke were the ones with a
+// working feed. That is backwards: a rider who cannot see the panel is the one who
+// most needs to be told that the arrivals did not arrive, or that this system
+// publishes a schedule instead of live times.
+//
+// NO TEXT-EQUALITY DEDUP. There was one, comparing the region's own textContent
+// against the new text, and it was removed on review: reading state back out of the
+// DOM to decide whether to write to the DOM hides whatever work it is really doing.
+// The paths that reach here are a station selection, a first-load failure, and a panel
+// reopen, all of them one-shot or rider-initiated, so there is nothing to suppress.
+// Re-announcing on a reopen is correct rather than duplicate: the region was gone from
+// the accessibility tree while the panel was closed. The repeat that WOULD matter, a
+// background refresh carrying unchanged data, never reaches this function at all; it
+// goes through announceArrivals, where announcementWorthy is the guard, and A1r pins
+// that it stays silent across two full refresh cycles.
+function announceState(text, tick) {
+  if (!announceUnlessTick(tick, text)) return;
+  // Whatever payload lands next counts as news: recovering from an error, or moving
+  // from a schedule to live times, IS something to say.
+  panelAnnounced = null;
+}
+
+// The arrivals announcement. The detail area repaints every second; this fires only
+// when the ARRIVALS changed in a way a rider would care about. announcementWorthy is
+// the guard and helpers.js documents its three clauses. panelAnnounced advances only
+// when the door actually opened, so a tick can neither speak nor quietly consume the
+// change that the next real render owes the rider.
+function announceArrivals(shaped, staleLine, tick) {
+  if (!panelStation) return;
   if (!announcementWorthy(panelAnnounced, shaped)) return;
-  panelAnnounced = shaped;
   const lines = [`${panelStation.name}, ${panelStation.systemLabel}`];
   // THE STALENESS TRAVELS WITH THE SPOKEN TEXT, not just the visible text. The
   // countdowns are read aloud whether or not the feed behind them is current, so a
@@ -506,24 +543,8 @@ function maybeAnnounce(shaped, staleLine = null) {
   if (!shaped.buckets.length) {
     lines.push(panelStation.noun === "boat" ? "No boats." : "No trains.");
   }
-  stationsAnnounce.textContent = lines.join(". ");
-}
-
-// The live region for the two states that have NO arrivals payload to compare: a
-// first-load failure, and the feedless scheduled view. Both render visible text, and
-// both used to render it in total silence, which meant the only station kinds that
-// spoke were the ones with a working feed. That is exactly backwards: a rider who
-// cannot see the panel is the one who most needs to be told that the arrivals did not
-// arrive, or that this system publishes a schedule instead of live times.
-//
-// Deduplicated on the text itself, so a repaint of an unchanged state cannot re-speak
-// the same sentence, and it clears panelAnnounced so that whatever payload lands next
-// counts as news: recovering from an error IS something to say.
-function announcePanelState(text) {
-  if (!stationsAnnounce) return;
-  if (stationsAnnounce.textContent === text) return;
-  panelAnnounced = null;
-  stationsAnnounce.textContent = text;
+  if (!announceUnlessTick(tick, lines.join(". "))) return;
+  panelAnnounced = shaped;
 }
 
 /* ---------------- the docked layout ---------------- */

@@ -214,12 +214,15 @@ nyc-transit-live/
 ├── frontend/
 │   ├── index.html
 │   ├── map.js               # Leaflet map, polls backend, draws markers
+│   ├── stations.js          # the accessible station panel (search + arrivals as text)
 │   ├── helpers.js           # pure helpers shared with map.js (node-testable)
 │   ├── helpers.test.js      # node --test suite for the helpers
 │   ├── style.css
 │   └── vendor/leaflet/      # self-hosted Leaflet 1.9.4 (js, css, images, LICENSE)
 ├── tests/e2e/               # hermetic Playwright smoke suite (dev/test only)
 │   ├── smoke.spec.js        # the scenarios; all network intercepted
+│   ├── stations.spec.js     # the station panel, including a keyboard-only walk
+│   ├── a11y.spec.js         # axe-core scan, scoped to the station panel
 │   ├── mock.js              # /api/* fixtures + basemap-tile stub
 │   ├── serve.js             # tiny static server for frontend/ (no backend)
 │   ├── playwright.config.js # chromium only, starts the static server
@@ -229,12 +232,37 @@ nyc-transit-live/
 │   ├── gtfs_static/         # downloaded static subway GTFS (gitignored)
 │   └── cache/bus_routes/    # background-built bus route index (gitignored)
 ├── .github/workflows/ci.yml # backend pytest + frontend node tests + e2e smoke
-├── package.json             # dev-only: @playwright/test (the app is buildless)
+├── package.json             # dev-only: @playwright/test + @axe-core/playwright (the app is buildless)
 ├── railway.json             # Railway start command + healthcheck
 ├── nixpacks.toml            # pins Python 3.12 for the Railway build
 ├── requirements.txt         # root pointer -> backend/requirements.lock
 └── .env                     # BUS_TIME_API_KEY (gitignored)
 ```
+
+## Accessibility
+
+A live map is a picture, and a picture is not arrival information. The station
+panel is the same data as text: press **Stations** (or the skip link, which is the
+first thing keyboard focus lands on) to search every station the map knows across
+all six rail and ferry systems (Subway, LIRR, Metro-North, PATH, Ferry, AirTrain),
+pick one, and read its next arrivals as sentences, grouped the way the popups
+group them (by direction, or by route for ferries), each naming the route and
+spelling the countdown out in words. AirTrain says plainly
+that its numbers are scheduled headways rather than live tracking, because it
+publishes no realtime feed. A stale feed says how old it is here in the same
+wording the popups use. On a screen 1100px or wider the panel is docked open;
+narrower, it opens over the map and starts closed. Selecting a station also pans
+the map and opens that station's popup, so a sighted rider and a screen-reader
+rider are looking at the same place. Arrivals refresh in the background, and the
+live region announces only when the trains themselves change, never on a
+countdown tick, so it does not talk over you.
+
+What this does *not* yet cover: the map itself is still a picture, buses are not
+in the panel (their stops are not stations), and the rest of the page (legend,
+layer toggles, alerts list) is **unmeasured**. CI enforces an axe-core scan scoped
+to exactly the panel and its skip link (`tests/e2e/a11y.spec.js`); widening that
+gate to the whole page, along with a plain statement of what the page promises, is
+later work in this arc, as are map semantics and a mobile and contrast pass.
 
 ## Setup
 

@@ -203,6 +203,21 @@ function renderStationResults() {
   stationsStatus.textContent = overflow ? `${shown}. ${overflow}.` : shown;
 }
 
+// Called by registerStation as each loader resolves. Repaints the list so a panel
+// that rendered before the stations arrived stops saying "Loading stations...".
+//
+// IT REFUSES TO REPAINT UNDER A FOCUSED ROW. Rebuilding the list replaces the
+// button elements, and replacing the element that currently has focus drops focus
+// to the body, which is the same stranding this phase spends a spec on. A rider
+// tabbing through results while a slow loader resolves would be thrown out of the
+// list. So the repaint is skipped whenever focus is inside the results, and the
+// next keystroke in the search box picks the new stations up.
+function stationsRegistryChanged() {
+  if (!stationsPanelOpen() || !stationsResults) return;
+  if (stationsResults.contains(document.activeElement)) return;
+  renderStationResults();
+}
+
 /* ---------------- one station's arrivals, as text ---------------- */
 
 function findStationEntry(key) {
@@ -436,7 +451,14 @@ function applyStationsDocking() {
   const docked = matchMedia(STATIONS_DOCK_QUERY).matches;
   document.body.classList.toggle("stations-docked", docked);
   if (docked && !stationsPanelOpen()) openStationsPanel({ focusSearch: false });
-  // Leaflet sizes itself from its container, which just changed width.
+  // THE MAP MUST LEARN ITS NEW WIDTH. Docking narrows #map, and Leaflet caches its
+  // container size, so without this the map stays sized for a viewport it no
+  // longer has: tiles short of the right edge, and clicks landing on the wrong
+  // coordinates. invalidateSize is Leaflet's sanctioned API for exactly this, and
+  // it is called ONLY when the dock state is applied: once at load, and then on a
+  // matchMedia change, which fires when the query flips rather than on every resize
+  // frame. Never on the one-second tick. The phase's "no map layout changes"
+  // constraint is about not restyling the map, which this does not do.
   if (typeof map !== "undefined" && map) map.invalidateSize();
 }
 

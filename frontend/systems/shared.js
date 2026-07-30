@@ -221,6 +221,14 @@ const stationRegistry = [];
 // realtime feed would take.
 function registerStation(entry) {
   stationRegistry.push(entry);
+  // TELL THE PANEL, because it may already be on screen showing "Loading
+  // stations..." from before this loader resolved. The docked-open desktop default
+  // renders the panel at load time, when the registry is usually still empty, so
+  // without this notification the list stayed on its loading line until the rider
+  // typed something. Late-bound by name rather than wired at definition time,
+  // because stations.js loads AFTER this file; the loaders all run later still, so
+  // the function exists by the time any of them call it.
+  if (typeof stationsRegistryChanged === "function") stationsRegistryChanged();
 }
 
 let stationSeq = 0;

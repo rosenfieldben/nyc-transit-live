@@ -60,6 +60,30 @@ function openStationsPanel({ focusSearch = true } = {}) {
   if (stationsToggle) stationsToggle.setAttribute("aria-expanded", "true");
   if (focusSearch && stationsSearch) stationsSearch.focus();
   renderStationResults();
+  resumePanelArrivals();
+}
+
+// REOPENING MUST NOT PRESENT THE OLD ARRIVALS AS CURRENT, and before this it did.
+// Closing stops the tick but leaves the rendered detail sitting in the DOM, so a
+// rider who closed the panel, did something else for ten minutes, and reopened it
+// read "1 train in 2 minutes, 8:01 AM arrival" for a train that had left eight
+// minutes earlier, with no staleness line anywhere, because the text was computed
+// when it was true and nothing recomputed it. The countdown and the clock time even
+// agreed with each other, so there was no way to tell from the text that it was old.
+//
+// Three parts, in order. The re-render recomputes everything against the current
+// clock, which is what makes the "as of 10m ago" line appear and moves the departed
+// train to "now", both from the helpers that already existed. The tick restarts so
+// the text keeps moving. The refresh fetches live data instead of leaving the rider
+// on retained rows until map.js next comes around, and it is a refresh rather than a
+// first load so a failed poll keeps those rows (already marked old by the re-render)
+// rather than replacing them with an error.
+function resumePanelArrivals() {
+  if (!panelStation) return;
+  renderStationDetail();
+  if (!panelStation.arrivalsUrl) return;
+  startPanelTick();
+  fetchPanelArrivals({ refresh: true });
 }
 
 // Closing returns focus to the toggle, which is the element that opened it and
@@ -283,10 +307,14 @@ async function fetchPanelArrivals({ refresh = false } = {}) {
   if (seq !== panelSeq) return;
   panelBody = body;
   renderStationDetail();
+  startPanelTick();
+}
+
+// One tick a second repaints the countdowns. It repaints TEXT only; whether the live
+// region speaks is decided by the payload comparison in renderStationDetail, never by
+// this timer firing. Cleared first so two callers cannot leave two intervals running.
+function startPanelTick() {
   clearInterval(panelTimer);
-  // One tick a second repaints the countdowns. It repaints TEXT only; whether the
-  // live region speaks is decided by the payload comparison in renderStationDetail,
-  // never by this timer firing.
   panelTimer = setInterval(() => renderStationDetail({ tick: true }), 1000);
 }
 
@@ -306,10 +334,11 @@ function panelClockNow() {
 // AirTrain publishes no realtime feed, so a countdown here would fabricate
 // precision the data does not have. This is the branch any feedless system takes.
 function renderScheduledDetail(entry, heading) {
-  const note = document.createElement("p");
-  note.className = "station-detail-note";
-  note.textContent = "Scheduled service. AirTrain JFK publishes no live tracking.";
-  stationsDetail.append(heading, note);
+  const note = "Scheduled service. AirTrain JFK publishes no live tracking.";
+  const noteEl = document.createElement("p");
+  noteEl.className = "station-detail-note";
+  noteEl.textContent = note;
+  stationsDetail.append(heading, noteEl);
   const serving = (entry.airtrainRoutes || []).filter((route) =>
     (route.stations || []).includes(entry.id),
   );
@@ -317,19 +346,24 @@ function renderScheduledDetail(entry, heading) {
     const none = document.createElement("p");
     none.textContent = "No AirTrain branch serves this station.";
     stationsDetail.appendChild(none);
+    announcePanelState(`${entry.name}, ${entry.systemLabel}. ${note} No AirTrain branch serves this station.`);
     return;
   }
   const list = document.createElement("ul");
   list.className = "station-arrivals";
+  const spoken = [];
   for (const route of serving) {
     const band = selectHeadwayBand(route.headways, nyMinutesSinceMidnight());
-    const row = document.createElement("li");
-    row.textContent = band
+    const text = band
       ? `${route.name || route.id}: a train about every ${band.headway_min} minutes, scheduled`
       : `${route.name || route.id}: schedule unavailable`;
+    const row = document.createElement("li");
+    row.textContent = text;
     list.appendChild(row);
+    spoken.push(text);
   }
   stationsDetail.appendChild(list);
+  announcePanelState(`${entry.name}, ${entry.systemLabel}. ${note} ${spoken.join(". ")}`);
 }
 
 // Render the detail area for the selected station.
@@ -365,6 +399,7 @@ function renderStationDetail({ error = null, tick = false } = {}) {
     problem.className = "station-detail-note";
     problem.textContent = error;
     stationsDetail.appendChild(problem);
+    announcePanelState(`${entry.name}, ${entry.systemLabel}. ${error}`);
     return;
   }
   if (!panelBody) {
@@ -382,10 +417,12 @@ function renderStationDetail({ error = null, tick = false } = {}) {
 
   // The same "as of Xm ago" honesty the popups render, from the same threshold and
   // the same wording, so a stale feed reads identically on both surfaces.
+  let staleLine = null;
   if (staleAge(shaped.ageSeconds)) {
+    staleLine = `as of ${humanizeAge(shaped.ageSeconds)} ago`;
     const stale = document.createElement("p");
     stale.className = "station-detail-stale";
-    stale.textContent = `as of ${humanizeAge(shaped.ageSeconds)} ago`;
+    stale.textContent = staleLine;
     stationsDetail.appendChild(stale);
   }
 
@@ -409,7 +446,7 @@ function renderStationDetail({ error = null, tick = false } = {}) {
     stationsDetail.appendChild(list);
   }
 
-  if (!tick) maybeAnnounce(shaped);
+  if (!tick) maybeAnnounce(shaped, staleLine);
 }
 
 // THE LIVE REGION, and the one hard interaction rule of this phase. The detail
@@ -418,11 +455,16 @@ function renderStationDetail({ error = null, tick = false } = {}) {
 // helpers.js documents its three clauses; what matters here is that the tick path
 // never reaches this function at all, so "4 minutes... 3 minutes..." forever is
 // structurally impossible rather than merely guarded against.
-function maybeAnnounce(shaped) {
+function maybeAnnounce(shaped, staleLine = null) {
   if (!stationsAnnounce || !panelStation) return;
   if (!announcementWorthy(panelAnnounced, shaped)) return;
   panelAnnounced = shaped;
   const lines = [`${panelStation.name}, ${panelStation.systemLabel}`];
+  // THE STALENESS TRAVELS WITH THE SPOKEN TEXT, not just the visible text. The
+  // countdowns are read aloud whether or not the feed behind them is current, so a
+  // rider listening to a stale payload would otherwise hear confident times with the
+  // one caveat that qualifies them left on screen where they cannot see it.
+  if (staleLine) lines.push(staleLine);
   for (const bucket of shaped.buckets) {
     const sentences = bucket.rows.map((row) => arrivalSentence(row, panelStation.noun));
     lines.push(`${bucket.name}: ${sentences.join(". ")}`);
@@ -431,6 +473,23 @@ function maybeAnnounce(shaped) {
     lines.push(panelStation.noun === "boat" ? "No boats." : "No trains.");
   }
   stationsAnnounce.textContent = lines.join(". ");
+}
+
+// The live region for the two states that have NO arrivals payload to compare: a
+// first-load failure, and the feedless scheduled view. Both render visible text, and
+// both used to render it in total silence, which meant the only station kinds that
+// spoke were the ones with a working feed. That is exactly backwards: a rider who
+// cannot see the panel is the one who most needs to be told that the arrivals did not
+// arrive, or that this system publishes a schedule instead of live times.
+//
+// Deduplicated on the text itself, so a repaint of an unchanged state cannot re-speak
+// the same sentence, and it clears panelAnnounced so that whatever payload lands next
+// counts as news: recovering from an error IS something to say.
+function announcePanelState(text) {
+  if (!stationsAnnounce) return;
+  if (stationsAnnounce.textContent === text) return;
+  panelAnnounced = null;
+  stationsAnnounce.textContent = text;
 }
 
 /* ---------------- the docked layout ---------------- */

@@ -297,4 +297,70 @@ test("A1h. AirTrain renders scheduled headways, labeled as scheduled", async ({ 
   ]);
   // A schedule cannot go stale, and there is no feed here for staleness to measure.
   await expect(detail.locator(".station-detail-stale")).toHaveCount(0);
+
+  // AND IT IS SPOKEN, NOT ONLY DRAWN. The review found this branch rendering its
+  // text in total silence: focus stays on the result row, the detail is elsewhere in
+  // the DOM, so a rider using a screen reader pressed Enter and heard nothing at all.
+  // Live stations spoke and feedless ones did not, which is backwards.
+  await expect(page.locator("#stations-announce")).toContainText("Scheduled service");
+  await expect(page.locator("#stations-announce")).toContainText("every 7 minutes");
+});
+
+test("A1m. reopening the panel never presents the old arrivals as current", async ({ page }) => {
+  // THE DEFECT THE REVIEW FOUND. Closing stops the tick but leaves the rendered
+  // arrivals in the DOM, so before the fix, closing the panel, waiting ten minutes,
+  // and reopening it showed byte-identical text: "1 train in 2 minutes, 8:01 AM
+  // arrival" for a train that had left eight minutes earlier, with no staleness line.
+  // The countdown and the clock time agreed with each other, so nothing in the text
+  // gave it away.
+  await open(page);
+  await page.locator("#stations-search").fill("times");
+  await page.locator("#stations-results button.station-row").first().click();
+  const detail = page.locator("#stations-detail");
+  await expect(detail).toContainText("in 2 minutes");
+  const before = await detail.innerText();
+
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#stations-panel")).toBeHidden();
+  // Ten minutes pass with the panel closed. The arrivals fixture is fixed, so on
+  // reopen the SAME payload is now ten minutes old: that is the point.
+  await page.clock.fastForward(600_000);
+  await page.locator("#stations-toggle").click();
+  await expect(page.locator("#stations-panel")).toBeVisible();
+
+  // The reopened panel is honest about age, and the departed train is no longer
+  // counting down to a time that has passed.
+  await expect(detail.locator(".station-detail-stale")).toContainText(/as of \d+m ago/);
+  const after = await detail.innerText();
+  expect(after, "the detail must not be the pre-close text verbatim").not.toBe(before);
+  expect(after).not.toContain("in 2 minutes");
+});
+
+test("A1n. a first-load arrivals failure is spoken, not only drawn", async ({ page }) => {
+  // The other half of the same defect: the error branch returned before reaching the
+  // live region, so the one moment a rider most needs to be told something was the
+  // one moment the panel said nothing.
+  const ctx = await installMocks(page);
+  ctx.overrides.subwayArrivals = (route) =>
+    json(route, { detail: "Arrivals cache is warming up; try again in a few seconds." }, 503);
+  await open(page, { install: false });
+  await page.locator("#stations-search").fill("times");
+  await page.locator("#stations-results button.station-row").first().click();
+  await expect(page.locator("#stations-detail")).toContainText("warming up");
+  await expect(page.locator("#stations-announce")).toContainText("warming up");
+  await expect(page.locator("#stations-announce")).toContainText("Times Sq");
+});
+
+test("A1o. a stale payload's age is spoken, not left on screen alone", async ({ page }) => {
+  // The announcement reads the countdowns aloud whether or not the feed behind them
+  // is current, so the caveat has to travel with them rather than living only in the
+  // visible text a listening rider cannot see.
+  const ctx = await installMocks(page);
+  ctx.overrides.subwayArrivals = (route, fixtures) =>
+    json(route, { ...fixtures.subwayArrivals(), fetched_at: fx.FROZEN_S - 600 });
+  await open(page, { install: false });
+  await page.locator("#stations-search").fill("times");
+  await page.locator("#stations-results button.station-row").first().click();
+  await expect(page.locator(".station-detail-stale")).toContainText(/as of \d+m ago/);
+  await expect(page.locator("#stations-announce")).toContainText(/as of \d+m ago/);
 });

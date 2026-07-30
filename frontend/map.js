@@ -185,6 +185,9 @@ async function refreshAll() {
   // list (not just the countdowns) stays current on the same ~15s cadence as the
   // markers. openStationArrivals reads the open descriptor, so it is kind-agnostic.
   if (openStation) openStationArrivals({ refresh: true });
+  // The station panel refreshes on the SAME cadence, so the popup and the panel
+  // never show arrivals of different ages for the same station (A1).
+  refreshPanelArrivals();
 
   // Re-render the alert banner so its "may be out of date" marker (R1) appears or
   // clears as the alerts feed crosses ALERTS_STALE_AFTER_S even while its own 60s

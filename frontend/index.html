@@ -15,11 +15,43 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div id="map"></div>
+  <!-- A1: the FIRST focusable element on the page. Visually hidden until focused,
+       so it costs sighted users nothing and gives keyboard users a one-stop route
+       past the map to the station list. -->
+  <a href="#stations-panel" id="stations-skip" class="visually-hidden-focusable">Skip to stations list</a>
+  <!-- role=region with a name so the map is a landmark a screen reader can skip
+       rather than an unlabeled canvas. DEEPER MAP SEMANTICS ARE A2's JOB: naming
+       the region is the whole of A1's excursion outside the panel, and no attempt
+       is made here to expose markers, layers, or positions. -->
+  <div id="map" role="region" aria-label="Live transit map (visual)"></div>
+  <!-- A1: the accessible station surface. The searchable, keyboard-reachable
+       equivalent of clicking a station dot. -->
+  <section id="stations-panel" role="region" aria-labelledby="stations-heading" hidden>
+    <h2 id="stations-heading">Stations</h2>
+    <label for="stations-search">Search stations</label>
+    <input type="search" id="stations-search" autocomplete="off" spellcheck="false">
+    <!-- The result count and the overflow line. aria-live=polite because it is a
+         status: it changes as the rider types and is never worth interrupting for. -->
+    <p id="stations-status" role="status"></p>
+    <ul id="stations-results"></ul>
+    <div id="stations-detail"></div>
+    <!-- THE LIVE REGION. Written to only when the arrivals PAYLOAD meaningfully
+         changes, never on a countdown tick; see maybeAnnounce in stations.js and
+         announcementWorthy in helpers.js. Kept separate from the visible detail so
+         the visual repaint and the announcement cannot be coupled by accident. -->
+    <div id="stations-announce" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
+  </section>
   <!-- Agency-wide service alerts strip, populated by map.js only when there is
        something to show (empty otherwise, so no banner element is rendered). -->
   <div id="alert-banner"></div>
+  <!-- NOTE THE NEAR-MISS: this is id="panel", the LEGEND. The A1 station surface is
+       id="stations-panel" and is a different thing entirely. They are not to be
+       unified; the ids only look similar. -->
   <div id="panel">
+    <!-- A1's toggle lives in the controls cluster with the layer checkboxes. -->
+    <button type="button" id="stations-toggle" aria-expanded="false" aria-controls="stations-panel">
+      Stations
+    </button>
     <div class="legend-row">
       <svg viewBox="0 0 20 20"><path d="M10 2 L16 17 L10 13 L4 17 Z" fill="#1d4ed8" stroke="#fff" stroke-width="1.2"/></svg>
       Bus (arrow points where it's heading)
@@ -84,7 +116,12 @@
     <div id="toggles">
       <label><input type="checkbox" id="toggle-buses" checked> Buses</label>
       <label><input type="checkbox" id="toggle-subways" checked> Subways</label>
-      <label><input type="checkbox" id="toggle-stations" checked> Stations</label>
+      <!-- aria-label, not new visible text: the button above and this checkbox both
+           read "Stations" but do different things (open the station list versus show
+           or hide the subway station markers), and two controls announcing the same
+           name is worst for exactly the users A1 exists for. The visible label,
+           layout and CSS are untouched. -->
+      <label><input type="checkbox" id="toggle-stations" aria-label="Show subway station markers" checked> Stations</label>
       <label><input type="checkbox" id="toggle-railroads" checked> Railroads</label>
       <label><input type="checkbox" id="toggle-airtrain" checked> AirTrain JFK</label>
       <label><input type="checkbox" id="toggle-path" checked> PATH</label>
@@ -105,6 +142,9 @@
   <script src="systems/airtrain.js"></script>
   <script src="systems/path.js"></script>
   <script src="systems/ferry.js"></script>
+  <!-- A1 after the system files, because it reads the station registry they fill,
+       and before map.js, which wires its refresh into the poll loop. -->
+  <script src="stations.js"></script>
   <script src="map.js"></script>
 </body>
 </html>

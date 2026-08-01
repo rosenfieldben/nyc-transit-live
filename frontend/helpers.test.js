@@ -14,9 +14,10 @@ const {
   busName,
   compassPoint,
   airtrainStationName,
-  statusSignature,
-  statusWorthy,
-  bannerWorthy,
+  degradedIdentities,
+  statusAnnouncement,
+  alertIdentities,
+  bannerAnnouncement,
   motionAllowed,
   esc,
   routeColor,
@@ -2066,59 +2067,6 @@ test("A2: a bus says its heading as a compass point, never as degrees", () => {
 
 /* ---------------- A2: when the page itself speaks ---------------- */
 
-test("A2: the status line speaks on a health transition and not on a repaint", () => {
-  const healthy = { buses: {}, subways: {}, ferry: {} };
-  const first = statusSignature(healthy);
-  assert.deepEqual(first, { buses: "ok", subways: "ok", ferry: "ok" });
-
-  // THE CHATTY INVERSE, and the reason this helper compares state instead of text:
-  // the status line rewrites itself every 15 seconds because it contains a clock, so
-  // a text comparison would announce forever. Identical health says nothing.
-  assert.equal(statusWorthy(first, statusSignature(healthy)), null);
-
-  // A source failing IS news, and the helper says which one and which way.
-  const broken = statusSignature({ buses: { error: "timed out" }, subways: {}, ferry: {} });
-  assert.deepEqual(statusWorthy(first, broken), [{ key: "buses", from: "ok", to: "error" }]);
-  // Still broken on the next poll: already said.
-  assert.equal(statusWorthy(broken, statusSignature({ buses: { error: "timed out" }, subways: {}, ferry: {} })), null);
-  // The SAME source failing a DIFFERENT way is not a new transition either: the rider
-  // already knows the buses are down, and the wording is on screen.
-  assert.equal(statusWorthy(broken, statusSignature({ buses: { error: "HTTP 502" }, subways: {}, ferry: {} })), null);
-  // Recovery is news.
-  assert.deepEqual(statusWorthy(broken, first), [{ key: "buses", from: "error", to: "ok" }]);
-
-  // Stale is its own state between ok and error, and moving between them announces.
-  const stale = statusSignature({ buses: { staleLine: "as of 6m ago" }, subways: {}, ferry: {} });
-  assert.deepEqual(statusWorthy(first, stale), [{ key: "buses", from: "ok", to: "stale" }]);
-  assert.deepEqual(statusWorthy(stale, broken), [{ key: "buses", from: "stale", to: "error" }]);
-
-  // COUNTS ARE NOT HEALTH. Two buses becoming three is not worth interrupting for,
-  // and a signature that folded counts in would announce on almost every poll.
-  const twoBuses = statusSignature({ buses: { count: 2 }, subways: {}, ferry: {} });
-  const threeBuses = statusSignature({ buses: { count: 3 }, subways: {}, ferry: {} });
-  assert.equal(statusWorthy(twoBuses, threeBuses), null);
-
-  // THE FIRST OBSERVATION IS NOT A TRANSITION. A page load must not read the whole
-  // status line aloud before the rider has done anything.
-  assert.equal(statusWorthy({}, first), null);
-  assert.equal(statusWorthy(null, first), null);
-  // A source the previous signature did not carry is treated as a first observation
-  // too, not as a transition into failure. In practice this cannot happen (the source
-  // set is fixed in map.js at load and every signature covers all of it), which is
-  // exactly why it must not invent an announcement if it ever does.
-  assert.equal(statusWorthy({ buses: "ok" }, { buses: "ok", path: "error" }), null);
-});
-
-test("A2: the banner speaks when its content changes, and stays quiet otherwise", () => {
-  assert.equal(bannerWorthy(null, "abc"), true); // an alert arrived
-  assert.equal(bannerWorthy("abc", "abc"), false); // same alerts, same staleness
-  assert.equal(bannerWorthy("abc", "def"), true); // different alerts
-  // A banner going away is not announced: the rider is not told about the absence of
-  // an emergency, and the visible strip disappearing is the signal.
-  assert.equal(bannerWorthy("abc", null), false);
-  assert.equal(bannerWorthy(null, null), false);
-});
-
 /* ---------------- A2: the motion gate ---------------- */
 
 test("A2: motionAllowed reads the preference, and defaults to animating", () => {
@@ -2127,4 +2075,126 @@ test("A2: motionAllowed reads the preference, and defaults to animating", () => 
   // No matchMedia at all (node, or a browser too old to have it): animate as before
   // rather than silently degrading everyone's map.
   assert.equal(motionAllowed(null), true);
+});
+
+/* ---------------- A2: when the page itself speaks ---------------- */
+
+// The freshness index shape the frontend already builds: "<source>|<system>" -> {age}.
+// FEED_STALE_AFTER_S is 90, so 200 is degraded and 10 is not.
+const fresh = (age) => ({ age });
+const OLD = 200;
+const NEW = 10;
+
+test("A2: the status line announces degraded-SET transitions, not counts or strings", () => {
+  const healthy = degradedIdentities({ "buses|buses": fresh(NEW), "subways|ACE": fresh(NEW) });
+  assert.deepEqual(healthy, []);
+
+  // FIRST OBSERVATION IS SILENT. A page load must not read its own condition aloud
+  // before the rider has asked for anything. Asserted with a NON-EMPTY set, because a
+  // page that loads while the buses are already delayed is the only case that tells
+  // seeding apart from announcing; with an empty set the two are indistinguishable and
+  // a mutation that announced on first sight would pass unnoticed.
+  assert.equal(statusAnnouncement(null, ["buses|buses"]), null);
+  assert.equal(statusAnnouncement(null, healthy), null);
+
+  // Entering the degraded set is news, and it names what went wrong.
+  const busesOut = degradedIdentities({ "buses|buses": fresh(OLD), "subways|ACE": fresh(NEW) });
+  assert.equal(statusAnnouncement(healthy, busesOut), "Live data delayed for Bus.");
+
+  // AN AGE TICK IS NOT A TRANSITION. The same system, older, is still the same set.
+  const busesOlder = degradedIdentities({ "buses|buses": fresh(OLD * 5), "subways|ACE": fresh(NEW) });
+  assert.equal(statusAnnouncement(busesOut, busesOlder), null);
+  // And a re-render with literally the same input says nothing either.
+  assert.equal(statusAnnouncement(busesOut, busesOut), null);
+
+  // THE TEST A COUNT-BASED IMPLEMENTATION FAILS. One system recovers as another goes
+  // out: the count is unchanged at one, but two things a rider cares about changed.
+  const swapped = degradedIdentities({ "buses|buses": fresh(NEW), "subways|ACE": fresh(OLD) });
+  assert.equal(
+    statusAnnouncement(busesOut, swapped),
+    "Live data delayed for Subway ACE. Live data current again for Bus.",
+  );
+
+  // A SECOND system joining an already-degraded one is a set change, so it announces.
+  // A count-based implementation would notice this one but not the swap above; a
+  // string-compare implementation would announce on every poll because the status line
+  // carries a clock. Both traps are covered by comparing membership.
+  const bothOut = degradedIdentities({ "buses|buses": fresh(OLD), "subways|ACE": fresh(OLD) });
+  assert.equal(statusAnnouncement(busesOut, bothOut), "Live data delayed for Subway ACE.");
+
+  // Recovery is worth one sentence: a rider told the data was delayed is owed the news
+  // that it is not.
+  assert.equal(statusAnnouncement(bothOut, healthy), "Live data current again for Bus and Subway ACE.");
+
+  // A system that has never decoded carries a null age and is not degraded BY AGE; the
+  // status line says "not reporting" about it separately. Silence here rather than a
+  // sentence built from a null.
+  assert.deepEqual(degradedIdentities({ "ferry|ferry": { age: null } }), []);
+
+  // The index arrives as a Map in the browser and as an object in tests; both work.
+  assert.deepEqual(degradedIdentities(new Map([["path|path", fresh(OLD)]])), ["path|path"]);
+});
+
+test("A2: identities are described the way a rider would say them", () => {
+  // A single-feed source synthesizes one system named after itself, so naming it twice
+  // would be noise.
+  assert.equal(statusAnnouncement([], ["ferry|ferry"]), "Live data delayed for Ferry.");
+  // A subway feed GROUP is qualified, because "ACE" alone means nothing to a rider.
+  assert.equal(statusAnnouncement([], ["subways|ACE"]), "Live data delayed for Subway ACE.");
+  // A railroad system is already what a rider calls it: "Railroad LIRR" is a phrase
+  // only a schema would produce.
+  assert.equal(statusAnnouncement([], ["railroads|LIRR"]), "Live data delayed for LIRR.");
+  // BUT the railroads source ALSO synthesizes a system named after itself whenever its
+  // payload carries no systems block, and that path produced "Live data delayed for
+  // railroads" in the first draft: lowercase and plural, straight out of the payload
+  // key. A rider gets a whole word.
+  assert.equal(statusAnnouncement([], ["railroads|railroads"]), "Live data delayed for Railroad.");
+  // An unknown source (a system added later without a word here) falls back to its key
+  // rather than throwing, which is the right failure: odd wording, never a crash.
+  assert.equal(statusAnnouncement([], ["amtrak|amtrak"]), "Live data delayed for amtrak.");
+  // Three or more read as a list with an "and".
+  assert.equal(
+    statusAnnouncement([], ["buses|buses", "path|path", "subways|ACE"]),
+    "Live data delayed for Bus, PATH, and Subway ACE.",
+  );
+});
+
+test("A2: the banner announces new and reworded alerts, and nothing else", () => {
+  const alert = (id, header, system = "subway") => ({ id, header, system });
+  const none = alertIdentities([]);
+  const one = alertIdentities([alert("a1", "Delays on the A line")]);
+
+  // First observation seeds silently, even when an alert is already showing on load.
+  assert.equal(bannerAnnouncement(null, one), null);
+  // A new alert announces, as a SUMMARY. The body belongs on screen and in the panel;
+  // a live region reading a full service alert aloud would be unusable during exactly
+  // the incident it exists for.
+  assert.equal(bannerAnnouncement(none, one), "New service alert.");
+
+  // An identical refresh is silent.
+  assert.equal(bannerAnnouncement(one, alertIdentities([alert("a1", "Delays on the A line")])), null);
+
+  // SAME ID, REWORDED CONTENT ANNOUNCES ONCE. This is the C1 pattern: the MTA revises
+  // an ongoing incident in place rather than issuing a new id, and an id-only
+  // comparison would leave a rider hearing nothing while the situation changed.
+  const reworded = alertIdentities([alert("a1", "All A service suspended")]);
+  assert.equal(bannerAnnouncement(one, reworded), "New service alert.");
+  assert.equal(bannerAnnouncement(reworded, reworded), null); // and only once
+
+  // ORDERING IS NOT NEWS: the identities are compared as a sorted set.
+  const two = alertIdentities([alert("a1", "One"), alert("a2", "Two")]);
+  const twoReordered = alertIdentities([alert("a2", "Two"), alert("a1", "One")]);
+  assert.equal(bannerAnnouncement(two, twoReordered), null);
+
+  // Several at once are counted rather than read out.
+  assert.equal(bannerAnnouncement(none, two), "2 new service alerts.");
+
+  // CLEARING IS SILENT. A rider is not told about the absence of an emergency, and the
+  // strip disappearing is the signal.
+  assert.equal(bannerAnnouncement(two, none), null);
+  assert.equal(bannerAnnouncement(two, alertIdentities([alert("a1", "One")])), null);
+
+  // The staleness marker is not part of an identity at all, so it cannot announce: it
+  // is honesty about the feed, not news about the transit system.
+  assert.deepEqual(alertIdentities([alert("a1", "One")]), alertIdentities([alert("a1", "One")]));
 });

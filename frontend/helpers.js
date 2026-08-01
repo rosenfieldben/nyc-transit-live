@@ -1691,56 +1691,118 @@ function airtrainStationName(station) {
 
 /* ---------------- A2: when the page itself should speak ---------------- */
 
-// The page-level equivalent of announcementWorthy, and it follows the same rule: judge
-// a TRANSITION between two states, never a rendered string, so a repaint carrying
-// identical facts cannot be mistaken for news.
+// The page-level equivalent of announcementWorthy, and it follows the same rule A1
+// settled: judge a TRANSITION in underlying state, never a rendered string. The status
+// line contains a clock and rewrites itself every fifteen seconds by construction, so
+// anything comparing its text would announce forever.
 //
-// The status line rewrites itself on every poll (the clock in it changes every 15
-// seconds by construction), so comparing text would announce forever. What a rider
-// actually needs to hear is a source CHANGING HEALTH: buses started failing, the
-// subway came back. Everything else, including the counts and the timestamp, is
-// visible detail that belongs on screen and not in the ear.
-function statusSignature(sources) {
-  const signature = {};
-  for (const [key, source] of Object.entries(sources || {})) {
-    // Three states, deliberately coarse. "error" is a poll that failed; "stale" is a
-    // poll that succeeded against data too old to trust; "ok" is everything else. The
-    // COUNTS ARE NOT IN HERE: two buses becoming three is not an announcement.
-    let state = "ok";
-    if (source && source.error) state = "error";
-    else if (source && source.staleLine) state = "stale";
-    signature[key] = state;
-  }
-  return signature;
+// THE UNIT OF JUDGEMENT IS SET MEMBERSHIP, not a count and not a string. The identity
+// is "<sourceKey>|<systemName>", exactly the key the C2 freshness index already uses,
+// so what a rider hears is derived from the same numbers the status line and the
+// marker dimming read. Counting would be wrong in a way that shows up precisely during
+// a spreading incident: LIRR going stale while MNR recovers leaves the count at one
+// and says nothing, when two things a rider cares about just changed.
+
+// Which (source, system) identities are degraded right now. Accepts the freshness
+// index as a Map or a plain object so callers and tests can pass either.
+function degradedIdentities(freshnessIndex) {
+  const entries =
+    freshnessIndex instanceof Map
+      ? [...freshnessIndex.entries()]
+      : Object.entries(freshnessIndex || {});
+  return entries
+    .filter(([, entry]) => entry && staleAge(entry.age))
+    .map(([key]) => key)
+    .sort();
 }
 
-// True when at least one source changed health. Returns the reason so the caller can
-// speak about what changed rather than reciting the whole page.
-function statusWorthy(prev, next) {
+// The rider-facing word for a source, and the word to use when a source's system is
+// only the source over again. Railroads take no qualifier in front of a real system
+// name, because "LIRR" and "Metro-North" are already what a rider calls them and
+// "Railroad LIRR" is the kind of phrase only a schema would produce. But they still
+// need a WHOLE word for the case below, and getting that wrong is not hypothetical:
+// the first draft announced "Live data delayed for railroads", lowercase and plural,
+// straight out of the payload key.
+const SOURCE_WORDS = {
+  buses: { qualifier: "Bus", whole: "Bus" },
+  subways: { qualifier: "Subway", whole: "Subway" },
+  railroads: { qualifier: null, whole: "Railroad" },
+  path: { qualifier: "PATH", whole: "PATH" },
+  ferry: { qualifier: "Ferry", whole: "Ferry" },
+};
+
+function describeIdentity(identity) {
+  const [source, system] = String(identity).split("|");
+  const words = SOURCE_WORDS[source] || { qualifier: source, whole: source };
+  // A source with no per-system block synthesizes ONE system named after itself
+  // (ingestSystems), so "buses|buses" is just the buses and naming it twice would be
+  // noise. The railroads payload does this whenever its systems block is absent, which
+  // is the path that produced the defect above.
+  if (system === source || !system) return words.whole;
+  return words.qualifier ? `${words.qualifier} ${system}` : system;
+}
+
+// Join names the way a person would say them.
+function sentenceList(names) {
+  if (names.length <= 1) return names[0] || "";
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
+}
+
+// The status announcement, or null for silence. `prev` of null is the FIRST
+// OBSERVATION: it seeds state and says nothing, because a page load must not read its
+// own condition aloud before the rider has asked for anything.
+//
+// Silent by construction on: age ticks (an identity already in the set stays in it as
+// it gets older), re-renders, and any change that alters the formatted line without
+// altering membership. Recovery is worth one sentence, because a rider who was told
+// the data was delayed is owed the news that it is not.
+function statusAnnouncement(prev, next) {
   if (!next) return null;
-  const changed = [];
-  const keys = new Set([...Object.keys(prev || {}), ...Object.keys(next)]);
-  for (const key of keys) {
-    const before = (prev || {})[key];
-    const after = next[key];
-    if (before === after) continue;
-    // The FIRST observation is not a transition. Without this a page load would
-    // announce the entire status line before the rider had asked for anything, which
-    // is the chatty failure this helper exists to prevent.
-    if (before === undefined) continue;
-    changed.push({ key, from: before, to: after });
-  }
-  return changed.length ? changed : null;
+  if (!prev) return null;
+  const before = new Set(prev);
+  const after = new Set(next);
+  const entered = next.filter((key) => !before.has(key));
+  const left = prev.filter((key) => !after.has(key));
+  if (!entered.length && !left.length) return null;
+  const clauses = [];
+  if (entered.length) clauses.push(`Live data delayed for ${sentenceList(entered.map(describeIdentity))}`);
+  if (left.length) clauses.push(`Live data current again for ${sentenceList(left.map(describeIdentity))}`);
+  return `${clauses.join(". ")}.`;
 }
 
-// The alert banner speaks when its CONTENT meaningfully changes. bannerRenderKey is
-// the existing dedup key the banner already repaints from (alert ids plus the stale
-// flag), so reusing it here keeps the spoken and the drawn banner in step by
-// construction rather than by two functions agreeing.
-function bannerWorthy(prevKey, nextKey) {
-  if (!nextKey) return false; // nothing to say when there is no banner
-  if (prevKey === nextKey) return false; // same alerts, same staleness: silence
-  return true;
+// The banner's announcement. The identity of an alert is its id AND a hash of its
+// wording, which is the same content-hash approach the C1 banner dedup fix
+// established after an alert whose text was revised in place under an unchanged id
+// left the banner showing superseded wording indefinitely. So a reworded alert is a
+// new identity here too, and is announced once.
+//
+// Deliberately NOT sensitive to: ordering (the set is compared, and the render key is
+// built from a sorted list), a refresh carrying identical alerts, and the staleness
+// marker. That last one matters: the "may be out of date" flag is visual honesty
+// about the feed, not news about the transit system, and folding it in would announce
+// every time the alerts feed crossed its threshold with nothing having happened.
+function alertIdentities(alerts) {
+  return (alerts || [])
+    .map((a) => `${a.system}|${a.id}|${hashString(String(a.header ?? ""))}`)
+    .sort();
+}
+
+function bannerAnnouncement(prev, next) {
+  if (!next) return null;
+  if (!prev) return null; // first observation seeds silently
+  const before = new Set(prev);
+  const appeared = next.filter((key) => !before.has(key));
+  // An alert CLEARING is not announced: the rider is not told about the absence of an
+  // emergency, and the strip disappearing is the signal. Only new or revised alerts
+  // are worth interrupting for.
+  if (!appeared.length) return null;
+  // A SUMMARY, NEVER THE BODY. The banner and the alerts block carry the wording; a
+  // live region that read a full service alert aloud would be unusable during exactly
+  // the incident it exists for.
+  return appeared.length === 1
+    ? "New service alert."
+    : `${appeared.length} new service alerts.`;
 }
 
 /* ---------------- A2: motion ---------------- */
@@ -1795,7 +1857,8 @@ if (typeof module !== "undefined" && module.exports) {
     // A2: map semantics and the interaction floor.
     joinName, subwayTrainName, railroadTrainName, pathTrainName, ferryBoatName,
     busName, compassPoint, airtrainStationName, COMPASS_POINTS, railroadSystemLabel,
-    statusSignature, statusWorthy, bannerWorthy,
+    degradedIdentities, describeIdentity, sentenceList, statusAnnouncement,
+    alertIdentities, bannerAnnouncement,
     motionAllowed, REDUCED_MOTION_QUERY,
   };
 }

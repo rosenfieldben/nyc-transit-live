@@ -50,6 +50,14 @@
          the visual repaint and the announcement cannot be coupled by accident. -->
     <div id="stations-announce" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
   </section>
+  <!-- A2: THE PAGE'S ONE LIVE REGION. The status line and the alert banner both speak
+       through announcePage in systems/shared.js and nothing else may write here; the
+       reasoning for a single door rather than a guard per surface is in that comment.
+       Polite, because nothing on this page is worth cutting off whatever a rider is
+       reading: alerts are decorative by project philosophy and the status line is
+       ambient. Kept separate from both visible surfaces so a repaint and an
+       announcement cannot be coupled by accident, exactly as #stations-announce is. -->
+  <div id="page-announce" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
   <!-- Agency-wide service alerts strip, populated by map.js only when there is
        something to show (empty otherwise, so no banner element is rendered). -->
   <div id="alert-banner"></div>

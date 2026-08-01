@@ -166,6 +166,10 @@ async function refreshAll() {
   // create them (a route relabel moving a train between groups).
   refreshSystemFreshness();
   applyStaleTreatment();
+  // A2: the page's live region, from the same index the dimming just used. Judged on
+  // degraded-set membership in helpers.js, so a poll that only makes an already-stale
+  // system older says nothing.
+  announceStatusTransition(systemFreshnessIndex);
   const counts = Object.values(sources)
     .map((s) => `${s.count.toLocaleString()} ${s.label}`)
     .join(" · ");

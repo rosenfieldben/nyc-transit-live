@@ -70,6 +70,63 @@ function setStatus(text, isError = false) {
   statusEl.classList.toggle("error", isError);
 }
 
+/* ---------------- A2: the page's one live region ---------------- */
+
+// THE PAGE DOOR. The status line and the alert banner are the two surfaces outside the
+// station panel that can have something to say, and BOTH must speak through here.
+//
+// WHY ONE DOOR AND NOT A GUARD AT EACH SURFACE. This is the same reasoning as the
+// marker factory owning keyboard:false, and as A1's announceUnlessTick before it:
+// three guarded copies drift, and the one that drifts is the one nobody notices,
+// because a live region failing is silent by definition. A1 learned this the
+// expensive way when a copied tick guard was missing from one branch and a leaked
+// timer walked straight through the gap. One function, one element, no other writer.
+//
+// POLITENESS IS DELIBERATE. aria-live="polite" for both: alerts are decorative by this
+// project's philosophy (they never gate the arrivals a rider came for) and the status
+// line is ambient. Nothing on this page is worth cutting off whatever a rider is
+// currently reading, so nothing here is assertive.
+//
+// A NOTE FOR A FUTURE PATH THAT DOES NOT EXIST YET: if either surface is ever hidden
+// and later shown again, re-announcing the CURRENT state on return is correct, not
+// duplicate. The A1 panel settled the same question: while a region is out of the
+// accessibility tree it cannot have been heard, so returning is a first observation
+// again rather than a repeat. Today nothing hides these two, which is exactly why the
+// rule belongs in writing before something does.
+const pageAnnounceEl = document.getElementById("page-announce");
+
+function announcePage(text) {
+  if (!pageAnnounceEl || !text) return false;
+  pageAnnounceEl.textContent = text;
+  return true;
+}
+
+// What the page last knew, so worthiness is judged against the previous OBSERVATION
+// rather than against whatever happens to be on screen. Null means nothing has been
+// observed yet, which is what makes the first poll silent.
+let announcedDegraded = null;
+let announcedAlerts = null;
+
+// Called from the poll tail with the freshness index this tick produced. Pure decision
+// in helpers.js; this is only the plumbing that remembers and speaks.
+function announceStatusTransition(freshnessIndex) {
+  const next = degradedIdentities(freshnessIndex);
+  const text = statusAnnouncement(announcedDegraded, next);
+  announcedDegraded = next;
+  if (text) announcePage(text);
+  return text;
+}
+
+// Called wherever the banner's shown set is computed, with the SAME list the banner
+// renders, so the spoken and the drawn banner cannot disagree about what is showing.
+function announceAlertTransition(shown) {
+  const next = alertIdentities(shown);
+  const text = bannerAnnouncement(announcedAlerts, next);
+  announcedAlerts = next;
+  if (text) announcePage(text);
+  return text;
+}
+
 
 /* ---------------- Per-system freshness (C2) ---------------- */
 
@@ -579,6 +636,14 @@ function renderAlertBanner(alerts) {
   const key = bannerRenderKey(shown, stale);
   if (key === lastBannerKey) return; // unchanged since the last render: leave the DOM alone
   lastBannerKey = key;
+  // Speak from the SAME `shown` list the rows below are built from, so the spoken and
+  // the drawn banner cannot disagree about what is showing. Placed after the dedup
+  // return, which costs nothing: an unchanged key means unchanged alert identities, so
+  // the announcement would have been silent anyway. The stale flag IS in the key but
+  // NOT in the identities, so the freshness marker appearing re-renders the strip and
+  // says nothing, which is the intent: that marker is honesty about the feed, not news
+  // about the transit system.
+  announceAlertTransition(shown);
   if (!shown.length && !stale) {
     el.replaceChildren(); // nothing to show and alerts are current: no banner strip
     return;
@@ -630,7 +695,16 @@ function animateTrains(ts) {
     // waiting up to 15s for the next poll. The sweep runs only when the stale set
     // actually changes (C2).
     refreshSystemFreshness();
-    if (staleSetChanged()) applyStaleTreatment();
+    if (staleSetChanged()) {
+      applyStaleTreatment();
+      // AND SAY SO. A system goes stale by time passing, not only by a poll landing,
+      // so the tick is where a mid-interval crossing is detected; announcing only from
+      // the poll tail would leave a rider up to fifteen seconds behind the dimming
+      // they cannot see. announceStatusTransition compares against what was last
+      // announced, so being called from here AND from the poll tail is harmless: the
+      // second call finds an unchanged set and says nothing.
+      announceStatusTransition(systemFreshnessIndex);
+    }
     const now = Date.now() / 1000 - (minClockOffset ?? 0);
     // glideClock pins a marker at its system's freeze deadline instead of
     // dead-reckoning it forward on a feed that is not being refreshed. A system with

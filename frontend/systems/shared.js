@@ -492,20 +492,28 @@ function openStationFromCrossLink(stationKey) {
 // Popup content here is bound as a FUNCTION, so a refresh re-renders it wholesale and
 // the old nodes are discarded. Nothing warns; focus simply lands on the body.
 //
-// Restores the same control when it can identify it (a cross-link is identified by its
-// station key, which survives the re-render because the popup describes the same
-// vehicle), and falls back to the popup's content container so the rider is at worst
-// still inside the popup they were reading rather than at the top of the document.
+// Restores the same control when the re-rendered popup still has one, and falls back to
+// the popup's content container so the rider is at worst still inside the popup they
+// were reading rather than at the top of the document.
+//
+// THE CONTROL IS IDENTIFIED BY ITS ROLE IN THE POPUP, NOT BY WHAT IT POINTS AT, and
+// round 3 of the review caught the difference by reproduction. The first version matched
+// the cross-link on its data-station-key, with a comment claiming the key "survives the
+// re-render because the popup describes the same vehicle". The key describes the
+// STATION: railroad.js builds it from the train's current stop_id, so a train advancing
+// one stop changes it by design. The rider tabbed to "Also here: Jamaica", the poll
+// rendered "Also here: Hicksville", the key no longer matched, and focus was dumped on
+// the inert content div with a live button on screen. Worse, it stuck: the content div
+// survives later updates, so the guard below returned early on every subsequent poll and
+// focus never came back. A vehicle popup has at most one cross-link (one call site, in
+// railroad.js), so asking for that one is both simpler and correct.
 function updatePopupKeepingFocus(marker) {
   const popup = marker.getPopup && marker.getPopup();
   if (!popup) return;
   const before = popup.getElement ? popup.getElement() : null;
   const active = document.activeElement;
   const hadFocus = !!(before && active && before.contains(active));
-  const crossKey =
-    hadFocus && active.classList && active.classList.contains(CROSSLINK_CLASS)
-      ? active.getAttribute("data-station-key")
-      : null;
+  const hadCrossLink = !!(hadFocus && active.classList && active.classList.contains(CROSSLINK_CLASS));
 
   popup.update();
 
@@ -521,9 +529,12 @@ function updatePopupKeepingFocus(marker) {
   // element that still holds focus is by definition not stranded, so leave it alone.
   if (after.contains(active)) return;
   const content = after.querySelector(".leaflet-popup-content");
-  const sameControl = crossKey
-    ? after.querySelector(`.${CROSSLINK_CLASS}[data-station-key="${crossKey}"]`)
-    : null;
+  // The station this now points at may differ from the one the rider tabbed to, and
+  // that is the honest outcome: the button carries the station name in its accessible
+  // name, so a restored focus announces the new destination before the rider can act on
+  // it. A vehicle that has stopped naming a station renders no cross-link at all, and
+  // then the content container below is the right landing place.
+  const sameControl = hadCrossLink ? after.querySelector(`.${CROSSLINK_CLASS}`) : null;
   const destination = sameControl || content;
   if (!destination) return;
   // The content container is not naturally focusable; -1 makes it a landing place

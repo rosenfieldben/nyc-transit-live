@@ -194,6 +194,67 @@ test("A3e. focus parked on the cross-link survives a background refresh", async 
   await expect.poll(async () => page.evaluate(() => (openStation ? openStation.station.name : null))).not.toBeNull();
 });
 
+test("A3g. the restored cross-link is the live one, even when the train has moved on", async ({ page }) => {
+  // FOUND BY ROUND 3, WHICH EXISTED TO REVIEW ROUND 2's FIX. A3e restores focus to the
+  // cross-link after a refresh destroys it, and the first version found the button again
+  // by its data-station-key. That key is the STATION's, not the control's: railroad.js
+  // builds it from the train's current stop_id, so a train advancing one stop changes it
+  // by design. The rider tabbed to "Also here: Jamaica", the poll rendered "Also here:
+  // Hicksville", the key did not match, and focus went to the inert content div while a
+  // live button sat on screen. It stuck too, because the content div survives the next
+  // update and the "leave alone what still has focus" guard then returns early forever.
+  //
+  // A3e pins the case where the stop is unchanged, which is why the suite stayed green
+  // over this. This is the moving-train case, and the two together are what make the
+  // restore mean "the control", not "that one station".
+  const ctx = await installMocks(page);
+  // A second LIRR station, so the train has somewhere to advance TO. Registered before
+  // the page loads, because the station registry is built once from this payload.
+  ctx.overrides.railroadStops = (route, fixtures) =>
+    json(route, [...fixtures.railroadStops(), { system: "LIRR", id: "13", name: "Hicksville", lat: 40.7684, lon: -73.5251 }]);
+  let advanced = false;
+  ctx.overrides.railroads = (route, fixtures) => {
+    const body = fixtures.railroads();
+    if (advanced) {
+      for (const train of body.data) if (train.stop_id === "12") {
+        train.stop_id = "13";
+        train.stop_name = "Hicksville";
+      }
+    }
+    return json(route, body);
+  };
+  await open(page);
+
+  const placed = await page.evaluate(() => {
+    for (const [key, record] of railroads) if (record.latest.stop_id != null) return key;
+    return null;
+  });
+  await page.evaluate((key) => railroads.get(key).marker.openPopup(), placed);
+  await expect(page.locator(".popup-crosslink")).toHaveAttribute("data-station-key", "LIRR|12");
+  await page.locator(".popup-crosslink").focus();
+  await expect(page.locator(".popup-crosslink")).toBeFocused();
+
+  // The train reaches its next stop, and one poll re-renders the popup around it.
+  advanced = true;
+  await page.clock.runFor(15_000 + 1000);
+  await expect(page.locator(".popup-crosslink")).toHaveAttribute("data-station-key", "LIRR|13");
+
+  const after = await page.evaluate(() => {
+    const el = document.activeElement;
+    if (!el || el === document.body) return "BODY";
+    return `${el.className}|${el.getAttribute("data-station-key")}|${el.textContent}`;
+  });
+  expect(after, "focus must be on the live cross-link, not on the content div").toContain("popup-crosslink");
+  expect(after, "and it must be the button as it now reads, naming where it now goes").toContain("Hicksville");
+
+  // The assertion that matters: the rider can still act. Focus sitting on a button that
+  // looks right is not the same as the button working.
+  await page.keyboard.press("Enter");
+  await expect
+    .poll(async () => page.evaluate(() => (openStation ? openStation.station.name : null)))
+    .toBe("Hicksville");
+});
+
 test("A3f. a refresh leaves alone the controls it did not destroy", async ({ page }) => {
   // THE REGRESSION A3e's FIX INTRODUCED, found by five independent review lenses.
   // popup.update() reassigns the CONTENT node's innerHTML and nothing else, so the

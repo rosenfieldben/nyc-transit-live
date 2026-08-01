@@ -210,6 +210,19 @@ function labeledMarker(latlng, options, name) {
   // silently anonymous again, and nothing else would notice for a static system like
   // AirTrain that has no poll to re-apply the name.
   marker.on("add", () => applyMarkerName(marker));
+  // RELABEL AFTER A RE-SKIN TOO, so the name survives no matter what order a caller
+  // does things in. Today setIcon happens to reuse the same element and attributes
+  // happen to survive, but that is a Leaflet implementation detail (Icon._setIconStyles
+  // reassigns className wholesale, and DivIcon.createIcon reuses the div it is handed)
+  // and two systems already call setIcon AFTER setMarkerName. Making survival depend
+  // on call-site ordering is the copied-guard liability again, one level down: wrap it
+  // once here and no system can get the order wrong.
+  const setIcon = marker.setIcon.bind(marker);
+  marker.setIcon = (icon) => {
+    const result = setIcon(icon);
+    applyMarkerName(marker);
+    return result;
+  };
   setMarkerName(marker, name);
   return marker;
 }

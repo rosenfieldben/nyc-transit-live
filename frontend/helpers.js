@@ -1570,6 +1570,203 @@ function announcementWorthy(prev, next) {
   return false;
 }
 
+/* ---------------- A2: what a marker is called ---------------- */
+
+// THE NAMES ON THE MAP. Every one of these builds from the SAME fields its system's
+// popup renders, so a marker and its popup can never describe different trains. They
+// are pure and take their lookups by injection, which is what lets the node tests pin
+// the wording instead of asserting against a live map.
+//
+// They are also deliberately plain sentences rather than the popup's shorthand. A
+// popup can afford "Next stop:" as a label above a value because it is laid out in
+// two dimensions; a name is read as one line of speech, so it has to be a sentence a
+// person would say. The rule for every builder below: name the vehicle, say where it
+// is going or what it is doing, and stop. No trip ids, no coordinates, no counts.
+//
+// NOTHING HERE READS THE CLOCK OR THE FRESHNESS INDEX. A stale marker is already
+// dimmed and its popup already carries the age line; folding "as of 4m ago" into the
+// name would make every label change on a timer, which is the announcement problem
+// A1 solved and has no business coming back through the marker layer.
+
+// Join the parts of a name, dropping the empty ones, so a missing field leaves no
+// double comma and no dangling "to".
+function joinName(parts) {
+  return parts.filter((part) => part != null && part !== "").join(", ");
+}
+
+// "1 train, next stop Times Sq-42 St, Northbound". route_id is the same bullet the
+// icon shows; an unknown route says so rather than reading the literal "?" glyph.
+function subwayTrainName(train) {
+  const t = train || {};
+  const route = t.route_id ? `${t.route_id} train` : "Subway train";
+  const stop = t.stop_name || t.stop_id;
+  return joinName([route, stop ? `next stop ${stop}` : null, t.direction || null]);
+}
+
+// "MNR" is what the feed calls it and what the popup prints; "Metro-North" is what a
+// rider calls it, and what the A1 station panel already says. A name that is going to
+// be SPOKEN uses the rider's word, because an initialism is read letter by letter.
+function railroadSystemLabel(system) {
+  return system === "MNR" ? "Metro-North" : system || "Railroad";
+}
+
+// "Metro-North Hudson, train 8801, next stop Grand Central, scheduled position, no
+// GPS". Built from the same FIELDS as the popup head, but NOT from formatRailroadHead
+// itself: that helper joins with a middot, which is a visual separator doing a job
+// that punctuation cannot do in speech (a screen reader reads it as noise, or as the
+// words "middle dot"). Same facts, spoken shape. The GPS-versus-scheduled clause is
+// here for the same reason it is in the popup: it tells a rider how much to trust the
+// position they are being told about.
+function railroadTrainName(train, routeName = null) {
+  const t = train || {};
+  const system = railroadSystemLabel(t.system);
+  const head = routeName ? `${system} ${routeName}` : t.route_id ? `${system} route ${t.route_id}` : system;
+  const placed = isPlacedRailroad(t);
+  return joinName([
+    head,
+    t.train_num ? `train ${t.train_num}` : null,
+    placed && t.stop_name ? `next stop ${t.stop_name}` : null,
+    t.direction || null,
+    placed ? "scheduled position, no GPS" : "live GPS",
+  ]);
+}
+
+// "Newark - World Trade Center, PATH, next stop Grove St, to Newark". PATH trains are
+// always scheduled positions, which the popup states and the name repeats.
+function pathTrainName(train, routeName = null) {
+  const t = train || {};
+  return joinName([
+    formatPathHead(t.route_id, routeName),
+    "PATH",
+    t.stop_name ? `next stop ${t.stop_name}` : null,
+    t.direction || null,
+    "scheduled position, no GPS",
+  ]);
+}
+
+// "East River, NYC Ferry, boat H201, at dock". ferryStatusText is the popup's own
+// wording. The boat label is the rider-visible hull name, not the feed's vehicle id.
+function ferryBoatName(boat, routeName = null) {
+  const b = boat || {};
+  // ferryStatusText returns null for a status the feed did not give or we do not
+  // recognise, and the popup omits its line entirely in that case. The name does the
+  // same: saying "under way" about a boat whose status is unknown would be inventing
+  // the one fact a rider is actually asking about.
+  const status = ferryStatusText(b.status);
+  return joinName([
+    routeName || "Unassigned route",
+    "NYC Ferry",
+    b.label ? `boat ${b.label}` : null,
+    status ? status.toLowerCase() : null,
+  ]);
+}
+
+// "M15 bus, heading east" or "M15 bus, heading unknown". The bearing is spoken as a
+// COMPASS POINT, not as degrees: the marker's whole visual job is the arrow, and "142
+// degrees" is a number a rider has to convert while standing at a stop.
+function busName(bus) {
+  const b = bus || {};
+  const route = b.route_id ? `${b.route_id} bus` : "Bus";
+  return joinName([route, `heading ${compassPoint(b.bearing)}`]);
+}
+
+const COMPASS_POINTS = ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"];
+
+// Degrees to one of eight compass points. Wraps, so 350 and -10 both read "north".
+function compassPoint(bearing) {
+  if (bearing == null || Number.isNaN(Number(bearing))) return "unknown";
+  const step = 360 / COMPASS_POINTS.length;
+  const index = Math.round(Number(bearing) / step);
+  return COMPASS_POINTS[((index % COMPASS_POINTS.length) + COMPASS_POINTS.length) % COMPASS_POINTS.length];
+}
+
+// "Federal Circle, AirTrain JFK station". AirTrain stations are the one STATION with a
+// DOM element to name (every other system's stations are circleMarkers drawn on a
+// shared canvas, which has no element and therefore no place to put a name; those
+// stations are reachable as text through the A1 panel instead).
+function airtrainStationName(station) {
+  const s = station || {};
+  return joinName([s.name || "AirTrain station", "AirTrain JFK station"]);
+}
+
+/* ---------------- A2: when the page itself should speak ---------------- */
+
+// The page-level equivalent of announcementWorthy, and it follows the same rule: judge
+// a TRANSITION between two states, never a rendered string, so a repaint carrying
+// identical facts cannot be mistaken for news.
+//
+// The status line rewrites itself on every poll (the clock in it changes every 15
+// seconds by construction), so comparing text would announce forever. What a rider
+// actually needs to hear is a source CHANGING HEALTH: buses started failing, the
+// subway came back. Everything else, including the counts and the timestamp, is
+// visible detail that belongs on screen and not in the ear.
+function statusSignature(sources) {
+  const signature = {};
+  for (const [key, source] of Object.entries(sources || {})) {
+    // Three states, deliberately coarse. "error" is a poll that failed; "stale" is a
+    // poll that succeeded against data too old to trust; "ok" is everything else. The
+    // COUNTS ARE NOT IN HERE: two buses becoming three is not an announcement.
+    let state = "ok";
+    if (source && source.error) state = "error";
+    else if (source && source.staleLine) state = "stale";
+    signature[key] = state;
+  }
+  return signature;
+}
+
+// True when at least one source changed health. Returns the reason so the caller can
+// speak about what changed rather than reciting the whole page.
+function statusWorthy(prev, next) {
+  if (!next) return null;
+  const changed = [];
+  const keys = new Set([...Object.keys(prev || {}), ...Object.keys(next)]);
+  for (const key of keys) {
+    const before = (prev || {})[key];
+    const after = next[key];
+    if (before === after) continue;
+    // The FIRST observation is not a transition. Without this a page load would
+    // announce the entire status line before the rider had asked for anything, which
+    // is the chatty failure this helper exists to prevent.
+    if (before === undefined) continue;
+    changed.push({ key, from: before, to: after });
+  }
+  return changed.length ? changed : null;
+}
+
+// The alert banner speaks when its CONTENT meaningfully changes. bannerRenderKey is
+// the existing dedup key the banner already repaints from (alert ids plus the stale
+// flag), so reusing it here keeps the spoken and the drawn banner in step by
+// construction rather than by two functions agreeing.
+function bannerWorthy(prevKey, nextKey) {
+  if (!nextKey) return false; // nothing to say when there is no banner
+  if (prevKey === nextKey) return false; // same alerts, same staleness: silence
+  return true;
+}
+
+/* ---------------- A2: motion ---------------- */
+
+// THE ONE MOTION GATE. Returns false when the rider has asked their system for
+// reduced motion.
+//
+// THE PRINCIPLE, and it is the whole reason this is a gate and not a feature flag:
+// reduced motion changes HOW a position updates, never WHAT is shown. A gliding train
+// and a stepping train are at the same place at the same time; one interpolates
+// between polls and the other jumps when the truth arrives. Nothing here may hide a
+// marker, drop a poll, freeze data, or change any text. If a change would make the
+// map say something different rather than move differently, it does not belong behind
+// this gate.
+//
+// matchMedia is injected so the node tests can drive both answers, and so the callers
+// that need to REACT to a change (see motionPreferenceListener) share one definition
+// of the query with the callers that only read it once.
+const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+
+function motionAllowed(mql = null) {
+  const query = mql || (typeof matchMedia === "function" ? matchMedia(REDUCED_MOTION_QUERY) : null);
+  if (!query) return true; // no matchMedia (node, ancient browser): animate as before
+  return !query.matches;
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     esc, routeColor, lineColor, staleness, emptyFeedDecision, noteClockOffset,
@@ -1595,5 +1792,10 @@ if (typeof module !== "undefined" && module.exports) {
     foldStationName, stationQueryTokens, stationMatchesTokens, searchStations,
     stationOverflowLine, shapeStationArrivals, arrivalSentence, clockTimeLabel,
     ANNOUNCE_LEAD_SHIFT_S, arrivalsSignature, announcementWorthy,
+    // A2: map semantics and the interaction floor.
+    joinName, subwayTrainName, railroadTrainName, pathTrainName, ferryBoatName,
+    busName, compassPoint, airtrainStationName, COMPASS_POINTS, railroadSystemLabel,
+    statusSignature, statusWorthy, bannerWorthy,
+    motionAllowed, REDUCED_MOTION_QUERY,
   };
 }

@@ -7,6 +7,17 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  subwayTrainName,
+  railroadTrainName,
+  pathTrainName,
+  ferryBoatName,
+  busName,
+  compassPoint,
+  airtrainStationName,
+  statusSignature,
+  statusWorthy,
+  bannerWorthy,
+  motionAllowed,
   esc,
   routeColor,
   lineColor,
@@ -1964,4 +1975,156 @@ test("announcementWorthy on a REPLACED lead train: visible identity decides", ()
     now,
   );
   assert.equal(announcementWorthy(subBefore, subLater), true);
+});
+
+/* ---------------- A2: the names on the map ---------------- */
+
+test("A2: every marker name is built from the fields its popup renders", () => {
+  // Subway: the route bullet the icon already shows, then where it is going.
+  assert.equal(
+    subwayTrainName({ route_id: "1", stop_name: "Times Sq-42 St", direction: "Northbound" }),
+    "1 train, next stop Times Sq-42 St, Northbound",
+  );
+  // stop_id is the fallback the popup uses when the name did not resolve.
+  assert.equal(subwayTrainName({ route_id: "A", stop_id: "A31" }), "A train, next stop A31");
+  // A train with no route is still a subway train, never the literal "?" the icon
+  // draws when it cannot fit a bullet.
+  assert.equal(subwayTrainName({ stop_name: "Canal St" }), "Subway train, next stop Canal St");
+  assert.equal(subwayTrainName({}), "Subway train");
+  assert.equal(subwayTrainName(null), "Subway train");
+
+  // Railroad: the popup's own head builder, and the GPS-versus-scheduled clause,
+  // which is the part that tells a rider how much to trust the position.
+  assert.equal(
+    railroadTrainName({ system: "LIRR", route_id: "10", train_num: "2751", direction: "Eastbound" }, "Babylon Branch"),
+    "LIRR Babylon Branch, train 2751, Eastbound, live GPS",
+  );
+  // A PLACED train (it carries stop_id) says so, and only a placed train has a next
+  // stop to give.
+  assert.equal(
+    railroadTrainName({ system: "MNR", route_id: "1", train_num: "8801", stop_id: "1", stop_name: "Grand Central" }, "Hudson"),
+    "Metro-North Hudson, train 8801, next stop Grand Central, scheduled position, no GPS",
+  );
+  // NO MIDDOT. The popup head joins system and route with "·", which is a visual
+  // separator; spoken, it is noise or the words "middle dot". Same fields, spoken
+  // shape. And "MNR" becomes the word a rider uses, as the A1 panel already does.
+  assert.ok(!railroadTrainName({ system: "MNR", route_id: "1" }, "Hudson").includes("\u00b7"));
+  assert.equal(railroadTrainName({ system: "LIRR", route_id: "10" }), "LIRR route 10, live GPS");
+
+  // PATH: always a scheduled position, which the popup states and the name repeats.
+  assert.equal(
+    pathTrainName({ route_id: "862", stop_name: "Grove St", direction: "To Newark" }, "Newark - World Trade Center"),
+    "Newark - World Trade Center, PATH, next stop Grove St, To Newark, scheduled position, no GPS",
+  );
+  // No route name resolved yet: formatPathHead's fallback, not a blank.
+  assert.equal(pathTrainName({ route_id: "862" }), "PATH route 862, PATH, scheduled position, no GPS");
+
+  // Ferry: the status in the popup's own words, lowercased into the sentence.
+  assert.equal(
+    ferryBoatName({ label: "H201", status: "STOPPED_AT" }, "East River"),
+    "East River, NYC Ferry, boat H201, at dock",
+  );
+  assert.equal(
+    ferryBoatName({ label: "H202", status: "IN_TRANSIT_TO" }, "Rockaway"),
+    "Rockaway, NYC Ferry, boat H202, under way",
+  );
+  // An unassigned boat is what the popup calls it too. And a boat whose status the
+  // feed did not give says NOTHING about its status, rather than guessing "under way":
+  // ferryStatusText returns null there and the popup omits the line for the same
+  // reason. Inventing the one fact the rider is asking about is worse than silence.
+  assert.equal(ferryBoatName({ label: "H9" }), "Unassigned route, NYC Ferry, boat H9");
+  assert.equal(ferryBoatName({ label: "H9", status: "NONSENSE" }), "Unassigned route, NYC Ferry, boat H9");
+
+  // AirTrain stations are the one station kind with an element to name.
+  assert.equal(airtrainStationName({ name: "Federal Circle" }), "Federal Circle, AirTrain JFK station");
+});
+
+test("A2: a bus says its heading as a compass point, never as degrees", () => {
+  // THE POINT OF THIS HELPER. The marker's whole visual job is an arrow; a rider
+  // listening instead of looking needs the direction as a word, because "142 degrees"
+  // is arithmetic to do while standing at a stop.
+  assert.equal(busName({ route_id: "M15", bearing: 90 }), "M15 bus, heading east");
+  assert.equal(busName({ route_id: "B62", bearing: 0 }), "B62 bus, heading north");
+  assert.equal(busName({ route_id: "Q10" }), "Q10 bus, heading unknown");
+  assert.equal(busName({ bearing: 180 }), "Bus, heading south");
+
+  // The eight points, and the rounding between them.
+  assert.equal(compassPoint(0), "north");
+  assert.equal(compassPoint(45), "northeast");
+  assert.equal(compassPoint(135), "southeast");
+  assert.equal(compassPoint(225), "southwest");
+  assert.equal(compassPoint(315), "northwest");
+  // Wrapping at both ends: 350 and -10 are the same bearing and must read alike.
+  assert.equal(compassPoint(350), "north");
+  assert.equal(compassPoint(-10), "north");
+  assert.equal(compassPoint(360), "north");
+  // Halfway between two points rounds up, consistently, rather than throwing.
+  assert.equal(compassPoint(22.5), "northeast");
+  assert.equal(compassPoint(NaN), "unknown");
+  assert.equal(compassPoint(null), "unknown");
+});
+
+/* ---------------- A2: when the page itself speaks ---------------- */
+
+test("A2: the status line speaks on a health transition and not on a repaint", () => {
+  const healthy = { buses: {}, subways: {}, ferry: {} };
+  const first = statusSignature(healthy);
+  assert.deepEqual(first, { buses: "ok", subways: "ok", ferry: "ok" });
+
+  // THE CHATTY INVERSE, and the reason this helper compares state instead of text:
+  // the status line rewrites itself every 15 seconds because it contains a clock, so
+  // a text comparison would announce forever. Identical health says nothing.
+  assert.equal(statusWorthy(first, statusSignature(healthy)), null);
+
+  // A source failing IS news, and the helper says which one and which way.
+  const broken = statusSignature({ buses: { error: "timed out" }, subways: {}, ferry: {} });
+  assert.deepEqual(statusWorthy(first, broken), [{ key: "buses", from: "ok", to: "error" }]);
+  // Still broken on the next poll: already said.
+  assert.equal(statusWorthy(broken, statusSignature({ buses: { error: "timed out" }, subways: {}, ferry: {} })), null);
+  // The SAME source failing a DIFFERENT way is not a new transition either: the rider
+  // already knows the buses are down, and the wording is on screen.
+  assert.equal(statusWorthy(broken, statusSignature({ buses: { error: "HTTP 502" }, subways: {}, ferry: {} })), null);
+  // Recovery is news.
+  assert.deepEqual(statusWorthy(broken, first), [{ key: "buses", from: "error", to: "ok" }]);
+
+  // Stale is its own state between ok and error, and moving between them announces.
+  const stale = statusSignature({ buses: { staleLine: "as of 6m ago" }, subways: {}, ferry: {} });
+  assert.deepEqual(statusWorthy(first, stale), [{ key: "buses", from: "ok", to: "stale" }]);
+  assert.deepEqual(statusWorthy(stale, broken), [{ key: "buses", from: "stale", to: "error" }]);
+
+  // COUNTS ARE NOT HEALTH. Two buses becoming three is not worth interrupting for,
+  // and a signature that folded counts in would announce on almost every poll.
+  const twoBuses = statusSignature({ buses: { count: 2 }, subways: {}, ferry: {} });
+  const threeBuses = statusSignature({ buses: { count: 3 }, subways: {}, ferry: {} });
+  assert.equal(statusWorthy(twoBuses, threeBuses), null);
+
+  // THE FIRST OBSERVATION IS NOT A TRANSITION. A page load must not read the whole
+  // status line aloud before the rider has done anything.
+  assert.equal(statusWorthy({}, first), null);
+  assert.equal(statusWorthy(null, first), null);
+  // A source the previous signature did not carry is treated as a first observation
+  // too, not as a transition into failure. In practice this cannot happen (the source
+  // set is fixed in map.js at load and every signature covers all of it), which is
+  // exactly why it must not invent an announcement if it ever does.
+  assert.equal(statusWorthy({ buses: "ok" }, { buses: "ok", path: "error" }), null);
+});
+
+test("A2: the banner speaks when its content changes, and stays quiet otherwise", () => {
+  assert.equal(bannerWorthy(null, "abc"), true); // an alert arrived
+  assert.equal(bannerWorthy("abc", "abc"), false); // same alerts, same staleness
+  assert.equal(bannerWorthy("abc", "def"), true); // different alerts
+  // A banner going away is not announced: the rider is not told about the absence of
+  // an emergency, and the visible strip disappearing is the signal.
+  assert.equal(bannerWorthy("abc", null), false);
+  assert.equal(bannerWorthy(null, null), false);
+});
+
+/* ---------------- A2: the motion gate ---------------- */
+
+test("A2: motionAllowed reads the preference, and defaults to animating", () => {
+  assert.equal(motionAllowed({ matches: true }), false); // rider asked for reduced motion
+  assert.equal(motionAllowed({ matches: false }), true);
+  // No matchMedia at all (node, or a browser too old to have it): animate as before
+  // rather than silently degrading everyone's map.
+  assert.equal(motionAllowed(null), true);
 });

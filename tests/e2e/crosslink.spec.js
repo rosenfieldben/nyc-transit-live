@@ -193,3 +193,49 @@ test("A3e. focus parked on the cross-link survives a background refresh", async 
   await page.keyboard.press("Enter");
   await expect.poll(async () => page.evaluate(() => (openStation ? openStation.station.name : null))).not.toBeNull();
 });
+
+test("A3f. a refresh leaves alone the controls it did not destroy", async ({ page }) => {
+  // THE REGRESSION A3e's FIX INTRODUCED, found by five independent review lenses.
+  // popup.update() reassigns the CONTENT node's innerHTML and nothing else, so the
+  // popup's own close button is a sibling that survives every refresh. Restoring focus
+  // unconditionally therefore moved it off a live control onto an inert container, on
+  // every vehicle popup on every poll, and the rider's Enter stopped closing the popup.
+  //
+  // A restore is only ever correct for something that was actually destroyed.
+  await installMocks(page);
+  await open(page);
+
+  const gps = await page.evaluate(() => {
+    for (const [key, record] of railroads) if (record.latest.stop_id == null) return key;
+    return null;
+  });
+  await page.evaluate((key) => railroads.get(key).marker.openPopup(), gps);
+
+  // The close button is the first tab stop inside any vehicle popup, and for a popup
+  // with no cross-link it is the only one.
+  await page.locator(".leaflet-popup-close-button").focus();
+  await expect(page.locator(".leaflet-popup-close-button")).toBeFocused();
+
+  await page.clock.runFor(15_000 + 1000);
+
+  const after = await page.evaluate(() => {
+    const el = document.activeElement;
+    if (!el || el === document.body) return "BODY";
+    return `${el.tagName}.${el.className}`;
+  });
+  expect(after, "a surviving control must keep focus across a refresh").toContain("leaflet-popup-close-button");
+
+  // And it still does its job, which is the assertion that matters: focus sitting on
+  // the right-looking element is not the same as the rider being able to act.
+  await page.keyboard.press("Enter");
+  // Asked of the MARKER, which is the only source here that tells the truth. Measured
+  // on a popup closed by its own button: isPopupOpen() false and the popup's _map
+  // cleared, but map._popup still holds a stale reference AND one ".leaflet-popup" node
+  // is still in the document, because the clock is paused and the corpse never finishes
+  // fading. Two of the three obvious ways to ask this question report the popup as
+  // still open. This is the same family as the two Leaflet traps documented in
+  // shared.js, and the third time it has cost a round in this phase.
+  await expect
+    .poll(async () => page.evaluate((key) => railroads.get(key).marker.isPopupOpen(), gps))
+    .toBe(false);
+});

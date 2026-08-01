@@ -484,6 +484,14 @@ function updatePopupKeepingFocus(marker) {
   if (!hadFocus) return; // focus was elsewhere: moving it now would be the rude case
   const after = popup.getElement ? popup.getElement() : null;
   if (!after) return;
+  // AND ONLY RESTORE WHAT WAS ACTUALLY LOST. Round 1 of the review shipped this helper
+  // without this line and five independent lenses caught the same regression: update()
+  // reassigns the CONTENT node's innerHTML and nothing else, so the popup's own close
+  // button is a sibling that survives untouched. Restoring unconditionally therefore
+  // yanked focus off a live control and dropped it on an inert div, on every vehicle
+  // popup, every fifteen seconds, and the rider's Enter stopped closing the popup. The
+  // element that still holds focus is by definition not stranded, so leave it alone.
+  if (after.contains(active)) return;
   const content = after.querySelector(".leaflet-popup-content");
   const sameControl = crossKey
     ? after.querySelector(`.${CROSSLINK_CLASS}[data-station-key="${crossKey}"]`)

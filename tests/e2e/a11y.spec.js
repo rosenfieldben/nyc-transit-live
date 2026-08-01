@@ -20,7 +20,7 @@
 
 const { test, expect } = require("@playwright/test");
 const AxeBuilder = require("@axe-core/playwright").default;
-const { installMocks } = require("./mock");
+const { installMocks, json } = require("./mock");
 const fx = require("./fixtures/api");
 
 // Same hermetic harness as stations.spec.js: axe is injected into the page from
@@ -34,7 +34,29 @@ const fx = require("./fixtures/api");
 // app's skew calibration at zero and its ages deterministic) while leaving timers
 // running, which is exactly the combination a scan needs.
 async function open(page) {
-  await installMocks(page);
+  const ctx = await installMocks(page);
+  // AN ALERT IS SERVED ON PURPOSE. The banner renders nothing at all when there are no
+  // agency-wide alerts, so scanning a page without one would include the selector and
+  // examine an empty div: green, and meaningless. The anti-vacuity assertions below
+  // check that the banner was actually reached.
+  ctx.overrides.alerts = (route, fixtures) => {
+    const body = fixtures.alerts();
+    body.alerts = [
+      {
+        id: "a11y-1",
+        system: "subway",
+        header: "Reduced service systemwide while crews clear a disabled train",
+        description: null,
+        effect: "REDUCED_SERVICE",
+        cause: "OTHER_CAUSE",
+        routes: [],
+        stops: [],
+        starts_at: fx.FROZEN_S - 600,
+        ends_at: null,
+      },
+    ];
+    return json(route, body);
+  };
   await page.clock.setFixedTime(new Date(fx.FROZEN_MS));
   await page.goto("/");
   await expect
@@ -44,14 +66,31 @@ async function open(page) {
     .toBeGreaterThanOrEqual(6);
 }
 
-// TWO include() CALLS, NOT ONE include([...]). An ARRAY argument is an iframe path in
-// axe's selector grammar ("#stations-panel" then "#stations-skip" INSIDE it), not a
-// list of roots, and since neither element is a frame the array form silently resolves
-// to nothing at all. The first draft of this file used it and every scan came back
-// green having checked zero nodes: 25 rules and 63 nodes with the chained form, 0 and
-// 0 with the array. That is what the assertions below exist to catch.
+// ONE include() CALL PER ROOT, NEVER include([...]). An ARRAY argument is an iframe
+// path in axe's selector grammar ("#stations-panel" then "#stations-skip" INSIDE it),
+// not a list of roots, and since neither element is a frame the array form silently
+// resolves to nothing at all. The first draft of this file used it and every scan came
+// back green having checked zero nodes: 25 rules and 63 nodes with the chained form, 0
+// and 0 with the array. That is what the assertions below exist to catch.
+//
+// A2 GREW THE SCOPE to the surfaces this phase touched: the alert banner, the status
+// line, and the map controls a rider actually operates (zoom, the layer toggles, the
+// Stations button). Still not the whole page: the legend's rows and the popups remain
+// outside, and widening to the page belongs to the later phase that also states what
+// the page promises. Scoping deliberately, and saying where the edge is, is what keeps
+// a green scan meaningful rather than a suppression list waiting to happen.
+const SCAN_ROOTS = [
+  "#stations-panel",
+  "#stations-skip",
+  "#alert-banner",
+  "#status",
+  ".leaflet-control-zoom",
+  "#toggles",
+  "#stations-toggle",
+];
+
 function scan(page) {
-  return new AxeBuilder({ page }).include("#stations-panel").include("#stations-skip");
+  return SCAN_ROOTS.reduce((builder, root) => builder.include(root), new AxeBuilder({ page }));
 }
 
 // Report violations as readable text rather than as a bare count, because "expected 0,
@@ -70,6 +109,35 @@ function violations(results) {
 // fail the build), the specific selectors that must have been reached, and that
 // color-contrast actually ran, since a rule with no applicable nodes is filed under
 // `inapplicable` and would otherwise vanish without a word.
+// WHAT THE SCAN CANNOT DECIDE, RECORDED RATHER THAN HIDDEN. axe reports a third
+// category besides pass and violation: "incomplete", meaning it needs a human. A green
+// "0 violations" says nothing about those, so if they are never asserted the scan
+// quietly certifies less than it appears to.
+//
+// Everything currently incomplete here is color-contrast, and all of it for the same
+// real reason: the legend is rgba(255,255,255,0.92) and the Leaflet controls sit
+// directly on map tiles, so the actual contrast depends on whatever imagery is behind
+// them and genuinely varies as a rider pans. That is a real accessibility question, not
+// a tooling artifact, and it belongs to the later contrast pass. Pinning the shape here
+// means a NEW kind of uncertainty, or an old one appearing somewhere new, fails this
+// suite instead of blending into a green run.
+function assertIncompletesAreKnown(results, { alsoAllow = [] } = {}) {
+  const kinds = [...new Set(results.incomplete.map((entry) => entry.id))];
+  expect(kinds.sort(), "a new kind of undecidable finding appeared").toEqual(
+    kinds.length ? ["color-contrast"] : [],
+  );
+  const nodes = results.incomplete.flatMap((entry) => entry.nodes.map((node) => node.target.join(" ")));
+  // Every one must be an element painted over something translucent or over the map.
+  const expected = /^(#status|#toggles|label|\.leaflet-control-zoom)/;
+  for (const target of nodes) {
+    if (alsoAllow.some((allowed) => target.startsWith(allowed))) continue;
+    expect(
+      expected.test(target),
+      `contrast is undecidable for ${target}, which is not one of the known translucent surfaces`,
+    ).toBe(true);
+  }
+}
+
 function assertScanned(results, { targets }) {
   const passes = results.passes;
   const checked = passes.flatMap((p) => p.nodes.map((n) => n.target.join(" ")));
@@ -92,7 +160,21 @@ test("A1i. axe: the station panel and the skip link, in the list state", async (
   await expect(page.locator("#stations-results button.station-row").first()).toBeVisible();
   const results = await scan(page).analyze();
   expect(violations(results), "axe violations in the list state").toEqual([]);
-  assertScanned(results, { targets: ["#stations-panel", "#stations-search", "station-row", "#stations-skip"] });
+  assertIncompletesAreKnown(results);
+  assertScanned(results, {
+    targets: [
+      "#stations-panel",
+      "#stations-search",
+      "station-row",
+      "#stations-skip",
+      // The surfaces A2 added to the scope, asserted individually so a root that
+      // silently matched nothing is a failure rather than a smaller green run.
+      "alert-banner",
+      "leaflet-control-zoom",
+      "#toggle-buses",
+      "#stations-toggle",
+    ],
+  });
 });
 
 test("A1j. axe: the station panel with a station selected and arrivals rendered", async ({ page }) => {
@@ -106,7 +188,10 @@ test("A1j. axe: the station panel with a station selected and arrivals rendered"
   await expect(page.locator("#stations-detail .station-arrivals").first()).toBeVisible();
   const results = await scan(page).analyze();
   expect(violations(results), "axe violations in the detail state").toEqual([]);
-  assertScanned(results, { targets: ["#stations-panel", "#stations-announce", "station-arrivals", "h3"] });
+  assertIncompletesAreKnown(results);
+  assertScanned(results, {
+    targets: ["#stations-panel", "#stations-announce", "station-arrivals", "h3", "leaflet-control-zoom"],
+  });
 });
 
 test("A1k. axe: the skip link is scanned while FOCUSED, which is when it is visible", async ({ page }) => {
@@ -120,6 +205,15 @@ test("A1k. axe: the skip link is scanned while FOCUSED, which is when it is visi
   await expect(page.locator("#stations-skip")).toBeFocused();
   const results = await scan(page).analyze();
   expect(violations(results), "axe violations with the skip link focused").toEqual([]);
+  // The panel HEADING joins the undecidable set in this state and only this one,
+  // because a focused skip link is drawn over the top-left of the page and the docked
+  // panel's heading is underneath it. Measured: the link occupies x 8..190 y 8..44 and
+  // the heading x 14..345 y 12..32, so they genuinely overlap. That is what a skip link
+  // is supposed to do (appear above the content while focused, vanish when it is not),
+  // and the rider whose focus is on the link is not reading the heading behind it. So
+  // it is allowed HERE, by name, rather than added to the global allowance where it
+  // would also excuse a heading that was unreadable in the ordinary states.
+  assertIncompletesAreKnown(results, { alsoAllow: ["#stations-heading"] });
   assertScanned(results, { targets: ["#stations-skip"] });
 });
 

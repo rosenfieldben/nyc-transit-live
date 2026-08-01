@@ -275,6 +275,15 @@ knowing: the map library reads its own zoom and pan animation settings once when
 page loads, so if you change the setting while the page is open, everything else
 responds immediately but those two take effect the next time you load the page.
 
+**Keeping your place.** This page rewrites itself under you every fifteen seconds, and
+a keyboard rider parked on a control has to survive that. When a popup you are reading
+refreshes, or the alert banner is rebuilt because the MTA reworded an incident, the
+control you were on gets focus back rather than dropping you at the top of the document.
+Two cases are not solved yet and are worth knowing about: if the vehicle whose popup you
+have open leaves the feed entirely, or the last agency-wide alert clears while you are on
+its dismiss button, the thing you were holding is genuinely gone and focus falls to the
+top of the page. One Tab from there reaches the skip link.
+
 What this does *not* yet cover: the map itself is still a picture, buses are not
 in the panel (their stops are not stations), and the rest of the page (legend,
 layer toggles, alerts list) is **unmeasured**. CI enforces an axe-core scan scoped

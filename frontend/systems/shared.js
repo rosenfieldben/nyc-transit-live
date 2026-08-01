@@ -37,6 +37,25 @@ function applyMotionPreference(allowed) {
   document.documentElement.classList.toggle("reduced-motion", !allowed);
 }
 
+// THE PAN IS NOT A CONSTRUCTOR OPTION, and that is exactly why the first version of
+// this gate missed it. Leaflet has no map-level switch for pan animation the way it has
+// for zoom and fade: panBy animates unless a caller passes animate:false, and the
+// callers that matter are inside Leaflet. Popup._adjustPan calls map.panBy with no
+// options whenever an opening popup would overflow the viewport, which the A2
+// cross-link triggers on purpose, so opening a popup near an edge slid the entire map
+// (tiles, every marker, every route line) for ~280ms. The review measured it as
+// IDENTICAL with the preference on and off: 13 distinct map centres either way. That is
+// full-field motion, and it is a larger motion source than the train glide the gate
+// already stops.
+//
+// Wrapping panBy is the narrowest place that covers every caller, ours and Leaflet's
+// own, including panTo and the animated branch of setView, which both route through it.
+// It changes only HOW the map arrives at a position, never WHICH position: an
+// unanimated pan lands on exactly the same centre.
+const leafletPanBy = map.panBy.bind(map);
+map.panBy = (offset, options) =>
+  leafletPanBy(offset, motionOn ? options : { ...(options || {}), animate: false });
+
 applyMotionPreference(motionAtLoad);
 watchMotionPreference(applyMotionPreference);
 
@@ -192,8 +211,17 @@ function refreshSystemFreshness() {
     if (!source.systems) continue;
     const ages = systemAges(source, now);
     const staleAts = systemStaleAts(source);
+    // `ok` travels WITH the age, because an age alone cannot tell "current" from
+    // "never decoded anything". The status line has always known this (its `blind` set
+    // is exactly ages[name] == null && !ok), and the review found the announcement
+    // path did not, which let a dead system be announced as recovered.
+    const blocks = sourceSystems(source);
     for (const name of Object.keys(ages)) {
-      index.set(`${sourceKey}|${name}`, { age: ages[name], staleAt: staleAts[name] });
+      index.set(`${sourceKey}|${name}`, {
+        age: ages[name],
+        staleAt: staleAts[name],
+        ok: (blocks[name] || {}).ok !== false,
+      });
     }
   }
   systemFreshnessIndex = index;

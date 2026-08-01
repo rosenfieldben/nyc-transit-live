@@ -1711,9 +1711,29 @@ function degradedIdentities(freshnessIndex) {
       ? [...freshnessIndex.entries()]
       : Object.entries(freshnessIndex || {});
   return entries
-    .filter(([, entry]) => entry && staleAge(entry.age))
+    .filter(([, entry]) => entry && (staleAge(entry.age) || neverDecoded(entry)))
     .map(([key]) => key)
     .sort();
+}
+
+// A system with NO age at all, which its own source reports as down. This is not a
+// healthy system and it is not merely a stale one: it has never produced data.
+//
+// THE REVIEW FOUND THIS BY REPRODUCTION, and the failure was the worst shape available.
+// A backend restart while a feed is still failing republishes that system with
+// fetched_at null (the previous value it would have carried forward is gone with the
+// process). A null age is not >= the staleness threshold, so the system silently LEFT
+// the degraded set, and the page announced "Live data current again" at the exact
+// moment its trains disappeared from the map. It then never re-entered the set, so the
+// one surface that exists to say otherwise stayed quiet for as long as the outage
+// lasted. A rider was told a dead system was fine, once, and never corrected.
+//
+// The status line never had this bug: staleness() has always separated a `blind` set
+// (no age AND not ok) from the stale one. This makes the spoken judgment read the same
+// two fields the visible one does, which is the invariant that matters: the page must
+// not say one thing and speak another.
+function neverDecoded(entry) {
+  return entry.age == null && entry.ok === false;
 }
 
 // The rider-facing word for a source, and the word to use when a source's system is
@@ -1882,7 +1902,7 @@ if (typeof module !== "undefined" && module.exports) {
     // A2: map semantics and the interaction floor.
     joinName, subwayTrainName, railroadTrainName, pathTrainName, ferryBoatName,
     busName, compassPoint, airtrainStationName, COMPASS_POINTS, railroadSystemLabel,
-    degradedIdentities, describeIdentity, sentenceList, statusAnnouncement,
+    degradedIdentities, neverDecoded, describeIdentity, sentenceList, statusAnnouncement,
     alertIdentities, bannerAnnouncement,
     motionAllowed, watchMotionPreference, REDUCED_MOTION_QUERY,
   };

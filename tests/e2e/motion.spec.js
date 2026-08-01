@@ -137,3 +137,57 @@ test("A5d. without the preference, the map still glides", async ({ page }) => {
     "between polls the train should be interpolating toward its next stop",
   ).toBe(true);
 });
+
+test.describe("with reduced motion requested, the map itself", () => {
+  test("A5e. opening a popup near the edge does not slide the whole map", async ({ page }) => {
+    // FOUND BY REVIEW, MEASURED NOT REASONED. Leaflet auto-pans when an opening popup
+    // would overflow the viewport, and it does so through panBy with no options, which
+    // animates. There is no constructor switch for it, so the three options the gate
+    // sets do not touch it and the .reduced-motion class cannot reach it either: the
+    // pan is animated in JS, not by a css transition. Before the fix this was measured
+    // as identical with the preference on and off, ~280ms of the entire viewport
+    // sliding, which is the largest motion source in the app.
+    await installMocks(page);
+    await open(page, { reduce: true });
+
+    const result = await page.evaluate(() => {
+      // A station dot close enough to the top edge that its popup must auto-pan.
+      const entry = stationRegistry.find((row) => row.key.startsWith("subway|"));
+      map.setView([entry.lat, entry.lon], map.getZoom(), { animate: false });
+      const target = map.containerPointToLatLng([map.getSize().x / 2, 60]);
+      entry.marker.setLatLng(target);
+
+      const centres = [];
+      const onMove = () => centres.push(map.getCenter().lat + "," + map.getCenter().lng);
+      map.on("move", onMove);
+      entry.marker.openPopup();
+      const panned = document.querySelector(".leaflet-pan-anim") !== null;
+      map.off("move", onMove);
+      return { moves: centres.length, distinct: new Set(centres).size, panAnimClass: panned };
+    });
+
+    // A pan may still HAPPEN (the popup must be brought into view, and suppressing that
+    // would change what the rider can see, which this gate must never do). What must
+    // not happen is a multi-frame slide: it arrives in one step.
+    expect(result.distinct, "the map must not travel through intermediate positions").toBeLessThanOrEqual(1);
+    expect(result.panAnimClass, "Leaflet's pan animation class must never appear").toBe(false);
+  });
+
+  test("A5f. without the preference, that same pan is still animated", async ({ page }) => {
+    // The control for A5e, so the pair pins a PREFERENCE rather than a removed feature.
+    await installMocks(page);
+    await open(page);
+
+    const result = await page.evaluate(() => {
+      const entry = stationRegistry.find((row) => row.key.startsWith("subway|"));
+      map.setView([entry.lat, entry.lon], map.getZoom(), { animate: false });
+      entry.marker.setLatLng(map.containerPointToLatLng([map.getSize().x / 2, 60]));
+      const centres = [];
+      const onMove = () => centres.push(map.getCenter().lat + "," + map.getCenter().lng);
+      map.on("move", onMove);
+      entry.marker.openPopup();
+      return { started: map._panAnim ? !!map._panAnim._inProgress : false, moves: centres.length };
+    });
+    expect(result.started, "an ordinary rider still gets the animated pan").toBe(true);
+  });
+});

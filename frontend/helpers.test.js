@@ -2127,9 +2127,20 @@ test("A2: the status line announces degraded-SET transitions, not counts or stri
   // that it is not.
   assert.equal(statusAnnouncement(bothOut, healthy), "Live data current again for Bus and Subway ACE.");
 
-  // A system that has never decoded carries a null age and is not degraded BY AGE; the
-  // status line says "not reporting" about it separately. Silence here rather than a
-  // sentence built from a null.
+  // A SYSTEM THAT HAS NEVER DECODED AND REPORTS ITSELF DOWN IS DEGRADED, not healthy.
+  // The review found the worst possible shape here: a backend restart while a feed is
+  // still failing republishes that system with fetched_at null, so a check on age alone
+  // dropped it OUT of the degraded set and the page announced "Live data current again"
+  // at the moment its trains vanished, then never mentioned it again.
+  assert.deepEqual(degradedIdentities({ "subways|ACE": { age: null, ok: false } }), ["subways|ACE"]);
+  const dead = degradedIdentities({ "subways|ACE": { age: null, ok: false } });
+  assert.equal(statusAnnouncement(["subways|ACE"], dead), null, "a system that stayed dead says nothing new");
+
+  // But a null age with no failure reported is a system still WARMING, which is not a
+  // degradation and must not be announced as one.
+  assert.deepEqual(degradedIdentities({ "ferry|ferry": { age: null, ok: true } }), []);
+  // And an entry with no ok field at all (an older shape) is treated as reporting fine,
+  // so this can never invent a degradation out of a missing property.
   assert.deepEqual(degradedIdentities({ "ferry|ferry": { age: null } }), []);
 
   // The index arrives as a Map in the browser and as an object in tests; both work.

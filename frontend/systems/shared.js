@@ -477,6 +477,16 @@ function openStationFromCrossLink(stationKey) {
   if (!content) return false;
   // tabindex -1 makes it programmatically focusable without adding a tab stop: the
   // rider lands here, and Tab from here continues into the popup's own controls.
+  //
+  // ESCAPE DOES NOT CLOSE THE POPUP FROM HERE, raised by the review and left alone on
+  // purpose. Leaflet binds Escape on the MAP container, and focus inside a popup is
+  // outside it, so the key never reaches the handler. Measured: popup still open, focus
+  // unmoved. But the finding's stronger claim, that there is no way back out, is false:
+  // one Tab from this landing point reaches the popup's own close button, measured
+  // landing on .leaflet-popup-close-button, and that closes it. So this is a missing
+  // convenience rather than a trap, it is how every popup on the map has always behaved
+  // rather than anything this phase introduced, and a keyboard-dismiss binding is a
+  // map-wide decision that does not belong in the cross-link's landing path.
   content.setAttribute("tabindex", "-1");
   content.focus();
   return true;

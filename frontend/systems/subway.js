@@ -14,7 +14,20 @@ function trainIcon(train) {
             font-size="${label.length > 1 ? 7 : 9}" font-weight="700"
             font-family="system-ui, sans-serif" fill="${textColor}">${esc(label)}</text>
     </svg>`;
-  return L.divIcon({ className: "train-marker", html, iconSize: [18, 18], iconAnchor: [9, 9] });
+  // A2: OFFSET, not centred, so the square floats above its point instead of covering
+  // the station dot underneath. A subway train's position is DERIVED (placed at its
+  // stop by stop_id, or interpolated between two stops), so moving the drawing a few
+  // pixels states nothing false; PATH set this precedent for the same reason and the
+  // same geometry. See the principle comment at crossLinkHtml in shared.js for why
+  // measured positions get a popup link instead. popupAnchor follows the anchor so the
+  // popup still points at the train rather than floating away from it.
+  return L.divIcon({
+    className: "train-marker",
+    html,
+    iconSize: [18, 18],
+    iconAnchor: [9, 22],
+    popupAnchor: [0, -22],
+  });
 }
 
 function trainPopup(record) {

@@ -156,6 +156,13 @@ function railroadPopup(record) {
     (isPlacedRailroad(t) && t.stop_name ? `<br>Next stop: ${esc(t.stop_name)}` : "") +
     (t.direction ? `<br>${esc(t.direction)}` : "") +
     `<br><span class="popup-sub">${isPlacedRailroad(t) ? "scheduled (no GPS)" : "live GPS"}</span>` +
+    // A2: the station this train is sitting on, reachable. A placed train is drawn AT
+    // its station's coordinates and covers the dot entirely, so without this the
+    // arrivals a rider came for are unreachable at that pixel. "At" is read from the
+    // stop_id the payload already carries, never from distance; the registry key is
+    // system-qualified because LIRR and MNR id spaces are independent and both are
+    // bare integers. See the principle comment at crossLinkHtml in shared.js.
+    (isPlacedRailroad(t) ? crossLinkHtml(`${t.system}|${t.stop_id}`) : "") +
     // C2: how old this train's own SYSTEM is when LIRR or MNR has gone stale. The
     // train already names its system, so unlike the subway there is no route
     // mapping to consult.

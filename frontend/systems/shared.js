@@ -304,6 +304,112 @@ function applyMarkerName(marker) {
   if (svg) svg.setAttribute("aria-hidden", "true");
 }
 
+/* ---------------- A2: reaching a station a vehicle is sitting on ---------------- */
+
+// THE PRINCIPLE, AND IT LIVES HERE ONCE. Both systems that need it cite this comment
+// rather than restating it.
+//
+// A vehicle marker sits in markerPane (z 600); station dots are drawn on a canvas in
+// stationPane (z 450). A vehicle parked on its station therefore swallows every click
+// meant for the station, and the arrivals a rider actually came for become unreachable
+// at that pixel. Measured in the step-1 inventory: clicking a station with a train on
+// it opens the TRAIN popup, and the station popup never fires.
+//
+// There are two honest resolutions, and which one applies is decided by where the
+// position came from.
+//
+// DERIVED POSITIONS MAY OFFSET. A subway train is placed at its stop by stop_id and a
+// PATH train is interpolated along its route: neither position is a measurement, so
+// drawing the marker a few pixels above the point costs nothing true. PATH already
+// does this (iconAnchor [8, 20], path.js), and the subway follows the same precedent.
+// Nudging a computation lies to no one.
+//
+// MEASURED POSITIONS MAY NOT. Moving a GPS marker would make the map say the vehicle
+// is somewhere it is not, which is the one thing this project does not do. So the
+// marker stays exactly where the feed put it and the POPUP grows a link to the station
+// instead: reachability without a lie.
+//
+// THE LINK IS NOT A REPLACEMENT FOR THE PANE ORDERING. Vehicles still paint above
+// stations, because that is the right visual layering; the link exists so the station
+// under a vehicle is still reachable, not so the layering can be ignored.
+//
+// AND IT IS NEVER A GUESS. "At" is read from a field the payload already carries, per
+// system, never from distance math. A cross-link pointing at the wrong station is
+// worse than no cross-link at all: a rider who follows it gets confidently incorrect
+// arrivals, and nothing on screen tells them so. A vehicle that does not name a
+// station gets no link.
+const CROSSLINK_CLASS = "popup-crosslink";
+
+// The link's markup, or "" when this vehicle names no station. `stationKey` must be a
+// SYSTEM-QUALIFIED registry key: station ids collide across systems (see the
+// stationRegistry comment above, where the contract tier measured 21 of 24 ferry dock
+// ids colliding with Metro-North station ids), so a bare id could resolve to a station
+// in an entirely different system.
+function crossLinkHtml(stationKey) {
+  const entry = stationKey ? stationRegistry.find((row) => row.key === stationKey) : null;
+  // No registry entry means the station layer has not loaded yet, or this id is not a
+  // station we know. Either way there is nothing to link to, and inventing a
+  // destination is the failure this whole comment is about.
+  if (!entry) return "";
+  // A real button, not a styled span: it is keyboard reachable, it activates on Enter
+  // and Space without any handler of ours, and it announces as a button. The station
+  // name is IN the accessible name, so "Also here" is never announced on its own.
+  return (
+    `<button type="button" class="${CROSSLINK_CLASS}" data-station-key="${esc(entry.key)}">` +
+    `Also here: ${esc(entry.name)}</button>`
+  );
+}
+
+// One delegated handler for every cross-link on the map, bound once. Delegation rather
+// than per-popup wiring because popup content is regenerated from a function on every
+// open and every update, so any listener attached to the rendered nodes would be
+// discarded and re-attached constantly.
+//
+// BOUND IN THE CAPTURE PHASE, and it does not work otherwise. Leaflet calls
+// disableClickPropagation on every popup container, which stops click events inside a
+// popup from bubbling out (so a click on a popup does not also reach the map beneath
+// it). A bubble-phase listener on document therefore never sees a cross-link press at
+// all: the first draft used one and the button did nothing, from mouse or keyboard.
+// Capture runs downward from document before the container's own listener, so it
+// arrives first and is unaffected. Enter and Space on a <button> both synthesize a
+// click, so this one listener is the keyboard path too.
+document.addEventListener(
+  "click",
+  (event) => {
+    const button = event.target.closest ? event.target.closest(`.${CROSSLINK_CLASS}`) : null;
+    if (!button) return;
+    event.preventDefault();
+    openStationFromCrossLink(button.getAttribute("data-station-key"));
+  },
+  true,
+);
+
+// Open the linked station's popup and MOVE FOCUS INTO IT. This is the one place where
+// moving focus is correct rather than rude: the rider activated a link asking to go
+// somewhere, so leaving focus behind on a button whose popup just closed would strand
+// them exactly as A1's closing paths would have. Opening a Leaflet popup replaces the
+// popup pane's contents, so the button the rider pressed no longer exists by the time
+// this returns.
+function openStationFromCrossLink(stationKey) {
+  const entry = stationRegistry.find((row) => row.key === stationKey);
+  if (!entry || !entry.marker) return false;
+  entry.marker.openPopup();
+  // Ask the POPUP for its element rather than querying the document for the first
+  // ".leaflet-popup-content". Leaflet fades a closing popup out, so for the length of
+  // that animation the old popup is still in the DOM and a document query returns the
+  // one we just closed: the first draft focused the train's dying popup and the
+  // station's never received focus at all.
+  const popup = entry.marker.getPopup();
+  const root = popup && popup.getElement ? popup.getElement() : null;
+  const content = root ? root.querySelector(".leaflet-popup-content") : null;
+  if (!content) return false;
+  // tabindex -1 makes it programmatically focusable without adding a tab stop: the
+  // rider lands here, and Tab from here continues into the popup's own controls.
+  content.setAttribute("tabindex", "-1");
+  content.focus();
+  return true;
+}
+
 /* ----- Station popups + live arrivals, shared by subway, railroad and PATH ----- */
 
 // Canvas-rendered so ~470 circle markers stay cheap and hit-testable; on its

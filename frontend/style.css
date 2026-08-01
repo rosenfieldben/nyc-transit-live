@@ -484,3 +484,22 @@ html, body {
     width: auto;
   }
 }
+
+/* A2: the "Also here" cross-link inside a vehicle popup. A real button, sized to the
+   24px hit-target floor including its padding rather than by visual bulk: the text is
+   small because a popup is small, and the padding does the reaching. */
+.popup-crosslink {
+  display: inline-block;
+  margin-top: 6px;
+  min-height: 24px;
+  padding: 4px 8px;
+  border: 1px solid #94a3b8;
+  border-radius: 4px;
+  background: #f8fafc;
+  font: 12px system-ui, sans-serif;
+  color: #1d4ed8;
+  cursor: pointer;
+}
+.popup-crosslink:hover {
+  background: #eef2f7;
+}

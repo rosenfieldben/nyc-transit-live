@@ -482,6 +482,28 @@ function openStationFromCrossLink(stationKey) {
   return true;
 }
 
+// A2 FOLLOWUP, DELIBERATELY NOT DONE HERE: WHERE FOCUS GOES WHEN A CONTROL IS DESTROYED
+// WITH NO SUCCESSOR. Everything below restores focus to a live replacement, which is the
+// case this phase can answer honestly. Two reachable cases have no replacement at all,
+// and both were measured landing the rider on document.body:
+//
+//   1. A VEHICLE LEAVES THE FEED while its popup is open and focused. Measured on a
+//      railroad train removed from one poll's payload: railroads.size 2 -> 1,
+//      marker gone, zero .leaflet-popup nodes, document.activeElement === document.body.
+//      Every system's apply* loop removes departed vehicles the same way, so the same
+//      path exists five times over. It predates this phase; A2 neither introduced it nor
+//      closes it.
+//   2. THE LAST AGENCY-WIDE ALERT CLEARS while the rider is on the banner's dismiss
+//      button, including when the rider is the one who dismissed it.
+//
+// It is one question, not two, and it is a product question rather than a mechanical
+// one: silently moving focus to a landmark is a WCAG 3.2.2 change of context the rider
+// did not ask for, and moving it WITH an announcement means deciding what the page says
+// when a train a rider was reading about stops existing. The door for saying it already
+// exists (announcePage). Fixing it badly is worse than the strand, and this phase has no
+// review round left to cover a five-call-site change, so it is filed rather than guessed
+// at. Until then a rider who lands on the body reaches the skip link with one Tab.
+//
 // UPDATING AN OPEN POPUP DESTROYS WHATEVER HAS FOCUS INSIDE IT, so every update goes
 // through here. This is the THIRD Leaflet behaviour of the same family as the two above,
 // and the review found it by reproduction: a rider who tabbed to a cross-link and waited
@@ -897,12 +919,24 @@ function renderAlertBanner(alerts) {
   const dismiss = shown.length
     ? `<button type="button" id="alert-banner-dismiss" title="Dismiss">&times;</button>`
     : "";
+  // THE SAME FAMILY AS THE POPUP REFRESH, on the page's other rebuilt-in-place surface.
+  // Reassigning innerHTML destroys the dismiss button, so a rider parked on it was
+  // dropped to document.body the moment an ongoing incident was reworded under its own
+  // id, which is precisely the case the header hash in the render key exists to catch.
+  // Measured before the fix: BUTTON#alert-banner-dismiss -> BODY.
+  //
+  // Restores only to a LIVE successor, like updatePopupKeepingFocus. When the rebuild
+  // has no dismiss button the banner itself is gone, and where focus belongs then is an
+  // open question this phase does not answer; see the A2 FOLLOWUP filed above
+  // updatePopupKeepingFocus.
+  const hadFocus = !!(document.activeElement && el.contains(document.activeElement));
   el.innerHTML =
     `<div class="alert-banner-strip">` +
     `<div class="alert-banner-rows">${rows}${staleRow}</div>` +
     dismiss +
     `</div>`;
   const dismissBtn = el.querySelector("#alert-banner-dismiss");
+  if (hadFocus && dismissBtn) dismissBtn.focus();
   if (dismissBtn) {
     dismissBtn.addEventListener("click", () => {
       for (const alert of shown) dismissedAlertIds.add(alertKey(alert));

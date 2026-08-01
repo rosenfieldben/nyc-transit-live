@@ -211,3 +211,86 @@ test("A4c. the enlarged hit areas did not hand the station dots back to the trai
     ).toEqual([]);
   }
 });
+
+test("A4d. focus parked on the banner's dismiss survives the banner being rebuilt", async ({ page }) => {
+  // RAISED BY THE REVIEW, DROPPED BY MY OWN REVIEW SCRIPT, then reproduced. The banner
+  // is the page's other rebuilt-in-place surface: renderAlertBanner reassigns innerHTML,
+  // which destroys the dismiss button along with everything else. A rider parked on it
+  // was dropped to document.body, measured, with the button visibly back on screen.
+  //
+  // The trigger is not exotic. The MTA revises an ongoing incident IN PLACE under one
+  // id, which is the whole reason the render key hashes the header text; that revision
+  // is exactly what rebuilds the strip under the rider's fingers.
+  const ctx = await installMocks(page);
+  let header = "Reduced service systemwide while crews clear a disabled train";
+  ctx.overrides.alerts = (route, fixtures) => {
+    const body = fixtures.alerts();
+    body.alerts = [
+      {
+        id: "a-revised",
+        system: "subway",
+        header,
+        description: null,
+        effect: "REDUCED_SERVICE",
+        cause: "OTHER_CAUSE",
+        routes: [],
+        stops: [],
+        starts_at: fx.FROZEN_S - 600,
+        ends_at: null,
+      },
+    ];
+    return json(route, body);
+  };
+  await open(page, ctx);
+
+  await page.locator("#alert-banner-dismiss").focus();
+  await expect(page.locator("#alert-banner-dismiss")).toBeFocused();
+
+  // Same id, new wording: the alerts poll is 60s.
+  header = "All subway service suspended while crews clear a disabled train";
+  await page.clock.runFor(65_000);
+  await expect(page.locator("#alert-banner")).toContainText("All subway service suspended");
+
+  await expect(page.locator("#alert-banner-dismiss"), "a rebuilt control must keep focus").toBeFocused();
+
+  // And it still works, which is the assertion that matters: focus on a right-looking
+  // element is not the same as the rider being able to act.
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#alert-banner-dismiss")).toHaveCount(0);
+});
+
+test("A4e. a banner rebuild does not GRAB focus from somewhere else", async ({ page }) => {
+  // The other half, and the one that makes A4d a restore rather than a focus trap. The
+  // popup helper needed exactly this guard and shipped without it once: restoring
+  // unconditionally is how a background refresh starts yanking focus off whatever the
+  // rider was actually using. Here the rider is in the Stations panel and the banner
+  // must leave them alone.
+  const ctx = await installMocks(page);
+  let header = "Reduced service systemwide while crews clear a disabled train";
+  ctx.overrides.alerts = (route, fixtures) => {
+    const body = fixtures.alerts();
+    body.alerts = [
+      {
+        id: "a-revised",
+        system: "subway",
+        header,
+        description: null,
+        effect: "REDUCED_SERVICE",
+        cause: "OTHER_CAUSE",
+        routes: [],
+        stops: [],
+        starts_at: fx.FROZEN_S - 600,
+        ends_at: null,
+      },
+    ];
+    return json(route, body);
+  };
+  await open(page, ctx);
+
+  await page.locator("#stations-search").focus();
+  await expect(page.locator("#stations-search")).toBeFocused();
+  header = "All subway service suspended while crews clear a disabled train";
+  await page.clock.runFor(65_000);
+  await expect(page.locator("#alert-banner")).toContainText("All subway service suspended");
+  await expect(page.locator("#stations-search"), "the rider was not in the banner").toBeFocused();
+});

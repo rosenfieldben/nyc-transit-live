@@ -454,6 +454,48 @@ function openStationFromCrossLink(stationKey) {
   return true;
 }
 
+// UPDATING AN OPEN POPUP DESTROYS WHATEVER HAS FOCUS INSIDE IT, so every update goes
+// through here. This is the THIRD Leaflet behaviour of the same family as the two above,
+// and the review found it by reproduction: a rider who tabbed to a cross-link and waited
+// one poll had document.activeElement drop to BODY while the button was still on screen,
+// and their Enter did nothing. That is precisely the stranding the A1 focus contract
+// exists to prevent, reintroduced through a feature built FOR keyboard riders.
+//
+// Popup content here is bound as a FUNCTION, so a refresh re-renders it wholesale and
+// the old nodes are discarded. Nothing warns; focus simply lands on the body.
+//
+// Restores the same control when it can identify it (a cross-link is identified by its
+// station key, which survives the re-render because the popup describes the same
+// vehicle), and falls back to the popup's content container so the rider is at worst
+// still inside the popup they were reading rather than at the top of the document.
+function updatePopupKeepingFocus(marker) {
+  const popup = marker.getPopup && marker.getPopup();
+  if (!popup) return;
+  const before = popup.getElement ? popup.getElement() : null;
+  const active = document.activeElement;
+  const hadFocus = !!(before && active && before.contains(active));
+  const crossKey =
+    hadFocus && active.classList && active.classList.contains(CROSSLINK_CLASS)
+      ? active.getAttribute("data-station-key")
+      : null;
+
+  popup.update();
+
+  if (!hadFocus) return; // focus was elsewhere: moving it now would be the rude case
+  const after = popup.getElement ? popup.getElement() : null;
+  if (!after) return;
+  const content = after.querySelector(".leaflet-popup-content");
+  const sameControl = crossKey
+    ? after.querySelector(`.${CROSSLINK_CLASS}[data-station-key="${crossKey}"]`)
+    : null;
+  const destination = sameControl || content;
+  if (!destination) return;
+  // The content container is not naturally focusable; -1 makes it a landing place
+  // without adding a tab stop, exactly as the cross-link handler does.
+  if (destination === content) content.setAttribute("tabindex", "-1");
+  destination.focus();
+}
+
 /* ----- Station popups + live arrivals, shared by subway, railroad and PATH ----- */
 
 // Canvas-rendered so ~470 circle markers stay cheap and hit-testable; on its

@@ -66,7 +66,7 @@ function setBusRouteNote(routeId, message) {
 
 function refreshOpenPopup(busId) {
   const record = buses.get(busId);
-  if (record?.marker.isPopupOpen()) record.marker.getPopup().update();
+  if (record?.marker.isPopupOpen()) updatePopupKeepingFocus(record.marker);
 }
 
 function clearBusRoute() {
@@ -192,7 +192,7 @@ function applyBuses(data) {
       // turned twenty minutes ago. Refreshed here, after every field it reads is
       // settled and before the popup update that reads the same record.
       setMarkerName(record.marker, busName(bus));
-      if (record.marker.isPopupOpen()) record.marker.getPopup().update();
+      if (record.marker.isPopupOpen()) updatePopupKeepingFocus(record.marker);
     } else {
       const newRecord = { bearing: bus.bearing, routeId: bus.route_id, latest: bus };
       newRecord.marker = labeledMarker([bus.latitude, bus.longitude], {

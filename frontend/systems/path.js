@@ -240,7 +240,7 @@ function applyPath(data) {
         record.marker.setIcon(pathIcon(train));
         record.routeId = train.route_id;
       }
-      if (record.marker.isPopupOpen()) record.marker.getPopup().update();
+      if (record.marker.isPopupOpen()) updatePopupKeepingFocus(record.marker);
     } else {
       const newRecord = { routeId: train.route_id, latest: train, fState: {} };
       newRecord._segId = `${train.route_id}|${train.prev_time}|${train.stop_id}`;

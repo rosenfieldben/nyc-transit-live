@@ -253,7 +253,7 @@ function applyRailroads(data) {
         record.routeId = train.route_id;
         record.placed = placed;
       }
-      if (record.marker.isPopupOpen()) record.marker.getPopup().update();
+      if (record.marker.isPopupOpen()) updatePopupKeepingFocus(record.marker);
     } else {
       const newRecord = { routeId: train.route_id, placed, latest: train, fState: {} };
       if (placed) {

@@ -243,7 +243,7 @@ function applyFerryBoats(data) {
       // Re-applied every poll, not only when the icon changes: a boat that docks or
       // departs changes its resting opacity, and its feed may have gone stale.
       dimMarker(record.marker, systemAgeOf("ferry", "ferry"), ferryBaseOpacity(boat));
-      if (record.marker.isPopupOpen()) record.marker.getPopup().update();
+      if (record.marker.isPopupOpen()) updatePopupKeepingFocus(record.marker);
     } else {
       const color = ferryColorFor(boat.route_id);
       const newRecord = {

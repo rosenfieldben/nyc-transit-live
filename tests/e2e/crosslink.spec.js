@@ -155,3 +155,41 @@ test("A3d. a subway train is drawn clear of its station dot, so both are clickab
   expect(boxes.markerBottom, "the train must not cover its own anchor point").toBeLessThan(boxes.anchorY);
   expect(boxes.iconAnchor[1], "anchored above centre, like the PATH precedent").toBeGreaterThan(18 / 2);
 });
+
+test("A3e. focus parked on the cross-link survives a background refresh", async ({ page }) => {
+  // FOUND BY REVIEW, BY REPRODUCTION. A popup's content is bound as a function, so the
+  // 15s background refresh re-renders it wholesale and discards the old nodes. A rider
+  // who tabbed to the cross-link and paused for one poll had focus dropped to
+  // document.body while the button was still visibly on screen, and their Enter did
+  // nothing. That is exactly the stranding the A1 focus contract exists to prevent,
+  // reintroduced through a control built for keyboard riders.
+  //
+  // This is the same family as the two Leaflet behaviours already documented in
+  // shared.js: the thing you are holding is quietly replaced underneath you.
+  await installMocks(page);
+  await open(page);
+
+  const placed = await page.evaluate(() => {
+    for (const [key, record] of railroads) if (record.latest.stop_id != null) return key;
+    return null;
+  });
+  await page.evaluate((key) => railroads.get(key).marker.openPopup(), placed);
+  await page.locator(".popup-crosslink").focus();
+  await expect(page.locator(".popup-crosslink")).toBeFocused();
+
+  // One full poll, which re-renders the popup.
+  await page.clock.runFor(15_000 + 1000);
+
+  const after = await page.evaluate(() => {
+    const el = document.activeElement;
+    if (!el || el === document.body) return "BODY";
+    return `${el.tagName}.${el.className}`;
+  });
+  expect(after, "focus must not be dropped to the body by a refresh").toContain("popup-crosslink");
+
+  // AND IT STILL WORKS. Focus being on something that looks right is not enough: the
+  // control must still be the live one, not a detached node left over from the render
+  // that was thrown away.
+  await page.keyboard.press("Enter");
+  await expect.poll(async () => page.evaluate(() => (openStation ? openStation.station.name : null))).not.toBeNull();
+});

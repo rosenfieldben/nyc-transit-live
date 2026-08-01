@@ -190,4 +190,70 @@ test.describe("with reduced motion requested, the map itself", () => {
     });
     expect(result.started, "an ordinary rider still gets the animated pan").toBe(true);
   });
+
+  test("A5g. selecting a station in the panel does not slide the map either", async ({ page }) => {
+    // THE SECOND PAN, raised by the review alongside A5e's and dropped by my own review
+    // script before it reached a skeptic. A5e covers Leaflet's own autopan when an
+    // opening popup would overflow the viewport; this is the app's own pan,
+    // syncMapToStation calling map.panTo with no options every time a rider picks a
+    // station in the A1 panel. It is the pan a keyboard rider triggers most, because the
+    // panel is the keyboard path to the whole map.
+    //
+    // MEASURED ON THE LAYER-OFF BRANCH, which is a real rider path (pick a station whose
+    // system you have toggled off: the map pans and deliberately opens no popup) and the
+    // only one that can be measured at all. Leaflet's Popup._adjustPan opens with
+    // `this._map._panAnim && this._map._panAnim.stop()`, so in the popup branch the
+    // pan animation is killed by the popup one statement later and there is nothing left
+    // to observe. Verified in the vendored source rather than assumed. Same panTo, same
+    // gate; this branch just leaves the evidence standing.
+    await installMocks(page);
+    await open(page, { reduce: true });
+
+    const result = await page.evaluate(() => {
+      const entry = stationRegistry.find((row) => row.key.startsWith("subway|"));
+      if (entry.layer && map.hasLayer(entry.layer)) map.removeLayer(entry.layer);
+      // Far enough to be a real pan, near enough to stay inside the viewport-sized
+      // offset Leaflet is willing to animate at all.
+      map.setView([entry.lat + 0.02, entry.lon + 0.02], map.getZoom(), { animate: false });
+      syncMapToStation(entry);
+      const c = map.getCenter();
+      return {
+        inProgress: map._panAnim ? !!map._panAnim._inProgress : false,
+        panAnimClass: document.querySelector(".leaflet-pan-anim") !== null,
+        arrived: Math.abs(c.lat - entry.lat) < 1e-4 && Math.abs(c.lng - entry.lon) < 1e-4,
+      };
+    });
+
+    expect(result.inProgress, "no pan animation may be running").toBe(false);
+    expect(result.panAnimClass, "Leaflet's pan animation class must never appear").toBe(false);
+    // AND IT STILL GOT THERE. The rider asked to be taken to a station; the gate changes
+    // HOW the map arrives, never WHETHER it does. A gate that simply suppressed the pan
+    // would satisfy the two assertions above and strand the rider looking at the wrong
+    // part of the city.
+    expect(result.arrived, "the map must be at the station, in one step").toBe(true);
+  });
+});
+
+test("A5h. without the preference, that same panel pan is animated", async ({ page }) => {
+  // The control for A5g, so the pair pins a preference rather than a deleted feature.
+  // Under the suite's frozen clock an animation in flight has made no progress yet, so
+  // "still travelling" and "already there" are cleanly distinguishable: this run is mid
+  // animation and has NOT arrived, A5g's has arrived and is not animating.
+  await installMocks(page);
+  await open(page);
+  const result = await page.evaluate(() => {
+    const entry = stationRegistry.find((row) => row.key.startsWith("subway|"));
+    if (entry.layer && map.hasLayer(entry.layer)) map.removeLayer(entry.layer);
+    map.setView([entry.lat + 0.02, entry.lon + 0.02], map.getZoom(), { animate: false });
+    syncMapToStation(entry);
+    const c = map.getCenter();
+    return {
+      inProgress: map._panAnim ? !!map._panAnim._inProgress : false,
+      panAnimClass: document.querySelector(".leaflet-pan-anim") !== null,
+      arrived: Math.abs(c.lat - entry.lat) < 1e-4 && Math.abs(c.lng - entry.lon) < 1e-4,
+    };
+  });
+  expect(result.inProgress, "an ordinary rider still gets the animated pan from the panel").toBe(true);
+  expect(result.panAnimClass, "and Leaflet's pan animation class with it").toBe(true);
+  expect(result.arrived, "which is exactly why it has not arrived yet").toBe(false);
 });

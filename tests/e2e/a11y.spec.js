@@ -121,21 +121,49 @@ function violations(results) {
 // a tooling artifact, and it belongs to the later contrast pass. Pinning the shape here
 // means a NEW kind of uncertainty, or an old one appearing somewhere new, fails this
 // suite instead of blending into a green run.
+//
+// AN INVENTORY, NOT A PATTERN, and the difference is what the review asked for. The
+// first version allowed anything matching /^(#status|#toggles|label|\.leaflet-control-zoom)/,
+// which meant a NEW element added under #toggles joined the undecidable set silently and
+// the scan went on reporting zero violations. An exact list makes any change to the set
+// fail and put a person in front of it.
+//
+// This is deliberately stricter than the rule and node FLOORS above, which are set well
+// below what was observed so an axe-core bump that retires a rule cannot redden the
+// build. The two are different kinds of number. A floor guards against the scan quietly
+// shrinking; this list is the register of surfaces this project has admitted it cannot
+// measure yet, and it growing is exactly the event a human should see.
+//
+// SAYING WHAT THIS STILL DOES NOT PROVE. Every target below remains UNMEASURED for
+// contrast, and tightening the list does not change that: axe cannot decide these, so
+// text on them could be unreadable today and this suite would stay green. That is the
+// contrast pass's work, not a hole this file can close. What the list does close is the
+// hole where a new unmeasured surface joins them without anyone noticing.
+const UNDECIDABLE_CONTRAST = [
+  // The status line and the layer toggles: translucent panel over live map tiles.
+  "#status",
+  "#toggles > label:nth-child(2)",
+  "label:nth-child(1)",
+  "label:nth-child(3)",
+  "label:nth-child(4)",
+  "label:nth-child(5)",
+  "label:nth-child(6)",
+  "label:nth-child(7)",
+  // Leaflet's zoom control sits directly on the tiles. Only the "out" glyph is
+  // undecidable, which is not a typo: it is the one whose box axe cannot resolve
+  // against the imagery behind it.
+  ".leaflet-control-zoom-out > span",
+];
+
 function assertIncompletesAreKnown(results, { alsoAllow = [] } = {}) {
   const kinds = [...new Set(results.incomplete.map((entry) => entry.id))];
   expect(kinds.sort(), "a new kind of undecidable finding appeared").toEqual(
     kinds.length ? ["color-contrast"] : [],
   );
   const nodes = results.incomplete.flatMap((entry) => entry.nodes.map((node) => node.target.join(" ")));
-  // Every one must be an element painted over something translucent or over the map.
-  const expected = /^(#status|#toggles|label|\.leaflet-control-zoom)/;
-  for (const target of nodes) {
-    if (alsoAllow.some((allowed) => target.startsWith(allowed))) continue;
-    expect(
-      expected.test(target),
-      `contrast is undecidable for ${target}, which is not one of the known translucent surfaces`,
-    ).toBe(true);
-  }
+  expect(nodes.sort(), "the set of surfaces whose contrast axe cannot decide has changed").toEqual(
+    [...UNDECIDABLE_CONTRAST, ...alsoAllow].sort(),
+  );
 }
 
 function assertScanned(results, { targets }) {

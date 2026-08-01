@@ -529,6 +529,30 @@ function openStationFromCrossLink(stationKey) {
 // survives later updates, so the guard below returned early on every subsequent poll and
 // focus never came back. A vehicle popup has at most one cross-link (one call site, in
 // railroad.js), so asking for that one is both simpler and correct.
+//
+// A DISSENT ON THE RECORD, because the review panel that raised this also REFUTED it and
+// the disagreement is a judgment call rather than a fact. The skeptic reproduced
+// everything above and then argued two things. First, that the severity is lower than
+// round 1's: true, and worth stating plainly. Focus lands inside the popup, not on the
+// body, so the rider is one Tab from the button rather than at the top of the document.
+// Second, that this fix is worse than the defect, because restoring focus to a relabeled
+// button means a rider who chose "Jamaica" and waited can press Enter and arrive at
+// Hicksville without having chosen it.
+//
+// The fix ships anyway, for three reasons. The alternative leaves a rider holding a
+// live-looking control whose Enter does nothing, which is the exact symptom this phase
+// has now fixed twice and the reason the helper exists at all. The principle the skeptic
+// cited (a cross-link pointing at the wrong station is worse than no cross-link) is
+// about a link that names a station the vehicle is NOT at; this one names, correctly,
+// where the train now is. And a popup held open across polls is live by design: its next
+// stop, its countdowns and its staleness line all change underneath the rider already,
+// so a control that changes with them is consistent rather than treacherous, and it
+// announces its new name at the moment focus reaches it.
+//
+// The residual risk the skeptic names is real: a rider not listening when focus is
+// restored can act on a changed destination. It is bounded by the station popup that
+// opens naming itself. A3g pins the announcing half deliberately, asserting the button
+// reads "Hicksville" before asserting Enter goes there.
 function updatePopupKeepingFocus(marker) {
   const popup = marker.getPopup && marker.getPopup();
   if (!popup) return;

@@ -257,6 +257,14 @@ rider are looking at the same place. Arrivals refresh in the background, and the
 live region announces only when the trains themselves change, never on a
 countdown tick, so it does not talk over you.
 
+**Motion.** If your system asks for reduced motion, the map stops animating: vehicles
+jump to each new position when the data arrives instead of sliding there, and the
+marker and panel transitions are off. Nothing is hidden and no data is held back, since
+this changes only how a position updates, never what is shown. One limitation worth
+knowing: the map library reads its own zoom and pan animation settings once when the
+page loads, so if you change the setting while the page is open, everything else
+responds immediately but those two take effect the next time you load the page.
+
 What this does *not* yet cover: the map itself is still a picture, buses are not
 in the panel (their stops are not stations), and the rest of the page (legend,
 layer toggles, alerts list) is **unmeasured**. CI enforces an axe-core scan scoped

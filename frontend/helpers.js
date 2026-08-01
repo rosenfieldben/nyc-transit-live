@@ -1829,6 +1829,31 @@ function motionAllowed(mql = null) {
   return !query.matches;
 }
 
+// Watch the preference for CHANGES, so a rider who turns reduced motion on does not
+// have to reload to be believed. Returns an unsubscribe function.
+//
+// WHAT THIS CANNOT REACH, and it is stated here rather than discovered later: Leaflet
+// reads its zoomAnimation, fadeAnimation and markerZoomAnimation options ONCE, when the
+// map is constructed, and offers no supported way to change them afterwards. So a
+// mid-session flip takes effect immediately for everything this app owns (the marker
+// glide, the css transitions, the panel) and only at the next page load for Leaflet's
+// own zoom and pan animations. Poking at map.options after construction would leave the
+// handlers Leaflet already installed running against a lie, which is a worse failure
+// than the honest limitation. The README says the same thing in a rider's words, since
+// the person affected is a user rather than a maintainer.
+//
+// addEventListener is guarded because MediaQueryList only grew it in Safari 14; the
+// older addListener is deliberately NOT used as a fallback, because a browser that old
+// predates the app's other requirements anyway and a silent no-op is better than a
+// deprecated path nobody tests.
+function watchMotionPreference(onChange, mql = null) {
+  const query = mql || (typeof matchMedia === "function" ? matchMedia(REDUCED_MOTION_QUERY) : null);
+  if (!query || typeof query.addEventListener !== "function") return () => {};
+  const handler = () => onChange(!query.matches);
+  query.addEventListener("change", handler);
+  return () => query.removeEventListener("change", handler);
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     esc, routeColor, lineColor, staleness, emptyFeedDecision, noteClockOffset,
@@ -1859,6 +1884,6 @@ if (typeof module !== "undefined" && module.exports) {
     busName, compassPoint, airtrainStationName, COMPASS_POINTS, railroadSystemLabel,
     degradedIdentities, describeIdentity, sentenceList, statusAnnouncement,
     alertIdentities, bannerAnnouncement,
-    motionAllowed, REDUCED_MOTION_QUERY,
+    motionAllowed, watchMotionPreference, REDUCED_MOTION_QUERY,
   };
 }

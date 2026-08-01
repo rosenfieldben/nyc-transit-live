@@ -577,3 +577,28 @@ body.stations-docked #alert-banner {
   min-height: 24px;
   padding: 4px 6px;
 }
+
+/* ---------------- A2: reduced motion ---------------- */
+
+/* The class is put on <html> by applyMotionPreference in systems/shared.js, and it
+   follows the preference LIVE rather than only at load, so a rider who turns reduced
+   motion on mid-session is believed straight away.
+
+   Everything the app itself animates is listed here. Leaflet's own zoom and pan
+   animations are NOT, because they are constructor options rather than css, and they
+   are set from the same gate at map construction; that is the one thing a mid-session
+   flip cannot reach, and the README says so in a rider's words. */
+.reduced-motion .bus-marker svg,
+.reduced-motion .ferry-marker svg {
+  transition: none;
+}
+
+/* The station panel has NO transition today: it appears and disappears through the
+   hidden attribute, so there is nothing here to suppress. The rule is written anyway,
+   because the panel is the most likely thing in this app to be given a slide later and
+   whoever adds it should find the gate already covering them rather than discover this
+   file after a rider complains. */
+.reduced-motion #stations-panel {
+  transition: none;
+  animation: none;
+}

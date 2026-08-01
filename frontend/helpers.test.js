@@ -19,6 +19,7 @@ const {
   alertIdentities,
   bannerAnnouncement,
   motionAllowed,
+  watchMotionPreference,
   esc,
   routeColor,
   lineColor,
@@ -2197,4 +2198,46 @@ test("A2: the banner announces new and reworded alerts, and nothing else", () =>
   // The staleness marker is not part of an identity at all, so it cannot announce: it
   // is honesty about the feed, not news about the transit system.
   assert.deepEqual(alertIdentities([alert("a1", "One")]), alertIdentities([alert("a1", "One")]));
+});
+
+test("A2: the motion preference is watched, not only read once", () => {
+  // A rider who turns reduced motion on mid-session must be believed without
+  // reloading, so the gate subscribes rather than sampling at load. The media query
+  // list is injected, which is what lets node drive a change event at all.
+  const listeners = [];
+  const mql = {
+    matches: false,
+    addEventListener: (type, fn) => listeners.push([type, fn]),
+    removeEventListener: (type, fn) => {
+      const i = listeners.findIndex(([t, f]) => t === type && f === fn);
+      if (i >= 0) listeners.splice(i, 1);
+    },
+  };
+
+  const seen = [];
+  const stop = watchMotionPreference((allowed) => seen.push(allowed), mql);
+  assert.equal(listeners.length, 1);
+  assert.equal(listeners[0][0], "change");
+
+  // The rider turns reduced motion ON: the gate closes.
+  mql.matches = true;
+  listeners[0][1]();
+  assert.deepEqual(seen, [false]);
+
+  // And back off again: the gate reopens. Both directions, because a preference that
+  // could only ever be turned on would strand a rider who changed their mind.
+  mql.matches = false;
+  listeners[0][1]();
+  assert.deepEqual(seen, [false, true]);
+
+  // Unsubscribing actually detaches.
+  stop();
+  assert.equal(listeners.length, 0);
+
+  // A media query list too old to support addEventListener yields a no-op unsubscribe
+  // rather than throwing on a browser nobody tests.
+  const ancient = { matches: true };
+  const noop = watchMotionPreference(() => assert.fail("must not be called"), ancient);
+  assert.equal(typeof noop, "function");
+  noop();
 });

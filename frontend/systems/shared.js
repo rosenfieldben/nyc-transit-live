@@ -6,7 +6,39 @@
 // top-level const/let bindings are in the shared global scope they all read (the
 // same buildless model helpers.js -> map.js already uses; no bundler).
 
-const map = L.map("map").setView([40.7128, -74.006], 12);
+/* ---------------- A2: motion ---------------- */
+
+// THE PRINCIPLE, and every gate below serves it: REDUCED MOTION CHANGES HOW A POSITION
+// UPDATES, NEVER WHAT IS SHOWN. A gliding train and a stepping train are at the same
+// place at the same time; one interpolates between polls and the other jumps when the
+// truth arrives. Nothing behind this gate may hide a marker, skip a poll, freeze data,
+// or change a single word of text. If a change would make the map SAY something
+// different rather than MOVE differently, it does not belong here.
+//
+// Read once here for Leaflet, because Leaflet reads these options at construction and
+// has no supported way to change them afterwards; watchMotionPreference in helpers.js
+// carries the same limitation in full, and the README states it for riders.
+const motionAtLoad = motionAllowed();
+
+const map = L.map("map", {
+  zoomAnimation: motionAtLoad,
+  fadeAnimation: motionAtLoad,
+  markerZoomAnimation: motionAtLoad,
+}).setView([40.7128, -74.006], 12);
+
+// Everything this app owns follows the preference LIVE. One class on the root element
+// drives every css transition (see the reduced-motion rules in style.css), and one flag
+// drives the glide in animateTrains, so a rider who turns the preference on mid-session
+// is believed immediately rather than at their next reload.
+let motionOn = motionAtLoad;
+
+function applyMotionPreference(allowed) {
+  motionOn = allowed;
+  document.documentElement.classList.toggle("reduced-motion", !allowed);
+}
+
+applyMotionPreference(motionAtLoad);
+watchMotionPreference(applyMotionPreference);
 
 // Station dots get their own canvas pane sandwiched between the route lines
 // (overlayPane, 400) and the train/bus markers (markerPane, 600), so the
@@ -824,6 +856,16 @@ function animateTrains(ts) {
       announceStatusTransition(systemFreshnessIndex);
     }
     const now = Date.now() / 1000 - (minClockOffset ?? 0);
+    // REDUCED MOTION STOPS THE GLIDE, AND NOTHING ELSE. The freshness rebuild, the
+    // dimming sweep and the announcement above all still run: those are data honesty,
+    // not motion, and suppressing them would be the gate changing WHAT is shown rather
+    // than HOW it moves. What is skipped is only the per-frame interpolation, so every
+    // marker sits where its last poll said it was and jumps to the new truth when the
+    // next one lands. Same positions, same data, no tweening.
+    if (!motionOn) {
+      requestAnimationFrame(animateTrains);
+      return;
+    }
     // glideClock pins a marker at its system's freeze deadline instead of
     // dead-reckoning it forward on a feed that is not being refreshed. A system with
     // no deadline gets `now` back unchanged, so healthy gliding is untouched.

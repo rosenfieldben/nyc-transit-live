@@ -216,6 +216,11 @@ function applyFerryBoats(data) {
         record.iconState = iconState;
       }
       record.latest = boat;
+      // THE LABEL TRACKS THE DATA: a boat's status is the field that changes most (at
+      // dock, arriving, under way) and it is the one a rider is listening for. Like
+      // the re-icon above, this reads the RESOLVED route name, so a boat named before
+      // the route table landed gets its real route once it does.
+      setMarkerName(record.marker, ferryBoatName(boat, ferryRouteNames.get(boat.route_id)));
       // Re-applied every poll, not only when the icon changes: a boat that docks or
       // departs changes its resting opacity, and its feed may have gone stale.
       dimMarker(record.marker, systemAgeOf("ferry", "ferry"), ferryBaseOpacity(boat));
@@ -227,11 +232,11 @@ function applyFerryBoats(data) {
         iconState: ferryBoatIconState(boat.status),
         latest: boat,
       };
-      newRecord.marker = L.marker([boat.latitude, boat.longitude], {
+      newRecord.marker = labeledMarker([boat.latitude, boat.longitude], {
         icon: ferryBoatIcon(boat, color),
         // Dim on the first frame, for staleness and/or for being docked.
         opacity: markerOpacity(systemAgeOf("ferry", "ferry"), ferryBaseOpacity(boat)),
-      })
+      }, ferryBoatName(boat, ferryRouteNames.get(boat.route_id)))
         .bindPopup(() => ferryBoatPopup(newRecord))
         .addTo(ferryBoats);
       ferryBoatRecords.set(boat.id, newRecord);

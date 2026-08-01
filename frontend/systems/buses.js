@@ -186,13 +186,19 @@ function applyBuses(data) {
       record.bearing = bus.bearing;
       record.routeId = bus.route_id;
       record.latest = bus;
+      // THE LABEL TRACKS THE DATA. Route and bearing both change on a REUSED marker
+      // (the bearing-only branch above even rewrites the svg in place rather than
+      // re-iconing), so a name written once at creation would describe a bus that
+      // turned twenty minutes ago. Refreshed here, after every field it reads is
+      // settled and before the popup update that reads the same record.
+      setMarkerName(record.marker, busName(bus));
       if (record.marker.isPopupOpen()) record.marker.getPopup().update();
     } else {
       const newRecord = { bearing: bus.bearing, routeId: bus.route_id, latest: bus };
-      newRecord.marker = L.marker([bus.latitude, bus.longitude], {
+      newRecord.marker = labeledMarker([bus.latitude, bus.longitude], {
         icon: busIcon(bus),
         opacity: markerOpacity(systemAgeOf("buses", "buses")), // dim on the first frame
-      })
+      }, busName(bus))
         .bindPopup(() => busPopup(newRecord))
         .on("click", () => toggleBusRoute(newRecord.latest, newRecord.marker))
         .addTo(busLayer);

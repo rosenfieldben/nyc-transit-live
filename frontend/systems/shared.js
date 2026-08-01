@@ -179,10 +179,74 @@ function dimMarker(marker, age, base = 1) {
   marker.setOpacity(markerOpacity(age, base));
 }
 
+/* ---------------- A2: the one place a map marker is born ---------------- */
+
+// EVERY L.marker ON THIS MAP COMES FROM HERE, and new systems (Amtrak, NJ Transit)
+// must use it too. It is a seam, not a convenience.
+//
+// WHY A FACTORY RATHER THAN AN OPTION COPIED SIX TIMES. Leaflet gates two separate
+// things on ONE option: `keyboard && (tabIndex = "0", role = "button")`. So the tab
+// stop and the role are inseparable, and every marker in this app arrived
+// tabbable, role="button", and nameless: a keyboard rider tabbed through every
+// vehicle on the map before reaching a single control, hearing "button" each time
+// and nothing else. The tab-order policy is that markers are NOT the keyboard path
+// (the A1 station panel is, reachable by the skip link), so `keyboard: false` is
+// correct everywhere. Written as six copied lines it would be six chances to forget,
+// and the seventh system would forget; A1's announceUnlessTick exists for exactly
+// this reason and this is the same lesson applied to the map. Sweeping the DOM after
+// each poll to fix up markers would be worse still: a compensator running after the
+// mistake instead of a design that cannot make it.
+//
+// The role has to be put BACK by hand, because keyboard:false took it away with the
+// tab stop. role="img" with an aria-label is what a marker actually is: a graphic
+// that means something. Touch screen-reader users, who navigate by pointer and not
+// by Tab, still find and hear it.
+function labeledMarker(latlng, options, name) {
+  const marker = L.marker(latlng, { ...options, keyboard: false });
+  // Relabel whenever Leaflet builds the element again. Toggling a layer off and on
+  // DESTROYS the icon element and creates a fresh one, which restores tabindex and
+  // role from marker options but loses anything we wrote as an attribute; verified
+  // in the step-1 inventory. Without this, every marker on a re-shown layer would be
+  // silently anonymous again, and nothing else would notice for a static system like
+  // AirTrain that has no poll to re-apply the name.
+  marker.on("add", () => applyMarkerName(marker));
+  setMarkerName(marker, name);
+  return marker;
+}
+
+// Set or refresh a marker's accessible name. SAFE AND EXPECTED TO BE CALLED EVERY
+// POLL: the name is remembered on the marker so a rebuilt element can be relabeled
+// from the last known value, and re-applying an unchanged name costs one attribute
+// write and announces nothing (a marker is not a live region).
+function setMarkerName(marker, name) {
+  marker._a11yName = name;
+  applyMarkerName(marker);
+}
+
+function applyMarkerName(marker) {
+  const el = marker.getElement();
+  if (!el || !marker._a11yName) return; // not on the map yet, or on a hidden layer
+  el.setAttribute("role", "img");
+  el.setAttribute("aria-label", marker._a11yName);
+  // The inner svg is decoration: it repeats what the label already says, and left
+  // exposed it reads as a second, nameless graphic inside the first.
+  const svg = el.querySelector("svg");
+  if (svg) svg.setAttribute("aria-hidden", "true");
+}
+
 /* ----- Station popups + live arrivals, shared by subway, railroad and PATH ----- */
 
 // Canvas-rendered so ~470 circle markers stay cheap and hit-testable; on its
 // own pane (above the route-line canvas) so station clicks land here.
+//
+// A2 FOOTNOTE, because it is the reason station dots have no accessible name: a
+// canvas-rendered circleMarker produces NO DOM element at all, so there is nothing to
+// put a role or a label on. Naming ~470 station dots would mean abandoning the canvas
+// renderer, which is the canvas work this phase deliberately does not do. Stations are
+// reachable as named, keyboard-navigable text through the A1 station panel instead,
+// which is the surface built for exactly that. AirTrain stations are the exception:
+// they are L.marker with a divIcon (they need a shape a circle cannot draw), so they
+// have an element and they get a name like any other marker.
 const stationRenderer = L.canvas({ padding: 0.5, pane: "stationPane" });
 
 // Shared popup machinery for BOTH station kinds (subway + railroad). One popup

@@ -258,6 +258,10 @@ function applyTrains(data) {
           : computeRouteSlice(train, routeIndex.get(train.route_id));
       record._segId = segId;
       record.latest = train;
+      // THE LABEL TRACKS THE DATA: a subway train's next stop and direction change on
+      // every poll while the marker is reused, and those are the whole content of its
+      // name.
+      setMarkerName(record.marker, subwayTrainName(train));
       // Placed through the freeze clock, not the raw one: a retained group's trains
       // must not advance on a poll that only re-served them (C2).
       const fresh = subwaySystemFreshness(train);
@@ -273,7 +277,7 @@ function applyTrains(data) {
       newRecord._segId = `${train.route_id}|${train.prev_time}|${train.stop_id}`;
       train._route = computeRouteSlice(train, routeIndex.get(train.route_id));
       const fresh = subwaySystemFreshness(train);
-      newRecord.marker = L.marker(
+      newRecord.marker = labeledMarker(
         trainLatLng(train, glideClock(now, fresh.staleAt), newRecord.fState),
         {
           icon: trainIcon(train),
@@ -284,6 +288,7 @@ function applyTrains(data) {
           // this rendering ship in one commit.
           opacity: markerOpacity(fresh.age),
         },
+        subwayTrainName(train),
       )
         .bindPopup(() => trainPopup(newRecord))
         .addTo(subwayLayer);

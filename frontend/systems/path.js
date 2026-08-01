@@ -223,6 +223,13 @@ function applyPath(data) {
           : computePathRouteSlice(train, pathRouteIndex.get(train.route_id), PATH_SLICE_OPTS);
       record._segId = segId;
       record.latest = train;
+      // THE LABEL TRACKS THE DATA, AND IS NOT GATED ON route_id CHANGING. The re-icon
+      // below is gated that way, and the step-1 inventory proved what that costs: when
+      // the route table loads late, a diamond keeps the fallback colour permanently
+      // because route_id never changed. A name gated the same way would strand
+      // "PATH route 862" forever after the real route name arrived. Recomputed every
+      // poll instead, which is what ferry.js already does for its colour.
+      setMarkerName(record.marker, pathTrainName(train, pathRouteNames.get(train.route_id)));
       // Frozen glide clock while the feed is stale, so an anchored train stops
       // advancing along its route instead of dead-reckoning on a dead feed (C2).
       record.marker.setLatLng(
@@ -238,12 +245,13 @@ function applyPath(data) {
       const newRecord = { routeId: train.route_id, latest: train, fState: {} };
       newRecord._segId = `${train.route_id}|${train.prev_time}|${train.stop_id}`;
       train._route = computePathRouteSlice(train, pathRouteIndex.get(train.route_id), PATH_SLICE_OPTS);
-      newRecord.marker = L.marker(
+      newRecord.marker = labeledMarker(
         trainLatLng(train, glideClock(now, pathSystemStaleAt()), newRecord.fState),
         {
           icon: pathIcon(train),
           opacity: markerOpacity(pathSystemAge()), // dim on the first frame, as elsewhere
         },
+        pathTrainName(train, pathRouteNames.get(train.route_id)),
       )
         .bindPopup(() => pathTrainPopup(newRecord))
         .addTo(pathTrains);

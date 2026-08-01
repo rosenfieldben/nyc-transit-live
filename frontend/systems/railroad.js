@@ -216,6 +216,14 @@ function applyRailroads(data) {
         record._segId = segId;
       }
       record.latest = train;
+      // THE LABEL TRACKS THE DATA, including the field a reader would not guess: a
+      // train can move BETWEEN placed and GPS positioning between polls, which flips
+      // the "scheduled position, no GPS" clause the name ends with, and that clause is
+      // how a rider knows how much to trust the position.
+      setMarkerName(
+        record.marker,
+        railroadTrainName(train, railroadRouteNames.get(`${train.system}|${train.route_id}`)),
+      );
       const age = systemAgeOf("railroads", train.system);
       // A placed train is glided through the freeze clock so a retained system's
       // trains stop advancing (C2). A GPS train has no interpolation to freeze: it
@@ -250,7 +258,7 @@ function applyRailroads(data) {
         );
       }
       const age = systemAgeOf("railroads", train.system);
-      newRecord.marker = L.marker(
+      newRecord.marker = labeledMarker(
         placed
           ? trainLatLng(
               train,
@@ -261,6 +269,7 @@ function applyRailroads(data) {
         // Dimmed at creation for the same reason as the subway: retained data must
         // never render live, not even for one frame (the "C2b" spec).
         { icon: railroadIcon(train), opacity: markerOpacity(age) },
+        railroadTrainName(train, railroadRouteNames.get(`${train.system}|${train.route_id}`)),
       )
         .bindPopup(() => railroadPopup(newRecord))
         .addTo(railroadLayer);

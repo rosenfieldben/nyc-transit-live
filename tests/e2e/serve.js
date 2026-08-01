@@ -55,6 +55,13 @@ const server = http.createServer((req, res) => {
     }
     res.writeHead(200, {
       "Content-Type": TYPES[path.extname(filePath)] || "application/octet-stream",
+      // NO-STORE, because this server sends no validators (no ETag, no Last-Modified)
+      // and a response with no freshness information at all is eligible for heuristic
+      // caching. A spec that asserts on CSS geometry could then run against the
+      // stylesheet from before the edit under test, which is a failure mode that looks
+      // exactly like a real regression and disappears on the next run. Production sets
+      // its own caching separately; this is a property of the test server only.
+      "Cache-Control": "no-store",
       ...SECURITY_HEADERS,
     });
     res.end(body);

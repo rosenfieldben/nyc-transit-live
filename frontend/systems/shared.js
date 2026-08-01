@@ -315,19 +315,31 @@ function applyMarkerName(marker) {
 // at that pixel. Measured in the step-1 inventory: clicking a station with a train on
 // it opens the TRAIN popup, and the station popup never fires.
 //
-// There are two honest resolutions, and which one applies is decided by where the
-// position came from.
+// There are two honest resolutions, and where the position came from decides which
+// ones are available.
 //
 // DERIVED POSITIONS MAY OFFSET. A subway train is placed at its stop by stop_id and a
 // PATH train is interpolated along its route: neither position is a measurement, so
-// drawing the marker a few pixels above the point costs nothing true. PATH already
-// does this (iconAnchor [8, 20], path.js), and the subway follows the same precedent.
-// Nudging a computation lies to no one.
+// drawing the marker a few pixels above the point costs nothing true. PATH set this
+// precedent (iconAnchor [8, 20], path.js) and the subway follows it. Nudging a
+// computation lies to no one.
 //
-// MEASURED POSITIONS MAY NOT. Moving a GPS marker would make the map say the vehicle
-// is somewhere it is not, which is the one thing this project does not do. So the
-// marker stays exactly where the feed put it and the POPUP grows a link to the station
-// instead: reachability without a lie.
+// MEASURED POSITIONS MUST NOT OFFSET. Moving a GPS marker would make the map say the
+// vehicle is somewhere it is not, which is the one thing this project does not do.
+//
+// A CROSS-LINK IS HONEST FOR EITHER, because it moves nothing at all: it adds a way to
+// reach the station without touching where anything is drawn. So offsetting is the
+// narrower permission and linking is the general one.
+//
+// PLACED RAILROAD TRAINS ARE DERIVED, AND TAKE THE CROSS-LINK ANYWAY. isPlacedRailroad
+// means the train carries a stop_id and is drawn at its station's coordinates from the
+// schedule; a railroad train with real GPS carries no stop_id at all. So a placed train
+// would qualify for the offset by the rule above. It gets the link instead, as the
+// deliberate conservative choice: the link never moves a marker, and the subway and
+// PATH offsets are tuned to grid geometry those two systems share and the commuter
+// railroads do not. Recorded because an earlier version of this comment had it
+// backwards, calling placed trains measured, and a reader who inherited that would
+// draw the wrong conclusion about every system here.
 //
 // THE LINK IS NOT A REPLACEMENT FOR THE PANE ORDERING. Vehicles still paint above
 // stations, because that is the right visual layering; the link exists so the station

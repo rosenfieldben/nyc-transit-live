@@ -1743,10 +1743,16 @@ function neverDecoded(entry) {
 // need a WHOLE word for the case below, and getting that wrong is not hypothetical:
 // the first draft announced "Live data delayed for railroads", lowercase and plural,
 // straight out of the payload key.
+//
+// AND THE RAILROAD SYSTEM NAME GOES THROUGH railroadSystemLabel, which the review found
+// missing here. Every other spoken surface says "Metro-North"; this one said "MNR",
+// straight out of the feed, into the only region a screen reader reads aloud. It is the
+// same defect railroadSystemLabel was written to prevent, one surface later. "LIRR" is
+// unchanged by that helper, because LIRR is what a rider calls it.
 const SOURCE_WORDS = {
   buses: { qualifier: "Bus", whole: "Bus" },
   subways: { qualifier: "Subway", whole: "Subway" },
-  railroads: { qualifier: null, whole: "Railroad" },
+  railroads: { qualifier: null, whole: "Railroad", spoken: railroadSystemLabel },
   path: { qualifier: "PATH", whole: "PATH" },
   ferry: { qualifier: "Ferry", whole: "Ferry" },
 };
@@ -1759,7 +1765,8 @@ function describeIdentity(identity) {
   // noise. The railroads payload does this whenever its systems block is absent, which
   // is the path that produced the defect above.
   if (system === source || !system) return words.whole;
-  return words.qualifier ? `${words.qualifier} ${system}` : system;
+  const spoken = words.spoken ? words.spoken(system) : system;
+  return words.qualifier ? `${words.qualifier} ${spoken}` : spoken;
 }
 
 // Join names the way a person would say them.

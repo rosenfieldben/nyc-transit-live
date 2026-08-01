@@ -2156,6 +2156,11 @@ test("A2: identities are described the way a rider would say them", () => {
   // A railroad system is already what a rider calls it: "Railroad LIRR" is a phrase
   // only a schema would produce.
   assert.equal(statusAnnouncement([], ["railroads|LIRR"]), "Live data delayed for LIRR.");
+  // BUT "MNR" is the feed's word, not a rider's, and this region is read ALOUD: an
+  // initialism is spoken letter by letter. Raised by the review and dropped by my own
+  // review script, which escalated only the first finding from each lens. Every other
+  // spoken surface already went through railroadSystemLabel; this one did not.
+  assert.equal(statusAnnouncement([], ["railroads|MNR"]), "Live data delayed for Metro-North.");
   // BUT the railroads source ALSO synthesizes a system named after itself whenever its
   // payload carries no systems block, and that path produced "Live data delayed for
   // railroads" in the first draft: lowercase and plural, straight out of the payload

@@ -1,5 +1,4 @@
-// SCRATCH: same boundary scenario at a NARROW viewport, where the page has no
-// horizontal overflow at all, to show the scroll is not an artifact of the docked layout.
+// SCRATCH: re-confirm against current HEAD (round 3's helper).
 const { test, expect } = require("@playwright/test");
 const { installMocks } = require("./mock");
 const fx = require("./fixtures/api");
@@ -10,20 +9,18 @@ const state = (page) =>
     const cr = c.getBoundingClientRect();
     const p = map._popup && map._popup.getElement();
     const el = document.activeElement;
+    const panel = document.getElementById("stations-panel");
     return {
-      docOverflowPx: document.documentElement.scrollWidth - document.documentElement.clientWidth,
       windowScrollX: window.scrollX,
-      containerScrollLeft: c.scrollLeft,
       container: [Math.round(cr.x), Math.round(cr.right)],
+      panel: panel ? [Math.round(panel.getBoundingClientRect().x), Math.round(panel.getBoundingClientRect().right)] : null,
       popup: p ? [Math.round(p.getBoundingClientRect().x), Math.round(p.getBoundingClientRect().right)] : null,
-      tilePaneX: Math.round(document.querySelector(".leaflet-tile-pane").getBoundingClientRect().x),
       active: el === document.body ? "BODY" : el.tagName + "." + String(el.className || "").trim(),
     };
   });
 
 for (const mode of ["helper", "raw-baseline"]) {
-  test(`NARROW-${mode}`, async ({ page }) => {
-    await page.setViewportSize({ width: 900, height: 720 });
+  test(`FINAL-${mode}`, async ({ page }) => {
     await installMocks(page);
     await page.clock.install({ time: new Date(fx.FROZEN_MS) });
     await page.clock.pauseAt(new Date(fx.FROZEN_MS));
@@ -57,19 +54,18 @@ for (const mode of ["helper", "raw-baseline"]) {
     await expect(page.locator(".popup-crosslink")).toBeFocused();
 
     await page.clock.runFor(13_800);
-    console.log(`${mode} before zoom: ` + JSON.stringify(await state(page)));
+    console.log(`${mode} parked:  ` + JSON.stringify(await state(page)));
 
     const box = await page.locator("#map").boundingBox();
-    await page.mouse.move(box.x + 25, box.y + box.height - 25);
+    await page.mouse.move(box.x + 30, box.y + box.height - 30);
     for (let i = 0; i < 3; i++) {
       await page.mouse.wheel(0, -400);
       await page.clock.runFor(250);
     }
-    console.log(`${mode} after zoom:  ` + JSON.stringify(await state(page)));
+    console.log(`${mode} zoomed:  ` + JSON.stringify(await state(page)));
 
     await page.clock.runFor(1200);
-    console.log(`${mode} at poll:     ` + JSON.stringify(await state(page)));
     await page.clock.runFor(800);
-    console.log(`${mode} settled:     ` + JSON.stringify(await state(page)));
+    console.log(`${mode} settled: ` + JSON.stringify(await state(page)));
   });
 }

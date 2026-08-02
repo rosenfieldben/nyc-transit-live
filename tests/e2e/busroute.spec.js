@@ -10,6 +10,7 @@
 
 const { test, expect } = require("@playwright/test");
 const { installMocks } = require("./mock");
+const { expectPopupState } = require("./popup");
 const fx = require("./fixtures/api");
 
 async function open(page) {
@@ -45,7 +46,7 @@ test("A7a. a popup opened WITHOUT a click still draws the route", async ({ page 
 
   const id = await firstBusId(page);
   await page.evaluate((busId) => buses.get(busId).marker.openPopup(), id);
-  await expect(page.locator(".leaflet-popup-content")).toBeVisible();
+  await expectPopupState(page, { registry: "buses", key: id }, true);
 
   await expect.poll(async () => drawnLines(page), { timeout: 5_000 }).toBeGreaterThan(0);
   // And the banner that names the route appears with it, since the two are one surface.
@@ -83,7 +84,7 @@ test("A7c. a mouse open draws the line exactly once, and does not draw then clea
     const el = buses.get(busId).marker.getElement();
     el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
   }, id);
-  await expect(page.locator(".leaflet-popup-content")).toBeVisible();
+  await expectPopupState(page, { registry: "buses", key: id }, true);
   await expect.poll(async () => drawnLines(page), { timeout: 5_000 }).toBeGreaterThan(0);
 
   // Settle, then count. One open, one fetch.
@@ -122,14 +123,12 @@ test("A7d. opening a different bus replaces the line rather than losing it", asy
   const firstLabel = await page.locator("#route-banner-label").textContent();
 
   await page.evaluate((busId) => buses.get(busId).marker.openPopup(), ids[1]);
-  // ASKED OF THE MARKER, NOT THE DOCUMENT. A closing Leaflet popup lingers in the DOM
-  // while it fades, and the suite's clock is paused so the corpse never leaves: querying
-  // .leaflet-popup-content here matches TWO nodes and a visibility assertion dies on
-  // strict mode. This is the third A-phase to be caught by it, which is why A2 wrote it
-  // down in shared.js; the first draft of this spec walked into it anyway.
-  await expect
-    .poll(async () => page.evaluate((busId) => buses.get(busId).marker.isPopupOpen(), ids[1]))
-    .toBe(true);
+  // Through the harness helper, which is the only thing in this suite that knows a
+  // closing popup lingers in the DOM. The first draft of this line hand-rolled the
+  // workaround and the draft before that died on strict mode; see tests/e2e/popup.js.
+  await expectPopupState(page, { registry: "buses", key: ids[1] }, true);
+  // And the one it replaced is genuinely closed, which the document could not tell us.
+  await expectPopupState(page, { registry: "buses", key: ids[0] }, false);
 
   // A line is still drawn, and the banner names the SECOND bus's route.
   await expect.poll(async () => drawnLines(page), { timeout: 5_000 }).toBeGreaterThan(0);

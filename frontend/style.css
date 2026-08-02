@@ -231,10 +231,25 @@ html, body {
 #alert-banner {
   position: absolute;
   top: 10px;
-  left: 10px;
+  /* A2: STARTS CLEAR OF THE ZOOM CONTROL. The banner used to begin at 10px, the same
+     place Leaflet's zoom control sits, and won the stacking contest by exactly one
+     (banner 1001, control corner 1000). Measured before the fix: elementFromPoint over
+     the zoom-in button returned the banner, so the map could not be zoomed at all
+     while any agency-wide alert was showing, which is precisely when a rider wants to
+     look closer. 54px clears the control (10px margin + 34px button + 10px gap)
+     without moving the control itself, so nothing a rider has learned moves. */
+  left: 54px;
   right: 10px;
   max-width: 560px; /* left-aligned; full width only on a narrow screen */
   z-index: 1001; /* above Leaflet panes AND the legend #panel (z-index 1000) */
+}
+
+/* The zoom control belongs to the MAP, which the docked panel pushes right, while the
+   banner is positioned against the body. Mirror the same offset the map itself takes
+   (see body.stations-docked #map below) so the clearance holds when the panel is
+   docked, instead of the banner sliding back over the control. */
+body.stations-docked #alert-banner {
+  left: calc(min(360px, 92vw) + 54px);
 }
 
 .alert-banner-strip {
@@ -483,4 +498,107 @@ html, body {
     left: min(360px, 92vw);
     width: auto;
   }
+}
+
+/* A2: the "Also here" cross-link inside a vehicle popup. A real button, sized to the
+   24px hit-target floor including its padding rather than by visual bulk: the text is
+   small because a popup is small, and the padding does the reaching. */
+.popup-crosslink {
+  display: inline-block;
+  margin-top: 6px;
+  min-height: 24px;
+  padding: 4px 8px;
+  border: 1px solid #94a3b8;
+  border-radius: 4px;
+  background: #f8fafc;
+  font: 12px system-ui, sans-serif;
+  color: #1d4ed8;
+  cursor: pointer;
+}
+.popup-crosslink:hover {
+  background: #eef2f7;
+}
+
+/* ---------------- A2: the 24px hit-target floor (WCAG 2.2) ---------------- */
+
+/* EVERY interactive thing on the map surface must be at least 24 CSS px in both
+   directions. The markers are all smaller than that by design (a 24px subway square
+   would be a blob at city zoom, and 470 of them would be a wall), so the floor is met
+   with a TRANSPARENT hit area rather than by making anything bigger to look at. A
+   pseudo-element belongs to its originating element for hit testing, so this widens
+   what a finger or an imprecise pointer can land on while changing nothing visible.
+
+   Centred on the ICON, not on the anchor point, because the icon is what a rider aims
+   at. For the offset markers (subway, PATH) that keeps the halo above the station dot
+   underneath, which is the whole reason those two are offset. */
+.leaflet-marker-icon::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 24px;
+  height: 24px;
+  transform: translate(-50%, -50%);
+  /* No background: this exists only to be hit. */
+}
+
+/* THE OFFSET MARKERS GROW THEIR HIT AREA UPWARD ONLY. Subway and PATH icons are
+   anchored ABOVE their point so they do not cover the station dot underneath (see the
+   principle comment at crossLinkHtml in systems/shared.js), and a halo centred on the
+   icon eats into that clearance from below.
+
+   MEASURED, because the first draft of this comment claimed a regression that did not
+   exist. Centred, the halo bottom lands 1px above the anchor for the subway and exactly
+   ON it for PATH, and a hit test at the anchor pixel passes either way. So the centred
+   version was not actually handing the station back; it was leaving between zero and
+   one pixel of margin, which any future change to an icon size or an anchor would
+   spend without anyone noticing. Aligning the halo's bottom edge to the icon's keeps
+   the full 24px of reach and leaves 4px of clearance instead. The spec asserts the
+   margin rather than only the anchor pixel, because an assertion on the anchor alone
+   cannot tell these two configurations apart. */
+.train-marker::before,
+.path-marker::before {
+  top: auto;
+  bottom: 0;
+  transform: translateX(-50%);
+}
+
+/* The layer toggles were 13px checkboxes inside 20px-high labels. The LABEL is the hit
+   target (clicking it toggles its input), so giving the label the floor is enough and
+   the checkbox keeps its native size. */
+#toggles label {
+  min-height: 24px;
+}
+
+/* The banner's dismiss control measured 13x16: padding takes it to the floor without
+   enlarging the glyph. */
+#alert-banner-dismiss {
+  min-width: 24px;
+  min-height: 24px;
+  padding: 4px 6px;
+}
+
+/* ---------------- A2: reduced motion ---------------- */
+
+/* The class is put on <html> by applyMotionPreference in systems/shared.js, and it
+   follows the preference LIVE rather than only at load, so a rider who turns reduced
+   motion on mid-session is believed straight away.
+
+   Everything the app itself animates is listed here. Leaflet's own zoom and pan
+   animations are NOT, because they are constructor options rather than css, and they
+   are set from the same gate at map construction; that is the one thing a mid-session
+   flip cannot reach, and the README says so in a rider's words. */
+.reduced-motion .bus-marker svg,
+.reduced-motion .ferry-marker svg {
+  transition: none;
+}
+
+/* The station panel has NO transition today: it appears and disappears through the
+   hidden attribute, so there is nothing here to suppress. The rule is written anyway,
+   because the panel is the most likely thing in this app to be given a slide later and
+   whoever adds it should find the gate already covering them rather than discover this
+   file after a rider complains. */
+.reduced-motion #stations-panel {
+  transition: none;
+  animation: none;
 }

@@ -149,6 +149,25 @@ function ferryBoatIcon(boat, color) {
   });
 }
 
+// A2 FOLLOWUP, DELIBERATELY NOT DONE HERE: a docked boat gets no "Also here" link.
+//
+// A boat sitting at its dock covers the dock dot exactly as a placed railroad train
+// covers its station (markerPane z 600 over stationPane z 450), and the cross-link at
+// crossLinkHtml in shared.js is the resolution for a measured position. It is not used
+// here because THE PAYLOAD NAMES NO DOCK. FerryBoat carries `status` but no stop id,
+// and that is not an omission in this repo's decoder: the captured upstream
+// VehiclePositions feeds carry stop_id on 0 of 28 vehicles while 14 of them report
+// STOPPED_AT. NYC Ferry says a boat is docked and never says where.
+//
+// Guessing the nearest dock is forbidden, and rightly: a wrong "Also here" hands a
+// rider confidently incorrect arrivals with nothing on screen to contradict them.
+//
+// THE HONEST UNBLOCK IS A BACKEND DERIVATION, out of A2's scope by the zero-backend
+// rule. A STOPPED_AT boat's dock is the stop on its own trip whose dwell window
+// contains now: arrival in the past, departure in the future. The TripUpdates feed
+// already carries both times per stop (14b decodes exactly that for the dock arrivals
+// endpoint), so the dock falls out of payload semantics with no distance math at all.
+// Until then, dock arrivals remain reachable by name through the A1 station panel.
 function ferryBoatPopup(record) {
   const b = record.latest;
   // Reads record.latest so a popup a rider holds open across polls always renders the
@@ -216,10 +235,15 @@ function applyFerryBoats(data) {
         record.iconState = iconState;
       }
       record.latest = boat;
+      // THE LABEL TRACKS THE DATA: a boat's status is the field that changes most (at
+      // dock, arriving, under way) and it is the one a rider is listening for. Like
+      // the re-icon above, this reads the RESOLVED route name, so a boat named before
+      // the route table landed gets its real route once it does.
+      setMarkerName(record.marker, ferryBoatName(boat, ferryRouteNames.get(boat.route_id)));
       // Re-applied every poll, not only when the icon changes: a boat that docks or
       // departs changes its resting opacity, and its feed may have gone stale.
       dimMarker(record.marker, systemAgeOf("ferry", "ferry"), ferryBaseOpacity(boat));
-      if (record.marker.isPopupOpen()) record.marker.getPopup().update();
+      if (record.marker.isPopupOpen()) updatePopupKeepingFocus(record.marker);
     } else {
       const color = ferryColorFor(boat.route_id);
       const newRecord = {
@@ -227,11 +251,11 @@ function applyFerryBoats(data) {
         iconState: ferryBoatIconState(boat.status),
         latest: boat,
       };
-      newRecord.marker = L.marker([boat.latitude, boat.longitude], {
+      newRecord.marker = labeledMarker([boat.latitude, boat.longitude], {
         icon: ferryBoatIcon(boat, color),
         // Dim on the first frame, for staleness and/or for being docked.
         opacity: markerOpacity(systemAgeOf("ferry", "ferry"), ferryBaseOpacity(boat)),
-      })
+      }, ferryBoatName(boat, ferryRouteNames.get(boat.route_id)))
         .bindPopup(() => ferryBoatPopup(newRecord))
         .addTo(ferryBoats);
       ferryBoatRecords.set(boat.id, newRecord);

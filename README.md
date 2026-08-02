@@ -257,6 +257,33 @@ rider are looking at the same place. Arrivals refresh in the background, and the
 live region announces only when the trains themselves change, never on a
 countdown tick, so it does not talk over you.
 
+**The map itself.** Every vehicle marker now carries a name, so a screen reader on a
+touch device announces "1 train, next stop Times Sq-42 St, Northbound" instead of an
+unlabeled button. Those markers are deliberately **not** in the keyboard tab order:
+there can be several hundred of them, and tabbing through every bus in Brooklyn to
+reach a control is not a keyboard path anyone wants. The keyboard path is the Stations
+panel, one Tab away via the skip link. The map container itself stays focusable, so
+Leaflet's arrow-key panning still works. Where a vehicle is parked on top of a station,
+its popup carries an "Also here" link to that station's arrivals, so the station stays
+reachable even when the marker covers it.
+
+**Motion.** If your system asks for reduced motion, the map stops animating: vehicles
+jump to each new position when the data arrives instead of sliding there, and the
+marker and panel transitions are off. Nothing is hidden and no data is held back, since
+this changes only how a position updates, never what is shown. One limitation worth
+knowing: the map library reads its own zoom and pan animation settings once when the
+page loads, so if you change the setting while the page is open, everything else
+responds immediately but those two take effect the next time you load the page.
+
+**Keeping your place.** This page rewrites itself under you every fifteen seconds, and
+a keyboard rider parked on a control has to survive that. When a popup you are reading
+refreshes, or the alert banner is rebuilt because the MTA reworded an incident, the
+control you were on gets focus back rather than dropping you at the top of the document.
+Two cases are not solved yet and are worth knowing about: if the vehicle whose popup you
+have open leaves the feed entirely, or the last agency-wide alert clears while you are on
+its dismiss button, the thing you were holding is genuinely gone and focus falls to the
+top of the page. One Tab from there reaches the skip link.
+
 What this does *not* yet cover: the map itself is still a picture, buses are not
 in the panel (their stops are not stations), and the rest of the page (legend,
 layer toggles, alerts list) is **unmeasured**. CI enforces an axe-core scan scoped
@@ -814,6 +841,17 @@ alert feed and cannot heal on its own: that is a `FAIL`.
 - Phase 4 (subways) is the hard part: joining realtime `trip_id`s to physical
   stations involves fiddly matching against the static schedule, and the subway
   feeds use NYC-specific protobuf extensions. Expect to iterate.
+- **Adding a system (Amtrak, NJ Transit, a second ferry operator) means using two
+  seams, not copying a neighbouring file.** Build every marker with `labeledMarker`
+  in `frontend/systems/shared.js`: it owns `keyboard: false` and the `role="img"`
+  plus `aria-label` that replace what that option strips, and a marker made any other
+  way rejoins the tab order as an unnamed button. `frontend/markers.test.js` fails
+  the build if a system calls `L.marker` directly, if it names markers with none of
+  the `helpers.js` name builders, or if it reuses markers across polls without
+  calling `setMarkerName` to keep the label with the data. Register the system's
+  stations with `registerStation` in the same file, using a **system-qualified** key:
+  station ids collide across systems, and the contract tier measured 21 of 24 ferry
+  dock ids colliding with Metro-North station ids.
 
 ## Contributing
 

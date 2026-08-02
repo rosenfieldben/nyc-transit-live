@@ -1570,6 +1570,317 @@ function announcementWorthy(prev, next) {
   return false;
 }
 
+/* ---------------- A2: what a marker is called ---------------- */
+
+// THE NAMES ON THE MAP. Every one of these builds from the SAME fields its system's
+// popup renders, so a marker and its popup can never describe different trains. They
+// are pure and take their lookups by injection, which is what lets the node tests pin
+// the wording instead of asserting against a live map.
+//
+// They are also deliberately plain sentences rather than the popup's shorthand. A
+// popup can afford "Next stop:" as a label above a value because it is laid out in
+// two dimensions; a name is read as one line of speech, so it has to be a sentence a
+// person would say. The rule for every builder below: name the vehicle, say where it
+// is going or what it is doing, and stop. No trip ids, no coordinates, no counts.
+//
+// NOTHING HERE READS THE CLOCK OR THE FRESHNESS INDEX. A stale marker is already
+// dimmed and its popup already carries the age line; folding "as of 4m ago" into the
+// name would make every label change on a timer, which is the announcement problem
+// A1 solved and has no business coming back through the marker layer.
+
+// Join the parts of a name, dropping the empty ones, so a missing field leaves no
+// double comma and no dangling "to".
+function joinName(parts) {
+  return parts.filter((part) => part != null && part !== "").join(", ");
+}
+
+// "1 train, next stop Times Sq-42 St, Northbound". route_id is the same bullet the
+// icon shows; an unknown route says so rather than reading the literal "?" glyph.
+function subwayTrainName(train) {
+  const t = train || {};
+  const route = t.route_id ? `${t.route_id} train` : "Subway train";
+  const stop = t.stop_name || t.stop_id;
+  return joinName([route, stop ? `next stop ${stop}` : null, t.direction || null]);
+}
+
+// "MNR" is what the feed calls it and what the popup prints; "Metro-North" is what a
+// rider calls it, and what the A1 station panel already says. A name that is going to
+// be SPOKEN uses the rider's word, because an initialism is read letter by letter.
+function railroadSystemLabel(system) {
+  return system === "MNR" ? "Metro-North" : system || "Railroad";
+}
+
+// "Metro-North Hudson, train 8801, next stop Grand Central, scheduled position, no
+// GPS". Built from the same FIELDS as the popup head, but NOT from formatRailroadHead
+// itself: that helper joins with a middot, which is a visual separator doing a job
+// that punctuation cannot do in speech (a screen reader reads it as noise, or as the
+// words "middle dot"). Same facts, spoken shape. The GPS-versus-scheduled clause is
+// here for the same reason it is in the popup: it tells a rider how much to trust the
+// position they are being told about.
+function railroadTrainName(train, routeName = null) {
+  const t = train || {};
+  const system = railroadSystemLabel(t.system);
+  const head = routeName ? `${system} ${routeName}` : t.route_id ? `${system} route ${t.route_id}` : system;
+  const placed = isPlacedRailroad(t);
+  return joinName([
+    head,
+    t.train_num ? `train ${t.train_num}` : null,
+    placed && t.stop_name ? `next stop ${t.stop_name}` : null,
+    t.direction || null,
+    placed ? "scheduled position, no GPS" : "live GPS",
+  ]);
+}
+
+// "Newark - World Trade Center, PATH, next stop Grove St, to Newark". PATH trains are
+// always scheduled positions, which the popup states and the name repeats.
+function pathTrainName(train, routeName = null) {
+  const t = train || {};
+  return joinName([
+    formatPathHead(t.route_id, routeName),
+    "PATH",
+    t.stop_name ? `next stop ${t.stop_name}` : null,
+    t.direction || null,
+    "scheduled position, no GPS",
+  ]);
+}
+
+// "East River, NYC Ferry, boat H201, at dock". ferryStatusText is the popup's own
+// wording. The boat label is the rider-visible hull name, not the feed's vehicle id.
+function ferryBoatName(boat, routeName = null) {
+  const b = boat || {};
+  // ferryStatusText returns null for a status the feed did not give or we do not
+  // recognise, and the popup omits its line entirely in that case. The name does the
+  // same: saying "under way" about a boat whose status is unknown would be inventing
+  // the one fact a rider is actually asking about.
+  const status = ferryStatusText(b.status);
+  return joinName([
+    routeName || "Unassigned route",
+    "NYC Ferry",
+    b.label ? `boat ${b.label}` : null,
+    status ? status.toLowerCase() : null,
+  ]);
+}
+
+// "M15 bus, heading east" or "M15 bus, heading unknown". The bearing is spoken as a
+// COMPASS POINT, not as degrees: the marker's whole visual job is the arrow, and "142
+// degrees" is a number a rider has to convert while standing at a stop.
+function busName(bus) {
+  const b = bus || {};
+  const route = b.route_id ? `${b.route_id} bus` : "Bus";
+  return joinName([route, `heading ${compassPoint(b.bearing)}`]);
+}
+
+const COMPASS_POINTS = ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"];
+
+// Degrees to one of eight compass points. Wraps, so 350 and -10 both read "north".
+function compassPoint(bearing) {
+  if (bearing == null || Number.isNaN(Number(bearing))) return "unknown";
+  const step = 360 / COMPASS_POINTS.length;
+  const index = Math.round(Number(bearing) / step);
+  return COMPASS_POINTS[((index % COMPASS_POINTS.length) + COMPASS_POINTS.length) % COMPASS_POINTS.length];
+}
+
+// "Federal Circle, AirTrain JFK station". AirTrain stations are the one STATION with a
+// DOM element to name (every other system's stations are circleMarkers drawn on a
+// shared canvas, which has no element and therefore no place to put a name; those
+// stations are reachable as text through the A1 panel instead).
+function airtrainStationName(station) {
+  const s = station || {};
+  return joinName([s.name || "AirTrain station", "AirTrain JFK station"]);
+}
+
+/* ---------------- A2: when the page itself should speak ---------------- */
+
+// The page-level equivalent of announcementWorthy, and it follows the same rule A1
+// settled: judge a TRANSITION in underlying state, never a rendered string. The status
+// line contains a clock and rewrites itself every fifteen seconds by construction, so
+// anything comparing its text would announce forever.
+//
+// THE UNIT OF JUDGEMENT IS SET MEMBERSHIP, not a count and not a string. The identity
+// is "<sourceKey>|<systemName>", exactly the key the C2 freshness index already uses,
+// so what a rider hears is derived from the same numbers the status line and the
+// marker dimming read. Counting would be wrong in a way that shows up precisely during
+// a spreading incident: LIRR going stale while MNR recovers leaves the count at one
+// and says nothing, when two things a rider cares about just changed.
+
+// Which (source, system) identities are degraded right now. Accepts the freshness
+// index as a Map or a plain object so callers and tests can pass either.
+function degradedIdentities(freshnessIndex) {
+  const entries =
+    freshnessIndex instanceof Map
+      ? [...freshnessIndex.entries()]
+      : Object.entries(freshnessIndex || {});
+  return entries
+    .filter(([, entry]) => entry && (staleAge(entry.age) || neverDecoded(entry)))
+    .map(([key]) => key)
+    .sort();
+}
+
+// A system with NO age at all, which its own source reports as down. This is not a
+// healthy system and it is not merely a stale one: it has never produced data.
+//
+// THE REVIEW FOUND THIS BY REPRODUCTION, and the failure was the worst shape available.
+// A backend restart while a feed is still failing republishes that system with
+// fetched_at null (the previous value it would have carried forward is gone with the
+// process). A null age is not >= the staleness threshold, so the system silently LEFT
+// the degraded set, and the page announced "Live data current again" at the exact
+// moment its trains disappeared from the map. It then never re-entered the set, so the
+// one surface that exists to say otherwise stayed quiet for as long as the outage
+// lasted. A rider was told a dead system was fine, once, and never corrected.
+//
+// The status line never had this bug: staleness() has always separated a `blind` set
+// (no age AND not ok) from the stale one. This makes the spoken judgment read the same
+// two fields the visible one does, which is the invariant that matters: the page must
+// not say one thing and speak another.
+function neverDecoded(entry) {
+  return entry.age == null && entry.ok === false;
+}
+
+// The rider-facing word for a source, and the word to use when a source's system is
+// only the source over again. Railroads take no qualifier in front of a real system
+// name, because "LIRR" and "Metro-North" are already what a rider calls them and
+// "Railroad LIRR" is the kind of phrase only a schema would produce. But they still
+// need a WHOLE word for the case below, and getting that wrong is not hypothetical:
+// the first draft announced "Live data delayed for railroads", lowercase and plural,
+// straight out of the payload key.
+//
+// AND THE RAILROAD SYSTEM NAME GOES THROUGH railroadSystemLabel, which the review found
+// missing here. Every other spoken surface says "Metro-North"; this one said "MNR",
+// straight out of the feed, into the only region a screen reader reads aloud. It is the
+// same defect railroadSystemLabel was written to prevent, one surface later. "LIRR" is
+// unchanged by that helper, because LIRR is what a rider calls it.
+const SOURCE_WORDS = {
+  buses: { qualifier: "Bus", whole: "Bus" },
+  subways: { qualifier: "Subway", whole: "Subway" },
+  railroads: { qualifier: null, whole: "Railroad", spoken: railroadSystemLabel },
+  path: { qualifier: "PATH", whole: "PATH" },
+  ferry: { qualifier: "Ferry", whole: "Ferry" },
+};
+
+function describeIdentity(identity) {
+  const [source, system] = String(identity).split("|");
+  const words = SOURCE_WORDS[source] || { qualifier: source, whole: source };
+  // A source with no per-system block synthesizes ONE system named after itself
+  // (ingestSystems), so "buses|buses" is just the buses and naming it twice would be
+  // noise. The railroads payload does this whenever its systems block is absent, which
+  // is the path that produced the defect above.
+  if (system === source || !system) return words.whole;
+  const spoken = words.spoken ? words.spoken(system) : system;
+  return words.qualifier ? `${words.qualifier} ${spoken}` : spoken;
+}
+
+// Join names the way a person would say them.
+function sentenceList(names) {
+  if (names.length <= 1) return names[0] || "";
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
+}
+
+// The status announcement, or null for silence. `prev` of null is the FIRST
+// OBSERVATION: it seeds state and says nothing, because a page load must not read its
+// own condition aloud before the rider has asked for anything.
+//
+// Silent by construction on: age ticks (an identity already in the set stays in it as
+// it gets older), re-renders, and any change that alters the formatted line without
+// altering membership. Recovery is worth one sentence, because a rider who was told
+// the data was delayed is owed the news that it is not.
+function statusAnnouncement(prev, next) {
+  if (!next) return null;
+  if (!prev) return null;
+  const before = new Set(prev);
+  const after = new Set(next);
+  const entered = next.filter((key) => !before.has(key));
+  const left = prev.filter((key) => !after.has(key));
+  if (!entered.length && !left.length) return null;
+  const clauses = [];
+  if (entered.length) clauses.push(`Live data delayed for ${sentenceList(entered.map(describeIdentity))}`);
+  if (left.length) clauses.push(`Live data current again for ${sentenceList(left.map(describeIdentity))}`);
+  return `${clauses.join(". ")}.`;
+}
+
+// The banner's announcement. The identity of an alert is its id AND a hash of its
+// wording, which is the same content-hash approach the C1 banner dedup fix
+// established after an alert whose text was revised in place under an unchanged id
+// left the banner showing superseded wording indefinitely. So a reworded alert is a
+// new identity here too, and is announced once.
+//
+// Deliberately NOT sensitive to: ordering (the set is compared, and the render key is
+// built from a sorted list), a refresh carrying identical alerts, and the staleness
+// marker. That last one matters: the "may be out of date" flag is visual honesty
+// about the feed, not news about the transit system, and folding it in would announce
+// every time the alerts feed crossed its threshold with nothing having happened.
+function alertIdentities(alerts) {
+  return (alerts || [])
+    .map((a) => `${a.system}|${a.id}|${hashString(String(a.header ?? ""))}`)
+    .sort();
+}
+
+function bannerAnnouncement(prev, next) {
+  if (!next) return null;
+  if (!prev) return null; // first observation seeds silently
+  const before = new Set(prev);
+  const appeared = next.filter((key) => !before.has(key));
+  // An alert CLEARING is not announced: the rider is not told about the absence of an
+  // emergency, and the strip disappearing is the signal. Only new or revised alerts
+  // are worth interrupting for.
+  if (!appeared.length) return null;
+  // A SUMMARY, NEVER THE BODY. The banner and the alerts block carry the wording; a
+  // live region that read a full service alert aloud would be unusable during exactly
+  // the incident it exists for.
+  return appeared.length === 1
+    ? "New service alert."
+    : `${appeared.length} new service alerts.`;
+}
+
+/* ---------------- A2: motion ---------------- */
+
+// THE ONE MOTION GATE. Returns false when the rider has asked their system for
+// reduced motion.
+//
+// THE PRINCIPLE, and it is the whole reason this is a gate and not a feature flag:
+// reduced motion changes HOW a position updates, never WHAT is shown. A gliding train
+// and a stepping train are at the same place at the same time; one interpolates
+// between polls and the other jumps when the truth arrives. Nothing here may hide a
+// marker, drop a poll, freeze data, or change any text. If a change would make the
+// map say something different rather than move differently, it does not belong behind
+// this gate.
+//
+// matchMedia is injected so the node tests can drive both answers, and so the callers
+// that need to REACT to a change (see motionPreferenceListener) share one definition
+// of the query with the callers that only read it once.
+const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+
+function motionAllowed(mql = null) {
+  const query = mql || (typeof matchMedia === "function" ? matchMedia(REDUCED_MOTION_QUERY) : null);
+  if (!query) return true; // no matchMedia (node, ancient browser): animate as before
+  return !query.matches;
+}
+
+// Watch the preference for CHANGES, so a rider who turns reduced motion on does not
+// have to reload to be believed. Returns an unsubscribe function.
+//
+// WHAT THIS CANNOT REACH, and it is stated here rather than discovered later: Leaflet
+// reads its zoomAnimation, fadeAnimation and markerZoomAnimation options ONCE, when the
+// map is constructed, and offers no supported way to change them afterwards. So a
+// mid-session flip takes effect immediately for everything this app owns (the marker
+// glide, the css transitions, the panel) and only at the next page load for Leaflet's
+// own zoom and pan animations. Poking at map.options after construction would leave the
+// handlers Leaflet already installed running against a lie, which is a worse failure
+// than the honest limitation. The README says the same thing in a rider's words, since
+// the person affected is a user rather than a maintainer.
+//
+// addEventListener is guarded because MediaQueryList only grew it in Safari 14; the
+// older addListener is deliberately NOT used as a fallback, because a browser that old
+// predates the app's other requirements anyway and a silent no-op is better than a
+// deprecated path nobody tests.
+function watchMotionPreference(onChange, mql = null) {
+  const query = mql || (typeof matchMedia === "function" ? matchMedia(REDUCED_MOTION_QUERY) : null);
+  if (!query || typeof query.addEventListener !== "function") return () => {};
+  const handler = () => onChange(!query.matches);
+  query.addEventListener("change", handler);
+  return () => query.removeEventListener("change", handler);
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     esc, routeColor, lineColor, staleness, emptyFeedDecision, noteClockOffset,
@@ -1595,5 +1906,11 @@ if (typeof module !== "undefined" && module.exports) {
     foldStationName, stationQueryTokens, stationMatchesTokens, searchStations,
     stationOverflowLine, shapeStationArrivals, arrivalSentence, clockTimeLabel,
     ANNOUNCE_LEAD_SHIFT_S, arrivalsSignature, announcementWorthy,
+    // A2: map semantics and the interaction floor.
+    joinName, subwayTrainName, railroadTrainName, pathTrainName, ferryBoatName,
+    busName, compassPoint, airtrainStationName, COMPASS_POINTS, railroadSystemLabel,
+    degradedIdentities, neverDecoded, describeIdentity, sentenceList, statusAnnouncement,
+    alertIdentities, bannerAnnouncement,
+    motionAllowed, watchMotionPreference, REDUCED_MOTION_QUERY,
   };
 }

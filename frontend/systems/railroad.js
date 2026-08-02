@@ -156,6 +156,13 @@ function railroadPopup(record) {
     (isPlacedRailroad(t) && t.stop_name ? `<br>Next stop: ${esc(t.stop_name)}` : "") +
     (t.direction ? `<br>${esc(t.direction)}` : "") +
     `<br><span class="popup-sub">${isPlacedRailroad(t) ? "scheduled (no GPS)" : "live GPS"}</span>` +
+    // A2: the station this train is sitting on, reachable. A placed train is drawn AT
+    // its station's coordinates and covers the dot entirely, so without this the
+    // arrivals a rider came for are unreachable at that pixel. "At" is read from the
+    // stop_id the payload already carries, never from distance; the registry key is
+    // system-qualified because LIRR and MNR id spaces are independent and both are
+    // bare integers. See the principle comment at crossLinkHtml in shared.js.
+    (isPlacedRailroad(t) ? crossLinkHtml(`${t.system}|${t.stop_id}`) : "") +
     // C2: how old this train's own SYSTEM is when LIRR or MNR has gone stale. The
     // train already names its system, so unlike the subway there is no route
     // mapping to consult.
@@ -216,6 +223,14 @@ function applyRailroads(data) {
         record._segId = segId;
       }
       record.latest = train;
+      // THE LABEL TRACKS THE DATA, including the field a reader would not guess: a
+      // train can move BETWEEN placed and GPS positioning between polls, which flips
+      // the "scheduled position, no GPS" clause the name ends with, and that clause is
+      // how a rider knows how much to trust the position.
+      setMarkerName(
+        record.marker,
+        railroadTrainName(train, railroadRouteNames.get(`${train.system}|${train.route_id}`)),
+      );
       const age = systemAgeOf("railroads", train.system);
       // A placed train is glided through the freeze clock so a retained system's
       // trains stop advancing (C2). A GPS train has no interpolation to freeze: it
@@ -238,7 +253,7 @@ function applyRailroads(data) {
         record.routeId = train.route_id;
         record.placed = placed;
       }
-      if (record.marker.isPopupOpen()) record.marker.getPopup().update();
+      if (record.marker.isPopupOpen()) updatePopupKeepingFocus(record.marker);
     } else {
       const newRecord = { routeId: train.route_id, placed, latest: train, fState: {} };
       if (placed) {
@@ -250,7 +265,7 @@ function applyRailroads(data) {
         );
       }
       const age = systemAgeOf("railroads", train.system);
-      newRecord.marker = L.marker(
+      newRecord.marker = labeledMarker(
         placed
           ? trainLatLng(
               train,
@@ -261,6 +276,7 @@ function applyRailroads(data) {
         // Dimmed at creation for the same reason as the subway: retained data must
         // never render live, not even for one frame (the "C2b" spec).
         { icon: railroadIcon(train), opacity: markerOpacity(age) },
+        railroadTrainName(train, railroadRouteNames.get(`${train.system}|${train.route_id}`)),
       )
         .bindPopup(() => railroadPopup(newRecord))
         .addTo(railroadLayer);

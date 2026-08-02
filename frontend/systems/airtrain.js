@@ -70,10 +70,10 @@ async function loadAirtrain() {
     // Render on stationPane (z-index 450) like the subway/rail station dots, so the
     // squares sit ABOVE route lines but BELOW the train/bus markers (markerPane 600),
     // matching the station-below-vehicles layering the rest of the map keeps.
-    const marker = L.marker([station.lat, station.lon], {
+    const marker = labeledMarker([station.lat, station.lon], {
       icon: airtrainIcon(),
       pane: "stationPane",
-    })
+    }, airtrainStationName(station))
       .bindPopup(() => airtrainStationPopupHtml(station, routes, nyMinutesSinceMidnight()))
       .addTo(airtrainStationLayer);
     registerStation({

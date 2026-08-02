@@ -20,10 +20,19 @@
        past the map to the station list. -->
   <a href="#stations-panel" id="stations-skip" class="visually-hidden-focusable">Skip to stations list</a>
   <!-- role=region with a name so the map is a landmark a screen reader can skip
-       rather than an unlabeled canvas. DEEPER MAP SEMANTICS ARE A2's JOB: naming
-       the region is the whole of A1's excursion outside the panel, and no attempt
-       is made here to expose markers, layers, or positions. -->
-  <div id="map" role="region" aria-label="Live transit map (visual)"></div>
+       rather than an unlabeled canvas.
+       THE TAB-ORDER POLICY LIVES HERE (A2). Markers are deliberately NOT in the tab
+       order: every vehicle is created through labeledMarker in systems/shared.js,
+       which passes keyboard:false and writes role="img" with an aria-label back by
+       hand (Leaflet gates the tab stop and the role on one option, so removing the
+       stop removes the role too). A rider who could otherwise tab through several
+       hundred vehicles before reaching a single control uses the station panel
+       instead, one Tab away via the skip link. The markers keep names and roles for
+       touch screen-reader users, who navigate by pointer rather than by Tab.
+       THE CONTAINER KEEPS ITS OWN FOCUS. Leaflet puts tabindex=0 on this div and
+       binds arrow-key panning to it; that is a real keyboard affordance for the map
+       itself and the exclusion above does not touch it. -->
+  <div id="map" role="region" aria-label="Live transit map (visual). Markers are not keyboard reachable; use the Stations panel for arrivals as text."></div>
   <!-- A1: the accessible station surface. The searchable, keyboard-reachable
        equivalent of clicking a station dot. -->
   <section id="stations-panel" role="region" aria-labelledby="stations-heading" hidden>
@@ -41,6 +50,14 @@
          the visual repaint and the announcement cannot be coupled by accident. -->
     <div id="stations-announce" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
   </section>
+  <!-- A2: THE PAGE'S ONE LIVE REGION. The status line and the alert banner both speak
+       through announcePage in systems/shared.js and nothing else may write here; the
+       reasoning for a single door rather than a guard per surface is in that comment.
+       Polite, because nothing on this page is worth cutting off whatever a rider is
+       reading: alerts are decorative by project philosophy and the status line is
+       ambient. Kept separate from both visible surfaces so a repaint and an
+       announcement cannot be coupled by accident, exactly as #stations-announce is. -->
+  <div id="page-announce" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
   <!-- Agency-wide service alerts strip, populated by map.js only when there is
        something to show (empty otherwise, so no banner element is rendered). -->
   <div id="alert-banner"></div>
@@ -53,59 +70,59 @@
       Stations
     </button>
     <div class="legend-row">
-      <svg viewBox="0 0 20 20"><path d="M10 2 L16 17 L10 13 L4 17 Z" fill="#1d4ed8" stroke="#fff" stroke-width="1.2"/></svg>
+      <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M10 2 L16 17 L10 13 L4 17 Z" fill="#1d4ed8" stroke="#fff" stroke-width="1.2"/></svg>
       Bus (arrow points where it's heading)
     </div>
     <div class="legend-row">
-      <svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="5.5" fill="#1d4ed8" stroke="#fff" stroke-width="1.5"/></svg>
+      <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="10" cy="10" r="5.5" fill="#1d4ed8" stroke="#fff" stroke-width="1.5"/></svg>
       Bus, heading unknown
     </div>
     <div class="legend-row">
-      <svg viewBox="0 0 18 18"><rect x="1.5" y="1.5" width="15" height="15" rx="3" fill="#1f5fbf" stroke="#fff" stroke-width="1.5"/><text x="9" y="9.5" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="700" font-family="system-ui, sans-serif" fill="#fff">A</text></svg>
+      <svg aria-hidden="true" viewBox="0 0 18 18"><rect x="1.5" y="1.5" width="15" height="15" rx="3" fill="#1f5fbf" stroke="#fff" stroke-width="1.5"/><text x="9" y="9.5" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="700" font-family="system-ui, sans-serif" fill="#fff">A</text></svg>
       Subway train, at/approaching the stop shown
     </div>
     <div class="legend-row">
-      <svg viewBox="0 0 20 20"><path d="M2 15 C9 15 9 5 18 5" stroke="#1f5fbf" stroke-width="2.5" fill="none" opacity="0.6"/></svg>
+      <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M2 15 C9 15 9 5 18 5" stroke="#1f5fbf" stroke-width="2.5" fill="none" opacity="0.6"/></svg>
       Subway route line
     </div>
     <div class="legend-row">
-      <svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="4.5" fill="#fff" stroke="#333" stroke-width="2"/></svg>
+      <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="10" cy="10" r="4.5" fill="#fff" stroke="#333" stroke-width="2"/></svg>
       Subway station (click for arrivals)
     </div>
     <div class="legend-row">
-      <svg viewBox="0 0 16 16"><rect x="1.5" y="1.5" width="13" height="13" rx="1.5" fill="#7b1fa2" stroke="#fff" stroke-width="1.5"/></svg>
+      <svg aria-hidden="true" viewBox="0 0 16 16"><rect x="1.5" y="1.5" width="13" height="13" rx="1.5" fill="#7b1fa2" stroke="#fff" stroke-width="1.5"/></svg>
       LIRR / Metro-North train (live GPS)
     </div>
     <div class="legend-row">
-      <svg viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="12" rx="1.5" fill="#fff" stroke="#7b1fa2" stroke-width="2.5"/></svg>
+      <svg aria-hidden="true" viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="12" rx="1.5" fill="#fff" stroke="#7b1fa2" stroke-width="2.5"/></svg>
       LIRR / Metro-North train (at station, scheduled)
     </div>
     <div class="legend-row">
-      <svg viewBox="0 0 20 20"><path d="M2 15 C9 15 9 5 18 5" stroke="#7b1fa2" stroke-width="2.5" fill="none" opacity="0.6"/></svg>
+      <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M2 15 C9 15 9 5 18 5" stroke="#7b1fa2" stroke-width="2.5" fill="none" opacity="0.6"/></svg>
       LIRR / Metro-North route line
     </div>
     <div class="legend-row">
-      <svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="4" fill="#fff" stroke="#334155" stroke-width="2.5"/></svg>
+      <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="10" cy="10" r="4" fill="#fff" stroke="#334155" stroke-width="2.5"/></svg>
       LIRR / Metro-North station (click for arrivals)
     </div>
     <div class="legend-row">
-      <svg viewBox="0 0 20 20"><path d="M2 15 C9 15 9 5 18 5" stroke="#b5179e" stroke-width="2.5" fill="none" opacity="0.6"/></svg>
+      <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M2 15 C9 15 9 5 18 5" stroke="#b5179e" stroke-width="2.5" fill="none" opacity="0.6"/></svg>
       AirTrain JFK route line (scheduled service, no live tracking)
     </div>
     <div class="legend-row">
-      <svg viewBox="0 0 14 14"><rect x="1.5" y="1.5" width="11" height="11" rx="2" fill="#fff" stroke="#b5179e" stroke-width="2.5"/></svg>
+      <svg aria-hidden="true" viewBox="0 0 14 14"><rect x="1.5" y="1.5" width="11" height="11" rx="2" fill="#fff" stroke="#b5179e" stroke-width="2.5"/></svg>
       AirTrain JFK station (click for scheduled headways)
     </div>
     <div class="legend-row">
-      <svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="4.5" fill="#3d5a80" stroke="#fff" stroke-width="1.5"/></svg>
+      <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="10" cy="10" r="4.5" fill="#3d5a80" stroke="#fff" stroke-width="1.5"/></svg>
       PATH station (click for arrivals); trains are diamonds
     </div>
     <div class="legend-row">
-      <svg viewBox="0 0 22 14"><rect x="1" y="3" width="20" height="8" rx="4" fill="#00839c" stroke="#fff" stroke-width="1.5"/></svg>
+      <svg aria-hidden="true" viewBox="0 0 22 14"><rect x="1" y="3" width="20" height="8" rx="4" fill="#00839c" stroke="#fff" stroke-width="1.5"/></svg>
       NYC Ferry boat (live GPS); dimmed when at a dock
     </div>
     <div class="legend-row">
-      <svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="4.5" fill="#0e7490" stroke="#fff" stroke-width="1.5"/></svg>
+      <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="10" cy="10" r="4.5" fill="#0e7490" stroke="#fff" stroke-width="1.5"/></svg>
       Ferry dock (click for arrivals)
     </div>
     <div class="legend-note">Color indicates route &middot; click a bus to draw its route</div>

@@ -6,7 +6,58 @@
 // top-level const/let bindings are in the shared global scope they all read (the
 // same buildless model helpers.js -> map.js already uses; no bundler).
 
-const map = L.map("map").setView([40.7128, -74.006], 12);
+/* ---------------- A2: motion ---------------- */
+
+// THE PRINCIPLE, and every gate below serves it: REDUCED MOTION CHANGES HOW A POSITION
+// UPDATES, NEVER WHAT IS SHOWN. A gliding train and a stepping train are at the same
+// place at the same time; one interpolates between polls and the other jumps when the
+// truth arrives. Nothing behind this gate may hide a marker, skip a poll, freeze data,
+// or change a single word of text. If a change would make the map SAY something
+// different rather than MOVE differently, it does not belong here.
+//
+// Read once here for Leaflet, because Leaflet reads these options at construction and
+// has no supported way to change them afterwards; watchMotionPreference in helpers.js
+// carries the same limitation in full, and the README states it for riders.
+const motionAtLoad = motionAllowed();
+
+const map = L.map("map", {
+  zoomAnimation: motionAtLoad,
+  fadeAnimation: motionAtLoad,
+  markerZoomAnimation: motionAtLoad,
+}).setView([40.7128, -74.006], 12);
+
+// Everything this app owns follows the preference LIVE. One class on the root element
+// drives every css transition (see the reduced-motion rules in style.css), and one flag
+// drives the glide in animateTrains, so a rider who turns the preference on mid-session
+// is believed immediately rather than at their next reload.
+let motionOn = motionAtLoad;
+
+function applyMotionPreference(allowed) {
+  motionOn = allowed;
+  document.documentElement.classList.toggle("reduced-motion", !allowed);
+}
+
+// THE PAN IS NOT A CONSTRUCTOR OPTION, and that is exactly why the first version of
+// this gate missed it. Leaflet has no map-level switch for pan animation the way it has
+// for zoom and fade: panBy animates unless a caller passes animate:false, and the
+// callers that matter are inside Leaflet. Popup._adjustPan calls map.panBy with no
+// options whenever an opening popup would overflow the viewport, which the A2
+// cross-link triggers on purpose, so opening a popup near an edge slid the entire map
+// (tiles, every marker, every route line) for ~280ms. The review measured it as
+// IDENTICAL with the preference on and off: 13 distinct map centres either way. That is
+// full-field motion, and it is a larger motion source than the train glide the gate
+// already stops.
+//
+// Wrapping panBy is the narrowest place that covers every caller, ours and Leaflet's
+// own, including panTo and the animated branch of setView, which both route through it.
+// It changes only HOW the map arrives at a position, never WHICH position: an
+// unanimated pan lands on exactly the same centre.
+const leafletPanBy = map.panBy.bind(map);
+map.panBy = (offset, options) =>
+  leafletPanBy(offset, motionOn ? options : { ...(options || {}), animate: false });
+
+applyMotionPreference(motionAtLoad);
+watchMotionPreference(applyMotionPreference);
 
 // Station dots get their own canvas pane sandwiched between the route lines
 // (overlayPane, 400) and the train/bus markers (markerPane, 600), so the
@@ -70,6 +121,63 @@ function setStatus(text, isError = false) {
   statusEl.classList.toggle("error", isError);
 }
 
+/* ---------------- A2: the page's one live region ---------------- */
+
+// THE PAGE DOOR. The status line and the alert banner are the two surfaces outside the
+// station panel that can have something to say, and BOTH must speak through here.
+//
+// WHY ONE DOOR AND NOT A GUARD AT EACH SURFACE. This is the same reasoning as the
+// marker factory owning keyboard:false, and as A1's announceUnlessTick before it:
+// three guarded copies drift, and the one that drifts is the one nobody notices,
+// because a live region failing is silent by definition. A1 learned this the
+// expensive way when a copied tick guard was missing from one branch and a leaked
+// timer walked straight through the gap. One function, one element, no other writer.
+//
+// POLITENESS IS DELIBERATE. aria-live="polite" for both: alerts are decorative by this
+// project's philosophy (they never gate the arrivals a rider came for) and the status
+// line is ambient. Nothing on this page is worth cutting off whatever a rider is
+// currently reading, so nothing here is assertive.
+//
+// A NOTE FOR A FUTURE PATH THAT DOES NOT EXIST YET: if either surface is ever hidden
+// and later shown again, re-announcing the CURRENT state on return is correct, not
+// duplicate. The A1 panel settled the same question: while a region is out of the
+// accessibility tree it cannot have been heard, so returning is a first observation
+// again rather than a repeat. Today nothing hides these two, which is exactly why the
+// rule belongs in writing before something does.
+const pageAnnounceEl = document.getElementById("page-announce");
+
+function announcePage(text) {
+  if (!pageAnnounceEl || !text) return false;
+  pageAnnounceEl.textContent = text;
+  return true;
+}
+
+// What the page last knew, so worthiness is judged against the previous OBSERVATION
+// rather than against whatever happens to be on screen. Null means nothing has been
+// observed yet, which is what makes the first poll silent.
+let announcedDegraded = null;
+let announcedAlerts = null;
+
+// Called from the poll tail with the freshness index this tick produced. Pure decision
+// in helpers.js; this is only the plumbing that remembers and speaks.
+function announceStatusTransition(freshnessIndex) {
+  const next = degradedIdentities(freshnessIndex);
+  const text = statusAnnouncement(announcedDegraded, next);
+  announcedDegraded = next;
+  if (text) announcePage(text);
+  return text;
+}
+
+// Called wherever the banner's shown set is computed, with the SAME list the banner
+// renders, so the spoken and the drawn banner cannot disagree about what is showing.
+function announceAlertTransition(shown) {
+  const next = alertIdentities(shown);
+  const text = bannerAnnouncement(announcedAlerts, next);
+  announcedAlerts = next;
+  if (text) announcePage(text);
+  return text;
+}
+
 
 /* ---------------- Per-system freshness (C2) ---------------- */
 
@@ -103,8 +211,17 @@ function refreshSystemFreshness() {
     if (!source.systems) continue;
     const ages = systemAges(source, now);
     const staleAts = systemStaleAts(source);
+    // `ok` travels WITH the age, because an age alone cannot tell "current" from
+    // "never decoded anything". The status line has always known this (its `blind` set
+    // is exactly ages[name] == null && !ok), and the review found the announcement
+    // path did not, which let a dead system be announced as recovered.
+    const blocks = sourceSystems(source);
     for (const name of Object.keys(ages)) {
-      index.set(`${sourceKey}|${name}`, { age: ages[name], staleAt: staleAts[name] });
+      index.set(`${sourceKey}|${name}`, {
+        age: ages[name],
+        staleAt: staleAts[name],
+        ok: (blocks[name] || {}).ok !== false,
+      });
     }
   }
   systemFreshnessIndex = index;
@@ -179,10 +296,322 @@ function dimMarker(marker, age, base = 1) {
   marker.setOpacity(markerOpacity(age, base));
 }
 
+/* ---------------- A2: the one place a map marker is born ---------------- */
+
+// EVERY L.marker ON THIS MAP COMES FROM HERE, and new systems (Amtrak, NJ Transit)
+// must use it too. It is a seam, not a convenience.
+//
+// WHY A FACTORY RATHER THAN AN OPTION COPIED SIX TIMES. Leaflet gates two separate
+// things on ONE option: `keyboard && (tabIndex = "0", role = "button")`. So the tab
+// stop and the role are inseparable, and every marker in this app arrived
+// tabbable, role="button", and nameless: a keyboard rider tabbed through every
+// vehicle on the map before reaching a single control, hearing "button" each time
+// and nothing else. The tab-order policy is that markers are NOT the keyboard path
+// (the A1 station panel is, reachable by the skip link), so `keyboard: false` is
+// correct everywhere. Written as six copied lines it would be six chances to forget,
+// and the seventh system would forget; A1's announceUnlessTick exists for exactly
+// this reason and this is the same lesson applied to the map. Sweeping the DOM after
+// each poll to fix up markers would be worse still: a compensator running after the
+// mistake instead of a design that cannot make it.
+//
+// The role has to be put BACK by hand, because keyboard:false took it away with the
+// tab stop. role="img" with an aria-label is what a marker actually is: a graphic
+// that means something. Touch screen-reader users, who navigate by pointer and not
+// by Tab, still find and hear it.
+function labeledMarker(latlng, options, name) {
+  const marker = L.marker(latlng, { ...options, keyboard: false });
+  // Relabel whenever Leaflet builds the element again. Toggling a layer off and on
+  // DESTROYS the icon element and creates a fresh one, which restores tabindex and
+  // role from marker options but loses anything we wrote as an attribute; verified
+  // in the step-1 inventory. Without this, every marker on a re-shown layer would be
+  // silently anonymous again, and nothing else would notice for a static system like
+  // AirTrain that has no poll to re-apply the name.
+  marker.on("add", () => applyMarkerName(marker));
+  // RELABEL AFTER A RE-SKIN TOO, so the name survives no matter what order a caller
+  // does things in. Today setIcon happens to reuse the same element and attributes
+  // happen to survive, but that is a Leaflet implementation detail (Icon._setIconStyles
+  // reassigns className wholesale, and DivIcon.createIcon reuses the div it is handed)
+  // and two systems already call setIcon AFTER setMarkerName. Making survival depend
+  // on call-site ordering is the copied-guard liability again, one level down: wrap it
+  // once here and no system can get the order wrong.
+  const setIcon = marker.setIcon.bind(marker);
+  marker.setIcon = (icon) => {
+    const result = setIcon(icon);
+    applyMarkerName(marker);
+    return result;
+  };
+  setMarkerName(marker, name);
+  return marker;
+}
+
+// Set or refresh a marker's accessible name. SAFE AND EXPECTED TO BE CALLED EVERY
+// POLL: the name is remembered on the marker so a rebuilt element can be relabeled
+// from the last known value, and re-applying an unchanged name costs one attribute
+// write and announces nothing (a marker is not a live region).
+function setMarkerName(marker, name) {
+  marker._a11yName = name;
+  applyMarkerName(marker);
+}
+
+function applyMarkerName(marker) {
+  const el = marker.getElement();
+  if (!el || !marker._a11yName) return; // not on the map yet, or on a hidden layer
+  el.setAttribute("role", "img");
+  el.setAttribute("aria-label", marker._a11yName);
+  // The inner svg is decoration: it repeats what the label already says, and left
+  // exposed it reads as a second, nameless graphic inside the first.
+  const svg = el.querySelector("svg");
+  if (svg) svg.setAttribute("aria-hidden", "true");
+}
+
+/* ---------------- A2: reaching a station a vehicle is sitting on ---------------- */
+
+// THE PRINCIPLE, AND IT LIVES HERE ONCE. Both systems that need it cite this comment
+// rather than restating it.
+//
+// A vehicle marker sits in markerPane (z 600); station dots are drawn on a canvas in
+// stationPane (z 450). A vehicle parked on its station therefore swallows every click
+// meant for the station, and the arrivals a rider actually came for become unreachable
+// at that pixel. Measured in the step-1 inventory: clicking a station with a train on
+// it opens the TRAIN popup, and the station popup never fires.
+//
+// There are two honest resolutions, and where the position came from decides which
+// ones are available.
+//
+// DERIVED POSITIONS MAY OFFSET. A subway train is placed at its stop by stop_id and a
+// PATH train is interpolated along its route: neither position is a measurement, so
+// drawing the marker a few pixels above the point costs nothing true. PATH set this
+// precedent (iconAnchor [8, 20], path.js) and the subway follows it. Nudging a
+// computation lies to no one.
+//
+// MEASURED POSITIONS MUST NOT OFFSET. Moving a GPS marker would make the map say the
+// vehicle is somewhere it is not, which is the one thing this project does not do.
+//
+// A CROSS-LINK IS HONEST FOR EITHER, because it moves nothing at all: it adds a way to
+// reach the station without touching where anything is drawn. So offsetting is the
+// narrower permission and linking is the general one.
+//
+// PLACED RAILROAD TRAINS ARE DERIVED, AND TAKE THE CROSS-LINK ANYWAY. isPlacedRailroad
+// means the train carries a stop_id and is drawn at its station's coordinates from the
+// schedule; a railroad train with real GPS carries no stop_id at all. So a placed train
+// would qualify for the offset by the rule above. It gets the link instead, as the
+// deliberate conservative choice: the link never moves a marker, and the subway and
+// PATH offsets are tuned to grid geometry those two systems share and the commuter
+// railroads do not. Recorded because an earlier version of this comment had it
+// backwards, calling placed trains measured, and a reader who inherited that would
+// draw the wrong conclusion about every system here.
+//
+// THE LINK IS NOT A REPLACEMENT FOR THE PANE ORDERING. Vehicles still paint above
+// stations, because that is the right visual layering; the link exists so the station
+// under a vehicle is still reachable, not so the layering can be ignored.
+//
+// AND IT IS NEVER A GUESS. "At" is read from a field the payload already carries, per
+// system, never from distance math. A cross-link pointing at the wrong station is
+// worse than no cross-link at all: a rider who follows it gets confidently incorrect
+// arrivals, and nothing on screen tells them so. A vehicle that does not name a
+// station gets no link.
+const CROSSLINK_CLASS = "popup-crosslink";
+
+// The link's markup, or "" when this vehicle names no station. `stationKey` must be a
+// SYSTEM-QUALIFIED registry key: station ids collide across systems (see the
+// stationRegistry comment above, where the contract tier measured 21 of 24 ferry dock
+// ids colliding with Metro-North station ids), so a bare id could resolve to a station
+// in an entirely different system.
+function crossLinkHtml(stationKey) {
+  const entry = stationKey ? stationRegistry.find((row) => row.key === stationKey) : null;
+  // No registry entry means the station layer has not loaded yet, or this id is not a
+  // station we know. Either way there is nothing to link to, and inventing a
+  // destination is the failure this whole comment is about.
+  if (!entry) return "";
+  // A real button, not a styled span: it is keyboard reachable, it activates on Enter
+  // and Space without any handler of ours, and it announces as a button. The station
+  // name is IN the accessible name, so "Also here" is never announced on its own.
+  return (
+    `<button type="button" class="${CROSSLINK_CLASS}" data-station-key="${esc(entry.key)}">` +
+    `Also here: ${esc(entry.name)}</button>`
+  );
+}
+
+// One delegated handler for every cross-link on the map, bound once. Delegation rather
+// than per-popup wiring because popup content is regenerated from a function on every
+// open and every update, so any listener attached to the rendered nodes would be
+// discarded and re-attached constantly.
+//
+// BOUND IN THE CAPTURE PHASE, and it does not work otherwise. Leaflet calls
+// disableClickPropagation on every popup container, which stops click events inside a
+// popup from bubbling out (so a click on a popup does not also reach the map beneath
+// it). A bubble-phase listener on document therefore never sees a cross-link press at
+// all: the first draft used one and the button did nothing, from mouse or keyboard.
+// Capture runs downward from document before the container's own listener, so it
+// arrives first and is unaffected. Enter and Space on a <button> both synthesize a
+// click, so this one listener is the keyboard path too.
+document.addEventListener(
+  "click",
+  (event) => {
+    const button = event.target.closest ? event.target.closest(`.${CROSSLINK_CLASS}`) : null;
+    if (!button) return;
+    event.preventDefault();
+    openStationFromCrossLink(button.getAttribute("data-station-key"));
+  },
+  true,
+);
+
+// Open the linked station's popup and MOVE FOCUS INTO IT. This is the one place where
+// moving focus is correct rather than rude: the rider activated a link asking to go
+// somewhere, so leaving focus behind on a button whose popup just closed would strand
+// them exactly as A1's closing paths would have. Opening a Leaflet popup replaces the
+// popup pane's contents, so the button the rider pressed no longer exists by the time
+// this returns.
+function openStationFromCrossLink(stationKey) {
+  const entry = stationRegistry.find((row) => row.key === stationKey);
+  if (!entry || !entry.marker) return false;
+  entry.marker.openPopup();
+  // Ask the POPUP for its element rather than querying the document for the first
+  // ".leaflet-popup-content". Leaflet fades a closing popup out, so for the length of
+  // that animation the old popup is still in the DOM and a document query returns the
+  // one we just closed: the first draft focused the train's dying popup and the
+  // station's never received focus at all.
+  const popup = entry.marker.getPopup();
+  const root = popup && popup.getElement ? popup.getElement() : null;
+  const content = root ? root.querySelector(".leaflet-popup-content") : null;
+  if (!content) return false;
+  // tabindex -1 makes it programmatically focusable without adding a tab stop: the
+  // rider lands here, and Tab from here continues into the popup's own controls.
+  //
+  // ESCAPE DOES NOT CLOSE THE POPUP FROM HERE, raised by the review and left alone on
+  // purpose. Leaflet binds Escape on the MAP container, and focus inside a popup is
+  // outside it, so the key never reaches the handler. Measured: popup still open, focus
+  // unmoved. But the finding's stronger claim, that there is no way back out, is false:
+  // one Tab from this landing point reaches the popup's own close button, measured
+  // landing on .leaflet-popup-close-button, and that closes it. So this is a missing
+  // convenience rather than a trap, it is how every popup on the map has always behaved
+  // rather than anything this phase introduced, and a keyboard-dismiss binding is a
+  // map-wide decision that does not belong in the cross-link's landing path.
+  content.setAttribute("tabindex", "-1");
+  content.focus();
+  return true;
+}
+
+// A2 FOLLOWUP, DELIBERATELY NOT DONE HERE: WHERE FOCUS GOES WHEN A CONTROL IS DESTROYED
+// WITH NO SUCCESSOR. Everything below restores focus to a live replacement, which is the
+// case this phase can answer honestly. Two reachable cases have no replacement at all,
+// and both were measured landing the rider on document.body:
+//
+//   1. A VEHICLE LEAVES THE FEED while its popup is open and focused. Measured on a
+//      railroad train removed from one poll's payload: railroads.size 2 -> 1,
+//      marker gone, zero .leaflet-popup nodes, document.activeElement === document.body.
+//      Every system's apply* loop removes departed vehicles the same way, so the same
+//      path exists five times over. It predates this phase; A2 neither introduced it nor
+//      closes it.
+//   2. THE LAST AGENCY-WIDE ALERT CLEARS while the rider is on the banner's dismiss
+//      button, including when the rider is the one who dismissed it.
+//
+// It is one question, not two, and it is a product question rather than a mechanical
+// one: silently moving focus to a landmark is a WCAG 3.2.2 change of context the rider
+// did not ask for, and moving it WITH an announcement means deciding what the page says
+// when a train a rider was reading about stops existing. The door for saying it already
+// exists (announcePage). Fixing it badly is worse than the strand, and this phase has no
+// review round left to cover a five-call-site change, so it is filed rather than guessed
+// at. Until then a rider who lands on the body reaches the skip link with one Tab.
+//
+// UPDATING AN OPEN POPUP DESTROYS WHATEVER HAS FOCUS INSIDE IT, so every update goes
+// through here. This is the THIRD Leaflet behaviour of the same family as the two above,
+// and the review found it by reproduction: a rider who tabbed to a cross-link and waited
+// one poll had document.activeElement drop to BODY while the button was still on screen,
+// and their Enter did nothing. That is precisely the stranding the A1 focus contract
+// exists to prevent, reintroduced through a feature built FOR keyboard riders.
+//
+// Popup content here is bound as a FUNCTION, so a refresh re-renders it wholesale and
+// the old nodes are discarded. Nothing warns; focus simply lands on the body.
+//
+// Restores the same control when the re-rendered popup still has one, and falls back to
+// the popup's content container so the rider is at worst still inside the popup they
+// were reading rather than at the top of the document.
+//
+// THE CONTROL IS IDENTIFIED BY ITS ROLE IN THE POPUP, NOT BY WHAT IT POINTS AT, and
+// round 3 of the review caught the difference by reproduction. The first version matched
+// the cross-link on its data-station-key, with a comment claiming the key "survives the
+// re-render because the popup describes the same vehicle". The key describes the
+// STATION: railroad.js builds it from the train's current stop_id, so a train advancing
+// one stop changes it by design. The rider tabbed to "Also here: Jamaica", the poll
+// rendered "Also here: Hicksville", the key no longer matched, and focus was dumped on
+// the inert content div with a live button on screen. Worse, it stuck: the content div
+// survives later updates, so the guard below returned early on every subsequent poll and
+// focus never came back. A vehicle popup has at most one cross-link (one call site, in
+// railroad.js), so asking for that one is both simpler and correct.
+//
+// A DISSENT ON THE RECORD, because the review panel that raised this also REFUTED it and
+// the disagreement is a judgment call rather than a fact. The skeptic reproduced
+// everything above and then argued two things. First, that the severity is lower than
+// round 1's: true, and worth stating plainly. Focus lands inside the popup, not on the
+// body, so the rider is one Tab from the button rather than at the top of the document.
+// Second, that this fix is worse than the defect, because restoring focus to a relabeled
+// button means a rider who chose "Jamaica" and waited can press Enter and arrive at
+// Hicksville without having chosen it.
+//
+// The fix ships anyway, for three reasons. The alternative leaves a rider holding a
+// live-looking control whose Enter does nothing, which is the exact symptom this phase
+// has now fixed twice and the reason the helper exists at all. The principle the skeptic
+// cited (a cross-link pointing at the wrong station is worse than no cross-link) is
+// about a link that names a station the vehicle is NOT at; this one names, correctly,
+// where the train now is. And a popup held open across polls is live by design: its next
+// stop, its countdowns and its staleness line all change underneath the rider already,
+// so a control that changes with them is consistent rather than treacherous, and it
+// announces its new name at the moment focus reaches it.
+//
+// The residual risk the skeptic names is real: a rider not listening when focus is
+// restored can act on a changed destination. It is bounded by the station popup that
+// opens naming itself. A3g pins the announcing half deliberately, asserting the button
+// reads "Hicksville" before asserting Enter goes there.
+function updatePopupKeepingFocus(marker) {
+  const popup = marker.getPopup && marker.getPopup();
+  if (!popup) return;
+  const before = popup.getElement ? popup.getElement() : null;
+  const active = document.activeElement;
+  const hadFocus = !!(before && active && before.contains(active));
+  const hadCrossLink = !!(hadFocus && active.classList && active.classList.contains(CROSSLINK_CLASS));
+
+  popup.update();
+
+  if (!hadFocus) return; // focus was elsewhere: moving it now would be the rude case
+  const after = popup.getElement ? popup.getElement() : null;
+  if (!after) return;
+  // AND ONLY RESTORE WHAT WAS ACTUALLY LOST. Round 1 of the review shipped this helper
+  // without this line and five independent lenses caught the same regression: update()
+  // reassigns the CONTENT node's innerHTML and nothing else, so the popup's own close
+  // button is a sibling that survives untouched. Restoring unconditionally therefore
+  // yanked focus off a live control and dropped it on an inert div, on every vehicle
+  // popup, every fifteen seconds, and the rider's Enter stopped closing the popup. The
+  // element that still holds focus is by definition not stranded, so leave it alone.
+  if (after.contains(active)) return;
+  const content = after.querySelector(".leaflet-popup-content");
+  // The station this now points at may differ from the one the rider tabbed to, and
+  // that is the honest outcome: the button carries the station name in its accessible
+  // name, so a restored focus announces the new destination before the rider can act on
+  // it. A vehicle that has stopped naming a station renders no cross-link at all, and
+  // then the content container below is the right landing place.
+  const sameControl = hadCrossLink ? after.querySelector(`.${CROSSLINK_CLASS}`) : null;
+  const destination = sameControl || content;
+  if (!destination) return;
+  // The content container is not naturally focusable; -1 makes it a landing place
+  // without adding a tab stop, exactly as the cross-link handler does.
+  if (destination === content) content.setAttribute("tabindex", "-1");
+  destination.focus();
+}
+
 /* ----- Station popups + live arrivals, shared by subway, railroad and PATH ----- */
 
 // Canvas-rendered so ~470 circle markers stay cheap and hit-testable; on its
 // own pane (above the route-line canvas) so station clicks land here.
+//
+// A2 FOOTNOTE, because it is the reason station dots have no accessible name: a
+// canvas-rendered circleMarker produces NO DOM element at all, so there is nothing to
+// put a role or a label on. Naming ~470 station dots would mean abandoning the canvas
+// renderer, which is the canvas work this phase deliberately does not do. Stations are
+// reachable as named, keyboard-navigable text through the A1 station panel instead,
+// which is the surface built for exactly that. AirTrain stations are the exception:
+// they are L.marker with a divIcon (they need a shape a circle cannot draw), so they
+// have an element and they get a name like any other marker.
 const stationRenderer = L.canvas({ padding: 0.5, pane: "stationPane" });
 
 // Shared popup machinery for BOTH station kinds (subway + railroad). One popup
@@ -502,6 +931,14 @@ function renderAlertBanner(alerts) {
   const key = bannerRenderKey(shown, stale);
   if (key === lastBannerKey) return; // unchanged since the last render: leave the DOM alone
   lastBannerKey = key;
+  // Speak from the SAME `shown` list the rows below are built from, so the spoken and
+  // the drawn banner cannot disagree about what is showing. Placed after the dedup
+  // return, which costs nothing: an unchanged key means unchanged alert identities, so
+  // the announcement would have been silent anyway. The stale flag IS in the key but
+  // NOT in the identities, so the freshness marker appearing re-renders the strip and
+  // says nothing, which is the intent: that marker is honesty about the feed, not news
+  // about the transit system.
+  announceAlertTransition(shown);
   if (!shown.length && !stale) {
     el.replaceChildren(); // nothing to show and alerts are current: no banner strip
     return;
@@ -516,12 +953,24 @@ function renderAlertBanner(alerts) {
   const dismiss = shown.length
     ? `<button type="button" id="alert-banner-dismiss" title="Dismiss">&times;</button>`
     : "";
+  // THE SAME FAMILY AS THE POPUP REFRESH, on the page's other rebuilt-in-place surface.
+  // Reassigning innerHTML destroys the dismiss button, so a rider parked on it was
+  // dropped to document.body the moment an ongoing incident was reworded under its own
+  // id, which is precisely the case the header hash in the render key exists to catch.
+  // Measured before the fix: BUTTON#alert-banner-dismiss -> BODY.
+  //
+  // Restores only to a LIVE successor, like updatePopupKeepingFocus. When the rebuild
+  // has no dismiss button the banner itself is gone, and where focus belongs then is an
+  // open question this phase does not answer; see the A2 FOLLOWUP filed above
+  // updatePopupKeepingFocus.
+  const hadFocus = !!(document.activeElement && el.contains(document.activeElement));
   el.innerHTML =
     `<div class="alert-banner-strip">` +
     `<div class="alert-banner-rows">${rows}${staleRow}</div>` +
     dismiss +
     `</div>`;
   const dismissBtn = el.querySelector("#alert-banner-dismiss");
+  if (hadFocus && dismissBtn) dismissBtn.focus();
   if (dismissBtn) {
     dismissBtn.addEventListener("click", () => {
       for (const alert of shown) dismissedAlertIds.add(alertKey(alert));
@@ -553,8 +1002,27 @@ function animateTrains(ts) {
     // waiting up to 15s for the next poll. The sweep runs only when the stale set
     // actually changes (C2).
     refreshSystemFreshness();
-    if (staleSetChanged()) applyStaleTreatment();
+    if (staleSetChanged()) {
+      applyStaleTreatment();
+      // AND SAY SO. A system goes stale by time passing, not only by a poll landing,
+      // so the tick is where a mid-interval crossing is detected; announcing only from
+      // the poll tail would leave a rider up to fifteen seconds behind the dimming
+      // they cannot see. announceStatusTransition compares against what was last
+      // announced, so being called from here AND from the poll tail is harmless: the
+      // second call finds an unchanged set and says nothing.
+      announceStatusTransition(systemFreshnessIndex);
+    }
     const now = Date.now() / 1000 - (minClockOffset ?? 0);
+    // REDUCED MOTION STOPS THE GLIDE, AND NOTHING ELSE. The freshness rebuild, the
+    // dimming sweep and the announcement above all still run: those are data honesty,
+    // not motion, and suppressing them would be the gate changing WHAT is shown rather
+    // than HOW it moves. What is skipped is only the per-frame interpolation, so every
+    // marker sits where its last poll said it was and jumps to the new truth when the
+    // next one lands. Same positions, same data, no tweening.
+    if (!motionOn) {
+      requestAnimationFrame(animateTrains);
+      return;
+    }
     // glideClock pins a marker at its system's freeze deadline instead of
     // dead-reckoning it forward on a feed that is not being refreshed. A system with
     // no deadline gets `now` back unchanged, so healthy gliding is untouched.

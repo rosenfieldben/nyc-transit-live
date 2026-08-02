@@ -7,6 +7,19 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  subwayTrainName,
+  railroadTrainName,
+  pathTrainName,
+  ferryBoatName,
+  busName,
+  compassPoint,
+  airtrainStationName,
+  degradedIdentities,
+  statusAnnouncement,
+  alertIdentities,
+  bannerAnnouncement,
+  motionAllowed,
+  watchMotionPreference,
   esc,
   routeColor,
   lineColor,
@@ -1964,4 +1977,283 @@ test("announcementWorthy on a REPLACED lead train: visible identity decides", ()
     now,
   );
   assert.equal(announcementWorthy(subBefore, subLater), true);
+});
+
+/* ---------------- A2: the names on the map ---------------- */
+
+test("A2: every marker name is built from the fields its popup renders", () => {
+  // Subway: the route bullet the icon already shows, then where it is going.
+  assert.equal(
+    subwayTrainName({ route_id: "1", stop_name: "Times Sq-42 St", direction: "Northbound" }),
+    "1 train, next stop Times Sq-42 St, Northbound",
+  );
+  // stop_id is the fallback the popup uses when the name did not resolve.
+  assert.equal(subwayTrainName({ route_id: "A", stop_id: "A31" }), "A train, next stop A31");
+  // A train with no route is still a subway train, never the literal "?" the icon
+  // draws when it cannot fit a bullet.
+  assert.equal(subwayTrainName({ stop_name: "Canal St" }), "Subway train, next stop Canal St");
+  assert.equal(subwayTrainName({}), "Subway train");
+  assert.equal(subwayTrainName(null), "Subway train");
+
+  // Railroad: the popup's own head builder, and the GPS-versus-scheduled clause,
+  // which is the part that tells a rider how much to trust the position.
+  assert.equal(
+    railroadTrainName({ system: "LIRR", route_id: "10", train_num: "2751", direction: "Eastbound" }, "Babylon Branch"),
+    "LIRR Babylon Branch, train 2751, Eastbound, live GPS",
+  );
+  // A PLACED train (it carries stop_id) says so, and only a placed train has a next
+  // stop to give.
+  assert.equal(
+    railroadTrainName({ system: "MNR", route_id: "1", train_num: "8801", stop_id: "1", stop_name: "Grand Central" }, "Hudson"),
+    "Metro-North Hudson, train 8801, next stop Grand Central, scheduled position, no GPS",
+  );
+  // NO MIDDOT. The popup head joins system and route with "·", which is a visual
+  // separator; spoken, it is noise or the words "middle dot". Same fields, spoken
+  // shape. And "MNR" becomes the word a rider uses, as the A1 panel already does.
+  assert.ok(!railroadTrainName({ system: "MNR", route_id: "1" }, "Hudson").includes("\u00b7"));
+  assert.equal(railroadTrainName({ system: "LIRR", route_id: "10" }), "LIRR route 10, live GPS");
+
+  // PATH: always a scheduled position, which the popup states and the name repeats.
+  assert.equal(
+    pathTrainName({ route_id: "862", stop_name: "Grove St", direction: "To Newark" }, "Newark - World Trade Center"),
+    "Newark - World Trade Center, PATH, next stop Grove St, To Newark, scheduled position, no GPS",
+  );
+  // No route name resolved yet: formatPathHead's fallback, not a blank.
+  assert.equal(pathTrainName({ route_id: "862" }), "PATH route 862, PATH, scheduled position, no GPS");
+
+  // Ferry: the status in the popup's own words, lowercased into the sentence.
+  assert.equal(
+    ferryBoatName({ label: "H201", status: "STOPPED_AT" }, "East River"),
+    "East River, NYC Ferry, boat H201, at dock",
+  );
+  assert.equal(
+    ferryBoatName({ label: "H202", status: "IN_TRANSIT_TO" }, "Rockaway"),
+    "Rockaway, NYC Ferry, boat H202, under way",
+  );
+  // An unassigned boat is what the popup calls it too. And a boat whose status the
+  // feed did not give says NOTHING about its status, rather than guessing "under way":
+  // ferryStatusText returns null there and the popup omits the line for the same
+  // reason. Inventing the one fact the rider is asking about is worse than silence.
+  assert.equal(ferryBoatName({ label: "H9" }), "Unassigned route, NYC Ferry, boat H9");
+  assert.equal(ferryBoatName({ label: "H9", status: "NONSENSE" }), "Unassigned route, NYC Ferry, boat H9");
+
+  // AirTrain stations are the one station kind with an element to name.
+  assert.equal(airtrainStationName({ name: "Federal Circle" }), "Federal Circle, AirTrain JFK station");
+});
+
+test("A2: a bus says its heading as a compass point, never as degrees", () => {
+  // THE POINT OF THIS HELPER. The marker's whole visual job is an arrow; a rider
+  // listening instead of looking needs the direction as a word, because "142 degrees"
+  // is arithmetic to do while standing at a stop.
+  assert.equal(busName({ route_id: "M15", bearing: 90 }), "M15 bus, heading east");
+  assert.equal(busName({ route_id: "B62", bearing: 0 }), "B62 bus, heading north");
+  assert.equal(busName({ route_id: "Q10" }), "Q10 bus, heading unknown");
+  assert.equal(busName({ bearing: 180 }), "Bus, heading south");
+
+  // The eight points, and the rounding between them.
+  assert.equal(compassPoint(0), "north");
+  assert.equal(compassPoint(45), "northeast");
+  assert.equal(compassPoint(135), "southeast");
+  assert.equal(compassPoint(225), "southwest");
+  assert.equal(compassPoint(315), "northwest");
+  // Wrapping at both ends: 350 and -10 are the same bearing and must read alike.
+  assert.equal(compassPoint(350), "north");
+  assert.equal(compassPoint(-10), "north");
+  assert.equal(compassPoint(360), "north");
+  // Halfway between two points rounds up, consistently, rather than throwing.
+  assert.equal(compassPoint(22.5), "northeast");
+  assert.equal(compassPoint(NaN), "unknown");
+  assert.equal(compassPoint(null), "unknown");
+});
+
+/* ---------------- A2: when the page itself speaks ---------------- */
+
+/* ---------------- A2: the motion gate ---------------- */
+
+test("A2: motionAllowed reads the preference, and defaults to animating", () => {
+  assert.equal(motionAllowed({ matches: true }), false); // rider asked for reduced motion
+  assert.equal(motionAllowed({ matches: false }), true);
+  // No matchMedia at all (node, or a browser too old to have it): animate as before
+  // rather than silently degrading everyone's map.
+  assert.equal(motionAllowed(null), true);
+});
+
+/* ---------------- A2: when the page itself speaks ---------------- */
+
+// The freshness index shape the frontend already builds: "<source>|<system>" -> {age}.
+// FEED_STALE_AFTER_S is 90, so 200 is degraded and 10 is not.
+const fresh = (age) => ({ age });
+const OLD = 200;
+const NEW = 10;
+
+test("A2: the status line announces degraded-SET transitions, not counts or strings", () => {
+  const healthy = degradedIdentities({ "buses|buses": fresh(NEW), "subways|ACE": fresh(NEW) });
+  assert.deepEqual(healthy, []);
+
+  // FIRST OBSERVATION IS SILENT. A page load must not read its own condition aloud
+  // before the rider has asked for anything. Asserted with a NON-EMPTY set, because a
+  // page that loads while the buses are already delayed is the only case that tells
+  // seeding apart from announcing; with an empty set the two are indistinguishable and
+  // a mutation that announced on first sight would pass unnoticed.
+  assert.equal(statusAnnouncement(null, ["buses|buses"]), null);
+  assert.equal(statusAnnouncement(null, healthy), null);
+
+  // Entering the degraded set is news, and it names what went wrong.
+  const busesOut = degradedIdentities({ "buses|buses": fresh(OLD), "subways|ACE": fresh(NEW) });
+  assert.equal(statusAnnouncement(healthy, busesOut), "Live data delayed for Bus.");
+
+  // AN AGE TICK IS NOT A TRANSITION. The same system, older, is still the same set.
+  const busesOlder = degradedIdentities({ "buses|buses": fresh(OLD * 5), "subways|ACE": fresh(NEW) });
+  assert.equal(statusAnnouncement(busesOut, busesOlder), null);
+  // And a re-render with literally the same input says nothing either.
+  assert.equal(statusAnnouncement(busesOut, busesOut), null);
+
+  // THE TEST A COUNT-BASED IMPLEMENTATION FAILS. One system recovers as another goes
+  // out: the count is unchanged at one, but two things a rider cares about changed.
+  const swapped = degradedIdentities({ "buses|buses": fresh(NEW), "subways|ACE": fresh(OLD) });
+  assert.equal(
+    statusAnnouncement(busesOut, swapped),
+    "Live data delayed for Subway ACE. Live data current again for Bus.",
+  );
+
+  // A SECOND system joining an already-degraded one is a set change, so it announces.
+  // A count-based implementation would notice this one but not the swap above; a
+  // string-compare implementation would announce on every poll because the status line
+  // carries a clock. Both traps are covered by comparing membership.
+  const bothOut = degradedIdentities({ "buses|buses": fresh(OLD), "subways|ACE": fresh(OLD) });
+  assert.equal(statusAnnouncement(busesOut, bothOut), "Live data delayed for Subway ACE.");
+
+  // Recovery is worth one sentence: a rider told the data was delayed is owed the news
+  // that it is not.
+  assert.equal(statusAnnouncement(bothOut, healthy), "Live data current again for Bus and Subway ACE.");
+
+  // A SYSTEM THAT HAS NEVER DECODED AND REPORTS ITSELF DOWN IS DEGRADED, not healthy.
+  // The review found the worst possible shape here: a backend restart while a feed is
+  // still failing republishes that system with fetched_at null, so a check on age alone
+  // dropped it OUT of the degraded set and the page announced "Live data current again"
+  // at the moment its trains vanished, then never mentioned it again.
+  assert.deepEqual(degradedIdentities({ "subways|ACE": { age: null, ok: false } }), ["subways|ACE"]);
+  const dead = degradedIdentities({ "subways|ACE": { age: null, ok: false } });
+  assert.equal(statusAnnouncement(["subways|ACE"], dead), null, "a system that stayed dead says nothing new");
+
+  // But a null age with no failure reported is a system still WARMING, which is not a
+  // degradation and must not be announced as one.
+  assert.deepEqual(degradedIdentities({ "ferry|ferry": { age: null, ok: true } }), []);
+  // And an entry with no ok field at all (an older shape) is treated as reporting fine,
+  // so this can never invent a degradation out of a missing property.
+  assert.deepEqual(degradedIdentities({ "ferry|ferry": { age: null } }), []);
+
+  // The index arrives as a Map in the browser and as an object in tests; both work.
+  assert.deepEqual(degradedIdentities(new Map([["path|path", fresh(OLD)]])), ["path|path"]);
+});
+
+test("A2: identities are described the way a rider would say them", () => {
+  // A single-feed source synthesizes one system named after itself, so naming it twice
+  // would be noise.
+  assert.equal(statusAnnouncement([], ["ferry|ferry"]), "Live data delayed for Ferry.");
+  // A subway feed GROUP is qualified, because "ACE" alone means nothing to a rider.
+  assert.equal(statusAnnouncement([], ["subways|ACE"]), "Live data delayed for Subway ACE.");
+  // A railroad system is already what a rider calls it: "Railroad LIRR" is a phrase
+  // only a schema would produce.
+  assert.equal(statusAnnouncement([], ["railroads|LIRR"]), "Live data delayed for LIRR.");
+  // BUT "MNR" is the feed's word, not a rider's, and this region is read ALOUD: an
+  // initialism is spoken letter by letter. Raised by the review and dropped by my own
+  // review script, which escalated only the first finding from each lens. Every other
+  // spoken surface already went through railroadSystemLabel; this one did not.
+  assert.equal(statusAnnouncement([], ["railroads|MNR"]), "Live data delayed for Metro-North.");
+  // BUT the railroads source ALSO synthesizes a system named after itself whenever its
+  // payload carries no systems block, and that path produced "Live data delayed for
+  // railroads" in the first draft: lowercase and plural, straight out of the payload
+  // key. A rider gets a whole word.
+  assert.equal(statusAnnouncement([], ["railroads|railroads"]), "Live data delayed for Railroad.");
+  // An unknown source (a system added later without a word here) falls back to its key
+  // rather than throwing, which is the right failure: odd wording, never a crash.
+  assert.equal(statusAnnouncement([], ["amtrak|amtrak"]), "Live data delayed for amtrak.");
+  // Three or more read as a list with an "and".
+  assert.equal(
+    statusAnnouncement([], ["buses|buses", "path|path", "subways|ACE"]),
+    "Live data delayed for Bus, PATH, and Subway ACE.",
+  );
+});
+
+test("A2: the banner announces new and reworded alerts, and nothing else", () => {
+  const alert = (id, header, system = "subway") => ({ id, header, system });
+  const none = alertIdentities([]);
+  const one = alertIdentities([alert("a1", "Delays on the A line")]);
+
+  // First observation seeds silently, even when an alert is already showing on load.
+  assert.equal(bannerAnnouncement(null, one), null);
+  // A new alert announces, as a SUMMARY. The body belongs on screen and in the panel;
+  // a live region reading a full service alert aloud would be unusable during exactly
+  // the incident it exists for.
+  assert.equal(bannerAnnouncement(none, one), "New service alert.");
+
+  // An identical refresh is silent.
+  assert.equal(bannerAnnouncement(one, alertIdentities([alert("a1", "Delays on the A line")])), null);
+
+  // SAME ID, REWORDED CONTENT ANNOUNCES ONCE. This is the C1 pattern: the MTA revises
+  // an ongoing incident in place rather than issuing a new id, and an id-only
+  // comparison would leave a rider hearing nothing while the situation changed.
+  const reworded = alertIdentities([alert("a1", "All A service suspended")]);
+  assert.equal(bannerAnnouncement(one, reworded), "New service alert.");
+  assert.equal(bannerAnnouncement(reworded, reworded), null); // and only once
+
+  // ORDERING IS NOT NEWS: the identities are compared as a sorted set.
+  const two = alertIdentities([alert("a1", "One"), alert("a2", "Two")]);
+  const twoReordered = alertIdentities([alert("a2", "Two"), alert("a1", "One")]);
+  assert.equal(bannerAnnouncement(two, twoReordered), null);
+
+  // Several at once are counted rather than read out.
+  assert.equal(bannerAnnouncement(none, two), "2 new service alerts.");
+
+  // CLEARING IS SILENT. A rider is not told about the absence of an emergency, and the
+  // strip disappearing is the signal.
+  assert.equal(bannerAnnouncement(two, none), null);
+  assert.equal(bannerAnnouncement(two, alertIdentities([alert("a1", "One")])), null);
+
+  // The staleness marker is not part of an identity at all, so it cannot announce: it
+  // is honesty about the feed, not news about the transit system.
+  assert.deepEqual(alertIdentities([alert("a1", "One")]), alertIdentities([alert("a1", "One")]));
+});
+
+test("A2: the motion preference is watched, not only read once", () => {
+  // A rider who turns reduced motion on mid-session must be believed without
+  // reloading, so the gate subscribes rather than sampling at load. The media query
+  // list is injected, which is what lets node drive a change event at all.
+  const listeners = [];
+  const mql = {
+    matches: false,
+    addEventListener: (type, fn) => listeners.push([type, fn]),
+    removeEventListener: (type, fn) => {
+      const i = listeners.findIndex(([t, f]) => t === type && f === fn);
+      if (i >= 0) listeners.splice(i, 1);
+    },
+  };
+
+  const seen = [];
+  const stop = watchMotionPreference((allowed) => seen.push(allowed), mql);
+  assert.equal(listeners.length, 1);
+  assert.equal(listeners[0][0], "change");
+
+  // The rider turns reduced motion ON: the gate closes.
+  mql.matches = true;
+  listeners[0][1]();
+  assert.deepEqual(seen, [false]);
+
+  // And back off again: the gate reopens. Both directions, because a preference that
+  // could only ever be turned on would strand a rider who changed their mind.
+  mql.matches = false;
+  listeners[0][1]();
+  assert.deepEqual(seen, [false, true]);
+
+  // Unsubscribing actually detaches.
+  stop();
+  assert.equal(listeners.length, 0);
+
+  // A media query list too old to support addEventListener yields a no-op unsubscribe
+  // rather than throwing on a browser nobody tests.
+  const ancient = { matches: true };
+  const noop = watchMotionPreference(() => assert.fail("must not be called"), ancient);
+  assert.equal(typeof noop, "function");
+  noop();
 });

@@ -14,7 +14,20 @@ function trainIcon(train) {
             font-size="${label.length > 1 ? 7 : 9}" font-weight="700"
             font-family="system-ui, sans-serif" fill="${textColor}">${esc(label)}</text>
     </svg>`;
-  return L.divIcon({ className: "train-marker", html, iconSize: [18, 18], iconAnchor: [9, 9] });
+  // A2: OFFSET, not centred, so the square floats above its point instead of covering
+  // the station dot underneath. A subway train's position is DERIVED (placed at its
+  // stop by stop_id, or interpolated between two stops), so moving the drawing a few
+  // pixels states nothing false; PATH set this precedent for the same reason and the
+  // same geometry. See the principle comment at crossLinkHtml in shared.js for why
+  // measured positions get a popup link instead. popupAnchor follows the anchor so the
+  // popup still points at the train rather than floating away from it.
+  return L.divIcon({
+    className: "train-marker",
+    html,
+    iconSize: [18, 18],
+    iconAnchor: [9, 22],
+    popupAnchor: [0, -22],
+  });
 }
 
 function trainPopup(record) {
@@ -258,6 +271,10 @@ function applyTrains(data) {
           : computeRouteSlice(train, routeIndex.get(train.route_id));
       record._segId = segId;
       record.latest = train;
+      // THE LABEL TRACKS THE DATA: a subway train's next stop and direction change on
+      // every poll while the marker is reused, and those are the whole content of its
+      // name.
+      setMarkerName(record.marker, subwayTrainName(train));
       // Placed through the freeze clock, not the raw one: a retained group's trains
       // must not advance on a poll that only re-served them (C2).
       const fresh = subwaySystemFreshness(train);
@@ -267,13 +284,13 @@ function applyTrains(data) {
         record.marker.setIcon(trainIcon(train));
         record.routeId = train.route_id;
       }
-      if (record.marker.isPopupOpen()) record.marker.getPopup().update();
+      if (record.marker.isPopupOpen()) updatePopupKeepingFocus(record.marker);
     } else {
       const newRecord = { routeId: train.route_id, latest: train, fState: {} };
       newRecord._segId = `${train.route_id}|${train.prev_time}|${train.stop_id}`;
       train._route = computeRouteSlice(train, routeIndex.get(train.route_id));
       const fresh = subwaySystemFreshness(train);
-      newRecord.marker = L.marker(
+      newRecord.marker = labeledMarker(
         trainLatLng(train, glideClock(now, fresh.staleAt), newRecord.fState),
         {
           icon: trainIcon(train),
@@ -284,6 +301,7 @@ function applyTrains(data) {
           // this rendering ship in one commit.
           opacity: markerOpacity(fresh.age),
         },
+        subwayTrainName(train),
       )
         .bindPopup(() => trainPopup(newRecord))
         .addTo(subwayLayer);

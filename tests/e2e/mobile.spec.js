@@ -224,3 +224,106 @@ test("A6e. a popup never exceeds the phone's viewport", async ({ page }) => {
   expect(fit.left, "a popup must not start off the left edge").toBeGreaterThanOrEqual(0);
   expect(fit.right, "or end past the right edge").toBeLessThanOrEqual(fit.viewport);
 });
+
+test("A6f. every control this app owns shows a focus ring, at 3:1 or better", async ({ page }) => {
+  // A1 wrote the focus-ring rule for the station panel and called it the pattern to
+  // spread; until A3 everything else fell back to whatever the browser drew, which over
+  // Leaflet's controls is a thin default ring on live map imagery. This samples the
+  // controls a rider actually operates, in the focused state, and measures the ring
+  // rather than trusting the stylesheet.
+  await page.setViewportSize(PHONE);
+  await withBanner(page);
+  await open(page);
+
+  // Open what needs opening so every sampled control exists.
+  await page.evaluate(() => {
+    const [id] = [...buses.keys()];
+    buses.get(id).marker.openPopup();
+  });
+  await expect(page.locator(".leaflet-popup-close-button")).toBeVisible();
+
+  const controls = [
+    "#legend-toggle",
+    "#stations-toggle",
+    "#alert-banner-dismiss",
+    "#toggles input",
+    ".leaflet-control-zoom-in",
+    ".leaflet-popup-close-button",
+  ];
+
+  const measured = [];
+  for (const selector of controls) {
+    // focus() rather than a click: :focus-visible is exactly the distinction being
+    // tested, and a mouse click is the case that must NOT ring.
+    await page.locator(selector).first().focus();
+    measured.push(
+      await page.evaluate((sel) => {
+        const srgb = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+        const lum = ([r, g, b]) => 0.2126 * srgb(r) + 0.7152 * srgb(g) + 0.0722 * srgb(b);
+        const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
+        const parse = (s) => {
+          const m = String(s).match(/rgba?\(([^)]+)\)/);
+          if (!m) return null;
+          const p = m[1].split(/[\s,/]+/).filter(Boolean).map(Number);
+          return { rgb: p.slice(0, 3), a: p.length > 3 ? p[3] : 1 };
+        };
+        const el = document.querySelector(sel);
+        // The element that actually carries the ring may be an ancestor: the layer
+        // toggles ring their LABEL via :focus-within, because the label is the target a
+        // rider sees while the checkbox is what receives focus.
+        const ringed = [el, el.closest("label")].filter(Boolean).find((n) => {
+          const cs = getComputedStyle(n);
+          return cs.outlineStyle !== "none" && parseFloat(cs.outlineWidth) > 0;
+        });
+        if (!ringed) return { sel, width: 0, ratio: 0 };
+        const cs = getComputedStyle(ringed);
+        const ring = parse(cs.outlineColor);
+        // Composited against the nearest opaque ancestor, the same rule A4g uses.
+        let surface = [255, 255, 255];
+        for (let n = ringed; n && n !== document.documentElement; n = n.parentElement) {
+          const bg = parse(getComputedStyle(n).backgroundColor);
+          if (bg && bg.a === 1) { surface = bg.rgb; break; }
+        }
+        return {
+          sel,
+          on: ringed === el ? "self" : "label",
+          width: parseFloat(cs.outlineWidth),
+          ratio: ring ? +ratio(ring.rgb, surface).toFixed(2) : 0,
+        };
+      }, selector),
+    );
+  }
+
+  for (const m of measured) {
+    expect(m.width, `${m.sel} must draw a focus ring (got ${JSON.stringify(m)})`).toBeGreaterThanOrEqual(2);
+    expect(m.ratio, `${m.sel} ring contrast (got ${JSON.stringify(m)})`).toBeGreaterThanOrEqual(3);
+  }
+
+  // AND A MOUSE CLICK DOES NOT RING, which is the whole reason the rule is
+  // :focus-visible rather than :focus. Without this the spec would pass just as well
+  // against a rule that rings everything all the time.
+  //
+  // MEASURED AS THE DRAWN OUTLINE, not as element.matches(":focus-visible"). The first
+  // version asked the element whether it matched that pseudo-class, which queries the
+  // BROWSER's heuristic and is completely independent of this app's stylesheet: swapping
+  // the rule to plain :focus left that assertion green. Reading the computed outline is
+  // the only form that can tell the two rules apart.
+  await page.locator("#legend-toggle").click();
+  const afterClick = await page.evaluate(() => {
+    const cs = getComputedStyle(document.getElementById("legend-toggle"));
+    return {
+      style: cs.outlineStyle,
+      width: parseFloat(cs.outlineWidth) || 0,
+      // DRAWN, not declared. outline-width keeps reporting its declared value while
+      // outline-style is "none", so a width check alone calls the correct code a
+      // failure: the passing state here measures {style: "none", width: 3}.
+      drawn: cs.outlineStyle !== "none" && (parseFloat(cs.outlineWidth) || 0) > 0,
+      focused: document.activeElement === document.getElementById("legend-toggle"),
+    };
+  });
+  expect(afterClick.focused, "the click must actually have left focus on the button").toBe(true);
+  expect(
+    afterClick.drawn,
+    `a mouse click must not leave a ring behind (got ${JSON.stringify(afterClick)})`,
+  ).toBe(false);
+});

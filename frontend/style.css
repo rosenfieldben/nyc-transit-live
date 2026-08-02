@@ -536,15 +536,47 @@ body.stations-docked #alert-banner {
   color: #b45309;
 }
 
-/* FOCUS IS ALWAYS VISIBLE inside the panel, and this is the pattern A3 spreads to
-   the rest of the app. :focus-visible rather than :focus so a mouse click does not
-   leave a ring behind, and an outline with an offset rather than a background
-   change so it survives against any row state. */
+/* FOCUS IS ALWAYS VISIBLE, EVERYWHERE, and A3 is the phase that finished the job.
+   A1 wrote this rule for the station panel and its toggle and said it was the pattern
+   to spread; until now everything else fell back to whatever the browser drew, which
+   for Leaflet's own controls is a thin default ring over live map imagery.
+
+   :focus-visible rather than :focus, so a mouse click does not leave a ring behind.
+   An outline with an offset rather than a background change, so it survives against any
+   row state and cannot be mistaken for selection.
+
+   #1d4ed8 ON THE NOW-OPAQUE SURFACES, measured: 6.70:1 against the white panel and
+   popups, 5.54:1 against the banner's amber, 6.12:1 on the toggle button and 6.41:1 on
+   the cross-link, all clear of the 3:1 a focus indicator owes as non-text contrast. That number is only meaningful because A3 made those surfaces
+   opaque; over the old translucent panel it depended on the tiles.
+
+   THE LIST IS EXPLICIT RATHER THAN A BARE `:focus-visible`, and that is deliberate. A
+   universal selector would also ring the map container itself on every click-to-pan,
+   and Leaflet gives that container tabindex="0", so a rider panning the map would get a
+   3px ring around the whole viewport. Naming the controls keeps the promise to things a
+   rider actually operates. */
 #stations-panel :focus-visible,
-#stations-toggle:focus-visible {
+#stations-toggle:focus-visible,
+#legend-toggle:focus-visible,
+#toggles label:focus-within,
+#toggles input:focus-visible,
+#route-clear:focus-visible,
+#alert-banner-dismiss:focus-visible,
+.popup-crosslink:focus-visible,
+.leaflet-popup-close-button:focus-visible,
+.leaflet-control-zoom a:focus-visible,
+.leaflet-control-attribution a:focus-visible {
   outline: 3px solid #1d4ed8;
   outline-offset: 1px;
   border-radius: 3px;
+}
+
+/* The layer toggles are a checkbox inside a label, and the checkbox is what receives
+   focus while the label is what a rider sees and clicks. Ringing the label via
+   :focus-within puts the indicator around the whole target rather than around a 13px
+   box, which is the same reasoning that made the label the 24px hit target in A2. */
+#toggles label:focus-within {
+  outline-offset: 2px;
 }
 
 /* Docked rather than overlaid once there is room for both, per the phase's

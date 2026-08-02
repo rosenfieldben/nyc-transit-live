@@ -211,7 +211,22 @@ function applyBuses(data) {
     if (record) {
       record.marker.setLatLng([bus.latitude, bus.longitude]);
       // Vehicle reassigned to a different route: its drawn line is now stale.
-      if (record.routeId !== bus.route_id && shownBusRoute?.busId === bus.id) {
+      //
+      // A3 review: ASKED OF busRouteOwnedBy, NOT OF shownBusRoute, because the drawn
+      // line is only half the state. Between the popup opening and the geometry landing
+      // there is a fetch in flight and nothing drawn yet, and a reassignment arriving in
+      // that window passed this check untouched: the fetch then completed and drew the
+      // OLD route, for a bus the poll had just moved to a new one. Reproduced with a
+      // delayed /api/bus-route response: bus MTA NYCT_101 opened on M15, reassigned
+      // mid-flight, and the result was {lines: 1, label: "Bus route M15"} with the
+      // record on the new route. busRouteOwnedBy covers both halves, and clearBusRoute
+      // bumps the sequence so the in-flight response is discarded rather than drawn.
+      //
+      // Cleared and not redrawn, which is the same choice already made for the drawn
+      // case: the rider asked for the line that bus was on, and the honest answer to
+      // "it is not on that route any more" is no line, not a different one they did not
+      // ask for.
+      if (record.routeId !== bus.route_id && busRouteOwnedBy(bus.id)) {
         clearBusRoute();
       }
       const shapeChanged =

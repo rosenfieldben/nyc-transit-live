@@ -9,7 +9,7 @@
 // Same hermetic harness as the rest of the suite.
 
 const { test, expect } = require("@playwright/test");
-const { installMocks } = require("./mock");
+const { installMocks, json } = require("./mock");
 const { expectPopupState } = require("./popup");
 const fx = require("./fixtures/api");
 
@@ -206,4 +206,61 @@ test("A7f. hiding the Buses layer preserves the route line, and showing it bring
   // No refetch was needed: the geometry was preserved, not re-requested.
   const shown = await page.evaluate(() => (shownBusRoute ? shownBusRoute.routeId : null));
   expect(shown, "the route is still the one the rider chose").not.toBeNull();
+});
+
+test("A7g. a reassignment landing mid-fetch does not draw the route the bus just left", async ({ page }) => {
+  // THE OTHER HALF OF THE REASSIGNMENT GUARD. applyBuses already cleared the line when a
+  // poll moved the DRAWN bus to a different route, but between the popup opening and the
+  // geometry landing there is a fetch in flight and nothing drawn yet. A reassignment
+  // arriving in that window passed the old check untouched, the fetch completed, and the
+  // rider got the previous route's line under a banner naming it, for a bus that was no
+  // longer on it. Measured before the fix: {lines: 1, label: "Bus route M15"}.
+  //
+  // The delay is what makes the window exist at all. Without it the fetch resolves before
+  // any poll could land and this spec would pass on a race it never entered.
+  const ctx = await installMocks(page);
+  ctx.overrides.busRoute = async (route, fixtures) => {
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    const id = decodeURIComponent(new URL(route.request().url()).pathname.split("/").pop());
+    return json(route, { ...fixtures.busRoute(), route: id });
+  };
+  await open(page);
+
+  const id = await firstBusId(page);
+  const wasOn = await page.evaluate((busId) => buses.get(busId).latest.route_id, id);
+  // Armed BEFORE the popup opens, because the response is what the assertions below
+  // have to outlast and a listener registered afterwards can miss it.
+  const geometryArrived = page.waitForResponse((res) => res.url().includes("/api/bus-route/"));
+  await page.evaluate((busId) => buses.get(busId).marker.openPopup(), id);
+  await expectPopupState(page, { registry: "buses", key: id }, true);
+
+  // The window is real: claimed by this bus, with nothing drawn yet. Asserted rather
+  // than assumed, because if the fetch had already landed the rest of this spec would be
+  // testing the drawn case that was never broken.
+  const inFlight = await page.evaluate(() => ({ pending: pendingBusId, shown: shownBusRoute }));
+  expect(inFlight, `the route fetch for ${wasOn} must still be in flight`).toEqual({
+    pending: id,
+    shown: null,
+  });
+
+  // The poll lands, moving this bus to another route.
+  await page.evaluate((busId) => {
+    applyBuses([{ ...buses.get(busId).latest, route_id: "REASSIGNED" }]);
+  }, id);
+
+  // And the superseded geometry never reaches the map.
+  //
+  // WAITED FOR AND THEN SAMPLED, NOT POLLED, and the first draft of this spec got it
+  // wrong in a way worth recording: expect.poll(...).toBe(0) passed on its very first
+  // read, 600ms before the response existed, so it stayed green with the fix reverted.
+  // The wait is what makes the response part of the test. The sampling is because there
+  // is no timer between the body arriving and the draw that would follow it, only a
+  // microtask chain, and each read below is a round trip that gives the page room to run
+  // it. Under the reverted guard the line appears within the first few samples.
+  await geometryArrived;
+  for (let i = 0; i < 10; i++) {
+    expect(await drawnLines(page), `the superseded geometry must never reach the map (sample ${i})`).toBe(0);
+  }
+  expect(await page.evaluate(() => shownBusRoute), "nothing may claim the line").toBe(null);
+  await expect(page.locator("#route-banner"), "and no banner names the route it left").toBeHidden();
 });

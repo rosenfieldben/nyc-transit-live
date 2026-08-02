@@ -150,7 +150,7 @@ function railroadPopup(record) {
     // Scoped to the train's OWN system (LIRR/MNR) so a numeric route id shared with
     // another mode never leaks in.
     routeAlertsBlock(t.system, t.route_id) +
-    `<b style="color:${railroadColor(t.route_id)}">${esc(head)}</b>` +
+    `<b style="color:${readableInk(railroadColor(t.route_id))}">${esc(head)}</b>` +
     (t.train_num ? `<br>Train ${esc(t.train_num)}` : "") +
     // Placed trains carry a next/current station; GPS trains do not.
     (isPlacedRailroad(t) && t.stop_name ? `<br>Next stop: ${esc(t.stop_name)}` : "") +

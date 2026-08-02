@@ -39,8 +39,6 @@ const LINE_COLORS = {
   GS: "#566573", FS: "#566573", H: "#566573", S: "#566573",
   SI: "#34495e",
 };
-// Yellow squares need dark text for contrast.
-const DARK_TEXT_LINES = new Set(["N", "Q", "R", "W"]);
 
 function lineColor(routeId) {
   if (!routeId) return "#555555";
@@ -852,7 +850,7 @@ function railroadArrivalsHtml(station, body, now, nameFor = () => null) {
       .map((a) => {
         const route = a.route_id ?? "";
         const badge =
-          `<span class="arr-badge" style="background:${railroadColor(route)};color:#fff">` +
+          `<span class="arr-badge" style="background:${railroadColor(route)};color:${readableTextOn(railroadColor(route))}">` +
           `${esc(route || "?")}</span>`;
         const routeName = a.route_id ? nameFor(a.route_id) : null;
         const label = routeName ? ` ${esc(routeName)}` : "";
@@ -959,7 +957,7 @@ function formatPathHead(routeId, name) {
 // publishes no alerts feed. Every feed-derived string is escaped.
 function pathTrainPopupHtml(train, name, color) {
   return (
-    `<b style="color:${color}">${esc(formatPathHead(train.route_id, name))}</b>` +
+    `<b style="color:${readableInk(color)}">${esc(formatPathHead(train.route_id, name))}</b>` +
     ` <span class="popup-sub">PATH</span>` +
     (train.stop_name ? `<br>Next stop: ${esc(train.stop_name)}` : "") +
     (train.direction ? `<br>${esc(train.direction)}` : "") +
@@ -987,7 +985,7 @@ function pathArrivalsHtml(station, body, now, colorFor = () => PATH_FALLBACK_COL
       .map((a) => {
         const route = a.route_id ?? "";
         const badge =
-          `<span class="arr-badge" style="background:${colorFor(a.route_id)};color:#fff">` +
+          `<span class="arr-badge" style="background:${colorFor(a.route_id)};color:${readableTextOn(colorFor(a.route_id))}">` +
           `${esc(route || "?")}</span>`;
         const routeName = a.route_id ? nameFor(a.route_id) : null;
         const label = routeName ? ` ${esc(routeName)}` : "";
@@ -1109,7 +1107,7 @@ function ferryBoatPopupHtml(boat, name, color) {
   const status = ferryStatusText(boat.status);
   const speed = ferrySpeedKnots(boat.status, boat.speed);
   return (
-    `<b style="color:${color}">${esc(routeText)}</b>` +
+    `<b style="color:${readableInk(color)}">${esc(routeText)}</b>` +
     ` <span class="popup-sub">NYC Ferry</span>` +
     (boat.label ? `<br>Boat ${esc(boat.label)}` : "") +
     (status ? `<br>${esc(status)}` : "") +
@@ -1138,7 +1136,7 @@ function ferryArrivalsHtml(station, body, now, colorFor = () => FERRY_FALLBACK_C
   let html = header;
   for (const [routeName, rows] of buckets) {
     const color = rows[0] && rows[0].route_id ? colorFor(rows[0].route_id) : FERRY_FALLBACK_COLOR;
-    html += `<div class="arr-dir" style="color:${color}">${esc(routeName)}</div>`;
+    html += `<div class="arr-dir" style="color:${readableInk(color)}">${esc(routeName)}</div>`;
     html += rows
       .map((row) => {
         const d = ferryArrivalDisplay(row, now);
@@ -1989,7 +1987,7 @@ if (typeof module !== "undefined" && module.exports) {
     indexAlerts, matchStationAlerts, matchRouteAlerts, bannerAlerts, alertsBlockHtml,
     hashString, bannerRenderKey,
     RAILROAD_ROUTE_MAX_SLICE, RAILROAD_ROUTE_ACCEPT_DIST, RAILROAD_BUCKET_ORDER,
-    LINE_COLORS, DARK_TEXT_LINES, FEED_STALE_AFTER_S, FETCH_DEADLINE_MS, shouldRefresh,
+    LINE_COLORS, FEED_STALE_AFTER_S, FETCH_DEADLINE_MS, shouldRefresh,
     // A3: one luminance path for the whole app.
     parseColor, relativeLuminance, contrastRatio, readableTextOn, readableInk,
     INK_LIGHT, INK_DARK,

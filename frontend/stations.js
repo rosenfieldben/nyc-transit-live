@@ -144,13 +144,18 @@ if (stationsSearch) stationsSearch.addEventListener("input", renderStationResult
 // (its route ids collide with the subway's), and PATH and ferry colors are served
 // per route by the backend and validated before use.
 function stationChipStyle(entry, routeId) {
-  if (entry.kind === "railroad") return { bg: railroadColor(routeId), fg: "#fff" };
+  if (entry.kind === "railroad") {
+    const bg = railroadColor(routeId);
+    return { bg, fg: readableTextOn(bg) };
+  }
   if (entry.kind === "path" || entry.kind === "ferry") {
     const colorFor = entry.colorFor || (() => null);
-    return { bg: colorFor(routeId) || "#546e7a", fg: "#fff" };
+    const bg = colorFor(routeId) || "#546e7a";
+    return { bg, fg: readableTextOn(bg) };
   }
-  if (entry.kind === "airtrain") return { bg: "#b5179e", fg: "#fff" };
-  return { bg: lineColor(routeId), fg: DARK_TEXT_LINES.has(String(routeId)[0]) ? "#1a1a1a" : "#fff" };
+  if (entry.kind === "airtrain") return { bg: "#b5179e", fg: readableTextOn("#b5179e") };
+  const bg = lineColor(routeId);
+  return { bg, fg: readableTextOn(bg) };
 }
 
 // One result row: a real button carrying the station name, its system, its route

@@ -345,3 +345,114 @@ for (const [label, viewport] of [
     expect(fit.statusReachable, "the status line must be reachable by scrolling the panel").toBe(true);
   });
 }
+
+test("A4g. every rendered route colour meets AA where it carries or is text", async ({ page }) => {
+  // THE WIRING CHECK. The node tests prove readableTextOn and readableInk are correct
+  // over every palette; they cannot prove the twelve call sites actually call them. A
+  // site left on its old hardcoded "#fff" would keep every node test green and still
+  // ship unreadable text, so this measures what the browser painted.
+  //
+  // Compositing is done against the element's nearest OPAQUE ancestor background rather
+  // than down the whole chain, because A3's inventory work showed the naive walk gives a
+  // false answer for absolutely-positioned overlays.
+  //
+  // THE ORDER HERE IS THE WHOLE TEST. The first draft sampled the DOM before opening any
+  // popup, found nothing, and passed in two seconds having measured zero elements: the
+  // vacuity trap this suite keeps re-learning. Everything is opened first, and the sample
+  // size is asserted before the ratios are.
+  // A DISCRIMINATING ROUTE IS SERVED ON PURPOSE. The stock fixture carries only the 1
+  // and the A, whose colours are readable with white ink and readable as headings, so a
+  // sample built from them passes whether or not the fix is wired: the first version of
+  // this spec measured real elements, asserted a non-empty sample, and still survived
+  // both mutations. The N is the sharp case in the palette at #e6b800, which needs DARK
+  // ink on a chip and measures 1.87 as heading text on white.
+  const ctx = await installMocks(page);
+  ctx.overrides.subways = (route, fixtures) => {
+    const body = fixtures.subways();
+    const sample = body.data[0];
+    body.data = [...body.data, { ...sample, trip_id: `${sample.trip_id}-N`, route_id: "N" }];
+    return json(route, body);
+  };
+  // The CHIP half needs the N at a station, not just on a train: chips are built from a
+  // stop's routes list. Times Sq serves 1/2/3 in the fixture, all of which are readable
+  // with white ink either way, so without this the fill assertions never see a light
+  // fill and survive a helper that always returns white.
+  ctx.overrides.subwayStops = (route, fixtures) =>
+    json(
+      route,
+      fixtures.subwayStops().map((stop) => (stop.id === "127" ? { ...stop, routes: [...stop.routes, "N"] } : stop)),
+    );
+  await open(page, ctx);
+
+  // A station popup as well as the vehicle popups, because the chips and the arrival
+  // badges live there and they are half the sites under test.
+  await page.evaluate(() => {
+    for (const [, record] of trains) {
+      if (record.latest && record.latest.route_id === "N") { record.marker.openPopup(); return; }
+    }
+    const entry = stationRegistry.find((row) => row.key.startsWith("subway|"));
+    if (entry && entry.marker) entry.marker.openPopup();
+  });
+  await expect.poll(async () => page.locator(".leaflet-popup-content").count()).toBeGreaterThan(0);
+  await page.locator("#stations-search").fill("times");
+  await expect(page.locator("#stations-results button.station-row").first()).toBeVisible();
+
+  const measured = await page.evaluate(() => {
+    const srgb = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+    const lum = ([r, g, b]) => 0.2126 * srgb(r) + 0.7152 * srgb(g) + 0.0722 * srgb(b);
+    const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
+    const parse = (s) => {
+      const m = String(s).match(/rgba?\(([^)]+)\)/);
+      if (!m) return null;
+      const p = m[1].split(/[\s,/]+/).filter(Boolean).map(Number);
+      return { rgb: p.slice(0, 3), a: p.length > 3 ? p[3] : 1 };
+    };
+    const surfaceOf = (el) => {
+      for (let n = el; n && n !== document.documentElement; n = n.parentElement) {
+        const bg = parse(getComputedStyle(n).backgroundColor);
+        if (bg && bg.a === 1) return bg.rgb;
+      }
+      return [255, 255, 255];
+    };
+    const out = [];
+    const sample = (el, what) => {
+      const cs = getComputedStyle(el);
+      const fg = parse(cs.color);
+      const r = el.getBoundingClientRect();
+      if (!fg || r.width === 0 || r.height === 0) return;
+      const px = parseFloat(cs.fontSize);
+      const bold = parseInt(cs.fontWeight, 10) >= 700;
+      const need = px >= 24 || (bold && px >= 18.66) ? 3 : 4.5;
+      out.push({
+        what,
+        text: (el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 24),
+        color: cs.color,
+        ratio: +ratio(fg.rgb, surfaceOf(el)).toFixed(2),
+        need,
+      });
+    };
+    for (const el of document.querySelectorAll(".arr-badge, .station-chip")) sample(el, "fill");
+    for (const el of document.querySelectorAll(".leaflet-popup-content b, .arr-dir")) sample(el, "ink");
+    return out;
+  });
+
+  // NON-VACUITY FIRST, and both KINDS, so a run that rendered only headings cannot
+  // certify the chips.
+  expect(measured.length, "nothing was measured, so nothing was proved").toBeGreaterThan(0);
+  expect(measured.some((m) => m.what === "ink"), "no route-coloured heading was rendered").toBe(true);
+  expect(measured.some((m) => m.what === "fill"), "no chip or badge was rendered").toBe(true);
+  // AND THE SHARP CASE IS IN IT. Without this the spec can be non-empty, well-formed and
+  // still blind, which is exactly what it was before: a sample of readable colours proves
+  // only that readable colours are readable.
+  expect(
+    measured.some((m) => m.what === "ink" && /\bN\b/.test(m.text)),
+    `an N heading must be in the sample, got ${JSON.stringify(measured.filter((m) => m.what === "ink").map((m) => m.text))}`,
+  ).toBe(true);
+  expect(
+    measured.some((m) => m.what === "fill" && m.text === "N"),
+    `an N chip must be in the sample, got ${JSON.stringify(measured.filter((m) => m.what === "fill").map((m) => m.text))}`,
+  ).toBe(true);
+
+  const failures = measured.filter((m) => m.ratio < m.need);
+  expect(failures, `route colour text below AA as rendered: ${JSON.stringify(failures)}`).toEqual([]);
+});

@@ -30,7 +30,7 @@ function busPopup(record) {
     // Bus alerts are route-only (no stop selectors); "bus" route ids share the
     // bus layer's id space, so the match is by route_id under system "bus".
     routeAlertsBlock("bus", b.route_id) +
-    `<b style="color:${routeColor(b.route_id)}">${esc(b.route_id ?? "Unknown route")}</b>` +
+    `<b style="color:${readableInk(routeColor(b.route_id))}">${esc(b.route_id ?? "Unknown route")}</b>` +
     `<br>Bus ${esc(b.id)}<br>Heading: ${heading}` +
     (showNote ? `<br><span class="popup-sub">${esc(note.message)}</span>` : "") +
     // C2: buses are a single feed, so their system is the synthesized one named

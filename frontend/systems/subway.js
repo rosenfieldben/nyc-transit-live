@@ -7,7 +7,7 @@ function trainIcon(train) {
   const route = train.route_id ?? "";
   const label = /^[A-Za-z0-9]{1,3}$/.test(route) ? route : "?";
   const color = lineColor(route);
-  const textColor = DARK_TEXT_LINES.has(route[0]) ? "#1a1a1a" : "#ffffff";
+  const textColor = readableTextOn(color);
   const html = `<svg viewBox="0 0 18 18">
       <rect x="1.5" y="1.5" width="15" height="15" rx="3" fill="${color}" stroke="#fff" stroke-width="1.5"/>
       <text x="9" y="9.5" text-anchor="middle" dominant-baseline="central"
@@ -34,7 +34,7 @@ function trainPopup(record) {
   const t = record.latest;
   return (
     routeAlertsBlock("subway", t.route_id) +
-    `<b style="color:${lineColor(t.route_id)}">${esc(t.route_id ?? "?")} train</b>` +
+    `<b style="color:${readableInk(lineColor(t.route_id))}">${esc(t.route_id ?? "?")} train</b>` +
     `<br>Next stop: ${esc(t.stop_name ?? t.stop_id ?? "unknown")}` +
     (t.direction ? `<br>${esc(t.direction)}` : "") +
     `<br><span class="popup-sub">Trip ${esc(t.trip_id ?? "?")}</span>` +
@@ -183,7 +183,7 @@ function subwayArrivalsHtml(station, body) {
     html += arrivals
       .map((a) => {
         const route = a.route_id ?? "";
-        const textColor = DARK_TEXT_LINES.has(route[0]) ? "#1a1a1a" : "#fff";
+        const textColor = readableTextOn(lineColor(route));
         const badge =
           `<span class="arr-badge" style="background:${lineColor(route)};color:${textColor}">` +
           `${esc(route || "?")}</span>`;

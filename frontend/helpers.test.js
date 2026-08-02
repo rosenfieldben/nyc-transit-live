@@ -1206,7 +1206,13 @@ test("ferryBoatPopupHtml shows label, route name, status, and under-way speed in
     "#00839c",
   );
   assert.ok(html.includes("East River"));
-  assert.ok(html.includes("#00839c"));
+  // A3: the heading carries the route's IDENTITY, darkened only as far as readability
+  // demands. This fixture colour is a real NYC Ferry route colour and it measures 4.44
+  // on white, so it darkens; the old assertion pinned the literal #00839c and was
+  // therefore pinning an unreadable value. Asserting the obligation instead survives any
+  // future change to how far readableInk goes.
+  assert.ok(html.includes(readableInk("#00839c")));
+  assert.ok(contrastRatio(readableInk("#00839c"), "#ffffff") >= 4.5);
   assert.ok(html.includes("Boat H201"));
   assert.ok(html.includes("Under way"));
   assert.ok(html.includes("NYC Ferry"));
@@ -1230,7 +1236,9 @@ test("ferryBoatPopupHtml omits speed for a docked boat", () => {
 test("ferryBoatPopupHtml labels a null-route boat Unassigned and omits an unknown status", () => {
   const html = ferryBoatPopupHtml({ label: "H099", status: null }, null, FERRY_FALLBACK_COLOR);
   assert.ok(html.includes("Unassigned"));
-  assert.ok(html.includes(FERRY_FALLBACK_COLOR));
+  // The fallback fill is #78909c, which is 2.72 on white and therefore darkens when used
+  // as heading text. Its use as a chip FILL is unchanged and covered separately.
+  assert.ok(html.includes(readableInk(FERRY_FALLBACK_COLOR)));
   assert.ok(html.includes("Boat H099"));
   // Unknown status -> no status line at all (ferryStatusText returned null).
   assert.ok(!html.includes("At dock") && !html.includes("Under way"));
@@ -1256,7 +1264,15 @@ test("ferryArrivalsHtml buckets by route name with arriving/departing countdowns
   assert.ok(html.includes("NYC Ferry"));
   assert.ok(html.includes("&#9855;")); // wheelchair accessibility marker
   assert.ok(html.indexOf("East River") < html.indexOf("South Brooklyn")); // alphabetical
-  assert.ok(html.includes("#00839c") && html.includes("#ffd100")); // route-colored headings
+  // Route-coloured headings, each darkened to clear AA on the white popup. #ffd100 is
+  // the sharper case: bright yellow measures 1.51 on white, which is not text.
+  assert.ok(html.includes(readableInk("#00839c")) && html.includes(readableInk("#ffd100")));
+  for (const raw of ["#00839c", "#ffd100"]) {
+    assert.ok(
+      contrastRatio(readableInk(raw), "#ffffff") >= 4.5,
+      `${raw} heading ink is below AA on the popup`,
+    );
+  }
   assert.ok(html.includes("1 min")); // East River arriving in (120-40)=80s -> "1 min"
   assert.ok(html.includes("departs 2 min")); // South Brooklyn dwelling, departs in (180-40)=140s
 });

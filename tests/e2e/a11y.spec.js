@@ -290,6 +290,68 @@ test("A1k. axe: the skip link is scanned while FOCUSED, which is when it is visi
   assertScanned(results, { targets: ["#stations-skip"] });
 });
 
+// THE MOBILE UNDECIDABLE SET, which is not the desktop one and is not allowed to be a
+// looser version of it. Two entries, both named, both with the reason a machine cannot
+// decide them and the thing that decides them instead.
+//
+// The desktop inventory's nth-child targets are NOT reused here: the mobile tree numbers
+// its children differently, so asserting that list at this width would either fail for
+// the wrong reason or get loosened until it meant nothing. Same rule, own list.
+function assertMobileIncompletesAreKnown(results) {
+  const kinds = [...new Set(results.incomplete.map((entry) => entry.id))].sort();
+  expect(kinds, "a new KIND of undecidable finding appeared at mobile width").toEqual(
+    // color-contrast: the zoom-out glyph, exactly as on desktop, for the same reason
+    //   (axe declines to judge an element whose content is only non-text characters).
+    // skip-link: "Skip link target should become visible on activation". The panel is
+    //   CLOSED at this width, so at scan time the link points at a hidden element and a
+    //   static rule cannot know that activating it opens one. It is genuinely
+    //   undecidable by inspection, and it is decided behaviourally instead: A6g in
+    //   mobile.spec.js presses the link and asserts focus lands inside the panel that
+    //   was hidden a moment earlier. That spec is why this entry is an admission of a
+    //   TOOL limit rather than of an unfixed defect.
+    ["color-contrast", "skip-link"],
+  );
+  const skip = results.incomplete.filter((entry) => entry.id === "skip-link");
+  for (const entry of skip) {
+    expect(
+      entry.nodes.map((node) => node.target.join(" ")),
+      "only the stations skip link may be undecidable for skip-link",
+    ).toEqual(["#stations-skip"]);
+  }
+}
+
+// A3: THE SAME SCOPE, SCANNED ON A PHONE. The mobile layout moves the banner, collapses
+// the legend behind a disclosure and turns the station panel into a full-width overlay,
+// so it is a genuinely different tree from the desktop one and a desktop-only scan
+// certifies nothing about it.
+//
+// The undecidable inventory is NOT reused here, deliberately. Those entries are
+// nth-child selectors against a desktop DOM, and the mobile tree numbers its children
+// differently; asserting the desktop list at this viewport would either fail for the
+// wrong reason or, worse, be loosened until it stopped meaning anything. What the mobile
+// scan asserts is the part that must hold at every width: no violations, real work done,
+// and no undecidable finding of a NEW kind.
+test("A1m2. axe: the mobile layout, at 375, with the legend collapsed and expanded", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 667 });
+  await open(page);
+
+  // Collapsed, which is the state a rider lands on.
+  await expect(page.locator("#legend")).toBeHidden();
+  let results = await scan(page).analyze();
+  expect(violations(results), "axe violations on the phone, legend collapsed").toEqual([]);
+  assertMobileIncompletesAreKnown(results);
+  assertScanned(results, { targets: ["#stations-panel", "#legend-toggle", "#alert-banner", "#stations-toggle"] });
+
+  // And expanded, because the disclosure's open state is a different tree again: the
+  // fourteen legend rows and the note only exist here.
+  await page.locator("#legend-toggle").click();
+  await expect(page.locator("#legend")).toBeVisible();
+  results = await scan(page).analyze();
+  expect(violations(results), "axe violations on the phone, legend expanded").toEqual([]);
+  assertMobileIncompletesAreKnown(results);
+  assertScanned(results, { targets: ["#legend-toggle", "#toggles"] });
+});
+
 test("A1l. the gate has teeth: a defect inside the scope IS caught", async ({ page }) => {
   await open(page);
   // This spec tests the gate, not the markup, and it is here because the gate silently

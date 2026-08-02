@@ -327,3 +327,62 @@ test("A6f. every control this app owns shows a focus ring, at 3:1 or better", as
     `a mouse click must not leave a ring behind (got ${JSON.stringify(afterClick)})`,
   ).toBe(false);
 });
+
+test("A6g. the skip link opens the panel it skips to", async ({ page }) => {
+  // WHAT AXE CANNOT DECIDE, DECIDED HERE. The mobile scan reports skip-link as
+  // undecidable ("Skip link target should become visible on activation") because at
+  // scan time the panel is closed and a static rule cannot know that activating the
+  // link opens one. That report is what put this under the light, and what it found was
+  // real: the link was a bare anchor with no script, so it worked only where A1 happens
+  // to dock the panel open.
+  //
+  // Measured at 375 before the fix: Tab reached the link, Enter did nothing observable,
+  // and the next Tab landed on #stations-toggle. The first tab stop on a phone promised
+  // to skip TO the stations list and delivered the button that opens it, which is where
+  // the rider would have arrived with one more Tab and no link at all.
+  await page.setViewportSize(PHONE);
+  await installMocks(page);
+  await open(page);
+
+  await expect(page.locator("#stations-panel"), "the panel starts closed on a phone").toBeHidden();
+
+  await page.keyboard.press("Tab");
+  await expect(page.locator("#stations-skip"), "the skip link is still the first tab stop").toBeFocused();
+  await page.keyboard.press("Enter");
+
+  await expect(page.locator("#stations-panel")).toBeVisible();
+  // FOCUS IS INSIDE THE PANEL, which is the promise the link's own words make. Landing
+  // on the toggle, or on the body, would satisfy "the panel opened" and still leave the
+  // rider where they started.
+  const landed = await page.evaluate(() => {
+    const el = document.activeElement;
+    return {
+      id: el.id || el.tagName,
+      inPanel: document.getElementById("stations-panel").contains(el),
+    };
+  });
+  expect(landed.inPanel, `focus must land inside the panel, got ${JSON.stringify(landed)}`).toBe(true);
+});
+
+test("A6h. at desktop the skip link keeps the native behaviour A1 shipped", async ({ page }) => {
+  // The other half, and the reason the handler returns early when the panel is open. At
+  // desktop widths A1 docks the panel, the anchor's own fragment navigation is correct,
+  // and A3 must not replace it with a script that does the same thing differently.
+  // Native skip-link behaviour leaves document.activeElement on the body and sets the
+  // sequential navigation point, so it is the NEXT Tab that lands in the panel.
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await installMocks(page);
+  await open(page);
+
+  await expect(page.locator("#stations-panel")).toBeVisible();
+  await page.keyboard.press("Tab");
+  await expect(page.locator("#stations-skip")).toBeFocused();
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Tab");
+
+  const landed = await page.evaluate(() => {
+    const el = document.activeElement;
+    return { id: el.id || el.tagName, inPanel: document.getElementById("stations-panel").contains(el) };
+  });
+  expect(landed.inPanel, `one Tab after activating must be in the panel, got ${JSON.stringify(landed)}`).toBe(true);
+});

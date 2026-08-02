@@ -133,6 +133,34 @@ if (stationsPanel) {
 }
 
 if (stationsToggle) stationsToggle.addEventListener("click", toggleStationsPanel);
+
+/* A3: THE SKIP LINK HAS TO OPEN WHAT IT SKIPS TO.
+   It was a bare <a href="#stations-panel"> with no script at all, which works only when
+   the panel happens to be open already. At desktop widths A1 docks it open, so the link
+   behaved correctly and nothing noticed; under the mobile breakpoint the panel starts
+   closed, and the link then pointed at a hidden element.
+
+   Measured at 375 before this: Tab reached the link, Enter did nothing observable, and
+   the next Tab landed on #stations-toggle. So the first tab stop on a phone promised to
+   skip TO the stations list and delivered the button that opens it, which is exactly
+   where the rider would have arrived with one more Tab and no link at all. axe says the
+   same thing in its own words, reporting skip-link as undecidable at this width with
+   "Skip link target should become visible on activation"; that report is what put this
+   under the light, and it is the reason the mobile scan was worth adding.
+
+   preventDefault because the fragment navigation is now redundant and would fight the
+   focus call. openStationsPanel already focuses the search box, so this reuses the
+   panel's own opening path rather than reimplementing it: one door, as everywhere else
+   in this codebase. When the panel is ALREADY open the anchor's native behaviour is
+   correct and is left alone, which keeps the desktop path exactly as A1 shipped it. */
+const stationsSkip = document.getElementById("stations-skip");
+if (stationsSkip) {
+  stationsSkip.addEventListener("click", (event) => {
+    if (!stationsPanel || !stationsPanel.hidden) return; // already open: the anchor is right
+    event.preventDefault();
+    openStationsPanel();
+  });
+}
 if (stationsSearch) stationsSearch.addEventListener("input", renderStationResults);
 
 /* ---------------- the result list ---------------- */

@@ -264,3 +264,58 @@ test("A7g. a reassignment landing mid-fetch does not draw the route the bus just
   expect(await page.evaluate(() => shownBusRoute), "nothing may claim the line").toBe(null);
   await expect(page.locator("#route-banner"), "and no banner names the route it left").toBeHidden();
 });
+
+test("A7h. hiding the Buses layer mid-fetch discards the route rather than banner-ing it", async ({ page }) => {
+  // ROUND 2 CAUGHT THIS IN A7f's OWN FIX. Ownership is two states, not one: drawn, and a
+  // fetch in flight with nothing drawn yet. A7f's guard preserved both, and preserving
+  // the pending one also skipped the sequence bump that supersedes the fetch, so hiding
+  // the layer mid-fetch let the response run to completion against a layer no longer on
+  // the map. Measured on that tree: {lines: 1, bannerHidden: false, label: "Bus route
+  // M15", busesChecked: false}, a banner naming a route for a popup the rider cannot see.
+  //
+  // A7f (the drawn case) and this spec (the pending case) are the two halves and must
+  // both hold: the first says the geometry SURVIVES a layer toggle, this one says a fetch
+  // that was still in the air does NOT come back to life behind it.
+  const ctx = await installMocks(page);
+  ctx.overrides.busRoute = async (route, fixtures) => {
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    const id = decodeURIComponent(new URL(route.request().url()).pathname.split("/").pop());
+    return json(route, { ...fixtures.busRoute(), route: id });
+  };
+  await open(page);
+
+  const id = await firstBusId(page);
+  const geometryArrived = page.waitForResponse((res) => res.url().includes("/api/bus-route/"));
+  await page.evaluate((busId) => buses.get(busId).marker.openPopup(), id);
+  await expectPopupState(page, { registry: "buses", key: id }, true);
+
+  // The window is real: claimed, with nothing drawn. Without this the spec could run
+  // entirely after the fetch and would be testing A7f again rather than its blind spot.
+  expect(
+    await page.evaluate(() => ({ pending: pendingBusId, shown: shownBusRoute })),
+    "the route fetch must still be in flight",
+  ).toEqual({ pending: id, shown: null });
+
+  // The rider hides the layer while the fetch is in the air. This is the real control,
+  // not a direct call: the defect ran through Leaflet's own `remove: this.closePopup`.
+  await page.locator("#toggle-buses").uncheck();
+
+  await geometryArrived;
+  for (let i = 0; i < 10; i++) {
+    const state = await page.evaluate(() => ({
+      lines: (() => { let n = 0; busRouteLayer.eachLayer(() => { n += 1; }); return n; })(),
+      shown: shownBusRoute,
+      bannerHidden: document.getElementById("route-banner").hidden,
+    }));
+    expect(state, `a superseded fetch must not draw or announce (sample ${i})`).toEqual({
+      lines: 0,
+      shown: null,
+      bannerHidden: true,
+    });
+  }
+
+  // And showing the layer again brings back a map with no phantom route on it.
+  await page.locator("#toggle-buses").check();
+  expect(await drawnLines(page), "nothing reappears when the layer comes back").toBe(0);
+  await expect(page.locator("#route-banner")).toBeHidden();
+});

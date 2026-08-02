@@ -133,7 +133,20 @@ function releaseBusRoute(bus, marker) {
   // line (busRouteLayer is hidden by the same toggle and comes back with it), and the
   // departed-vehicle case is already handled explicitly in the removal sweep below,
   // which clears the route when the drawn bus itself leaves.
-  if (marker && typeof map !== "undefined" && map && !map.hasLayer(marker)) return;
+  //
+  // AND ONLY WHEN THERE IS A LINE TO PRESERVE, which round 2 of the review caught as a
+  // defect in the guard above. Ownership is two states, not one: DRAWN, and a fetch still
+  // in flight with nothing drawn yet. Preserving the pending state was wrong, because the
+  // early return also skips the sequence bump that supersedes that fetch, so hiding the
+  // layer mid-fetch let the response land and run to completion against a layer that was
+  // no longer on the map. Reproduced: uncheck Buses during the fetch and the result was
+  // {lines: 1, bannerHidden: false, label: "Bus route M15", busesChecked: false} -- the
+  // banner naming a route for a popup the rider can no longer see, which is the exact
+  // state A7f pins as forbidden for the drawn case. Falling through to clearBusRoute
+  // discards the in-flight response instead, and there is no drawn geometry to lose:
+  // that is what shownBusRoute being null in this branch means.
+  const drawnForThisBus = shownBusRoute && shownBusRoute.busId === bus.id;
+  if (drawnForThisBus && marker && typeof map !== "undefined" && map && !map.hasLayer(marker)) return;
   clearBusRoute();
 }
 

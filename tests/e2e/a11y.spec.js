@@ -322,6 +322,29 @@ test("A1j. axe: the station panel with a station selected and arrivals rendered"
   await page.locator("#stations-results button.station-row").first().click();
   await expect(page.locator("#stations-detail h3")).toBeVisible();
   await expect(page.locator("#stations-detail .station-arrivals").first()).toBeVisible();
+
+  // THE COUNTDOWN TICK IS STOPPED BEFORE THE SCAN, and this is the fix for a transient
+  // that a review reproduced rather than a precaution against one it imagined. The panel
+  // repaints its countdowns once a second, renderStationDetail begins by replacing the
+  // detail subtree wholesale, and axe walks the tree over several frames. A scan that
+  // straddles a repaint sees the h3 detached from the document and reports heading-order
+  // as UNDECIDABLE, so assertIncompletesAreKnown below fails on a finding about OUR
+  // timer rather than about the markup. Sweeping a delay before analyze() reproduced it
+  // twice, at d=700 in one run and d=800 in the next: a race, not a fixed point, which
+  // is why a wait of any length would not have fixed it.
+  //
+  // Stopped through the app's own door rather than by clearing the handle from the test,
+  // so the spec cannot drift from what the app actually does when it stops a tick. And
+  // the timer is asserted LIVE first, because a door that silently stopped working (a
+  // rename, a refactor that moves the interval elsewhere) would otherwise leave this
+  // looking fixed while the race quietly came back.
+  const tickWasLive = await page.evaluate(() => {
+    const live = panelTimer !== null;
+    stopPanelArrivals();
+    return live;
+  });
+  expect(tickWasLive, "the panel countdown must be running for stopping it to mean anything").toBe(true);
+
   const results = await scan(page).analyze();
   expect(violations(results), "axe violations in the detail state").toEqual([]);
   await assertIncompletesAreKnown(page, results);

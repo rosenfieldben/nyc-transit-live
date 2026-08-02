@@ -182,8 +182,18 @@ html, body {
    remain as the state markers the icon carries and the e2e suite reads, so there is
    deliberately no rule for them here. */
 
+/* A3: #666 IS THE ONE MUTED INK, and it is the lightest grey that clears 4.5:1 on all
+   three surfaces this app prints muted text on: white popups (5.74), the banner's amber
+   #fde8b0 (4.74) and the popup cream #fdf6e3 (5.32). Measured, not chosen by eye. What
+   it replaces failed on every one of them: .popup-sub was #777 at 4.48 on white, a
+   two-hundredths miss that no eye would catch; .arr-none was #888 at 3.54; .popup-stale
+   was #999 at 2.85; and .alert-stale was #888 at 2.93 on the amber. These are the
+   honesty lines, the "as of 3m ago" and "alerts may be out of date" hedges, so they were
+   the least readable text on the page and the text a rider most needs when the data is
+   wrong. Collapsing four greys to one loses no distinction that was doing work: the
+   stale lines are already italic, which is what separated them. */
 .popup-sub {
-  color: #777;
+  color: #666;
   font-size: 11px;
 }
 
@@ -202,7 +212,7 @@ html, body {
 }
 
 .arr-none {
-  color: #888;
+  color: #666;
   font-style: italic;
 }
 
@@ -237,13 +247,13 @@ html, body {
    alarm: low-emphasis so they never compete with the live data they hedge. */
 .popup-stale {
   margin-top: 2px;
-  color: #999;
+  color: #666;
   font-size: 11px;
   font-style: italic;
 }
 
 .alert-stale {
-  color: #888;
+  color: #666;
   font-size: 11px;
   font-style: italic;
 }

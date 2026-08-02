@@ -336,8 +336,8 @@ test("lineColor maps trunks, falls back by first char, defaults gray", () => {
 test("railroadColor is deterministic, from the palette, and null-safe", () => {
   assert.equal(railroadColor("3"), railroadColor("3")); // deterministic
   assert.match(railroadColor("3"), /^#[0-9a-f]{6}$/);
-  assert.equal(railroadColor(null), "#607d8b"); // neutral default
-  assert.equal(railroadColor(""), "#607d8b");
+  assert.equal(railroadColor(null), "#546e7a"); // neutral default, readable with white ink
+  assert.equal(railroadColor(""), "#546e7a");
   // A railroad route id is colored on its own scale, not the subway's.
   assert.notEqual(railroadColor("1"), lineColor("1"));
 });
@@ -853,6 +853,9 @@ test("trainLatLng monotonic-f clamp: dwell can't drag the marker backward; reset
 
 // Separate require (additive; leaves the top import block untouched).
 const { selectHeadwayBand, airtrainStationPopupHtml } = require("./helpers.js");
+const {
+  parseColor, contrastRatio, readableTextOn, readableInk, INK_DARK, LINE_COLORS,
+} = require("./helpers.js");
 
 // The real reconciled bands from data/airtrain_jfk.json (all 3 routes share them):
 // 15 min overnight, 7 min shoulders, 4 min midday, half-open [start, end).
@@ -2256,4 +2259,135 @@ test("A2: the motion preference is watched, not only read once", () => {
   const noop = watchMotionPreference(() => assert.fail("must not be called"), ancient);
   assert.equal(typeof noop, "function");
   noop();
+});
+
+// ---------------------------------------------------------------------------
+// A3: contrast, computed rather than curated.
+// ---------------------------------------------------------------------------
+
+test("A3: parseColor reads every colour form this app actually emits", () => {
+  assert.deepEqual(parseColor("#abc"), [170, 187, 204]);
+  assert.deepEqual(parseColor("#d68910"), [214, 137, 16]);
+  assert.deepEqual(parseColor("rgb(1, 2, 3)"), [1, 2, 3]);
+  assert.deepEqual(parseColor("rgba(1, 2, 3, 0.5)"), [1, 2, 3]);
+  // routeColor emits hsl(); without this branch every bus route would be unjudgeable.
+  const hsl = parseColor("hsl(0, 100%, 50%)").map(Math.round);
+  assert.deepEqual(hsl, [255, 0, 0]);
+  // NULL rather than a guess. A caller that gets a colour we cannot read must be able
+  // to tell, because the alternative is silently printing unreadable text.
+  assert.equal(parseColor("chartreuse"), null);
+  assert.equal(parseColor(""), null);
+  assert.equal(parseColor(null), null);
+  assert.equal(contrastRatio("chartreuse", "#fff"), null);
+});
+
+test("A3: contrastRatio matches the WCAG anchors and is order-independent", () => {
+  assert.equal(Math.round(contrastRatio("#ffffff", "#000000")), 21);
+  assert.equal(Math.round(contrastRatio("#ffffff", "#ffffff")), 1);
+  assert.equal(contrastRatio("#777777", "#ffffff"), contrastRatio("#ffffff", "#777777"));
+  // The published ratio for the classic "web grey on white" pair, to three places.
+  assert.ok(Math.abs(contrastRatio("#767676", "#ffffff") - 4.54) < 0.01);
+});
+
+// THE REAL STYLESHEET, NOT A COPY OF ITS NUMBERS. A test that hardcoded "#666" would
+// keep passing after someone lightened the CSS, which is the exact regression it exists
+// to catch. So the values are read out of style.css and the ratios computed from what
+// ships.
+test("A3: every muted ink in style.css clears AA on the surface it prints on", () => {
+  const css = require("node:fs").readFileSync(`${__dirname}/style.css`, "utf8");
+  const declared = (selector) => {
+    const block = css.match(new RegExp(`\\${selector}\\s*\\{([^}]*)\\}`));
+    assert.ok(block, `${selector} must still exist in style.css`);
+    const color = block[1].match(/(?:^|[;\s])color:\s*([^;]+);/);
+    assert.ok(color, `${selector} must still declare a color`);
+    return color[1].trim();
+  };
+  // Selector -> the opaque surface it is actually painted on, from the A3 inventory.
+  const WHITE = "#ffffff";
+  const BANNER_AMBER = "#fde8b0";
+  const cases = [
+    [".popup-sub", WHITE],
+    [".arr-none", WHITE],
+    [".popup-stale", WHITE],
+    [".alert-stale", BANNER_AMBER],
+  ];
+  for (const [selector, surface] of cases) {
+    const ink = declared(selector);
+    const ratio = contrastRatio(ink, surface);
+    assert.ok(
+      ratio >= 4.5,
+      `${selector} is ${ink} on ${surface} = ${ratio.toFixed(2)}, below the 4.5 it owes`,
+    );
+  }
+  // And the surfaces themselves are still what this test believes: a stylesheet that
+  // darkened the banner would make the assertion above pass while the real pairing got
+  // worse, which is the same vacuity trap in a different coat.
+  assert.ok(css.includes("background: #fde8b0"), "the banner strip is still amber");
+  assert.ok(css.includes("background: #fff;"), "the legend panel is still opaque white");
+});
+
+test("A3: readableTextOn replaces the hand-curated dark-text set, and is never wrong", () => {
+  // The four lines the old set named still get dark ink.
+  for (const line of ["N", "Q", "R", "W"]) {
+    assert.equal(readableTextOn(lineColor(line)), INK_DARK, `${line} should take dark ink`);
+  }
+  // AND THE SIX IT MISSED. Each of these carried white text at under 4.5 against its own
+  // fill: B/D/F/M at 2.82, G at 2.97, L at 3.48. This is the assertion that would have
+  // failed before the helper existed.
+  for (const line of ["B", "D", "F", "M", "G", "L"]) {
+    assert.equal(readableTextOn(lineColor(line)), INK_DARK, `${line} was missing from DARK_TEXT_LINES`);
+  }
+  // Whatever it picks, the pick clears AA. Asserted over every id in the palette rather
+  // than over a sample, because a set that is right about ten entries and wrong about the
+  // eleventh is exactly what this replaces.
+  for (const line of Object.keys(LINE_COLORS)) {
+    const bg = lineColor(line);
+    const ratio = contrastRatio(readableTextOn(bg), bg);
+    assert.ok(ratio >= 4.5, `subway ${line} (${bg}) ink is only ${ratio.toFixed(2)}`);
+  }
+  // FALLBACK FILLS INCLUDED ON PURPOSE. Each is what a rider sees when a feed omits a
+  // route id, which is a degraded state and therefore when the label matters most.
+  // railroadColor's #607d8b failed when this test was written: 4.37 with white ink and
+  // 3.98 with dark, so NEITHER choice could rescue it and the fill itself had to move.
+  // routeColor is absent from this list for the reason given above.
+  for (const bg of [railroadColor(null), lineColor(null), PATH_FALLBACK_COLOR, FERRY_FALLBACK_COLOR]) {
+    const ratio = contrastRatio(readableTextOn(bg), bg);
+    assert.ok(ratio >= 4.5, `fallback fill ${bg} ink is only ${ratio.toFixed(2)}`);
+  }
+  for (const id of ["", "1", "2", "3", "BABYLON", "HARLEM", "PORT JEFFERSON", "NEW HAVEN"]) {
+    const bg = railroadColor(id);
+    const ratio = contrastRatio(readableTextOn(bg), bg);
+    assert.ok(ratio >= 4.5, `railroad "${id}" (${bg}) ink is only ${ratio.toFixed(2)}`);
+  }
+  // DELIBERATELY NOT THE BUS WHEEL. hsl(h, 75%, 40%) has hues where neither ink clears
+  // 4.5 (hue 30 tops out at 4.36), and the first draft of this test swept it and failed.
+  // The failure was the test's, not the palette's: nothing prints text ON a bus colour.
+  // It is a polyline colour and a heading colour, so it owes 3:1 as a non-text indicator,
+  // and its heading use is covered by the readableInk sweep in the next test. Asserting
+  // an obligation a colour does not have would have forced a redesign of the wheel to
+  // satisfy a rule nobody was breaking.
+});
+
+test("A3: readableInk darkens only what must darken, and keeps the hue", () => {
+  // Already readable: returned untouched, so a colour that needs nothing is not shifted.
+  assert.equal(readableInk("#1f5fbf"), "#1f5fbf");
+  assert.equal(readableInk("#c0392b"), "#c0392b");
+  // The worst case in the palette. #e6b800 on white is 1.87, which is not text anyone
+  // can read; the result must clear 4.5 and must still be recognisably yellow, meaning
+  // red and green stay far ahead of blue.
+  const yellow = parseColor(readableInk("#e6b800"));
+  assert.ok(contrastRatio(readableInk("#e6b800"), "#ffffff") >= 4.5);
+  assert.ok(yellow[0] > yellow[2] && yellow[1] > yellow[2], "an N heading must still read yellow");
+  // Every palette colour, as text on white, after the helper.
+  for (const line of Object.keys(LINE_COLORS)) {
+    const ratio = contrastRatio(readableInk(lineColor(line)), "#ffffff");
+    assert.ok(ratio >= 4.5, `subway ${line} heading ink is only ${ratio.toFixed(2)}`);
+  }
+  for (let hue = 0; hue < 360; hue += 5) {
+    const ratio = contrastRatio(readableInk(`hsl(${hue}, 75%, 40%)`), "#ffffff");
+    assert.ok(ratio >= 4.5, `bus hue ${hue} heading ink is only ${ratio.toFixed(2)}`);
+  }
+  // Unparseable input passes through rather than throwing: a caller that hands us
+  // something odd gets its own colour back, not a crash in a popup.
+  assert.equal(readableInk("chartreuse"), "chartreuse");
 });

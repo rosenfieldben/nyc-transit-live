@@ -533,9 +533,23 @@ body.stations-docked #alert-banner {
   #stations-panel {
     box-shadow: none;
   }
+  /* THE MAP IS SIZED TO THE SPACE BESIDE THE PANEL, NOT PUSHED INTO IT.
+     #map is position:relative and was `left: min(360px, 92vw); width: auto`. On a
+     relatively-positioned block, `left` displaces the box and `width: auto` still
+     resolves to the containing block, so the map stayed 1280px wide and simply moved
+     360px right: measured scrollWidth 1640 against clientWidth 1280, a 360px horizontal
+     document overflow, with the attribution control carried out to x1406..1640 where a
+     rider could neither read nor click it. That is the A1 defect this phase inherited
+     by name, and the mechanism was never the panel's width. It was that nothing ever
+     took the width back off the map.
+
+     Subtracting the same value the offset adds is the whole fix, and the two must stay
+     the same expression or the right edge drifts. A4h asserts the result rather than
+     the rule: scrollWidth equals clientWidth, the map's right edge lands on the
+     viewport edge, and the attribution is inside it. */
   body.stations-docked #map {
     left: min(360px, 92vw);
-    width: auto;
+    width: calc(100% - min(360px, 92vw));
   }
 }
 

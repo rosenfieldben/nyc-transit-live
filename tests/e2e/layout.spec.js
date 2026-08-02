@@ -456,3 +456,56 @@ test("A4g. every rendered route colour meets AA where it carries or is text", as
   const failures = measured.filter((m) => m.ratio < m.need);
   expect(failures, `route colour text below AA as rendered: ${JSON.stringify(failures)}`).toEqual([]);
 });
+
+for (const [label, viewport, docked] of [
+  ["1280 docked", { width: 1280, height: 720 }, true],
+  ["375 overlay", { width: 375, height: 667 }, false],
+]) {
+  test(`A4h. the document never scrolls sideways at ${label}`, async ({ page }) => {
+    // THE A1 DEFECT THIS PHASE INHERITED BY NAME. Docked, the map was displaced by the
+    // panel rather than sized to the space beside it, so the document was 360px wider
+    // than the window: scrollWidth 1640 against clientWidth 1280, with the attribution
+    // control pushed to x1406..1640 where it could be neither read nor clicked.
+    //
+    // Asserted at BOTH widths on purpose. The overflow only ever appeared docked, so a
+    // mobile-only assertion would have passed throughout the defect's life, and a
+    // desktop-only one would not notice the mobile layout reintroducing it later.
+    await page.setViewportSize(viewport);
+    const ctx = await installMocks(page);
+    await open(page, ctx);
+
+    // The panel must actually be in the state the label claims, or this measures the
+    // wrong layout and passes for the wrong reason.
+    const isDocked = await page.evaluate(() => document.body.classList.contains("stations-docked"));
+    expect(isDocked, `the panel must be ${docked ? "docked" : "overlaid"} at this width`).toBe(docked);
+
+    const geometry = await page.evaluate(() => {
+      const de = document.documentElement;
+      const map = document.getElementById("map").getBoundingClientRect();
+      const attribution = document.querySelector(".leaflet-control-attribution");
+      const a = attribution ? attribution.getBoundingClientRect() : null;
+      return {
+        scrollWidth: de.scrollWidth,
+        clientWidth: de.clientWidth,
+        mapRight: Math.round(map.right),
+        mapLeft: Math.round(map.left),
+        attribution: a ? [Math.round(a.left), Math.round(a.right)] : null,
+        attributionInside: a ? a.right <= de.clientWidth + 0.5 && a.left >= -0.5 : false,
+      };
+    });
+
+    expect(geometry.scrollWidth, "the document must not be wider than the window").toBe(
+      geometry.clientWidth,
+    );
+    // The map ENDS at the window edge, which is what "sized to the space beside the
+    // panel" means. Without this, a map that had simply been made narrower and left in
+    // the corner would satisfy the scrollWidth check while wasting the screen.
+    expect(geometry.mapRight, "the map must reach the right edge of the window").toBe(
+      geometry.clientWidth,
+    );
+    expect(
+      geometry.attributionInside,
+      `the attribution must be on screen, measured at ${JSON.stringify(geometry.attribution)}`,
+    ).toBe(true);
+  });
+}

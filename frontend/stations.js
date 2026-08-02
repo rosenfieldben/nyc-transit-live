@@ -139,8 +139,20 @@ if (stationsClose) stationsClose.addEventListener("click", closeStationsPanel);
 // control reaches elements that are behind an opaque overlay: reachable by keyboard,
 // invisible to the eye. That is a real wart and it is deliberately not solved by
 // trapping focus, because a trap with no reliable exit is how the defect above was
-// created in the first place. The close button is the exit, it is the last stop inside
-// the panel, and A6i asserts a pointer rider can reach and use it.
+// created in the first place.
+//
+// WHERE THE EXIT ACTUALLY IS, corrected after round 2 of the review caught this comment
+// claiming the close button was "the last stop inside the panel". It is the FIRST:
+// measured at 375, the panel's focusable order is [#stations-close, #stations-search,
+// then any result rows], opening puts focus on the search input, and tabbing FORWARD
+// from there goes straight out to #legend-toggle and the layer checkboxes underneath the
+// overlay. So the keyboard exits are Escape, and one Shift+Tab from the search input the
+// panel opens on. A6n pins that ordering rather than trusting this paragraph, since the
+// paragraph is what was wrong; A6i pins the pointer rider's exit.
+//
+// First was chosen for the screen reader, and it is kept: the exit is announced
+// immediately after the region's name, and it stays in one place instead of moving down
+// the panel as result rows appear.
 if (stationsPanel) {
   stationsPanel.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;

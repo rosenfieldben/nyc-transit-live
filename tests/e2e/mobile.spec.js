@@ -591,3 +591,70 @@ test("A6m. dismissing the banner gives the reserved strip back", async ({ page }
     `the panel must take the strip back (showing ${showing.panelBottom}, dismissed ${dismissed.panelBottom})`,
   ).toBeGreaterThan(showing.panelBottom);
 });
+
+test("A6n. the keyboard exit from the full-screen panel is where the comment says it is", async ({ page }) => {
+  // ROUND 2 CAUGHT stations.js CLAIMING the close button was "the last stop inside the
+  // panel". It is the first. That sentence was the stated mitigation for shipping an
+  // opaque overlay with no focus trap, so a maintainer reading it would have believed
+  // forward-tabbing ended at a visible exit, when forward-tabbing in fact leaves the
+  // overlay entirely.
+  //
+  // The comment is now corrected, and this spec is why it stays corrected: the ordering
+  // is asserted rather than described. It pins the exit that exists (Shift+Tab from the
+  // input the panel opens on, plus Escape) AND the wart that also exists (forward-tab
+  // leaves), because a spec that only pinned the good half would be the same kind of
+  // half-true the comment was.
+  await page.setViewportSize(PHONE);
+  await installMocks(page);
+  await open(page);
+  await page.locator("#stations-toggle").click();
+  await expect(page.locator("#stations-panel")).toBeVisible();
+
+  const order = await page.evaluate(() => {
+    const panel = document.getElementById("stations-panel");
+    const focusable = "a[href], button, input, select, textarea, [tabindex]:not([tabindex='-1'])";
+    return [...panel.querySelectorAll(focusable)]
+      .filter((el) => !el.disabled && el.offsetParent !== null)
+      .map((el) => el.id);
+  });
+  expect(order, "the close button is the FIRST focusable in the panel, not the last").toEqual([
+    "stations-close",
+    "stations-search",
+  ]);
+
+  // Opening lands on the search input, which is the A1 contract.
+  await expect(page.locator("#stations-search")).toBeFocused();
+
+  // The exit is one Shift+Tab away, and it works.
+  await page.keyboard.press("Shift+Tab");
+  await expect(page.locator("#stations-close"), "one Shift+Tab reaches the exit").toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#stations-panel")).toBeHidden();
+  await expect(page.locator("#stations-toggle"), "and closing returns focus to the opener").toBeFocused();
+
+  // The wart, recorded rather than papered over: tabbing FORWARD leaves the overlay onto
+  // controls the rider cannot see. If a later phase adds a focus trap this fails, which
+  // is the right way to find out that this comment needs rewriting again.
+  await page.locator("#stations-toggle").click();
+  await expect(page.locator("#stations-search")).toBeFocused();
+  await page.keyboard.press("Tab");
+  const landed = await page.evaluate(() => {
+    const el = document.activeElement;
+    const r = el.getBoundingClientRect();
+    const top = document.elementFromPoint(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2));
+    return {
+      id: el.id,
+      inPanel: document.getElementById("stations-panel").contains(el),
+      // Covered means the rider's focus is on something they cannot see, which is the
+      // wart itself. Named by MEASUREMENT rather than by id: the first draft of this
+      // assertion pinned "legend-toggle" from a misread probe and the real next stop is
+      // #stations-toggle, which is the same wart and a different element.
+      covered: !!(top && top !== el && !el.contains(top)),
+    };
+  });
+  expect(landed, "forward-tab still leaves the overlay onto a control the rider cannot see").toEqual({
+    id: "stations-toggle",
+    inPanel: false,
+    covered: true,
+  });
+});

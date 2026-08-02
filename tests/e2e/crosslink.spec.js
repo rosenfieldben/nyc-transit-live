@@ -16,6 +16,7 @@
 
 const { test, expect } = require("@playwright/test");
 const { installMocks, json } = require("./mock");
+const { expectPopupState } = require("./popup");
 const fx = require("./fixtures/api");
 
 async function open(page) {
@@ -289,14 +290,10 @@ test("A3f. a refresh leaves alone the controls it did not destroy", async ({ pag
   // And it still does its job, which is the assertion that matters: focus sitting on
   // the right-looking element is not the same as the rider being able to act.
   await page.keyboard.press("Enter");
-  // Asked of the MARKER, which is the only source here that tells the truth. Measured
-  // on a popup closed by its own button: isPopupOpen() false and the popup's _map
-  // cleared, but map._popup still holds a stale reference AND one ".leaflet-popup" node
-  // is still in the document, because the clock is paused and the corpse never finishes
-  // fading. Two of the three obvious ways to ask this question report the popup as
-  // still open. This is the same family as the two Leaflet traps documented in
-  // shared.js, and the third time it has cost a round in this phase.
-  await expect
-    .poll(async () => page.evaluate((key) => railroads.get(key).marker.isPopupOpen(), gps))
-    .toBe(false);
+  // Through the harness helper. The measurement that made it necessary is recorded in
+  // tests/e2e/popup.js: on a popup closed by its own button, isPopupOpen() is false and
+  // the popup's _map is cleared, but map._popup still holds a stale reference AND one
+  // ".leaflet-popup" node is still in the document, because the clock is paused and the
+  // corpse never finishes fading. Two of the three obvious ways to ask report it open.
+  await expectPopupState(page, { registry: "railroads", key: gps }, false);
 });

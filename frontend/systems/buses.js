@@ -30,7 +30,7 @@ function busPopup(record) {
     // Bus alerts are route-only (no stop selectors); "bus" route ids share the
     // bus layer's id space, so the match is by route_id under system "bus".
     routeAlertsBlock("bus", b.route_id) +
-    `<b style="color:${routeColor(b.route_id)}">${esc(b.route_id ?? "Unknown route")}</b>` +
+    `<b style="color:${readableInk(routeColor(b.route_id))}">${esc(b.route_id ?? "Unknown route")}</b>` +
     `<br>Bus ${esc(b.id)}<br>Heading: ${heading}` +
     (showNote ? `<br><span class="popup-sub">${esc(note.message)}</span>` : "") +
     // C2: buses are a single feed, so their system is the synthesized one named
@@ -77,22 +77,85 @@ function clearBusRoute() {
   document.getElementById("route-banner").hidden = true;
 }
 
-async function toggleBusRoute(bus, marker) {
-  if (!bus?.route_id) return;
+// Does the line currently on the map (or the fetch in flight) belong to this bus?
+//
+// HONEST ABOUT WHAT THIS GUARD DOES TODAY: nothing observable. Leaflet closes the old
+// popup BEFORE opening the new one, so bus A's clear always lands before bus B's draw,
+// and an unconditional clear would behave identically. Mutation testing said exactly
+// that: removing this check leaves every bus-route spec green. It is kept because it
+// encodes the ordering the code depends on rather than assuming it silently, and A7e
+// asserts that ordering directly, so the day a Leaflet upgrade fires open before close
+// the suite says so and this check becomes the only thing between a rider and a popup
+// naming a route with no route drawn.
+function busRouteOwnedBy(busId) {
+  return (shownBusRoute && shownBusRoute.busId === busId) || pendingBusId === busId;
+}
 
-  // Leaflet's own popup toggle runs before this handler, so isPopupOpen()
-  // reflects the popup's NEW state. For a re-click on the selected (or
-  // pending) bus: popup just closed -> remove the line; popup just reopened
-  // (it was closed by a map click earlier) -> keep the line as is.
-  const sameBus =
-    (shownBusRoute &&
-      shownBusRoute.busId === bus.id &&
-      shownBusRoute.routeId === bus.route_id) ||
-    pendingBusId === bus.id;
-  if (sameBus) {
-    if (!marker.isPopupOpen()) clearBusRoute();
-    return;
-  }
+/* A3: THE ROUTE LINE FOLLOWS THE POPUP, NOT THE CLICK.
+   This was bound to the marker's `click` event, so the line was drawn by the gesture
+   rather than by the state it produced. Every other way of opening the popup drew
+   nothing: a programmatic openPopup (which is what any panel or keyboard path uses)
+   opened a popup describing a route with no route on the map, and Leaflet's own
+   keyboard activation path does not synthesise a click on the layer either. The defect
+   was recorded twice in earlier phases and had no owning surface until this one.
+
+   popupopen and popupclose are the honest seam because they fire for every opener,
+   including ones that do not exist yet. Leaflet fires both on the source layer as well
+   as the map (verified in the vendored source), so binding them here needs no
+   map-level bookkeeping.
+
+   THE DOUBLE-FIRE THIS HAD TO AVOID: keeping the old click handler alongside these
+   would have drawn on click AND on popupopen for a mouse rider, and since a
+   same-bus re-click closes the popup, the pair would have raced draw against clear on
+   one gesture. The click handler is gone rather than guarded, because a guard would
+   have left two things able to draw and only one of them tested.
+
+   The toggle logic goes with it. A re-click closes the popup, which now clears the line
+   through popupclose; that used to be inferred from isPopupOpen() reading the state
+   Leaflet had just changed. BEHAVIOUR CHANGE WORTH NAMING: dismissing the popup by
+   clicking the map used to leave the line drawn, and now clears it. That is what "and
+   closing clears it" asks for, and it is more consistent: the banner naming the route
+   is part of the same popup-shaped thing. */
+function releaseBusRoute(bus, marker) {
+  if (!bus || !busRouteOwnedBy(bus.id)) return;
+  // A POPUP THAT CLOSED BECAUSE ITS MARKER LEFT THE MAP IS NOT A RIDER DISMISSING IT,
+  // and the review caught this as a regression the popupopen move introduced. Hiding the
+  // Buses layer calls map.removeLayer(busLayer), which removes every bus marker, and
+  // Leaflet binds `remove: this.closePopup` on any layer with a popup. So unchecking
+  // Buses fired popupclose and DESTROYED the drawn route line; re-checking could not
+  // bring it back, because the geometry was gone and only a fresh fetch would restore
+  // it. Measured before this guard: uncheck -> {lines: 0}, re-check -> {lines: 0}. On
+  // the pre-A3 tree the same sequence gave {lines: 1} both times.
+  //
+  // Asking whether the marker is still on the map separates the two causes exactly: a
+  // rider closing a popup leaves the marker where it is, while hiding a layer or a
+  // vehicle leaving the feed takes the marker with it. The layer case must PRESERVE the
+  // line (busRouteLayer is hidden by the same toggle and comes back with it), and the
+  // departed-vehicle case is already handled explicitly in the removal sweep below,
+  // which clears the route when the drawn bus itself leaves.
+  //
+  // AND ONLY WHEN THERE IS A LINE TO PRESERVE, which round 2 of the review caught as a
+  // defect in the guard above. Ownership is two states, not one: DRAWN, and a fetch still
+  // in flight with nothing drawn yet. Preserving the pending state was wrong, because the
+  // early return also skips the sequence bump that supersedes that fetch, so hiding the
+  // layer mid-fetch let the response land and run to completion against a layer that was
+  // no longer on the map. Reproduced: uncheck Buses during the fetch and the result was
+  // {lines: 1, bannerHidden: false, label: "Bus route M15", busesChecked: false} -- the
+  // banner naming a route for a popup the rider can no longer see, which is the exact
+  // state A7f pins as forbidden for the drawn case. Falling through to clearBusRoute
+  // discards the in-flight response instead, and there is no drawn geometry to lose:
+  // that is what shownBusRoute being null in this branch means.
+  const drawnForThisBus = shownBusRoute && shownBusRoute.busId === bus.id;
+  if (drawnForThisBus && marker && typeof map !== "undefined" && map && !map.hasLayer(marker)) return;
+  clearBusRoute();
+}
+
+async function showBusRoute(bus) {
+  if (!bus?.route_id) return;
+  // Already drawn for this exact bus and route: a refresh that reopens nothing should
+  // not refetch. popup.update() does not fire popupopen, so this is belt for a future
+  // path rather than the common case.
+  if (shownBusRoute && shownBusRoute.busId === bus.id && shownBusRoute.routeId === bus.route_id) return;
 
   clearBusRoute(); // a different bus replaces any current line
   const requestId = ++busRouteSeq;
@@ -161,7 +224,22 @@ function applyBuses(data) {
     if (record) {
       record.marker.setLatLng([bus.latitude, bus.longitude]);
       // Vehicle reassigned to a different route: its drawn line is now stale.
-      if (record.routeId !== bus.route_id && shownBusRoute?.busId === bus.id) {
+      //
+      // A3 review: ASKED OF busRouteOwnedBy, NOT OF shownBusRoute, because the drawn
+      // line is only half the state. Between the popup opening and the geometry landing
+      // there is a fetch in flight and nothing drawn yet, and a reassignment arriving in
+      // that window passed this check untouched: the fetch then completed and drew the
+      // OLD route, for a bus the poll had just moved to a new one. Reproduced with a
+      // delayed /api/bus-route response: bus MTA NYCT_101 opened on M15, reassigned
+      // mid-flight, and the result was {lines: 1, label: "Bus route M15"} with the
+      // record on the new route. busRouteOwnedBy covers both halves, and clearBusRoute
+      // bumps the sequence so the in-flight response is discarded rather than drawn.
+      //
+      // Cleared and not redrawn, which is the same choice already made for the drawn
+      // case: the rider asked for the line that bus was on, and the honest answer to
+      // "it is not on that route any more" is no line, not a different one they did not
+      // ask for.
+      if (record.routeId !== bus.route_id && busRouteOwnedBy(bus.id)) {
         clearBusRoute();
       }
       const shapeChanged =
@@ -200,7 +278,8 @@ function applyBuses(data) {
         opacity: markerOpacity(systemAgeOf("buses", "buses")), // dim on the first frame
       }, busName(bus))
         .bindPopup(() => busPopup(newRecord))
-        .on("click", () => toggleBusRoute(newRecord.latest, newRecord.marker))
+        .on("popupopen", () => showBusRoute(newRecord.latest))
+        .on("popupclose", () => releaseBusRoute(newRecord.latest, newRecord.marker))
         .addTo(busLayer);
       buses.set(bus.id, newRecord);
     }

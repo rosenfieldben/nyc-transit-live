@@ -11,6 +11,12 @@ function esc(value) {
 }
 
 // Deterministic color per bus route: hash the route id onto the hue wheel.
+// NO TEXT IS EVER PRINTED ON A BUS COLOUR: it is a polyline colour and a heading colour,
+// never a chip fill, so this wheel owes 3:1 as a non-text indicator rather than 4.5 as a
+// background for ink. The heading use goes through readableInk, which the node test
+// sweeps across all 360 hues. An earlier draft of this comment changed the fallback to
+// #666666 on the grounds that white text on #777 measures 4.48; that reasoning was
+// borrowed from the chips and does not apply here, so the value is unchanged.
 function routeColor(routeId) {
   if (!routeId) return "#777777";
   let h = 0;
@@ -33,8 +39,6 @@ const LINE_COLORS = {
   GS: "#566573", FS: "#566573", H: "#566573", S: "#566573",
   SI: "#34495e",
 };
-// Yellow squares need dark text for contrast.
-const DARK_TEXT_LINES = new Set(["N", "Q", "R", "W"]);
 
 function lineColor(routeId) {
   if (!routeId) return "#555555";
@@ -50,11 +54,151 @@ const RAILROAD_COLORS = [
   "#4527a0", "#2e7d32", "#ad1457", "#00695c", "#5d4037",
 ];
 
+// The no-id fallback is the same neutral PATH already uses, and it moved for a measured
+// reason: #607d8b carries white text at 4.37 and dark text at 3.98, so NEITHER ink can
+// make it readable. That is a fill that has to move rather than an ink that has to be
+// chosen, which is the one case readableTextOn cannot rescue and the reason the node
+// test asserts the chosen ink's ratio rather than merely that a choice was made.
 function railroadColor(routeId) {
-  if (!routeId) return "#607d8b";
+  if (!routeId) return "#546e7a";
   let h = 0;
   for (const c of routeId) h = (h * 31 + c.charCodeAt(0)) >>> 0;
   return RAILROAD_COLORS[h % RAILROAD_COLORS.length];
+}
+
+/* ----- A3: one breakpoint, named once ----------------------------------------
+   700px is the mobile boundary, and it is declared here as well as in style.css because
+   two things need it: the media queries that lay the page out, and the status line's
+   compaction, which is composed in JavaScript. A number written twice drifts, so the
+   node test asserts style.css actually uses this value. The 1100px docked threshold is a
+   different decision and is deliberately untouched by A3.
+
+   Injectable like the motion gate above, for the same reason: a test needs to state the
+   viewport rather than resize a real window, and node has no matchMedia at all. */
+const MOBILE_MAX_WIDTH_PX = 700;
+const MOBILE_QUERY = `(max-width: ${MOBILE_MAX_WIDTH_PX}px)`;
+
+function narrowViewport(mql = null) {
+  const query = mql || (typeof matchMedia === "function" ? matchMedia(MOBILE_QUERY) : null);
+  if (!query) return false; // no matchMedia (node): the roomy layout, same as before A3
+  return !!query.matches;
+}
+
+/* ----- A3: the status line's composition rule --------------------------------
+   ONE STATED ORDER: counts, then clock, then problems. Counts are what a rider glances
+   at, the clock is ambient, and a problem is the thing they need to read whole. The
+   line WRAPS rather than truncating, so nothing is ever cut off at any width; what
+   compaction does is drop the clock's SECONDS, which is the only part of the line that
+   carries no information a rider acts on.
+
+   NEVER TRUNCATE A PROBLEM STATEMENT. This is the hard rule and the reason composition
+   lives in one testable function instead of a template literal at the call site: "Bus:
+   upstream 502" clipped to "Bus: upstr" is worse than no status line at all, because it
+   looks like the page merely ran out of room rather than that something is broken. If a
+   future narrow layout needs to shed something, it sheds the clock and then the counts,
+   in that order, and the problems stay whole.
+
+   THE PROBLEM SEPARATOR IS A COLON, NOT AN EM DASH, by ruling, and the reason is the one
+   that kept the middot out of the spoken train names in A2: an em dash is visual
+   punctuation a screen reader renders as noise or as the words "em dash", while a colon
+   is read as the pause it looks like. The line shipped with a U+2014 here before A3;
+   recomposing it was the moment to fix that rather than carry it forward.
+   The middot between counts and clock stays. It separates two glanceable facts rather
+   than introducing a statement, and it is what shipped. */
+function statusLineText({ counts, clock, problems = [] } = {}, { compact = false } = {}) {
+  const time = compact ? String(clock ?? "").replace(/:\d\d(?=(\s|$))/, "") : clock;
+  const stated = (problems ?? []).filter(Boolean);
+  const head = [counts, time].filter(Boolean).join(" \u00b7 ");
+  if (!stated.length) return counts ? `${counts} \u00b7 updated ${time}` : `updated ${time}`;
+  return `${head}: ${stated.join("; ")}`;
+}
+
+/* ----- A3: contrast, computed rather than curated ----------------------------
+   ONE luminance path for the whole app. Before this there was none: the only
+   contrast logic anywhere was DARK_TEXT_LINES above, a hand-written set of four
+   subway lines "that need dark text". Hand-curated sets are wrong the moment a
+   palette gains an entry, and this one already was. Measured against white text at
+   the 4.5 a chip's 11px owes: B/D/F/M #d68910 at 2.82, G #58a832 at 2.97, L #7f8c8d
+   at 3.48, and in the railroad palette #ef6c00 at 3.08 and the no-id default #607d8b
+   at 4.37. Six subway lines and two railroad colours carrying unreadable text, none
+   of them in the set.
+
+   The formulas are WCAG 2.x relative luminance and contrast ratio, verbatim. They
+   are here rather than in a stylesheet because the decision is per route colour and
+   the route colours are computed. */
+
+// "#rgb", "#rrggbb", "rgb(...)" and the "hsl(h, s%, l%)" that routeColor emits.
+// Returns null for anything unparseable rather than guessing, so a caller gets a
+// visible failure instead of a silently wrong colour.
+function parseColor(value) {
+  const text = String(value ?? "").trim();
+  const short = text.match(/^#([0-9a-f])([0-9a-f])([0-9a-f])$/i);
+  if (short) return short.slice(1, 4).map((c) => parseInt(c + c, 16));
+  const long = text.match(/^#([0-9a-f]{6})$/i);
+  if (long) return [0, 2, 4].map((i) => parseInt(long[1].slice(i, i + 2), 16));
+  const rgb = text.match(/^rgba?\(([^)]+)\)$/i);
+  if (rgb) {
+    const parts = rgb[1].split(/[\s,/]+/).filter(Boolean).map(Number);
+    if (parts.length >= 3 && parts.slice(0, 3).every((n) => Number.isFinite(n))) return parts.slice(0, 3);
+    return null;
+  }
+  const hsl = text.match(/^hsl\(\s*([\d.]+)\s*,\s*([\d.]+)%\s*,\s*([\d.]+)%\s*\)$/i);
+  if (hsl) {
+    const [h, s, l] = [Number(hsl[1]), Number(hsl[2]) / 100, Number(hsl[3]) / 100];
+    const a = s * Math.min(l, 1 - l);
+    const f = (n) => {
+      const k = (n + h / 30) % 12;
+      return l - a * Math.max(-1, Math.min(k - 3, Math.min(9 - k, 1)));
+    };
+    return [f(0) * 255, f(8) * 255, f(4) * 255];
+  }
+  return null;
+}
+
+function relativeLuminance(rgb) {
+  const [r, g, b] = rgb.map((channel) => {
+    const c = channel / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+// WCAG contrast ratio, 1 to 21. Order-independent by construction.
+function contrastRatio(a, b) {
+  const [x, y] = [parseColor(a), parseColor(b)];
+  if (!x || !y) return null;
+  const [hi, lo] = [relativeLuminance(x), relativeLuminance(y)].sort((m, n) => n - m);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+// The ink to print ON a filled shape: whichever of the two carries further. This is
+// what replaces DARK_TEXT_LINES, and it cannot fall behind a palette because it reads
+// the palette.
+const INK_LIGHT = "#ffffff";
+const INK_DARK = "#1a1a1a";
+function readableTextOn(background) {
+  const light = contrastRatio(INK_LIGHT, background);
+  const dark = contrastRatio(INK_DARK, background);
+  if (light == null || dark == null) return INK_DARK; // unparseable: the safer default
+  return light >= dark ? INK_LIGHT : INK_DARK;
+}
+
+// A route colour used AS TEXT, on a light surface, darkened only as far as it must be.
+// The brand colour stays on the SHAPES that carry identity (bullets, chips, route
+// lines), where 3:1 applies and the label carries the meaning; a heading rendered in
+// the same hue is text and owes 4.5, and #e6b800 on white is 1.87. Scaling the channels
+// toward black preserves the hue, so an N heading still reads yellow, just readably so.
+// Returns the input unchanged when it already clears the target.
+function readableInk(color, background = "#ffffff", target = 4.5) {
+  const rgb = parseColor(color);
+  if (!rgb) return color;
+  if ((contrastRatio(color, background) ?? 0) >= target) return color;
+  for (let scale = 0.95; scale >= 0; scale -= 0.05) {
+    const scaled = rgb.map((c) => Math.round(c * scale));
+    const hex = `#${scaled.map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+    if ((contrastRatio(hex, background) ?? 0) >= target) return hex;
+  }
+  return "#000000"; // black fails nothing on a light surface
 }
 
 // A railroad train placed at its next station (vs one drawn at a live GPS
@@ -753,7 +897,7 @@ function railroadArrivalsHtml(station, body, now, nameFor = () => null) {
       .map((a) => {
         const route = a.route_id ?? "";
         const badge =
-          `<span class="arr-badge" style="background:${railroadColor(route)};color:#fff">` +
+          `<span class="arr-badge" style="background:${railroadColor(route)};color:${readableTextOn(railroadColor(route))}">` +
           `${esc(route || "?")}</span>`;
         const routeName = a.route_id ? nameFor(a.route_id) : null;
         const label = routeName ? ` ${esc(routeName)}` : "";
@@ -860,7 +1004,7 @@ function formatPathHead(routeId, name) {
 // publishes no alerts feed. Every feed-derived string is escaped.
 function pathTrainPopupHtml(train, name, color) {
   return (
-    `<b style="color:${color}">${esc(formatPathHead(train.route_id, name))}</b>` +
+    `<b style="color:${readableInk(color)}">${esc(formatPathHead(train.route_id, name))}</b>` +
     ` <span class="popup-sub">PATH</span>` +
     (train.stop_name ? `<br>Next stop: ${esc(train.stop_name)}` : "") +
     (train.direction ? `<br>${esc(train.direction)}` : "") +
@@ -888,7 +1032,7 @@ function pathArrivalsHtml(station, body, now, colorFor = () => PATH_FALLBACK_COL
       .map((a) => {
         const route = a.route_id ?? "";
         const badge =
-          `<span class="arr-badge" style="background:${colorFor(a.route_id)};color:#fff">` +
+          `<span class="arr-badge" style="background:${colorFor(a.route_id)};color:${readableTextOn(colorFor(a.route_id))}">` +
           `${esc(route || "?")}</span>`;
         const routeName = a.route_id ? nameFor(a.route_id) : null;
         const label = routeName ? ` ${esc(routeName)}` : "";
@@ -1010,7 +1154,7 @@ function ferryBoatPopupHtml(boat, name, color) {
   const status = ferryStatusText(boat.status);
   const speed = ferrySpeedKnots(boat.status, boat.speed);
   return (
-    `<b style="color:${color}">${esc(routeText)}</b>` +
+    `<b style="color:${readableInk(color)}">${esc(routeText)}</b>` +
     ` <span class="popup-sub">NYC Ferry</span>` +
     (boat.label ? `<br>Boat ${esc(boat.label)}` : "") +
     (status ? `<br>${esc(status)}` : "") +
@@ -1039,7 +1183,7 @@ function ferryArrivalsHtml(station, body, now, colorFor = () => FERRY_FALLBACK_C
   let html = header;
   for (const [routeName, rows] of buckets) {
     const color = rows[0] && rows[0].route_id ? colorFor(rows[0].route_id) : FERRY_FALLBACK_COLOR;
-    html += `<div class="arr-dir" style="color:${color}">${esc(routeName)}</div>`;
+    html += `<div class="arr-dir" style="color:${readableInk(color)}">${esc(routeName)}</div>`;
     html += rows
       .map((row) => {
         const d = ferryArrivalDisplay(row, now);
@@ -1890,7 +2034,11 @@ if (typeof module !== "undefined" && module.exports) {
     indexAlerts, matchStationAlerts, matchRouteAlerts, bannerAlerts, alertsBlockHtml,
     hashString, bannerRenderKey,
     RAILROAD_ROUTE_MAX_SLICE, RAILROAD_ROUTE_ACCEPT_DIST, RAILROAD_BUCKET_ORDER,
-    LINE_COLORS, DARK_TEXT_LINES, FEED_STALE_AFTER_S, FETCH_DEADLINE_MS, shouldRefresh,
+    LINE_COLORS, FEED_STALE_AFTER_S, FETCH_DEADLINE_MS, shouldRefresh,
+    // A3: one luminance path for the whole app.
+    parseColor, relativeLuminance, contrastRatio, readableTextOn, readableInk, statusLineText,
+    MOBILE_MAX_WIDTH_PX, MOBILE_QUERY, narrowViewport,
+    INK_LIGHT, INK_DARK,
     feedAgeLine, humanizeAge, alertsStale, alertsFreshnessBasis, ALERTS_STALE_AFTER_S,
     ingestSystems, systemAges, systemStaleAts, staleAge, markerOpacity, glideClock,
     thresholdOverrides, CONTRACT_FLAG_PARAM,

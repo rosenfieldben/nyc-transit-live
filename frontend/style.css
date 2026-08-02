@@ -9,17 +9,60 @@ html, body {
 }
 
 /* Legend + status panel, top right */
+
+/* A3: OPAQUE, AND THAT IS AN ACCESSIBILITY DECISION RATHER THAN A VISUAL ONE.
+   This surface was rgba(255, 255, 255, 0.92), and the 8% of map tile showing through
+   was the single largest source of undecidable contrast on the page: axe reported
+   "background color could not be determined because element contains an image node"
+   for all seven layer-toggle labels, because resolving their background meant
+   resolving live imagery. Contrast over a solid colour is machine-checkable; contrast
+   over the map never is, at any alpha. Measured: opaque takes the undecidable set from
+   9 entries to 1 and the color-contrast passes from 7 nodes to 15, with no text colour
+   changed and no violation introduced.
+
+   The 8% was never buying much. Composited over the darkest possible tile the old
+   surface was rgb(235, 235, 235), so nothing here was ever failing AA; the problem was
+   that no machine could prove it. See the conversion rule in tests/e2e/a11y.spec.js.
+
+   AND IT IS BOUNDED BY THE VIEWPORT, which is a SEPARATE fix that happens to live in
+   the same rule. RE-MEASURED after A3's review round 2 found the numbers here had gone
+   stale (the mobile override below moved one of them, and this comment still quoted the
+   pre-fix figure as the fixed one). With the legend expanded and no alert showing:
+
+     unbounded  1280x720  content 771px, runs to y=781, so 61px off the bottom
+     unbounded   375x667  content 884px, runs to y=894, so 227px off the bottom
+     bounded    1280x720  ends at y=710 (max-height 700)
+     bounded     375x667  ends at y=637 (max-height 627, from the mobile rule below)
+
+   With one agency-wide alert at 375x667 the mobile rule takes it to 587, clear of the
+   banner. Bounded it scrolls its own overflow, so every row stays reachable and the
+   panel cannot grow off the screen as systems are added.
+
+   Do not credit this half with the axe conversion, which is a claim about the DESKTOP
+   scan and still measures true: removing max-height and overflow-y leaves A1i, A1j, A1k
+   and A1l green, because the opaque background alone converts all eight entries.
+   Reverting to rgba fails three of them.
+
+   What changed is that a fifth spec now depends on the bounding. The same mutation fails
+   A1m2 on "the set of surfaces undecidable at mobile width has changed", because an
+   unbounded panel reaches down into the alert banner and axe stops being able to decide
+   the alert row's contrast. Removing only the base rule does it too: the mobile override
+   sets a height but takes its overflow-y from here, so without it the content spills
+   past the bound anyway. Two fixes, one rule, and now each has its own evidence. */
 #panel {
   position: absolute;
   top: 10px;
   right: 10px;
   z-index: 1000; /* above Leaflet panes */
-  background: rgba(255, 255, 255, 0.92);
+  background: #fff;
   padding: 8px 12px;
   border-radius: 6px;
   font: 13px/1.5 system-ui, sans-serif;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
   max-width: 240px;
+  box-sizing: border-box;
+  max-height: calc(100vh - 20px); /* the 10px inset, top and bottom */
+  overflow-y: auto;
 }
 
 .legend-row {
@@ -73,10 +116,18 @@ html, body {
   font-weight: 600;
 }
 
+/* A3: meets the 24px floor, which it did not before. Measured at 59x18 in the inventory
+   and missed by A2's floor work for a mundane reason: it only exists after a rider has
+   clicked a bus, so a sample of the resting page never sees it. The height comes from
+   padding and a min-height rather than a larger font, so the button looks the same as it
+   did; inline-flex keeps the label centred in the taller box. */
 #route-clear {
+  display: inline-flex;
+  align-items: center;
   border: 1px solid #ccc;
   background: #f6f6f6;
   border-radius: 4px;
+  min-height: 24px;
   padding: 1px 7px;
   font: 12px system-ui, sans-serif;
   cursor: pointer;
@@ -153,8 +204,18 @@ html, body {
    remain as the state markers the icon carries and the e2e suite reads, so there is
    deliberately no rule for them here. */
 
+/* A3: #666 IS THE ONE MUTED INK, and it is the lightest grey that clears 4.5:1 on all
+   three surfaces this app prints muted text on: white popups (5.74), the banner's amber
+   #fde8b0 (4.74) and the popup cream #fdf6e3 (5.32). Measured, not chosen by eye. What
+   it replaces failed on every one of them: .popup-sub was #777 at 4.48 on white, a
+   two-hundredths miss that no eye would catch; .arr-none was #888 at 3.54; .popup-stale
+   was #999 at 2.85; and .alert-stale was #888 at 2.93 on the amber. These are the
+   honesty lines, the "as of 3m ago" and "alerts may be out of date" hedges, so they were
+   the least readable text on the page and the text a rider most needs when the data is
+   wrong. Collapsing four greys to one loses no distinction that was doing work: the
+   stale lines are already italic, which is what separated them. */
 .popup-sub {
-  color: #777;
+  color: #666;
   font-size: 11px;
 }
 
@@ -173,7 +234,7 @@ html, body {
 }
 
 .arr-none {
-  color: #888;
+  color: #666;
   font-style: italic;
 }
 
@@ -208,13 +269,13 @@ html, body {
    alarm: low-emphasis so they never compete with the live data they hedge. */
 .popup-stale {
   margin-top: 2px;
-  color: #999;
+  color: #666;
   font-size: 11px;
   font-style: italic;
 }
 
 .alert-stale {
-  color: #888;
+  color: #666;
   font-size: 11px;
   font-style: italic;
 }
@@ -239,7 +300,20 @@ html, body {
      look closer. 54px clears the control (10px margin + 34px button + 10px gap)
      without moving the control itself, so nothing a rider has learned moves. */
   left: 54px;
-  right: 10px;
+  /* A3: AND IT STOPS CLEAR OF THE LEGEND PANEL, for the same reason A2 made it start
+     clear of the zoom control. The banner is z-index 1001 and #panel is 1000, so
+     wherever they meet the banner wins and whatever is under it stops being tappable.
+     The panel is `right: 10px; max-width: 240px`, so its left edge sits at
+     viewport - 250; 260px reserves that plus a 10px gap.
+
+     THE OVERLAP WAS REAL AND WIDER THAN THE PHONE. With `right: 10px` the banner ran to
+     x=614 at any width past 624 (54 + the 560px cap), while the panel's left edge is at
+     viewport - 250, so the two collided at every width below about 864: 320 and 375
+     where it was first measured, and the whole 701..864 band besides. The first version
+     of this fix moved the banner only under the mobile breakpoint and left that band
+     broken, which the boundary spec caught on its first run. Reserving the space here
+     fixes every width at once instead of one range at a time. */
+  right: 260px;
   max-width: 560px; /* left-aligned; full width only on a narrow screen */
   z-index: 1001; /* above Leaflet panes AND the legend #panel (z-index 1000) */
 }
@@ -476,15 +550,47 @@ body.stations-docked #alert-banner {
   color: #b45309;
 }
 
-/* FOCUS IS ALWAYS VISIBLE inside the panel, and this is the pattern A3 spreads to
-   the rest of the app. :focus-visible rather than :focus so a mouse click does not
-   leave a ring behind, and an outline with an offset rather than a background
-   change so it survives against any row state. */
+/* FOCUS IS ALWAYS VISIBLE, EVERYWHERE, and A3 is the phase that finished the job.
+   A1 wrote this rule for the station panel and its toggle and said it was the pattern
+   to spread; until now everything else fell back to whatever the browser drew, which
+   for Leaflet's own controls is a thin default ring over live map imagery.
+
+   :focus-visible rather than :focus, so a mouse click does not leave a ring behind.
+   An outline with an offset rather than a background change, so it survives against any
+   row state and cannot be mistaken for selection.
+
+   #1d4ed8 ON THE NOW-OPAQUE SURFACES, measured: 6.70:1 against the white panel and
+   popups, 5.54:1 against the banner's amber, 6.12:1 on the toggle button and 6.41:1 on
+   the cross-link, all clear of the 3:1 a focus indicator owes as non-text contrast. That number is only meaningful because A3 made those surfaces
+   opaque; over the old translucent panel it depended on the tiles.
+
+   THE LIST IS EXPLICIT RATHER THAN A BARE `:focus-visible`, and that is deliberate. A
+   universal selector would also ring the map container itself on every click-to-pan,
+   and Leaflet gives that container tabindex="0", so a rider panning the map would get a
+   3px ring around the whole viewport. Naming the controls keeps the promise to things a
+   rider actually operates. */
 #stations-panel :focus-visible,
-#stations-toggle:focus-visible {
+#stations-toggle:focus-visible,
+#legend-toggle:focus-visible,
+#toggles label:focus-within,
+#toggles input:focus-visible,
+#route-clear:focus-visible,
+#alert-banner-dismiss:focus-visible,
+.popup-crosslink:focus-visible,
+.leaflet-popup-close-button:focus-visible,
+.leaflet-control-zoom a:focus-visible,
+.leaflet-control-attribution a:focus-visible {
   outline: 3px solid #1d4ed8;
   outline-offset: 1px;
   border-radius: 3px;
+}
+
+/* The layer toggles are a checkbox inside a label, and the checkbox is what receives
+   focus while the label is what a rider sees and clicks. Ringing the label via
+   :focus-within puts the indicator around the whole target rather than around a 13px
+   box, which is the same reasoning that made the label the 24px hit target in A2. */
+#toggles label:focus-within {
+  outline-offset: 2px;
 }
 
 /* Docked rather than overlaid once there is room for both, per the phase's
@@ -494,9 +600,23 @@ body.stations-docked #alert-banner {
   #stations-panel {
     box-shadow: none;
   }
+  /* THE MAP IS SIZED TO THE SPACE BESIDE THE PANEL, NOT PUSHED INTO IT.
+     #map is position:relative and was `left: min(360px, 92vw); width: auto`. On a
+     relatively-positioned block, `left` displaces the box and `width: auto` still
+     resolves to the containing block, so the map stayed 1280px wide and simply moved
+     360px right: measured scrollWidth 1640 against clientWidth 1280, a 360px horizontal
+     document overflow, with the attribution control carried out to x1406..1640 where a
+     rider could neither read nor click it. That is the A1 defect this phase inherited
+     by name, and the mechanism was never the panel's width. It was that nothing ever
+     took the width back off the map.
+
+     Subtracting the same value the offset adds is the whole fix, and the two must stay
+     the same expression or the right edge drifts. A4h asserts the result rather than
+     the rule: scrollWidth equals clientWidth, the map's right edge lands on the
+     viewport edge, and the attribution is inside it. */
   body.stations-docked #map {
     left: min(360px, 92vw);
-    width: auto;
+    width: calc(100% - min(360px, 92vw));
   }
 }
 
@@ -601,4 +721,129 @@ body.stations-docked #alert-banner {
 .reduced-motion #stations-panel {
   transition: none;
   animation: none;
+}
+
+/* ==================================================================
+   A3: the mobile layout, under 700px
+   ==================================================================
+
+   The breakpoint is declared here AND as MOBILE_MAX_WIDTH_PX in helpers.js, because
+   the status line's compaction is composed in JavaScript while everything below is
+   laid out by CSS. A node test asserts the two agree, since a number written twice
+   is a number that drifts. The 1100px docked threshold is a different decision and
+   A3 does not touch it. */
+
+/* The legend disclosure button exists at every width and is hidden above the
+   breakpoint, so the control is never present without being usable. */
+#legend-toggle {
+  display: none;
+}
+
+/* Same shape for the panel's close button: hidden where the panel is a drawer beside
+   the map and #stations-toggle is visible next to it, shown where the panel covers the
+   page. THE ORDER MATTERS AND CAUGHT ME: this base rule has to precede the media block
+   below, because at equal specificity the later rule wins. Appended after it, this
+   `display: none` silently beat the mobile `display: block` and the close button was
+   present, focusable and invisible, which a click times out on. */
+#stations-close {
+  display: none;
+}
+
+@media (max-width: 700px) {
+  /* THE STATIONS PANEL BECOMES A FULL-WIDTH OVERLAY. On a phone a 360px slide-over
+     next to a 375px viewport is a slide-over with 15px of map beside it, which is
+     neither a panel nor a map. Full width, and the focus contract is unchanged:
+     the skip link is still the first tab stop, Escape still closes, and the toggle
+     still gets focus back. Those are A1 promises and A3 only changes the geometry. */
+  #stations-panel {
+    left: 0;
+    right: 0;
+    width: 100%;
+    max-width: none;
+    border-radius: 0;
+  }
+
+  /* The overlay's own exit. Full width so it is unmissable, and it sits directly under
+     the heading so a screen reader meets it immediately after the panel's name. */
+  #stations-close {
+    display: block;
+    width: 100%;
+    min-height: 32px;
+    margin-bottom: 8px;
+    padding: 6px 10px;
+    font: 600 13px system-ui, sans-serif;
+    color: #1a1a1a;
+    background: #f1f5f9;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+
+  #legend-toggle {
+    display: block;
+    width: 100%;
+    margin-bottom: 6px;
+    padding: 6px 10px;
+    min-height: 24px;
+    font: 600 13px system-ui, sans-serif;
+    color: #1a1a1a;
+    background: #f1f5f9;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  #panel {
+    max-width: 60vw;
+    /* AND IT STOPS ABOVE THE BANNER, which at this width lives at the bottom of the
+       screen. 40px is this layout's own geometry: the panel's 10px top inset, the
+       banner's 22px bottom inset, and an 8px gap between them. The banner's HEIGHT is
+       not a constant and is not guessed here: systems/shared.js measures the rendered
+       strip and publishes it, because it grows with each additional alert and with how
+       the header wraps at a given width.
+       Without this the panel ran to y=657 at 375x667 while the banner sat at 595..645.
+       Nothing was hidden from view (the banner paints above the panel), but the panel's
+       last 62px were unreachable: it scrolls its own overflow, so its END is what lands
+       behind the banner, and on a phone during an incident that is the status line. */
+    max-height: calc(100vh - 40px - var(--alert-banner-height, 0px));
+  }
+
+  /* THE ALERT BANNER MOVES OFF THE CONTROLS. Measured before this rule, at both 320
+     and 375 with an agency-wide alert showing: document.elementFromPoint at the
+     centre of #stations-toggle returned div.alert-banner-row, and a real Playwright
+     click on the toggle timed out on actionability. The Stations panel is the entire
+     text path to arrivals, so on a phone during a systemwide incident the one surface
+     built for riders who cannot use the map could not be tapped. It stayed reachable
+     by keyboard, because Tab and Enter do not hit-test, which is exactly why nothing
+     had noticed.
+     The banner goes to the bottom rather than the panel going down: banner height
+     varies with the number of alerts, so any top offset for the panel would be a
+     guess that breaks on the second alert. `bottom: 22px` clears Leaflet's
+     attribution strip, which must stay legible for the tile licence. */
+  #alert-banner {
+    top: auto;
+    bottom: 22px;
+    left: 8px;
+    right: 8px;
+    max-width: none;
+  }
+
+  /* The docked offset above is a desktop rule; at this width nothing is docked, and
+     leaving it applied would push the banner off the right edge. */
+  body.stations-docked #alert-banner {
+    left: 8px;
+  }
+
+  /* Popups are sized to the viewport, not to Leaflet's 300px default plus whatever
+     the content wants, so a long station name cannot push a popup off screen. */
+  .leaflet-popup-content {
+    max-width: calc(100vw - 60px);
+  }
+
+  /* The status line wraps rather than truncating; the never-truncate rule for problem
+     statements is stated at statusLineText in helpers.js. */
+  #status {
+    overflow-wrap: anywhere;
+  }
 }

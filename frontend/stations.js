@@ -66,6 +66,7 @@ function openStationsPanel({ focusSearch = true } = {}) {
   if (!stationsPanel) return;
   stationsPanel.hidden = false;
   if (stationsToggle) stationsToggle.setAttribute("aria-expanded", "true");
+  applyDockedLayout(); // the map gives up the column while the panel is using it
   if (focusSearch && stationsSearch) stationsSearch.focus();
   renderStationResults();
   resumePanelArrivals();
@@ -113,6 +114,7 @@ function closeStationsPanel() {
   if (focusWasInside && stationsToggle) stationsToggle.focus();
   stationsPanel.hidden = true;
   if (stationsToggle) stationsToggle.setAttribute("aria-expanded", "false");
+  applyDockedLayout(); // and takes it back the moment the panel stops using it
   stopPanelArrivals();
 }
 
@@ -121,9 +123,47 @@ function toggleStationsPanel() {
   else openStationsPanel();
 }
 
+// A3: the panel's own close button, which under 700px is the only pointer route out of
+// a full-viewport overlay. Routed through closeStationsPanel so it shares the focus
+// contract with Escape and the toggle: one door, and focus returns to the opener.
+const stationsClose = document.getElementById("stations-close");
+if (stationsClose) stationsClose.addEventListener("click", closeStationsPanel);
+
 // Escape anywhere inside closes and returns focus. Bound on the panel rather than
 // the document so it cannot swallow Escape from the rest of the page (the Leaflet
-// popups use it too), and nothing here traps: Tab always leaves the panel.
+// popups use it too).
+//
+// TAB IS NOT TRAPPED, and A3 has to be honest about what that means now. Above the
+// breakpoint the panel is a drawer beside the map and tabbing out of it reaches things
+// the rider can see. Under 700px the panel COVERS the page, so tabbing past its last
+// control reaches elements that are behind an opaque overlay: reachable by keyboard,
+// invisible to the eye. That is a real wart and it is deliberately not solved by
+// trapping focus, because a trap with no reliable exit is how the defect above was
+// created in the first place.
+//
+// WHERE THE EXIT ACTUALLY IS, corrected after round 2 of the review caught this comment
+// claiming the close button was "the last stop inside the panel". It is the FIRST.
+//
+// Round 3 then caught the correction: it named the wrong element AND described only one
+// of the two states the panel is ever in. Twice wrong in the same paragraph is worth
+// leaving on the record, because it is the argument for A6n existing at all. Measured at
+// 375, both states:
+//
+//   focusable order   [#stations-close, #stations-search, one button per result row]
+//   empty query       search -> #stations-toggle (outside, and covered by the overlay)
+//   with result rows  search -> the first row (still inside), rows -> #stations-toggle
+//
+// So the first stop outside the panel is always #stations-toggle, which the overlay
+// covers; #legend-toggle, which the earlier draft named, is the stop after it. And with
+// rows rendered, which is the state a rider who has typed anything is in, forward-tab
+// does not leave immediately at all. The keyboard exits are Escape, and one Shift+Tab
+// from the search input the panel opens on. A6n pins all of that in both states rather
+// than trusting this paragraph, since this paragraph is what keeps being wrong; A6i pins
+// the pointer rider's exit.
+//
+// First was chosen for the screen reader, and it is kept: the exit is announced
+// immediately after the region's name, and it stays in one place instead of moving down
+// the panel as result rows appear.
 if (stationsPanel) {
   stationsPanel.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
@@ -133,6 +173,34 @@ if (stationsPanel) {
 }
 
 if (stationsToggle) stationsToggle.addEventListener("click", toggleStationsPanel);
+
+/* A3: THE SKIP LINK HAS TO OPEN WHAT IT SKIPS TO.
+   It was a bare <a href="#stations-panel"> with no script at all, which works only when
+   the panel happens to be open already. At desktop widths A1 docks it open, so the link
+   behaved correctly and nothing noticed; under the mobile breakpoint the panel starts
+   closed, and the link then pointed at a hidden element.
+
+   Measured at 375 before this: Tab reached the link, Enter did nothing observable, and
+   the next Tab landed on #stations-toggle. So the first tab stop on a phone promised to
+   skip TO the stations list and delivered the button that opens it, which is exactly
+   where the rider would have arrived with one more Tab and no link at all. axe says the
+   same thing in its own words, reporting skip-link as undecidable at this width with
+   "Skip link target should become visible on activation"; that report is what put this
+   under the light, and it is the reason the mobile scan was worth adding.
+
+   preventDefault because the fragment navigation is now redundant and would fight the
+   focus call. openStationsPanel already focuses the search box, so this reuses the
+   panel's own opening path rather than reimplementing it: one door, as everywhere else
+   in this codebase. When the panel is ALREADY open the anchor's native behaviour is
+   correct and is left alone, which keeps the desktop path exactly as A1 shipped it. */
+const stationsSkip = document.getElementById("stations-skip");
+if (stationsSkip) {
+  stationsSkip.addEventListener("click", (event) => {
+    if (!stationsPanel || !stationsPanel.hidden) return; // already open: the anchor is right
+    event.preventDefault();
+    openStationsPanel();
+  });
+}
 if (stationsSearch) stationsSearch.addEventListener("input", renderStationResults);
 
 /* ---------------- the result list ---------------- */
@@ -144,13 +212,18 @@ if (stationsSearch) stationsSearch.addEventListener("input", renderStationResult
 // (its route ids collide with the subway's), and PATH and ferry colors are served
 // per route by the backend and validated before use.
 function stationChipStyle(entry, routeId) {
-  if (entry.kind === "railroad") return { bg: railroadColor(routeId), fg: "#fff" };
+  if (entry.kind === "railroad") {
+    const bg = railroadColor(routeId);
+    return { bg, fg: readableTextOn(bg) };
+  }
   if (entry.kind === "path" || entry.kind === "ferry") {
     const colorFor = entry.colorFor || (() => null);
-    return { bg: colorFor(routeId) || "#546e7a", fg: "#fff" };
+    const bg = colorFor(routeId) || "#546e7a";
+    return { bg, fg: readableTextOn(bg) };
   }
-  if (entry.kind === "airtrain") return { bg: "#b5179e", fg: "#fff" };
-  return { bg: lineColor(routeId), fg: DARK_TEXT_LINES.has(String(routeId)[0]) ? "#1a1a1a" : "#fff" };
+  if (entry.kind === "airtrain") return { bg: "#b5179e", fg: readableTextOn("#b5179e") };
+  const bg = lineColor(routeId);
+  return { bg, fg: readableTextOn(bg) };
 }
 
 // One result row: a real button carrying the station name, its system, its route
@@ -560,20 +633,43 @@ function announceArrivals(shaped, staleLine, tick) {
 // a screen reader user and breaks the skip link's whole purpose.
 const STATIONS_DOCK_QUERY = "(min-width: 1100px)";
 
-function applyStationsDocking() {
-  if (!stationsPanel || typeof matchMedia !== "function") return;
-  const docked = matchMedia(STATIONS_DOCK_QUERY).matches;
-  document.body.classList.toggle("stations-docked", docked);
-  if (docked && !stationsPanelOpen()) openStationsPanel({ focusSearch: false });
+// A3 review: THE CLASS MEANS "the panel is docked AND OPEN", not "the viewport is wide",
+// and the difference was a defect. body.stations-docked drives two rules that reserve
+// the panel's column: #map is offset and narrowed by 360px, and the alert banner is
+// pushed clear of it. Both were keyed on the media query alone, so closing the panel at
+// a wide width left the column reserved for something that was no longer there.
+// Measured at 1280 before this change: with the panel closed, #map still reported
+// {left: 360, width: 920} and elementFromPoint at (180, 400) returned BODY, a 360px
+// strip of nothing beside a map squeezed out of it, with the banner still indented to
+// 414px. Riders who close the panel are exactly the ones who wanted the map bigger.
+//
+// One function owns the class so the two callers cannot disagree about what it means:
+// the breakpoint handler below and the panel's own open and close.
+function applyDockedLayout() {
+  const docked = typeof matchMedia === "function" && matchMedia(STATIONS_DOCK_QUERY).matches;
+  const reserve = docked && stationsPanelOpen();
+  if (document.body.classList.contains("stations-docked") === reserve) return;
+  document.body.classList.toggle("stations-docked", reserve);
   // THE MAP MUST LEARN ITS NEW WIDTH. Docking narrows #map, and Leaflet caches its
   // container size, so without this the map stays sized for a viewport it no
   // longer has: tiles short of the right edge, and clicks landing on the wrong
-  // coordinates. invalidateSize is Leaflet's sanctioned API for exactly this, and
-  // it is called ONLY when the dock state is applied: once at load, and then on a
-  // matchMedia change, which fires when the query flips rather than on every resize
-  // frame. Never on the one-second tick. The phase's "no map layout changes"
-  // constraint is about not restyling the map, which this does not do.
+  // coordinates. invalidateSize is Leaflet's sanctioned API for exactly this, and the
+  // early return above is what keeps it to the moments that need it: the class actually
+  // changing, which is a breakpoint crossing or the panel opening or closing at a wide
+  // width. Never on a resize frame, never on the one-second tick. The phase's "no map
+  // layout changes" constraint is about not restyling the map, which this does not do.
   if (typeof map !== "undefined" && map) map.invalidateSize();
+}
+
+function applyStationsDocking() {
+  if (!stationsPanel || typeof matchMedia !== "function") return;
+  // Opening comes first: it calls applyDockedLayout itself, so the class lands with the
+  // panel rather than a frame before it. The call below then covers the other
+  // direction, where the viewport left the docked range and the class has to come off.
+  if (matchMedia(STATIONS_DOCK_QUERY).matches && !stationsPanelOpen()) {
+    openStationsPanel({ focusSearch: false });
+  }
+  applyDockedLayout();
 }
 
 applyStationsDocking();

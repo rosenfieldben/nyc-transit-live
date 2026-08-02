@@ -114,11 +114,9 @@ function violations(results) {
 // "0 violations" says nothing about those, so if they are never asserted the scan
 // quietly certifies less than it appears to.
 //
-// Everything currently incomplete here is color-contrast, and all of it for the same
-// real reason: the legend is rgba(255,255,255,0.92) and the Leaflet controls sit
-// directly on map tiles, so the actual contrast depends on whatever imagery is behind
-// them and genuinely varies as a rider pans. That is a real accessibility question, not
-// a tooling artifact, and it belongs to the later contrast pass. Pinning the shape here
+// Everything incomplete here is color-contrast. A2 attributed all of it to one cause
+// and was wrong about that; A3 read axe's per-node messages and found three, fixed two,
+// and wrote the correction into the inventory comment below. Pinning the shape here
 // means a NEW kind of uncertainty, or an old one appearing somewhere new, fails this
 // suite instead of blending into a green run.
 //
@@ -139,8 +137,39 @@ function violations(results) {
 // text on them could be unreadable today and this suite would stay green. That is the
 // contrast pass's work, not a hole this file can close. What the list does close is the
 // hole where a new unmeasured surface joins them without anyone noticing.
+// THE INVENTORY SHRINKS BY CONVERSION, NEVER BY EXCLUSION. That is the rule A3 added,
+// and it is the whole reason this list is worth keeping. An entry may leave this array
+// only by appearing in DECIDABLE_CONTRAST below, which asserts that axe now actively
+// PASSES color-contrast on that same target. Narrowing the scan scope, deleting a root,
+// or hiding an element would also make an entry disappear, and would make this file a
+// record of what stopped being looked at rather than of what got fixed. The paired lists
+// are what tell those two apart, and A3's own conversion is the worked example: eight of
+// the nine entries here moved across, and every one of them is asserted below.
+//
+// A3 CORRECTED THIS FILE'S DIAGNOSIS, WHICH IS WORTH RECORDING. A2 wrote that everything
+// undecidable was so "because the legend is rgba(255,255,255,0.92) and the Leaflet
+// controls sit directly on map tiles". Reading axe's own per-node messages showed three
+// distinct causes, not one: seven labels reported "background color could not be
+// determined because element contains an image node" (the map showing through the 8%
+// alpha), #status reported "partially overlaps other elements" (the panel had grown past
+// the bottom of a 720px viewport), and the zoom-out glyph reports "element content
+// contains only non-text characters", which is about the character itself and has
+// nothing to do with backgrounds at all. The first two were fixable. The third is not.
 const UNDECIDABLE_CONTRAST = [
-  // The status line and the layer toggles: translucent panel over live map tiles.
+  // THE ONE GENUINE SURVIVOR, and it is not a contrast problem. Leaflet's zoom-out
+  // control contains a single "−" glyph, which axe classifies as non-text and
+  // therefore declines to judge as text. No background, opacity or colour change can
+  // convert it, because the rule never reached the colours: measured at 21:1 against its
+  // own opaque white control, so it comfortably clears the 3:1 a non-text indicator
+  // owes. It stays stock per the phase decision, named here rather than excused.
+  ".leaflet-control-zoom-out > span",
+];
+
+// EVERY ENTRY A3 REMOVED FROM THE LIST ABOVE, asserted as a live pass rather than an
+// absence. This is the other half of the conversion rule: if one of these ever stops
+// passing color-contrast it fails here, whether it regressed into a violation, back into
+// undecidability, or out of the scanned scope entirely.
+const DECIDABLE_CONTRAST = [
   "#status",
   "#toggles > label:nth-child(2)",
   "label:nth-child(1)",
@@ -149,10 +178,6 @@ const UNDECIDABLE_CONTRAST = [
   "label:nth-child(5)",
   "label:nth-child(6)",
   "label:nth-child(7)",
-  // Leaflet's zoom control sits directly on the tiles. Only the "out" glyph is
-  // undecidable, which is not a typo: it is the one whose box axe cannot resolve
-  // against the imagery behind it.
-  ".leaflet-control-zoom-out > span",
 ];
 
 function assertIncompletesAreKnown(results, { alsoAllow = [] } = {}) {
@@ -164,6 +189,20 @@ function assertIncompletesAreKnown(results, { alsoAllow = [] } = {}) {
   expect(nodes.sort(), "the set of surfaces whose contrast axe cannot decide has changed").toEqual(
     [...UNDECIDABLE_CONTRAST, ...alsoAllow].sort(),
   );
+}
+
+// The conversion half. Asked of the color-contrast rule specifically, not of "did any
+// rule pass here", because an element can pass a dozen unrelated rules while its
+// contrast stays unjudged, which is the exact state this phase set out to leave behind.
+function assertConvertedToDecidable(results, { expect: expected = DECIDABLE_CONTRAST } = {}) {
+  const rule = results.passes.find((p) => p.id === "color-contrast");
+  const passed = new Set(rule ? rule.nodes.map((node) => node.target.join(" ")) : []);
+  for (const target of expected) {
+    expect(
+      passed.has(target),
+      `${target} left the undecidable inventory, so contrast must now actively PASS on it`,
+    ).toBe(true);
+  }
 }
 
 function assertScanned(results, { targets }) {
@@ -189,6 +228,7 @@ test("A1i. axe: the station panel and the skip link, in the list state", async (
   const results = await scan(page).analyze();
   expect(violations(results), "axe violations in the list state").toEqual([]);
   assertIncompletesAreKnown(results);
+  assertConvertedToDecidable(results);
   assertScanned(results, {
     targets: [
       "#stations-panel",
@@ -217,6 +257,7 @@ test("A1j. axe: the station panel with a station selected and arrivals rendered"
   const results = await scan(page).analyze();
   expect(violations(results), "axe violations in the detail state").toEqual([]);
   assertIncompletesAreKnown(results);
+  assertConvertedToDecidable(results);
   assertScanned(results, {
     targets: ["#stations-panel", "#stations-announce", "station-arrivals", "h3", "leaflet-control-zoom"],
   });
@@ -233,6 +274,7 @@ test("A1k. axe: the skip link is scanned while FOCUSED, which is when it is visi
   await expect(page.locator("#stations-skip")).toBeFocused();
   const results = await scan(page).analyze();
   expect(violations(results), "axe violations with the skip link focused").toEqual([]);
+  assertConvertedToDecidable(results);
   // The panel HEADING joins the undecidable set in this state and only this one,
   // because a focused skip link is drawn over the top-left of the page and the docked
   // panel's heading is underneath it. Measured: the link occupies x 8..190 y 8..44 and

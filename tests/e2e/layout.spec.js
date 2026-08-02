@@ -294,3 +294,54 @@ test("A4e. a banner rebuild does not GRAB focus from somewhere else", async ({ p
   await expect(page.locator("#alert-banner")).toContainText("All subway service suspended");
   await expect(page.locator("#stations-search"), "the rider was not in the banner").toBeFocused();
 });
+
+for (const [label, viewport] of [
+  ["desktop", { width: 1280, height: 720 }],
+  ["375", { width: 375, height: 667 }],
+]) {
+  test(`A4f. the legend panel stays inside the viewport at ${label}`, async ({ page }) => {
+    // MEASURED, NOT SUSPECTED. The legend panel is content-sized and had no ceiling, so
+    // with every system's legend row and seven layer toggles it measured 771px of
+    // content and ran to y=781: 61px off the bottom of a 720px desktop viewport and
+    // 114px off a 375x667 phone. The status line was among what fell off, and because
+    // nothing scrolled there was no way to reach it. That is the honesty surface for
+    // stale feeds disappearing because the legend above it got long.
+    //
+    // Asserted as geometry rather than as a max-height value, so it keeps meaning if the
+    // mechanism changes, and it fails the moment a new system's legend row pushes the
+    // panel past the edge again.
+    await page.setViewportSize(viewport);
+    const ctx = await installMocks(page);
+    await open(page, ctx);
+
+    const fit = await page.evaluate(() => {
+      const panel = document.getElementById("panel");
+      const r = panel.getBoundingClientRect();
+      return {
+        bottom: Math.round(r.bottom),
+        viewportHeight: document.documentElement.clientHeight,
+        scrollable: panel.scrollHeight > panel.clientHeight,
+        // Everything inside must be REACHABLE, which for a scroll container means the
+        // scroll actually goes far enough to bring the last row into view.
+        statusReachable: (() => {
+          const s = document.getElementById("status");
+          const p = panel.getBoundingClientRect();
+          const before = panel.scrollTop;
+          panel.scrollTop = panel.scrollHeight;
+          const sr = s.getBoundingClientRect();
+          const ok = sr.bottom <= p.bottom + 1 && sr.top >= p.top - 1;
+          panel.scrollTop = before;
+          return ok;
+        })(),
+      };
+    });
+
+    expect(fit.bottom, "the panel must not hang off the bottom of the screen").toBeLessThanOrEqual(
+      fit.viewportHeight,
+    );
+    // And nothing was hidden to achieve that: whatever does not fit is scrolled to, not
+    // cut away. A panel that fits because its contents were clipped would satisfy the
+    // assertion above and lose the rider the status line just the same.
+    expect(fit.statusReachable, "the status line must be reachable by scrolling the panel").toBe(true);
+  });
+}

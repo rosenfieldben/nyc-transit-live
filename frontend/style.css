@@ -9,17 +9,46 @@ html, body {
 }
 
 /* Legend + status panel, top right */
+
+/* A3: OPAQUE, AND THAT IS AN ACCESSIBILITY DECISION RATHER THAN A VISUAL ONE.
+   This surface was rgba(255, 255, 255, 0.92), and the 8% of map tile showing through
+   was the single largest source of undecidable contrast on the page: axe reported
+   "background color could not be determined because element contains an image node"
+   for all seven layer-toggle labels, because resolving their background meant
+   resolving live imagery. Contrast over a solid colour is machine-checkable; contrast
+   over the map never is, at any alpha. Measured: opaque takes the undecidable set from
+   9 entries to 1 and the color-contrast passes from 7 nodes to 15, with no text colour
+   changed and no violation introduced.
+
+   The 8% was never buying much. Composited over the darkest possible tile the old
+   surface was rgb(235, 235, 235), so nothing here was ever failing AA; the problem was
+   that no machine could prove it. See the conversion rule in tests/e2e/a11y.spec.js.
+
+   AND IT IS BOUNDED BY THE VIEWPORT, which is a SEPARATE fix that happens to live in
+   the same rule. Measured: unbounded, this panel is 771px of content and runs to y=781,
+   so at 1280x720 it hung 61px off the bottom of the screen and at 375x667 it hung 114px
+   off, with the status line among what was lost and no way to scroll to it. Bounded, it
+   ends at 710 and 657 respectively and scrolls its own overflow, so every row stays
+   reachable and the panel cannot grow off the screen as systems are added.
+
+   Do not credit this half with the axe conversion. The first draft of this comment did,
+   and mutation testing disproved it: removing max-height and overflow-y leaves all four
+   a11y specs green, because the opaque background alone converts all eight entries.
+   Reverting to rgba fails three of them. Two fixes, one rule, distinct evidence. */
 #panel {
   position: absolute;
   top: 10px;
   right: 10px;
   z-index: 1000; /* above Leaflet panes */
-  background: rgba(255, 255, 255, 0.92);
+  background: #fff;
   padding: 8px 12px;
   border-radius: 6px;
   font: 13px/1.5 system-ui, sans-serif;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
   max-width: 240px;
+  box-sizing: border-box;
+  max-height: calc(100vh - 20px); /* the 10px inset, top and bottom */
+  overflow-y: auto;
 }
 
 .legend-row {

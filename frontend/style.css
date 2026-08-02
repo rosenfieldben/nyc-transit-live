@@ -25,16 +25,30 @@ html, body {
    that no machine could prove it. See the conversion rule in tests/e2e/a11y.spec.js.
 
    AND IT IS BOUNDED BY THE VIEWPORT, which is a SEPARATE fix that happens to live in
-   the same rule. Measured: unbounded, this panel is 771px of content and runs to y=781,
-   so at 1280x720 it hung 61px off the bottom of the screen and at 375x667 it hung 114px
-   off, with the status line among what was lost and no way to scroll to it. Bounded, it
-   ends at 710 and 657 respectively and scrolls its own overflow, so every row stays
-   reachable and the panel cannot grow off the screen as systems are added.
+   the same rule. RE-MEASURED after A3's review round 2 found the numbers here had gone
+   stale (the mobile override below moved one of them, and this comment still quoted the
+   pre-fix figure as the fixed one). With the legend expanded and no alert showing:
 
-   Do not credit this half with the axe conversion. The first draft of this comment did,
-   and mutation testing disproved it: removing max-height and overflow-y leaves all four
-   a11y specs green, because the opaque background alone converts all eight entries.
-   Reverting to rgba fails three of them. Two fixes, one rule, distinct evidence. */
+     unbounded  1280x720  content 771px, runs to y=781, so 61px off the bottom
+     unbounded   375x667  content 884px, runs to y=894, so 227px off the bottom
+     bounded    1280x720  ends at y=710 (max-height 700)
+     bounded     375x667  ends at y=637 (max-height 627, from the mobile rule below)
+
+   With one agency-wide alert at 375x667 the mobile rule takes it to 587, clear of the
+   banner. Bounded it scrolls its own overflow, so every row stays reachable and the
+   panel cannot grow off the screen as systems are added.
+
+   Do not credit this half with the axe conversion, which is a claim about the DESKTOP
+   scan and still measures true: removing max-height and overflow-y leaves A1i, A1j, A1k
+   and A1l green, because the opaque background alone converts all eight entries.
+   Reverting to rgba fails three of them.
+
+   What changed is that a fifth spec now depends on the bounding. The same mutation fails
+   A1m2 on "the set of surfaces undecidable at mobile width has changed", because an
+   unbounded panel reaches down into the alert banner and axe stops being able to decide
+   the alert row's contrast. Removing only the base rule does it too: the mobile override
+   sets a height but takes its overflow-y from here, so without it the content spills
+   past the bound anyway. Two fixes, one rule, and now each has its own evidence. */
 #panel {
   position: absolute;
   top: 10px;

@@ -550,3 +550,44 @@ test("A6l. the reserved strip follows the banner's height when the viewport chan
     `after rotating down the panel must still end above the banner (panel ${JSON.stringify(boxes.panel)}, banner ${JSON.stringify(boxes.banner)})`,
   ).toBeLessThanOrEqual(boxes.banner.top);
 });
+
+test("A6m. dismissing the banner gives the reserved strip back", async ({ page }) => {
+  // ROUND 2 FOUND THIS AS A COVERAGE HOLE, and it is the honest kind: the fix had three
+  // publish sites and only two of them were pinned. Deleting the publish on the
+  // empty-banner branch left the whole 121-spec suite green, so half of the height fix
+  // was unmutated. That branch is not an edge case: it is the dismiss button, and it is
+  // also every standing incident that simply ends on a later poll.
+  //
+  // Measured with that line deleted, at 375x667 with the legend expanded: after
+  // dismissing, --alert-banner-height stays at 49.59px instead of dropping to 0, the
+  // panel keeps max-height 577px instead of 627px, and 50px of phone screen stays
+  // reserved for a banner that is gone, for the rest of the session. Nothing heals it
+  // until the next banner render or a resize.
+  await page.setViewportSize(PHONE);
+  await withBanner(page);
+  await open(page);
+  await expect(page.locator(".alert-banner-row").first()).toBeVisible();
+  await page.locator("#legend-toggle").click();
+  await expect(page.locator("#legend")).toBeVisible();
+
+  const reserved = async () =>
+    page.evaluate(() => ({
+      published: getComputedStyle(document.documentElement).getPropertyValue("--alert-banner-height").trim(),
+      panelBottom: Math.round(document.getElementById("panel").getBoundingClientRect().bottom),
+    }));
+
+  const showing = await reserved();
+  expect(parseFloat(showing.published), "a banner is showing, so it reserves height").toBeGreaterThan(0);
+
+  await page.locator("#alert-banner-dismiss").click();
+  await expect(page.locator(".alert-banner-row")).toHaveCount(0);
+
+  const dismissed = await reserved();
+  expect(parseFloat(dismissed.published), "a dismissed banner reserves nothing").toBe(0);
+  // And the panel actually grows into the strip, which is the rider-facing half: the
+  // property alone could be right while nothing consumed it.
+  expect(
+    dismissed.panelBottom,
+    `the panel must take the strip back (showing ${showing.panelBottom}, dismissed ${dismissed.panelBottom})`,
+  ).toBeGreaterThan(showing.panelBottom);
+});

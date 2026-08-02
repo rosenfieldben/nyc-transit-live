@@ -198,10 +198,15 @@ test("A6d. the stations panel is a full-width overlay, with the A1 focus contrac
   await expect(page.locator("#stations-panel")).toBeHidden();
   await expect(page.locator("#stations-toggle"), "Escape returns focus to the opener").toBeFocused();
 
-  // And the toggle closes it too, from the keyboard, landing focus in the same place.
-  await page.locator("#stations-toggle").press("Enter");
+  // And the toggle OPENS it with a real click, which hit-tests. The first version of
+  // this used locator.press(), which dispatches a key event straight at the element and
+  // skips the receives-events check entirely: it stayed green while the overlay made
+  // that same toggle untappable, the exact blindness A6a exists in this file to remove.
+  // Closing is then driven from the panel's own button, because at this width the
+  // toggle is UNDERNEATH the overlay and pressing it is not something a rider can do.
+  await page.locator("#stations-toggle").click({ timeout: 5_000 });
   await expect(page.locator("#stations-panel")).toBeVisible();
-  await page.locator("#stations-toggle").press("Enter");
+  await page.locator("#stations-close").click({ timeout: 5_000 });
   await expect(page.locator("#stations-panel")).toBeHidden();
   await expect(page.locator("#stations-toggle")).toBeFocused();
 });
@@ -385,4 +390,51 @@ test("A6h. at desktop the skip link keeps the native behaviour A1 shipped", asyn
     return { id: el.id || el.tagName, inPanel: document.getElementById("stations-panel").contains(el) };
   });
   expect(landed.inPanel, `one Tab after activating must be in the panel, got ${JSON.stringify(landed)}`).toBe(true);
+});
+
+test("A6i. a phone rider can always get back out of the full-screen panel", async ({ page }) => {
+  // THE TRAP, PINNED AS A POINTER PATH. Under 700px the panel is a full-viewport opaque
+  // overlay, so it covers #stations-toggle, which was the only control that closed it.
+  // Escape still worked and a phone has no Escape key: a rider who tapped Stations had
+  // no exit but a page reload. Reproduced by the review at 375, where elementFromPoint
+  // at the toggle's centre returned #stations-panel and a real click timed out.
+  //
+  // So this spec never presses a key. Every step is a click, because the rider this is
+  // for has no keyboard at all.
+  await page.setViewportSize(PHONE);
+  await installMocks(page);
+  await open(page);
+
+  await page.locator("#stations-toggle").click({ timeout: 5_000 });
+  await expect(page.locator("#stations-panel")).toBeVisible();
+
+  // The toggle really is covered, so the close button is not redundant with it.
+  const toggleCovered = await page.evaluate(() => {
+    const el = document.getElementById("stations-toggle");
+    const r = el.getBoundingClientRect();
+    const top = document.elementFromPoint(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2));
+    return !!(top && top !== el && !el.contains(top));
+  });
+  expect(toggleCovered, "the overlay must actually cover the toggle, or this spec proves nothing").toBe(true);
+
+  // And the way out is tappable, which is the whole finding.
+  await page.locator("#stations-close").click({ timeout: 5_000 });
+  await expect(page.locator("#stations-panel")).toBeHidden();
+  await expect(page.locator("#stations-toggle"), "closing returns focus to the opener").toBeFocused();
+});
+
+test("A6j. rotating a docked desktop panel down to a phone leaves a way out", async ({ page }) => {
+  // THE UNPROMPTED ARRIVAL. A tablet docked at 1280 with the panel open, narrowed to
+  // 375, keeps the panel open and it becomes the full-screen overlay without the rider
+  // touching anything. If the exit were painted only on open, this is the path that
+  // would miss it.
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await installMocks(page);
+  await open(page);
+  await expect(page.locator("#stations-panel")).toBeVisible();
+
+  await page.setViewportSize(PHONE);
+  await expect(page.locator("#stations-panel")).toBeVisible();
+  await page.locator("#stations-close").click({ timeout: 5_000 });
+  await expect(page.locator("#stations-panel")).toBeHidden();
 });

@@ -37,6 +37,16 @@
        equivalent of clicking a station dot. -->
   <section id="stations-panel" role="region" aria-labelledby="stations-heading" hidden>
     <h2 id="stations-heading">Stations</h2>
+    <!-- A3: THE PANEL'S OWN WAY OUT, and it is not optional. Under 700px this panel is a
+         full-viewport opaque overlay, which puts it on top of #stations-toggle, the only
+         control that closed it. Escape still worked, and a phone has no Escape key, so a
+         rider who tapped Stations had no exit but a page reload. The review reproduced
+         it: elementFromPoint at the toggle's centre returned #stations-panel and a real
+         click timed out on actionability.
+         Present in the markup at every width and hidden by CSS above the breakpoint, the
+         same shape the legend disclosure uses, so the control is never there without
+         being usable. -->
+    <button type="button" id="stations-close">Close</button>
     <label for="stations-search">Search stations</label>
     <input type="search" id="stations-search" autocomplete="off" spellcheck="false">
     <!-- The result count and the overflow line. aria-live=polite because it is a

@@ -725,6 +725,16 @@ body.stations-docked #alert-banner {
   display: none;
 }
 
+/* Same shape for the panel's close button: hidden where the panel is a drawer beside
+   the map and #stations-toggle is visible next to it, shown where the panel covers the
+   page. THE ORDER MATTERS AND CAUGHT ME: this base rule has to precede the media block
+   below, because at equal specificity the later rule wins. Appended after it, this
+   `display: none` silently beat the mobile `display: block` and the close button was
+   present, focusable and invisible, which a click times out on. */
+#stations-close {
+  display: none;
+}
+
 @media (max-width: 700px) {
   /* THE STATIONS PANEL BECOMES A FULL-WIDTH OVERLAY. On a phone a 360px slide-over
      next to a 375px viewport is a slide-over with 15px of map beside it, which is
@@ -739,9 +749,22 @@ body.stations-docked #alert-banner {
     border-radius: 0;
   }
 
-  /* The legend collapses. Fourteen rows plus the note are most of this panel's
-     height, and on 375x667 they pushed the toggles and the status line off the
-     screen entirely. */
+  /* The overlay's own exit. Full width so it is unmissable, and it sits directly under
+     the heading so a screen reader meets it immediately after the panel's name. */
+  #stations-close {
+    display: block;
+    width: 100%;
+    min-height: 32px;
+    margin-bottom: 8px;
+    padding: 6px 10px;
+    font: 600 13px system-ui, sans-serif;
+    color: #1a1a1a;
+    background: #f1f5f9;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+
   #legend-toggle {
     display: block;
     width: 100%;

@@ -121,9 +121,24 @@ function toggleStationsPanel() {
   else openStationsPanel();
 }
 
+// A3: the panel's own close button, which under 700px is the only pointer route out of
+// a full-viewport overlay. Routed through closeStationsPanel so it shares the focus
+// contract with Escape and the toggle: one door, and focus returns to the opener.
+const stationsClose = document.getElementById("stations-close");
+if (stationsClose) stationsClose.addEventListener("click", closeStationsPanel);
+
 // Escape anywhere inside closes and returns focus. Bound on the panel rather than
 // the document so it cannot swallow Escape from the rest of the page (the Leaflet
-// popups use it too), and nothing here traps: Tab always leaves the panel.
+// popups use it too).
+//
+// TAB IS NOT TRAPPED, and A3 has to be honest about what that means now. Above the
+// breakpoint the panel is a drawer beside the map and tabbing out of it reaches things
+// the rider can see. Under 700px the panel COVERS the page, so tabbing past its last
+// control reaches elements that are behind an opaque overlay: reachable by keyboard,
+// invisible to the eye. That is a real wart and it is deliberately not solved by
+// trapping focus, because a trap with no reliable exit is how the defect above was
+// created in the first place. The close button is the exit, it is the last stop inside
+// the panel, and A6i asserts a pointer rider can reach and use it.
 if (stationsPanel) {
   stationsPanel.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;

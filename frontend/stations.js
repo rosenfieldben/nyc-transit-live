@@ -142,13 +142,24 @@ if (stationsClose) stationsClose.addEventListener("click", closeStationsPanel);
 // created in the first place.
 //
 // WHERE THE EXIT ACTUALLY IS, corrected after round 2 of the review caught this comment
-// claiming the close button was "the last stop inside the panel". It is the FIRST:
-// measured at 375, the panel's focusable order is [#stations-close, #stations-search,
-// then any result rows], opening puts focus on the search input, and tabbing FORWARD
-// from there goes straight out to #legend-toggle and the layer checkboxes underneath the
-// overlay. So the keyboard exits are Escape, and one Shift+Tab from the search input the
-// panel opens on. A6n pins that ordering rather than trusting this paragraph, since the
-// paragraph is what was wrong; A6i pins the pointer rider's exit.
+// claiming the close button was "the last stop inside the panel". It is the FIRST.
+//
+// Round 3 then caught the correction: it named the wrong element AND described only one
+// of the two states the panel is ever in. Twice wrong in the same paragraph is worth
+// leaving on the record, because it is the argument for A6n existing at all. Measured at
+// 375, both states:
+//
+//   focusable order   [#stations-close, #stations-search, one button per result row]
+//   empty query       search -> #stations-toggle (outside, and covered by the overlay)
+//   with result rows  search -> the first row (still inside), rows -> #stations-toggle
+//
+// So the first stop outside the panel is always #stations-toggle, which the overlay
+// covers; #legend-toggle, which the earlier draft named, is the stop after it. And with
+// rows rendered, which is the state a rider who has typed anything is in, forward-tab
+// does not leave immediately at all. The keyboard exits are Escape, and one Shift+Tab
+// from the search input the panel opens on. A6n pins all of that in both states rather
+// than trusting this paragraph, since this paragraph is what keeps being wrong; A6i pins
+// the pointer rider's exit.
 //
 // First was chosen for the screen reader, and it is kept: the exit is announced
 // immediately after the region's name, and it stays in one place instead of moving down

@@ -610,14 +610,15 @@ test("A6n. the keyboard exit from the full-screen panel is where the comment say
   await page.locator("#stations-toggle").click();
   await expect(page.locator("#stations-panel")).toBeVisible();
 
-  const order = await page.evaluate(() => {
-    const panel = document.getElementById("stations-panel");
-    const focusable = "a[href], button, input, select, textarea, [tabindex]:not([tabindex='-1'])";
-    return [...panel.querySelectorAll(focusable)]
-      .filter((el) => !el.disabled && el.offsetParent !== null)
-      .map((el) => el.id);
-  });
-  expect(order, "the close button is the FIRST focusable in the panel, not the last").toEqual([
+  const focusableIds = () =>
+    page.evaluate(() => {
+      const panel = document.getElementById("stations-panel");
+      const focusable = "a[href], button, input, select, textarea, [tabindex]:not([tabindex='-1'])";
+      return [...panel.querySelectorAll(focusable)]
+        .filter((el) => !el.disabled && el.offsetParent !== null)
+        .map((el) => el.id || el.tagName + "." + (el.className || "").split(" ")[0]);
+    });
+  expect(await focusableIds(), "the close button is the FIRST focusable in the panel, not the last").toEqual([
     "stations-close",
     "stations-search",
   ]);
@@ -653,6 +654,49 @@ test("A6n. the keyboard exit from the full-screen panel is where the comment say
     };
   });
   expect(landed, "forward-tab still leaves the overlay onto a control the rider cannot see").toEqual({
+    id: "stations-toggle",
+    inPanel: false,
+    covered: true,
+  });
+
+  // AND THE STATE A RIDER IS ACTUALLY IN. Round 3 caught the empty-query half being
+  // asserted as if it were the whole story: with result rows rendered, forward-tab from
+  // the search input does NOT leave the panel, it walks the rows first. That is the
+  // common state, because the query survives closing and the panel reopens with its rows
+  // already drawn. Asserting only the rowless state made the "leaves immediately" claim
+  // true by accident, which is the failure mode this file exists to catch elsewhere.
+  await page.locator("#stations-search").fill("times");
+  await expect(page.locator("#stations-results button.station-row").first()).toBeVisible();
+  const rows = await page.locator("#stations-results button.station-row").count();
+  expect(await focusableIds(), "result rows join the panel's tab order, after the search input").toEqual([
+    "stations-close",
+    "stations-search",
+    ...Array(rows).fill("BUTTON.station-row"),
+  ]);
+
+  await page.locator("#stations-search").focus();
+  await page.keyboard.press("Tab");
+  expect(
+    await page.evaluate(() => ({
+      isRow: document.activeElement.classList.contains("station-row"),
+      inPanel: document.getElementById("stations-panel").contains(document.activeElement),
+    })),
+    "with rows showing, the next stop is a result row and it is still inside the panel",
+  ).toEqual({ isRow: true, inPanel: true });
+
+  // Past the last row the rider does leave, and lands on the same covered control.
+  for (let i = 0; i < rows; i++) await page.keyboard.press("Tab");
+  const afterRows = await page.evaluate(() => {
+    const el = document.activeElement;
+    const r = el.getBoundingClientRect();
+    const top = document.elementFromPoint(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2));
+    return {
+      id: el.id,
+      inPanel: document.getElementById("stations-panel").contains(el),
+      covered: !!(top && top !== el && !el.contains(top)),
+    };
+  });
+  expect(afterRows, "the first stop outside the panel is the same covered control in both states").toEqual({
     id: "stations-toggle",
     inPanel: false,
     covered: true,

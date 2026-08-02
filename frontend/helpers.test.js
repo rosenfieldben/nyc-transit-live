@@ -2419,7 +2419,7 @@ test("A3: the status line states its order and never truncates a problem", () =>
   const problems = ["Bus: upstream 502", "Subway ACE: data 3m old"];
   assert.equal(
     statusLineText({ counts, clock, problems }),
-    `${counts} · ${clock} — Bus: upstream 502; Subway ACE: data 3m old`,
+    `${counts} · ${clock}: Bus: upstream 502; Subway ACE: data 3m old`,
   );
   // COMPACT DROPS THE SECONDS AND NOTHING ELSE. That is the only part of the line
   // carrying no information a rider acts on.

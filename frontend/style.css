@@ -102,10 +102,18 @@ html, body {
   font-weight: 600;
 }
 
+/* A3: meets the 24px floor, which it did not before. Measured at 59x18 in the inventory
+   and missed by A2's floor work for a mundane reason: it only exists after a rider has
+   clicked a bus, so a sample of the resting page never sees it. The height comes from
+   padding and a min-height rather than a larger font, so the button looks the same as it
+   did; inline-flex keeps the label centred in the taller box. */
 #route-clear {
+  display: inline-flex;
+  align-items: center;
   border: 1px solid #ccc;
   background: #f6f6f6;
   border-radius: 4px;
+  min-height: 24px;
   padding: 1px 7px;
   font: 12px system-ui, sans-serif;
   cursor: pointer;

@@ -117,7 +117,18 @@ for (const [label, viewport] of [
   });
 }
 
-test("A4b. every interactive thing on the map surface meets the 24px floor", async ({ page }) => {
+// A3 EXTENDS THE SAMPLING TO MOBILE RATHER THAN DUPLICATING IT. A separate mobile copy
+// of this spec would drift from this one the first time a control is added, and the
+// drifting copy is always the one nobody notices. The list of controls is shared; only
+// the viewport changes, and the mobile widths bring two more controls into existence
+// (the legend disclosure) and one out of a different layout (the panel rows).
+for (const [label, viewport] of [
+  ["desktop", { width: 1280, height: 720 }],
+  ["375", { width: 375, height: 667 }],
+  ["320", { width: 320, height: 640 }],
+]) {
+test(`A4b. every interactive thing on the map surface meets the 24px floor at ${label}`, async ({ page }) => {
+  await page.setViewportSize(viewport);
   await withBanner(page);
   await open(page);
 
@@ -152,19 +163,69 @@ test("A4b. every interactive thing on the map surface meets the 24px floor", asy
   }
 
   // The controls, which meet the floor by padding rather than by pseudo-element.
-  for (const selector of [
+  // A3 added the route-line clear button and the legend disclosure; both were measured
+  // sub-floor in the inventory (#route-clear at 59x18) or are new in this phase.
+  const controls = [
     "#toggles label",
     "#alert-banner-dismiss",
     ".leaflet-control-zoom-in",
     ".leaflet-control-zoom-out",
     "#stations-toggle",
-  ]) {
+  ];
+  if (viewport.width <= 700) controls.push("#legend-toggle");
+  for (const selector of controls) {
     const box = await rect(page, selector);
-    expect(box, `${selector} must exist`).not.toBeNull();
-    expect(box.w, `${selector} width`).toBeGreaterThanOrEqual(HIT_FLOOR);
-    expect(box.h, `${selector} height`).toBeGreaterThanOrEqual(HIT_FLOOR);
+    expect(box, `${selector} must exist at ${label}`).not.toBeNull();
+    expect(box.w, `${selector} width at ${label}`).toBeGreaterThanOrEqual(HIT_FLOOR);
+    expect(box.h, `${selector} height at ${label}`).toBeGreaterThanOrEqual(HIT_FLOOR);
   }
+
+  // CONTROLS THAT ONLY EXIST IN A STATE, measured in that state. A control nobody can
+  // reach yet is not exempt from the floor; it is just harder to sample, and "harder to
+  // sample" is how #route-clear stayed at 59x18 through A2's floor work.
+  await page.evaluate(() => {
+    const [id] = [...buses.keys()];
+    buses.get(id).marker.fire("click");
+  });
+  await expect(page.locator("#route-clear")).toBeVisible();
+  const clear = await rect(page, "#route-clear");
+  expect(clear.w, `#route-clear width at ${label}`).toBeGreaterThanOrEqual(HIT_FLOOR);
+  expect(clear.h, `#route-clear height at ${label}`).toBeGreaterThanOrEqual(HIT_FLOOR);
+
+  // The skip link is offscreen until focused, so it is measured focused, which is the
+  // only state in which a rider can operate it.
+  await page.locator("#stations-skip").focus();
+  await expect(page.locator("#stations-skip")).toBeFocused();
+  const skip = await rect(page, "#stations-skip");
+  expect(skip.w, `#stations-skip width at ${label}`).toBeGreaterThanOrEqual(HIT_FLOOR);
+  expect(skip.h, `#stations-skip height at ${label}`).toBeGreaterThanOrEqual(HIT_FLOOR);
+
+  // The panel's own rows, which are the mobile reading surface. Opened only if it is not
+  // already open: at desktop widths A1 docks it open at load, and clicking the toggle
+  // there CLOSES it, which is how the first version of this spec timed out on a search
+  // box that was no longer on screen.
+  if (!(await page.locator("#stations-panel").isVisible())) {
+    await page.locator("#stations-toggle").click();
+  }
+  await expect(page.locator("#stations-panel")).toBeVisible();
+  await page.locator("#stations-search").fill("times");
+  await expect(page.locator("#stations-results button.station-row").first()).toBeVisible();
+  const row = await rect(page, "#stations-results button.station-row");
+  expect(row.h, `station row height at ${label}`).toBeGreaterThanOrEqual(HIT_FLOOR);
+
+  // NAMED, NOT SILENTLY EXEMPT: Leaflet's attribution link measures 51x14 and stays
+  // that way. WCAG 2.2's Target Size (Minimum) has an explicit exception for a target
+  // "in a sentence or block of text", which is exactly what this is, and the alternative
+  // is forking Leaflet's stylesheet to inflate a licence credit. Asserted as a known
+  // shape so that if it ever grows into a real control this stops being true quietly.
+  const attribution = await rect(page, ".leaflet-control-attribution a");
+  expect(attribution, "the attribution link must still exist").not.toBeNull();
+  expect(
+    attribution.h < HIT_FLOOR,
+    "the inline attribution exception is still the case being made, not a regression",
+  ).toBe(true);
 });
+}
 
 test("A4c. the enlarged hit areas did not hand the station dots back to the trains", async ({ page }) => {
   // THE REGRESSION THIS ITEM COULD EASILY HAVE CAUSED, and did in its first draft. The

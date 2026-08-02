@@ -98,14 +98,19 @@ function narrowViewport(mql = null) {
    future narrow layout needs to shed something, it sheds the clock and then the counts,
    in that order, and the problems stay whole.
 
-   The rider-facing separators are unchanged from what shipped before A3, deliberately:
-   moving composition into a helper is not licence to reword what a rider reads. */
+   THE PROBLEM SEPARATOR IS A COLON, NOT AN EM DASH, by ruling, and the reason is the one
+   that kept the middot out of the spoken train names in A2: an em dash is visual
+   punctuation a screen reader renders as noise or as the words "em dash", while a colon
+   is read as the pause it looks like. The line shipped with a U+2014 here before A3;
+   recomposing it was the moment to fix that rather than carry it forward.
+   The middot between counts and clock stays. It separates two glanceable facts rather
+   than introducing a statement, and it is what shipped. */
 function statusLineText({ counts, clock, problems = [] } = {}, { compact = false } = {}) {
   const time = compact ? String(clock ?? "").replace(/:\d\d(?=(\s|$))/, "") : clock;
   const stated = (problems ?? []).filter(Boolean);
   const head = [counts, time].filter(Boolean).join(" \u00b7 ");
   if (!stated.length) return counts ? `${counts} \u00b7 updated ${time}` : `updated ${time}`;
-  return `${head} \u2014 ${stated.join("; ")}`;
+  return `${head}: ${stated.join("; ")}`;
 }
 
 /* ----- A3: contrast, computed rather than curated ----------------------------

@@ -438,3 +438,115 @@ test("A6j. rotating a docked desktop panel down to a phone leaves a way out", as
   await page.locator("#stations-close").click({ timeout: 5_000 });
   await expect(page.locator("#stations-panel")).toBeHidden();
 });
+
+// A6k: the legend panel and the alert banner share the bottom of a phone screen, and
+// this is the spec that keeps them out of each other's way.
+//
+// WHAT WENT WRONG AND WHAT IT COST. A3 moved the banner to the bottom so it would stop
+// covering the Stations toggle. The legend panel grows DOWN from the top, and with the
+// legend expanded at 375x667 it ran to y=657 while the banner sat at 595..645. The alert
+// text itself was never hidden (the banner is z-index 1001 to the panel's 1000, and
+// elementFromPoint returned the alert row at every sample across it), so this is not the
+// occlusion defect it first looked like. What it cost was the other direction: the panel
+// scrolls its own overflow, so its END is what lands behind the banner, and its end is
+// the status line. On a phone during a systemwide incident the rider could not reach the
+// line that says whether the data they are looking at is current.
+//
+// Both widths, both legend states, because the panel is only tall enough to reach the
+// banner in one of them and a spec that only tried the collapsed state would pass
+// without touching the defect.
+for (const [label, viewport] of [
+  ["320", NARROW],
+  ["375", PHONE],
+]) {
+  test(`A6k. the legend panel stops above the alert banner at ${label}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await withBanner(page);
+    await open(page);
+    await expect(page.locator(".alert-banner-row").first()).toBeVisible();
+
+    for (const state of ["collapsed", "expanded"]) {
+      if (state === "expanded") {
+        await page.locator("#legend-toggle").click();
+        await expect(page.locator("#legend")).toBeVisible();
+      }
+      const boxes = await page.evaluate(() => {
+        const rect = (sel) => {
+          const r = document.querySelector(sel).getBoundingClientRect();
+          return { top: Math.round(r.top), bottom: Math.round(r.bottom) };
+        };
+        return { panel: rect("#panel"), banner: rect("#alert-banner") };
+      });
+      expect(
+        boxes.panel.bottom,
+        `${state}: the panel must end above the banner (panel ${JSON.stringify(boxes.panel)}, banner ${JSON.stringify(boxes.banner)})`,
+      ).toBeLessThanOrEqual(boxes.banner.top);
+    }
+
+    // And the consequence, asserted as the rider experiences it rather than as geometry:
+    // scrolled to the end of the expanded panel, the status line is on screen and on top.
+    await page.evaluate(() => {
+      const panel = document.getElementById("panel");
+      panel.scrollTop = panel.scrollHeight;
+    });
+    const statusReachable = await page.evaluate(() => {
+      const el = document.getElementById("status");
+      const r = el.getBoundingClientRect();
+      const top = document.elementFromPoint(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2));
+      return { inView: r.bottom <= window.innerHeight && r.top >= 0, onTop: !!(top && (top === el || el.contains(top))) };
+    });
+    expect(statusReachable, "the status line must be reachable at the end of the panel's scroll").toEqual({
+      inView: true,
+      onTop: true,
+    });
+  });
+}
+
+test("A6l. the reserved strip follows the banner's height when the viewport changes", async ({ page }) => {
+  // The height is published by systems/shared.js when the banner RENDERS, and
+  // renderAlertBanner returns early on an unchanged key, so a viewport change alone would
+  // never republish it. That matters because the same header wraps to one line on a
+  // tablet and more than one on a phone: a rider who rotates would leave the panel sized
+  // against a height that is no longer true. The listener is what keeps them apart, and
+  // this is the spec that fails if it is removed.
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await withBanner(page);
+  await open(page);
+  await expect(page.locator(".alert-banner-row").first()).toBeVisible();
+  const wide = await page.evaluate(() =>
+    getComputedStyle(document.documentElement).getPropertyValue("--alert-banner-height").trim(),
+  );
+
+  await page.setViewportSize(NARROW);
+  // The panel is docked open at 1280 and becomes the full-screen overlay on the way
+  // down, so it is covering the legend disclosure until the rider dismisses it. Closing
+  // it here is the rider's own first move, not a workaround: A6j is the spec for that
+  // path, and this one is about what the layout does afterwards.
+  await page.locator("#stations-close").click({ timeout: 5_000 });
+  await expect(page.locator("#stations-panel")).toBeHidden();
+  await page.locator("#legend-toggle").click();
+  await expect(page.locator("#legend")).toBeVisible();
+  const narrow = await page.evaluate(() =>
+    getComputedStyle(document.documentElement).getPropertyValue("--alert-banner-height").trim(),
+  );
+  // Not a fixed pair of numbers: what is being asserted is that the published height
+  // TRACKS the layout, and pinning the exact pixels would fail on a font metric change
+  // that broke nothing. The banner is genuinely taller at 320 than at 1280 with this
+  // header, which is what makes the comparison meaningful rather than tautological.
+  expect(
+    parseFloat(narrow),
+    `the banner is taller on a phone, so the reservation must grow (1280: ${wide}, 320: ${narrow})`,
+  ).toBeGreaterThan(parseFloat(wide));
+
+  const boxes = await page.evaluate(() => {
+    const rect = (sel) => {
+      const r = document.querySelector(sel).getBoundingClientRect();
+      return { top: Math.round(r.top), bottom: Math.round(r.bottom) };
+    };
+    return { panel: rect("#panel"), banner: rect("#alert-banner") };
+  });
+  expect(
+    boxes.panel.bottom,
+    `after rotating down the panel must still end above the banner (panel ${JSON.stringify(boxes.panel)}, banner ${JSON.stringify(boxes.banner)})`,
+  ).toBeLessThanOrEqual(boxes.banner.top);
+});

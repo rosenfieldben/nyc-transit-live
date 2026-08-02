@@ -782,6 +782,17 @@ body.stations-docked #alert-banner {
 
   #panel {
     max-width: 60vw;
+    /* AND IT STOPS ABOVE THE BANNER, which at this width lives at the bottom of the
+       screen. 40px is this layout's own geometry: the panel's 10px top inset, the
+       banner's 22px bottom inset, and an 8px gap between them. The banner's HEIGHT is
+       not a constant and is not guessed here: systems/shared.js measures the rendered
+       strip and publishes it, because it grows with each additional alert and with how
+       the header wraps at a given width.
+       Without this the panel ran to y=657 at 375x667 while the banner sat at 595..645.
+       Nothing was hidden from view (the banner paints above the panel), but the panel's
+       last 62px were unreachable: it scrolls its own overflow, so its END is what lands
+       behind the banner, and on a phone during an incident that is the status line. */
+    max-height: calc(100vh - 40px - var(--alert-banner-height, 0px));
   }
 
   /* THE ALERT BANNER MOVES OFF THE CONTROLS. Measured before this rule, at both 320

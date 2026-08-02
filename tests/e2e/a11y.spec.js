@@ -382,10 +382,30 @@ test("A1k. axe: the skip link is scanned while FOCUSED, which is when it is visi
 // looser version of it. Two entries, both named, both with the reason a machine cannot
 // decide them and the thing that decides them instead.
 //
-// The desktop inventory's nth-child targets are NOT reused here: the mobile tree numbers
-// its children differently, so asserting that list at this width would either fail for
-// the wrong reason or get loosened until it meant nothing. Same rule, own list.
-function assertMobileIncompletesAreKnown(results) {
+// IT NOW CHECKS THE NODES AND NOT ONLY THE RULE IDS, which is what the review asked for
+// and what the earlier version could not do. Checking rule ids alone meant "some
+// color-contrast finding is undecidable somewhere", and something WAS hiding behind that:
+// with the legend expanded at 375 the alert banner's own row had joined the undecidable
+// set, and the kinds check could not see it because color-contrast was already an allowed
+// kind. The reason it could not check nodes was that the desktop entries were nth-child
+// selectors against a desktop tree; now that both lists are written as identities the
+// document supplies, the mobile list can be exact too.
+const MOBILE_UNDECIDABLE = [
+  // Same glyph, same reason, same non-fix as on desktop.
+  ".leaflet-control-zoom-out span",
+  // "Skip link target should become visible on activation". The panel is CLOSED at this
+  // width, so at scan time the link points at a hidden element and a static rule cannot
+  // know that activating it opens one. Decided behaviourally instead: A6g presses the
+  // link and asserts focus lands inside the panel that was hidden a moment earlier.
+  "#stations-skip",
+];
+
+async function assertMobileIncompletesAreKnown(page, results) {
+  const nodes = results.incomplete.flatMap((entry) => entry.nodes.map((node) => node.target.join(" ")));
+  expect(
+    (await identities(page, nodes, { distinct: true })).sort(),
+    "the set of surfaces undecidable at mobile width has changed",
+  ).toEqual([...MOBILE_UNDECIDABLE].sort());
   const kinds = [...new Set(results.incomplete.map((entry) => entry.id))].sort();
   expect(kinds, "a new KIND of undecidable finding appeared at mobile width").toEqual(
     // color-contrast: the zoom-out glyph, exactly as on desktop, for the same reason
@@ -408,35 +428,54 @@ function assertMobileIncompletesAreKnown(results) {
   }
 }
 
+// The alert rows are counted rather than looked up, and that is not a stylistic choice.
+// They are siblings with no ids, so they all share one identity, and asking whether "an"
+// alert row passed would be answered yes by any one of several while the others failed.
+// Asking whether ALL of them passed cannot be answered that way.
+async function bannerRowsDecided(page, results) {
+  const rule = results.passes.find((entry) => entry.id === "color-contrast");
+  const ids = rule ? await identities(page, rule.nodes.map((node) => node.target.join(" "))) : [];
+  return ids.filter((id) => id === ".alert-banner-rows .alert-banner-row").length;
+}
+
 // A3: THE SAME SCOPE, SCANNED ON A PHONE. The mobile layout moves the banner, collapses
 // the legend behind a disclosure and turns the station panel into a full-width overlay,
 // so it is a genuinely different tree from the desktop one and a desktop-only scan
 // certifies nothing about it.
 //
-// The undecidable inventory is NOT reused here, deliberately. Those entries are
-// nth-child selectors against a desktop DOM, and the mobile tree numbers its children
-// differently; asserting the desktop list at this viewport would either fail for the
-// wrong reason or, worse, be loosened until it stopped meaning anything. What the mobile
-// scan asserts is the part that must hold at every width: no violations, real work done,
-// and no undecidable finding of a NEW kind.
+// The mobile scan keeps its OWN undecidable list, because the two layouts genuinely
+// differ, but it is now exact rather than a rule-id check: see MOBILE_UNDECIDABLE. It
+// also runs the desktop conversion list, since every entry there (#status and the seven
+// toggle labels) exists at this width too and there is no reason a phone should be
+// allowed to lose a contrast guarantee a desktop keeps.
 test("A1m2. axe: the mobile layout, at 375, with the legend collapsed and expanded", async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 667 });
   await open(page);
 
   // Collapsed, which is the state a rider lands on.
   await expect(page.locator("#legend")).toBeHidden();
+  const rowCount = await page.locator(".alert-banner-row").count();
+  expect(rowCount, "the fixture must render an alert row, or the row assertions are vacuous").toBeGreaterThan(0);
   let results = await scan(page).analyze();
   expect(violations(results), "axe violations on the phone, legend collapsed").toEqual([]);
-  assertMobileIncompletesAreKnown(results);
+  await assertMobileIncompletesAreKnown(page, results);
+  await assertConvertedToDecidable(page, results);
+  expect(await bannerRowsDecided(page, results), "every alert row's contrast, legend collapsed").toBe(rowCount);
   assertScanned(results, { targets: ["#stations-panel", "#legend-toggle", "#alert-banner", "#stations-toggle"] });
 
   // And expanded, because the disclosure's open state is a different tree again: the
-  // fourteen legend rows and the note only exist here.
+  // fourteen legend rows and the note only exist here. THIS is the state that was
+  // hiding a finding: the taller panel reached down into the banner's strip, and axe
+  // stopped being able to decide the alert row's contrast at all. A3's review found it
+  // and the fix bounds the panel above the banner, so the row is asserted DECIDED here
+  // rather than admitted to the list above.
   await page.locator("#legend-toggle").click();
   await expect(page.locator("#legend")).toBeVisible();
   results = await scan(page).analyze();
   expect(violations(results), "axe violations on the phone, legend expanded").toEqual([]);
-  assertMobileIncompletesAreKnown(results);
+  await assertMobileIncompletesAreKnown(page, results);
+  await assertConvertedToDecidable(page, results);
+  expect(await bannerRowsDecided(page, results), "every alert row's contrast, legend expanded").toBe(rowCount);
   assertScanned(results, { targets: ["#legend-toggle", "#toggles"] });
 });
 

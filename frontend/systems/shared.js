@@ -956,6 +956,41 @@ const alertKey = (a) => `${a.system}|${a.id}|${hashString(String(a.header ?? "")
 // re-parse identical markup for no visual change.
 let lastBannerKey = null;
 
+// A3 review: THE PANEL HAS TO KNOW HOW TALL THIS IS, because under 700px the two share
+// the bottom of the screen. The banner moved to the bottom so it would stop covering the
+// Stations toggle; the legend panel grows down from the top; and with the legend expanded
+// they met. Measured at 375x667 with one agency-wide alert: #panel ran to y=657 while the
+// banner occupied y 595..645.
+//
+// WHAT THE OVERLAP ACTUALLY COST, since the first reading of it was wrong. The banner is
+// z-index 1001 and the panel 1000, and elementFromPoint across the alert row returned the
+// row at every sample, so no alert text was ever hidden. Two things were: axe stopped
+// being able to decide the row's contrast at all ("background color could not be
+// determined because it partially overlaps other elements"), and the panel's last 62px
+// sat behind the banner with no way to bring them out, because the panel scrolls its own
+// overflow and its end is exactly what lands there. On a phone during a systemwide
+// incident that is the status line, which is the surface that says whether the data a
+// rider is looking at is current.
+//
+// PUBLISHED RATHER THAN GUESSED because the height varies with the number of alerts and
+// with how the header wraps at a given width: any fixed reservation in the stylesheet
+// would be right for one alert and wrong for two. style.css subtracts it from the panel's
+// mobile max-height, so the panel now stops above the banner and scrolls instead.
+function publishBannerHeight(el) {
+  const px = el.childElementCount ? el.getBoundingClientRect().height : 0;
+  document.documentElement.style.setProperty("--alert-banner-height", `${px}px`);
+}
+
+// The banner's height changes with the viewport even when its CONTENT has not changed: the
+// same header wraps to one line at 1280 and two at 320, and renderAlertBanner returns early
+// on an unchanged key so it would never republish. Rotating a phone would then leave the
+// panel sized against the old height. Cheap enough to run raw (one rect read plus one
+// custom property write), and there is no work to debounce.
+window.addEventListener("resize", () => {
+  const el = document.getElementById("alert-banner");
+  if (el) publishBannerHeight(el);
+});
+
 function renderAlertBanner(alerts) {
   const el = document.getElementById("alert-banner");
   const shown = alerts.filter((a) => a.header && !dismissedAlertIds.has(alertKey(a)));
@@ -979,6 +1014,7 @@ function renderAlertBanner(alerts) {
   announceAlertTransition(shown);
   if (!shown.length && !stale) {
     el.replaceChildren(); // nothing to show and alerts are current: no banner strip
+    publishBannerHeight(el);
     return;
   }
   const rows = shown.map((a) => `<div class="alert-banner-row">${esc(a.header)}</div>`).join("");
@@ -1009,6 +1045,7 @@ function renderAlertBanner(alerts) {
     `</div>`;
   const dismissBtn = el.querySelector("#alert-banner-dismiss");
   if (hadFocus && dismissBtn) dismissBtn.focus();
+  publishBannerHeight(el);
   if (dismissBtn) {
     dismissBtn.addEventListener("click", () => {
       for (const alert of shown) dismissedAlertIds.add(alertKey(alert));

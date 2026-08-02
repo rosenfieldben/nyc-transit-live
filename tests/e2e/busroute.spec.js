@@ -174,3 +174,36 @@ test("A7e. Leaflet closes the old popup BEFORE opening the new one", async ({ pa
 
   expect(order, "the close must be recorded before the open").toEqual(["close:first", "open:second"]);
 });
+
+test("A7f. hiding the Buses layer preserves the route line, and showing it brings it back", async ({ page }) => {
+  // THE REGRESSION THE popupopen MOVE INTRODUCED, found by review. Unchecking Buses
+  // removes every bus marker, and Leaflet closes any popup on a removed layer, so the
+  // close handler read a layer toggle as a rider dismissing the popup and destroyed the
+  // line. Re-checking could not bring it back: the geometry was gone and only a fresh
+  // fetch would restore it. On the pre-A3 tree the line survived both ways.
+  await installMocks(page);
+  await open(page);
+
+  const id = await firstBusId(page);
+  await page.evaluate((busId) => {
+    const el = buses.get(busId).marker.getElement();
+    el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+  }, id);
+  await expect.poll(async () => drawnLines(page), { timeout: 5_000 }).toBeGreaterThan(0);
+  const drawn = await drawnLines(page);
+
+  // Hide the layer the way a rider does.
+  await page.locator("#toggle-buses").uncheck();
+  expect(await drawnLines(page), "hiding the layer must not DESTROY the line").toBe(drawn);
+  // The banner is honest about the line being off screen while the layer is hidden.
+  await expect(page.locator("#route-banner")).toBeHidden();
+
+  // And show it again.
+  await page.locator("#toggle-buses").check();
+  expect(await drawnLines(page), "showing the layer brings the same line back").toBe(drawn);
+  await expect(page.locator("#route-banner")).toBeVisible();
+
+  // No refetch was needed: the geometry was preserved, not re-requested.
+  const shown = await page.evaluate(() => (shownBusRoute ? shownBusRoute.routeId : null));
+  expect(shown, "the route is still the one the rider chose").not.toBeNull();
+});

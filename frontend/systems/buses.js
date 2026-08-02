@@ -116,8 +116,25 @@ function busRouteOwnedBy(busId) {
    clicking the map used to leave the line drawn, and now clears it. That is what "and
    closing clears it" asks for, and it is more consistent: the banner naming the route
    is part of the same popup-shaped thing. */
-function releaseBusRoute(bus) {
-  if (bus && busRouteOwnedBy(bus.id)) clearBusRoute();
+function releaseBusRoute(bus, marker) {
+  if (!bus || !busRouteOwnedBy(bus.id)) return;
+  // A POPUP THAT CLOSED BECAUSE ITS MARKER LEFT THE MAP IS NOT A RIDER DISMISSING IT,
+  // and the review caught this as a regression the popupopen move introduced. Hiding the
+  // Buses layer calls map.removeLayer(busLayer), which removes every bus marker, and
+  // Leaflet binds `remove: this.closePopup` on any layer with a popup. So unchecking
+  // Buses fired popupclose and DESTROYED the drawn route line; re-checking could not
+  // bring it back, because the geometry was gone and only a fresh fetch would restore
+  // it. Measured before this guard: uncheck -> {lines: 0}, re-check -> {lines: 0}. On
+  // the pre-A3 tree the same sequence gave {lines: 1} both times.
+  //
+  // Asking whether the marker is still on the map separates the two causes exactly: a
+  // rider closing a popup leaves the marker where it is, while hiding a layer or a
+  // vehicle leaving the feed takes the marker with it. The layer case must PRESERVE the
+  // line (busRouteLayer is hidden by the same toggle and comes back with it), and the
+  // departed-vehicle case is already handled explicitly in the removal sweep below,
+  // which clears the route when the drawn bus itself leaves.
+  if (marker && typeof map !== "undefined" && map && !map.hasLayer(marker)) return;
+  clearBusRoute();
 }
 
 async function showBusRoute(bus) {
@@ -234,7 +251,7 @@ function applyBuses(data) {
       }, busName(bus))
         .bindPopup(() => busPopup(newRecord))
         .on("popupopen", () => showBusRoute(newRecord.latest))
-        .on("popupclose", () => releaseBusRoute(newRecord.latest))
+        .on("popupclose", () => releaseBusRoute(newRecord.latest, newRecord.marker))
         .addTo(busLayer);
       buses.set(bus.id, newRecord);
     }

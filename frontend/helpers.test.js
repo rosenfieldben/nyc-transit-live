@@ -2457,3 +2457,45 @@ test("A3: the mobile breakpoint is one number, and style.css agrees with it", ()
   assert.equal(narrowViewport({ matches: false }), false);
   assert.equal(narrowViewport(), false);
 });
+
+const { vanishingFocusPlan, vanishingFocusMessage } = require("./helpers.js");
+
+// A4: the vanishing-focus decision, tested without a DOM. The predicate is the whole of
+// the policy, so it is worth pinning away from Leaflet, viewports and timing.
+test("A4: vanishingFocusPlan rescues only when the rider was inside the doomed subtree", () => {
+  const inside = { tag: "button" };
+  const elsewhere = { tag: "input" };
+  const subtree = { contains: (node) => node === inside };
+
+  assert.equal(vanishingFocusPlan(subtree, inside).rescue, true);
+  assert.equal(vanishingFocusPlan(subtree, elsewhere).rescue, false, "focus elsewhere is not rescued");
+  // The subtree itself counts as inside it: the banner case focuses a descendant, but a
+  // future caller could hand us the focused node directly and the answer must not change.
+  assert.equal(vanishingFocusPlan(subtree, subtree).rescue, true);
+  // Nothing to destroy, or nothing focused, is never a rescue rather than an error.
+  assert.equal(vanishingFocusPlan(null, inside).rescue, false);
+  assert.equal(vanishingFocusPlan(subtree, null).rescue, false);
+  // A subtree without contains() (a detached stub) must not throw.
+  assert.equal(vanishingFocusPlan({}, inside).rescue, false);
+});
+
+test("A4: the wording names the vehicle from its own label, and never invents a noun", () => {
+  // Built from the marker's accessible name rather than a hardcoded "train", because this
+  // app carries buses and boats too and buildMarkerName puts the identity in the leading
+  // clause. The decisions block's example wording is the subway case of this rule.
+  assert.equal(
+    vanishingFocusMessage("vehicle", "1 train, next stop Times Sq-42 St, Northbound"),
+    "The 1 train you were following left the feed. Focus moved to the map.",
+  );
+  assert.equal(
+    vanishingFocusMessage("vehicle", "M15 bus, northbound"),
+    "The M15 bus you were following left the feed. Focus moved to the map.",
+  );
+  assert.equal(vanishingFocusMessage("alerts"), "Alerts cleared. Focus moved to the map.");
+  // A nameless marker still gets a true sentence rather than "The undefined you were...".
+  assert.equal(
+    vanishingFocusMessage("vehicle", null),
+    "The vehicle you were following left the feed. Focus moved to the map.",
+  );
+  assert.equal(vanishingFocusMessage("vehicle", "   "), vanishingFocusMessage("vehicle", null));
+});

@@ -356,6 +356,59 @@ function dimMarker(marker, age, base = 1) {
 // tab stop. role="img" with an aria-label is what a marker actually is: a graphic
 // that means something. Touch screen-reader users, who navigate by pointer and not
 // by Tab, still find and hear it.
+/* A4: THE VANISHING-FOCUS DOOR, one place, on the popup path.
+
+   WHERE IT LIVES. labeledMarker is the single birth seam for every marker in this app,
+   enforced by markers.test.js, so a `remove` hook registered here is the symmetric death
+   seam and covers every destruction path at once: the five per-system departure sweeps
+   (group.removeLayer), a layer toggle (map.removeLayer on the group, which fires `remove`
+   on every child), clearLayers, and a bare marker.remove(). That coverage is the reason
+   for the placement, and it is pinned by mutation: deleting this hook fails A8a and A8c,
+   which travel two different destruction paths.
+
+   WHAT IS *NOT* LOAD-BEARING, corrected after mutation testing said so. The first version
+   of this comment claimed the hook must run BEFORE Leaflet's own `remove: this.closePopup`
+   (which callers install later, via bindPopup) so that it could see the popup still open.
+   Measured: forcing marker.closePopup() to run first, at the top of this handler, leaves
+   every spec green. The predicate does not need the popup to be OPEN, only for its ELEMENT
+   to still contain the focused node, and a closing Leaflet popup lingers in the DOM for
+   its fade. So the ordering is real but incidental, and saying otherwise would have left a
+   future reader defending an invariant nothing depends on.
+
+   WHAT IT DOES NOT TRY TO DO. It does not ask why the marker is going away. Measured at
+   `remove` time, a departed vehicle and a hidden layer are byte-identical in every piece
+   of Leaflet state (the group still has the marker, the map still has the group, the
+   registry still has the key), so any attempt to tell them apart here would be guesswork.
+   It does not need to: the predicate is about the RIDER, not the cause. A layer toggle
+   moves focus to the checkbox the rider just activated, so the predicate is false and the
+   door stays silent; a vehicle ageing out of the feed while its popup is open leaves focus
+   inside the doomed subtree, and that is the case worth rescuing. */
+function planVanishingFocus(subtree, { label = null, kind = "vehicle" } = {}) {
+  return vanishingFocusPlan(subtree, document.activeElement, { label, kind });
+}
+
+// SPLIT FROM THE PLAN, and the split is not cosmetic. The banner is rebuilt by replacing
+// its children, so by the time the rescue runs the focused button is already gone and
+// document.activeElement has fallen to the body: a predicate evaluated at that moment asks
+// "is the body inside the banner", which is false, and the rescue silently declines to
+// fire on precisely the case it exists for. Caught by A8d failing with active=BODY. So
+// callers whose destruction happens AFTER the decision plan first and apply second; the
+// marker door, whose hook runs BEFORE Leaflet tears anything down, can do both at once.
+function applyVanishingFocus(plan) {
+  if (!plan || !plan.rescue) return false;
+  // The map container is the stable ancestor and is already a labeled tab stop (Leaflet
+  // writes tabindex=0 on it; index.html gives it the name). It cannot itself vanish, which
+  // is the whole reason it is the destination rather than, say, the nearest sibling.
+  const container = document.getElementById("map");
+  if (container) container.focus();
+  announcePage(plan.message);
+  return true;
+}
+
+function rescueVanishingFocus(subtree, options = {}) {
+  return applyVanishingFocus(planVanishingFocus(subtree, options));
+}
+
 function labeledMarker(latlng, options, name) {
   const marker = L.marker(latlng, { ...options, keyboard: false });
   // Relabel whenever Leaflet builds the element again. Toggling a layer off and on
@@ -365,6 +418,13 @@ function labeledMarker(latlng, options, name) {
   // silently anonymous again, and nothing else would notice for a static system like
   // AirTrain that has no poll to re-apply the name.
   marker.on("add", () => applyMarkerName(marker));
+  // A4: and the symmetric door. Registered BEFORE the caller's bindPopup so it runs
+  // before Leaflet's own closePopup and can still see what the rider was holding.
+  marker.on("remove", () => {
+    const popup = typeof marker.getPopup === "function" ? marker.getPopup() : null;
+    const el = popup && typeof popup.getElement === "function" ? popup.getElement() : null;
+    rescueVanishingFocus(el, { label: marker._a11yName, kind: "vehicle" });
+  });
   // RELABEL AFTER A RE-SKIN TOO, so the name survives no matter what order a caller
   // does things in. Today setIcon happens to reuse the same element and attributes
   // happen to survive, but that is a Leaflet implementation detail (Icon._setIconStyles
@@ -991,6 +1051,18 @@ window.addEventListener("resize", () => {
   if (el) publishBannerHeight(el);
 });
 
+// A4: what the banner is about to destroy, captured while it still exists.
+//
+// The banner is REBUILT IN PLACE rather than removed, so the element the rider is holding
+// is a descendant that will not survive, while #alert-banner itself does. Returning the
+// container is therefore right for the predicate (it is the subtree that contains the
+// doomed control) and returning the focused element itself would be wrong the moment
+// Leaflet or a future rebuild reuses a node.
+function bannerFocusVictim(el) {
+  if (!el || !document.activeElement) return null;
+  return el.contains(document.activeElement) ? el : null;
+}
+
 function renderAlertBanner(alerts) {
   const el = document.getElementById("alert-banner");
   const shown = alerts.filter((a) => a.header && !dismissedAlertIds.has(alertKey(a)));
@@ -1013,8 +1085,14 @@ function renderAlertBanner(alerts) {
   // about the transit system.
   announceAlertTransition(shown);
   if (!shown.length && !stale) {
+    // A4: THE UNMOUNT PATH, which A2's own FOLLOWUP named and left open. The rider may be
+    // holding the dismiss button that is about to stop existing, and measured, this branch
+    // dropped them on document.body in silence. Read BEFORE the children go, because
+    // afterwards there is nothing left to ask.
+    const plan = planVanishingFocus(bannerFocusVictim(el), { kind: "alerts" });
     el.replaceChildren(); // nothing to show and alerts are current: no banner strip
     publishBannerHeight(el);
+    applyVanishingFocus(plan);
     return;
   }
   const rows = shown.map((a) => `<div class="alert-banner-row">${esc(a.header)}</div>`).join("");
@@ -1038,6 +1116,9 @@ function renderAlertBanner(alerts) {
   // open question this phase does not answer; see the A2 FOLLOWUP filed above
   // updatePopupKeepingFocus.
   const hadFocus = !!(document.activeElement && el.contains(document.activeElement));
+  // Captured before the rebuild for the same reason as the unmount branch: once innerHTML
+  // is reassigned the old subtree is gone and cannot be asked whether it held focus.
+  const rebuildPlan = planVanishingFocus(bannerFocusVictim(el), { kind: "alerts" });
   el.innerHTML =
     `<div class="alert-banner-strip">` +
     `<div class="alert-banner-rows">${rows}${staleRow}</div>` +
@@ -1045,6 +1126,14 @@ function renderAlertBanner(alerts) {
     `</div>`;
   const dismissBtn = el.querySelector("#alert-banner-dismiss");
   if (hadFocus && dismissBtn) dismissBtn.focus();
+  // A4: AND THE REBUILD THAT HAS NO SUCCESSOR TO RESTORE TO. When the alert set empties
+  // on a poll whose feed is also stale, the strip is rebuilt carrying only the "alerts may
+  // be out of date" row and no dismiss button, so the branch above finds nothing to focus
+  // and silently gives up. Measured, that is the most confusing variant of the defect: the
+  // banner is still visibly on screen with nothing focusable inside it and the rider is on
+  // the body. The dismiss button also cannot survive its own click, since dismissing
+  // empties `shown`, so every dismissal lands on this path or the unmount above.
+  if (hadFocus && !dismissBtn) applyVanishingFocus(rebuildPlan);
   publishBannerHeight(el);
   if (dismissBtn) {
     dismissBtn.addEventListener("click", () => {

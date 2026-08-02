@@ -2025,8 +2025,55 @@ function watchMotionPreference(onChange, mql = null) {
   return () => query.removeEventListener("change", handler);
 }
 
+/* A4: VANISHING FOCUS, the decision half.
+
+   WHAT VANISHES AND WHY IT IS THE POPUP. A rider's focus can never be inside a marker
+   element: the factory builds every marker with keyboard:false, so there is no tabindex
+   and no tab stop, and A2 pinned that as the marker exclusion policy. Popups, though,
+   live in Leaflet's popupPane as a SEPARATE subtree, and every popup contains at least
+   Leaflet's own close button. So the thing that can be destroyed under a rider's fingers
+   is the popup, and the same is true of the alert banner's dismiss button.
+
+   THE PREDICATE IS THE ONE THE POPUP-REFRESH FIX PROVED OUT: did the subtree that is
+   about to be destroyed contain document.activeElement? Not "is a popup open", not "did
+   a vehicle leave" - the question is only ever whether the rider was holding something
+   that is going away. That is what makes this silent in the common case: a layer toggle
+   destroys every marker in a group, but the rider's focus is on the checkbox they just
+   activated, so the predicate is false and nothing is said. The announcement is earned by
+   a TRANSITION in the rider's own state, which is the same worthiness rule the live
+   regions have followed since A1.
+
+   Kept pure and here so node can test it without a DOM: the caller passes the subtree and
+   the currently focused element, and gets back the decision plus the wording. */
+function vanishingFocusPlan(subtree, active, { label = null, kind = "vehicle" } = {}) {
+  if (!subtree || !active) return { rescue: false, message: null };
+  const inside = subtree === active || (typeof subtree.contains === "function" && subtree.contains(active));
+  if (!inside) return { rescue: false, message: null };
+  return { rescue: true, message: vanishingFocusMessage(kind, label) };
+}
+
+/* The wording. The decisions block gave "The train you were following left the feed" and
+   "Alerts cleared"; the vehicle half is built from the marker's OWN accessible name
+   rather than from a hardcoded noun, because this app carries buses, boats and PATH
+   trains as well as subway trains and a fixed "train" would be false for most of them.
+   The name's leading clause is exactly the vehicle identity ("1 train", "M15 bus",
+   "Rockaway ferry"), because that is how buildMarkerName composes it.
+
+   Both sentences name where focus went. That is not decoration: a rider who was reading a
+   popup and is silently moved somewhere else has lost their place, and "focus moved to
+   the map" is the one piece of orientation that makes the move recoverable. */
+function vanishingFocusMessage(kind, label) {
+  if (kind === "alerts") return "Alerts cleared. Focus moved to the map.";
+  const lead = typeof label === "string" && label.trim() ? label.split(",")[0].trim() : null;
+  return lead
+    ? `The ${lead} you were following left the feed. Focus moved to the map.`
+    : "The vehicle you were following left the feed. Focus moved to the map.";
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
+    vanishingFocusPlan,
+    vanishingFocusMessage,
     esc, routeColor, lineColor, staleness, emptyFeedDecision, noteClockOffset,
     formatCountdown, trainLatLng, polylineCumLengths, pointAtArcLength, projectOntoRoute,
     computeRouteSlice, railroadColor, isPlacedRailroad, orderedRailroadBuckets,

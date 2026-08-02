@@ -182,8 +182,10 @@ async function refreshAll() {
     // absent fallback branch reading a nonsense clock.
     .concat(Object.values(sources).map((s) => staleness(s)).filter(Boolean));
   const now = new Date().toLocaleTimeString();
-  if (problems.length) setStatus(`${counts} · ${now} — ${problems.join("; ")}`, true);
-  else setStatus(`${counts} · updated ${now}`);
+  // A3: composition moved into statusLineText so the order and the never-truncate rule
+  // are stated once and tested, rather than living in a template literal here. compact
+  // drops the clock's seconds on a narrow screen; see the rule beside the helper.
+  setStatus(statusLineText({ counts, clock: now, problems }, { compact: narrowViewport() }), problems.length > 0);
 
   // Refresh whichever station popup is open (subway or railroad) so the train
   // list (not just the countdowns) stays current on the same ~15s cadence as the

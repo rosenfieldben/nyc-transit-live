@@ -87,6 +87,9 @@ const SCAN_ROOTS = [
   ".leaflet-control-zoom",
   "#toggles",
   "#stations-toggle",
+  // A3 added the legend disclosure; a new interactive control joins the scanned scope
+  // in the same commit that creates it, or the scope quietly falls behind the page.
+  "#legend-toggle",
 ];
 
 function scan(page) {

@@ -69,6 +69,18 @@
     <button type="button" id="stations-toggle" aria-expanded="false" aria-controls="stations-panel">
       Stations
     </button>
+    <!-- A3: the legend collapses on a phone. Fourteen legend rows and a note are most of
+         this panel's height, and on a 375x667 screen they pushed the layer toggles and
+         the status line off the bottom. The button is present in the markup at every
+         width and HIDDEN BY CSS above the mobile breakpoint, rather than being created
+         by script, so the disclosure has no load-order dependency and a rider whose
+         JavaScript has not run yet is never shown a control that does nothing.
+         aria-expanded is maintained by the same code that sets the hidden attribute, so
+         what a screen reader is told and what is drawn cannot disagree. -->
+    <button type="button" id="legend-toggle" aria-expanded="false" aria-controls="legend">
+      Legend
+    </button>
+    <div id="legend">
     <div class="legend-row">
       <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M10 2 L16 17 L10 13 L4 17 Z" fill="#1d4ed8" stroke="#fff" stroke-width="1.2"/></svg>
       Bus (arrow points where it's heading)
@@ -126,6 +138,7 @@
       Ferry dock (click for arrivals)
     </div>
     <div class="legend-note">Color indicates route &middot; click a bus to draw its route</div>
+    </div><!-- /#legend -->
     <div id="route-banner" hidden>
       <span id="route-banner-label"></span>
       <button id="route-clear" type="button" title="Remove route line">&times; clear</button>

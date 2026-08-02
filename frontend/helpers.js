@@ -66,6 +66,48 @@ function railroadColor(routeId) {
   return RAILROAD_COLORS[h % RAILROAD_COLORS.length];
 }
 
+/* ----- A3: one breakpoint, named once ----------------------------------------
+   700px is the mobile boundary, and it is declared here as well as in style.css because
+   two things need it: the media queries that lay the page out, and the status line's
+   compaction, which is composed in JavaScript. A number written twice drifts, so the
+   node test asserts style.css actually uses this value. The 1100px docked threshold is a
+   different decision and is deliberately untouched by A3.
+
+   Injectable like the motion gate above, for the same reason: a test needs to state the
+   viewport rather than resize a real window, and node has no matchMedia at all. */
+const MOBILE_MAX_WIDTH_PX = 700;
+const MOBILE_QUERY = `(max-width: ${MOBILE_MAX_WIDTH_PX}px)`;
+
+function narrowViewport(mql = null) {
+  const query = mql || (typeof matchMedia === "function" ? matchMedia(MOBILE_QUERY) : null);
+  if (!query) return false; // no matchMedia (node): the roomy layout, same as before A3
+  return !!query.matches;
+}
+
+/* ----- A3: the status line's composition rule --------------------------------
+   ONE STATED ORDER: counts, then clock, then problems. Counts are what a rider glances
+   at, the clock is ambient, and a problem is the thing they need to read whole. The
+   line WRAPS rather than truncating, so nothing is ever cut off at any width; what
+   compaction does is drop the clock's SECONDS, which is the only part of the line that
+   carries no information a rider acts on.
+
+   NEVER TRUNCATE A PROBLEM STATEMENT. This is the hard rule and the reason composition
+   lives in one testable function instead of a template literal at the call site: "Bus:
+   upstream 502" clipped to "Bus: upstr" is worse than no status line at all, because it
+   looks like the page merely ran out of room rather than that something is broken. If a
+   future narrow layout needs to shed something, it sheds the clock and then the counts,
+   in that order, and the problems stay whole.
+
+   The rider-facing separators are unchanged from what shipped before A3, deliberately:
+   moving composition into a helper is not licence to reword what a rider reads. */
+function statusLineText({ counts, clock, problems = [] } = {}, { compact = false } = {}) {
+  const time = compact ? String(clock ?? "").replace(/:\d\d(?=(\s|$))/, "") : clock;
+  const stated = (problems ?? []).filter(Boolean);
+  const head = [counts, time].filter(Boolean).join(" \u00b7 ");
+  if (!stated.length) return counts ? `${counts} \u00b7 updated ${time}` : `updated ${time}`;
+  return `${head} \u2014 ${stated.join("; ")}`;
+}
+
 /* ----- A3: contrast, computed rather than curated ----------------------------
    ONE luminance path for the whole app. Before this there was none: the only
    contrast logic anywhere was DARK_TEXT_LINES above, a hand-written set of four
@@ -1989,7 +2031,8 @@ if (typeof module !== "undefined" && module.exports) {
     RAILROAD_ROUTE_MAX_SLICE, RAILROAD_ROUTE_ACCEPT_DIST, RAILROAD_BUCKET_ORDER,
     LINE_COLORS, FEED_STALE_AFTER_S, FETCH_DEADLINE_MS, shouldRefresh,
     // A3: one luminance path for the whole app.
-    parseColor, relativeLuminance, contrastRatio, readableTextOn, readableInk,
+    parseColor, relativeLuminance, contrastRatio, readableTextOn, readableInk, statusLineText,
+    MOBILE_MAX_WIDTH_PX, MOBILE_QUERY, narrowViewport,
     INK_LIGHT, INK_DARK,
     feedAgeLine, humanizeAge, alertsStale, alertsFreshnessBasis, ALERTS_STALE_AFTER_S,
     ingestSystems, systemAges, systemStaleAts, staleAge, markerOpacity, glideClock,

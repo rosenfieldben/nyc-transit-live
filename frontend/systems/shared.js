@@ -59,6 +59,44 @@ map.panBy = (offset, options) =>
 applyMotionPreference(motionAtLoad);
 watchMotionPreference(applyMotionPreference);
 
+/* ----- A3: the legend disclosure, and the one place the breakpoint is read ----------
+   The legend collapses under 700px and is always open above it. Both facts live here
+   rather than being split between a CSS rule and a click handler, because the two would
+   drift: a rider who rotates a phone into landscape crosses the breakpoint without any
+   click, and the version of this that only listened for clicks left the legend hidden
+   on a screen with room for it.
+
+   ARIA AND THE ATTRIBUTE ARE SET TOGETHER, always, so what a screen reader is told and
+   what is drawn cannot disagree. Above the breakpoint the button is display:none, and
+   aria-expanded is reported as true, because the legend genuinely is expanded there.
+
+   FOCUS STAYS ON THE BUTTON. The panel expands in place, so there is nowhere to send
+   focus and nothing is destroyed; this is deliberately NOT the popup or banner case
+   where a control is replaced. */
+const legendToggleEl = document.getElementById("legend-toggle");
+const legendEl = document.getElementById("legend");
+let legendOpen = false;
+
+function applyLegendDisclosure() {
+  if (!legendToggleEl || !legendEl) return;
+  const narrow = narrowViewport();
+  const open = narrow ? legendOpen : true;
+  legendEl.hidden = !open;
+  legendToggleEl.setAttribute("aria-expanded", String(open));
+}
+
+if (legendToggleEl) {
+  legendToggleEl.addEventListener("click", () => {
+    legendOpen = !legendOpen;
+    applyLegendDisclosure();
+  });
+}
+applyLegendDisclosure();
+if (typeof matchMedia === "function") {
+  const mql = matchMedia(MOBILE_QUERY);
+  if (mql.addEventListener) mql.addEventListener("change", applyLegendDisclosure);
+}
+
 // Station dots get their own canvas pane sandwiched between the route lines
 // (overlayPane, 400) and the train/bus markers (markerPane, 600), so the
 // station canvas — not the route-line canvas it overlaps — receives clicks.

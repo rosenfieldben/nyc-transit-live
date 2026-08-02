@@ -855,6 +855,7 @@ test("trainLatLng monotonic-f clamp: dwell can't drag the marker backward; reset
 const { selectHeadwayBand, airtrainStationPopupHtml } = require("./helpers.js");
 const {
   parseColor, contrastRatio, readableTextOn, readableInk, INK_DARK, LINE_COLORS,
+  statusLineText, MOBILE_MAX_WIDTH_PX, narrowViewport,
 } = require("./helpers.js");
 
 // The real reconciled bands from data/airtrain_jfk.json (all 3 routes share them):
@@ -2406,4 +2407,53 @@ test("A3: readableInk darkens only what must darken, and keeps the hue", () => {
   // Unparseable input passes through rather than throwing: a caller that hands us
   // something odd gets its own colour back, not a crash in a popup.
   assert.equal(readableInk("chartreuse"), "chartreuse");
+});
+
+test("A3: the status line states its order and never truncates a problem", () => {
+  const counts = "1,234 buses · 56 trains";
+  const clock = "8:01:23 AM";
+  // Healthy: counts, then the clock, and the word that says the clock is a freshness
+  // stamp rather than a departure time.
+  assert.equal(statusLineText({ counts, clock }), `${counts} · updated ${clock}`);
+  // Problems: counts, clock, then every problem, joined and WHOLE.
+  const problems = ["Bus: upstream 502", "Subway ACE: data 3m old"];
+  assert.equal(
+    statusLineText({ counts, clock, problems }),
+    `${counts} · ${clock} — Bus: upstream 502; Subway ACE: data 3m old`,
+  );
+  // COMPACT DROPS THE SECONDS AND NOTHING ELSE. That is the only part of the line
+  // carrying no information a rider acts on.
+  assert.equal(statusLineText({ counts, clock }, { compact: true }), `${counts} · updated 8:01 AM`);
+  const tight = statusLineText({ counts, clock, problems }, { compact: true });
+  assert.ok(tight.includes("8:01 AM") && !tight.includes("8:01:23"));
+  // THE HARD RULE, asserted rather than described: every problem survives compaction
+  // character for character. "Bus: upstream 502" clipped to "Bus: upstr" reads as the
+  // page running out of room rather than as something being broken.
+  for (const problem of problems) assert.ok(tight.includes(problem), `${problem} was altered`);
+  assert.ok(tight.includes(counts), "the counts survive too");
+  // A very long problem is still whole; there is no cap anywhere in the composition.
+  const long = "Railroad LIRR: upstream returned 503 Service Unavailable after three attempts";
+  assert.ok(statusLineText({ counts, clock, problems: [long] }, { compact: true }).includes(long));
+  // Falsy problems are dropped rather than rendered as empty segments.
+  assert.equal(statusLineText({ counts, clock, problems: [null, "", undefined] }), `${counts} · updated ${clock}`);
+});
+
+test("A3: the mobile breakpoint is one number, and style.css agrees with it", () => {
+  // Written twice by necessity: the media queries lay the page out, and the status
+  // line's compaction is composed in JavaScript. A number written twice drifts, so this
+  // reads the stylesheet rather than trusting the pair.
+  const css = require("node:fs").readFileSync(`${__dirname}/style.css`, "utf8");
+  assert.ok(
+    css.includes(`@media (max-width: ${MOBILE_MAX_WIDTH_PX}px)`),
+    `style.css must use the ${MOBILE_MAX_WIDTH_PX}px breakpoint declared in helpers.js`,
+  );
+  // The 1100px docked threshold is a DIFFERENT decision and A3 does not touch it; if it
+  // ever collapses into the mobile number, this says so.
+  assert.ok(css.includes("@media (min-width: 1100px)"), "the docked threshold is unchanged");
+  assert.notEqual(MOBILE_MAX_WIDTH_PX, 1100);
+  // narrowViewport takes an injected query so it is testable without a browser, and
+  // returns the roomy answer when there is no matchMedia at all.
+  assert.equal(narrowViewport({ matches: true }), true);
+  assert.equal(narrowViewport({ matches: false }), false);
+  assert.equal(narrowViewport(), false);
 });

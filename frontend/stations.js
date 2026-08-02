@@ -66,6 +66,7 @@ function openStationsPanel({ focusSearch = true } = {}) {
   if (!stationsPanel) return;
   stationsPanel.hidden = false;
   if (stationsToggle) stationsToggle.setAttribute("aria-expanded", "true");
+  applyDockedLayout(); // the map gives up the column while the panel is using it
   if (focusSearch && stationsSearch) stationsSearch.focus();
   renderStationResults();
   resumePanelArrivals();
@@ -113,6 +114,7 @@ function closeStationsPanel() {
   if (focusWasInside && stationsToggle) stationsToggle.focus();
   stationsPanel.hidden = true;
   if (stationsToggle) stationsToggle.setAttribute("aria-expanded", "false");
+  applyDockedLayout(); // and takes it back the moment the panel stops using it
   stopPanelArrivals();
 }
 
@@ -608,20 +610,43 @@ function announceArrivals(shaped, staleLine, tick) {
 // a screen reader user and breaks the skip link's whole purpose.
 const STATIONS_DOCK_QUERY = "(min-width: 1100px)";
 
-function applyStationsDocking() {
-  if (!stationsPanel || typeof matchMedia !== "function") return;
-  const docked = matchMedia(STATIONS_DOCK_QUERY).matches;
-  document.body.classList.toggle("stations-docked", docked);
-  if (docked && !stationsPanelOpen()) openStationsPanel({ focusSearch: false });
+// A3 review: THE CLASS MEANS "the panel is docked AND OPEN", not "the viewport is wide",
+// and the difference was a defect. body.stations-docked drives two rules that reserve
+// the panel's column: #map is offset and narrowed by 360px, and the alert banner is
+// pushed clear of it. Both were keyed on the media query alone, so closing the panel at
+// a wide width left the column reserved for something that was no longer there.
+// Measured at 1280 before this change: with the panel closed, #map still reported
+// {left: 360, width: 920} and elementFromPoint at (180, 400) returned BODY, a 360px
+// strip of nothing beside a map squeezed out of it, with the banner still indented to
+// 414px. Riders who close the panel are exactly the ones who wanted the map bigger.
+//
+// One function owns the class so the two callers cannot disagree about what it means:
+// the breakpoint handler below and the panel's own open and close.
+function applyDockedLayout() {
+  const docked = typeof matchMedia === "function" && matchMedia(STATIONS_DOCK_QUERY).matches;
+  const reserve = docked && stationsPanelOpen();
+  if (document.body.classList.contains("stations-docked") === reserve) return;
+  document.body.classList.toggle("stations-docked", reserve);
   // THE MAP MUST LEARN ITS NEW WIDTH. Docking narrows #map, and Leaflet caches its
   // container size, so without this the map stays sized for a viewport it no
   // longer has: tiles short of the right edge, and clicks landing on the wrong
-  // coordinates. invalidateSize is Leaflet's sanctioned API for exactly this, and
-  // it is called ONLY when the dock state is applied: once at load, and then on a
-  // matchMedia change, which fires when the query flips rather than on every resize
-  // frame. Never on the one-second tick. The phase's "no map layout changes"
-  // constraint is about not restyling the map, which this does not do.
+  // coordinates. invalidateSize is Leaflet's sanctioned API for exactly this, and the
+  // early return above is what keeps it to the moments that need it: the class actually
+  // changing, which is a breakpoint crossing or the panel opening or closing at a wide
+  // width. Never on a resize frame, never on the one-second tick. The phase's "no map
+  // layout changes" constraint is about not restyling the map, which this does not do.
   if (typeof map !== "undefined" && map) map.invalidateSize();
+}
+
+function applyStationsDocking() {
+  if (!stationsPanel || typeof matchMedia !== "function") return;
+  // Opening comes first: it calls applyDockedLayout itself, so the class lands with the
+  // panel rather than a frame before it. The call below then covers the other
+  // direction, where the viewport left the docked range and the class has to come off.
+  if (matchMedia(STATIONS_DOCK_QUERY).matches && !stationsPanelOpen()) {
+    openStationsPanel({ focusSearch: false });
+  }
+  applyDockedLayout();
 }
 
 applyStationsDocking();

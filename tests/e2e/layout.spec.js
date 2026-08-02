@@ -570,3 +570,62 @@ for (const [label, viewport, docked] of [
     ).toBe(true);
   });
 }
+
+test("A4i. closing the docked panel gives the map its column back", async ({ page }) => {
+  // body.stations-docked reserves a 360px column: #map is offset and narrowed by it,
+  // and the alert banner is indented clear of it. Both were keyed on the media query
+  // alone, so the reservation outlived the thing it was reserved for. Measured at 1280
+  // with the panel closed, before the fix: #map still reported {left: 360, width: 920}
+  // and elementFromPoint at (180, 400) returned BODY. A rider who closes the station
+  // list is asking for more map, and got a 360px strip of nothing instead.
+  //
+  // The banner is served here because it is the second rule keyed on that class, and a
+  // spec that only checked the map would let the indent rot on its own.
+  await page.setViewportSize({ width: 1280, height: 720 });
+  const ctx = await withBanner(page);
+  await open(page, ctx);
+  await expect(page.locator(".alert-banner-row").first()).toBeVisible();
+
+  const probe = () =>
+    page.evaluate(() => {
+      const de = document.documentElement;
+      const m = document.getElementById("map").getBoundingClientRect();
+      const at = document.elementFromPoint(180, 400);
+      return {
+        reserved: document.body.classList.contains("stations-docked"),
+        mapLeft: Math.round(m.left),
+        mapWidth: Math.round(m.width),
+        overflow: de.scrollWidth - de.clientWidth,
+        strip: !!(at && document.getElementById("map").contains(at)),
+        bannerLeft: getComputedStyle(document.getElementById("alert-banner")).left,
+      };
+    });
+
+  // Docked and open: the column is reserved, and the point tested below is the panel.
+  const open1 = await probe();
+  expect(open1.reserved, "the panel is docked open at 1280").toBe(true);
+  expect(open1.mapLeft, "the map starts beside the panel").toBe(360);
+  expect(open1.strip, "the panel occupies the column while it is open").toBe(false);
+
+  // Closed: the column comes back, in both rules, with no sideways scroll either way.
+  await page.locator("#stations-toggle").click();
+  await expect(page.locator("#stations-panel")).toBeHidden();
+  const closed = await probe();
+  expect(closed, "closing the docked panel must return the whole width to the map").toEqual({
+    reserved: false,
+    mapLeft: 0,
+    mapWidth: 1280,
+    overflow: 0,
+    strip: true,
+    bannerLeft: "54px",
+  });
+
+  // And reopening reserves it again, so this is a property of the panel's state rather
+  // than a one-way release that happens to look right once.
+  await page.locator("#stations-toggle").click();
+  await expect(page.locator("#stations-panel")).toBeVisible();
+  const open2 = await probe();
+  expect(open2.reserved, "reopening reserves the column again").toBe(true);
+  expect(open2.mapLeft, "and the map steps aside again").toBe(360);
+  expect(open2.overflow, "with no sideways scroll in either state").toBe(0);
+});

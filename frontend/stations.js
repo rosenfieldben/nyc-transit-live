@@ -59,6 +59,54 @@ function stationsPanelOpen() {
   return stationsPanel != null && !stationsPanel.hidden;
 }
 
+/* A4: WHILE THE OVERLAY IS UP, THE PAGE BEHIND IT IS INERT.
+
+   THE WART THIS CLOSES. Under 700px the panel covers the viewport, and A3 measured what
+   that cost a keyboard rider: 14 of 17 tab stops sat behind an opaque overlay, reachable
+   by Tab and invisible to the eye. A3 recorded it rather than fixing it, and A6n pinned
+   it as a known wart, because the obvious fix is a focus trap and a trap with no reliable
+   exit is exactly how the untappable overlay got created in the first place.
+
+   `inert` is the platform primitive built for this and it is NOT a trap: it makes a
+   subtree unfocusable AND removes it from the accessibility tree, so the controls behind
+   the overlay stop being reachable and stop being announced, while Tab still cycles
+   freely within the panel and Escape still leaves. Nothing has to be un-trapped on the
+   way out; the attribute is simply removed.
+
+   TWO EXEMPTIONS, and the second one is the sharp edge.
+
+   #stations-panel itself, obviously: it is the thing that is on top.
+
+   #page-announce, because inert removes a subtree from the accessibility tree and an
+   inert live region is a SILENT live region. That region is where A4's vanishing-focus
+   announcements are spoken, and the overlay is exactly the state a rider is most likely
+   to be in when a marker they were reading disappears underneath it. Inerting it would
+   have made this phase's other deliverable mute in this phase's own new state, silently,
+   with every spec still green. It is visually hidden and holds nothing focusable, so
+   exempting it costs nothing and hides nothing.
+
+   #stations-skip is deliberately NOT exempt. It is a body child, so it goes inert with
+   everything else, and that is correct: the link exists to get a rider INTO the panel and
+   the panel is already open and holding focus. */
+const INERT_EXEMPT = new Set(["stations-panel", "page-announce"]);
+
+function setBackgroundInert(on) {
+  if (!document.body) return;
+  for (const el of document.body.children) {
+    // Scripts are not rendered and cannot hold focus; skipping them keeps the attribute
+    // off elements where it would only be noise in the DOM.
+    if (el.tagName === "SCRIPT" || INERT_EXEMPT.has(el.id)) continue;
+    el.inert = on;
+  }
+}
+
+// The state this derives from is the same state the layout derives from: an overlay is
+// an open panel at a width where the panel covers the page. Above the breakpoint the
+// panel is a drawer beside the map, nothing is covered, and nothing is inerted.
+function applyOverlayInertness() {
+  setBackgroundInert(stationsPanelOpen() && narrowViewport());
+}
+
 // Opening moves focus INTO the panel, to the search input, because the reason
 // someone opened it is to search. Announcing the panel and leaving focus behind
 // on the toggle would make the next Tab land somewhere unrelated.
@@ -67,6 +115,7 @@ function openStationsPanel({ focusSearch = true } = {}) {
   stationsPanel.hidden = false;
   if (stationsToggle) stationsToggle.setAttribute("aria-expanded", "true");
   applyDockedLayout(); // the map gives up the column while the panel is using it
+  applyOverlayInertness(); // and at overlay widths the page behind it stops being reachable
   if (focusSearch && stationsSearch) stationsSearch.focus();
   renderStationResults();
   resumePanelArrivals();
@@ -110,6 +159,14 @@ function resumePanelArrivals() {
 // closing a panel the rider was not in must not yank their focus somewhere else.
 function closeStationsPanel() {
   if (!stationsPanel) return;
+  // A4: UN-INERT BEFORE RESTORING FOCUS, and this order is the whole of the fix rather
+  // than a tidiness preference. #stations-toggle is outside the panel, so while the
+  // overlay is up it is inert, and .focus() on an element inside an inert subtree is a
+  // no-op: the call succeeds, nothing moves, and the rider is left on the body with the
+  // panel closing around them. Released unconditionally rather than through
+  // applyOverlayInertness, because the panel is still open on this line and that helper
+  // would correctly compute "still an overlay" and change nothing.
+  setBackgroundInert(false);
   const focusWasInside = stationsPanel.contains(document.activeElement);
   if (focusWasInside && stationsToggle) stationsToggle.focus();
   stationsPanel.hidden = true;
@@ -670,6 +727,19 @@ function applyStationsDocking() {
     openStationsPanel({ focusSearch: false });
   }
   applyDockedLayout();
+  applyOverlayInertness();
+}
+
+// A4: the overlay threshold is 700, not the 1100 dock threshold, so it needs its own
+// listener. The path that matters is the unprompted one A6j already covers: a tablet
+// docked at 1280 with the panel open, narrowed to a phone, becomes an overlay without
+// the rider touching anything, and the page behind it has to go inert on the way down
+// and come back on the way up.
+if (typeof matchMedia === "function" && typeof MOBILE_QUERY === "string") {
+  const overlayQuery = matchMedia(MOBILE_QUERY);
+  if (typeof overlayQuery.addEventListener === "function") {
+    overlayQuery.addEventListener("change", applyOverlayInertness);
+  }
 }
 
 applyStationsDocking();

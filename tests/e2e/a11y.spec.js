@@ -33,28 +33,39 @@ const fx = require("./fixtures/api");
 // rather than on a violation. setFixedTime pins Date.now (which is what keeps the
 // app's skew calibration at zero and its ages deterministic) while leaving timers
 // running, which is exactly the combination a scan needs.
-async function open(page) {
+const agencyAlert = (n) => ({
+  id: `a11y-${n}`,
+  system: "subway",
+  header:
+    n === 1
+      ? "Reduced service systemwide while crews clear a disabled train"
+      : "Some elevators are out of service across the system",
+  description: null,
+  effect: "REDUCED_SERVICE",
+  cause: "OTHER_CAUSE",
+  routes: [],
+  stops: [],
+  starts_at: fx.FROZEN_S - 600,
+  ends_at: null,
+});
+
+// alerts: how many agency-wide alerts the banner shows.
+//
+// AN ALERT IS SERVED ON PURPOSE. The banner renders nothing at all when there are no
+// agency-wide alerts, so scanning a page without one would include the selector and
+// examine an empty div: green, and meaningless. The anti-vacuity assertions below
+// check that the banner was actually reached.
+//
+// TWO IS NOT ONE, and the mobile scan asks for two. Round 2 of the review pointed out
+// that bannerRowsDecided compares a COUNT precisely so that one passing row cannot answer
+// for its siblings, and that with a single row in the fixture the property was never
+// exercised: a mutation that deduplicated the identities left the file green. Two rows is
+// what makes that assertion mean what it says.
+async function open(page, { alerts = 1 } = {}) {
   const ctx = await installMocks(page);
-  // AN ALERT IS SERVED ON PURPOSE. The banner renders nothing at all when there are no
-  // agency-wide alerts, so scanning a page without one would include the selector and
-  // examine an empty div: green, and meaningless. The anti-vacuity assertions below
-  // check that the banner was actually reached.
   ctx.overrides.alerts = (route, fixtures) => {
     const body = fixtures.alerts();
-    body.alerts = [
-      {
-        id: "a11y-1",
-        system: "subway",
-        header: "Reduced service systemwide while crews clear a disabled train",
-        description: null,
-        effect: "REDUCED_SERVICE",
-        cause: "OTHER_CAUSE",
-        routes: [],
-        stops: [],
-        starts_at: fx.FROZEN_S - 600,
-        ends_at: null,
-      },
-    ];
+    body.alerts = Array.from({ length: alerts }, (_, i) => agencyAlert(i + 1));
     return json(route, body);
   };
   await page.clock.setFixedTime(new Date(fx.FROZEN_MS));
@@ -450,7 +461,7 @@ async function bannerRowsDecided(page, results) {
 // allowed to lose a contrast guarantee a desktop keeps.
 test("A1m2. axe: the mobile layout, at 375, with the legend collapsed and expanded", async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 667 });
-  await open(page);
+  await open(page, { alerts: 2 });
 
   // Collapsed, which is the state a rider lands on.
   await expect(page.locator("#legend")).toBeHidden();

@@ -77,22 +77,55 @@ function clearBusRoute() {
   document.getElementById("route-banner").hidden = true;
 }
 
-async function toggleBusRoute(bus, marker) {
-  if (!bus?.route_id) return;
+// Does the line currently on the map (or the fetch in flight) belong to this bus?
+//
+// HONEST ABOUT WHAT THIS GUARD DOES TODAY: nothing observable. Leaflet closes the old
+// popup BEFORE opening the new one, so bus A's clear always lands before bus B's draw,
+// and an unconditional clear would behave identically. Mutation testing said exactly
+// that: removing this check leaves every bus-route spec green. It is kept because it
+// encodes the ordering the code depends on rather than assuming it silently, and A7e
+// asserts that ordering directly, so the day a Leaflet upgrade fires open before close
+// the suite says so and this check becomes the only thing between a rider and a popup
+// naming a route with no route drawn.
+function busRouteOwnedBy(busId) {
+  return (shownBusRoute && shownBusRoute.busId === busId) || pendingBusId === busId;
+}
 
-  // Leaflet's own popup toggle runs before this handler, so isPopupOpen()
-  // reflects the popup's NEW state. For a re-click on the selected (or
-  // pending) bus: popup just closed -> remove the line; popup just reopened
-  // (it was closed by a map click earlier) -> keep the line as is.
-  const sameBus =
-    (shownBusRoute &&
-      shownBusRoute.busId === bus.id &&
-      shownBusRoute.routeId === bus.route_id) ||
-    pendingBusId === bus.id;
-  if (sameBus) {
-    if (!marker.isPopupOpen()) clearBusRoute();
-    return;
-  }
+/* A3: THE ROUTE LINE FOLLOWS THE POPUP, NOT THE CLICK.
+   This was bound to the marker's `click` event, so the line was drawn by the gesture
+   rather than by the state it produced. Every other way of opening the popup drew
+   nothing: a programmatic openPopup (which is what any panel or keyboard path uses)
+   opened a popup describing a route with no route on the map, and Leaflet's own
+   keyboard activation path does not synthesise a click on the layer either. The defect
+   was recorded twice in earlier phases and had no owning surface until this one.
+
+   popupopen and popupclose are the honest seam because they fire for every opener,
+   including ones that do not exist yet. Leaflet fires both on the source layer as well
+   as the map (verified in the vendored source), so binding them here needs no
+   map-level bookkeeping.
+
+   THE DOUBLE-FIRE THIS HAD TO AVOID: keeping the old click handler alongside these
+   would have drawn on click AND on popupopen for a mouse rider, and since a
+   same-bus re-click closes the popup, the pair would have raced draw against clear on
+   one gesture. The click handler is gone rather than guarded, because a guard would
+   have left two things able to draw and only one of them tested.
+
+   The toggle logic goes with it. A re-click closes the popup, which now clears the line
+   through popupclose; that used to be inferred from isPopupOpen() reading the state
+   Leaflet had just changed. BEHAVIOUR CHANGE WORTH NAMING: dismissing the popup by
+   clicking the map used to leave the line drawn, and now clears it. That is what "and
+   closing clears it" asks for, and it is more consistent: the banner naming the route
+   is part of the same popup-shaped thing. */
+function releaseBusRoute(bus) {
+  if (bus && busRouteOwnedBy(bus.id)) clearBusRoute();
+}
+
+async function showBusRoute(bus) {
+  if (!bus?.route_id) return;
+  // Already drawn for this exact bus and route: a refresh that reopens nothing should
+  // not refetch. popup.update() does not fire popupopen, so this is belt for a future
+  // path rather than the common case.
+  if (shownBusRoute && shownBusRoute.busId === bus.id && shownBusRoute.routeId === bus.route_id) return;
 
   clearBusRoute(); // a different bus replaces any current line
   const requestId = ++busRouteSeq;
@@ -200,7 +233,8 @@ function applyBuses(data) {
         opacity: markerOpacity(systemAgeOf("buses", "buses")), // dim on the first frame
       }, busName(bus))
         .bindPopup(() => busPopup(newRecord))
-        .on("click", () => toggleBusRoute(newRecord.latest, newRecord.marker))
+        .on("popupopen", () => showBusRoute(newRecord.latest))
+        .on("popupclose", () => releaseBusRoute(newRecord.latest))
         .addTo(busLayer);
       buses.set(bus.id, newRecord);
     }

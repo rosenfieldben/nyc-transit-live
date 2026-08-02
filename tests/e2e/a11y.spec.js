@@ -158,6 +158,63 @@ function violations(results) {
 // the bottom of a 720px viewport), and the zoom-out glyph reports "element content
 // contains only non-text characters", which is about the character itself and has
 // nothing to do with backgrounds at all. The first two were fixable. The third is not.
+// AXE'S TARGET SELECTORS ARE NOT IDENTITIES, and this file found that out by breaking.
+// axe reports each node as the SHORTEST selector that is unique in the document at scan
+// time, so what it calls a node depends on the rest of the page. Adding a close button
+// to the station panel pushed that panel's <label> from nth-child(2) to nth-child(3),
+// which collided with a toggle label, which made axe requalify a DIFFERENT element as
+// "#toggles > label:nth-child(2)". Three specs went red, none of them about a real
+// accessibility change, and the inventory below was suddenly describing elements nobody
+// had touched.
+//
+// So the inventories are written in identities the DOCUMENT supplies, and axe's targets
+// are resolved to those before anything is compared. An id if the element has one, else
+// the id of the control it wraps (which is what a <label> is), else its own first class
+// under its parent's. Those survive renumbering because they do not count siblings.
+//
+// COLLISIONS ARE CHECKED WHERE THEY COULD COST AN ENTRY, which is the whole-list
+// comparisons: two axe targets folding onto one identity would compare equal to a
+// shorter list and pass by losing an entry, exactly the silent shrink this file exists
+// to prevent. Membership checks do not take that check, because they must not: the
+// passes list legitimately contains many identical siblings (each station row's route
+// chips resolve to the same `.station-row-chips .station-chip`), and rejecting those
+// would be rejecting normal markup. What makes membership safe instead is that every
+// identity looked up there is anchored to an id, which the document guarantees unique.
+// assertConvertedToDecidable enforces that on its own list rather than trusting it.
+function canonicalise(page, targets) {
+  return page.evaluate((selectors) => {
+    const identify = (sel) => {
+      const el = document.querySelector(sel);
+      if (!el) return `UNRESOLVABLE(${sel})`;
+      if (el.id) return `#${el.id}`;
+      const labelled = el.querySelector("[id]");
+      if (labelled) return `${el.tagName.toLowerCase()}>#${labelled.id}`;
+      const own = el.classList.length ? `.${el.classList[0]}` : el.tagName.toLowerCase();
+      const parent = el.parentElement;
+      // The parent's FIRST class only: Leaflet appends `leaflet-disabled` to a zoom
+      // control that has hit the end of its range, and an identity that changed when the
+      // rider zoomed in would be no better than the nth-child it replaces.
+      const above = !parent ? "" : parent.id ? `#${parent.id}` : parent.classList.length ? `.${parent.classList[0]}` : "";
+      return `${above} ${own}`.trim();
+    };
+    return selectors.map((sel) => [sel, identify(sel)]);
+  }, targets);
+}
+
+async function identities(page, targets, { distinct = false } = {}) {
+  const pairs = await canonicalise(page, targets);
+  if (distinct) {
+    const seen = new Map();
+    for (const [sel, id] of pairs) {
+      if (seen.has(id) && seen.get(id) !== sel) {
+        throw new Error(`two axe targets share one identity (${seen.get(id)} and ${sel} both -> ${id})`);
+      }
+      seen.set(id, sel);
+    }
+  }
+  return pairs.map(([, id]) => id);
+}
+
 const UNDECIDABLE_CONTRAST = [
   // THE ONE GENUINE SURVIVOR, and it is not a contrast problem. Leaflet's zoom-out
   // control contains a single "−" glyph, which axe classifies as non-text and
@@ -165,7 +222,7 @@ const UNDECIDABLE_CONTRAST = [
   // convert it, because the rule never reached the colours: measured at 21:1 against its
   // own opaque white control, so it comfortably clears the 3:1 a non-text indicator
   // owes. It stays stock per the phase decision, named here rather than excused.
-  ".leaflet-control-zoom-out > span",
+  ".leaflet-control-zoom-out span",
 ];
 
 // EVERY ENTRY A3 REMOVED FROM THE LIST ABOVE, asserted as a live pass rather than an
@@ -174,32 +231,40 @@ const UNDECIDABLE_CONTRAST = [
 // undecidability, or out of the scanned scope entirely.
 const DECIDABLE_CONTRAST = [
   "#status",
-  "#toggles > label:nth-child(2)",
-  "label:nth-child(1)",
-  "label:nth-child(3)",
-  "label:nth-child(4)",
-  "label:nth-child(5)",
-  "label:nth-child(6)",
-  "label:nth-child(7)",
+  "label>#toggle-buses",
+  "label>#toggle-subways",
+  "label>#toggle-stations",
+  "label>#toggle-railroads",
+  "label>#toggle-airtrain",
+  "label>#toggle-path",
+  "label>#toggle-ferries",
 ];
 
-function assertIncompletesAreKnown(results, { alsoAllow = [] } = {}) {
+async function assertIncompletesAreKnown(page, results, { alsoAllow = [] } = {}) {
   const kinds = [...new Set(results.incomplete.map((entry) => entry.id))];
   expect(kinds.sort(), "a new kind of undecidable finding appeared").toEqual(
     kinds.length ? ["color-contrast"] : [],
   );
   const nodes = results.incomplete.flatMap((entry) => entry.nodes.map((node) => node.target.join(" ")));
-  expect(nodes.sort(), "the set of surfaces whose contrast axe cannot decide has changed").toEqual(
-    [...UNDECIDABLE_CONTRAST, ...alsoAllow].sort(),
-  );
+  expect(
+    (await identities(page, nodes, { distinct: true })).sort(),
+    "the set of surfaces whose contrast axe cannot decide has changed",
+  ).toEqual([...UNDECIDABLE_CONTRAST, ...alsoAllow].sort());
 }
 
 // The conversion half. Asked of the color-contrast rule specifically, not of "did any
 // rule pass here", because an element can pass a dozen unrelated rules while its
 // contrast stays unjudged, which is the exact state this phase set out to leave behind.
-function assertConvertedToDecidable(results, { expect: expected = DECIDABLE_CONTRAST } = {}) {
+async function assertConvertedToDecidable(page, results, { expect: expected = DECIDABLE_CONTRAST } = {}) {
+  // The membership check below skips collision detection (see identities), so what makes
+  // it safe is that each entry is anchored to an id and the document guarantees ids are
+  // unique. Enforced rather than assumed, because a future entry written as a bare class
+  // would be satisfiable by an element nobody meant, which is a green with no meaning.
+  for (const target of expected) {
+    expect(/(^#|>#)/.test(target), `${target} must be anchored to an id to be looked up safely`).toBe(true);
+  }
   const rule = results.passes.find((p) => p.id === "color-contrast");
-  const passed = new Set(rule ? rule.nodes.map((node) => node.target.join(" ")) : []);
+  const passed = new Set(rule ? await identities(page, rule.nodes.map((node) => node.target.join(" "))) : []);
   for (const target of expected) {
     expect(
       passed.has(target),
@@ -230,8 +295,8 @@ test("A1i. axe: the station panel and the skip link, in the list state", async (
   await expect(page.locator("#stations-results button.station-row").first()).toBeVisible();
   const results = await scan(page).analyze();
   expect(violations(results), "axe violations in the list state").toEqual([]);
-  assertIncompletesAreKnown(results);
-  assertConvertedToDecidable(results);
+  await assertIncompletesAreKnown(page, results);
+  await assertConvertedToDecidable(page, results);
   assertScanned(results, {
     targets: [
       "#stations-panel",
@@ -259,8 +324,8 @@ test("A1j. axe: the station panel with a station selected and arrivals rendered"
   await expect(page.locator("#stations-detail .station-arrivals").first()).toBeVisible();
   const results = await scan(page).analyze();
   expect(violations(results), "axe violations in the detail state").toEqual([]);
-  assertIncompletesAreKnown(results);
-  assertConvertedToDecidable(results);
+  await assertIncompletesAreKnown(page, results);
+  await assertConvertedToDecidable(page, results);
   assertScanned(results, {
     targets: ["#stations-panel", "#stations-announce", "station-arrivals", "h3", "leaflet-control-zoom"],
   });
@@ -277,7 +342,7 @@ test("A1k. axe: the skip link is scanned while FOCUSED, which is when it is visi
   await expect(page.locator("#stations-skip")).toBeFocused();
   const results = await scan(page).analyze();
   expect(violations(results), "axe violations with the skip link focused").toEqual([]);
-  assertConvertedToDecidable(results);
+  await assertConvertedToDecidable(page, results);
   // The panel HEADING joins the undecidable set in this state and only this one,
   // because a focused skip link is drawn over the top-left of the page and the docked
   // panel's heading is underneath it. Measured: the link occupies x 8..190 y 8..44 and
@@ -286,7 +351,7 @@ test("A1k. axe: the skip link is scanned while FOCUSED, which is when it is visi
   // and the rider whose focus is on the link is not reading the heading behind it. So
   // it is allowed HERE, by name, rather than added to the global allowance where it
   // would also excuse a heading that was unreadable in the ordinary states.
-  assertIncompletesAreKnown(results, { alsoAllow: ["#stations-heading"] });
+  await assertIncompletesAreKnown(page, results, { alsoAllow: ["#stations-heading"] });
   assertScanned(results, { targets: ["#stations-skip"] });
 });
 

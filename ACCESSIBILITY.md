@@ -133,10 +133,20 @@ Three things stop that gate from being decoration:
 
 ### Motion
 
-- With `prefers-reduced-motion: reduce`, vehicles step to each new position
-  instead of sliding, marker and panel transitions are off, and the map does not
-  slide when a popup opens near an edge or when the panel selects a station.
-  `motion.spec.js A5a` through `A5h`.
+The map follows one rule: **animate the journey, never the adjustment.**
+
+- A **journey** is navigation the rider chose, and it keeps its preference gate.
+  Selecting a station in the panel pans the map to it, animated unless
+  `prefers-reduced-motion: reduce` is set, because the motion carries continuity:
+  it shows that this new place is that old place, moved. `motion.spec.js A5g`
+  (with the preference), `A5h` (without it).
+- An **adjustment** is the app correcting its own fit, and it is instant for
+  everyone, preference or none. Leaflet nudging an opening popup back inside the
+  viewport is one; so is moving a popup out from under the legend. Nobody asked
+  for it and it carries no continuity. `motion.spec.js A5e`, `A5f`.
+- With the preference set, vehicles also step to each new position instead of
+  sliding, and the marker and panel transitions are off.
+  `motion.spec.js A5a` through `A5d`.
 - Nothing is hidden and no data is withheld: the preference changes only how a
   position updates, never what is shown.
 

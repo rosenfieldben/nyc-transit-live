@@ -53,20 +53,33 @@ function applyMotionPreference(allowed) {
 // It changes only HOW the map arrives at a position, never WHICH position: an
 // unanimated pan lands on exactly the same centre.
 //
-// A4 ROUND 1: LEAFLET'S OWN AUTOPAN IS NOW ALWAYS INSTANT, motion preference or none, and
-// that is a rider-visible change made for a measured reason rather than a tidy-up.
-// _adjustPan's pan is a CORRECTION of where a popup landed, not a journey the rider asked
-// for, and animating it has two costs. For the rider it is the full-field slide the comment
-// above already describes as this page's largest motion source. For the code it makes the
-// popup's resting position unknowable: the animation lands on a later frame than popupopen,
-// so anything that wants to reason about where the popup ENDED UP is reading a position
-// that is still moving. Measured at 1280 with the placed railroad popup:
+// A4 ROUND 1: ANIMATE THE JOURNEY, NEVER THE ADJUSTMENT.
+//
+// This is the principle the map's motion now follows, and it splits the pans into two kinds
+// that had been treated as one:
+//
+//   A JOURNEY is navigation the rider chose. Picking a station in the panel pans the map to
+//   it (syncMapToStation's panTo), and the motion there carries CONTINUITY: it shows the
+//   rider that this new place is that old place, moved. Journeys keep their preference gate,
+//   animated unless the rider asked for reduced motion. A5g and A5h pin that pair.
+//
+//   AN ADJUSTMENT is the app correcting its own fit. Leaflet's _adjustPan nudging an opening
+//   popup back inside the viewport is one, and so is this phase's move of a popup out from
+//   under the legend. Nobody asked for it, it carries no continuity, and its ENDPOINT MUST BE
+//   KNOWABLE: the app's own occlusion logic reads where the popup came to rest, and it cannot
+//   read a position that is still moving. Adjustments are instant for everyone.
+//
+// So Leaflet's autoPan is unanimated regardless of preference, which is a rider-visible
+// change from A2 and is deliberate. Measured at 1280 with the placed railroad popup:
+//
 //     real clock   popup settles at x 1001..1276, overlapping the legend at 1030
 //     fixed clock  popup never lands at all, x 1288..1563, off the map's right edge
-// The second is why it matters beyond aesthetics: PosAnimation drives itself off
-// `+new Date()`, so under a fixed clock (which the accessibility gate needs for
-// deterministic ages) the animation never completes and the map is left mid-slide forever.
-// Instant is the only setting under which the popup has a position at all.
+//
+// The second row is the one that makes this structural rather than aesthetic: PosAnimation
+// drives itself off `+new Date()`, so under a fixed clock (which the accessibility gate
+// needs for deterministic ages) the animation never completes and the map is left mid-slide
+// forever. Instant is the only setting under which the popup has a position at all, for the
+// app's occlusion logic first and for any test second.
 let leafletAutoPanning = false;
 map.on("autopanstart", () => {
   leafletAutoPanning = true;

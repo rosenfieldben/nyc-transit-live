@@ -221,13 +221,13 @@ if (stationsClose) stationsClose.addEventListener("click", closeStationsPanel);
 // First was chosen for the screen reader, and it is kept: the exit is announced
 // immediately after the region's name, and it stays in one place instead of moving down
 // the panel as result rows appear.
-if (stationsPanel) {
-  stationsPanel.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape") return;
-    event.stopPropagation();
-    closeStationsPanel();
-  });
-}
+// A4 MOVED THE ESCAPE HANDLING OUT OF THIS FILE. The panel used to bind its own Escape
+// here, which meant the answer to "what does Escape close" depended on which file you
+// read: this one closed the panel whenever focus was inside it, and Leaflet closed a popup
+// whenever focus was the map container, so a rider with both open got different results
+// from the same key depending on where they were standing. The ladder in map.js now owns
+// the ordering in one place (popup, then panel, never the banner) and calls
+// closeStationsPanel, so this file keeps the focus contract and gives up the key.
 
 if (stationsToggle) stationsToggle.addEventListener("click", toggleStationsPanel);
 

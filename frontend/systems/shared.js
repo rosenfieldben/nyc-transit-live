@@ -576,24 +576,33 @@ function openStationFromCrossLink(stationKey) {
   // tabindex -1 makes it programmatically focusable without adding a tab stop: the
   // rider lands here, and Tab from here continues into the popup's own controls.
   //
-  // ESCAPE DOES NOT CLOSE THE POPUP FROM HERE, raised by the review and left alone on
-  // purpose. Leaflet binds Escape on the MAP container, and focus inside a popup is
-  // outside it, so the key never reaches the handler. Measured: popup still open, focus
-  // unmoved. But the finding's stronger claim, that there is no way back out, is false:
-  // one Tab from this landing point reaches the popup's own close button, measured
-  // landing on .leaflet-popup-close-button, and that closes it. So this is a missing
-  // convenience rather than a trap, it is how every popup on the map has always behaved
-  // rather than anything this phase introduced, and a keyboard-dismiss binding is a
-  // map-wide decision that does not belong in the cross-link's landing path.
+  // ESCAPE NOW CLOSES THE POPUP FROM HERE, and this comment is kept rather than deleted
+  // because the reasoning that deferred it is the reasoning that A4 finally acted on.
+  //
+  // A2 recorded the gap and declined to fix it here: Leaflet binds Escape on the MAP
+  // container, focus inside a popup is outside it, so the key never reached any handler
+  // (measured then: popup still open, focus unmoved). The finding's stronger claim, that
+  // there was no way out, was false even then, because one Tab from this landing point
+  // reaches the popup's own close button. What A2 said was that a keyboard-dismiss binding
+  // is a MAP-WIDE decision and does not belong in the cross-link's landing path.
+  //
+  // A4 is where that map-wide decision got made. The Escape ladder in map.js is one
+  // document-level handler that closes the topmost transient surface (an open popup, then
+  // the station panel) from anywhere on the page, so this landing point inherits it
+  // without knowing anything about keys. A9d asserts the ladder behaves identically from
+  // inside a popup and from inside the panel, which is exactly the asymmetry A2 measured.
   content.setAttribute("tabindex", "-1");
   content.focus();
   return true;
 }
 
-// A2 FOLLOWUP, DELIBERATELY NOT DONE HERE: WHERE FOCUS GOES WHEN A CONTROL IS DESTROYED
-// WITH NO SUCCESSOR. Everything below restores focus to a live replacement, which is the
-// case this phase can answer honestly. Two reachable cases have no replacement at all,
-// and both were measured landing the rider on document.body:
+// A2 FOLLOWUP, RESOLVED IN A4: WHERE FOCUS GOES WHEN A CONTROL IS DESTROYED WITH NO
+// SUCCESSOR. Everything below restores focus to a live replacement, which was the case A2
+// could answer honestly. The two cases with no replacement at all, both measured then
+// landing the rider on document.body, are the ones A4's vanishing-focus door now catches:
+// focus moves to the map container and the page live region says so once. See
+// rescueVanishingFocus above and tests/e2e/vanish.spec.js. The original statement of both
+// cases is kept below because it is the measurement that justified the fix:
 //
 //   1. A VEHICLE LEAVES THE FEED while its popup is open and focused. Measured on a
 //      railroad train removed from one poll's payload: railroads.size 2 -> 1,

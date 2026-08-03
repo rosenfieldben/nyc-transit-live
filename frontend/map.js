@@ -217,6 +217,120 @@ retryUntil(loadPathRoutes, staticRetryOpts);
 retryUntil(loadPathStops, staticRetryOpts);
 retryUntil(loadFerryRoutes, staticRetryOpts);
 retryUntil(loadFerryStops, staticRetryOpts);
+
+/* A4: THE ESCAPE LADDER, and it is the page's ONLY Escape handler.
+
+   WHAT REPLACED WHAT. Before this, Escape was a focus-location switch rather than a
+   ladder, and the two behaviours lived in different files: stations.js bound a handler on
+   the panel (focus inside the panel closed the PANEL and left an open popup alone), while
+   Leaflet's own Map.Keyboard handler closed the POPUP but only while document.activeElement
+   was the #map container itself, so focus in a popup, on the toggle or on the banner did
+   nothing at all. Measured across 22 presses at 375 and 1280, identical at both widths.
+   Which surface closed depended on where the rider happened to be standing, which is not
+   a rule anyone can learn.
+
+   THE RULE: THE RIDER'S OWN SURFACE FIRST, then the topmost transient.
+
+     focus inside a transient  ->  that transient closes
+     focus anywhere else       ->  open popup first, then the panel
+
+   The banner is on neither branch: it is ambient status rather than a dialog, and its
+   dismiss button stays the deliberate act, per the phase decision.
+
+   WHY NOT LITERAL POPUP-FIRST FROM EVERYWHERE, which is what the phase decision said
+   before this was measured. Selecting a station in the PANEL opens that station's popup on
+   the map: A1's syncMapToStation does it on purpose, so a sighted keyboard rider sees one
+   application rather than two. That means a rider using the panel always has a popup open,
+   and a literal popup-first rung would close that popup while they are looking at the
+   list. Measured: it broke A1a, A1b, A1m and A1q, all of which assert that one Escape
+   closes the panel and returns focus to the toggle. At 375 it is worse than a test
+   failure, because the popup is behind the opaque overlay, so the rider's first Escape
+   closes something they cannot see and appears to do nothing at all.
+
+   So the rung is judged relative to the rider. It is still one rule in one place, it is
+   still learnable ("Escape closes what you are in"), and it leaves the A1 contract exactly
+   as A1 shipped it rather than silently editing it from another deliverable.
+
+   CAPTURE PHASE, for a smaller reason than the first draft of this comment claimed.
+   Leaflet has its own Escape-closes-popup handler that acts only while the map container
+   holds focus, so the worry was a race: if Leaflet ran first it would close the popup, and
+   a bubble-phase ladder would then find no popup and take the next rung, closing the panel
+   too. One Escape, two surfaces.
+
+   MEASURED, THAT DOES NOT HAPPEN. With the ladder moved to the bubble phase, a popup open
+   and focus on #map, the event propagates untouched through the container and on to the
+   document (instrumented: doc-capture, container-bubble and a late doc-bubble listener all
+   fire), the ladder closes the popup itself, and the panel stays open. Leaflet's handler
+   did not act at all in that state. So capture is not what prevents a double close, and
+   saying otherwise would leave a future reader defending an invariant nothing depends on.
+
+   What capture actually buys is that the ladder's decision is not CONTINGENT on another
+   handler's behaviour: it decides first, always, and stops the event once it has acted.
+   That is worth keeping as a deliberate property rather than relying on Leaflet continuing
+   to decline. frontend/keyboard.test.js pins the flag, because it is a one-word edit.
+
+   AND WHEN THERE IS NOTHING TRANSIENT OPEN, this handler does nothing at all: no
+   preventDefault, no stopPropagation. The event proceeds exactly as it did before this
+   phase, reaching Leaflet's handler, which finds no popup and returns without touching
+   the event. That is what keeps the native path intact rather than swallowed. */
+function openPopupOnMap() {
+  // ASKED OF LEAFLET, WITH THE STALE HALF GUARDED. map._popup is the same field Leaflet's
+  // own handler consults, but it is NOT cleared on close: measured, it still holds the
+  // reference after the popup has closed and even after the fade has removed the element.
+  // map.hasLayer is the public and truthful half, and it was measured across all five
+  // states (fresh, open, closed under a paused clock with the corpse still in the DOM,
+  // closed after the fade, and a station popup open): false, true, false, false, true.
+  // A DOM query would have answered 1 in the third state, which is the fade-corpse trap
+  // tests/e2e/popup.js exists for, one layer down.
+  const popup = map._popup;
+  return popup && map.hasLayer(popup) ? popup : null;
+}
+
+// Which surface, if any, the rider is standing in. Asked of the DOM rather than remembered,
+// so there is no third copy of either surface's state to drift out of date.
+function transientHoldingFocus() {
+  const active = document.activeElement;
+  if (!active) return null;
+  const popup = openPopupOnMap();
+  const popupEl = popup && popup.getElement ? popup.getElement() : null;
+  if (popupEl && popupEl.contains(active)) return "popup";
+  const panel = document.getElementById("stations-panel");
+  if (panel && !panel.hidden && panel.contains(active)) return "panel";
+  return null;
+}
+
+function closeStationsPanelIfOpen() {
+  if (typeof stationsPanelOpen !== "function" || !stationsPanelOpen()) return false;
+  closeStationsPanel(); // owns the A1 focus return and the A4 inertness release
+  return true;
+}
+
+function closeOpenPopup() {
+  const popup = openPopupOnMap();
+  if (!popup) return false;
+  map.closePopup(popup);
+  return true;
+}
+
+document.addEventListener(
+  "keydown",
+  (event) => {
+    if (event.key !== "Escape") return;
+    const inside = transientHoldingFocus();
+    const closed =
+      inside === "panel"
+        ? closeStationsPanelIfOpen()
+        : inside === "popup"
+          ? closeOpenPopup()
+          : closeOpenPopup() || closeStationsPanelIfOpen();
+    if (!closed) return; // nothing transient: leave the event entirely alone
+    event.preventDefault();
+    event.stopPropagation();
+  },
+  true,
+);
+
+
 loadAlerts();
 refreshAll();
 setInterval(refreshAll, POLL_INTERVAL_MS);

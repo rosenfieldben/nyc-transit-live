@@ -222,15 +222,17 @@ nyc-transit-live/
 ├── tests/e2e/               # hermetic Playwright smoke suite (dev/test only)
 │   ├── smoke.spec.js        # the scenarios; all network intercepted
 │   ├── stations.spec.js     # the station panel, including a keyboard-only walk
-│   ├── a11y.spec.js         # axe-core scan, scoped to the station panel
+│   ├── a11y.spec.js         # page-wide axe scan + the keyboard invariants
 │   ├── mock.js              # /api/* fixtures + basemap-tile stub
 │   ├── serve.js             # tiny static server for frontend/ (no backend)
 │   ├── playwright.config.js # chromium only, starts the static server
 │   └── fixtures/            # handcrafted JSON payloads
+├── tests/statement.test.js  # ACCESSIBILITY.md cites real tests, checked
 ├── data/
 │   ├── airtrain_jfk.json    # committed AirTrain JFK fixture (geometry + scheduled headways)
 │   ├── gtfs_static/         # downloaded static subway GTFS (gitignored)
 │   └── cache/bus_routes/    # background-built bus route index (gitignored)
+├── ACCESSIBILITY.md         # what is measured, what is excepted, what is unchecked
 ├── .github/workflows/ci.yml # backend pytest + frontend node tests + e2e smoke
 ├── package.json             # dev-only: @playwright/test + @axe-core/playwright (the app is buildless)
 ├── railway.json             # Railway start command + healthcheck
@@ -279,17 +281,25 @@ responds immediately but those two take effect the next time you load the page.
 a keyboard rider parked on a control has to survive that. When a popup you are reading
 refreshes, or the alert banner is rebuilt because the MTA reworded an incident, the
 control you were on gets focus back rather than dropping you at the top of the document.
-Two cases are not solved yet and are worth knowing about: if the vehicle whose popup you
-have open leaves the feed entirely, or the last agency-wide alert clears while you are on
-its dismiss button, the thing you were holding is genuinely gone and focus falls to the
-top of the page. One Tab from there reaches the skip link.
+When the thing you were holding is genuinely gone, because the vehicle left the feed or
+the last alert cleared, focus moves to the map and the page says so once: "The 1 train
+you were following left the feed. Focus moved to the map."
 
-What this does *not* yet cover: the map itself is still a picture, buses are not
-in the panel (their stops are not stations), and the rest of the page (legend,
-layer toggles, alerts list) is **unmeasured**. CI enforces an axe-core scan scoped
-to exactly the panel and its skip link (`tests/e2e/a11y.spec.js`); widening that
-gate to the whole page, along with a plain statement of what the page promises, is
-later work in this arc, as are map semantics and a mobile and contrast pass.
+**Escape** closes the topmost thing you are in, one surface per press: the popup first
+if you are in a popup, the panel first if you are in the panel. On a phone the station
+panel opens over the map and the page behind it goes `inert`, so nothing behind it is
+reachable, and Tab still runs off the end of the panel rather than looping: there is no
+focus trap anywhere on this page.
+
+**What is measured, and what is not.** CI enforces a page-wide axe-core scan at two
+widths across six states, plus keyboard invariants driven by a real Tab walk
+(`tests/e2e/a11y.spec.js`). The scan's three remaining undecidables each have a test
+that answers them by measurement instead. What is honestly *not* covered: no screen
+reader and no disabled rider has ever tested this page, it is checked in one browser
+engine, the map itself is still a picture, and buses are not in the panel because their
+stops are not stations. The full statement, with the test that proves every claim and
+the complete list of what is unchecked, is in
+[ACCESSIBILITY.md](ACCESSIBILITY.md).
 
 ## Setup
 

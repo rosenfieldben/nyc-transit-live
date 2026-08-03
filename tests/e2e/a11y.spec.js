@@ -506,10 +506,15 @@ async function tabWalk(page) {
       if (!el || el === document.body || el === document.documentElement) return null;
       const text = (node) => (node ? (node.textContent || "").replace(/\s+/g, " ").trim() : "");
       // A pragmatic accessible name rather than the full W3C computation: the sources this
-      // page actually uses, in the order the algorithm consults them. It is allowed to be
-      // approximate in one direction only, by finding a name the algorithm would not, and
-      // it does not have that failure mode here because every branch below is a source the
-      // algorithm honours.
+      // page actually uses, in the order the algorithm consults them.
+      //
+      // NAME FROM CONTENT IS NOT UNIVERSAL, and the first draft of this walk treated it as
+      // if it were. Mutation caught it: deleting the map container's aria-label left all
+      // fifteen tests green, because the container's descendant text (Leaflet's own
+      // attribution) stood in for a name it does not actually have. ARIA gives a name from
+      // content only to roles that take one, and a region is not among them, so descendant
+      // text is a fallback ONLY for the tags below. Everything else must be named out loud.
+      const NAME_FROM_CONTENT = new Set(["a", "button", "summary", "option", "h1", "h2", "h3", "h4", "h5", "h6"]);
       const labelled = el.getAttribute("aria-labelledby");
       const wrapping = el.closest("label");
       const associated = el.id ? document.querySelector(`label[for="${el.id}"]`) : null;
@@ -519,9 +524,9 @@ async function tabWalk(page) {
             .map((id) => text(document.getElementById(id)))
             .join(" ")
         : "";
-      const name =
-        el.getAttribute("aria-label") || named || text(associated) || text(wrapping) || el.getAttribute("title") ||
-        text(el);
+      const explicit =
+        el.getAttribute("aria-label") || named || text(associated) || text(wrapping) || el.getAttribute("title") || "";
+      const name = explicit || (NAME_FROM_CONTENT.has(el.tagName.toLowerCase()) ? text(el) : "");
       const box = el.getBoundingClientRect();
       return {
         id: el.id || null,

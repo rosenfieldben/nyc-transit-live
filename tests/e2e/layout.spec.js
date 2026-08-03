@@ -629,3 +629,57 @@ test("A4i. closing the docked panel gives the map its column back", async ({ pag
   expect(open2.mapLeft, "and the map steps aside again").toBe(360);
   expect(open2.overflow, "with no sideways scroll in either state").toBe(0);
 });
+
+test("A4j. once the rider moves the map, the popup correction stands down", async ({ page }) => {
+  /* ROUND 2, AND IT IS THE SAME PRINCIPLE AS THE MOTION SPLIT ONE LEVEL UP. The correction
+     that moves a popup out from under the chrome watches the popup for size changes, so it
+     outlives the opening: a background arrivals refresh re-ran it on a map the RIDER had
+     since moved, and threw their position away. Measured at 375 before the fix: the rider
+     dragged to centre lat 40.65134, a refresh grew the popup, and the map jumped to
+     40.72996.
+     An adjustment is the app correcting its own fit. The moment the rider takes over, the
+     position is theirs and the app has no business tidying it, even when it can see that
+     the popup is now behind the legend. That is what this asserts: after a rider-chosen
+     move, a resize must NOT put the popup back where the app would have wanted it. */
+  await page.setViewportSize({ width: 375, height: 667 });
+  const ctx = await installMocks(page);
+  await page.clock.setFixedTime(new Date(fx.FROZEN_MS));
+  await page.goto("/");
+  await expect
+    .poll(async () => page.evaluate(() => (typeof railroads === "undefined" ? 0 : railroads.size)), { timeout: 15_000 })
+    .toBeGreaterThan(0);
+  void ctx;
+
+  await page.evaluate(() => {
+    const placed = [...railroads.values()].find((r) => r.placed);
+    placed.marker.openPopup();
+  });
+  await expect(page.locator(".leaflet-popup-content")).toBeVisible();
+
+  // The rider puts the popup where the app would not: behind the legend, deliberately.
+  const chosen = await page.evaluate(() => {
+    const pop = document.querySelector(".leaflet-popup").getBoundingClientRect();
+    const panel = document.getElementById("panel").getBoundingClientRect();
+    map.panBy([0, pop.top - panel.top - 20], { animate: false });
+    const after = document.querySelector(".leaflet-popup").getBoundingClientRect();
+    return { top: Math.round(after.top), panelBottom: Math.round(panel.bottom) };
+  });
+  expect(chosen.top, "the rider has genuinely put the popup under the legend").toBeLessThan(chosen.panelBottom);
+
+  // A background refresh changes the popup's height, which is exactly what the observer sees.
+  await page.evaluate(() => {
+    const el = document.querySelector(".leaflet-popup-content");
+    el.appendChild(Object.assign(document.createElement("div"), { style: "height:40px" }));
+  });
+  await expect
+    .poll(async () => page.evaluate(() => Math.round(document.querySelector(".leaflet-popup").getBoundingClientRect().top)))
+    .toBeLessThan(chosen.panelBottom);
+
+  // Asserted as "still where the rider left it", not as an exact centre: Leaflet's own
+  // autoPan may nudge a popup that now overflows the viewport, and that is its business,
+  // not this correction's. What must not happen is the app clearing the chrome again.
+  const finalTop = await page.evaluate(() =>
+    Math.round(document.querySelector(".leaflet-popup").getBoundingClientRect().top),
+  );
+  expect(finalTop, "the app must not have re-cleared a position the rider chose").toBeLessThan(chosen.panelBottom);
+});

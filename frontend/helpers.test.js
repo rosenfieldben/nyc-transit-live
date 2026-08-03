@@ -2568,3 +2568,46 @@ test("popupClearingShift costs a direction by the obstacle that demands the most
   assert.equal(boxesOverlap(moved, near), false);
   assert.equal(boxesOverlap(moved, far), false);
 });
+
+test("popupClearingShift steps sideways when the first move lands on a second obstacle", () => {
+  // ROUND 2: adding the banner as an obstacle could CANCEL the leftward desktop move,
+  // because a candidate that collided with a non-blocking obstacle was discarded rather
+  // than extended. With every candidate discarded the popup stayed fully under the legend,
+  // so the defect-3 fix undid the defect-2 fix.
+  const popup = box(1001, 1276, 20, 146);
+  const legend = box(1030, 1270, 10, 710);
+  const banner = box(400, 1020, 10, 60); // the left move alone would land under this
+  const viewport = box(360, 1280, 0, 720);
+  const shift = popupClearingShift(popup, [legend, banner], viewport);
+  assert.notEqual(shift, null, "a two-axis move exists, so null would be giving up early");
+  const moved = shiftBox(popup, shift.dx, shift.dy);
+  assert.equal(boxesOverlap(moved, legend), false);
+  assert.equal(boxesOverlap(moved, banner), false);
+  assert.equal(moved.left >= viewport.left && moved.right <= viewport.right, true);
+  assert.equal(moved.top >= viewport.top && moved.bottom <= viewport.bottom, true);
+});
+
+test("popupClearingShift still prefers a single-axis move when one clears everything", () => {
+  // The L is a fallback, not a habit: a straight move that works must beat a longer pair.
+  const popup = box(1001, 1276, 293, 419);
+  const legend = box(1030, 1270, 10, 710);
+  const shift = popupClearingShift(popup, [legend], box(360, 1280, 0, 720));
+  assert.equal(shift.dy, 0, "one axis is enough here");
+  assert.equal(shift.dx, -(1276 - 1030) - POPUP_CLEAR_GAP);
+});
+
+test("popupClearingShift re-checks a move against obstacles that were NOT blocking it", () => {
+  // A MUTATION SURVIVED THE FIRST VERSION OF THE TEST ABOVE, because there both obstacles
+  // blocked from the start, so "re-check against all obstacles" and "re-check against the
+  // blockers" were the same check. Here the banner is clear of the popup where it opens and
+  // is only reachable by the move itself: a filter that looks at the blockers alone accepts
+  // the straight leftward move and lands the popup on the banner.
+  const popup = box(1001, 1276, 20, 146);
+  const legend = box(1030, 1270, 10, 710);
+  const banner = box(400, 900, 20, 146);
+  assert.equal(boxesOverlap(popup, banner), false, "the banner must not block where the popup opens");
+  const shift = popupClearingShift(popup, [legend, banner], box(360, 1280, 0, 720));
+  const moved = shiftBox(popup, shift.dx, shift.dy);
+  assert.equal(boxesOverlap(moved, legend), false, "clears what blocked it");
+  assert.equal(boxesOverlap(moved, banner), false, "and does not land on what did not");
+});

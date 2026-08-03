@@ -244,20 +244,46 @@ function shiftBox(box, dx, dy) {
 function popupClearingShift(popup, obstacles, viewport) {
   const blocking = obstacles.filter((box) => boxesOverlap(popup, box));
   if (!blocking.length) return null;
-  // Each direction's cost is set by the obstacle that demands the most, because a move that
-  // clears one blocker and not another has not cleared anything.
-  const candidates = [
-    { dx: -Math.max(...blocking.map((b) => popup.right - b.left)) - POPUP_CLEAR_GAP, dy: 0 },
-    { dx: Math.max(...blocking.map((b) => b.right - popup.left)) + POPUP_CLEAR_GAP, dy: 0 },
-    { dx: 0, dy: -Math.max(...blocking.map((b) => popup.bottom - b.top)) - POPUP_CLEAR_GAP },
-    { dx: 0, dy: Math.max(...blocking.map((b) => b.bottom - popup.top)) + POPUP_CLEAR_GAP },
-  ];
   const fits = (box) =>
     box.left >= viewport.left && box.right <= viewport.right && box.top >= viewport.top && box.bottom <= viewport.bottom;
+
+  /* THE SEARCH, AND WHY IT IS A SEARCH RATHER THAN A FORMULA.
+     The first version costed each direction as "the most any blocking obstacle demands" and
+     discarded the result if it landed on something else. Round 2 showed that fights itself
+     two ways. Taking the max over every blocker turns two small obstacles into one enormous
+     move that leaves the viewport; discarding a landing collision throws away the answer
+     when the honest response is "then also step sideways". Together they could cancel the
+     desktop leftward move outright and leave the popup fully under the legend.
+     So each blocker is costed SEPARATELY, in each direction, and any collision the result
+     lands in is resolved on the OTHER axis. The candidate set is small (obstacles times four,
+     twice) and every candidate is checked against every obstacle before it can win, so the
+     search cannot return a move that does not actually clear. */
+  const axisMoves = (box, blockers) =>
+    blockers.flatMap((b) => [
+      { dx: b.left - box.right - POPUP_CLEAR_GAP, dy: 0 },
+      { dx: b.right - box.left + POPUP_CLEAR_GAP, dy: 0 },
+      { dx: 0, dy: b.top - box.bottom - POPUP_CLEAR_GAP },
+      { dx: 0, dy: b.bottom - box.top + POPUP_CLEAR_GAP },
+    ]);
+
+  const candidates = [];
+  for (const first of axisMoves(popup, blocking)) {
+    const moved = shiftBox(popup, first.dx, first.dy);
+    candidates.push({ move: first, moved });
+    const stillBlocking = obstacles.filter((box) => boxesOverlap(moved, box));
+    if (!stillBlocking.length) continue;
+    // The second axis only: a move along x is followed by a y move and vice versa, so the
+    // pair is always an L and never doubles back along the axis just cleared.
+    for (const second of axisMoves(moved, stillBlocking)) {
+      if ((first.dx !== 0) === (second.dx !== 0)) continue;
+      const move = { dx: first.dx + second.dx, dy: first.dy + second.dy };
+      candidates.push({ move, moved: shiftBox(popup, move.dx, move.dy) });
+    }
+  }
+
   const accepted = candidates
-    .map((move) => ({ move, moved: shiftBox(popup, move.dx, move.dy) }))
-    // Re-checked against EVERY obstacle, not just the blocking ones: moving out from under
-    // the legend must not move under the banner, which is defect 3 above.
+    // Re-checked against EVERY obstacle, not just the ones that were blocking: moving out
+    // from under the legend must not move under the banner.
     .filter(({ moved }) => fits(moved) && !obstacles.some((box) => boxesOverlap(moved, box)))
     .map(({ move }) => move);
   if (!accepted.length) return null;
@@ -266,7 +292,6 @@ function popupClearingShift(popup, obstacles, viewport) {
     Math.abs(move.dx) + Math.abs(move.dy) < Math.abs(best.dx) + Math.abs(best.dy) ? move : best,
   );
 }
-
 
 // ---- Staleness thresholds, and the one test seam in this file (C6) ----
 //

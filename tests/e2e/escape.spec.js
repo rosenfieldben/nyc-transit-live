@@ -472,3 +472,28 @@ test("A9l. closing the popup from a control outside it leaves that control focus
   expect((await ladderState(page)).popupOpen, "rung one still takes the popup").toBe(false);
   await expect(page.locator("#stations-toggle"), "and the rider is left exactly where they were").toBeFocused();
 });
+
+test("A9m. the close button closes the popup that owns it, not whichever is current", async ({ page }) => {
+  // ROUND 2. The handler read map._popup instead of the popup it was bound to. In this app
+  // the two are the same, because Leaflet auto-closes the previous popup when a new one
+  // opens, so a second live popup is not reachable and no rider could hit it. It is fixed
+  // anyway and pinned here anyway, because "ask the map which popup is current" is wrong in
+  // a way that only stays harmless until the first feature that opens two.
+  await installMocks(page);
+  await open(page);
+  const out = await page.evaluate(() => {
+    const [first] = [...railroads.values()];
+    first.marker.openPopup();
+    const firstPopup = first.marker.getPopup();
+    const button = firstPopup.getElement().querySelector(".leaflet-popup-close-button");
+    // A second popup, which becomes map._popup while the first one's button is still live.
+    const other = L.popup({ autoClose: false, closeOnClick: false })
+      .setLatLng(map.getCenter())
+      .setContent("second")
+      .openOn(map);
+    button.click();
+    return { otherStillOpen: map.hasLayer(other), mapPopupWasOther: map._popup === other };
+  });
+  expect(out.mapPopupWasOther, "the state the bug needs: map._popup is the OTHER popup").toBe(true);
+  expect(out.otherStillOpen, "the first popup's button must not close the second popup").toBe(true);
+});

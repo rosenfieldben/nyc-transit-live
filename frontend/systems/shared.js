@@ -272,23 +272,45 @@ function panPopupClearOfChrome(popup) {
    ResizeObserver on the popup element catches both moments with one mechanism: it fires
    once when the element is first laid out and again when the fetched content changes its
    size. It is disconnected on popupclose so a closed popup's corpse cannot keep panning
-   the map during its fade. */
+   the map during its fade.
+
+   AND IT ONLY EVER CORRECTS A POSITION IT SET ITSELF, which round 2 had to teach it. The
+   observer outlives the opening, so a background arrivals refresh that changes the popup's
+   height re-ran the correction on a map the RIDER had since moved, and threw their position
+   away. Measured at 375: the rider dragged the map to centre lat 40.65134, a refresh grew
+   the popup, and the map jumped to 40.72996.
+
+   That is the same principle as the pan animation split, one level up. An adjustment is the
+   app correcting its own fit; the moment the rider takes over, the position is theirs and
+   the app has no business tidying it. So the last centre this code set is remembered, and if
+   the map is not still there when the observer fires, the correction stands down for good.
+   Remembered as the centre rather than as a "did the rider drag" flag, because that catches
+   every way the map can move without asking us, including keyboard panning and zoom, and it
+   needs no Leaflet internals to do it. */
 let popupClearObserver = null;
+let popupClearCentre = null;
+
+const sameCentre = (a, b) => !!a && !!b && a.lat === b.lat && a.lng === b.lng;
 
 map.on("popupopen", (event) => {
   const root = event.popup && event.popup.getElement ? event.popup.getElement() : null;
   if (popupClearObserver) popupClearObserver.disconnect();
   panPopupClearOfChrome(event.popup);
+  popupClearCentre = map.getCenter();
   if (!root || typeof ResizeObserver !== "function") return;
   popupClearObserver = new ResizeObserver(() => {
     // Guarded on the popup still being the open one: Leaflet keeps the element alive
     // through the close fade, and a resize during that fade must not move the map.
-    if (map._popup === event.popup && map.hasLayer(event.popup)) panPopupClearOfChrome(event.popup);
+    if (map._popup !== event.popup || !map.hasLayer(event.popup)) return;
+    if (!sameCentre(map.getCenter(), popupClearCentre)) return; // the rider owns it now
+    panPopupClearOfChrome(event.popup);
+    popupClearCentre = map.getCenter();
   });
   popupClearObserver.observe(root);
 });
 
 map.on("popupclose", () => {
+  popupClearCentre = null;
   if (!popupClearObserver) return;
   popupClearObserver.disconnect();
   popupClearObserver = null;
@@ -347,10 +369,19 @@ map.on("popupopen", (event) => {
   // goes through the one helper that knows about focus.
   button.addEventListener(
     "click",
-    (event) => {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      closePopupReturningFocus(map._popup && map.hasLayer(map._popup) ? map._popup : null);
+    // Named `press` rather than `event`: the outer parameter is the popupopen event and the
+    // popup it carries is the whole point of this handler, so shadowing it silently turned
+    // event.popup into undefined and the close button stopped closing anything. A9j caught
+    // it in the same run it was written.
+    (press) => {
+      press.preventDefault();
+      press.stopImmediatePropagation();
+      // THE POPUP THAT OWNS THIS BUTTON, not map._popup. They are the same in this app
+      // today, because Leaflet auto-closes the previous popup when a new one opens, so a
+      // second live popup is not reachable. It is still wrong to ask the map which popup is
+      // current when the button already knows: the handler is bound per popup and closing
+      // "whichever is current" is a bug waiting for the first feature that opens two.
+      closePopupReturningFocus(event.popup);
     },
     true,
   );

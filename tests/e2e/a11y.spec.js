@@ -148,14 +148,37 @@ const UNDECIDABLE_SHAPES = [
     // Matched on substrings rather than on adjacency: an element-anchored identity is a
     // PATH, so it carries intermediate ancestors and same-tag index suffixes that a rigid
     // "parent then child" pattern would miss for no good reason.
-    where: (id) =>
-      /svg[^ ]* text/.test(id) ||
-      /leaflet-control-zoom-out[^ ]* span/.test(id) ||
-      /leaflet-popup-close-button[^ ]* span/.test(id),
+    where: (id) => /svg[^ ]* text/.test(id),
+    // ROUND 2 CORRECTED THIS DECIDER. It used to name layout.spec.js A4g, which samples
+    // .arr-badge, .station-chip, .leaflet-popup-content b and .arr-dir, and touches no SVG
+    // text node anywhere. The exception therefore pointed at a spec that decided a different
+    // surface, which is the exact "suppression with a sentence attached" the pairing rule
+    // exists to prevent. A1z below now measures these glyphs against their own backing
+    // shape, which is what makes this an admission of a tool limit rather than an excuse.
     decider:
-      "layout.spec.js A4g computes every rendered route colour's contrast in-page with the same " +
-      "sRGB/luminance formula as helpers.js, and a11y.spec.js A1z below measures the zoom glyph " +
-      "and the popup close glyph against their own control backgrounds.",
+      "a11y.spec.js A1z measures every rendered SVG glyph against the fill of the shape it " +
+      "is drawn on, and the zoom and popup-close glyphs against their control backgrounds.",
+  },
+  {
+    name: "a single-character arrival badge",
+    rule: "color-contrast",
+    // The same tool limit in HTML rather than SVG: a badge reading "2" is one character, so
+    // axe will not judge it. Found by a flake rather than by design, which is its own small
+    // lesson: this state only sometimes had its popup arrivals rendered at scan time, so the
+    // gate reported the badges intermittently and the shape list had never seen them.
+    message: /too short to determine if it is actual text content|only non-text characters/,
+    where: (id) => /span\.arr-badge/.test(id),
+    decider:
+      "layout.spec.js A4g computes the contrast of every rendered .arr-badge in-page with the " +
+      "same sRGB and relative-luminance formulas as helpers.js, which is exactly this surface.",
+  },
+  {
+    name: "a single-character glyph on a Leaflet control",
+    rule: "color-contrast",
+    message: /too short to determine if it is actual text content|only non-text characters/,
+    where: (id) =>
+      /leaflet-control-zoom-out[^ ]* span/.test(id) || /leaflet-popup-close-button[^ ]* span/.test(id),
+    decider: "a11y.spec.js A1z measures the zoom glyph and the popup close glyph against their own backgrounds.",
   },
   {
     name: "Leaflet's attribution, which sits directly on map tiles",
@@ -426,6 +449,29 @@ test("A1z. the deciders: every named undecidable is answered by measurement", as
       return ratio(fg, composited);
     };
 
+    /* EVERY RENDERED SVG GLYPH, MEASURED AGAINST THE SHAPE IT SITS ON. Round 2 found the
+       old decider for this shape named a spec that samples HTML badges and no SVG at all,
+       so the glyphs were excepted from axe and decided by nothing. A legend swatch recoloured
+       to 1.14:1 passed the whole suite. The backing shape is the <rect> or <circle> sibling
+       inside the same <svg>, which is what a rider actually sees the character against. */
+    const glyphs = [...document.querySelectorAll("svg text")].map((text) => {
+      const svg = text.closest("svg");
+      const shape = svg ? svg.querySelector("rect, circle, path, polygon") : null;
+      const fill = (el) => (el ? el.getAttribute("fill") || getComputedStyle(el).fill : null);
+      const hex = (v) => {
+        if (!v) return null;
+        if (v.startsWith("#")) {
+          const h = v.slice(1);
+          const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
+          return [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16));
+        }
+        return parse(v);
+      };
+      const fg = hex(fill(text));
+      const bg = hex(fill(shape));
+      return { text: (text.textContent || "").trim(), ratio: fg && bg ? ratio(fg, bg) : null };
+    });
+
     const zoom = document.querySelector(".leaflet-control-zoom-out");
     const zoomStyle = getComputedStyle(zoom);
     const attribution = document.querySelector(".leaflet-control-attribution");
@@ -442,6 +488,7 @@ test("A1z. the deciders: every named undecidable is answered by measurement", as
       // ratio that clears AA against the worse of them clears it against every tile.
       attributionOverBlack: over(parse(attrStyle.color), attrBg, attrAlpha, [0, 0, 0]),
       attributionOverWhite: over(parse(attrStyle.color), attrBg, attrAlpha, [255, 255, 255]),
+      glyphs,
     };
   });
 
@@ -451,6 +498,13 @@ test("A1z. the deciders: every named undecidable is answered by measurement", as
   expect(measured.zoomGlyph, `zoom glyph contrast (measured ${measured.zoomGlyph.toFixed(2)})`).toBeGreaterThanOrEqual(
     4.5,
   );
+  // 3:1 is the non-text floor and these are single characters carrying route identity, which
+  // is the same call A4g makes for the badges: they are read, so the text floor is the honest
+  // one, and every glyph on this page clears it.
+  expect(measured.glyphs.length, "the scan must find rendered SVG glyphs, or it decides nothing").toBeGreaterThan(0);
+  const dimGlyphs = measured.glyphs.filter((g) => g.ratio === null || g.ratio < 4.5);
+  expect(dimGlyphs, "every SVG glyph must clear AA against the shape it is drawn on").toEqual([]);
+
   expect(
     Math.min(measured.attributionOverBlack, measured.attributionOverWhite),
     `attribution over the worst possible tile (black ${measured.attributionOverBlack.toFixed(2)}, ` +

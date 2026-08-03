@@ -35,8 +35,8 @@ Three things stop that gate from being decoration:
 - **It counts what it examined.** `assertScanned` requires a floor of rules and
   nodes and requires named targets to appear in the pass list, so a scan that
   silently stopped reaching the popup or the banner fails rather than passes.
-- **Every fix is mutation-tested.** Reverting a fix must redden the gate. This
-  is how the page-wide widening was validated: reverting the `<main>`/`<h1>`
+- **Each of this phase's fixes was mutation-tested.** Reverting a fix must
+  redden the gate. This is how the page-wide widening was validated: reverting the `<main>`/`<h1>`
   landmark fix fails every state, removing the popup pan fails the 375 popup
   state, neutering the inert sweep fails three mobile states.
 
@@ -46,28 +46,43 @@ Three things stop that gate from being decoration:
 
 - A skip link is the **first** thing focus reaches, at both widths, and pressing
   it opens the station panel it skips to.
-  `a11y.spec.js A1y`, `mobile.spec.js A6g` (375), `mobile.spec.js A6h` (desktop).
-- **There is no keyboard trap anywhere.** A real Tab walk from the top of the
-  document runs to the end and hands focus back to the browser, including with
-  the full-screen mobile overlay open. `a11y.spec.js A1y`.
+  `a11y.spec.js A1y`, `mobile.spec.js A6g` (375). At desktop the panel is
+  already docked open, and `mobile.spec.js A6h` asserts the native fragment
+  behaviour the link keeps there.
+- **No keyboard trap was found in any state we walk.** A real Tab walk from the
+  top of the document runs to the end and hands focus back to the browser, at
+  both widths and with the full-screen mobile overlay open. `a11y.spec.js A1y`.
+  Three states are walked, not every state.
   The overlay uses the platform's `inert` rather than a focus trap precisely
   because `inert` does not wrap: `mobile.spec.js A6n` measures that Tab leaves
   the panel rather than cycling inside it.
 - Every keyboard stop **announces itself**: it has an accessible name from an
   explicit source, or from its own content where the role takes a name from
   content. `a11y.spec.js A1y`.
-- Every keyboard stop is **painted while focused**, so a sighted keyboard rider
-  can see where they are. `a11y.spec.js A1y`.
+- Every keyboard stop has a **non-zero box while focused**, which rules out
+  zero-size stops. `a11y.spec.js A1y`. It does not rule out a stop that is
+  clipped, transparent or scrolled out of sight, and nothing here checks WCAG
+  2.2's 2.4.11 Focus Not Obscured on a page with three overlays.
 - **Tab order follows the document.** No element on the page carries a positive
   `tabindex`. `a11y.spec.js A1y`.
-- Every control this app owns draws a focus ring of at least 2px at 3:1 or
-  better against its own surface, and a **mouse click does not** draw one.
-  `mobile.spec.js A6f`.
+- **The controls this app owns are still reachable.** The same walk checks that
+  every visible control it owns actually appears in it, so a control that
+  quietly leaves the tab order fails rather than passing by absence.
+  `a11y.spec.js A1y`.
+- Six sampled controls draw a focus ring of at least 2px at 3:1 or better
+  against their own surface, and one of them is checked for the other half: a
+  **mouse click does not** draw one. `mobile.spec.js A6f`, at 375 only.
+  Two controls fall back to the browser's own 1px outline and are not covered by
+  that rule: the skip link and the map container. Measured, both report
+  `outline-style: auto, width 1`.
 - **Escape closes the topmost transient only**, and which one that is depends on
   where the rider is standing: the popup first from inside a popup, the panel
   first from inside the panel. One press never closes two surfaces. The whole
   ladder is one document-level listener, which `frontend/keyboard.test.js` pins
-  at the source. `escape.spec.js A9a` through `A9h`.
+  at the source. `escape.spec.js A9a` through `A9l`.
+- Closing a popup the rider was standing in lands them on the map container,
+  **quietly**. `escape.spec.js A9i`, `A9j`. Closing one they were not standing in
+  does not move them at all. `escape.spec.js A9l`.
 - The banner is deliberately **not** Escape-dismissable, because it is not
   transient: it carries service alerts and has its own dismiss button.
 
@@ -92,9 +107,12 @@ Three things stop that gate from being decoration:
 
 ### The station panel, which is the text equivalent of the map
 
-- Every station the map knows, across all six rail and ferry systems, is
-  searchable, and each one's next arrivals read as sentences.
-  `stations.spec.js A1a`, `A1e`.
+- Each loader registers its stations as it draws them, and the panel searches
+  that registry. A subway station's arrivals read as sentences
+  (`stations.spec.js A1a`), the empty, no-match and capped cases say so in words
+  (`A1e`), a ferry dock states its accessibility (`A1g`) and AirTrain labels its
+  numbers as scheduled (`A1h`). No test enumerates all six systems or checks that
+  the registry matches everything the map drew.
 - Arrivals that are stale, still warming, failed, or scheduled rather than live
   say so **in words**. `stations.spec.js A1f`, `A1h`, `A1n`, `A1o`, `A1q`.
 - A ferry dock's wheelchair accessibility is stated in words, not left as a
@@ -105,8 +123,12 @@ Three things stop that gate from being decoration:
 
 ### Announcements
 
-- One live region, one door: nothing else in the app writes to it.
-  `announce.spec.js A2i`.
+- The page has **three** live regions: `#page-announce` for status and alerts,
+  `#stations-announce` for arrivals, and `#stations-status`, which restates the
+  result count as a rider types in the search box. `announce.spec.js A2i` pins
+  the first one's attributes and that it is a different element from the second.
+  That `announcePage` is its only writer is a convention in the source, not
+  something a test enforces, and `#stations-status`'s chattiness is unmeasured.
 - A feed going stale announces **once** and then stays quiet.
   `announce.spec.js A2f`.
 - Two refreshes of unchanged data announce **nothing**, and a countdown tick
@@ -115,11 +137,17 @@ Three things stop that gate from being decoration:
 
 ### Colour, size and layout
 
-- Every rendered route colour meets AA wherever it carries or is text, computed
-  in-page with the same sRGB and relative-luminance formulas the app uses.
-  `layout.spec.js A4g`.
-- Every interactive thing on the map surface meets the WCAG 2.2 **24px target
-  floor**, sampled at 1280, 375 and 320. `layout.spec.js A4b`.
+- At the chip, badge and heading call sites, the route colours this fixture
+  renders meet AA as painted, computed in-page with the same sRGB and
+  relative-luminance formulas the app uses. `layout.spec.js A4g` samples four
+  selectors in one state at one viewport. The palette itself is covered by the
+  node tests; the marker and legend glyph call sites are covered by neither.
+- Vehicle markers and the named controls meet the WCAG 2.2 **24px target
+  floor**, sampled at 1280, 375 and 320. `layout.spec.js A4b`. Two things do
+  not, and `A4b` asserts the exception rather than hiding it: Leaflet's
+  attribution link (measured 234x17, claimed under 2.5.8's inline-text
+  exception) and the canvas-drawn station dots, which have no DOM node for any
+  test to measure and rely on the panel's 24px rows as the equivalent control.
 - The document **never scrolls sideways**, at 1280 docked and at 375.
   `layout.spec.js A4h`.
 - The legend panel stays inside the viewport at both widths, so the status line
@@ -127,9 +155,11 @@ Three things stop that gate from being decoration:
   `layout.spec.js A4f`.
 - The alert banner never covers the zoom controls, at 1280 or 320.
   `layout.spec.js A4a`.
-- A popup never exceeds the phone's viewport (`mobile.spec.js A6e`) and never
-  opens underneath the legend: if it would, the map pans down so it does not
-  (`a11y.spec.js A1w`, the 375 popup state).
+- A popup never exceeds the phone's viewport (`mobile.spec.js A6e`) and does not
+  open underneath the legend or the alert banner: if it would, the map moves it
+  clear, choosing whichever direction actually has room at that width
+  (`a11y.spec.js A1w` at both widths; the geometry itself in
+  `frontend/helpers.test.js`).
 
 ### Motion
 
@@ -212,6 +242,26 @@ available in text; what is available in text is arrivals, by station.
 **Buses are not in the station panel**, because their stops are not stations in
 the data this app has. A keyboard-only rider cannot reach bus arrivals.
 
+**Auto-updating content cannot be paused, and WCAG 2.2's 2.2.2 Pause, Stop,
+Hide is not met.** The map repolls every fifteen seconds and the panel's
+countdowns retick every second, with no control to pause, stop or slow either.
+Reduced motion does **not** satisfy this criterion and it is worth being exact
+about why: 2.2.2 protects every rider from content that moves and updates on its
+own, whether or not they have expressed a motion preference, and the preference
+here changes only *how* a position updates, never *whether* it does. The layer
+checkboxes hide vehicles but not the countdowns or the status line. A
+pause-control follow-up is filed as issue #88.
+
+**Panning the map is drag-only, and WCAG 2.2's 2.5.7 Dragging Movements is not
+met.** Moving the map to an arbitrary area requires a drag. Arrow-key panning
+does work (measured: one ArrowRight moves the centre from -74.00597 to
+-73.97850, pinned by `markers.spec.js A2e`) and it satisfies keyboard access,
+but 2.5.7 is specifically about **pointer** input: it exists for riders who can
+operate a pointer but cannot drag, and a keyboard path is not an alternative for
+them. There is a partial single-pointer path, since selecting a station in the
+panel pans the map to it (`stations.spec.js A1c`), but that reaches stations
+rather than arbitrary areas, so the criterion is not met.
+
 **Text resize and zoom are unverified.** No test asserts behaviour at 200% text
 size or 400% page zoom. Horizontal scrolling is pinned at 1280 and 375 at default
 zoom only (`layout.spec.js A4h`).
@@ -227,7 +277,9 @@ language of parts, and consistent help among them.
 ## Reporting a problem
 
 Open an issue at
-<https://github.com/rosenfieldben/nyc-transit-live/issues>. A description of what
+<https://github.com/rosenfieldben/nyc-transit-live/issues>. Of the gaps above,
+the pause control is filed as
+[#88](https://github.com/rosenfieldben/nyc-transit-live/issues/88). A description of what
 you were trying to do, what happened instead, and which assistive technology and
 browser you were using is enough; a reproduction is welcome but not required.
 

@@ -133,6 +133,39 @@ const ferryRouteLines = L.layerGroup().addTo(map); // route geometry, modal poly
 const ferryDocks = L.layerGroup().addTo(map); // clickable landing docks
 const ferryBoats = L.layerGroup().addTo(map); // live GPS boat markers
 
+/* A4: LEAFLET'S POPUP CLOSE BUTTON IS AN ANCHOR TO NOWHERE, and page-wide scanning is
+   what finally saw it. Leaflet renders
+     <a class="leaflet-popup-close-button" role="button" aria-label="Close popup" href="#close">
+   and axe reports it as a skip-link violation, "No skip link target", because an anchor
+   with a fragment href is a link to an element that has to exist and `#close` never does.
+   No scoped scan could ever have caught it: popups were outside every root A1 through A3
+   included.
+
+   The role and the name are already right, so the defect is only the vestigial href, which
+   Leaflet carries to make the anchor focusable and clickable. Removing it costs the focus
+   stop, so tabindex replaces it, and it costs keyboard activation, because a browser
+   synthesises a click from Enter for LINKS and not for role=button anchors: that is what
+   the keydown handler restores. Space is included because a rider who has been told this
+   is a button will try it.
+
+   Done on popupopen rather than by replacing the node, because Leaflet keeps its own
+   reference to the button and rebuilds the popup element lazily; the guard flag is because
+   Leaflet reuses that element across opens and a second listener would close the popup on
+   one press and then try again on nothing. */
+map.on("popupopen", (event) => {
+  const root = event.popup && event.popup.getElement ? event.popup.getElement() : null;
+  const button = root ? root.querySelector(".leaflet-popup-close-button") : null;
+  if (!button || button.dataset.a11yCloseFixed) return;
+  button.dataset.a11yCloseFixed = "1";
+  button.removeAttribute("href");
+  button.setAttribute("tabindex", "0");
+  button.addEventListener("keydown", (key) => {
+    if (key.key !== "Enter" && key.key !== " ") return;
+    key.preventDefault();
+    button.click();
+  });
+});
+
 function bindToggle(checkboxId, layers) {
   const box = document.getElementById(checkboxId);
   const sync = () => {

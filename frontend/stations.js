@@ -88,15 +88,40 @@ function stationsPanelOpen() {
    #stations-skip is deliberately NOT exempt. It is a body child, so it goes inert with
    everything else, and that is correct: the link exists to get a rider INTO the panel and
    the panel is already open and holding focus. */
-const INERT_EXEMPT = new Set(["stations-panel", "page-announce"]);
+const INERT_EXEMPT = new Set(["stations-panel", "page-announce", "app-title"]);
 
+/* WALKED, NOT FLATTENED, and A4 had to learn that the hard way inside its own phase.
+
+   The first version of this iterated document.body.children, which was correct only while
+   the panel happened to BE a body child. Deliverable 4 then wrapped the map and the panel
+   in <main> for the landmark rules, and that one structural change turned this loop into a
+   defect: <main> is a body child, it is not the panel, so it was inerted, and the panel
+   inside it went inert with it. The overlay would have made itself unusable.
+
+   So the sweep walks from the panel up to the body and inerts SIBLINGS at each level,
+   which is the standard "everything except this subtree" shape and is indifferent to how
+   deeply the panel is nested. #map is a sibling of the panel inside <main> and is inerted
+   there; <main> itself is on the path and is left alone, which is also what keeps the
+   document's one landmark reachable while the overlay is up.
+
+   THE EXEMPTIONS, all three non-interactive and all three needed in the accessibility tree
+   rather than out of it. #stations-panel is the overlay. #page-announce is where the
+   vanishing-focus announcements are spoken, and an inert live region is a silent one.
+   #app-title is the page's h1: inerting it removes the document's only level-one heading
+   from the a11y tree, which axe reports as page-has-heading-one and which would leave a
+   screen-reader rider in the overlay with no page title at all. */
 function setBackgroundInert(on) {
-  if (!document.body) return;
-  for (const el of document.body.children) {
-    // Scripts are not rendered and cannot hold focus; skipping them keeps the attribute
-    // off elements where it would only be noise in the DOM.
-    if (el.tagName === "SCRIPT" || INERT_EXEMPT.has(el.id)) continue;
-    el.inert = on;
+  if (!stationsPanel || !document.body) return;
+  let node = stationsPanel;
+  while (node && node !== document.body && node.parentElement) {
+    const parent = node.parentElement;
+    for (const sibling of parent.children) {
+      // Scripts are not rendered and cannot hold focus; skipping them keeps the attribute
+      // off elements where it would only be noise in the DOM.
+      if (sibling === node || sibling.tagName === "SCRIPT" || INERT_EXEMPT.has(sibling.id)) continue;
+      sibling.inert = on;
+    }
+    node = parent;
   }
 }
 

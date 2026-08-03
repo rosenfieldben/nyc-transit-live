@@ -672,11 +672,19 @@ test("A6n. the keyboard exit from the full-screen panel is where the comment say
   // except the panel and the live region carries the attribute, and the control A3
   // measured as reachable-but-invisible is now unfocusable AND out of the a11y tree.
   const background = await page.evaluate(() => {
+    // ASKED AS A PROPERTY, NOT AS A LIST OF BODY CHILDREN. The first version of this
+    // enumerated document.body.children, which was only ever right while the panel
+    // happened to be a body child; A4 then wrapped the map and the panel in <main> and the
+    // list changed without any accessibility behaviour changing. What matters is which
+    // SUBTREES a rider can reach, so that is what is asked.
     const out = { inert: [], notInert: [], covered: {} };
-    for (const el of document.body.children) {
-      if (el.tagName === "SCRIPT") continue;
-      (el.inert ? out.inert : out.notInert).push(el.id || el.tagName);
+    const panel = document.getElementById("stations-panel");
+    for (const id of ["stations-panel", "page-announce", "app-title", "map", "alert-banner", "panel"]) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      (el.closest("[inert]") ? out.inert : out.notInert).push(id);
     }
+    out.panelReachable = panel.closest("[inert]") === null;
     // The controls A3 measured as reachable-but-invisible are not body children (they
     // live inside #panel, the legend), so membership in the list above cannot speak for
     // them. Their inertness is INHERITED, and the only honest way to ask about inherited
@@ -694,9 +702,15 @@ test("A6n. the keyboard exit from the full-screen panel is where the comment say
     }
     return out;
   });
-  expect(background.notInert.sort(), "only the panel and the page live region stay reachable").toEqual([
+  expect(background.notInert.sort(), "only the overlay and the three exempt surfaces stay reachable").toEqual([
+    "app-title",
     "page-announce",
     "stations-panel",
+  ]);
+  expect(background.inert.sort(), "the map and the page chrome are all inert").toEqual([
+    "alert-banner",
+    "map",
+    "panel",
   ]);
   expect(background.covered, "the covered controls inherit inertness and cannot take focus").toEqual({
     "stations-toggle": { focusable: false, ownInert: false },

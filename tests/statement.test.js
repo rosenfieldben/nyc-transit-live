@@ -91,15 +91,30 @@ test("A4: every test id the accessibility statement cites actually exists", () =
   assert.ok(cited.length >= 40, `the parse must find the document's citations, found ${cited.length}`);
   assert.ok(new Set(cited.map((c) => c.file)).size >= 7, "citations must span the suites, not one file");
 
-  // AND NOTHING THAT LOOKS LIKE A RANGE MAY GO UNPARSED. The floors above cannot see a
-  // silent drop, because losing six of eighty-one citations leaves both of them satisfied.
-  // This looks for two ids separated by a short span of prose and requires the joiner to be
-  // one the parse understands, so an unsupported joiner is a red build rather than a quiet
-  // reduction in what the statement checks.
-  const suspectedRanges = [...doc.matchAll(/([A-Z]\d+[a-z]\d*)`?(\s*[^`\n]{1,12}?\s*)`?([A-Z]\d+[a-z]\d*)/g)]
+  /* AND NOTHING THAT LOOKS LIKE A RANGE MAY GO UNPARSED. The floors above cannot see a
+     silent drop, because losing six of eighty-one citations leaves both of them satisfied.
+     This looks for two ids separated by a short span of prose and requires the joiner to be
+     one the parse understands, so an unsupported joiner is a red build rather than a quiet
+     reduction in what the statement checks.
+     ROUND 2 FOUND TWO HOLES IN THE FIRST VERSION OF THIS GUARD, both of which let the exact
+     silent drop it was written to stop happen with a green build. It tested containment, so
+     any joiner CONTAINING a known one was exempt ("A9a through-ish A9h", or the "to" inside
+     "up to"); and its character class excluded newlines, so a range broken across a line
+     wrap, which this document does constantly, was invisible. It now matches whole words
+     against the joiner set and lets the span cross a wrap. */
+  const suspectedRanges = [...doc.matchAll(/([A-Z]\d+[a-z]\d*)`?([^`]{1,16}?)`?([A-Z]\d+[a-z]\d*)/g)]
     .filter(([, from, joiner, to]) => from.slice(0, -1) === to.slice(0, -1) && !/^[\s,;]*$/.test(joiner))
-    .filter(([, , joiner]) => !JOINER_WORDS.some((j) => joiner.includes(j)))
-    .map(([whole]) => whole);
+    .filter(([, , joiner]) => {
+      // Judged by WORDS when the joiner has any, and only by punctuation when it has none.
+      // A punctuation fallback that applies to a worded joiner exempts anything CONTAINING a
+      // punctuation joiner, which is how "through-ish" walked past the first version of this
+      // guard: it is not a joiner the parse knows, the middle ids were dropped, and the "-"
+      // inside it rescued the whole span.
+      const words = joiner.split(/[^\w.-]+/).filter(Boolean);
+      if (/[A-Za-z]/.test(joiner)) return !words.some((w) => JOINER_WORDS.includes(w));
+      return !JOINER_WORDS.includes(joiner.trim());
+    })
+    .map(([whole]) => whole.replace(/\s+/g, " "));
   assert.deepEqual(
     suspectedRanges,
     [],

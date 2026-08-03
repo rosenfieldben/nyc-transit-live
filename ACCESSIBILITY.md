@@ -145,8 +145,8 @@ Three things stop that gate from being decoration:
 - Vehicle markers and the named controls meet the WCAG 2.2 **24px target
   floor**, sampled at 1280, 375 and 320. `layout.spec.js A4b`. Two things do
   not, and `A4b` asserts the exception rather than hiding it: Leaflet's
-  attribution link (measured 234x17, claimed under 2.5.8's inline-text
-  exception) and the canvas-drawn station dots, which have no DOM node for any
+  attribution link (below the floor, claimed under 2.5.8's
+  inline-text exception, which `A4b` asserts explicitly rather than hiding) and the canvas-drawn station dots, which have no DOM node for any
   test to measure and rely on the panel's 24px rows as the equivalent control.
 - The document **never scrolls sideways**, at 1280 docked and at 375.
   `layout.spec.js A4h`.
@@ -156,10 +156,14 @@ Three things stop that gate from being decoration:
 - The alert banner never covers the zoom controls, at 1280 or 320.
   `layout.spec.js A4a`.
 - A popup never exceeds the phone's viewport (`mobile.spec.js A6e`) and does not
-  open underneath the legend or the alert banner: if it would, the map moves it
-  clear, choosing whichever direction actually has room at that width
-  (`a11y.spec.js A1w` at both widths; the geometry itself in
-  `frontend/helpers.test.js`).
+  open underneath the legend: if it would, the map moves it clear, choosing
+  whichever direction actually has room at that width (`a11y.spec.js A1w` at
+  both widths). The alert banner is treated as an obstacle by the same geometry
+  and the node tests in `frontend/helpers.test.js` cover it, but no scanned
+  state has a popup and a banner open together, so the banner half is proved by
+  the geometry rather than in the browser.
+- Once the rider moves the map themselves, that correction stands down: the app
+  does not tidy a position the rider chose. `layout.spec.js A4j`.
 
 ### Motion
 
@@ -191,7 +195,9 @@ quietly become a suppression with a sentence attached.
 
 | What axe could not decide | Why | How it is decided |
 | --- | --- | --- |
-| Contrast of a single-character glyph inside an SVG icon | axe cannot tell a route letter from a decorative mark when the visible text is one character | `layout.spec.js A4g` computes every rendered route colour's contrast in-page; `a11y.spec.js A1z` measures the zoom glyph and the popup close glyph against their own control backgrounds |
+| Contrast of a single-character glyph inside an SVG icon (route letters on markers, the legend swatches) | axe cannot tell a route letter from a decorative mark when the visible text is one character | `a11y.spec.js A1z` measures every rendered SVG glyph against the fill of the shape it is drawn on |
+| Contrast of a single-character arrival badge | the same tool limit in HTML: a badge reading "2" is one character | `layout.spec.js A4g` computes the contrast of every rendered `.arr-badge` in-page with the same sRGB and relative-luminance formulas as the app |
+| Contrast of a single-character glyph on a Leaflet control (the zoom minus, the popup close) | as above, and these are third-party markup | `a11y.spec.js A1z` measures both against their own control backgrounds |
 | Contrast of Leaflet's attribution, which sits directly on map tiles | the background is live imagery, so there is no single colour to compute against | `a11y.spec.js A1z` composites the attribution's translucent background over **both** extremes a tile can be, black and white, and requires AA against the worse of the two, which bounds every possible tile |
 | Whether the skip link's target becomes visible on activation | the panel is hidden at scan time and no static rule can activate a link | `mobile.spec.js A6g` presses it at 375 and asserts focus lands inside the panel that was hidden a moment earlier; `A6h` asserts the desktop behaviour it must not break |
 

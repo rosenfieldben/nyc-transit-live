@@ -76,8 +76,12 @@ function keydownBindings() {
     const src = read(rel);
     // The receiver may be a dotted path and may use optional chaining; both are normalised
     // to a plain path so `document?.addEventListener` cannot hide behind punctuation.
-    for (const m of src.matchAll(/([A-Za-z_$][\w$]*(?:\??\.[\w$]+)*)\??\.addEventListener\(\s*\n?\s*"keydown"/g)) {
-      found.push({ file: rel, receiver: m[1].replace(/\?/g, "") });
+    for (const m of src.matchAll(
+      /(?:([A-Za-z_$][\w$]*(?:\??\.[\w$]+)*)\??\.)?\baddEventListener\(\s*\n?\s*["']keydown["']/g,
+    )) {
+      // A bare call in a classic script binds to window, so that is what it is recorded as
+      // rather than being skipped for having no receiver to read.
+      found.push({ file: rel, receiver: (m[1] || "window").replace(/\?/g, "") });
     }
   }
   return found;

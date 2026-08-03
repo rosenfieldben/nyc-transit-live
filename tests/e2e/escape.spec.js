@@ -431,10 +431,17 @@ test("A9j. the popup's own close button lands the rider in the same place", asyn
   await expect(page.locator("#page-announce")).toHaveText("");
 });
 
-test("A9k. closing a popup the rider was NOT in does not move them", async ({ page }) => {
-  // THE HALF THAT MUST NOT FIRE, which is the same shape as A9a's inherited A1 contract and
-  // the same shape as A8g in the vanishing suite: a focus move nobody asked for is its own
-  // defect. Without this, "always focus the map on close" would pass both specs above.
+test("A9k. from inside the panel, Escape takes the panel and leaves the popup alone", async ({ page }) => {
+  /* RETITLED IN ROUND 2, BECAUSE THE OLD TITLE AND COMMENT DESCRIBED A TEST THIS IS NOT.
+     It read "closing a popup the rider was NOT in does not move them" and claimed that
+     without it, "always focus the map on close" would pass. Both were false and a mutation
+     said so: the rider is parked in the search box, so the ladder takes the PANEL rung and
+     the popup helper is never entered, and the unconditional-focus mutant passed this spec.
+     A9l is the spec that kills it.
+     What this actually pins is worth keeping under an honest name: the rider's-surface rung.
+     Focus inside the panel closes the panel even though a popup is open, which is the
+     ordering A1a, A1b, A1m and A1q depend on and the one the phase decision originally got
+     backwards. */
   await installMocks(page);
   await open(page);
   const id = await page.evaluate(() => [...railroads.keys()][0]);
@@ -444,7 +451,6 @@ test("A9k. closing a popup the rider was NOT in does not move them", async ({ pa
   await page.locator("#stations-search").focus();
   await page.keyboard.press("Escape");
 
-  // The rider was in the panel, so the panel rung takes it and the popup survives.
   expect(await ladderState(page)).toMatchObject({ popupOpen: true, panelOpen: false });
   await expect(page.locator("#stations-toggle"), "the A1 return, not the map").toBeFocused();
 });

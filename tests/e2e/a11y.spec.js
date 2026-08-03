@@ -697,11 +697,17 @@ for (const viewport of [DESKTOP, PHONE]) {
        mutation in the adversarial round: adding tabindex="-1" to all seven layer toggles
        removed every layer control from keyboard reach and all 153 e2e tests stayed green.
        That is the whole page's layer switching, gone, with a green build.
-       So the walk is also checked for PRESENCE, and the list is derived from the page
-       rather than written down: every control this app owns, found by the same selector a
-       browser uses, must appear in the walk. Deriving it is what keeps this from being the
-       order literal the file argues against, and it means a NEW control is covered the day
-       it is added rather than the day someone remembers to list it. */
+       So the walk is also checked for PRESENCE against the controls this app owns.
+       THE LIST IS EXPLICIT, AND THE FIRST VERSION OF THIS COMMENT CLAIMED OTHERWISE. It said
+       the list was "derived from the page", which it is not: it is written down here, and
+       round 2 pointed out that a control outside it can still leave the keyboard path with
+       the suite green. A genuinely derived list is not available, because "every focusable
+       thing" includes Leaflet's own controls and the map's attribution links, which this app
+       does not own and cannot promise. What is available is an explicit list that is checked
+       for BEING REACHED, plus the discipline that adding a control means adding it here.
+       Controls that only exist in some states are filtered by their box rather than named
+       twice, and the popup's own controls are walked by the popup-open walk below, which is
+       where they exist. */
     const reachable = await page.evaluate(() => {
       const owned = [
         "#stations-skip",
@@ -713,6 +719,7 @@ for (const viewport of [DESKTOP, PHONE]) {
         "#alert-banner-dismiss",
         "#toggles input",
         "#route-clear",
+        ".station-row",
       ];
       const seen = [];
       for (const sel of owned) {

@@ -245,9 +245,9 @@ nyc-transit-live/
 
 A live map is a picture, and a picture is not arrival information. The station
 panel is the same data as text: press **Stations** (or the skip link, which is the
-first thing keyboard focus lands on) to search every station the map knows across
-all six rail and ferry systems (Subway, LIRR, Metro-North, PATH, Ferry, AirTrain),
-pick one, and read its next arrivals as sentences, grouped the way the popups
+first thing keyboard focus lands on) to search the stations each loader registers
+as it draws them, across all six rail and ferry systems (Subway, LIRR, Metro-North,
+PATH, Ferry, AirTrain), pick one, and read its next arrivals as sentences, grouped the way the popups
 group them (by direction, or by route for ferries), each naming the route and
 spelling the countdown out in words. AirTrain says plainly
 that its numbers are scheduled headways rather than live tracking, because it
@@ -288,12 +288,13 @@ you were following left the feed. Focus moved to the map."
 **Escape** closes the topmost thing you are in, one surface per press: the popup first
 if you are in a popup, the panel first if you are in the panel. On a phone the station
 panel opens over the map and the page behind it goes `inert`, so nothing behind it is
-reachable, and Tab still runs off the end of the panel rather than looping: there is no
-focus trap anywhere on this page.
+reachable, and Tab still runs off the end of the panel rather than looping. No keyboard
+trap has been found in any state the tests walk; "no trap anywhere" is a stronger claim
+than three walked states support, and ACCESSIBILITY.md says which three.
 
 **What is measured, and what is not.** CI enforces a page-wide axe-core scan at two
 widths across six states, plus keyboard invariants driven by a real Tab walk
-(`tests/e2e/a11y.spec.js`). The scan's three remaining undecidables each have a test
+(`tests/e2e/a11y.spec.js`). The scan's five remaining undecidables each have a test
 that answers them by measurement instead. What is honestly *not* covered: no screen
 reader and no disabled rider has ever tested this page, it is checked in one browser
 engine, the map itself is still a picture, and buses are not in the panel because their

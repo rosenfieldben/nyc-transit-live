@@ -282,39 +282,104 @@ function panPopupClearOfChrome(popup) {
 
    That is the same principle as the pan animation split, one level up. An adjustment is the
    app correcting its own fit; the moment the rider takes over, the position is theirs and
-   the app has no business tidying it. So the last centre this code set is remembered, and if
-   the map is not still there when the observer fires, the correction stands down for good.
-   Remembered as the centre rather than as a "did the rider drag" flag, because that catches
-   every way the map can move without asking us, including keyboard panning and zoom, and it
-   needs no Leaflet internals to do it. */
-let popupClearObserver = null;
-let popupClearCentre = null;
+   the app has no business tidying it.
 
-const sameCentre = (a, b) => !!a && !!b && a.lat === b.lat && a.lng === b.lng;
+   ROUND 2 EXPRESSED THAT AS "IS THE CENTRE STILL WHERE I LEFT IT", AND ROUND 3 BROKE IT.
+   Comparing centres asks a question about FLOATS when the thing being decided is INTENT, and
+   Leaflet moves the centre on its own: invalidateSize re-centres by
+   round(oldSize/2) - round(newSize/2), so any container dimension that flips parity shifts
+   the reported centre by exactly half a pixel with no input at all. Measured on a phone whose
+   URL bar collapsed, 375x667 to 375x600: the centre moved 0.500003px, the guard read that as
+   the rider taking over, the correction stood down for good, and the next arrivals refresh
+   left 146px of the popup under a legend that paints over it. An epsilon would not have
+   fixed that; it would have moved the threshold and kept the category error.
+
+   SO THE GUARD KEYS ON INTENT, FROM THE EVENTS THAT CARRY IT. Leaflet fires dragstart when a
+   rider drags and zoomstart when a rider zooms, and every other way the view moves without
+   us arrives as a movestart we did not cause. Ours are bracketed while they run, and
+   Leaflet's own autoPan is excluded by the same autopanstart signal the motion wrapper
+   already consumes, because an autoPan is an adjustment too. What is left is the rider. */
+let popupClearObserver = null;
+let popupClearObserved = null;
+let riderOwnsTheView = false;
+let correctingNow = false;
+
+function noteRiderTookOver() {
+  riderOwnsTheView = true;
+}
+map.on("dragstart", noteRiderTookOver);
+map.on("zoomstart", noteRiderTookOver);
+map.on("movestart", () => {
+  // Not ours, and not Leaflet tidying its own popup: that only leaves the rider, which
+  // covers keyboard panning and anything a future Leaflet handler does on their behalf.
+  if (correctingNow || leafletAutoPanning) return;
+  noteRiderTookOver();
+});
+
+function correctOnce(popup) {
+  correctingNow = true;
+  try {
+    return panPopupClearOfChrome(popup);
+  } finally {
+    correctingNow = false;
+  }
+}
 
 map.on("popupopen", (event) => {
   const root = event.popup && event.popup.getElement ? event.popup.getElement() : null;
   if (popupClearObserver) popupClearObserver.disconnect();
-  panPopupClearOfChrome(event.popup);
-  popupClearCentre = map.getCenter();
+  // A new popup is a new placement, so the rider's ownership of the last one does not carry.
+  riderOwnsTheView = false;
+  correctOnce(event.popup);
+  popupClearObserved = event.popup;
   if (!root || typeof ResizeObserver !== "function") return;
   popupClearObserver = new ResizeObserver(() => {
-    // Guarded on the popup still being the open one: Leaflet keeps the element alive
-    // through the close fade, and a resize during that fade must not move the map.
-    if (map._popup !== event.popup || !map.hasLayer(event.popup)) return;
-    if (!sameCentre(map.getCenter(), popupClearCentre)) return; // the rider owns it now
-    panPopupClearOfChrome(event.popup);
-    popupClearCentre = map.getCenter();
+    // Guarded on the popup still being open: Leaflet keeps the element alive through the
+    // close fade, and a resize during that fade must not move the map. Asked of hasLayer
+    // rather than of map._popup, for the reason recorded at openPopupsOnMap below.
+    if (!map.hasLayer(event.popup)) return;
+    if (riderOwnsTheView) return;
+    correctOnce(event.popup);
   });
   popupClearObserver.observe(root);
 });
 
-map.on("popupclose", () => {
-  popupClearCentre = null;
+map.on("popupclose", (event) => {
+  if (event.popup !== popupClearObserved) return;
+  popupClearObserved = null;
+  riderOwnsTheView = false;
   if (!popupClearObserver) return;
   popupClearObserver.disconnect();
   popupClearObserver = null;
 });
+
+/* WHICH POPUPS ARE OPEN, ASKED OF A REGISTER WE KEEP RATHER THAN OF map._popup.
+   Round 2 took this question away from the close button, which had been closing "whichever
+   popup the map thinks is current" instead of its own. Round 3 pointed out the same read was
+   still live one file over, in the Escape ladder, where it decides which popup a keypress
+   closes: with two popups open and the rider standing in the first, Escape closed the other.
+   Fixing it per-file leaves the class alive, so the read is gone from the app entirely and
+   this register is the single answer. map._popup remains wrong for the same reason it always
+   was: it is Leaflet's idea of the most recent popup, it is not cleared on close, and it
+   answers a question about RECENCY when every caller here is asking about IDENTITY.
+   hasLayer stays as the truthful filter, because a popup lingers through its fade. */
+const openPopups = new Set();
+map.on("popupopen", (event) => openPopups.add(event.popup));
+map.on("popupclose", (event) => openPopups.delete(event.popup));
+
+function openPopupsOnMap() {
+  return [...openPopups].filter((popup) => map.hasLayer(popup));
+}
+
+function popupContaining(node) {
+  if (!node) return null;
+  return (
+    openPopupsOnMap().find((popup) => {
+      const el = popup.getElement ? popup.getElement() : null;
+      return !!el && (el === node || el.contains(node));
+    }) || null
+  );
+}
 
 /* A4 ROUND 1: CLOSING A POPUP THE RIDER IS STANDING IN HAS A FOCUS CONTRACT, and until the
    adversarial round it did not. Measured at 1280 with focus on the close button:

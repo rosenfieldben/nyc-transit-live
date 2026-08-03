@@ -273,17 +273,16 @@ retryUntil(loadFerryStops, staticRetryOpts);
    preventDefault, no stopPropagation. The event proceeds exactly as it did before this
    phase, reaching Leaflet's handler, which finds no popup and returns without touching
    the event. That is what keeps the native path intact rather than swallowed. */
+/* ROUND 3 TOOK map._popup AWAY FROM THIS FILE TOO. The rung used to read Leaflet's own
+   most-recent-popup field, which is the exact question round 2 removed from the close button
+   in systems/shared.js: it answers RECENCY when the ladder is asking IDENTITY. With two
+   popups open and the rider standing in the first, Escape closed the other one. Fixing that
+   per-file would have left the class alive, so the read is gone from the app entirely and
+   both callers use the register systems/shared.js keeps. */
 function openPopupOnMap() {
-  // ASKED OF LEAFLET, WITH THE STALE HALF GUARDED. map._popup is the same field Leaflet's
-  // own handler consults, but it is NOT cleared on close: measured, it still holds the
-  // reference after the popup has closed and even after the fade has removed the element.
-  // map.hasLayer is the public and truthful half, and it was measured across all five
-  // states (fresh, open, closed under a paused clock with the corpse still in the DOM,
-  // closed after the fade, and a station popup open): false, true, false, false, true.
-  // A DOM query would have answered 1 in the third state, which is the fade-corpse trap
-  // tests/e2e/popup.js exists for, one layer down.
-  const popup = map._popup;
-  return popup && map.hasLayer(popup) ? popup : null;
+  // The topmost open popup, which is the one a rider standing outside every surface means.
+  const open = openPopupsOnMap();
+  return open.length ? open[open.length - 1] : null;
 }
 
 // Which surface, if any, the rider is standing in. Asked of the DOM rather than remembered,
@@ -291,9 +290,7 @@ function openPopupOnMap() {
 function transientHoldingFocus() {
   const active = document.activeElement;
   if (!active) return null;
-  const popup = openPopupOnMap();
-  const popupEl = popup && popup.getElement ? popup.getElement() : null;
-  if (popupEl && popupEl.contains(active)) return "popup";
+  if (popupContaining(active)) return "popup";
   const panel = document.getElementById("stations-panel");
   if (panel && !panel.hidden && panel.contains(active)) return "panel";
   return null;
@@ -306,7 +303,9 @@ function closeStationsPanelIfOpen() {
 }
 
 function closeOpenPopup() {
-  const popup = openPopupOnMap();
+  // THE POPUP THE RIDER IS IN, when they are in one: closing "the topmost" would be the
+  // recency answer again, one level up from the field this file stopped reading.
+  const popup = popupContaining(document.activeElement) || openPopupOnMap();
   if (!popup) return false;
   // Through the shared helper rather than map.closePopup, so the rung that closes the popup
   // the rider is standing in also puts them somewhere. See closePopupReturningFocus.

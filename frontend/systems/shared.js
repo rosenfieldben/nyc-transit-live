@@ -204,6 +204,40 @@ function panPopupClearOfLegend(popup) {
   map.panBy([0, -down], { animate: false });
 }
 
+/* A4 ROUND 1: CLOSING A POPUP THE RIDER IS STANDING IN HAS A FOCUS CONTRACT, and until the
+   adversarial round it did not. Measured at 1280 with focus on the close button:
+
+     Escape          -> {"active":"BODY","announced":""}
+     the close button-> {"active":"BODY","announced":""}
+     next Tab        -> #stations-skip, so the rider restarted at the top of the page
+
+   Two reviewers found it independently, and the shape of the miss is worth recording. A4
+   built the vanishing-focus door for exactly this outcome, then A4's own Escape ladder
+   created a new path to it, and escape.spec.js asserted only which surface was open, never
+   where the rider ended up. A spec suite that checks state and not focus will pass over a
+   stranding every time.
+
+   QUIETLY, WHICH IS THE DIFFERENCE FROM THE VANISHING DOOR. That door announces because the
+   rider did not ask for anything and the thing they held disappeared. Here the rider pressed
+   Escape or the close button: the move is the expected consequence of their own action, and
+   narrating it every time would be noise. So focus lands on the map container with nothing
+   said, which is the same contract A1 gave the panel.
+
+   ONE HELPER, TWO CALL SITES, and the split is honest: the ladder owns the key and the
+   button owns the click, but the DECISION about focus lives in one place. The plan is taken
+   BEFORE the popup is destroyed, because afterwards activeElement is already BODY and the
+   question cannot be asked, which is the lesson the banner rebuild taught in deliverable 2. */
+function closePopupReturningFocus(popup) {
+  if (!popup) return false;
+  const el = popup.getElement ? popup.getElement() : null;
+  const held = !!(el && document.activeElement && el.contains(document.activeElement));
+  map.closePopup(popup);
+  if (!held) return true;
+  const container = document.getElementById("map");
+  if (container) container.focus();
+  return true;
+}
+
 map.on("popupopen", (event) => {
   const root = event.popup && event.popup.getElement ? event.popup.getElement() : null;
   const button = root ? root.querySelector(".leaflet-popup-close-button") : null;
@@ -216,6 +250,20 @@ map.on("popupopen", (event) => {
     key.preventDefault();
     button.click();
   });
+  // CAPTURE AND stopImmediatePropagation, because Leaflet binds its own close handler to
+  // this same button and a plain stopPropagation does not stop a sibling listener on the
+  // target. Leaflet's handler is map.closePopup(popup) and nothing else, so replacing it
+  // costs no cleanup; what it buys is that every close path, mouse and keyboard alike,
+  // goes through the one helper that knows about focus.
+  button.addEventListener(
+    "click",
+    (event) => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      closePopupReturningFocus(map._popup && map.hasLayer(map._popup) ? map._popup : null);
+    },
+    true,
+  );
 });
 
 map.on("popupopen", (event) => panPopupClearOfLegend(event.popup));

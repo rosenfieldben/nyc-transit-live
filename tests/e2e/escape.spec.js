@@ -382,3 +382,93 @@ test("A9f. at mobile width, a rider standing outside both still gets the popup r
     "closing through the ladder still releases the overlay's inertness",
   ).toBe(false);
 });
+
+/* THE POPUP RUNG'S FOCUS CONTRACT, added in the adversarial round after two reviewers found
+   independently that it did not have one. Every spec above asserts which surface is OPEN.
+   None asserted where the RIDER is, and closing the popup they were standing in dropped
+   them on document.body in silence: measured {"active":"BODY","announced":""}, with the
+   next Tab restarting at the skip link.
+   That is worth a comment rather than a quiet fix, because the gap was structural. A4 built
+   the vanishing-focus door for exactly this outcome and then opened a new path to it, and a
+   suite that checks state and not focus cannot see the difference. Both specs below fail
+   against the pre-fix ladder. */
+test("A9i. Escape from inside the popup leaves the rider on the map, not on the body", async ({ page }) => {
+  await installMocks(page);
+  await open(page);
+  const id = await page.evaluate(() => [...railroads.keys()][0]);
+  await page.evaluate((key) => railroads.get(key).marker.openPopup(), id);
+  await expectPopupState(page, { registry: "railroads", key: id }, true);
+
+  await page.locator(".leaflet-popup-close-button").focus();
+  await expect(page.locator(".leaflet-popup-close-button")).toBeFocused();
+
+  await page.keyboard.press("Escape");
+  expect((await ladderState(page)).popupOpen, "the rung still closes the popup").toBe(false);
+  await expect(page.locator("#map"), "and the rider lands on the map container").toBeFocused();
+
+  // QUIETLY. The vanishing-focus door announces because the rider did not ask for anything;
+  // this move is the expected consequence of their own keypress, and narrating every Escape
+  // would be noise. Asserted so a later change cannot make the two doors say the same thing.
+  await expect(page.locator("#page-announce")).toHaveText("");
+});
+
+test("A9j. the popup's own close button lands the rider in the same place", async ({ page }) => {
+  // THE OTHER DOOR ON THE SAME SURFACE. A4 removed this button's href to fix an anchor to a
+  // fragment that never existed, which made it a real control; it inherited the same missing
+  // contract. Driven by Enter rather than by click(), because the keyboard path is the one
+  // that strands: a mouse user is not holding a focus position to lose.
+  await installMocks(page);
+  await open(page);
+  const id = await page.evaluate(() => [...railroads.keys()][0]);
+  await page.evaluate((key) => railroads.get(key).marker.openPopup(), id);
+  await expectPopupState(page, { registry: "railroads", key: id }, true);
+
+  await page.locator(".leaflet-popup-close-button").focus();
+  await page.keyboard.press("Enter");
+
+  expect((await ladderState(page)).popupOpen, "Enter on the close button still closes it").toBe(false);
+  await expect(page.locator("#map")).toBeFocused();
+  await expect(page.locator("#page-announce")).toHaveText("");
+});
+
+test("A9k. closing a popup the rider was NOT in does not move them", async ({ page }) => {
+  // THE HALF THAT MUST NOT FIRE, which is the same shape as A9a's inherited A1 contract and
+  // the same shape as A8g in the vanishing suite: a focus move nobody asked for is its own
+  // defect. Without this, "always focus the map on close" would pass both specs above.
+  await installMocks(page);
+  await open(page);
+  const id = await page.evaluate(() => [...railroads.keys()][0]);
+  await page.evaluate((key) => railroads.get(key).marker.openPopup(), id);
+  await expectPopupState(page, { registry: "railroads", key: id }, true);
+
+  await page.locator("#stations-search").focus();
+  await page.keyboard.press("Escape");
+
+  // The rider was in the panel, so the panel rung takes it and the popup survives.
+  expect(await ladderState(page)).toMatchObject({ popupOpen: true, panelOpen: false });
+  await expect(page.locator("#stations-toggle"), "the A1 return, not the map").toBeFocused();
+});
+
+test("A9l. closing the popup from a control outside it leaves that control focused", async ({ page }) => {
+  // A9k WAS NOT THE MUST-NOT-FIRE TEST IT LOOKED LIKE, and a mutation said so: making the
+  // helper focus the map UNCONDITIONALLY passed all eleven specs. A9k parks the rider in
+  // the panel, so Escape takes the PANEL rung and the popup helper is never reached.
+  // The case that reaches it is a rider standing on a control that is in neither transient,
+  // where rung one closes the popup and the rider must not be moved off what they were on.
+  // The Stations toggle is that control: outside the popup, outside the panel, and not
+  // #map, so an unconditional move is visible here and invisible everywhere else. Not the
+  // legend disclosure, which was the first choice and is display:none above the breakpoint,
+  // so focus() on it is a no-op and the spec failed against correct code.
+  await installMocks(page);
+  await open(page);
+  const id = await page.evaluate(() => [...railroads.keys()][0]);
+  await page.evaluate((key) => railroads.get(key).marker.openPopup(), id);
+  await expectPopupState(page, { registry: "railroads", key: id }, true);
+
+  await page.locator("#stations-toggle").focus();
+  await expect(page.locator("#stations-toggle")).toBeFocused();
+
+  await page.keyboard.press("Escape");
+  expect((await ladderState(page)).popupOpen, "rung one still takes the popup").toBe(false);
+  await expect(page.locator("#stations-toggle"), "and the rider is left exactly where they were").toBeFocused();
+});

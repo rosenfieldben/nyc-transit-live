@@ -308,8 +308,9 @@ function closeStationsPanelIfOpen() {
 function closeOpenPopup() {
   const popup = openPopupOnMap();
   if (!popup) return false;
-  map.closePopup(popup);
-  return true;
+  // Through the shared helper rather than map.closePopup, so the rung that closes the popup
+  // the rider is standing in also puts them somewhere. See closePopupReturningFocus.
+  return closePopupReturningFocus(popup);
 }
 
 document.addEventListener(

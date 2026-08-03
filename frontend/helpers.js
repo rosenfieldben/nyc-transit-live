@@ -212,6 +212,62 @@ function isPlacedRailroad(t) {
   return t.stop_id != null;
 }
 
+/* A4 ROUND 1: WHERE A POPUP SHOULD MOVE TO GET OUT FROM UNDER THE PAGE'S CHROME.
+   Pure geometry, here rather than in systems/shared.js so it can be reasoned about and
+   tested without a browser, which is the same split the rest of this file exists for. The
+   caller supplies three boxes and gets back a translation or null; it knows nothing about
+   Leaflet, the legend or the banner.
+   The first version of this lived inside the map file, only ever moved DOWN, and knew about
+   one obstacle. All three were wrong and all three were caught by measurement rather than by
+   reading: see the comment at panPopupClearOfChrome for what each cost. */
+const POPUP_CLEAR_GAP = 8; // the gap the layout uses between two surfaces that must not touch
+
+function boxesOverlap(a, b) {
+  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+}
+
+function shiftBox(box, dx, dy) {
+  return {
+    left: box.left + dx,
+    right: box.right + dx,
+    top: box.top + dy,
+    bottom: box.bottom + dy,
+  };
+}
+
+/* THE GEOMETRY, KEPT SEPARATE FROM THE MAP so it can be reasoned about and tested without
+   a browser: given where the popup is, what the obstacles are and how much room the map
+   has, which way should the world move and by how much? Returns null when the popup is
+   already clear or when no direction can clear it, and the difference between those two
+   is deliberately not encoded: both mean "do nothing", and a caller that treated them
+   differently would be inventing a distinction the rider cannot see. */
+function popupClearingShift(popup, obstacles, viewport) {
+  const blocking = obstacles.filter((box) => boxesOverlap(popup, box));
+  if (!blocking.length) return null;
+  // Each direction's cost is set by the obstacle that demands the most, because a move that
+  // clears one blocker and not another has not cleared anything.
+  const candidates = [
+    { dx: -Math.max(...blocking.map((b) => popup.right - b.left)) - POPUP_CLEAR_GAP, dy: 0 },
+    { dx: Math.max(...blocking.map((b) => b.right - popup.left)) + POPUP_CLEAR_GAP, dy: 0 },
+    { dx: 0, dy: -Math.max(...blocking.map((b) => popup.bottom - b.top)) - POPUP_CLEAR_GAP },
+    { dx: 0, dy: Math.max(...blocking.map((b) => b.bottom - popup.top)) + POPUP_CLEAR_GAP },
+  ];
+  const fits = (box) =>
+    box.left >= viewport.left && box.right <= viewport.right && box.top >= viewport.top && box.bottom <= viewport.bottom;
+  const accepted = candidates
+    .map((move) => ({ move, moved: shiftBox(popup, move.dx, move.dy) }))
+    // Re-checked against EVERY obstacle, not just the blocking ones: moving out from under
+    // the legend must not move under the banner, which is defect 3 above.
+    .filter(({ moved }) => fits(moved) && !obstacles.some((box) => boxesOverlap(moved, box)))
+    .map(({ move }) => move);
+  if (!accepted.length) return null;
+  // The smallest accepted move, so the map shifts as little as the rider will tolerate.
+  return accepted.reduce((best, move) =>
+    Math.abs(move.dx) + Math.abs(move.dy) < Math.abs(best.dx) + Math.abs(best.dy) ? move : best,
+  );
+}
+
+
 // ---- Staleness thresholds, and the one test seam in this file (C6) ----
 //
 // WHY A SEAM EXISTS HERE AT ALL. The contract tier runs the REAL page against a
@@ -2107,5 +2163,7 @@ if (typeof module !== "undefined" && module.exports) {
     degradedIdentities, neverDecoded, describeIdentity, sentenceList, statusAnnouncement,
     alertIdentities, bannerAnnouncement,
     motionAllowed, watchMotionPreference, REDUCED_MOTION_QUERY,
+    // A4: the popup-clearing geometry.
+    boxesOverlap, shiftBox, popupClearingShift, POPUP_CLEAR_GAP,
   };
 }

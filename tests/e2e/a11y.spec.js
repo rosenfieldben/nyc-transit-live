@@ -306,15 +306,31 @@ const STATES = [
       if (await page.evaluate(() => !document.getElementById("stations-panel").hidden)) {
         await page.evaluate(() => closeStationsPanel());
       }
-      // The placed railroad train is the one popup that carries the A2 cross-link button,
-      // so this state is the only one that scans an app-rendered control inside a popup.
+      // SELECTED BY THE PROPERTY THAT MAKES IT THE RIGHT TRAIN, not by position. The first
+      // draft took `find((r) => r.marker.getPopup())`, meaning "the first railroad with any
+      // popup bound", and every railroad has one. Measured, it opened MNR|mnr-gps-1:
+      //   {"text":"MNR · HudsonTrain 1797live GPS","hasCrossLink":false,"buttons":[]}
+      // so the state named "with cross-link" scanned a popup that has no buttons at all,
+      // and the page-wide gate had never examined a cross-link in any state. The reviewer
+      // who found it proved the cost by emptying the cross-link's accessible name: the
+      // exact button-name defect A1l injects as its canary, and all fifteen tests passed.
+      // The registry already carries the app's own derived answer: `placed`, set from
+      // isPlacedRailroad when the record is built. Reading the app's flag rather than
+      // re-deriving it means the state cannot drift from what the app calls placed. The
+      // throw below fails loudly if the fixture ever stops carrying one, rather than
+      // silently scanning a different popup, which is how this got past review the once.
       await page.evaluate(() => {
-        const placed = [...railroads.values()].find((r) => r.marker.getPopup());
+        const placed = [...railroads.values()].find((r) => r.placed);
+        if (!placed) throw new Error("the fixture no longer has a placed railroad train to cross-link");
         placed.marker.openPopup();
       });
       await expect(page.locator(".leaflet-popup-content")).toBeVisible();
+      await expect(page.locator(".leaflet-popup-content .popup-crosslink")).toBeVisible();
     },
-    targets: ["leaflet-popup"],
+    // The cross-link is named as a target, so the anti-vacuity check fails if the scan
+    // stops reaching it. That is the half the first draft was missing: the state reached
+    // the wrong popup AND nothing asked whether a cross-link had been examined.
+    targets: ["leaflet-popup", "popup-crosslink"],
   },
   {
     key: "banner active",

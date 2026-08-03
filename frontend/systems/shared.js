@@ -52,9 +52,31 @@ function applyMotionPreference(allowed) {
 // own, including panTo and the animated branch of setView, which both route through it.
 // It changes only HOW the map arrives at a position, never WHICH position: an
 // unanimated pan lands on exactly the same centre.
+//
+// A4 ROUND 1: LEAFLET'S OWN AUTOPAN IS NOW ALWAYS INSTANT, motion preference or none, and
+// that is a rider-visible change made for a measured reason rather than a tidy-up.
+// _adjustPan's pan is a CORRECTION of where a popup landed, not a journey the rider asked
+// for, and animating it has two costs. For the rider it is the full-field slide the comment
+// above already describes as this page's largest motion source. For the code it makes the
+// popup's resting position unknowable: the animation lands on a later frame than popupopen,
+// so anything that wants to reason about where the popup ENDED UP is reading a position
+// that is still moving. Measured at 1280 with the placed railroad popup:
+//     real clock   popup settles at x 1001..1276, overlapping the legend at 1030
+//     fixed clock  popup never lands at all, x 1288..1563, off the map's right edge
+// The second is why it matters beyond aesthetics: PosAnimation drives itself off
+// `+new Date()`, so under a fixed clock (which the accessibility gate needs for
+// deterministic ages) the animation never completes and the map is left mid-slide forever.
+// Instant is the only setting under which the popup has a position at all.
+let leafletAutoPanning = false;
+map.on("autopanstart", () => {
+  leafletAutoPanning = true;
+});
 const leafletPanBy = map.panBy.bind(map);
-map.panBy = (offset, options) =>
-  leafletPanBy(offset, motionOn ? options : { ...(options || {}), animate: false });
+map.panBy = (offset, options) => {
+  const instant = !motionOn || leafletAutoPanning;
+  leafletAutoPanning = false; // consumed: autopanstart fires immediately before its own panBy
+  return leafletPanBy(offset, instant ? { ...(options || {}), animate: false } : options);
+};
 
 applyMotionPreference(motionAtLoad);
 watchMotionPreference(applyMotionPreference);
@@ -152,13 +174,13 @@ const ferryBoats = L.layerGroup().addTo(map); // live GPS boat markers
    reference to the button and rebuilds the popup element lazily; the guard flag is because
    Leaflet reuses that element across opens and a second listener would close the popup on
    one press and then try again on nothing. */
-/* A4: A POPUP MUST NOT OPEN UNDERNEATH THE LEGEND, and page-wide scanning is what proved
-   it was happening. axe reported the popup's content as undecidable, "background color
-   could not be determined because it is overlapped by another element". Measured at
-   375x667: the popup occupied x 255..345 y 19..70 while #panel occupied x 140..365
-   y 10..285, and document.elementFromPoint at all nine sample points across the popup
-   returned #stations-toggle or #legend-toggle. Not partially covered: entirely covered. A
-   rider who opened a popup near the top of a phone screen saw the legend instead of it.
+/* A4: A POPUP MUST NOT OPEN UNDERNEATH THE PAGE'S OWN CHROME, and page-wide scanning is
+   what proved it was happening. axe reported the popup's content as undecidable,
+   "background color could not be determined because it is overlapped by another element".
+   Measured at 375x667: the popup occupied x 255..345 y 19..70 while #panel occupied
+   x 140..365 y 10..285, and document.elementFromPoint at all nine sample points across the
+   popup returned #stations-toggle or #legend-toggle. Not partially covered: entirely
+   covered. A rider who opened a popup near the top of a phone screen saw the legend.
 
    THE STACKING FIX DOES NOT WORK, and it is worth recording why so nobody retries it.
    Leaflet's popupPane is z-index 700 and #panel is 1000, so raising the pane looks like a
@@ -170,39 +192,94 @@ const ferryBoats = L.layerGroup().addTo(map); // live GPS boat markers
    the map's transform and the popup would stop following the map.
 
    SO THE MAP PANS, which is what Leaflet already does when a popup would fall off the
-   viewport edge; this extends the same idea to an edge Leaflet cannot see. Leaflet's own
-   autoPan runs inside the popup's onAdd and therefore finishes before popupopen fires,
-   which is why reading the rect in that handler reads a settled position: measured at 375,
-   autopanstart saw the popup at y -479 and this handler saw it at y 5.
+   viewport edge; this extends the same idea to edges Leaflet cannot see.
 
-   DOWNWARD, BECAUSE LEFT IS NOT ACTUALLY FREE. Left is the shorter move at 375 and it was
-   the first draft's choice. Measured, it lands the popup at x -4: off the left edge and on
-   top of the zoom controls, which trades one occlusion for two. Down is the direction the
-   legend's own geometry offers, since it hangs from the top edge and its bottom is a line
-   the popup can sit under. The guard below says when that is actually available.
+   THE FIRST VERSION WAS WRONG IN THREE WAYS AND THE ADVERSARIAL ROUND MEASURED ALL THREE.
+   It is rewritten rather than adjusted, because each error came from deciding something in
+   advance that only measurement can answer.
+
+   1. IT READ THE POPUP TOO EARLY. The old comment claimed popupopen "reads a settled
+      position". False for the popups that matter: a station popup is bound with empty
+      content and filled by a fetch, so at popupopen it is 29px tall, the correction is
+      computed on that, and the arrivals then land and grow it back over the legend.
+      Measured at 375 on the panel's own sync path: popupopen saw h=29, settled measured
+      top 169.65 bottom 321 against #panel bottom 284.5, still overlapping. So the trigger
+      is a ResizeObserver on the popup element as well as popupopen, and the correction
+      runs again whenever the content changes size.
+
+   2. IT ONLY EVER MOVED DOWN. Down is right at 375, where #panel is 275px of a 667px
+      viewport. At 1280 the legend spans y 10..710 of a 720px map, so nothing fits below it
+      and the guard bailed every time: the mechanism never fired at the width where the
+      popup is largest. Measured on a real station popup at desktop, six of nine sample
+      points across it returned legend-row. The clear space at desktop is to the LEFT of
+      x=1030, not below. So the direction is no longer chosen in advance: all four are
+      costed and the cheapest one that actually clears everything wins.
+
+   3. IT KNEW ABOUT ONE OBSTACLE. The old guard's only other constraint was the map's
+      height, so a downward move could push a tall popup under the alert banner, which is
+      z-index 1001 and paints over the popup pane exactly as the legend does. Measured with
+      a 300px popup at 375: pan down 368.5, popup bottom 620, banner top 595.4, the bottom
+      25px covered and not hit-testable. The banner is now an obstacle like any other.
 
    UNANIMATED, AND THAT IS A DECISION RATHER THAN A DEFAULT. Everything else on this map
    goes through the A2 panBy wrapper, which animates unless the rider asked for reduced
    motion. This one does not, because it is not a journey: it is a correction of where the
    popup already landed, and animating a correction shows the rider the wrong position
    first and then slides the whole field away from it. */
-function panPopupClearOfLegend(popup) {
-  const legend = document.getElementById("panel");
-  const root = popup && popup.getElement ? popup.getElement() : null;
-  if (!legend || !root || legend.hidden) return;
-  const a = root.getBoundingClientRect();
-  const b = legend.getBoundingClientRect();
-  const overlaps = a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
-  if (!overlaps) return;
-  // The 8px is the same gap the layout uses everywhere else between two surfaces that must
-  // not touch. If the popup is too tall to fit below the legend, panning would only trade
-  // one occlusion for the popup running off the bottom, which Leaflet would then undo; in
-  // that case leave it where Leaflet put it rather than start a fight nobody wins.
-  const down = b.bottom - a.top + 8;
-  const viewport = map.getSize().y;
-  if (a.bottom + down > viewport) return;
-  map.panBy([0, -down], { animate: false });
+
+// The chrome that paints over the popup pane. Both are siblings of #map with a z-index
+// above .leaflet-map-pane's stacking context, which is the property that makes them
+// obstacles rather than just neighbours. Listed rather than derived, so adding a third
+// overlay is a deliberate edit here and not a silent regression.
+const POPUP_OBSTACLE_IDS = ["panel", "alert-banner"];
+
+function popupObstacles() {
+  return POPUP_OBSTACLE_IDS.map((id) => document.getElementById(id))
+    .filter((el) => el && !el.hidden)
+    .map((el) => el.getBoundingClientRect())
+    // A zero-size box is the dismissed banner, which reserves no space and blocks nothing.
+    .filter((box) => box.width > 0 && box.height > 0);
 }
+
+function panPopupClearOfChrome(popup) {
+  const root = popup && popup.getElement ? popup.getElement() : null;
+  const container = document.getElementById("map");
+  if (!root || !container) return false;
+  const shift = popupClearingShift(root.getBoundingClientRect(), popupObstacles(), container.getBoundingClientRect());
+  if (!shift) return false;
+  // panBy moves the VIEW, so the content moves the other way: to move the popup left by d
+  // the map pans right by d. Measured rather than assumed: panBy([200, 0]) moved a popup
+  // from x 234 to x 34.
+  map.panBy([-shift.dx, -shift.dy], { animate: false });
+  return true;
+}
+
+/* THE TRIGGER, WHICH IS THE HALF THE FIRST VERSION GOT WRONG. popupopen alone is too early
+   for any popup whose content arrives later, and every station popup is one. A
+   ResizeObserver on the popup element catches both moments with one mechanism: it fires
+   once when the element is first laid out and again when the fetched content changes its
+   size. It is disconnected on popupclose so a closed popup's corpse cannot keep panning
+   the map during its fade. */
+let popupClearObserver = null;
+
+map.on("popupopen", (event) => {
+  const root = event.popup && event.popup.getElement ? event.popup.getElement() : null;
+  if (popupClearObserver) popupClearObserver.disconnect();
+  panPopupClearOfChrome(event.popup);
+  if (!root || typeof ResizeObserver !== "function") return;
+  popupClearObserver = new ResizeObserver(() => {
+    // Guarded on the popup still being the open one: Leaflet keeps the element alive
+    // through the close fade, and a resize during that fade must not move the map.
+    if (map._popup === event.popup && map.hasLayer(event.popup)) panPopupClearOfChrome(event.popup);
+  });
+  popupClearObserver.observe(root);
+});
+
+map.on("popupclose", () => {
+  if (!popupClearObserver) return;
+  popupClearObserver.disconnect();
+  popupClearObserver = null;
+});
 
 /* A4 ROUND 1: CLOSING A POPUP THE RIDER IS STANDING IN HAS A FOCUS CONTRACT, and until the
    adversarial round it did not. Measured at 1280 with focus on the close button:
@@ -266,7 +343,6 @@ map.on("popupopen", (event) => {
   );
 });
 
-map.on("popupopen", (event) => panPopupClearOfLegend(event.popup));
 
 function bindToggle(checkboxId, layers) {
   const box = document.getElementById(checkboxId);

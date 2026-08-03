@@ -2499,3 +2499,72 @@ test("A4: the wording names the vehicle from its own label, and never invents a 
   );
   assert.equal(vanishingFocusMessage("vehicle", "   "), vanishingFocusMessage("vehicle", null));
 });
+
+/* A4 ROUND 1: the popup-clearing geometry, with the three real viewports as its cases.
+   These numbers are not invented: they are what the browser measured while the adversarial
+   round was taking the first version apart, which is what makes them worth pinning. */
+const { boxesOverlap, shiftBox, popupClearingShift, POPUP_CLEAR_GAP } = require("./helpers.js");
+const box = (left, right, top, bottom) => ({ left, right, top, bottom, width: right - left, height: bottom - top });
+
+test("popupClearingShift returns null when nothing is in the way", () => {
+  const popup = box(100, 300, 400, 500);
+  const legend = box(1030, 1270, 10, 710);
+  assert.equal(popupClearingShift(popup, [legend], box(0, 1280, 0, 720)), null);
+});
+
+test("popupClearingShift goes LEFT at desktop, where nothing fits below a 700px legend", () => {
+  // The measured desktop case: #panel spans y 10..710 of a 720px map, so the old
+  // downward-only version bailed every time and the popup stayed under the legend.
+  const popup = box(1001, 1276, 293, 419);
+  const legend = box(1030, 1270, 10, 710);
+  const shift = popupClearingShift(popup, [legend], box(360, 1280, 0, 720));
+  assert.equal(shift.dy, 0);
+  assert.equal(shift.dx, -(1276 - 1030) - POPUP_CLEAR_GAP);
+  // And the result actually clears, which is the property the direction is chosen for.
+  assert.equal(boxesOverlap(shiftBox(popup, shift.dx, shift.dy), legend), false);
+});
+
+test("popupClearingShift goes DOWN at 375, where left would run off the screen", () => {
+  const popup = box(234, 370, 5, 84);
+  const legend = box(140, 365, 10, 285);
+  const shift = popupClearingShift(popup, [legend], box(0, 375, 0, 667));
+  assert.equal(shift.dx, 0);
+  assert.equal(shift.dy, 285 - 5 + POPUP_CLEAR_GAP);
+  assert.equal(boxesOverlap(shiftBox(popup, shift.dx, shift.dy), legend), false);
+});
+
+test("popupClearingShift will not move a popup out from under the legend and under the banner", () => {
+  // The third defect the round found: the old guard knew only the map's height, so a tall
+  // popup was panned down onto the alert banner, which paints over the popup pane.
+  const popup = box(234, 370, 5, 305);
+  const legend = box(140, 365, 10, 285);
+  const banner = box(8, 367, 595, 645);
+  const viewport = box(0, 375, 0, 667);
+  const withoutBanner = popupClearingShift(popup, [legend], viewport);
+  assert.equal(withoutBanner.dy > 0, true, "with only the legend, down is available");
+  const withBanner = popupClearingShift(popup, [legend, banner], viewport);
+  assert.equal(
+    withBanner && boxesOverlap(shiftBox(popup, withBanner.dx, withBanner.dy), banner),
+    false,
+    "whatever it picks, it must not land on the banner",
+  );
+});
+
+test("popupClearingShift returns null rather than moving a popup off the viewport", () => {
+  // A popup wider than the clear space either side: every candidate leaves the map box, so
+  // the honest answer is to leave it where Leaflet put it.
+  const popup = box(20, 360, 5, 84);
+  const legend = box(140, 365, 10, 285);
+  assert.equal(popupClearingShift(popup, [legend], box(0, 375, 0, 300)), null);
+});
+
+test("popupClearingShift costs a direction by the obstacle that demands the most", () => {
+  // Two blockers, and clearing only the nearer one is not clearing anything.
+  const popup = box(200, 300, 100, 200);
+  const near = box(280, 320, 50, 250);
+  const far = box(290, 400, 50, 250);
+  const shift = popupClearingShift(popup, [near, far], box(0, 500, 0, 500));
+  const moved = shiftBox(popup, shift.dx, shift.dy);
+  assert.equal(boxesOverlap(moved, near), false);
+  assert.equal(boxesOverlap(moved, far), false);
+});

@@ -152,6 +152,58 @@ const ferryBoats = L.layerGroup().addTo(map); // live GPS boat markers
    reference to the button and rebuilds the popup element lazily; the guard flag is because
    Leaflet reuses that element across opens and a second listener would close the popup on
    one press and then try again on nothing. */
+/* A4: A POPUP MUST NOT OPEN UNDERNEATH THE LEGEND, and page-wide scanning is what proved
+   it was happening. axe reported the popup's content as undecidable, "background color
+   could not be determined because it is overlapped by another element". Measured at
+   375x667: the popup occupied x 255..345 y 19..70 while #panel occupied x 140..365
+   y 10..285, and document.elementFromPoint at all nine sample points across the popup
+   returned #stations-toggle or #legend-toggle. Not partially covered: entirely covered. A
+   rider who opened a popup near the top of a phone screen saw the legend instead of it.
+
+   THE STACKING FIX DOES NOT WORK, and it is worth recording why so nobody retries it.
+   Leaflet's popupPane is z-index 700 and #panel is 1000, so raising the pane looks like a
+   one-line answer. It is not: .leaflet-map-pane is itself positioned with z-index 400, which
+   makes it a stacking context, so every pane inside it is capped at 400 relative to anything
+   outside. Measured: the pane's computed z-index really was 1001 and the hit test still
+   returned the legend's controls. Moving the popup to a pane outside the map pane would
+   escape the cap and break worse, because a pane outside .leaflet-map-pane does not receive
+   the map's transform and the popup would stop following the map.
+
+   SO THE MAP PANS, which is what Leaflet already does when a popup would fall off the
+   viewport edge; this extends the same idea to an edge Leaflet cannot see. Leaflet's own
+   autoPan runs inside the popup's onAdd and therefore finishes before popupopen fires,
+   which is why reading the rect in that handler reads a settled position: measured at 375,
+   autopanstart saw the popup at y -479 and this handler saw it at y 5.
+
+   DOWNWARD, BECAUSE LEFT IS NOT ACTUALLY FREE. Left is the shorter move at 375 and it was
+   the first draft's choice. Measured, it lands the popup at x -4: off the left edge and on
+   top of the zoom controls, which trades one occlusion for two. Down is the direction the
+   legend's own geometry offers, since it hangs from the top edge and its bottom is a line
+   the popup can sit under. The guard below says when that is actually available.
+
+   UNANIMATED, AND THAT IS A DECISION RATHER THAN A DEFAULT. Everything else on this map
+   goes through the A2 panBy wrapper, which animates unless the rider asked for reduced
+   motion. This one does not, because it is not a journey: it is a correction of where the
+   popup already landed, and animating a correction shows the rider the wrong position
+   first and then slides the whole field away from it. */
+function panPopupClearOfLegend(popup) {
+  const legend = document.getElementById("panel");
+  const root = popup && popup.getElement ? popup.getElement() : null;
+  if (!legend || !root || legend.hidden) return;
+  const a = root.getBoundingClientRect();
+  const b = legend.getBoundingClientRect();
+  const overlaps = a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+  if (!overlaps) return;
+  // The 8px is the same gap the layout uses everywhere else between two surfaces that must
+  // not touch. If the popup is too tall to fit below the legend, panning would only trade
+  // one occlusion for the popup running off the bottom, which Leaflet would then undo; in
+  // that case leave it where Leaflet put it rather than start a fight nobody wins.
+  const down = b.bottom - a.top + 8;
+  const viewport = map.getSize().y;
+  if (a.bottom + down > viewport) return;
+  map.panBy([0, -down], { animate: false });
+}
+
 map.on("popupopen", (event) => {
   const root = event.popup && event.popup.getElement ? event.popup.getElement() : null;
   const button = root ? root.querySelector(".leaflet-popup-close-button") : null;
@@ -165,6 +217,8 @@ map.on("popupopen", (event) => {
     button.click();
   });
 });
+
+map.on("popupopen", (event) => panPopupClearOfLegend(event.popup));
 
 function bindToggle(checkboxId, layers) {
   const box = document.getElementById(checkboxId);

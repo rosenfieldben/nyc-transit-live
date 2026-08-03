@@ -241,5 +241,5 @@ the A4 phase. Re-verify the whole statement with:
 
 ```bash
 npx playwright test --config tests/e2e/playwright.config.js
-node --test "frontend/*.test.js"
+node --test "frontend/*.test.js" "tests/*.test.js"
 ```

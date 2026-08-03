@@ -37,55 +37,79 @@ const FRONTEND_SOURCES = [
   "systems/ferry.js",
 ];
 
-/* THE INVARIANT IS ABOUT ROUTERS, NOT ABOUT THE WORD "keydown", and the first version of
-   this file did not make that distinction. It asserted exactly one keydown listener
-   anywhere in the frontend, which was true when it was written and stopped being true one
-   commit later: the popup close button's Enter and Space handler is a keydown listener too.
-   It went red and stayed red until the node tier was run again, which is its own lesson.
+/* THE INVARIANT IS ABOUT ROUTERS, NOT ABOUT THE WORD "keydown", and it took two goes to say
+   that precisely.
+
+   The first version asserted exactly one keydown listener anywhere in the frontend. That was
+   true when written and false one commit later, because the popup close button's Enter and
+   Space handler is a keydown listener too. It went red and stayed red until the node tier was
+   run again, which is its own lesson.
 
    The two are not the same kind of thing. The ladder ROUTES a key: it looks at the page,
    decides which surface a press belongs to, and stops the event. A second router would
-   silently compete with it, and because the ladder captures, the loser would be invisible
-   to any spec that drives the keyboard, which is exactly why this is asserted at the source.
-   The close button's handler ROUTES nothing: it is bound to one control and restores the
+   silently compete with it, and because the ladder captures, the loser would be invisible to
+   any spec that drives the keyboard, which is exactly why this is asserted at the source. The
+   close button's handler ROUTES nothing: it is bound to one control and restores the
    activation a browser synthesises for links but not for role=button anchors.
 
-   So the check is by RECEIVER. Exactly one document-level keydown, and every other keydown
-   named here with its reason. The allowlist is one entry long and it has to stay that way
-   by decision rather than by drift: a new name appearing in it is the moment to ask whether
-   the thing being built is a control's activation or a second door. */
+   The second version keyed the allowlist by FILE, and the adversarial round walked through
+   the hole: it appended a second bubble-phase Escape router bound on WINDOW inside
+   systems/shared.js, a file already excused, and 154 node tests and 8 escape specs stayed
+   green. A file-keyed exemption excuses a file, not a listener, and this file's whole point
+   is that WHAT THE LISTENER IS BOUND TO decides what kind of thing it is.
+
+   So the key is now file AND receiver. Any page-level receiver (window, document, the body,
+   the documentElement) is a router by construction and may appear exactly once, in the
+   ladder. Anything else is a control's own activation and must be named below with its
+   reason. The same round also found that `document?.addEventListener` slipped the old regex
+   entirely, so the receiver pattern reads optional chaining too. */
+const PAGE_LEVEL_RECEIVERS = new Set(["window", "document", "document.body", "document.documentElement", "self"]);
+
 const ACTIVATION_KEYDOWNS = {
-  "systems/shared.js": "the Leaflet popup close button, whose href A4 removed (Enter and Space activation)",
+  "systems/shared.js button":
+    "the Leaflet popup close button, whose href A4 removed (Enter and Space activation)",
 };
 
-test("A4: exactly one keydown ROUTER in the frontend, and every other keydown is named", () => {
-  const documentLevel = [];
-  const scoped = [];
+function keydownBindings() {
+  const found = [];
   for (const rel of FRONTEND_SOURCES) {
     const src = read(rel);
-    for (const match of src.matchAll(/(\w+)\.addEventListener\(\s*\n?\s*"keydown"/g)) {
-      (match[1] === "document" ? documentLevel : scoped).push(rel);
+    // The receiver may be a dotted path and may use optional chaining; both are normalised
+    // to a plain path so `document?.addEventListener` cannot hide behind punctuation.
+    for (const m of src.matchAll(/([A-Za-z_$][\w$]*(?:\??\.[\w$]+)*)\??\.addEventListener\(\s*\n?\s*"keydown"/g)) {
+      found.push({ file: rel, receiver: m[1].replace(/\?/g, "") });
     }
   }
+  return found;
+}
+
+test("A4: exactly one keydown ROUTER in the frontend, and every other keydown is named", () => {
+  const bindings = keydownBindings();
+
+  // ANTI-VACUITY. A receiver pattern that stopped matching would report no routers and no
+  // unnamed listeners, which reads exactly like a clean page.
+  assert.ok(bindings.length >= 2, `the scan must find the frontend's keydown bindings, found ${bindings.length}`);
+
+  const routers = bindings.filter((b) => PAGE_LEVEL_RECEIVERS.has(b.receiver));
   assert.deepEqual(
-    documentLevel,
-    ["map.js"],
-    `a document-level keydown is a key ROUTER and there may be exactly one, the ladder. ` +
-      `Found in: ${documentLevel.join(", ") || "nowhere"}`,
+    routers.map((b) => `${b.file} ${b.receiver}`),
+    ["map.js document"],
+    "a keydown on a page-level receiver is a key ROUTER and there may be exactly one, the ladder",
   );
-  const unnamed = scoped.filter((rel) => !(rel in ACTIVATION_KEYDOWNS));
+
+  const scoped = bindings.filter((b) => !PAGE_LEVEL_RECEIVERS.has(b.receiver)).map((b) => `${b.file} ${b.receiver}`);
+  const unnamed = scoped.filter((key) => !(key in ACTIVATION_KEYDOWNS));
   assert.deepEqual(
     unnamed,
     [],
-    `every keydown outside the ladder must be a control's own activation, named above with ` +
-      `its reason. Unnamed: ${unnamed.join(", ")}`,
+    "every keydown outside the ladder must be a control's own activation, named above with its reason",
   );
-  // The allowlist is not allowed to outlive what it describes either: an entry whose file
-  // has stopped binding keydown is a stale exemption waiting to cover the next one.
+  // The allowlist is not allowed to outlive what it describes either: an entry whose binding
+  // is gone is a stale exemption waiting to cover the next one.
   assert.deepEqual(
-    Object.keys(ACTIVATION_KEYDOWNS).filter((rel) => !scoped.includes(rel)),
+    Object.keys(ACTIVATION_KEYDOWNS).filter((key) => !scoped.includes(key)),
     [],
-    "an entry in ACTIVATION_KEYDOWNS no longer binds keydown; delete it rather than leave it",
+    "an entry in ACTIVATION_KEYDOWNS no longer matches a binding; delete it rather than leave it",
   );
 });
 

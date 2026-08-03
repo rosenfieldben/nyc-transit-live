@@ -20,31 +20,25 @@ const assert = require("node:assert");
 const fs = require("node:fs");
 const path = require("node:path");
 
+const { declaredIds, E2E_DIR: E2E } = require("./specids");
+
 const ROOT = path.join(__dirname, "..");
 const STATEMENT = path.join(ROOT, "ACCESSIBILITY.md");
-const E2E = path.join(ROOT, "tests", "e2e");
-
-// Every id a spec file declares, as a set, keyed by the file's basename.
-function declaredIds() {
-  const byFile = new Map();
-  for (const name of fs.readdirSync(E2E)) {
-    if (!name.endsWith(".spec.js")) continue;
-    const src = fs.readFileSync(path.join(E2E, name), "utf8");
-    const ids = new Set();
-    // Both forms the suites use: a plain string title and a template literal that
-    // parametrises the viewport into the title. The id is the leading token either way.
-    for (const m of src.matchAll(/test\(\s*[`"]([A-Za-z][\w]*)\./g)) ids.add(m[1]);
-    byFile.set(name, ids);
-  }
-  return byFile;
-}
 
 // The document's citations, in reading order, each already resolved to a file.
 function citations(doc) {
   const found = [];
   let currentFile = null;
-  // One pass over the tokens that matter, in order: a spec filename, or a test id, or the
-  // word "through" joining two ids into a range.
+  // One pass over the tokens that matter, in order: a spec filename, or a test id, or a
+  // JOINER between two ids that makes them a range.
+  //
+  // THE JOINER SET IS CLOSED, AND ANYTHING ELSE FAILS LOUDLY. The first version understood
+  // only the literal word "through". The adversarial round rewrote one range as "A9a to
+  // A9h" and the parse silently dropped six citations: 81 became 75, the floors (40
+  // citations, 7 files) never noticed, and a claim quietly stopped being checked while the
+  // build stayed green. Silent under-collection is the disease this whole file exists to
+  // treat, so an id pair that LOOKS like a range and is not written with a joiner this
+  // parse knows is an error rather than two unrelated citations. See the assertion below.
   //
   // AN ID IS REQUIRED TO END IN A LETTER, and that is what keeps this parse from eating the
   // document's prose. The suites number their tests A1w, A6p, A9a; the phases they came
@@ -52,7 +46,14 @@ function citations(doc) {
   // the trailing letter, "the A4 phase" would parse as a citation to a test that never
   // existed. The backticks are optional on purpose: the document writes a file and its id
   // inside ONE code span, which is how anyone would write it.
-  const token = /([\w.-]+\.spec\.js)|([A-Z]\d+[a-z]\d*)(`?\s+through\s+`?([A-Z]\d+[a-z]\d*))?/g;
+  const JOINERS = JOINER_WORDS;
+  const token = new RegExp(
+    "([\\w.-]+\\.spec\\.js)" +
+      "|([A-Z]\\d+[a-z]\\d*)(`?\\s*(" +
+      JOINERS.map((j) => j.replace(/[.\\-]/g, "\\$&")).join("|") +
+      ")\\s*`?([A-Z]\\d+[a-z]\\d*))?",
+    "g",
+  );
   for (const m of doc.matchAll(token)) {
     if (m[1]) {
       currentFile = path.basename(m[1]);
@@ -60,14 +61,15 @@ function citations(doc) {
     }
     const id = m[2];
     if (!currentFile) continue;
-    if (m[4]) {
+    const endId = m[5];
+    if (endId) {
       // A range: same prefix, walking the trailing letter. Written as "A9a through A9h"
       // rather than as eight ids because eight ids in a sentence is unreadable.
       const prefix = id.slice(0, -1);
       const from = id.charCodeAt(id.length - 1);
-      const to = m[4].charCodeAt(m[4].length - 1);
-      assert.equal(prefix, m[4].slice(0, -1), `a citation range must share a prefix: ${id} through ${m[4]}`);
-      assert.ok(to > from, `a citation range must run forwards: ${id} through ${m[4]}`);
+      const to = endId.charCodeAt(endId.length - 1);
+      assert.equal(prefix, endId.slice(0, -1), `a citation range must share a prefix: ${id} .. ${endId}`);
+      assert.ok(to > from, `a citation range must run forwards: ${id} .. ${endId}`);
       for (let c = from; c <= to; c++) found.push({ file: currentFile, id: prefix + String.fromCharCode(c) });
     } else {
       found.push({ file: currentFile, id });
@@ -75,6 +77,9 @@ function citations(doc) {
   }
   return found;
 }
+
+// Shared with the parse below so the check and the grammar cannot drift apart.
+const JOINER_WORDS = ["through", "to", "and", "-", "..", String.fromCharCode(0x2013)];
 
 test("A4: every test id the accessibility statement cites actually exists", () => {
   const doc = fs.readFileSync(STATEMENT, "utf8");
@@ -85,6 +90,22 @@ test("A4: every test id the accessibility statement cites actually exists", () =
   // clean bill of health, which is the exact failure mode the statement is written against.
   assert.ok(cited.length >= 40, `the parse must find the document's citations, found ${cited.length}`);
   assert.ok(new Set(cited.map((c) => c.file)).size >= 7, "citations must span the suites, not one file");
+
+  // AND NOTHING THAT LOOKS LIKE A RANGE MAY GO UNPARSED. The floors above cannot see a
+  // silent drop, because losing six of eighty-one citations leaves both of them satisfied.
+  // This looks for two ids separated by a short span of prose and requires the joiner to be
+  // one the parse understands, so an unsupported joiner is a red build rather than a quiet
+  // reduction in what the statement checks.
+  const suspectedRanges = [...doc.matchAll(/([A-Z]\d+[a-z]\d*)`?(\s*[^`\n]{1,12}?\s*)`?([A-Z]\d+[a-z]\d*)/g)]
+    .filter(([, from, joiner, to]) => from.slice(0, -1) === to.slice(0, -1) && !/^[\s,;]*$/.test(joiner))
+    .filter(([, , joiner]) => !JOINER_WORDS.some((j) => joiner.includes(j)))
+    .map(([whole]) => whole);
+  assert.deepEqual(
+    suspectedRanges,
+    [],
+    "a citation range is written with a joiner this parse does not understand, so its middle " +
+      "ids would be silently dropped. Use one of: " + JOINER_WORDS.join(", "),
+  );
 
   const dangling = cited.filter((c) => !declared.has(c.file) || !declared.get(c.file).has(c.id));
   assert.deepEqual(

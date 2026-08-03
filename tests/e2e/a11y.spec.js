@@ -25,6 +25,7 @@ const { test, expect } = require("@playwright/test");
 const AxeBuilder = require("@axe-core/playwright").default;
 const { installMocks, json } = require("./mock");
 const fx = require("./fixtures/api");
+const { danglingCitations, citedPairs } = require("../specids");
 
 const DESKTOP = { width: 1280, height: 720 };
 const PHONE = { width: 375, height: 667 };
@@ -384,15 +385,26 @@ test("A1z. the deciders: every named undecidable is answered by measurement", as
   // Without this the list would be three excuses rather than three admissions of a TOOL
   // limit, which is the distinction the conversion rule exists to protect.
 
-  // THE PAIRING CHECK, FIRST, because it is the rule the list can lose silently. A shape
-  // may be added at any time by anyone chasing a red build, and the only thing standing
-  // between "a named exception" and "a suppression with a sentence attached" is that it
-  // names the spec that answers the question axe declined. Asserted as a reference to a
-  // real spec file and a real test id, so the sentence cannot be prose alone.
+  /* THE PAIRING CHECK, FIRST, because it is the rule the list can lose silently. A shape
+     may be added at any time by anyone chasing a red build, and the only thing standing
+     between "a named exception" and "a suppression with a sentence attached" is that it
+     names the spec that answers the question axe declined.
+     RESOLVED, NOT PATTERN-MATCHED. The first version asserted the sentence MATCHED
+     /\w+\.spec\.js A\w+/, which asks only whether it looks like a citation. The
+     adversarial round rewrote a decider to "nosuchfile.spec.js A0z composites..." and it
+     passed. A citation that resolves to nothing is worse than no citation, because it
+     reads as evidence. */
   for (const shape of UNDECIDABLE_SHAPES) {
-    expect(shape.decider || "", `the undecidable "${shape.name}" must name the spec that decides it`).toMatch(
-      /\b[\w.-]+\.spec\.js\s+A\w+/,
-    );
+    expect(
+      citedPairs(shape.decider || ""),
+      `the undecidable "${shape.name}" must name the spec that decides it, as file and test id`,
+    ).not.toEqual([]);
+    expect(
+      danglingCitations(shape.decider || ""),
+      `the undecidable "${shape.name}" cites a test that does not exist. Either the spec was ` +
+        `renamed and this decider must follow it, or this exception has lost its decider and ` +
+        `must become a defect to fix.`,
+    ).toEqual([]);
   }
 
   await page.setViewportSize(DESKTOP);
@@ -624,6 +636,49 @@ for (const viewport of [DESKTOP, PHONE]) {
       walk.stops[0] && walk.stops[0].id,
       `${viewport.width}: the skip link must be the first stop or it skips nothing`,
     ).toBe("stations-skip");
+
+    /* AND THE OTHER HALF: THE CONTROLS THAT MUST BE STOPS ARE STILL STOPS.
+       Every assertion above is a property of whatever the walk HAPPENS to find, so all of
+       them hold vacuously for a control that has quietly left the tab order. Measured by
+       mutation in the adversarial round: adding tabindex="-1" to all seven layer toggles
+       removed every layer control from keyboard reach and all 153 e2e tests stayed green.
+       That is the whole page's layer switching, gone, with a green build.
+       So the walk is also checked for PRESENCE, and the list is derived from the page
+       rather than written down: every control this app owns, found by the same selector a
+       browser uses, must appear in the walk. Deriving it is what keeps this from being the
+       order literal the file argues against, and it means a NEW control is covered the day
+       it is added rather than the day someone remembers to list it. */
+    const reachable = await page.evaluate(() => {
+      const owned = [
+        "#stations-skip",
+        "#map",
+        "#stations-toggle",
+        "#legend-toggle",
+        "#stations-search",
+        "#stations-close",
+        "#alert-banner-dismiss",
+        "#toggles input",
+        "#route-clear",
+      ];
+      const seen = [];
+      for (const sel of owned) {
+        for (const el of document.querySelectorAll(sel)) {
+          // Only controls a rider can actually see: #stations-close is display:none above
+          // the breakpoint and #route-clear only exists while a bus route is drawn, so
+          // requiring them everywhere would be requiring the page to be a different page.
+          const box = el.getBoundingClientRect();
+          if (box.width > 0 && box.height > 0) seen.push(el.id || sel);
+        }
+      }
+      return seen;
+    });
+    const walked = new Set(walk.stops.map((s) => s.id).filter(Boolean));
+    const unreachable = reachable.filter((id) => !walked.has(id));
+    expect(
+      unreachable,
+      `${viewport.width}: these controls are visible but not reachable by Tab. A control ` +
+        `that leaves the tab order is invisible to every other invariant in this spec.`,
+    ).toEqual([]);
 
     // THE STATE INERT EXISTS FOR gets its own walk at the width where it exists. With the
     // overlay open the background is inert, so the same invariants must hold AND the walk

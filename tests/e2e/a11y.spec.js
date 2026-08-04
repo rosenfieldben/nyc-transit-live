@@ -156,9 +156,12 @@ const UNDECIDABLE_SHAPES = [
     // surface, which is the exact "suppression with a sentence attached" the pairing rule
     // exists to prevent. A1z below now measures these glyphs against their own backing
     // shape, which is what makes this an admission of a tool limit rather than an excuse.
+    // ROUND 3 CORRECTED WHICH BACKING SHAPE: the topmost one under the glyph, not the first
+    // one in document order, which is the bottom of the stack.
     decider:
-      "a11y.spec.js A1z measures every rendered SVG glyph against the fill of the shape it " +
-      "is drawn on, and the zoom and popup-close glyphs against their control backgrounds.",
+      "a11y.spec.js A1z measures every rendered SVG glyph against the fill of the topmost " +
+      "shape drawn under it, and the zoom and popup-close glyphs against their control " +
+      "backgrounds.",
   },
   {
     name: "a single-character arrival badge",
@@ -452,24 +455,66 @@ test("A1z. the deciders: every named undecidable is answered by measurement", as
     /* EVERY RENDERED SVG GLYPH, MEASURED AGAINST THE SHAPE IT SITS ON. Round 2 found the
        old decider for this shape named a spec that samples HTML badges and no SVG at all,
        so the glyphs were excepted from axe and decided by nothing. A legend swatch recoloured
-       to 1.14:1 passed the whole suite. The backing shape is the <rect> or <circle> sibling
-       inside the same <svg>, which is what a rider actually sees the character against. */
+       to 1.14:1 passed the whole suite.
+
+       WHICH SHAPE, THOUGH. Round 3: this read querySelector("rect, circle, path, polygon"),
+       which is FIRST IN DOCUMENT ORDER, and document order is paint order in SVG — so it
+       reads the BOTTOM shape while a rider sees the top one. It is right today only because
+       every marker in this app happens to be one shape and one glyph; the moment a marker
+       gains a halo, a shadow or a second plate, the decider silently starts measuring a
+       colour nobody sees. Measured under mutation: a subway icon drawn as a black plate
+       under a #eee plate under white text reads 21:1 by document order and 1.13:1 by what
+       is actually behind the character.
+       So: the candidates are the shapes whose box CONTAINS the glyph's centre, and the
+       answer is the LAST of them, because later siblings paint over earlier ones.
+
+       AND NOTHING HERE IS ALLOWED TO GO QUIET. A glyph with no shape under it, a backing
+       painted fill="none", a colour this parser cannot read — each used to produce NaN,
+       and `NaN < 4.5` is false, so an unmeasurable glyph passed as if it had been measured.
+       Every one of them now returns a null ratio with a `why`, and null is a failure. */
     const glyphs = [...document.querySelectorAll("svg text")].map((text) => {
       const svg = text.closest("svg");
-      const shape = svg ? svg.querySelector("rect, circle, path, polygon") : null;
+      const shapes = svg ? [...svg.querySelectorAll("rect, circle, ellipse, path, polygon")] : [];
+      const box = text.getBoundingClientRect();
+      const cx = box.left + box.width / 2;
+      const cy = box.top + box.height / 2;
+      const under = shapes.filter((el) => {
+        const b = el.getBoundingClientRect();
+        return b.width > 0 && b.height > 0 && cx >= b.left && cx <= b.right && cy >= b.top && cy <= b.bottom;
+      });
+      const shape = under.length ? under[under.length - 1] : null;
+      const show = (el) =>
+        el ? `${el.tagName}[${under.indexOf(el) + 1} of ${under.length} under the glyph]` : "none";
+
       const fill = (el) => (el ? el.getAttribute("fill") || getComputedStyle(el).fill : null);
       const hex = (v) => {
-        if (!v) return null;
+        if (!v || v === "none" || v === "transparent" || v === "currentColor") return null;
         if (v.startsWith("#")) {
           const h = v.slice(1);
           const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
-          return [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16));
+          const rgb = [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16));
+          return rgb.some(Number.isNaN) ? null : rgb;
         }
-        return parse(v);
+        const rgb = parse(v);
+        return rgb.length === 3 && rgb.every(Number.isFinite) ? rgb : null;
       };
-      const fg = hex(fill(text));
-      const bg = hex(fill(shape));
-      return { text: (text.textContent || "").trim(), ratio: fg && bg ? ratio(fg, bg) : null };
+      const rawFg = fill(text);
+      const rawBg = fill(shape);
+      const fg = hex(rawFg);
+      const bg = hex(rawBg);
+      const why = !shape
+        ? "no painted shape sits under this glyph's centre, so there is nothing to measure it against"
+        : !fg
+          ? `the glyph's own fill (${rawFg}) is not a colour this decider can read`
+          : !bg
+            ? `the backing ${show(shape)} is filled ${rawBg}, which is not a colour, so what the rider sees behind the glyph is whatever is under the SVG`
+            : null;
+      return {
+        text: (text.textContent || "").trim(),
+        backing: show(shape),
+        ratio: why ? null : ratio(fg, bg),
+        why,
+      };
     });
 
     const zoom = document.querySelector(".leaflet-control-zoom-out");

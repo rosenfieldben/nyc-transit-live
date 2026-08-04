@@ -34,8 +34,12 @@ async function open(page) {
 // A closing popup lingers in the DOM while it fades, so a document query can return
 // the popup that was just dismissed; that cost a debugging round here and is the same
 // trap the product code hit.
+// AND NOT THROUGH map._popup, since round 3. That field answers "which opened most
+// recently" and is never cleared on close, so on a closed-then-not-reopened popup it
+// reports the corpse. openPopupsOnMap is the app's own register of what is actually on
+// the map; asking it means this helper cannot disagree with the code it is testing.
 const popupText = (page) => page.evaluate(() => {
-  const popup = map._popup;
+  const [popup] = openPopupsOnMap();
   const root = popup && popup.getElement ? popup.getElement() : null;
   const el = root ? root.querySelector(".leaflet-popup-content") : null;
   return el ? el.textContent.replace(/\s+/g, " ").trim() : null;

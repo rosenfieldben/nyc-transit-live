@@ -64,10 +64,18 @@ async function withBanner(page) {
 }
 
 // Asked of Leaflet, not of the DOM: a closed popup lingers through its fade, and under
-// this suite's paused clock it never leaves at all. map.hasLayer is the truthful half.
+// this suite's paused clock it never leaves at all.
+//
+// ROUND 3 SWEPT map._popup OUT OF HERE TOO. It was `map._popup && map.hasLayer(map._popup)`,
+// which is the same recency-not-identity read the round-2 fix took out of the Escape rung:
+// map._popup is whichever popup opened MOST RECENTLY and Leaflet never clears it on close.
+// The app answers this from a register it maintains itself (openPopupsOnMap in shared.js),
+// so the suite asks the same question the app does rather than keeping a second, wronger
+// implementation alive next to it. The one deliberate exception is A9m, which reads
+// map._popup on purpose because staging its trap IS setting map._popup to the wrong popup.
 const ladderState = (page) =>
   page.evaluate(() => ({
-    popupOpen: !!(map._popup && map.hasLayer(map._popup)),
+    popupOpen: openPopupsOnMap().length > 0,
     panelOpen: !document.getElementById("stations-panel").hidden,
     bannerRows: document.querySelectorAll(".alert-banner-row").length,
   }));
@@ -259,15 +267,13 @@ test("A9g. inside the popup the panel opened, Escape still takes the popup", asy
 
   // Stand inside that popup, the way the cross-link landing point does (tabindex -1 on the
   // content node, which is exactly what openStationFromCrossLink focuses).
+  await expectState(page, "one popup open", "A9g: the panel's own sync opens exactly one");
   await page.evaluate(() => {
-    const content = map._popup.getElement().querySelector(".leaflet-popup-content");
+    const content = openPopupsOnMap()[0].getElement().querySelector(".leaflet-popup-content");
     content.setAttribute("tabindex", "-1");
     content.focus();
   });
-  expect(
-    await page.evaluate(() => map._popup.getElement().contains(document.activeElement)),
-    "the rider must actually be standing in the synced popup",
-  ).toBe(true);
+  await expectState(page, "focus inside the popup", "A9g: the rider must be standing in the synced popup");
 
   await page.keyboard.press("Escape");
   expect(await ladderState(page), "the rider is in the popup, so the popup closes").toEqual({
@@ -296,7 +302,7 @@ test("A9h. at 375 the overlay closes first and the popup it opened survives for 
   // the wrong answer rather than merely a different one.
   expect(
     await page.evaluate(() => {
-      const el = map._popup.getElement();
+      const el = openPopupsOnMap()[0].getElement();
       const r = el.getBoundingClientRect();
       const top = document.elementFromPoint(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2));
       return !!(top && !el.contains(top));
@@ -530,4 +536,61 @@ test("A9m. the close button closes the popup that owns it, not whichever is curr
 
   expect(out.firstOpen, "the button closed its own popup").toBe(false);
   expect(out.secondOpen, "and left the other one alone").toBe(true);
+});
+
+test("A9n. with the fade off, the close button still hands the rider the map", async ({ page }) => {
+  /* THE CAPTURE FLAG, PINNED, AND IT TURNS OUT TO BE A REDUCED-MOTION CONTRACT.
+
+     The app's click handler on the popup close button is registered with capture:true and
+     calls stopImmediatePropagation, so it beats Leaflet's own close handler on that same
+     button. Round 3 asked what pins the flag and the answer was nothing: flipping it to
+     false left all thirteen specs in this file green. Worth understanding why, because the
+     reason is the whole spec.
+
+     Leaflet binds `function (t) { stop(t); this.close(); }` to the button at _initLayout,
+     which is BEFORE our popupopen handler runs, so without capture Leaflet's listener goes
+     first and the popup is already closed by the time the app decides where focus goes.
+     That decision needs the rider to still be inside the popup — and they usually still
+     are, because DivOverlay.onRemove defers the container's removal by 200ms when the map
+     is fade-animated. The focus contract was riding on a fade timeout.
+
+     A RIDER WHO ASKED FOR REDUCED MOTION HAS NO FADE. shared.js constructs the map with
+     fadeAnimation: motionAtLoad, so for exactly the riders most likely to be on a keyboard,
+     the container is removed SYNCHRONOUSLY, activeElement is BODY before the app's handler
+     runs, and the rider is dropped at the top of the document. Measured with capture:false:
+     A9j (fade on) passes, this spec fails on `#map` not being focused.
+
+     So this is the pair A5g/A5h are for the pan: A9j is the ordinary rider and A9n is the
+     reduced-motion one, and only together do they say the contract holds for both. */
+  await page.emulateMedia({ reducedMotion: "reduce" }); // before goto: Leaflet reads it once
+  await installMocks(page);
+  await open(page);
+
+  // THE STATE THAT MAKES THIS SPEC DIFFERENT FROM A9j, asserted rather than assumed. If a
+  // future change stops passing the preference to Leaflet, this spec would quietly become
+  // a duplicate of A9j instead of failing.
+  expect(
+    await page.evaluate(() => map._fadeAnimated),
+    "reduced motion must actually have turned Leaflet's fade off, or this is just A9j again",
+  ).toBe(false);
+
+  const id = await page.evaluate(() => [...railroads.keys()][0]);
+  await page.evaluate((key) => railroads.get(key).marker.openPopup(), id);
+  await expectPopupState(page, { registry: "railroads", key: id }, true);
+
+  await page.locator(".leaflet-popup-close-button").focus();
+  await expectState(page, ["one popup open", "focus inside the popup"], "A9n");
+  await page.keyboard.press("Enter");
+
+  expect((await ladderState(page)).popupOpen, "Enter on the close button still closes it").toBe(false);
+  // AND THE CORPSE IS GONE IMMEDIATELY, which is the mechanism this spec exists to exercise:
+  // with the fade on, the element the rider was standing in survives the close by 200ms and
+  // any focus decision taken afterwards still finds them inside it.
+  expect(
+    await page.evaluate(() => document.querySelectorAll(".leaflet-popup").length),
+    "with no fade the popup leaves the document in the same task, taking focus with it",
+  ).toBe(0);
+  await expect(page.locator("#map")).toBeFocused();
+  // Still quiet: the rider asked for this, so it is not announced. Same rule as A9i and A9j.
+  await expect(page.locator("#page-announce")).toHaveText("");
 });

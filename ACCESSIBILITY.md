@@ -66,9 +66,15 @@ Three things stop that gate from being decoration:
 - **Tab order follows the document.** No element on the page carries a positive
   `tabindex`. `a11y.spec.js A1y`.
 - **The controls this app owns are still reachable.** The same walk checks that
-  every visible control it owns actually appears in it, so a control that
-  quietly leaves the tab order fails rather than passing by absence.
-  `a11y.spec.js A1y`.
+  every control it owns that is on screen and not inert actually appears in the
+  walk, so a control that quietly leaves the tab order fails rather than passing
+  by absence. Inert controls are excluded because unreachable is what `inert`
+  means: with the 375 overlay up, twelve owned controls sit painted behind it and
+  every one of them is deliberately out of the tab order. Each state also states
+  which controls it offers, so a control dropping out of the requirement is a
+  failure rather than a silent narrowing. `a11y.spec.js A1y`. The list of owned
+  controls is explicit, not derived: "everything focusable" would include
+  Leaflet's own controls and the tile attribution, which this app does not own.
 - Six sampled controls draw a focus ring of at least 2px at 3:1 or better
   against their own surface, and one of them is checked for the other half: a
   **mouse click does not** draw one. `mobile.spec.js A6f`, at 375 only.
@@ -79,10 +85,12 @@ Three things stop that gate from being decoration:
   where the rider is standing: the popup first from inside a popup, the panel
   first from inside the panel. One press never closes two surfaces. The whole
   ladder is one document-level listener, which `frontend/keyboard.test.js` pins
-  at the source. `escape.spec.js A9a` through `A9l`.
+  at the source. `escape.spec.js A9a` through `A9n`.
 - Closing a popup the rider was standing in lands them on the map container,
-  **quietly**. `escape.spec.js A9i`, `A9j`. Closing one they were not standing in
-  does not move them at all. `escape.spec.js A9l`.
+  **quietly**, whether they closed it with Escape or with the popup's own close
+  button, and whether or not they asked for reduced motion. `escape.spec.js A9i`,
+  `A9j`, `A9n`. Closing one they were not standing in does not move them at all.
+  `escape.spec.js A9l`.
 - The banner is deliberately **not** Escape-dismissable, because it is not
   transient: it carries service alerts and has its own dismiss button.
 
@@ -141,7 +149,9 @@ Three things stop that gate from being decoration:
   renders meet AA as painted, computed in-page with the same sRGB and
   relative-luminance formulas the app uses. `layout.spec.js A4g` samples four
   selectors in one state at one viewport. The palette itself is covered by the
-  node tests; the marker and legend glyph call sites are covered by neither.
+  node tests. The marker and legend glyph call sites are covered separately, by
+  `a11y.spec.js A1z`, because axe cannot decide a one-character glyph; that spec
+  measures each glyph against the topmost shape drawn under it.
 - Vehicle markers and the named controls meet the WCAG 2.2 **24px target
   floor**, sampled at 1280, 375 and 320. `layout.spec.js A4b`. Two things do
   not, and `A4b` asserts the exception rather than hiding it: Leaflet's
@@ -181,6 +191,11 @@ The map follows one rule: **animate the journey, never the adjustment.**
 - With the preference set, vehicles also step to each new position instead of
   sliding, and the marker and panel transitions are off.
   `motion.spec.js A5a` through `A5d`.
+- The preference also turns off Leaflet's popup fade, which means a closing popup
+  leaves the document immediately rather than lingering for 200ms. The focus
+  contract holds anyway: closing a popup you are standing in still lands you on
+  the map, not at the top of the document. `escape.spec.js A9n` is the
+  reduced-motion half of the pair `A9j` covers for everyone else.
 - Nothing is hidden and no data is withheld: the preference changes only how a
   position updates, never what is shown.
 
@@ -188,14 +203,14 @@ The map follows one rule: **animate the journey, never the adjustment.**
 
 axe reports a third category besides pass and fail: **incomplete**, meaning it
 needs a human. A green "zero violations" says nothing about those, so the gate
-asserts them too. The list is closed: an incomplete finding outside these three
+asserts them too. The list is closed: an incomplete finding outside these five
 shapes fails the build. Each entry names the test that answers the question axe
 declined, and `a11y.spec.js A1z` **asserts that pairing**, so an exception cannot
 quietly become a suppression with a sentence attached.
 
 | What axe could not decide | Why | How it is decided |
 | --- | --- | --- |
-| Contrast of a single-character glyph inside an SVG icon (route letters on markers, the legend swatches) | axe cannot tell a route letter from a decorative mark when the visible text is one character | `a11y.spec.js A1z` measures every rendered SVG glyph against the fill of the shape it is drawn on |
+| Contrast of a single-character glyph inside an SVG icon (route letters on markers, the legend swatches) | axe cannot tell a route letter from a decorative mark when the visible text is one character | `a11y.spec.js A1z` measures every rendered SVG glyph against the fill of the topmost shape drawn under it, which is what a rider actually sees the character against; a glyph whose backing cannot be resolved to a colour is a failure, not a skip |
 | Contrast of a single-character arrival badge | the same tool limit in HTML: a badge reading "2" is one character | `layout.spec.js A4g` computes the contrast of every rendered `.arr-badge` in-page with the same sRGB and relative-luminance formulas as the app |
 | Contrast of a single-character glyph on a Leaflet control (the zoom minus, the popup close) | as above, and these are third-party markup | `a11y.spec.js A1z` measures both against their own control backgrounds |
 | Contrast of Leaflet's attribution, which sits directly on map tiles | the background is live imagery, so there is no single colour to compute against | `a11y.spec.js A1z` composites the attribution's translucent background over **both** extremes a tile can be, black and white, and requires AA against the worse of the two, which bounds every possible tile |

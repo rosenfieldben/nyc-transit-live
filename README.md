@@ -228,6 +228,7 @@ nyc-transit-live/
 │   ├── playwright.config.js # chromium only, starts the static server
 │   └── fixtures/            # handcrafted JSON payloads
 ├── tests/statement.test.js  # ACCESSIBILITY.md cites real tests, checked
+├── docs/reviews/            # adversarial-review adjudication records, one per phase
 ├── data/
 │   ├── airtrain_jfk.json    # committed AirTrain JFK fixture (geometry + scheduled headways)
 │   ├── gtfs_static/         # downloaded static subway GTFS (gitignored)

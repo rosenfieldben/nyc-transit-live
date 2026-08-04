@@ -20,7 +20,7 @@ const assert = require("node:assert");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const { declaredIds, E2E_DIR: E2E } = require("./specids");
+const { declaredIds, allDeclared, isCitableId, E2E_DIR: E2E } = require("./specids");
 
 const ROOT = path.join(__dirname, "..");
 const STATEMENT = path.join(ROOT, "ACCESSIBILITY.md");
@@ -46,7 +46,7 @@ function citations(doc) {
   // the trailing letter, "the A4 phase" would parse as a citation to a test that never
   // existed. The backticks are optional on purpose: the document writes a file and its id
   // inside ONE code span, which is how anyone would write it.
-  const JOINERS = JOINER_WORDS;
+  const JOINERS = RANGE_JOINERS;
   const token = new RegExp(
     "([\\w.-]+\\.spec\\.js)" +
       "|([A-Z]\\d+[a-z]\\d*)(`?\\s*(" +
@@ -78,8 +78,28 @@ function citations(doc) {
   return found;
 }
 
-// Shared with the parse below so the check and the grammar cannot drift apart.
-const JOINER_WORDS = ["through", "to", "and", "-", "..", String.fromCharCode(0x2013)];
+/* THE JOINER GRAMMAR, IN THREE CLASSES, because round 3 found the two-class version
+   wrong in both directions.
+   A RANGE joiner means "and every id between": it expands. A LIST separator means "these
+   two, separately": it does not. Round 2 put "and" in the range set, so "A9a and A9l" would
+   have expanded into fifteen fabricated citations, and the guard's own remediation message
+   recommended it. And the guard exempted any span CONTAINING a range word, so "up to"
+   passed on the strength of the "to" inside it while the parse understood neither.
+   Both are fixed by classifying the joiner EXACTLY, after trimming, against one of the
+   three sets. Exact matching is what makes "up to" unclassifiable, which is what makes it
+   loud. */
+const RANGE_JOINERS = ["through", "to", "-", "..", String.fromCharCode(0x2013)];
+const LIST_JOINERS = ["and", "or", ",", ";", ", and", ", or"];
+
+// The whole point of this file, applied to its own grammar: a joiner it cannot place in one
+// of the two sets is neither ignored nor guessed at.
+function classifyJoiner(raw) {
+  const joiner = String(raw).replace(/\s+/g, " ").trim();
+  if (joiner === "") return "adjacent";
+  if (RANGE_JOINERS.includes(joiner)) return "range";
+  if (LIST_JOINERS.includes(joiner)) return "list";
+  return "unknown";
+}
 
 test("A4: every test id the accessibility statement cites actually exists", () => {
   const doc = fs.readFileSync(STATEMENT, "utf8");
@@ -104,22 +124,13 @@ test("A4: every test id the accessibility statement cites actually exists", () =
      against the joiner set and lets the span cross a wrap. */
   const suspectedRanges = [...doc.matchAll(/([A-Z]\d+[a-z]\d*)`?([^`]{1,16}?)`?([A-Z]\d+[a-z]\d*)/g)]
     .filter(([, from, joiner, to]) => from.slice(0, -1) === to.slice(0, -1) && !/^[\s,;]*$/.test(joiner))
-    .filter(([, , joiner]) => {
-      // Judged by WORDS when the joiner has any, and only by punctuation when it has none.
-      // A punctuation fallback that applies to a worded joiner exempts anything CONTAINING a
-      // punctuation joiner, which is how "through-ish" walked past the first version of this
-      // guard: it is not a joiner the parse knows, the middle ids were dropped, and the "-"
-      // inside it rescued the whole span.
-      const words = joiner.split(/[^\w.-]+/).filter(Boolean);
-      if (/[A-Za-z]/.test(joiner)) return !words.some((w) => JOINER_WORDS.includes(w));
-      return !JOINER_WORDS.includes(joiner.trim());
-    })
+    .filter(([, , joiner]) => classifyJoiner(joiner) === "unknown")
     .map(([whole]) => whole.replace(/\s+/g, " "));
   assert.deepEqual(
     suspectedRanges,
     [],
-    "a citation range is written with a joiner this parse does not understand, so its middle " +
-      "ids would be silently dropped. Use one of: " + JOINER_WORDS.join(", "),
+    "a citation span uses a joiner this parse cannot classify, so its middle ids would be " +
+      "silently dropped. Ranges: " + RANGE_JOINERS.join(", ") + ". Lists: " + LIST_JOINERS.join(", "),
   );
 
   const dangling = cited.filter((c) => !declared.has(c.file) || !declared.get(c.file).has(c.id));
@@ -157,4 +168,70 @@ test("A4: the statement's exception list is the gate's exception list", () => {
     shapes.length,
     `the statement lists ${rows.length - 1} exceptions and the gate enforces ${shapes.length}`,
   );
+});
+
+/* ROUND 3: A CITATION THIS GRAMMAR CANNOT READ IS AN ERROR, NOT AN ABSENCE.
+   The parse only ever saw ids of the lettered form, so a citation to one of smoke.spec.js's
+   numeric scenarios ("smoke.spec.js 12") matched nothing, resolved against nothing, and was
+   invisible: not dangling, not counted, not checked. Thirty-five of that file's forty-one
+   tests were in that position, and the collector could not even see them to say so.
+   Both halves are fixed. The collector reads numeric ids, and this asserts that anything
+   written in the document immediately after a spec filename is a token this grammar can
+   classify, so an unciteable citation is loud. */
+test("A4: a token written as a citation must be one this grammar can read", () => {
+  const doc = fs.readFileSync(STATEMENT, "utf8");
+  const attempts = [...doc.matchAll(/\b([\w.-]+\.spec\.js)`?\s+`?([A-Za-z0-9][\w]*)/g)]
+    .map(([, file, token]) => ({ file, token }))
+    // Prose continues after a filename all the time ("layout.spec.js A4b samples ..."), so
+    // only a token that could plausibly BE an id is judged: a bare English word after a
+    // filename is prose, and treating it as a failed citation would make this unusable.
+    .filter(({ token }) => /^[A-Za-z]?\d/.test(token));
+  assert.ok(attempts.length >= 20, `the scan must find the document's citations, found ${attempts.length}`);
+  const unreadable = attempts.filter(({ token }) => !isCitableId(token)).map(({ file, token }) => `${file} ${token}`);
+  assert.deepEqual(
+    unreadable,
+    [],
+    "a token follows a spec filename in a position this grammar reads as a citation, but it " +
+      "is not an id form the grammar knows. Teach specids.js the form or rewrite the sentence; " +
+      "leaving it is how a citation stops being checked without anyone noticing.",
+  );
+});
+
+test("A4: every id the suites declare is one the citation grammar could cite", () => {
+  // THE OTHER DIRECTION. The check above catches a citation the grammar cannot read; this
+  // catches an id nobody COULD cite, which is the same hole seen from the suites' end.
+  const uncitable = allDeclared()
+    .filter(({ id }) => !isCitableId(id))
+    .map(({ file, id }) => `${file} ${id}`);
+  assert.deepEqual(
+    uncitable,
+    [],
+    "a spec declares an id the citation grammar cannot express, so no claim could ever cite " +
+      "it and a citation attempt would be unreadable. Teach specids.js the form.",
+  );
+});
+
+/* THE SPELLING CORPUS. Every exotic form these scanners must handle, pinned as a fixture,
+   so extending one starts from a failing example rather than from a hopeful regex. Each
+   entry here was written by an adversarial round as an attack that worked. */
+const JOINER_CORPUS = [
+  ["A9a through A9l", "range", "the form the document actually uses"],
+  ["A9a to A9l", "range", "round 2's attack: a shorter range word"],
+  ["A9a - A9l", "range", "punctuation range"],
+  ["A9a .. A9l", "range", "punctuation range"],
+  ["A9a and A9l", "list", "round 3's attack: expanding this fabricated fifteen citations"],
+  ["A9a, A9l", "list", "the ordinary two-item list"],
+  ["A9a up to A9l", "unknown", "round 3's attack: 'to' is a whole word inside it"],
+  ["A9a through-ish A9l", "unknown", "round 2's attack: contains a range word"],
+  ["A9a spanning A9l", "unknown", "an ordinary unknown"],
+];
+
+test("A4: the joiner grammar classifies every spelling the rounds invented", () => {
+  const wrong = [];
+  for (const [phrase, expected, why] of JOINER_CORPUS) {
+    const joiner = phrase.replace(/^[A-Z]\d+[a-z]\d*/, "").replace(/[A-Z]\d+[a-z]\d*$/, "");
+    const got = classifyJoiner(joiner);
+    if (got !== expected) wrong.push(`${phrase}: expected ${expected}, got ${got} (${why})`);
+  }
+  assert.deepEqual(wrong, [], "the joiner grammar has drifted from the corpus of forms it must classify");
 });

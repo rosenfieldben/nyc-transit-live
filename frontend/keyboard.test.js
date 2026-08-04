@@ -63,36 +63,129 @@ const FRONTEND_SOURCES = [
    ladder. Anything else is a control's own activation and must be named below with its
    reason. The same round also found that `document?.addEventListener` slipped the old regex
    entirely, so the receiver pattern reads optional chaining too. */
-const PAGE_LEVEL_RECEIVERS = new Set(["window", "document", "document.body", "document.documentElement", "self"]);
+const PAGE_LEVEL_RECEIVERS = new Set([
+  "window",
+  "document",
+  "document.body",
+  "document.documentElement",
+  "self",
+  "globalThis",
+]);
 
 const ACTIVATION_KEYDOWNS = {
-  "systems/shared.js button":
-    "the Leaflet popup close button, whose href A4 removed (Enter and Space activation)",
+  "systems/shared.js button": "the Leaflet popup close button, whose href A4 removed (Enter and Space activation)",
 };
+
+/* ROUND 3 WENT THROUGH THE SCAN A THIRD TIME, and the lesson has stopped being about
+   regexes. Round 1 keyed the allowlist by file; round 2 keyed it by receiver and read one
+   quote style; round 3 wrote the router with a TEMPLATE LITERAL, as document.onkeydown, and
+   behind an alias, and also pointed out that reading the file as raw text made a COMMENT
+   mentioning addEventListener into a phantom binding.
+   Three rules now, and they are what a scanner owes rather than what one regex can do.
+   ONE: read code, not prose. Comments and string literals are removed first, so neither a
+   phantom nor a hiding place exists.
+   TWO: every spelling of "bind a keydown" is recognised, including the assignment form,
+   because onkeydown is a router with different punctuation.
+   THREE: anything matching addEventListener that this scanner cannot CLASSIFY is a loud
+   failure. A form it has never seen is exactly the case where silence is worst.
+   The corpus below is the standing record of every spelling an adversarial round invented,
+   so the next extension starts from a failing example. */
+
+/* COMMENTS OUT, STRINGS KEPT BUT MAPPED. The first attempt at this blanked the inside of
+   every string literal, which removed the phantom AND the event name the scan needs to read
+   out of the very same call: addEventListener("keydown") became addEventListener("       ").
+   The two concerns are separate. Comments are deleted outright, because nothing in one is
+   ever a real binding. String literals STAY, so an event name is still readable, and a match
+   is rejected instead when it lies INSIDE one, which is what a phantom actually is. */
+function stripComments(src) {
+  return src.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (m) => " ".repeat(m.length));
+}
+
+function stringRanges(code) {
+  const ranges = [];
+  for (const m of code.matchAll(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`/g)) {
+    ranges.push([m.index, m.index + m[0].length]);
+  }
+  return ranges;
+}
+
+const insideAny = (ranges, index) => ranges.some(([from, to]) => index > from && index < to);
+
+// Aliases of a page-level object, so `const d = document; d.addEventListener(...)` is not a
+// hiding place. Only the direct form is recognised, which is the honest limit: an alias
+// built by a function call is not something this scanner claims to see, and the
+// unclassified rule below is what covers the rest.
+function pageLevelAliases(code) {
+  const aliases = new Set();
+  for (const m of code.matchAll(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([A-Za-z_$][\w$.]*)\s*;/g)) {
+    if (PAGE_LEVEL_RECEIVERS.has(m[2])) aliases.add(m[1]);
+  }
+  return aliases;
+}
+
+function scanKeydowns(src) {
+  const code = stripComments(src);
+  const strings = stringRanges(code);
+  const aliases = pageLevelAliases(code);
+  const bindings = [];
+  const unclassified = [];
+
+  // The assignment form. onkeydown is a router with different punctuation, and nothing in
+  // the addEventListener pattern would ever have seen it.
+  for (const m of code.matchAll(/([A-Za-z_$][\w$]*(?:\.[\w$]+)*)\.onkeydown\s*=/g)) {
+    if (insideAny(strings, m.index)) continue;
+    bindings.push({ receiver: m[1], form: "onkeydown" });
+  }
+
+  // Every addEventListener call, then classified. Splitting recognition from classification
+  // is what makes an unknown spelling loud instead of absent.
+  for (const m of code.matchAll(/(?:([^\s;{}()]+)\s*\.\s*)?\baddEventListener\s*\(([^,)]*)[,)]/g)) {
+    if (insideAny(strings, m.index)) continue; // a call written inside a string is prose
+    const event = m[2].trim();
+    const quoted = /^(["'`])([A-Za-z]+)\1$/.exec(event);
+    if (!quoted) {
+      // A computed or variable event name. It may or may not be keydown, and this scanner
+      // cannot tell, which is exactly the case it must not pass over in silence.
+      unclassified.push(`addEventListener(${event.slice(0, 40)})`);
+      continue;
+    }
+    if (quoted[2] !== "keydown") continue;
+    const raw = (m[1] || "window").replace(/\?/g, "");
+    if (!/^[A-Za-z_$][\w$]*(?:\.[\w$]+)*$/.test(raw)) {
+      unclassified.push(`addEventListener on receiver ${raw.slice(0, 40)}`);
+      continue;
+    }
+    bindings.push({ receiver: aliases.has(raw) ? "document" : raw, form: "addEventListener" });
+  }
+  return { bindings, unclassified };
+}
 
 function keydownBindings() {
   const found = [];
+  const unclassified = [];
   for (const rel of FRONTEND_SOURCES) {
-    const src = read(rel);
-    // The receiver may be a dotted path and may use optional chaining; both are normalised
-    // to a plain path so `document?.addEventListener` cannot hide behind punctuation.
-    for (const m of src.matchAll(
-      /(?:([A-Za-z_$][\w$]*(?:\??\.[\w$]+)*)\??\.)?\baddEventListener\(\s*\n?\s*["']keydown["']/g,
-    )) {
-      // A bare call in a classic script binds to window, so that is what it is recorded as
-      // rather than being skipped for having no receiver to read.
-      found.push({ file: rel, receiver: (m[1] || "window").replace(/\?/g, "") });
-    }
+    const scan = scanKeydowns(read(rel));
+    for (const b of scan.bindings) found.push({ file: rel, ...b });
+    for (const u of scan.unclassified) unclassified.push(`${rel}: ${u}`);
   }
-  return found;
+  return { found, unclassified };
 }
 
 test("A4: exactly one keydown ROUTER in the frontend, and every other keydown is named", () => {
-  const bindings = keydownBindings();
+  const { found: bindings, unclassified } = keydownBindings();
 
   // ANTI-VACUITY. A receiver pattern that stopped matching would report no routers and no
   // unnamed listeners, which reads exactly like a clean page.
   assert.ok(bindings.length >= 2, `the scan must find the frontend's keydown bindings, found ${bindings.length}`);
+
+  // AND ANYTHING IT CANNOT CLASSIFY IS LOUD. A spelling this scanner has never seen is the
+  // case where staying quiet is worst, because that is precisely when nobody is looking.
+  assert.deepEqual(
+    unclassified,
+    [],
+    "an addEventListener call this scanner cannot classify. Teach scanKeydowns the form, with " +
+      "a corpus entry, rather than leaving a binding it cannot see",
+  );
 
   const routers = bindings.filter((b) => PAGE_LEVEL_RECEIVERS.has(b.receiver));
   assert.deepEqual(
@@ -108,13 +201,45 @@ test("A4: exactly one keydown ROUTER in the frontend, and every other keydown is
     [],
     "every keydown outside the ladder must be a control's own activation, named above with its reason",
   );
-  // The allowlist is not allowed to outlive what it describes either: an entry whose binding
-  // is gone is a stale exemption waiting to cover the next one.
   assert.deepEqual(
     Object.keys(ACTIVATION_KEYDOWNS).filter((key) => !scoped.includes(key)),
     [],
     "an entry in ACTIVATION_KEYDOWNS no longer matches a binding; delete it rather than leave it",
   );
+});
+
+/* THE SPELLING CORPUS: every form an adversarial round invented, with what the scan must
+   make of it. Extending the scanner starts here, with a failing example. */
+const KEYDOWN_CORPUS = [
+  ['document.addEventListener("keydown", f, true);', ["document"], [], "round 1's form, the ladder itself"],
+  ["document.addEventListener('keydown', f);", ["document"], [], "round 2: single quotes"],
+  ["document.addEventListener(`keydown`, f);", ["document"], [], "round 3: a template literal"],
+  ["document?.addEventListener('keydown', f);", ["document"], [], "round 2: optional chaining"],
+  ['addEventListener("keydown", f);', ["window"], [], "round 2: bare, implicit window in a classic script"],
+  ["document.onkeydown = f;", ["document"], [], "round 3: the assignment form"],
+  ["window.onkeydown = f;", ["window"], [], "round 3: the assignment form on window"],
+  ["globalThis.addEventListener('keydown', f);", ["globalThis"], [], "round 3: globalThis"],
+  ["const d = document; d.addEventListener('keydown', f);", ["document"], [], "round 3: an alias"],
+  ['button.addEventListener("keydown", f);', ["button"], [], "a control's own activation, not a router"],
+  ['// document.addEventListener("keydown", f) in a comment', [], [], "round 3: a phantom in prose"],
+  ["const s = 'document.addEventListener(keydown';", [], [], "round 3: a phantom in a string"],
+  ["el.addEventListener(EVENT_NAME, f);", [], ["unclassified"], "a computed event name cannot be judged"],
+];
+
+test("A4: the keydown scanner reads every spelling the rounds invented", () => {
+  const wrong = [];
+  for (const [source, receivers, flags, why] of KEYDOWN_CORPUS) {
+    const scan = scanKeydowns(source);
+    const got = scan.bindings.map((b) => b.receiver);
+    if (JSON.stringify(got) !== JSON.stringify(receivers)) {
+      wrong.push(`${why}: expected receivers ${JSON.stringify(receivers)}, got ${JSON.stringify(got)}`);
+    }
+    const wantsUnclassified = flags.includes("unclassified");
+    if (wantsUnclassified !== scan.unclassified.length > 0) {
+      wrong.push(`${why}: expected unclassified=${wantsUnclassified}, got ${JSON.stringify(scan.unclassified)}`);
+    }
+  }
+  assert.deepEqual(wrong, [], "the keydown scanner has drifted from the corpus of spellings it must read");
 });
 
 test("A4: the ladder is bound on the document, in the capture phase", () => {

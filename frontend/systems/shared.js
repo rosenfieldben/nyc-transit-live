@@ -84,11 +84,22 @@ let leafletAutoPanning = false;
 map.on("autopanstart", () => {
   leafletAutoPanning = true;
 });
+/* THE FLAG IS CLEARED AFTER THE PAN, NOT BEFORE IT, and that one line's placement is a
+   defect the round-3 stand-down guard created and round 3 measured. panBy fires `movestart`,
+   and the stand-down guard reads this flag inside its movestart handler to tell Leaflet's own
+   adjustment apart from the rider's hand. Clearing it first meant the flag was already false
+   by the time the pan it describes announced itself, so every autopan was filed as the rider
+   taking over. Measured at 375: after Leaflet autopanned an overflowing popup back into
+   view, a later arrivals refresh that pushed it under the legend was declined — the app
+   thought the position was the rider's, and it was the app's own. A4l pins it. */
 const leafletPanBy = map.panBy.bind(map);
 map.panBy = (offset, options) => {
   const instant = !motionOn || leafletAutoPanning;
-  leafletAutoPanning = false; // consumed: autopanstart fires immediately before its own panBy
-  return leafletPanBy(offset, instant ? { ...(options || {}), animate: false } : options);
+  try {
+    return leafletPanBy(offset, instant ? { ...(options || {}), animate: false } : options);
+  } finally {
+    leafletAutoPanning = false;
+  }
 };
 
 applyMotionPreference(motionAtLoad);

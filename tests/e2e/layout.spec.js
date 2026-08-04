@@ -712,10 +712,16 @@ const growAndSettle = (page, by) =>
           const c = map.getCenter();
           const a = root.getBoundingClientRect();
           const b = document.getElementById("panel").getBoundingClientRect();
+          const container = document.getElementById("map");
           resolve({
             centre: { lat: c.lat, lng: c.lng },
             autoPanned,
             underTheLegend: a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top,
+            // ASKED OF THE APP'S OWN GEOMETRY, which is the only honest way to say "it could
+            // have moved this and chose not to". popupClearingShift returns null when no
+            // move clears every obstacle AND keeps the popup inside the map, and null is not
+            // a decision — it is an impossibility. See the note in A4j.
+            clearingMoveExists: !!popupClearingShift(a, popupObstacles(), container.getBoundingClientRect()),
           });
         });
         probe.observe(root);
@@ -746,11 +752,17 @@ test("A4j. once the rider moves the map, the popup correction stands down", asyn
     return { lat: c.lat, lng: c.lng };
   });
 
-  // Bottom-left of the viewport is map and only map at this width: the legend is top-right,
-  // the popup is mid-screen and the station panel is shut.
-  await page.mouse.move(30, 620);
+  /* Bottom-left of the viewport is map and only map at this width: the legend is top-right,
+     the popup is mid-screen and the station panel is shut.
+     DOWN AND TO THE LEFT, and the direction is load-bearing. The first draft dragged right,
+     which pushed the popup's right edge from 370 to 390 — past the map container's 375 — and
+     popupClearingShift refuses any move that would leave the popup outside the map. There
+     was no clearing move to decline, so deleting the stand-down guard changed nothing and
+     the spec passed 20/20 against a build with its subject removed. Dragging left keeps a
+     move available (measured: down by 61px), so declining it is a decision. */
+  await page.mouse.move(60, 620);
   await page.mouse.down();
-  await page.mouse.move(50, 640, { steps: 12 });
+  await page.mouse.move(40, 640, { steps: 12 });
   await page.mouse.up();
   const dragged = await page.evaluate(() => {
     const c = map.getCenter();
@@ -777,6 +789,14 @@ test("A4j. once the rider moves the map, the popup correction stands down", asyn
   // it there. This is the fact Leaflet's own autopan cannot fake — an autopan pushes an
   // overflowing popup back DOWN into the viewport, deeper under the legend, never clear of it.
   expect(after.underTheLegend, "the app must not tidy a position the rider chose").toBe(true);
+  // AND IT DECLINED SOMETHING IT COULD HAVE DONE. Without this the assertion above is
+  // satisfied by geometry in which no clearing move exists at all, which is how the first
+  // rebuild of this spec passed with the stand-down guard deleted.
+  expect(
+    after.clearingMoveExists,
+    "a clearing move must be available for declining it to mean anything: with none, this " +
+      "spec passes against a build that has no stand-down guard at all",
+  ).toBe(true);
   // And the stricter claim, made only when it is the app's to make. If Leaflet autopanned,
   // the centre moved for a reason that is not this correction and asserting on it would be
   // asserting about Leaflet.
@@ -803,4 +823,57 @@ test("A4k. with no rider takeover, that same growth DOES move the popup clear", 
   expect(after.underTheLegend, "the app corrects its own fit when the position is still its own").toBe(false);
   expect(after.centre, "which it does by moving the map").not.toEqual(before);
   await expectState(page, "one popup open", "A4k: still exactly one popup after the correction");
+});
+
+test("A4l. Leaflet's own autopan is not the rider taking over", async ({ page }) => {
+  /* THE DEFECT THE STAND-DOWN GUARD CREATED, found by measuring the guard rather than by
+     reading it. The guard tells the rider's hand from the app's own adjustment by watching
+     movestart and ignoring the ones that happen while Leaflet is autopanning. The flag that
+     says "Leaflet is autopanning" was cleared one line too early — before the panBy that
+     fires the movestart — so it was already false when the handler asked, and every autopan
+     was filed as the rider taking over.
+
+     What that costs a rider: Leaflet nudges a popup that overflows the viewport back into
+     view, entirely on its own; from then on the app believes the position is the rider's and
+     declines to move that popup out from under the legend, however far under it goes.
+     Measured at 375 before the fix, with a clearing move available the whole time:
+
+       after the autopan   popup at y 5..131, clear move exists
+       after a refresh     popup at y -35..131, still under the legend, still a move available
+       with the fix        popup at y 292..458, clear of the legend
+
+     THE SETUP DRIVES LEAFLET, NOT THE APP. The marker moves to 60px below the top of the
+     map, which puts its popup's top off-screen, and popup.update() is Leaflet's own path to
+     _adjustPan. The rider's hand is nowhere in it. */
+  await popupOnTheMapAt375(page);
+
+  const staged = await page.evaluate(() => {
+    const placed = [...railroads.values()].find((r) => r.placed);
+    const popup = placed.marker.getPopup();
+    let autoPanned = false;
+    const note = () => {
+      autoPanned = true;
+    };
+    map.on("autopanstart", note);
+    placed.marker.setLatLng(map.containerPointToLatLng([map.getSize().x / 2, 60]));
+    popup.update();
+    map.off("autopanstart", note);
+    const a = popup.getElement().getBoundingClientRect();
+    return {
+      autoPanned,
+      clearingMoveExists: !!popupClearingShift(a, popupObstacles(), document.getElementById("map").getBoundingClientRect()),
+    };
+  });
+  // Both halves of the premise, because either one silently missing makes the rest vacuous:
+  // Leaflet must really have autopanned, and the app must really have somewhere to move the
+  // popup to. A popup with no clearing move is declined for geometry, not for policy.
+  expect(staged.autoPanned, "the setup must actually make Leaflet autopan").toBe(true);
+  expect(staged.clearingMoveExists, "and a clearing move must exist after it").toBe(true);
+
+  const after = await growAndSettle(page, 40);
+  expect(
+    after.underTheLegend,
+    "an autopan is the app's own adjustment; treating it as a takeover leaves the rider's " +
+      "popup buried under the legend with a move available and nobody willing to make it",
+  ).toBe(false);
 });

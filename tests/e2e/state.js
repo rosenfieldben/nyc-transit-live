@@ -61,6 +61,18 @@ const WITNESSES = {
       "the previous popup unless the NEW one is opened with autoClose:false AND the old one " +
       "was not opened through openOn(), which is how A9m spent a round asserting nothing",
   },
+  "popup finished opening": {
+    ask: () => {
+      const popup = openPopupsOnMap()[0];
+      const el = popup && popup.getElement ? popup.getElement() : null;
+      return !!el && getComputedStyle(el).opacity === "1";
+    },
+    absent:
+      "the popup is still fading in, so it is SEMI-TRANSPARENT and whatever is behind it " +
+      "shows through. A contrast scan taken now measures the popup's text against a map tile " +
+      "rather than against the popup, and only the muted colours fail, which reads like a " +
+      "real contrast defect and is not one",
+  },
   "popup has a cross-link": {
     ask: () => !!document.querySelector(".leaflet-popup-content .popup-crosslink"),
     absent:

@@ -352,7 +352,21 @@ const STATES = [
         if (!placed) throw new Error("the fixture no longer has a placed railroad train to cross-link");
         placed.marker.openPopup();
       });
-      await expectState(page, ["one popup open", "popup has a cross-link"], "the gate's cross-link state");
+      /* AND WAIT FOR IT TO FINISH OPENING, which round 4 found by watching CI fail on a
+         state that is green on this machine every time. Leaflet fades a popup in from
+         opacity 0 over 200ms, and a contrast scan taken during the fade measures the
+         popup's text against the MAP TILE showing through it. Sampled here at 375:
+           frame 0  opacity 0     frame 1  opacity 0     frame 2  opacity 0.083
+         The near-black body text survives that; the muted ink does not. CI reported
+         color-contrast on exactly the two muted nodes at 1280 (.popup-sub #666,
+         .popup-crosslink #1d4ed8) and four nodes at 375, while this machine passed the same
+         commit 16 runs out of 16. A gate whose verdict depends on how fast the machine is
+         is not a gate. */
+      await expectState(
+        page,
+        ["one popup open", "popup finished opening", "popup has a cross-link"],
+        "the gate's cross-link state",
+      );
     },
     // The cross-link is named as a target, so the anti-vacuity check fails if the scan
     // stops reaching it. That is the half the first draft was missing: the state reached
@@ -387,6 +401,45 @@ const STATES = [
   },
 ];
 
+/* NOTHING MAY BE MID-TRANSITION WHEN THE SCAN RUNS, AND THIS IS A CONTRAST RULE.
+
+   ROUND 4 FOUND THIS BY WATCHING CI FAIL ON A STATE THAT IS GREEN HERE EVERY TIME. Leaflet
+   fades a popup in from opacity 0 over 200ms. A translucent element shows whatever is behind
+   it, so axe measures the popup's text against a MAP TILE, and the near-black body text
+   survives that while the muted ink does not. CI reported color-contrast on exactly the two
+   muted nodes at 1280 and four nodes at 375; this machine passed the same commit sixteen
+   runs out of sixteen. A gate whose verdict depends on how fast the machine is is not a gate.
+
+   AND IT IS NOT A POPUP PROBLEM, which is why the wait lives here rather than in that one
+   state's reach(). The same-class mutation — a three-second fade-in on the ALERT BANNER,
+   which does not animate today — reddens the banner state exactly the same way. Any surface
+   that ever animates in would silently start being measured against whatever is behind it.
+
+   So the gate waits for the document to stop animating, and says what it was waiting for.
+   Asked of document.getAnimations() rather than of opacity, because a designed translucent
+   element (the legend's route-line glyphs are opacity 0.6 by intent) is not a thing to wait
+   for, and a running transition is. */
+async function assertNothingIsMidTransition(page, label) {
+  const running = () =>
+    page.evaluate(() =>
+      document
+        .getAnimations()
+        .filter((a) => a.playState === "running")
+        .map((a) => a.transitionProperty || a.animationName || "an animation")
+        .sort(),
+    );
+  await expect
+    .poll(running, { timeout: 5_000 })
+    .toEqual([])
+    .catch(async () => {
+      throw new Error(
+        `${label}: the page was still animating when the scan was due (${(await running()).join(", ")}). ` +
+          `A translucent element is measured against whatever is behind it, so this would be ` +
+          `reported as a contrast defect in the surface rather than as a scan taken too early.`,
+      );
+    });
+}
+
 for (const viewport of [DESKTOP, PHONE]) {
   for (const state of STATES) {
     if (state.only && state.only !== viewport) continue;
@@ -394,6 +447,7 @@ for (const viewport of [DESKTOP, PHONE]) {
       await page.setViewportSize(viewport);
       await open(page, { alerts: state.alerts });
       await state.reach(page);
+      await assertNothingIsMidTransition(page, `${viewport.width} / ${state.key}`);
 
       // NO include() AT ALL: this is the whole document, which is the deliverable.
       const results = await new AxeBuilder({ page }).analyze();

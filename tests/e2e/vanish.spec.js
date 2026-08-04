@@ -77,6 +77,10 @@ test("A8a. a followed vehicle ageing out of the feed lands focus on the map, and
   // C2 retention cap drops carried-forward vehicles individually, so this drops one and
   // leaves its neighbour, which also proves the sweep removed the RIGHT marker.
   const survivors = await page.evaluate(() => railroads.size);
+  // Read while the marker still exists, because the assertion below is about whether the
+  // message carries THIS vehicle's name and afterwards there is nothing left to ask.
+  const vanishedName = await page.evaluate((key) => railroads.get(key).marker._a11yName, id);
+  expect(vanishedName, "the fixture's marker must carry an accessible name to be named by").toBeTruthy();
   // The payload key is `data` and the registry key is `system|trip_id` (railroadKey), so
   // the filter is written against the real shape rather than a guessed one; the assertion
   // below on the registry SIZE is what catches a filter that silently matched nothing.
@@ -96,6 +100,22 @@ test("A8a. a followed vehicle ageing out of the feed lands focus on the map, and
   expect(after.announced, "and the rider is told once, politely").toMatch(
     /^The .+ you were following left the feed\. Focus moved to the map\.$/,
   );
+  /* AND IT NAMES THE THING THAT VANISHED, which `.+` above does not require. Round 4:
+     dropping the label from the rescue call — one deleted property — still produced "The
+     vehicle you were following left the feed", still matched that pattern, and left the
+     whole vanish and announce suites green. The message is composed from the marker's OWN
+     accessible name on purpose, because this app carries buses, boats and PATH trains as
+     well as trains and a fixed noun would be false for most of them (see helpers.js). A
+     rescue that has forgotten which vehicle it was about is a rescue that stopped doing the
+     thing the composition exists for. */
+  // The leading clause of the marker's name IS the vehicle identity ("1 train", "M15 bus",
+  // "Rockaway ferry"), because that is how buildMarkerName composes it and what
+  // vanishingFocusMessage takes.
+  const identity = vanishedName.split(",")[0].trim();
+  expect(
+    after.announced,
+    `the message must name the vehicle, not a generic noun (marker name was ${JSON.stringify(vanishedName)})`,
+  ).toBe(`The ${identity} you were following left the feed. Focus moved to the map.`);
 });
 
 test("A8b. hiding a layer under an open popup is silent, because the rider is on the checkbox", async ({ page }) => {
@@ -339,4 +359,65 @@ test("A8h. the strip that survives with nothing focusable in it still rescues th
   const after = await state(page);
   expect(after.active, "a visible strip with no controls must not strand the rider").toBe("map");
   expect(after.announced).toBe("Alerts cleared. Focus moved to the map.");
+});
+
+test("A8i. the last alert clearing while the rider is typing says nothing and moves nothing", async ({ page }) => {
+  /* THE BANNER'S SILENCE HALF, which round 4 found had no spec at all.
+
+     A8b and A8g pin the silence half on the VEHICLE path. On the banner path only the
+     rescues were pinned (A8d, A8e, A8h), so the door could be rewritten to fire on the CAUSE
+     — "a live strip was torn down" — instead of on the RIDER, and nothing would notice.
+     Measured: keying both branches on the strip's own state rather than on where focus is
+     left all 162 e2e specs and all 167 node tests green.
+
+     What that costs is the thing this file's header forbids in its own words: "speech is
+     earned by a transition in the RIDER'S own state, not by every event that happens to be
+     true". A screen-reader or keyboard rider typing a station name when the last agency-wide
+     alert clears on a background poll would be yanked out of the search box onto the map and
+     told "Alerts cleared. Focus moved to the map." — a WCAG 3.2.2 change of context nobody
+     asked for, plus speech nobody earned.
+
+     The rider is in #stations-search rather than on the toggle, because the search box is
+     where a rider actually is while the panel is open, and because being mid-word is what
+     makes the interruption cost something. */
+  const ctx = await installMocks(page);
+  ctx.overrides.alerts = (route, fixtures) => {
+    const body = fixtures.alerts();
+    body.alerts = [
+      {
+        id: "vanish-quiet-1",
+        system: "subway",
+        header: "Reduced service systemwide while crews clear a disabled train",
+        description: null,
+        effect: "REDUCED_SERVICE",
+        cause: "OTHER_CAUSE",
+        routes: [],
+        stops: [],
+        starts_at: fx.FROZEN_S - 600,
+        ends_at: null,
+      },
+    ];
+    return json(route, body);
+  };
+  await open(page);
+  await expect(page.locator("#alert-banner-dismiss")).toBeVisible();
+
+  // The panel is docked open at this width, so the search box is reachable without a click
+  // that would move focus somewhere else first (the trap A8g records).
+  await expect(page.locator("#stations-panel")).toBeVisible();
+  await page.locator("#stations-search").fill("tim");
+  await expect(page.locator("#stations-search")).toBeFocused();
+
+  // The incident ends on a poll. No rider action at all.
+  ctx.overrides.alerts = (route, fixtures) => json(route, { ...fixtures.alerts(), alerts: [] });
+  await page.evaluate(() => loadAlerts());
+  await expect(page.locator("#alert-banner-dismiss"), "the strip really is torn down").toHaveCount(0);
+
+  const after = await state(page);
+  expect(after.active, "the rider keeps the control they were using").toBe("stations-search");
+  expect(after.announced, "and hears nothing about it").toBe("");
+  expect(
+    await page.locator("#stations-search").inputValue(),
+    "and what they had typed is still there",
+  ).toBe("tim");
 });

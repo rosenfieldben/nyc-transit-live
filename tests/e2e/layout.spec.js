@@ -803,6 +803,54 @@ test("A4j. once the rider moves the map, the popup correction stands down", asyn
   if (!after.autoPanned) {
     expect(after.centre, "and with no autopan in play, nothing moved the map at all").toEqual(dragged);
   }
+
+  /* A SECOND GROWTH, BECAUSE ONE PROVES ONLY THAT THE FIRST WAS DECLINED. Round 4: making the
+     stand-down ONE-SHOT — consumed by the first post-takeover resize and forgotten — passed
+     this spec 15 runs out of 15, because the spec only ever grew the popup once. What that
+     costs a rider is the original defect delayed by one refresh: they drag the map to their
+     own neighbourhood, the next arrivals refresh is correctly declined, and the one fifteen
+     seconds later throws their position away exactly as before.
+     The takeover is a property of the rider's ownership of THIS popup, and it ends when the
+     popup does (popupopen resets it), so it must survive every resize in between. */
+  const again = await growAndSettle(page, 40);
+  expect(again.underTheLegend, "and it must still be declined on the NEXT refresh, and every one after").toBe(true);
+  expect(again.clearingMoveExists, "with a clearing move still available the second time").toBe(true);
+});
+
+test("A4m. a rider who pans with the arrow keys owns the view too", async ({ page }) => {
+  /* THE RIDER THIS PHASE IS FOR, and until round 4 the one whose takeover was never measured.
+     Every stand-down spec in this phase drives page.mouse. Deleting the movestart handler —
+     one of the guard's three intent producers, and the only one a keyboard pan reaches, since
+     Leaflet's Keyboard handler goes through panBy and fires neither dragstart nor zoomstart —
+     left ALL 162 e2e specs green. Measured: the rider's centre thrown from 40.71955 to
+     40.74036 by the next popup growth, with a clearing move available, so the app really did
+     choose to move.
+
+     THE PRESS IS THE ASSERTION, not the centre. Under this suite's paused clock Leaflet's
+     keyboard pan starts and never completes, so the centre does not change; what does happen,
+     and what the guard listens for, is movestart. That is asserted directly below rather than
+     inferred from a position, which is the same lesson round 3 wrote into the guard itself:
+     intent is an event, not a float. */
+  await popupOnTheMapAt375(page);
+
+  await page.evaluate(() => {
+    window.__moveStarts = 0;
+    map.on("movestart", () => {
+      window.__moveStarts += 1;
+    });
+  });
+  await page.locator("#map").focus();
+  await expect(page.locator("#map")).toBeFocused();
+  await page.keyboard.press("ArrowRight");
+
+  expect(
+    await page.evaluate(() => window.__moveStarts),
+    "the arrow key must actually reach Leaflet's keyboard pan, or this spec presses nothing",
+  ).toBeGreaterThan(0);
+
+  const after = await growAndSettle(page, 80);
+  expect(after.underTheLegend, "a keyboard pan is a rider taking over, exactly like a drag").toBe(true);
+  expect(after.clearingMoveExists, "with a clearing move available, so declining it is a decision").toBe(true);
 });
 
 test("A4k. with no rider takeover, that same growth DOES move the popup clear", async ({ page }) => {
@@ -876,4 +924,33 @@ test("A4l. Leaflet's own autopan is not the rider taking over", async ({ page })
     "an autopan is the app's own adjustment; treating it as a takeover leaves the rider's " +
       "popup buried under the legend with a move available and nobody willing to make it",
   ).toBe(false);
+
+  /* AND THE OTHER DIRECTION, WHICH THE SAME ONE FLAG DECIDES. Round 4: never clearing
+     leafletAutoPanning at all — the opposite lifetime error to the round-3 one this spec was
+     written for — left all 162 e2e specs green. Once Leaflet has autopanned even once, every
+     subsequent movestart is filed as the app's own adjustment forever, so a rider who then
+     pans is not registered as taking over and the next growth jumps the map off their
+     position (measured: 40.76221 -> 40.83680).
+     A flag that must be true during one pan and false after it needs both halves asserted;
+     asserting only "an autopan does not read as the rider" leaves the half that says "and
+     afterwards the rider still does" to nobody. */
+  await page.evaluate(() => {
+    window.__moveStarts = 0;
+    map.on("movestart", () => {
+      window.__moveStarts += 1;
+    });
+  });
+  await page.locator("#map").focus();
+  await page.keyboard.press("ArrowRight");
+  expect(
+    await page.evaluate(() => window.__moveStarts),
+    "the arrow key must reach Leaflet, or the second half of this spec presses nothing",
+  ).toBeGreaterThan(0);
+
+  const afterRider = await growAndSettle(page, 40);
+  expect(
+    afterRider.underTheLegend,
+    "after an autopan, a REAL rider move must still read as the rider taking over",
+  ).toBe(true);
+  expect(afterRider.clearingMoveExists, "with a clearing move available, so declining it is a decision").toBe(true);
 });

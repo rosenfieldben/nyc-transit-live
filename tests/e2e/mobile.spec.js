@@ -789,9 +789,17 @@ test("A6o. closing un-inerts the background BEFORE it restores focus", async ({ 
     await page.evaluate(() => ({
       inert: document.getElementById("panel").inert,
       active: document.activeElement.id,
+      // ROUND 4: THE WHOLE BACKGROUND, not the one container that happens to hold the focus
+      // target. A partial release — walking the focus target's own ancestors back to life and
+      // leaving the rest inert — passed all 21 mobile specs, order untouched. What it costs a
+      // rider is permanent: after one open-and-close on a phone, #map, #stations-skip and
+      // #alert-banner stay inert for the session, so the map loses the stop Leaflet binds
+      // arrow-key panning to, the skip link leaves the tab order, and the Service alerts
+      // landmark leaves the accessibility tree entirely.
+      stillInert: [...document.querySelectorAll("[inert]")].map((el) => el.id || el.tagName.toLowerCase()),
     })),
     "the background is released and focus lands on the opener, not the body",
-  ).toEqual({ inert: false, active: "stations-toggle" });
+  ).toEqual({ inert: false, active: "stations-toggle", stillInert: [] });
 
   // Escape is the other closing path and takes the same door, so it gets the same claim.
   await page.locator("#stations-toggle").click();
@@ -803,9 +811,10 @@ test("A6o. closing un-inerts the background BEFORE it restores focus", async ({ 
     await page.evaluate(() => ({
       inert: document.getElementById("panel").inert,
       active: document.activeElement.id,
+      stillInert: [...document.querySelectorAll("[inert]")].map((el) => el.id || el.tagName.toLowerCase()),
     })),
     "Escape releases the background and returns focus too",
-  ).toEqual({ inert: false, active: "stations-toggle" });
+  ).toEqual({ inert: false, active: "stations-toggle", stillInert: [] });
 });
 
 test("A6q. the page live region stays out of the inert set, so it can still speak", async ({ page }) => {
@@ -828,15 +837,28 @@ test("A6q. the page live region stays out of the inert set, so it can still spea
     "the background must be inert, or the exemption below proves nothing",
   ).toBe(true);
 
-  // Asked of the ACCESSIBILITY TREE rather than of the attribute, because "not inert" and
-  // "actually announceable" are different claims and only the second one matters. An
-  // element inside an inert subtree is excluded from the a11y tree entirely.
+  /* Asked of the ACCESSIBILITY TREE rather than of the attribute, because "not inert" and
+     "actually announceable" are different claims and only the second one matters. An element
+     inside an inert subtree is excluded from the a11y tree entirely.
+     AND INERT IS NOT THE ONLY DOOR OUT OF THAT TREE, which round 4 proved by walking through
+     the other one: a sweep that keeps this element's `inert` exemption exactly as the title
+     requires, and sets aria-hidden="true" on every background sibling INCLUDING this one,
+     passed all 48 specs in the mobile, vanish, announce and a11y suites. The region is out of
+     the accessibility tree, the vanishing-focus announcement is written into nothing, and the
+     rider in the state this exemption was built for hears silence.
+     So the claim is now made in the terms of the tree: nothing on the path from this element
+     to the document is inert OR aria-hidden. */
   const speakable = await page.evaluate(() => {
     const region = document.getElementById("page-announce");
     region.textContent = "The train you were following left the feed";
+    const hiddenAncestors = [];
+    for (let n = region; n; n = n.parentElement) {
+      if (n.getAttribute && n.getAttribute("aria-hidden") === "true") hiddenAncestors.push(n.id || n.tagName.toLowerCase());
+    }
     return {
       ownInert: region.inert,
       inInertSubtree: region.closest("[inert]") !== null,
+      hiddenAncestors,
       live: region.getAttribute("aria-live"),
       text: region.textContent,
     };
@@ -844,6 +866,7 @@ test("A6q. the page live region stays out of the inert set, so it can still spea
   expect(speakable, "the page live region must remain announceable under the overlay").toEqual({
     ownInert: false,
     inInertSubtree: false,
+    hiddenAncestors: [],
     live: "polite",
     text: "The train you were following left the feed",
   });
@@ -912,5 +935,21 @@ test("A6p. inertness follows the 700px boundary in both directions", async ({ pa
   await settles(
     { panelOpen: true, backgroundInert: false, mapInert: false },
     "701 is not",
+  );
+
+  /* AND BACK DOWN ACROSS 700 ALONE, which is the only step in this spec that isolates the
+     ENTERING direction. Round 4 found that every other crossing here also crosses the 1100
+     dock boundary, where applyStationsDocking re-applies inertness on its own, so the 700
+     listener's entering branch was covered by nobody: a listener rewritten to
+     `if (!e.matches) applyOverlayInertness()` — handling only the way OUT of mobile — passed
+     all 21 mobile specs, while the mirror image died at the 701 step above.
+     701 to 700 crosses no other breakpoint, so this step is the 700 listener or nothing. The
+     rider is anyone narrowing a small tablet or a window from 701 to 700 with the panel open;
+     without the entering branch they get a full-viewport opaque overlay with the whole page
+     behind it still in the tab order and still in the accessibility tree. */
+  await page.setViewportSize(BOUNDARY_MOBILE);
+  await settles(
+    { panelOpen: true, backgroundInert: true, mapInert: true },
+    "701 back to 700 crosses no other breakpoint, so this is the overlay listener or nothing",
   );
 });

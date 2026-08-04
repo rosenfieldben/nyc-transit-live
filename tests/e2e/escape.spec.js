@@ -99,6 +99,15 @@ test("A9a. one Escape closes the popup and leaves the panel; the second closes t
   // rider's-surface test. Opening the panel leaves focus in the search box, and from
   // there the rung is the panel by rule; the topmost-transient ordering only applies to a
   // rider standing in neither surface. A9d covers the inside-a-surface positions.
+  //
+  // ROUND 4 MEASURED WHAT THIS SPEC AND A9c CAN AND CANNOT TELL, and the comment now says
+  // so rather than implying more. Reversing the outside-both rung order reddens this spec,
+  // A9c, A9f and A9l — four, so the ORDER is well pinned. What neither this spec nor A9c
+  // can see is the ladder DECLINING the popup rung and letting Leaflet's own container
+  // handler close the popup instead: from the map container the two are indistinguishable,
+  // and it is A9f, A9h and A9l — the specs that stand the rider somewhere Leaflet's handler
+  // does not reach — that catch it. That is a division of labour, not a hole, and writing
+  // it down is what stops the next reader trusting this spec for a claim it cannot make.
   await page.locator("#map").focus();
 
   expect(await ladderState(page), "both transients open, banner showing").toEqual({
@@ -151,9 +160,36 @@ test("A9b. Escape with nothing transient open changes nothing at all", async ({ 
     scrollX: window.scrollX,
   }));
 
+  /* THE KEY IS WATCHED ON ITS WAY PAST, because "leaves the event entirely alone" is not
+     something a before/after picture of the map can see. Round 4 deleted the one line that
+     implements it — `if (!closed) return;` — and this spec stayed green, along with every
+     other escape spec: the ladder called preventDefault and stopPropagation on a key it had
+     done nothing with, and nothing noticed. Leaflet's own Escape branch happens to return
+     early when there is no popup, so today there is no rider-visible consequence; what the
+     property protects is the NEXT component that binds Escape.
+     A bubble-phase listener on the document is exactly the observer that a capture-phase
+     stopPropagation would silence, so its firing IS the assertion. */
+  await page.evaluate(() => {
+    window.__escapesSeen = 0;
+    window.__escapesDefaultPrevented = 0;
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") return;
+      window.__escapesSeen += 1;
+      if (e.defaultPrevented) window.__escapesDefaultPrevented += 1;
+    });
+  });
+
   await page.locator("#map").focus();
   await page.keyboard.press("Escape");
   await page.keyboard.press("Escape");
+
+  expect(
+    await page.evaluate(() => ({
+      seen: window.__escapesSeen,
+      prevented: window.__escapesDefaultPrevented,
+    })),
+    "with nothing transient open the key must reach the rest of the page, unprevented",
+  ).toEqual({ seen: 2, prevented: 0 });
 
   const after = await page.evaluate(() => ({
     center: map.getCenter(),
@@ -203,6 +239,13 @@ test("A9c. one Escape never closes two surfaces, from the position where Leaflet
   expect((await ladderState(page)).panelOpen, "the second press takes the next rung").toBe(false);
 });
 
+/* A9d's THIRD LEG IS REDUNDANT, AND ROUND 4 SAYS SO OUT LOUD. Its "from NEITHER, the popup
+   goes first" leg survives both the order reversal AND a rung that closes both surfaces at
+   once — measured — because by the time it runs the panel is already shut and there is
+   nothing left to order. The ordering it names is pinned by A9a, A9c, A9f and A9l; this leg
+   is a dispatch check, not an order check. Kept because the three legs together are what
+   make the "same logic from every position" claim, and corrected because a leg that reads
+   as protection and is not is exactly what this round exists to find. */
 test("A9d. the same ladder logic runs from every focus position, and closes what the rider is in", async ({ page }) => {
   // THE AMENDED CLAIM. The deliverable asked for "identical behaviour from inside the popup
   // and from inside the panel", and the honest form of that is identical LOGIC, not an
@@ -593,4 +636,92 @@ test("A9n. with the fade off, the close button still hands the rider the map", a
   await expect(page.locator("#map")).toBeFocused();
   // Still quiet: the rider asked for this, so it is not announced. Same rule as A9i and A9j.
   await expect(page.locator("#page-announce")).toHaveText("");
+});
+
+test("A9o. Escape from inside the banner leaves the banner alone", async ({ page }) => {
+  /* THE BANNER'S ABSENCE FROM THE LADDER, ASSERTED FROM INSIDE IT.
+
+     A9a's last line presses Escape with the rider on the MAP and checks the banner survives,
+     which catches a banner added as a third FALLBACK rung. Round 4 added it as a rider's-own-
+     surface rung instead — checked before transientHoldingFocus, so it fires only when focus
+     is inside the banner — and every escape and vanish spec stayed green, because no spec
+     ever pressed Escape from in there.
+
+     The phase decision is explicit that dismissing the alert strip stays a DELIBERATE act:
+     the banner is ambient status rather than a dialog, and a rider who has tabbed to the ×
+     to read the alert must not lose the whole strip by pressing the key that means "get me
+     out of this". */
+  await withBanner(page);
+  await open(page);
+  await expect(page.locator("#alert-banner-dismiss")).toBeVisible();
+
+  await page.locator("#alert-banner-dismiss").focus();
+  await expect(page.locator("#alert-banner-dismiss")).toBeFocused();
+  expect((await ladderState(page)).bannerRows, "a row must be showing for its survival to mean anything").toBe(1);
+
+  await page.keyboard.press("Escape");
+  /* WHAT THE RULE ACTUALLY SAYS, and this spec learned it by being wrong first. The banner is
+     on NEITHER branch, which does not mean Escape does nothing from inside it: focus on the
+     dismiss button is focus outside both transients, so the fallback rung runs and takes the
+     panel, exactly as it would from the map. The claim is only that the banner itself is
+     never what closes.
+     Both halves are asserted, because the mutation this exists for breaks both: a banner
+     given a rider's-own-surface rung removes the rows AND returns before the panel rung. */
+  expect(await ladderState(page), "the banner survives; the fallback rung takes the panel as usual").toEqual({
+    popupOpen: false,
+    panelOpen: false,
+    bannerRows: 1,
+  });
+  // And nothing yanked the rider: they were not inside the panel, so the A1 return does not
+  // fire and they keep the control they were on.
+  await expect(page.locator("#alert-banner-dismiss"), "and the rider keeps the control they were on").toBeFocused();
+});
+
+test("A9p. Escape closes the popup the rider is standing in, not whichever is topmost", async ({ page }) => {
+  /* THE ESCAPE HALF OF A9m'S CONTRACT, which round 4 found had no pin.
+
+     closeOpenPopup asks popupContaining(document.activeElement) BEFORE falling back to the
+     topmost, and map.js's own comment says why: "closing the topmost would be the recency
+     answer again, one level up from the field this file stopped reading". Deleting that
+     first clause — taking the topmost always — left all fourteen escape specs green, because
+     no spec ever had two popups live while the rider stood in one of them. A9m pins exactly
+     this for the close BUTTON; the key had nobody.
+
+     THE STAGING IS A9m'S, and it is the only staging that works: Leaflet's openOn removes
+     the map's current popup only when that popup's autoClose is set, so clearing it on the
+     first and then openOn-ing the second gives two live popups with the map's idea of
+     "current" pointing at the wrong one. No rider reaches this today; what it pins is that
+     the answer comes from where the RIDER is rather than from what opened last. */
+  await installMocks(page);
+  await open(page);
+  const id = await page.evaluate(() => [...railroads.keys()][0]);
+  await page.evaluate((key) => railroads.get(key).marker.openPopup(), id);
+  await expectPopupState(page, { registry: "railroads", key: id }, true);
+
+  const staged = await page.evaluate((key) => {
+    const first = railroads.get(key).marker.getPopup();
+    first.options.autoClose = false; // so openOn below leaves it alone
+    const second = L.popup({ autoClose: false, closeOnClick: false })
+      .setLatLng(map.getCenter())
+      .setContent("second")
+      .openOn(map);
+    window.__secondPopup = second;
+    // The rider stands in the FIRST popup, which is not the map's current one.
+    const content = first.getElement().querySelector(".leaflet-popup-content");
+    content.setAttribute("tabindex", "-1");
+    content.focus();
+    return { mapPopupIsSecond: map._popup === second };
+  }, id);
+  await expectState(page, ["two popups open", "focus inside the popup"], "A9p needs both live and the rider in one");
+  expect(staged.mapPopupIsSecond, "and the map's idea of current must be the OTHER one").toBe(true);
+
+  await page.keyboard.press("Escape");
+
+  const out = await page.evaluate((key) => {
+    const first = railroads.get(key).marker.getPopup();
+    return { firstOpen: map.hasLayer(first), secondOpen: map.hasLayer(window.__secondPopup) };
+  }, id);
+  expect(out.firstOpen, "the rung closed the popup the rider was in").toBe(false);
+  expect(out.secondOpen, "and left the topmost one alone").toBe(true);
+  await expect(page.locator("#map"), "and the rider lands on the map, as A9i requires").toBeFocused();
 });

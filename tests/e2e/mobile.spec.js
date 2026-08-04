@@ -638,33 +638,90 @@ test("A6n. the keyboard exit from the full-screen panel is where the comment say
   // is the right way to find out that this comment needs rewriting again.
   await page.locator("#stations-toggle").click();
   await expect(page.locator("#stations-search")).toBeFocused();
-  await page.keyboard.press("Tab");
-  const landed = await page.evaluate(() => {
-    const el = document.activeElement;
-    const r = el.getBoundingClientRect();
-    const top = document.elementFromPoint(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2));
-    return {
-      id: el.id,
-      inPanel: document.getElementById("stations-panel").contains(el),
-      // Covered means the rider's focus is on something they cannot see, which is the
-      // wart itself. Named by MEASUREMENT rather than by id: the first draft of this
-      // assertion pinned "legend-toggle" from a misread probe and the real next stop is
-      // #stations-toggle, which is the same wart and a different element.
-      covered: !!(top && top !== el && !el.contains(top)),
-    };
+
+  // A4: FORWARD-TAB NO LONGER REACHES A COVERED CONTROL, which is the half of this spec
+  // that flipped. A3 pinned the wart here: one Tab from the search input landed on
+  // #stations-toggle, outside the panel and underneath the overlay. A4 makes everything
+  // outside the panel `inert`, so those stops stop being stops.
+  //
+  // WHAT IT DOES NOT DO, MEASURED RATHER THAN ASSUMED: it does not cycle. Tab from the
+  // panel's last control lands on BODY, because inert removes the background from the tab
+  // order without wrapping the order around the panel. Wrapping is what a focus TRAP does,
+  // and this phase forbids traps by name: a trap with no reliable exit is how A3's
+  // untappable overlay was created. So the property asserted here is the one inert
+  // actually provides and the one the rider actually needs, which is that no control they
+  // cannot see is reachable. Leaving to the body and tabbing back in through the browser
+  // is the normal, escapable behaviour of a page with an inert background.
+  const sweep = [];
+  for (let i = 0; i < 6; i++) {
+    await page.keyboard.press("Tab");
+    sweep.push(
+      await page.evaluate(() => {
+        const el = document.activeElement;
+        return {
+          id: el.id || el.tagName,
+          inPanel: document.getElementById("stations-panel").contains(el),
+        };
+      }),
+    );
+  }
+  const escaped = sweep.filter((stop) => !stop.inPanel && stop.id !== "BODY");
+  expect(escaped, `no covered control may be reachable by Tab (sweep: ${JSON.stringify(sweep)})`).toEqual([]);
+
+  // The background is genuinely inert, not merely visually covered: every body child
+  // except the panel and the live region carries the attribute, and the control A3
+  // measured as reachable-but-invisible is now unfocusable AND out of the a11y tree.
+  const background = await page.evaluate(() => {
+    // ASKED AS A PROPERTY, NOT AS A LIST OF BODY CHILDREN. The first version of this
+    // enumerated document.body.children, which was only ever right while the panel
+    // happened to be a body child; A4 then wrapped the map and the panel in <main> and the
+    // list changed without any accessibility behaviour changing. What matters is which
+    // SUBTREES a rider can reach, so that is what is asked.
+    const out = { inert: [], notInert: [], covered: {} };
+    const panel = document.getElementById("stations-panel");
+    for (const id of ["stations-panel", "page-announce", "app-title", "map", "alert-banner", "panel"]) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      (el.closest("[inert]") ? out.inert : out.notInert).push(id);
+    }
+    out.panelReachable = panel.closest("[inert]") === null;
+    // The controls A3 measured as reachable-but-invisible are not body children (they
+    // live inside #panel, the legend), so membership in the list above cannot speak for
+    // them. Their inertness is INHERITED, and the only honest way to ask about inherited
+    // inertness is to try to use them: focus() on an element inside an inert subtree is
+    // specified as a no-op. That is also the property the rider actually has.
+    for (const id of ["stations-toggle", "legend-toggle", "toggle-buses"]) {
+      const el = document.getElementById(id);
+      el.focus();
+      // ownInert is recorded to make the inheritance VISIBLE rather than implied: it is
+      // false on every one of these, because the attribute sits on #panel and the
+      // property reflects only the element's own attribute. A spec that asserted el.inert
+      // here would fail while the rider was perfectly protected, which is the same
+      // declared-value-versus-effective-value trap A3 hit twice with outline-width.
+      out.covered[id] = { focusable: document.activeElement === el, ownInert: el.inert };
+    }
+    return out;
   });
-  expect(landed, "forward-tab still leaves the overlay onto a control the rider cannot see").toEqual({
-    id: "stations-toggle",
-    inPanel: false,
-    covered: true,
+  expect(background.notInert.sort(), "only the overlay and the three exempt surfaces stay reachable").toEqual([
+    "app-title",
+    "page-announce",
+    "stations-panel",
+  ]);
+  expect(background.inert.sort(), "the map and the page chrome are all inert").toEqual([
+    "alert-banner",
+    "map",
+    "panel",
+  ]);
+  expect(background.covered, "the covered controls inherit inertness and cannot take focus").toEqual({
+    "stations-toggle": { focusable: false, ownInert: false },
+    "legend-toggle": { focusable: false, ownInert: false },
+    "toggle-buses": { focusable: false, ownInert: false },
   });
 
-  // AND THE STATE A RIDER IS ACTUALLY IN. Round 3 caught the empty-query half being
-  // asserted as if it were the whole story: with result rows rendered, forward-tab from
-  // the search input does NOT leave the panel, it walks the rows first. That is the
-  // common state, because the query survives closing and the panel reopens with its rows
-  // already drawn. Asserting only the rowless state made the "leaves immediately" claim
-  // true by accident, which is the failure mode this file exists to catch elsewhere.
+  // AND THE STATE A RIDER IS ACTUALLY IN. Round 3 of A3 caught the empty-query half being
+  // asserted as if it were the whole story: with result rows rendered, forward-tab walks
+  // the rows. That is the common state, because the query survives closing and the panel
+  // reopens with its rows already drawn.
   await page.locator("#stations-search").fill("times");
   await expect(page.locator("#stations-results button.station-row").first()).toBeVisible();
   const rows = await page.locator("#stations-results button.station-row").count();
@@ -684,21 +741,215 @@ test("A6n. the keyboard exit from the full-screen panel is where the comment say
     "with rows showing, the next stop is a result row and it is still inside the panel",
   ).toEqual({ isRow: true, inPanel: true });
 
-  // Past the last row the rider does leave, and lands on the same covered control.
-  for (let i = 0; i < rows; i++) await page.keyboard.press("Tab");
-  const afterRows = await page.evaluate(() => {
-    const el = document.activeElement;
-    const r = el.getBoundingClientRect();
-    const top = document.elementFromPoint(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2));
+  // Past the last row, the same property in the state that used to be the exception to it.
+  const rowSweep = [];
+  for (let i = 0; i < rows + 3; i++) {
+    await page.keyboard.press("Tab");
+    rowSweep.push(
+      await page.evaluate(() => {
+        const el = document.activeElement;
+        return {
+          id: el.id || el.tagName,
+          inPanel: document.getElementById("stations-panel").contains(el),
+        };
+      }),
+    );
+  }
+  const rowEscaped = rowSweep.filter((stop) => !stop.inPanel && stop.id !== "BODY");
+  expect(
+    rowEscaped,
+    `with rows rendered, still no covered control is reachable (sweep: ${JSON.stringify(rowSweep)})`,
+  ).toEqual([]);
+});
+
+test("A6o. closing un-inerts the background BEFORE it restores focus", async ({ page }) => {
+  // THE SHARP EDGE OF DELIVERABLE 1, and the reason the release is unconditional and
+  // first. #stations-toggle is outside the panel, so while the overlay is up it is inert,
+  // and .focus() on an element inside an inert subtree is specified as a no-op: the call
+  // succeeds, returns nothing, throws nothing, and the rider stays where they were. Close
+  // the panel in the wrong order and the A1 focus-return contract silently becomes "focus
+  // falls to the body", with every existing spec still green because they assert the
+  // panel closed rather than where focus went.
+  await page.setViewportSize(PHONE);
+  await installMocks(page);
+  await open(page);
+  await page.locator("#stations-toggle").click();
+  await expect(page.locator("#stations-panel")).toBeVisible();
+
+  // The precondition, asserted so this cannot pass on a tree where nothing was inert.
+  expect(
+    await page.evaluate(() => document.getElementById("panel").inert),
+    "the background must actually be inert before the close, or this proves nothing",
+  ).toBe(true);
+
+  // Close through the panel's own control, which is the mobile rider's route out.
+  await page.locator("#stations-close").click();
+  await expect(page.locator("#stations-panel")).toBeHidden();
+  expect(
+    await page.evaluate(() => ({
+      inert: document.getElementById("panel").inert,
+      active: document.activeElement.id,
+      // ROUND 4: THE WHOLE BACKGROUND, not the one container that happens to hold the focus
+      // target. A partial release (walking the focus target's own ancestors back to life and
+      // leaving the rest inert) passed all 21 mobile specs, order untouched. What it costs a
+      // rider is permanent: after one open-and-close on a phone, #map, #stations-skip and
+      // #alert-banner stay inert for the session, so the map loses the stop Leaflet binds
+      // arrow-key panning to, the skip link leaves the tab order, and the Service alerts
+      // landmark leaves the accessibility tree entirely.
+      stillInert: [...document.querySelectorAll("[inert]")].map((el) => el.id || el.tagName.toLowerCase()),
+    })),
+    "the background is released and focus lands on the opener, not the body",
+  ).toEqual({ inert: false, active: "stations-toggle", stillInert: [] });
+
+  // Escape is the other closing path and takes the same door, so it gets the same claim.
+  await page.locator("#stations-toggle").click();
+  await expect(page.locator("#stations-panel")).toBeVisible();
+  await page.locator("#stations-search").focus();
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#stations-panel")).toBeHidden();
+  expect(
+    await page.evaluate(() => ({
+      inert: document.getElementById("panel").inert,
+      active: document.activeElement.id,
+      stillInert: [...document.querySelectorAll("[inert]")].map((el) => el.id || el.tagName.toLowerCase()),
+    })),
+    "Escape releases the background and returns focus too",
+  ).toEqual({ inert: false, active: "stations-toggle", stillInert: [] });
+});
+
+test("A6q. the page live region stays out of the inert set, so it can still speak", async ({ page }) => {
+  // THE COLLISION DELIVERABLE 1 CREATES WITH DELIVERABLE 2, pinned because nothing else
+  // would notice it. `inert` removes a subtree from the ACCESSIBILITY TREE, not just from
+  // the tab order, so an inert live region is a silent one. #page-announce is a body child
+  // and would go inert with everything else, and the overlay is exactly the state in which
+  // a rider is most likely to be reading the panel when a marker they were following
+  // disappears behind it. Without this exemption A4's vanishing-focus announcements would
+  // be mute in A4's own new state, with every other spec still green.
+  await page.setViewportSize(PHONE);
+  await installMocks(page);
+  await open(page);
+  await page.locator("#stations-toggle").click();
+  await expect(page.locator("#stations-panel")).toBeVisible();
+
+  // The precondition: the background really is inert, so the exemption is doing work.
+  expect(
+    await page.evaluate(() => document.getElementById("panel").inert),
+    "the background must be inert, or the exemption below proves nothing",
+  ).toBe(true);
+
+  /* Asked of the ACCESSIBILITY TREE rather than of the attribute, because "not inert" and
+     "actually announceable" are different claims and only the second one matters. An element
+     inside an inert subtree is excluded from the a11y tree entirely.
+     AND INERT IS NOT THE ONLY DOOR OUT OF THAT TREE, which round 4 proved by walking through
+     the other one: a sweep that keeps this element's `inert` exemption exactly as the title
+     requires, and sets aria-hidden="true" on every background sibling INCLUDING this one,
+     passed all 48 specs in the mobile, vanish, announce and a11y suites. The region is out of
+     the accessibility tree, the vanishing-focus announcement is written into nothing, and the
+     rider in the state this exemption was built for hears silence.
+     So the claim is now made in the terms of the tree: nothing on the path from this element
+     to the document is inert OR aria-hidden. */
+  const speakable = await page.evaluate(() => {
+    const region = document.getElementById("page-announce");
+    region.textContent = "The train you were following left the feed";
+    const hiddenAncestors = [];
+    for (let n = region; n; n = n.parentElement) {
+      if (n.getAttribute && n.getAttribute("aria-hidden") === "true") hiddenAncestors.push(n.id || n.tagName.toLowerCase());
+    }
     return {
-      id: el.id,
-      inPanel: document.getElementById("stations-panel").contains(el),
-      covered: !!(top && top !== el && !el.contains(top)),
+      ownInert: region.inert,
+      inInertSubtree: region.closest("[inert]") !== null,
+      hiddenAncestors,
+      live: region.getAttribute("aria-live"),
+      text: region.textContent,
     };
   });
-  expect(afterRows, "the first stop outside the panel is the same covered control in both states").toEqual({
-    id: "stations-toggle",
-    inPanel: false,
-    covered: true,
+  expect(speakable, "the page live region must remain announceable under the overlay").toEqual({
+    ownInert: false,
+    inInertSubtree: false,
+    hiddenAncestors: [],
+    live: "polite",
+    text: "The train you were following left the feed",
   });
+
+  // The panel's OWN region is inside the panel, so it was never at risk; asserted so a
+  // future refactor that moves either region out of its container fails here.
+  expect(
+    await page.evaluate(() => document.getElementById("stations-announce").closest("[inert]") !== null),
+    "the panel's own live region is inside the panel and equally unaffected",
+  ).toBe(false);
+});
+
+test("A6p. inertness follows the 700px boundary in both directions", async ({ page }) => {
+  // The overlay is a function of width AND openness, so the state has to be recomputed on
+  // a crossing that the rider never touched: a docked desktop panel narrowed to a phone
+  // becomes an overlay by itself (the A6j path), and widening it back must give the page
+  // behind it back. A one-way test cannot see a listener that fails to un-apply.
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await installMocks(page);
+  await open(page);
+  await expect(page.locator("#stations-panel")).toBeVisible();
+
+  const state = () =>
+    page.evaluate(() => ({
+      panelOpen: !document.getElementById("stations-panel").hidden,
+      backgroundInert: document.getElementById("panel").inert,
+      mapInert: document.getElementById("map").inert,
+    }));
+
+  // POLLED, NOT READ ONCE, and this is a fact about the mechanism rather than a hedge.
+  // Inertness is re-applied from a matchMedia CHANGE listener, the same door the legend
+  // disclosure and the dock use, and that event is dispatched on a later task than the
+  // one setViewportSize resolves on. Reading immediately passed in isolation and failed
+  // under load, which is the signature of asserting a synchronous answer to an
+  // asynchronous contract. The contract is "on the breakpoint change", so the spec waits
+  // for the change; a listener that never fires still fails, on the timeout.
+  const settles = async (expected, message) => {
+    await expect.poll(async () => state(), { timeout: 5_000, message }).toEqual(expected);
+  };
+
+  // Docked is not an overlay: the panel sits beside the map and nothing is covered.
+  await settles(
+    { panelOpen: true, backgroundInert: false, mapInert: false },
+    "docked at 1280, nothing is inert",
+  );
+
+  await page.setViewportSize(PHONE);
+  await settles(
+    { panelOpen: true, backgroundInert: true, mapInert: true },
+    "narrowed to a phone, the same open panel is now an overlay",
+  );
+
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await settles(
+    { panelOpen: true, backgroundInert: false, mapInert: false },
+    "widened back, the page behind it is returned",
+  );
+
+  // And the exact breakpoint, both sides, because 700 is the last mobile width.
+  await page.setViewportSize(BOUNDARY_MOBILE);
+  await settles(
+    { panelOpen: true, backgroundInert: true, mapInert: true },
+    "700 is still an overlay width",
+  );
+  await page.setViewportSize(BOUNDARY_ROOMY);
+  await settles(
+    { panelOpen: true, backgroundInert: false, mapInert: false },
+    "701 is not",
+  );
+
+  /* AND BACK DOWN ACROSS 700 ALONE, which is the only step in this spec that isolates the
+     ENTERING direction. Round 4 found that every other crossing here also crosses the 1100
+     dock boundary, where applyStationsDocking re-applies inertness on its own, so the 700
+     listener's entering branch was covered by nobody: a listener rewritten to
+     `if (!e.matches) applyOverlayInertness()`, handling only the way OUT of mobile, passed
+     all 21 mobile specs, while the mirror image died at the 701 step above.
+     701 to 700 crosses no other breakpoint, so this step is the 700 listener or nothing. The
+     rider is anyone narrowing a small tablet or a window from 701 to 700 with the panel open;
+     without the entering branch they get a full-viewport opaque overlay with the whole page
+     behind it still in the tab order and still in the accessibility tree. */
+  await page.setViewportSize(BOUNDARY_MOBILE);
+  await settles(
+    { panelOpen: true, backgroundInert: true, mapInert: true },
+    "701 back to 700 crosses no other breakpoint, so this is the overlay listener or nothing",
+  );
 });

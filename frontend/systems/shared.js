@@ -52,9 +52,55 @@ function applyMotionPreference(allowed) {
 // own, including panTo and the animated branch of setView, which both route through it.
 // It changes only HOW the map arrives at a position, never WHICH position: an
 // unanimated pan lands on exactly the same centre.
+//
+// A4 ROUND 1: ANIMATE THE JOURNEY, NEVER THE ADJUSTMENT.
+//
+// This is the principle the map's motion now follows, and it splits the pans into two kinds
+// that had been treated as one:
+//
+//   A JOURNEY is navigation the rider chose. Picking a station in the panel pans the map to
+//   it (syncMapToStation's panTo), and the motion there carries CONTINUITY: it shows the
+//   rider that this new place is that old place, moved. Journeys keep their preference gate,
+//   animated unless the rider asked for reduced motion. A5g and A5h pin that pair.
+//
+//   AN ADJUSTMENT is the app correcting its own fit. Leaflet's _adjustPan nudging an opening
+//   popup back inside the viewport is one, and so is this phase's move of a popup out from
+//   under the legend. Nobody asked for it, it carries no continuity, and its ENDPOINT MUST BE
+//   KNOWABLE: the app's own occlusion logic reads where the popup came to rest, and it cannot
+//   read a position that is still moving. Adjustments are instant for everyone.
+//
+// So Leaflet's autoPan is unanimated regardless of preference, which is a rider-visible
+// change from A2 and is deliberate. Measured at 1280 with the placed railroad popup:
+//
+//     real clock   popup settles at x 1001..1276, overlapping the legend at 1030
+//     fixed clock  popup never lands at all, x 1288..1563, off the map's right edge
+//
+// The second row is the one that makes this structural rather than aesthetic: PosAnimation
+// drives itself off `+new Date()`, so under a fixed clock (which the accessibility gate
+// needs for deterministic ages) the animation never completes and the map is left mid-slide
+// forever. Instant is the only setting under which the popup has a position at all, for the
+// app's occlusion logic first and for any test second.
+let leafletAutoPanning = false;
+map.on("autopanstart", () => {
+  leafletAutoPanning = true;
+});
+/* THE FLAG IS CLEARED AFTER THE PAN, NOT BEFORE IT, and that one line's placement is a
+   defect the round-3 stand-down guard created and round 3 measured. panBy fires `movestart`,
+   and the stand-down guard reads this flag inside its movestart handler to tell Leaflet's own
+   adjustment apart from the rider's hand. Clearing it first meant the flag was already false
+   by the time the pan it describes announced itself, so every autopan was filed as the rider
+   taking over. Measured at 375: after Leaflet autopanned an overflowing popup back into
+   view, a later arrivals refresh that pushed it under the legend was declined. The app
+   thought the position was the rider's, and it was the app's own. A4l pins it. */
 const leafletPanBy = map.panBy.bind(map);
-map.panBy = (offset, options) =>
-  leafletPanBy(offset, motionOn ? options : { ...(options || {}), animate: false });
+map.panBy = (offset, options) => {
+  const instant = !motionOn || leafletAutoPanning;
+  try {
+    return leafletPanBy(offset, instant ? { ...(options || {}), animate: false } : options);
+  } finally {
+    leafletAutoPanning = false;
+  }
+};
 
 applyMotionPreference(motionAtLoad);
 watchMotionPreference(applyMotionPreference);
@@ -132,6 +178,291 @@ const pathTrains = L.layerGroup().addTo(map); // trains gliding between (or plac
 const ferryRouteLines = L.layerGroup().addTo(map); // route geometry, modal polyline per direction
 const ferryDocks = L.layerGroup().addTo(map); // clickable landing docks
 const ferryBoats = L.layerGroup().addTo(map); // live GPS boat markers
+
+/* A4: LEAFLET'S POPUP CLOSE BUTTON IS AN ANCHOR TO NOWHERE, and page-wide scanning is
+   what finally saw it. Leaflet renders
+     <a class="leaflet-popup-close-button" role="button" aria-label="Close popup" href="#close">
+   and axe reports it as a skip-link violation, "No skip link target", because an anchor
+   with a fragment href is a link to an element that has to exist and `#close` never does.
+   No scoped scan could ever have caught it: popups were outside every root A1 through A3
+   included.
+
+   The role and the name are already right, so the defect is only the vestigial href, which
+   Leaflet carries to make the anchor focusable and clickable. Removing it costs the focus
+   stop, so tabindex replaces it, and it costs keyboard activation, because a browser
+   synthesises a click from Enter for LINKS and not for role=button anchors: that is what
+   the keydown handler restores. Space is included because a rider who has been told this
+   is a button will try it.
+
+   Done on popupopen rather than by replacing the node, because Leaflet keeps its own
+   reference to the button and rebuilds the popup element lazily; the guard flag is because
+   Leaflet reuses that element across opens and a second listener would close the popup on
+   one press and then try again on nothing. */
+/* A4: A POPUP MUST NOT OPEN UNDERNEATH THE PAGE'S OWN CHROME, and page-wide scanning is
+   what proved it was happening. axe reported the popup's content as undecidable,
+   "background color could not be determined because it is overlapped by another element".
+   Measured at 375x667: the popup occupied x 255..345 y 19..70 while #panel occupied
+   x 140..365 y 10..285, and document.elementFromPoint at all nine sample points across the
+   popup returned #stations-toggle or #legend-toggle. Not partially covered: entirely
+   covered. A rider who opened a popup near the top of a phone screen saw the legend.
+
+   THE STACKING FIX DOES NOT WORK, and it is worth recording why so nobody retries it.
+   Leaflet's popupPane is z-index 700 and #panel is 1000, so raising the pane looks like a
+   one-line answer. It is not: .leaflet-map-pane is itself positioned with z-index 400, which
+   makes it a stacking context, so every pane inside it is capped at 400 relative to anything
+   outside. Measured: the pane's computed z-index really was 1001 and the hit test still
+   returned the legend's controls. Moving the popup to a pane outside the map pane would
+   escape the cap and break worse, because a pane outside .leaflet-map-pane does not receive
+   the map's transform and the popup would stop following the map.
+
+   SO THE MAP PANS, which is what Leaflet already does when a popup would fall off the
+   viewport edge; this extends the same idea to edges Leaflet cannot see.
+
+   THE FIRST VERSION WAS WRONG IN THREE WAYS AND THE ADVERSARIAL ROUND MEASURED ALL THREE.
+   It is rewritten rather than adjusted, because each error came from deciding something in
+   advance that only measurement can answer.
+
+   1. IT READ THE POPUP TOO EARLY. The old comment claimed popupopen "reads a settled
+      position". False for the popups that matter: a station popup is bound with empty
+      content and filled by a fetch, so at popupopen it is 29px tall, the correction is
+      computed on that, and the arrivals then land and grow it back over the legend.
+      Measured at 375 on the panel's own sync path: popupopen saw h=29, settled measured
+      top 169.65 bottom 321 against #panel bottom 284.5, still overlapping. So the trigger
+      is a ResizeObserver on the popup element as well as popupopen, and the correction
+      runs again whenever the content changes size.
+
+   2. IT ONLY EVER MOVED DOWN. Down is right at 375, where #panel is 275px of a 667px
+      viewport. At 1280 the legend spans y 10..710 of a 720px map, so nothing fits below it
+      and the guard bailed every time: the mechanism never fired at the width where the
+      popup is largest. Measured on a real station popup at desktop, six of nine sample
+      points across it returned legend-row. The clear space at desktop is to the LEFT of
+      x=1030, not below. So the direction is no longer chosen in advance: all four are
+      costed and the cheapest one that actually clears everything wins.
+
+   3. IT KNEW ABOUT ONE OBSTACLE. The old guard's only other constraint was the map's
+      height, so a downward move could push a tall popup under the alert banner, which is
+      z-index 1001 and paints over the popup pane exactly as the legend does. Measured with
+      a 300px popup at 375: pan down 368.5, popup bottom 620, banner top 595.4, the bottom
+      25px covered and not hit-testable. The banner is now an obstacle like any other.
+
+   UNANIMATED, AND THAT IS A DECISION RATHER THAN A DEFAULT. Everything else on this map
+   goes through the A2 panBy wrapper, which animates unless the rider asked for reduced
+   motion. This one does not, because it is not a journey: it is a correction of where the
+   popup already landed, and animating a correction shows the rider the wrong position
+   first and then slides the whole field away from it. */
+
+// The chrome that paints over the popup pane. Both are siblings of #map with a z-index
+// above .leaflet-map-pane's stacking context, which is the property that makes them
+// obstacles rather than just neighbours. Listed rather than derived, so adding a third
+// overlay is a deliberate edit here and not a silent regression.
+const POPUP_OBSTACLE_IDS = ["panel", "alert-banner"];
+
+function popupObstacles() {
+  return POPUP_OBSTACLE_IDS.map((id) => document.getElementById(id))
+    .filter((el) => el && !el.hidden)
+    .map((el) => el.getBoundingClientRect())
+    // A zero-size box is the dismissed banner, which reserves no space and blocks nothing.
+    .filter((box) => box.width > 0 && box.height > 0);
+}
+
+function panPopupClearOfChrome(popup) {
+  const root = popup && popup.getElement ? popup.getElement() : null;
+  const container = document.getElementById("map");
+  if (!root || !container) return false;
+  const shift = popupClearingShift(root.getBoundingClientRect(), popupObstacles(), container.getBoundingClientRect());
+  if (!shift) return false;
+  // panBy moves the VIEW, so the content moves the other way: to move the popup left by d
+  // the map pans right by d. Measured rather than assumed: panBy([200, 0]) moved a popup
+  // from x 234 to x 34.
+  map.panBy([-shift.dx, -shift.dy], { animate: false });
+  return true;
+}
+
+/* THE TRIGGER, WHICH IS THE HALF THE FIRST VERSION GOT WRONG. popupopen alone is too early
+   for any popup whose content arrives later, and every station popup is one. A
+   ResizeObserver on the popup element catches both moments with one mechanism: it fires
+   once when the element is first laid out and again when the fetched content changes its
+   size. It is disconnected on popupclose so a closed popup's corpse cannot keep panning
+   the map during its fade.
+
+   AND IT ONLY EVER CORRECTS A POSITION IT SET ITSELF, which round 2 had to teach it. The
+   observer outlives the opening, so a background arrivals refresh that changes the popup's
+   height re-ran the correction on a map the RIDER had since moved, and threw their position
+   away. Measured at 375: the rider dragged the map to centre lat 40.65134, a refresh grew
+   the popup, and the map jumped to 40.72996.
+
+   That is the same principle as the pan animation split, one level up. An adjustment is the
+   app correcting its own fit; the moment the rider takes over, the position is theirs and
+   the app has no business tidying it.
+
+   ROUND 2 EXPRESSED THAT AS "IS THE CENTRE STILL WHERE I LEFT IT", AND ROUND 3 BROKE IT.
+   Comparing centres asks a question about FLOATS when the thing being decided is INTENT, and
+   Leaflet moves the centre on its own: invalidateSize re-centres by
+   round(oldSize/2) - round(newSize/2), so any container dimension that flips parity shifts
+   the reported centre by exactly half a pixel with no input at all. Measured on a phone whose
+   URL bar collapsed, 375x667 to 375x600: the centre moved 0.500003px, the guard read that as
+   the rider taking over, the correction stood down for good, and the next arrivals refresh
+   left 146px of the popup under a legend that paints over it. An epsilon would not have
+   fixed that; it would have moved the threshold and kept the category error.
+
+   SO THE GUARD KEYS ON INTENT, FROM THE EVENTS THAT CARRY IT. Leaflet fires dragstart when a
+   rider drags and zoomstart when a rider zooms, and every other way the view moves without
+   us arrives as a movestart we did not cause. Ours are bracketed while they run, and
+   Leaflet's own autoPan is excluded by the same autopanstart signal the motion wrapper
+   already consumes, because an autoPan is an adjustment too. What is left is the rider. */
+let popupClearObserver = null;
+let popupClearObserved = null;
+let riderOwnsTheView = false;
+let correctingNow = false;
+
+function noteRiderTookOver() {
+  riderOwnsTheView = true;
+}
+map.on("dragstart", noteRiderTookOver);
+map.on("zoomstart", noteRiderTookOver);
+map.on("movestart", () => {
+  // Not ours, and not Leaflet tidying its own popup: that only leaves the rider, which
+  // covers keyboard panning and anything a future Leaflet handler does on their behalf.
+  if (correctingNow || leafletAutoPanning) return;
+  noteRiderTookOver();
+});
+
+function correctOnce(popup) {
+  correctingNow = true;
+  try {
+    return panPopupClearOfChrome(popup);
+  } finally {
+    correctingNow = false;
+  }
+}
+
+map.on("popupopen", (event) => {
+  const root = event.popup && event.popup.getElement ? event.popup.getElement() : null;
+  if (popupClearObserver) popupClearObserver.disconnect();
+  // A new popup is a new placement, so the rider's ownership of the last one does not carry.
+  riderOwnsTheView = false;
+  correctOnce(event.popup);
+  popupClearObserved = event.popup;
+  if (!root || typeof ResizeObserver !== "function") return;
+  popupClearObserver = new ResizeObserver(() => {
+    // Guarded on the popup still being open: Leaflet keeps the element alive through the
+    // close fade, and a resize during that fade must not move the map. Asked of hasLayer
+    // rather than of map._popup, for the reason recorded at openPopupsOnMap below.
+    if (!map.hasLayer(event.popup)) return;
+    if (riderOwnsTheView) return;
+    correctOnce(event.popup);
+  });
+  popupClearObserver.observe(root);
+});
+
+map.on("popupclose", (event) => {
+  if (event.popup !== popupClearObserved) return;
+  popupClearObserved = null;
+  riderOwnsTheView = false;
+  if (!popupClearObserver) return;
+  popupClearObserver.disconnect();
+  popupClearObserver = null;
+});
+
+/* WHICH POPUPS ARE OPEN, ASKED OF A REGISTER WE KEEP RATHER THAN OF map._popup.
+   Round 2 took this question away from the close button, which had been closing "whichever
+   popup the map thinks is current" instead of its own. Round 3 pointed out the same read was
+   still live one file over, in the Escape ladder, where it decides which popup a keypress
+   closes: with two popups open and the rider standing in the first, Escape closed the other.
+   Fixing it per-file leaves the class alive, so the read is gone from the app entirely and
+   this register is the single answer. map._popup remains wrong for the same reason it always
+   was: it is Leaflet's idea of the most recent popup, it is not cleared on close, and it
+   answers a question about RECENCY when every caller here is asking about IDENTITY.
+   hasLayer stays as the truthful filter, because a popup lingers through its fade. */
+const openPopups = new Set();
+map.on("popupopen", (event) => openPopups.add(event.popup));
+map.on("popupclose", (event) => openPopups.delete(event.popup));
+
+function openPopupsOnMap() {
+  return [...openPopups].filter((popup) => map.hasLayer(popup));
+}
+
+function popupContaining(node) {
+  if (!node) return null;
+  return (
+    openPopupsOnMap().find((popup) => {
+      const el = popup.getElement ? popup.getElement() : null;
+      return !!el && (el === node || el.contains(node));
+    }) || null
+  );
+}
+
+/* A4 ROUND 1: CLOSING A POPUP THE RIDER IS STANDING IN HAS A FOCUS CONTRACT, and until the
+   adversarial round it did not. Measured at 1280 with focus on the close button:
+
+     Escape          -> {"active":"BODY","announced":""}
+     the close button-> {"active":"BODY","announced":""}
+     next Tab        -> #stations-skip, so the rider restarted at the top of the page
+
+   Two reviewers found it independently, and the shape of the miss is worth recording. A4
+   built the vanishing-focus door for exactly this outcome, then A4's own Escape ladder
+   created a new path to it, and escape.spec.js asserted only which surface was open, never
+   where the rider ended up. A spec suite that checks state and not focus will pass over a
+   stranding every time.
+
+   QUIETLY, WHICH IS THE DIFFERENCE FROM THE VANISHING DOOR. That door announces because the
+   rider did not ask for anything and the thing they held disappeared. Here the rider pressed
+   Escape or the close button: the move is the expected consequence of their own action, and
+   narrating it every time would be noise. So focus lands on the map container with nothing
+   said, which is the same contract A1 gave the panel.
+
+   ONE HELPER, TWO CALL SITES, and the split is honest: the ladder owns the key and the
+   button owns the click, but the DECISION about focus lives in one place. The plan is taken
+   BEFORE the popup is destroyed, because afterwards activeElement is already BODY and the
+   question cannot be asked, which is the lesson the banner rebuild taught in deliverable 2. */
+function closePopupReturningFocus(popup) {
+  if (!popup) return false;
+  const el = popup.getElement ? popup.getElement() : null;
+  const held = !!(el && document.activeElement && el.contains(document.activeElement));
+  map.closePopup(popup);
+  if (!held) return true;
+  const container = document.getElementById("map");
+  if (container) container.focus();
+  return true;
+}
+
+map.on("popupopen", (event) => {
+  const root = event.popup && event.popup.getElement ? event.popup.getElement() : null;
+  const button = root ? root.querySelector(".leaflet-popup-close-button") : null;
+  if (!button || button.dataset.a11yCloseFixed) return;
+  button.dataset.a11yCloseFixed = "1";
+  button.removeAttribute("href");
+  button.setAttribute("tabindex", "0");
+  button.addEventListener("keydown", (key) => {
+    if (key.key !== "Enter" && key.key !== " ") return;
+    key.preventDefault();
+    button.click();
+  });
+  // CAPTURE AND stopImmediatePropagation, because Leaflet binds its own close handler to
+  // this same button and a plain stopPropagation does not stop a sibling listener on the
+  // target. Leaflet's handler is map.closePopup(popup) and nothing else, so replacing it
+  // costs no cleanup; what it buys is that every close path, mouse and keyboard alike,
+  // goes through the one helper that knows about focus.
+  button.addEventListener(
+    "click",
+    // Named `press` rather than `event`: the outer parameter is the popupopen event and the
+    // popup it carries is the whole point of this handler, so shadowing it silently turned
+    // event.popup into undefined and the close button stopped closing anything. A9j caught
+    // it in the same run it was written.
+    (press) => {
+      press.preventDefault();
+      press.stopImmediatePropagation();
+      // THE POPUP THAT OWNS THIS BUTTON, not map._popup. They are the same in this app
+      // today, because Leaflet auto-closes the previous popup when a new one opens, so a
+      // second live popup is not reachable. It is still wrong to ask the map which popup is
+      // current when the button already knows: the handler is bound per popup and closing
+      // "whichever is current" is a bug waiting for the first feature that opens two.
+      closePopupReturningFocus(event.popup);
+    },
+    true,
+  );
+});
+
 
 function bindToggle(checkboxId, layers) {
   const box = document.getElementById(checkboxId);
@@ -356,6 +687,59 @@ function dimMarker(marker, age, base = 1) {
 // tab stop. role="img" with an aria-label is what a marker actually is: a graphic
 // that means something. Touch screen-reader users, who navigate by pointer and not
 // by Tab, still find and hear it.
+/* A4: THE VANISHING-FOCUS DOOR, one place, on the popup path.
+
+   WHERE IT LIVES. labeledMarker is the single birth seam for every marker in this app,
+   enforced by markers.test.js, so a `remove` hook registered here is the symmetric death
+   seam and covers every destruction path at once: the five per-system departure sweeps
+   (group.removeLayer), a layer toggle (map.removeLayer on the group, which fires `remove`
+   on every child), clearLayers, and a bare marker.remove(). That coverage is the reason
+   for the placement, and it is pinned by mutation: deleting this hook fails A8a and A8c,
+   which travel two different destruction paths.
+
+   WHAT IS *NOT* LOAD-BEARING, corrected after mutation testing said so. The first version
+   of this comment claimed the hook must run BEFORE Leaflet's own `remove: this.closePopup`
+   (which callers install later, via bindPopup) so that it could see the popup still open.
+   Measured: forcing marker.closePopup() to run first, at the top of this handler, leaves
+   every spec green. The predicate does not need the popup to be OPEN, only for its ELEMENT
+   to still contain the focused node, and a closing Leaflet popup lingers in the DOM for
+   its fade. So the ordering is real but incidental, and saying otherwise would have left a
+   future reader defending an invariant nothing depends on.
+
+   WHAT IT DOES NOT TRY TO DO. It does not ask why the marker is going away. Measured at
+   `remove` time, a departed vehicle and a hidden layer are byte-identical in every piece
+   of Leaflet state (the group still has the marker, the map still has the group, the
+   registry still has the key), so any attempt to tell them apart here would be guesswork.
+   It does not need to: the predicate is about the RIDER, not the cause. A layer toggle
+   moves focus to the checkbox the rider just activated, so the predicate is false and the
+   door stays silent; a vehicle ageing out of the feed while its popup is open leaves focus
+   inside the doomed subtree, and that is the case worth rescuing. */
+function planVanishingFocus(subtree, { label = null, kind = "vehicle" } = {}) {
+  return vanishingFocusPlan(subtree, document.activeElement, { label, kind });
+}
+
+// SPLIT FROM THE PLAN, and the split is not cosmetic. The banner is rebuilt by replacing
+// its children, so by the time the rescue runs the focused button is already gone and
+// document.activeElement has fallen to the body: a predicate evaluated at that moment asks
+// "is the body inside the banner", which is false, and the rescue silently declines to
+// fire on precisely the case it exists for. Caught by A8d failing with active=BODY. So
+// callers whose destruction happens AFTER the decision plan first and apply second; the
+// marker door, whose hook runs BEFORE Leaflet tears anything down, can do both at once.
+function applyVanishingFocus(plan) {
+  if (!plan || !plan.rescue) return false;
+  // The map container is the stable ancestor and is already a labeled tab stop (Leaflet
+  // writes tabindex=0 on it; index.html gives it the name). It cannot itself vanish, which
+  // is the whole reason it is the destination rather than, say, the nearest sibling.
+  const container = document.getElementById("map");
+  if (container) container.focus();
+  announcePage(plan.message);
+  return true;
+}
+
+function rescueVanishingFocus(subtree, options = {}) {
+  return applyVanishingFocus(planVanishingFocus(subtree, options));
+}
+
 function labeledMarker(latlng, options, name) {
   const marker = L.marker(latlng, { ...options, keyboard: false });
   // Relabel whenever Leaflet builds the element again. Toggling a layer off and on
@@ -365,6 +749,13 @@ function labeledMarker(latlng, options, name) {
   // silently anonymous again, and nothing else would notice for a static system like
   // AirTrain that has no poll to re-apply the name.
   marker.on("add", () => applyMarkerName(marker));
+  // A4: and the symmetric door. Registered BEFORE the caller's bindPopup so it runs
+  // before Leaflet's own closePopup and can still see what the rider was holding.
+  marker.on("remove", () => {
+    const popup = typeof marker.getPopup === "function" ? marker.getPopup() : null;
+    const el = popup && typeof popup.getElement === "function" ? popup.getElement() : null;
+    rescueVanishingFocus(el, { label: marker._a11yName, kind: "vehicle" });
+  });
   // RELABEL AFTER A RE-SKIN TOO, so the name survives no matter what order a caller
   // does things in. Today setIcon happens to reuse the same element and attributes
   // happen to survive, but that is a Leaflet implementation detail (Icon._setIconStyles
@@ -516,24 +907,33 @@ function openStationFromCrossLink(stationKey) {
   // tabindex -1 makes it programmatically focusable without adding a tab stop: the
   // rider lands here, and Tab from here continues into the popup's own controls.
   //
-  // ESCAPE DOES NOT CLOSE THE POPUP FROM HERE, raised by the review and left alone on
-  // purpose. Leaflet binds Escape on the MAP container, and focus inside a popup is
-  // outside it, so the key never reaches the handler. Measured: popup still open, focus
-  // unmoved. But the finding's stronger claim, that there is no way back out, is false:
-  // one Tab from this landing point reaches the popup's own close button, measured
-  // landing on .leaflet-popup-close-button, and that closes it. So this is a missing
-  // convenience rather than a trap, it is how every popup on the map has always behaved
-  // rather than anything this phase introduced, and a keyboard-dismiss binding is a
-  // map-wide decision that does not belong in the cross-link's landing path.
+  // ESCAPE NOW CLOSES THE POPUP FROM HERE, and this comment is kept rather than deleted
+  // because the reasoning that deferred it is the reasoning that A4 finally acted on.
+  //
+  // A2 recorded the gap and declined to fix it here: Leaflet binds Escape on the MAP
+  // container, focus inside a popup is outside it, so the key never reached any handler
+  // (measured then: popup still open, focus unmoved). The finding's stronger claim, that
+  // there was no way out, was false even then, because one Tab from this landing point
+  // reaches the popup's own close button. What A2 said was that a keyboard-dismiss binding
+  // is a MAP-WIDE decision and does not belong in the cross-link's landing path.
+  //
+  // A4 is where that map-wide decision got made. The Escape ladder in map.js is one
+  // document-level handler that closes the topmost transient surface (an open popup, then
+  // the station panel) from anywhere on the page, so this landing point inherits it
+  // without knowing anything about keys. A9d asserts the ladder behaves identically from
+  // inside a popup and from inside the panel, which is exactly the asymmetry A2 measured.
   content.setAttribute("tabindex", "-1");
   content.focus();
   return true;
 }
 
-// A2 FOLLOWUP, DELIBERATELY NOT DONE HERE: WHERE FOCUS GOES WHEN A CONTROL IS DESTROYED
-// WITH NO SUCCESSOR. Everything below restores focus to a live replacement, which is the
-// case this phase can answer honestly. Two reachable cases have no replacement at all,
-// and both were measured landing the rider on document.body:
+// A2 FOLLOWUP, RESOLVED IN A4: WHERE FOCUS GOES WHEN A CONTROL IS DESTROYED WITH NO
+// SUCCESSOR. Everything below restores focus to a live replacement, which was the case A2
+// could answer honestly. The two cases with no replacement at all, both measured then
+// landing the rider on document.body, are the ones A4's vanishing-focus door now catches:
+// focus moves to the map container and the page live region says so once. See
+// rescueVanishingFocus above and tests/e2e/vanish.spec.js. The original statement of both
+// cases is kept below because it is the measurement that justified the fix:
 //
 //   1. A VEHICLE LEAVES THE FEED while its popup is open and focused. Measured on a
 //      railroad train removed from one poll's payload: railroads.size 2 -> 1,
@@ -991,6 +1391,18 @@ window.addEventListener("resize", () => {
   if (el) publishBannerHeight(el);
 });
 
+// A4: what the banner is about to destroy, captured while it still exists.
+//
+// The banner is REBUILT IN PLACE rather than removed, so the element the rider is holding
+// is a descendant that will not survive, while #alert-banner itself does. Returning the
+// container is therefore right for the predicate (it is the subtree that contains the
+// doomed control) and returning the focused element itself would be wrong the moment
+// Leaflet or a future rebuild reuses a node.
+function bannerFocusVictim(el) {
+  if (!el || !document.activeElement) return null;
+  return el.contains(document.activeElement) ? el : null;
+}
+
 function renderAlertBanner(alerts) {
   const el = document.getElementById("alert-banner");
   const shown = alerts.filter((a) => a.header && !dismissedAlertIds.has(alertKey(a)));
@@ -1013,8 +1425,14 @@ function renderAlertBanner(alerts) {
   // about the transit system.
   announceAlertTransition(shown);
   if (!shown.length && !stale) {
+    // A4: THE UNMOUNT PATH, which A2's own FOLLOWUP named and left open. The rider may be
+    // holding the dismiss button that is about to stop existing, and measured, this branch
+    // dropped them on document.body in silence. Read BEFORE the children go, because
+    // afterwards there is nothing left to ask.
+    const plan = planVanishingFocus(bannerFocusVictim(el), { kind: "alerts" });
     el.replaceChildren(); // nothing to show and alerts are current: no banner strip
     publishBannerHeight(el);
+    applyVanishingFocus(plan);
     return;
   }
   const rows = shown.map((a) => `<div class="alert-banner-row">${esc(a.header)}</div>`).join("");
@@ -1038,6 +1456,9 @@ function renderAlertBanner(alerts) {
   // open question this phase does not answer; see the A2 FOLLOWUP filed above
   // updatePopupKeepingFocus.
   const hadFocus = !!(document.activeElement && el.contains(document.activeElement));
+  // Captured before the rebuild for the same reason as the unmount branch: once innerHTML
+  // is reassigned the old subtree is gone and cannot be asked whether it held focus.
+  const rebuildPlan = planVanishingFocus(bannerFocusVictim(el), { kind: "alerts" });
   el.innerHTML =
     `<div class="alert-banner-strip">` +
     `<div class="alert-banner-rows">${rows}${staleRow}</div>` +
@@ -1045,6 +1466,14 @@ function renderAlertBanner(alerts) {
     `</div>`;
   const dismissBtn = el.querySelector("#alert-banner-dismiss");
   if (hadFocus && dismissBtn) dismissBtn.focus();
+  // A4: AND THE REBUILD THAT HAS NO SUCCESSOR TO RESTORE TO. When the alert set empties
+  // on a poll whose feed is also stale, the strip is rebuilt carrying only the "alerts may
+  // be out of date" row and no dismiss button, so the branch above finds nothing to focus
+  // and silently gives up. Measured, that is the most confusing variant of the defect: the
+  // banner is still visibly on screen with nothing focusable inside it and the rider is on
+  // the body. The dismiss button also cannot survive its own click, since dismissing
+  // empties `shown`, so every dismissal lands on this path or the unmount above.
+  if (hadFocus && !dismissBtn) applyVanishingFocus(rebuildPlan);
   publishBannerHeight(el);
   if (dismissBtn) {
     dismissBtn.addEventListener("click", () => {

@@ -2457,3 +2457,176 @@ test("A3: the mobile breakpoint is one number, and style.css agrees with it", ()
   assert.equal(narrowViewport({ matches: false }), false);
   assert.equal(narrowViewport(), false);
 });
+
+const { vanishingFocusPlan, vanishingFocusMessage } = require("./helpers.js");
+
+// A4: the vanishing-focus decision, tested without a DOM. The predicate is the whole of
+// the policy, so it is worth pinning away from Leaflet, viewports and timing.
+test("A4: vanishingFocusPlan rescues only when the rider was inside the doomed subtree", () => {
+  const inside = { tag: "button" };
+  const elsewhere = { tag: "input" };
+  const subtree = { contains: (node) => node === inside };
+
+  assert.equal(vanishingFocusPlan(subtree, inside).rescue, true);
+  assert.equal(vanishingFocusPlan(subtree, elsewhere).rescue, false, "focus elsewhere is not rescued");
+  // The subtree itself counts as inside it: the banner case focuses a descendant, but a
+  // future caller could hand us the focused node directly and the answer must not change.
+  assert.equal(vanishingFocusPlan(subtree, subtree).rescue, true);
+  // Nothing to destroy, or nothing focused, is never a rescue rather than an error.
+  assert.equal(vanishingFocusPlan(null, inside).rescue, false);
+  assert.equal(vanishingFocusPlan(subtree, null).rescue, false);
+  // A subtree without contains() (a detached stub) must not throw.
+  assert.equal(vanishingFocusPlan({}, inside).rescue, false);
+});
+
+test("A4: the wording names the vehicle from its own label, and never invents a noun", () => {
+  // Built from the marker's accessible name rather than a hardcoded "train", because this
+  // app carries buses and boats too and buildMarkerName puts the identity in the leading
+  // clause. The decisions block's example wording is the subway case of this rule.
+  assert.equal(
+    vanishingFocusMessage("vehicle", "1 train, next stop Times Sq-42 St, Northbound"),
+    "The 1 train you were following left the feed. Focus moved to the map.",
+  );
+  assert.equal(
+    vanishingFocusMessage("vehicle", "M15 bus, northbound"),
+    "The M15 bus you were following left the feed. Focus moved to the map.",
+  );
+  assert.equal(vanishingFocusMessage("alerts"), "Alerts cleared. Focus moved to the map.");
+  // A nameless marker still gets a true sentence rather than "The undefined you were...".
+  assert.equal(
+    vanishingFocusMessage("vehicle", null),
+    "The vehicle you were following left the feed. Focus moved to the map.",
+  );
+  assert.equal(vanishingFocusMessage("vehicle", "   "), vanishingFocusMessage("vehicle", null));
+});
+
+/* A4 ROUND 1: the popup-clearing geometry, with the three real viewports as its cases.
+   These numbers are not invented: they are what the browser measured while the adversarial
+   round was taking the first version apart, which is what makes them worth pinning. */
+const { boxesOverlap, shiftBox, popupClearingShift, POPUP_CLEAR_GAP } = require("./helpers.js");
+const box = (left, right, top, bottom) => ({ left, right, top, bottom, width: right - left, height: bottom - top });
+
+test("popupClearingShift returns null when nothing is in the way", () => {
+  const popup = box(100, 300, 400, 500);
+  const legend = box(1030, 1270, 10, 710);
+  assert.equal(popupClearingShift(popup, [legend], box(0, 1280, 0, 720)), null);
+});
+
+test("popupClearingShift goes LEFT at desktop, where nothing fits below a 700px legend", () => {
+  // The measured desktop case: #panel spans y 10..710 of a 720px map, so the old
+  // downward-only version bailed every time and the popup stayed under the legend.
+  const popup = box(1001, 1276, 293, 419);
+  const legend = box(1030, 1270, 10, 710);
+  const shift = popupClearingShift(popup, [legend], box(360, 1280, 0, 720));
+  assert.equal(shift.dy, 0);
+  assert.equal(shift.dx, -(1276 - 1030) - POPUP_CLEAR_GAP);
+  // And the result actually clears, which is the property the direction is chosen for.
+  assert.equal(boxesOverlap(shiftBox(popup, shift.dx, shift.dy), legend), false);
+});
+
+test("popupClearingShift goes DOWN at 375, where left would run off the screen", () => {
+  const popup = box(234, 370, 5, 84);
+  const legend = box(140, 365, 10, 285);
+  const shift = popupClearingShift(popup, [legend], box(0, 375, 0, 667));
+  assert.equal(shift.dx, 0);
+  assert.equal(shift.dy, 285 - 5 + POPUP_CLEAR_GAP);
+  assert.equal(boxesOverlap(shiftBox(popup, shift.dx, shift.dy), legend), false);
+});
+
+test("popupClearingShift costs EVERY blocker, not just the first one it meets", () => {
+  /* ROUND 4: the round-2 fix ("each blocker costed SEPARATELY") had no test that could
+     tell it from "cost only the first blocker". The three tests round 2 added kill the
+     max-over-all-blockers shape; a variant that seeds the candidate list from blocking[0]
+     alone passed all 161 node tests. Non-equivalent, and found by searching the space:
+     with both blockers costed the answer is dx 30; with only the first it is dx 30 dy 45,
+     a strictly larger move, which breaks the "cheapest that actually clears" contract the
+     function is built on. */
+  const popup = box(299, 322, 104, 171);
+  const a = box(182, 311, 116, 141);
+  const b = box(272, 321, 83, 172);
+  const viewport = box(0, 400, 0, 400);
+  const both = popupClearingShift(popup, [a, b], viewport);
+  assert.deepEqual(both, { dx: 30, dy: 0 }, "the cheapest move that clears both is one step sideways");
+  // And it really clears: the answer above is not merely smaller, it is correct.
+  assert.equal(boxesOverlap(shiftBox(popup, both.dx, both.dy), a), false);
+  assert.equal(boxesOverlap(shiftBox(popup, both.dx, both.dy), b), false);
+});
+
+test("popupClearingShift will not move a popup out from under the legend and under the banner", () => {
+  // The third defect the round found: the old guard knew only the map's height, so a tall
+  // popup was panned down onto the alert banner, which paints over the popup pane.
+  const popup = box(234, 370, 5, 305);
+  const legend = box(140, 365, 10, 285);
+  const banner = box(8, 367, 595, 645);
+  const viewport = box(0, 375, 0, 667);
+  const withoutBanner = popupClearingShift(popup, [legend], viewport);
+  assert.equal(withoutBanner.dy > 0, true, "with only the legend, down is available");
+  const withBanner = popupClearingShift(popup, [legend, banner], viewport);
+  assert.equal(
+    withBanner && boxesOverlap(shiftBox(popup, withBanner.dx, withBanner.dy), banner),
+    false,
+    "whatever it picks, it must not land on the banner",
+  );
+});
+
+test("popupClearingShift returns null rather than moving a popup off the viewport", () => {
+  // A popup wider than the clear space either side: every candidate leaves the map box, so
+  // the honest answer is to leave it where Leaflet put it.
+  const popup = box(20, 360, 5, 84);
+  const legend = box(140, 365, 10, 285);
+  assert.equal(popupClearingShift(popup, [legend], box(0, 375, 0, 300)), null);
+});
+
+test("popupClearingShift costs a direction by the obstacle that demands the most", () => {
+  // Two blockers, and clearing only the nearer one is not clearing anything.
+  const popup = box(200, 300, 100, 200);
+  const near = box(280, 320, 50, 250);
+  const far = box(290, 400, 50, 250);
+  const shift = popupClearingShift(popup, [near, far], box(0, 500, 0, 500));
+  const moved = shiftBox(popup, shift.dx, shift.dy);
+  assert.equal(boxesOverlap(moved, near), false);
+  assert.equal(boxesOverlap(moved, far), false);
+});
+
+test("popupClearingShift steps sideways when the first move lands on a second obstacle", () => {
+  // ROUND 2: adding the banner as an obstacle could CANCEL the leftward desktop move,
+  // because a candidate that collided with a non-blocking obstacle was discarded rather
+  // than extended. With every candidate discarded the popup stayed fully under the legend,
+  // so the defect-3 fix undid the defect-2 fix.
+  const popup = box(1001, 1276, 20, 146);
+  const legend = box(1030, 1270, 10, 710);
+  const banner = box(400, 1020, 10, 60); // the left move alone would land under this
+  const viewport = box(360, 1280, 0, 720);
+  const shift = popupClearingShift(popup, [legend, banner], viewport);
+  assert.notEqual(shift, null, "a two-axis move exists, so null would be giving up early");
+  const moved = shiftBox(popup, shift.dx, shift.dy);
+  assert.equal(boxesOverlap(moved, legend), false);
+  assert.equal(boxesOverlap(moved, banner), false);
+  assert.equal(moved.left >= viewport.left && moved.right <= viewport.right, true);
+  assert.equal(moved.top >= viewport.top && moved.bottom <= viewport.bottom, true);
+});
+
+test("popupClearingShift still prefers a single-axis move when one clears everything", () => {
+  // The L is a fallback, not a habit: a straight move that works must beat a longer pair.
+  const popup = box(1001, 1276, 293, 419);
+  const legend = box(1030, 1270, 10, 710);
+  const shift = popupClearingShift(popup, [legend], box(360, 1280, 0, 720));
+  assert.equal(shift.dy, 0, "one axis is enough here");
+  assert.equal(shift.dx, -(1276 - 1030) - POPUP_CLEAR_GAP);
+});
+
+test("popupClearingShift re-checks a move against obstacles that were NOT blocking it", () => {
+  // A MUTATION SURVIVED THE FIRST VERSION OF THE TEST ABOVE, because there both obstacles
+  // blocked from the start, so "re-check against all obstacles" and "re-check against the
+  // blockers" were the same check. Here the banner is clear of the popup where it opens and
+  // is only reachable by the move itself: a filter that looks at the blockers alone accepts
+  // the straight leftward move and lands the popup on the banner.
+  const popup = box(1001, 1276, 20, 146);
+  const legend = box(1030, 1270, 10, 710);
+  const banner = box(400, 900, 20, 146);
+  assert.equal(boxesOverlap(popup, banner), false, "the banner must not block where the popup opens");
+  const shift = popupClearingShift(popup, [legend, banner], box(360, 1280, 0, 720));
+  const moved = shiftBox(popup, shift.dx, shift.dy);
+  assert.equal(boxesOverlap(moved, legend), false, "clears what blocked it");
+  assert.equal(boxesOverlap(moved, banner), false, "and does not land on what did not");
+});

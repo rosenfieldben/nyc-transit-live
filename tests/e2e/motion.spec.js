@@ -163,7 +163,17 @@ test.describe("with reduced motion requested, the map itself", () => {
       entry.marker.openPopup();
       const panned = document.querySelector(".leaflet-pan-anim") !== null;
       map.off("move", onMove);
-      return { moves: centres.length, distinct: new Set(centres).size, panAnimClass: panned };
+      // Measured from the popup rather than from the centre: an autopan's job is to put the
+      // popup inside the map, and the popup started with its top off the top edge.
+      const el = openPopupsOnMap()[0].getElement();
+      const p = el.getBoundingClientRect();
+      const m = document.getElementById("map").getBoundingClientRect();
+      return {
+        moves: centres.length,
+        distinct: new Set(centres).size,
+        panAnimClass: panned,
+        pannedIntoView: p.top >= m.top && p.bottom <= m.bottom && p.left >= m.left && p.right <= m.right,
+      };
     });
 
     // A pan may still HAPPEN (the popup must be brought into view, and suppressing that
@@ -171,10 +181,41 @@ test.describe("with reduced motion requested, the map itself", () => {
     // not happen is a multi-frame slide: it arrives in one step.
     expect(result.distinct, "the map must not travel through intermediate positions").toBeLessThanOrEqual(1);
     expect(result.panAnimClass, "Leaflet's pan animation class must never appear").toBe(false);
+    /* AND IT DID HAPPEN, which round 4 found this spec could not tell from "it did not".
+       Both assertions above are satisfied by a pan that never ran at all: suppressing
+       Leaflet's autopan outright (returning from the panBy wrapper without panning) left
+       all eight motion specs green, including this one, whose own comment says suppressing
+       it "would change what the rider can see, which this gate must never do". The sentence
+       was true and unasserted.
+       So the popup's position is asserted, which is the thing the pan exists to fix and the
+       only fact that separates instant from absent. A5g does the same for the panel's pan
+       with its "and it still got there" half; this is that half, here. */
+    expect(result.pannedIntoView, "and the popup really was brought inside the viewport").toBe(true);
   });
 
-  test("A5f. without the preference, that same pan is still animated", async ({ page }) => {
-    // The control for A5e, so the pair pins a PREFERENCE rather than a removed feature.
+  test("A5f. that pan is now unanimated for EVERYONE, and this is the record of why", async ({ page }) => {
+    // THIS SPEC HAS BEEN INVERTED, deliberately, and the old assertion is quoted here so the
+    // change is legible rather than silent. It used to read "an ordinary rider still gets
+    // the animated pan", and it was the control that made A5e pin a PREFERENCE rather than
+    // a removed feature.
+    //
+    // A4's adversarial round removed the feature on purpose. Leaflet's _adjustPan is a
+    // CORRECTION of where a popup landed, not a journey the rider asked for, and animating
+    // it made the popup's resting position unknowable: the animation lands on a later frame
+    // than popupopen, so the A4 code that moves a popup out from under the legend was
+    // reading a position that was still moving. Measured at 1280 with the placed railroad
+    // popup: real clock, the popup settles at x 1001..1276 and overlaps the legend at 1030;
+    // fixed clock, PosAnimation drives itself off `+new Date()` and never completes at all,
+    // leaving the popup at x 1288..1563, off the map's right edge, forever.
+    //
+    // That second measurement is why this could not stay a preference. The accessibility
+    // gate needs a fixed clock for deterministic ages, and under a fixed clock an animated
+    // pan has no landing position for any spec to assert. Instant is the only setting under
+    // which the popup HAS a position.
+    //
+    // THE PREFERENCE PAIR IS NOT LOST, it moved: A5g and A5h still pin the app's own panTo
+    // from the station panel as animated-unless-asked-otherwise, which is the pan a keyboard
+    // rider triggers most often.
     await installMocks(page);
     await open(page);
 
@@ -186,9 +227,18 @@ test.describe("with reduced motion requested, the map itself", () => {
       const onMove = () => centres.push(map.getCenter().lat + "," + map.getCenter().lng);
       map.on("move", onMove);
       entry.marker.openPopup();
-      return { started: map._panAnim ? !!map._panAnim._inProgress : false, moves: centres.length };
+      const panned = document.querySelector(".leaflet-pan-anim") !== null;
+      map.off("move", onMove);
+      return {
+        started: map._panAnim ? !!map._panAnim._inProgress : false,
+        distinct: new Set(centres).size,
+        panAnimClass: panned,
+      };
     });
-    expect(result.started, "an ordinary rider still gets the animated pan").toBe(true);
+
+    expect(result.started, "no pan animation is in flight for anyone").toBe(false);
+    expect(result.panAnimClass, "and Leaflet's pan animation class never appears").toBe(false);
+    expect(result.distinct, "the correction arrives in one step").toBeLessThanOrEqual(1);
   });
 
   test("A5g. selecting a station in the panel does not slide the map either", async ({ page }) => {

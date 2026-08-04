@@ -31,7 +31,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       # The runner's preinstalled Node is plenty for node --test.
-      - run: node --test "frontend/*.test.js"
+      - run: node --test "frontend/*.test.js" "tests/*.test.js"
 
   frontend-e2e:
     runs-on: ubuntu-latest

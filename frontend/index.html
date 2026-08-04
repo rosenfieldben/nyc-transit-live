@@ -19,6 +19,29 @@
        so it costs sighted users nothing and gives keyboard users a one-stop route
        past the map to the station list. -->
   <a href="#stations-panel" id="stations-skip" class="visually-hidden-focusable">Skip to stations list</a>
+  <!-- A4: THE PAGE'S ONE h1, AND ITS ONE MAIN. Both are product defects the scoped
+       accessibility eras could not see, because A1 through A3 scanned named roots rather
+       than the document: axe reported page-has-heading-one and landmark-one-main against
+       <html>, which no scoped scan ever included.
+       The heading is visually hidden because the page has no visible title bar to put it
+       in and inventing one would be a design change smuggled in as an accessibility fix.
+       Hidden from sight is not hidden from the accessibility tree: visually-hidden keeps
+       it in both the heading outline and the a11y tree, which is the whole point. It also
+       gives the panel's existing h2 a level to hang from, so the outline reads
+       h1 > h2 rather than starting at 2.
+       It lives INSIDE <main> because axe's `region` rule counts a heading outside every
+       landmark as page content outside a landmark, and it carries an id because the mobile
+       overlay's inert sweep would otherwise take it out of the accessibility tree along
+       with the rest of the background; see INERT_EXEMPT in stations.js. -->
+
+  <!-- <main> wraps the two surfaces that ARE the app: the map and its text equivalent.
+       It is display:contents in the stylesheet, so it introduces no box and changes no
+       layout; the semantics are the entire payload. Everything else on the page (the
+       alert strip, the legend and controls) is chrome and gets its own landmark below,
+       because axe's `region` rule counts any content outside a landmark as a defect and
+       the fix for that is structure, not an exception. -->
+  <main>
+  <h1 id="app-title" class="visually-hidden">NYC Transit Live</h1>
   <!-- role=region with a name so the map is a landmark a screen reader can skip
        rather than an unlabeled canvas.
        THE TAB-ORDER POLICY LIVES HERE (A2). Markers are deliberately NOT in the tab
@@ -60,6 +83,7 @@
          the visual repaint and the announcement cannot be coupled by accident. -->
     <div id="stations-announce" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
   </section>
+  </main>
   <!-- A2: THE PAGE'S ONE LIVE REGION. The status line and the alert banner both speak
        through announcePage in systems/shared.js and nothing else may write here; the
        reasoning for a single door rather than a guard per surface is in that comment.
@@ -69,12 +93,22 @@
        announcement cannot be coupled by accident, exactly as #stations-announce is. -->
   <div id="page-announce" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
   <!-- Agency-wide service alerts strip, populated by map.js only when there is
-       something to show (empty otherwise, so no banner element is rendered). -->
-  <div id="alert-banner"></div>
+       something to show (empty otherwise, so no banner element is rendered).
+       A4: a <section> with a name, which makes it a landmark. Its rows were reported by
+       axe's `region` rule at both viewports in every state that had an alert, because
+       they were page content sitting outside every landmark. Naming the strip is the
+       structural fix; it also means a screen-reader rider can jump to the alerts
+       directly rather than discovering them by tabbing past them. -->
+  <section id="alert-banner" aria-label="Service alerts"></section>
   <!-- NOTE THE NEAR-MISS: this is id="panel", the LEGEND. The A1 station surface is
        id="stations-panel" and is a different thing entirely. They are not to be
        unified; the ids only look similar. -->
-  <div id="panel">
+  <!-- A4: <aside>, i.e. a complementary landmark. The legend, the layer checkboxes, the
+       route banner and the status line are all support material for the map rather than
+       the app's main content, which is exactly what `complementary` means. Before this
+       they were the largest block of landmark-less content on the page: #legend, #toggles,
+       #status and #route-banner-label were reported by `region` in every measured state. -->
+  <aside id="panel" aria-label="Legend, layers and status">
     <!-- A1's toggle lives in the controls cluster with the layer checkboxes. -->
     <button type="button" id="stations-toggle" aria-expanded="false" aria-controls="stations-panel">
       Stations
@@ -168,7 +202,7 @@
       <label><input type="checkbox" id="toggle-ferries" checked> Ferries</label>
     </div>
     <div id="status">Loading&hellip;</div>
-  </div>
+  </aside>
   <!-- Self-hosted Leaflet (see the stylesheet comment in <head>). -->
   <script src="vendor/leaflet/leaflet.js"></script>
   <script src="helpers.js"></script>

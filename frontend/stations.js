@@ -59,6 +59,79 @@ function stationsPanelOpen() {
   return stationsPanel != null && !stationsPanel.hidden;
 }
 
+/* A4: WHILE THE OVERLAY IS UP, THE PAGE BEHIND IT IS INERT.
+
+   THE WART THIS CLOSES. Under 700px the panel covers the viewport, and A3 measured what
+   that cost a keyboard rider: 14 of 17 tab stops sat behind an opaque overlay, reachable
+   by Tab and invisible to the eye. A3 recorded it rather than fixing it, and A6n pinned
+   it as a known wart, because the obvious fix is a focus trap and a trap with no reliable
+   exit is exactly how the untappable overlay got created in the first place.
+
+   `inert` is the platform primitive built for this and it is NOT a trap: it makes a
+   subtree unfocusable AND removes it from the accessibility tree, so the controls behind
+   the overlay stop being reachable and stop being announced, while Tab still cycles
+   freely within the panel and Escape still leaves. Nothing has to be un-trapped on the
+   way out; the attribute is simply removed.
+
+   TWO EXEMPTIONS, and the second one is the sharp edge.
+
+   #stations-panel itself, obviously: it is the thing that is on top.
+
+   #page-announce, because inert removes a subtree from the accessibility tree and an
+   inert live region is a SILENT live region. That region is where A4's vanishing-focus
+   announcements are spoken, and the overlay is exactly the state a rider is most likely
+   to be in when a marker they were reading disappears underneath it. Inerting it would
+   have made this phase's other deliverable mute in this phase's own new state, silently,
+   with every spec still green. It is visually hidden and holds nothing focusable, so
+   exempting it costs nothing and hides nothing.
+
+   #stations-skip is deliberately NOT exempt. It is a body child, so it goes inert with
+   everything else, and that is correct: the link exists to get a rider INTO the panel and
+   the panel is already open and holding focus. */
+const INERT_EXEMPT = new Set(["stations-panel", "page-announce", "app-title"]);
+
+/* WALKED, NOT FLATTENED, and A4 had to learn that the hard way inside its own phase.
+
+   The first version of this iterated document.body.children, which was correct only while
+   the panel happened to BE a body child. Deliverable 4 then wrapped the map and the panel
+   in <main> for the landmark rules, and that one structural change turned this loop into a
+   defect: <main> is a body child, it is not the panel, so it was inerted, and the panel
+   inside it went inert with it. The overlay would have made itself unusable.
+
+   So the sweep walks from the panel up to the body and inerts SIBLINGS at each level,
+   which is the standard "everything except this subtree" shape and is indifferent to how
+   deeply the panel is nested. #map is a sibling of the panel inside <main> and is inerted
+   there; <main> itself is on the path and is left alone, which is also what keeps the
+   document's one landmark reachable while the overlay is up.
+
+   THE EXEMPTIONS, all three non-interactive and all three needed in the accessibility tree
+   rather than out of it. #stations-panel is the overlay. #page-announce is where the
+   vanishing-focus announcements are spoken, and an inert live region is a silent one.
+   #app-title is the page's h1: inerting it removes the document's only level-one heading
+   from the a11y tree, which axe reports as page-has-heading-one and which would leave a
+   screen-reader rider in the overlay with no page title at all. */
+function setBackgroundInert(on) {
+  if (!stationsPanel || !document.body) return;
+  let node = stationsPanel;
+  while (node && node !== document.body && node.parentElement) {
+    const parent = node.parentElement;
+    for (const sibling of parent.children) {
+      // Scripts are not rendered and cannot hold focus; skipping them keeps the attribute
+      // off elements where it would only be noise in the DOM.
+      if (sibling === node || sibling.tagName === "SCRIPT" || INERT_EXEMPT.has(sibling.id)) continue;
+      sibling.inert = on;
+    }
+    node = parent;
+  }
+}
+
+// The state this derives from is the same state the layout derives from: an overlay is
+// an open panel at a width where the panel covers the page. Above the breakpoint the
+// panel is a drawer beside the map, nothing is covered, and nothing is inerted.
+function applyOverlayInertness() {
+  setBackgroundInert(stationsPanelOpen() && narrowViewport());
+}
+
 // Opening moves focus INTO the panel, to the search input, because the reason
 // someone opened it is to search. Announcing the panel and leaving focus behind
 // on the toggle would make the next Tab land somewhere unrelated.
@@ -67,6 +140,7 @@ function openStationsPanel({ focusSearch = true } = {}) {
   stationsPanel.hidden = false;
   if (stationsToggle) stationsToggle.setAttribute("aria-expanded", "true");
   applyDockedLayout(); // the map gives up the column while the panel is using it
+  applyOverlayInertness(); // and at overlay widths the page behind it stops being reachable
   if (focusSearch && stationsSearch) stationsSearch.focus();
   renderStationResults();
   resumePanelArrivals();
@@ -110,6 +184,14 @@ function resumePanelArrivals() {
 // closing a panel the rider was not in must not yank their focus somewhere else.
 function closeStationsPanel() {
   if (!stationsPanel) return;
+  // A4: UN-INERT BEFORE RESTORING FOCUS, and this order is the whole of the fix rather
+  // than a tidiness preference. #stations-toggle is outside the panel, so while the
+  // overlay is up it is inert, and .focus() on an element inside an inert subtree is a
+  // no-op: the call succeeds, nothing moves, and the rider is left on the body with the
+  // panel closing around them. Released unconditionally rather than through
+  // applyOverlayInertness, because the panel is still open on this line and that helper
+  // would correctly compute "still an overlay" and change nothing.
+  setBackgroundInert(false);
   const focusWasInside = stationsPanel.contains(document.activeElement);
   if (focusWasInside && stationsToggle) stationsToggle.focus();
   stationsPanel.hidden = true;
@@ -164,13 +246,13 @@ if (stationsClose) stationsClose.addEventListener("click", closeStationsPanel);
 // First was chosen for the screen reader, and it is kept: the exit is announced
 // immediately after the region's name, and it stays in one place instead of moving down
 // the panel as result rows appear.
-if (stationsPanel) {
-  stationsPanel.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape") return;
-    event.stopPropagation();
-    closeStationsPanel();
-  });
-}
+// A4 MOVED THE ESCAPE HANDLING OUT OF THIS FILE. The panel used to bind its own Escape
+// here, which meant the answer to "what does Escape close" depended on which file you
+// read: this one closed the panel whenever focus was inside it, and Leaflet closed a popup
+// whenever focus was the map container, so a rider with both open got different results
+// from the same key depending on where they were standing. The ladder in map.js now owns
+// the ordering in one place (popup, then panel, never the banner) and calls
+// closeStationsPanel, so this file keeps the focus contract and gives up the key.
 
 if (stationsToggle) stationsToggle.addEventListener("click", toggleStationsPanel);
 
@@ -670,6 +752,19 @@ function applyStationsDocking() {
     openStationsPanel({ focusSearch: false });
   }
   applyDockedLayout();
+  applyOverlayInertness();
+}
+
+// A4: the overlay threshold is 700, not the 1100 dock threshold, so it needs its own
+// listener. The path that matters is the unprompted one A6j already covers: a tablet
+// docked at 1280 with the panel open, narrowed to a phone, becomes an overlay without
+// the rider touching anything, and the page behind it has to go inert on the way down
+// and come back on the way up.
+if (typeof matchMedia === "function" && typeof MOBILE_QUERY === "string") {
+  const overlayQuery = matchMedia(MOBILE_QUERY);
+  if (typeof overlayQuery.addEventListener === "function") {
+    overlayQuery.addEventListener("change", applyOverlayInertness);
+  }
 }
 
 applyStationsDocking();

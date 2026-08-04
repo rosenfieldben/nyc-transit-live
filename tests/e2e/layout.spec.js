@@ -16,6 +16,7 @@
 const { test, expect } = require("@playwright/test");
 const { installMocks, json } = require("./mock");
 const fx = require("./fixtures/api");
+const { expectState } = require("./state");
 
 const HIT_FLOOR = 24;
 
@@ -628,4 +629,328 @@ test("A4i. closing the docked panel gives the map its column back", async ({ pag
   expect(open2.reserved, "reopening reserves the column again").toBe(true);
   expect(open2.mapLeft, "and the map steps aside again").toBe(360);
   expect(open2.overflow, "with no sideways scroll in either state").toBe(0);
+});
+
+/* ---------------- A4j / A4k: the popup correction, and when it stands down ----------------
+
+   REBUILT IN ROUND 3, BECAUSE THE FIRST VERSION WAS FLAKY AND VACUOUS AT THE SAME TIME.
+   Deleting its subject (the `if (riderOwnsTheView) return` line the whole spec is about)
+   left it passing five to seven runs in ten. Both halves of that have one cause: it waited
+   for the correction with expect.poll on a condition that was ALREADY TRUE before the
+   resize, so what it actually measured was whether the ResizeObserver happened to fire
+   inside the poll window.
+
+   So the wait is now deterministic rather than timed. A probe ResizeObserver is attached to
+   the same popup element AFTER the app's, and observers are delivered in creation order, so
+   when the probe fires the app's has already run and any pan it wanted is already on the
+   map. No polling, no timeout, no window to lose.
+
+   AND IT IS A PAIR, which is the other half of what was missing. A4j says the correction
+   does NOT run after the rider takes over; on its own that is satisfied by a correction
+   that never runs at all. A4k is the same sequence with the drag removed, and requires the
+   map to move. Together they pin a decision rather than an absence. */
+
+const RIDER_MOVES_THE_MAP = { width: 375, height: 667 };
+
+async function popupOnTheMapAt375(page) {
+  await page.setViewportSize(RIDER_MOVES_THE_MAP);
+  await installMocks(page);
+  /* PAUSED, NOT MERELY FIXED, AND THAT IS THE FLAKE. setFixedTime pins Date and leaves the
+     timers running, so the fifteen-second refresh still lands, and a refresh that rebuilds
+     the railroad markers closes and reopens the popup, which resets the very flag these two
+     specs are about. Measured: one or two runs in ten failed on the correction firing after
+     a legitimate takeover, and the takeover had been legitimately forgotten in between.
+     With the clock paused nothing polls, and the size change these specs care about is made
+     directly rather than waited for. */
+  await page.clock.install({ time: new Date(fx.FROZEN_MS) });
+  await page.clock.pauseAt(new Date(fx.FROZEN_MS));
+  await page.goto("/");
+  await expect
+    .poll(async () => page.evaluate(() => (typeof railroads === "undefined" ? 0 : railroads.size)), { timeout: 15_000 })
+    .toBeGreaterThan(0);
+  // A PLACED railroad train, the same subject the gate's cross-link state uses: it sits on
+  // its station rather than at a GPS fix, which is what makes its popup reproducible.
+  await page.evaluate(() => {
+    const placed = [...railroads.values()].find((r) => r.placed);
+    if (!placed) throw new Error("the fixture no longer has a placed railroad train");
+    placed.marker.openPopup();
+  });
+  await expectState(page, "one popup open", "the popup correction specs need exactly one");
+}
+
+/* Grow the popup and report what the map did about it, once the app has had its chance.
+   The growth is upward, because a Leaflet popup is anchored at its tip: the bottom stays on
+   the marker and the top rises, which at 375 is straight into the legend.
+   LEAFLET'S OWN AUTOPAN IS REPORTED SEPARATELY. A popup that grows past the top of the
+   viewport is Leaflet's business to nudge back in, and that nudge moves the centre without
+   the app's correction having run at all. So the centre claim below is made only when no
+   autopanstart fired, and the claim that always holds is about where the POPUP ended up,
+   which is the fact a rider can see. */
+const growAndSettle = (page, by) =>
+  page.evaluate(
+    (px) =>
+      new Promise((resolve) => {
+        let autoPanned = false;
+        const noteAutoPan = () => {
+          autoPanned = true;
+        };
+        map.on("autopanstart", noteAutoPan);
+        const root = openPopupsOnMap()[0].getElement();
+        let deliveries = 0;
+        const probe = new ResizeObserver(() => {
+          deliveries += 1;
+          if (deliveries === 1) {
+            // The initial observation. The app's observer, created first, has seen the same
+            // one; now change the size for real.
+            root
+              .querySelector(".leaflet-popup-content")
+              .appendChild(Object.assign(document.createElement("div"), { style: `height:${px}px` }));
+            return;
+          }
+          probe.disconnect();
+          map.off("autopanstart", noteAutoPan);
+          const c = map.getCenter();
+          const a = root.getBoundingClientRect();
+          const b = document.getElementById("panel").getBoundingClientRect();
+          const container = document.getElementById("map");
+          resolve({
+            centre: { lat: c.lat, lng: c.lng },
+            autoPanned,
+            underTheLegend: a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top,
+            // ASKED OF THE APP'S OWN GEOMETRY, which is the only honest way to say "it could
+            // have moved this and chose not to". popupClearingShift returns null when no
+            // move clears every obstacle AND keeps the popup inside the map, and null is not
+            // a decision: it is an impossibility. See the note in A4j.
+            clearingMoveExists: !!popupClearingShift(a, popupObstacles(), container.getBoundingClientRect()),
+          });
+        });
+        probe.observe(root);
+      }),
+    by,
+  );
+
+test("A4j. once the rider moves the map, the popup correction stands down", async ({ page }) => {
+  /* THE SAME PRINCIPLE AS THE MOTION SPLIT ONE LEVEL UP. The correction that moves a popup
+     out from under the chrome watches the popup for size changes, so it outlives the
+     opening: a background arrivals refresh re-ran it on a map the RIDER had since moved and
+     threw their position away. Measured at 375 before the fix: the rider dragged to centre
+     lat 40.65134, a refresh grew the popup, and the map jumped to 40.72996.
+
+     An adjustment is the app correcting its own fit. The moment the rider takes over, the
+     position is theirs and the app has no business tidying it, even when it can see the
+     popup is now behind the legend.
+
+     A REAL DRAG, because the stand-down keys on rider INTENT. Round 3 replaced a centre
+     comparison with dragstart/zoomstart/movestart precisely because Leaflet's own internals
+     move the centre by half a pixel on any viewport parity flip, with no rider anywhere
+     near it. Driving this with page.mouse means the spec exercises the signal the app
+     actually listens for rather than a proxy for it. */
+  await popupOnTheMapAt375(page);
+
+  const before = await page.evaluate(() => {
+    const c = map.getCenter();
+    return { lat: c.lat, lng: c.lng };
+  });
+
+  /* Bottom-left of the viewport is map and only map at this width: the legend is top-right,
+     the popup is mid-screen and the station panel is shut.
+     DOWN AND TO THE LEFT, and the direction is load-bearing. The first draft dragged right,
+     which pushed the popup's right edge from 370 to 390, past the map container's 375, and
+     popupClearingShift refuses any move that would leave the popup outside the map. There
+     was no clearing move to decline, so deleting the stand-down guard changed nothing and
+     the spec passed 20/20 against a build with its subject removed. Dragging left keeps a
+     move available (measured: down by 61px), so declining it is a decision. */
+  await page.mouse.move(60, 620);
+  await page.mouse.down();
+  await page.mouse.move(40, 640, { steps: 12 });
+  await page.mouse.up();
+  const dragged = await page.evaluate(() => {
+    const c = map.getCenter();
+    return { lat: c.lat, lng: c.lng };
+  });
+  expect(dragged, "the drag must actually have moved the map, or there is no takeover").not.toEqual(before);
+
+  // THE PREMISE, MEASURED RATHER THAN ASSUMED: the popup is currently clear of the legend
+  // and 80px of upward growth will put it underneath. Without this the spec would pass just
+  // as well on a popup nowhere near the chrome, which is a spec about nothing.
+  const willCollide = await page.evaluate(() => {
+    const a = openPopupsOnMap()[0].getElement().getBoundingClientRect();
+    const b = document.getElementById("panel").getBoundingClientRect();
+    const overlapsNow = a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+    return { overlapsNow, willOverlap: a.left < b.right && a.right > b.left && a.top - 80 < b.bottom };
+  });
+  expect(willCollide, "the growth must be what creates the collision, not the drag").toEqual({
+    overlapsNow: false,
+    willOverlap: true,
+  });
+
+  const after = await growAndSettle(page, 80);
+  // THE ASSERTION, in the terms a rider sees: the popup is under the legend and the app left
+  // it there. This is the fact Leaflet's own autopan cannot fake: an autopan pushes an
+  // overflowing popup back DOWN into the viewport, deeper under the legend, never clear of it.
+  expect(after.underTheLegend, "the app must not tidy a position the rider chose").toBe(true);
+  // AND IT DECLINED SOMETHING IT COULD HAVE DONE. Without this the assertion above is
+  // satisfied by geometry in which no clearing move exists at all, which is how the first
+  // rebuild of this spec passed with the stand-down guard deleted.
+  expect(
+    after.clearingMoveExists,
+    "a clearing move must be available for declining it to mean anything: with none, this " +
+      "spec passes against a build that has no stand-down guard at all",
+  ).toBe(true);
+  // And the stricter claim, made only when it is the app's to make. If Leaflet autopanned,
+  // the centre moved for a reason that is not this correction and asserting on it would be
+  // asserting about Leaflet.
+  if (!after.autoPanned) {
+    expect(after.centre, "and with no autopan in play, nothing moved the map at all").toEqual(dragged);
+  }
+
+  /* A SECOND GROWTH, BECAUSE ONE PROVES ONLY THAT THE FIRST WAS DECLINED. Round 4: making the
+     stand-down ONE-SHOT (consumed by the first post-takeover resize and forgotten) passed
+     this spec 15 runs out of 15, because the spec only ever grew the popup once. What that
+     costs a rider is the original defect delayed by one refresh: they drag the map to their
+     own neighbourhood, the next arrivals refresh is correctly declined, and the one fifteen
+     seconds later throws their position away exactly as before.
+     The takeover is a property of the rider's ownership of THIS popup, and it ends when the
+     popup does (popupopen resets it), so it must survive every resize in between. */
+  const again = await growAndSettle(page, 40);
+  expect(again.underTheLegend, "and it must still be declined on the NEXT refresh, and every one after").toBe(true);
+  expect(again.clearingMoveExists, "with a clearing move still available the second time").toBe(true);
+});
+
+test("A4m. a rider who pans with the arrow keys owns the view too", async ({ page }) => {
+  /* THE RIDER THIS PHASE IS FOR, and until round 4 the one whose takeover was never measured.
+     Every stand-down spec in this phase drives page.mouse. Deleting the movestart handler,
+     one of the guard's three intent producers and the only one a keyboard pan reaches (since
+     Leaflet's Keyboard handler goes through panBy and fires neither dragstart nor zoomstart),
+     left ALL 162 e2e specs green. Measured: the rider's centre thrown from 40.71955 to
+     40.74036 by the next popup growth, with a clearing move available, so the app really did
+     choose to move.
+
+     THE PRESS IS THE ASSERTION, not the centre. Under this suite's paused clock Leaflet's
+     keyboard pan starts and never completes, so the centre does not change; what does happen,
+     and what the guard listens for, is movestart. That is asserted directly below rather than
+     inferred from a position, which is the same lesson round 3 wrote into the guard itself:
+     intent is an event, not a float. */
+  await popupOnTheMapAt375(page);
+
+  await page.evaluate(() => {
+    window.__moveStarts = 0;
+    map.on("movestart", () => {
+      window.__moveStarts += 1;
+    });
+  });
+  await page.locator("#map").focus();
+  await expect(page.locator("#map")).toBeFocused();
+  await page.keyboard.press("ArrowRight");
+
+  expect(
+    await page.evaluate(() => window.__moveStarts),
+    "the arrow key must actually reach Leaflet's keyboard pan, or this spec presses nothing",
+  ).toBeGreaterThan(0);
+
+  const after = await growAndSettle(page, 80);
+  expect(after.underTheLegend, "a keyboard pan is a rider taking over, exactly like a drag").toBe(true);
+  expect(after.clearingMoveExists, "with a clearing move available, so declining it is a decision").toBe(true);
+});
+
+test("A4k. with no rider takeover, that same growth DOES move the popup clear", async ({ page }) => {
+  // THE CONTROL, and A4j means nothing without it. Same fixture, same growth, same
+  // deterministic wait; the only difference is that nobody dragged. If this ever goes green
+  // by the correction simply not running, A4j is satisfied by an absence rather than by a
+  // decision, which is exactly the failure round 3 found.
+  await popupOnTheMapAt375(page);
+
+  const before = await page.evaluate(() => {
+    const c = map.getCenter();
+    return { lat: c.lat, lng: c.lng };
+  });
+  const after = await growAndSettle(page, 80);
+
+  // THE SAME OBSERVABLE AS A4j, IN THE OPPOSITE DIRECTION. A pair that asserts one fact each
+  // way pins a decision; A4j alone would be satisfied by a correction that never runs.
+  expect(after.underTheLegend, "the app corrects its own fit when the position is still its own").toBe(false);
+  expect(after.centre, "which it does by moving the map").not.toEqual(before);
+  await expectState(page, "one popup open", "A4k: still exactly one popup after the correction");
+});
+
+test("A4l. Leaflet's own autopan is not the rider taking over", async ({ page }) => {
+  /* THE DEFECT THE STAND-DOWN GUARD CREATED, found by measuring the guard rather than by
+     reading it. The guard tells the rider's hand from the app's own adjustment by watching
+     movestart and ignoring the ones that happen while Leaflet is autopanning. The flag that
+     says "Leaflet is autopanning" was cleared one line too early, before the panBy that
+     fires the movestart, so it was already false when the handler asked, and every autopan
+     was filed as the rider taking over.
+
+     What that costs a rider: Leaflet nudges a popup that overflows the viewport back into
+     view, entirely on its own; from then on the app believes the position is the rider's and
+     declines to move that popup out from under the legend, however far under it goes.
+     Measured at 375 before the fix, with a clearing move available the whole time:
+
+       after the autopan   popup at y 5..131, clear move exists
+       after a refresh     popup at y -35..131, still under the legend, still a move available
+       with the fix        popup at y 292..458, clear of the legend
+
+     THE SETUP DRIVES LEAFLET, NOT THE APP. The marker moves to 60px below the top of the
+     map, which puts its popup's top off-screen, and popup.update() is Leaflet's own path to
+     _adjustPan. The rider's hand is nowhere in it. */
+  await popupOnTheMapAt375(page);
+
+  const staged = await page.evaluate(() => {
+    const placed = [...railroads.values()].find((r) => r.placed);
+    const popup = placed.marker.getPopup();
+    let autoPanned = false;
+    const note = () => {
+      autoPanned = true;
+    };
+    map.on("autopanstart", note);
+    placed.marker.setLatLng(map.containerPointToLatLng([map.getSize().x / 2, 60]));
+    popup.update();
+    map.off("autopanstart", note);
+    const a = popup.getElement().getBoundingClientRect();
+    return {
+      autoPanned,
+      clearingMoveExists: !!popupClearingShift(a, popupObstacles(), document.getElementById("map").getBoundingClientRect()),
+    };
+  });
+  // Both halves of the premise, because either one silently missing makes the rest vacuous:
+  // Leaflet must really have autopanned, and the app must really have somewhere to move the
+  // popup to. A popup with no clearing move is declined for geometry, not for policy.
+  expect(staged.autoPanned, "the setup must actually make Leaflet autopan").toBe(true);
+  expect(staged.clearingMoveExists, "and a clearing move must exist after it").toBe(true);
+
+  const after = await growAndSettle(page, 40);
+  expect(
+    after.underTheLegend,
+    "an autopan is the app's own adjustment; treating it as a takeover leaves the rider's " +
+      "popup buried under the legend with a move available and nobody willing to make it",
+  ).toBe(false);
+
+  /* AND THE OTHER DIRECTION, WHICH THE SAME ONE FLAG DECIDES. Round 4: never clearing
+     leafletAutoPanning at all (the opposite lifetime error to the round-3 one this spec was
+     written for) left all 162 e2e specs green. Once Leaflet has autopanned even once, every
+     subsequent movestart is filed as the app's own adjustment forever, so a rider who then
+     pans is not registered as taking over and the next growth jumps the map off their
+     position (measured: 40.76221 -> 40.83680).
+     A flag that must be true during one pan and false after it needs both halves asserted;
+     asserting only "an autopan does not read as the rider" leaves the half that says "and
+     afterwards the rider still does" to nobody. */
+  await page.evaluate(() => {
+    window.__moveStarts = 0;
+    map.on("movestart", () => {
+      window.__moveStarts += 1;
+    });
+  });
+  await page.locator("#map").focus();
+  await page.keyboard.press("ArrowRight");
+  expect(
+    await page.evaluate(() => window.__moveStarts),
+    "the arrow key must reach Leaflet, or the second half of this spec presses nothing",
+  ).toBeGreaterThan(0);
+
+  const afterRider = await growAndSettle(page, 40);
+  expect(
+    afterRider.underTheLegend,
+    "after an autopan, a REAL rider move must still read as the rider taking over",
+  ).toBe(true);
+  expect(afterRider.clearingMoveExists, "with a clearing move available, so declining it is a decision").toBe(true);
 });

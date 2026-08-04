@@ -212,6 +212,87 @@ function isPlacedRailroad(t) {
   return t.stop_id != null;
 }
 
+/* A4 ROUND 1: WHERE A POPUP SHOULD MOVE TO GET OUT FROM UNDER THE PAGE'S CHROME.
+   Pure geometry, here rather than in systems/shared.js so it can be reasoned about and
+   tested without a browser, which is the same split the rest of this file exists for. The
+   caller supplies three boxes and gets back a translation or null; it knows nothing about
+   Leaflet, the legend or the banner.
+   The first version of this lived inside the map file, only ever moved DOWN, and knew about
+   one obstacle. All three were wrong and all three were caught by measurement rather than by
+   reading: see the comment at panPopupClearOfChrome for what each cost. */
+const POPUP_CLEAR_GAP = 8; // the gap the layout uses between two surfaces that must not touch
+
+function boxesOverlap(a, b) {
+  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+}
+
+function shiftBox(box, dx, dy) {
+  return {
+    left: box.left + dx,
+    right: box.right + dx,
+    top: box.top + dy,
+    bottom: box.bottom + dy,
+  };
+}
+
+/* THE GEOMETRY, KEPT SEPARATE FROM THE MAP so it can be reasoned about and tested without
+   a browser: given where the popup is, what the obstacles are and how much room the map
+   has, which way should the world move and by how much? Returns null when the popup is
+   already clear or when no direction can clear it, and the difference between those two
+   is deliberately not encoded: both mean "do nothing", and a caller that treated them
+   differently would be inventing a distinction the rider cannot see. */
+function popupClearingShift(popup, obstacles, viewport) {
+  const blocking = obstacles.filter((box) => boxesOverlap(popup, box));
+  if (!blocking.length) return null;
+  const fits = (box) =>
+    box.left >= viewport.left && box.right <= viewport.right && box.top >= viewport.top && box.bottom <= viewport.bottom;
+
+  /* THE SEARCH, AND WHY IT IS A SEARCH RATHER THAN A FORMULA.
+     The first version costed each direction as "the most any blocking obstacle demands" and
+     discarded the result if it landed on something else. Round 2 showed that fights itself
+     two ways. Taking the max over every blocker turns two small obstacles into one enormous
+     move that leaves the viewport; discarding a landing collision throws away the answer
+     when the honest response is "then also step sideways". Together they could cancel the
+     desktop leftward move outright and leave the popup fully under the legend.
+     So each blocker is costed SEPARATELY, in each direction, and any collision the result
+     lands in is resolved on the OTHER axis. The candidate set is small (obstacles times four,
+     twice) and every candidate is checked against every obstacle before it can win, so the
+     search cannot return a move that does not actually clear. */
+  const axisMoves = (box, blockers) =>
+    blockers.flatMap((b) => [
+      { dx: b.left - box.right - POPUP_CLEAR_GAP, dy: 0 },
+      { dx: b.right - box.left + POPUP_CLEAR_GAP, dy: 0 },
+      { dx: 0, dy: b.top - box.bottom - POPUP_CLEAR_GAP },
+      { dx: 0, dy: b.bottom - box.top + POPUP_CLEAR_GAP },
+    ]);
+
+  const candidates = [];
+  for (const first of axisMoves(popup, blocking)) {
+    const moved = shiftBox(popup, first.dx, first.dy);
+    candidates.push({ move: first, moved });
+    const stillBlocking = obstacles.filter((box) => boxesOverlap(moved, box));
+    if (!stillBlocking.length) continue;
+    // The second axis only: a move along x is followed by a y move and vice versa, so the
+    // pair is always an L and never doubles back along the axis just cleared.
+    for (const second of axisMoves(moved, stillBlocking)) {
+      if ((first.dx !== 0) === (second.dx !== 0)) continue;
+      const move = { dx: first.dx + second.dx, dy: first.dy + second.dy };
+      candidates.push({ move, moved: shiftBox(popup, move.dx, move.dy) });
+    }
+  }
+
+  const accepted = candidates
+    // Re-checked against EVERY obstacle, not just the ones that were blocking: moving out
+    // from under the legend must not move under the banner.
+    .filter(({ moved }) => fits(moved) && !obstacles.some((box) => boxesOverlap(moved, box)))
+    .map(({ move }) => move);
+  if (!accepted.length) return null;
+  // The smallest accepted move, so the map shifts as little as the rider will tolerate.
+  return accepted.reduce((best, move) =>
+    Math.abs(move.dx) + Math.abs(move.dy) < Math.abs(best.dx) + Math.abs(best.dy) ? move : best,
+  );
+}
+
 // ---- Staleness thresholds, and the one test seam in this file (C6) ----
 //
 // WHY A SEAM EXISTS HERE AT ALL. The contract tier runs the REAL page against a
@@ -2025,8 +2106,55 @@ function watchMotionPreference(onChange, mql = null) {
   return () => query.removeEventListener("change", handler);
 }
 
+/* A4: VANISHING FOCUS, the decision half.
+
+   WHAT VANISHES AND WHY IT IS THE POPUP. A rider's focus can never be inside a marker
+   element: the factory builds every marker with keyboard:false, so there is no tabindex
+   and no tab stop, and A2 pinned that as the marker exclusion policy. Popups, though,
+   live in Leaflet's popupPane as a SEPARATE subtree, and every popup contains at least
+   Leaflet's own close button. So the thing that can be destroyed under a rider's fingers
+   is the popup, and the same is true of the alert banner's dismiss button.
+
+   THE PREDICATE IS THE ONE THE POPUP-REFRESH FIX PROVED OUT: did the subtree that is
+   about to be destroyed contain document.activeElement? Not "is a popup open", not "did
+   a vehicle leave" - the question is only ever whether the rider was holding something
+   that is going away. That is what makes this silent in the common case: a layer toggle
+   destroys every marker in a group, but the rider's focus is on the checkbox they just
+   activated, so the predicate is false and nothing is said. The announcement is earned by
+   a TRANSITION in the rider's own state, which is the same worthiness rule the live
+   regions have followed since A1.
+
+   Kept pure and here so node can test it without a DOM: the caller passes the subtree and
+   the currently focused element, and gets back the decision plus the wording. */
+function vanishingFocusPlan(subtree, active, { label = null, kind = "vehicle" } = {}) {
+  if (!subtree || !active) return { rescue: false, message: null };
+  const inside = subtree === active || (typeof subtree.contains === "function" && subtree.contains(active));
+  if (!inside) return { rescue: false, message: null };
+  return { rescue: true, message: vanishingFocusMessage(kind, label) };
+}
+
+/* The wording. The decisions block gave "The train you were following left the feed" and
+   "Alerts cleared"; the vehicle half is built from the marker's OWN accessible name
+   rather than from a hardcoded noun, because this app carries buses, boats and PATH
+   trains as well as subway trains and a fixed "train" would be false for most of them.
+   The name's leading clause is exactly the vehicle identity ("1 train", "M15 bus",
+   "Rockaway ferry"), because that is how buildMarkerName composes it.
+
+   Both sentences name where focus went. That is not decoration: a rider who was reading a
+   popup and is silently moved somewhere else has lost their place, and "focus moved to
+   the map" is the one piece of orientation that makes the move recoverable. */
+function vanishingFocusMessage(kind, label) {
+  if (kind === "alerts") return "Alerts cleared. Focus moved to the map.";
+  const lead = typeof label === "string" && label.trim() ? label.split(",")[0].trim() : null;
+  return lead
+    ? `The ${lead} you were following left the feed. Focus moved to the map.`
+    : "The vehicle you were following left the feed. Focus moved to the map.";
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
+    vanishingFocusPlan,
+    vanishingFocusMessage,
     esc, routeColor, lineColor, staleness, emptyFeedDecision, noteClockOffset,
     formatCountdown, trainLatLng, polylineCumLengths, pointAtArcLength, projectOntoRoute,
     computeRouteSlice, railroadColor, isPlacedRailroad, orderedRailroadBuckets,
@@ -2060,5 +2188,7 @@ if (typeof module !== "undefined" && module.exports) {
     degradedIdentities, neverDecoded, describeIdentity, sentenceList, statusAnnouncement,
     alertIdentities, bannerAnnouncement,
     motionAllowed, watchMotionPreference, REDUCED_MOTION_QUERY,
+    // A4: the popup-clearing geometry.
+    boxesOverlap, shiftBox, popupClearingShift, POPUP_CLEAR_GAP,
   };
 }

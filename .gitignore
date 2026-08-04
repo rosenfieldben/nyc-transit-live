@@ -34,6 +34,9 @@ playwright-report/
 blob-report/
 .playwright/
 
+# --- Agent scratch (transient git worktrees created for isolated review runs) ---
+.claude/worktrees/
+
 # --- OS / editor junk ---
 .DS_Store
 Thumbs.db

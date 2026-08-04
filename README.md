@@ -222,15 +222,18 @@ nyc-transit-live/
 ├── tests/e2e/               # hermetic Playwright smoke suite (dev/test only)
 │   ├── smoke.spec.js        # the scenarios; all network intercepted
 │   ├── stations.spec.js     # the station panel, including a keyboard-only walk
-│   ├── a11y.spec.js         # axe-core scan, scoped to the station panel
+│   ├── a11y.spec.js         # page-wide axe scan + the keyboard invariants
 │   ├── mock.js              # /api/* fixtures + basemap-tile stub
 │   ├── serve.js             # tiny static server for frontend/ (no backend)
 │   ├── playwright.config.js # chromium only, starts the static server
 │   └── fixtures/            # handcrafted JSON payloads
+├── tests/statement.test.js  # ACCESSIBILITY.md cites real tests, checked
+├── docs/reviews/            # adversarial-review adjudication records, one per phase
 ├── data/
 │   ├── airtrain_jfk.json    # committed AirTrain JFK fixture (geometry + scheduled headways)
 │   ├── gtfs_static/         # downloaded static subway GTFS (gitignored)
 │   └── cache/bus_routes/    # background-built bus route index (gitignored)
+├── ACCESSIBILITY.md         # what is measured, what is excepted, what is unchecked
 ├── .github/workflows/ci.yml # backend pytest + frontend node tests + e2e smoke
 ├── package.json             # dev-only: @playwright/test + @axe-core/playwright (the app is buildless)
 ├── railway.json             # Railway start command + healthcheck
@@ -243,9 +246,9 @@ nyc-transit-live/
 
 A live map is a picture, and a picture is not arrival information. The station
 panel is the same data as text: press **Stations** (or the skip link, which is the
-first thing keyboard focus lands on) to search every station the map knows across
-all six rail and ferry systems (Subway, LIRR, Metro-North, PATH, Ferry, AirTrain),
-pick one, and read its next arrivals as sentences, grouped the way the popups
+first thing keyboard focus lands on) to search the stations each loader registers
+as it draws them, across all six rail and ferry systems (Subway, LIRR, Metro-North,
+PATH, Ferry, AirTrain), pick one, and read its next arrivals as sentences, grouped the way the popups
 group them (by direction, or by route for ferries), each naming the route and
 spelling the countdown out in words. AirTrain says plainly
 that its numbers are scheduled headways rather than live tracking, because it
@@ -279,17 +282,26 @@ responds immediately but those two take effect the next time you load the page.
 a keyboard rider parked on a control has to survive that. When a popup you are reading
 refreshes, or the alert banner is rebuilt because the MTA reworded an incident, the
 control you were on gets focus back rather than dropping you at the top of the document.
-Two cases are not solved yet and are worth knowing about: if the vehicle whose popup you
-have open leaves the feed entirely, or the last agency-wide alert clears while you are on
-its dismiss button, the thing you were holding is genuinely gone and focus falls to the
-top of the page. One Tab from there reaches the skip link.
+When the thing you were holding is genuinely gone, because the vehicle left the feed or
+the last alert cleared, focus moves to the map and the page says so once: "The 1 train
+you were following left the feed. Focus moved to the map."
 
-What this does *not* yet cover: the map itself is still a picture, buses are not
-in the panel (their stops are not stations), and the rest of the page (legend,
-layer toggles, alerts list) is **unmeasured**. CI enforces an axe-core scan scoped
-to exactly the panel and its skip link (`tests/e2e/a11y.spec.js`); widening that
-gate to the whole page, along with a plain statement of what the page promises, is
-later work in this arc, as are map semantics and a mobile and contrast pass.
+**Escape** closes the topmost thing you are in, one surface per press: the popup first
+if you are in a popup, the panel first if you are in the panel. On a phone the station
+panel opens over the map and the page behind it goes `inert`, so nothing behind it is
+reachable, and Tab still runs off the end of the panel rather than looping. No keyboard
+trap has been found in any state the tests walk; "no trap anywhere" is a stronger claim
+than three walked states support, and ACCESSIBILITY.md says which three.
+
+**What is measured, and what is not.** CI enforces a page-wide axe-core scan at two
+widths across six states, plus keyboard invariants driven by a real Tab walk
+(`tests/e2e/a11y.spec.js`). The scan's five remaining undecidables each have a test
+that answers them by measurement instead. What is honestly *not* covered: no screen
+reader and no disabled rider has ever tested this page, it is checked in one browser
+engine, the map itself is still a picture, and buses are not in the panel because their
+stops are not stations. The full statement, with the test that proves every claim and
+the complete list of what is unchecked, is in
+[ACCESSIBILITY.md](ACCESSIBILITY.md).
 
 ## Setup
 
@@ -350,6 +362,41 @@ fixtures in `tests/e2e/fixtures/`; Leaflet is self-hosted under
 serves it (there is no CDN URL left to intercept), and the basemap tiles are
 stubbed. Nothing leaves the machine, so CI needs no network at test time. Time is frozen with Playwright's clock control, so the
 arrival countdowns and the staleness window are deterministic (no sleeps).
+
+#### Writing a spec: assert the state before asserting about it
+
+If a test's title says "with X open", "from inside Y" or "while Z is showing",
+call `expectState` from `tests/e2e/state.js` for that state **before** its own
+assertions:
+
+```js
+const { expectState } = require("./state");
+await expectState(page, ["one popup open", "focus inside the popup"], "A9j");
+```
+
+This is not ceremony. Four specs across three adversarial rounds claimed a state
+they never reached and passed anyway: a spec titled "closing a popup the rider
+was not in" that never closed a popup, one titled "the popup that owns the
+button" that only ever had one popup live, a keyboard walk that required station
+rows to be reachable in a state with no rows on screen, and an axe state named
+"popup with a cross-link" that scanned a popup with no cross-link. Every one of
+them was green. Reaching a state and asserting about a state are different acts,
+and only the second was ever being written down.
+
+Each witness is the smallest fact that is true in its state and false outside it,
+and it fails with a sentence naming what is absent rather than with a confusing
+mismatch twenty lines later. If the witness you need is not in `state.js`, add it
+there rather than inline: a witness written inline is one the next spec cannot
+reuse and the next reviewer cannot audit. The header of that file lists the four
+failures that paid for it.
+
+The sibling convention is `expectPopupState` in `tests/e2e/popup.js`, for the
+narrower question of whether a specific marker's popup is open. Leaflet leaves a
+closed popup in the DOM while it fades and never clears `map._popup`, so two of
+the three obvious ways to ask that question answer wrongly. Ask through the
+helper. In app code the same question is answered by `openPopupsOnMap()`, a
+register the map keeps itself; `map._popup` means "most recently opened", which
+is not the same thing and is never cleared on close.
 
 ## Data sources
 

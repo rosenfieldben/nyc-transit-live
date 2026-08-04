@@ -157,6 +157,19 @@ function scanKeydowns(src) {
     }
     bindings.push({ receiver: aliases.has(raw) ? "document" : raw, form: "addEventListener" });
   }
+  /* ROUND 4: A COMPUTED MEMBER IS A REGISTRATION THIS SCANNER CANNOT READ, and until now it
+     was one it could not SEE. `window["addEventListener"]("keydown", f)` contains no
+     `.addEventListener(` for the pattern above to match, and the literal name sits inside a
+     string, so a page-level Escape router written that way passed the whole node tier.
+     That is the silent-drop disease in its fifth costume, and the rule is unchanged: a shape
+     this file cannot classify is loud, never absent. The bracket is what is looked for, at a
+     position outside any string, so both `window["addEventListener"]` and `window[name]` are
+     caught without either being decoded. */
+  for (const m of code.matchAll(/\b(window|self|globalThis|document(?:\.\w+)?)\s*\[([^\]]{0,40})\]\s*\(/g)) {
+    if (insideAny(strings, m.index)) continue;
+    unclassified.push(`computed member call on ${m[1]}[${m[2].trim().slice(0, 30)}]`);
+  }
+
   return { bindings, unclassified };
 }
 
@@ -224,6 +237,24 @@ const KEYDOWN_CORPUS = [
   ['// document.addEventListener("keydown", f) in a comment', [], [], "round 3: a phantom in prose"],
   ["const s = 'document.addEventListener(keydown';", [], [], "round 3: a phantom in a string"],
   ["el.addEventListener(EVENT_NAME, f);", [], ["unclassified"], "a computed event name cannot be judged"],
+  [
+    'window["addEventListener"]("keydown", f);',
+    [],
+    ["unclassified"],
+    "round 4: a computed member call, which has no .addEventListener to match and hides the name in a string",
+  ],
+  [
+    "globalThis[REGISTER]('keydown', f);",
+    [],
+    ["unclassified"],
+    "round 4: the same shape with the method name in a variable",
+  ],
+  [
+    'const s = \'window["addEventListener"]("keydown"\';',
+    [],
+    [],
+    "round 4: and the same text inside a string is still prose",
+  ],
 ];
 
 test("A4: the keydown scanner reads every spelling the rounds invented", () => {

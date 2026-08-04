@@ -163,7 +163,17 @@ test.describe("with reduced motion requested, the map itself", () => {
       entry.marker.openPopup();
       const panned = document.querySelector(".leaflet-pan-anim") !== null;
       map.off("move", onMove);
-      return { moves: centres.length, distinct: new Set(centres).size, panAnimClass: panned };
+      // Measured from the popup rather than from the centre: an autopan's job is to put the
+      // popup inside the map, and the popup started with its top off the top edge.
+      const el = openPopupsOnMap()[0].getElement();
+      const p = el.getBoundingClientRect();
+      const m = document.getElementById("map").getBoundingClientRect();
+      return {
+        moves: centres.length,
+        distinct: new Set(centres).size,
+        panAnimClass: panned,
+        pannedIntoView: p.top >= m.top && p.bottom <= m.bottom && p.left >= m.left && p.right <= m.right,
+      };
     });
 
     // A pan may still HAPPEN (the popup must be brought into view, and suppressing that
@@ -171,6 +181,16 @@ test.describe("with reduced motion requested, the map itself", () => {
     // not happen is a multi-frame slide: it arrives in one step.
     expect(result.distinct, "the map must not travel through intermediate positions").toBeLessThanOrEqual(1);
     expect(result.panAnimClass, "Leaflet's pan animation class must never appear").toBe(false);
+    /* AND IT DID HAPPEN, which round 4 found this spec could not tell from "it did not".
+       Both assertions above are satisfied by a pan that never ran at all: suppressing
+       Leaflet's autopan outright — returning from the panBy wrapper without panning — left
+       all eight motion specs green, including this one, whose own comment says suppressing
+       it "would change what the rider can see, which this gate must never do". The sentence
+       was true and unasserted.
+       So the popup's position is asserted, which is the thing the pan exists to fix and the
+       only fact that separates instant from absent. A5g does the same for the panel's pan
+       with its "and it still got there" half; this is that half, here. */
+    expect(result.pannedIntoView, "and the popup really was brought inside the viewport").toBe(true);
   });
 
   test("A5f. that pan is now unanimated for EVERYONE, and this is the record of why", async ({ page }) => {

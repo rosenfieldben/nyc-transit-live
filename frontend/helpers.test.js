@@ -2533,6 +2533,25 @@ test("popupClearingShift goes DOWN at 375, where left would run off the screen",
   assert.equal(boxesOverlap(shiftBox(popup, shift.dx, shift.dy), legend), false);
 });
 
+test("popupClearingShift costs EVERY blocker, not just the first one it meets", () => {
+  /* ROUND 4: the round-2 fix — "each blocker costed SEPARATELY" — had no test that could
+     tell it from "cost only the first blocker". The three tests round 2 added kill the
+     max-over-all-blockers shape; a variant that seeds the candidate list from blocking[0]
+     alone passed all 161 node tests. Non-equivalent, and found by searching the space:
+     with both blockers costed the answer is dx 30; with only the first it is dx 30 dy 45,
+     a strictly larger move, which breaks the "cheapest that actually clears" contract the
+     function is built on. */
+  const popup = box(299, 322, 104, 171);
+  const a = box(182, 311, 116, 141);
+  const b = box(272, 321, 83, 172);
+  const viewport = box(0, 400, 0, 400);
+  const both = popupClearingShift(popup, [a, b], viewport);
+  assert.deepEqual(both, { dx: 30, dy: 0 }, "the cheapest move that clears both is one step sideways");
+  // And it really clears: the answer above is not merely smaller, it is correct.
+  assert.equal(boxesOverlap(shiftBox(popup, both.dx, both.dy), a), false);
+  assert.equal(boxesOverlap(shiftBox(popup, both.dx, both.dy), b), false);
+});
+
 test("popupClearingShift will not move a popup out from under the legend and under the banner", () => {
   // The third defect the round found: the old guard knew only the map's height, so a tall
   // popup was panned down onto the alert banner, which paints over the popup pane.

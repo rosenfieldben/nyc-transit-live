@@ -173,12 +173,12 @@ Three things stop that gate from being decoration:
   state has a popup and a banner open together, so the banner half is proved by
   the geometry rather than in the browser.
 - Once the rider moves the map themselves, that correction stands down: the app
-  does not tidy a position the rider chose. `layout.spec.js A4j`, with
-  `A4k` as its control — the same growth with no rider drag does move the popup
+  does not tidy a position the rider chose. `layout.spec.js A4j`. Its control is
+  `layout.spec.js A4k`: the same growth with no rider drag *does* move the popup
   clear, so the pair pins a decision rather than a correction that never runs.
-  "The rider moved it" means a real drag or zoom, not a changed centre:
-  Leaflet's own nudge of an overflowing popup is the app's adjustment, not the
-  rider's hand, and `A4l` pins that it is not mistaken for one.
+  "The rider moved it" means a real drag or zoom, not a changed centre.
+  Leaflet's own nudge of an overflowing popup is the app's adjustment rather than
+  the rider's hand, and `layout.spec.js A4l` pins that it is not mistaken for one.
 
 ### Motion
 

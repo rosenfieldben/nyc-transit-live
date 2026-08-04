@@ -362,6 +362,41 @@ serves it (there is no CDN URL left to intercept), and the basemap tiles are
 stubbed. Nothing leaves the machine, so CI needs no network at test time. Time is frozen with Playwright's clock control, so the
 arrival countdowns and the staleness window are deterministic (no sleeps).
 
+#### Writing a spec: assert the state before asserting about it
+
+If a test's title says "with X open", "from inside Y" or "while Z is showing",
+call `expectState` from `tests/e2e/state.js` for that state **before** its own
+assertions:
+
+```js
+const { expectState } = require("./state");
+await expectState(page, ["one popup open", "focus inside the popup"], "A9j");
+```
+
+This is not ceremony. Four specs across three adversarial rounds claimed a state
+they never reached and passed anyway — a spec titled "closing a popup the rider
+was not in" that never closed a popup, one titled "the popup that owns the
+button" that only ever had one popup live, a keyboard walk that required station
+rows to be reachable in a state with no rows on screen, and an axe state named
+"popup with a cross-link" that scanned a popup with no cross-link. Every one of
+them was green. Reaching a state and asserting about a state are different acts,
+and only the second was ever being written down.
+
+Each witness is the smallest fact that is true in its state and false outside it,
+and it fails with a sentence naming what is absent rather than with a confusing
+mismatch twenty lines later. If the witness you need is not in `state.js`, add it
+there rather than inline: a witness written inline is one the next spec cannot
+reuse and the next reviewer cannot audit. The header of that file lists the four
+failures that paid for it.
+
+The sibling convention is `expectPopupState` in `tests/e2e/popup.js`, for the
+narrower question of whether a specific marker's popup is open. Leaflet leaves a
+closed popup in the DOM while it fades and never clears `map._popup`, so two of
+the three obvious ways to ask that question answer wrongly. Ask through the
+helper. In app code the same question is answered by `openPopupsOnMap()`, a
+register the map keeps itself; `map._popup` means "most recently opened", which
+is not the same thing and is never cleared on close.
+
 ## Data sources
 
 - **Buses** — MTA Bus Time `VehiclePositions` feed (requires key). Real lat/lon.

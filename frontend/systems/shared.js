@@ -90,7 +90,7 @@ map.on("autopanstart", () => {
    adjustment apart from the rider's hand. Clearing it first meant the flag was already false
    by the time the pan it describes announced itself, so every autopan was filed as the rider
    taking over. Measured at 375: after Leaflet autopanned an overflowing popup back into
-   view, a later arrivals refresh that pushed it under the legend was declined — the app
+   view, a later arrivals refresh that pushed it under the legend was declined. The app
    thought the position was the rider's, and it was the app's own. A4l pins it. */
 const leafletPanBy = map.panBy.bind(map);
 map.panBy = (offset, options) => {

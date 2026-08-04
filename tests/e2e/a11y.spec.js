@@ -30,7 +30,7 @@ const { expectState } = require("./state");
 
 /* THE GATE'S SCAN, IN ONE PLACE, because A1l's whole job is to prove THIS scan has teeth.
    Round 4: A1l built its own AxeBuilder, so it measured axe-core rather than the gate, and
-   the two could drift without either noticing. They cannot drift now — re-scoping the gate
+   the two could drift without either noticing. They cannot drift now: re-scoping the gate
    re-scopes the spec that checks the gate. */
 const scanPage = (page) => new AxeBuilder({ page }).analyze();
 
@@ -292,8 +292,8 @@ const STATES = [
       /* ROUND 4: THE ONE THING THIS STATE'S NAME PROMISES, ASSERTED. Neutering
          closeStationsPanel so the panel never closes left all fifteen a11y specs green, and
          this instantiation quietly became a second copy of "panel list". The two pages
-         genuinely differ to axe — 516 nodes with the skip link reported as an incomplete,
-         548 without it — so an accessibility defect that exists only on the panel-closed
+         genuinely differ to axe (516 nodes with the skip link reported as an incomplete,
+         548 without it), so an accessibility defect that exists only on the panel-closed
          page, which is the app's default at 375 and where a 1280 rider lands after closing
          the drawer, could never be caught here. */
       await expectState(page, "panel closed", "the gate's map-alone state");
@@ -425,8 +425,8 @@ const STATES = [
    runs out of sixteen. A gate whose verdict depends on how fast the machine is is not a gate.
 
    AND IT IS NOT A POPUP PROBLEM, which is why the wait lives here rather than in that one
-   state's reach(). The same-class mutation — a three-second fade-in on the ALERT BANNER,
-   which does not animate today — reddens the banner state exactly the same way. Any surface
+   state's reach(). The same-class mutation (a three-second fade-in on the ALERT BANNER,
+   which does not animate today) reddens the banner state exactly the same way. Any surface
    that ever animates in would silently start being measured against whatever is behind it.
 
    So the gate waits for the document to stop animating, and says what it was waiting for.
@@ -506,7 +506,7 @@ test("A1z. the deciders: every named undecidable is answered by measurement", as
 
   /* AND A POPUP IS OPENED, BECAUSE THE DECIDER SAYS SO. Round 4: shape 3 of
      UNDECIDABLE_SHAPES excuses BOTH `.leaflet-control-zoom-out span` and
-     `.leaflet-popup-close-button span`, and its decider sentence names both — but this spec
+     `.leaflet-popup-close-button span`, and its decider sentence names both. But this spec
      never opened a popup, so the close glyph did not exist while it ran. Measured: the popup's
      only Close control recoloured to #f2f2f2 (1.09:1 against the popup, effectively invisible)
      left all 162 specs green, because axe downgrades a one-character glyph to `incomplete`,
@@ -542,7 +542,7 @@ test("A1z. the deciders: every named undecidable is answered by measurement", as
        to 1.14:1 passed the whole suite.
 
        WHICH SHAPE, THOUGH. Round 3: this read querySelector("rect, circle, path, polygon"),
-       which is FIRST IN DOCUMENT ORDER, and document order is paint order in SVG — so it
+       which is FIRST IN DOCUMENT ORDER, and document order is paint order in SVG, so it
        reads the BOTTOM shape while a rider sees the top one. It is right today only because
        every marker in this app happens to be one shape and one glyph; the moment a marker
        gains a halo, a shadow or a second plate, the decider silently starts measuring a
@@ -553,7 +553,7 @@ test("A1z. the deciders: every named undecidable is answered by measurement", as
        answer is the LAST of them, because later siblings paint over earlier ones.
 
        AND NOTHING HERE IS ALLOWED TO GO QUIET. A glyph with no shape under it, a backing
-       painted fill="none", a colour this parser cannot read — each used to produce NaN,
+       painted fill="none", a colour this parser cannot read: each used to produce NaN,
        and `NaN < 4.5` is false, so an unmeasurable glyph passed as if it had been measured.
        Every one of them now returns a null ratio with a `why`, and null is a failure. */
     const glyphs = [...document.querySelectorAll("svg text")].map((text) => {
@@ -851,7 +851,7 @@ function assertWalkInvariants(walk, label, floor) {
    Same predicate the walk records its stops with, so the two halves cannot drift.
    AND WHAT THE FILTER REMOVES, THE CALLER MUST STILL VOUCH FOR. Two filters (a box, an inert
    ancestor) sit between the owned list and the requirement, so a control can leave the
-   requirement silently and the check still passes — which is precisely how ".station-row"
+   requirement silently and the check still passes, which is precisely how ".station-row"
    spent a round in the list without ever being required of anything. `must` is the caller's
    claim about which controls this state genuinely offers; a name in it that the filters drop
    is a loud failure rather than an invisible subtraction. */

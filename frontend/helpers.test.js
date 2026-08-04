@@ -2534,7 +2534,7 @@ test("popupClearingShift goes DOWN at 375, where left would run off the screen",
 });
 
 test("popupClearingShift costs EVERY blocker, not just the first one it meets", () => {
-  /* ROUND 4: the round-2 fix — "each blocker costed SEPARATELY" — had no test that could
+  /* ROUND 4: the round-2 fix ("each blocker costed SEPARATELY") had no test that could
      tell it from "cost only the first blocker". The three tests round 2 added kill the
      max-over-all-blockers shape; a variant that seeds the candidate list from blocking[0]
      alone passed all 161 node tests. Non-equivalent, and found by searching the space:

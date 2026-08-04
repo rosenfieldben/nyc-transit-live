@@ -102,11 +102,11 @@ test("A9a. one Escape closes the popup and leaves the panel; the second closes t
   //
   // ROUND 4 MEASURED WHAT THIS SPEC AND A9c CAN AND CANNOT TELL, and the comment now says
   // so rather than implying more. Reversing the outside-both rung order reddens this spec,
-  // A9c, A9f and A9l — four, so the ORDER is well pinned. What neither this spec nor A9c
-  // can see is the ladder DECLINING the popup rung and letting Leaflet's own container
+  // A9c, A9f and A9l: four specs, so the ORDER is well pinned. What neither this spec nor
+  // A9c can see is the ladder DECLINING the popup rung and letting Leaflet's own container
   // handler close the popup instead: from the map container the two are indistinguishable,
-  // and it is A9f, A9h and A9l — the specs that stand the rider somewhere Leaflet's handler
-  // does not reach — that catch it. That is a division of labour, not a hole, and writing
+  // and it is A9f, A9h and A9l, the specs that stand the rider somewhere Leaflet's handler
+  // does not reach, that catch it. That is a division of labour, not a hole, and writing
   // it down is what stops the next reader trusting this spec for a claim it cannot make.
   await page.locator("#map").focus();
 
@@ -162,7 +162,7 @@ test("A9b. Escape with nothing transient open changes nothing at all", async ({ 
 
   /* THE KEY IS WATCHED ON ITS WAY PAST, because "leaves the event entirely alone" is not
      something a before/after picture of the map can see. Round 4 deleted the one line that
-     implements it — `if (!closed) return;` — and this spec stayed green, along with every
+     implements it (`if (!closed) return;`) and this spec stayed green, along with every
      other escape spec: the ladder called preventDefault and stopPropagation on a key it had
      done nothing with, and nothing noticed. Leaflet's own Escape branch happens to return
      early when there is no popup, so today there is no rider-visible consequence; what the
@@ -241,7 +241,7 @@ test("A9c. one Escape never closes two surfaces, from the position where Leaflet
 
 /* A9d's THIRD LEG IS REDUNDANT, AND ROUND 4 SAYS SO OUT LOUD. Its "from NEITHER, the popup
    goes first" leg survives both the order reversal AND a rung that closes both surfaces at
-   once — measured — because by the time it runs the panel is already shut and there is
+   once (measured) because by the time it runs the panel is already shut and there is
    nothing left to order. The ordering it names is pinned by A9a, A9c, A9f and A9l; this leg
    is a dispatch check, not an order check. Kept because the three legs together are what
    make the "same logic from every position" claim, and corrected because a leg that reads
@@ -593,7 +593,7 @@ test("A9n. with the fade off, the close button still hands the rider the map", a
      Leaflet binds `function (t) { stop(t); this.close(); }` to the button at _initLayout,
      which is BEFORE our popupopen handler runs, so without capture Leaflet's listener goes
      first and the popup is already closed by the time the app decides where focus goes.
-     That decision needs the rider to still be inside the popup — and they usually still
+     That decision needs the rider to still be inside the popup, and they usually still
      are, because DivOverlay.onRemove defers the container's removal by 200ms when the map
      is fade-animated. The focus contract was riding on a fade timeout.
 
@@ -643,8 +643,8 @@ test("A9o. Escape from inside the banner leaves the banner alone", async ({ page
 
      A9a's last line presses Escape with the rider on the MAP and checks the banner survives,
      which catches a banner added as a third FALLBACK rung. Round 4 added it as a rider's-own-
-     surface rung instead — checked before transientHoldingFocus, so it fires only when focus
-     is inside the banner — and every escape and vanish spec stayed green, because no spec
+     surface rung instead, checked before transientHoldingFocus so it fires only when focus
+     is inside the banner, and every escape and vanish spec stayed green, because no spec
      ever pressed Escape from in there.
 
      The phase decision is explicit that dismissing the alert strip stays a DELIBERATE act:
@@ -683,7 +683,7 @@ test("A9p. Escape closes the popup the rider is standing in, not whichever is to
      closeOpenPopup asks popupContaining(document.activeElement) BEFORE falling back to the
      topmost, and map.js's own comment says why: "closing the topmost would be the recency
      answer again, one level up from the field this file stopped reading". Deleting that
-     first clause — taking the topmost always — left all fourteen escape specs green, because
+     first clause (taking the topmost always) left all fourteen escape specs green, because
      no spec ever had two popups live while the rider stood in one of them. A9m pins exactly
      this for the close BUTTON; the key had nobody.
 

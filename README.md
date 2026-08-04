@@ -375,7 +375,7 @@ await expectState(page, ["one popup open", "focus inside the popup"], "A9j");
 ```
 
 This is not ceremony. Four specs across three adversarial rounds claimed a state
-they never reached and passed anyway — a spec titled "closing a popup the rider
+they never reached and passed anyway: a spec titled "closing a popup the rider
 was not in" that never closed a popup, one titled "the popup that owns the
 button" that only ever had one popup live, a keyboard walk that required station
 rows to be reachable in a state with no rows on screen, and an axe state named

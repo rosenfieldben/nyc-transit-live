@@ -634,7 +634,7 @@ test("A4i. closing the docked panel gives the map its column back", async ({ pag
 /* ---------------- A4j / A4k: the popup correction, and when it stands down ----------------
 
    REBUILT IN ROUND 3, BECAUSE THE FIRST VERSION WAS FLAKY AND VACUOUS AT THE SAME TIME.
-   Deleting its subject — the `if (riderOwnsTheView) return` line the whole spec is about —
+   Deleting its subject (the `if (riderOwnsTheView) return` line the whole spec is about)
    left it passing five to seven runs in ten. Both halves of that have one cause: it waited
    for the correction with expect.poll on a condition that was ALREADY TRUE before the
    resize, so what it actually measured was whether the ResizeObserver happened to fire
@@ -656,7 +656,7 @@ async function popupOnTheMapAt375(page) {
   await page.setViewportSize(RIDER_MOVES_THE_MAP);
   await installMocks(page);
   /* PAUSED, NOT MERELY FIXED, AND THAT IS THE FLAKE. setFixedTime pins Date and leaves the
-     timers running, so the fifteen-second refresh still lands — and a refresh that rebuilds
+     timers running, so the fifteen-second refresh still lands, and a refresh that rebuilds
      the railroad markers closes and reopens the popup, which resets the very flag these two
      specs are about. Measured: one or two runs in ten failed on the correction firing after
      a legitimate takeover, and the takeover had been legitimately forgotten in between.
@@ -720,7 +720,7 @@ const growAndSettle = (page, by) =>
             // ASKED OF THE APP'S OWN GEOMETRY, which is the only honest way to say "it could
             // have moved this and chose not to". popupClearingShift returns null when no
             // move clears every obstacle AND keeps the popup inside the map, and null is not
-            // a decision — it is an impossibility. See the note in A4j.
+            // a decision: it is an impossibility. See the note in A4j.
             clearingMoveExists: !!popupClearingShift(a, popupObstacles(), container.getBoundingClientRect()),
           });
         });
@@ -755,7 +755,7 @@ test("A4j. once the rider moves the map, the popup correction stands down", asyn
   /* Bottom-left of the viewport is map and only map at this width: the legend is top-right,
      the popup is mid-screen and the station panel is shut.
      DOWN AND TO THE LEFT, and the direction is load-bearing. The first draft dragged right,
-     which pushed the popup's right edge from 370 to 390 — past the map container's 375 — and
+     which pushed the popup's right edge from 370 to 390, past the map container's 375, and
      popupClearingShift refuses any move that would leave the popup outside the map. There
      was no clearing move to decline, so deleting the stand-down guard changed nothing and
      the spec passed 20/20 against a build with its subject removed. Dragging left keeps a
@@ -786,7 +786,7 @@ test("A4j. once the rider moves the map, the popup correction stands down", asyn
 
   const after = await growAndSettle(page, 80);
   // THE ASSERTION, in the terms a rider sees: the popup is under the legend and the app left
-  // it there. This is the fact Leaflet's own autopan cannot fake — an autopan pushes an
+  // it there. This is the fact Leaflet's own autopan cannot fake: an autopan pushes an
   // overflowing popup back DOWN into the viewport, deeper under the legend, never clear of it.
   expect(after.underTheLegend, "the app must not tidy a position the rider chose").toBe(true);
   // AND IT DECLINED SOMETHING IT COULD HAVE DONE. Without this the assertion above is
@@ -805,7 +805,7 @@ test("A4j. once the rider moves the map, the popup correction stands down", asyn
   }
 
   /* A SECOND GROWTH, BECAUSE ONE PROVES ONLY THAT THE FIRST WAS DECLINED. Round 4: making the
-     stand-down ONE-SHOT — consumed by the first post-takeover resize and forgotten — passed
+     stand-down ONE-SHOT (consumed by the first post-takeover resize and forgotten) passed
      this spec 15 runs out of 15, because the spec only ever grew the popup once. What that
      costs a rider is the original defect delayed by one refresh: they drag the map to their
      own neighbourhood, the next arrivals refresh is correctly declined, and the one fifteen
@@ -819,9 +819,9 @@ test("A4j. once the rider moves the map, the popup correction stands down", asyn
 
 test("A4m. a rider who pans with the arrow keys owns the view too", async ({ page }) => {
   /* THE RIDER THIS PHASE IS FOR, and until round 4 the one whose takeover was never measured.
-     Every stand-down spec in this phase drives page.mouse. Deleting the movestart handler —
-     one of the guard's three intent producers, and the only one a keyboard pan reaches, since
-     Leaflet's Keyboard handler goes through panBy and fires neither dragstart nor zoomstart —
+     Every stand-down spec in this phase drives page.mouse. Deleting the movestart handler,
+     one of the guard's three intent producers and the only one a keyboard pan reaches (since
+     Leaflet's Keyboard handler goes through panBy and fires neither dragstart nor zoomstart),
      left ALL 162 e2e specs green. Measured: the rider's centre thrown from 40.71955 to
      40.74036 by the next popup growth, with a clearing move available, so the app really did
      choose to move.
@@ -877,8 +877,8 @@ test("A4l. Leaflet's own autopan is not the rider taking over", async ({ page })
   /* THE DEFECT THE STAND-DOWN GUARD CREATED, found by measuring the guard rather than by
      reading it. The guard tells the rider's hand from the app's own adjustment by watching
      movestart and ignoring the ones that happen while Leaflet is autopanning. The flag that
-     says "Leaflet is autopanning" was cleared one line too early — before the panBy that
-     fires the movestart — so it was already false when the handler asked, and every autopan
+     says "Leaflet is autopanning" was cleared one line too early, before the panBy that
+     fires the movestart, so it was already false when the handler asked, and every autopan
      was filed as the rider taking over.
 
      What that costs a rider: Leaflet nudges a popup that overflows the viewport back into
@@ -926,8 +926,8 @@ test("A4l. Leaflet's own autopan is not the rider taking over", async ({ page })
   ).toBe(false);
 
   /* AND THE OTHER DIRECTION, WHICH THE SAME ONE FLAG DECIDES. Round 4: never clearing
-     leafletAutoPanning at all — the opposite lifetime error to the round-3 one this spec was
-     written for — left all 162 e2e specs green. Once Leaflet has autopanned even once, every
+     leafletAutoPanning at all (the opposite lifetime error to the round-3 one this spec was
+     written for) left all 162 e2e specs green. Once Leaflet has autopanned even once, every
      subsequent movestart is filed as the app's own adjustment forever, so a rider who then
      pans is not registered as taking over and the next growth jumps the map off their
      position (measured: 40.76221 -> 40.83680).

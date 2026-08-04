@@ -183,7 +183,7 @@ test.describe("with reduced motion requested, the map itself", () => {
     expect(result.panAnimClass, "Leaflet's pan animation class must never appear").toBe(false);
     /* AND IT DID HAPPEN, which round 4 found this spec could not tell from "it did not".
        Both assertions above are satisfied by a pan that never ran at all: suppressing
-       Leaflet's autopan outright — returning from the panBy wrapper without panning — left
+       Leaflet's autopan outright (returning from the panBy wrapper without panning) left
        all eight motion specs green, including this one, whose own comment says suppressing
        it "would change what the rider can see, which this gate must never do". The sentence
        was true and unasserted.

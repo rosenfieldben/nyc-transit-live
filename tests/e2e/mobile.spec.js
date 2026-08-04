@@ -790,8 +790,8 @@ test("A6o. closing un-inerts the background BEFORE it restores focus", async ({ 
       inert: document.getElementById("panel").inert,
       active: document.activeElement.id,
       // ROUND 4: THE WHOLE BACKGROUND, not the one container that happens to hold the focus
-      // target. A partial release — walking the focus target's own ancestors back to life and
-      // leaving the rest inert — passed all 21 mobile specs, order untouched. What it costs a
+      // target. A partial release (walking the focus target's own ancestors back to life and
+      // leaving the rest inert) passed all 21 mobile specs, order untouched. What it costs a
       // rider is permanent: after one open-and-close on a phone, #map, #stations-skip and
       // #alert-banner stay inert for the session, so the map loses the stop Leaflet binds
       // arrow-key panning to, the skip link leaves the tab order, and the Service alerts
@@ -941,7 +941,7 @@ test("A6p. inertness follows the 700px boundary in both directions", async ({ pa
      ENTERING direction. Round 4 found that every other crossing here also crosses the 1100
      dock boundary, where applyStationsDocking re-applies inertness on its own, so the 700
      listener's entering branch was covered by nobody: a listener rewritten to
-     `if (!e.matches) applyOverlayInertness()` — handling only the way OUT of mobile — passed
+     `if (!e.matches) applyOverlayInertness()`, handling only the way OUT of mobile, passed
      all 21 mobile specs, while the mirror image died at the 701 step above.
      701 to 700 crosses no other breakpoint, so this step is the 700 listener or nothing. The
      rider is anyone narrowing a small tablet or a window from 701 to 700 with the panel open;

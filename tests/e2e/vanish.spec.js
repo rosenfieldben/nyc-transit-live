@@ -101,7 +101,7 @@ test("A8a. a followed vehicle ageing out of the feed lands focus on the map, and
     /^The .+ you were following left the feed\. Focus moved to the map\.$/,
   );
   /* AND IT NAMES THE THING THAT VANISHED, which `.+` above does not require. Round 4:
-     dropping the label from the rescue call — one deleted property — still produced "The
+     dropping the label from the rescue call, one deleted property, still produced "The
      vehicle you were following left the feed", still matched that pattern, and left the
      whole vanish and announce suites green. The message is composed from the marker's OWN
      accessible name on purpose, because this app carries buses, boats and PATH trains as
@@ -366,7 +366,7 @@ test("A8i. the last alert clearing while the rider is typing says nothing and mo
 
      A8b and A8g pin the silence half on the VEHICLE path. On the banner path only the
      rescues were pinned (A8d, A8e, A8h), so the door could be rewritten to fire on the CAUSE
-     — "a live strip was torn down" — instead of on the RIDER, and nothing would notice.
+     ("a live strip was torn down") instead of on the RIDER, and nothing would notice.
      Measured: keying both branches on the strip's own state rather than on where focus is
      left all 162 e2e specs and all 167 node tests green.
 
@@ -374,7 +374,7 @@ test("A8i. the last alert clearing while the rider is typing says nothing and mo
      earned by a transition in the RIDER'S own state, not by every event that happens to be
      true". A screen-reader or keyboard rider typing a station name when the last agency-wide
      alert clears on a background poll would be yanked out of the search box onto the map and
-     told "Alerts cleared. Focus moved to the map." — a WCAG 3.2.2 change of context nobody
+     told "Alerts cleared. Focus moved to the map.": a WCAG 3.2.2 change of context nobody
      asked for, plus speech nobody earned.
 
      The rider is in #stations-search rather than on the toggle, because the search box is

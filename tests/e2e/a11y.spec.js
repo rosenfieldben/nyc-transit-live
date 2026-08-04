@@ -26,6 +26,7 @@ const AxeBuilder = require("@axe-core/playwright").default;
 const { installMocks, json } = require("./mock");
 const fx = require("./fixtures/api");
 const { danglingCitations, citedPairs } = require("../specids");
+const { expectState } = require("./state");
 
 const DESKTOP = { width: 1280, height: 720 };
 const PHONE = { width: 375, height: 667 };
@@ -348,8 +349,7 @@ const STATES = [
         if (!placed) throw new Error("the fixture no longer has a placed railroad train to cross-link");
         placed.marker.openPopup();
       });
-      await expect(page.locator(".leaflet-popup-content")).toBeVisible();
-      await expect(page.locator(".leaflet-popup-content .popup-crosslink")).toBeVisible();
+      await expectState(page, ["one popup open", "popup has a cross-link"], "the gate's cross-link state");
     },
     // The cross-link is named as a target, so the anti-vacuity check fails if the scan
     // stops reaching it. That is the half the first draft was missing: the state reached
@@ -661,6 +661,74 @@ function assertWalkInvariants(walk, label, floor) {
   return stops;
 }
 
+/* THE OTHER HALF: THE CONTROLS THAT MUST BE STOPS ARE STILL STOPS.
+   Every invariant in assertWalkInvariants is a property of whatever the walk HAPPENS to
+   find, so all of them hold vacuously for a control that has quietly left the tab order.
+   Measured by mutation in round 1: tabindex="-1" on all seven layer toggles removed every
+   layer control from keyboard reach and all 153 e2e tests stayed green.
+   THE LIST IS EXPLICIT, AND THE FIRST VERSION OF THIS COMMENT CLAIMED OTHERWISE. It said the
+   list was "derived from the page", which it is not. A genuinely derived list is not
+   available, because "every focusable thing" includes Leaflet's own controls and the map's
+   attribution links, which this app does not own and cannot promise. What is available is an
+   explicit list checked for BEING REACHED, plus the discipline that adding a control means
+   adding it here.
+   VISIBLE AND LIVE, KEYED THE WAY THE WALK KEYS ITS STOPS. Controls that exist in some states
+   and not others are filtered by their box rather than named twice, so this is honest in
+   whichever state it is called from; and round 3 found the two sides keyed differently, the
+   check pushing a literal selector while the walk recorded ids, so ".station-row" could only
+   ever fail. Both sides now produce id-or-first-class.
+   INERT IS SUBTRACTED, and it has to be, because unreachable is what inert MEANS. With the
+   375 overlay up, twelve owned controls are still painted behind it and every one of them is
+   deliberately out of the tab order; requiring them would be requiring the bug A4 fixed.
+   Same predicate the walk records its stops with, so the two halves cannot drift.
+   AND WHAT THE FILTER REMOVES, THE CALLER MUST STILL VOUCH FOR. Two filters (a box, an inert
+   ancestor) sit between the owned list and the requirement, so a control can leave the
+   requirement silently and the check still passes — which is precisely how ".station-row"
+   spent a round in the list without ever being required of anything. `must` is the caller's
+   claim about which controls this state genuinely offers; a name in it that the filters drop
+   is a loud failure rather than an invisible subtraction. */
+async function assertOwnedControlsReachable(page, walk, label, must = []) {
+  const required = await page.evaluate(() => {
+    const owned = [
+      "#stations-skip",
+      "#map",
+      "#stations-toggle",
+      "#legend-toggle",
+      "#stations-search",
+      "#stations-close",
+      "#alert-banner-dismiss",
+      "#toggles input",
+      "#route-clear",
+      ".station-row",
+    ];
+    const key = (el) => (el.id ? el.id : (el.className || "").toString().split(" ")[0]);
+    const seen = new Set();
+    for (const sel of owned) {
+      for (const el of document.querySelectorAll(sel)) {
+        const box = el.getBoundingClientRect();
+        if (box.width > 0 && box.height > 0 && !el.closest("[inert]")) seen.add(key(el));
+      }
+    }
+    return [...seen];
+  });
+
+  const missing = must.filter((k) => !required.includes(k));
+  expect(
+    missing,
+    `${label}: this state was declared to offer these controls and does not, so the ` +
+      `reachability check below would have been silently narrower than it claims. Either the ` +
+      `state is not the one the spec set up, or the control is hidden or inert here.`,
+  ).toEqual([]);
+
+  const walked = new Set(walk.stops.flatMap((s) => [s.id, s.cls].filter(Boolean)));
+  const unreachable = required.filter((k) => !walked.has(k));
+  expect(
+    unreachable,
+    `${label}: these controls are visible and live but not reachable by Tab. A control that ` +
+      `leaves the tab order is invisible to every other invariant in this spec.`,
+  ).toEqual([]);
+}
+
 for (const viewport of [DESKTOP, PHONE]) {
   test(`A1y. keyboard invariants at ${viewport.width}`, async ({ page }) => {
     await page.setViewportSize(viewport);
@@ -678,6 +746,19 @@ for (const viewport of [DESKTOP, PHONE]) {
     );
     expect(positive, `${viewport.width}: a positive tabindex reorders the whole page`).toEqual([]);
 
+    /* ROUND 3: .station-row WAS ADDED TO THE OWNED LIST AND WAS INERT, because no walk ever
+       had rows on screen when the check ran. An entry in a required-controls list that cannot
+       exist is worse than no entry: it reads as coverage.
+       AT DESKTOP THE PANEL IS DOCKED, so searching it adds rows to the page the default walk
+       already crosses. At 375 opening the panel IS the overlay state, and doing it here would
+       turn this into a second overlay walk: measured, the default walk fell from sixteen
+       stops to three. So the rows are covered at 375 by the overlay walk below, which is
+       where they exist, and the visible-only filter makes this honest in both. */
+    if (viewport === DESKTOP) {
+      await page.locator("#stations-search").fill("times");
+      await expectState(page, ["panel open", "panel results listed"], "A1y default walk at 1280");
+    }
+
     await resetFocus(page);
     const walk = await tabWalk(page);
     // The floors are anti-vacuity guards, set to what each state genuinely offers rather
@@ -691,55 +772,20 @@ for (const viewport of [DESKTOP, PHONE]) {
       `${viewport.width}: the skip link must be the first stop or it skips nothing`,
     ).toBe("stations-skip");
 
-    /* AND THE OTHER HALF: THE CONTROLS THAT MUST BE STOPS ARE STILL STOPS.
-       Every assertion above is a property of whatever the walk HAPPENS to find, so all of
-       them hold vacuously for a control that has quietly left the tab order. Measured by
-       mutation in the adversarial round: adding tabindex="-1" to all seven layer toggles
-       removed every layer control from keyboard reach and all 153 e2e tests stayed green.
-       That is the whole page's layer switching, gone, with a green build.
-       So the walk is also checked for PRESENCE against the controls this app owns.
-       THE LIST IS EXPLICIT, AND THE FIRST VERSION OF THIS COMMENT CLAIMED OTHERWISE. It said
-       the list was "derived from the page", which it is not: it is written down here, and
-       round 2 pointed out that a control outside it can still leave the keyboard path with
-       the suite green. A genuinely derived list is not available, because "every focusable
-       thing" includes Leaflet's own controls and the map's attribution links, which this app
-       does not own and cannot promise. What is available is an explicit list that is checked
-       for BEING REACHED, plus the discipline that adding a control means adding it here.
-       Controls that only exist in some states are filtered by their box rather than named
-       twice, and the popup's own controls are walked by the popup-open walk below, which is
-       where they exist. */
-    const reachable = await page.evaluate(() => {
-      const owned = [
-        "#stations-skip",
-        "#map",
-        "#stations-toggle",
-        "#legend-toggle",
-        "#stations-search",
-        "#stations-close",
-        "#alert-banner-dismiss",
-        "#toggles input",
-        "#route-clear",
-        ".station-row",
-      ];
-      const seen = [];
-      for (const sel of owned) {
-        for (const el of document.querySelectorAll(sel)) {
-          // Only controls a rider can actually see: #stations-close is display:none above
-          // the breakpoint and #route-clear only exists while a bus route is drawn, so
-          // requiring them everywhere would be requiring the page to be a different page.
-          const box = el.getBoundingClientRect();
-          if (box.width > 0 && box.height > 0) seen.push(el.id || sel);
-        }
-      }
-      return seen;
-    });
-    const walked = new Set(walk.stops.map((s) => s.id).filter(Boolean));
-    const unreachable = reachable.filter((id) => !walked.has(id));
-    expect(
-      unreachable,
-      `${viewport.width}: these controls are visible but not reachable by Tab. A control ` +
-        `that leaves the tab order is invisible to every other invariant in this spec.`,
-    ).toEqual([]);
+    // WHAT EACH DEFAULT STATE GENUINELY OFFERS, claimed out loud, and the claim was wrong
+    // the first time in a way worth keeping: #stations-close is display:none above the
+    // breakpoint, because a docked drawer covers nothing and has nothing to exit. It is
+    // required of the overlay walk instead, which is the state it exists for. At 375 the
+    // panel is shut, so rows do not exist and the layer toggles sit behind the legend
+    // disclosure.
+    await assertOwnedControlsReachable(
+      page,
+      walk,
+      `${viewport.width} / default`,
+      viewport === DESKTOP
+        ? ["stations-skip", "map", "stations-search", "station-row", "toggle-buses"]
+        : ["stations-skip", "map", "stations-toggle", "legend-toggle"],
+    );
 
     // THE STATE INERT EXISTS FOR gets its own walk at the width where it exists. With the
     // overlay open the background is inert, so the same invariants must hold AND the walk
@@ -751,10 +797,18 @@ for (const viewport of [DESKTOP, PHONE]) {
       // Searched rather than empty, so the walk crosses the result buttons the panel builds
       // at runtime and not only the two controls the markup ships with.
       await page.locator("#stations-search").fill("times");
-      await expect(page.locator("#stations-results button.station-row").first()).toBeVisible();
+      await expectState(page, ["panel open", "panel results listed"], "A1y overlay walk");
       await resetFocus(page);
       const overlay = await tabWalk(page);
       assertWalkInvariants(overlay, "375 / overlay open", 3);
+      // The overlay is the ONLY 375 state where a station row exists, so this is the call
+      // that makes ".station-row" mean something at this width. Everything else the page
+      // owns is inert underneath and correctly absent from the requirement.
+      await assertOwnedControlsReachable(page, overlay, "375 / overlay open", [
+        "stations-search",
+        "stations-close",
+        "station-row",
+      ]);
       const outside = overlay.stops.filter((s) => !s.inPanel && s.id !== "stations-skip");
       expect(
         outside.map((s) => `${s.tag}${s.id ? "#" + s.id : ""}`),

@@ -24,6 +24,7 @@
 const { test, expect } = require("@playwright/test");
 const { installMocks, json } = require("./mock");
 const { expectPopupState } = require("./popup");
+const { expectState } = require("./state");
 const fx = require("./fixtures/api");
 
 const PHONE = { width: 375, height: 667 };
@@ -400,7 +401,7 @@ test("A9i. Escape from inside the popup leaves the rider on the map, not on the 
   await expectPopupState(page, { registry: "railroads", key: id }, true);
 
   await page.locator(".leaflet-popup-close-button").focus();
-  await expect(page.locator(".leaflet-popup-close-button")).toBeFocused();
+  await expectState(page, ["one popup open", "focus inside the popup"], "A9i");
 
   await page.keyboard.press("Escape");
   expect((await ladderState(page)).popupOpen, "the rung still closes the popup").toBe(false);
@@ -424,6 +425,7 @@ test("A9j. the popup's own close button lands the rider in the same place", asyn
   await expectPopupState(page, { registry: "railroads", key: id }, true);
 
   await page.locator(".leaflet-popup-close-button").focus();
+  await expectState(page, ["one popup open", "focus inside the popup"], "A9j");
   await page.keyboard.press("Enter");
 
   expect((await ladderState(page)).popupOpen, "Enter on the close button still closes it").toBe(false);
@@ -449,6 +451,11 @@ test("A9k. from inside the panel, Escape takes the panel and leaves the popup al
   await expectPopupState(page, { registry: "railroads", key: id }, true);
 
   await page.locator("#stations-search").focus();
+  // THE WITNESS A9k SPENT TWO ROUNDS WITHOUT. Its title once claimed it closed a popup; the
+  // rung it actually exercises is the panel one, and that is only true while focus is inside
+  // the panel. Stated up front, so the spec fails on the state rather than on a downstream
+  // assertion that happens to notice.
+  await expectState(page, ["one popup open", "focus inside the panel"], "A9k");
   await page.keyboard.press("Escape");
 
   expect(await ladderState(page)).toMatchObject({ popupOpen: true, panelOpen: false });
@@ -473,6 +480,7 @@ test("A9l. closing the popup from a control outside it leaves that control focus
 
   await page.locator("#stations-toggle").focus();
   await expect(page.locator("#stations-toggle")).toBeFocused();
+  await expectState(page, "one popup open", "A9l");
 
   await page.keyboard.press("Escape");
   expect((await ladderState(page)).popupOpen, "rung one still takes the popup").toBe(false);
@@ -480,26 +488,46 @@ test("A9l. closing the popup from a control outside it leaves that control focus
 });
 
 test("A9m. the close button closes the popup that owns it, not whichever is current", async ({ page }) => {
-  // ROUND 2. The handler read map._popup instead of the popup it was bound to. In this app
-  // the two are the same, because Leaflet auto-closes the previous popup when a new one
-  // opens, so a second live popup is not reachable and no rider could hit it. It is fixed
-  // anyway and pinned here anyway, because "ask the map which popup is current" is wrong in
-  // a way that only stays harmless until the first feature that opens two.
+  /* REBUILT TWICE, AND THE SECOND REBUILD IS THE ONE THAT BITES.
+     Round 2 wrote it opening a second popup with openOn(map), which auto-closes the first,
+     so at click time only one popup was live and the fix passed because closing a dead popup
+     is a no-op. Round 3 caught that. The first rebuild then opened the second popup with
+     addLayer, which keeps both alive but does NOT set map._popup, so map._popup was still
+     the first popup and reverting the fix STILL passed: the state existed but did not
+     discriminate.
+     The state that discriminates needs map._popup to be the OTHER popup while the first is
+     still open. Leaflet's openOn removes the map's current popup only when that popup's
+     autoClose is set, so clearing it on the first popup and then openOn-ing the second gives
+     exactly that: two live popups, and the map's idea of "current" pointing at the wrong one.
+     No rider reaches this today. What it pins is that the answer comes from the button's own
+     popup rather than from the map's most-recent field, which must survive the first feature
+     that opens two. */
   await installMocks(page);
   await open(page);
-  const out = await page.evaluate(() => {
-    const [first] = [...railroads.values()];
-    first.marker.openPopup();
-    const firstPopup = first.marker.getPopup();
-    const button = firstPopup.getElement().querySelector(".leaflet-popup-close-button");
-    // A second popup, which becomes map._popup while the first one's button is still live.
-    const other = L.popup({ autoClose: false, closeOnClick: false })
+  const id = await page.evaluate(() => [...railroads.keys()][0]);
+  await page.evaluate((key) => railroads.get(key).marker.openPopup(), id);
+  await expectPopupState(page, { registry: "railroads", key: id }, true);
+
+  const staged = await page.evaluate((key) => {
+    const first = railroads.get(key).marker.getPopup();
+    first.options.autoClose = false; // so openOn below leaves it alone
+    const second = L.popup({ autoClose: false, closeOnClick: false })
       .setLatLng(map.getCenter())
       .setContent("second")
       .openOn(map);
-    button.click();
-    return { otherStillOpen: map.hasLayer(other), mapPopupWasOther: map._popup === other };
-  });
-  expect(out.mapPopupWasOther, "the state the bug needs: map._popup is the OTHER popup").toBe(true);
-  expect(out.otherStillOpen, "the first popup's button must not close the second popup").toBe(true);
+    window.__secondPopup = second;
+    return { mapPopupIsSecond: map._popup === second, firstStillOpen: map.hasLayer(first) };
+  }, id);
+  await expectState(page, "two popups open", "A9m needs both live for the question to exist");
+  expect(staged.mapPopupIsSecond, "and the map's idea of current must be the OTHER one").toBe(true);
+  expect(staged.firstStillOpen, "while the first is still open").toBe(true);
+
+  const out = await page.evaluate((key) => {
+    const first = railroads.get(key).marker.getPopup();
+    first.getElement().querySelector(".leaflet-popup-close-button").click();
+    return { firstOpen: map.hasLayer(first), secondOpen: map.hasLayer(window.__secondPopup) };
+  }, id);
+
+  expect(out.firstOpen, "the button closed its own popup").toBe(false);
+  expect(out.secondOpen, "and left the other one alone").toBe(true);
 });

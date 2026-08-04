@@ -65,16 +65,42 @@ function citedPairs(sentence) {
   }));
 }
 
+/* ROUND 4, AND THE SILENT-DROP DISEASE IN ITS FOURTH COSTUME. citedPairs reads exactly one id
+   shape, and a citation written in any other shape matched nothing, resolved against nothing,
+   and was therefore INVISIBLE rather than dangling. Measured: a decider rewritten to
+   "a11y.spec.js A1z measures the zoom glyph, and smoke.spec.js 42 and mobile.spec.js A6zzz
+   measure the popup close glyph" passed A1z and the whole node tier, because one real pair
+   anywhere in the sentence satisfied the non-empty check and the two fictions were not seen.
+   Every ".spec.js" in a sentence is now a citation ATTEMPT, and the token after it is either
+   an id this repo could cite or a loud failure. */
+const CITATION_ATTEMPT = /\b([\w.-]+\.spec\.js)\s+(\S+)/g;
+
+function unreadableCitations(sentence) {
+  const out = [];
+  for (const m of String(sentence).matchAll(CITATION_ATTEMPT)) {
+    const token = m[2].replace(/[.,;:)\]]+$/, "");
+    if (!isCitableId(token)) out.push(`${m[1]} ${m[2]}`);
+  }
+  return out;
+}
+
 // The pairs in `sentence` that name a test which does not exist. Empty means every citation
 // in it resolves.
 function danglingCitations(sentence, declared = declaredIds()) {
-  return citedPairs(sentence)
+  const cited = citedPairs(sentence)
     .filter(({ file, id }) => !declared.has(file) || !declared.get(file).has(id))
     .map(({ file, id }) => `${file} ${id}`);
+  // A NUMERIC id resolves too: the smoke suite numbers its scenarios, and round 3 made the
+  // collector see them precisely so a citation to one could dangle rather than vanish.
+  const numeric = [...String(sentence).matchAll(/\b([\w.-]+\.spec\.js)\s+(\d+[a-z]?)\b/g)]
+    .filter(([, file, id]) => !declared.has(file) || !declared.get(file).has(id))
+    .map(([, file, id]) => `${file} ${id}`);
+  return [...cited, ...numeric, ...unreadableCitations(sentence)];
 }
 
 module.exports = {
   declaredIds,
+  unreadableCitations,
   allDeclared,
   citedPairs,
   danglingCitations,

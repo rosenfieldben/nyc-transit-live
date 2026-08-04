@@ -28,6 +28,12 @@ const fx = require("./fixtures/api");
 const { danglingCitations, citedPairs } = require("../specids");
 const { expectState } = require("./state");
 
+/* THE GATE'S SCAN, IN ONE PLACE, because A1l's whole job is to prove THIS scan has teeth.
+   Round 4: A1l built its own AxeBuilder, so it measured axe-core rather than the gate, and
+   the two could drift without either noticing. They cannot drift now — re-scoping the gate
+   re-scopes the spec that checks the gate. */
+const scanPage = (page) => new AxeBuilder({ page }).analyze();
+
 const DESKTOP = { width: 1280, height: 720 };
 const PHONE = { width: 375, height: 667 };
 
@@ -283,6 +289,14 @@ const STATES = [
       if (await page.evaluate(() => !document.getElementById("stations-panel").hidden)) {
         await page.evaluate(() => closeStationsPanel());
       }
+      /* ROUND 4: THE ONE THING THIS STATE'S NAME PROMISES, ASSERTED. Neutering
+         closeStationsPanel so the panel never closes left all fifteen a11y specs green, and
+         this instantiation quietly became a second copy of "panel list". The two pages
+         genuinely differ to axe — 516 nodes with the skip link reported as an incomplete,
+         548 without it — so an accessibility defect that exists only on the panel-closed
+         page, which is the app's default at 375 and where a 1280 rider lands after closing
+         the drawer, could never be caught here. */
+      await expectState(page, "panel closed", "the gate's map-alone state");
     },
     targets: ["leaflet-control-zoom", "#toggles", "#status"],
   },
@@ -450,7 +464,7 @@ for (const viewport of [DESKTOP, PHONE]) {
       await assertNothingIsMidTransition(page, `${viewport.width} / ${state.key}`);
 
       // NO include() AT ALL: this is the whole document, which is the deliverable.
-      const results = await new AxeBuilder({ page }).analyze();
+      const results = await scanPage(page);
       const label = `${viewport.width} / ${state.key}`;
       expect(violations(results), `${label}: page-wide axe violations`).toEqual([]);
       await assertUndecidablesAreKnown(page, results, label);
@@ -489,6 +503,22 @@ test("A1z. the deciders: every named undecidable is answered by measurement", as
 
   await page.setViewportSize(DESKTOP);
   await open(page, { alerts: 0 });
+
+  /* AND A POPUP IS OPENED, BECAUSE THE DECIDER SAYS SO. Round 4: shape 3 of
+     UNDECIDABLE_SHAPES excuses BOTH `.leaflet-control-zoom-out span` and
+     `.leaflet-popup-close-button span`, and its decider sentence names both — but this spec
+     never opened a popup, so the close glyph did not exist while it ran. Measured: the popup's
+     only Close control recoloured to #f2f2f2 (1.09:1 against the popup, effectively invisible)
+     left all 162 specs green, because axe downgrades a one-character glyph to `incomplete`,
+     the shape list excuses that incomplete, and the spec named as its decider was not looking.
+     Degrading the OTHER glyph the same sentence names was caught, which is what made this a
+     half-covered exception rather than an uncovered one. */
+  await page.evaluate(() => {
+    const placed = [...railroads.values()].find((r) => r.placed);
+    if (!placed) throw new Error("the fixture no longer has a placed railroad train to open");
+    placed.marker.openPopup();
+  });
+  await expectState(page, ["one popup open", "popup finished opening"], "A1z measures the popup close glyph");
 
   const measured = await page.evaluate(() => {
     const srgb = (c) => {
@@ -540,7 +570,14 @@ test("A1z. the deciders: every named undecidable is answered by measurement", as
       const show = (el) =>
         el ? `${el.tagName}[${under.indexOf(el) + 1} of ${under.length} under the glyph]` : "none";
 
-      const fill = (el) => (el ? el.getAttribute("fill") || getComputedStyle(el).fill : null);
+      // ROUND 4: THE PAINTED FILL, WHICH IS THE COMPUTED ONE. This read the presentation
+      // ATTRIBUTE first, and CSS beats a presentation attribute in the cascade, so any
+      // stylesheet rule setting `fill` changed what the rider sees while the decider went on
+      // reporting the old attribute. Measured: `.legend-row svg text { fill: #2a6ac8 }` drives
+      // the legend glyph to 1.16:1 on its #1f5fbf plate and left all 162 specs green, while
+      // the identical regression written into the attribute was caught. getComputedStyle
+      // resolves the attribute too when no rule wins, so nothing is lost by asking it alone.
+      const fill = (el) => (el ? getComputedStyle(el).fill : null);
       const hex = (v) => {
         if (!v || v === "none" || v === "transparent" || v === "currentColor") return null;
         if (v.startsWith("#")) {
@@ -573,6 +610,28 @@ test("A1z. the deciders: every named undecidable is answered by measurement", as
 
     const zoom = document.querySelector(".leaflet-control-zoom-out");
     const zoomStyle = getComputedStyle(zoom);
+
+    /* The popup close button paints on the popup's own wrapper rather than on a background of
+       its own, and Leaflet appends it to `.leaflet-popup` rather than to that wrapper, so no
+       ANCESTOR of it has a background at all: the white it visually sits on belongs to a
+       sibling it overlaps. Walking parents returns null; asking what is painted under its own
+       centre returns the wrapper. */
+    const closeBtn = document.querySelector(".leaflet-popup-close-button");
+    const surfaceOf = (el) => {
+      const r = el.getBoundingClientRect();
+      const stack = document.elementsFromPoint(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2));
+      for (const n of stack) {
+        const bg = getComputedStyle(n).backgroundColor;
+        // The alpha channel exists only in the rgba() form; asking a plain rgb() for its
+        // "last number" returns the blue channel, which is how the first draft of this walk
+        // rejected an opaque white surface for having an alpha of 255.
+        const alpha = bg.startsWith("rgba(") ? Number(bg.slice(0, -1).split(",").pop()) : 1;
+        if (bg && bg !== "transparent" && alpha === 1) return parse(bg);
+      }
+      return null;
+    };
+    const closeSurface = closeBtn ? surfaceOf(closeBtn) : null;
+    const closeInk = closeBtn ? parse(getComputedStyle(closeBtn).color) : null;
     const attribution = document.querySelector(".leaflet-control-attribution");
     const attrStyle = getComputedStyle(attribution);
     const attrBg = parse(attrStyle.backgroundColor);
@@ -582,6 +641,9 @@ test("A1z. the deciders: every named undecidable is answered by measurement", as
       // The zoom control is opaque white with its own border, so this one is a plain
       // computation that axe simply refused to run on a one-character glyph.
       zoomGlyph: ratio(parse(zoomStyle.color), parse(zoomStyle.backgroundColor)),
+      // The other glyph the same exception excuses. Null when the button is missing or its
+      // surface cannot be resolved, and null is asserted as a failure rather than skipped.
+      closeGlyph: closeInk && closeSurface ? ratio(closeInk, closeSurface) : null,
       // The attribution is translucent over live imagery, so it is bounded rather than
       // computed: over BLACK and over WHITE are the two extremes any tile can be, and a
       // ratio that clears AA against the worse of them clears it against every tile.
@@ -597,6 +659,13 @@ test("A1z. the deciders: every named undecidable is answered by measurement", as
   expect(measured.zoomGlyph, `zoom glyph contrast (measured ${measured.zoomGlyph.toFixed(2)})`).toBeGreaterThanOrEqual(
     4.5,
   );
+  // The popup's Close control, on the same non-text floor and asserted at the text floor for
+  // the same reason as the zoom glyph: it clears it comfortably, so a regression below 4.5 is
+  // worth knowing about while it is still legal.
+  expect(
+    measured.closeGlyph,
+    `popup close glyph contrast (measured ${measured.closeGlyph === null ? "UNMEASURABLE" : measured.closeGlyph.toFixed(2)})`,
+  ).toBeGreaterThanOrEqual(4.5);
   // 3:1 is the non-text floor and these are single characters carrying route identity, which
   // is the same call A4g makes for the badges: they are read, so the text floor is the honest
   // one, and every glyph on this page clears it.
@@ -627,7 +696,7 @@ test("A1l. the gate has teeth: a defect anywhere on the page IS caught", async (
       b.id = "a11y-canary";
       document.getElementById(id).appendChild(b);
     }, containerId);
-    const results = await new AxeBuilder({ page }).analyze();
+    const results = await scanPage(page);
     await page.evaluate(() => document.getElementById("a11y-canary").remove());
     return results.violations.map((v) => v.id);
   };
@@ -856,6 +925,20 @@ for (const viewport of [DESKTOP, PHONE]) {
     if (viewport === DESKTOP) {
       await page.locator("#stations-search").fill("times");
       await expectState(page, ["panel open", "panel results listed"], "A1y default walk at 1280");
+      /* AND A BUS ROUTE IS DRAWN, so #route-clear EXISTS. Round 4 found it in exactly the
+         position ".station-row" had been in a round earlier: on the owned list, 0x0 in every
+         state this spec walks, therefore dropped by the visible filter and required of
+         nothing. tabindex="-1" on it left all 162 e2e specs green. #route-clear is the only
+         control that removes a drawn route line (buses.js holds its sole listener), so a
+         rider who draws one with a pointer and then drives from the keyboard would have the
+         line on their map until reload.
+         Opened through the marker rather than clicked, which is the keyboard path A7a pins:
+         the popup, the line, the banner and this button all arrive together. */
+      await page.evaluate(() => {
+        const [id] = [...buses.keys()];
+        buses.get(id).marker.openPopup();
+      });
+      await expect(page.locator("#route-clear")).toBeVisible();
     }
 
     await resetFocus(page);
@@ -882,7 +965,7 @@ for (const viewport of [DESKTOP, PHONE]) {
       walk,
       `${viewport.width} / default`,
       viewport === DESKTOP
-        ? ["stations-skip", "map", "stations-search", "station-row", "toggle-buses"]
+        ? ["stations-skip", "map", "stations-search", "station-row", "toggle-buses", "route-clear"]
         : ["stations-skip", "map", "stations-toggle", "legend-toggle"],
     );
 

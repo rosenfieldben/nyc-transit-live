@@ -41,6 +41,13 @@ const WITNESSES = {
     ask: () => !document.getElementById("stations-panel").hidden,
     absent: "the station panel is closed, so nothing inside it exists to assert about",
   },
+  "panel closed": {
+    ask: () => document.getElementById("stations-panel").hidden,
+    absent:
+      "the station panel is open, so a state named for the page WITHOUT it is scanning a " +
+      "different page. Measured: the closed-panel scan reports 516 nodes and the skip link " +
+      "as an incomplete; the open-panel scan reports 548 and no skip-link incomplete",
+  },
   "panel results listed": {
     ask: () => document.querySelectorAll("#stations-results button.station-row").length > 0,
     absent: "the panel is showing no station rows, so any claim about a row is vacuous",

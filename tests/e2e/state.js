@@ -67,6 +67,20 @@ const WITNESSES = {
       "the open popup carries no cross-link button, so this is not the popup the spec names. " +
       "Only a PLACED railroad train gets one (see isPlacedRailroad)",
   },
+  "popup under the legend": {
+    ask: () => {
+      const popup = openPopupsOnMap()[0];
+      const el = popup && popup.getElement ? popup.getElement() : null;
+      const legend = document.getElementById("panel");
+      if (!el || !legend) return false;
+      const a = el.getBoundingClientRect();
+      const b = legend.getBoundingClientRect();
+      return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+    },
+    absent:
+      "the open popup does not overlap the legend, so the app has no reason to move it and " +
+      "a spec about whether it moves it is asserting nothing",
+  },
   "banner showing": {
     ask: () => document.querySelectorAll(".alert-banner-row").length > 0,
     absent: "the alert banner has no rows, so it is not showing and cannot be covering anything",

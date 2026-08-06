@@ -922,7 +922,9 @@ def test_njt_realtime_outage_degrades_only_njt(harness):
         )
         assert during["systems"]["njt"]["ok"] is False, during["systems"]
         assert app.status()["feeds"]["njt"]["last_error"], "the failure is named on /api/status"
-        assert app.get("/api/subways")["trains"], "one credentialed system down is not an outage"
+        # `data`, not `trains`: the subway envelope predates the per-system naming
+        # the NJT one uses.
+        assert app.get("/api/subways")["data"], "one credentialed system down is not an outage"
 
         # And it heals on its own, which is what makes the degradation a state
         # rather than a terminal condition.

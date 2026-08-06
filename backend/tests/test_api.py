@@ -2238,15 +2238,17 @@ async def test_fail_and_wait_sleeps_the_delay_it_reported(monkeypatch):
         ("_warm_path_static", "path_static_status", "path_empty"),
         ("_warm_ferry_static", "ferry_static_status", "ferry_raise"),
         ("_warm_ferry_static", "ferry_static_status", "ferry_empty"),
+        ("_warm_njt_static", "njt_static_status", "njt_raise"),
+        ("_warm_njt_static", "njt_static_status", "njt_empty"),
     ],
 )
 async def test_every_warmup_failure_path_advances_the_schedule(monkeypatch, warm, field, patch):
     # EVERY failure path must thread the attempt counter through _fail_and_wait, or
     # that path silently pins itself to the first rung and retries every 15s forever
-    # against a dead upstream. This covers all seven: each of the four groups' raise
-    # path, plus the empty-result path that PATH, ferry, and (since R3) railroad each
-    # add. A path that forgot to reassign `attempt` shows up here as a repeated first
-    # rung instead of a rising one.
+    # against a dead upstream. This covers all nine: each of the five groups' raise
+    # path, plus the empty-result path that PATH, ferry, NJT, and (since R3) railroad
+    # each add. A path that forgot to reassign `attempt` shows up here as a repeated
+    # first rung instead of a rising one.
     attempts = []
     real_delay = warmups._retry_delay
 
@@ -2279,6 +2281,16 @@ async def test_every_warmup_failure_path_advances_the_schedule(monkeypatch, warm
         monkeypatch.setattr(app_module.ferry_static, "load_ferry_static", raiser)
     elif patch == "ferry_empty":
         monkeypatch.setattr(app_module.ferry_static, "load_ferry_static", empty_dict)
+    elif patch.startswith("njt_"):
+        # Credentials first, or the warmup takes its not-configured short circuit
+        # and never reaches the retry loop this test is about.
+        monkeypatch.setenv("NJT_USERNAME", "rider")
+        monkeypatch.setenv("NJT_PASSWORD", "secret")
+        monkeypatch.setattr(
+            app_module.njt_static,
+            "load_njt_static",
+            raiser if patch == "njt_raise" else empty_dict,
+        )
 
     app = _fake_app(**{field: "loading"})
     task = asyncio.create_task(getattr(app_module, warm)(app))
@@ -3912,3 +3924,200 @@ async def test_c3_ferry_one_poisoned_endpoint_fails_the_whole_poll(client, cache
     await app_module._refresh_ferry(app_module.app, client=poisoned)
     assert cache["ferry"]["data"] == FERRY_BOATS  # kept
     assert cache["ferry"]["error"]["status"] == 502
+
+
+# ---------------- /api/njt-stops and the NJT warmup (15a) ----------------
+#
+# The only static group with FOUR states. Everything about loading / ready /
+# failed is the ferry pattern and is covered as such; what is new here, and what
+# these tests are actually for, is "not-configured": a deployment without NJ
+# Transit credentials must reach a distinct state, make no network call, and leave
+# the rest of the app untouched.
+
+NJT_STOPS = {
+    "109": {"id": "109", "name": "New York Penn Station", "lat": 40.750568, "lon": -73.993519},
+    "112": {"id": "112", "name": "Newark Penn Station", "lat": 40.734924, "lon": -74.164581},
+}
+
+NJT_STATIC_DATA = {
+    "stops": NJT_STOPS,
+    "routes": {
+        "1": {
+            "long_name": "Northeast Corridor",
+            "short_name": "NEC",
+            "color": "EF3E42",
+            "text_color": None,
+            "type": "113",
+        }
+    },
+    "trips": {
+        "T1": {
+            "route_id": "1",
+            "direction_id": "0",
+            "service_id": "SVC1",
+            "headsign": "New York",
+            "short_name": "3800",
+        }
+    },
+    "stop_times": {
+        "T1": [
+            {"stop_id": "112", "seq": 1, "arrival": 25200, "departure": 25200},
+            {"stop_id": "109", "seq": 2, "arrival": 26400, "departure": 26400},
+        ]
+    },
+    "calendar_dates": {"SVC1": {"20270501"}},
+}
+
+
+def _njt_configured(monkeypatch):
+    monkeypatch.setenv("NJT_USERNAME", "rider")
+    monkeypatch.setenv("NJT_PASSWORD", "secret")
+
+
+def _njt_unconfigured(monkeypatch):
+    monkeypatch.delenv("NJT_USERNAME", raising=False)
+    monkeypatch.delenv("NJT_PASSWORD", raising=False)
+
+
+async def test_njt_stops_503_while_loading(client):
+    app_module.app.state.njt_static_status = "loading"
+    res = await client.get("/api/njt-stops")
+    assert res.status_code == 503
+    assert "loading" in res.json()["detail"].lower()
+
+
+async def test_njt_stops_served_with_max_age_when_ready(client):
+    app_module.app.state.njt_static_status = "ready"
+    app_module.app.state.njt_stops = NJT_STOPS
+    # Port Jervis stations report MAIN/BERG, which is what the feed says: Port
+    # Jervis has no route id of its own (see njt_static.derive_njt_stop_routes).
+    app_module.app.state.njt_station_routes = {"109": ["1"], "112": ["1", "13"]}
+    res = await client.get("/api/njt-stops")
+    assert res.status_code == 200
+    assert res.json() == [
+        {**NJT_STOPS["109"], "routes": ["1"]},
+        {**NJT_STOPS["112"], "routes": ["1", "13"]},
+    ]
+    assert "max-age" in res.headers.get("cache-control", "")
+    # NO wheelchair KEY. NJ Transit publishes no accessibility data, so the marker
+    # must not carry a False a client would read as "not accessible".
+    assert "wheelchair" not in res.json()[0]
+
+
+async def test_njt_stops_failed_serves_empty_under_no_cache(client):
+    app_module.app.state.njt_static_status = "failed"
+    app_module.app.state.njt_stops = {}
+    res = await client.get("/api/njt-stops")
+    assert res.status_code == 200
+    assert res.json() == []
+    assert res.headers.get("cache-control") == "no-cache"
+
+
+async def test_njt_stops_not_configured_serves_empty_under_no_cache(client):
+    # NOT a 503: nothing is coming, so promising data would lie. And not a cached
+    # empty either: a process restart with credentials must be picked up.
+    app_module.app.state.njt_static_status = "not-configured"
+    app_module.app.state.njt_stops = {}
+    res = await client.get("/api/njt-stops")
+    assert res.status_code == 200
+    assert res.json() == []
+    assert res.headers.get("cache-control") == "no-cache"
+
+
+async def test_status_publishes_the_njt_group_state(client):
+    app_module.app.state.njt_static_status = "not-configured"
+    res = await client.get("/api/status")
+    assert res.status_code == 200
+    # Published DISTINCTLY from failed, which is the whole point: an operator
+    # reading "failed" would go looking for a broken upstream.
+    assert res.json()["njt_static"] == "not-configured"
+
+
+async def test_njt_static_warmup_loading_to_ready(monkeypatch):
+    _njt_configured(monkeypatch)
+
+    async def fake_load():
+        return NJT_STATIC_DATA
+
+    monkeypatch.setattr(app_module.njt_static, "load_njt_static", fake_load)
+    app = _fake_app(njt_static_status="loading")
+    await app_module._warm_njt_static(app)
+
+    assert app.state.njt_static_status == "ready"
+    assert app.state.njt_stops == NJT_STATIC_DATA["stops"]
+    # The full tables stay on app.state for 15b to consume without re-parsing, the
+    # way ferry_static's trip -> route map waited for 14b.
+    assert app.state.njt_static["calendar_dates"] == {"SVC1": {"20270501"}}
+    # And the derived indexes 15b and the panel era read.
+    assert app.state.njt_station_routes == {"112": ["1"], "109": ["1"]}
+    assert app.state.njt_trips["T1"]["short_name"] == "3800"
+    assert [call["trip_id"] for call in app.state.njt_stop_schedule["112"]] == ["T1"]
+
+
+async def test_njt_warmup_without_credentials_is_terminal_and_touches_nothing(monkeypatch):
+    """THE 15a CREDENTIALS DECISION, at the warmup boundary.
+
+    The loader must not even be CALLED: the check runs before the retry loop, so an
+    unconfigured deployment never enters one, never mints, and never fetches. A
+    loader that raised would be caught and retried; one that is never invoked
+    cannot be. And the coroutine RETURNS rather than sleeping, because credentials
+    are read from the environment at boot and cannot appear mid-process.
+    """
+    _njt_unconfigured(monkeypatch)
+
+    async def must_not_run():
+        raise AssertionError("the loader must not be called without credentials")
+
+    monkeypatch.setattr(app_module.njt_static, "load_njt_static", must_not_run)
+    app = _fake_app(njt_static_status="loading")
+
+    # await, not create_task: reaching this line at all proves it returned rather
+    # than entering the retry loop, and asyncio.wait_for would hide that.
+    await asyncio.wait_for(app_module._warm_njt_static(app), timeout=5)
+    assert app.state.njt_static_status == "not-configured"
+
+
+async def test_njt_warmup_treats_a_late_not_configured_as_terminal_too(monkeypatch):
+    """Belt and braces. If the loader raises NjtNotConfigured from somewhere the
+    pre-check could not see, the answer must still be the terminal state rather
+    than a failure that retries forever against an endpoint that would reject it."""
+    _njt_configured(monkeypatch)
+
+    async def raise_not_configured():
+        raise app_module.njt_static.njt_auth.NjtNotConfigured("gone")
+
+    monkeypatch.setattr(app_module.njt_static, "load_njt_static", raise_not_configured)
+    app = _fake_app(njt_static_status="loading")
+    await asyncio.wait_for(app_module._warm_njt_static(app), timeout=5)
+    assert app.state.njt_static_status == "not-configured"
+
+
+async def test_njt_static_warmup_empty_result_is_failed_then_recovers(monkeypatch):
+    # Single system, same as PATH and the ferry: an empty load drives FAILED (the
+    # endpoint serves no-cache []), and a later retry with data recovers to READY.
+    _njt_configured(monkeypatch)
+    monkeypatch.setattr(app_module, "STATIC_RETRY_S", 0.01)
+    gate = {"ok": False}
+
+    async def gated_load():
+        return NJT_STATIC_DATA if gate["ok"] else {}
+
+    monkeypatch.setattr(app_module.njt_static, "load_njt_static", gated_load)
+    app = _fake_app(njt_static_status="loading")
+    task = asyncio.create_task(app_module._warm_njt_static(app))
+    try:
+        for _ in range(200):
+            if app.state.njt_static_status == "failed":
+                break
+            await asyncio.sleep(0.005)
+        assert app.state.njt_static_status == "failed"
+        gate["ok"] = True
+        for _ in range(200):
+            if app.state.njt_static_status == "ready":
+                break
+            await asyncio.sleep(0.005)
+        assert app.state.njt_static_status == "ready"
+        assert app.state.njt_stops == NJT_STATIC_DATA["stops"]
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)

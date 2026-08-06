@@ -24,7 +24,7 @@ import importlib.util
 import io
 import json
 import zipfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -66,9 +66,13 @@ class FakeFetcher:
     def __init__(self, mapping):
         self.mapping = mapping
         self.calls = []
+        # POST form fields, recorded separately so `calls` stays the 3-tuples every
+        # pre-15a assertion unpacks. NJ Transit is the only source that POSTs.
+        self.forms = []
 
-    def __call__(self, url, headers=None, params=None):
+    def __call__(self, url, headers=None, params=None, files=None):
         self.calls.append((url, headers, params))
+        self.forms.append(files)
         if url not in self.mapping:
             raise AssertionError(f"unexpected fetch of {url}")
         value = self.mapping[url]
@@ -1388,6 +1392,255 @@ def test_production_non_json_is_fail():
 
 
 # ---------------------------------------------------------------------------
+# NJ Transit static (credentialed, mint-conserving)
+# ---------------------------------------------------------------------------
+#
+# The check has one property no other check here has: it SPENDS something. Minting
+# is rate-limited below the data cap and the limit is unpublished, so "exactly one
+# mint per run" is asserted directly rather than trusted, and the WARN-skip with no
+# credentials is asserted to make no request at all.
+
+NJT_TOKEN = "https://njt.example/getToken"
+NJT_DATA = "https://njt.example/getGTFS"
+
+_NJT_ROUTES = (
+    "route_id,route_short_name,route_long_name,route_type,route_color,route_text_color\n"
+    + "".join(f"{i},R{i},Line {i},113,EF3E42,\n" for i in range(1, 13))
+)
+_NJT_STOPS = "stop_id,stop_code,stop_name,stop_lat,stop_lon\n" + "".join(
+    f"{i},C{i},Station {i},40.7{i:03d},-74.0{i:03d}\n"
+    for i in range(1, 200)
+    if i != 109 and i != 112
+)
+_NJT_IDENTITY = (
+    "109,NY,New York Penn Station,40.750568,-73.993519\n"
+    "112,NP,Newark Penn Station,40.734924,-74.164581\n"
+)
+_NJT_TRIPS = (
+    "route_id,service_id,trip_id,trip_headsign,direction_id,trip_short_name\n1,S,T1,NY,0,3800\n"
+)
+_NJT_STOP_TIMES = (
+    "trip_id,arrival_time,departure_time,stop_id,stop_sequence\nT1,07:00:00,07:00:00,109,1\n"
+)
+_NJT_AGENCY = (
+    "agency_id,agency_name,agency_url,agency_timezone\nNJT,NJ TRANSIT,https://x,America/New_York\n"
+)
+_NJT_SHAPES = "shape_id,shape_pt_sequence,shape_pt_lat,shape_pt_lon\ns1,1,40.7,-74.0\n"
+
+NJT_NOW = datetime(2026, 8, 6, 12, 0, tzinfo=feeds.NYC_TZ).timestamp()
+
+
+def _njt_zip(*, last_service="20270501", **overrides):
+    """An NJT-shaped archive: no calendar.txt, no feed_info.txt, route_type 113."""
+    members = {
+        "agency.txt": _NJT_AGENCY,
+        "routes.txt": _NJT_ROUTES,
+        "stops.txt": _NJT_STOPS + _NJT_IDENTITY,
+        "trips.txt": _NJT_TRIPS,
+        "stop_times.txt": _NJT_STOP_TIMES,
+        "calendar_dates.txt": f"service_id,date,exception_type\nS,{last_service},1\n",
+        "shapes.txt": _NJT_SHAPES,
+    }
+    members.update(overrides)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, body in members.items():
+            if body is not None:
+                zf.writestr(name, body)
+    return buf.getvalue()
+
+
+def _njt_token(token="tok"):
+    return json.dumps({"UserToken": token}).encode()
+
+
+def _njt_fetch(**overrides):
+    mapping = {NJT_TOKEN: _njt_token(), NJT_DATA: _njt_zip()}
+    mapping.update(overrides)
+    return FakeFetcher(mapping)
+
+
+def _check_njt(fetch, now=NJT_NOW, user="rider", password="secret"):
+    return cm.check_njt_static(
+        fetch, NO_SLEEP, now, user, password, token_url=NJT_TOKEN, url=NJT_DATA
+    )
+
+
+def test_njt_static_skipped_without_credentials():
+    """The bus precedent: a credentialed feed the monitor cannot reach is a config
+    choice, not an outage. WARN, and provably no request."""
+    fetch = FakeFetcher({})
+    for user, password in ((None, "secret"), ("rider", None), (None, None), ("", "")):
+        result, parsed = _check_njt(fetch, user=user, password=password)
+        assert result.status == cm.WARN
+        assert "not set" in result.detail
+        assert parsed is None
+    assert not fetch.calls, "an unconfigured monitor must never reach the network"
+
+
+def test_njt_static_healthy_passes_with_exactly_one_mint():
+    fetch = _njt_fetch()
+    result, parsed = _check_njt(fetch)
+    assert result.status == cm.PASS, result.detail
+    assert parsed is not None and len(parsed["routes"]) == 12
+    mints = [url for url, _h, _p in fetch.calls if url == NJT_TOKEN]
+    assert len(mints) == 1, f"the monitor must mint exactly once per run, got {len(mints)}"
+    # The credentials rode in the multipart form, never in the URL or the query.
+    assert fetch.forms[0] == {"username": "rider", "password": "secret"}
+    assert "secret" not in fetch.calls[0][0]
+    # And the data request carried the minted token as a form field.
+    assert fetch.forms[1] == {"token": "tok"}
+
+
+class _StatusFetcher:
+    """A fetcher that answers one url with a chosen (status, body) pair.
+
+    FakeFetcher cannot express "a non-200 WITH a body" (an int means an empty
+    body), and the body is the whole point here: it is the only place NJ Transit
+    says why a mint was refused.
+    """
+
+    def __init__(self, url, status, body):
+        self.url, self.status, self.body = url, status, body
+        self.calls = []
+        self.forms = []
+
+    def __call__(self, url, headers=None, params=None, files=None):
+        self.calls.append((url, headers, params))
+        self.forms.append(files)
+        if url != self.url:
+            raise AssertionError(f"unexpected fetch of {url}")
+        return cm.FetchResult(self.status, self.body)
+
+
+def test_njt_static_mint_failure_fails_with_the_body_quoted():
+    """The only place NJ Transit says WHY, so the detail carries it. And a failed
+    mint must not be retried: that would be two mints against an unpublished cap."""
+    fetch = _StatusFetcher(NJT_TOKEN, 401, b'{"errorMessage":"Bad account."}')
+    result, parsed = _check_njt(fetch)
+    assert result.status == cm.FAIL
+    assert "mint failed" in result.detail
+    assert "Bad account." in result.detail, "the upstream body must reach the operator"
+    assert parsed is None
+    assert len(fetch.calls) == 1, "a failed mint must not be retried"
+
+
+def test_njt_static_mint_transport_failure_is_a_fail():
+    def explodes(url, headers=None, params=None, files=None):
+        raise ConnectionResetError("connection reset")
+
+    result, parsed = _check_njt(explodes)
+    assert result.status == cm.FAIL
+    assert "mint failed" in result.detail
+    assert parsed is None
+
+
+def test_njt_static_a_token_response_with_no_token_fails():
+    fetch = _njt_fetch(**{NJT_TOKEN: b'{"expires":3600}'})
+    result, _parsed = _check_njt(fetch)
+    assert result.status == cm.FAIL
+    assert "mint failed" in result.detail
+
+
+def test_njt_static_an_invalid_token_500_is_reported_as_unreachable():
+    """The monitor does not re-mint on the probe's 500: it has already spent its
+    one mint, and a token that died between minting and fetching (seconds apart) is
+    a real fault worth a human look rather than something to spend another mint on.
+    _fetch_retrying reports it as an unreachable upstream, which is a FAIL."""
+    fetch = _njt_fetch(**{NJT_DATA: 500})
+    result, _parsed = _check_njt(fetch)
+    assert result.status == cm.FAIL
+    mints = [url for url, _h, _p in fetch.calls if url == NJT_TOKEN]
+    assert len(mints) == 1, "a rejected data fetch must never provoke a second mint"
+
+
+def test_njt_static_missing_members_fail():
+    fetch = _njt_fetch(**{NJT_DATA: _njt_zip(**{"calendar_dates.txt": None})})
+    result, _parsed = _check_njt(fetch)
+    assert result.status == cm.FAIL
+    assert "calendar_dates.txt" in result.detail
+
+
+def test_njt_static_does_not_require_calendar_or_feed_info():
+    """THE ACCEPTANCE CASE. Neither member exists in the real feed, and requiring
+    either would FAIL this check on every valid publication forever."""
+    body = _njt_zip()
+    with zipfile.ZipFile(io.BytesIO(body)) as zf:
+        assert "calendar.txt" not in zf.namelist()
+        assert "feed_info.txt" not in zf.namelist()
+    result, _parsed = _check_njt(_njt_fetch(**{NJT_DATA: body}))
+    assert result.status == cm.PASS, result.detail
+
+
+def test_njt_static_identity_stops_are_checked_by_name():
+    """Presence alone proves nothing in a feed of small integer ids: stop 112 names
+    four different places across our feeds, so an id that survived a renumbering
+    pointing at the wrong station is exactly the drift worth catching."""
+    renamed = _NJT_STOPS + (
+        "109,NY,Somewhere Else,40.750568,-73.993519\n"
+        "112,NP,Newark Penn Station,40.734924,-74.164581\n"
+    )
+    result, _parsed = _check_njt(_njt_fetch(**{NJT_DATA: _njt_zip(**{"stops.txt": renamed})}))
+    assert result.status == cm.FAIL
+    assert "109" in result.detail
+
+
+def test_njt_static_thin_feeds_fail_their_floors():
+    thin_routes = _NJT_ROUTES.splitlines()[0] + "\n1,R1,Line 1,113,EF3E42,\n"
+    result, _parsed = _check_njt(_njt_fetch(**{NJT_DATA: _njt_zip(**{"routes.txt": thin_routes})}))
+    assert result.status == cm.FAIL
+    assert "routes" in result.detail
+
+
+# --- the service-date band, at every edge -----------------------------------
+
+
+@pytest.mark.parametrize(
+    ("offset_days", "expected"),
+    [
+        (365, cm.PASS),
+        (cm.NJT_SERVICE_WARN_DAYS, cm.PASS),  # exactly at the edge: not yet a warning
+        (cm.NJT_SERVICE_WARN_DAYS - 1, cm.WARN),
+        (1, cm.WARN),
+        (0, cm.WARN),  # last service day is TODAY: still servable, but say so loudly
+        (-1, cm.FAIL),  # expired yesterday
+        (-400, cm.FAIL),
+    ],
+)
+def test_njt_service_date_bands(offset_days, expected):
+    """THE BAND THE VALIDATOR DELEGATES TO THIS CHECK. njt_static's guard draws the
+    hard line (it refuses to promote a feed that leads today by nothing); this warns
+    while the edge approaches, so a human sees it a month out rather than the
+    morning it lands. Offset 0 is deliberately a WARN and not a FAIL: a feed whose
+    last service day is today is running trains right now."""
+    last = (datetime.fromtimestamp(NJT_NOW, feeds.NYC_TZ) + timedelta(days=offset_days)).strftime(
+        "%Y%m%d"
+    )
+    status, detail = cm._njt_service_status(last, NJT_NOW, feeds.NYC_TZ)
+    assert status == expected, detail
+
+
+def test_njt_service_date_of_nothing_fails():
+    status, detail = cm._njt_service_status(None, NJT_NOW, feeds.NYC_TZ)
+    assert status == cm.FAIL
+    assert "no service days" in detail
+
+
+def test_njt_service_date_that_is_not_a_date_warns_rather_than_aborting():
+    """Shaped right, not a date. Not this check's to police, and certainly not
+    something to abort the whole monitor run over."""
+    status, _detail = cm._njt_service_status("20261332", NJT_NOW, feeds.NYC_TZ)
+    assert status == cm.WARN
+
+
+def test_njt_static_expired_service_fails_the_whole_check():
+    fetch = _njt_fetch(**{NJT_DATA: _njt_zip(last_service="20250101")})
+    result, _parsed = _check_njt(fetch)
+    assert result.status == cm.FAIL
+    assert "service ended" in result.detail
+
+
+# ---------------------------------------------------------------------------
 # Runner wiring / hermeticity
 # ---------------------------------------------------------------------------
 
@@ -1399,7 +1652,7 @@ def test_run_all_is_hermetic_and_names_every_check():
         def __init__(self):
             self.calls = 0
 
-        def __call__(self, url, headers=None, params=None):
+        def __call__(self, url, headers=None, params=None, files=None):
             self.calls += 1
             return cm.FetchResult(500, b"")
 
@@ -1411,6 +1664,7 @@ def test_run_all_is_hermetic_and_names_every_check():
         "railroad-static",
         "path-static",
         "ferry-static",
+        "njt-static",
         "subway-realtime",
         "railroad-realtime",
         "path-realtime",
@@ -1427,7 +1681,7 @@ def test_run_all_unset_status_url_produces_a_production_fail():
     # The wiring end of the change: run_all must pass the unset variable through so
     # the section fails, rather than the old silent WARN-skip.
     class AllFail:
-        def __call__(self, url, headers=None, params=None):
+        def __call__(self, url, headers=None, params=None, files=None):
             return cm.FetchResult(500, b"")
 
     results = cm.run_all(AllFail(), NO_SLEEP, 1000.0, env={})
@@ -1440,7 +1694,7 @@ def test_run_all_unset_status_url_produces_a_production_fail():
 def test_run_all_honors_the_explicit_skip_variable():
     # Any non-empty value opts out, the usual shell-variable convention.
     class AllFail:
-        def __call__(self, url, headers=None, params=None):
+        def __call__(self, url, headers=None, params=None, files=None):
             return cm.FetchResult(500, b"")
 
     for value in ("1", "true", "yes"):
@@ -1456,7 +1710,7 @@ def test_exit_code_is_zero_for_all_warn_and_one_for_any_fail(monkeypatch, tmp_pa
     # The unset-variable case is included because that is precisely the run that used
     # to exit 0 while checking nothing at all.
     def fake_fetcher():
-        def _fetch(url, headers=None, params=None):
+        def _fetch(url, headers=None, params=None, files=None):
             return cm.FetchResult(500, b"")
 
         return _fetch

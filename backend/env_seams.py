@@ -71,6 +71,15 @@ SEAM_NAMES = (
     "PATH_STATIC_URL",
     "FERRY_STATIC_URL",
     "BUS_STATIC_BASE",
+    # NJ Transit (15a). TWO seams rather than one base, because the two endpoints
+    # are consumed by different modules for different reasons: njt_auth owns the
+    # mint and njt_static owns the archive, and each declares the URL it uses whole,
+    # the way PATH_STATIC_URL and FERRY_STATIC_URL do. Both must be redirectable
+    # together or the contract tier could point the download at a simulator while
+    # the mint still went to NJ Transit, which is a scenario that would silently
+    # spend real mints on every CI run.
+    "NJT_TOKEN_URL",
+    "NJT_STATIC_URL",
     # Timing.
     "POLL_INTERVAL_S",
     "ALERT_POLL_INTERVAL_S",

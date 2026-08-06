@@ -30,6 +30,8 @@ from fastapi import FastAPI
 
 import ferry_static
 import main
+import njt_auth
+import njt_static
 import path_static
 import railroad_static
 
@@ -46,14 +48,20 @@ def _set_static_status(
     retry_in_s: float | None = None,
 ) -> None:
     """Set a static group's status, logging only on a TRANSITION so a long retry
-    loop (or the per-poll checks that read this) never spams the log. `field` is
-    one of "subway_static_status", "railroad_static_status", "path_static_status",
-    or "ferry_static_status". retry_in_s is the delay actually scheduled for the
-    next attempt: the retry interval is a backoff schedule now, not a flat
-    constant, so the log must report the real wait rather than the steady-state
-    ceiling. Because this logs only the TRANSITION, the delay it names is the FIRST
-    rung; _fail_and_wait logs each later escalation, so the whole schedule stays
-    visible without one line per attempt."""
+    loop (or the per-poll checks that read this) never spams the log. `field` is one
+    of "subway_static_status", "railroad_static_status", "path_static_status",
+    "ferry_static_status", or "njt_static_status". retry_in_s is the delay actually
+    scheduled for the next attempt: the retry interval is a backoff schedule now,
+    not a flat constant, so the log must report the real wait rather than the
+    steady-state ceiling. Because this logs only the TRANSITION, the delay it names
+    is the FIRST rung; _fail_and_wait logs each later escalation, so the whole
+    schedule stays visible without one line per attempt.
+
+    "not-configured" (NJT only, 15a) is a TERMINAL state, not a failure: it is
+    logged once at INFO rather than WARNING and names no retry, because there is
+    nothing to retry and nothing broken. An operator who did not mean to leave NJ
+    Transit unconfigured needs to see the line; one who did must not see a
+    warning about it on every deploy."""
     if getattr(app.state, field, None) == status:
         return
     setattr(app.state, field, status)
@@ -62,6 +70,8 @@ def _set_static_status(
         logger.warning("%s failed to load (%s); retrying in %.0fs", field, _describe(exc), delay)
     elif status == "ready":
         logger.info("%s ready", field)
+    elif status == "not-configured":
+        logger.info("%s not configured (%s); this system is disabled", field, _describe(exc))
 
 
 def _describe(exc: BaseException | None) -> str:
@@ -350,4 +360,87 @@ async def _warm_ferry_static(app: FastAPI) -> None:
             data["trips"], data.get("stop_times") or {}
         )
         _set_static_status(app, "ferry_static_status", "ready")
+        return
+
+
+async def _warm_njt_static(app: FastAPI) -> None:
+    """Load the NJ Transit static GTFS in the background, retrying on the
+    STATIC_RETRY_SCHEDULE_S backoff. The PATH/ferry single-system pattern, plus the
+    one state no other group has.
+
+    THE NOT-CONFIGURED SHORT CIRCUIT, AND WHY IT IS FIRST. NJ Transit is the only
+    upstream in this app behind credentials the deployment may simply not have.
+    Without this arm, an unconfigured deployment would enter the ordinary retry
+    loop and stay in it forever: every attempt would fail identically, every
+    failure would look like a broken upstream on /api/status, and each attempt
+    would POST at a mint endpoint whose rate limit is real and unpublished. So the
+    check runs BEFORE the loop, the state is its own string rather than a shade of
+    "failed", and the task RETURNS rather than sleeping. Credentials cannot appear
+    mid-process (they are read from the environment at boot), so there is nothing
+    to wake up for.
+
+    The check is deliberately duplicated with load_njt_static's own guard. That one
+    is what makes "absent credentials reach no socket" a property of the LOADER,
+    provable in a hermetic test with no app at all; this one is what keeps the app
+    from spinning a retry loop around it. Neither subsumes the other, and the
+    NjtNotConfigured arm below catches the case where a loader raises it from
+    somewhere the pre-check could not see.
+
+    Everything else matches the ferry warmup exactly: load_njt_static is lenient
+    ({} on any failure, no raise), NJ Transit is a single system, so an empty
+    result means the only system failed and the group stays failed and retries.
+    """
+    if not njt_auth.is_configured():
+        _set_static_status(
+            app,
+            "njt_static_status",
+            "not-configured",
+            RuntimeError(f"{njt_auth.USERNAME_VAR}/{njt_auth.PASSWORD_VAR} are not set"),
+        )
+        return
+    attempt = 0
+    while True:
+        try:
+            # Whole-attempt deadline (main.STATIC_ATTEMPT_DEADLINE_S): the OUTER
+            # ceiling over njt_static's own per-transfer asyncio.timeout, so a
+            # wedged attempt cannot stall this retry loop forever. For NJT that
+            # attempt may contain up to three POSTs (a mint, a rejected fetch, a
+            # re-mint and its retry), which is exactly the kind of multi-request
+            # attempt the 300s ceiling was sized for.
+            async with asyncio.timeout(main.STATIC_ATTEMPT_DEADLINE_S):
+                data = await njt_static.load_njt_static()
+        except njt_auth.NjtNotConfigured as exc:
+            # Belt and braces with the pre-check above. Reaching here means the
+            # credentials went away between the check and the load, which no
+            # supported path does; treating it as the terminal state rather than a
+            # failure keeps the two answers consistent whichever one fires.
+            _set_static_status(app, "njt_static_status", "not-configured", exc)
+            return
+        except Exception as exc:
+            attempt = await _fail_and_wait(app, "njt_static_status", exc, attempt)
+            continue
+        if not data.get("stops"):
+            attempt = await _fail_and_wait(
+                app,
+                "njt_static_status",
+                RuntimeError("NJ Transit static GTFS unavailable or empty"),
+                attempt,
+            )
+            continue
+        app.state.njt_static = data
+        app.state.njt_stops = data["stops"]
+        # Routes-per-station index (H5): the field /api/njt-stops merges onto each
+        # marker. Port Jervis stations come back carrying MAIN and BERG, which is
+        # what the feed actually says (see derive_njt_stop_routes).
+        app.state.njt_station_routes = njt_static.derive_njt_stop_routes(
+            data["trips"], data["stop_times"]
+        )
+        # 15b's join target (trip_id -> route, headsign, train number) and the
+        # panel era's scheduled calls per stop. Built here, from the tables the
+        # load already parsed, so neither later phase re-reads the zip.
+        app.state.njt_trips = njt_static.build_njt_trip_index(data["trips"])
+        app.state.njt_stop_schedule = njt_static.build_njt_stop_schedule(
+            data["trips"], data["stop_times"]
+        )
+        _set_static_status(app, "njt_static_status", "ready")
         return

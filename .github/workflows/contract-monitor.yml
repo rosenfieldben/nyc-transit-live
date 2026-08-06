@@ -66,4 +66,19 @@ jobs:
           # Optional secret for the keyed bus feed. When unset, the bus check
           # WARN-skips (it cannot reach the feed without a key).
           MTA_BUS_API_KEY: ${{ secrets.MTA_BUS_API_KEY }}
+          # Optional secrets for NJ Transit's credentialed RailData API (15a).
+          # When either is unset the njt-static check WARN-skips, exactly like the
+          # bus check above: the monitor cannot reach a credentialed feed without
+          # credentials, and that is a configuration choice, not an outage. Adding
+          # both as repository secrets is what turns NJT coverage on here, and it
+          # is deliberately a repo-owner decision rather than something this phase
+          # assumed: the account behind them is a person's RailData registration.
+          #
+          # THE MONITOR MINTS EXACTLY ONCE PER RUN when they are set (see
+          # check_njt_static). At the 6-hourly cadence above that is four mints a
+          # day against a rate limit NJ Transit does not publish, which is why the
+          # single-mint discipline is enforced in the check rather than left to
+          # the retry helper.
+          NJT_USERNAME: ${{ secrets.NJT_USERNAME }}
+          NJT_PASSWORD: ${{ secrets.NJT_PASSWORD }}
         run: python scripts/contract_monitor.py

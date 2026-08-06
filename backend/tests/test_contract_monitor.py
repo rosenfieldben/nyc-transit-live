@@ -1477,13 +1477,76 @@ def _check_njt(fetch, now=NJT_NOW, user="rider", password="secret"):
     )
 
 
+def test_production_reports_a_dark_njt_layer():
+    """THE ONLY PLACE A DARK NJ TRANSIT LAYER IS VISIBLE, so it gets its own test.
+
+    check_njt_static probes the RailData API from the RUNNER and says nothing about
+    the deployment; when the runner has no credentials it WARN-skips, and a WARN
+    never fails a run. So a production instance whose NJT credentials were revoked,
+    or whose publication is stuck, is seen by exactly one line: the static-group map
+    in check_production. It was still the pre-15a four-tuple, which reported "all
+    static groups ready" over njt_static="failed".
+    """
+    for state in ("failed", "loading", None):
+        body = _status_json(njt_static=state)
+        fetch = FakeFetcher({"https://app.example/api/status": body})
+        results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
+        statics = [r for r in results if r.name == "production:statics"]
+        assert len(statics) == 1
+        assert statics[0].status == cm.FAIL, f"njt_static={state!r} must not read as ready"
+        assert "njt_static" in statics[0].detail
+
+
+def test_production_accepts_a_deliberately_unconfigured_njt():
+    """The other side, and the reason the map is a map rather than a longer tuple.
+
+    "not-configured" means the deployment was given no NJ Transit credentials: it
+    makes no network call at all, nothing is failing, and nothing is retrying.
+    Failing on it would paint every deployment that does not run NJT permanently
+    red, which is how a monitor teaches its operator to ignore it.
+    """
+    body = _status_json(njt_static="not-configured")
+    fetch = FakeFetcher({"https://app.example/api/status": body})
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
+    statics = [r for r in results if r.name == "production:statics"]
+    assert statics[0].status == cm.PASS, statics[0].detail
+
+
+def test_production_still_fails_a_dark_layer_in_any_other_group():
+    """The map must not have loosened anything else on its way in: only NJT gained
+    a second acceptable state."""
+    for field in ("subway_static", "railroad_static", "path_static", "ferry_static"):
+        body = _status_json(**{field: "not-configured"})
+        fetch = FakeFetcher({"https://app.example/api/status": body})
+        results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
+        statics = [r for r in results if r.name == "production:statics"]
+        assert statics[0].status == cm.FAIL, f"{field} has no not-configured state"
+
+
 def test_njt_static_skipped_without_credentials():
     """The bus precedent: a credentialed feed the monitor cannot reach is a config
     choice, not an outage. WARN, and provably no request."""
     fetch = FakeFetcher({})
-    for user, password in ((None, "secret"), ("rider", None), (None, None), ("", "")):
+    cases = [
+        (None, "secret"),
+        ("rider", None),
+        (None, None),
+        ("", ""),
+        ("   ", "secret"),  # whitespace only
+        # THE PLACEHOLDERS .env.example SHIPS. README step 2 says copy that file, and
+        # contract_monitor imports env_seams (which runs load_dotenv), so an operator
+        # who copied it and edited only the bus key hands these straight through. A
+        # bare `if not username or not password` reads them as configured and POSTs
+        # a doomed mint to the live getToken endpoint against the unpublished cap,
+        # then reports the rejection as an NJ Transit outage rather than the promised
+        # WARN-skip. Routing the guard through njt_auth.credentials is what keeps the
+        # monitor's idea of "configured" identical to the app's, by construction.
+        ("your-njt-username", "your-njt-password"),
+        ("realuser", "your-njt-password"),  # the realistic half-edit
+    ]
+    for user, password in cases:
         result, parsed = _check_njt(fetch, user=user, password=password)
-        assert result.status == cm.WARN
+        assert result.status == cm.WARN, f"{user!r}/{password!r} must WARN-skip"
         assert "not set" in result.detail
         assert parsed is None
     assert not fetch.calls, "an unconfigured monitor must never reach the network"

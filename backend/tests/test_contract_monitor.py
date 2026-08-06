@@ -1529,7 +1529,15 @@ NJT_RT_CLOSED = datetime(2026, 8, 6, 3, 0, tzinfo=feeds.NYC_TZ).timestamp()
 
 
 def _njt_tu(
-    count=30, *, header_ts=None, straddling=True, placeable=True, entity_ids=True, prefix="T"
+    count=30,
+    *,
+    header_ts=None,
+    straddling=True,
+    placeable=True,
+    entity_ids=True,
+    prefix="T",
+    canceled=0,
+    canceled_skips_stops=True,
 ):
     """A TripUpdates feed of `count` trips, each with a passed call and a future one.
 
@@ -1549,6 +1557,10 @@ def _njt_tu(
         tu = entity.trip_update
         tu.trip.trip_id = f"{prefix}{i}"
         tu.trip.route_id = "1"
+        if i < canceled:
+            # The probe's phantom shape: canceled at the trip level, every stop
+            # marked SKIPPED and still carrying full plausible times.
+            tu.trip.schedule_relationship = pb.TripDescriptor.CANCELED
         calls = [("112", 300)] if not straddling else [("38", -300), ("112", 300)]
         if not placeable:
             calls = [("38", -300), ("99999", 300)]
@@ -1556,6 +1568,8 @@ def _njt_tu(
             stu = tu.stop_time_update.add()
             stu.stop_sequence = (seq + 1) * 10
             stu.stop_id = stop_id
+            if i < canceled and canceled_skips_stops:
+                stu.schedule_relationship = pb.TripUpdate.StopTimeUpdate.SKIPPED
             stu.arrival.time = int(now + offset)
             stu.departure.time = int(now + offset + 30)
     return feed.SerializeToString()
@@ -1711,6 +1725,59 @@ def test_njt_realtime_warns_when_running_trips_stop_being_placed():
     result = _check_njt_rt(_njt_rt_fetch(**{NJT_TU: unplaceable}))
     assert result.status == cm.WARN, result.detail
     assert "running trips placed" in result.detail
+
+
+def test_njt_realtime_canceled_trips_do_not_drag_the_placement_ratio_down():
+    """CANCELED trips are excluded from the DENOMINATOR, and this is what keeps the
+    watched ratio from crying wolf on a perfectly healthy feed.
+
+    A canceled trip still sits in the feed carrying full times on every stop it
+    marks SKIPPED, so it straddles `now` exactly like a running train does. The
+    decoder is RIGHT to drop it, which means counting it as "running" would put a
+    permanent gap between numerator and denominator that has nothing to do with
+    the assumption being watched. At the probe's peak rate (8% of Penn
+    stop_time_updates were phantoms of this shape) that gap alone would sit near
+    the floor, and an operator would learn to ignore the one warning that matters.
+
+    Here a third of the feed is canceled and the check must still PASS.
+    """
+    mixed = _njt_tu(count=30, canceled=10)
+    result = _check_njt_rt(_njt_rt_fetch(**{NJT_TU: mixed}))
+    assert result.status == cm.PASS, result.detail
+    # Non-vacuous in both directions: the canceled trips really are in the feed
+    # and really are absent from the straddling set the ratio is measured over.
+    feed = cm.feeds.parse_feed(mixed)
+    canceled = sum(
+        1
+        for e in feed.entity
+        if e.trip_update.trip.schedule_relationship == pb.TripDescriptor.CANCELED
+    )
+    assert canceled == 10
+    assert len(cm._njt_straddling_trips(feed, NJT_RT_NOW)) == 20
+
+
+def test_njt_realtime_excludes_canceled_trips_that_do_not_mark_their_stops_skipped():
+    """The DEFENSIVE half of the case above, and the only one where the trip-level
+    exclusion is actually load-bearing.
+
+    The probe's canceled trips mark every stop SKIPPED, and the stop-level filter
+    alone would drop those from the straddling set anyway, so the test above
+    cannot tell the two guards apart. This one can: a CANCELED trip whose stops
+    carry no relationship at all looks like a running train to every stop-level
+    test, and only reading schedule_relationship AT THE TRIP LEVEL excludes it.
+
+    That is decoder law 1 restated for the monitor, and it matters here for a
+    different reason than it does in the decoder: the decoder drops these trips
+    from what a rider sees, and if this denominator counted them anyway the ratio
+    would fall by exactly the cancellation rate and warn about an assumption that
+    had not changed.
+    """
+    mixed = _njt_tu(count=30, canceled=10, canceled_skips_stops=False)
+    feed = cm.feeds.parse_feed(mixed)
+    assert len(cm._njt_straddling_trips(feed, NJT_RT_NOW)) == 20, (
+        "a CANCELED trip is not running, however its stops are marked"
+    )
+    assert _check_njt_rt(_njt_rt_fetch(**{NJT_TU: mixed})).status == cm.PASS
 
 
 def test_njt_realtime_does_not_judge_placement_on_a_thin_feed():

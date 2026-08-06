@@ -755,6 +755,30 @@ async def _refresh_njt(app: FastAPI, client: httpx.AsyncClient) -> None:
     last-known trains.
     """
     entry = app.state.feed_cache["njt"]
+
+    def fail(status: int, detail: str, *, log: bool = True) -> None:
+        """Record one failed NJT poll on all three surfaces it has to reach.
+
+        THE THIRD SURFACE IS THE ONE THAT WAS MISSED, and the contract tier is what
+        found it: the C2 per-system block on the /api/njt-trains envelope kept
+        reporting ok: True through an outage, because only the subway and railroad
+        refreshers called _mark_all_systems_failed and the unclassified-failure
+        degrader was the sole path here that did. So a CLASSIFIED failure (an
+        upstream 502, a refused token) left the client every reason to draw the
+        retained trains at full opacity with no staleness marker, which is exactly
+        the ghost-train trade C2 exists to refuse. Retention is only honest when
+        the retained data is drawn AS stale.
+
+        A single system's envelope makes every failure a TOTAL one, so there is no
+        partial case to distinguish here. _mark_all_systems_failed leaves each
+        block's fetched_at alone on purpose: "this system's data is from then" is
+        already true, and the frozen fetched_at beside the envelope's advancing one
+        IS the staleness signal the client measures.
+        """
+        app.state.njt_feed_health = {"total": 1, "ok": 0, "failed": ["njt"]}
+        _mark_all_systems_failed(entry)
+        _note_failure(entry, status, detail, log=log)
+
     if getattr(app.state, "njt_static_status", None) != "ready":
         # Not ready covers BOTH the warming case and the not-configured one, and
         # they must read differently to an operator. "not-configured" is terminal
@@ -763,16 +787,14 @@ async def _refresh_njt(app: FastAPI, client: httpx.AsyncClient) -> None:
         # belongs to _set_static_status rather than to a poll loop running every
         # POLL_INTERVAL_S).
         if getattr(app.state, "njt_static_status", None) == "not-configured":
-            _note_failure(
-                entry,
+            fail(
                 503,
                 "NJ Transit is not configured (NJT_USERNAME/NJT_PASSWORD are unset); "
                 "no realtime poll is attempted.",
                 log=False,
             )
         else:
-            _note_failure(
-                entry,
+            fail(
                 503,
                 "Static NJ Transit GTFS is still loading; it will retry automatically. "
                 "Try again shortly.",
@@ -788,23 +810,19 @@ async def _refresh_njt(app: FastAPI, client: httpx.AsyncClient) -> None:
         # Unreachable behind the status guard above, and handled anyway so the
         # distinct state cannot degrade into a generic 500 two frames from where
         # the distinction was made.
-        app.state.njt_feed_health = {"total": 1, "ok": 0, "failed": ["njt"]}
-        _note_failure(entry, 503, str(exc), log=False)
+        fail(503, str(exc), log=False)
         return
     except njt_auth.NjtAuthError as exc:
         # A rejected token AFTER the one permitted re-mint, or a failed mint. Not
         # a 500: the upstream answered, it just refused us.
-        app.state.njt_feed_health = {"total": 1, "ok": 0, "failed": ["njt"]}
-        _note_failure(entry, 502, f"NJ Transit rejected our credentials: {_sanitize_upstream(exc)}")
+        fail(502, f"NJ Transit rejected our credentials: {_sanitize_upstream(exc)}")
         return
     except (njt_auth.NjtUpstreamError, httpx.HTTPError) as exc:
-        app.state.njt_feed_health = {"total": 1, "ok": 0, "failed": ["njt"]}
-        _note_failure(entry, 502, f"Upstream NJ Transit feed error: {_sanitize_upstream(exc)}")
+        fail(502, f"Upstream NJ Transit feed error: {_sanitize_upstream(exc)}")
         return
     except DecodeError:
         # HTTP 200 with a non-protobuf body (an error page, a proxy's HTML).
-        app.state.njt_feed_health = {"total": 1, "ok": 0, "failed": ["njt"]}
-        _note_failure(entry, 502, "Upstream NJ Transit feed returned undecodable data")
+        fail(502, "Upstream NJ Transit feed returned undecodable data")
         return
     njt_feed.log_cross_check(warnings)
     app.state.njt_feed_health = {

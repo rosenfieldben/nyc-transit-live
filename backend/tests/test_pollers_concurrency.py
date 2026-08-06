@@ -18,6 +18,7 @@ import asyncio
 
 import httpx
 import pytest
+from google.protobuf.message import DecodeError
 
 import main as app_module
 import pollers
@@ -523,3 +524,96 @@ def test_c4_first_leaf_picks_the_first_failure_and_descends_nested_groups():
     # A nested group must never reach a handler as an opaque repr.
     nested = ExceptionGroup("outer", [ExceptionGroup("inner", [first]), second])
     assert _first_leaf(nested) is first
+
+
+# ---------------------------------------------------------------------------
+# NJ Transit: a failed poll must say so on the block the CLIENT reads (15b)
+# ---------------------------------------------------------------------------
+
+
+async def _run_njt_refresh(monkeypatch, cache, raiser):
+    """Drive _refresh_njt once with a static group that is ready and a fetch that
+    fails the given way, starting from a healthy per-system block."""
+    app = app_module.app
+    monkeypatch.setattr(app.state, "njt_static_status", "ready", raising=False)
+    monkeypatch.setattr(app.state, "njt_stops", {"109": {}}, raising=False)
+    monkeypatch.setattr(app.state, "njt_trips", {"T1": {}}, raising=False)
+    entry = cache["njt"]
+    # A healthy previous generation, exactly as a successful poll leaves it.
+    entry.update(
+        data=[{"id": "T1"}],
+        fetched_at=1000.0,
+        feed_timestamp=1000.0,
+        error=None,
+        systems={"njt": {"fetched_at": 1000.0, "ok": True, "retained_since": None, "routes": None}},
+    )
+
+    async def boom(*_args, **_kwargs):
+        raise raiser
+
+    monkeypatch.setattr(app_module, "fetch_njt_trains", boom)
+    await pollers._refresh_njt(app, client=None)
+    return entry
+
+
+@pytest.mark.parametrize(
+    "raiser",
+    [
+        httpx.ConnectError("upstream refused"),
+        pollers.njt_auth.NjtAuthError("token rejected"),
+        pollers.njt_auth.NjtUpstreamError("HTTP 503"),
+        DecodeError("not a protobuf"),
+    ],
+    ids=["transport", "auth", "upstream", "decode"],
+)
+async def test_a_failed_njt_poll_marks_its_own_system_block_not_just_the_cache_error(
+    monkeypatch, cache, raiser
+):
+    """THE DEFECT THE CONTRACT TIER FOUND, pinned one layer down.
+
+    /api/njt-trains publishes a C2 per-system block, and the client reads THAT to
+    decide whether to draw a train as stale. Every classified failure in
+    _refresh_njt used to record the cache error and the feed_health dict and leave
+    the block reporting ok: True, because only the subway and railroad refreshers
+    called _mark_all_systems_failed and the unclassified-failure degrader was the
+    one path here that did.
+
+    The consequence is the exact trade C2 exists to refuse: retention is honest
+    only when the retained data is drawn AS stale, so a block still claiming ok
+    through an outage turns "last-known trains, dimmed" into "ghost trains at full
+    opacity". Parametrized across all four classified failures because the
+    original defect was per-branch, and one fixed branch would have looked green.
+
+    THE RETAINED TRAINS STAY, which is the other half of the same claim: a failed
+    poll learned nothing new, so the previous answer is still the best available.
+    It is the block, not the data, that has to change.
+    """
+    entry = await _run_njt_refresh(monkeypatch, cache, raiser)
+    assert entry["systems"]["njt"]["ok"] is False, entry["systems"]
+    # fetched_at is deliberately untouched: "this system's data is from then" is
+    # still true, and its divergence from the envelope's advancing clock IS the
+    # staleness signal.
+    assert entry["systems"]["njt"]["fetched_at"] == 1000.0
+    assert entry["data"] == [{"id": "T1"}], "a failed poll keeps the last-known trains"
+    assert entry["error"] is not None
+    assert app_module.app.state.njt_feed_health == {"total": 1, "ok": 0, "failed": ["njt"]}
+
+
+async def test_the_not_configured_njt_poll_also_marks_the_block(monkeypatch, cache):
+    """The same claim on the path that makes no request at all.
+
+    A deployment whose credentials are removed after a healthy start would
+    otherwise keep serving its last trains with a block that says they are fine,
+    forever, because nothing else ever writes to that block again.
+    """
+    app = app_module.app
+    monkeypatch.setattr(app.state, "njt_static_status", "not-configured", raising=False)
+    entry = cache["njt"]
+    entry.update(
+        data=[{"id": "T1"}],
+        fetched_at=1000.0,
+        systems={"njt": {"fetched_at": 1000.0, "ok": True, "retained_since": None, "routes": None}},
+    )
+    await pollers._refresh_njt(app, client=None)
+    assert entry["systems"]["njt"]["ok"] is False
+    assert "not configured" in entry["error"]["detail"]

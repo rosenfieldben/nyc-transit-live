@@ -833,6 +833,52 @@ async def _refresh_njt(app: FastAPI, client: httpx.AsyncClient) -> None:
     app.state.njt_arrivals = arrivals
 
 
+# EVERY SOURCE THE POLL CYCLE REFRESHES, and the single place that list exists.
+#
+# MODULE LEVEL RATHER THAN INLINE IN THE CYCLE, so a test can read it. That is not
+# tidiness: _poll_feeds looks up cache[name] for each entry BEFORE the TaskGroup
+# children start, so a feed_cache missing one key raises in the cycle BODY rather
+# than in a child. The loop then logs, sleeps, and goes round again, and under a
+# test clock that turns the sleep into a no-op the whole suite spins at full speed
+# instead of failing. Adding "njt" here without updating the fixtures did exactly
+# that. tests/test_pollers_registry.py is the coupling test that makes it
+# impossible to repeat: comments had already failed as this project's
+# countermeasure, so this one has a test behind it.
+#
+# NJ TRANSIT'S VEHICLE POSITIONS FEED IS DELIBERATELY ABSENT, AND THAT IS A
+# DECISION WITH NUMBERS BEHIND IT (15b). getVehiclePositions is not fetched, not
+# parsed, and not modelled. The 2026-08-05 probes measured, at peak: 89% of
+# coordinates FROZEN, a worst observed age of 3h18m, and a CANCELED train still
+# broadcasting a position. Serving any of that would put confidently wrong trains
+# on the map, which is strictly worse than the schedule-derived placement the
+# TripUpdates feed supports (and which /api/njt-trains labels as derived through
+# `status`).
+#
+# This note is HERE, at the registry, because this is where the next person adding
+# a feed will be standing. If you are about to helpfully add it: the numbers above
+# are the reason not to, and they have not changed unless you re-probed.
+# occupancy_status is the ONE field that could ever earn a gated return, since it
+# has no position to be wrong about; that is a ledger followup, not code.
+# NAMES, NOT FUNCTION OBJECTS, and that is load-bearing rather than a style
+# choice. The concurrency suite swaps refreshers with
+# monkeypatch.setattr(pollers, "_refresh_subways", ...) to hold a child open and
+# watch what the cycle does meanwhile. A tuple of function OBJECTS binds at import
+# and freezes the originals, so those patches would apply to a module attribute
+# the cycle no longer reads and every one of those tests would silently exercise
+# the real refresher instead. (Measured: the first extraction did exactly that and
+# five C4 tests went red on the real subway refresher reaching for app state a
+# fake app does not have.) Resolving through globals() at call time is the same
+# read-it-back-at-call-time discipline main and the warmups already document.
+FEED_REFRESHERS = (
+    ("buses", "_refresh_buses"),
+    ("subways", "_refresh_subways"),
+    ("railroads", "_refresh_railroads"),
+    ("path", "_refresh_path"),
+    ("ferry", "_refresh_ferry"),
+    ("njt", "_refresh_njt"),
+)
+
+
 async def _poll_feeds(app: FastAPI) -> None:
     """Refresh the feeds every POLL_INTERVAL_S for the app's lifetime.
 
@@ -886,31 +932,10 @@ async def _poll_feeds(app: FastAPI) -> None:
                 # wedged upstream still bounds only its system, exactly as R2 left it.
                 cache = app.state.feed_cache
                 async with asyncio.TaskGroup() as group:
-                    # NJ TRANSIT'S VEHICLE POSITIONS FEED IS NOT HERE, AND THAT IS
-                    # A DECISION WITH NUMBERS BEHIND IT (15b). getVehiclePositions
-                    # is not fetched, not parsed, and not modelled. The 2026-08-05
-                    # probes measured, at peak: 89% of coordinates FROZEN, a worst
-                    # observed age of 3h18m, and a CANCELED train still broadcasting
-                    # a position. Serving any of that would put confidently wrong
-                    # trains on the map, which is strictly worse than the
-                    # schedule-derived placement the TripUpdates feed supports (and
-                    # which /api/njt-trains labels as derived through `status`).
-                    #
-                    # This comment is here, at the registry, because this is where
-                    # the next person adding a feed will be standing. If you are
-                    # about to helpfully add it: the numbers above are the reason
-                    # not to, and they have not changed unless you re-probed.
-                    # occupancy_status is the ONE field that could ever earn a gated
-                    # return, since it has no position to be wrong about; that is a
-                    # ledger followup, not code.
-                    for name, refresh in (
-                        ("buses", _refresh_buses),
-                        ("subways", _refresh_subways),
-                        ("railroads", _refresh_railroads),
-                        ("path", _refresh_path),
-                        ("ferry", _refresh_ferry),
-                        ("njt", _refresh_njt),
-                    ):
+                    for name, refresher_name in FEED_REFRESHERS:
+                        # Resolved HERE, per cycle, so a monkeypatched refresher
+                        # is the one that runs (see the registry's comment).
+                        refresh = globals()[refresher_name]
                         entry = cache[name]
                         group.create_task(
                             _total_refresh(

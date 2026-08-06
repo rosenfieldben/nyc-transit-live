@@ -951,6 +951,11 @@ def _status_json(**overrides):
         "railroad_static": "ready",
         "path_static": "ready",
         "ferry_static": "ready",
+        # NJT's fourth state is acceptable here BY DESIGN (15a): a deployment given
+        # no NJ Transit credentials makes no network call at all, and failing on
+        # that would paint every non-NJT deployment permanently red. The
+        # njt_static-specific bands are asserted separately below.
+        "njt_static": "ready",
         "feeds": {"subway": {"age_s": 5.0}, "buses": {"age_s": 8.0}},
         # age_s is part of a healthy alerts payload: the poll-level age is what
         # catches a TOTAL outage, where the per-system map freezes and looks fine.
@@ -1076,6 +1081,7 @@ def test_production_malformed_nested_shapes_do_not_crash():
             "railroad_static": "ready",
             "path_static": "ready",
             "ferry_static": "ready",
+            "njt_static": "ready",
             "feeds": [1, 2, 3],
             "alerts": [],
         }
@@ -1403,6 +1409,11 @@ def test_production_non_json_is_fail():
 NJT_TOKEN = "https://njt.example/getToken"
 NJT_DATA = "https://njt.example/getGTFS"
 
+# The probe's exact invalid-token response (2026-08-05). Written out here rather
+# than imported from the simulator: this is the hermetic tier, and the two are
+# supposed to be able to fail independently.
+NJT_INVALID_TOKEN = b'{"errorMessage":"Invalid token."}'
+
 _NJT_ROUTES = (
     "route_id,route_short_name,route_long_name,route_type,route_color,route_text_color\n"
     + "".join(f"{i},R{i},Line {i},113,EF3E42,\n" for i in range(1, 13))
@@ -1543,22 +1554,95 @@ def test_njt_static_a_token_response_with_no_token_fails():
 
 
 def test_njt_static_an_invalid_token_500_is_reported_as_unreachable():
-    """The monitor does not re-mint on the probe's 500: it has already spent its
-    one mint, and a token that died between minting and fetching (seconds apart) is
-    a real fault worth a human look rather than something to spend another mint on.
-    _fetch_retrying reports it as an unreachable upstream, which is a FAIL."""
-    fetch = _njt_fetch(**{NJT_DATA: 500})
-    result, _parsed = _check_njt(fetch)
+    """THE PROBE'S EXACT BODY, not a bare 500, and the distinction is the test.
+
+    An earlier version served a 500 with an EMPTY body, which is an ordinary outage
+    and therefore could not tell "the monitor does not re-mint on an auth 500" from
+    "the monitor does not re-mint on anything". Serving the real invalid-token body
+    is what makes the assertion mean what it says.
+
+    The monitor deliberately does NOT re-mint here: it has already spent its one
+    mint, and a token that died between minting and fetching (seconds apart) is a
+    real fault worth a human look rather than another mint against an unpublished
+    cap. _fetch_retrying reports it as an unreachable upstream, which is a FAIL.
+    """
+
+    class _MintThenReject:
+        """Mints normally, then answers every getGTFS with the probe's exact
+        invalid-token 500. FakeFetcher cannot express a non-200 WITH a body."""
+
+        def __init__(self):
+            self.calls = []
+            self.forms = []
+
+        def __call__(self, url, headers=None, params=None, files=None):
+            self.calls.append((url, headers, params))
+            self.forms.append(files)
+            if url == NJT_TOKEN:
+                return cm.FetchResult(200, _njt_token())
+            return cm.FetchResult(500, NJT_INVALID_TOKEN)
+
+    fetch = _MintThenReject()
+    result, parsed = _check_njt(fetch)
     assert result.status == cm.FAIL
+    assert parsed is None
     mints = [url for url, _h, _p in fetch.calls if url == NJT_TOKEN]
     assert len(mints) == 1, "a rejected data fetch must never provoke a second mint"
+    # The data POST was retried once (the house one-retry for a transient blip),
+    # reusing the same token, so it cost no additional mint.
+    assert [url for url, _h, _p in fetch.calls].count(NJT_DATA) == 2
 
 
 def test_njt_static_missing_members_fail():
-    fetch = _njt_fetch(**{NJT_DATA: _njt_zip(**{"calendar_dates.txt": None})})
+    """DROPS agency.txt, and the choice of member is the whole test.
+
+    An earlier version dropped calendar_dates.txt, which njt_static._parse_zip
+    OPENS: the check never reached _check_members at all, it short-circuited in the
+    earlier "unparseable" arm on a KeyError, and NJT_REQUIRED_MEMBERS was wholly
+    untested while the assertion appeared to pass. agency.txt is required by the
+    monitor and opened by nothing, so it is the one member that can only be caught
+    by the presence check.
+    """
+    fetch = _njt_fetch(**{NJT_DATA: _njt_zip(**{"agency.txt": None})})
     result, _parsed = _check_njt(fetch)
     assert result.status == cm.FAIL
-    assert "calendar_dates.txt" in result.detail
+    assert "missing members: agency.txt" in result.detail
+
+
+def test_njt_static_a_missing_shapes_is_a_warn_not_a_fail():
+    """shapes.txt is WATCHED, not required: njt_static deliberately does not parse
+    it (15a defers geometry) and a hermetic test pins that a publication without it
+    still serves. So upstream dropping it is worth a human look and must NOT exit
+    the run non-zero, which is what listing it as required did: the 6-hourly
+    schedule went red over a member the app was designed to survive losing."""
+    fetch = _njt_fetch(**{NJT_DATA: _njt_zip(**{"shapes.txt": None})})
+    result, parsed = _check_njt(fetch)
+    assert result.status == cm.WARN, result.detail
+    assert "shapes.txt" in result.detail
+    assert parsed is not None, "a WARN must still return the parsed tables"
+
+
+def test_njt_static_warns_when_the_feed_stops_being_flat():
+    """The shape-change watch. njt_static treats this feed as FLAT on the strength
+    of the probe; if parent stations or entrances appear, the parser correctly drops
+    the non-boardable rows but "should the marker set become the PARENTS" is a
+    design decision a human owes an answer to. Nothing else can see it: the stop
+    floor is a lower bound, so 172 becoming 400 sails past, and the identity check
+    still passes because a parent keeps the station's name."""
+    grown = (
+        "stop_id,stop_code,stop_name,stop_lat,stop_lon,location_type,parent_station\n"
+        + "".join(
+            f"{i},C{i},Station {i},40.7{i:03d},-74.0{i:03d},0,\n"
+            for i in range(1, 200)
+            if i not in (109, 112)
+        )
+        + "109,NY,New York Penn Station,40.750568,-73.993519,0,\n"
+        + "112,NP,Newark Penn Station,40.734924,-74.164581,0,\n"
+    )
+    fetch = _njt_fetch(**{NJT_DATA: _njt_zip(**{"stops.txt": grown})})
+    result, _parsed = _check_njt(fetch)
+    assert result.status == cm.WARN, result.detail
+    assert "location_type" in result.detail and "parent_station" in result.detail
 
 
 def test_njt_static_does_not_require_calendar_or_feed_info():

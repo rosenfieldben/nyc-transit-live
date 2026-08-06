@@ -103,6 +103,12 @@ def _explodes(*_args, **_kwargs):
         b'{"errorMessage": "Invalid token."}',  # whitespace after the colon
         b'{"errorMessage":"  Invalid token.  "}',  # padded value, stripped before compare
         b'{"errorMessage":"Invalid token.","detail":"ignored"}',  # extra keys are fine
+        # CASE IS IGNORED, and it is the one place narrowness buys nothing: the same
+        # rejection typed differently is still the rejection, and a genuine NJT 500
+        # carries an entirely different sentence rather than this one recased.
+        b'{"errorMessage":"Invalid Token."}',
+        b'{"errorMessage":"INVALID TOKEN."}',
+        b'{"errorMessage":"invalid token."}',
     ],
 )
 def test_the_probe_shape_is_an_auth_error(body):
@@ -195,6 +201,128 @@ def _fixed(token: str):
         return token
 
     return mint
+
+
+# --- the age ceiling, which is what makes a false negative recoverable ------
+
+
+class _Clock:
+    """A hand-cranked monotonic clock, so the ceiling is tested by advancing time
+    rather than by waiting six hours."""
+
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += seconds
+
+
+async def test_a_token_is_reused_until_it_reaches_the_age_ceiling():
+    clock = _Clock()
+    transport = RecordingTransport(
+        mint_responses=[
+            (200, json.dumps({"UserToken": "first"})),
+            (200, json.dumps({"UserToken": "second"})),
+        ]
+    )
+    cache = njt_auth.TokenCache(clock=clock)
+    kwargs = dict(cache=cache, transport=transport, env=ENV, token_url=TOKEN_URL)
+
+    await njt_auth.njt_post(URL, **kwargs)
+    clock.advance(njt_auth.MAX_TOKEN_AGE_S - 1)
+    await njt_auth.njt_post(URL, **kwargs)
+    assert transport.mints == 1, "a token under the ceiling must be reused"
+
+    clock.advance(1)  # exactly at the ceiling: over-age, so treated as absent
+    await njt_auth.njt_post(URL, **kwargs)
+    assert transport.mints == 2
+    assert [form["token"] for form in transport.data_calls] == ["first", "first", "second"]
+
+
+async def test_a_rejection_the_sniff_misses_recovers_at_the_ceiling():
+    """THE REASON THE CEILING EXISTS, stated as the failure it closes.
+
+    is_auth_error matches one exact response shape, so a rejection that drifts (a
+    reworded message, a changed punctuation) is a false negative. The module prices
+    that as "costs one failed attempt; the caller's rung schedule tries again", and
+    without a ceiling that was simply untrue: the non-auth path returns without
+    invalidating, nothing else expires a token, and the warmup loop then re-posts
+    the SAME dead token forever. Terminal until the process restarted.
+
+    Here the upstream rejects any token but the third one, with a body the sniff
+    does NOT recognise. Attempts before the ceiling all fail on the same token; the
+    attempt after it mints and succeeds. That is the documented price being true.
+    """
+    clock = _Clock()
+    drifted = '{"errorMessage":"Token is no longer valid."}'  # not the probed body
+
+    class Upstream:
+        def __init__(self):
+            self.mints = 0
+            self.posts = []
+
+        async def __call__(self, url, form, timeout_s):
+            if url == TOKEN_URL:
+                self.mints += 1
+                return 200, json.dumps({"UserToken": f"t{self.mints}"}).encode()
+            self.posts.append(form["token"])
+            if form["token"] == "t2":
+                return 200, b"zip-bytes"
+            return 500, drifted.encode()
+
+    upstream = Upstream()
+    cache = njt_auth.TokenCache(clock=clock)
+    kwargs = dict(cache=cache, transport=upstream, env=ENV, token_url=TOKEN_URL)
+
+    # Three attempts inside the ceiling: all fail, all on the same dead token, and
+    # crucially the sniff never fires so nothing re-mints.
+    for _ in range(3):
+        with pytest.raises(njt_auth.NjtUpstreamError):
+            await njt_auth.njt_post(URL, **kwargs)
+        clock.advance(60)
+    assert upstream.mints == 1
+    assert upstream.posts == ["t1", "t1", "t1"]
+
+    # Past the ceiling the cached token is treated as absent and the next attempt
+    # mints a fresh one, which the upstream accepts.
+    clock.advance(njt_auth.MAX_TOKEN_AGE_S)
+    assert await njt_auth.njt_post(URL, **kwargs) == b"zip-bytes"
+    assert upstream.mints == 2
+
+
+async def test_the_ceiling_does_not_widen_the_sniff():
+    """The ceiling must not become a second way to spend mints on an outage. A
+    genuine 500, repeated inside the ceiling, still costs exactly one mint."""
+    clock = _Clock()
+    transport = RecordingTransport(data_responses=[(500, REAL_500)])
+    cache = njt_auth.TokenCache(clock=clock)
+    for _ in range(5):
+        with pytest.raises(njt_auth.NjtUpstreamError):
+            await njt_auth.njt_post(
+                URL, cache=cache, transport=transport, env=ENV, token_url=TOKEN_URL
+            )
+        clock.advance(60)
+    assert transport.mints == 1
+
+
+async def test_mint_requests_counts_posts_sent_not_tokens_issued():
+    """THE COUNTER THAT MATTERS FOR THE RATE CAP. A failed mint raises before the
+    token is stored, so it never advances `mints` -- and a failed mint is exactly the
+    traffic that spends the unpublished cap. Asserting conservation on `mints` alone
+    is blind to a loop that mints unsuccessfully forever."""
+    transport = RecordingTransport(mint_responses=[(503, "upstream down")])
+    cache = njt_auth.TokenCache()
+    for _ in range(4):
+        with pytest.raises(njt_auth.NjtAuthError):
+            await njt_auth.njt_post(
+                URL, cache=cache, transport=transport, env=ENV, token_url=TOKEN_URL
+            )
+    assert cache.mints == 0, "no token was ever issued"
+    assert cache.mint_requests == 4, "but four getToken POSTs were really sent"
+    assert transport.mints == 4
 
 
 # ---------------------------------------------------------------------------
@@ -318,6 +446,14 @@ async def test_a_non_200_data_response_raises_without_minting_again():
         (
             {njt_auth.USERNAME_VAR: "your-njt-username", njt_auth.PASSWORD_VAR: "x"},
             "a .env.example copied but never edited",
+        ),
+        (
+            # THE REALISTIC HALF-EDIT: the real registered username is pasted over
+            # the first line and the second is left as shipped. That used to read as
+            # configured, skip the not-configured short circuit, and put the app in
+            # a retry loop posting a doomed mint on every rung.
+            {njt_auth.USERNAME_VAR: "realuser", njt_auth.PASSWORD_VAR: "your-njt-password"},
+            "the password left at its shipped placeholder",
         ),
     ],
 )

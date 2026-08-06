@@ -292,10 +292,7 @@ FERRY_REQUIRED_MEMBERS = ("stops.txt", "trips.txt", "shapes.txt", "stop_times.tx
 # NJ Transit ships NO calendar.txt and NO feed_info.txt, by design, so neither can
 # be required here; requiring either would FAIL the monitor on every valid
 # publication. calendar_dates.txt takes calendar's place and IS required, because
-# without it the feed carries no service span at all. shapes.txt is listed even
-# though the loader does not parse it (15a defers that): the monitor watches what
-# UPSTREAM publishes, and shapes.txt vanishing from the real feed is a truncation
-# worth a human look even while nothing here reads it.
+# without it the feed carries no service span at all.
 NJT_REQUIRED_MEMBERS = (
     "agency.txt",
     "routes.txt",
@@ -303,8 +300,20 @@ NJT_REQUIRED_MEMBERS = (
     "stops.txt",
     "stop_times.txt",
     "calendar_dates.txt",
-    "shapes.txt",
 )
+
+# Members the monitor WATCHES but the app does not need. A separate tuple with a
+# separate band, because the two answer different questions and conflating them
+# gets the severity wrong in the direction that matters.
+#
+# shapes.txt is the case. njt_static deliberately does not parse it (15a defers
+# geometry to 15c) and does not require it, and a hermetic test pins that a
+# publication without it still serves. So upstream dropping it is worth a HUMAN
+# LOOK, which is what WARN means in this file, and is emphatically not "this is
+# really broken", which is what FAIL means and what exits the run non-zero. Listing
+# it as required turned the 6-hourly schedule red over a member the app was
+# designed to survive losing.
+NJT_WATCHED_MEMBERS = ("shapes.txt",)
 
 # NYC Ferry daily service window in ET (~06:00 first departures to ~22:30 last
 # arrivals). Used so an empty realtime feed reads as FAIL-worthy only when boats
@@ -1153,7 +1162,19 @@ def check_njt_static(
     their floors, an identity spot check, and the service-date band above. Returns
     the parsed tables so a future NJT realtime check can join against them.
     """
-    if not username or not password:
+    # THROUGH njt_auth.credentials, NEVER a bare truthiness test on the two strings.
+    # Reuse, never reimplement, is this file's second guiding principle, and here it
+    # is load-bearing rather than tidy: the app treats the placeholders .env.example
+    # ships as ABSENT, and a re-derived `if not username or not password` reads
+    # "your-njt-username" as configured. That sends a doomed mint to the live
+    # getToken endpoint on every run, against the unpublished cap, and reports the
+    # rejection as an NJ Transit outage instead of the WARN-skip the operator was
+    # promised. Whitespace-only values behave the same way. One call keeps the
+    # monitor's idea of "configured" identical to the app's, by construction.
+    creds = njt_auth.credentials(
+        {njt_auth.USERNAME_VAR: username or "", njt_auth.PASSWORD_VAR: password or ""}
+    )
+    if creds is None:
         return (
             Result(
                 "njt-static",
@@ -1162,6 +1183,7 @@ def check_njt_static(
             ),
             None,
         )
+    username, password = creds
     tz = tz if tz is not None else feeds.NYC_TZ
     mint_url = token_url if token_url is not None else njt_auth.NJT_TOKEN_URL
     data_url = url if url is not None else njt_static.NJT_STATIC_URL
@@ -1206,6 +1228,33 @@ def check_njt_static(
     statuses: list[str] = []
     details: list[str] = []
     _check_members(statuses, details, members, NJT_REQUIRED_MEMBERS)
+    _check_members(statuses, details, members, NJT_WATCHED_MEMBERS, status=WARN)
+    # THE SHAPE-CHANGE WATCH, which is the monitor's job in the way a floor is not.
+    # njt_static treats this feed as FLAT on the strength of the 2026-08-05 probe:
+    # no location_type, no parent_station, 172 stops that are all boardable. If that
+    # changes, the loader's parser drops the non-boardable rows (correct, and it
+    # keeps entrances off the map), but "should the marker set become the PARENT
+    # stations, the way subway and PATH do it" is a design decision a human owes an
+    # answer to. Nothing else can see it: NJT_STATIC_MIN_STOPS is a lower bound, so
+    # 172 becoming 400 sails past, and the 109/112 identity check still passes
+    # because a parent keeps the station's name. WARN, not FAIL: the app keeps
+    # serving correctly throughout, and this is a "come and look" rather than a
+    # "something is broken".
+    if "stops.txt" in members:
+        with zipfile.ZipFile(io.BytesIO(res.content)) as zf:
+            with zf.open("stops.txt") as raw:
+                header = io.TextIOWrapper(raw, encoding="utf-8-sig").readline()
+        grown = sorted(
+            column
+            for column in ("location_type", "parent_station")
+            if column in {c.strip() for c in header.split(",")}
+        )
+        if grown:
+            statuses.append(WARN)
+            details.append(
+                f"stops.txt now carries {', '.join(grown)}; the loader treats this feed as "
+                "FLAT and a parent/child model is a human decision"
+            )
     routes = parsed.get("routes") or {}
     stops = parsed.get("stops") or {}
     if len(routes) < NJT_STATIC_MIN_ROUTES:
@@ -1252,12 +1301,18 @@ def _check_members(
     members: set[str],
     required: tuple[str, ...],
     prefix: str = "",
+    status: str = FAIL,
 ) -> None:
-    """Fold a required-member presence check into a static check's accumulators.
-    A missing member is a FAIL (the feed is structurally truncated)."""
+    """Fold a member-presence check into a static check's accumulators.
+
+    A missing member defaults to FAIL (the feed is structurally truncated). `status`
+    exists for the members a loader deliberately does not need: NJ Transit's
+    shapes.txt is watched rather than required, so its absence is a WARN, and the
+    band has to be the CALLER's choice because only the caller knows whether the app
+    can serve without it. See NJT_WATCHED_MEMBERS."""
     missing = [m for m in required if m not in members]
     if missing:
-        statuses.append(FAIL)
+        statuses.append(status)
         details.append(prefix + "missing members: " + ", ".join(missing))
 
 
@@ -1350,13 +1405,33 @@ def check_production(
 
     results = [Result("production:status", PASS, "/api/status reachable")]
 
-    static_fields = ("subway_static", "railroad_static", "path_static", "ferry_static")
-    # ANY group not "ready" is a FAIL, not just a definitively "failed" one. A
-    # static group that is not ready means a whole mode is dark for riders: no
-    # stops, no route lines, and for subway/PATH/ferry no vehicles at all, because
-    # their pollers gate on the static being loaded. "Loading" is only benign if you
-    # know it is transient, and a probe that sees it cannot know that.
+    # Every static group /api/status publishes, mapped to the states that are
+    # acceptable for it. ANY group outside its set is a FAIL, not just a
+    # definitively "failed" one. A static group that is not ready means a whole mode
+    # is dark for riders: no stops, no route lines, and for subway/PATH/ferry no
+    # vehicles at all, because their pollers gate on the static being loaded.
+    # "Loading" is only benign if you know it is transient, and a probe that sees it
+    # cannot know that.
     #
+    # A MAP RATHER THAN A TUPLE, because NJ Transit (15a) has a legitimate fourth
+    # state. "not-configured" means the deployment was given no NJT credentials,
+    # which is a supported configuration that makes no network call at all; failing
+    # on it would paint every deployment that does not run NJT permanently red. It
+    # is listed HERE, beside the group, rather than special-cased at the comparison,
+    # so adding a sixth group forces the same decision explicitly.
+    #
+    # THIS MAP IS THE ONLY THING THAT SEES A DARK NJT LAYER. check_njt_static probes
+    # the RailData API from the runner and says nothing about the deployment; when
+    # the runner has no credentials it WARN-skips, and a WARN never fails a run. So
+    # a production instance whose NJT credentials were revoked, or whose publication
+    # is stuck, is visible in exactly one place: this line.
+    static_states = {
+        "subway_static": ("ready",),
+        "railroad_static": ("ready",),
+        "path_static": ("ready",),
+        "ferry_static": ("ready",),
+        "njt_static": ("ready", "not-configured"),
+    }
     # ACCEPTED COST, stated so the next person knows it was chosen: a scheduled run
     # that lands inside a redeploy's warmup window now goes red where it used to go
     # yellow. That is the deliberate trade. A cold start reaches ready in seconds
@@ -1364,7 +1439,7 @@ def check_production(
     # not-ready) is exactly the blind spot this PR exists to close. If redeploy-window
     # flapping ever shows up in practice, the fix is to re-check after a delay, not to
     # go back to calling a dark system yellow.
-    not_ready = [f for f in static_fields if data.get(f) != "ready"]
+    not_ready = [f for f, allowed in static_states.items() if data.get(f) not in allowed]
     if not_ready:
         results.append(
             Result(

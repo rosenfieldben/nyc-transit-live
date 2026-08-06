@@ -265,15 +265,138 @@ def test_a_calendar_dates_only_feed_validates():
         njt_static.validate_njt_publication(zf, now=NOW)
 
 
-def test_a_feed_that_also_ships_calendar_still_validates():
-    """The other side of the same coin, and the adversarial question worth asking:
-    calendar.txt is not FORBIDDEN, only unrequired. If NJ Transit starts publishing
-    one, nothing here may break; the extra member is simply not read."""
-    with _open(
-        _members(**{"calendar.txt": "service_id,monday,start_date,end_date\nSVC1,1,,\n"})
-    ) as zf:
+# --- a feed that adopts the ordinary GTFS shape ----------------------------
+#
+# calendar.txt is not FORBIDDEN, only unrequired, and "not read at all" was the
+# wrong answer to what happens if it appears. These three variants are the ones
+# that matter, and all three used to produce a CONFIDENT WRONG ANSWER: two
+# rejections whose message named the wrong cause, and one acceptance that
+# published an end date 15 months early. The span is now the later of calendar's
+# end_date and the latest added calendar_dates day, which gets all three right.
+
+_CAL = "service_id,monday,tuesday,start_date,end_date\nSVC1,1,1,{start},{end}\n"
+
+
+def test_a_removals_only_calendar_dates_is_fine_when_calendar_carries_the_span():
+    """Variant (a). With calendar.txt present, calendar_dates is an EXCEPTION list
+    again, and a feed whose only exceptions are cancellations is perfectly ordinary.
+    Rejecting it as "schedules no service days" named the wrong cause entirely."""
+    members = _members(
+        **{
+            "calendar.txt": _CAL.format(start=_ny_date(NOW, -30), end=_ny_date(NOW, 400)),
+            "calendar_dates.txt": f"service_id,date,exception_type\nSVC1,{_ny_date(NOW, 120)},2\n",
+        }
+    )
+    with _open(members) as zf:
         njt_static.validate_njt_archive(zf, now=NOW)
-        njt_static.validate_njt_publication(zf, now=NOW)
+    assert njt_static._service_span(_open(members)) == _ny_date(NOW, 400)
+
+
+def test_a_conventional_calendar_dates_is_judged_on_calendars_end_date():
+    """Variant (b). Exception-style calendar_dates whose few ADDED rows are all in
+    the past, over a calendar.txt running another year. The feed schedules service
+    for months; judging it on the additive rows alone rejected it as expired."""
+    members = _members(
+        **{
+            "calendar.txt": _CAL.format(start=_ny_date(NOW, -30), end=_ny_date(NOW, 400)),
+            "calendar_dates.txt": (
+                f"service_id,date,exception_type\nSVC1,{_ny_date(NOW, -20)},1\n"
+                f"SVC1,{_ny_date(NOW, 150)},2\n"
+            ),
+        }
+    )
+    with _open(members) as zf:
+        njt_static.validate_njt_archive(zf, now=NOW)
+
+
+def test_the_span_is_the_later_of_the_two_calendars():
+    """Variant (c), the quiet one. A near-future ADD plus a far-future calendar
+    end_date used to be ACCEPTED while publishing the add as the feed's end date, so
+    /api/status, the warmup log and the monitor's band all reported a number 15
+    months early and the guard would start rejecting a healthy feed on that day."""
+    members = _members(
+        **{
+            "calendar.txt": _CAL.format(start=_ny_date(NOW, -30), end=_ny_date(NOW, 400)),
+            "calendar_dates.txt": f"service_id,date,exception_type\nSVC1,{_ny_date(NOW, 30)},1\n",
+        }
+    )
+    assert njt_static._service_span(_open(members)) == _ny_date(NOW, 400)
+    # And the other direction: calendar_dates reaching past calendar's end wins.
+    members = _members(
+        **{
+            "calendar.txt": _CAL.format(start=_ny_date(NOW, -30), end=_ny_date(NOW, 10)),
+            "calendar_dates.txt": f"service_id,date,exception_type\nSVC1,{_ny_date(NOW, 300)},1\n",
+        }
+    )
+    assert njt_static._service_span(_open(members)) == _ny_date(NOW, 300)
+
+
+def test_a_calendar_with_no_usable_end_date_contributes_nothing():
+    """A calendar.txt whose end_date is blank or impossible must not rescue an
+    expired feed, and must not break a healthy one either: it simply adds nothing
+    and the calendar_dates answer stands."""
+    for end in ("", "20261332", "not-a-date"):
+        members = _members(
+            **{
+                "calendar.txt": _CAL.format(start=_ny_date(NOW, -30), end=end),
+                "calendar_dates.txt": _calendar_dates(last_offset=-1, first_offset=-40),
+            }
+        )
+        with _open(members) as zf:
+            with pytest.raises(StaticValidationError, match="expired"):
+                njt_static.validate_njt_archive(zf, now=NOW)
+
+
+# --- an eight-digit string is not a date ------------------------------------
+
+
+@pytest.mark.parametrize(
+    "impossible", ["20261301", "20260230", "20260000", "20261232", "99999999", "00000000"]
+)
+def test_an_impossible_date_cannot_extend_the_service_span(impossible):
+    """THE GUARD RETURNS THE HEALTHY ANSWER ON EXACTLY THE INPUT IT CANNOT READ, if
+    the parser admits any eight digits. The comparison is lexicographic, so
+    "20261301" (month 13) sorts above every real 2026 date: one such row anywhere in
+    an 8,697-row table made a fully expired schedule look like one running into next
+    year, and the monitor could not cover for it (it downgrades an unparseable date
+    to WARN, and a WARN never fails a run).
+
+    So the date is really parsed and an impossible one is dropped, exactly like a
+    malformed coordinate is dropped from stops.
+    """
+    table = f"service_id,date,exception_type\nSVC1,{_ny_date(NOW, -400)},1\nSVC1,{impossible},1\n"
+    dates = _parse(table, njt_static._parse_calendar_dates)
+    assert njt_static.latest_service_date(dates) == _ny_date(NOW, -400)
+    with _open(_members(**{"calendar_dates.txt": table})) as zf:
+        with pytest.raises(StaticValidationError, match="expired"):
+            njt_static.validate_njt_archive(zf, now=NOW)
+
+
+# --- rows that are not boardable stops --------------------------------------
+
+
+def test_non_boardable_rows_never_become_markers():
+    """This feed is FLAT today (no location_type, no parent_station), and the parser
+    assumes that. What it does NOT assume is that a row it has never seen is a stop:
+    a parent station, an entrance, a generic node and a boarding area are all things
+    a train does not call at, and placing them puts a station pin and a street-
+    entrance pin a few metres from the platform that actually carries the routes,
+    each with no routes of its own. Nothing downstream could catch that: the
+    monitor's stop count is a lower bound and the identity check passes because a
+    parent keeps the station's name.
+    """
+    table = (
+        "stop_id,stop_name,stop_lat,stop_lon,location_type,parent_station\n"
+        "109,New York Penn Station,40.750568,-73.993519,1,\n"  # parent station
+        "109A,NY Penn Track 1,40.750568,-73.993519,0,109\n"  # boardable platform
+        "109E,NY Penn 7th Ave entrance,40.750100,-73.993000,2,109\n"  # entrance
+        "109N,NY Penn concourse,40.750200,-73.993100,3,109\n"  # generic node
+        "112,Newark Penn Station,40.734924,-74.164581,,\n"  # today's flat shape
+    )
+    stops = _parse(table, njt_static._parse_stops)
+    assert set(stops) == {"109A", "112"}, (
+        "only boardable rows (blank or 0 location_type) may become markers"
+    )
 
 
 def test_shapes_may_be_absent_because_nothing_parses_it_yet():
@@ -300,19 +423,48 @@ def test_a_missing_required_member_fails_validation(member):
         ("stops.txt", "stops"),
         ("routes.txt", "routes"),
         ("trips.txt", "trips"),
-        ("stop_times.txt", "stop times"),
     ],
 )
-def test_headers_only_stops_fails_validation(member, what):
+def test_headers_only_table_fails_the_light_validator(member, what):
     """FINDING 4, FROM BIRTH. A headers-only table is structurally perfect and
     parses cleanly to nothing; promoting one reaches "ready" with an empty map and
-    nothing retrying. All four tables the load reads are gated, not just stops: a
-    feed with stops and no trips places markers that can never carry a train, which
-    is the same silent lie one table over."""
+    nothing retrying. Three tables are gated on every load, not just stops: a feed
+    with stops and no trips places markers that can never carry a train, which is
+    the same silent lie one table over.
+
+    stop_times.txt is deliberately NOT in this list; it is the expensive table and
+    the publication gate owns it. See the pair of tests below, which pin both halves
+    of that split."""
     headers_only = _members()[member].splitlines()[0] + "\n"
     with _open(_members(**{member: headers_only})) as zf:
         with pytest.raises(StaticValidationError, match=f"no usable {what}"):
             njt_static.validate_njt_archive(zf, now=NOW)
+
+
+def test_a_headers_only_stop_times_passes_the_light_validator():
+    """THE FIRST HALF OF THE SPLIT, and it is an ACCEPTANCE test on purpose.
+
+    validate_njt_archive runs on every load of the cached archive, so it pays only
+    for the three cheap tables; stop_times.txt is the one table it does not open.
+    Asserting that it passes here is what makes the next test's rejection mean
+    something: without this, the two validators could be identical again and nobody
+    would notice.
+    """
+    headers_only = STOP_TIMES.splitlines()[0] + "\n"
+    with _open(_members(**{"stop_times.txt": headers_only})) as zf:
+        njt_static.validate_njt_archive(zf, now=NOW)
+
+
+def test_a_headers_only_stop_times_fails_the_publication_gate():
+    """THE SECOND HALF. A publication may not be promoted over a working archive
+    unless the REAL parse of every table the load reads succeeds, and stop_times is
+    the table only this gate opens. Delete _parse_open from
+    validate_njt_publication and this is what goes red."""
+    headers_only = STOP_TIMES.splitlines()[0] + "\n"
+    with _open(_members(**{"stop_times.txt": headers_only})) as zf:
+        njt_static.validate_njt_archive(zf, now=NOW)  # the light gate still passes
+        with pytest.raises(StaticValidationError):
+            njt_static.validate_njt_publication(zf, now=NOW)
 
 
 def test_a_calendar_dates_with_no_added_rows_fails_validation():
@@ -374,20 +526,30 @@ def test_the_guard_reads_today_in_new_york_not_in_utc():
 
 
 def test_the_publication_validator_runs_the_real_parse():
-    """Strictly stronger than the archive validator, and the difference is the
-    point: a publication with clean stops and routes but an undecodable byte in a
-    table the light validator only checks for PRESENCE would otherwise be promoted
-    over the last-known-good and then discarded, losing both."""
+    """Strictly stronger than the archive validator, and the difference is the whole
+    point: a publication with clean stops, routes and trips but an undecodable byte
+    in stop_times.txt (which the light validator never opens) would otherwise be
+    promoted over the last-known-good and then discarded by the loader's residual
+    arm, losing both archives.
+
+    KEYED ON stop_times.txt, not on a table both validators read. An earlier version
+    of this test corrupted trips.txt, which the LIGHT validator already parses, so
+    it passed identically whether or not validate_njt_publication did anything at
+    all: deleting the publication gate's extra parse could not fail it. The two
+    validators were in fact equivalent at the time, and this test could not see it.
+    """
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         for name, body in _members().items():
-            if name == "trips.txt":
+            if name == "stop_times.txt":
                 # Bytes that are not valid UTF-8, so the table is present and
                 # structurally fine but cannot be read.
-                zf.writestr(name, TRIPS.encode()[:-5] + b"\xff\xfe\n")
+                zf.writestr(name, STOP_TIMES.encode()[:-5] + b"\xff\xfe\n")
             else:
                 zf.writestr(name, body)
     with zipfile.ZipFile(io.BytesIO(buf.getvalue())) as zf:
+        # The light gate passes: it does not open stop_times at all.
+        njt_static.validate_njt_archive(zf, now=NOW)
         with pytest.raises(StaticValidationError):
             njt_static.validate_njt_publication(zf, now=NOW)
 
@@ -678,15 +840,31 @@ def test_golden_every_trip_carries_a_train_number():
 
 
 @golden
-def test_golden_the_fixture_ships_no_calendar_and_no_feed_info():
-    """The absence is load-bearing: the validators are built on it, and a
-    regenerated fixture that suddenly carried either would mean the upstream feed
-    changed shape, which is a decision rather than a refresh."""
-    assert not (FIXTURE_DIR / "calendar.txt").exists()
-    assert not (FIXTURE_DIR / "feed_info.txt").exists()
-    # And shapes.txt is deliberately not committed: 10 MB of geometry no phase
-    # reads yet (15a defers it; 15c decides).
-    assert not (FIXTURE_DIR / "shapes.txt").exists()
+def test_golden_the_committed_fixture_holds_exactly_the_trim_rule_writes():
+    """PINS THE TRIM CONTRACT, and says so, because it cannot pin anything else.
+
+    An earlier version of this test asserted that calendar.txt and feed_info.txt
+    are absent and described itself as catching upstream drift. It could not:
+    gen_njt_fixture.py writes a hardcoded six-file list and never copies either
+    member through under any circumstances, so the assertion was true by
+    construction whatever NJ Transit publishes. Deleting the generator's real drift
+    check (its EXPECTED_ABSENT loop) left this green.
+
+    UPSTREAM DRIFT IS THE GENERATOR'S JOB, and it does it against the live archive's
+    own member list, which is the only place the question can be asked. What a
+    committed fixture can honestly pin is the TRIM: exactly these six members, no
+    more (shapes.txt is deliberately not committed, being 10 MB of geometry no phase
+    reads yet) and no fewer.
+    """
+    committed = {path.name for path in FIXTURE_DIR.iterdir() if path.suffix == ".txt"}
+    assert committed == {
+        "agency.txt",
+        "routes.txt",
+        "stops.txt",
+        "trips.txt",
+        "stop_times.txt",
+        "calendar_dates.txt",
+    }, f"the trim rule writes six members; the fixture holds {sorted(committed)}"
 
 
 @golden

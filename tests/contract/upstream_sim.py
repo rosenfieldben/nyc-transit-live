@@ -179,7 +179,13 @@ class NjtApi:
     """
 
     token_mode: str = "ok"
+    # TWO COUNTERS, for the reason njt_auth.TokenCache carries two: `mints` counts
+    # tokens ISSUED, `mint_requests` counts getToken POSTS RECEIVED. A request that
+    # this simulator refuses (missing credentials) never becomes a token, so a
+    # scenario asserting only on `mints` is blind to exactly the traffic that spends
+    # a real rate cap. Every conservation claim here reads BOTH.
     mints: int = 0
+    mint_requests: int = 0
     gtfs_requests: int = 0
     # Tokens this simulator has issued, in order. reject-first keys on POSITION:
     # the FIRST token ever minted is the dead one, everything after it is live,
@@ -690,24 +696,36 @@ class UpstreamSim:
             self.njt.token_mode = mode
 
     def mints(self) -> int:
-        """How many tokens NJ Transit has issued in this scenario. THE number the
-        conservation claim is made against."""
+        """How many tokens NJ Transit has ISSUED in this scenario."""
         with self._lock:
             return self.njt.mints
 
+    def mint_requests(self) -> int:
+        """How many getToken POSTs NJ Transit has RECEIVED, issued or not. THE
+        number a conservation claim should be made against: a refused mint costs
+        the same against a rate limit as a successful one, and `mints` cannot see
+        it."""
+        with self._lock:
+            return self.njt.mint_requests
+
+    def gtfs_requests(self) -> int:
+        """How many getGTFS POSTs NJ Transit has received, accepted or rejected."""
+        with self._lock:
+            return self.njt.gtfs_requests
+
     def await_mints(self, count: int, deadline_s: float = 30.0) -> int:
-        """Block until at least `count` tokens have been minted, then return the
+        """Block until at least `count` getToken POSTs have arrived, then return the
         total. Used to reach a known point before asserting NO FURTHER mints
         happened: an assertion that a counter stayed at N is only meaningful once
         it has definitely reached N, and sleeping to find out would break rule 2."""
         end = time.monotonic() + deadline_s
         while time.monotonic() < end:
-            if self.mints() >= count:
-                return self.mints()
+            if self.mint_requests() >= count:
+                return self.mint_requests()
             time.sleep(0.05)
         raise AssertionError(
-            f"NJ Transit minted {self.mints()} tokens in {deadline_s}s, expected at least {count}. "
-            "The app may not be reaching getToken at all."
+            f"NJ Transit received {self.mint_requests()} getToken POSTs in {deadline_s}s, "
+            f"expected at least {count}. The app may not be reaching getToken at all."
         )
 
     def fetches(self, key: str) -> int:
@@ -795,6 +813,9 @@ class UpstreamSim:
         from the one that replaced it, and identical strings cannot.
         """
         with self._lock:
+            # Counted BEFORE the guard: the POST was made whether or not it yields
+            # a token, and it is the POST that costs.
+            self.njt.mint_requests += 1
             if not fields.get("username") or not fields.get("password"):
                 return 400, b'{"errorMessage":"Missing credentials."}'
             self.njt.mints += 1
@@ -862,6 +883,7 @@ class UpstreamSim:
                 "njt": {
                     "token_mode": self.njt.token_mode,
                     "mints": self.njt.mints,
+                    "mint_requests": self.njt.mint_requests,
                     "gtfs_requests": self.njt.gtfs_requests,
                 },
                 "not_found": list(self.not_found),

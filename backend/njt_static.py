@@ -130,10 +130,26 @@ _SERVICE_ADDED = "1"
 def _parse_stops(raw: IO[bytes]) -> dict[str, dict]:
     """stops.txt -> stop_id -> {id, name, lat, lon}.
 
-    FLAT, like the ferry and unlike PATH: this feed ships no location_type and no
-    parent_station, so every row with a usable id and coordinate is a marker.
-    Rows with a blank stop_id or a missing/malformed coordinate are skipped;
-    first-writer-wins on a duplicate stop_id.
+    FLAT, like the ferry and unlike PATH: as of the 2026-08-05 probe this feed ships
+    no location_type and no parent_station at all, so every row with a usable id and
+    coordinate is a marker. Rows with a blank stop_id or a missing/malformed
+    coordinate are skipped; first-writer-wins on a duplicate stop_id.
+
+    THE ONE THING NOT ASSUMED, because the cost of being wrong is visible to riders:
+    a row whose location_type is anything but blank or "0" is NOT a boardable stop.
+    location_type 1 is a parent station, 2 an entrance, 3 a generic node, 4 a
+    boarding area, and none of them is a place a train calls at. This feed publishes
+    none of them today, so the filter is inert; if it ever does, the alternative is
+    that /api/njt-stops sprouts a station pin and a street-entrance pin a few metres
+    from the platform that actually carries the routes, which is precisely the
+    silently-wrong map this codebase keeps removing. Skipping them is right whatever
+    the feed does, and it costs one comparison.
+
+    What the filter deliberately does NOT do is invent a parent/child fold. If
+    parent stations ever appear, the marker set should probably become the parents
+    (the subway and PATH shape) and that is a design decision for a human, not
+    something to infer at parse time. The contract monitor watches for exactly that
+    shape change so the decision is prompted rather than discovered.
 
     NO WHEELCHAIR FIELD, deliberately. The ferry marker carries one because the
     ferry feed publishes wheelchair_boarding; NJ Transit's carries no accessibility
@@ -147,6 +163,8 @@ def _parse_stops(raw: IO[bytes]) -> dict[str, dict]:
         stop_id = (row.get("stop_id") or "").strip()
         if not stop_id or stop_id in stops:
             continue
+        if (row.get("location_type") or "").strip() not in ("", "0"):
+            continue  # not a boardable stop; see the docstring
         try:
             lat = float(row.get("stop_lat") or "")
             lon = float(row.get("stop_lon") or "")
@@ -288,6 +306,64 @@ def _parse_stop_times(raw: IO[bytes]) -> dict[str, list[dict]]:
     }
 
 
+def _service_day(value: str) -> str | None:
+    """A GTFS YYYYMMDD date, or None when the value is not one.
+
+    EIGHT DIGITS IS NOT A DATE, and the difference decides whether this feed's only
+    staleness check works. The guard below compares dates as zero-padded strings,
+    which is exact for real dates and meaningless for impossible ones: "20261301"
+    (month 13) sorts above every real date in 2026, so a single such row anywhere in
+    an 8,697-row table would make a fully expired schedule look like one running
+    into next year. The monitor cannot cover for it either, because it downgrades an
+    unparseable date to WARN and a WARN never fails a run.
+
+    So the date is really parsed, and a value that is not a calendar day is dropped
+    exactly like a malformed coordinate is dropped in _parse_stops: the row simply
+    does not contribute a service day, the max falls back to a real date (or to
+    None, which already raises), and the guard keeps meaning what it says.
+    """
+    text = (value or "").strip()
+    if len(text) != 8 or not text.isdigit():
+        return None
+    try:
+        datetime.strptime(text, "%Y%m%d")
+    except ValueError:
+        return None
+    return text
+
+
+def _parse_calendar(raw: IO[bytes]) -> str | None:
+    """calendar.txt -> the latest end_date over all services, or None.
+
+    THIS FEED SHIPS NO calendar.txt (probed 2026-08-05), which is why
+    calendar_dates.txt is the whole schedule and why the service-date guard reads
+    it. This parser exists for the publication that stops being true.
+
+    WITHOUT IT, a feed that adopted the ordinary GTFS shape would be MISDIAGNOSED
+    rather than merely unsupported, and that is the reason to write it now rather
+    than when it happens. Three measured variants, all against a calendar.txt
+    running to 2027-12-31: a calendar_dates holding only removals is rejected as
+    "schedules no service days"; a conventional exception-style calendar_dates
+    whose few additive rows are all in the past is rejected as "the schedule has
+    expired"; and one with a single near-future addition is ACCEPTED while
+    publishing that addition as the feed's end date, so /api/status, the warmup log
+    and the monitor's band all report a number 15 months early and the guard starts
+    rejecting a perfectly good feed on that day. Every one of those is a wrong
+    answer with a confident message, which is worse than an unsupported feed.
+
+    Folding end_date into the span fixes all three at once and asks nothing of a
+    feed that never grows the member. A row with no usable end_date contributes
+    nothing; a table of them leaves the span exactly where calendar_dates put it.
+    """
+    latest: str | None = None
+    reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
+    for row in reader:
+        end = _service_day(row.get("end_date") or "")
+        if end is not None and (latest is None or end > latest):
+            latest = end
+    return latest
+
+
 def _parse_calendar_dates(raw: IO[bytes]) -> dict[str, set[str]]:
     """calendar_dates.txt -> service_id -> {YYYYMMDD} of ADDED service days.
 
@@ -299,18 +375,19 @@ def _parse_calendar_dates(raw: IO[bytes]) -> dict[str, set[str]]:
     rather than tidiness: a removal row says a service does NOT run on a day, so
     counting one toward the feed's service span would let a feed whose real service
     ended in March pass the staleness guard on the strength of a cancellation
-    published for December. Rows with a blank service_id or a date that is not
-    eight digits are skipped, so a malformed row cannot become a fake service day.
+    published for December. Rows with a blank service_id or a date that is not a
+    real calendar day are skipped (see _service_day), so neither a malformed row nor
+    an impossible one can become a fake service day.
     """
     dates: dict[str, set[str]] = defaultdict(set)
     reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
     for row in reader:
         service_id = (row.get("service_id") or "").strip()
-        date = (row.get("date") or "").strip()
         exception = (row.get("exception_type") or "").strip()
         if not service_id or exception != _SERVICE_ADDED:
             continue
-        if len(date) != 8 or not date.isdigit():
+        date = _service_day(row.get("date") or "")
+        if date is None:
             continue
         dates[service_id].add(date)
     return dict(dates)
@@ -354,18 +431,30 @@ def validate_njt_archive(zf: zipfile.ZipFile, *, now: float | None = None) -> No
        gets from birth rather than growing later like the other four did. A
        headers-only stops.txt is structurally perfect and parses cleanly to
        nothing; promoting that reaches "ready" with an empty map and nothing
-       retrying. All four tables the load reads are gated, not just stops: a feed
-       with stops and no trips places markers that can never carry a train, which
-       is the same silent lie one table over.
+       retrying. Three tables are gated here rather than only stops: a feed with
+       stops and no trips places markers that can never carry a train, which is the
+       same silent lie one table over.
+
+       stop_times.txt IS NOT GATED HERE, and its absence from this list is what
+       makes the split with validate_njt_publication real. It is the one expensive
+       table, this validator runs on EVERY load, and the publication gate below
+       parses it in full before any archive may be promoted. So a cached archive
+       cannot contain a stop_times that never passed that gate, and a load pays for
+       the three cheap tables rather than for all four. (An earlier draft gated all
+       four here, which quietly made the two validators equivalent: the publication
+       gate's extra parse became unreachable, and the test that claimed to pin it
+       could not fail.)
 
     3. THE SERVICE-DATE GUARD, this feed's staleness truth. Every other loader in
        this app can defer staleness to the contract monitor's feed_info reader;
-       there is NO feed_info.txt here, so there is no feed_end_date to check and
-       the question has to be answered from calendar_dates, which is the whole
-       schedule. The rule: the latest ADDED service day must be today or later, in
-       New York local time. A publication whose service has entirely expired
-       schedules nothing for today or any day after, so it cannot be served from,
-       and accepting one would replace a working archive with a dead calendar.
+       there is NO feed_info.txt here, so there is no feed_end_date to check and the
+       question has to be answered from the schedule itself. The span is the later
+       of calendar.txt's end_date (absent today, folded in for the publication that
+       changes that; see _parse_calendar) and the latest ADDED calendar_dates day.
+       The rule: that span must reach today or later, in New York local time. A
+       publication whose service has entirely expired schedules nothing for today or
+       any day after, so it cannot be served from, and accepting one would replace a
+       working archive with a dead calendar.
 
        THE VALIDATOR DRAWS THE HARD LINE, THE MONITOR BANDS THE APPROACH. This
        raises only when the feed leads today by NOTHING; the contract monitor
@@ -380,31 +469,49 @@ def validate_njt_archive(zf: zipfile.ZipFile, *, now: float | None = None) -> No
     require_parsed(lambda: parse_member(zf, "stops.txt", _parse_stops), "stops.txt", "stops")
     require_parsed(lambda: parse_member(zf, "routes.txt", _parse_routes), "routes.txt", "routes")
     require_parsed(lambda: parse_member(zf, "trips.txt", _parse_trips), "trips.txt", "trips")
-    require_parsed(
-        lambda: parse_member(zf, "stop_times.txt", _parse_stop_times),
-        "stop_times.txt",
-        "stop times",
-    )
-    try:
-        calendar_dates = parse_member(zf, "calendar_dates.txt", _parse_calendar_dates)
-    except (UnicodeDecodeError, csv.Error) as exc:
-        # The same shape-naming message require_parsed produces for the tables it
-        # gates. This one is checked by hand rather than through require_parsed
-        # because emptiness is not the only question asked of it: the service-date
-        # guard below needs the parsed table itself, and parsing it twice to reuse
-        # a helper would buy nothing.
-        raise StaticValidationError("calendar_dates.txt is not readable as CSV") from exc
-    latest = latest_service_date(calendar_dates)
+    latest = _service_span(zf)
     if latest is None:
         raise StaticValidationError("calendar_dates.txt schedules no service days")
     today = _today(now)
     if latest < today:
         # String comparison is exact for zero-padded YYYYMMDD and needs no date
-        # parsing, so a malformed value cannot raise inside a validator; the parser
-        # already dropped anything that is not eight digits.
+        # arithmetic, and _service_day has already dropped anything that is not a
+        # real calendar day, so an impossible value cannot sort its way past this.
         raise StaticValidationError(
             f"service ended {latest}, before today ({today}); the schedule has expired"
         )
+
+
+def _service_span(zf: zipfile.ZipFile) -> str | None:
+    """The last day this archive schedules any service, as YYYYMMDD, or None.
+
+    The later of calendar.txt's end_date and the latest added calendar_dates day.
+    calendar.txt is absent from this feed today, so in practice this is the
+    calendar_dates answer; reading both is what keeps a publication that adopts the
+    ordinary GTFS shape from being confidently misdiagnosed rather than merely
+    unsupported (see _parse_calendar for the three measured variants).
+    """
+    try:
+        calendar_dates = parse_member(zf, "calendar_dates.txt", _parse_calendar_dates)
+        # Present-or-absent rather than required: this feed ships no calendar.txt,
+        # and _REQUIRED_MEMBERS deliberately does not ask for one.
+        try:
+            member = zf.open("calendar.txt")
+        except KeyError:
+            calendar_end = None
+        else:
+            with member as raw:
+                calendar_end = _parse_calendar(raw)
+    except (UnicodeDecodeError, csv.Error) as exc:
+        # The same shape-naming message require_parsed produces for the tables it
+        # gates. Checked by hand rather than through require_parsed because
+        # emptiness is not the only question asked here: the guard needs the parsed
+        # value, and parsing twice to reuse a helper would buy nothing.
+        raise StaticValidationError("the service calendar is not readable as CSV") from exc
+    latest = latest_service_date(calendar_dates)
+    if calendar_end is not None and (latest is None or calendar_end > latest):
+        return calendar_end
+    return latest
 
 
 def validate_njt_publication(zf: zipfile.ZipFile, *, now: float | None = None) -> None:
@@ -413,16 +520,28 @@ def validate_njt_publication(zf: zipfile.ZipFile, *, now: float | None = None) -
     Strictly stronger than validate_njt_archive, the same split every other loader
     keeps and for the same reason: this runs the REAL parse of every table the load
     reads, so an archive that would fail the load can never be promoted over a
-    working one. A publication with clean stops and routes but an undecodable byte
-    in a table the light validator only checks for PRESENCE would otherwise pass,
-    be renamed over the last-known-good, and then be discarded by the residual arm
-    in the loader: one bad publication, both archives gone.
+    working one. A publication with clean stops, routes and trips but an undecodable
+    byte in stop_times.txt (which the light validator does not open at all) would
+    otherwise pass, be renamed over the last-known-good, and then be discarded by
+    the residual arm in the loader: one bad publication, both archives gone.
 
-    The cost lands where it belongs: this runs once per download attempt, the light
-    validator runs on every load.
+    stop_times.txt IS THE DIFFERENCE, and it is the whole difference: one table, one
+    added gate. Between the two validators every table the load reads is parsed for
+    real before an archive may be promoted, and the expensive one is paid for once
+    per download attempt rather than on every load.
+
+    DELIBERATELY NOT a blanket `_parse_open(zf)` on top. That is what this used to
+    be, and it made the two validators equivalent: every table _parse_open touches
+    was already gated above, so the extra call could be deleted without failing a
+    single test, and the strength split the docstring promised did not exist. One
+    named gate for the one uncovered table is both cheaper and actually falsifiable.
     """
     validate_njt_archive(zf, now=now)
-    _parse_open(zf)
+    require_parsed(
+        lambda: parse_member(zf, "stop_times.txt", _parse_stop_times),
+        "stop_times.txt",
+        "stop times",
+    )
 
 
 async def _download_via_token(url: str, dest: Path, deadline_s: float) -> None:
@@ -674,6 +793,19 @@ async def load_njt_static(*, now: float | None = None) -> dict:
         logger.warning("Cached NJ Transit static GTFS is unparseable (%s); discarding", exc)
         zip_path.unlink(missing_ok=True)
         return {}
+    if not data["stop_times"]:
+        # The member is required (so it is present) and every PUBLICATION is gated
+        # on it parsing to something, but the light cached-archive validator does
+        # not open it (see validate_njt_archive), so a cache that rotted since it
+        # was promoted can still reach here empty. The group stays ready because
+        # stops still place markers; what degrades is the routes-per-station index
+        # and the scheduled stop schedule, both of which come up empty. Worth one
+        # line so an operator can tell a degraded index from a code bug. Same
+        # treatment as load_path_static's stop_times warning.
+        logger.warning(
+            "NJ Transit stop_times.txt has no usable rows; "
+            "routes-per-station and the scheduled stop schedule will be empty"
+        )
     logger.info(
         "Loaded NJ Transit static GTFS: %d stops, %d routes, %d trips, "
         "%d trips with stop_times, service through %s",

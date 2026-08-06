@@ -522,8 +522,13 @@ def test_njt_cold_start_serves_stops_and_reports_ready(contract_app):
 
     # ONE MINT for a healthy cold start. Not two: the single-flight cache means the
     # loader's one attempt takes one token, and nothing re-mints when nothing is
-    # rejected.
-    assert app.sim.mints() == 1, f"a healthy cold start should mint once, got {app.sim.mints()}"
+    # rejected. Asserted on getToken POSTS RECEIVED, not on tokens issued: a refused
+    # mint costs the same against a rate limit as a successful one, and the issued
+    # count cannot see one.
+    assert app.sim.mint_requests() == 1, (
+        f"a healthy cold start should POST getToken once, got {app.sim.mint_requests()}"
+    )
+    assert app.sim.gtfs_requests() == 1, "and should fetch the archive exactly once"
 
     status = app.status()
     assert status["njt_static"] == "ready"
@@ -603,8 +608,9 @@ def test_njt_bad_publication_stays_failed_then_heals(harness):
         # RETRIES DO NOT RE-MINT. The token is still good, so the cache hands the
         # same one to every attempt; a loader that minted per attempt would burn
         # through an unpublished rate cap during any upstream outage.
-        assert app.sim.mints() == 1, (
-            f"repeated failed attempts must reuse one token, got {app.sim.mints()} mints"
+        assert app.sim.mint_requests() == 1, (
+            f"repeated failed attempts must reuse one token, got "
+            f"{app.sim.mint_requests()} getToken POSTs"
         )
 
         # The app is not sick. NJT failing is one layer degraded, not an outage.
@@ -641,19 +647,27 @@ def test_njt_token_expiry_costs_exactly_one_extra_mint(harness):
             lambda s: s["njt_static"] == "ready",
             "the NJT group to recover from an expired token inside one attempt",
         )
-        assert harness.sim.mints() == 2, (
+        assert harness.sim.mint_requests() == 2, (
             "an expired token costs exactly one extra mint: one cold, one to replace "
-            f"the dead one, got {harness.sim.mints()}"
+            f"the dead one, got {harness.sim.mint_requests()}"
         )
-        # THE OTHER HALF, and the reason this is not just a mint count: the attempt
-        # must never have been classified as an upstream outage. A recorded download
-        # failure here would mean the 500 propagated as one, which is exactly the
-        # misreading the scenario exists to rule out.
+        # THE OTHER HALF, AND THE FALSIFIABLE ONE. Two getGTFS POSTs is what
+        # "recovered INSIDE one attempt" looks like on the wire: the rejected fetch
+        # and the retry that succeeded. A loader that read the 500 as an outage
+        # instead would fail the attempt, retry on the rung schedule, and re-post the
+        # SAME token, so this count would climb while mint_requests stayed at 1.
+        #
+        # The static_archives block is deliberately NOT the assertion here, though it
+        # is checked below for corroboration: static_shared._record CLEARS
+        # failed_downloads and last_download_error on every promotion, so those two
+        # read zero after any successful attempt, re-minted or not. They cannot tell
+        # this scenario from the failure it is about.
+        assert harness.sim.gtfs_requests() == 2, (
+            "recovery must happen inside one attempt: one rejected fetch, one retry, "
+            f"got {harness.sim.gtfs_requests()} getGTFS POSTs"
+        )
         archive = app.status()["static_archives"]["njt"]
-        assert archive["failed_downloads"] == 0, (
-            f"a re-minted attempt must not count as a failed download: {archive}"
-        )
-        assert archive["last_download_error"] is None
+        assert archive["last_promoted_at"] is not None, archive
         assert app.get("/api/njt-stops"), "recovery must actually place stations"
 
 
@@ -679,9 +693,9 @@ def test_a_real_njt_500_neither_mints_nor_heals(harness):
         # RETRYING app rather than about one that has only tried once. The rungs are
         # compressed to 1s/2s/3s in this tier, so this is a couple of seconds.
         harness.sim.await_fetched("njt", 3)
-        assert harness.sim.mints() == 1, (
+        assert harness.sim.mint_requests() == 1, (
             "a real 500 must never provoke a re-mint, however many attempts fail; "
-            f"got {harness.sim.mints()} mints"
+            f"got {harness.sim.mint_requests()} getToken POSTs"
         )
         assert app.status()["njt_static"] == "failed"
         assert app.status()["static_archives"]["njt"]["failed_downloads"] >= 1

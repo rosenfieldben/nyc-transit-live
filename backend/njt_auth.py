@@ -10,6 +10,9 @@ this wrong, so they are stated here rather than discovered later:
      LIFETIME IS UNDOCUMENTED: the vendor's own docs template carries a literal
      blank where the number should be. So nothing here may assume an expiry
      window; the only reliable signal that a token died is the upstream saying so.
+     MAX_TOKEN_AGE_S is not that assumption in disguise: it is a ceiling on how
+     long we will hold a token without proof it still works, which is what stops a
+     rejection the sniff fails to recognise from wedging the cache permanently.
   3. Minting is rate-limited BELOW the data cap, and the number is unpublished.
      Tokens are also product-scoped, so a GTFSRT token is rejected by the Usage
      API and we cannot read our own counters. Mints are therefore treated as a
@@ -40,6 +43,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from collections.abc import Awaitable, Callable
 
 import httpx
@@ -60,15 +64,58 @@ NJT_TOKEN_URL = env_seams.url("NJT_TOKEN_URL", "https://raildata.njtransit.com/a
 USERNAME_VAR = "NJT_USERNAME"
 PASSWORD_VAR = "NJT_PASSWORD"
 
-# The placeholder .env.example ships, treated as absent so a copied-but-unedited
+# The placeholders .env.example ships, treated as absent so a copied-but-unedited
 # .env reads as "not configured" rather than sending a doomed mint. Mirrors
 # feeds.shared._api_key's "your-key-here" guard.
-_PLACEHOLDER = "your-njt-username"
+#
+# BOTH NAMES, not just the username, and the asymmetric case is the realistic one:
+# someone pastes their real registered username over the first line and does not
+# notice the second is still the shipped example. That reads as configured, takes
+# the app out of its not-configured short circuit, and puts it in a retry loop
+# posting a doomed mint on every rung. Checking each field against its own
+# placeholder costs one line and closes it.
+_PLACEHOLDERS = {
+    USERNAME_VAR: "your-njt-username",
+    PASSWORD_VAR: "your-njt-password",
+}
 
 # Whole-request ceiling for one NJT POST. The static endpoint answered in 428 ms
 # overnight and 8.9 s at peak on 2026-08-05, so this is a wedge guard rather than
-# a latency budget; the warmup's whole-attempt deadline sits above it.
-REQUEST_TIMEOUT_S = 120.0
+# a latency budget.
+#
+# WHY 30 AND NOT THE 120 THE OTHER TRANSFERS USE. The enclosing budget for the
+# static load is static_shared.DOWNLOAD_DEADLINE_S (120s), which _download_via_token
+# wraps around the WHOLE njt_post call, and one call is up to four requests on the
+# invalid-token path this module exists for: mint, POST, re-mint, POST. A 120s
+# per-request ceiling inside a 120s whole-call ceiling can never fire (the outer one
+# always starts strictly earlier), so it was a guard in name only, and one slow-but-
+# healthy request could eat the entire budget that three others still had to fit in.
+# 30s times four is exactly the outer budget, and it is more than three times the
+# worst latency the probe measured, so a genuinely wedged request is cut off with
+# time left for the rest of the sequence.
+REQUEST_TIMEOUT_S = 30.0
+
+# The longest this process will keep using a token before minting a fresh one.
+#
+# NOT A CLAIM ABOUT WHEN THE TOKEN DIES. The lifetime is undocumented (the vendor's
+# own docs template has a literal blank there), so nothing here may assert one. This
+# is a ceiling on how long we will hold a token WITHOUT PROOF IT STILL WORKS, and it
+# exists because the alternative is unbounded.
+#
+# THE FAILURE IT CLOSES: is_auth_error matches one exact response shape, so a
+# rejection that drifts by one character is a false negative. The module used to
+# price that as "costs one failed attempt; the caller's rung schedule tries again",
+# and that was wrong: the non-auth path returns without invalidating, the cache has
+# no expiry, and the warmup loop then re-posts the SAME dead token forever, so a
+# false negative was terminal until the process restarted. A ceiling makes the
+# documented price true. Any rejection this module fails to recognise now heals by
+# itself within one ceiling, without widening the sniff toward real 500s.
+#
+# WHY SIX HOURS: it bounds the worst case at four mints a day per process from this
+# rule alone, which is negligible against any plausible cap, while being short
+# enough that a self-heal lands inside a single contract-monitor cycle (the monitor
+# runs every six hours) rather than after a day of a dark layer.
+MAX_TOKEN_AGE_S = 6 * 3600.0
 
 # How much of an upstream body a failure message may quote. Enough to carry
 # {"errorMessage":"..."} whole, short enough that an HTML error page does not
@@ -123,7 +170,9 @@ def credentials(env: dict[str, str] | None = None) -> tuple[str, str] | None:
     source = os.environ if env is None else env
     username = (source.get(USERNAME_VAR) or "").strip()
     password = (source.get(PASSWORD_VAR) or "").strip()
-    if not username or not password or username == _PLACEHOLDER:
+    if not username or not password:
+        return None
+    if username == _PLACEHOLDERS[USERNAME_VAR] or password == _PLACEHOLDERS[PASSWORD_VAR]:
         return None
     return username, password
 
@@ -148,13 +197,26 @@ def is_auth_error(status: int, body: bytes) -> bool:
     every real outage.
 
     THE ASYMMETRY IS DELIBERATE AND IT POINTS THIS WAY ON PURPOSE. A false
-    NEGATIVE (a real auth failure this misses) costs one failed attempt; the
-    caller's rung schedule tries again, the loader keeps serving its cached
-    archive, and an operator sees the failure on /api/status. A false POSITIVE (a
-    real outage read as an auth failure) costs a MINT, repeatedly, against a cap
-    we cannot measure and cannot raise. So the match is exact: status 500, a body
+    POSITIVE (a real outage read as an auth failure) costs a MINT, repeatedly,
+    against a cap we cannot measure and cannot raise. A false NEGATIVE costs one
+    failed attempt, and the caller's rung schedule tries again while the loader
+    keeps serving its cached archive. So the match is narrow: status 500, a body
     that parses as a JSON object, and an errorMessage of exactly "Invalid token."
     after stripping surrounding whitespace. Anything else is not this.
+
+    CASE IS IGNORED, and that is the one place narrowness buys nothing. The probe
+    recorded a capital I and a lowercase t twice, but "Invalid Token." is the same
+    rejection typed differently, and matching it costs no specificity at all: a
+    genuine NJ Transit 500 carries an entirely different sentence, not the same one
+    in another case. Every other part of the shape stays exact.
+
+    THE FALSE-NEGATIVE PRICE IS ONLY TRUE BECAUSE OF MAX_TOKEN_AGE_S. Before that
+    ceiling existed, a rejection this missed left the dead token in the
+    process-wide cache with nothing to expire it, and the retry loop re-posted it
+    forever: the attempt failed, but it failed the same way on every rung until the
+    process restarted. The ceiling is what makes "the schedule tries again" mean
+    "and eventually succeeds". Narrowing this sniff without that ceiling in place
+    would be reintroducing that bug.
 
     A CONTROL PINS BOTH DIRECTIONS. tests/contract/test_contract_api.py runs a
     same-class 500 with a different body and asserts it neither mints nor heals,
@@ -176,7 +238,7 @@ def is_auth_error(status: int, body: bytes) -> bool:
     message = payload.get("errorMessage")
     if not isinstance(message, str):
         return False
-    return message.strip() == "Invalid token."
+    return message.strip().casefold() == "invalid token."
 
 
 def _quote(body: bytes) -> str:
@@ -287,6 +349,14 @@ class TokenCache:
     away B's brand-new token and force a third mint. Clearing only if the cached
     token is still the one that failed keeps the arithmetic honest.
 
+    A TOKEN IS ALSO DROPPED ONCE IT REACHES MAX_TOKEN_AGE_S, which is what makes the
+    sniff's documented false-negative price true rather than aspirational. Nothing
+    else expires a token: the non-auth path returns without invalidating (correctly,
+    or a real outage would mint on every attempt), so without this ceiling a
+    rejection is_auth_error does not recognise would leave the dead token here for
+    the life of the process while the retry loop re-posted it forever. See the
+    constant for why six hours and what it does and does not claim.
+
     THE LOCK IS REBOUND WHEN THE RUNNING LOOP CHANGES. asyncio.Lock binds itself to
     the loop that first awaits it and raises if awaited from another, and this
     module holds a process-wide cache. The app has one loop for its whole lifetime,
@@ -297,11 +367,28 @@ class TokenCache:
     the rebind because a token is not loop-bound.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        max_age_s: float = MAX_TOKEN_AGE_S,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._token: str | None = None
+        self._minted_at: float = 0.0
         self._lock: asyncio.Lock | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
-        self.mints = 0  # observable, so a test or a scenario can assert conservation
+        self._max_age_s = max_age_s
+        # MONOTONIC, not the wall clock: a container whose clock steps backwards at
+        # boot (or forwards under an NTP correction) must not be able to make a
+        # token look arbitrarily fresh or arbitrarily stale.
+        self._clock = clock
+        # TWO COUNTERS, AND THE DISTINCTION IS THE WHOLE POINT OF HAVING BOTH.
+        # `mints` counts tokens successfully ISSUED; `mint_requests` counts getToken
+        # POSTS ACTUALLY SENT. A failed mint raises before the token is stored, so it
+        # advances the second and not the first, and it is the second that spends the
+        # unpublished rate cap. Asserting conservation on `mints` alone is blind to
+        # exactly the worst path: a loop that mints unsuccessfully forever.
+        self.mints = 0
+        self.mint_requests = 0
 
     def _get_lock(self) -> asyncio.Lock:
         loop = asyncio.get_running_loop()
@@ -310,8 +397,22 @@ class TokenCache:
             self._loop = loop
         return self._lock
 
+    def _live_token(self) -> str | None:
+        """The cached token if there is one and it has not reached the age ceiling.
+
+        Read on every get(), so an over-age token is treated as absent rather than
+        expired on a timer: this costs nothing while the app is idle and re-mints
+        lazily on the next request that actually needs one.
+        """
+        if self._token is None:
+            return None
+        if self._clock() - self._minted_at >= self._max_age_s:
+            return None
+        return self._token
+
     def peek(self) -> str | None:
-        """The cached token without minting. For tests and for logging only."""
+        """The cached token without minting, ignoring the age ceiling. For tests and
+        for logging: a caller deciding whether to USE a token wants _live_token."""
         return self._token
 
     def invalidate(self, stale: str | None = None) -> None:
@@ -322,18 +423,23 @@ class TokenCache:
             self._token = None
 
     async def get(self, mint_token: Callable[[], Awaitable[str]]) -> str:
-        """The cached token, minting exactly once if there is none."""
-        cached = self._token
+        """The cached token, minting exactly once if there is none or it is over-age."""
+        cached = self._live_token()
         if cached is not None:
             return cached
         async with self._get_lock():
             # THE SECOND CHECK. Another caller may have minted while this one waited
-            # for the lock; returning its token is the entire point of the lock.
-            if self._token is not None:
-                return self._token
+            # for the lock; returning its token is the entire point of the lock. It
+            # re-reads through the age ceiling too, so a token that aged out while
+            # this caller queued is not handed back as fresh.
+            live = self._live_token()
+            if live is not None:
+                return live
+            self.mint_requests += 1
             token = await mint_token()
             self.mints += 1
             self._token = token
+            self._minted_at = self._clock()
             return token
 
 

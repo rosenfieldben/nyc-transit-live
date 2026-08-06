@@ -40,6 +40,18 @@ THE MODES, and what each one models:
 Static archives take a publication NAME instead (good, headers-only-stops,
 missing-member, corrupt-zip), because "what did upstream publish" is the question
 there, not "is it up".
+
+NJ TRANSIT IS THE ONE UPSTREAM HERE THAT IS NOT A GET (15a). Every RailData
+endpoint is POST multipart/form-data with a token as a form field, and the token
+is minted by POSTing credentials to getToken. So the simulator grows two POST
+routes and a third axis of control beside MODE and PUBLICATION: a TOKEN MODE
+(`ok`, `reject-first`, `server-error`) that decides what getGTFS does with the
+token it is handed. That axis exists for one fact the probes pinned and nothing
+else in this repo has to survive: NJ TRANSIT ANSWERS A DEAD TOKEN WITH HTTP 500
+AND {"errorMessage":"Invalid token."}, not 401 or 403, so a poller that reads it
+as a server error backs off forever while the fix is a re-mint. `reject-first`
+reproduces exactly that; `server-error` is the same-class control that must NOT
+be mistaken for it.
 """
 
 from __future__ import annotations
@@ -47,6 +59,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 import threading
 import time
 import zipfile
@@ -97,6 +110,33 @@ BUS_BOROUGHS = {
 MODES = ("live", "frozen", "empty", "error")
 PUBLICATIONS = ("good", "headers-only-stops", "missing-member", "corrupt-zip")
 
+# What NJ Transit's getGTFS does with the token it is handed. Enumerated and
+# validated for the same reason MODES and PUBLICATIONS are: an unknown name must
+# be a 400 from the control endpoint, never a mystery failure the app reports as a
+# bad upstream.
+#
+#   ok            every token this simulator minted is accepted.
+#   reject-first  THE PROBE'S MOST DANGEROUS FACT, reproduced. The first getGTFS
+#                 after a mint answers HTTP 500 with {"errorMessage":"Invalid
+#                 token."}, the exact body NJ Transit serves for a dead token, and
+#                 accepts everything after. A loader that re-mints once recovers
+#                 inside one attempt; one that classifies 500 as an outage never
+#                 does.
+#   server-error  THE CONTROL. A genuine HTTP 500 with a DIFFERENT body, forever.
+#                 It must not provoke a mint and must classify as an attempt
+#                 failure. Without it, "re-mint on invalid token" and "re-mint on
+#                 any 500" are indistinguishable, and the second one spends mints
+#                 against an unpublished rate cap on every real NJT outage.
+TOKEN_MODES = ("ok", "reject-first", "server-error")
+
+# Byte-for-byte what the 2026-08-05 probes recorded for a rejected token. Written
+# as one literal so a test can assert against the same string the app sniffs for.
+NJT_INVALID_TOKEN_BODY = b'{"errorMessage":"Invalid token."}'
+
+# A genuine NJT server error: same status, different body. The whole point is that
+# only the BODY tells them apart.
+NJT_SERVER_ERROR_BODY = b'{"errorMessage":"An unexpected error occurred."}'
+
 
 @dataclass
 class Feed:
@@ -121,6 +161,37 @@ class Archive:
     publication: str = "good"
     fetches: int = 0
     bodies: dict[str, bytes] = field(default_factory=dict)
+
+
+@dataclass
+class NjtApi:
+    """NJ Transit's credentialed API surface: the mint counter and the token mode.
+
+    SEPARATE FROM Archive rather than folded into it, because the two answer
+    different questions and a scenario asserts on both at once: the Archive says
+    what NJ Transit PUBLISHED (good, headers-only, ...), this says what it did with
+    the TOKEN. The token-expiry scenario needs a good publication AND a rejected
+    token simultaneously, which one field could not express.
+
+    `mints` is the number the conservation claim is made against: "the loader
+    succeeded with exactly two mints" is an assertion about this counter, not about
+    a log line.
+    """
+
+    token_mode: str = "ok"
+    # TWO COUNTERS, for the reason njt_auth.TokenCache carries two: `mints` counts
+    # tokens ISSUED, `mint_requests` counts getToken POSTS RECEIVED. A request that
+    # this simulator refuses (missing credentials) never becomes a token, so a
+    # scenario asserting only on `mints` is blind to exactly the traffic that spends
+    # a real rate cap. Every conservation claim here reads BOTH.
+    mints: int = 0
+    mint_requests: int = 0
+    gtfs_requests: int = 0
+    # Tokens this simulator has issued, in order. reject-first keys on POSITION:
+    # the FIRST token ever minted is the dead one, everything after it is live,
+    # which is what models "the token we were holding expired" rather than "the
+    # endpoint is flaky".
+    issued: list[str] = field(default_factory=list)
 
 
 def _restamp(raw: bytes, now: float, drift_deg: float = 0.0, generation: int = 0) -> bytes:
@@ -340,6 +411,93 @@ def _ferry_members() -> dict[str, str]:
     return members
 
 
+def _njt_members(now: float) -> dict[str, str]:
+    """NJ Transit archive members, SYNTHESIZED rather than taken from a fixture.
+
+    THE OPPOSITE CALL FROM PATH AND THE FERRY, and the reason is specific rather
+    than convenient. Those two borrow committed GTFS fixtures because their
+    REALTIME feeds join to the archive by id, and a synthesized id space either
+    matches nothing or (worse) matches by accident. NJ Transit has no realtime in
+    this phase at all: 15a is static plus the token plumbing, so there is no join
+    for a wrong id to corrupt. What the NJT scenarios assert is the AUTH DANCE and
+    the validation pipeline, and neither reads a stop name.
+
+    It also keeps this tier independent of a fixture that cannot be generated
+    without credentials. backend/tests/fixtures/njt_gtfs/ is produced by
+    backend/scripts/gen_njt_fixture.py against the live credentialed API; until it
+    is committed the hermetic goldens are dormant, and the contract tier must not
+    be dormant with them.
+
+    THE SHAPE IS THE PROBED SHAPE, though, in every way a validator can see:
+      * NO calendar.txt AND NO feed_info.txt. Both are absent from the real feed by
+        design, so an archive carrying either would test a loader that does not
+        exist. This is the member set njt_static._REQUIRED_MEMBERS was written for.
+      * route_type=113 on every route, the GTFS extended "Rail Service" type that
+        anything switch-casing 0-7 falls through, with route_text_color EMPTY.
+      * calendar_dates.txt carrying ADDED (exception_type=1) rows only, which is
+        what the real 8,697-row table is.
+
+    THE SERVICE DATES ARE WRITTEN RELATIVE TO NOW, which is the same rewrite
+    _restamp performs on the realtime captures and for the same reason: NJ
+    Transit's service-date guard rejects a publication whose schedule has entirely
+    expired, so a table of fixed dates would quietly turn every NJT scenario red on
+    whatever day it aged past. Only the dates move; nothing else does.
+    """
+    day = 86400.0
+    dates = [
+        time.strftime("%Y%m%d", time.localtime(now + offset * day))
+        # A week behind through six months ahead: comfortably inside the guard, and
+        # wide enough that a scenario running across local midnight cannot land on
+        # an empty span.
+        for offset in (-7, 0, 1, 30, 180)
+    ]
+    return {
+        "agency.txt": _csv(
+            "agency_id,agency_name,agency_url,agency_timezone",
+            ["NJT,NJ TRANSIT,https://www.njtransit.com,America/New_York"],
+        ),
+        # route_type 113 and an EMPTY route_text_color on both, matching the real
+        # feed's 12 routes. NEC and PASC are used because the probe named Pascack
+        # Valley as the one first-class west-of-Hudson route.
+        "routes.txt": _csv(
+            "route_id,route_short_name,route_long_name,route_type,route_color,route_text_color",
+            ["1,NEC,Northeast Corridor,113,EF3E42,", "13,PASC,Pascack Valley,113,A2A4A3,"],
+        ),
+        "stops.txt": _csv(
+            "stop_id,stop_code,stop_name,stop_lat,stop_lon",
+            [
+                "109,NY,New York Penn Station,40.750568,-73.993519",
+                "112,NP,Newark Penn Station,40.734924,-74.164581",
+                "38,HB,Hoboken,40.734984,-74.027683",
+            ],
+        ),
+        "trips.txt": _csv(
+            "route_id,service_id,trip_id,trip_headsign,direction_id,trip_short_name",
+            ["1,SVC1,T1,New York,0,3800", "13,SVC1,T2,Hoboken,1,1600"],
+        ),
+        "stop_times.txt": _csv(
+            "trip_id,arrival_time,departure_time,stop_id,stop_sequence",
+            [
+                "T1,07:00:00,07:00:00,112,1",
+                "T1,07:20:00,07:20:00,109,2",
+                "T2,08:00:00,08:00:00,38,1",
+                "T2,08:25:00,08:25:00,112,2",
+            ],
+        ),
+        "calendar_dates.txt": _csv(
+            "service_id,date,exception_type",
+            [f"SVC1,{date},1" for date in dates],
+        ),
+        # Present and never parsed, exactly as in the real feed (15a defers
+        # shapes.txt). Carried so a publication that DROPS it is expressible if a
+        # later phase ever requires it.
+        "shapes.txt": _csv(
+            "shape_id,shape_pt_sequence,shape_pt_lat,shape_pt_lon",
+            ["s1,1,40.73,-74.16", "s1,2,40.75,-73.99"],
+        ),
+    }
+
+
 def _publications(members: dict[str, str]) -> dict[str, bytes]:
     """The four publications a static upstream can serve.
 
@@ -369,6 +527,7 @@ class UpstreamSim:
     def __init__(self) -> None:
         self.feeds: dict[str, Feed] = {}
         self.archives: dict[str, Archive] = {}
+        self.njt = NjtApi()
         self.not_found: list[str] = []
         self._lock = threading.Lock()
         self._server: ThreadingHTTPServer | None = None
@@ -467,6 +626,10 @@ class UpstreamSim:
             self.archives[f"bus:{borough}"] = Archive(
                 f"bus:{borough}", bodies=_publications(_archive_members(subway_stops, "platforms"))
             )
+        # NJ Transit (15a). Synthesized rather than fixture-derived, for the reason
+        # _njt_members states at length; served over POST behind a token, which is
+        # what the two routes and the token mode below are for.
+        self.archives["njt"] = Archive("njt", bodies=_publications(_njt_members(time.time())))
 
         # Alerts end this far out by default: comfortably beyond any scenario, so
         # nothing expires unless a test asks for it.
@@ -521,6 +684,49 @@ class UpstreamSim:
             raise ValueError(f"unknown publication {publication!r}; expected one of {PUBLICATIONS}")
         with self._lock:
             self.archives[key].publication = publication
+
+    def set_token_mode(self, mode: str) -> None:
+        """ok | reject-first | server-error. Validated like set_mode and
+        set_publication, and for the sharper of the two reasons: an unknown token
+        mode falling through to the healthy body would make a scenario about token
+        expiry pass without ever expiring a token."""
+        if mode not in TOKEN_MODES:
+            raise ValueError(f"unknown token mode {mode!r}; expected one of {TOKEN_MODES}")
+        with self._lock:
+            self.njt.token_mode = mode
+
+    def mints(self) -> int:
+        """How many tokens NJ Transit has ISSUED in this scenario."""
+        with self._lock:
+            return self.njt.mints
+
+    def mint_requests(self) -> int:
+        """How many getToken POSTs NJ Transit has RECEIVED, issued or not. THE
+        number a conservation claim should be made against: a refused mint costs
+        the same against a rate limit as a successful one, and `mints` cannot see
+        it."""
+        with self._lock:
+            return self.njt.mint_requests
+
+    def gtfs_requests(self) -> int:
+        """How many getGTFS POSTs NJ Transit has received, accepted or rejected."""
+        with self._lock:
+            return self.njt.gtfs_requests
+
+    def await_mints(self, count: int, deadline_s: float = 30.0) -> int:
+        """Block until at least `count` getToken POSTs have arrived, then return the
+        total. Used to reach a known point before asserting NO FURTHER mints
+        happened: an assertion that a counter stayed at N is only meaningful once
+        it has definitely reached N, and sleeping to find out would break rule 2."""
+        end = time.monotonic() + deadline_s
+        while time.monotonic() < end:
+            if self.mint_requests() >= count:
+                return self.mint_requests()
+            time.sleep(0.05)
+        raise AssertionError(
+            f"NJ Transit received {self.mint_requests()} getToken POSTs in {deadline_s}s, "
+            f"expected at least {count}. The app may not be reaching getToken at all."
+        )
 
     def fetches(self, key: str) -> int:
         with self._lock:
@@ -592,6 +798,67 @@ class UpstreamSim:
             archive.fetches += 1
             return 200, archive.bodies[archive.publication]
 
+    def serve_njt_token(self, fields: dict[str, str]) -> tuple[int, bytes]:
+        """getToken: hand out a token, permissively.
+
+        PERMISSIVE ABOUT CREDENTIALS on purpose. What this tier tests is the app's
+        behavior around a token (single-flight minting, one re-mint on the probe's
+        500, never a mint on a real 500), not NJ Transit's password check, and a
+        credential check here would only add a way for the harness to fail that
+        looks like a product bug. Any non-empty username and password work.
+
+        NOT A FIXED TOKEN, which is the one deliberate deviation from "the sim
+        returns a fixed token". Numbered tokens are what make the expiry scenario
+        expressible at all: reject-first has to distinguish the token that died
+        from the one that replaced it, and identical strings cannot.
+        """
+        with self._lock:
+            # Counted BEFORE the guard: the POST was made whether or not it yields
+            # a token, and it is the POST that costs.
+            self.njt.mint_requests += 1
+            if not fields.get("username") or not fields.get("password"):
+                return 400, b'{"errorMessage":"Missing credentials."}'
+            self.njt.mints += 1
+            token = f"njt-token-{self.njt.mints}"
+            self.njt.issued.append(token)
+            return 200, json.dumps({"UserToken": token}).encode()
+
+    def serve_njt_gtfs(self, fields: dict[str, str]) -> tuple[int, bytes]:
+        """getGTFS: the archive, behind whatever the token mode says about tokens.
+
+        THE 500s HERE ARE THE POINT OF THE WHOLE ROUTE. NJ Transit answers a dead
+        token with HTTP 500 and {"errorMessage":"Invalid token."}, and answers a
+        real fault with HTTP 500 and something else. Both shapes are served here,
+        under `reject-first` and `server-error`, so a scenario can prove the app
+        tells them apart rather than asserting it reads the code that does.
+
+        The archive fetch counter advances on every request INCLUDING a rejected
+        one, because upstream really was asked; await_fetched therefore means "the
+        app reached getGTFS", which is what the hermeticity smoke test needs it to
+        mean.
+        """
+        with self._lock:
+            archive = self.archives["njt"]
+            archive.fetches += 1
+            self.njt.gtfs_requests += 1
+            token = fields.get("token") or ""
+            mode = self.njt.token_mode
+            if mode == "server-error":
+                # A GENUINE fault: same status, different body, and it never ends.
+                # An app that re-mints on this is spending mints on an outage.
+                return 500, NJT_SERVER_ERROR_BODY
+            if token not in self.njt.issued:
+                # A token this simulator never issued (or none at all) is dead by
+                # definition, and gets the real upstream's answer for that.
+                return 500, NJT_INVALID_TOKEN_BODY
+            if mode == "reject-first" and token == self.njt.issued[0]:
+                # THE EXPIRY. The first token ever minted is the one that died; the
+                # re-mint that follows works. Keyed on the token rather than on a
+                # request counter so a loader that retried with the SAME token
+                # still fails, which is the behavior the scenario is about.
+                return 500, NJT_INVALID_TOKEN_BODY
+            return 200, archive.bodies[archive.publication]
+
     def record_not_found(self, path: str) -> None:
         """Remember a path the app asked for that no route matched.
 
@@ -612,6 +879,12 @@ class UpstreamSim:
                 "archives": {
                     k: {"publication": a.publication, "fetches": a.fetches}
                     for k, a in self.archives.items()
+                },
+                "njt": {
+                    "token_mode": self.njt.token_mode,
+                    "mints": self.njt.mints,
+                    "mint_requests": self.njt.mint_requests,
+                    "gtfs_requests": self.njt.gtfs_requests,
                 },
                 "not_found": list(self.not_found),
             }
@@ -635,8 +908,20 @@ class UpstreamSim:
             "PATH_STATIC_URL": f"{base}/static/path.zip",
             "FERRY_STATIC_URL": f"{base}/static/ferry.zip",
             "BUS_STATIC_BASE": f"{base}/static/bus",
+            # BOTH NJT seams, together. Pointing only the archive here would leave
+            # the MINT aimed at raildata.njtransit.com, so every contract run would
+            # spend a real token against an unpublished rate cap and the tier would
+            # stop being hermetic in the one place it is hardest to notice.
+            "NJT_TOKEN_URL": f"{base}/njt/getToken",
+            "NJT_STATIC_URL": f"{base}/njt/getGTFS",
             "DATA_DIR": str(data_dir),
             "BUS_TIME_API_KEY": "contract-tier-not-a-real-key",
+            # Credentials, not seams (the monitor needs the real ones set, so they
+            # are deliberately outside SEAM_NAMES). Present by default because the
+            # DEFAULT contract app is a configured one; the not-configured scenario
+            # launches with them emptied instead.
+            "NJT_USERNAME": "contract-tier-not-a-real-user",
+            "NJT_PASSWORD": "contract-tier-not-a-real-password",
         }
 
 
@@ -689,6 +974,47 @@ def _resolve(path: str) -> tuple[str, str] | None:
     return None
 
 
+# NJ Transit's two POST routes. Kept out of _resolve, which answers for GETs: the
+# app never GETs these and a GET that reached one would be a real defect worth the
+# 404 (and worth appearing in the not_found list the hermeticity smoke test reads).
+_NJT_ROUTES = ("/njt/getToken", "/njt/getGTFS")
+
+
+def _multipart_fields(body: bytes, content_type: str) -> dict[str, str]:
+    """Field name -> value out of a multipart/form-data body.
+
+    Hand-rolled rather than reached for from the standard library, because the
+    obvious tool (cgi.FieldStorage) is gone in modern Python and the alternatives
+    want a full email message. The bodies here are a handful of short text fields
+    with no filenames and no nested parts, which is exactly the case a dozen lines
+    covers correctly.
+
+    A body this cannot parse yields an EMPTY mapping, which makes the request look
+    tokenless and therefore gets NJ Transit's invalid-token answer. That is the
+    right failure: a scenario fails visibly rather than a harness bug being served
+    as a healthy archive.
+    """
+    match = re.search(r'boundary="?([^";]+)"?', content_type or "")
+    if not match:
+        return {}
+    boundary = b"--" + match.group(1).encode()
+    fields: dict[str, str] = {}
+    for part in body.split(boundary):
+        head, sep, value = part.partition(b"\r\n\r\n")
+        if not sep:
+            continue
+        name = re.search(rb'name="([^"]*)"', head)
+        if not name:
+            continue
+        # split() consumed the delimiter, so each part still carries the CRLF that
+        # preceded it. The final part is the closing "--\r\n" and has no header,
+        # so it never reaches here.
+        if value.endswith(b"\r\n"):
+            value = value[:-2]
+        fields[name.group(1).decode()] = value.decode("utf-8", errors="replace")
+    return fields
+
+
 def _make_handler(sim: UpstreamSim):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -723,7 +1049,25 @@ def _make_handler(sim: UpstreamSim):
                 self._send(status, body, "application/x-protobuf")
 
         def do_POST(self) -> None:  # noqa: N802
-            if urlparse(self.path).path != "/__control":
+            path = urlparse(self.path).path
+            if path in _NJT_ROUTES:
+                length = int(self.headers.get("Content-Length", 0))
+                fields = _multipart_fields(
+                    self.rfile.read(length), self.headers.get("Content-Type", "")
+                )
+                if path == "/njt/getToken":
+                    status, body = sim.serve_njt_token(fields)
+                    self._send(status, body, "application/json")
+                else:
+                    status, body = sim.serve_njt_gtfs(fields)
+                    # An error body is JSON, a success body is the zip. Sending the
+                    # right content type for each keeps the app's own handling
+                    # honest rather than letting it succeed on a mislabeled body.
+                    kind = "application/zip" if status == 200 else "application/json"
+                    self._send(status, body, kind)
+                return
+            if path != "/__control":
+                sim.record_not_found(path)
                 self._send(404, b"", "text/plain")
                 return
             length = int(self.headers.get("Content-Length", 0))
@@ -738,12 +1082,14 @@ def _make_handler(sim: UpstreamSim):
                     sim.set_mode(payload["key"], payload["mode"])
                 elif "publication" in payload:
                     sim.set_publication(payload["key"], payload["publication"])
+                elif "token_mode" in payload:
+                    sim.set_token_mode(payload["token_mode"])
                 elif "alerts_end_in_s" in payload:
                     sim.alerts_end_in_s = payload["alerts_end_in_s"]
                 else:
                     raise ValueError(
-                        f"control payload names none of mode/publication/alerts_end_in_s: "
-                        f"{sorted(payload)}"
+                        f"control payload names none of "
+                        f"mode/publication/token_mode/alerts_end_in_s: {sorted(payload)}"
                     )
             except (ValueError, KeyError) as exc:
                 self._send(400, json.dumps({"error": str(exc)}).encode(), "application/json")

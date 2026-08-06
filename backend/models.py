@@ -314,6 +314,21 @@ class FerryRoute(BaseModel):
     shape: list[list[list[float]]]
 
 
+# NJ Transit Rail static (15a): station markers from the credentialed RailData
+# GTFS. NJT stop ids are small integers (1..176) that collide heavily with MTA,
+# PATH and ferry ids (stop_id 112 names four different places across our feeds), so
+# NJT data stays in its own namespace like every other system's.
+class NjtStop(BaseModel):
+    id: str
+    name: str | None
+    lat: float
+    lon: float
+    routes: list[str] = []  # route ids serving this station (H5)
+    # NO wheelchair FIELD, unlike FerryStop, and the absence is deliberate: NJ
+    # Transit's GTFS carries no accessibility data anywhere, and a hardcoded False
+    # would read as an affirmative "not accessible" the feed never published.
+
+
 # NYC Ferry realtime (14b): live GPS boats from the VehiclePositions feed and a
 # per-dock arrivals index from the TripUpdates feed. Both feeds carry an empty
 # route_id, so route_id is recovered by joining trip_id through 14a's static
@@ -514,6 +529,12 @@ class StatusResponse(BaseModel):
     # Defaulted so pre-14a /api/status fixtures validate unchanged; the live
     # handler always populates it.
     ferry_static: str | None = None
+    # NJ Transit (15a). FOUR states here, not three: "loading" | "ready" |
+    # "failed" | "not-configured". The fourth is what makes an unconfigured
+    # deployment legible: no NJT credentials means no network attempt of any kind,
+    # which is a deliberate configuration choice and must never look like a broken
+    # upstream. Defaulted so pre-15a fixtures validate unchanged.
+    njt_static: str | None = None
     subway_feeds: SubwayFeedHealth | None
     railroad_feeds: RailroadFeedHealth | None
     path_feeds: PathFeedHealth | None

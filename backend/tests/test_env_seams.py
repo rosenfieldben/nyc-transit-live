@@ -28,6 +28,8 @@ import cache
 import env_seams
 import ferry_static
 import main
+import njt_auth
+import njt_static
 import path_static
 import pollers
 import railroad_static
@@ -42,6 +44,7 @@ BACKEND = Path(__file__).resolve().parent.parent
 
 _MTA_DATASERVICE = "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds"
 _RRGTFS = "https://rrgtfsfeeds.s3.amazonaws.com"
+_NJT_RAILDATA = "https://raildata.njtransit.com/api/GTFSRT"
 
 EXPECTED_DEFAULTS: dict[str, object] = {
     # Realtime upstreams.
@@ -58,6 +61,12 @@ EXPECTED_DEFAULTS: dict[str, object] = {
     "PATH_STATIC_URL": "https://data.trilliumtransit.com/gtfs/path-nj-us/path-nj-us.zip",
     "FERRY_STATIC_URL": "https://nycferry.connexionz.net/rtt/public/utility/gtfs.aspx",
     "BUS_STATIC_BASE": _RRGTFS,
+    # NJ Transit (15a). TWO seams for one upstream, because the mint and the
+    # archive live in different modules and both must be redirectable together:
+    # pointing only the archive at a simulator would leave every contract run
+    # minting real tokens against a rate limit NJ Transit does not publish.
+    "NJT_TOKEN_URL": _NJT_RAILDATA + "/getToken",
+    "NJT_STATIC_URL": _NJT_RAILDATA + "/getGTFS",
     # Timing.
     "POLL_INTERVAL_S": 20,
     "ALERT_POLL_INTERVAL_S": 60,
@@ -151,6 +160,8 @@ def test_static_archive_urls_unchanged():
         ferry_static.FERRY_STATIC_URL
         == "https://nycferry.connexionz.net/rtt/public/utility/gtfs.aspx"
     )
+    assert njt_static.NJT_STATIC_URL == _NJT_RAILDATA + "/getGTFS"
+    assert njt_auth.NJT_TOKEN_URL == _NJT_RAILDATA + "/getToken"
 
 
 def test_timing_constants_unchanged():
@@ -174,6 +185,7 @@ def test_static_cache_paths_unchanged():
     }
     assert path_static.PATH_STATIC_ZIP == static / "gtfs_path.zip"
     assert ferry_static.FERRY_STATIC_ZIP == static / "gtfs_ferry.zip"
+    assert njt_static.NJT_STATIC_ZIP == static / "gtfs_njt.zip"
     assert bus_static.BUS_CACHE_DIR == project_root / "data" / "cache" / "bus_routes"
 
 

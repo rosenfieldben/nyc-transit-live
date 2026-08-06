@@ -70,6 +70,8 @@ sys.path.insert(0, str(REPO_ROOT / "backend"))
 import env_seams  # noqa: E402
 import feeds  # noqa: E402
 import ferry_static  # noqa: E402
+import njt_auth  # noqa: E402
+import njt_static  # noqa: E402
 import path_static  # noqa: E402
 import railroad_static  # noqa: E402
 import static_data  # noqa: E402
@@ -109,8 +111,11 @@ class FetchResult(NamedTuple):
     content: bytes
 
 
-# A fetcher takes (url, headers, params) and returns a FetchResult, or raises on
-# a transport error. Injected everywhere so tests never touch the network.
+# A fetcher takes (url, headers, params, files) and returns a FetchResult, or
+# raises on a transport error. Injected everywhere so tests never touch the
+# network. `files` is the NJ Transit addition (15a): passing it makes the request a
+# POST carrying multipart/form-data, which is the ONLY shape the RailData
+# endpoints answer. Every other source here is a GET and passes it as None.
 Fetcher = Callable[..., FetchResult]
 
 # One short pause between the two attempts. WHY exactly one retry: a single
@@ -132,16 +137,22 @@ def _fetch_retrying(
     *,
     headers: dict[str, str] | None = None,
     params: dict[str, str] | None = None,
+    files: dict[str, str] | None = None,
 ) -> tuple[FetchResult | None, str]:
     """Fetch once, and on a transport error OR a non-200, wait a short delay and
     try exactly once more. Returns (result, "") on a 200, else (None, detail)
     where detail is a sanitized reason for the caller's FAIL line. Any URL in an
     exception string (including a key-bearing bus URL) is scrubbed by _sanitize,
-    so a failure detail never leaks a secret."""
+    so a failure detail never leaks a secret.
+
+    `files` turns the request into a POST (NJ Transit, 15a). RETRYING SUCH A
+    REQUEST IS SAFE ONLY BECAUSE THE CALLER ALREADY HOLDS ITS TOKEN: the retry
+    re-sends the same form, so it costs one more data fetch and no additional
+    mint. The mint itself must never come through here, and does not."""
     last = ""
     for attempt in (1, 2):
         try:
-            res = fetch(url, headers=headers, params=params)
+            res = fetch(url, headers=headers, params=params, files=files)
         except Exception as exc:  # noqa: BLE001 - any transport failure is a miss
             last = f"transport error: {_sanitize(exc)}"
         else:
@@ -154,18 +165,36 @@ def _fetch_retrying(
 
 
 def make_httpx_fetcher(timeout: float = REQUEST_TIMEOUT_S) -> Fetcher:
-    """The production fetcher: a plain follow-redirects GET. follow_redirects is
-    on because two static sources (ferry utility URL, the MTA developer static
-    paths) 30x to their real zip."""
+    """The production fetcher: a follow-redirects GET, or a POST when `files` is
+    given. follow_redirects is on because two static sources (ferry utility URL,
+    the MTA developer static paths) 30x to their real zip.
+
+    THE POST ARM EXISTS FOR NJ TRANSIT AND ONLY FOR IT. Every RailData endpoint is
+    POST multipart/form-data with the token as a form field, so a GET returns
+    nothing usable. httpx sends multipart when handed `files`, and (None, value)
+    is its documented way to put a plain text field into a multipart body without
+    inventing a filename. It stays one fetcher rather than two so the injection
+    seam the whole suite is built on does not fork."""
 
     def fetch(
         url: str,
         headers: dict[str, str] | None = None,
         params: dict[str, str] | None = None,
+        files: dict[str, str] | None = None,
     ) -> FetchResult:
-        resp = httpx.get(
-            url, headers=headers, params=params, follow_redirects=True, timeout=timeout
-        )
+        if files is not None:
+            resp = httpx.post(
+                url,
+                headers=headers,
+                params=params,
+                files={key: (None, value) for key, value in files.items()},
+                follow_redirects=True,
+                timeout=timeout,
+            )
+        else:
+            resp = httpx.get(
+                url, headers=headers, params=params, follow_redirects=True, timeout=timeout
+            )
         return FetchResult(resp.status_code, resp.content)
 
     return fetch
@@ -238,6 +267,18 @@ RAILROAD_STATIC_MIN_STOPS = 20  # LIRR ~240, MNR ~180 stops
 PATH_STATIC_MIN_PARENTS = 10  # 13 PATH parent stations
 FERRY_STATIC_MIN_ROUTES = 7  # 9 NYC Ferry routes
 FERRY_STATIC_MIN_STOPS = 40  # 50 NYC Ferry stops
+NJT_STATIC_MIN_ROUTES = 10  # 12 NJ Transit rail routes (probed 2026-08-05)
+NJT_STATIC_MIN_STOPS = 140  # 172 NJ Transit rail stops
+
+# NJ Transit's staleness band, and it exists because this feed answers the
+# staleness question differently from every other one here. There is NO
+# feed_info.txt and therefore no feed_end_date, so _feed_end_date_status has
+# nothing to read; service is the 8,697-row calendar_dates table, and the last day
+# it schedules IS the feed's end date. The loader's validator draws the hard line
+# (a feed that leads today by nothing cannot be served from at all); this is the
+# approach warning, deliberately the same 30 days as FEED_END_WARN_DAYS so the two
+# staleness stories read alike even though they read different tables.
+NJT_SERVICE_WARN_DAYS = 30
 
 # Required zip members per static source: the files the production parser opens.
 # stop_times.txt is required for PATH and ferry (a real GTFS always ships it,
@@ -248,6 +289,31 @@ SUBWAY_REQUIRED_MEMBERS = ("stops.txt", "shapes.txt")
 RAILROAD_REQUIRED_MEMBERS = ("stops.txt", "trips.txt", "shapes.txt")
 PATH_REQUIRED_MEMBERS = ("stops.txt", "trips.txt", "shapes.txt", "stop_times.txt")
 FERRY_REQUIRED_MEMBERS = ("stops.txt", "trips.txt", "shapes.txt", "stop_times.txt")
+# NJ Transit ships NO calendar.txt and NO feed_info.txt, by design, so neither can
+# be required here; requiring either would FAIL the monitor on every valid
+# publication. calendar_dates.txt takes calendar's place and IS required, because
+# without it the feed carries no service span at all.
+NJT_REQUIRED_MEMBERS = (
+    "agency.txt",
+    "routes.txt",
+    "trips.txt",
+    "stops.txt",
+    "stop_times.txt",
+    "calendar_dates.txt",
+)
+
+# Members the monitor WATCHES but the app does not need. A separate tuple with a
+# separate band, because the two answer different questions and conflating them
+# gets the severity wrong in the direction that matters.
+#
+# shapes.txt is the case. njt_static deliberately does not parse it (15a defers
+# geometry to 15c) and does not require it, and a hermetic test pins that a
+# publication without it still serves. So upstream dropping it is worth a HUMAN
+# LOOK, which is what WARN means in this file, and is emphatically not "this is
+# really broken", which is what FAIL means and what exits the run non-zero. Listing
+# it as required turned the 6-hourly schedule red over a member the app was
+# designed to survive losing.
+NJT_WATCHED_MEMBERS = ("shapes.txt",)
 
 # NYC Ferry daily service window in ET (~06:00 first departures to ~22:30 last
 # arrivals). Used so an empty realtime feed reads as FAIL-worthy only when boats
@@ -1027,18 +1093,226 @@ def check_ferry_static(
     return Result("ferry-static", _worst(statuses), "; ".join(details)), parsed
 
 
+def _njt_service_status(latest: str | None, now: float, tz) -> tuple[str, str]:
+    """(status, detail) for how far NJ Transit's published service still reaches.
+
+    THE BAND THIS FEED NEEDS AND NO OTHER ONE DOES. Every other static source here
+    answers "has this publication expired" from feed_info.txt's feed_end_date, and
+    NJ Transit ships no feed_info.txt at all. Its 8,697-row calendar_dates table IS
+    the schedule (there is no calendar.txt either), so the last ADDED service day is
+    the only end date that exists.
+
+    FAIL when the feed leads today by NOTHING, WARN inside NJT_SERVICE_WARN_DAYS,
+    otherwise PASS. That is deliberately the same shape as _feed_end_date_status'
+    bands so the two staleness stories read alike, and deliberately a DIFFERENT
+    reader because they read different tables.
+
+    The split with the app is the point: njt_static's validator draws the hard line
+    (it refuses to promote a publication whose service has entirely expired, so the
+    last good archive keeps serving), and this bands the APPROACH, so a human sees
+    the edge coming a month out rather than the morning it lands.
+    """
+    if latest is None:
+        return (FAIL, "calendar_dates.txt schedules no service days")
+    today = datetime.fromtimestamp(now, tz)
+    try:
+        last_day = datetime(int(latest[:4]), int(latest[4:6]), int(latest[6:8]), tzinfo=tz)
+    except (ValueError, IndexError, OverflowError, OSError):
+        # The parser already dropped anything that is not eight digits, so this is
+        # a value like 20261332: shaped right, not a date. Not this check's to
+        # police, and not something to abort the whole run over.
+        return (WARN, f"last service date {latest} is not a valid date")
+    lead_days = (last_day.date() - today.date()).days
+    if lead_days < 0:
+        return (FAIL, f"service ended {latest}, {-lead_days} days ago")
+    if lead_days < NJT_SERVICE_WARN_DAYS:
+        return (WARN, f"service ends {latest}, in {lead_days} days")
+    return (PASS, f"service through {latest}")
+
+
+def check_njt_static(
+    fetch: Fetcher,
+    sleep: Callable[[float], None],
+    now: float,
+    username: str | None,
+    password: str | None,
+    *,
+    token_url: str | None = None,
+    url: str | None = None,
+    tz=None,
+) -> tuple[Result, dict | None]:
+    """NJ Transit's static GTFS, behind the credentialed RailData API.
+
+    WARN-SKIPPED WITH NO CREDENTIALS, exactly like check_bus_realtime with no bus
+    key: the monitor cannot reach a credentialed feed without credentials, and that
+    is a configuration choice rather than an outage. Full coverage in CI needs
+    NJT_USERNAME and NJT_PASSWORD added as Actions secrets, which is a repo-owner
+    decision and is flagged in the 15a handoff rather than assumed here.
+
+    ONE MINT PER RUN, and it is not an optimization. Minting is rate-limited below
+    the data cap, the limit is unpublished, and tokens are product-scoped so we
+    cannot even read our own usage counters. So the mint below is a single POST
+    with NO retry (a mint that fails is a FAIL, reported with the upstream body
+    quoted), while the archive fetch that follows keeps the house one-retry
+    behavior because it REUSES that token and therefore costs nothing extra.
+
+    Everything else is the ordinary static shape: reachable, a valid zip, required
+    members present, parseable by the production parser (njt_static._parse_zip, so
+    a pass here means the real code path works against today's bytes), counts above
+    their floors, an identity spot check, and the service-date band above. Returns
+    the parsed tables so a future NJT realtime check can join against them.
+    """
+    # THROUGH njt_auth.credentials, NEVER a bare truthiness test on the two strings.
+    # Reuse, never reimplement, is this file's second guiding principle, and here it
+    # is load-bearing rather than tidy: the app treats the placeholders .env.example
+    # ships as ABSENT, and a re-derived `if not username or not password` reads
+    # "your-njt-username" as configured. That sends a doomed mint to the live
+    # getToken endpoint on every run, against the unpublished cap, and reports the
+    # rejection as an NJ Transit outage instead of the WARN-skip the operator was
+    # promised. Whitespace-only values behave the same way. One call keeps the
+    # monitor's idea of "configured" identical to the app's, by construction.
+    creds = njt_auth.credentials(
+        {njt_auth.USERNAME_VAR: username or "", njt_auth.PASSWORD_VAR: password or ""}
+    )
+    if creds is None:
+        return (
+            Result(
+                "njt-static",
+                WARN,
+                f"skipped ({njt_auth.USERNAME_VAR}/{njt_auth.PASSWORD_VAR} not set)",
+            ),
+            None,
+        )
+    username, password = creds
+    tz = tz if tz is not None else feeds.NYC_TZ
+    mint_url = token_url if token_url is not None else njt_auth.NJT_TOKEN_URL
+    data_url = url if url is not None else njt_static.NJT_STATIC_URL
+
+    # THE ONE MINT. Deliberately not through _fetch_retrying: that helper retries
+    # once on a non-200, which for getToken would mean two mints against a cap we
+    # cannot measure. A single miss here is worth a FAIL a human reads.
+    try:
+        minted = fetch(mint_url, files={"username": username, "password": password})
+    except Exception as exc:  # noqa: BLE001 - any transport failure is a miss
+        return Result("njt-static", FAIL, f"mint failed (transport: {_sanitize(exc)})"), None
+    if minted.status != 200:
+        # The body is quoted because it is the only place NJ Transit says WHY. Its
+        # error bodies are short JSON ({"errorMessage": "..."}), and _quote bounds
+        # anything that is not.
+        return (
+            Result(
+                "njt-static",
+                FAIL,
+                f"mint failed (HTTP {minted.status}: {njt_auth._quote(minted.content)})",
+            ),
+            None,
+        )
+    try:
+        token = njt_auth.extract_token(minted.content)
+    except njt_auth.NjtAuthError as exc:
+        return Result("njt-static", FAIL, f"mint failed ({_sanitize(exc)})"), None
+
+    res, detail = _fetch_retrying(fetch, data_url, sleep, files={"token": token})
+    if res is None:
+        return Result("njt-static", FAIL, f"unreachable ({detail})"), None
+    # A 200 is not proof of authorization here: the probe's invalid-token response
+    # IS an HTTP 500, so _fetch_retrying would have reported it as an ordinary
+    # unreachable above. Reaching this line means the token was accepted.
+    try:
+        with zipfile.ZipFile(io.BytesIO(res.content)) as zf:
+            members = set(zf.namelist())
+        parsed = _parse_zip_bytes(njt_static._parse_zip, res.content, "gtfs_njt.zip")
+    except (zipfile.BadZipFile, KeyError, UnicodeDecodeError) as exc:
+        return Result("njt-static", FAIL, f"unparseable ({_sanitize(exc)})"), None
+
+    statuses: list[str] = []
+    details: list[str] = []
+    _check_members(statuses, details, members, NJT_REQUIRED_MEMBERS)
+    _check_members(statuses, details, members, NJT_WATCHED_MEMBERS, status=WARN)
+    # THE SHAPE-CHANGE WATCH, which is the monitor's job in the way a floor is not.
+    # njt_static treats this feed as FLAT on the strength of the 2026-08-05 probe:
+    # no location_type, no parent_station, 172 stops that are all boardable. If that
+    # changes, the loader's parser drops the non-boardable rows (correct, and it
+    # keeps entrances off the map), but "should the marker set become the PARENT
+    # stations, the way subway and PATH do it" is a design decision a human owes an
+    # answer to. Nothing else can see it: NJT_STATIC_MIN_STOPS is a lower bound, so
+    # 172 becoming 400 sails past, and the 109/112 identity check still passes
+    # because a parent keeps the station's name. WARN, not FAIL: the app keeps
+    # serving correctly throughout, and this is a "come and look" rather than a
+    # "something is broken".
+    if "stops.txt" in members:
+        with zipfile.ZipFile(io.BytesIO(res.content)) as zf:
+            with zf.open("stops.txt") as raw:
+                header = io.TextIOWrapper(raw, encoding="utf-8-sig").readline()
+        grown = sorted(
+            column
+            for column in ("location_type", "parent_station")
+            if column in {c.strip() for c in header.split(",")}
+        )
+        if grown:
+            statuses.append(WARN)
+            details.append(
+                f"stops.txt now carries {', '.join(grown)}; the loader treats this feed as "
+                "FLAT and a parent/child model is a human decision"
+            )
+    routes = parsed.get("routes") or {}
+    stops = parsed.get("stops") or {}
+    if len(routes) < NJT_STATIC_MIN_ROUTES:
+        statuses.append(FAIL)
+        details.append(f"only {len(routes)} routes (< {NJT_STATIC_MIN_ROUTES})")
+    if len(stops) < NJT_STATIC_MIN_STOPS:
+        statuses.append(FAIL)
+        details.append(f"only {len(stops)} stops (< {NJT_STATIC_MIN_STOPS})")
+    # IDENTITY SPOT CHECK: stop 109 is Penn Station New York and stop 112 is Newark
+    # Penn Station (probed 2026-08-05). Both are checked BY NAME rather than by
+    # presence, because presence alone proves nothing in a feed whose ids are small
+    # integers: 112 already names four different places across our feeds, so an id
+    # that survived a renumbering pointing at the wrong station is the exact drift
+    # this check exists to catch.
+    for stop_id, expected in (("109", "New York"), ("112", "Newark")):
+        stop = stops.get(stop_id)
+        if stop is None:
+            statuses.append(FAIL)
+            details.append(f"identity stop {stop_id} missing")
+        elif expected not in (stop.get("name") or ""):
+            statuses.append(FAIL)
+            details.append(f"stop {stop_id} name is {stop.get('name')!r}, expected {expected}")
+    service_status, service_detail = _njt_service_status(
+        njt_static.latest_service_date(parsed.get("calendar_dates") or {}), now, tz
+    )
+    if service_status != PASS:
+        statuses.append(service_status)
+        details.append(service_detail)
+    if not statuses:
+        return (
+            Result(
+                "njt-static",
+                PASS,
+                f"{len(routes)} routes, {len(stops)} stops, 109/112, {service_detail}",
+            ),
+            parsed,
+        )
+    return Result("njt-static", _worst(statuses), "; ".join(details)), parsed
+
+
 def _check_members(
     statuses: list[str],
     details: list[str],
     members: set[str],
     required: tuple[str, ...],
     prefix: str = "",
+    status: str = FAIL,
 ) -> None:
-    """Fold a required-member presence check into a static check's accumulators.
-    A missing member is a FAIL (the feed is structurally truncated)."""
+    """Fold a member-presence check into a static check's accumulators.
+
+    A missing member defaults to FAIL (the feed is structurally truncated). `status`
+    exists for the members a loader deliberately does not need: NJ Transit's
+    shapes.txt is watched rather than required, so its absence is a WARN, and the
+    band has to be the CALLER's choice because only the caller knows whether the app
+    can serve without it. See NJT_WATCHED_MEMBERS."""
     missing = [m for m in required if m not in members]
     if missing:
-        statuses.append(FAIL)
+        statuses.append(status)
         details.append(prefix + "missing members: " + ", ".join(missing))
 
 
@@ -1131,13 +1405,33 @@ def check_production(
 
     results = [Result("production:status", PASS, "/api/status reachable")]
 
-    static_fields = ("subway_static", "railroad_static", "path_static", "ferry_static")
-    # ANY group not "ready" is a FAIL, not just a definitively "failed" one. A
-    # static group that is not ready means a whole mode is dark for riders: no
-    # stops, no route lines, and for subway/PATH/ferry no vehicles at all, because
-    # their pollers gate on the static being loaded. "Loading" is only benign if you
-    # know it is transient, and a probe that sees it cannot know that.
+    # Every static group /api/status publishes, mapped to the states that are
+    # acceptable for it. ANY group outside its set is a FAIL, not just a
+    # definitively "failed" one. A static group that is not ready means a whole mode
+    # is dark for riders: no stops, no route lines, and for subway/PATH/ferry no
+    # vehicles at all, because their pollers gate on the static being loaded.
+    # "Loading" is only benign if you know it is transient, and a probe that sees it
+    # cannot know that.
     #
+    # A MAP RATHER THAN A TUPLE, because NJ Transit (15a) has a legitimate fourth
+    # state. "not-configured" means the deployment was given no NJT credentials,
+    # which is a supported configuration that makes no network call at all; failing
+    # on it would paint every deployment that does not run NJT permanently red. It
+    # is listed HERE, beside the group, rather than special-cased at the comparison,
+    # so adding a sixth group forces the same decision explicitly.
+    #
+    # THIS MAP IS THE ONLY THING THAT SEES A DARK NJT LAYER. check_njt_static probes
+    # the RailData API from the runner and says nothing about the deployment; when
+    # the runner has no credentials it WARN-skips, and a WARN never fails a run. So
+    # a production instance whose NJT credentials were revoked, or whose publication
+    # is stuck, is visible in exactly one place: this line.
+    static_states = {
+        "subway_static": ("ready",),
+        "railroad_static": ("ready",),
+        "path_static": ("ready",),
+        "ferry_static": ("ready",),
+        "njt_static": ("ready", "not-configured"),
+    }
     # ACCEPTED COST, stated so the next person knows it was chosen: a scheduled run
     # that lands inside a redeploy's warmup window now goes red where it used to go
     # yellow. That is the deliberate trade. A cold start reaches ready in seconds
@@ -1145,7 +1439,7 @@ def check_production(
     # not-ready) is exactly the blind spot this PR exists to close. If redeploy-window
     # flapping ever shows up in practice, the fix is to re-check after a delay, not to
     # go back to calling a dark system yellow.
-    not_ready = [f for f in static_fields if data.get(f) != "ready"]
+    not_ready = [f for f, allowed in static_states.items() if data.get(f) not in allowed]
     if not_ready:
         results.append(
             Result(
@@ -1390,7 +1684,13 @@ def run_all(
     railroad_res, railroad = check_railroad_static(fetch, sleep, now)
     path_res, path = check_path_static(fetch, sleep, now)
     ferry_res, ferry = check_ferry_static(fetch, sleep, now)
-    results += [subway_res, railroad_res, path_res, ferry_res]
+    # NJT has no realtime check yet (15b), so its parsed tables are discarded here
+    # rather than threaded onward. Named `_njt` rather than dropped so the shape
+    # matches its siblings and 15b only has to change the name.
+    njt_res, _njt = check_njt_static(
+        fetch, sleep, now, env.get(njt_auth.USERNAME_VAR), env.get(njt_auth.PASSWORD_VAR)
+    )
+    results += [subway_res, railroad_res, path_res, ferry_res, njt_res]
 
     results.append(check_subway_realtime(fetch, sleep, now, (subway or {}).get("stops", {})))
     results.append(check_railroad_realtime(fetch, sleep, now, railroad))

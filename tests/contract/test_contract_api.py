@@ -476,3 +476,227 @@ def test_finding_4_cold_start_stays_failed_then_heals(harness):
             "the group to heal once upstream publishes a real archive",
         )
         assert app.get("/api/subway-stops"), "healing must actually place stations"
+
+
+# ---------------------------------------------------------------------------
+# 15a: NJ Transit, the first credentialed upstream
+# ---------------------------------------------------------------------------
+#
+# Four scenarios, and the last two are a MATCHED PAIR that has to be read
+# together. NJ Transit answers a dead token with HTTP 500 and
+# {"errorMessage":"Invalid token."} rather than 401 or 403, so "re-mint on an
+# invalid token" and "re-mint on any 500" look identical from one direction. The
+# expiry scenario proves the app heals from the first; the control proves it does
+# NOT treat the second the same way. Either one alone is satisfied by the wrong
+# implementation.
+
+
+def test_njt_cold_start_serves_stops_and_reports_ready(contract_app):
+    """The ordinary path, end to end over a real socket: mint, POST, validate, serve.
+
+    Worth a scenario of its own even though it asserts nothing exotic, because
+    every part of it is new in 15a and none of it is exercised anywhere else at
+    this tier: a POST upstream, a credential exchange, a token riding as a form
+    field, and a validator built for a feed with no calendar.txt and no
+    feed_info.txt. A hermetic test can pin each piece; only this can pin that the
+    real app, with real env wiring, reaches ready.
+
+    Hermetic counterparts: backend/tests/test_njt_auth.py (the token dance) and
+    backend/tests/test_njt_static.py (the validators and indexes).
+    """
+    app = contract_app
+    app.await_status(
+        lambda s: s["njt_static"] == "ready",
+        "the NJ Transit static group to reach ready from a simulator archive",
+    )
+    stops = app.get("/api/njt-stops")
+    assert stops, "a ready NJT group must place stations"
+    by_id = {stop["id"]: stop for stop in stops}
+    # The two identity stops the probe named, carried end to end.
+    assert "New York" in by_id["109"]["name"]
+    assert "Newark" in by_id["112"]["name"]
+    # NO wheelchair KEY, unlike /api/ferry-stops. NJ Transit publishes no
+    # accessibility data, and the marker must not invent a False that a client
+    # would read as an affirmative "not accessible".
+    assert "wheelchair" not in by_id["109"]
+
+    # ONE MINT for a healthy cold start. Not two: the single-flight cache means the
+    # loader's one attempt takes one token, and nothing re-mints when nothing is
+    # rejected. Asserted on getToken POSTS RECEIVED, not on tokens issued: a refused
+    # mint costs the same against a rate limit as a successful one, and the issued
+    # count cannot see one.
+    assert app.sim.mint_requests() == 1, (
+        f"a healthy cold start should POST getToken once, got {app.sim.mint_requests()}"
+    )
+    assert app.sim.gtfs_requests() == 1, "and should fetch the archive exactly once"
+
+    status = app.status()
+    assert status["njt_static"] == "ready"
+    # The C5 archive block comes free with staged_fetch, and its presence here is
+    # the proof the NJT download went through the SAME staged pipeline as every
+    # other archive rather than a private path beside it.
+    assert status["static_archives"]["njt"]["last_promoted_at"] is not None
+    assert status["static_archives"]["njt"]["last_download_error"] is None
+
+
+def test_njt_not_configured_makes_no_request_and_leaves_the_app_healthy(harness):
+    """No credentials: a distinct state, zero network, nothing else disturbed.
+
+    THE NEGATIVE IS THE ASSERTION. An unconfigured deployment must not mint, must
+    not fetch, and must not enter a retry loop that would do either on a schedule.
+    The mint counter staying at zero is what says so, and it is checked AFTER
+    another system has demonstrably finished warming, so it is a statement about a
+    running app rather than about an app that had not got round to it yet.
+
+    Hermetic counterpart:
+    backend/tests/test_njt_auth.py::test_absent_credentials_never_reach_the_transport.
+    """
+    # Emptied rather than removed: the launch env is a merge over os.environ, so a
+    # developer running this suite with real NJT credentials in their own shell
+    # would otherwise leak them into the scenario and make it configured.
+    with harness.launch(NJT_USERNAME="", NJT_PASSWORD="") as app:
+        app.await_status(
+            lambda s: s["njt_static"] == "not-configured",
+            "the NJ Transit group to report not-configured with no credentials",
+        )
+        # A DIFFERENT WAIT, on a different system, is what makes the zero below
+        # mean something: the app has been up long enough to warm an unrelated
+        # static group, so "NJT never asked for anything" is not just "NJT has not
+        # asked yet".
+        app.await_status(
+            lambda s: s["subway_static"] == "ready",
+            "the subway group to warm, proving the app ran while NJT stayed silent",
+        )
+        assert app.sim.mints() == 0, "an unconfigured deployment must never mint a token"
+        assert app.sim.fetches("njt") == 0, (
+            "an unconfigured deployment must never fetch the archive"
+        )
+
+        # The endpoint answers, empty, uncacheable. NOT a 503: nothing is coming, so
+        # promising data would lie.
+        assert app.get("/api/njt-stops") == []
+        # And the rest of the app is entirely unaffected, which is the other half
+        # of the claim.
+        assert app.get("/api/subway-stops"), "the subway layer must be untouched by NJT's absence"
+
+
+def test_njt_bad_publication_stays_failed_then_heals(harness):
+    """Finding 4, NJT edition: a headers-only stops.txt must never reach ready.
+
+    Structurally perfect, parses to nothing. The app must reject it, keep retrying
+    on the rung schedule, report failed honestly, stay healthy overall, and heal
+    without a redeploy once upstream publishes something real.
+
+    Hermetic counterpart:
+    backend/tests/test_njt_static.py::test_headers_only_stops_fails_validation.
+    """
+    harness.sim.set_publication("njt", "headers-only-stops")
+    with harness.launch() as app:
+        app.await_status(
+            lambda s: s["njt_static"] == "failed",
+            "the NJT group to report failed on a headers-only publication",
+        )
+        # Failed-and-RETRYING, not failed-and-stopped. await_fetched IS the retry
+        # assertion: it names the upstream and fails if the warmup ever stops asking.
+        harness.sim.await_fetched("njt", 2)
+        assert app.status()["njt_static"] == "failed", (
+            "a retry must not promote an archive that parses to nothing"
+        )
+        assert app.status()["static_archives"]["njt"]["last_promoted_at"] is None
+        assert "stops.txt" in app.status()["static_archives"]["njt"]["last_download_error"]
+
+        # RETRIES DO NOT RE-MINT. The token is still good, so the cache hands the
+        # same one to every attempt; a loader that minted per attempt would burn
+        # through an unpublished rate cap during any upstream outage.
+        assert app.sim.mint_requests() == 1, (
+            f"repeated failed attempts must reuse one token, got "
+            f"{app.sim.mint_requests()} getToken POSTs"
+        )
+
+        # The app is not sick. NJT failing is one layer degraded, not an outage.
+        assert app.get("/api/subway-stops")
+
+        harness.sim.set_publication("njt", "good")
+        app.await_status(
+            lambda s: s["njt_static"] == "ready",
+            "the group to heal once upstream publishes a real archive",
+        )
+        assert app.get("/api/njt-stops"), "healing must actually place stations"
+
+
+def test_njt_token_expiry_costs_exactly_one_extra_mint(harness):
+    """THE MOST DANGEROUS PROBE FACT, pinned: a dead token is an HTTP 500.
+
+    The simulator rejects the first token it ever issued with the real upstream's
+    exact body, {"errorMessage":"Invalid token."} under a 500, and accepts the one
+    that replaces it. A loader that reads that 500 as a server error backs off
+    forever while the fix is a single re-mint; one that reads it correctly recovers
+    INSIDE one attempt.
+
+    THE ASSERTION IS ARITHMETIC, not a log line: exactly two mints across the whole
+    scenario. One for the cold cache, one to replace the token that died, and no
+    more, because "re-mint once" must be structural rather than a convention that
+    drifts into a loop against an unpublished rate cap.
+
+    Hermetic counterpart:
+    backend/tests/test_njt_auth.py::test_one_remint_then_the_attempt_fails.
+    """
+    harness.sim.set_token_mode("reject-first")
+    with harness.launch() as app:
+        app.await_status(
+            lambda s: s["njt_static"] == "ready",
+            "the NJT group to recover from an expired token inside one attempt",
+        )
+        assert harness.sim.mint_requests() == 2, (
+            "an expired token costs exactly one extra mint: one cold, one to replace "
+            f"the dead one, got {harness.sim.mint_requests()}"
+        )
+        # THE OTHER HALF, AND THE FALSIFIABLE ONE. Two getGTFS POSTs is what
+        # "recovered INSIDE one attempt" looks like on the wire: the rejected fetch
+        # and the retry that succeeded. A loader that read the 500 as an outage
+        # instead would fail the attempt, retry on the rung schedule, and re-post the
+        # SAME token, so this count would climb while mint_requests stayed at 1.
+        #
+        # The static_archives block is deliberately NOT the assertion here, though it
+        # is checked below for corroboration: static_shared._record CLEARS
+        # failed_downloads and last_download_error on every promotion, so those two
+        # read zero after any successful attempt, re-minted or not. They cannot tell
+        # this scenario from the failure it is about.
+        assert harness.sim.gtfs_requests() == 2, (
+            "recovery must happen inside one attempt: one rejected fetch, one retry, "
+            f"got {harness.sim.gtfs_requests()} getGTFS POSTs"
+        )
+        archive = app.status()["static_archives"]["njt"]
+        assert archive["last_promoted_at"] is not None, archive
+        assert app.get("/api/njt-stops"), "recovery must actually place stations"
+
+
+def test_a_real_njt_500_neither_mints_nor_heals(harness):
+    """THE CONTROL for the scenario above, and it is not optional.
+
+    Same status code, different body: a genuine NJ Transit fault. The app must NOT
+    re-mint (mints are rate-limited below the data cap, the limit is unpublished,
+    and spending them on someone else's outage is how an integration gets itself
+    throttled) and it MUST classify the attempt as a failure.
+
+    Loosening njt_auth.is_auth_error to "any HTTP 500" passes the expiry scenario
+    above and fails HERE, which is what makes that mutation detectable; the 15a
+    handoff records the mutation run that proves it.
+    """
+    harness.sim.set_token_mode("server-error")
+    with harness.launch() as app:
+        app.await_status(
+            lambda s: s["njt_static"] == "failed",
+            "the NJT group to report failed on a genuine upstream 500",
+        )
+        # Let several attempts happen, so "no extra mint" is a claim about a
+        # RETRYING app rather than about one that has only tried once. The rungs are
+        # compressed to 1s/2s/3s in this tier, so this is a couple of seconds.
+        harness.sim.await_fetched("njt", 3)
+        assert harness.sim.mint_requests() == 1, (
+            "a real 500 must never provoke a re-mint, however many attempts fail; "
+            f"got {harness.sim.mint_requests()} getToken POSTs"
+        )
+        assert app.status()["njt_static"] == "failed"
+        assert app.status()["static_archives"]["njt"]["failed_downloads"] >= 1
+        assert app.get("/api/subway-stops"), "one failing system must not take the app down"

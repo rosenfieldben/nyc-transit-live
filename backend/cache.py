@@ -246,6 +246,12 @@ def _static_endpoint_ready(status: str, response: Response, warming_detail: str)
       a browser will NOT cache, so a later retry success is not masked for an hour.
     Returning [] under a max-age here (the old behavior) was the cold-start bug:
     a browser could cache an empty payload for the whole warmup.
+
+    ANY OTHER STATE TAKES THE FAILED ARM, which is what NJ Transit's fourth state
+    ("not-configured", 15a) wants: it is not loading, so a 503 promising data would
+    lie, and it is not ready, so caching an empty list for an hour would pin that
+    lie in the browser. Serving [] under no-cache says "nothing here, ask again"
+    without asserting why; the why is on /api/status, where an operator reads it.
     """
     if status == "loading":
         raise HTTPException(status_code=503, detail=warming_detail)

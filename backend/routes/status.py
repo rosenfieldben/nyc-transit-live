@@ -141,6 +141,15 @@ async def get_status(request: Request, response: Response) -> dict:
         # Same single-system rationale as PATH: an empty ferry load is a full
         # failure, so the warmup state must be visible in the snapshot.
         "ferry_static": getattr(app.state, "ferry_static_status", None),
+        # NJ Transit (15a), the only group with a FOURTH state. Besides loading /
+        # ready / failed it can be "not-configured", which is what a deployment
+        # without NJT_USERNAME and NJT_PASSWORD reports: no credentials means no
+        # network attempt of any kind, so there is nothing failing and nothing
+        # retrying. Publishing it distinctly is the whole point. An operator
+        # reading "failed" would go looking for a broken upstream; one reading
+        # "not-configured" knows the answer is a secret nobody set, and a
+        # deployment that MEANT to run NJT can see at a glance that it is not.
+        "njt_static": getattr(app.state, "njt_static_status", None),
         # Per-ARCHIVE download honesty (C5), beside the group states above rather
         # than inside them: a group state answers "can I serve this system", these
         # answer "how old is the archive I am serving it from, and why". Read

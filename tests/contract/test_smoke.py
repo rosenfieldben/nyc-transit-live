@@ -125,9 +125,16 @@ def test_the_simulator_points_at_every_url_seam_the_backend_declares():
     }
     seams = _load_env_seams()
     pointed = set(UpstreamSim().env("http://127.0.0.1:1", REPO_ROOT))
-    # BUS_TIME_API_KEY is not a seam; the simulator sets it because the bus feed
-    # refuses to fetch without one.
-    assert set(seams.SEAM_NAMES) == (pointed - {"DATA_DIR", "BUS_TIME_API_KEY"}) | non_url_seams, (
+    # CREDENTIALS ARE NOT SEAMS, and the distinction is load-bearing rather than
+    # bookkeeping: a seam is something env_seams.assert_unset REFUSES to let the
+    # contract monitor run with, because a redirected upstream would have it check
+    # the simulator against itself. The monitor needs these three SET to check the
+    # real upstreams, so they are read as plain environment variables and must be
+    # subtracted here. The simulator sets them because the bus feed refuses to
+    # fetch without a key, and because the default contract app is a
+    # CREDENTIALED NJT deployment (the not-configured scenario empties them).
+    credentials = {"BUS_TIME_API_KEY", "NJT_USERNAME", "NJT_PASSWORD"}
+    assert set(seams.SEAM_NAMES) == (pointed - {"DATA_DIR"} - credentials) | non_url_seams, (
         "every seam must be pointed at the simulator or listed as a non-URL seam"
     )
 

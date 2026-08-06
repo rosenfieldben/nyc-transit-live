@@ -24,7 +24,7 @@ import importlib.util
 import io
 import json
 import zipfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -66,9 +66,13 @@ class FakeFetcher:
     def __init__(self, mapping):
         self.mapping = mapping
         self.calls = []
+        # POST form fields, recorded separately so `calls` stays the 3-tuples every
+        # pre-15a assertion unpacks. NJ Transit is the only source that POSTs.
+        self.forms = []
 
-    def __call__(self, url, headers=None, params=None):
+    def __call__(self, url, headers=None, params=None, files=None):
         self.calls.append((url, headers, params))
+        self.forms.append(files)
         if url not in self.mapping:
             raise AssertionError(f"unexpected fetch of {url}")
         value = self.mapping[url]
@@ -947,6 +951,11 @@ def _status_json(**overrides):
         "railroad_static": "ready",
         "path_static": "ready",
         "ferry_static": "ready",
+        # NJT's fourth state is acceptable here BY DESIGN (15a): a deployment given
+        # no NJ Transit credentials makes no network call at all, and failing on
+        # that would paint every non-NJT deployment permanently red. The
+        # njt_static-specific bands are asserted separately below.
+        "njt_static": "ready",
         "feeds": {"subway": {"age_s": 5.0}, "buses": {"age_s": 8.0}},
         # age_s is part of a healthy alerts payload: the poll-level age is what
         # catches a TOTAL outage, where the per-system map freezes and looks fine.
@@ -1072,6 +1081,7 @@ def test_production_malformed_nested_shapes_do_not_crash():
             "railroad_static": "ready",
             "path_static": "ready",
             "ferry_static": "ready",
+            "njt_static": "ready",
             "feeds": [1, 2, 3],
             "alerts": [],
         }
@@ -1388,6 +1398,477 @@ def test_production_non_json_is_fail():
 
 
 # ---------------------------------------------------------------------------
+# NJ Transit static (credentialed, mint-conserving)
+# ---------------------------------------------------------------------------
+#
+# The check has one property no other check here has: it SPENDS something. Minting
+# is rate-limited below the data cap and the limit is unpublished, so "exactly one
+# mint per run" is asserted directly rather than trusted, and the WARN-skip with no
+# credentials is asserted to make no request at all.
+
+NJT_TOKEN = "https://njt.example/getToken"
+NJT_DATA = "https://njt.example/getGTFS"
+
+# The probe's exact invalid-token response (2026-08-05). Written out here rather
+# than imported from the simulator: this is the hermetic tier, and the two are
+# supposed to be able to fail independently.
+NJT_INVALID_TOKEN = b'{"errorMessage":"Invalid token."}'
+
+_NJT_ROUTES = (
+    "route_id,route_short_name,route_long_name,route_type,route_color,route_text_color\n"
+    + "".join(f"{i},R{i},Line {i},113,EF3E42,\n" for i in range(1, 13))
+)
+_NJT_STOPS = "stop_id,stop_code,stop_name,stop_lat,stop_lon\n" + "".join(
+    f"{i},C{i},Station {i},40.7{i:03d},-74.0{i:03d}\n"
+    for i in range(1, 200)
+    if i != 109 and i != 112
+)
+_NJT_IDENTITY = (
+    "109,NY,New York Penn Station,40.750568,-73.993519\n"
+    "112,NP,Newark Penn Station,40.734924,-74.164581\n"
+)
+_NJT_TRIPS = (
+    "route_id,service_id,trip_id,trip_headsign,direction_id,trip_short_name\n1,S,T1,NY,0,3800\n"
+)
+_NJT_STOP_TIMES = (
+    "trip_id,arrival_time,departure_time,stop_id,stop_sequence\nT1,07:00:00,07:00:00,109,1\n"
+)
+_NJT_AGENCY = (
+    "agency_id,agency_name,agency_url,agency_timezone\nNJT,NJ TRANSIT,https://x,America/New_York\n"
+)
+_NJT_SHAPES = "shape_id,shape_pt_sequence,shape_pt_lat,shape_pt_lon\ns1,1,40.7,-74.0\n"
+
+NJT_NOW = datetime(2026, 8, 6, 12, 0, tzinfo=feeds.NYC_TZ).timestamp()
+
+
+def _njt_zip(*, last_service="20270501", **overrides):
+    """An NJT-shaped archive: no calendar.txt, no feed_info.txt, route_type 113."""
+    members = {
+        "agency.txt": _NJT_AGENCY,
+        "routes.txt": _NJT_ROUTES,
+        "stops.txt": _NJT_STOPS + _NJT_IDENTITY,
+        "trips.txt": _NJT_TRIPS,
+        "stop_times.txt": _NJT_STOP_TIMES,
+        "calendar_dates.txt": f"service_id,date,exception_type\nS,{last_service},1\n",
+        "shapes.txt": _NJT_SHAPES,
+    }
+    members.update(overrides)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, body in members.items():
+            if body is not None:
+                zf.writestr(name, body)
+    return buf.getvalue()
+
+
+def _njt_token(token="tok"):
+    return json.dumps({"UserToken": token}).encode()
+
+
+def _njt_fetch(**overrides):
+    mapping = {NJT_TOKEN: _njt_token(), NJT_DATA: _njt_zip()}
+    mapping.update(overrides)
+    return FakeFetcher(mapping)
+
+
+def _check_njt(fetch, now=NJT_NOW, user="rider", password="secret"):
+    return cm.check_njt_static(
+        fetch, NO_SLEEP, now, user, password, token_url=NJT_TOKEN, url=NJT_DATA
+    )
+
+
+def test_production_reports_a_dark_njt_layer():
+    """THE ONLY PLACE A DARK NJ TRANSIT LAYER IS VISIBLE, so it gets its own test.
+
+    check_njt_static probes the RailData API from the RUNNER and says nothing about
+    the deployment; when the runner has no credentials it WARN-skips, and a WARN
+    never fails a run. So a production instance whose NJT credentials were revoked,
+    or whose publication is stuck, is seen by exactly one line: the static-group map
+    in check_production. It was still the pre-15a four-tuple, which reported "all
+    static groups ready" over njt_static="failed".
+    """
+    for state in ("failed", "loading", None):
+        body = _status_json(njt_static=state)
+        fetch = FakeFetcher({"https://app.example/api/status": body})
+        results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
+        statics = [r for r in results if r.name == "production:statics"]
+        assert len(statics) == 1
+        assert statics[0].status == cm.FAIL, f"njt_static={state!r} must not read as ready"
+        assert "njt_static" in statics[0].detail
+
+
+def test_production_accepts_a_deliberately_unconfigured_njt():
+    """The other side, and the reason the map is a map rather than a longer tuple.
+
+    "not-configured" means the deployment was given no NJ Transit credentials: it
+    makes no network call at all, nothing is failing, and nothing is retrying.
+    Failing on it would paint every deployment that does not run NJT permanently
+    red, which is how a monitor teaches its operator to ignore it.
+    """
+    body = _status_json(njt_static="not-configured")
+    fetch = FakeFetcher({"https://app.example/api/status": body})
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
+    statics = [r for r in results if r.name == "production:statics"]
+    assert statics[0].status == cm.PASS, statics[0].detail
+
+
+def test_production_still_fails_a_dark_layer_in_any_other_group():
+    """The map must not have loosened anything else on its way in: only NJT gained
+    a second acceptable state."""
+    for field in ("subway_static", "railroad_static", "path_static", "ferry_static"):
+        body = _status_json(**{field: "not-configured"})
+        fetch = FakeFetcher({"https://app.example/api/status": body})
+        results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
+        statics = [r for r in results if r.name == "production:statics"]
+        assert statics[0].status == cm.FAIL, f"{field} has no not-configured state"
+
+
+def test_njt_static_skipped_without_credentials():
+    """The bus precedent: a credentialed feed the monitor cannot reach is a config
+    choice, not an outage. WARN, and provably no request."""
+    fetch = FakeFetcher({})
+    cases = [
+        (None, "secret"),
+        ("rider", None),
+        (None, None),
+        ("", ""),
+        ("   ", "secret"),  # whitespace only
+        # THE PLACEHOLDERS .env.example SHIPS. README step 2 says copy that file, and
+        # contract_monitor imports env_seams (which runs load_dotenv), so an operator
+        # who copied it and edited only the bus key hands these straight through. A
+        # bare `if not username or not password` reads them as configured and POSTs
+        # a doomed mint to the live getToken endpoint against the unpublished cap,
+        # then reports the rejection as an NJ Transit outage rather than the promised
+        # WARN-skip. Routing the guard through njt_auth.credentials is what keeps the
+        # monitor's idea of "configured" identical to the app's, by construction.
+        ("your-njt-username", "your-njt-password"),
+        ("realuser", "your-njt-password"),  # the realistic half-edit
+    ]
+    for user, password in cases:
+        result, parsed = _check_njt(fetch, user=user, password=password)
+        assert result.status == cm.WARN, f"{user!r}/{password!r} must WARN-skip"
+        assert "not set" in result.detail
+        assert parsed is None
+    assert not fetch.calls, "an unconfigured monitor must never reach the network"
+
+
+def test_njt_static_healthy_passes_with_exactly_one_mint():
+    fetch = _njt_fetch()
+    result, parsed = _check_njt(fetch)
+    assert result.status == cm.PASS, result.detail
+    assert parsed is not None and len(parsed["routes"]) == 12
+    mints = [url for url, _h, _p in fetch.calls if url == NJT_TOKEN]
+    assert len(mints) == 1, f"the monitor must mint exactly once per run, got {len(mints)}"
+    # The credentials rode in the multipart form, never in the URL or the query.
+    assert fetch.forms[0] == {"username": "rider", "password": "secret"}
+    assert "secret" not in fetch.calls[0][0]
+    # And the data request carried the minted token as a form field.
+    assert fetch.forms[1] == {"token": "tok"}
+
+
+class _StatusFetcher:
+    """A fetcher that answers one url with a chosen (status, body) pair.
+
+    FakeFetcher cannot express "a non-200 WITH a body" (an int means an empty
+    body), and the body is the whole point here: it is the only place NJ Transit
+    says why a mint was refused.
+    """
+
+    def __init__(self, url, status, body):
+        self.url, self.status, self.body = url, status, body
+        self.calls = []
+        self.forms = []
+
+    def __call__(self, url, headers=None, params=None, files=None):
+        self.calls.append((url, headers, params))
+        self.forms.append(files)
+        if url != self.url:
+            raise AssertionError(f"unexpected fetch of {url}")
+        return cm.FetchResult(self.status, self.body)
+
+
+def test_njt_static_mint_failure_fails_with_the_body_quoted():
+    """The only place NJ Transit says WHY, so the detail carries it. And a failed
+    mint must not be retried: that would be two mints against an unpublished cap."""
+    fetch = _StatusFetcher(NJT_TOKEN, 401, b'{"errorMessage":"Bad account."}')
+    result, parsed = _check_njt(fetch)
+    assert result.status == cm.FAIL
+    assert "mint failed" in result.detail
+    assert "Bad account." in result.detail, "the upstream body must reach the operator"
+    assert parsed is None
+    assert len(fetch.calls) == 1, "a failed mint must not be retried"
+
+
+def test_njt_static_mint_transport_failure_is_a_fail():
+    def explodes(url, headers=None, params=None, files=None):
+        raise ConnectionResetError("connection reset")
+
+    result, parsed = _check_njt(explodes)
+    assert result.status == cm.FAIL
+    assert "mint failed" in result.detail
+    assert parsed is None
+
+
+def test_njt_static_a_token_response_with_no_token_fails():
+    fetch = _njt_fetch(**{NJT_TOKEN: b'{"expires":3600}'})
+    result, _parsed = _check_njt(fetch)
+    assert result.status == cm.FAIL
+    assert "mint failed" in result.detail
+
+
+def test_njt_static_an_invalid_token_500_is_reported_as_unreachable():
+    """THE PROBE'S EXACT BODY, not a bare 500, and the distinction is the test.
+
+    An earlier version served a 500 with an EMPTY body, which is an ordinary outage
+    and therefore could not tell "the monitor does not re-mint on an auth 500" from
+    "the monitor does not re-mint on anything". Serving the real invalid-token body
+    is what makes the assertion mean what it says.
+
+    The monitor deliberately does NOT re-mint here: it has already spent its one
+    mint, and a token that died between minting and fetching (seconds apart) is a
+    real fault worth a human look rather than another mint against an unpublished
+    cap. _fetch_retrying reports it as an unreachable upstream, which is a FAIL.
+    """
+
+    class _MintThenReject:
+        """Mints normally, then answers every getGTFS with the probe's exact
+        invalid-token 500. FakeFetcher cannot express a non-200 WITH a body."""
+
+        def __init__(self):
+            self.calls = []
+            self.forms = []
+
+        def __call__(self, url, headers=None, params=None, files=None):
+            self.calls.append((url, headers, params))
+            self.forms.append(files)
+            if url == NJT_TOKEN:
+                return cm.FetchResult(200, _njt_token())
+            return cm.FetchResult(500, NJT_INVALID_TOKEN)
+
+    fetch = _MintThenReject()
+    result, parsed = _check_njt(fetch)
+    assert result.status == cm.FAIL
+    assert parsed is None
+    mints = [url for url, _h, _p in fetch.calls if url == NJT_TOKEN]
+    assert len(mints) == 1, "a rejected data fetch must never provoke a second mint"
+    # The data POST was retried once (the house one-retry for a transient blip),
+    # reusing the same token, so it cost no additional mint.
+    assert [url for url, _h, _p in fetch.calls].count(NJT_DATA) == 2
+
+
+def test_njt_static_missing_members_fail():
+    """DROPS agency.txt, and the choice of member is the whole test.
+
+    An earlier version dropped calendar_dates.txt, which njt_static._parse_zip
+    OPENS: the check never reached _check_members at all, it short-circuited in the
+    earlier "unparseable" arm on a KeyError, and NJT_REQUIRED_MEMBERS was wholly
+    untested while the assertion appeared to pass. agency.txt is required by the
+    monitor and opened by nothing, so it is the one member that can only be caught
+    by the presence check.
+    """
+    fetch = _njt_fetch(**{NJT_DATA: _njt_zip(**{"agency.txt": None})})
+    result, _parsed = _check_njt(fetch)
+    assert result.status == cm.FAIL
+    assert "missing members: agency.txt" in result.detail
+
+
+def test_njt_static_a_missing_shapes_is_a_warn_not_a_fail():
+    """shapes.txt is WATCHED, not required: njt_static deliberately does not parse
+    it (15a defers geometry) and a hermetic test pins that a publication without it
+    still serves. So upstream dropping it is worth a human look and must NOT exit
+    the run non-zero, which is what listing it as required did: the 6-hourly
+    schedule went red over a member the app was designed to survive losing."""
+    fetch = _njt_fetch(**{NJT_DATA: _njt_zip(**{"shapes.txt": None})})
+    result, parsed = _check_njt(fetch)
+    assert result.status == cm.WARN, result.detail
+    assert "shapes.txt" in result.detail
+    assert parsed is not None, "a WARN must still return the parsed tables"
+
+
+def test_njt_static_warns_when_the_feed_stops_being_flat():
+    """The shape-change watch. njt_static treats this feed as FLAT on the strength
+    of the probe; if parent stations or entrances appear, the parser correctly drops
+    the non-boardable rows but "should the marker set become the PARENTS" is a
+    design decision a human owes an answer to. Nothing else can see it: the stop
+    floor is a lower bound, so 172 becoming 400 sails past, and the identity check
+    still passes because a parent keeps the station's name."""
+    grown = (
+        "stop_id,stop_code,stop_name,stop_lat,stop_lon,location_type,parent_station\n"
+        + "".join(
+            f"{i},C{i},Station {i},40.7{i:03d},-74.0{i:03d},0,\n"
+            for i in range(1, 200)
+            if i not in (109, 112)
+        )
+        + "109,NY,New York Penn Station,40.750568,-73.993519,0,\n"
+        + "112,NP,Newark Penn Station,40.734924,-74.164581,0,\n"
+    )
+    fetch = _njt_fetch(**{NJT_DATA: _njt_zip(**{"stops.txt": grown})})
+    result, _parsed = _check_njt(fetch)
+    assert result.status == cm.WARN, result.detail
+    assert "location_type" in result.detail and "parent_station" in result.detail
+
+
+def test_njt_static_does_not_require_calendar_or_feed_info():
+    """THE ACCEPTANCE CASE. Neither member exists in the real feed, and requiring
+    either would FAIL this check on every valid publication forever."""
+    body = _njt_zip()
+    with zipfile.ZipFile(io.BytesIO(body)) as zf:
+        assert "calendar.txt" not in zf.namelist()
+        assert "feed_info.txt" not in zf.namelist()
+    result, _parsed = _check_njt(_njt_fetch(**{NJT_DATA: body}))
+    assert result.status == cm.PASS, result.detail
+
+
+def test_njt_static_identity_stops_are_checked_by_name():
+    """Presence alone proves nothing in a feed of small integer ids: stop 112 names
+    four different places across our feeds, so an id that survived a renumbering
+    pointing at the wrong station is exactly the drift worth catching."""
+    renamed = _NJT_STOPS + (
+        "109,NY,Somewhere Else,40.750568,-73.993519\n"
+        "112,NP,Newark Penn Station,40.734924,-74.164581\n"
+    )
+    result, _parsed = _check_njt(_njt_fetch(**{NJT_DATA: _njt_zip(**{"stops.txt": renamed})}))
+    assert result.status == cm.FAIL
+    assert "109" in result.detail
+
+
+def test_njt_static_thin_feeds_fail_their_floors():
+    thin_routes = _NJT_ROUTES.splitlines()[0] + "\n1,R1,Line 1,113,EF3E42,\n"
+    result, _parsed = _check_njt(_njt_fetch(**{NJT_DATA: _njt_zip(**{"routes.txt": thin_routes})}))
+    assert result.status == cm.FAIL
+    assert "routes" in result.detail
+
+
+# --- the service-date band, at every edge -----------------------------------
+
+
+@pytest.mark.parametrize(
+    ("offset_days", "expected"),
+    [
+        (365, cm.PASS),
+        (cm.NJT_SERVICE_WARN_DAYS, cm.PASS),  # exactly at the edge: not yet a warning
+        (cm.NJT_SERVICE_WARN_DAYS - 1, cm.WARN),
+        (1, cm.WARN),
+        (0, cm.WARN),  # last service day is TODAY: still servable, but say so loudly
+        (-1, cm.FAIL),  # expired yesterday
+        (-400, cm.FAIL),
+    ],
+)
+def test_njt_service_date_bands(offset_days, expected):
+    """THE BAND THE VALIDATOR DELEGATES TO THIS CHECK. njt_static's guard draws the
+    hard line (it refuses to promote a feed that leads today by nothing); this warns
+    while the edge approaches, so a human sees it a month out rather than the
+    morning it lands. Offset 0 is deliberately a WARN and not a FAIL: a feed whose
+    last service day is today is running trains right now."""
+    last = (datetime.fromtimestamp(NJT_NOW, feeds.NYC_TZ) + timedelta(days=offset_days)).strftime(
+        "%Y%m%d"
+    )
+    status, detail = cm._njt_service_status(last, NJT_NOW, feeds.NYC_TZ)
+    assert status == expected, detail
+
+
+def test_njt_service_date_of_nothing_fails():
+    status, detail = cm._njt_service_status(None, NJT_NOW, feeds.NYC_TZ)
+    assert status == cm.FAIL
+    assert "no service days" in detail
+
+
+def test_njt_service_date_that_is_not_a_date_warns_rather_than_aborting():
+    """Shaped right, not a date. Not this check's to police, and certainly not
+    something to abort the whole monitor run over."""
+    status, _detail = cm._njt_service_status("20261332", NJT_NOW, feeds.NYC_TZ)
+    assert status == cm.WARN
+
+
+def test_njt_static_expired_service_fails_the_whole_check():
+    fetch = _njt_fetch(**{NJT_DATA: _njt_zip(last_service="20250101")})
+    result, _parsed = _check_njt(fetch)
+    assert result.status == cm.FAIL
+    assert "service ended" in result.detail
+
+
+# ---------------------------------------------------------------------------
+# The workflow's own wiring for the credentialed check
+# ---------------------------------------------------------------------------
+
+
+def test_the_monitor_workflow_declares_the_environment_its_njt_secrets_live_in():
+    """NJT_USERNAME and NJT_PASSWORD are ENVIRONMENT secrets on an environment named
+    "monitor", not repository secrets, and that distinction has exactly one failure
+    mode: environment secrets resolve only for a job that DECLARES the environment.
+    Drop `environment: monitor` and the two `secrets.NJT_*` mappings quietly become
+    empty strings, the njt-static check WARN-skips forever, and the run stays green
+    while checking nothing.
+
+    That is indistinguishable from a deliberate opt-out by design (the WARN-skip is
+    the same either way), which is exactly why it needs a test rather than a
+    reader's attention. The assertion is the COUPLING, not the presence of one line:
+    a job that references NJT secrets must declare the environment, so removing
+    either half fails here.
+
+    Read from the workflow file rather than hardcoded, the same way
+    test_static_warmup_retries_land_inside_the_healthcheck_window reads
+    railway.json: a test that restates the config cannot notice the config changing.
+    """
+    import yaml
+
+    workflow = yaml.safe_load(
+        (Path(__file__).resolve().parents[2] / ".github/workflows/contract-monitor.yml").read_text()
+    )
+    job = workflow["jobs"]["monitor"]
+    env_block = job["steps"][-1]["env"]
+
+    njt_from_secrets = {
+        name: value
+        for name, value in env_block.items()
+        if name.startswith("NJT_") and "secrets." in str(value)
+    }
+    assert set(njt_from_secrets) == {"NJT_USERNAME", "NJT_PASSWORD"}, (
+        "the monitor job must map both NJ Transit credentials from secrets, or the "
+        f"njt-static check can never run: got {sorted(njt_from_secrets)}"
+    )
+    assert job.get("environment") == "monitor", (
+        "the monitor job maps NJT_* ENVIRONMENT secrets, so it must declare "
+        "`environment: monitor`. Without the declaration those secrets resolve to "
+        "empty strings and njt-static WARN-skips forever while the run stays green."
+    )
+
+
+def test_the_check_warn_skips_on_the_empty_strings_a_missing_secret_resolves_to():
+    """The other half of the pair above, at the code boundary.
+
+    GitHub renders an unavailable secret as an EMPTY STRING rather than leaving the
+    variable unset, so "credentials absent" reaches run_all as "" and not as None. A
+    guard written with `is None` would pass every test that hands it None and then
+    run the real check with empty credentials in every fork and pull request
+    context, which is the one place this must not happen.
+
+    Driven through run_all rather than check_njt_static directly, because the
+    empty-string value has to survive the env plumbing too: an `env.get(name) or
+    default` anywhere on that path would turn "" into something else.
+    """
+    fetch = FakeFetcher({})
+    results = cm.run_all(
+        fetch,
+        NO_SLEEP,
+        1000.0,
+        env={"NJT_USERNAME": "", "NJT_PASSWORD": "", "MONITOR_SKIP_PRODUCTION": "1"},
+    )
+    njt = [r for r in results if r.name == "njt-static"]
+    assert len(njt) == 1
+    assert njt[0].status == cm.WARN
+    assert "not set" in njt[0].detail
+    # Scoped to NJT: the other checks in run_all fetch their own upstreams through
+    # this same fake, so a blanket "no calls" assertion would be about them.
+    njt_calls = [url for url, _h, _p in fetch.calls if "njtransit" in url or "/njt/" in url]
+    assert njt_calls == [], f"empty credentials must reach no NJT endpoint, got {njt_calls}"
+    assert all(form is None for form in fetch.forms), (
+        "no POST should have been attempted at all: NJ Transit is the only source "
+        "that posts, and it was skipped"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Runner wiring / hermeticity
 # ---------------------------------------------------------------------------
 
@@ -1399,7 +1880,7 @@ def test_run_all_is_hermetic_and_names_every_check():
         def __init__(self):
             self.calls = 0
 
-        def __call__(self, url, headers=None, params=None):
+        def __call__(self, url, headers=None, params=None, files=None):
             self.calls += 1
             return cm.FetchResult(500, b"")
 
@@ -1411,6 +1892,7 @@ def test_run_all_is_hermetic_and_names_every_check():
         "railroad-static",
         "path-static",
         "ferry-static",
+        "njt-static",
         "subway-realtime",
         "railroad-realtime",
         "path-realtime",
@@ -1427,7 +1909,7 @@ def test_run_all_unset_status_url_produces_a_production_fail():
     # The wiring end of the change: run_all must pass the unset variable through so
     # the section fails, rather than the old silent WARN-skip.
     class AllFail:
-        def __call__(self, url, headers=None, params=None):
+        def __call__(self, url, headers=None, params=None, files=None):
             return cm.FetchResult(500, b"")
 
     results = cm.run_all(AllFail(), NO_SLEEP, 1000.0, env={})
@@ -1440,7 +1922,7 @@ def test_run_all_unset_status_url_produces_a_production_fail():
 def test_run_all_honors_the_explicit_skip_variable():
     # Any non-empty value opts out, the usual shell-variable convention.
     class AllFail:
-        def __call__(self, url, headers=None, params=None):
+        def __call__(self, url, headers=None, params=None, files=None):
             return cm.FetchResult(500, b"")
 
     for value in ("1", "true", "yes"):
@@ -1456,7 +1938,7 @@ def test_exit_code_is_zero_for_all_warn_and_one_for_any_fail(monkeypatch, tmp_pa
     # The unset-variable case is included because that is precisely the run that used
     # to exit 0 while checking nothing at all.
     def fake_fetcher():
-        def _fetch(url, headers=None, params=None):
+        def _fetch(url, headers=None, params=None, files=None):
             return cm.FetchResult(500, b"")
 
         return _fetch

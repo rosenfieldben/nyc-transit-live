@@ -31,6 +31,7 @@ import airtrain_static
 import bus_static
 import env_seams
 import ferry_static
+import njt_static
 import path_static
 import railroad_static
 
@@ -72,6 +73,7 @@ from pollers import (
 from routes import airtrain as airtrain_routes
 from routes import buses as buses_routes
 from routes import ferry as ferry_routes
+from routes import njt as njt_routes
 from routes import path as path_routes
 from routes import railroad as railroad_routes
 from routes import status as status_routes
@@ -85,6 +87,7 @@ from static_data import (
 from warmups import (
     _set_static_status,
     _warm_ferry_static,
+    _warm_njt_static,
     _warm_path_static,
     _warm_railroad_static,
     _warm_subway_static,
@@ -243,6 +246,21 @@ async def lifespan(app: FastAPI):
     app.state.ferry_routes = []
     app.state.ferry_station_routes = {}  # {stop_id: [route_id]} (H5)
     app.state.ferry_static_status = "loading"
+    # NJ Transit Rail static (15a; realtime is 15b, the frontend 15c). Own
+    # app.state fields, never merged into a shared namespace: NJT stop ids are
+    # small integers with 84.9% overlap against our other feeds, and route ids
+    # overlap the LIRR's at 75%. njt_static holds the full parsed tables so 15b
+    # joins realtime without re-parsing, the way ferry_static's trip map did.
+    app.state.njt_static = {}  # {stops, routes, trips, stop_times, calendar_dates} or {}
+    app.state.njt_stops = {}
+    app.state.njt_station_routes = {}  # {stop_id: [route_id]} (H5)
+    app.state.njt_trips = {}  # {trip_id: {route_id, headsign, short_name}} for 15b
+    app.state.njt_stop_schedule = {}  # {stop_id: [scheduled call]} for the panel era
+    # FOUR states, not three: "loading" | "ready" | "failed" | "not-configured".
+    # A deployment with no NJT credentials reaches the fourth without touching the
+    # network at all, and that is a configuration choice rather than an outage, so
+    # it never wears "failed" (see warmups._warm_njt_static).
+    app.state.njt_static_status = "loading"
     # AirTrain JFK is a committed static fixture (data/airtrain_jfk.json), not a
     # network download, so it loads SYNCHRONOUSLY here and is ready the instant the
     # server accepts requests (no warmup task, no "loading" state, no 503). Loading
@@ -293,6 +311,11 @@ async def lifespan(app: FastAPI):
     app.state.railroad_static_task = asyncio.create_task(_warm_railroad_static(app))
     app.state.path_static_task = asyncio.create_task(_warm_path_static(app))
     app.state.ferry_static_task = asyncio.create_task(_warm_ferry_static(app))
+    # NJT joins the warmup group on the same rung schedule. With credentials absent
+    # this task reaches "not-configured" and RETURNS immediately, having made no
+    # network call, so an unconfigured deployment costs one scheduled coroutine and
+    # nothing else; the rest of the app is entirely unaffected either way.
+    app.state.njt_static_task = asyncio.create_task(_warm_njt_static(app))
     app.state.feed_poll_task = asyncio.create_task(_poll_feeds(app))
     # Service alerts poll on their own slower loop, independent of the position poll.
     app.state.alert_poll_task = asyncio.create_task(_poll_alerts(app))
@@ -313,6 +336,9 @@ async def lifespan(app: FastAPI):
     app.state.railroad_static_task.cancel()
     app.state.path_static_task.cancel()
     app.state.ferry_static_task.cancel()
+    # Cancelling an already-finished task (which the not-configured NJT warmup is,
+    # almost immediately) is a no-op, and awaiting it below simply returns.
+    app.state.njt_static_task.cancel()
     # Await all so cleanup (e.g. the poller's client close) finishes before
     # shutdown proceeds; the stop event bounds how long the build task runs.
     for task in (
@@ -323,6 +349,7 @@ async def lifespan(app: FastAPI):
         app.state.railroad_static_task,
         app.state.path_static_task,
         app.state.ferry_static_task,
+        app.state.njt_static_task,
     ):
         with contextlib.suppress(asyncio.CancelledError):
             await task
@@ -388,6 +415,7 @@ app.include_router(subway_routes.router)
 app.include_router(railroad_routes.router)
 app.include_router(path_routes.router)
 app.include_router(ferry_routes.router)
+app.include_router(njt_routes.router)
 app.include_router(airtrain_routes.router)
 app.include_router(status_routes.router)
 
@@ -415,8 +443,8 @@ app.mount("/", RevalidatingStaticFiles(directory=FRONTEND_DIR, html=True), name=
 # The re-export surface: every name the tests reach on `main` after the wiring
 # split, plus the app/lifespan/logger. Listed so ruff treats the re-export-only
 # imports as used and so the module's public interface is explicit. `time`,
-# `path_static`, `ferry_static`, `railroad_static` are here because tests patch
-# through them (monkeypatch.setattr(main.time, "time", ...),
+# `path_static`, `ferry_static`, `railroad_static`, `njt_static` are here because
+# tests patch through them (monkeypatch.setattr(main.time, "time", ...),
 # monkeypatch.setattr(main.ferry_static, "load_ferry_static", ...)).
 __all__ = [
     "app",
@@ -425,6 +453,7 @@ __all__ = [
     "time",
     "path_static",
     "ferry_static",
+    "njt_static",
     "railroad_static",
     "STATIC_RETRY_S",
     "STATIC_RETRY_SCHEDULE_S",
@@ -454,6 +483,7 @@ __all__ = [
     "_warm_railroad_static",
     "_warm_path_static",
     "_warm_ferry_static",
+    "_warm_njt_static",
     "_refresh_buses",
     "_refresh_subways",
     "_refresh_railroads",

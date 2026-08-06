@@ -34,7 +34,13 @@ the seam BETWEEN layers, or about a poll loop's behavior over time.
   (`live` / `frozen` / `empty` / `error`); archives carry a PUBLICATION (`good` /
   `headers-only-stops` / `missing-member` / `corrupt-zip`). Both are validated on
   the way in: an unknown name is a 400 from the control endpoint, not a mystery
-  failure the app reports as a bad upstream.
+  failure the app reports as a bad upstream. NJ Transit adds a third axis and two
+  POST routes, because it is the one credentialed upstream: `getToken` hands out a
+  numbered token, and `getGTFS` serves the archive behind a TOKEN MODE (`ok` /
+  `reject-first` / `server-error`), validated the same way. `reject-first`
+  reproduces the probe's most dangerous fact, an expired token answered with HTTP
+  500 and `{"errorMessage":"Invalid token."}`; `server-error` is the same-class
+  control, a genuine 500 with a different body that must not provoke a mint.
 - `conftest.py` — launches the real backend as a subprocess with PR 1's env seams
   pointed at the simulator and PR 1's timing knobs compressed, against a fresh
   temp `DATA_DIR`.
@@ -117,7 +123,7 @@ so every "all markers dim" check also asserts the marker set is non-empty.
 ## Budget
 
 Both halves are meant to finish well under four minutes, as separate CI jobs. As
-committed: 16 api scenarios in about 2m50s, 3 browser specs in about 1m35s. What
+committed: 22 api scenarios in about 3m10s, 3 browser specs in about 1m35s. What
 makes that reachable is PR 1's timing knobs, compressed in `CONTRACT_TIMING`: a
 scenario that has to outlive the retention window waits 20 seconds instead of ten
 minutes, a static retry walks 1s/2s/3s instead of 15s/30s/60s/300s, and the page
@@ -149,6 +155,13 @@ the 25s threshold could dim them. Nothing in the browser tier asserts the cap.
   They pin rendering against stubbed payloads in seconds, and this tier names its
   hermetic counterpart in every spec precisely so a failure localizes: hermetic red
   means the rendering logic broke, hermetic green means the composite did.
+- **NJ Transit realtime, and any NJT id-keyed claim.** 15a is static plus the token
+  plumbing, so there is no NJT realtime to fail. That absence is also why the NJT
+  archive is SYNTHESIZED here rather than derived from a committed fixture the way
+  PATH's and the ferry's are: with no realtime joining to it, a synthesized id space
+  cannot produce the wrong-but-plausible join those two exist to prevent, and the
+  fixture itself needs credentials no CI job has. The four NJT scenarios are about
+  the auth dance and the validation pipeline; nothing here reads an NJT stop name.
 - **The bus route index and AirTrain.** Neither has a partial-outage story yet.
   See the standing note below. The bus REALTIME feed is exercised (and asserted
   non-empty in `test_smoke.py`), but it borrows the ferry vehicle capture, whose

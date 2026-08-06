@@ -16,7 +16,7 @@ import time
 from fastapi import HTTPException, Response
 
 import env_seams
-from feeds import ALERT_FEED_URLS
+from feeds import active_alert_feeds
 
 # Log through the "main" logger (not __name__) so records and main.py's logging
 # config are unchanged by the split, the same discipline the feeds package uses.
@@ -134,7 +134,8 @@ def _fresh_alerts_entry() -> dict:
     # visible instead of silently thinning the index: fresh_at is the last decode,
     # retained_since marks a system whose alerts are being carried forward from a
     # down feed (null when fresh or once the retention cap drops them), last_error
-    # flags a system failing this poll. Keyed by the same alert systems (ALERT_FEED_URLS).
+    # flags a system failing this poll. Keyed by the same alert systems this process
+    # actually polls (feeds.active_alert_feeds).
     # On a TOTAL outage every system is marked, so degraded_systems is truthful then
     # too; it is not a partial-outage-only signal.
     return {
@@ -145,7 +146,11 @@ def _fresh_alerts_entry() -> dict:
         "suppressed": 0,
         "health": {
             system: {"fresh_at": None, "retained_since": None, "last_error": None}
-            for system in ALERT_FEED_URLS
+            # THE ACTIVE SET (15b): an unconfigured NJ Transit is not seeded here at
+            # all, so it cannot sit in degraded_systems forever on a deployment that
+            # does not run it. Same single source the gather and the total-outage
+            # path read (feeds.active_alert_feeds).
+            for system in active_alert_feeds()
         },
     }
 

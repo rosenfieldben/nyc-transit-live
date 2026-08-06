@@ -137,7 +137,14 @@ def test_alert_feed_urls_unchanged():
         "LIRR": _MTA_DATASERVICE + "/camsys%2Flirr-alerts",
         "MNR": _MTA_DATASERVICE + "/camsys%2Fmnr-alerts",
         "ferry": "https://nycferry.connexionz.net/rtt/public/utility/gtfsrealtime.aspx/alert",
+        # The sixth feed (15b), and the only one that is a POST behind a token.
+        "njt": "https://raildata.njtransit.com/api/GTFSRT/getAlerts",
     }
+    # KEYLESS_ALERT_FEEDS is the same table minus that one, derived rather than
+    # re-listed. Pinned here in BOTH directions so neither the derivation nor the
+    # membership can drift silently.
+    assert alerts.NJT_ALERT_SYSTEM not in alerts.KEYLESS_ALERT_FEEDS
+    assert set(alerts.KEYLESS_ALERT_FEEDS) | {"njt"} == set(alerts.ALERT_FEED_URLS)
 
 
 def test_bus_urls_unchanged():

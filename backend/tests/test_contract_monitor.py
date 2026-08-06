@@ -557,15 +557,40 @@ def test_alerts_realtime_undecodable_is_fail():
 
 
 def test_alerts_realtime_default_feeds_include_ferry_and_count_five():
-    # The alerts-realtime check ITERATES ALERT_FEED_URLS rather than hardcoding four,
+    # The alerts-realtime check ITERATES its feed table rather than hardcoding four,
     # so adding "ferry" makes it check the fifth feed and the count in the detail moves
     # to 5. Run with the default (real) feed set, every feed decodable.
-    assert "ferry" in cm.feeds.ALERT_FEED_URLS
+    assert "ferry" in cm.feeds.KEYLESS_ALERT_FEEDS
+    valid = _rt_feed()
+    fetch = FakeFetcher({url: valid for url in cm.feeds.KEYLESS_ALERT_FEEDS.values()})
+    result = cm.check_alerts_realtime(fetch, NO_SLEEP, 1.0)  # default feed_urls
+    assert result.status == cm.PASS
+    assert "5 alert feeds decodable" in result.detail
+
+
+def test_alerts_realtime_never_gets_the_njt_feed_which_only_answers_a_post():
+    """The split named in check_alerts_realtime's docstring, asserted from both
+    sides so it cannot become an accidental gap.
+
+    NJ Transit publishes an alerts feed and this app polls it, so it IS in the
+    production table. But it answers only a POST carrying a token, and this check's
+    fetcher GETs. Pointed at the full table it would report a permanent FAIL
+    against a feed it never spoke to, and (worse, in a pull request context with no
+    credentials) it would reach a live NJ Transit endpoint from a fork.
+
+    The other side of the split lives in check_njt_realtime, which holds the run's
+    one minted token; test_njt_realtime_checks_the_alerts_feed_through_the_door
+    pins that the feed is checked SOMEWHERE, so this exclusion cannot quietly
+    become "nobody checks NJT alerts".
+    """
+    assert "njt" in cm.feeds.ALERT_FEED_URLS, "the app does poll this feed"
+    assert "njt" not in cm.feeds.KEYLESS_ALERT_FEEDS, "but not with a GET"
     valid = _rt_feed()
     fetch = FakeFetcher({url: valid for url in cm.feeds.ALERT_FEED_URLS.values()})
     result = cm.check_alerts_realtime(fetch, NO_SLEEP, 1.0)  # default feed_urls
     assert result.status == cm.PASS
-    assert "5 alert feeds decodable" in result.detail
+    njt_calls = [url for url, _h, _p in fetch.calls if "njtransit" in url]
+    assert njt_calls == [], f"alerts-realtime must not touch an NJT endpoint, got {njt_calls}"
 
 
 # ---------------------------------------------------------------------------

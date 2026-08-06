@@ -1,7 +1,12 @@
-"""Service alerts: the keyless GTFS-RT alert feeds, the active-now window
-logic, the per-alert decode, the fetch aggregation, and the per-system
-retention merge that carries a down feed's alerts forward across a partial
-outage."""
+"""Service alerts: the GTFS-RT alert feeds, the active-now window logic, the
+per-alert decode, the fetch aggregation, and the per-system retention merge that
+carries a down feed's alerts forward across a partial outage.
+
+Five of the six feeds are keyless GETs. NJ Transit's (15b) is a POST behind the
+token door, and is the reason this module now distinguishes three feed sets:
+ALERT_FEED_URLS (every feed that exists), active_alert_feeds() (the ones THIS
+process will poll, which drops an unconfigured NJT), and KEYLESS_ALERT_FEEDS (the
+ones a bare GET can reach)."""
 
 from __future__ import annotations
 
@@ -15,6 +20,8 @@ from google.protobuf.message import DecodeError
 from google.transit import gtfs_realtime_pb2
 
 import env_seams
+import njt_auth
+from feeds import njt as njt_feed
 from feeds.shared import _RAILROAD_BASE, logger, parse_feed
 
 # Keyless GTFS-RT Service Alerts feeds. The four MTA feeds are camsys-published on
@@ -41,13 +48,81 @@ FERRY_ALERTS_URL = env_seams.url(
     "FERRY_ALERTS_URL",
     "https://nycferry.connexionz.net/rtt/public/utility/gtfsrealtime.aspx/alert",
 )
+#
+# "njt" is the SIXTH feed and the first that is neither keyless nor a GET (15b).
+# Every RailData endpoint is POST multipart/form-data with a token as a form
+# field, so the gather below dispatches on the key; everything downstream (the
+# per-system retention, the health map, degraded_systems) is keyed generically by
+# system and needs no other change.
+#
+# WHAT THE 2026-08-05 RUSH PROBE FOUND IN THIS FEED, recorded here because each
+# fact changes how a consumer must read it:
+#
+#   - active_period IS A 24-HOUR DISPLAY TTL, NOT AN EVENT WINDOW. An alert about
+#     next week legitimately vanishes from the feed within a day. Upstream expiry
+#     is honored AS-IS by _alert_window_status: that is NJ Transit's editorial
+#     choice recorded, not ours to extend. Do not "fix" a disappearing alert by
+#     widening the window here; it would put text on a rider's screen that the
+#     agency has stopped publishing.
+#   - THE MAJORITY ARE STOP-SCOPED: 162 of 263 at peak, joining stops.txt cleanly.
+#     So informed_entity stop scoping MUST survive serialization end to end, which
+#     is what 15c's station join reads. models.Alert.stops carries it and
+#     test_feeds_alerts pins it; nothing may narrow that to routes-only.
+#   - route_type ARRIVES AS 2 HERE AND 113 IN THE STATIC. Tolerated: neither value
+#     is read by any join, and the discrepancy is upstream's.
+#   - header_text DUPLICATES description_text. Both are decoded (the shape is
+#     generic) and a renderer should show ONE, not both.
+#   - THE CONTENT CHANGES EVERY POLL. Any hashing for change detection must
+#     exclude the header, which is the C1 banner rule reaffirmed rather than a new
+#     one.
 ALERT_FEED_URLS = {
     "subway": ALERTS_RT_BASE + "/camsys%2Fsubway-alerts",
     "bus": ALERTS_RT_BASE + "/camsys%2Fbus-alerts",
     "LIRR": ALERTS_RT_BASE + "/camsys%2Flirr-alerts",
     "MNR": ALERTS_RT_BASE + "/camsys%2Fmnr-alerts",
     "ferry": FERRY_ALERTS_URL,
+    "njt": njt_feed.NJT_ALERTS_URL,
 }
+
+# The system key for the one feed that is POSTed rather than GETed.
+NJT_ALERT_SYSTEM = "njt"
+
+# The feeds a bare keyless GET can reach, derived rather than re-listed so a
+# seventh feed lands here automatically.
+#
+# WHO READS THIS: the contract monitor's alerts-realtime check. Its injected
+# fetcher GETs by default, and the NJ Transit endpoint answers a GET with nothing
+# usable, so pointing that check at the full table would have it report a hard
+# FAIL against a feed it was never able to speak to. The monitor checks the NJT
+# alerts feed in its njt-realtime check instead, which is where the run's single
+# minted token lives. This is a deliberate split, and the monitor's tests assert
+# both halves of it (njt absent from this set, present in the full one) so it
+# cannot decay into an accidental gap.
+KEYLESS_ALERT_FEEDS = {key: url for key, url in ALERT_FEED_URLS.items() if key != NJT_ALERT_SYSTEM}
+
+
+def active_alert_feeds(env: dict[str, str] | None = None) -> dict[str, str]:
+    """The alert feeds THIS PROCESS will actually poll.
+
+    NJ Transit is dropped entirely when it has no credentials, and "entirely" is
+    the point: not fetched, not counted in the totals, and NOT SEEDED INTO THE
+    HEALTH MAP. Keeping it as a permanently-failing system would put "njt" in
+    degraded_systems forever on every deployment that does not run NJ Transit, and
+    a banner that is always degraded is one nobody reads. An unconfigured system
+    is not a degraded one; 15a made that distinction for the static group and this
+    is the same distinction for alerts.
+
+    ONE FUNCTION, THREE CALLERS, and they must agree or the honesty breaks in a
+    way that is hard to see: the gather here, the health seeding in
+    cache._fresh_alerts_entry, and the total-outage failed set in
+    pollers._refresh_alerts. If the health map were seeded from the full table
+    while the gather used this one, njt would report last_error None forever and
+    still never be fresh.
+    """
+    feeds = dict(ALERT_FEED_URLS)
+    if not njt_auth.is_configured(env):
+        feeds.pop(NJT_ALERT_SYSTEM, None)
+    return feeds
 
 
 # ---- Service alerts ----
@@ -263,18 +338,29 @@ async def fetch_service_alerts(client: httpx.AsyncClient) -> tuple[list[dict], i
     """
     now = time.time()
 
-    async def fetch(url: str) -> bytes:
+    async def fetch(key: str, url: str) -> bytes:
         # A whole-request deadline per feed. The client's own timeout=30 bounds the gap
         # between BYTES; this bounds the exchange, so a feed that dribbles forever under
         # that floor still fails on its own rather than holding up the poll.
         async with asyncio.timeout(ALERT_FEED_DEADLINE_S):
+            if key == NJT_ALERT_SYSTEM:
+                # THROUGH THE TOKEN DOOR, never this client. njt_auth.njt_post owns
+                # the process-wide single-flight token cache, which is what makes
+                # this feed, the NJT trains poller and the static loader share ONE
+                # token: three callers meeting an expired token together produce one
+                # re-mint, not three, against a rate limit NJ Transit does not
+                # publish. A client.post here would route around that lock.
+                return await njt_auth.njt_post(url, {})
             resp = await client.get(url)
             resp.raise_for_status()
             return resp.content
 
-    keys = list(ALERT_FEED_URLS)
+    # THE ACTIVE SET, not the full table: an unconfigured NJ Transit is absent
+    # rather than permanently failing (see active_alert_feeds).
+    feed_urls = active_alert_feeds()
+    keys = list(feed_urls)
     results = await asyncio.gather(
-        *(fetch(ALERT_FEED_URLS[k]) for k in keys),
+        *(fetch(k, feed_urls[k]) for k in keys),
         return_exceptions=True,
     )
 
@@ -297,10 +383,10 @@ async def fetch_service_alerts(client: httpx.AsyncClient) -> tuple[list[dict], i
         logger.warning(
             "%d of %d alert feeds failed: %s",
             len(feed_errors),
-            len(ALERT_FEED_URLS),
+            len(feed_urls),
             "; ".join(f"{key}: {reason}" for key, reason in feed_errors.items()),
         )
-    if len(feed_errors) == len(ALERT_FEED_URLS):
+    if len(feed_errors) == len(feed_urls):
         joined = "; ".join(f"{key}: {reason}" for key, reason in feed_errors.items())
         raise RuntimeError(f"All alert feeds failed: {joined}")
     return alerts, suppressed, sorted(feed_errors)

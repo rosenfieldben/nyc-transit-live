@@ -35,7 +35,6 @@ from cache import (
     _sanitize_upstream,
 )
 from feeds import (
-    ALERT_FEED_URLS,
     ALERT_RETENTION_MAX_S,
     RAILROAD_FEED_URLS,
     SUBWAY_FEED_URLS,
@@ -1103,10 +1102,14 @@ async def _refresh_alerts(app: FastAPI, client: httpx.AsyncClient) -> None:
             _apply_alert_generation(entry, [], set(entry["health"]), time.time(), write_index=False)
             return
         # Run the ordinary machinery with nothing fresh and every system failed.
-        # health is seeded from ALERT_FEED_URLS (cache._fresh_alerts_entry), so its
-        # key set IS the full system list; taking it from the map we are about to
-        # rewrite keeps the failed set and the health write consistent by
-        # construction rather than by a second import agreeing with the first.
+        # health is seeded from the ACTIVE feed set (cache._fresh_alerts_entry reads
+        # feeds.active_alert_feeds), so its key set IS the list of systems this
+        # process polls; taking it from the map we are about to rewrite keeps the
+        # failed set and the health write consistent by construction rather than by a
+        # second import agreeing with the first. That matters more since 15b, because
+        # the active set is now smaller than the full table on any deployment without
+        # NJ Transit credentials: reading the table here would mark "njt" failed in a
+        # health map that never had the key.
         _apply_alert_generation(entry, [], set(entry["health"]), time.time())
         # suppressed is deliberately left alone: like fetched_at it describes the last
         # poll that DECODED, and this poll decoded nothing to recount. NOTE the
@@ -1165,8 +1168,11 @@ async def _poll_alerts(app: FastAPI) -> None:
                     # deployment into one confidently serving "no active alerts".
                     lambda: _apply_alert_generation(
                         entry,
+                        # Same reasoning as the total-outage path above, and taken
+                        # from the same place for the same reason: the health map's
+                        # own keys, never the URL table.
                         [],
-                        set(ALERT_FEED_URLS),
+                        set(entry["health"]),
                         time.time(),
                         write_index=entry["alerts"] is not None,
                     ),

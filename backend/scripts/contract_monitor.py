@@ -708,10 +708,18 @@ def check_alerts_realtime(
     *,
     feed_urls: dict[str, str] | None = None,
 ) -> Result:
-    """Every service-alerts feed: reachable and decodable by the production
+    """Every KEYLESS service-alerts feed: reachable and decodable by the production
     _decode_alerts. NO entity floor: zero active alerts is a valid, common, and
-    good steady state, so emptiness is never a fault here."""
-    feed_urls = feed_urls if feed_urls is not None else feeds.ALERT_FEED_URLS
+    good steady state, so emptiness is never a fault here.
+
+    NJ TRANSIT'S ALERT FEED IS NOT CHECKED HERE, and its absence is structural
+    rather than an oversight. That feed is a POST carrying a token, so a GET at it
+    returns nothing decodable and this check would report a permanent FAIL against
+    a feed it never spoke to. It is checked by check_njt_realtime, which holds the
+    run's one minted token; feeds.KEYLESS_ALERT_FEEDS is the seam, and the tests
+    below pin njt out of this set and into the full one so the split stays
+    deliberate."""
+    feed_urls = feed_urls if feed_urls is not None else feeds.KEYLESS_ALERT_FEEDS
     statuses: list[str] = []
     details: list[str] = []
     for key, url in feed_urls.items():

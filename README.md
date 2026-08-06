@@ -414,10 +414,15 @@ is not the same thing and is never cleared on close.
   exists), decoded into placed trains with backend-synthesized identity, plus
   PANYNJ static GTFS via Trillium for stations, geometry, and the station
   order. Subject to PANYNJ license terms.
+- **NJ Transit**: the RailData GTFS for NJ Transit Rail, behind a free account.
+  Static stations and schedule only in 15a; realtime follows. **The only
+  credentialed upstream here, and the only one that is not a GET.** Leaving
+  `NJT_USERNAME` / `NJT_PASSWORD` unset is a supported configuration: the layer
+  reports `not-configured` and makes no network call at all.
 - **Static GTFS** — stop coordinates and route shapes, downloaded into
   `data/gtfs_static/` and loaded into memory by background warmup tasks (subway,
-  railroad, PATH, and ferry, each an independent group), off the startup critical
-  path. A group's load retries automatically on failure, on a backoff schedule that
+  railroad, PATH, ferry, and NJ Transit, each an independent group), off the startup
+  critical path. A group's load retries automatically on failure, on a backoff schedule that
   starts at 15s and settles at 5 minutes, so a degraded network at boot self-heals
   rather than stranding the map until the next deploy.
 - **AirTrain JFK**: 511NY open-data static GTFS, with no real-time feed. Committed
@@ -450,6 +455,52 @@ CI. Overlapping frequency bands (an all-day base under narrower daytime bands) a
 reconciled as base-plus-override, where the most frequent covering band wins rather
 than being summed as concurrent patterns; see the `reconcile_bands` comment in
 `backend/scripts/gen_airtrain_fixture.py`.
+
+### NJ Transit (credentialed, and unlike every other upstream here)
+
+Register for free RailData API access at the NJ Transit developer portal, then put
+the account's own username and password in `.env` as `NJT_USERNAME` and
+`NJT_PASSWORD`. There is no long-lived API key: the app exchanges those for a
+short-lived token at runtime.
+
+Three facts from the 2026-08-05 probes shape everything in `backend/njt_auth.py`,
+and each is a way a conventional poller gets this wrong:
+
+1. **Every endpoint is `POST multipart/form-data`, and the token rides as a form
+   field**, not an `Authorization` header and not a query parameter. A GET returns
+   nothing usable.
+2. **Minting is rate-limited below the data cap, and the number is unpublished.**
+   Tokens are product-scoped, so a GTFSRT token is rejected by the Usage API and we
+   cannot read our own counters either. Mints are therefore treated as a scarce,
+   unmeasurable resource: a single-flight cache turns concurrent callers into one
+   mint, and a rejected token buys exactly one re-mint per attempt.
+3. **An expired token is `HTTP 500` with `{"errorMessage":"Invalid token."}`, not
+   401 or 403.** This is the dangerous one. A poller that classifies 500 as a server
+   error backs off forever while the fix is a single re-mint; one that treats *all*
+   500s as auth failures spends a mint on every real NJ Transit outage.
+   `njt_auth.is_auth_error` matches that exact shape and nothing else, and the
+   contract tier carries a same-class control (a genuine 500 with a different body)
+   that must neither mint nor heal.
+
+The feed itself is unusual too, and the validators are built around it rather than
+around the GTFS norm: there is **no `calendar.txt` and no `feed_info.txt`**, so
+service is 8,697 additive `calendar_dates` rows and staleness is answered by a
+**service-date guard** (the latest scheduled service day must be today or later, in
+New York local time) instead of a `feed_end_date`. The loader draws that hard line;
+the contract monitor WARNs while the remaining runway is under 30 days. All 12
+routes carry `route_type=113`, the GTFS *extended* Rail Service type that anything
+switch-casing the classic 0-7 falls through. `shapes.txt` is present and
+deliberately unparsed: it is 10 MB of the 11.1 MB payload and nothing reads it yet.
+
+To regenerate the committed test fixture (needs credentials; nothing in CI touches
+the live API):
+
+```bash
+python backend/scripts/gen_njt_fixture.py   # mints once, downloads, trims, verifies
+```
+
+It fails loudly on any drift from the probed facts. Eyeball the printed tables
+before committing, per house rules.
 
 ## Scaling
 
@@ -518,9 +569,13 @@ freshness — both `age_s` (since this server last polled) and `feed_age_s` (how
 stale the feed's own content was at poll time) — the last recorded poll error
 if any, the bus route index state, the static subway GTFS age, and each static
 group's warmup state (`subway_static` / `railroad_static` / `path_static` /
-`ferry_static`: loading, ready, or failed-and-retrying). Beside those,
+`ferry_static` / `njt_static`: loading, ready, or failed-and-retrying). `njt_static`
+has a **fourth** state, `not-configured`, which is what a deployment without NJ
+Transit credentials reports: no credentials means no network attempt of any kind, so
+nothing is failing and nothing is retrying, and an operator reading `failed` would
+otherwise go looking for a broken upstream that does not exist. Beside those,
 `static_archives` reports each downloaded ARCHIVE (`subway`, `railroad_LIRR`,
-`railroad_MNR`, `path`, `ferry`): when a download last passed validation and was
+`railroad_MNR`, `path`, `ferry`, `njt`): when a download last passed validation and was
 promoted, why the last one was rejected, and how many have been rejected since.
 A group state answers "can I serve this system"; these answer "how old is the
 archive I am serving it from, and why", which together make the deliberate
@@ -879,6 +934,16 @@ alert feed and cannot heal on its own: that is a `FAIL`.
   route. Docks show stop-scoped alerts only for now (no dock-to-routes mapping yet,
   a shared follow-up); a route-scoped ferry alert still reaches riders on every boat
   of that route.
+- [x] **15a. NJ Transit (static foundation + the token door)**: NJ Transit's rail
+  GTFS, and the first credentialed upstream in this app. Every RailData endpoint is
+  `POST multipart/form-data` with a short-lived token as a **form field**, minted by
+  exchanging a username and password, so `backend/njt_auth.py` is the one door every
+  NJT request goes through: a single-flight token cache (N concurrent callers, one
+  mint), and exactly one re-mint per attempt, enforced by there being no loop. The
+  static loader rides the same staged download pipeline as every other archive, so
+  the token path is exercised from birth. `/api/njt-stops` serves the station
+  markers; realtime is 15b and the frontend 15c, so nothing here draws anything.
+  See **NJ Transit** under Data sources for the three facts that shape all of it.
 
 ## Notes
 

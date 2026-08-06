@@ -760,7 +760,8 @@ async def _refresh_njt(app: FastAPI, client: httpx.AsyncClient) -> None:
         # they must read differently to an operator. "not-configured" is terminal
         # and says so; anything else is the ordinary quiet warming path the PATH
         # and ferry refreshers take (log=False, because the single transition log
-        # belongs to _set_static_status rather than to a 30s poll loop).
+        # belongs to _set_static_status rather than to a poll loop running every
+        # POLL_INTERVAL_S).
         if getattr(app.state, "njt_static_status", None) == "not-configured":
             _note_failure(
                 entry,

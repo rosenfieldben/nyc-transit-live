@@ -81,6 +81,58 @@ NJT_ALERTS_URL = env_seams.url(
     "NJT_ALERTS_URL", "https://raildata.njtransit.com/api/GTFSRT/getAlerts"
 )
 
+# THE FRESHNESS BUDGET, DERIVED. These are the numbers behind every NJ Transit
+# staleness threshold in the app and the monitor; the thresholds themselves live
+# where they are applied (cache.FEED_STALE_AFTER_S for /api/status and /healthz,
+# NJT_HEADER_LAG_* in scripts/contract_monitor.py for the njt-realtime check) and
+# each points back here rather than re-deriving.
+#
+# WHAT THE 2026-08-05 PROBES MEASURED:
+#
+#   - GENERATION EVERY ~11.8s. The header timestamp advances on roughly that
+#     period, so the feed itself is never more than about 12s behind its own
+#     source of truth.
+#   - HEADER LAG 9s TO 23s AT PEAK, measured as (our receive time - header
+#     timestamp) across the rush window. 23s is the worst observed, not a
+#     tail estimate.
+#   - "THE OVERNIGHT NUMBERS ARE OPTIMISTIC BY ROUGHLY 2x" (the probe's own
+#     phrase, quoted rather than paraphrased because it is the single most
+#     load-bearing caveat here). Overnight the feed is small, the publisher is
+#     idle, and lag collapses. ANY THRESHOLD DERIVED FROM AN OVERNIGHT SAMPLE
+#     WOULD BE ABOUT HALF OF WHAT PEAK ACTUALLY NEEDS AND WOULD PAGE EVERY
+#     WEEKDAY MORNING. Every band below is therefore derived from the PEAK
+#     numbers, and a future re-probe that lands overnight must double its
+#     figures before comparing them against these.
+#
+# WHAT THAT MAKES THE WORST HONEST AGE OF A SERVED NJT TRAIN:
+#
+#     23s   worst observed peak header lag
+#   + 20s   one poll interval (pollers.POLL_INTERVAL_S), the most that can elapse
+#           between the feed being published and this app fetching it
+#   -----
+#     43s   worst expected age at the moment we serve it
+#
+# cache.FEED_STALE_AFTER_S is 90s, which is a little over 2x that. The headroom
+# is deliberate and is the same shape as the monitor's WARN/FAIL gap: a threshold
+# that trips on ordinary peak jitter trains an operator to ignore it. NJ Transit
+# is the TIGHTEST-MARGIN system under that shared 90s budget (the MTA feeds
+# regenerate every ~30s but publish with far less lag), so if 90 ever moves, this
+# is the derivation that has to be re-checked first.
+#
+# THE POLL CADENCE IS THE SHARED ONE (pollers.POLL_INTERVAL_S, 20s) rather than a
+# private NJT cadence, and NJT alerts likewise ride the shared 60s alert loop.
+# Both are FASTER than the 15b plan's 30s/120s. Kept deliberately: a private
+# cadence would be the only per-source interval in a cycle that has exactly one,
+# and for the alert loop it is not merely clutter but unrepresentable, because
+# merge_alert_generations knows exactly two states per system, fresh and failed.
+# A feed skipped for cadence would have to be reported as one or the other, so
+# throttling NJT alerts alone would either drop its alerts from the served index
+# or mark it degraded on every skipped poll. At 20s/60s this is ~5,800 requests a
+# day against a rate limit NJ Transit does not publish, and 4 token mints (the
+# 6h MAX_TOKEN_AGE_S ceiling); if that ever proves too warm, POLL_INTERVAL_S and
+# ALERT_POLL_INTERVAL_S are already C6 seams and moving them is a config change,
+# not a code one.
+
 # Upcoming departures kept per stop. FLAT rather than bucketed by direction or
 # route, unlike the subway (platform direction) and the ferry (route name): every
 # row already carries its route and headsign, and a departure board reads

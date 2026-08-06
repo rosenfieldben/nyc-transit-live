@@ -32,6 +32,14 @@ FEED_STALE_AFTER_S = 90
 # a flag-gated query override so the contract tier can watch the page dim without
 # waiting 90s). The two can therefore disagree, but only inside a browser that
 # asked for it: this value still governs /healthz and /api/status for everyone.
+#
+# NJ TRANSIT IS THE TIGHTEST-MARGIN SYSTEM UNDER THIS SHARED BUDGET (15b), so if
+# this number ever moves, that is the derivation to re-check first: 23s worst
+# observed peak header lag plus one 20s poll interval is a 43s worst honest age,
+# leaving barely 2x headroom here. The full working, including why the probe's
+# overnight figures must be doubled before they are compared against anything, is
+# at THE FRESHNESS BUDGET, DERIVED in feeds/njt.py. It is not repeated here so the
+# two cannot drift into disagreeing versions.
 
 # How long ONE failed subsystem's data is carried forward inside an aggregate
 # envelope before it is dropped (C2). Ten minutes, and the reasoning is the same

@@ -104,20 +104,37 @@ NJT_ALERTS_URL = env_seams.url(
 #     numbers, and a future re-probe that lands overnight must double its
 #     figures before comparing them against these.
 #
-# WHAT THAT MAKES THE WORST HONEST AGE OF A SERVED NJT TRAIN:
+# WHAT THAT MAKES THE WORST HONEST AGE OF A SERVED NJT TRAIN. Two numbers, not
+# one, because the poll gap is not the poll interval:
 #
-#     23s   worst observed peak header lag
-#   + 20s   one poll interval (pollers.POLL_INTERVAL_S), the most that can elapse
-#           between the feed being published and this app fetching it
-#   -----
-#     43s   worst expected age at the moment we serve it
+#   TYPICAL, and what an operator sees essentially always:
 #
-# cache.FEED_STALE_AFTER_S is 90s, which is a little over 2x that. The headroom
-# is deliberate and is the same shape as the monitor's WARN/FAIL gap: a threshold
-# that trips on ordinary peak jitter trains an operator to ignore it. NJ Transit
-# is the TIGHTEST-MARGIN system under that shared 90s budget (the MTA feeds
-# regenerate every ~30s but publish with far less lag), so if 90 ever moves, this
-# is the derivation that has to be re-checked first.
+#       23s   worst observed peak header lag
+#     + 22s   the poll gap on a healthy cycle (POLL_INTERVAL_S is 20s, and
+#             _poll_feeds sleeps it AFTER its TaskGroup joins, so the real
+#             fetch-to-fetch period is 20s plus however long the cycle took;
+#             a healthy six-source cycle is low single-digit seconds)
+#     -----
+#       45s   against a 90s budget: 2x headroom
+#
+#   WORST CASE, which is a pathological cycle rather than a busy one:
+#
+#       23s   worst observed peak header lag
+#     + 65s   20s interval plus a full REFRESH_DEADLINE_S (45s), the hard ceiling
+#             _bounded_refresh puts on ONE wedged refresher before it gives up
+#     -----
+#       88s   against 90s: essentially no headroom left
+#
+# THE SECOND NUMBER IS NOT A BUG AND IS WORTH UNDERSTANDING BEFORE CHANGING
+# ANYTHING. Crossing 90s does not serve a wrong train; it makes /api/status and
+# /healthz report the NJT feed STALE, which during a cycle that took 45 seconds to
+# finish is a true statement. The failure mode at this edge is a noisy staleness
+# flag, never a ghost, so the right response to it firing is to look at why a
+# refresh took 45 seconds rather than to raise the threshold.
+#
+# NJ Transit is the TIGHTEST-MARGIN system under that shared 90s budget (the MTA
+# feeds regenerate every ~30s but publish with far less lag), so if 90 ever moves,
+# this is the derivation that has to be re-checked first.
 #
 # THE POLL CADENCE IS THE SHARED ONE (pollers.POLL_INTERVAL_S, 20s) rather than a
 # private NJT cadence, and NJT alerts likewise ride the shared 60s alert loop.
@@ -218,6 +235,45 @@ def _ordered_calls(tu, stops: dict[str, dict]) -> list[dict]:
     return calls
 
 
+def _first_time(call: dict) -> float | None:
+    """The EARLIEST time on a call, which is the one a "has the train got here yet"
+    test has to use.
+
+    The mirror of _still_upcoming, and both exist because the two questions want
+    opposite ends of a dwell: "is this stop still ahead" reads the departure, and
+    "has the train reached this stop" reads the arrival. Returns None only when the
+    call carries neither, which _place treats as a gap in the walk.
+    """
+    times = [t for t in (call["arrival"], call["departure"]) if t is not None]
+    return min(times) if times else None
+
+
+def _still_upcoming(call: dict) -> float | None:
+    """The LATEST time on a call, which is the one an "is this stop still ahead"
+    test has to use.
+
+    THE HOUSE RULE, and it is feeds.shared._stop_time's rule applied to this
+    decoder's already-parsed calls rather than to a raw stop_time_update. That
+    docstring names the exact hazard: "a train dwelling or held at a station has
+    arrival in the past but departure in the future, and must not be treated as
+    past that stop".
+
+    Reading arrival first was wrong here for a sharper reason than "one station
+    ahead". A train standing at Penn Station that arrived five minutes ago and
+    leaves in ten has an arrival well past the just-passed grace, so it dropped
+    off Penn's departure board entirely while _place simultaneously drew it
+    standing at that platform. The map and the board disagreed about the one train
+    a rider could actually catch, and stop 109 is the station the whole trap
+    matrix is written about.
+
+    Sorting uses this too (see _trim_njt_arrivals): among surviving rows a train
+    that arrived thirty seconds ago and departs in eight minutes must not sort
+    ahead of one departing in one minute.
+    """
+    times = [t for t in (call["arrival"], call["departure"]) if t is not None]
+    return max(times) if times else None
+
+
 def _interpolate(
     prev_stop: dict, next_stop: dict, departed_at: float, arrives_at: float, now: float
 ) -> tuple[float, float]:
@@ -297,6 +353,19 @@ def _place(calls: list[dict], stops: dict[str, dict], now: float) -> dict | None
     A call missing one of its two times degrades rather than disqualifying the
     trip: the other time stands in, which keeps a partially-timed trip placeable
     instead of vanishing it.
+
+    A call missing BOTH times is skipped for cases 2 to 4 rather than breaking the
+    walk, and that is a correctness fix rather than tidiness. The bare SKIPPED
+    variant already proves this producer emits timeless stop_time_updates (35 per
+    peak poll), and a timeless call in a LIVE trip used to do two things, both
+    wrong. A timeless FIRST call made case 2's first_time None, so the
+    MAX_FUTURE_FIRST_STOP_S phantom cap was skipped entirely and the trip fell
+    through to case 4, which placed it standing at its terminal up to an hour and a
+    half before it got there. A timeless MIDDLE call broke case 3's consecutive
+    pairing on both sides, with the same result: a train between Newark and Penn
+    teleported to Penn's platform. Pairing over the TIMED calls interpolates across
+    the gap instead, which is the straight-line approximation this function already
+    makes between any two stops.
     """
     if not calls:
         return None
@@ -320,10 +389,21 @@ def _place(calls: list[dict], stops: dict[str, dict], now: float) -> dict | None
                 "next_time": departure,
             }
 
-    # Case 2: before the first call. `or` rather than an explicit None check: a
-    # first call with only a departure is still a time this can be judged against.
-    first = calls[0]
-    first_time = first["arrival"] if first["arrival"] is not None else first["departure"]
+    # Cases 2 to 4 walk only the calls that carry a time, for the reason the
+    # docstring gives: a timeless call is not a position, and treating it as a gap
+    # in the walk is what stops it becoming a phantom.
+    timed = [call for call in calls if _first_time(call) is not None]
+    if not timed:
+        return None
+
+    # Case 2: before the first TIMED call, and `timed[0]` rather than `calls[0]` is
+    # load-bearing: a timeless leading call made first_time None, which skipped this
+    # branch and its MAX_FUTURE_FIRST_STOP_S cap entirely. See case 4, which is the
+    # other half of the pair that now catches that. `or` rather than an explicit
+    # None check below: a first call with only a departure is still a time this can
+    # be judged against.
+    first = timed[0]
+    first_time = _first_time(first)
     if first_time is not None and now < first_time:
         if first_time > now + MAX_FUTURE_FIRST_STOP_S:
             return None  # listed far ahead of its own origin: not a running train
@@ -343,7 +423,7 @@ def _place(calls: list[dict], stops: dict[str, dict], now: float) -> dict | None
 
     # Case 3: between two calls. Walk pairs and take the first segment that
     # straddles `now`.
-    for prev, nxt in zip(calls, calls[1:]):
+    for prev, nxt in zip(timed, timed[1:]):
         left = prev["departure"] if prev["departure"] is not None else prev["arrival"]
         right = nxt["arrival"] if nxt["arrival"] is not None else nxt["departure"]
         if left is None or right is None:
@@ -364,10 +444,35 @@ def _place(calls: list[dict], stops: dict[str, dict], now: float) -> dict | None
                 "next_time": right,
             }
 
-    # Case 4: past the last call, within the terminal grace.
-    last = calls[-1]
+    # Case 4: PAST the last call, within the terminal grace.
+    #
+    # `last_time <= now` is the half this branch used to be missing, and its
+    # absence is how the phantom got out: case 4 was not "the trip is done" but an
+    # unconditional fallthrough for everything cases 1 to 3 declined, so a trip
+    # whose calls could not be walked was placed standing at its FINAL stop however
+    # far ahead that stop was, at-station, with a next_time an hour out. That is
+    # exactly what MAX_FUTURE_FIRST_STOP_S exists to refuse, arriving through the
+    # one branch that never consulted it.
+    #
+    # IT IS ONE OF TWO GUARDS AGAINST THAT PHANTOM, AND EITHER ALONE SUFFICES. The
+    # other is case 2 judging `timed[0]` rather than `calls[0]`, which is what
+    # guarantees it always has a first_time and therefore always applies its cap.
+    # Measured rather than assumed: with case 2's fix in place, an exhaustive
+    # search over every one-, two- and three-call configuration of
+    # {absent, -600s, -30s, now, +30s, +600s, +5400s} on both times found ZERO
+    # configurations where this condition changes the answer; and removing this
+    # condition alone, or case 2's alone, leaves the suite green while removing
+    # BOTH resurrects the phantom and fails
+    # test_a_timeless_first_call_does_not_park_a_train_at_a_terminal_it_has_not_reached.
+    #
+    # Recorded that way deliberately. This project's standard is that every guard
+    # has a killing mutation, and a redundant pair cannot meet it individually; the
+    # honest statement is that the PAIR is load-bearing and the double mutation is
+    # the one that kills. Both stay: the phantom escaped through this branch once
+    # already, and one line is a cheap second lock on it.
+    last = timed[-1]
     last_time = last["departure"] if last["departure"] is not None else last["arrival"]
-    if last_time is not None and now < last_time + _TERMINAL_GRACE_S:
+    if last_time is not None and last_time <= now < last_time + _TERMINAL_GRACE_S:
         stop = stops[last["stop_id"]]
         return {
             "latitude": stop["lat"],
@@ -483,7 +588,7 @@ def decode_njt_trip_updates(
         # filtered call list as placement, so a stop dropped for one is dropped for
         # both by construction rather than by two rules kept in step by hand.
         for call in calls:
-            when = call["arrival"] if call["arrival"] is not None else call["departure"]
+            when = _still_upcoming(call)
             if when is None or when < now - _JUST_PASSED_GRACE_S:
                 continue
             arrivals[call["stop_id"]].append(
@@ -521,18 +626,15 @@ def _trim_njt_arrivals(arrivals: dict[str, list[dict]]) -> dict[str, list[dict]]
 
     Its own trim rather than feeds.shared._trim_arrivals because the shape differs:
     that one takes {stop: {bucket: [...]}} and NJT's index is flat (see
-    ARRIVALS_PER_STOP). Sorted on the same best-available time the arrivals filter
-    used, then by train number so two departures sharing a minute order
-    deterministically across polls rather than by dict insertion.
+    ARRIVALS_PER_STOP). Sorted on _still_upcoming, the SAME key the arrivals
+    filter admitted the row on, then by train number so two departures sharing a
+    minute order deterministically across polls rather than by dict insertion.
+    Sharing the key is what keeps a dwelling train from sorting by an arrival five
+    minutes past while a rider is reading a board ordered by departure.
     """
     trimmed: dict[str, list[dict]] = {}
     for stop_id, rows in arrivals.items():
-        rows.sort(
-            key=lambda row: (
-                row["arrival"] if row["arrival"] is not None else row["departure"],
-                row["train_num"] or "",
-            )
-        )
+        rows.sort(key=lambda row: (_still_upcoming(row), row["train_num"] or ""))
         trimmed[stop_id] = rows[:ARRIVALS_PER_STOP]
     return trimmed
 

@@ -172,6 +172,14 @@ def _static_tables() -> tuple[dict, dict]:
     return parsed["stops"], njt_static.build_njt_trip_index(parsed["trips"])
 
 
+def _joining_trip_ids(raw: bytes) -> list[str]:
+    """Every trip id in the capture, so the stale-fixture check can be made before
+    anything derived from the join is judged."""
+    feed = pb.FeedMessage()
+    feed.ParseFromString(raw)
+    return [e.trip_update.trip.trip_id for e in feed.entity if e.HasField("trip_update")]
+
+
 def _shapes(raw: bytes) -> dict:
     """Count the shapes the decoder law is written about, straight off the wire.
 
@@ -182,6 +190,7 @@ def _shapes(raw: bytes) -> dict:
     feed = pb.FeedMessage()
     feed.ParseFromString(raw)
     trip_sr = Counter()
+    canceled_trip_ids: list[str] = []
     canceled_trips = 0
     skipped_with_times = 0
     skipped_bare = 0
@@ -200,6 +209,11 @@ def _shapes(raw: bytes) -> dict:
         trip_sr[relationship] += 1
         canceled = relationship == "CANCELED"
         canceled_trips += canceled
+        if canceled and tu.trip.trip_id:
+            # Recorded BY ID, not only counted, so the golden can assert that no
+            # arrival in the decoded index belongs to one of them. A count alone
+            # would let that assertion be written as a tautology.
+            canceled_trip_ids.append(tu.trip.trip_id)
         for stu in tu.stop_time_update:
             if stu.stop_id == PENN:
                 penn_calls += 1
@@ -212,17 +226,27 @@ def _shapes(raw: bytes) -> dict:
             # trip it has canceled, still carrying a time a board would print.
             if canceled and has_times and stu.stop_id == PENN:
                 phantom_penn_calls += 1
-        # The cross-check the decoder makes a warning of. Counted here against
-        # the trip id's own short name via the static index, since entity.id is
-        # supposed to equal both.
-        if entity.id:
+        # The cross-check the decoder makes a warning of, counted the SAME WAY the
+        # decoder counts it: only over trips that actually JOINED the static.
+        #
+        # Counting every entity instead made this gate misfire on the one condition
+        # it is most likely to meet. A trip absent from the committed static
+        # fixture yields no short_name, so it read as a mismatch, and a single such
+        # trip (an ADDED one, a train added since the capture, or a static fixture
+        # one publication out of date, which this script's own docstring says to
+        # expect) dropped the rate below 100% and aborted with "a real drift here
+        # is worth a human decision, not a regenerated fixture". That blamed
+        # feeds.njt._identity's invariant for a stale fixture, and it fired BEFORE
+        # the join-rate check written for exactly that case could be reached.
+        if entity.id and _TRIPS.get(tu.trip.trip_id):
             id_compared += 1
-            id_matches += entity.id == (_TRIPS.get(tu.trip.trip_id) or {}).get("short_name")
+            id_matches += entity.id == _TRIPS[tu.trip.trip_id].get("short_name")
 
     return {
         "trips": trips,
         "trip_relationships": dict(trip_sr),
         "canceled_trips": canceled_trips,
+        "canceled_trip_ids": sorted(canceled_trip_ids),
         "skipped_with_times": skipped_with_times,
         "skipped_bare": skipped_bare,
         "penn_calls": penn_calls,
@@ -297,6 +321,21 @@ def main() -> int:
     if alert_count < MIN_ALERTS:
         problems.append("the alerts feed is empty, so the alerts golden would assert nothing")
 
+    # THE STALE-STATIC CHECK RUNS BEFORE THE GATE, because it explains several of
+    # the problems above rather than being one more of them. A realtime capture
+    # taken after the static fixture's schedule rolled over joins nothing, and a
+    # reader who sees "entity.id agreement is 0%" first will go looking in the
+    # decoder for a fault that is entirely in the fixture pair.
+    joined_trips = sum(1 for e in _joining_trip_ids(tu_raw) if e in _TRIPS)
+    if shapes["trips"] and joined_trips == 0:
+        print(
+            "\n  !! NOTHING in this capture joins the committed static fixture. Regenerate "
+            "it first (backend/scripts/gen_njt_fixture.py); trip ids roll over with each "
+            "schedule publication, and every check below reads as a decoder fault when "
+            "the real problem is the fixture pair."
+        )
+        return 1
+
     if problems:
         print("\nFEED DRIFT OR AN UNUSABLE CAPTURE, fixtures NOT written:")
         for problem in problems:
@@ -318,19 +357,8 @@ def main() -> int:
         f"{sum(len(v) for v in arrivals.values())} arrivals across {len(arrivals)} stops, "
         f"{len(warnings)} cross-check warnings"
     )
-    # THE JOIN RATE IS THE ONE THAT CATCHES A STALE STATIC FIXTURE. Trip ids roll
-    # over with each schedule publication, so a realtime capture taken months
-    # after the static one joins nothing and produces a golden full of trains
-    # with synthesized names, which would look like a decoder bug forever after.
     joined = sum(1 for t in trains if t["trip_id"] in _TRIPS)
     print(f"  {joined} of {len(trains)} placed trains join the committed static fixture")
-    if trains and joined == 0:
-        print(
-            "\n  !! NOTHING joins the static fixture. Regenerate it first "
-            "(backend/scripts/gen_njt_fixture.py); trip ids roll over with each "
-            "schedule publication."
-        )
-        return 1
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     (OUT_DIR / "njt_tu.pb").write_bytes(tu_raw)

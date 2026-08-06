@@ -834,7 +834,7 @@ def _in_njt_service_hours(now: float, tz) -> bool:
     return local >= NJT_SERVICE_START or local <= NJT_SERVICE_END
 
 
-def _njt_straddling_trips(feed, now: float) -> set[str]:
+def _njt_straddling_trips(feed, now: float, stops: dict[str, dict]) -> set[str]:
     """Trip ids the feed itself says are running RIGHT NOW: one call behind `now`,
     one ahead.
 
@@ -856,7 +856,28 @@ def _njt_straddling_trips(feed, now: float) -> set[str]:
             continue
         behind = ahead = False
         for stu in tu.stop_time_update:
-            if stu.schedule_relationship == feeds._STOP_SR.SKIPPED:
+            # THE SAME TWO DROP RULES THE DECODER APPLIES, both of them, because a
+            # ratio whose numerator and denominator filter differently reports a
+            # gap that is its own arithmetic rather than a change in the feed.
+            # feeds.njt._ordered_calls drops a call for EITHER reason:
+            #
+            #   * an unknown stop_id. njt_static drops a stops.txt row whose
+            #     coordinates will not parse, so a live feed can name a stop the
+            #     static table does not have.
+            #   * any relationship in _DROP_STOP_RELATIONSHIPS, which is SKIPPED
+            #     AND NO_DATA. Checking SKIPPED alone left NO_DATA counted here and
+            #     dropped there, and this producer already ships 238
+            #     relationship-with-times calls a peak poll, so a NO_DATA carrying
+            #     times is exactly its habit.
+            #
+            # Either mismatch pushes placed/straddling below the floor and reports
+            # "the feed stopped retaining passed stops" when nothing of the kind
+            # happened. NJT_PLACEMENT_FLOOR's derivation claims the healthy value
+            # is 1.0 by construction, and that claim is only true if both sides
+            # filter identically.
+            if not stu.stop_id or stu.stop_id not in stops:
+                continue
+            if stu.schedule_relationship in feeds._DROP_STOP_RELATIONSHIPS:
                 continue
             for when in (stu.arrival, stu.departure):
                 if not when.time:
@@ -1006,7 +1027,7 @@ def check_njt_realtime(
         statuses.append(WARN)
         details.append(f"{len(warnings)} entity.id/trip_short_name mismatches (probe: 0 of 745)")
 
-    straddling = _njt_straddling_trips(feed, now)
+    straddling = _njt_straddling_trips(feed, now, stops_table)
     if entities >= NJT_MIN_TRIPS_FOR_RATIO and in_service:
         if not straddling:
             # THE ASSUMPTION'S SIGNATURE, and the reason this check exists. No trip

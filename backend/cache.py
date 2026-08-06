@@ -35,8 +35,10 @@ FEED_STALE_AFTER_S = 90
 #
 # NJ TRANSIT IS THE TIGHTEST-MARGIN SYSTEM UNDER THIS SHARED BUDGET (15b), so if
 # this number ever moves, that is the derivation to re-check first: 23s worst
-# observed peak header lag plus one 20s poll interval is a 43s worst honest age,
-# leaving barely 2x headroom here. The full working, including why the probe's
+# observed peak header lag plus a healthy poll gap is a 45s typical worst age, and
+# a cycle that burns a full REFRESH_DEADLINE_S takes that to 88s, which leaves
+# nothing. Crossing it reports STALE rather than serving anything wrong, so the
+# edge is noisy rather than dangerous. The full working, including why the probe's
 # overnight figures must be doubled before they are compared against anything, is
 # at THE FRESHNESS BUDGET, DERIVED in feeds/njt.py. It is not repeated here so the
 # two cannot drift into disagreeing versions.

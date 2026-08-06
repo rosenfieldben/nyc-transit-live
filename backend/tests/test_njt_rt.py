@@ -91,6 +91,12 @@ def _trip(
                 stu.arrival.time = int(arrival)
                 if delay is not None:
                     stu.arrival.delay = delay
+            elif delay is not None and departure is None:
+                # A DELAY WITH NO TIME: the minimal legal StopTimeEvent, and one
+                # field away from the bare timeless call this producer already
+                # emits 35 times a peak poll. Written here so the timeless-call
+                # tests build the real wire shape rather than an approximation.
+                stu.arrival.delay = delay
             if departure is not None:
                 stu.departure.time = int(departure)
                 if delay is not None:
@@ -587,3 +593,164 @@ def test_a_just_passed_stop_stays_briefly_then_goes():
     assert "109" in _decode(raw)[1], "just-passed stops keep the same grace as everywhere"
     raw = _feed(_trip("3800", "T-3800", [("109", NOW - 600, NOW - 590, None, None)]))
     assert _decode(raw)[1] == {}
+
+
+# ---------------------------------------------------------------------------
+# THE DWELL, and the timeless call: two shapes the adversarial round found
+# ---------------------------------------------------------------------------
+
+
+def test_a_train_standing_at_penn_is_on_pennsylvania_stations_own_board():
+    """THE MAP AND THE BOARD MUST NOT DISAGREE ABOUT THE TRAIN A RIDER CAN CATCH.
+
+    A train that pulled into Penn five minutes ago and leaves in ten is dwelling:
+    arrival well past, departure well ahead. Reading arrival first put that call
+    behind the just-passed grace, so the stop dropped out of the arrivals index
+    entirely while _place simultaneously drew the train standing at that platform.
+    The rider saw a train on the map at Penn and no such train on Penn's departure
+    board, and it is the one departure they could still make.
+
+    This is feeds.shared._stop_time's rule, whose docstring names this exact
+    hazard, applied to this decoder's already-parsed calls (_still_upcoming). The
+    ferry decoder had it right; this one did not.
+    """
+    raw = _feed(
+        _trip(
+            "3800",
+            "T-3800",
+            [
+                ("112", NOW - 1800, NOW - 1790, None, None),
+                ("109", NOW - 300, NOW + 600, None, None),
+            ],
+        )
+    )
+    trains, arrivals, _ts, _w = _decode(raw)
+    assert [t["status"] for t in trains] == ["at-station"], "the map places it at the platform"
+    assert trains[0]["stop_id"] == "109"
+    assert len(arrivals.get("109", [])) == 1, (
+        "and the board at that platform must list it: a dwelling call's DEPARTURE "
+        "is what makes the stop still upcoming, not its arrival"
+    )
+
+
+def test_a_dwelling_train_does_not_sort_ahead_of_a_sooner_departure():
+    """The same key, applied to ordering. A train that arrived thirty seconds ago
+    and departs in eight minutes must sit BELOW one departing in one minute on a
+    board a rider reads by time."""
+    raw = _feed(
+        _trip(
+            "3800",
+            "T-3800",
+            [("112", NOW - 900, NOW - 890, None, None), ("109", NOW - 30, NOW + 480, None, None)],
+        ),
+        _trip(
+            "3802",
+            "T-3802",
+            [("112", NOW - 900, NOW - 890, None, None), ("109", NOW + 50, NOW + 60, None, None)],
+        ),
+    )
+    _trains, arrivals, _ts, _w = _decode(raw)
+    assert [row["train_num"] for row in arrivals["109"]] == ["3802", "3800"]
+
+
+def test_a_timeless_first_call_does_not_park_a_train_at_a_terminal_it_has_not_reached():
+    """THE PHANTOM THAT CAME IN THROUGH THE ONE BRANCH THAT NEVER CONSULTED THE CAP.
+
+    A leading stop_time_update carrying a delay and no absolute time is the minimal
+    legal StopTimeEvent, and one field away from the bare timeless call this
+    producer already emits 35 times a peak poll. It made case 2's first_time None,
+    so MAX_FUTURE_FIRST_STOP_S never ran, and the trip fell through to case 4,
+    which had no "is the trip actually past this stop" test at all and placed it
+    standing at its FINAL stop ninety minutes early, status at-station, next_time
+    an hour and a half out.
+
+    The control is the same trip WITHOUT the timeless call, which the cap has
+    always rejected correctly. Both must now be dropped, for the same reason.
+    """
+    with_timeless = _feed(
+        _trip(
+            "3800",
+            "T-3800",
+            [("112", None, None, None, 120), ("109", NOW + 5400, NOW + 5430, None, None)],
+        )
+    )
+    trains, arrivals, _ts, _w = _decode(with_timeless)
+    assert trains == [], (
+        "a train whose only timed call is ninety minutes out is not running; placing "
+        "it at that stop is the phantom the cap exists to refuse"
+    )
+    # The BOARD still lists it, and that is right: it really does call at 109 in
+    # ninety minutes. What must not happen is a marker on the map.
+    assert len(arrivals.get("109", [])) == 1
+
+    control = _feed(_trip("3800", "T-3800", [("109", NOW + 5400, NOW + 5430, None, None)]))
+    assert _decode(control)[0] == [], "the control the cap already handled"
+
+
+def test_a_timeless_middle_call_interpolates_across_the_gap_rather_than_teleporting():
+    """The same defect one position along. A timeless call between two timed ones
+    broke case 3's consecutive pairing on BOTH sides, so a train between Newark and
+    Penn fell to case 4 and teleported onto Penn's platform.
+
+    Pairing over the timed calls interpolates across the gap instead, which is the
+    straight-line approximation _place already makes between any two stops.
+    """
+    raw = _feed(
+        _trip(
+            "3800",
+            "T-3800",
+            [
+                ("112", NOW - 600, NOW - 590, None, None),
+                ("38", None, None, None, 60),
+                ("109", NOW + 900, NOW + 930, None, None),
+            ],
+        )
+    )
+    trains, _arrivals, _ts, _w = _decode(raw)
+    assert len(trains) == 1
+    train = trains[0]
+    assert train["status"] == "in-transit", train
+    # Strictly BETWEEN Newark (-74.1646) and Penn (-73.9935), never snapped onto
+    # either endpoint, which is what the teleport looked like.
+    assert -74.1646 < train["longitude"] < -73.9935, train
+    assert train["latitude"] != STOPS["109"]["lat"]
+
+
+def test_the_terminal_grace_is_a_window_not_an_open_ended_fallthrough():
+    """Case 4's two edges, asserted together because only the pair pins the shape.
+
+    A train thirty seconds past its last departure is still standing at its
+    terminal and should be drawn there. One two hours past is done. One that has
+    not got there yet was never case 4's business at all.
+    """
+    just_done = _feed(
+        _trip(
+            "3800",
+            "T-3800",
+            [("112", NOW - 1800, NOW - 1790, None, None), ("109", NOW - 30, NOW - 20, None, None)],
+        )
+    )
+    assert [t["status"] for t in _decode(just_done)[0]] == ["at-station"]
+
+    long_done = _feed(
+        _trip(
+            "3800",
+            "T-3800",
+            [
+                ("112", NOW - 9000, NOW - 8990, None, None),
+                ("109", NOW - 8000, NOW - 7990, None, None),
+            ],
+        )
+    )
+    assert _decode(long_done)[0] == []
+
+
+def test_a_trip_whose_every_call_is_timeless_is_dropped_rather_than_guessed_at():
+    """No time anywhere is no position anywhere. The train is not placed, and it
+    does not raise on the way to not being placed."""
+    raw = _feed(
+        _trip("3800", "T-3800", [("112", None, None, None, 60), ("109", None, None, None, 120)])
+    )
+    trains, arrivals, _ts, _w = _decode(raw)
+    assert trains == []
+    assert arrivals == {}

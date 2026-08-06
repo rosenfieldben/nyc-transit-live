@@ -38,6 +38,7 @@ from feeds import (
     ALERT_RETENTION_MAX_S,
     RAILROAD_FEED_URLS,
     SUBWAY_FEED_URLS,
+    active_alert_feeds,
     carry_forward_prev,
     combine_group_arrivals,
     combine_group_trains,
@@ -111,14 +112,33 @@ async def _bounded_refresh(entry: dict, coro) -> None:
     can only cancel the fetch, never a half-applied update: last-known state is left
     intact for _note_failure to preserve.
 
-    Only the cache entry's error is recorded here; the per-system feed_health dict
-    (a secondary /api/status signal) is deliberately left at its last value, because
-    this generic wrapper does not know each system's health shape and the recorded
-    504 is the authoritative failure indicator either way."""
+    Only the app.state per-system feed_health DICT is left at its last value, and
+    only because this generic wrapper does not know each system's health shape; the
+    recorded 504 is the authoritative failure indicator either way.
+
+    THE C2 BLOCK IS NOT IN THAT EXEMPTION, and used to be by omission. A timeout
+    lands HERE rather than in any refresher's own error handling, so the three
+    envelopes that publish per-system freshness (subways, railroads and, since 15b,
+    njt) kept serving `ok: true` beside retained data whenever a refresh was
+    killed by this deadline. That is the same dishonesty the classified failure
+    paths were fixed for: retention is only honest when the retained data is drawn
+    AS stale, and a block still claiming ok is what turns dimmed last-known trains
+    into ghost trains at full opacity.
+
+    NJ TRANSIT IS THE MOST EXPOSED SOURCE TO THIS PATH, which is why 15b is where
+    it surfaced. njt_auth.njt_post's worst case is four requests at
+    REQUEST_TIMEOUT_S each (mint, POST, re-mint, POST) = 120s, comfortably past
+    this 45s deadline, so a slow-but-alive RailData reliably arrives here rather
+    than at _refresh_njt's own handler.
+
+    _mark_all_systems_failed is generic (it walks whatever entry["systems"] holds
+    and is a no-op when there is none), so it is safe for every source including
+    the ones with no such block."""
     try:
         async with asyncio.timeout(REFRESH_DEADLINE_S):
             await coro
     except TimeoutError:
+        _mark_all_systems_failed(entry)
         _note_failure(
             entry,
             504,
@@ -1044,6 +1064,41 @@ def _apply_alert_generation(
         entry.update(alerts=merged, active=len(merged))
 
 
+def _reconcile_alert_health(entry: dict) -> None:
+    """Make the health map's keys match the feeds this process will actually poll.
+
+    THE HEALTH MAP IS SEEDED ONCE, at cache construction, while the active set is
+    re-read on every poll (feeds.active_alert_feeds calls njt_auth.credentials,
+    which reads os.environ live). Those two can therefore disagree if credentials
+    change in-process, and every other rule in this module reads the health map's
+    keys as the authoritative system list, so the disagreement propagates:
+
+      * CREDENTIALS DISAPPEAR. "njt" stays in health but leaves the active set, so
+        it is neither fetched nor failed. _apply_alert_generation's not-failed
+        branch then stamps fresh_at = now and last_error = None on it every poll,
+        for a feed nobody is fetching, while merge_alert_generations deletes its
+        alerts as neither fresh nor retained. Silent thinning under a green health
+        surface, which is the exact failure the health map exists to prevent.
+      * CREDENTIALS APPEAR. "njt" is fetched and merged but has no health key, so
+        the retention clock threaded out of that map is never persisted for it. Its
+        retained_since restarts at now on every failing poll and
+        ALERT_RETENTION_MAX_S can never fire, so its alerts are carried forward
+        indefinitely.
+
+    Cold start is already safe (load_dotenv runs at feeds.shared import, well
+    before main builds the cache), so this closes a structural gap rather than a
+    live bug. It is four lines, it runs once per poll, and it means the rest of
+    this module's "take the system list from health's own keys" rule stays true
+    instead of being true only while the environment holds still.
+    """
+    active = active_alert_feeds()
+    health = entry["health"]
+    for system in active:
+        health.setdefault(system, {"fresh_at": None, "retained_since": None, "last_error": None})
+    for system in [s for s in health if s not in active]:
+        del health[system]
+
+
 async def _refresh_alerts(app: FastAPI, client: httpx.AsyncClient) -> None:
     """Refresh the active-alerts index. Same cache contract as the feeds: a failed
     poll keeps the last-known index and its fetched_at (the error is recorded but
@@ -1077,6 +1132,7 @@ async def _refresh_alerts(app: FastAPI, client: httpx.AsyncClient) -> None:
     which R4's monitor had to work around by consulting the poll age first, because
     the frozen per-system map used to read fully healthy while every feed was down."""
     entry = app.state.alerts_cache
+    _reconcile_alert_health(entry)
     try:
         # THIS REFRESHER OWNS ITS OWN DEADLINE rather than riding _bounded_refresh the
         # way the feed refreshers do (see _poll_alerts, which calls this directly).

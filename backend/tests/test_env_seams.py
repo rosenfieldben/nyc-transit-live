@@ -35,6 +35,7 @@ import pollers
 import railroad_static
 import static_data
 from feeds import alerts, buses, ferry, path, railroad, subway
+from feeds import njt as njt_feed
 
 BACKEND = Path(__file__).resolve().parent.parent
 
@@ -67,6 +68,11 @@ EXPECTED_DEFAULTS: dict[str, object] = {
     # minting real tokens against a rate limit NJ Transit does not publish.
     "NJT_TOKEN_URL": _NJT_RAILDATA + "/getToken",
     "NJT_STATIC_URL": _NJT_RAILDATA + "/getGTFS",
+    # NJ Transit realtime (15b). Two more whole URLs for the reason the 15a pair
+    # gives: each is owned by the module that consumes it, and a contract scenario
+    # has to be able to fail TRIP UPDATES while alerts keep flowing.
+    "NJT_TU_URL": _NJT_RAILDATA + "/getTripUpdates",
+    "NJT_ALERTS_URL": _NJT_RAILDATA + "/getAlerts",
     # Timing.
     "POLL_INTERVAL_S": 20,
     "ALERT_POLL_INTERVAL_S": 60,
@@ -162,6 +168,8 @@ def test_static_archive_urls_unchanged():
     )
     assert njt_static.NJT_STATIC_URL == _NJT_RAILDATA + "/getGTFS"
     assert njt_auth.NJT_TOKEN_URL == _NJT_RAILDATA + "/getToken"
+    assert njt_feed.NJT_TU_URL == _NJT_RAILDATA + "/getTripUpdates"
+    assert njt_feed.NJT_ALERTS_URL == _NJT_RAILDATA + "/getAlerts"
 
 
 def test_timing_constants_unchanged():

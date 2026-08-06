@@ -70,11 +70,13 @@ def cache():
         "railroads": app_module._fresh_entry(),
         "path": app_module._fresh_entry(),
         "ferry": app_module._fresh_entry(),
+        "njt": app_module._fresh_entry(),
     }
     app_module.app.state.subway_feed_health = None
     app_module.app.state.railroad_feed_health = None
     app_module.app.state.path_feed_health = None
     app_module.app.state.ferry_feed_health = None
+    app_module.app.state.njt_feed_health = None
     return app_module.app.state.feed_cache
 
 

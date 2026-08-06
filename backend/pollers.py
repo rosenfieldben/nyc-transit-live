@@ -27,6 +27,7 @@ from google.protobuf.message import DecodeError
 
 import env_seams
 import main
+import njt_auth
 from cache import (
     FEED_RETENTION_ENABLED,
     FEED_RETENTION_MAX_S,
@@ -46,6 +47,7 @@ from feeds import (
     merge_alert_generations,
     merge_system_generations,
 )
+from feeds import njt as njt_feed
 
 # Log through the "main" logger (not __name__) so records and main.py's logging
 # config are unchanged by the split.
@@ -130,7 +132,7 @@ async def _bounded_refresh(entry: dict, coro) -> None:
 # unclassified failure has to mark. Buses are absent on purpose: that source
 # publishes no per-feed health dict, so there is nothing to mark beyond its error.
 _FEED_HEALTH_TOTALS = {"subways": len(SUBWAY_FEED_URLS), "railroads": len(RAILROAD_FEED_URLS)}
-_SINGLE_FEED_HEALTH = {"path": "PATH", "ferry": "ferry"}
+_SINGLE_FEED_HEALTH = {"path": "PATH", "ferry": "ferry", "njt": "njt"}
 
 
 def _feed_degrader(app: FastAPI, name: str, entry: dict):
@@ -727,6 +729,110 @@ async def _refresh_ferry(app: FastAPI, client: httpx.AsyncClient) -> None:
     app.state.ferry_arrivals = arrivals
 
 
+async def _refresh_njt(app: FastAPI, client: httpx.AsyncClient) -> None:
+    """Refresh the NJ Transit trains + arrivals from the TripUpdates feed.
+
+    THE CLIENT ARGUMENT IS UNUSED, and that is the point rather than an oversight.
+    Every other refresher fetches with the poll loop's shared httpx client; NJT
+    goes through njt_auth.njt_post, because the token cache behind that door is
+    what makes this poller, the alerts poller and the static loader share ONE
+    token and produce exactly one re-mint when it expires. A direct client.post
+    here would route around the single-flight lock and turn one expiry into three
+    mints, against a rate limit NJ Transit does not publish. The parameter stays
+    so this refresher has the same signature as its five siblings and the registry
+    below needs no special case.
+
+    NOT-CONFIGURED EXTENDS FROM 15a UNCHANGED. With no credentials the loader
+    never reached ready, so the static guard below already short-circuits this
+    poll before any network call; njt_post would refuse anyway. The two together
+    are why an unconfigured deployment makes zero NJT requests of any kind rather
+    than merely failing them quietly.
+
+    Same cache contract as the other systems with the ferry's deliberate
+    divergence, and for a sharper reason: an EMPTY successful poll REPLACES the
+    trains. The overnight probe recorded a 13-byte valid feed with no entities, so
+    zero trains at 03:00 is the correct answer; retaining the evening's trains
+    through the night would be a map full of ghosts. Only a FAILED poll keeps the
+    last-known trains.
+    """
+    entry = app.state.feed_cache["njt"]
+    if getattr(app.state, "njt_static_status", None) != "ready":
+        # Not ready covers BOTH the warming case and the not-configured one, and
+        # they must read differently to an operator. "not-configured" is terminal
+        # and says so; anything else is the ordinary quiet warming path the PATH
+        # and ferry refreshers take (log=False, because the single transition log
+        # belongs to _set_static_status rather than to a 30s poll loop).
+        if getattr(app.state, "njt_static_status", None) == "not-configured":
+            _note_failure(
+                entry,
+                503,
+                "NJ Transit is not configured (NJT_USERNAME/NJT_PASSWORD are unset); "
+                "no realtime poll is attempted.",
+                log=False,
+            )
+        else:
+            _note_failure(
+                entry,
+                503,
+                "Static NJ Transit GTFS is still loading; it will retry automatically. "
+                "Try again shortly.",
+                log=False,
+            )
+        return
+    try:
+        trains, arrivals, feed_timestamp, warnings = await main.fetch_njt_trains(
+            getattr(app.state, "njt_stops", None) or {},
+            getattr(app.state, "njt_trips", None) or {},
+        )
+    except njt_auth.NjtNotConfigured as exc:
+        # Unreachable behind the status guard above, and handled anyway so the
+        # distinct state cannot degrade into a generic 500 two frames from where
+        # the distinction was made.
+        app.state.njt_feed_health = {"total": 1, "ok": 0, "failed": ["njt"]}
+        _note_failure(entry, 503, str(exc), log=False)
+        return
+    except njt_auth.NjtAuthError as exc:
+        # A rejected token AFTER the one permitted re-mint, or a failed mint. Not
+        # a 500: the upstream answered, it just refused us.
+        app.state.njt_feed_health = {"total": 1, "ok": 0, "failed": ["njt"]}
+        _note_failure(entry, 502, f"NJ Transit rejected our credentials: {_sanitize_upstream(exc)}")
+        return
+    except (njt_auth.NjtUpstreamError, httpx.HTTPError) as exc:
+        app.state.njt_feed_health = {"total": 1, "ok": 0, "failed": ["njt"]}
+        _note_failure(entry, 502, f"Upstream NJ Transit feed error: {_sanitize_upstream(exc)}")
+        return
+    except DecodeError:
+        # HTTP 200 with a non-protobuf body (an error page, a proxy's HTML).
+        app.state.njt_feed_health = {"total": 1, "ok": 0, "failed": ["njt"]}
+        _note_failure(entry, 502, "Upstream NJ Transit feed returned undecodable data")
+        return
+    njt_feed.log_cross_check(warnings)
+    app.state.njt_feed_health = {
+        "total": 1,
+        "ok": 1,
+        "failed": [],
+        # The entity.id / trip_short_name cross-check count, which the probe
+        # measured at 745/745 agreement. Surfaced on /api/status rather than only
+        # logged, so a drift that starts is visible without reading logs.
+        "cross_check_failures": len(warnings),
+    }
+    now = time.time()
+    entry.update(
+        data=trains,
+        fetched_at=now,
+        feed_timestamp=feed_timestamp,
+        error=None,
+        # THE C2 PER-SYSTEM BLOCK, single-entry. Written on every successful poll so
+        # the envelope's block and its top-level fetched_at agree while healthy;
+        # a failed poll leaves this untouched, which is exactly the divergence the
+        # client dims on.
+        systems=_system_freshness(entry.get("systems"), [njt_feed.SYSTEM], [], {}, now),
+    )
+    # Replace the arrivals index only on success, so a failed poll keeps the
+    # last-known arrivals on the same fetched_at, consistent with the cache.
+    app.state.njt_arrivals = arrivals
+
+
 async def _poll_feeds(app: FastAPI) -> None:
     """Refresh the feeds every POLL_INTERVAL_S for the app's lifetime.
 
@@ -780,12 +886,30 @@ async def _poll_feeds(app: FastAPI) -> None:
                 # wedged upstream still bounds only its system, exactly as R2 left it.
                 cache = app.state.feed_cache
                 async with asyncio.TaskGroup() as group:
+                    # NJ TRANSIT'S VEHICLE POSITIONS FEED IS NOT HERE, AND THAT IS
+                    # A DECISION WITH NUMBERS BEHIND IT (15b). getVehiclePositions
+                    # is not fetched, not parsed, and not modelled. The 2026-08-05
+                    # probes measured, at peak: 89% of coordinates FROZEN, a worst
+                    # observed age of 3h18m, and a CANCELED train still broadcasting
+                    # a position. Serving any of that would put confidently wrong
+                    # trains on the map, which is strictly worse than the
+                    # schedule-derived placement the TripUpdates feed supports (and
+                    # which /api/njt-trains labels as derived through `status`).
+                    #
+                    # This comment is here, at the registry, because this is where
+                    # the next person adding a feed will be standing. If you are
+                    # about to helpfully add it: the numbers above are the reason
+                    # not to, and they have not changed unless you re-probed.
+                    # occupancy_status is the ONE field that could ever earn a gated
+                    # return, since it has no position to be wrong about; that is a
+                    # ledger followup, not code.
                     for name, refresh in (
                         ("buses", _refresh_buses),
                         ("subways", _refresh_subways),
                         ("railroads", _refresh_railroads),
                         ("path", _refresh_path),
                         ("ferry", _refresh_ferry),
+                        ("njt", _refresh_njt),
                     ):
                         entry = cache[name]
                         group.create_task(

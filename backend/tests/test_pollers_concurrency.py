@@ -29,7 +29,13 @@ pytestmark = pytest.mark.anyio
 def cache():
     app_module.app.state.feed_cache = {
         name: app_module._fresh_entry()
-        for name in ("buses", "subways", "railroads", "path", "ferry")
+        # EVERY registry key, and it must stay that way: _poll_feeds reads
+        # cache[name] for each registered source BEFORE the TaskGroup children
+        # start, so a missing key raises in the cycle body rather than in a child.
+        # The loop then logs and sleeps, the clock below turns that sleep into a
+        # no-op, and the whole suite spins at full speed instead of failing. That
+        # is what adding "njt" to the registry without this line did.
+        for name in ("buses", "subways", "railroads", "path", "ferry", "njt")
     }
     return app_module.app.state.feed_cache
 

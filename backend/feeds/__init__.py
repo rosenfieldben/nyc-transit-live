@@ -36,6 +36,10 @@ from feeds.ferry import (
     _trim_ferry_arrivals,
     fetch_ferry_data,
 )
+from feeds.njt import (
+    decode_njt_trip_updates,
+    fetch_njt_trains,
+)
 from feeds.path import (
     _PATH_DIRECTION,
     _PATH_DIRECTION_ID,
@@ -157,6 +161,8 @@ __all__ = [
     "_decode_ferry_arrivals",
     "_trim_ferry_arrivals",
     "fetch_ferry_data",
+    "fetch_njt_trains",
+    "decode_njt_trip_updates",
     "_SUBWAY_BASE",
     "SUBWAY_FEED_URLS",
     "_platform_direction",

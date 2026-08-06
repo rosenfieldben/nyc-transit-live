@@ -1641,6 +1641,87 @@ def test_njt_static_expired_service_fails_the_whole_check():
 
 
 # ---------------------------------------------------------------------------
+# The workflow's own wiring for the credentialed check
+# ---------------------------------------------------------------------------
+
+
+def test_the_monitor_workflow_declares_the_environment_its_njt_secrets_live_in():
+    """NJT_USERNAME and NJT_PASSWORD are ENVIRONMENT secrets on an environment named
+    "monitor", not repository secrets, and that distinction has exactly one failure
+    mode: environment secrets resolve only for a job that DECLARES the environment.
+    Drop `environment: monitor` and the two `secrets.NJT_*` mappings quietly become
+    empty strings, the njt-static check WARN-skips forever, and the run stays green
+    while checking nothing.
+
+    That is indistinguishable from a deliberate opt-out by design (the WARN-skip is
+    the same either way), which is exactly why it needs a test rather than a
+    reader's attention. The assertion is the COUPLING, not the presence of one line:
+    a job that references NJT secrets must declare the environment, so removing
+    either half fails here.
+
+    Read from the workflow file rather than hardcoded, the same way
+    test_static_warmup_retries_land_inside_the_healthcheck_window reads
+    railway.json: a test that restates the config cannot notice the config changing.
+    """
+    import yaml
+
+    workflow = yaml.safe_load(
+        (Path(__file__).resolve().parents[2] / ".github/workflows/contract-monitor.yml").read_text()
+    )
+    job = workflow["jobs"]["monitor"]
+    env_block = job["steps"][-1]["env"]
+
+    njt_from_secrets = {
+        name: value
+        for name, value in env_block.items()
+        if name.startswith("NJT_") and "secrets." in str(value)
+    }
+    assert set(njt_from_secrets) == {"NJT_USERNAME", "NJT_PASSWORD"}, (
+        "the monitor job must map both NJ Transit credentials from secrets, or the "
+        f"njt-static check can never run: got {sorted(njt_from_secrets)}"
+    )
+    assert job.get("environment") == "monitor", (
+        "the monitor job maps NJT_* ENVIRONMENT secrets, so it must declare "
+        "`environment: monitor`. Without the declaration those secrets resolve to "
+        "empty strings and njt-static WARN-skips forever while the run stays green."
+    )
+
+
+def test_the_check_warn_skips_on_the_empty_strings_a_missing_secret_resolves_to():
+    """The other half of the pair above, at the code boundary.
+
+    GitHub renders an unavailable secret as an EMPTY STRING rather than leaving the
+    variable unset, so "credentials absent" reaches run_all as "" and not as None. A
+    guard written with `is None` would pass every test that hands it None and then
+    run the real check with empty credentials in every fork and pull request
+    context, which is the one place this must not happen.
+
+    Driven through run_all rather than check_njt_static directly, because the
+    empty-string value has to survive the env plumbing too: an `env.get(name) or
+    default` anywhere on that path would turn "" into something else.
+    """
+    fetch = FakeFetcher({})
+    results = cm.run_all(
+        fetch,
+        NO_SLEEP,
+        1000.0,
+        env={"NJT_USERNAME": "", "NJT_PASSWORD": "", "MONITOR_SKIP_PRODUCTION": "1"},
+    )
+    njt = [r for r in results if r.name == "njt-static"]
+    assert len(njt) == 1
+    assert njt[0].status == cm.WARN
+    assert "not set" in njt[0].detail
+    # Scoped to NJT: the other checks in run_all fetch their own upstreams through
+    # this same fake, so a blanket "no calls" assertion would be about them.
+    njt_calls = [url for url, _h, _p in fetch.calls if "njtransit" in url or "/njt/" in url]
+    assert njt_calls == [], f"empty credentials must reach no NJT endpoint, got {njt_calls}"
+    assert all(form is None for form in fetch.forms), (
+        "no POST should have been attempted at all: NJ Transit is the only source "
+        "that posts, and it was skipped"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Runner wiring / hermeticity
 # ---------------------------------------------------------------------------
 

@@ -36,6 +36,31 @@ permissions:
 jobs:
   monitor:
     runs-on: ubuntu-latest
+    # REQUIRED FOR THE NJ TRANSIT CREDENTIALS TO EXIST AT ALL (15a). NJT_USERNAME
+    # and NJT_PASSWORD are ENVIRONMENT secrets on an environment named "monitor",
+    # not repository secrets. Environment secrets resolve only for a job that
+    # declares the environment, so without this line the two `secrets.NJT_*`
+    # mappings below are silently empty strings and the njt-static check
+    # WARN-skips forever while looking exactly like a deliberate opt-out. The
+    # declaration is the whole mechanism; there is nothing else to configure.
+    #
+    # THE ENVIRONMENT IS DEPLOYMENT-BRANCH-RESTRICTED TO main, and the resulting
+    # degradation is by design rather than by accident: a context that is not
+    # permitted to reach the environment does not get the credentials, and the
+    # check's credentials-absent path is a WARN-skip that says exactly which two
+    # names are missing. So a fork, a pull request context, or any run off a
+    # non-main ref reports NJT as skipped instead of failing or, worse, silently
+    # checking nothing. The scheduled runs this workflow exists for always fire on
+    # the default branch, so they are always on the permitted side of that line.
+    #
+    # ONE PRACTICAL NOTE for whoever debugs a red manual dispatch: a deployment
+    # branch policy gates the JOB, so a `workflow_dispatch` deliberately launched
+    # from a non-main ref is refused by Actions before any step runs, rather than
+    # running credential-free. The WARN-skip above is what a context with no
+    # access to the environment sees; a blocked job is what a restricted ref sees.
+    # Both are safe, and neither can quietly check the real upstream without
+    # credentials.
+    environment: monitor
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -66,13 +91,13 @@ jobs:
           # Optional secret for the keyed bus feed. When unset, the bus check
           # WARN-skips (it cannot reach the feed without a key).
           MTA_BUS_API_KEY: ${{ secrets.MTA_BUS_API_KEY }}
-          # Optional secrets for NJ Transit's credentialed RailData API (15a).
-          # When either is unset the njt-static check WARN-skips, exactly like the
-          # bus check above: the monitor cannot reach a credentialed feed without
-          # credentials, and that is a configuration choice, not an outage. Adding
-          # both as repository secrets is what turns NJT coverage on here, and it
-          # is deliberately a repo-owner decision rather than something this phase
-          # assumed: the account behind them is a person's RailData registration.
+          # NJ Transit's credentialed RailData API (15a). These are ENVIRONMENT
+          # secrets on the "monitor" environment declared at the job level above,
+          # NOT repository secrets, so this mapping is inert without that
+          # declaration. When either resolves empty the njt-static check
+          # WARN-skips, exactly like the bus check above: the monitor cannot reach
+          # a credentialed feed without credentials, and that is a configuration
+          # state rather than an outage.
           #
           # THE MONITOR MINTS EXACTLY ONCE PER RUN when they are set (see
           # check_njt_static). At the 6-hourly cadence above that is four mints a

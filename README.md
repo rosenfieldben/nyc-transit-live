@@ -745,6 +745,23 @@ Config:
   the keyed bus feed. The key rides as a query parameter and every error string is
   scrubbed, so it never reaches the logs. When unset, the bus check is skipped
   with a `WARN`.
+- `NJT_USERNAME` / `NJT_PASSWORD` (**environment** secrets, on an environment named
+  `monitor`): when set, the monitor also checks NJ Transit's credentialed RailData
+  static feed. **Environment secrets, not repository secrets**, which means the job
+  must declare `environment: monitor` for them to resolve at all; the declaration is
+  in `contract-monitor.yml` with the reasoning beside it. The environment is
+  deployment-branch-restricted to `main`, so a context with no access to it gets no
+  credentials and the `njt-static` check WARN-skips naming the two missing variables.
+  That degradation is the design, not an accident: a fork or a pull request context
+  reports NJT as skipped rather than failing or silently checking nothing. The
+  scheduled runs always fire on the default branch, so they are always on the
+  permitted side of that restriction.
+
+  When they *are* set the monitor **mints exactly one token per run** (four a day at
+  the 6-hourly cadence). NJ Transit's mint rate limit sits below its data cap and the
+  number is unpublished, so `check_njt_static` mints once with no retry and reuses
+  that token for the archive fetch, rather than leaving conservation to the shared
+  retry helper.
 
 The production section's bands are deliberately two-tiered so the red light stays
 meaningful. A static group in any state but `ready` is a `FAIL`, because a mode

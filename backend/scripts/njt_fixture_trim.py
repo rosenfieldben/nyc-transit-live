@@ -113,6 +113,127 @@ def exclusive_stops(trip_ids: set[str], calls: dict[str, list[dict]]) -> set[str
     return (mine - others) - {""}
 
 
+def _ordered_stop_ids(trip_calls: list[dict]) -> list[str]:
+    """A trip's stop ids in call order. Sorted on stop_sequence defensively: the
+    generators build their call index straight from stop_times.txt row order, which
+    a publisher is under no obligation to keep sorted, and the junction derivation
+    below is meaningless on a shuffled list."""
+    ordered = sorted(trip_calls, key=lambda call: int(get(call, "stop_sequence") or 0))
+    return [get(call, "stop_id") for call in ordered]
+
+
+def west_of_hudson_stops(pj_trips: set[str], calls: dict[str, list[dict]]) -> set[str]:
+    """The west-of-Hudson stations: the line's own stops plus the junction it leaves
+    the rest of the network at.
+
+    THE EXCLUSIVE SET IS EIGHT OF THE NINE, AND SUFFERN IS THE NINTH. That gap is
+    its own artifact, separate from the direction-dependence that used to empty the
+    set entirely: Suffern is a real Port Jervis station AND the terminus of trips
+    headsigned "Suffern", so trips outside the line serve it and exclusivity
+    correctly excludes it. Measured on the committed fixture, which reports the
+    other eight.
+
+    SO THE NINTH IS DERIVED RATHER THAN NAMED. Walk a Port Jervis run in call order
+    and the exclusive stops form one contiguous block at whichever end the line
+    runs to; the stop immediately beside that block is the junction, the last one
+    shared with Main and Bergen service. Taking it from the data means a renamed or
+    relocated junction follows automatically, where a hardcoded "Suffern" would
+    quietly stop matching.
+
+    Both directions are handled because the block sits at the END of an outbound
+    run and at the START of an inbound one, so the adjacent stop is looked for on
+    whichever side has one.
+    """
+    exclusive = exclusive_stops(pj_trips, calls)
+    if not exclusive:
+        # No exclusive stops means the trip set has cancelled itself (see
+        # port_jervis_trips) or the line genuinely is not running. Either way there
+        # is no block to find a junction beside, and inventing one would be a guess.
+        return set()
+    stations = set(exclusive)
+    for trip_id in pj_trips:
+        ordered = _ordered_stop_ids(calls.get(trip_id, []))
+        positions = [i for i, stop_id in enumerate(ordered) if stop_id in exclusive]
+        if not positions:
+            continue
+        first, last = min(positions), max(positions)
+        if first > 0:
+            stations.add(ordered[first - 1])
+        if last < len(ordered) - 1:
+            stations.add(ordered[last + 1])
+    return stations - {""}
+
+
+def select_port_jervis_trips(
+    pj_trips: set[str],
+    headsigned: set[str],
+    calls: dict[str, list[dict]],
+    must_cover: set[str],
+    route_of_trip: dict[str, str] | None = None,
+) -> tuple[set[str], set[str]]:
+    """(trips to keep, stations still uncovered) for the Port Jervis mandate.
+
+    COVERAGE-DRIVEN RATHER THAN LEXICOGRAPHIC, and the difference is the mandate
+    holding by construction instead of by luck. The old rule kept
+    sorted(pj_trips)[:2], which was written when that set was two outbound runs and
+    therefore covered the line by accident. Once the set is direction-agnostic it
+    contains inbound workings and short-turns too, and the two lexicographically
+    first can easily be a pair that never reaches Otisville or Port Jervis: the
+    stations would then vanish from the fixture with every guard silent, because a
+    guard on a set nothing selected against cannot see it.
+
+    Greedy set cover, which is the right tool and is close to free here: one full
+    run usually covers all nine, so coverage alone often wants a single trip and
+    the route-representation pass below brings it back to two. Candidates are
+    walked in sorted order and ties break to the first, so the choice is
+    deterministic across runs and the committed fixture is reproducible.
+
+    A TRIP THAT NAMES THE LINE IS ALWAYS KEPT. The headsign golden reads
+    trip_headsign, and coverage alone could satisfy itself entirely with inbound
+    workings headsigned Hoboken, which would leave the fixture carrying the line's
+    stations and no evidence of whose they are.
+
+    Returns what it could NOT cover rather than raising: a station genuinely
+    unserved on the day of the capture is a fact about the schedule, and the caller
+    reports it and lets the mandated-stop top-up pull the row in from elsewhere.
+    """
+    remaining = set(must_cover)
+    kept: set[str] = set()
+    for _ in range(len(pj_trips)):
+        if not remaining:
+            break
+        best_trip, best_cover = None, set()
+        for trip_id in sorted(pj_trips):
+            if trip_id in kept:
+                continue
+            cover = {get(call, "stop_id") for call in calls.get(trip_id, [])} & remaining
+            if len(cover) > len(best_cover):
+                best_trip, best_cover = trip_id, cover
+        if best_trip is None:
+            break
+        kept.add(best_trip)
+        remaining -= best_cover
+    if headsigned and not (kept & headsigned):
+        kept.add(sorted(headsigned)[0])
+    # EVERY ROUTE ID THE LINE RUNS UNDER STAYS REPRESENTED, which coverage alone
+    # does not guarantee: one full run covers all nine stations, and if it happens
+    # to be a route 6 working then route 5 disappears from the west-of-Hudson
+    # stations entirely. 15a's golden asserts those stations report MAIN (6) and
+    # BERG (5) precisely because Port Jervis has no route of its own, so a fixture
+    # that can only show one of them has lost the evidence for the claim it exists
+    # to make. Costs one extra trip.
+    if route_of_trip:
+        represented = {route_of_trip.get(t, "") for t in kept} - {""}
+        for route_id in sorted({route_of_trip.get(t, "") for t in pj_trips} - {""}):
+            if route_id in represented:
+                continue
+            on_route = sorted(t for t in pj_trips if route_of_trip.get(t) == route_id)
+            if on_route:
+                kept.add(on_route[0])
+                represented.add(route_id)
+    return kept, remaining
+
+
 def route_exclusive_stops(
     route_of_trip: dict[str, str], calls: dict[str, list[dict]], route_id: str
 ) -> set[str]:
@@ -128,7 +249,7 @@ def select_trim(
     trips: list[dict],
     calls: dict[str, list[dict]],
     trips_by_route: dict[str, list[dict]],
-    pj_trips: set[str],
+    pj_keep: set[str],
     mandated_stops: list[str],
     extra_trip_ids: set[str] = frozenset(),
 ) -> set[str]:
@@ -149,9 +270,9 @@ def select_trim(
     # Port Jervis trips are chosen SEPARATELY from the per-route quota, because they
     # have no route of their own: without this the per-route pick for 5 and 6 would
     # almost certainly be ordinary Main/Bergen trips and every west-of-Hudson
-    # station would vanish from the fixture.
-    for trip_id in sorted(pj_trips)[:TRIPS_PER_ROUTE]:
-        kept.add(trip_id)
+    # station would vanish from the fixture. WHICH ones is decided by coverage, in
+    # select_port_jervis_trips, and handed in here already chosen.
+    kept |= pj_keep
     # The realtime capture's own trips, so the pair joins.
     kept |= {trip_id for trip_id in extra_trip_ids if trip_id in calls}
     # Then top up for any mandated stop nothing kept covers yet.

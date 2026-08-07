@@ -172,7 +172,7 @@ def test_the_plain_trim_keeps_two_trips_per_route():
         trips=trips,
         calls=calls,
         trips_by_route=_by_route(trips),
-        pj_trips=set(),
+        pj_keep=set(),
         mandated_stops=list(trim.IDENTITY_STOPS),
     )
     assert kept == {"R0-T00", "R0-T01", "R1-T00", "R1-T01", "R2-T00", "R2-T01"}
@@ -194,7 +194,7 @@ def test_the_realtime_widening_is_what_makes_the_pair_join():
         trips=trips,
         calls=calls,
         trips_by_route=_by_route(trips),
-        pj_trips=set(),
+        pj_keep=set(),
         mandated_stops=list(trim.IDENTITY_STOPS),
     )
     assert not (in_flight & without), "the shape of the original defect: no overlap at all"
@@ -203,7 +203,7 @@ def test_the_realtime_widening_is_what_makes_the_pair_join():
         trips=trips,
         calls=calls,
         trips_by_route=_by_route(trips),
-        pj_trips=set(),
+        pj_keep=set(),
         mandated_stops=list(trim.IDENTITY_STOPS),
         extra_trip_ids=in_flight,
     )
@@ -219,7 +219,7 @@ def test_an_unknown_realtime_trip_id_is_ignored_rather_than_raising():
         trips=trips,
         calls=calls,
         trips_by_route=_by_route(trips),
-        pj_trips=set(),
+        pj_keep=set(),
         mandated_stops=list(trim.IDENTITY_STOPS),
         extra_trip_ids={"R0-T05", "ADDED-9001"},
     )
@@ -266,16 +266,20 @@ def test_the_trim_reproduces_the_committed_fixture_exactly():
         calls[row["trip_id"]].append(row)
 
     pj_trips = trim.port_jervis_trips(trips, calls)
-    pj_stops = trim.exclusive_stops(pj_trips, calls)
+    headsigned = {t["trip_id"] for t in trips if "port jervis" in t["trip_headsign"].lower()}
+    woh = trim.west_of_hudson_stops(pj_trips, calls)
     route_of_trip = {t["trip_id"]: t["route_id"] for t in trips}
+    pj_keep, _uncovered = trim.select_port_jervis_trips(
+        pj_trips, headsigned, calls, woh, route_of_trip
+    )
     pasc = sorted(trim.route_exclusive_stops(route_of_trip, calls, "13"))[: trim.PASC_TRIO]
 
     kept = trim.select_trim(
         trips=trips,
         calls=calls,
         trips_by_route=_by_route(trips),
-        pj_trips=pj_trips,
-        mandated_stops=list(trim.IDENTITY_STOPS) + sorted(pj_stops) + pasc,
+        pj_keep=pj_keep,
+        mandated_stops=list(trim.IDENTITY_STOPS) + sorted(woh) + pasc,
     )
     assert kept == {t["trip_id"] for t in trips}, (
         "re-trimming an already-trimmed fixture must be the identity; a difference means "
@@ -333,8 +337,13 @@ def test_the_west_of_hudson_guard_fires_when_the_trim_actually_drops_a_station()
         {"trip_id": "SHORT", "trip_headsign": "Suffern", "route_id": "6"},
     ]
     calls = _calls([("FULL", SHARED_TRACK + WEST_OF_HUDSON), ("SHORT", SHARED_TRACK)])
-    pj_stops = trim.exclusive_stops(trim.port_jervis_trips(trips, calls), calls)
-    assert pj_stops == set(WEST_OF_HUDSON)
+    pj_trips = trim.port_jervis_trips(trips, calls)
+    headsigned = {t["trip_id"] for t in trips if "port jervis" in t["trip_headsign"].lower()}
+    woh = trim.west_of_hudson_stops(pj_trips, calls)
+    pj_keep, _uncovered = trim.select_port_jervis_trips(pj_trips, headsigned, calls, woh)
+    # Suffern is the junction here, so the derived set is the shared-track stop
+    # adjacent to the exclusive block plus the block itself.
+    assert set(WEST_OF_HUDSON) <= woh
 
     # A trim that kept only the short working: exactly the failure the guard is for.
     _kept_trips, _kept_stops, _rows = trim.apply_trim(
@@ -344,7 +353,7 @@ def test_the_west_of_hudson_guard_fires_when_the_trim_actually_drops_a_station()
         kept_trip_ids={"SHORT"},
     )
     kept_stop_ids = {row["stop_id"] for row in _rows}
-    assert sorted(pj_stops - kept_stop_ids) == sorted(WEST_OF_HUDSON), (
+    assert set(WEST_OF_HUDSON) <= (woh - kept_stop_ids), (
         "the generator's subtraction must name every west-of-Hudson station the trim lost"
     )
 
@@ -354,8 +363,264 @@ def test_the_west_of_hudson_guard_fires_when_the_trim_actually_drops_a_station()
         trips=trips,
         calls=calls,
         trips_by_route={"6": trips},
-        pj_trips=trim.port_jervis_trips(trips, calls),
-        mandated_stops=sorted(pj_stops),
+        pj_keep=pj_keep,
+        mandated_stops=sorted(woh),
     )
     covered = {call["stop_id"] for tid in kept for call in calls[tid]}
-    assert not (pj_stops - covered), "the mandated-stop top-up is what keeps the guard green"
+    assert not (woh - covered), "the mandated-stop top-up is what keeps the guard green"
+
+
+# ---------------------------------------------------------------------------
+# Coverage-driven Port Jervis selection
+# ---------------------------------------------------------------------------
+#
+# THE MANDATE HOLDS BY CONSTRUCTION OR IT DOES NOT HOLD. The trim must carry the
+# whole west-of-Hudson line, and the old rule kept sorted(pj_trips)[:2], which
+# satisfied that only because the headsign-only set happened to contain exactly two
+# full outbound runs. Once the set is direction-agnostic it also holds inbound
+# workings and short-turns, and two lexicographically-first entries can easily be a
+# pair that never reaches the far end.
+
+
+def _line(trip_id, headsign, route, stops):
+    return {"trip_id": trip_id, "trip_headsign": headsign, "route_id": route}, (trip_id, stops)
+
+
+# A publication where the lexicographic pick is WRONG. The two lowest trip ids are
+# short-turns that stop at Suffern; the full runs sort last.
+SHORT_TURN_TRAP_TRIPS, SHORT_TURN_TRAP_PAIRS = zip(
+    _line("0001", "Port Jervis", "6", SHARED_TRACK + ["Suffern"]),
+    _line("0002", "Port Jervis", "5", SHARED_TRACK + ["Suffern"]),
+    _line("9001", "Port Jervis", "6", SHARED_TRACK + ["Suffern"] + WEST_OF_HUDSON),
+    _line("9002", "Hoboken", "5", WEST_OF_HUDSON[::-1] + ["Suffern"] + SHARED_TRACK[::-1]),
+    _line("5000", "Suffern", "6", SHARED_TRACK + ["Suffern"]),
+)
+SHORT_TURN_TRAP_TRIPS = list(SHORT_TURN_TRAP_TRIPS)
+
+
+def _trap():
+    calls = _calls(list(SHORT_TURN_TRAP_PAIRS))
+    trips = SHORT_TURN_TRAP_TRIPS
+    pj = trim.port_jervis_trips(trips, calls)
+    headsigned = {t["trip_id"] for t in trips if "port jervis" in t["trip_headsign"].lower()}
+    woh = trim.west_of_hudson_stops(pj, calls)
+    route_of_trip = {t["trip_id"]: t["route_id"] for t in trips}
+    return trips, calls, pj, headsigned, woh, route_of_trip
+
+
+def test_the_lexicographic_pick_would_have_missed_the_far_end_of_the_line():
+    """THE TRAP ITSELF, measured before the fix is applied to it.
+
+    This is not hypothetical: the two lowest trip ids here are short-turns that go
+    no further than the junction, so taking the first two by id keeps neither of
+    the runs that reach Otisville or Port Jervis. Under the old rule those stations
+    left the fixture and every guard stayed silent, because the guards were derived
+    from the same set the selection was.
+    """
+    _trips, calls, pj, _headsigned, woh, _routes = _trap()
+    assert {"Otisville", "PortJervis"} <= woh, "the far end is part of the mandate"
+
+    lexicographic = sorted(pj)[:2]
+    covered = {c["stop_id"] for tid in lexicographic for c in calls[tid]}
+    assert not (woh <= covered), (
+        "the trap must actually trap: the first two by id must fail to cover the line"
+    )
+    assert sorted(woh - covered) == ["Middletown", "Otisville", "PortJervis"]
+
+
+def test_coverage_selection_reaches_the_far_end_the_lexicographic_pick_missed():
+    """The fix against the same publication. Chosen by what they cover, the kept
+    trips reach every west-of-Hudson station and nothing is left uncovered."""
+    _trips, calls, pj, headsigned, woh, route_of_trip = _trap()
+    kept, uncovered = trim.select_port_jervis_trips(pj, headsigned, calls, woh, route_of_trip)
+    covered = {c["stop_id"] for tid in kept for c in calls[tid]}
+    assert not uncovered, f"nothing may be left uncovered, got {sorted(uncovered)}"
+    assert woh <= covered, f"the kept trips must cover the line, missing {sorted(woh - covered)}"
+
+
+def test_coverage_selection_keeps_a_trip_that_names_the_line():
+    """Coverage alone could satisfy itself with inbound workings headsigned
+    Hoboken, leaving the fixture carrying the line's stations and no evidence of
+    whose they are. The headsign golden reads trip_headsign, so one must survive."""
+    _trips, calls, pj, headsigned, woh, route_of_trip = _trap()
+    kept, _uncovered = trim.select_port_jervis_trips(pj, headsigned, calls, woh, route_of_trip)
+    assert kept & headsigned, "a trip headsigned Port Jervis must always be kept"
+
+
+def test_coverage_selection_keeps_both_route_ids_the_line_runs_under():
+    """PORT JERVIS HAS NO ROUTE OF ITS OWN, and 15a's golden asserts its stations
+    report MAIN (6) and BERG (5). One full run covers all nine stations, so pure
+    coverage could keep a single route-6 working and delete the evidence for the
+    claim the fixture exists to support."""
+    _trips, calls, pj, headsigned, woh, route_of_trip = _trap()
+    kept, _uncovered = trim.select_port_jervis_trips(pj, headsigned, calls, woh, route_of_trip)
+    assert {route_of_trip[t] for t in kept} >= {"5", "6"}
+
+
+def test_coverage_selection_is_deterministic():
+    """The committed fixture has to be reproducible, so the greedy walk is over
+    sorted candidates and ties break to the first. Run it repeatedly and it must
+    not move."""
+    _trips, calls, pj, headsigned, woh, route_of_trip = _trap()
+    answers = {
+        frozenset(trim.select_port_jervis_trips(pj, headsigned, calls, woh, route_of_trip)[0])
+        for _ in range(8)
+    }
+    assert len(answers) == 1
+
+
+def test_an_unservable_station_is_reported_rather_than_silently_dropped():
+    """A station no Port Jervis trip reaches on the day of the capture is a fact
+    about the schedule, not a fault. The selection reports it as uncovered so the
+    generator can name it, and the mandated-stop top-up still forces its row in."""
+    trips = [{"trip_id": "OUT", "trip_headsign": "Port Jervis", "route_id": "6"}]
+    calls = _calls([("OUT", SHARED_TRACK + WEST_OF_HUDSON)])
+    pj = trim.port_jervis_trips(trips, calls)
+    woh = trim.west_of_hudson_stops(pj, calls) | {"Otisville-Closed"}
+    kept, uncovered = trim.select_port_jervis_trips(pj, {"OUT"}, calls, woh)
+    assert uncovered == {"Otisville-Closed"}
+    assert kept == {"OUT"}, "and the rest of the line is still covered"
+
+
+def test_the_derived_nine_include_the_junction_that_exclusivity_drops():
+    """SUFFERN IS THE NINTH, and it is derived rather than named: it is the stop
+    adjacent to the exclusive block, on the shared-track side. Taking it from the
+    data means a renamed or relocated junction follows automatically."""
+    trips = [
+        {"trip_id": "OUT", "trip_headsign": "Port Jervis", "route_id": "6"},
+        {"trip_id": "TERM", "trip_headsign": "Suffern", "route_id": "6"},
+    ]
+    calls = _calls([("OUT", SHARED_TRACK + WEST_OF_HUDSON), ("TERM", SHARED_TRACK)])
+    pj = trim.port_jervis_trips(trips, calls)
+    exclusive = trim.exclusive_stops(pj, calls)
+    woh = trim.west_of_hudson_stops(pj, calls)
+    assert "Suffern" not in exclusive, "exclusivity drops it: a Suffern working also serves it"
+    assert "Suffern" in woh, "and the junction rule puts it back"
+    assert woh == exclusive | {"Suffern"}
+
+
+def test_the_junction_is_found_from_an_inbound_run_too():
+    """The exclusive block sits at the END of an outbound run and at the START of
+    an inbound one, so the adjacent stop is looked for on whichever side has one.
+    A derivation that only walked backwards would miss it on half the feed.
+
+    THE TRIP SET IS PASSED DIRECTLY rather than derived, and that is deliberate:
+    with an outbound trip also present its block sits at the far end and supplies
+    the junction from the other side, so the forward branch would never have to
+    work and a mutation removing it would survive. Exactly that happened, which is
+    why this test isolates the inbound case instead of building a realistic feed.
+    """
+    calls = _calls(
+        [
+            # Port Jervis first, then the junction, then shared track: the exclusive
+            # block is at indices 0 to 2 and the junction is the stop AFTER it.
+            ("IN", WEST_OF_HUDSON[::-1] + SHARED_TRACK[::-1]),
+            ("TERM", SHARED_TRACK[::-1]),
+        ]
+    )
+    exclusive = trim.exclusive_stops({"IN"}, calls)
+    assert exclusive == set(WEST_OF_HUDSON), "the far end is exclusive to the inbound run"
+    stations = trim.west_of_hudson_stops({"IN"}, calls)
+    assert stations == set(WEST_OF_HUDSON) | {"Suffern"}, (
+        "the junction must be picked up from the stop FOLLOWING the block on an "
+        f"inbound run; got {sorted(stations)}"
+    )
+
+
+def test_the_headsign_guarantee_bites_when_the_best_cover_is_an_inbound_working():
+    """The trap above has an OUTBOUND trip as its best cover, so the headsign
+    guarantee never has to do anything there. This is the publication where it
+    does: the inbound working sorts first and covers the whole line by itself, so
+    pure coverage would keep it alone and the fixture would carry every Port
+    Jervis station with nothing naming the line they belong to.
+    """
+    trips = [
+        {"trip_id": "0001", "trip_headsign": "Hoboken", "route_id": "6"},
+        {"trip_id": "9999", "trip_headsign": "Port Jervis", "route_id": "6"},
+    ]
+    calls = _calls(
+        [
+            ("0001", WEST_OF_HUDSON[::-1] + ["Suffern"] + SHARED_TRACK),
+            ("9999", SHARED_TRACK + ["Suffern"] + WEST_OF_HUDSON),
+        ]
+    )
+    pj = trim.port_jervis_trips(trips, calls)
+    woh = trim.west_of_hudson_stops(pj, calls)
+    route_of_trip = {t["trip_id"]: t["route_id"] for t in trips}
+
+    inbound_cover = {c["stop_id"] for c in calls["0001"]}
+    assert woh <= inbound_cover, "the inbound working really does cover the whole line"
+
+    kept, uncovered = trim.select_port_jervis_trips(pj, {"9999"}, calls, woh, route_of_trip)
+    assert not uncovered
+    assert "9999" in kept, (
+        "a trip headsigned Port Jervis must be kept even when it adds no coverage, or the "
+        "fixture has the line's stations and no evidence of whose they are"
+    )
+
+
+def test_the_greedy_walk_keeps_going_until_the_line_is_covered():
+    """A publication where NO single trip covers the line: one working runs to
+    Middletown, another to Port Jervis by a different set of intermediate stops.
+    Covering it takes two, so a selection that stopped after the first would leave
+    the far end out with everything looking fine.
+    """
+    trips = [
+        {"trip_id": "PJ_A", "trip_headsign": "Port Jervis", "route_id": "6"},
+        {"trip_id": "PJ_B", "trip_headsign": "Port Jervis", "route_id": "6"},
+        {"trip_id": "TERM", "trip_headsign": "Suffern", "route_id": "6"},
+    ]
+    calls = _calls(
+        [
+            ("PJ_A", SHARED_TRACK + ["Suffern", "Sloatsburg", "Tuxedo", "Middletown"]),
+            ("PJ_B", SHARED_TRACK + ["Suffern", "Harriman", "Otisville", "PortJervis"]),
+            ("TERM", SHARED_TRACK + ["Suffern"]),
+        ]
+    )
+    pj = trim.port_jervis_trips(trips, calls)
+    woh = trim.west_of_hudson_stops(pj, calls)
+    route_of_trip = {t["trip_id"]: t["route_id"] for t in trips}
+    assert len(woh) == 7, sorted(woh)
+
+    for trip_id in ("PJ_A", "PJ_B"):
+        covered = {c["stop_id"] for c in calls[trip_id]}
+        assert not (woh <= covered), f"{trip_id} alone must not cover the line"
+
+    kept, uncovered = trim.select_port_jervis_trips(pj, {"PJ_A", "PJ_B"}, calls, woh, route_of_trip)
+    assert not uncovered, f"the walk must continue until nothing is left, got {sorted(uncovered)}"
+    assert kept == {"PJ_A", "PJ_B"}
+
+
+def test_the_junction_survives_stop_times_rows_arriving_out_of_order():
+    """stop_times.txt row order is a convention, not a guarantee, and the junction
+    derivation is meaningless on a shuffled list: it reads the stop BESIDE the
+    exclusive block, which is only "beside" it in call order.
+
+    The generators build their call index straight from row order, so this is the
+    one place the defensive sort earns its keep. Built here with the rows reversed
+    and stop_sequence still correct, which is exactly what a publisher emitting
+    grouped-by-stop rather than grouped-by-trip would produce.
+    """
+    ordered_stops = SHARED_TRACK + WEST_OF_HUDSON  # Suffern is SHARED_TRACK's last
+    sequence = {stop_id: index + 1 for index, stop_id in enumerate(ordered_stops)}
+    # NOT merely reversed: reversal is symmetric here, so both branches of the
+    # junction rule still find Suffern and the sort looks unnecessary. This order
+    # puts Hoboken directly before the exclusive block, so an unsorted walk reads
+    # the wrong junction and claims a shared-track terminal is west of the Hudson.
+    scrambled_order = ["Hoboken", "Otisville", "Middletown", "PortJervis", "Suffern", "Ridgewood"]
+    shuffled = {
+        "OUT": [
+            {"trip_id": "OUT", "stop_id": stop_id, "stop_sequence": str(sequence[stop_id])}
+            for stop_id in scrambled_order
+        ],
+        "TERM": [
+            {"trip_id": "TERM", "stop_id": stop_id, "stop_sequence": str(sequence[stop_id])}
+            for stop_id in reversed(SHARED_TRACK)
+        ],
+    }
+    assert [row["stop_id"] for row in shuffled["OUT"]] != ordered_stops, "the rows are shuffled"
+
+    stations = trim.west_of_hudson_stops({"OUT"}, shuffled)
+    assert stations == set(WEST_OF_HUDSON) | {"Suffern"}, (
+        f"the junction must still be found when rows arrive out of order; got {sorted(stations)}"
+    )

@@ -525,6 +525,20 @@ it, and the generator refuses to write one: it checks the trap-shape counts, the
 peak numbers, and it refuses a capture that joins nothing (which is what a realtime
 capture taken after the static one's schedule rolled over looks like).
 
+The realtime run also **re-trims the static fixture** around the trips its capture
+contains, so the committed pair always joins; the goldens assert a measured floor
+under that. The trim itself lives in `backend/scripts/njt_fixture_trim.py` and is
+shared by both generators, so the two cannot select differently.
+
+**The Port Jervis mandate is satisfied by coverage, not by trip id order.** The
+line has no route of its own (its identity lives only in `trip_headsign`), and the
+trim must carry all nine west-of-Hudson stations: Suffern, Sloatsburg, Tuxedo,
+Harriman Station, Salisbury Mills, Campbell Hall, Middletown NY, Otisville and Port
+Jervis. Trips are chosen by what they cover, a trip that names the line is always
+kept, and both route ids the line runs under stay represented. Two golden tests
+assert those nine BY NAME against the committed fixture, so a fixture that violates
+the mandate fails in CI regardless of how it was generated.
+
 `getVehiclePositions` is deliberately never fetched, parsed, modelled or captured;
 the numbers behind that are at the poller registry in `backend/pollers.py`.
 

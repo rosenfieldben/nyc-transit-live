@@ -491,8 +491,22 @@ def main() -> int:
         trips_by_route[trim.get(row, "route_id")].append(row)
 
     pj_trips = trim.port_jervis_trips(static_trips, calls)
-    pj_stops = trim.exclusive_stops(pj_trips, calls)
+    pj_headsigned = {
+        trim.get(t, "trip_id")
+        for t in static_trips
+        if "port jervis" in trim.get(t, "trip_headsign").lower()
+    }
+    west_of_hudson = trim.west_of_hudson_stops(pj_trips, calls)
     route_of_trip = {trim.get(t, "trip_id"): trim.get(t, "route_id") for t in static_trips}
+    pj_keep, pj_uncovered = trim.select_port_jervis_trips(
+        pj_trips, pj_headsigned, calls, west_of_hudson, route_of_trip
+    )
+    if pj_uncovered:
+        print(
+            f"  NOTE: {len(pj_uncovered)} west-of-Hudson station(s) are served by no Port "
+            f"Jervis trip in this publication: {sorted(pj_uncovered)}. The mandated-stop "
+            "top-up still puts their rows in the fixture."
+        )
     pasc_trio = sorted(
         trim.route_exclusive_stops(route_of_trip, calls, "13"),
         key=lambda sid: (int(sid) if sid.isdigit() else 0, sid),
@@ -502,8 +516,8 @@ def main() -> int:
         trips=static_trips,
         calls=calls,
         trips_by_route=trips_by_route,
-        pj_trips=pj_trips,
-        mandated_stops=list(trim.IDENTITY_STOPS) + sorted(pj_stops) + pasc_trio,
+        pj_keep=pj_keep,
+        mandated_stops=list(trim.IDENTITY_STOPS) + sorted(west_of_hudson) + pasc_trio,
         extra_trip_ids=set(live_trip_ids),
     )
     kept_trips, kept_stops, kept_stop_times = trim.apply_trim(
@@ -522,10 +536,21 @@ def main() -> int:
         )
         return 1
 
+    kept_stop_ids = {trim.get(s_, "stop_id") for s_ in kept_stops}
+    missing_woh = sorted(west_of_hudson - kept_stop_ids)
+    if missing_woh:
+        print(
+            f"\n  !! the re-trim drops west-of-Hudson stations {missing_woh}. The coverage "
+            "selection and the mandated-stop top-up are both supposed to prevent this; the "
+            "static fixture would violate its own mandate."
+        )
+        return 1
+
     print(
         f"\nre-trimmed the static fixture around this capture: {len(kept_trips)} of "
         f"{len(static_trips)} trips, {len(kept_stops)} of {len(static_stops)} stops, "
-        f"{len(kept_stop_times)} stop_times rows"
+        f"{len(kept_stop_times)} stop_times rows, all {len(west_of_hudson)} west-of-Hudson "
+        "stations kept"
     )
     trim.write_fixture(
         STATIC_OUT_DIR,

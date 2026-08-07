@@ -387,7 +387,7 @@ def test_the_join_gate_is_measured_against_the_publication_not_the_trim(capture)
             ]
             for r in ROUTES
         },
-        pj_trips=set(),
+        pj_keep=set(),
         mandated_stops=[],
     )
     assert not (set(IN_FLIGHT) & trim_only), (

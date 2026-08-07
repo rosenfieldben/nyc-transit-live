@@ -283,11 +283,18 @@ def test_an_added_trip_renders_with_a_synthesized_name():
     and the display name is synthesized from them. The join miss must NOT produce
     a cross-check warning: a miss is the documented shape for ADDED, and warning
     on it would train an operator to ignore the signal that matters.
+
+    THE trip_id IS EMPTY, WHICH IS THE REAL SHAPE. This test used to pass a fake
+    "T-UNKNOWN", and a live capture then showed NJ Transit publishes ADDED trips
+    with trip_id "" (164 trip_updates, 128 joined, 36 ADDED, all with empty ids).
+    A nonempty fake was NON-DISCRIMINATING for the defect that matters here: with
+    a unique id per trip, nothing could ever collide, so the test would have passed
+    just as happily against a decoder that keyed every extra train identically.
     """
     raw = _feed(
         _trip(
             "9999",
-            "T-UNKNOWN",
+            "",
             [
                 ("112", NOW - 60, NOW - 30, None, None),
                 ("109", NOW + 600, NOW + 660, None, None),
@@ -307,11 +314,12 @@ def test_an_added_trip_renders_with_a_synthesized_name():
 
 
 def test_an_added_trip_with_no_route_still_renders():
-    """The join-optional path must not choke on the thinnest possible ADDED trip."""
+    """The join-optional path must not choke on the thinnest possible ADDED trip.
+    Empty trip_id, as the live feed publishes them."""
     raw = _feed(
         _trip(
             "7777",
-            "T-BARE",
+            "",
             [
                 ("112", NOW - 600, NOW - 570, None, None),
                 ("109", NOW + 600, NOW + 660, None, None),
@@ -754,3 +762,168 @@ def test_a_trip_whose_every_call_is_timeless_is_dropped_rather_than_guessed_at()
     trains, arrivals, _ts, _w = _decode(raw)
     assert trains == []
     assert arrivals == {}
+
+
+# ---------------------------------------------------------------------------
+# THE EMPTY trip_id, and the 35 trains that would vanish
+# ---------------------------------------------------------------------------
+#
+# NJ TRANSIT'S ADDED TRIPS CARRY AN EMPTY trip_id. Measured on a live capture:
+# 164 trip_updates, 128 joining the publication, and the other 36 all ADDED with
+# trip_id "". 164 - 128 = 36 exactly.
+#
+# So every structure keyed by trip_id has to survive dozens of entities sharing
+# the empty string, and the cost of getting it wrong is not cosmetic. Extras run
+# on disrupted nights, which is precisely when a rider is looking at the map, and
+# 36 of them collapsing into one key is 35 trains vanishing at the worst possible
+# moment.
+#
+# THE TESTS ABOVE COULD NOT HAVE CAUGHT IT. Both ADDED tests passed a unique fake
+# trip_id, so nothing could ever collide and they would have passed against a
+# decoder that keyed every extra identically. That is the A4g lesson again: a test
+# built from a shape the feed does not publish is not testing the feed.
+
+
+def _added_swarm(count: int, *, entity_ids=True, stop_id: str = "109"):
+    """`count` ADDED entities, all with an EMPTY trip_id, calling at one stop."""
+    return _feed(
+        *[
+            _trip(
+                f"{9000 + index}" if entity_ids else "",
+                "",
+                [
+                    ("112", NOW - 30, NOW - 20, None, None),
+                    (stop_id, NOW + 300, NOW + 330, None, None),
+                ],
+                route_id="1",
+                trip_relationship=_TRIP_SR.ADDED,
+            )
+            for index in range(count)
+        ]
+    )
+
+
+def test_thirty_six_added_trips_with_empty_trip_ids_stay_thirty_six_trains():
+    """THE HEADLINE CLAIM, at the exact count the live capture measured.
+
+    Every one of these carries trip_id "" and differs only in entity.id, which is
+    the train number. If the identity keyed on trip_id they would share one key and
+    the map would show a single train where thirty-six are running.
+    """
+    trains, _arrivals, _ts, warnings = _decode(_added_swarm(36))
+    assert len(trains) == 36, "every extra must survive as its own train"
+    assert len({train["id"] for train in trains}) == 36, (
+        "and they must be DISTINCT: a shared key is 35 trains vanishing on exactly "
+        "the disrupted nights extras are running"
+    )
+    assert len({train["trip_id"] for train in trains}) == 36
+    assert len({train["train_num"] for train in trains}) == 36, (
+        "the train number is entity.id, which is what makes them distinguishable"
+    )
+    assert warnings == [], "a join miss is the documented ADDED shape, not a warning"
+
+
+def test_added_trips_with_empty_trip_ids_stay_distinct_on_a_riders_board():
+    """The same claim on the ARRIVALS index, which is the other product and could
+    collapse independently of placement.
+
+    Sized under ARRIVALS_PER_STOP so the count is about identity rather than about
+    the trim: with six extras calling at Penn, a rider must see six rows.
+    """
+    count = njt.ARRIVALS_PER_STOP
+    _trains, arrivals, _ts, _w = _decode(_added_swarm(count))
+    rows = arrivals["109"]
+    assert len(rows) == count, f"{count} extras calling at Penn must be {count} rows"
+    assert len({row["trip_id"] for row in rows}) == count, "and every row a distinct train"
+    assert len({row["train_num"] for row in rows}) == count
+
+
+def test_the_arrivals_cap_trims_added_trips_rather_than_merging_them():
+    """Above the cap the board is TRIMMED, which is a different thing from
+    collapsed: the rows that survive are still distinct trains, and the count is
+    the cap rather than one."""
+    _trains, arrivals, _ts, _w = _decode(_added_swarm(36))
+    rows = arrivals["109"]
+    assert len(rows) == njt.ARRIVALS_PER_STOP
+    assert len({row["trip_id"] for row in rows}) == njt.ARRIVALS_PER_STOP
+
+
+def test_an_entity_with_neither_a_trip_id_nor_an_entity_id_still_cannot_collapse():
+    """THE LAST RESORT IN THE FALLBACK CHAIN, and the one case entity.id cannot
+    cover. An entity carrying neither identity would key every train as "njt:" and
+    collapse them all, so position is used instead.
+
+    It is deliberately NOT stable across polls, and that is correct: a train the
+    feed gives no identity at all cannot be tracked between polls, and pretending
+    otherwise would animate one train into another. The warning says so, because a
+    trip_update with no identity of any kind would be a new NJ Transit fact.
+    """
+    trains, _arrivals, _ts, warnings = _decode(_added_swarm(5, entity_ids=False))
+    assert len(trains) == 5
+    assert len({train["id"] for train in trains}) == 5, "position keeps them apart"
+    assert len(warnings) == 5, "and each one is reported: this shape has never been seen"
+    assert "neither a trip_id nor an entity.id" in warnings[0]
+
+
+def test_a_scheduled_trip_keeps_keying_on_its_trip_id():
+    """The control. The fallback chain must not change identity for the 128 of 164
+    trips that DO carry a trip_id: those key on it, join the static, and take their
+    real headsign rather than a synthesized one."""
+    raw = _feed(
+        _trip(
+            "3800",
+            "T-3800",
+            [
+                ("112", NOW - 240, NOW - 210, None, None),
+                (("109"), NOW + 360, NOW + 390, None, None),
+            ],
+        )
+    )
+    trains, _arrivals, _ts, warnings = _decode(raw)
+    assert len(trains) == 1
+    assert trains[0]["trip_id"] == "T-3800", "a real trip_id is the key, unprefixed"
+    assert trains[0]["headsign"] == "New York", "and the static join still supplies the headsign"
+    assert warnings == []
+
+
+def test_an_extras_identity_survives_the_feed_reordering_it_between_polls():
+    """IDENTITY MUST BE STABLE ACROSS POLLS, not merely unique within one.
+
+    Distinctness alone is satisfied by keying on the entity's position in the feed,
+    and that looks fine in a single decode: thirty-six entities, thirty-six keys.
+    It is wrong the moment a second poll arrives with the entities in a different
+    order, because every train silently changes identity. A client tracking trains
+    by that key sees the whole extra fleet disappear and a new one appear on every
+    poll, which is a worse failure than the collapse it replaced: it is invisible
+    in any single response.
+
+    entity.id is the train number, so it travels with the train rather than with
+    its slot. Asserted as the train-number-to-key mapping, which is the thing
+    position-keying cannot reproduce.
+    """
+    order = [9000, 9001, 9002, 9003]
+
+    def swarm(sequence):
+        return _feed(
+            *[
+                _trip(
+                    str(number),
+                    "",
+                    [
+                        ("112", NOW - 30, NOW - 20, None, None),
+                        ("109", NOW + 300, NOW + 330, None, None),
+                    ],
+                    route_id="1",
+                    trip_relationship=_TRIP_SR.ADDED,
+                )
+                for number in sequence
+            ]
+        )
+
+    first = {t["train_num"]: t["id"] for t in _decode(swarm(order))[0]}
+    reordered = {t["train_num"]: t["id"] for t in _decode(swarm(list(reversed(order))))[0]}
+    assert len(first) == len(order)
+    assert first == reordered, (
+        "the same train must keep the same id when the feed reorders it; keying on the "
+        "entity's POSITION satisfies distinctness within one poll and breaks here"
+    )

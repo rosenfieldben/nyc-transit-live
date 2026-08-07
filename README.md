@@ -539,6 +539,15 @@ kept, and both route ids the line runs under stay represented. Two golden tests
 assert those nine BY NAME against the committed fixture, so a fixture that violates
 the mandate fails in CI regardless of how it was generated.
 
+**NJ Transit's ADDED trips carry an empty `trip_id`.** A live capture measured 164
+`trip_updates`, 128 joining the schedule, and 36 ADDED with `trip_id` `""` (164
+minus 128 is 36 exactly). Two consequences the code is built around: the join
+floor's denominator is trips that CLAIM to be scheduled (SCHEDULED and CANCELED),
+since ADDED trips are definitionally unjoinable; and train identity falls through
+`trip_id`, then `entity.id`, then position, because dozens of extras sharing the
+empty string would otherwise collapse into one train on exactly the disrupted
+nights extras are running.
+
 `getVehiclePositions` is deliberately never fetched, parsed, modelled or captured;
 the numbers behind that are at the poller registry in `backend/pollers.py`.
 

@@ -421,7 +421,8 @@ def test_a_rejected_publication_keeps_the_cached_archive_serving(harness):
     """
     with harness.launch() as app:
         app.await_status(
-            lambda s: s["subway_static"] == "ready", "a good publication to warm the subway"
+            lambda s: s["subway_static"] == "ready",
+            "a good publication to warm the subway",
         )
         stops_before = app.get("/api/subway-stops")
     archive = harness.data_dir / "gtfs_static" / "gtfs_subway.zip"
@@ -736,7 +737,8 @@ _PHANTOM = "3802"  # T3, trip-level CANCELED with full times on every skipped st
 _PARTIAL = "3804"  # T4, running, with Penn dropped and Newark surviving
 _BARE_SKIP = "1602"  # T5, the times-less SKIPPED variant
 _HEADSIGN_VICTIM = "3806"  # T7, skipping Penn while headsigned for New York
-_ADDED = "9001"  # A9, a trip no static knows
+_ADDED = "9001"  # A9, a trip no static knows; its trip_id is EMPTY on the wire
+_ADDED_2 = "9002"  # A9b, the second extra, sharing that same empty trip_id
 
 
 def _trains_by_num(body: dict) -> dict:
@@ -885,6 +887,17 @@ def test_njt_the_trap_matrix_never_reaches_a_riders_board(contract_app):
     )
     assert _ADDED in penn, "and it reaches a rider's board like any other train"
 
+    # BOTH EXTRAS, AND THAT IS THE POINT OF THERE BEING TWO. NJ Transit publishes
+    # ADDED trips with an EMPTY trip_id (36 of 164 on a live capture), so a decoder
+    # keying on trip_id merges every extra into one train. One ADDED trip in the
+    # matrix could never show that; two sharing the empty id can.
+    assert _ADDED_2 in trains, "the second extra must survive as its own train"
+    assert trains[_ADDED]["trip_id"] != trains[_ADDED_2]["trip_id"], (
+        "two extras sharing an empty trip_id must not share a key: at the scale the "
+        "real feed runs extras that is 35 trains vanishing from the map"
+    )
+    assert {_ADDED, _ADDED_2} <= set(penn), "and both reach the board"
+
 
 def test_njt_realtime_outage_degrades_only_njt(harness):
     """A partial outage across systems, with NJ Transit as the failing one.
@@ -972,7 +985,9 @@ def test_njt_overnight_empty_feed_is_a_served_state_not_a_failure(harness):
         assert app.get("/api/njt-arrivals/109")["arrivals"] == []
 
 
-def test_njt_token_expiry_mid_poll_costs_exactly_one_mint_across_three_consumers(harness):
+def test_njt_token_expiry_mid_poll_costs_exactly_one_mint_across_three_consumers(
+    harness,
+):
     """THE CONSERVATION CLAIM, made where it is hardest: three consumers at once.
 
     By 15b the static loader, the trains poller and the alerts poller all POST

@@ -28,9 +28,13 @@ test with a killing mutation:
      without times (35 seen). Both drop the stop. The named victim is a train
      skipping Penn while headsigned FOR Penn, which is exactly the row a rider
      would act on.
-  3. ADDED WAS NEVER OBSERVED in either probe. It is accepted anyway, expects no
-     static join, and synthesizes its display name from route plus train number.
-     Never assumed away, never crashed on.
+  3. ADDED IS REAL, AND IT CARRIES AN EMPTY trip_id. Both 2026-08-05 probes saw
+     none, and this rule used to say so; a later live capture carried 36 of them
+     out of 164 trip_updates, every one with trip_id "". It joins no static,
+     synthesizes its display name from route plus train number, and MUST BE KEYED
+     ON entity.id, because 36 extras sharing the empty string collapse into one
+     train and extras run on exactly the disrupted nights a rider is watching the
+     map. See _identity's fallback chain.
   4. delay, absolute time AND scheduled_time are all present. ABSOLUTE TIME IS
      AUTHORITATIVE; delay is carried through for display and as a cross-check,
      never as the source of a time.
@@ -489,7 +493,9 @@ def _place(calls: list[dict], stops: dict[str, dict], now: float) -> dict | None
     return None
 
 
-def _identity(tu, entity_id: str, trips: dict[str, dict]) -> tuple[dict, str | None]:
+def _identity(
+    tu, entity_id: str, trips: dict[str, dict], position: int = 0
+) -> tuple[dict, str | None]:
     """(identity fields, cross-check warning) for one trip_update.
 
     THE JOIN, and the cross-check the probe says will never fire. trip_id joins
@@ -505,6 +511,24 @@ def _identity(tu, entity_id: str, trips: dict[str, dict]) -> tuple[dict, str | N
     which is everything a rider needs to identify it on a board, and the join miss
     is NOT reported as a warning: a miss is the documented shape for ADDED, and
     warning on it would train the operator to ignore the signal that matters.
+
+    NJ TRANSIT'S ADDED TRIPS CARRY AN EMPTY trip_id. Measured on a live capture:
+    164 trip_updates, 128 with a trip_id that joined, and the other 36 all ADDED
+    with trip_id "". So the identity below CANNOT key on trip_id for these, and the
+    consequence of getting it wrong is not cosmetic: 36 extras sharing one key
+    collapse to a single train, which is 35 trains vanishing from the map on
+    exactly the disrupted nights extras are running.
+
+    THE FALLBACK CHAIN IS trip_id, THEN entity.id, THEN POSITION, and each step is
+    there for a measured reason. entity.id is the train number, unique per train,
+    and the probes found it equal to trip_short_name at 745 of 745 for scheduled
+    trips, so it is the right identity for an ADDED one. Position is the last
+    resort for an entity carrying NEITHER, which collapses everything into a single
+    "njt:" key otherwise; it is not stable across polls, and that is correct,
+    because a train the feed gives no identity at all cannot be tracked between
+    polls and pretending otherwise would animate one train into another. That case
+    also raises a warning, because a trip_update with no identity of any kind would
+    be a new NJT fact.
     """
     trip_id = tu.trip.trip_id or ""
     static = trips.get(trip_id) or {}
@@ -526,9 +550,23 @@ def _identity(tu, entity_id: str, trips: dict[str, dict]) -> tuple[dict, str | N
             f"entity.id {entity_id!r} does not match trip_short_name {train_num!r} "
             f"for trip {trip_id!r}"
         )
+    elif not trip_id and not entity_id:
+        warning = (
+            f"trip_update at position {position} carries neither a trip_id nor an entity.id, "
+            "so it has no identity that survives a poll; keyed by position"
+        )
+
+    # THE KEY. Falls through trip_id, entity.id, position: see the docstring for
+    # why each step exists and what each one costs.
+    if trip_id:
+        key = trip_id
+    elif entity_id:
+        key = f"{SYSTEM}:{entity_id}"
+    else:
+        key = f"{SYSTEM}:position-{position}"
     return (
         {
-            "trip_id": trip_id or f"{SYSTEM}:{entity_id}",
+            "trip_id": key,
             "route_id": route_id,
             "headsign": headsign,
             "train_num": train_num,
@@ -567,7 +605,7 @@ def decode_njt_trip_updates(
     arrivals: dict[str, list[dict]] = defaultdict(list)
     warnings: list[str] = []
 
-    for entity in feed.entity:
+    for position, entity in enumerate(feed.entity):
         if not entity.HasField("trip_update"):
             continue
         tu = entity.trip_update
@@ -578,7 +616,7 @@ def decode_njt_trip_updates(
             # and a rider's departure board.
             continue
 
-        identity, warning = _identity(tu, entity.id, trips)
+        identity, warning = _identity(tu, entity.id, trips, position)
         if warning:
             warnings.append(warning)
 

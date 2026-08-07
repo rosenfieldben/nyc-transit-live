@@ -471,10 +471,13 @@ def _ferry_members() -> dict[str, str]:
 #   T7  headsigned    Skipping Penn while headsigned FOR Penn. Decoder law 2's
 #       victim        named victim, kept as its own row because it is the row a
 #                     rider would actually act on.
-#   A9  ADDED         Trip-level ADDED, a trip_id no static knows, route on the
-#                     realtime descriptor only (decoder law 3). Must render from
-#                     a synthesized name rather than being dropped or crashed on.
-NJT_TRAP_TRIPS = ("T1", "T3", "T4", "T5", "T7", "A9")
+#   A9  ADDED         TWO of them, both with an EMPTY trip_id, which is what the
+#       A9b            live feed publishes (36 of 164 trip_updates, all empty).
+#                      Route lives on the realtime descriptor only (decoder law 3).
+#                      Must render from synthesized names and stay TWO trains: a
+#                      decoder keying on trip_id merges them, and that is 35 trains
+#                      vanishing at the scale the real feed runs extras.
+NJT_TRAP_TRIPS = ("T1", "T3", "T4", "T5", "T7", "A9", "A9b")
 
 # Stop and trip ids _njt_members publishes, restated so the trap feed can be
 # checked against them rather than trusted to match.
@@ -496,7 +499,15 @@ def _njt_trip_updates(now: float) -> bytes:
     feed.header.gtfs_realtime_version = "2.0"
     feed.header.timestamp = int(now)
 
-    def add(trip_id: str, entity_id: str, route_id: str, calls, *, canceled=False, added=False):
+    def add(
+        trip_id: str,
+        entity_id: str,
+        route_id: str,
+        calls,
+        *,
+        canceled=False,
+        added=False,
+    ):
         entity = feed.entity.add()
         entity.id = entity_id
         tu = entity.trip_update
@@ -525,7 +536,12 @@ def _njt_trip_updates(now: float) -> bytes:
                     stu.departure.delay = delay
 
     # T1: the healthy control. Left Newark 4 minutes ago, into Penn in 6.
-    add("T1", "3800", "1", [(10, "112", -240, False, True, 0), (20, "109", 360, False, True, 0)])
+    add(
+        "T1",
+        "3800",
+        "1",
+        [(10, "112", -240, False, True, 0), (20, "109", 360, False, True, 0)],
+    )
     # T3: THE PHANTOM. Canceled at the trip level, every stop still carrying a
     # full, plausible, nearly-arriving time.
     add(
@@ -575,11 +591,23 @@ def _njt_trip_updates(now: float) -> bytes:
     # the display name has to be synthesized from the realtime route plus the
     # train number. Routed INTO 109 on purpose: the claim worth making about ADDED
     # is that it reaches a rider's board, not merely that it fails to crash.
+    # TWO of them, with EMPTY trip_ids, which is the shape NJ Transit actually
+    # publishes: a live capture carried 36 ADDED trips out of 164 trip_updates and
+    # every one had trip_id "". One extra could never reveal the hazard, because a
+    # collapse needs at least two entities sharing the empty id before merging them
+    # is visible; the matrix carried exactly one until that capture landed.
     add(
-        "ADDED-A9",
+        "",
         "9001",
         "1",
         [(10, "112", -200, False, True, 0), (20, "109", 540, False, True, 0)],
+        added=True,
+    )
+    add(
+        "",
+        "9002",
+        "1",
+        [(10, "112", -160, False, True, 0), (20, "109", 600, False, True, 0)],
         added=True,
     )
     return feed.SerializeToString()
@@ -635,7 +663,10 @@ def _njt_members(now: float) -> dict[str, str]:
         # Valley as the one first-class west-of-Hudson route.
         "routes.txt": _csv(
             "route_id,route_short_name,route_long_name,route_type,route_color,route_text_color",
-            ["1,NEC,Northeast Corridor,113,EF3E42,", "13,PASC,Pascack Valley,113,A2A4A3,"],
+            [
+                "1,NEC,Northeast Corridor,113,EF3E42,",
+                "13,PASC,Pascack Valley,113,A2A4A3,",
+            ],
         ),
         "stops.txt": _csv(
             "stop_id,stop_code,stop_name,stop_lat,stop_lon",
@@ -822,7 +853,8 @@ class UpstreamSim:
         # fine, which is the failure bus_static is most likely to meet in production.
         for borough in BUS_BOROUGHS:
             self.archives[f"bus:{borough}"] = Archive(
-                f"bus:{borough}", bodies=_publications(_archive_members(subway_stops, "platforms"))
+                f"bus:{borough}",
+                bodies=_publications(_archive_members(subway_stops, "platforms")),
             )
         # NJ Transit (15a). Synthesized rather than fixture-derived, for the reason
         # _njt_members states at length; served over POST behind a token, which is
@@ -1261,7 +1293,10 @@ _NJT_ROUTES = ("/njt/getToken", "/njt/getGTFS", "/njt/getTripUpdates", "/njt/get
 # Which Feed key each realtime NJT route serves. A dict rather than an if-chain so
 # a new RailData realtime endpoint is one line and cannot be added to _NJT_ROUTES
 # while being forgotten in the handler.
-_NJT_RT_FEEDS = {"/njt/getTripUpdates": "njt:tripupdate", "/njt/getAlerts": "njt:alerts"}
+_NJT_RT_FEEDS = {
+    "/njt/getTripUpdates": "njt:tripupdate",
+    "/njt/getAlerts": "njt:alerts",
+}
 
 
 def _multipart_fields(body: bytes, content_type: str) -> dict[str, str]:

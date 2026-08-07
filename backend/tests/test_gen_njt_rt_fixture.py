@@ -394,3 +394,112 @@ def test_the_join_gate_is_measured_against_the_publication_not_the_trim(capture)
         "the in-flight trips share nothing with the plain trim, which is exactly why "
         "joining against the trim measured zero"
     )
+
+
+def _added_entities(feed, count, *, start=90000, empty_trip_id=True):
+    """`count` ADDED trip_updates, in NJ Transit's real shape: empty trip_id, a
+    distinct entity.id per train."""
+    for index in range(count):
+        entity = feed.entity.add()
+        entity.id = str(start + index)
+        tu = entity.trip_update
+        tu.trip.trip_id = "" if empty_trip_id else f"EXTRA-{index}"
+        tu.trip.route_id = "1"
+        tu.trip.schedule_relationship = pb.TripDescriptor.ADDED
+        for seq, (stop_id, offset) in enumerate((("112", -240), ("109", 360)), start=1):
+            stu = tu.stop_time_update.add()
+            stu.stop_sequence = seq * 10
+            stu.stop_id = stop_id
+            stu.arrival.time = int(NOW + offset)
+            stu.departure.time = int(NOW + offset + 30)
+
+
+def _capture_with_added(added_count=36, *, empty_trip_id=True):
+    """Tonight's shape: every scheduled trip joins, plus N ADDED extras."""
+    feed = pb.FeedMessage()
+    feed.ParseFromString(_trip_updates())
+    _added_entities(feed, added_count, empty_trip_id=empty_trip_id)
+    return feed.SerializeToString()
+
+
+def test_added_trips_are_excluded_from_the_join_denominator(capture, capsys):
+    """THE GATE THAT REFUSED A PERFECT CAPTURE.
+
+    NJ Transit publishes ADDED trips with an EMPTY trip_id, so they can never match
+    a trip in the schedule: they are definitionally unjoinable. Counting them in
+    the denominator turned a live feed whose every joinable trip joined into a
+    measured 0.78 failure. The real numbers were 164 trip_updates, 128 joined, 36
+    ADDED, and 164 - 128 = 36 exactly.
+
+    Here every scheduled trip joins and 36 extras ride along. Over the joinable set
+    the rate is 1.0000, so the capture must be ACCEPTED; over all trip_updates it
+    would be 40/76 and refused.
+    """
+    code, _out, static_out = capture(tu=_capture_with_added(36))
+    output = capsys.readouterr().out
+
+    assert code == 0, "a capture whose every joinable trip joins must not be refused"
+    assert "40/40 SCHEDULED-or-CANCELED" in output, (
+        f"the denominator must be the joinable trips only; got:\n{output}"
+    )
+    assert "(1.0000)" in output
+    assert "ADDED, definitionally unjoinable: 36, all with empty trip_id: yes" in output
+    assert (static_out / "trips.txt").exists(), "and the fixtures are written"
+
+
+def test_a_nonempty_trip_id_on_an_added_trip_is_reported_as_a_new_fact(capture, capsys):
+    """Worth its own printed note, because it would mean NJ Transit has started
+    publishing extras against the schedule and they might be joinable after all.
+    Not a refusal: a new fact is for a human to read, not for the script to decide."""
+    code, _out, _static = capture(tu=_capture_with_added(4, empty_trip_id=False))
+    output = capsys.readouterr().out
+    assert code == 0
+    assert "ADDED, definitionally unjoinable: 4, all with empty trip_id: no" in output
+    assert "carry a NONEMPTY trip_id" in output
+
+
+def test_an_empty_trip_id_on_a_scheduled_trip_is_reported_as_a_new_fact(capture, capsys):
+    """The mirror. A trip claiming to be in the schedule with no way to say which
+    is the opposite new fact, and it is counted as unjoined rather than excused."""
+    feed = pb.FeedMessage()
+    feed.ParseFromString(_trip_updates())
+    entity = feed.entity.add()
+    entity.id = "5555"
+    tu = entity.trip_update
+    tu.trip.trip_id = ""  # SCHEDULED by omission, with no id
+    tu.trip.route_id = "1"
+    for seq, (stop_id, offset) in enumerate((("112", -240), ("109", 360)), start=1):
+        stu = tu.stop_time_update.add()
+        stu.stop_sequence = seq * 10
+        stu.stop_id = stop_id
+        stu.arrival.time = int(NOW + offset)
+        stu.departure.time = int(NOW + offset + 30)
+
+    capture(tu=feed.SerializeToString())
+    output = capsys.readouterr().out
+    assert "carry an EMPTY trip_id, which is a new fact" in output
+    assert "40/41 SCHEDULED-or-CANCELED" in output, "and it counts against the join"
+
+
+def test_the_captured_extras_reach_the_golden_as_distinct_trains(capture):
+    """END TO END: 36 extras with empty trip_ids go in, and the committed golden
+    carries 36 distinct trains rather than one.
+
+    The count is what makes this discriminating. A single ADDED trip, which is what
+    the trap matrix carries, can never reveal a collapse: you need at least two
+    sharing the empty id before merging them is visible.
+    """
+    code, out, _static = capture(tu=_capture_with_added(36))
+    assert code == 0
+    expected = json.loads((out / "njt_tu_expected.json").read_text())
+    shapes = expected["capture_shapes"]
+    assert shapes["added_trips"] == 36
+    assert shapes["added_with_empty_trip_id"] == 36
+    assert shapes["added_distinct_entity_ids"] == 36
+
+    entity_ids = set(shapes["added_entity_ids"])
+    extras = [t for t in expected["trains"] if t["train_num"] in entity_ids]
+    assert len(extras) == 36, f"every extra must be placed, got {len(extras)}"
+    assert len({t["trip_id"] for t in extras}) == 36, (
+        "and each must keep its own key; a collapse here is 35 trains vanishing"
+    )

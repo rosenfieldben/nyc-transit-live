@@ -196,3 +196,55 @@ def test_golden_the_decode_is_stable():
     assert feed_ts == expected["feed_timestamp"]
     assert trains == expected["trains"]
     assert arrivals == expected["arrivals"]
+
+
+@golden
+def test_golden_captured_added_trips_survive_as_distinct_trains():
+    """REAL EXTRAS, FROM THE CAPTURE, EACH STILL ITS OWN TRAIN.
+
+    Both 2026-08-05 probes saw no ADDED trips at all, and this suite said none
+    would ever be captured. A later live capture carried 36 of them out of 164
+    trip_updates, every one with trip_id "". That empty id is the whole hazard: a
+    decoder keying on trip_id collapses all 36 into a single train, and extras run
+    on disrupted nights, which is exactly when a rider is looking at the map.
+
+    The synthetic tests in test_njt_rt.py pin the rule; this pins that the rule
+    holds against the bytes NJ Transit actually published, which is the one thing
+    a synthetic protobuf cannot tell you.
+
+    SKIPPED RATHER THAN FAILED WHEN THE CAPTURE HAS NO EXTRAS, because a quiet
+    night legitimately has none and this claim then has nothing to make. The
+    capture-shape counts are recorded either way, so the absence is visible.
+    """
+    expected = _expected()
+    shapes = expected["capture_shapes"]
+    added = shapes.get("added_trips", 0)
+    if not added:
+        import pytest
+
+        pytest.skip("this capture carried no ADDED trips; nothing to assert distinctness over")
+
+    # The empty trip_id is the fact that makes this test necessary. Recorded so a
+    # future capture where NJ Transit starts naming extras is visible rather than
+    # silently changing what this test is about.
+    assert shapes["added_with_empty_trip_id"] == added, (
+        f"{added - shapes['added_with_empty_trip_id']} ADDED trip(s) carry a NONEMPTY "
+        "trip_id. That is a new NJ Transit fact and this test's premise has changed."
+    )
+    assert shapes["added_distinct_entity_ids"] == added, (
+        "every ADDED trip must carry its own entity.id, which is the only identity "
+        "they have once trip_id is empty"
+    )
+
+    # AND THEY SURVIVE THE DECODE DISTINCTLY. Keyed off the recorded entity ids, so
+    # this compares the decode against the wire rather than against itself.
+    entity_ids = set(shapes["added_entity_ids"])
+    extras = [train for train in expected["trains"] if train["train_num"] in entity_ids]
+    assert len({train["trip_id"] for train in extras}) == len(extras), (
+        "two captured extras share a key in the decoded golden, which is the collapse "
+        "this whole chain exists to prevent"
+    )
+    # Placement can legitimately drop an extra (a trip whose calls are all past, or
+    # all too far ahead), so the count is a floor rather than an equality. What may
+    # never happen is two of them becoming one.
+    assert extras, "at least one captured extra must reach the map"

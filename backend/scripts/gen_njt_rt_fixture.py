@@ -29,11 +29,13 @@ parsed, not modelled, and not committed; the numbers behind that decision are at
 the poller registry in backend/pollers.py. If you came here to add it, read that
 first.
 
-THE ADDED TRAP CANNOT BE CAPTURED AT ALL. schedule_relationship ADDED was never
-observed in either probe, so no capture will ever contain one. Decoder law 3 is
-therefore pinned only by the synthetic tests in backend/tests/test_njt_rt.py and
-by the contract tier's trap matrix, and that is a permanent division of labour
-rather than a gap waiting to be filled.
+ADDED IS REAL AFTER ALL, AND IT CARRIES AN EMPTY trip_id. Both 2026-08-05 probes
+saw none, and this file used to say no capture ever would; a later live capture
+carried 36 of them out of 164 trip_updates, every one with trip_id "". So decoder
+law 3 is no longer synthetic-only, and the empty id is the load-bearing part: a
+decoder keying on trip_id would collapse all 36 into one train. The identity chain
+in feeds.njt._identity falls through to entity.id for exactly this, and the
+goldens below assert the captured extras survive DISTINCTLY.
 
 IT REUSES THE PRODUCTION TOKEN DOOR (njt_auth.njt_post) rather than posting for
 itself, which makes this script a live smoke test of that module as a side
@@ -153,10 +155,20 @@ MIN_ALERTS = 1
 # measured. The archive that evening re-downloaded byte-identical to the probe's,
 # so no rollover had happened; the trim was simply the wrong denominator.
 #
-# 0.95 rather than 1.0 because an ADDED trip is documented to join nothing
-# (decoder law 3) and a publication boundary crossed mid-capture would show as a
-# handful of misses. A REAL rollover still fails this loudly, and now says so with
-# the number it measured.
+# THE DENOMINATOR IS TRIPS THAT CLAIM TO BE SCHEDULED, which is SCHEDULED and
+# CANCELED: a canceled train was scheduled and still carries its trip_id. ADDED
+# trips are excluded because NJ Transit publishes them with an EMPTY trip_id, so
+# they are definitionally unjoinable and no floor over them means anything.
+#
+# THAT DISTINCTION BLOCKED A CAPTURE. With ADDED in the denominator a live feed of
+# 164 trip_updates measured 128/164 = 0.7805 and was refused, while the joinable
+# set was 128/128 = 1.0000: a perfect join reported as a failure because 36 trips
+# that can never join were being counted against it. 164 - 128 = 36 exactly, and
+# every one of the 36 was ADDED with an empty id.
+#
+# 0.95 rather than 1.0 because a publication boundary crossed between the two
+# downloads would show as a handful of misses. A REAL rollover still fails this
+# loudly, and says so with the number it measured.
 MIN_LIVE_JOIN_RATE = 0.95
 
 
@@ -260,12 +272,30 @@ def _raw_static_rows(archive: bytes) -> dict[str, tuple[list[str], list[dict]]]:
     return members
 
 
-def _joining_trip_ids(raw: bytes) -> list[str]:
-    """Every trip id in the capture, so the stale-fixture check can be made before
-    anything derived from the join is judged."""
+def _trip_ids_by_claim(raw: bytes) -> tuple[list[str], list[str]]:
+    """(trip ids that CLAIM to be scheduled, trip ids of ADDED trips).
+
+    THE SPLIT IS THE JOIN GATE'S WHOLE CORRECTNESS. A trip is joinable only if it
+    says it is in the schedule, which SCHEDULED and CANCELED both do: a canceled
+    train was scheduled and still carries its trip_id. ADDED says the opposite, and
+    NJ Transit publishes ADDED trips with an EMPTY trip_id, so they are
+    DEFINITIONALLY unjoinable and belong in no denominator.
+
+    Measured on the capture that exposed this: 164 trip_updates, 128 joined, 36
+    ADDED with empty ids, and 164 - 128 = 36 exactly. Over the joinable set the
+    rate was 128/128 = 1.0000, a perfect join reported as a 0.78 failure purely
+    because the denominator counted trips that can never be in it.
+    """
     feed = pb.FeedMessage()
     feed.ParseFromString(raw)
-    return [e.trip_update.trip.trip_id for e in feed.entity if e.HasField("trip_update")]
+    scheduled, added = [], []
+    for entity in feed.entity:
+        if not entity.HasField("trip_update"):
+            continue
+        trip = entity.trip_update.trip
+        target = added if trip.schedule_relationship == pb.TripDescriptor.ADDED else scheduled
+        target.append(trip.trip_id)
+    return scheduled, added
 
 
 def _shapes(raw: bytes) -> dict:
@@ -279,6 +309,8 @@ def _shapes(raw: bytes) -> dict:
     feed.ParseFromString(raw)
     trip_sr = Counter()
     canceled_trip_ids: list[str] = []
+    added_trip_ids: list[str] = []
+    added_entity_ids: list[str] = []
     canceled_trips = 0
     skipped_with_times = 0
     skipped_bare = 0
@@ -295,6 +327,9 @@ def _shapes(raw: bytes) -> dict:
         tu = entity.trip_update
         relationship = pb.TripDescriptor.ScheduleRelationship.Name(tu.trip.schedule_relationship)
         trip_sr[relationship] += 1
+        if relationship == "ADDED":
+            added_trip_ids.append(tu.trip.trip_id)
+            added_entity_ids.append(entity.id)
         canceled = relationship == "CANCELED"
         canceled_trips += canceled
         if canceled and tu.trip.trip_id:
@@ -335,6 +370,13 @@ def _shapes(raw: bytes) -> dict:
         "trip_relationships": dict(trip_sr),
         "canceled_trips": canceled_trips,
         "canceled_trip_ids": sorted(canceled_trip_ids),
+        # THE ADDED FACTS, recorded off the wire so the goldens can assert the
+        # captured extras survive as distinct trains rather than collapsing on a
+        # shared empty trip_id.
+        "added_trips": len(added_trip_ids),
+        "added_with_empty_trip_id": sum(1 for t in added_trip_ids if not t),
+        "added_entity_ids": sorted(e for e in added_entity_ids if e),
+        "added_distinct_entity_ids": len({e for e in added_entity_ids if e}),
         "skipped_with_times": skipped_with_times,
         "skipped_bare": skipped_bare,
         "penn_calls": penn_calls,
@@ -427,20 +469,47 @@ def main() -> int:
     # publication. Rollover is a real phenomenon and is named below as one
     # possibility among several, with the numbers a reader needs to tell them
     # apart, rather than asserted as fact.
-    live_trip_ids = _joining_trip_ids(tu_raw)
-    joined_trips = sum(1 for t in live_trip_ids if t in _TRIPS)
-    join_rate = joined_trips / len(live_trip_ids) if live_trip_ids else 0.0
+    claim_scheduled, added_ids = _trip_ids_by_claim(tu_raw)
+    live_trip_ids = claim_scheduled + added_ids
+    joined_trips = sum(1 for t in claim_scheduled if t in _TRIPS)
+    join_rate = joined_trips / len(claim_scheduled) if claim_scheduled else 0.0
     print(
-        f"\n  live join: {joined_trips}/{len(live_trip_ids)} trip_updates "
-        f"({join_rate:.4f}) match a trip in this publication's {len(_TRIPS)}-trip trips.txt"
+        f"\n  live join: {joined_trips}/{len(claim_scheduled)} SCHEDULED-or-CANCELED "
+        f"trip_updates ({join_rate:.4f}) match a trip in this publication's "
+        f"{len(_TRIPS)}-trip trips.txt"
     )
-    if live_trip_ids and join_rate < MIN_LIVE_JOIN_RATE:
-        missing = sorted({t for t in live_trip_ids if t not in _TRIPS})[:5]
+    all_added_empty = all(not t for t in added_ids)
+    print(
+        f"  ADDED, definitionally unjoinable: {len(added_ids)}, all with empty trip_id: "
+        f"{'yes' if all_added_empty else 'no'}"
+    )
+    # EITHER OF THESE WOULD BE A NEW NJ TRANSIT FACT, so each gets its own line
+    # rather than being folded into the rate. An ADDED trip carrying a real
+    # trip_id would mean extras are being published against the schedule after
+    # all; an empty one on a SCHEDULED trip would mean a train claiming to be in
+    # the schedule with no way to say which.
+    named_added = sorted({t for t in added_ids if t})[:5]
+    if named_added:
+        print(
+            f"  NOTE: {len(named_added)} ADDED trip(s) carry a NONEMPTY trip_id "
+            f"({named_added}). Every ADDED trip in the capture that exposed this had an "
+            "empty one; a named extra is a new fact and may mean they can now be joined."
+        )
+    unnamed_scheduled = sum(1 for t in claim_scheduled if not t)
+    if unnamed_scheduled:
+        print(
+            f"  NOTE: {unnamed_scheduled} SCHEDULED-or-CANCELED trip(s) carry an EMPTY "
+            "trip_id, which is a new fact: they claim to be in the schedule and give no "
+            "way to say which trip. They are counted as unjoined below."
+        )
+    if claim_scheduled and join_rate < MIN_LIVE_JOIN_RATE:
+        missing = sorted({t for t in claim_scheduled if t not in _TRIPS})[:5]
         print(
             f"\n  !! MEASURED join rate {join_rate:.4f} against the FULL live publication "
-            f"({joined_trips} of {len(live_trip_ids)} trip_updates matched a trip_id in the "
-            f"{len(_TRIPS)}-trip trips.txt downloaded in this same run), below the "
-            f"{MIN_LIVE_JOIN_RATE:.2f} floor.\n"
+            f"({joined_trips} of {len(claim_scheduled)} SCHEDULED-or-CANCELED trip_updates "
+            f"matched a trip_id in the {len(_TRIPS)}-trip trips.txt downloaded in this same "
+            f"run), below the {MIN_LIVE_JOIN_RATE:.2f} floor. The {len(added_ids)} ADDED "
+            "trips are excluded from this denominator by definition.\n"
             f"     unmatched trip_ids, first few: {missing}\n"
             "     This is the realtime feed and the static archive disagreeing about what is\n"
             "     scheduled. Possible causes, none of them measured here: a publication\n"

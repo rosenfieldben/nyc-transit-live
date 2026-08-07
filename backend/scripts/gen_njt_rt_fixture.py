@@ -37,7 +37,23 @@ rather than a gap waiting to be filled.
 
 IT REUSES THE PRODUCTION TOKEN DOOR (njt_auth.njt_post) rather than posting for
 itself, which makes this script a live smoke test of that module as a side
-effect, and costs ONE token for both feeds because the door's cache is shared.
+effect, and costs ONE token for all three downloads because the door's cache is
+shared.
+
+IT ALSO RE-TRIMS THE STATIC FIXTURE, which is why it downloads the archive at all.
+The committed static and realtime fixtures have to JOIN, and they used to be
+chosen by unrelated rules: the static kept two lexicographically-first trips per
+route, the realtime kept whatever happened to be moving. Those sets intersect only
+by luck, and at 17:20 on a live rush capture they did not intersect at all, which
+blocked the capture entirely. Now the static fixture is re-cut from the same
+archive around the trips the capture actually contains, so the pair joins by
+construction and the goldens can assert a MEASURED join floor.
+
+EVERY REFUSAL BELOW STATES WHAT IT MEASURED. The version that blocked the first
+capture asserted "trip ids roll over with each schedule publication" as the cause
+of a zero join, having measured no such thing, and it was wrong: the archive
+re-downloaded byte-identical to the probe's. Rollover is real and is named as one
+candidate among several, with the numbers a reader needs to tell them apart.
 
 The script verifies the live feeds still match the facts probed 2026-08-05, then
 prints what it found for eyeballing. It exits nonzero on any drift, so a stale or
@@ -47,12 +63,14 @@ empty regeneration cannot slip in quietly.
 from __future__ import annotations
 
 import asyncio
+import csv
+import importlib.util
 import io
 import json
 import sys
 import time
 import zipfile
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 
 # The same two-line preamble the other generators use, so a script run directly
@@ -66,7 +84,18 @@ import njt_auth  # noqa: E402
 import njt_static  # noqa: E402
 from feeds import njt as njt_feed  # noqa: E402
 
+# The trim, shared with gen_njt_fixture.py so the re-trim below writes exactly what
+# a first trim would. Loaded by path because scripts/ is not an importable package.
+_TRIM_SPEC = importlib.util.spec_from_file_location(
+    "njt_fixture_trim", Path(__file__).resolve().parent / "njt_fixture_trim.py"
+)
+trim = importlib.util.module_from_spec(_TRIM_SPEC)
+_TRIM_SPEC.loader.exec_module(trim)
+
 OUT_DIR = REPO_ROOT / "backend" / "tests" / "fixtures"
+# The static fixture this script RE-TRIMS on a successful capture, so the
+# committed pair joins. Same directory gen_njt_fixture.py writes.
+STATIC_OUT_DIR = OUT_DIR / "njt_gtfs"
 
 # --- facts probed live 2026-08-05 (overnight 02:37 EDT and rush 18:15 EDT) ---
 #
@@ -75,10 +104,14 @@ OUT_DIR = REPO_ROOT / "backend" / "tests" / "fixtures"
 # are calibrated so an ordinary rush capture passes while an overnight one (or a
 # feed that stopped publishing trip descriptors) fails.
 
-# Trips in flight at peak. The probe counted 745; a capture with fewer than this
-# is either off-peak or a feed in trouble, and either way is not what the goldens
-# are supposed to be asserting against.
-MIN_PEAK_TRIPS = 200
+# A SANITY FLOOR ON TRIP COUNT, not a peak detector, and the difference is a
+# correction. This was 200, calibrated against the probe's "745 trips" without
+# establishing what that number counted. A live rush capture at 17:20 carried 165
+# trip_updates, so the floor was rejecting exactly the captures it was written to
+# accept. What the goldens actually need is the TRAP SHAPES, and those have their
+# own floors below; this one only has to reject the overnight state the probe
+# recorded as a 13-byte empty feed.
+MIN_TRIPS = 40
 
 # The entity.id / trip_short_name agreement the decoder cross-checks. 745 of 745
 # at the probe, so this is written as "all of them" with the tolerance stated: a
@@ -109,15 +142,42 @@ PENN = "109"
 # a quiet day is legitimate, an EMPTY alerts feed is not what the golden wants.
 MIN_ALERTS = 1
 
+# The share of live trip_updates that must join the FULL LIVE STATIC, measured
+# against the archive downloaded in the same run.
+#
+# AGAINST THE FULL STATIC, NEVER THE TRIM, and that distinction is the whole
+# defect this script was blocked on. The check used to join live trips against the
+# COMMITTED fixture, which is 25 trips (two lexicographically-first per route). At
+# 17:20 none of the 165 trips in flight were among those 25, so the rate measured
+# 0.0000 and the script refused, blaming a schedule rollover it had never
+# measured. The archive that evening re-downloaded byte-identical to the probe's,
+# so no rollover had happened; the trim was simply the wrong denominator.
+#
+# 0.95 rather than 1.0 because an ADDED trip is documented to join nothing
+# (decoder law 3) and a publication boundary crossed mid-capture would show as a
+# handful of misses. A REAL rollover still fails this loudly, and now says so with
+# the number it measured.
+MIN_LIVE_JOIN_RATE = 0.95
 
-def _download() -> tuple[bytes, bytes, float]:
-    """Mint once, POST both realtime feeds, return (trip_updates, alerts, received_at).
 
-    ONE TOKEN FOR BOTH, which is not an optimization but the same single-flight
-    cache the app relies on: njt_auth.njt_post takes its token from a
-    process-wide cache and re-mints at most once per attempt. A regeneration
+def _download() -> tuple[bytes, bytes, bytes, float]:
+    """Mint once, POST both realtime feeds AND the static archive.
+
+    Returns (trip_updates, alerts, static_zip, received_at).
+
+    ONE TOKEN FOR ALL THREE, which is not an optimization but the same
+    single-flight cache the app relies on: njt_auth.njt_post takes its token from
+    a process-wide cache and re-mints at most once per attempt. A regeneration
     therefore costs one token against a rate limit NJ Transit does not publish,
     exactly as a production poll cycle does.
+
+    THE STATIC ARCHIVE IS FETCHED HERE, AND THAT IS THE FIX. The join check below
+    has to ask "do these live trips exist in the schedule this feed is running
+    on", and the only thing that can answer it is the FULL publication. Asking the
+    committed 25-trip trim instead produced 0.0000 at rush hour and a refusal that
+    blamed a rollover which had not happened. Downloading it in the same run also
+    means the pair written at the end is coherent by construction: same
+    publication, same minute.
     """
     if not njt_auth.is_configured():
         raise SystemExit(
@@ -125,51 +185,79 @@ def _download() -> tuple[bytes, bytes, float]:
             "environment or the project-root .env) to download the NJ Transit feeds."
         )
 
-    async def both() -> tuple[bytes, bytes]:
+    async def everything() -> tuple[bytes, bytes, bytes]:
         # Sequential rather than gathered, on purpose. Concurrency here would
         # exercise the single-flight lock, which is a fine thing to test and a
         # bad thing to depend on in a script whose failure mode is "spent two
         # tokens and did not notice".
+        #
+        # REALTIME FIRST, STATIC SECOND. The header lag this capture is judged on
+        # is measured from the trip updates, so the multi-megabyte archive
+        # download must not sit between the feed and the clock reading.
         tu = await njt_auth.njt_post(njt_feed.NJT_TU_URL)
         alerts = await njt_auth.njt_post(njt_feed.NJT_ALERTS_URL)
-        return tu, alerts
+        return tu, alerts, await njt_auth.njt_post(njt_static.NJT_STATIC_URL)
 
     print(f"Minting a token and POSTing {njt_feed.NJT_TU_URL} ...")
-    tu, alerts = asyncio.run(both())
+    tu, alerts, archive = asyncio.run(everything())
     received_at = time.time()
     print(f"  trip updates: {len(tu)} bytes")
     print(f"  alerts:       {len(alerts)} bytes")
-    return tu, alerts, received_at
+    print(f"  static zip:   {len(archive)} bytes")
+    return tu, alerts, archive, received_at
 
 
-def _static_tables() -> tuple[dict, dict]:
-    """The committed 15a static fixture, as the two indexes the decoder joins.
+def _zip_members(members: dict[str, tuple[list[str], list[dict]]]) -> io.BytesIO:
+    """An in-memory GTFS zip of (fieldnames, rows) members.
 
-    FROM THE COMMITTED FIXTURE, NEVER A SECOND LIVE DOWNLOAD. The golden's whole
-    value is that it is reproducible: decoding tomorrow's capture against
-    tomorrow's static would make a red golden ambiguous between a decoder change
-    and a schedule change. This also means a realtime capture must be regenerated
-    together with the static one when trip ids roll over, which the join-rate
-    check below will say loudly if you forget.
+    Used to run the PRODUCTION parser over the trim that was just written, so the
+    committed golden is the decode of the committed tables rather than of the full
+    publication they were cut from. Writing the files and re-reading them would
+    work too; building the zip keeps the whole check in one function and cannot be
+    fooled by a stale file left behind from an earlier run.
     """
-    fixture = OUT_DIR / "njt_gtfs"
-    if not (fixture / "trips.txt").exists():
-        raise SystemExit(
-            f"the 15a static fixture is missing ({fixture}); run "
-            "backend/scripts/gen_njt_fixture.py first, because the realtime golden "
-            "joins against it"
-        )
-    # Through the PRODUCTION parser, the same way test_njt_static's goldens read
-    # this directory: the fixture is committed as loose .txt members, so it is
-    # zipped in memory rather than parsed by a second reader that could disagree
-    # with njt_static about a quoted field or a BOM.
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as zf:
-        for path in sorted(fixture.iterdir()):
-            if path.suffix == ".txt":
-                zf.writestr(path.name, path.read_text(encoding="utf-8"))
-    parsed = njt_static._parse_zip(buffer)
-    return parsed["stops"], njt_static.build_njt_trip_index(parsed["trips"])
+        for name, (fieldnames, rows) in members.items():
+            out = io.StringIO()
+            writer = csv.DictWriter(out, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({c: row.get(c, "") for c in fieldnames})
+            zf.writestr(name, out.getvalue())
+    return buffer
+
+
+def _live_static(archive: bytes) -> dict:
+    """The FULL live publication, parsed by the production parser.
+
+    NOT THE COMMITTED FIXTURE. That was the defect: the fixture is a 25-trip trim,
+    so joining live realtime against it measured the trim rather than the
+    schedule, and reported 0.0000 at exactly the hour the capture is supposed to
+    be taken.
+
+    Through njt_static._parse_zip so this reads the archive the same way the app
+    does, which also makes the download a live smoke test of that parser.
+    """
+    return njt_static._parse_zip(io.BytesIO(archive))
+
+
+def _raw_static_rows(archive: bytes) -> dict[str, tuple[list[str], list[dict]]]:
+    """Every member the fixture carries, as (fieldnames, rows), straight from the zip.
+
+    Separate from _live_static because the two want different things: the parsed
+    tables are for JOINING (typed, indexed, production shapes), and these raw rows
+    are for WRITING (every original column preserved in its original order, so the
+    committed fixture is a faithful slice of the publication rather than a
+    re-serialization of whatever the parser chose to keep).
+    """
+    members: dict[str, tuple[list[str], list[dict]]] = {}
+    with zipfile.ZipFile(io.BytesIO(archive)) as zf:
+        for name in trim.FIXTURE_MEMBERS:
+            with zf.open(name) as fh:
+                reader = csv.DictReader(io.TextIOWrapper(fh, encoding="utf-8-sig"))
+                members[name] = (list(reader.fieldnames or []), list(reader))
+    return members
 
 
 def _joining_trip_ids(raw: bytes) -> list[str]:
@@ -261,10 +349,14 @@ _TRIPS: dict = {}
 
 def main() -> int:
     global _TRIPS
-    stops, _TRIPS = _static_tables()
-    print(f"static fixture: {len(stops)} stops, {len(_TRIPS)} trips")
+    tu_raw, alerts_raw, archive, received_at = _download()
 
-    tu_raw, alerts_raw, received_at = _download()
+    # THE FULL LIVE PUBLICATION, which is what the join below is measured against.
+    parsed = _live_static(archive)
+    stops = parsed["stops"]
+    _TRIPS = njt_static.build_njt_trip_index(parsed["trips"])
+    print(f"\nlive static: {len(stops)} stops, {len(_TRIPS)} trips in this publication")
+
     shapes = _shapes(tu_raw)
     lag = received_at - shapes["header_timestamp"] if shapes["header_timestamp"] else None
 
@@ -280,10 +372,11 @@ def main() -> int:
     print(f"  header lag             {lag:.1f}s" if lag is not None else "  header lag  (none)")
 
     problems: list[str] = []
-    if shapes["trips"] < MIN_PEAK_TRIPS:
+    if shapes["trips"] < MIN_TRIPS:
         problems.append(
-            f"only {shapes['trips']} trips in flight (want >= {MIN_PEAK_TRIPS}). This looks "
-            "like an off-peak capture; the traps the goldens are about only appear under load."
+            f"MEASURED {shapes['trips']} trip_updates in this capture, below the sanity floor "
+            f"of {MIN_TRIPS}. That is the overnight shape; the trap-shape floors below are "
+            "what actually decide whether a capture is usable."
         )
     if shapes["cross_check_agreement"] < EXPECTED_CROSS_CHECK_AGREEMENT:
         problems.append(
@@ -321,18 +414,41 @@ def main() -> int:
     if alert_count < MIN_ALERTS:
         problems.append("the alerts feed is empty, so the alerts golden would assert nothing")
 
-    # THE STALE-STATIC CHECK RUNS BEFORE THE GATE, because it explains several of
-    # the problems above rather than being one more of them. A realtime capture
-    # taken after the static fixture's schedule rolled over joins nothing, and a
-    # reader who sees "entity.id agreement is 0%" first will go looking in the
-    # decoder for a fault that is entirely in the fixture pair.
-    joined_trips = sum(1 for e in _joining_trip_ids(tu_raw) if e in _TRIPS)
-    if shapes["trips"] and joined_trips == 0:
+    # THE LIVE JOIN, MEASURED FIRST, because a low rate explains several of the
+    # problems above rather than being one more of them: entity.id agreement is
+    # computed over joined trips, so a schedule this capture does not match makes
+    # that number meaningless too.
+    #
+    # WHAT THIS REPORTS IS A MEASUREMENT, NOT A DIAGNOSIS. The previous version
+    # printed "trip ids roll over with each schedule publication" as the cause of a
+    # zero join, which it had not measured and which was false the evening it
+    # fired: the archive re-downloaded byte-identical to the probe's, and the zero
+    # came from joining against the 25-trip COMMITTED TRIM instead of the
+    # publication. Rollover is a real phenomenon and is named below as one
+    # possibility among several, with the numbers a reader needs to tell them
+    # apart, rather than asserted as fact.
+    live_trip_ids = _joining_trip_ids(tu_raw)
+    joined_trips = sum(1 for t in live_trip_ids if t in _TRIPS)
+    join_rate = joined_trips / len(live_trip_ids) if live_trip_ids else 0.0
+    print(
+        f"\n  live join: {joined_trips}/{len(live_trip_ids)} trip_updates "
+        f"({join_rate:.4f}) match a trip in this publication's {len(_TRIPS)}-trip trips.txt"
+    )
+    if live_trip_ids and join_rate < MIN_LIVE_JOIN_RATE:
+        missing = sorted({t for t in live_trip_ids if t not in _TRIPS})[:5]
         print(
-            "\n  !! NOTHING in this capture joins the committed static fixture. Regenerate "
-            "it first (backend/scripts/gen_njt_fixture.py); trip ids roll over with each "
-            "schedule publication, and every check below reads as a decoder fault when "
-            "the real problem is the fixture pair."
+            f"\n  !! MEASURED join rate {join_rate:.4f} against the FULL live publication "
+            f"({joined_trips} of {len(live_trip_ids)} trip_updates matched a trip_id in the "
+            f"{len(_TRIPS)}-trip trips.txt downloaded in this same run), below the "
+            f"{MIN_LIVE_JOIN_RATE:.2f} floor.\n"
+            f"     unmatched trip_ids, first few: {missing}\n"
+            "     This is the realtime feed and the static archive disagreeing about what is\n"
+            "     scheduled. Possible causes, none of them measured here: a publication\n"
+            "     boundary crossed between the two downloads; a schedule rollover in\n"
+            "     progress; or the realtime feed running against a publication the archive\n"
+            "     endpoint has not caught up to. Re-run in a few minutes before concluding\n"
+            "     anything: the two downloads are seconds apart and a boundary between them\n"
+            "     is the cheapest explanation to rule out."
         )
         return 1
 
@@ -342,23 +458,119 @@ def main() -> int:
             print(f"  !! {problem}")
         return 1
 
-    # THE DECODED GOLDEN, frozen at the feed's OWN header timestamp rather than at
+    # THE GOLDEN IS FROZEN AT THE FEED'S OWN HEADER TIMESTAMP rather than at
     # wall-clock now. Every window in the decoder (the just-passed grace, the
     # future-first-stop ceiling, the dwell test) is relative to `now`, so a golden
     # decoded at capture time and re-decoded at test time would differ for a
     # reason that has nothing to do with the code. The header timestamp is the one
-    # instant that travels with the bytes.
+    # instant that travels with the bytes. The decode itself happens after the
+    # re-trim below, against the tables actually written.
     now = shapes["header_timestamp"]
+
+    # --- THE RE-TRIM: make the committed pair join BY CONSTRUCTION ------------
+    #
+    # The static fixture is rewritten here, from the SAME archive this run
+    # downloaded, trimmed to the must-include set UNION every trip the realtime
+    # capture contains. That is what turns "does the pair join" from a property of
+    # the capture hour into a property of the writing step.
+    #
+    # WITHOUT IT the two fixtures are chosen by unrelated rules: the static keeps
+    # two lexicographically-first trips per route, the realtime keeps whatever was
+    # moving. Those sets intersect only by luck, and at 17:20 they did not
+    # intersect at all.
+    raw_members = _raw_static_rows(archive)
+    static_trips = raw_members["trips.txt"][1]
+    static_stops = raw_members["stops.txt"][1]
+    calls: dict[str, list[dict]] = defaultdict(list)
+    for row in raw_members["stop_times.txt"][1]:
+        calls[trim.get(row, "trip_id")].append(row)
+    for trip_calls in calls.values():
+        trip_calls.sort(key=lambda r: int(trim.get(r, "stop_sequence") or 0))
+    trips_by_route: dict[str, list[dict]] = defaultdict(list)
+    for row in static_trips:
+        trips_by_route[trim.get(row, "route_id")].append(row)
+
+    pj_trips = trim.port_jervis_trips(static_trips, calls)
+    pj_stops = trim.exclusive_stops(pj_trips, calls)
+    route_of_trip = {trim.get(t, "trip_id"): trim.get(t, "route_id") for t in static_trips}
+    pasc_trio = sorted(
+        trim.route_exclusive_stops(route_of_trip, calls, "13"),
+        key=lambda sid: (int(sid) if sid.isdigit() else 0, sid),
+    )[: trim.PASC_TRIO]
+
+    kept_trip_ids = trim.select_trim(
+        trips=static_trips,
+        calls=calls,
+        trips_by_route=trips_by_route,
+        pj_trips=pj_trips,
+        mandated_stops=list(trim.IDENTITY_STOPS) + sorted(pj_stops) + pasc_trio,
+        extra_trip_ids=set(live_trip_ids),
+    )
+    kept_trips, kept_stops, kept_stop_times = trim.apply_trim(
+        trips=static_trips, stops=static_stops, calls=calls, kept_trip_ids=kept_trip_ids
+    )
+
+    # The pair must now join by construction. Asserted rather than assumed,
+    # because "by construction" is a claim about code that can stop being true.
+    kept_ids = {trim.get(t, "trip_id") for t in kept_trips}
+    unjoined = sorted({t for t in live_trip_ids if t in _TRIPS and t not in kept_ids})
+    if unjoined:
+        print(
+            f"\n  !! the re-trim kept {len(kept_ids)} trips but {len(unjoined)} trip_ids in the "
+            f"capture that DO exist in this publication are not among them: {unjoined[:5]}. "
+            "select_trim's extra_trip_ids is not doing its job; the pair would not join."
+        )
+        return 1
+
+    print(
+        f"\nre-trimmed the static fixture around this capture: {len(kept_trips)} of "
+        f"{len(static_trips)} trips, {len(kept_stops)} of {len(static_stops)} stops, "
+        f"{len(kept_stop_times)} stop_times rows"
+    )
+    trim.write_fixture(
+        STATIC_OUT_DIR,
+        {
+            "agency.txt": raw_members["agency.txt"],
+            "routes.txt": raw_members["routes.txt"],
+            "calendar_dates.txt": raw_members["calendar_dates.txt"],
+            "stops.txt": (raw_members["stops.txt"][0], kept_stops),
+            "trips.txt": (raw_members["trips.txt"][0], kept_trips),
+            "stop_times.txt": (raw_members["stop_times.txt"][0], kept_stop_times),
+        },
+    )
+
+    # THE GOLDEN IS DECODED AGAINST THE TRIM THAT WAS JUST WRITTEN, not against the
+    # full publication, because the trim is what the tests will read. Re-decoding
+    # here is what makes the committed expected-output correct for the committed
+    # pair rather than for a table the repository does not contain.
+    trimmed_parsed = njt_static._parse_zip(
+        _zip_members(
+            {
+                name: (raw_members[name][0], rows)
+                for name, rows in (
+                    ("agency.txt", raw_members["agency.txt"][1]),
+                    ("routes.txt", raw_members["routes.txt"][1]),
+                    ("calendar_dates.txt", raw_members["calendar_dates.txt"][1]),
+                    ("stops.txt", kept_stops),
+                    ("trips.txt", kept_trips),
+                    ("stop_times.txt", kept_stop_times),
+                )
+            }
+        )
+    )
+    trimmed_trips = njt_static.build_njt_trip_index(trimmed_parsed["trips"])
     trains, arrivals, feed_ts, warnings = njt_feed.decode_njt_trip_updates(
-        tu_raw, stops, _TRIPS, now
+        tu_raw, trimmed_parsed["stops"], trimmed_trips, now
+    )
+    measured_join = (
+        sum(1 for t in live_trip_ids if t in trimmed_trips) / len(live_trip_ids)
+        if live_trip_ids
+        else 0.0
     )
     print(
-        f"\ndecoded at the feed's own header timestamp: {len(trains)} trains placed, "
-        f"{sum(len(v) for v in arrivals.values())} arrivals across {len(arrivals)} stops, "
-        f"{len(warnings)} cross-check warnings"
+        f"  against the written trim: {len(trains)} trains placed, join rate "
+        f"{measured_join:.4f} (the goldens assert a floor under this)"
     )
-    joined = sum(1 for t in trains if t["trip_id"] in _TRIPS)
-    print(f"  {joined} of {len(trains)} placed trains join the committed static fixture")
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     (OUT_DIR / "njt_tu.pb").write_bytes(tu_raw)

@@ -100,11 +100,17 @@ EXPECTED_PASC_ROUTE = ("13", "PASC")
 EXPECTED_PORT_JERVIS_ROUTES = {"5", "6"}
 # The probe counted nine Port Jervis stations, BY IDENTITY. Reported rather than
 # asserted, because what this script measures is a different question: the stops
-# nothing outside the line serves (njt_fixture_trim.exclusive_stops). The two can
-# disagree without anything having changed upstream, most obviously when a train
-# short-turns at Middletown and so counts as "other" for the near half of the
-# west-of-Hudson stations. A difference is printed for the eyeball step and says
-# it is not a drift signal.
+# nothing outside the line serves (njt_fixture_trim.exclusive_stops). The two
+# disagree by one on a healthy feed, and the one is SUFFERN: trips headsigned
+# "Suffern" terminate there, so it is served by trips outside the line and leaves
+# the exclusive set while remaining a Port Jervis station. Measured on the
+# committed fixture, which reports the other eight.
+#
+# So a difference here is expected rather than alarming, and the same holds for
+# any other station a short-turning or terminating service also reaches. A gap is
+# printed for the eyeball step and says explicitly that it is not a drift signal.
+# A count of ZERO is different and IS a problem, handled at the guard below: it
+# means the trip set has cancelled itself rather than that the line has shrunk.
 PROBED_PORT_JERVIS_STATIONS = 9
 # Members that must be ABSENT. Their absence is a load-bearing fact, not a
 # curiosity: njt_static's validators are built around it, and a feed that starts
@@ -322,9 +328,12 @@ def main() -> int:  # noqa: C901 - one linear verify-then-trim pass, split would
         # legitimately shrinks without anything having changed upstream.
         print(
             f"  NOTE: this is not a drift signal. The probe counted "
-            f"{PROBED_PORT_JERVIS_STATIONS} Port Jervis stations by identity; the exclusive "
-            f"set measured here is {len(pj_stops)}, and short-turning trips move it. Eyeball "
-            "the names above before committing."
+            f"{PROBED_PORT_JERVIS_STATIONS} Port Jervis stations BY IDENTITY; the set measured "
+            f"here is {len(pj_stops)} stops that nothing outside the line serves, which is a "
+            "different question. Suffern accounts for one of the difference on a healthy feed "
+            "(trips headsigned Suffern terminate there), and any other station a terminating "
+            "service also reaches accounts for the rest. Eyeball the names above before "
+            "committing."
         )
 
     pasc_stops = trim.route_exclusive_stops(route_of_trip, calls, EXPECTED_PASC_ROUTE[0])
@@ -367,23 +376,35 @@ def main() -> int:  # noqa: C901 - one linear verify-then-trim pass, split would
     for stop_id in IDENTITY_STOPS:
         if stop_id not in kept_stop_ids:
             problems.append(f"the trim drops identity stop {stop_id}")
-    # THE WEST-OF-HUDSON GUARD, rewritten because the old one COULD NOT FIRE. It
-    # asked whether the trim dropped any stop in the exclusive set, and on the full
-    # feed that set is empty (the headsign-only trip set cancelled itself against
-    # its own return workings), so an empty set minus anything is empty and the
-    # check passed no matter what the trim did. Asked against the kept Port Jervis
-    # trips' OWN CALLS instead, it is non-vacuous by construction: those trips are
-    # in the fixture, so their stops must be too.
-    kept_pj = sorted(pj_trips & kept_trip_ids)
-    pj_called = {_get(call, "stop_id") for tid in kept_pj for call in calls.get(tid, [])} - {""}
-    dropped_pj = sorted(pj_called - kept_stop_ids)
-    if dropped_pj:
+    # THE WEST-OF-HUDSON GUARD. Same subtraction it always was, and it is LIVE
+    # again only because pj_stops is no longer empty.
+    #
+    # WHAT MAKES IT NON-VACUOUS IS A PROPERTY OF port_jervis_trips, not of this
+    # line. Every trip in that set calls at one of the terminals the headsigned
+    # trips reach, and by construction no trip outside the set calls at one, so the
+    # terminals are always in (mine - others). pj_stops therefore always contains
+    # at least the line's own terminal, and the subtraction below always has
+    # something to subtract from. Under the old headsign-only set it did not, which
+    # is exactly why this check passed for a phase while protecting nothing.
+    #
+    # AN EARLIER ATTEMPT AT THIS FIX WAS ALSO VACUOUS and is worth recording so the
+    # next person does not repeat it: asking whether the kept Port Jervis trips'
+    # own calls survived cannot fail, because apply_trim keeps every stop of every
+    # kept trip. It read as a stronger check and was a tautology.
+    if pj_headsigned and not pj_stops:
         problems.append(
-            f"the trim keeps Port Jervis trips {kept_pj} but drops stops they call at: "
-            f"{dropped_pj}. stops.txt is supposed to follow the kept trips exactly."
+            "trips are headsigned Port Jervis but NO stop is exclusive to the line, which is "
+            "the signature of the trip set cancelling itself against its own return workings "
+            "(see njt_fixture_trim.port_jervis_trips). Every guard below is dead while this "
+            "holds, so it is a problem rather than a note."
         )
-    if kept_pj and not pj_called:
-        problems.append(f"kept Port Jervis trips {kept_pj} have no stop_times rows at all")
+    dropped_pj = sorted(pj_stops - kept_stop_ids)
+    if dropped_pj:
+        names = [_get(stop_by_id.get(sid, {}), "stop_name") or sid for sid in dropped_pj]
+        problems.append(
+            f"the trim drops west-of-Hudson stations: {names}. The mandated-stop top-up in "
+            "select_trim is supposed to pull in a trip for each of these."
+        )
     dropped_pasc = [s for s in pasc_trio if s not in kept_stop_ids]
     if dropped_pasc:
         problems.append(f"the trim drops Pascack stations: {dropped_pasc}")

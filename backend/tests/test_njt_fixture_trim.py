@@ -281,3 +281,81 @@ def test_the_trim_reproduces_the_committed_fixture_exactly():
         "re-trimming an already-trimmed fixture must be the identity; a difference means "
         "the extracted selection no longer matches the one that produced the fixture"
     )
+
+
+def test_the_exclusive_set_is_never_empty_while_the_line_is_named():
+    """THE PROPERTY THE WEST-OF-HUDSON GUARD RESTS ON, and the reason that guard is
+    live again rather than merely reworded.
+
+    Every trip in the set calls at one of the terminals the headsigned trips reach,
+    and by construction no trip OUTSIDE the set calls at one, so the terminals are
+    always in (mine - others). The exclusive set therefore always contains at least
+    the line's own terminal, whatever else is going on in the publication.
+
+    That is what the old headsign-only set could not promise, and its emptiness is
+    what silently killed the guard: an empty set minus anything is empty, so the
+    check passed for every possible trim.
+    """
+    outbound = {"trip_id": "OUT", "trip_headsign": "Port Jervis"}
+    scenarios = {
+        "both directions": (
+            [outbound, {"trip_id": "IN", "trip_headsign": "Hoboken"}],
+            [("OUT", SHARED_TRACK + WEST_OF_HUDSON), ("IN", WEST_OF_HUDSON[::-1] + SHARED_TRACK)],
+        ),
+        "with a short-turn that never reaches the terminal": (
+            [outbound, {"trip_id": "SHORT", "trip_headsign": "Middletown"}],
+            [("OUT", SHARED_TRACK + WEST_OF_HUDSON), ("SHORT", SHARED_TRACK + ["Otisville"])],
+        ),
+        "with unrelated service all over the shared track": (
+            [outbound] + [{"trip_id": f"X{i}", "trip_headsign": "Suffern"} for i in range(20)],
+            [("OUT", SHARED_TRACK + WEST_OF_HUDSON)] + [(f"X{i}", SHARED_TRACK) for i in range(20)],
+        ),
+    }
+    for label, (trips, pairs) in scenarios.items():
+        calls = _calls(pairs)
+        pj = trim.port_jervis_trips(trips, calls)
+        exclusive = trim.exclusive_stops(pj, calls)
+        assert exclusive, f"{label}: the exclusive set went empty and every guard on it died"
+        assert "PortJervis" in exclusive, f"{label}: the terminal itself must always be in it"
+
+
+def test_the_west_of_hudson_guard_fires_when_the_trim_actually_drops_a_station():
+    """THE GUARD IS NON-VACUOUS, demonstrated by making it fail.
+
+    A guard that has never been seen to fire is indistinguishable from one that
+    cannot, and this file exists because two successive versions of this one could
+    not. The trim here deliberately excludes the only trip serving the far end of
+    the line, and the subtraction the generator performs must name the stations
+    that went missing.
+    """
+    trips = [
+        {"trip_id": "FULL", "trip_headsign": "Port Jervis", "route_id": "6"},
+        {"trip_id": "SHORT", "trip_headsign": "Suffern", "route_id": "6"},
+    ]
+    calls = _calls([("FULL", SHARED_TRACK + WEST_OF_HUDSON), ("SHORT", SHARED_TRACK)])
+    pj_stops = trim.exclusive_stops(trim.port_jervis_trips(trips, calls), calls)
+    assert pj_stops == set(WEST_OF_HUDSON)
+
+    # A trim that kept only the short working: exactly the failure the guard is for.
+    _kept_trips, _kept_stops, _rows = trim.apply_trim(
+        trips=trips,
+        stops=[{"stop_id": s} for s in SHARED_TRACK + WEST_OF_HUDSON],
+        calls=calls,
+        kept_trip_ids={"SHORT"},
+    )
+    kept_stop_ids = {row["stop_id"] for row in _rows}
+    assert sorted(pj_stops - kept_stop_ids) == sorted(WEST_OF_HUDSON), (
+        "the generator's subtraction must name every west-of-Hudson station the trim lost"
+    )
+
+    # And the top-up the generator actually runs prevents it, which is why a real
+    # run passes: every mandated stop pulls in a trip that serves it.
+    kept = trim.select_trim(
+        trips=trips,
+        calls=calls,
+        trips_by_route={"6": trips},
+        pj_trips=trim.port_jervis_trips(trips, calls),
+        mandated_stops=sorted(pj_stops),
+    )
+    covered = {call["stop_id"] for tid in kept for call in calls[tid]}
+    assert not (pj_stops - covered), "the mandated-stop top-up is what keeps the guard green"

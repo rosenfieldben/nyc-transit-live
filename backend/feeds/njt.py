@@ -34,7 +34,10 @@ test with a killing mutation:
      synthesizes its display name from route plus train number, and MUST BE KEYED
      ON entity.id, because 36 extras sharing the empty string collapse into one
      train and extras run on exactly the disrupted nights a rider is watching the
-     map. See _identity's fallback chain.
+     map. See _identity's fallback chain, and note what the chain cannot see by
+     itself: two extras claiming ONE entity.id collapse just as completely and,
+     unlike an extra with no identity at all, do it silently. The chain ends in a
+     collision check for that reason.
   4. delay, absolute time AND scheduled_time are all present. ABSOLUTE TIME IS
      AUTHORITATIVE; delay is carried through for display and as a cross-check,
      never as the source of a time.
@@ -494,9 +497,13 @@ def _place(calls: list[dict], stops: dict[str, dict], now: float) -> dict | None
 
 
 def _identity(
-    tu, entity_id: str, trips: dict[str, dict], position: int = 0
-) -> tuple[dict, str | None]:
-    """(identity fields, cross-check warning) for one trip_update.
+    tu,
+    entity_id: str,
+    trips: dict[str, dict],
+    position: int,
+    seen: set[str],
+) -> tuple[dict, list[str]]:
+    """(identity fields, warnings) for one trip_update.
 
     THE JOIN, and the cross-check the probe says will never fire. trip_id joins
     app.state.njt_trips for route_id, headsign and the train number; separately,
@@ -529,6 +536,15 @@ def _identity(
     polls and pretending otherwise would animate one train into another. That case
     also raises a warning, because a trip_update with no identity of any kind would
     be a new NJT fact.
+
+    AND THE CHAIN IS CHECKED FOR COLLISIONS, because every step above reasons about
+    ONE entity and none of them can see a second entity arriving at the same key.
+    GTFS-RT requires FeedEntity.id to be unique within a message and NJT has honored
+    that in every probe, so `seen` should never fire. But the empty trip_id this
+    chain exists for was also unpredicted, and the two failure modes are not
+    symmetric: an entity with NO identity warns loudly, while two entities sharing
+    one identity would be silent, and silent is the shape that puts several running
+    trains on a board as one. A repeat is separated by position and announced.
     """
     trip_id = tu.trip.trip_id or ""
     static = trips.get(trip_id) or {}
@@ -544,14 +560,14 @@ def _identity(
         parts = [part for part in (route_id, train_num) if part]
         headsign = " ".join(parts) if parts else None
 
-    warning = None
+    warnings = []
     if static and entity_id and train_num and entity_id != train_num:
-        warning = (
+        warnings.append(
             f"entity.id {entity_id!r} does not match trip_short_name {train_num!r} "
             f"for trip {trip_id!r}"
         )
     elif not trip_id and not entity_id:
-        warning = (
+        warnings.append(
             f"trip_update at position {position} carries neither a trip_id nor an entity.id, "
             "so it has no identity that survives a poll; keyed by position"
         )
@@ -564,6 +580,27 @@ def _identity(
         key = f"{SYSTEM}:{entity_id}"
     else:
         key = f"{SYSTEM}:position-{position}"
+
+    # THE COLLISION CHECK, which is about the only thing the chain above cannot see.
+    # First one in keeps the clean key; a repeat is pushed onto a position-suffixed
+    # one. That suffix is not stable across polls, and neither is anything else here:
+    # two entities the feed made indistinguishable cannot be told apart between
+    # polls by any rule. Losing the animation is the small cost; losing the train is
+    # the one worth refusing. Separated with ":position-", matching the last resort
+    # above and staying URL-safe, since these ids are what a future per-train route
+    # would be keyed on and "#" would be read as a fragment.
+    if key in seen:
+        warnings.append(
+            f"trip_update at position {position} repeats the identity {key!r} of an "
+            "earlier entity in this feed; keyed by position so the two do not "
+            "collapse into one train"
+        )
+        key = f"{key}:position-{position}"
+    # Recording the key actually HANDED OUT, not the one asked for. The suffix
+    # already makes it unique (position is), so this is redundant for the shapes
+    # measured; it is what keeps the set meaning "keys in use" rather than "keys
+    # requested", which is the invariant a third duplicate would rely on.
+    seen.add(key)
     return (
         {
             "trip_id": key,
@@ -572,7 +609,7 @@ def _identity(
             "train_num": train_num,
             "joined": bool(static),
         },
-        warning,
+        warnings,
     )
 
 
@@ -604,6 +641,10 @@ def decode_njt_trip_updates(
     trains: list[dict] = []
     arrivals: dict[str, list[dict]] = defaultdict(list)
     warnings: list[str] = []
+    # The keys handed out so far in THIS decode, so _identity can refuse to hand the
+    # same one to two entities. Scoped to the walk, never carried between polls: a
+    # key repeating across polls is the same train, which is the whole point of a key.
+    seen_keys: set[str] = set()
 
     for position, entity in enumerate(feed.entity):
         if not entity.HasField("trip_update"):
@@ -616,9 +657,8 @@ def decode_njt_trip_updates(
             # and a rider's departure board.
             continue
 
-        identity, warning = _identity(tu, entity.id, trips, position)
-        if warning:
-            warnings.append(warning)
+        identity, entity_warnings = _identity(tu, entity.id, trips, position, seen_keys)
+        warnings.extend(entity_warnings)
 
         calls = _ordered_calls(tu, stops)
 
@@ -672,9 +712,29 @@ def _trim_njt_arrivals(arrivals: dict[str, list[dict]]) -> dict[str, list[dict]]
     """
     trimmed: dict[str, list[dict]] = {}
     for stop_id, rows in arrivals.items():
-        rows.sort(key=lambda row: (_still_upcoming(row), row["train_num"] or ""))
+        rows.sort(key=_arrival_sort_key)
         trimmed[stop_id] = rows[:ARRIVALS_PER_STOP]
     return trimmed
+
+
+def _arrival_sort_key(row: dict) -> tuple[bool, float, bool, str]:
+    """Soonest first, then by train number, with both unknowns sorted LAST.
+
+    Two defensive halves, and the second is the one that bites. A timeless row
+    cannot reach here, since the arrivals filter admits a call only after
+    _still_upcoming returned a number, but a bare `_still_upcoming(row)` in the key
+    would raise TypeError rather than misorder if that ever stopped being true, so
+    the flag makes the key total instead of leaving a crash for a future caller.
+
+    A row with NO train number can reach here: an entity carrying neither a trip_id
+    nor an entity.id gets train_num None. Falling back to "" alone would sort it
+    ahead of every named train, so on a stop where several departures share a
+    minute the nameless rows would take the six slots and evict real trains from a
+    rider's board. Unknown identity loses the tie-break instead of winning it.
+    """
+    when = _still_upcoming(row)
+    train_num = row["train_num"]
+    return (when is None, when if when is not None else 0.0, train_num is None, train_num or "")
 
 
 async def fetch_njt_trains(
@@ -702,16 +762,19 @@ async def fetch_njt_trains(
 
 
 def log_cross_check(warnings: list[str]) -> None:
-    """Log the entity.id cross-check misses, at most one line per poll.
+    """Log the identity warnings from one decode, at most one line per poll.
 
-    Capped and counted rather than one line per train: the probe says this cannot
-    happen, so if it ever does it will probably happen to the whole feed at once,
-    and 700 identical warnings a poll would bury the signal it exists to raise.
+    Three kinds reach here and the wording covers all of them rather than naming
+    one: the entity.id / trip_short_name cross-check miss, an entity carrying no
+    identity at all, and two entities claiming the same one. Capped and counted
+    rather than one line per train, because the probe says none of them can happen,
+    so if one starts it will probably happen to the whole feed at once and 700
+    identical warnings a poll would bury the signal it exists to raise.
     """
     if not warnings:
         return
     logger.warning(
-        "NJ Transit entity.id / trip_short_name cross-check failed for %d trip(s); first: %s",
+        "NJ Transit trip identity check failed for %d trip(s); first: %s",
         len(warnings),
         warnings[0],
     )

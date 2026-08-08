@@ -136,6 +136,11 @@ HEADER_LAG_RANGE_S = (-5.0, 120.0)
 MIN_CANCELED_TRIPS = 1
 MIN_SKIPPED_WITH_TIMES = 1
 MIN_SKIPPED_BARE = 1
+# ADDED joined the list once a capture proved it exists (36 of them, every one with
+# an empty trip_id). It is the only trap shape whose bytes the decoder's identity
+# chain is built on, so a capture without one retires that evidence; the goldens
+# assert the same floor, since a fixture can arrive past this script.
+MIN_ADDED_TRIPS = 1
 
 # Penn Station New York, the stop every phantom claim is measured at.
 PENN = "109"
@@ -408,6 +413,10 @@ def main() -> int:
     print(f"  CANCELED trips         {shapes['canceled_trips']}")
     print(f"  SKIPPED with times     {shapes['skipped_with_times']}")
     print(f"  SKIPPED bare           {shapes['skipped_bare']}")
+    print(
+        f"  ADDED trips            {shapes['added_trips']} "
+        f"({shapes['added_distinct_entity_ids']} distinct entity.id)"
+    )
     print(f"  calls at Penn ({PENN})     {shapes['penn_calls']}")
     print(f"  PHANTOM calls at Penn  {shapes['phantom_penn_calls']}")
     print(f"  entity.id agreement    {shapes['cross_check_agreement']:.4f}")
@@ -443,6 +452,11 @@ def main() -> int:
         problems.append("no SKIPPED-with-times call in this capture (decoder law 2, 238 at peak)")
     if shapes["skipped_bare"] < MIN_SKIPPED_BARE:
         problems.append("no bare SKIPPED call in this capture (decoder law 2, 35 at peak)")
+    if shapes["added_trips"] < MIN_ADDED_TRIPS:
+        problems.append(
+            "no ADDED trip in this capture, so nothing here pins decoder law 3 or the "
+            "empty-trip_id keying to real bytes; extras run on disrupted evenings"
+        )
 
     alerts_feed = pb.FeedMessage()
     alerts_feed.ParseFromString(alerts_raw)
@@ -478,11 +492,13 @@ def main() -> int:
         f"trip_updates ({join_rate:.4f}) match a trip in this publication's "
         f"{len(_TRIPS)}-trip trips.txt"
     )
-    all_added_empty = all(not t for t in added_ids)
-    print(
-        f"  ADDED, definitionally unjoinable: {len(added_ids)}, all with empty trip_id: "
-        f"{'yes' if all_added_empty else 'no'}"
-    )
+    # "all with empty trip_id: yes" against zero ADDED trips is vacuously true and
+    # reads as a confirmed observation, so a capture with none says so instead.
+    if added_ids:
+        answer = "yes" if all(not t for t in added_ids) else "no"
+    else:
+        answer = "n/a, none in this capture"
+    print(f"  ADDED, definitionally unjoinable: {len(added_ids)}, all with empty trip_id: {answer}")
     # EITHER OF THESE WOULD BE A NEW NJ TRANSIT FACT, so each gets its own line
     # rather than being folded into the rate. An ADDED trip carrying a real
     # trip_id would mean extras are being published against the schedule after
@@ -494,6 +510,18 @@ def main() -> int:
             f"  NOTE: {len(named_added)} ADDED trip(s) carry a NONEMPTY trip_id "
             f"({named_added}). Every ADDED trip in the capture that exposed this had an "
             "empty one; a named extra is a new fact and may mean they can now be joined."
+        )
+    # A THIRD NEW FACT, and the one with a rider-visible cost. Once trip_id is empty
+    # the entity.id is the only identity an extra has, so two extras sharing one
+    # would be two trains the decoder can only tell apart by feed position. It
+    # separates and warns rather than collapsing them, but a capture that contains
+    # the shape should say so out loud rather than leave it to a golden assertion.
+    if shapes["added_trips"] != shapes["added_distinct_entity_ids"]:
+        print(
+            f"  NOTE: {shapes['added_trips']} ADDED trips carry only "
+            f"{shapes['added_distinct_entity_ids']} distinct entity.id values, so some "
+            "extras share the only identity they have. GTFS-RT requires FeedEntity.id to "
+            "be unique within a message; this capture would be the first counterexample."
         )
     unnamed_scheduled = sum(1 for t in claim_scheduled if not t)
     if unnamed_scheduled:

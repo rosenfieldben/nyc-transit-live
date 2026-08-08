@@ -336,12 +336,16 @@ class NjtStop(BaseModel):
 # pollers.py). A consumer must treat these as derived, which is what `status`
 # makes checkable rather than implicit.
 class NjtTrain(BaseModel):
-    id: str  # the trip_id, which the probe measured stable at 100% across polls
+    # The trip_id where there is one (measured stable at 100% across polls), and
+    # "njt:<entity.id>" where there is not, which is every ADDED trip. Never empty:
+    # the decoder's fallback chain is what a consumer keying a map by this relies on.
+    id: str
     trip_id: str
     route_id: str | None
-    # Static headsign when the trip joins 15a's index; for an ADDED trip (never
-    # observed in either probe, handled anyway) this is synthesized from route
-    # plus train number, which is what a departure board would show.
+    # Static headsign when the trip joins 15a's index; for an ADDED trip (36 of them
+    # in the first capture that caught a disrupted evening, all carrying an empty
+    # trip_id) this is synthesized from route plus train number, which is what a
+    # departure board would show.
     headsign: str | None
     train_num: str | None  # trip_short_name == entity.id == the train number
     latitude: float

@@ -183,8 +183,14 @@ def _archive(service_date: str = "20991231") -> bytes:
 IN_FLIGHT = [f"{route}-{index:03d}" for route in ROUTES for index in range(10, 20)]
 
 
-def _trip_updates(trip_ids=None, *, header_ts: float = NOW) -> bytes:
-    """A capture carrying every trap shape the generator's floors require."""
+def _trip_updates(trip_ids=None, *, header_ts: float = NOW, added: int = 2) -> bytes:
+    """A capture carrying every trap shape the generator's floors require.
+
+    ADDED is one of those floors now, so the default carries two extras rather than
+    none: a healthy capture is one a real evening could produce, and every real
+    capture that has caught extras carried dozens. Pass added=0 to build the
+    ADDED-free shape the generator refuses.
+    """
     trip_ids = list(IN_FLIGHT if trip_ids is None else trip_ids)
     feed = pb.FeedMessage()
     feed.header.gtfs_realtime_version = "2.0"
@@ -208,6 +214,7 @@ def _trip_updates(trip_ids=None, *, header_ts: float = NOW) -> bytes:
             if not bare:
                 stu.arrival.time = int(header_ts + offset)
                 stu.departure.time = int(header_ts + offset + 30)
+    _added_entities(feed, added)
     return feed.SerializeToString()
 
 
@@ -280,7 +287,14 @@ def test_a_healthy_capture_writes_a_pair_that_joins(capture):
     # silently measuring.
     assert expected["trains"], "the capture must place trains"
     real_headsigns = {row["trip_headsign"] for row in _rows(static_out / "trips.txt")}
-    for train in expected["trains"]:
+    # The extras are excluded BY KEY rather than by headsign, because excluding them
+    # by "the ones with a synthesized headsign" would be excluding exactly the
+    # failure this asserts. An ADDED trip has no trip_id, so the decoder keys it
+    # "njt:<train number>"; every scheduled trip keys on its real trip_id.
+    scheduled = [t for t in expected["trains"] if not t["trip_id"].startswith("njt:")]
+    assert len(scheduled) < len(expected["trains"]), "the capture carries extras to exclude"
+    assert scheduled, "and scheduled trains to check"
+    for train in scheduled:
         assert train["headsign"] in real_headsigns, (
             f"train {train['trip_id']} has headsign {train['headsign']!r}, which is not one "
             "the static publishes; that is the synthesized fallback and means it did not join"
@@ -417,7 +431,7 @@ def _added_entities(feed, count, *, start=90000, empty_trip_id=True):
 def _capture_with_added(added_count=36, *, empty_trip_id=True):
     """Tonight's shape: every scheduled trip joins, plus N ADDED extras."""
     feed = pb.FeedMessage()
-    feed.ParseFromString(_trip_updates())
+    feed.ParseFromString(_trip_updates(added=0))
     _added_entities(feed, added_count, empty_trip_id=empty_trip_id)
     return feed.SerializeToString()
 
@@ -445,6 +459,26 @@ def test_added_trips_are_excluded_from_the_join_denominator(capture, capsys):
     assert "(1.0000)" in output
     assert "ADDED, definitionally unjoinable: 36, all with empty trip_id: yes" in output
     assert (static_out / "trips.txt").exists(), "and the fixtures are written"
+
+
+def test_a_capture_with_no_extras_is_refused_rather_than_quietly_accepted(capture, capsys):
+    """ADDED became a required trap shape once a capture proved it exists.
+
+    The goldens that pin the empty-trip_id keying to real bytes SKIP when the
+    capture carries no extras, which is right on a quiet night and wrong as the only
+    word on the subject: an ADDED-free recapture would retire decoder law 3's
+    evidence and report nothing. The refusal is what makes that a decision rather
+    than an accident.
+    """
+    code, _out, static_out = capture(tu=_trip_updates(added=0))
+    output = capsys.readouterr().out
+
+    assert code == 1
+    assert "no ADDED trip in this capture" in output
+    assert "ADDED, definitionally unjoinable: 0, all with empty trip_id: n/a" in output, (
+        "and it must not claim the empty-trip_id observation it did not make"
+    )
+    assert not (static_out / "trips.txt").exists(), "nothing is written on a refusal"
 
 
 def test_a_nonempty_trip_id_on_an_added_trip_is_reported_as_a_new_fact(capture, capsys):

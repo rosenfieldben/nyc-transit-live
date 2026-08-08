@@ -151,3 +151,79 @@ advanced timestamp.
 **The three-way alerts split.** `ALERT_FEED_URLS` (every feed), `active_alert_feeds()`
 (the ones polled), `KEYLESS_ALERT_FEEDS` (the ones a GET can reach). No caller reads
 the wrong one. The only defect here was the seeding asymmetry (F7).
+
+---
+
+## Round 4: the empty-`trip_id` decoder audit
+
+Ordered after the third capture refused itself and reported the reason: 164
+trip_updates, 128 joined, 36 ADDED, unmatched sample `['']`. The question put to
+the audit was whether anything keyed by `trip_id` collapses when 36 of them are the
+empty string. Three lenses (the decoder itself, everything downstream of it, and
+the tests), each finding independently re-measured by a second agent instructed to
+refute it.
+
+**The headline answer was no, and the reason is worth writing down: the keying was
+already correct at HEAD.** `"trip_id": trip_id or f"{SYSTEM}:{entity_id}"` predated
+the capture, so 36 extras with distinct `entity.id`s always decoded to 36 distinct
+trains. Verified by mutation against the pristine baseline rather than by reading:
+strip the fallback and the ENTIRE baseline suite stays green — 1185 backend passed,
+27 contract passed — while 36 trains collapse to one key. The correctness was luck.
+Nothing observed it, because every synthetic ADDED trip in the repo carried a
+fabricated NONEMPTY id (`"T-UNKNOWN"`, `"T-BARE"`, `"ADDED-A9"`) and no test
+anywhere built more than one. A collision cannot be seen where a collision cannot
+occur; the tests were not weak, they were incapable. Three separate guesses at a
+field, all wrong in the same direction, is the A4g lesson in its purest form.
+
+**F8 (real, fixed). Two entities sharing one `entity.id` collapse silently.** The
+one case the fallback chain cannot inspect: every step reasons about a single
+entity, so none of them notices a second arriving at the same key. Measured at
+HEAD: 36 ADDED with `trip_id=""` and one shared `entity.id` produce 36 trains, ONE
+distinct id, and ZERO warnings. That is the exact failure the capture-night commit
+was written to prevent, surviving in the corner it could not see. The asymmetry is
+what makes it worth code rather than a comment: an entity with NO identity already
+warned loudly per entity, while two entities claiming ONE identity said nothing,
+and silence is the shape that loses a train. GTFS-RT requires `FeedEntity.id` to be
+unique within a message, so this is a producer violation — and so was the empty
+`trip_id`. Fixed with a `seen` set threaded through `_identity`: the first claimant
+keeps the clean key, a repeat is separated by position and announced. The generator
+reports the shape at capture time as well, since a capture containing it would be
+NJ Transit's third broken promise in this feed and should not wait for a golden to
+say so.
+
+**F9 (real, fixed). The arrivals tie-break preferred rows with no identity.**
+`_trim_njt_arrivals` sorted on `(_still_upcoming(row), row["train_num"] or "")`. A
+train carrying neither a `trip_id` nor an `entity.id` has `train_num` None, and `""`
+precedes every real train number, so on a stop where departures share a minute the
+nameless rows sweep the six-row cap: four unidentified rows measured against eight
+scheduled ones served 4 of 4 nameless and 2 of 8 named, costing Penn six real
+departures. Not a collapse, and the trains themselves survive — it is a loss of
+served rows traceable to empty identity fields, which is the same defect wearing
+different clothes. The sort key is now total and puts both unknowns last, which
+also closes a latent `TypeError` (a timeless row and a timed row at one stop) that
+was unreachable by construction and would have crashed rather than misordered.
+
+**F10 (real, fixed). The only real-bytes ADDED assertion could go silent.**
+`test_golden_captured_added_trips_survive_as_distinct_trains` skips a capture with
+no extras. Defensible on a quiet night, wrong as the last word: an ADDED-free
+recapture would retire decoder law 3's evidence and report nothing, which is the
+dormant-golden failure that burned 13a and 13b. `added_trips >= 1` is now a
+generator refusal and a golden non-vacuity assertion, in step so a fixture cannot
+pass one and fail the other.
+
+**Corrected in the reports themselves, and worth recording because the correction
+is the finding.** One lens dramatized the defect as "35 trains vanish"; the
+verifier measured that `trains` is a plain list and the mutated decoder returns 36
+trains sharing one id. The vanish is real but PROJECTED — it lands in the first
+consumer that keys a map by id, which is the established house pattern
+(`path.js:258`, `buses.js:284`) and does not exist for NJT yet. This matters
+concretely: `assert len(trains) == 36` is non-discriminating, and the set
+cardinality line next to it is the whole assertion.
+
+**Checked and clean.** No structure between the decoder and the HTTP response keys
+by trip identity: `arrivals` and the trim key on `stop_id`, `trains` is a list,
+`_refresh_njt` does no carry-forward or merge, and pydantic dedups nothing (36
+identical-id trains serialize to 36 rows). `njt_static` skips blank `trip_id`s, so
+`trips.get("")` can never falsely join. An extra whose `entity.id` equals a
+scheduled trip's `trip_id` does not collide, because the synthesized key is
+prefixed. Cross-poll identity survives feed reordering.

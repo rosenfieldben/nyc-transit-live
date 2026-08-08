@@ -71,6 +71,15 @@ def test_golden_the_capture_carries_the_trap_shapes_the_law_is_written_about():
     )
     assert shapes["skipped_with_times"] >= 1, "decoder law 2's with-times variant (238 at peak)"
     assert shapes["skipped_bare"] >= 1, "decoder law 2's bare variant (35 at peak)"
+    # ADDED asserted HERE and not only where it is used, because the test that checks
+    # the extras survive as distinct trains SKIPS a capture that carries none. That
+    # skip is right on a quiet night and wrong as the only word on the subject: it
+    # would let an ADDED-free recapture retire decoder law 3's real-bytes evidence
+    # without anyone reading a line about it. A zero fails loudly here instead.
+    assert shapes["added_trips"] >= 1, (
+        "no ADDED trip in the capture, so decoder law 3 and the empty-trip_id keying "
+        "are pinned only by synthetic bytes; recapture on a disrupted evening"
+    )
     # Not a rush-hour capture is a real risk and a quiet one: the probe's own words
     # are that "the overnight numbers are optimistic by roughly 2x".
     assert shapes["trips"] >= 200, (

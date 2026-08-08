@@ -865,6 +865,121 @@ def test_an_entity_with_neither_a_trip_id_nor_an_entity_id_still_cannot_collapse
     assert "neither a trip_id nor an entity.id" in warnings[0]
 
 
+def test_a_nameless_row_does_not_take_a_board_slot_from_a_named_train():
+    """THE TIE-BREAK, which decides who survives the six-row cap when departures
+    share a minute.
+
+    A row whose train carries neither a trip_id nor an entity.id has train_num
+    None. Broken to "" for sorting, it precedes every real train number
+    lexicographically, so at a busy stop the nameless rows sweep the cap and evict
+    named trains from a rider's board: four unidentified rows can cost six real
+    departures at Penn. Unknown identity loses the tie-break rather than winning it.
+
+    The rows themselves are not wrong to be there. Being FIRST is what is wrong.
+    """
+    same_minute = NOW + 300
+    nameless = [
+        _trip(
+            "",
+            "",
+            [
+                ("112", NOW - 30, NOW - 20, None, None),
+                ("109", same_minute, same_minute, None, None),
+            ],
+            route_id="1",
+            trip_relationship=_TRIP_SR.ADDED,
+        )
+        for _ in range(4)
+    ]
+    named = [
+        _trip(
+            f"{3800 + index}",
+            f"T-{3800 + index}",
+            [
+                ("112", NOW - 30, NOW - 20, None, None),
+                ("109", same_minute, same_minute, None, None),
+            ],
+        )
+        for index in range(8)
+    ]
+    _trains, arrivals, _ts, _warnings = _decode(_feed(*nameless, *named))
+    rows = arrivals["109"]
+    assert len(rows) == njt.ARRIVALS_PER_STOP
+    assert all(row["train_num"] for row in rows), (
+        "every slot at a stop this busy belongs to a train a rider can identify"
+    )
+
+
+def test_two_extras_claiming_one_train_number_are_still_two_trains():
+    """THE COLLISION THE FALLBACK CHAIN CANNOT SEE BY ITSELF.
+
+    Every step of the chain reasons about one entity, so none of them notices a
+    SECOND entity arriving at the same key. Once trip_id is empty, entity.id is the
+    only identity an extra has, and two extras claiming one train number key
+    identically: thirty-six trains, one id, and the first consumer to build a map
+    keyed by it shows a rider one train where several are running.
+
+    The asymmetry is what makes this worth a test rather than a comment. An entity
+    with NO identity already warned loudly. Two entities sharing one identity was
+    silent, which is the shape that loses a train quietly. GTFS-RT requires
+    FeedEntity.id to be unique within a message, so this should never fire; the
+    empty trip_id it guards was also something NJ Transit was not supposed to send.
+    """
+    raw = _feed(
+        *[
+            _trip(
+                "9001",
+                "",
+                [
+                    ("112", NOW - 30, NOW - 20, None, None),
+                    ("109", NOW + 300 + index, NOW + 330 + index, None, None),
+                ],
+                route_id="1",
+                trip_relationship=_TRIP_SR.ADDED,
+            )
+            for index in range(4)
+        ]
+    )
+    trains, arrivals, _ts, warnings = _decode(raw)
+    assert len(trains) == 4
+    assert len({train["id"] for train in trains}) == 4, (
+        "four entities claiming one train number are four trains, not one"
+    )
+    assert len({row["trip_id"] for row in arrivals["109"]}) == 4, (
+        "and the board collapses independently of the map, so it is asserted separately"
+    )
+    assert len(warnings) == 3, "the first keeps the clean key; each repeat is announced"
+    assert "repeats the identity 'njt:9001'" in warnings[0]
+    assert trains[0]["id"] == "njt:9001", "the first one in is untouched"
+
+
+def test_a_duplicated_trip_id_cannot_merge_two_scheduled_trains_either():
+    """The same guard on the joinable side, where the key is a real trip_id.
+
+    Not a shape anyone expects from NJ Transit, and cheaper to cover than to argue
+    about: the collision check sits below the whole chain, so it either protects
+    every branch or it is a special case for extras that a reader has to remember.
+    """
+    trains, _arrivals, _ts, warnings = _decode(
+        _feed(
+            *[
+                _trip(
+                    f"380{index}",
+                    "T-3800",
+                    [
+                        ("112", NOW - 240, NOW - 210, None, None),
+                        ("109", NOW + 360 + index, NOW + 390 + index, None, None),
+                    ],
+                )
+                for index in range(2)
+            ]
+        )
+    )
+    assert len({train["id"] for train in trains}) == 2
+    assert len(warnings) == 2, "one cross-check miss for the second train number, one collision"
+    assert any("repeats the identity 'T-3800'" in warning for warning in warnings)
+
+
 def test_a_scheduled_trip_keeps_keying_on_its_trip_id():
     """The control. The fallback chain must not change identity for the 128 of 164
     trips that DO carry a trip_id: those key on it, join the static, and take their

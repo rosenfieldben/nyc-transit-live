@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import importlib.util
 import io
 import sys
 import zipfile
@@ -71,6 +72,16 @@ sys.path.insert(0, str(REPO_ROOT / "backend"))
 import njt_auth  # noqa: E402
 import njt_static  # noqa: E402
 
+# The trim itself lives in a module both generators import, because the REALTIME
+# capture has to be able to re-trim (see njt_fixture_trim's docstring for the
+# defect that forced the extraction). Loaded by path for the same reason the
+# monitor is: scripts/ is not an importable package.
+_TRIM_SPEC = importlib.util.spec_from_file_location(
+    "njt_fixture_trim", Path(__file__).resolve().parent / "njt_fixture_trim.py"
+)
+trim = importlib.util.module_from_spec(_TRIM_SPEC)
+_TRIM_SPEC.loader.exec_module(trim)
+
 OUT_DIR = REPO_ROOT / "backend" / "tests" / "fixtures" / "njt_gtfs"
 
 # Facts probed live 2026-08-05 (overnight 02:37 EDT and rush 18:15 EDT).
@@ -81,16 +92,25 @@ EXPECTED_STOPS = 172
 EXPECTED_STOP_ID_MAX = 176  # ids run 1..176 with gaps; 172 of them exist
 # The two identity stops, checked by NAME as well as presence: this feed's ids are
 # small integers with heavy cross-system collision, so presence alone proves nothing.
-IDENTITY_STOPS = {"109": "New York", "112": "Newark"}
+IDENTITY_STOPS = trim.IDENTITY_STOPS
 EXPECTED_PENN_STOP_CODE = "NY"  # Penn Station New York is FLAT stop 109, stop_code NY
 # Pascack Valley IS a first-class route; Port Jervis is NOT (see below).
 EXPECTED_PASC_ROUTE = ("13", "PASC")
 # The two route ids Port Jervis service runs under, per the probe.
 EXPECTED_PORT_JERVIS_ROUTES = {"5", "6"}
-# The probe counted nine Port Jervis stations. Reported rather than asserted,
-# because "which stops are the Port Jervis ones" is a DERIVED set here (see
-# _port_jervis_stops) and a definitional mismatch would read as feed drift when it
-# is not. A difference is printed loudly for the eyeball step.
+# The probe counted nine Port Jervis stations, BY IDENTITY. Reported rather than
+# asserted, because what this script measures is a different question: the stops
+# nothing outside the line serves (njt_fixture_trim.exclusive_stops). The two
+# disagree by one on a healthy feed, and the one is SUFFERN: trips headsigned
+# "Suffern" terminate there, so it is served by trips outside the line and leaves
+# the exclusive set while remaining a Port Jervis station. Measured on the
+# committed fixture, which reports the other eight.
+#
+# So a difference here is expected rather than alarming, and the same holds for
+# any other station a short-turning or terminating service also reaches. A gap is
+# printed for the eyeball step and says explicitly that it is not a drift signal.
+# A count of ZERO is different and IS a problem, handled at the guard below: it
+# means the trip set has cancelled itself rather than that the line has shrunk.
 PROBED_PORT_JERVIS_STATIONS = 9
 # Members that must be ABSENT. Their absence is a load-bearing fact, not a
 # curiosity: njt_static's validators are built around it, and a feed that starts
@@ -99,8 +119,8 @@ EXPECTED_ABSENT = ("calendar.txt", "feed_info.txt")
 # Present upstream, deliberately not committed.
 EXPECTED_PRESENT_UNPARSED = "shapes.txt"
 
-TRIPS_PER_ROUTE = 2  # enough for a join golden, small enough to stay a trim
-PASC_TRIO = 3  # "the PASC trio": three Pascack-only stations, per the 15a spec
+TRIPS_PER_ROUTE = trim.TRIPS_PER_ROUTE
+PASC_TRIO = trim.PASC_TRIO
 
 
 def _download() -> bytes:
@@ -140,53 +160,6 @@ def _write_rows(name: str, fieldnames: list[str], rows: list[dict]) -> None:
 
 def _get(row: dict, key: str) -> str:
     return (row.get(key) or "").strip()
-
-
-def _port_jervis_stops(
-    trips: list[dict], calls: dict[str, list[dict]]
-) -> tuple[set[str], set[str]]:
-    """(Port Jervis trip ids, the stops ONLY they serve).
-
-    PORT JERVIS HAS NO ROUTE OF ITS OWN. The probe found its service running under
-    the MAIN (6) and BERG (5) route ids, with the Port Jervis identity appearing
-    nowhere in routes.txt and only in trip_headsign. So the trips are found by
-    headsign, which is the only place the feed says it.
-
-    The station set is then the EXCLUSIVE one: stops that no non-Port-Jervis trip
-    calls at. That definition is what makes it stable. Port Jervis trains run down
-    the Main and Bergen County lines to reach Hoboken, so simply taking every stop
-    a Port Jervis trip touches would sweep in most of northern New Jersey; the
-    stops nothing else serves are the west-of-Hudson ones this fixture has to
-    carry, and they are exactly the ones a route-keyed trim would lose.
-    """
-    pj_trips = {
-        _get(trip, "trip_id")
-        for trip in trips
-        if "port jervis" in _get(trip, "trip_headsign").lower()
-    }
-    pj_stops: set[str] = set()
-    other_stops: set[str] = set()
-    for trip_id, trip_calls in calls.items():
-        target = pj_stops if trip_id in pj_trips else other_stops
-        for call in trip_calls:
-            target.add(_get(call, "stop_id"))
-    return pj_trips, pj_stops - other_stops
-
-
-def _exclusive_stops(
-    route_of_trip: dict[str, str], calls: dict[str, list[dict]], route_id: str
-) -> set[str]:
-    """Stops served ONLY by trips on `route_id`. The same exclusivity idea as
-    _port_jervis_stops, applied to a first-class route: Pascack Valley trains also
-    reach Hoboken over shared track, so its own stations are the ones nothing else
-    calls at."""
-    mine: set[str] = set()
-    others: set[str] = set()
-    for trip_id, trip_calls in calls.items():
-        target = mine if route_of_trip.get(trip_id) == route_id else others
-        for call in trip_calls:
-            target.add(_get(call, "stop_id"))
-    return mine - others
 
 
 def main() -> int:  # noqa: C901 - one linear verify-then-trim pass, split would obscure it
@@ -324,31 +297,71 @@ def main() -> int:  # noqa: C901 - one linear verify-then-trim pass, split would
             "number and 15b's second join key (745/745 on the probe); blanks break it"
         )
 
-    pj_trips, pj_stops = _port_jervis_stops(trips, calls)
+    pj_headsigned = {
+        _get(t, "trip_id") for t in trips if "port jervis" in _get(t, "trip_headsign").lower()
+    }
+    pj_trips = trim.port_jervis_trips(trips, calls)
+    pj_stops = trim.exclusive_stops(pj_trips, calls)
+    # THE NINE, derived: the exclusive block plus the junction beside it (see
+    # njt_fixture_trim.west_of_hudson_stops). This is what the trim must carry, and
+    # what the coverage selection below is measured against.
+    west_of_hudson = trim.west_of_hudson_stops(pj_trips, calls)
+    pj_keep, pj_uncovered = trim.select_port_jervis_trips(
+        pj_trips, pj_headsigned, calls, west_of_hudson, route_of_trip
+    )
     pj_routes = {route_of_trip.get(t, "") for t in pj_trips} - {""}
-    print(f"\nPort Jervis: {len(pj_trips)} trips under route ids {sorted(pj_routes)}")
-    print(f"  stations served ONLY by Port Jervis trips: {len(pj_stops)}")
-    for stop_id in sorted(pj_stops, key=lambda s: int(s) if s.isdigit() else 0):
-        print(f"    stop {stop_id}: {_get(stop_by_id.get(stop_id, {}), 'stop_name')!r}")
-    if not pj_trips:
+    print(
+        f"\nPort Jervis: {len(pj_headsigned)} trips headsigned for it, {len(pj_trips)} on the "
+        f"line in both directions, under route ids {sorted(pj_routes)}"
+    )
+    print(f"  stations served by those trips and by nothing else: {len(pj_stops)}")
+    print(f"  west-of-Hudson stations (those plus the junction): {len(west_of_hudson)}")
+    for stop_id in sorted(west_of_hudson, key=lambda s: int(s) if s.isdigit() else 0):
+        marker = " " if stop_id in pj_stops else "*"  # * marks the derived junction
+        print(f"   {marker}stop {stop_id}: {_get(stop_by_id.get(stop_id, {}), 'stop_name')!r}")
+    print(f"  covered by {len(pj_keep)} trip(s) chosen for COVERAGE, not order: {sorted(pj_keep)}")
+    if not pj_headsigned:
         problems.append(
             "no trip headsign names Port Jervis. The identity lives ONLY there, so losing it "
             "means the line is unnameable"
         )
-    if pj_routes and pj_routes != EXPECTED_PORT_JERVIS_ROUTES:
+    if pj_routes and not (pj_routes <= EXPECTED_PORT_JERVIS_ROUTES):
         problems.append(
-            f"Port Jervis trips now run under route ids {sorted(pj_routes)}, expected "
-            f"{sorted(EXPECTED_PORT_JERVIS_ROUTES)}"
+            f"Port Jervis trips now run under route ids {sorted(pj_routes)}, expected a subset "
+            f"of {sorted(EXPECTED_PORT_JERVIS_ROUTES)}"
         )
-    if len(pj_stops) != PROBED_PORT_JERVIS_STATIONS:
-        # REPORTED, NOT FAILED. See PROBED_PORT_JERVIS_STATIONS: the exclusive-set
-        # definition here may legitimately count differently from the probe's nine.
+    if pj_uncovered:
+        # MEASURED, not diagnosed. A station no Port Jervis trip serves on the day
+        # of the run is a fact about the schedule (a closure, a bus substitution, a
+        # capture during a service gap), not necessarily a fault. The mandated-stop
+        # top-up below still forces its stops.txt row in from whatever does serve
+        # it, so the fixture stays complete; the gap is named here for the eyeball.
+        names = [_get(stop_by_id.get(sid, {}), "stop_name") or sid for sid in sorted(pj_uncovered)]
         print(
-            f"  NOTE: the probe counted {PROBED_PORT_JERVIS_STATIONS} Port Jervis stations and "
-            f"this exclusive set has {len(pj_stops)}. Eyeball the names above before committing."
+            f"  NOTE: {len(pj_uncovered)} west-of-Hudson station(s) are served by NO Port "
+            f"Jervis trip in this publication: {names}. The mandated-stop top-up will still "
+            "put their rows in the fixture; eyeball whether the schedule really has a gap."
+        )
+    if len(west_of_hudson) != PROBED_PORT_JERVIS_STATIONS:
+        # REPORTED, NOT FAILED, and the wording matters because the old one implied
+        # drift. These are DIFFERENT MEASUREMENTS of different questions. The probe
+        # counted the line's stations by identity; this counts stops that nothing
+        # outside the line serves, which a train short-turning at Middletown
+        # legitimately shrinks without anything having changed upstream.
+        # This one IS worth a look, because west_of_hudson is derived to match the
+        # probe's count rather than to answer a different question: the exclusive
+        # block plus its junction was nine on the probed publication. A different
+        # number means the line's shape moved, or the junction derivation found a
+        # different boundary, and either is a human's call.
+        print(
+            f"  NOTE: the probe counted {PROBED_PORT_JERVIS_STATIONS} Port Jervis stations "
+            f"and this publication derives {len(west_of_hudson)}. The exclusive set alone is "
+            f"{len(pj_stops)}, which is expected to be one lower: Suffern is a Port Jervis "
+            "station AND the terminus of trips headsigned Suffern, so exclusivity drops it "
+            "and the junction rule puts it back. Eyeball the names above before committing."
         )
 
-    pasc_stops = _exclusive_stops(route_of_trip, calls, EXPECTED_PASC_ROUTE[0])
+    pasc_stops = trim.route_exclusive_stops(route_of_trip, calls, EXPECTED_PASC_ROUTE[0])
     pasc_trio = sorted(pasc_stops, key=lambda s: (int(s) if s.isdigit() else 0, s))[:PASC_TRIO]
     print(
         f"\nPascack Valley (route {EXPECTED_PASC_ROUTE[0]}): {len(pasc_stops)} exclusive stations"
@@ -361,35 +374,19 @@ def main() -> int:  # noqa: C901 - one linear verify-then-trim pass, split would
         )
 
     # --- the trim -----------------------------------------------------------
-    kept_trip_ids: set[str] = set()
-    for route_id, route_trips in sorted(trips_by_route.items()):
-        for trip in sorted(route_trips, key=lambda t: _get(t, "trip_id"))[:TRIPS_PER_ROUTE]:
-            kept_trip_ids.add(_get(trip, "trip_id"))
-    # Port Jervis trips are chosen SEPARATELY from the per-route quota, because
-    # they have no route of their own: without this the per-route pick for 5 and 6
-    # would almost certainly be ordinary Main/Bergen trips and every west-of-Hudson
-    # station would vanish from the fixture.
-    for trip_id in sorted(pj_trips)[:TRIPS_PER_ROUTE]:
-        kept_trip_ids.add(trip_id)
-    # Then top up for any mandated stop nothing kept covers yet.
-    covered = {_get(call, "stop_id") for tid in kept_trip_ids for call in calls.get(tid, [])}
-    for stop_id in list(IDENTITY_STOPS) + sorted(pj_stops) + pasc_trio:
-        if stop_id in covered:
-            continue
-        for trip_id in sorted(calls):
-            if any(_get(call, "stop_id") == stop_id for call in calls[trip_id]):
-                kept_trip_ids.add(trip_id)
-                covered |= {_get(call, "stop_id") for call in calls[trip_id]}
-                break
-
-    kept_trips = sorted(
-        (t for t in trips if _get(t, "trip_id") in kept_trip_ids), key=lambda t: _get(t, "trip_id")
+    # Shared with the realtime generator, which calls the same two functions with a
+    # non-empty extra_trip_ids so the committed pair joins by construction.
+    kept_trip_ids = trim.select_trim(
+        trips=trips,
+        calls=calls,
+        trips_by_route=trips_by_route,
+        pj_keep=pj_keep,
+        mandated_stops=list(IDENTITY_STOPS) + sorted(west_of_hudson) + pasc_trio,
     )
-    kept_stop_ids = {
-        _get(call, "stop_id") for tid in kept_trip_ids for call in calls.get(tid, [])
-    } - {""}
-    kept_stops = [s for s in stops if _get(s, "stop_id") in kept_stop_ids]
-    kept_stop_times = [row for tid in sorted(kept_trip_ids) for row in calls.get(tid, [])]
+    kept_trips, kept_stops, kept_stop_times = trim.apply_trim(
+        trips=trips, stops=stops, calls=calls, kept_trip_ids=kept_trip_ids
+    )
+    kept_stop_ids = {_get(s, "stop_id") for s in kept_stops}
 
     print(
         f"\ntrimmed: {len(kept_trips)} of {len(trips)} trips, {len(kept_stops)} of {len(stops)} "
@@ -404,14 +401,44 @@ def main() -> int:  # noqa: C901 - one linear verify-then-trim pass, split would
     for stop_id in IDENTITY_STOPS:
         if stop_id not in kept_stop_ids:
             problems.append(f"the trim drops identity stop {stop_id}")
-    dropped_pj = sorted(pj_stops - kept_stop_ids)
+    # THE WEST-OF-HUDSON GUARD. Same subtraction it always was, and it is LIVE
+    # again only because pj_stops is no longer empty.
+    #
+    # WHAT MAKES IT NON-VACUOUS IS A PROPERTY OF port_jervis_trips, not of this
+    # line. Every trip in that set calls at one of the terminals the headsigned
+    # trips reach, and by construction no trip outside the set calls at one, so the
+    # terminals are always in (mine - others). pj_stops therefore always contains
+    # at least the line's own terminal, and the subtraction below always has
+    # something to subtract from. Under the old headsign-only set it did not, which
+    # is exactly why this check passed for a phase while protecting nothing.
+    #
+    # AN EARLIER ATTEMPT AT THIS FIX WAS ALSO VACUOUS and is worth recording so the
+    # next person does not repeat it: asking whether the kept Port Jervis trips'
+    # own calls survived cannot fail, because apply_trim keeps every stop of every
+    # kept trip. It read as a stronger check and was a tautology.
+    if pj_headsigned and not pj_stops:
+        problems.append(
+            "trips are headsigned Port Jervis but NO stop is exclusive to the line, which is "
+            "the signature of the trip set cancelling itself against its own return workings "
+            "(see njt_fixture_trim.port_jervis_trips). Every guard below is dead while this "
+            "holds, so it is a problem rather than a note."
+        )
+    dropped_pj = sorted(west_of_hudson - kept_stop_ids)
     if dropped_pj:
-        problems.append(f"the trim drops west-of-Hudson stations: {dropped_pj}")
+        names = [_get(stop_by_id.get(sid, {}), "stop_name") or sid for sid in dropped_pj]
+        problems.append(
+            f"the trim drops west-of-Hudson stations: {names}. The mandated-stop top-up in "
+            "select_trim is supposed to pull in a trip for each of these."
+        )
     dropped_pasc = [s for s in pasc_trio if s not in kept_stop_ids]
     if dropped_pasc:
         problems.append(f"the trim drops Pascack stations: {dropped_pasc}")
-    if not (pj_trips & kept_trip_ids):
-        problems.append("the trim keeps no Port Jervis trip, so the headsign golden has nothing")
+    if not (pj_headsigned & kept_trip_ids):
+        problems.append(
+            "the trim keeps no trip HEADSIGNED Port Jervis, so the headsign golden has nothing. "
+            "Checked against the headsigned set rather than the whole line, because it is the "
+            "headsign the golden reads."
+        )
     dangling = kept_stop_ids - set(stop_by_id)
     if dangling:
         problems.append(f"stop_times reference stops that are not in stops.txt: {sorted(dangling)}")

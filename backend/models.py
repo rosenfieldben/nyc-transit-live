@@ -329,6 +329,79 @@ class NjtStop(BaseModel):
     # would read as an affirmative "not accessible" the feed never published.
 
 
+# NJ Transit Rail realtime (15b). SCHEDULE-DERIVED, never GPS: every position
+# below is computed from the TripUpdates feed's own times against 15a's stop
+# coordinates, because NJ Transit's vehicle positions feed is deliberately not
+# fetched (the reasoning and its numbers are at the poller registry in
+# pollers.py). A consumer must treat these as derived, which is what `status`
+# makes checkable rather than implicit.
+class NjtTrain(BaseModel):
+    # The trip_id where there is one (measured stable at 100% across polls), and
+    # "njt:<entity.id>" where there is not, which is every ADDED trip. Never empty:
+    # the decoder's fallback chain is what a consumer keying a map by this relies on.
+    id: str
+    trip_id: str
+    route_id: str | None
+    # Static headsign when the trip joins 15a's index; for an ADDED trip (36 of them
+    # in the first capture that caught a disrupted evening, all carrying an empty
+    # trip_id) this is synthesized from route plus train number, which is what a
+    # departure board would show.
+    headsign: str | None
+    train_num: str | None  # trip_short_name == entity.id == the train number
+    latitude: float
+    longitude: float
+    # "at-station" while inside the dwell window (arrival <= now < departure),
+    # "approaching" before the first listed stop, "in-transit" on the straight
+    # segment between two stops. The straight segment is this phase's accepted
+    # limit; shape-following is 15c's line-drawing decision.
+    status: str
+    stop_id: str | None  # where it is, or the stop it is heading for
+    stop_name: str | None
+    delay: int | None  # seconds, from the feed; absolute times remain authoritative
+    # Interpolation anchors, so 15c can glide between polls exactly as it does for
+    # every other system. Null while dwelling (there is nothing to glide along).
+    prev_lat: float | None
+    prev_lon: float | None
+    prev_time: float | None
+    next_time: float | None
+
+
+class NjtFeed(BaseModel):
+    fetched_at: float | None
+    feed_timestamp: float | None  # the TripUpdates header time
+    served_at: float  # this response's build time (see cache.py)
+    trains: list[NjtTrain]
+    # Keyed "njt", a single-entry block. A degenerate map for one system is
+    # deliberate rather than a scalar: C2's contract is that a client reads the
+    # same per-system shape from every envelope, and NJ Transit being one system
+    # today is not a reason to make its client code special.
+    systems: dict[str, SystemFreshness] | None = None
+
+
+class NjtArrival(BaseModel):
+    train_num: str | None
+    route_id: str | None
+    headsign: str | None
+    # Both times, because a departure board shows both and the dwell window that
+    # places the train is derived from the pair. Either may be null at an origin
+    # or a terminal; a row where both are null is never emitted.
+    arrival: float | None
+    departure: float | None
+    delay: int | None
+    trip_id: str
+
+
+class NjtStationArrivals(BaseModel):
+    fetched_at: float | None
+    stop_id: str
+    stop_name: str | None
+    # FLAT and chronological, not bucketed by direction or route: every row
+    # carries its own route and headsign, and a board reads by time. CANCELED
+    # trips and SKIPPED stops are already excluded upstream in the decoder, so no
+    # consumer can reconstruct a phantom from this list.
+    arrivals: list[NjtArrival]
+
+
 # NYC Ferry realtime (14b): live GPS boats from the VehiclePositions feed and a
 # per-dock arrivals index from the TripUpdates feed. Both feeds carry an empty
 # route_id, so route_id is recovered by joining trip_id through 14a's static

@@ -65,6 +65,12 @@ SEAM_NAMES = (
     "BUS_RT_URL",
     "ALERTS_RT_BASE",
     "FERRY_ALERTS_URL",
+    # NJ Transit realtime (15b), beside the static and token seams below. Two
+    # more whole URLs rather than a shared base, for the reason the 15a pair
+    # gives: each is consumed by the module that owns it, and a contract scenario
+    # has to be able to fail the TRIP UPDATES feed while alerts keep flowing.
+    "NJT_TU_URL",
+    "NJT_ALERTS_URL",
     # Static archives.
     "SUBWAY_GTFS_URL",
     "RAILROAD_STATIC_BASE",

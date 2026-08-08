@@ -557,15 +557,40 @@ def test_alerts_realtime_undecodable_is_fail():
 
 
 def test_alerts_realtime_default_feeds_include_ferry_and_count_five():
-    # The alerts-realtime check ITERATES ALERT_FEED_URLS rather than hardcoding four,
+    # The alerts-realtime check ITERATES its feed table rather than hardcoding four,
     # so adding "ferry" makes it check the fifth feed and the count in the detail moves
     # to 5. Run with the default (real) feed set, every feed decodable.
-    assert "ferry" in cm.feeds.ALERT_FEED_URLS
+    assert "ferry" in cm.feeds.KEYLESS_ALERT_FEEDS
+    valid = _rt_feed()
+    fetch = FakeFetcher({url: valid for url in cm.feeds.KEYLESS_ALERT_FEEDS.values()})
+    result = cm.check_alerts_realtime(fetch, NO_SLEEP, 1.0)  # default feed_urls
+    assert result.status == cm.PASS
+    assert "5 alert feeds decodable" in result.detail
+
+
+def test_alerts_realtime_never_gets_the_njt_feed_which_only_answers_a_post():
+    """The split named in check_alerts_realtime's docstring, asserted from both
+    sides so it cannot become an accidental gap.
+
+    NJ Transit publishes an alerts feed and this app polls it, so it IS in the
+    production table. But it answers only a POST carrying a token, and this check's
+    fetcher GETs. Pointed at the full table it would report a permanent FAIL
+    against a feed it never spoke to, and (worse, in a pull request context with no
+    credentials) it would reach a live NJ Transit endpoint from a fork.
+
+    The other side of the split lives in check_njt_realtime, which holds the run's
+    one minted token; test_njt_realtime_checks_the_alerts_feed_through_the_door
+    pins that the feed is checked SOMEWHERE, so this exclusion cannot quietly
+    become "nobody checks NJT alerts".
+    """
+    assert "njt" in cm.feeds.ALERT_FEED_URLS, "the app does poll this feed"
+    assert "njt" not in cm.feeds.KEYLESS_ALERT_FEEDS, "but not with a GET"
     valid = _rt_feed()
     fetch = FakeFetcher({url: valid for url in cm.feeds.ALERT_FEED_URLS.values()})
     result = cm.check_alerts_realtime(fetch, NO_SLEEP, 1.0)  # default feed_urls
     assert result.status == cm.PASS
-    assert "5 alert feeds decodable" in result.detail
+    njt_calls = [url for url, _h, _p in fetch.calls if "njtransit" in url]
+    assert njt_calls == [], f"alerts-realtime must not touch an NJT endpoint, got {njt_calls}"
 
 
 # ---------------------------------------------------------------------------
@@ -1477,6 +1502,423 @@ def _check_njt(fetch, now=NJT_NOW, user="rider", password="secret"):
     )
 
 
+# ---------------------------------------------------------------------------
+# NJ Transit realtime (15b): the shared mint, the bands, and the WATCHED ratio
+# ---------------------------------------------------------------------------
+
+NJT_TU = "https://njt.example/getTripUpdates"
+NJT_ALERTS = "https://njt.example/getAlerts"
+
+# The static tables check_njt_realtime joins against, in the shape check_njt_static
+# returns. Three stops so a trip can straddle a middle one.
+NJT_RT_STOPS = {
+    "109": {"id": "109", "name": "New York Penn Station", "lat": 40.750568, "lon": -73.993519},
+    "112": {"id": "112", "name": "Newark Penn Station", "lat": 40.734924, "lon": -74.164581},
+    "38": {"id": "38", "name": "Hoboken", "lat": 40.734984, "lon": -74.027683},
+}
+NJT_RT_TRIPS = {
+    f"T{i}": {"route_id": "1", "headsign": "New York", "short_name": f"{3800 + i}"}
+    for i in range(60)
+}
+NJT_RT_PARSED = {"stops": NJT_RT_STOPS, "trips": NJT_RT_TRIPS}
+
+# 2026-08-06 18:15 EDT, the rush probe's own hour and comfortably inside service.
+NJT_RT_NOW = datetime(2026, 8, 6, 18, 15, tzinfo=feeds.NYC_TZ).timestamp()
+# 03:00 EDT, outside the 05:00-01:30 window.
+NJT_RT_CLOSED = datetime(2026, 8, 6, 3, 0, tzinfo=feeds.NYC_TZ).timestamp()
+
+
+def _njt_tu(
+    count=30,
+    *,
+    header_ts=None,
+    straddling=True,
+    entity_ids=True,
+    prefix="T",
+    canceled=0,
+    canceled_skips_stops=True,
+):
+    """A TripUpdates feed of `count` trips, each with a passed call and a future one.
+
+    `straddling=False` PRUNES the passed calls, which is exactly what "NJ Transit
+    stopped retaining passed stops" looks like on the wire and is the failure the
+    watched ratio exists to catch.
+    """
+    now = NJT_RT_NOW
+    feed = pb.FeedMessage()
+    feed.header.gtfs_realtime_version = "2.0"
+    feed.header.timestamp = int(header_ts if header_ts is not None else now)
+    for i in range(count):
+        entity = feed.entity.add()
+        entity.id = f"{3800 + i}" if entity_ids else f"x{i}"
+        tu = entity.trip_update
+        tu.trip.trip_id = f"{prefix}{i}"
+        tu.trip.route_id = "1"
+        if i < canceled:
+            # The probe's phantom shape: canceled at the trip level, every stop
+            # marked SKIPPED and still carrying full plausible times.
+            tu.trip.schedule_relationship = pb.TripDescriptor.CANCELED
+        calls = [("112", 300)] if not straddling else [("38", -300), ("112", 300)]
+        for seq, (stop_id, offset) in enumerate(calls):
+            stu = tu.stop_time_update.add()
+            stu.stop_sequence = (seq + 1) * 10
+            stu.stop_id = stop_id
+            if i < canceled and canceled_skips_stops:
+                stu.schedule_relationship = pb.TripUpdate.StopTimeUpdate.SKIPPED
+            stu.arrival.time = int(now + offset)
+            stu.departure.time = int(now + offset + 30)
+    return feed.SerializeToString()
+
+
+def _njt_rt_fetch(**overrides):
+    mapping = {
+        NJT_TOKEN: _njt_token(),
+        NJT_TU: _njt_tu(),
+        NJT_ALERTS: _rt_feed(),
+    }
+    mapping.update(overrides)
+    return FakeFetcher(mapping)
+
+
+def _check_njt_rt(fetch, now=NJT_RT_NOW, parsed=NJT_RT_PARSED, user="rider", password="secret"):
+    return cm.check_njt_realtime(
+        fetch,
+        NO_SLEEP,
+        now,
+        parsed,
+        user,
+        password,
+        token_url=NJT_TOKEN,
+        tu_url=NJT_TU,
+        alerts_url=NJT_ALERTS,
+    )
+
+
+def test_njt_realtime_skipped_without_credentials():
+    """The same WARN-skip check_njt_static and check_bus_realtime take, and the
+    same reason it must reach NO endpoint: every fork and pull request context
+    arrives here with the secrets resolved to empty strings."""
+    fetch = FakeFetcher({})
+    result = _check_njt_rt(fetch, user="", password="")
+    assert result.status == cm.WARN
+    assert "not set" in result.detail
+    assert not fetch.calls, "credentials-absent must reach no NJ Transit endpoint at all"
+
+
+def test_njt_realtime_placeholder_credentials_are_treated_as_absent():
+    """The .env.example values copied verbatim. Re-deriving "configured" as a
+    truthiness test would send a doomed mint to the live endpoint on every run."""
+    result = _check_njt_rt(FakeFetcher({}), user="your-njt-username", password="your-njt-password")
+    assert result.status == cm.WARN
+
+
+def test_njt_realtime_healthy_passes_with_exactly_one_mint():
+    fetch = _njt_rt_fetch()
+    result = _check_njt_rt(fetch)
+    assert result.status == cm.PASS, result.detail
+    assert "30 trip updates" in result.detail
+    assert "in service" in result.detail
+    mints = [url for url, _h, _p in fetch.calls if url == NJT_TOKEN]
+    assert len(mints) == 1, f"one mint per check, got {len(mints)}"
+    # The token rode as a FORM FIELD on both realtime POSTs, which is the only
+    # shape RailData answers.
+    posted = [f for f in fetch.forms if f and "token" in f]
+    assert len(posted) == 2, "both trip updates and alerts POST behind the token"
+
+
+def test_njt_realtime_a_down_feed_fails():
+    assert _check_njt_rt(_njt_rt_fetch(**{NJT_TU: 503})).status == cm.FAIL
+    assert _check_njt_rt(_njt_rt_fetch(**{NJT_ALERTS: 503})).status == cm.FAIL
+
+
+def test_njt_realtime_undecodable_trip_updates_fail():
+    result = _check_njt_rt(_njt_rt_fetch(**{NJT_TU: b"not-a-protobuf"}))
+    assert result.status == cm.FAIL
+    assert "undecodable" in result.detail
+
+
+def test_njt_realtime_checks_the_alerts_feed_through_the_door():
+    """THE OTHER HALF of check_alerts_realtime's deliberate exclusion.
+
+    That check cannot reach this feed (its fetcher GETs; this endpoint answers
+    only a POST carrying a token), so the exclusion is only safe if SOMEBODY
+    checks it. This is that somebody, and this test is what stops the split from
+    decaying into a gap: an undecodable alerts body has to fail HERE.
+    """
+    result = _check_njt_rt(_njt_rt_fetch(**{NJT_ALERTS: b"not-a-protobuf-\xff"}))
+    assert result.status == cm.FAIL
+    assert "alerts undecodable" in result.detail
+    assert "njt" not in cm.feeds.KEYLESS_ALERT_FEEDS, "and the GET check still excludes it"
+
+
+def test_njt_realtime_empty_feed_is_a_warn_in_service_and_fine_when_closed():
+    """Decoder law 6's 13-byte valid feed, judged against the clock.
+
+    Zero trains at 03:00 is the correct answer, so an empty feed outside service
+    hours is a PASS. Inside them it means trains that should be running are not
+    being published, which is worth a look and deliberately not a page.
+    """
+    empty = _rt_feed(header_ts=NJT_RT_NOW)
+    assert _check_njt_rt(_njt_rt_fetch(**{NJT_TU: empty})).status == cm.WARN
+
+    closed = _rt_feed(header_ts=NJT_RT_CLOSED)
+    result = _check_njt_rt(_njt_rt_fetch(**{NJT_TU: closed}), now=NJT_RT_CLOSED)
+    assert result.status == cm.PASS
+    assert "closed" in result.detail
+
+
+def test_njt_realtime_header_lag_bands():
+    """The two edges derived from the PEAK probe (9s to 23s observed), never the
+    overnight sample the probe called optimistic by roughly 2x."""
+    fresh = _njt_tu(header_ts=NJT_RT_NOW - 20)  # inside the worst observed peak lag
+    assert _check_njt_rt(_njt_rt_fetch(**{NJT_TU: fresh})).status == cm.PASS
+
+    lagging = _njt_tu(header_ts=NJT_RT_NOW - 200)
+    result = _check_njt_rt(_njt_rt_fetch(**{NJT_TU: lagging}))
+    assert result.status == cm.WARN
+    assert "behind" in result.detail
+
+    dead = _njt_tu(header_ts=NJT_RT_NOW - 900)
+    assert _check_njt_rt(_njt_rt_fetch(**{NJT_TU: dead})).status == cm.FAIL
+
+
+def test_njt_realtime_warns_when_the_feed_stops_retaining_passed_stops():
+    """DIRECTIVE 1, AND THE POINT OF THIS WHOLE CHECK.
+
+    feeds.njt._place assumes this feed RETAINS ALREADY-PASSED STOPS; placement is
+    built on it and neither probe measured it directly. If NJ Transit ever starts
+    pruning them, every running train arrives at the not-yet-departed branch where
+    MAX_FUTURE_FIRST_STOP_S (180s) drops anything further out than three minutes,
+    and the map thins out while the boards stay full.
+
+    THE SIGNATURE IS ZERO STRADDLING TRIPS in a busy feed, and that needs no
+    invented percentage: a trip with a call behind and a call ahead is the feed's
+    own statement that the train is running this minute, so a feed full of trips
+    where NONE straddles has stopped saying where trains have been.
+
+    A detectable failure signature belongs to the monitor, not to a future rider's
+    confusion.
+    """
+    pruned = _njt_tu(count=30, straddling=False)
+    result = _check_njt_rt(_njt_rt_fetch(**{NJT_TU: pruned}))
+    assert result.status == cm.WARN, result.detail
+    assert "retaining passed stops" in result.detail
+    assert "_place" in result.detail or "njt._place" in result.detail
+
+
+def test_njt_realtime_warns_when_running_trips_stop_being_placed(monkeypatch):
+    """The second half of the watched ratio: trips the feed says are running that
+    the decoder did not place.
+
+    THIS IS DRIVEN BY MONKEYPATCHING THE DECODER, and that is the finding rather
+    than a shortcut. Once the denominator drops exactly what the decoder drops (see
+    the test below), there is NO well-formed feed that straddles `now` and fails to
+    place: a call behind and a call ahead, both at known stops, both carrying
+    times, lands in _place's dwelling case or its interpolate-between case, always.
+    That unreachability IS NJT_PLACEMENT_FLOOR's derivation, stated as a test
+    rather than only as a comment.
+
+    So what this branch guards is not an input, it is a REGRESSION: a future change
+    to _place that starts dropping running trains. Simulating that directly is the
+    only honest way to exercise it, and the 95% floor is the headroom that keeps an
+    ordinary poll from tripping it.
+    """
+    real = cm.njt_feed.decode_njt_trip_updates
+
+    def half(*args, **kwargs):
+        trains, arrivals, ts, warnings = real(*args, **kwargs)
+        return trains[: len(trains) // 2], arrivals, ts, warnings
+
+    monkeypatch.setattr(cm.njt_feed, "decode_njt_trip_updates", half)
+    result = _check_njt_rt(_njt_rt_fetch())
+    assert result.status == cm.WARN, result.detail
+    assert "running trips placed" in result.detail
+    assert "15/30" in result.detail, result.detail
+
+
+def test_the_straddling_denominator_drops_exactly_what_the_decoder_drops(monkeypatch):
+    """THE RATIO'S TWO SIDES MUST FILTER IDENTICALLY, or the WARN is arithmetic
+    rather than news.
+
+    NJT_PLACEMENT_FLOOR's derivation claims the healthy placement rate is 1.0 "by
+    construction, not an estimate". That is only true if the denominator drops the
+    same calls feeds.njt._ordered_calls does, and it drops a call for EITHER an
+    unknown stop_id or a relationship in _DROP_STOP_RELATIONSHIPS, which is SKIPPED
+    AND NO_DATA.
+
+    Both mismatches are reachable on real bytes. njt_static drops a stops.txt row
+    whose coordinates will not parse, so the realtime feed can name a stop the
+    static table lacks; and this producer's habit is relationships that still carry
+    times (238 SKIPPED-with-times a peak poll), so a NO_DATA with times is its
+    shape, not a hypothetical. Either one used to be counted as running here and
+    dropped by the decoder, pushing the ratio under the floor and blaming an
+    assumption that had not changed.
+    """
+    now = NJT_RT_NOW
+    feed = pb.FeedMessage()
+    feed.header.gtfs_realtime_version = "2.0"
+    feed.header.timestamp = int(now)
+
+    def add(trip_id, stop_behind, rel=None):
+        entity = feed.entity.add()
+        entity.id = trip_id
+        tu = entity.trip_update
+        tu.trip.trip_id = trip_id
+        for stop_id, offset in ((stop_behind, -300), ("109", 300)):
+            stu = tu.stop_time_update.add()
+            stu.stop_id = stop_id
+            if stop_id == stop_behind and rel is not None:
+                stu.schedule_relationship = rel
+            stu.arrival.time = int(now + offset)
+            stu.departure.time = int(now + offset + 30)
+
+    add("RUNNING", "112")  # the control: a real straddle
+    add("UNKNOWN_STOP", "99999")  # behind-call at a stop the static does not have
+    add("NO_DATA", "112", pb.TripUpdate.StopTimeUpdate.NO_DATA)
+    add("SKIPPED", "112", pb.TripUpdate.StopTimeUpdate.SKIPPED)
+
+    straddling = cm._njt_straddling_trips(feed, now, NJT_RT_STOPS)
+    assert straddling == {"RUNNING"}, (
+        f"only the trip with a usable call behind it is running; got {sorted(straddling)}"
+    )
+    # And the decoder agrees, which is the whole claim: same input, same drops.
+    trains, _arrivals, _ts, _w = cm.njt_feed.decode_njt_trip_updates(
+        feed.SerializeToString(), NJT_RT_STOPS, NJT_RT_TRIPS, now
+    )
+    placed = {t["trip_id"] for t in trains} & straddling
+    assert placed == {"RUNNING"}, (
+        "every trip the monitor calls running must be one the decoder places, or the "
+        f"ratio warns about its own arithmetic; placed {sorted(placed)}"
+    )
+
+
+def test_njt_realtime_does_not_judge_placement_on_a_thin_feed():
+    """Below NJT_MIN_TRIPS_FOR_RATIO the ratio is not computed at all: a quiet
+    stretch must not produce a percentage derived from three trips."""
+    thin = _njt_tu(count=3, straddling=False)
+    result = _check_njt_rt(_njt_rt_fetch(**{NJT_TU: thin}))
+    assert result.status == cm.PASS, result.detail
+
+
+def test_njt_realtime_does_not_judge_placement_without_the_static_tables():
+    """A failed static check must not surface as a realtime placement WARN. Its
+    own result already says why the archive is unavailable, and blaming the
+    realtime feed for it would point the reader at the wrong upstream."""
+    result = _check_njt_rt(_njt_rt_fetch(), parsed=None)
+    assert result.status == cm.PASS
+    assert "placement not checked" in result.detail
+
+
+def test_njt_realtime_warns_on_entity_id_cross_check_drift():
+    """The 745-of-745 agreement feeds.njt._identity is built on. Nothing is served
+    wrong when it drifts, so this is a WARN; but a drift that STARTS is worth a
+    human deciding about rather than a log line nobody reads."""
+    drifted = _njt_tu(count=30, entity_ids=False)
+    result = _check_njt_rt(_njt_rt_fetch(**{NJT_TU: drifted}))
+    assert result.status == cm.WARN
+    assert "entity.id" in result.detail
+
+
+@pytest.mark.parametrize(
+    "hour,minute,expected",
+    [
+        (5, 0, True),  # first trains, the window opens
+        (12, 0, True),
+        (18, 15, True),  # the rush probe's hour
+        (1, 30, True),  # last trains still reaching terminals, past midnight
+        (3, 0, False),  # the quiet middle
+        (4, 59, False),
+    ],
+)
+def test_njt_service_hours_wrap_midnight(hour, minute, expected):
+    """The window is 05:00 to 01:30 and therefore WRAPS, unlike the ferry's. A
+    simple start <= t <= end test would call 01:30 closed while the last trains
+    are still running and 03:00 in service while nothing is."""
+    when = datetime(2026, 8, 6, hour, minute, tzinfo=feeds.NYC_TZ).timestamp()
+    assert cm._in_njt_service_hours(when, feeds.NYC_TZ) is expected
+
+
+def test_run_all_mints_exactly_one_token_for_both_njt_checks():
+    """THE CONSERVATION CLAIM, made where it actually has to hold: run_all.
+
+    By 15b three RailData consumers run in one pass (the static archive, the
+    realtime trip updates, and the realtime alerts). Minting is rate-limited below
+    the data cap, the limit is unpublished, and tokens are product-scoped so we
+    cannot read our own usage. A wiring mistake that let each check mint its own
+    would leave every check PASSING and quietly triple what the 6-hourly schedule
+    spends, which is exactly the kind of defect no per-check test can see.
+
+    Asserted against run_all rather than either check, because run_all is the only
+    place the sharing is expressed.
+    """
+    calls = []
+
+    def fetch(url, headers=None, params=None, files=None):
+        calls.append(url)
+        if url == cm.njt_auth.NJT_TOKEN_URL:
+            return cm.FetchResult(200, _njt_token())
+        if url == cm.njt_static.NJT_STATIC_URL:
+            return cm.FetchResult(200, _njt_zip())
+        if url == cm.njt_feed.NJT_TU_URL:
+            # A PREFIX THAT CANNOT COLLIDE with the 15a archive fixture, which knows
+            # exactly one trip (T1, short name 3800). A colliding id carrying a
+            # different short name would raise the entity.id cross-check WARN, which
+            # would be the check working correctly and would say nothing about the
+            # mint arithmetic this test is here for.
+            return cm.FetchResult(200, _njt_tu(prefix="X"))
+        if url == cm.njt_feed.NJT_ALERTS_URL:
+            return cm.FetchResult(200, _rt_feed())
+        # Every other upstream fails; this test is only about the mint count.
+        return cm.FetchResult(500, b"")
+
+    results = cm.run_all(
+        fetch,
+        NO_SLEEP,
+        NJT_RT_NOW,
+        env={
+            "NJT_USERNAME": "rider",
+            "NJT_PASSWORD": "secret",
+            "MONITOR_SKIP_PRODUCTION": "1",
+        },
+    )
+    mints = [url for url in calls if url == cm.njt_auth.NJT_TOKEN_URL]
+    assert len(mints) == 1, (
+        f"one token for the whole run, got {len(mints)}. Each NJ Transit check "
+        "minting its own would pass every other test here and triple what the "
+        "schedule spends against an unpublished cap."
+    )
+    # Non-vacuous: all three consumers really did fetch behind that one token.
+    assert cm.njt_static.NJT_STATIC_URL in calls
+    assert cm.njt_feed.NJT_TU_URL in calls
+    assert cm.njt_feed.NJT_ALERTS_URL in calls
+    by_name = {r.name: r for r in results}
+    assert by_name["njt-static"].status == cm.PASS, by_name["njt-static"].detail
+    assert by_name["njt-realtime"].status == cm.PASS, by_name["njt-realtime"].detail
+
+
+def test_run_all_does_not_mint_at_all_without_credentials():
+    """The other side: a run with no credentials must not POST getToken even once.
+
+    _NjtToken is built lazily precisely so this holds. Both checks WARN-skip before
+    reaching it, which is what keeps a fork or pull request context, where GitHub
+    resolves an unavailable secret to an empty string, from touching NJ Transit.
+    """
+    fetch = FakeFetcher({})
+    fetch.mapping = {}
+
+    def permissive(url, headers=None, params=None, files=None):
+        fetch.calls.append((url, headers, params))
+        fetch.forms.append(files)
+        return cm.FetchResult(500, b"")
+
+    results = cm.run_all(permissive, NO_SLEEP, NJT_RT_NOW, env={"MONITOR_SKIP_PRODUCTION": "1"})
+    njt_calls = [url for url, _h, _p in fetch.calls if "njt" in url.lower()]
+    assert njt_calls == [], f"no credentials must mean no NJ Transit traffic, got {njt_calls}"
+    by_name = {r.name: r for r in results}
+    assert by_name["njt-static"].status == cm.WARN
+    assert by_name["njt-realtime"].status == cm.WARN
+
+
 def test_production_reports_a_dark_njt_layer():
     """THE ONLY PLACE A DARK NJ TRANSIT LAYER IS VISIBLE, so it gets its own test.
 
@@ -1898,6 +2340,7 @@ def test_run_all_is_hermetic_and_names_every_check():
         "path-realtime",
         "ferry-realtime",
         "alerts-realtime",
+        "njt-realtime",
         "bus-realtime",
         "production",
     ):

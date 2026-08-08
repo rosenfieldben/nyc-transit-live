@@ -53,6 +53,7 @@ from cache import (
 from feeds import (
     ALERT_RETENTION_MAX_S,
     fetch_ferry_data,
+    fetch_njt_trains,
     fetch_path_trains,
     fetch_railroad_trains,
     fetch_service_alerts,
@@ -66,6 +67,7 @@ from pollers import (
     _refresh_alerts,
     _refresh_buses,
     _refresh_ferry,
+    _refresh_njt,
     _refresh_path,
     _refresh_railroads,
     _refresh_subways,
@@ -261,6 +263,11 @@ async def lifespan(app: FastAPI):
     # network at all, and that is a configuration choice rather than an outage, so
     # it never wears "failed" (see warmups._warm_njt_static).
     app.state.njt_static_status = "loading"
+    # 15b realtime: the per-stop arrivals index each successful NJT poll rebuilds,
+    # and the single-feed health block /api/status reads. Its own fields, never
+    # merged: NJT ids collide with MTA, PATH and ferry ids.
+    app.state.njt_arrivals = {}
+    app.state.njt_feed_health = None
     # AirTrain JFK is a committed static fixture (data/airtrain_jfk.json), not a
     # network download, so it loads SYNCHRONOUSLY here and is ready the instant the
     # server accepts requests (no warmup task, no "loading" state, no 503). Loading
@@ -273,6 +280,7 @@ async def lifespan(app: FastAPI):
         "railroads": _fresh_entry(),
         "path": _fresh_entry(),
         "ferry": _fresh_entry(),
+        "njt": _fresh_entry(),
     }
     # Active service-alerts index, refreshed by its own slower poll (_poll_alerts).
     app.state.alerts_cache = _fresh_alerts_entry()
@@ -464,6 +472,7 @@ __all__ = [
     "fetch_railroad_trains",
     "fetch_path_trains",
     "fetch_ferry_data",
+    "fetch_njt_trains",
     "fetch_service_alerts",
     "new_path_identity_state",
     "load_subway_stops",
@@ -489,6 +498,7 @@ __all__ = [
     "_refresh_railroads",
     "_refresh_path",
     "_refresh_ferry",
+    "_refresh_njt",
     "_refresh_alerts",
     "_poll_feeds",
     "_poll_alerts",

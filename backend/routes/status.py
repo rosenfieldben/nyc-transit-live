@@ -11,7 +11,17 @@ import bus_static
 import static_data
 import static_shared
 from cache import FEED_STALE_AFTER_S, _feed_age
-from models import AlertFeed, StatusResponse
+from models import (
+    HEALTH_BUS_INDEX_FAILED,
+    HEALTH_FEED_CONTENT_STALE,
+    HEALTH_GATING_CODES,
+    HEALTH_NO_FEED_FRESH,
+    HEALTH_SUBWAY_GROUPS_DOWN,
+    HEALTH_SUBWAY_STATIC_FAILED,
+    AlertFeed,
+    HealthzResponse,
+    StatusResponse,
+)
 
 router = APIRouter()
 
@@ -167,6 +177,105 @@ async def get_status(request: Request, response: Response) -> dict:
     }
 
 
+# The prose each gating code contributes to `reasons`. Verbatim from before F1:
+# these strings are what a deploy log has said for two years, and the codes exist
+# so nothing has to parse them.
+_HEALTH_REASONS = {
+    HEALTH_NO_FEED_FRESH: "no feed has fresh data",
+    HEALTH_BUS_INDEX_FAILED: "bus route index failed to build",
+    HEALTH_SUBWAY_STATIC_FAILED: "subway static GTFS failed to load",
+}
+
+
+def _health_codes(
+    *,
+    cache: dict,
+    bus_index_status: str,
+    subway_static_status: str | None,
+    subway_feed_health: dict | None,
+    now: float,
+) -> list[str]:
+    """Every degraded classification true of this instance right now, as codes.
+
+    Pure and injected so the bands are testable without a client or a clock, the
+    same shape the contract monitor's checks use. Returns codes in a fixed order
+    so two probes of an unchanged instance compare equal.
+
+    A feed is fresh if it has data AND neither (a) the upstream content was stale
+    at the last poll (feed_age; unknown is tolerated, having data beats penalizing
+    a missing timestamp) nor (b) the poll loop has stalled (now - fetched_at).
+    The poll-age term catches a stuck poller that keeps serving frozen last-good
+    data, which feed_age alone cannot see. Both use server-recorded times, so no
+    clock skew. The `<` boundary matches the frontend (helpers.js flags at
+    age >= FEED_STALE_AFTER_S).
+    """
+    codes: list[str] = []
+    fresh, content_stale = [], []
+    for name, entry in cache.items():
+        if entry["data"] is None:
+            continue
+        feed_age = _feed_age(entry)
+        upstream_ok = feed_age is None or feed_age < FEED_STALE_AFTER_S
+        if not upstream_ok:
+            content_stale.append(name)
+        poll_ok = (now - entry["fetched_at"]) < FEED_STALE_AFTER_S
+        if upstream_ok and poll_ok:
+            fresh.append(name)
+    if not fresh:
+        codes.append(HEALTH_NO_FEED_FRESH)
+    if bus_index_status == "failed":
+        codes.append(HEALTH_BUS_INDEX_FAILED)
+    # A failed subway static load is degraded (symmetric with the bus index), but
+    # it retries in the background, so this clears once a retry succeeds. "loading"
+    # is not degraded (cold-start warmup). Railroad static is intentionally omitted
+    # (its failure is a lenient GPS-only degradation, per the handler docstring).
+    if subway_static_status == "failed":
+        codes.append(HEALTH_SUBWAY_STATIC_FAILED)
+
+    # NEW WITH F1, AND NOT A REASON TO 503. One endpoint serving content that is
+    # lagging is a real degradation a human should see, and a terrible trigger for
+    # a container restart: the upstream is what is late, and a fresh process would
+    # be exactly as late. Note the granularity this reports at, because it is not
+    # the obvious one: feed_cache is keyed per ENDPOINT (subways, railroads, path,
+    # ferry, buses), so this names an endpoint and never a subway line group. One
+    # frozen group still reaches here, because feeds/subway.py folds the eight
+    # group headers with min() and hands the cache the OLDEST of them.
+    if content_stale:
+        codes.append(HEALTH_FEED_CONTENT_STALE)
+
+    # ALSO NEW, ALSO NOT A REASON TO 503, and the one place a threshold had to be
+    # chosen rather than reused. The app carries no notion of "most groups": the
+    # contract monitor's own _evaluate_subway bands on all-vs-some, which is the
+    # house precedent and is deliberately not what this does. All-vs-some is right
+    # for the monitor, which is reading the eight upstreams directly and can call a
+    # single dead group a WARN. It is wrong here, because this is the only signal
+    # that survives to something which watches: below a majority the map still
+    # draws most lines and a single flapping group every six hours is how a monitor
+    # gets muted, while above it a rider sees a mostly empty map and the probe
+    # still answers 200.
+    if _most_subway_groups_down(subway_feed_health):
+        codes.append(HEALTH_SUBWAY_GROUPS_DOWN)
+    return codes
+
+
+def _most_subway_groups_down(health: dict | None) -> bool:
+    """True when a strict majority of the subway feed groups failed their last poll.
+
+    Typed defensively because this reads app.state, which is None before the first
+    poll and could carry a partly-built shape during one; a health block that
+    cannot be read is NOT reported as an outage, since "I do not know" and "most of
+    the subway is down" are different answers and only one of them is alarming.
+    """
+    if not isinstance(health, dict):
+        return False
+    total, ok = health.get("total"), health.get("ok")
+    if not isinstance(total, int) or isinstance(total, bool) or total <= 0:
+        return False
+    if not isinstance(ok, int) or isinstance(ok, bool) or ok < 0:
+        return False
+    return (total - ok) * 2 > total
+
+
 @router.get("/healthz", include_in_schema=False)
 async def healthz(request: Request) -> JSONResponse:
     """Readiness probe for the platform (Railway points its healthcheck here).
@@ -182,37 +291,25 @@ async def healthz(request: Request) -> JSONResponse:
     healthcheckTimeout) instead of flapping; the failed states, which retry,
     surface until a retry succeeds. Railroad static failure is deliberately NOT a
     reason: a system whose static did not load degrades to GPS-only (still useful)
-    rather than taking the probe down, matching its lenient per-system loading."""
+    rather than taking the probe down, matching its lenient per-system loading.
+
+    THE STATUS CODE AND THE CLASSIFICATION ARE TWO DIFFERENT ANSWERS since F1.
+    `status`/`reasons`/503 mean what they always meant, "should traffic come
+    here", because Railway restarts a container on a failing healthcheck and a
+    lagging upstream is not something a fresh process fixes. `degraded` means "is
+    this instance sick", is a superset of the gating reasons, and is what the
+    contract monitor reads: before F1 the monitor probed only /api/status and
+    could tell that production was dead but never that it was ill."""
     app = request.app
-    reasons: list[str] = []
     now = time.time()
-    cache = getattr(app.state, "feed_cache", {})
-    # A feed is fresh if it has data AND neither (a) the upstream content was
-    # stale at the last poll (feed_age; unknown is tolerated — having data beats
-    # penalizing a missing timestamp) nor (b) the poll loop has stalled
-    # (now - fetched_at). The poll-age term catches a stuck poller that keeps
-    # serving frozen last-good data, which feed_age alone can't see. Both use
-    # server-recorded times, so no clock skew. The `<` boundary matches the
-    # frontend (helpers.js flags at age >= FEED_STALE_AFTER_S).
-    fresh = []
-    for name, entry in cache.items():
-        if entry["data"] is None:
-            continue
-        feed_age = _feed_age(entry)
-        upstream_ok = feed_age is None or feed_age < FEED_STALE_AFTER_S
-        poll_ok = (now - entry["fetched_at"]) < FEED_STALE_AFTER_S
-        if upstream_ok and poll_ok:
-            fresh.append(name)
-    if not fresh:
-        reasons.append("no feed has fresh data")
-    if bus_static.status() == "failed":
-        reasons.append("bus route index failed to build")
-    # A failed subway static load is degraded (symmetric with the bus index), but
-    # it retries in the background, so this clears once a retry succeeds. "loading"
-    # is not degraded (cold-start warmup). Railroad static is intentionally omitted
-    # (its failure is a lenient GPS-only degradation, per the docstring).
-    if getattr(app.state, "subway_static_status", None) == "failed":
-        reasons.append("subway static GTFS failed to load")
+    codes = _health_codes(
+        cache=getattr(app.state, "feed_cache", {}),
+        bus_index_status=bus_static.status(),
+        subway_static_status=getattr(app.state, "subway_static_status", None),
+        subway_feed_health=getattr(app.state, "subway_feed_health", None),
+        now=now,
+    )
+    reasons = [_HEALTH_REASONS[code] for code in codes if code in HEALTH_GATING_CODES]
     # The service-alerts feed is deliberately NOT a health input. Alerts are a
     # decorative overlay (like railroad static): an alert-feed outage degrades only
     # the alerts layer and must not fail the readiness probe that gates the whole
@@ -227,7 +324,14 @@ async def healthz(request: Request) -> JSONResponse:
     # every instance identically, so there is no healthier instance to fail over
     # to); per-feed detail stays visible in /api/status regardless.
 
-    body: dict = {"status": "fail" if reasons else "pass"}
-    if reasons:
-        body["reasons"] = reasons
+    body = HealthzResponse(
+        status="fail" if reasons else "pass", reasons=reasons, degraded=codes
+    ).model_dump()
+    # `reasons` omitted when empty, byte-identical to the pre-F1 healthy body.
+    # `degraded` is NOT omitted when empty: a watcher has to be able to tell "this
+    # deployment classified itself and found nothing" from "this deployment is too
+    # old to classify itself", and an absent key is the only way the second one can
+    # announce itself.
+    if not reasons:
+        body.pop("reasons")
     return JSONResponse(body, status_code=503 if reasons else 200)

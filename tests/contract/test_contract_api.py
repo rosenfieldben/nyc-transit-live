@@ -17,6 +17,7 @@ from __future__ import annotations
 import time
 
 from conftest import CONTRACT_TIMING
+from upstream_sim import SUBWAY_GROUPS
 
 
 def _system(body: dict, name: str) -> dict:
@@ -700,3 +701,126 @@ def test_a_real_njt_500_neither_mints_nor_heals(harness):
         assert app.status()["njt_static"] == "failed"
         assert app.status()["static_archives"]["njt"]["failed_downloads"] >= 1
         assert app.get("/api/subway-stops"), "one failing system must not take the app down"
+
+
+# ---------------------------------------------------------------------------
+# F1: the degraded states a monitor probing only /api/status could not see
+# ---------------------------------------------------------------------------
+#
+# The audit's HIGH finding: the 6-hourly contract monitor probed /api/status and
+# exited 0 through every one of these, so it could tell that production was dead
+# but never that it was sick. The classification now lives in /healthz beside the
+# state it judges, and these scenarios drive a REAL app into each state and read
+# what the probe says about it. The monitor's side of the same wire is pinned
+# hermetically in backend/tests/test_contract_monitor.py; what cannot be faked is
+# whether the app actually enters the state, which is what this tier is for.
+
+
+def test_healthz_publishes_nothing_degraded_when_the_app_is_healthy(contract_app):
+    """THE GREEN PATH, and it is load-bearing rather than a formality: every
+    scenario below asserts a code is PRESENT, and a probe that reported every code
+    always would satisfy all of them. A monitor that fails on a healthy deployment
+    gets muted within two weeks, which costs more than the blindness it replaced.
+    """
+    app = contract_app
+    app.await_status(lambda s: (s.get("subway_feeds") or {}).get("ok", 0) > 0, "the first poll")
+    body = app.await_healthz(lambda h: h.get("status") == "pass", "a healthy readiness probe")
+    assert body["degraded"] == [], f"a healthy app must report nothing degraded, got {body}"
+    assert "reasons" not in body
+
+
+def test_a_failed_bus_route_index_reaches_healthz(harness):
+    """Every borough zip corrupt, so the index build fails outright.
+
+    Visible at /api/status all along as bus_route_index.status, and the monitor
+    never read that key. It is asserted here through /healthz instead of adding a
+    second opinion to the monitor, so there is exactly one place that decides what
+    "the index is broken" means.
+    """
+    for borough in ("manhattan", "brooklyn", "bronx", "queens", "staten_island", "mta_bus_co"):
+        harness.sim.set_publication(f"bus:{borough}", "corrupt-zip")
+    with harness.launch() as app:
+        body = app.await_healthz(
+            lambda h: "bus-route-index-failed" in h.get("degraded", []),
+            "the failed bus route index to reach the readiness probe",
+        )
+        # A GATING code, so the probe answers 503 and says why in prose too. The
+        # index is a build this deployment owns, unlike a lagging upstream.
+        assert body["status"] == "fail"
+        assert any("index" in reason for reason in body["reasons"])
+        assert app.status()["bus_route_index"]["status"] == "failed"
+
+
+def test_stale_upstream_content_reaches_healthz_without_taking_the_app_down(harness):
+    """The frozen-upstream blind spot, now visible.
+
+    test_a_frozen_upstream_leaves_every_liveness_signal_green pins the decision
+    that content sameness is never read as staleness. This is the other half: the
+    content CLOCK falling behind is read, and it is reported without touching the
+    status code. Railway restarts a container on a failing healthcheck and a
+    fresh process would be exactly as late, so a lagging upstream must reach a
+    human without reaching the platform.
+
+    PATH alone goes stale, so the app keeps a fresh feed and stays ready; that is
+    what makes this a test of the new code rather than of "no feed is fresh".
+    """
+    harness.sim.set_mode("PATH", "stale")
+    with harness.launch() as app:
+        body = app.await_healthz(
+            lambda h: "feed-content-stale" in h.get("degraded", []),
+            "stale upstream content to reach the readiness probe",
+        )
+        assert body["status"] == "pass", "a lagging upstream is not a reason to restart"
+        assert "reasons" not in body
+        status = app.status()
+        # THE POINT, stated as the two numbers that disagree: the poll is young and
+        # the content is old. Everything the pre-F1 monitor read is the first one.
+        assert status["feeds"]["path"]["age_s"] < 90
+        assert status["feeds"]["path"]["feed_age_s"] > 90
+        assert (status.get("path_feeds") or {}).get("ok") == 1, "the fetch itself still succeeds"
+
+
+def test_most_subway_groups_down_reaches_healthz(harness):
+    """Five of the eight line groups erroring: a mostly dark map behind a 200.
+
+    subway_feeds has published {total, ok, failed} on /api/status all along and
+    the monitor never read it. The majority threshold lives in the probe, with its
+    reasoning, rather than here or in the monitor.
+    """
+    down = ("ACE", "BDFM", "G", "JZ", "NQRW")
+    for group in down:
+        harness.sim.set_mode(f"subway:{group}", "error")
+    with harness.launch() as app:
+        body = app.await_healthz(
+            lambda h: "subway-groups-down" in h.get("degraded", []),
+            "a mostly dark subway to reach the readiness probe",
+        )
+        # Not gating, for the same reason as stale content: the groups are upstream
+        # and a restart does not bring them back. The rider still gets three lines.
+        assert body["status"] == "pass"
+        health = app.status()["subway_feeds"]
+        assert health["ok"] == len(SUBWAY_GROUPS) - len(down)
+        assert sorted(health["failed"]) == sorted(down)
+
+
+def test_exactly_half_the_subway_groups_down_is_not_a_majority(harness):
+    """The other side of the line, placed ON the boundary rather than near it.
+
+    FOUR of eight, not three. Three is comfortably a minority and would pass under
+    a `>=` rule just as happily as under `>`, so a scenario built on it cannot see
+    the difference between the two and pins nothing about where the line is; the
+    mutation run caught exactly that and this is the corrected version. Four is
+    where `(total - ok) * 2 > total` and `>= total` disagree, so this is the case
+    that holds the rule in place. The rider still has half the map.
+    """
+    down = ("ACE", "BDFM", "G", "JZ")
+    for group in down:
+        harness.sim.set_mode(f"subway:{group}", "error")
+    with harness.launch() as app:
+        app.await_status(
+            lambda s: len((s.get("subway_feeds") or {}).get("failed", [])) == len(down),
+            "the four down groups to be recorded",
+        )
+        body = app.healthz()
+        assert body["status"] == "pass"
+        assert "subway-groups-down" not in body["degraded"]

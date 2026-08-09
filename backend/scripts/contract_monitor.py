@@ -260,6 +260,42 @@ PRODUCTION_FEED_FAIL_S = 1800.0
 # invisible-but-covered.
 PRODUCTION_ALERT_RETENTION_MAX_S = 1800.0
 
+# The degraded codes /healthz publishes. MIRRORED, not imported, for exactly the
+# reason stated just above: what the monitor DEMANDS of production has to be its
+# own statement, so that editing the app cannot quietly edit the monitor's
+# expectations. Importing models.HEALTH_DEGRADED_CODES would mean deleting a code
+# there silently stops this watching that state, which is the F1 blindness all
+# over again, one level up.
+#
+# The coupling is real and is held by a test rather than by an import:
+# test_contract_monitor asserts this tuple equals models.HEALTH_DEGRADED_CODES,
+# so teaching the probe a new degraded state without teaching the monitor to
+# watch it fails CI.
+PRODUCTION_HEALTH_CODES = (
+    "no-feed-fresh",
+    "bus-route-index-failed",
+    "subway-static-failed",
+    "feed-content-stale",
+    "subway-groups-down",
+)
+
+# How far apart the two /api/status probes sit when witnessing a replayed
+# served_at. Two seconds, and both ends of that are chosen: long enough that a
+# live deployment's second response is unambiguously built later (served_at is
+# stamped per response from time.time(), so live deltas are never zero), and far
+# inside FEED_STALE_AFTER_S (90) so nothing the two payloads report can
+# legitimately change between them and no other check has to reason about which
+# probe it read.
+PRODUCTION_REPLAY_PROBE_GAP_S = 2.0
+
+# A live second response is built at least PRODUCTION_REPLAY_PROBE_GAP_S after the
+# first, because the monitor slept that long after receiving the first one. Half
+# of it is therefore a wide margin that still fails a frozen served_at (delta 0),
+# a clock stepped backwards (delta < 0), and a caching layer with a TTL up to half
+# the gap. Kept as a fraction of the gap rather than an absolute so the two move
+# together.
+PRODUCTION_REPLAY_MIN_ADVANCE_RATIO = 0.5
+
 # Static count floors, all set well below the real numbers so ordinary feed
 # churn never trips them; they exist to catch a gutted or truncated feed.
 SUBWAY_STATIC_MIN_STOPS = 100  # real stops.txt carries ~1900 platform+parent rows
@@ -1321,6 +1357,30 @@ def _check_members(
 # ---------------------------------------------------------------------------
 
 
+def _deployment_base(configured: str) -> str:
+    """The deployment base URL, from either operator form of MONITOR_STATUS_URL.
+
+    ONE VARIABLE, TWO PATHS SINCE F1. The monitor now probes /healthz as well as
+    /api/status, and that deliberately did NOT become a second environment
+    variable: two URLs naming one deployment is two things to get wrong, and the
+    failure mode of getting the second one wrong is a health probe pointed at
+    something that is not the deployment, reporting green forever."""
+    # .strip() first: a pasted repository variable very often carries a trailing
+    # newline or space, and without this the value would be non-empty (so it passes
+    # the unset check) but produce a request to a URL with whitespace in it.
+    trimmed = configured.strip().rstrip("/")
+    # Case-insensitive for the same reason both forms are accepted at all:
+    # /API/STATUS is the same intent, and rejecting it teaches nothing.
+    if trimmed.lower().endswith("/api/status"):
+        trimmed = trimmed[: -len("/api/status")].rstrip("/")
+    return trimmed
+
+
+def _resolve_health_url(configured: str) -> str:
+    """The /healthz URL to probe, from the same variable /api/status comes from."""
+    return _deployment_base(configured) + "/healthz"
+
+
 def _resolve_status_url(configured: str) -> str:
     """Accept either operator form of MONITOR_STATUS_URL and return the /api/status
     URL to fetch.
@@ -1344,6 +1404,167 @@ def _resolve_status_url(configured: str) -> str:
     return trimmed + "/api/status"
 
 
+# 503 is /healthz ANSWERING, not failing to. The probe replies 503 exactly when it
+# is degraded, which is the whole case this check exists for, so anything that
+# treats a non-200 as a miss reports the most interesting probe as the least
+# informative failure available.
+_HEALTH_ANSWERED = (200, 503)
+
+
+def _fetch_health(
+    fetch: Fetcher, url: str, sleep: Callable[[float], None]
+) -> tuple[FetchResult | None, str]:
+    """Fetch /healthz with one retry, accepting 200 and 503 alike.
+
+    A near-twin of _fetch_retrying rather than a flag on it, because every other
+    caller in this file wants "200 or it did not happen" and widening that
+    contract for one caller would quietly let a 503 count as a successful fetch
+    for eight upstream checks that have no business tolerating one.
+    """
+    last = ""
+    for attempt in (1, 2):
+        try:
+            res = fetch(url, headers=None, params=None, files=None)
+        except Exception as exc:  # noqa: BLE001 - any transport failure is a miss
+            last = f"transport error: {_sanitize(exc)}"
+        else:
+            if res.status in _HEALTH_ANSWERED:
+                return res, ""
+            last = f"HTTP {res.status}"
+        if attempt == 1:
+            sleep(RETRY_DELAY_S)
+    return None, last
+
+
+def _check_production_health(
+    fetch: Fetcher, sleep: Callable[[float], None], health_url: str
+) -> Result:
+    """The /healthz classification, surfaced rather than re-derived.
+
+    THE PROBE CLASSIFIES, THIS REPORTS. Every band lives in the app, beside the
+    state it is judging, and this check contributes no threshold of its own: the
+    monitor asking "is age_s over 600" about raw feed data is how it ended up able
+    to see a dead deployment and not a sick one, because each new degraded state
+    then needed the monitor to grow a second opinion about it.
+
+    ONLY RECOGNIZED CODES ARE PRINTED. `degraded` is a JSON array from a URL an
+    operator pasted into a repository variable, and this detail string is written
+    to the run log and to $GITHUB_STEP_SUMMARY, which GitHub renders as markdown.
+    Echoing an unrecognized string there would let anything that can answer that
+    URL write into the job summary. Unrecognized codes are COUNTED instead, which
+    still says "this deployment knows something I do not" without quoting it.
+    """
+    res, detail = _fetch_health(fetch, health_url, sleep)
+    if res is None:
+        return Result("production:healthz", FAIL, f"/healthz unreachable ({detail})")
+    try:
+        body = json.loads(res.content)
+    except (ValueError, UnicodeDecodeError) as exc:
+        return Result("production:healthz", FAIL, f"/healthz non-JSON ({_sanitize(exc)})")
+    if not isinstance(body, dict):
+        return Result("production:healthz", FAIL, "/healthz returned non-object JSON")
+
+    codes = body.get("degraded")
+    if codes is None:
+        # SILENCE MUST BE CHOSEN, NEVER DEFAULTED, the same rule an unset
+        # MONITOR_STATUS_URL is held to. A deployment that publishes no `degraded`
+        # key is running code from before the classification existed, so every
+        # state this check was added to watch is unwatched on it. Passing here
+        # would make an unmonitored deployment look exactly like a healthy one.
+        return Result(
+            "production:healthz",
+            FAIL,
+            "/healthz publishes no 'degraded' key, so this deployment predates the health "
+            "classification and its degraded states are UNWATCHED. Redeploy from a revision "
+            "that includes it.",
+        )
+    if not isinstance(codes, list) or any(not isinstance(code, str) for code in codes):
+        return Result("production:healthz", FAIL, "/healthz 'degraded' is not a list of strings")
+
+    known = [code for code in PRODUCTION_HEALTH_CODES if code in codes]
+    unknown = len([code for code in codes if code not in PRODUCTION_HEALTH_CODES])
+    if known or unknown:
+        parts = []
+        if known:
+            parts.append("degraded: " + ", ".join(known))
+        if unknown:
+            # Counted, never quoted. See the docstring.
+            parts.append(f"{unknown} unrecognized code(s), newer than this monitor")
+        return Result("production:healthz", FAIL, "; ".join(parts))
+    return Result("production:healthz", PASS, "no degraded states reported")
+
+
+def _served_at_of(payload: object) -> float | None:
+    """The payload's served_at as a number, or None if it has none worth reading."""
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get("served_at")
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    return float(value)
+
+
+def _check_production_served_at(
+    fetch: Fetcher,
+    sleep: Callable[[float], None],
+    first: object,
+    status_url: str,
+    *,
+    gap_s: float = PRODUCTION_REPLAY_PROBE_GAP_S,
+) -> Result:
+    """Witness that /api/status is being BUILT, not replayed.
+
+    A REPLAY CANNOT BE SEEN IN ONE READ. served_at is stamped per response, so a
+    single probe of a cached copy looks exactly like a probe of a live one: the
+    payload is well formed, every age it reports is internally consistent, and
+    every other check in this file passes on it happily while the deployment
+    behind it could be gone. Only comparison distinguishes them, so this probes
+    twice, spaced.
+
+    NOTHING PERSISTS BETWEEN CRON RUNS. Both reads happen inside one run, six
+    hours apart being both useless (any cache TTL is shorter) and a state store
+    this monitor deliberately does not have.
+
+    The advance is measured against the gap we ASKED FOR, not against wall time,
+    so the judgement is the same whether sleep is time.sleep or a test's no-op.
+    A live deployment builds the second response at least gap_s after the first,
+    because that is how long the monitor waited before asking for it.
+    """
+    before = _served_at_of(first)
+    if before is None:
+        return Result(
+            "production:served_at", FAIL, "/api/status carries no usable served_at to compare"
+        )
+    sleep(gap_s)
+    res, detail = _fetch_retrying(fetch, status_url, sleep)
+    if res is None:
+        # The first probe already proved reachability, so a second one failing
+        # seconds later is not a cold deployment; it is one answering
+        # inconsistently, which is worth a look on its own.
+        return Result(
+            "production:served_at", FAIL, f"second /api/status probe unreachable ({detail})"
+        )
+    try:
+        second = json.loads(res.content)
+    except (ValueError, UnicodeDecodeError) as exc:
+        return Result("production:served_at", FAIL, f"second probe non-JSON ({_sanitize(exc)})")
+    after = _served_at_of(second)
+    if after is None:
+        return Result("production:served_at", FAIL, "second probe carries no usable served_at")
+
+    advance = after - before
+    required = gap_s * PRODUCTION_REPLAY_MIN_ADVANCE_RATIO
+    if advance < required:
+        return Result(
+            "production:served_at",
+            FAIL,
+            f"served_at advanced {advance:.1f}s across two probes {gap_s:.0f}s apart, under the "
+            f"{required:.1f}s floor. The deployment is not building these responses: a cache or "
+            "proxy in front of it is replaying one, or its clock stepped backwards.",
+        )
+    return Result("production:served_at", PASS, f"served_at advanced {advance:.1f}s between probes")
+
+
 def check_production(
     fetch: Fetcher,
     sleep: Callable[[float], None],
@@ -1357,8 +1578,18 @@ def check_production(
     """The live deployment via MONITOR_STATUS_URL (either form, see
     _resolve_status_url). Returns a line each for: reachability (FAIL on
     non-200/non-JSON/non-object), each static group's state (FAIL unless ready),
-    per-feed poll freshness (PASS/WARN/FAIL on the bands above), and alert-system
-    degradation (WARN, escalating to FAIL past the retention horizon).
+    per-feed poll freshness (PASS/WARN/FAIL on the bands above), alert-system
+    degradation (WARN, escalating to FAIL past the retention horizon), the
+    /healthz degraded classification, and whether served_at is being built rather
+    than replayed.
+
+    THE LAST TWO ARE F1. Before them this section read one endpoint once, which
+    let it tell that production was DEAD but never that it was ILL: a failed bus
+    route index, upstream content frozen behind successful polls, most of the
+    subway dark, and a cached response replaying a served_at were all invisible
+    here while /api/status answered 200 with a well-formed body. The classification
+    for the first three lives in /healthz beside the state it judges; the fourth
+    cannot be classified from one read at all and is witnessed by comparison.
 
     SILENCE MUST BE CHOSEN, NEVER DEFAULTED. An unset MONITOR_STATUS_URL used to
     WARN-skip this entire section, which meant a completely unmonitored production
@@ -1528,6 +1759,11 @@ def check_production(
             results.append(Result("production:feeds", PASS, f"{len(feeds_map)} feeds fresh"))
 
     results.append(_check_production_alerts(data))
+    # F1. Both of these probe the deployment AGAIN, after every judgement above has
+    # been made from the first payload, so a slow or flapping second probe can only
+    # add a line rather than change one.
+    results.append(_check_production_served_at(fetch, sleep, data, url))
+    results.append(_check_production_health(fetch, sleep, _resolve_health_url(status_url)))
     return results
 
 

@@ -58,10 +58,16 @@ PATH_GOLDEN_TS = 1783297522.0
 class FakeFetcher:
     """Injected fetcher. `mapping` is url -> response, where a response is:
     bytes (served as HTTP 200), an int (served as that status with an empty
-    body), a BaseException (raised, simulating a transport error), or a list of
-    any of those consumed one per call (to script a retry sequence). Every call
-    is recorded so tests can assert call counts and that a secret rode in params,
-    not in the url."""
+    body), a FetchResult (served verbatim, for a non-200 that CARRIES a body), a
+    BaseException (raised, simulating a transport error), or a list of any of
+    those consumed one per call (to script a retry sequence). Every call is
+    recorded so tests can assert call counts and that a secret rode in params,
+    not in the url.
+
+    THE FetchResult FORM ARRIVED WITH F1 and is not a convenience: /healthz
+    answers 503 precisely when it has something to say, so status-and-body is a
+    real upstream shape here, and until this existed a test could express the
+    status or the body but never both."""
 
     def __init__(self, mapping):
         self.mapping = mapping
@@ -84,6 +90,10 @@ class FakeFetcher:
     def _materialize(value):
         if isinstance(value, BaseException):
             raise value
+        if isinstance(value, cm.FetchResult):
+            return value
+        # After FetchResult, because FetchResult is a NamedTuple and `bool` is an
+        # int; neither should be caught by the int branch below.
         if isinstance(value, int):
             return cm.FetchResult(value, b"")
         if isinstance(value, (bytes, bytearray)):
@@ -965,6 +975,45 @@ def _status_json(**overrides):
     return json.dumps(base).encode()
 
 
+_PROD_BASE = "https://app.example"
+_PROD_STATUS = f"{_PROD_BASE}/api/status"
+_PROD_HEALTH = f"{_PROD_BASE}/healthz"
+_PROD_SERVED_AT = 1000.0
+
+# NOTE what _status_json deliberately does NOT carry: served_at. Several tests
+# below depend on its absence to reach the "cannot age this honestly" branches, so
+# the happy path adds it explicitly rather than the builder defaulting it.
+
+
+def _healthz_json(**overrides):
+    """A healthy /healthz body. `degraded` present and empty is the healthy shape,
+    not an omission: the monitor treats an ABSENT key as an unwatched deployment."""
+    body = {"status": "pass", "degraded": []}
+    body.update(overrides)
+    return json.dumps(body).encode()
+
+
+def _healthy_prod(*, health=None, advance=None, **status_overrides):
+    """Both URLs check_production probes, wired for the full happy path.
+
+    /api/status is a LIST, which FakeFetcher consumes one entry per call, so the
+    two replay probes see served_at advance the way a live deployment's does. A
+    single body would replay itself and fail the served_at witness, which is the
+    point of that witness and would otherwise make every production test here
+    look like a caching proxy.
+    """
+    gap = cm.PRODUCTION_REPLAY_PROBE_GAP_S if advance is None else advance
+    return FakeFetcher(
+        {
+            _PROD_STATUS: [
+                _status_json(served_at=_PROD_SERVED_AT, **status_overrides),
+                _status_json(served_at=_PROD_SERVED_AT + gap, **status_overrides),
+            ],
+            _PROD_HEALTH: _healthz_json() if health is None else health,
+        }
+    )
+
+
 def test_production_unset_url_is_fail_not_a_silent_skip():
     # R4 CHANGED THIS: an unset MONITOR_STATUS_URL used to WARN-skip the whole
     # production section, so a completely unmonitored deployment looked exactly like
@@ -1016,16 +1065,23 @@ def test_production_accepts_both_url_forms(configured):
     # /api/status, but the instinct is to paste the status URL you were just
     # looking at, which produced /api/status/api/status and a baffling 404 FAIL.
     # Every form must resolve to the same single request.
-    fetch = FakeFetcher({"https://app.example/api/status": _status_json()})
+    fetch = _healthy_prod()
     results = cm.check_production(fetch, NO_SLEEP, 1000.0, configured)
-    assert [call[0] for call in fetch.calls] == ["https://app.example/api/status"]
+    # BOTH paths resolve off the one variable, in every form. F1 added /healthz
+    # without adding a second environment variable, so the form that used to be
+    # only about /api/status is now also what proves the health probe is pointed
+    # at the same deployment.
+    assert [call[0] for call in fetch.calls] == [_PROD_STATUS, _PROD_STATUS, _PROD_HEALTH]
     assert all(r.status == cm.PASS for r in results)
 
 
 def test_production_healthy_is_all_pass():
-    fetch = FakeFetcher({"https://app.example/api/status": _status_json()})
+    """THE GREEN PATH. A monitor that cries wolf gets muted, so a deployment with
+    nothing wrong with it has to come back clean across every line F1 added."""
+    fetch = _healthy_prod()
     results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
-    assert all(r.status == cm.PASS for r in results)
+    assert all(r.status == cm.PASS for r in results), [r for r in results if r.status != cm.PASS]
+    assert {r.name for r in results} >= {"production:healthz", "production:served_at"}
 
 
 def test_production_failed_static_is_fail():
@@ -1987,3 +2043,296 @@ def test_format_summary_table_escapes_pipes():
     table = cm.format_summary_table(rows)
     assert "a \\| b" in table
     assert table.startswith("| Check | Status | Detail |")
+
+
+# ---------------------------------------------------------------------------
+# F1: the /healthz classification and the served_at replay witness
+# ---------------------------------------------------------------------------
+
+
+def test_the_monitor_watches_exactly_the_codes_the_probe_publishes():
+    """THE COUPLING TEST that stands in for an import.
+
+    PRODUCTION_HEALTH_CODES is mirrored rather than imported, matching what this
+    file already does with PRODUCTION_ALERT_RETENTION_MAX_S and for the same
+    reason: what the monitor DEMANDS of production must be its own statement, or
+    editing the app quietly edits the monitor's expectations. Mirroring without
+    this test would be strictly worse than importing, though, because teaching
+    /healthz a new degraded state would leave the monitor silently not watching
+    it, which is F1 happening again one level up. So the drift is caught here.
+    """
+    import models
+
+    assert cm.PRODUCTION_HEALTH_CODES == models.HEALTH_DEGRADED_CODES
+
+
+@pytest.mark.parametrize(
+    "configured",
+    ["https://app.example", "https://app.example/", "https://app.example/api/status"],
+)
+def test_the_health_url_comes_off_the_same_variable_in_every_form(configured):
+    assert cm._resolve_health_url(configured) == _PROD_HEALTH
+
+
+# ---- the four degraded states, each seen to fire ----
+
+
+@pytest.mark.parametrize("code", cm.PRODUCTION_HEALTH_CODES)
+def test_every_degraded_code_fails_the_run(code):
+    """Each state the probe can report has to reach a nonzero exit. Parametrized
+    over the tuple itself so a code added to both sides without a witness cannot
+    slip through: the new code gets a test the moment it is listed."""
+    fetch = _healthy_prod(health=_healthz_json(status="fail", degraded=[code]))
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
+    health = next(r for r in results if r.name == "production:healthz")
+    assert health.status == cm.FAIL
+    assert code in health.detail
+
+
+def test_a_degraded_probe_answering_503_is_read_not_called_unreachable():
+    """/healthz replies 503 EXACTLY WHEN IT IS DEGRADED, so the one probe with
+    something to say arrives as a non-200. Routed through _fetch_retrying it would
+    come back as (None, "HTTP 503"), the body would be discarded, and the richest
+    signal this check has would be reported as the poorest failure it can emit."""
+    fetch = FakeFetcher(
+        {
+            _PROD_STATUS: [
+                _status_json(served_at=_PROD_SERVED_AT),
+                _status_json(served_at=_PROD_SERVED_AT + cm.PRODUCTION_REPLAY_PROBE_GAP_S),
+            ],
+            _PROD_HEALTH: cm.FetchResult(
+                503, _healthz_json(status="fail", degraded=["bus-route-index-failed"])
+            ),
+        }
+    )
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
+    health = next(r for r in results if r.name == "production:healthz")
+    assert health.status == cm.FAIL
+    assert "bus-route-index-failed" in health.detail
+    assert "unreachable" not in health.detail
+
+
+def test_several_degraded_states_are_all_named():
+    codes = ["bus-route-index-failed", "feed-content-stale", "subway-groups-down"]
+    fetch = _healthy_prod(health=_healthz_json(status="pass", degraded=codes))
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
+    health = next(r for r in results if r.name == "production:healthz")
+    assert health.status == cm.FAIL
+    for code in codes:
+        assert code in health.detail
+
+
+def test_a_degraded_state_fails_the_run_even_while_the_probe_says_pass():
+    """The non-gating codes ride a 200 with status "pass", because a lagging
+    upstream must not make Railway restart the container. The monitor is the
+    stricter reader on purpose: readiness and sickness are different questions and
+    this one is asking the second."""
+    fetch = _healthy_prod(health=_healthz_json(status="pass", degraded=["feed-content-stale"]))
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
+    health = next(r for r in results if r.name == "production:healthz")
+    assert health.status == cm.FAIL
+
+
+# ---- the probe body itself ----
+
+
+def test_a_probe_that_publishes_no_degraded_key_is_unwatched_not_healthy():
+    """SILENCE MUST BE CHOSEN, NEVER DEFAULTED, the rule an unset
+    MONITOR_STATUS_URL is already held to. A deployment running code from before
+    the classification reports nothing, and reading that as "nothing wrong" would
+    make an unwatched deployment indistinguishable from a healthy one."""
+    fetch = _healthy_prod(health=json.dumps({"status": "pass"}).encode())
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
+    health = next(r for r in results if r.name == "production:healthz")
+    assert health.status == cm.FAIL
+    assert "UNWATCHED" in health.detail
+
+
+def test_unrecognized_codes_are_counted_and_never_quoted():
+    """`degraded` is JSON from a URL pasted into a repository variable, and this
+    detail is written to $GITHUB_STEP_SUMMARY, which GitHub RENDERS AS MARKDOWN.
+    Echoing an unknown string there would let whatever answers that URL write into
+    the job summary. The count still says "this deployment knows something I do
+    not" without repeating it."""
+    hostile = "[click me](https://evil.example) <img src=x onerror=alert(1)>"
+    fetch = _healthy_prod(health=_healthz_json(status="fail", degraded=[hostile, "not-a-code"]))
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
+    health = next(r for r in results if r.name == "production:healthz")
+    assert health.status == cm.FAIL
+    assert "2 unrecognized" in health.detail
+    assert "evil.example" not in health.detail
+    assert "onerror" not in health.detail
+    # And nothing from the body survives into the rendered summary either.
+    assert "evil.example" not in cm.format_summary_table(results)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"not json at all",
+        b"null",
+        b"[]",
+        b'{"status": "pass", "degraded": "feed-content-stale"}',  # a string, not a list
+        b'{"status": "pass", "degraded": [1, 2]}',  # a list of the wrong type
+    ],
+)
+def test_a_malformed_probe_body_fails_its_own_line_only(body):
+    fetch = _healthy_prod(health=body)
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
+    health = next(r for r in results if r.name == "production:healthz")
+    assert health.status == cm.FAIL
+    # Every other line still reported, so one bad probe cannot blind the rest.
+    assert next(r for r in results if r.name == "production:statics").status == cm.PASS
+
+
+@pytest.mark.parametrize("response", [500, 404, ConnectionError("boom")])
+def test_an_unreachable_probe_is_a_fail(response):
+    fetch = _healthy_prod(health=response)
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
+    health = next(r for r in results if r.name == "production:healthz")
+    assert health.status == cm.FAIL
+    assert "unreachable" in health.detail
+
+
+# ---- the replayed served_at ----
+
+
+def _replay_prod(first, second, *, health=None):
+    """Two /api/status probes with served_at set explicitly on each."""
+    return FakeFetcher(
+        {
+            _PROD_STATUS: [_status_json(served_at=first), _status_json(served_at=second)],
+            _PROD_HEALTH: _healthz_json() if health is None else health,
+        }
+    )
+
+
+def test_a_replayed_served_at_is_caught_by_the_second_probe():
+    """THE STATE THAT CANNOT BE SEEN IN ONE READ. A cached copy of /api/status is
+    well formed, internally consistent, and passes every other check in this file
+    while the deployment behind it could be gone. Only comparison tells them
+    apart."""
+    fetch = _replay_prod(_PROD_SERVED_AT, _PROD_SERVED_AT)
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
+    replay = next(r for r in results if r.name == "production:served_at")
+    assert replay.status == cm.FAIL
+    assert "replaying" in replay.detail
+    # Non-vacuity: everything else about this payload looked perfectly healthy,
+    # which is exactly why the single-read version of this check could not exist.
+    assert next(r for r in results if r.name == "production:statics").status == cm.PASS
+    assert next(r for r in results if r.name == "production:feeds").status == cm.PASS
+
+
+@pytest.mark.parametrize(
+    ("advance", "expected"),
+    [
+        (0.0, "FAIL"),  # frozen: the replay signature
+        (-30.0, "FAIL"),  # the deployment's clock stepped backwards
+        (0.4, "FAIL"),  # a short-TTL cache, advancing but far under the gap
+        (1.0, "PASS"),  # exactly the floor (gap 2.0 x ratio 0.5)
+        (2.0, "PASS"),  # a live deployment: advances by the whole gap
+        (2.6, "PASS"),  # ...or a little more, the probes not being instant
+    ],
+)
+def test_the_served_at_advance_bands(advance, expected):
+    fetch = _replay_prod(_PROD_SERVED_AT, _PROD_SERVED_AT + advance)
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
+    replay = next(r for r in results if r.name == "production:served_at")
+    assert replay.status == getattr(cm, expected)
+
+
+def test_the_replay_probe_waits_the_gap_before_asking_again():
+    """The judgement is made against the gap we ASKED for, so the gap has to
+    actually be requested; without the sleep a live deployment would be judged on
+    two responses built microseconds apart and would read as a cache."""
+    slept = []
+    fetch = _healthy_prod()
+    cm.check_production(fetch, slept.append, 1000.0, _PROD_BASE)
+    assert cm.PRODUCTION_REPLAY_PROBE_GAP_S in slept
+
+
+@pytest.mark.parametrize("missing", ["first", "second"])
+def test_a_probe_without_a_usable_served_at_cannot_be_judged_and_fails(missing):
+    first = _status_json() if missing == "first" else _status_json(served_at=_PROD_SERVED_AT)
+    second = _status_json() if missing == "second" else _status_json(served_at=_PROD_SERVED_AT + 5)
+    fetch = FakeFetcher({_PROD_STATUS: [first, second], _PROD_HEALTH: _healthz_json()})
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
+    replay = next(r for r in results if r.name == "production:served_at")
+    assert replay.status == cm.FAIL
+    assert "served_at" in replay.detail
+
+
+@pytest.mark.parametrize("value", ['"1000"', "true", "null", "{}"])
+def test_a_nonnumeric_served_at_is_not_silently_compared(value):
+    body = json.loads(_status_json())
+    body["served_at"] = json.loads(value)
+    fetch = FakeFetcher(
+        {
+            _PROD_STATUS: [json.dumps(body).encode(), _status_json(served_at=_PROD_SERVED_AT)],
+            _PROD_HEALTH: _healthz_json(),
+        }
+    )
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
+    replay = next(r for r in results if r.name == "production:served_at")
+    assert replay.status == cm.FAIL
+
+
+def test_a_second_probe_that_fails_is_a_fail_not_a_silent_pass():
+    """The first probe already proved reachability, so a second one missing
+    seconds later is not a cold deployment; it is one answering inconsistently."""
+    fetch = FakeFetcher(
+        {
+            _PROD_STATUS: [_status_json(served_at=_PROD_SERVED_AT), 502, 502],
+            _PROD_HEALTH: _healthz_json(),
+        }
+    )
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
+    replay = next(r for r in results if r.name == "production:served_at")
+    assert replay.status == cm.FAIL
+    assert "second" in replay.detail
+
+
+@pytest.mark.parametrize(
+    ("health", "status_bodies", "expected_exit"),
+    [
+        (None, None, 0),
+        (_healthz_json(status="fail", degraded=["subway-groups-down"]), None, 1),
+        (None, "replay", 1),
+    ],
+    ids=["healthy-exits-0", "degraded-exits-1", "replayed-served-at-exits-1"],
+)
+def test_a_degraded_deployment_produces_the_fail_that_exits_nonzero(
+    health, status_bodies, expected_exit, monkeypatch
+):
+    """THE EXIT SEMANTICS. main() exits 1 when any Result is a FAIL (pinned
+    separately), so what is left to prove is that a degraded deployment actually
+    PRODUCES one: a classification that reaches a Result but not the exit code
+    would be a monitor reporting production sick in a job that stays green, which
+    is the finding restated.
+
+    Against check_production rather than run_all, deliberately. run_all with a
+    stub fetcher fails every upstream check too, so `any FAIL` would hold whatever
+    the production lines said and the assertion would be non-discriminating. The
+    healthy row is here for the same reason: a check that always failed would
+    satisfy the other two.
+    """
+    served = (
+        [_status_json(served_at=_PROD_SERVED_AT), _status_json(served_at=_PROD_SERVED_AT)]
+        if status_bodies == "replay"
+        else [
+            _status_json(served_at=_PROD_SERVED_AT),
+            _status_json(served_at=_PROD_SERVED_AT + cm.PRODUCTION_REPLAY_PROBE_GAP_S),
+        ]
+    )
+    mapping = {_PROD_STATUS: served, _PROD_HEALTH: health or _healthz_json()}
+
+    def fetch(url, headers=None, params=None, files=None):
+        if url in mapping:
+            return FakeFetcher(mapping)(url, headers, params, files)
+        # Every non-production upstream is out of scope here; a 500 keeps their
+        # lines FAILing uniformly so only the production lines vary between rows.
+        return cm.FetchResult(500, b"")
+
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
+    fails = [r for r in results if r.status == cm.FAIL]
+    assert (1 if fails else 0) == expected_exit, fails

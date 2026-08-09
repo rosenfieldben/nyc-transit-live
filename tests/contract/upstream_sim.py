@@ -37,6 +37,12 @@ THE MODES, and what each one models:
            SUCCEEDS, so this is the silent-failure shape a lenient decoder reports
            as a healthy feed with zero vehicles.
   error    a 503, for the ordinary transport failure.
+  stale    a successful 200 carrying a body whose CONTENT CLOCK is already
+           STALE_CONTENT_BY_S behind. Distinct from `frozen`, which starts at age
+           zero and only becomes stale after 90 seconds of waiting that this
+           tier's budget cannot afford: `stale` is the same end state reached
+           immediately. The fetch succeeds and the poll advances, so every
+           liveness signal stays green and only the content age shows it.
 Static archives take a publication NAME instead (good, headers-only-stops,
 missing-member, corrupt-zip), because "what did upstream publish" is the question
 there, not "is it up".
@@ -107,7 +113,14 @@ BUS_BOROUGHS = {
 # an unknown publication used to surface as a KeyError inside a handler thread,
 # which the app sees as a connection reset, i.e. a plausible transport failure
 # rather than the control-plane typo it actually is.
-MODES = ("live", "frozen", "empty", "error")
+MODES = ("live", "frozen", "empty", "error", "stale")
+
+# How far behind `stale` backdates a feed's content clock. Must exceed the app's
+# FEED_STALE_AFTER_S (90, cache.py), and that constant is deliberately NOT
+# overridable, so unlike every other cadence this tier compresses, this one cannot
+# be shrunk: a scenario has to arrive already stale rather than wait to become so.
+# 300 matches the hermetic suite's own _stale helper.
+STALE_CONTENT_BY_S = 300.0
 PUBLICATIONS = ("good", "headers-only-stops", "missing-member", "corrupt-zip")
 
 # What NJ Transit's getGTFS does with the token it is handed. Enumerated and
@@ -771,8 +784,11 @@ class UpstreamSim:
 
     # -- bodies ------------------------------------------------------------
 
-    def _body_for(self, feed: Feed) -> bytes:
-        now = time.time()
+    def _body_for(self, feed: Feed, age_s: float = 0.0) -> bytes:
+        # age_s backdates the whole body, header and entity times together, which
+        # is what _restamp's single-delta rule already guarantees. An upstream
+        # publishing late is late about everything, not just its header.
+        now = time.time() - age_s
         if feed.key.startswith("alerts:"):
             return _alerts_body(feed.template, now, self.alerts_end_in_s)
         return _restamp(feed.template, now, feed.drift_deg, feed.generation)
@@ -790,6 +806,8 @@ class UpstreamSim:
             if mode == "frozen":
                 assert feed.frozen_body is not None
                 return 200, feed.frozen_body
+            if mode == "stale":
+                return 200, self._body_for(feed, age_s=STALE_CONTENT_BY_S)
             return 200, self._body_for(feed)
 
     def serve_archive(self, key: str) -> tuple[int, bytes]:

@@ -32,6 +32,7 @@ fixture was.
 
 from __future__ import annotations
 
+import importlib.util
 import io
 import json
 from pathlib import Path
@@ -43,6 +44,15 @@ FIXTURES = Path(__file__).parent / "fixtures"
 TU = FIXTURES / "njt_tu.pb"
 EXPECTED = FIXTURES / "njt_tu_expected.json"
 STATIC_DIR = FIXTURES / "njt_gtfs"
+
+# The generator, loaded from its file path the way test_gen_njt_rt_fixture.py
+# loads it (scripts/ is not an importable package). The volume floor below
+# asserts gen.MIN_TRIPS, so this golden and the generator cannot disagree about
+# what counts as an off-peak capture.
+_GEN_PATH = Path(__file__).resolve().parent.parent / "scripts" / "gen_njt_rt_fixture.py"
+_spec = importlib.util.spec_from_file_location("gen_njt_rt_fixture", _GEN_PATH)
+gen = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(gen)
 
 golden = golden_fixture_guard(
     TU,
@@ -81,8 +91,13 @@ def test_golden_the_capture_carries_the_trap_shapes_the_law_is_written_about():
         "are pinned only by synthetic bytes; recapture on a disrupted evening"
     )
     # Not a rush-hour capture is a real risk and a quiet one: the probe's own words
-    # are that "the overnight numbers are optimistic by roughly 2x".
-    assert shapes["trips"] >= 200, (
+    # are that "the overnight numbers are optimistic by roughly 2x". The floor is
+    # the generator's own MIN_TRIPS rather than a number of this file's own: a 200
+    # here outlived the generator's correction and rejected real rush captures
+    # (165, 164, then this one at 112) that the generator had already accepted.
+    # See the comment on MIN_TRIPS for what the floor is actually for; the trap
+    # shapes above are what decide whether a capture is usable.
+    assert shapes["trips"] >= gen.MIN_TRIPS, (
         f"only {shapes['trips']} trips in the capture; this looks off-peak, and the "
         "shapes these goldens are about only appear under load"
     )

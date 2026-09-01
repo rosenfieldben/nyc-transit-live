@@ -362,7 +362,7 @@ def main() -> int:  # noqa: C901 - one linear verify-then-trim pass, split would
         )
 
     pasc_stops = trim.route_exclusive_stops(route_of_trip, calls, EXPECTED_PASC_ROUTE[0])
-    pasc_trio = sorted(pasc_stops, key=lambda s: (int(s) if s.isdigit() else 0, s))[:PASC_TRIO]
+    pasc_trio = trim.select_pasc_trio(pasc_stops)
     print(
         f"\nPascack Valley (route {EXPECTED_PASC_ROUTE[0]}): {len(pasc_stops)} exclusive stations"
     )

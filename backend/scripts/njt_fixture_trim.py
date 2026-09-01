@@ -244,6 +244,17 @@ def route_exclusive_stops(
     return exclusive_stops({t for t, r in route_of_trip.items() if r == route_id}, calls)
 
 
+def select_pasc_trio(pasc_stops: set[str]) -> list[str]:
+    """The PASC_TRIO stations the fixture mandates for Pascack Valley, in numeric
+    stop-id order. One function on purpose: both generators and the identity
+    replay in the tests must mandate the SAME three, and while each sorted for
+    itself they did not — the replay sorted lexicographically where the
+    generators sorted numerically, which picks a different trio as soon as the
+    exclusive set outgrows PASC_TRIO, and the difference surfaces as an identity
+    failure blamed on the trim."""
+    return sorted(pasc_stops, key=lambda s: (int(s) if s.isdigit() else 0, s))[:PASC_TRIO]
+
+
 def select_trim(
     *,
     trips: list[dict],

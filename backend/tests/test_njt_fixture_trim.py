@@ -246,7 +246,17 @@ def test_apply_trim_keeps_every_stop_its_trips_call_at():
 def test_the_trim_reproduces_the_committed_fixture_exactly():
     """The extraction is faithful. Re-running the trim over the ALREADY-TRIMMED
     committed fixture is the identity, which it would not be if the extracted
-    selection had drifted from the inline one it replaced."""
+    selection had drifted from the inline one it replaced.
+
+    THE COMMITTED FIXTURE IS THE SELECTION UNION THE CAPTURE. The realtime
+    generator re-trims the static around the trips its capture contains
+    (extra_trip_ids), so once a capture is committed the bare selection alone
+    CANNOT be the identity and was never meant to be: replaying it without the
+    extras asserts a rule the writer does not follow. The replay therefore reads
+    the committed njt_tu.pb and hands in the same extras, counted by the
+    generator's own join check, so writer and replay stay one question. With no
+    capture committed the extras are empty and this is 15a's original identity
+    claim, unweakened."""
     import csv
     import io
 
@@ -265,6 +275,22 @@ def test_the_trim_reproduces_the_committed_fixture_exactly():
     for row in rows("stop_times.txt"):
         calls[row["trip_id"]].append(row)
 
+    # The capture's SCHEDULED-or-CANCELED trip ids, which are the ones that claim
+    # a place in the schedule and therefore the ones the writer widened the trim
+    # around. Counted by the generator's own _trip_ids_by_claim rather than
+    # re-derived here, so the replay cannot disagree with the join check about
+    # which trips those are (ADDED ids are excluded there; their empty trip_id
+    # would be ignored by select_trim anyway).
+    extras: set[str] = set()
+    tu_path = fixture.parent / "njt_tu.pb"
+    if tu_path.exists():
+        gen_path = Path(__file__).resolve().parent.parent / "scripts" / "gen_njt_rt_fixture.py"
+        gen_spec = importlib.util.spec_from_file_location("gen_njt_rt_fixture", gen_path)
+        gen = importlib.util.module_from_spec(gen_spec)
+        gen_spec.loader.exec_module(gen)
+        scheduled_or_canceled, _added = gen._trip_ids_by_claim(tu_path.read_bytes())
+        extras = set(scheduled_or_canceled)
+
     pj_trips = trim.port_jervis_trips(trips, calls)
     headsigned = {t["trip_id"] for t in trips if "port jervis" in t["trip_headsign"].lower()}
     woh = trim.west_of_hudson_stops(pj_trips, calls)
@@ -272,7 +298,7 @@ def test_the_trim_reproduces_the_committed_fixture_exactly():
     pj_keep, _uncovered = trim.select_port_jervis_trips(
         pj_trips, headsigned, calls, woh, route_of_trip
     )
-    pasc = sorted(trim.route_exclusive_stops(route_of_trip, calls, "13"))[: trim.PASC_TRIO]
+    pasc = trim.select_pasc_trio(trim.route_exclusive_stops(route_of_trip, calls, "13"))
 
     kept = trim.select_trim(
         trips=trips,
@@ -280,6 +306,7 @@ def test_the_trim_reproduces_the_committed_fixture_exactly():
         trips_by_route=_by_route(trips),
         pj_keep=pj_keep,
         mandated_stops=list(trim.IDENTITY_STOPS) + sorted(woh) + pasc,
+        extra_trip_ids=extras,
     )
     assert kept == {t["trip_id"] for t in trips}, (
         "re-trimming an already-trimmed fixture must be the identity; a difference means "

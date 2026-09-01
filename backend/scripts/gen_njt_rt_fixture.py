@@ -604,10 +604,7 @@ def main() -> int:
             f"Jervis trip in this publication: {sorted(pj_uncovered)}. The mandated-stop "
             "top-up still puts their rows in the fixture."
         )
-    pasc_trio = sorted(
-        trim.route_exclusive_stops(route_of_trip, calls, "13"),
-        key=lambda sid: (int(sid) if sid.isdigit() else 0, sid),
-    )[: trim.PASC_TRIO]
+    pasc_trio = trim.select_pasc_trio(trim.route_exclusive_stops(route_of_trip, calls, "13"))
 
     kept_trip_ids = trim.select_trim(
         trips=static_trips,

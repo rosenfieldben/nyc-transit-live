@@ -1,0 +1,7441 @@
+{
+"arrivals": {
+"1": [
+{
+"arrival": 1788302575.0,
+"delay": 685,
+"departure": 1788302695.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3267",
+"trip_id": "2132029"
+},
+{
+"arrival": 1788302704.0,
+"delay": 244,
+"departure": 1788302749.0,
+"headsign": "Penn Station New York",
+"route_id": "10",
+"train_num": "3272",
+"trip_id": "2131995"
+},
+{
+"arrival": 1788302953.0,
+"delay": 3268,
+"departure": 1788303043.0,
+"headsign": "Bay Head",
+"route_id": "10",
+"train_num": "3363",
+"trip_id": "2132094"
+},
+{
+"arrival": 1788305339.0,
+"delay": 719,
+"departure": 1788305399.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3271",
+"trip_id": "2134795"
+},
+{
+"arrival": 1788305330.0,
+"delay": 65,
+"departure": 1788305420.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3275",
+"trip_id": "2132125"
+},
+{
+"arrival": 1788307125.0,
+"delay": 0,
+"departure": 1788307185.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3279",
+"trip_id": "2132126"
+}
+],
+"10": [
+{
+"arrival": 1788303030.0,
+"delay": 1410,
+"departure": 1788303075.0,
+"headsign": "Penn Station New York",
+"route_id": "10",
+"train_num": "3270",
+"trip_id": "2134097"
+},
+{
+"arrival": 1788303794.0,
+"delay": 719,
+"departure": 1788303839.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3271",
+"trip_id": "2134795"
+},
+{
+"arrival": 1788303945.0,
+"delay": 0,
+"departure": 1788303945.0,
+"headsign": "Penn Station New York",
+"route_id": "10",
+"train_num": "3272",
+"trip_id": "2131995"
+},
+{
+"arrival": 1788304965.0,
+"delay": 0,
+"departure": 1788304995.0,
+"headsign": "South Amboy",
+"route_id": "10",
+"train_num": "3515",
+"trip_id": "2131927"
+},
+{
+"arrival": 1788305640.0,
+"delay": 0,
+"departure": 1788305700.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3279",
+"trip_id": "2132126"
+}
+],
+"100": [
+{
+"arrival": 1788302550.0,
+"delay": 0,
+"departure": 1788302595.0,
+"headsign": "Dover",
+"route_id": "2",
+"train_num": "1009",
+"trip_id": "2131582"
+},
+{
+"arrival": 1788305430.0,
+"delay": 0,
+"departure": 1788305490.0,
+"headsign": "Lake Hopatcong",
+"route_id": "2",
+"train_num": "1011",
+"trip_id": "2131327"
+}
+],
+"101": [
+{
+"arrival": 1788303032.0,
+"delay": 302,
+"departure": 1788303092.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0435",
+"trip_id": "2131698"
+},
+{
+"arrival": 1788303492.0,
+"delay": 57,
+"departure": 1788303552.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "6437",
+"trip_id": "2132007"
+},
+{
+"arrival": 1788305280.0,
+"delay": 0,
+"departure": 1788305340.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0439",
+"trip_id": "2131699"
+}
+],
+"102": [
+{
+"arrival": 1788303104.0,
+"delay": 134,
+"departure": 1788303194.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1631",
+"trip_id": "2131450"
+},
+{
+"arrival": 1788304339.0,
+"delay": 259,
+"departure": 1788304429.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1633",
+"trip_id": "2131451"
+},
+{
+"arrival": 1788305250.0,
+"delay": 0,
+"departure": 1788305340.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1635",
+"trip_id": "2131911"
+},
+{
+"arrival": 1788306960.0,
+"delay": 0,
+"departure": 1788307050.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1637",
+"trip_id": "2131454"
+}
+],
+"103": [
+{
+"arrival": 1788303025.0,
+"delay": 25,
+"departure": 1788303055.0,
+"headsign": "Mount Olive",
+"route_id": "2",
+"train_num": "1055",
+"trip_id": "2131328"
+},
+{
+"arrival": 1788304860.0,
+"delay": 0,
+"departure": 1788304890.0,
+"headsign": "Hoboken",
+"route_id": "7",
+"train_num": "0882",
+"trip_id": "2131438"
+},
+{
+"arrival": 1788306255.0,
+"delay": 0,
+"departure": 1788306300.0,
+"headsign": "Hackettstown",
+"route_id": "7",
+"train_num": "0881",
+"trip_id": "2131922"
+}
+],
+"104": [
+{
+"arrival": 1788302340.0,
+"delay": 240,
+"departure": 1788302400.0,
+"headsign": "Raritan",
+"route_id": "15",
+"train_num": "5441",
+"trip_id": "2133763"
+},
+{
+"arrival": 1788304290.0,
+"delay": 0,
+"departure": 1788304350.0,
+"headsign": "Raritan",
+"route_id": "15",
+"train_num": "5445",
+"trip_id": "2133740"
+},
+{
+"arrival": 1788304440.0,
+"delay": 0,
+"departure": 1788304485.0,
+"headsign": "Penn Station New York",
+"route_id": "15",
+"train_num": "5150",
+"trip_id": "2136510"
+}
+],
+"105": [
+{
+"arrival": 1788302133.0,
+"delay": 243,
+"departure": 1788302223.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1633",
+"trip_id": "2131451"
+},
+{
+"arrival": 1788303069.0,
+"delay": 9,
+"departure": 1788303159.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1635",
+"trip_id": "2131911"
+},
+{
+"arrival": 1788304860.0,
+"delay": 0,
+"departure": 1788304920.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1637",
+"trip_id": "2131454"
+}
+],
+"106": [
+{
+"arrival": 1788303171.0,
+"delay": 1041,
+"departure": 1788303261.0,
+"headsign": "3127",
+"route_id": null,
+"train_num": "3127",
+"trip_id": "njt:3127"
+},
+{
+"arrival": 1788303450.0,
+"delay": 0,
+"departure": 1788303540.0,
+"headsign": "Penn Station New York",
+"route_id": "9",
+"train_num": "3870",
+"trip_id": "2131472"
+},
+{
+"arrival": 1788304335.0,
+"delay": 0,
+"departure": 1788304455.0,
+"headsign": "Penn Station New York",
+"route_id": "9",
+"train_num": "3872",
+"trip_id": "2134122"
+},
+{
+"arrival": 1788304639.0,
+"delay": 214,
+"departure": 1788304699.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3873",
+"trip_id": "2134115"
+},
+{
+"arrival": 1788304815.0,
+"delay": 0,
+"departure": 1788304905.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3961",
+"trip_id": "2133227"
+},
+{
+"arrival": 1788305925.0,
+"delay": 0,
+"departure": 1788306015.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3875",
+"trip_id": "2131931"
+}
+],
+"108": [
+{
+"arrival": 1788302841.0,
+"delay": 321,
+"departure": 1788302901.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0435",
+"trip_id": "2131698"
+},
+{
+"arrival": 1788303279.0,
+"delay": 69,
+"departure": 1788303339.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "6437",
+"trip_id": "2132007"
+},
+{
+"arrival": 1788305070.0,
+"delay": 0,
+"departure": 1788305130.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0439",
+"trip_id": "2131699"
+}
+],
+"109": [
+{
+"arrival": 1788302220.0,
+"delay": -60,
+"departure": 1788302220.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3961",
+"trip_id": "2133227"
+},
+{
+"arrival": 1788302460.0,
+"delay": -60,
+"departure": 1788302460.0,
+"headsign": "Montclair State University",
+"route_id": "2",
+"train_num": "6283",
+"trip_id": "2131275"
+},
+{
+"arrival": 1788300900.0,
+"delay": 1200,
+"departure": 1788302460.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "6655",
+"trip_id": "2134096"
+},
+{
+"arrival": 1788302792.0,
+"delay": 152,
+"departure": 1788302792.0,
+"headsign": "10 3598",
+"route_id": "10",
+"train_num": "3598",
+"trip_id": "njt:3598"
+},
+{
+"arrival": 1788302820.0,
+"delay": -60,
+"departure": 1788302820.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3875",
+"trip_id": "2131931"
+},
+{
+"arrival": 1788303000.0,
+"delay": -60,
+"departure": 1788303000.0,
+"headsign": "Summit",
+"route_id": "7",
+"train_num": "6359",
+"trip_id": "2131289"
+}
+],
+"110": [
+{
+"arrival": 1788302321.0,
+"delay": 641,
+"departure": 1788302381.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3271",
+"trip_id": "2134795"
+},
+{
+"arrival": 1788302734.0,
+"delay": 214,
+"departure": 1788302794.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3873",
+"trip_id": "2134115"
+},
+{
+"arrival": 1788303390.0,
+"delay": 3900,
+"departure": 1788303450.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3867",
+"trip_id": "2132039"
+},
+{
+"arrival": 1788303540.0,
+"delay": 0,
+"departure": 1788303600.0,
+"headsign": "South Amboy",
+"route_id": "10",
+"train_num": "3515",
+"trip_id": "2131927"
+},
+{
+"arrival": 1788303814.0,
+"delay": 1324,
+"departure": 1788303874.0,
+"headsign": "Penn Station New York",
+"route_id": "10",
+"train_num": "3270",
+"trip_id": "2134097"
+},
+{
+"arrival": 1788304002.0,
+"delay": 207,
+"departure": 1788304047.0,
+"headsign": "Penn Station New York",
+"route_id": "10",
+"train_num": "3512",
+"trip_id": "2137433"
+}
+],
+"111": [
+{
+"arrival": 1788302180.0,
+"delay": 320,
+"departure": 1788302240.0,
+"headsign": "Montclair State University",
+"route_id": "2",
+"train_num": "6279",
+"trip_id": "2132100"
+},
+{
+"arrival": 1788302940.0,
+"delay": 0,
+"departure": 1788303000.0,
+"headsign": "Lake Hopatcong",
+"route_id": "2",
+"train_num": "1011",
+"trip_id": "2131327"
+},
+{
+"arrival": 1788303060.0,
+"delay": 0,
+"departure": 1788303120.0,
+"headsign": "Penn Station New York",
+"route_id": "7",
+"train_num": "6666",
+"trip_id": "2145229"
+},
+{
+"arrival": 1788303210.0,
+"delay": 0,
+"departure": 1788303270.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "0657",
+"trip_id": "2131427"
+},
+{
+"arrival": 1788303290.0,
+"delay": 860,
+"departure": 1788303350.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "6655",
+"trip_id": "2134096"
+},
+{
+"arrival": 1788303630.0,
+"delay": 0,
+"departure": 1788303690.0,
+"headsign": "Montclair State University",
+"route_id": "2",
+"train_num": "6283",
+"trip_id": "2131275"
+}
+],
+"112": [
+{
+"arrival": 1788302220.0,
+"delay": 120,
+"departure": 1788302280.0,
+"headsign": "Penn Station New York",
+"route_id": "9",
+"train_num": "3866",
+"trip_id": "2131835"
+},
+{
+"arrival": 1788301980.0,
+"delay": -60,
+"departure": 1788302340.0,
+"headsign": "Raritan",
+"route_id": "15",
+"train_num": "5445",
+"trip_id": "2133740"
+},
+{
+"arrival": 1788302237.0,
+"delay": 392,
+"departure": 1788302342.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3957",
+"trip_id": "2133279"
+},
+{
+"arrival": 1788302359.0,
+"delay": 214,
+"departure": 1788302434.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3873",
+"trip_id": "2134115"
+},
+{
+"arrival": 1788302470.0,
+"delay": 10,
+"departure": 1788302500.0,
+"headsign": "Newark Penn Station",
+"route_id": "15",
+"train_num": "5746",
+"trip_id": "2137246"
+},
+{
+"arrival": 1788302925.0,
+"delay": 3900,
+"departure": 1788303060.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3867",
+"trip_id": "2132039"
+}
+],
+"113": [
+{
+"arrival": 1788302700.0,
+"delay": 0,
+"departure": 1788302760.0,
+"headsign": "Raritan",
+"route_id": "15",
+"train_num": "5435",
+"trip_id": "2134083"
+},
+{
+"arrival": 1788304785.0,
+"delay": 0,
+"departure": 1788304815.0,
+"headsign": "High Bridge",
+"route_id": "15",
+"train_num": "5743",
+"trip_id": "2137447"
+}
+],
+"114": [
+{
+"arrival": 1788302546.0,
+"delay": 641,
+"departure": 1788302591.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3271",
+"trip_id": "2134795"
+},
+{
+"arrival": 1788303765.0,
+"delay": 0,
+"departure": 1788303810.0,
+"headsign": "South Amboy",
+"route_id": "10",
+"train_num": "3515",
+"trip_id": "2131927"
+},
+{
+"arrival": 1788303792.0,
+"delay": 207,
+"departure": 1788303837.0,
+"headsign": "Penn Station New York",
+"route_id": "10",
+"train_num": "3512",
+"trip_id": "2137433"
+},
+{
+"arrival": 1788305280.0,
+"delay": 0,
+"departure": 1788305325.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3877",
+"trip_id": "2132064"
+},
+{
+"arrival": 1788306480.0,
+"delay": 0,
+"departure": 1788306525.0,
+"headsign": "Penn Station New York",
+"route_id": "9",
+"train_num": "3872",
+"trip_id": "2134122"
+}
+],
+"116": [
+{
+"arrival": 1788302517.0,
+"delay": 87,
+"departure": 1788302577.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1633",
+"trip_id": "2131451"
+},
+{
+"arrival": 1788303600.0,
+"delay": 0,
+"departure": 1788303660.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1635",
+"trip_id": "2131911"
+},
+{
+"arrival": 1788305340.0,
+"delay": 0,
+"departure": 1788305400.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1637",
+"trip_id": "2131454"
+}
+],
+"117": [
+{
+"arrival": 1788302147.0,
+"delay": 1817,
+"departure": 1788302147.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "6651",
+"trip_id": "2132038"
+},
+{
+"arrival": 1788302385.0,
+"delay": 435,
+"departure": 1788302445.0,
+"headsign": "Summit",
+"route_id": "7",
+"train_num": "0339",
+"trip_id": "2131423"
+},
+{
+"arrival": 1788302671.0,
+"delay": 91,
+"departure": 1788302731.0,
+"headsign": "7 6355",
+"route_id": "7",
+"train_num": "6355",
+"trip_id": "njt:6355"
+},
+{
+"arrival": 1788303840.0,
+"delay": 0,
+"departure": 1788303900.0,
+"headsign": "Penn Station New York",
+"route_id": "7",
+"train_num": "6368",
+"trip_id": "2134114"
+},
+{
+"arrival": 1788303870.0,
+"delay": 0,
+"departure": 1788303930.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "0657",
+"trip_id": "2131427"
+},
+{
+"arrival": 1788304680.0,
+"delay": 0,
+"departure": 1788304740.0,
+"headsign": "Summit",
+"route_id": "7",
+"train_num": "6359",
+"trip_id": "2131289"
+}
+],
+"118": [
+{
+"arrival": 1788302211.0,
+"delay": -129,
+"departure": 1788302241.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0053",
+"trip_id": "2131408"
+},
+{
+"arrival": 1788304050.0,
+"delay": 0,
+"departure": 1788304080.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0055",
+"trip_id": "2131723"
+},
+{
+"arrival": 1788305940.0,
+"delay": 0,
+"departure": 1788305970.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0057",
+"trip_id": "2131411"
+},
+{
+"arrival": 1788307410.0,
+"delay": 0,
+"departure": 1788307440.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0059",
+"trip_id": "2132754"
+},
+{
+"arrival": 1788308400.0,
+"delay": 0,
+"departure": 1788308430.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0061",
+"trip_id": "2131413"
+},
+{
+"arrival": 1788310260.0,
+"delay": 0,
+"departure": 1788310290.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0063",
+"trip_id": "2131415"
+}
+],
+"119": [
+{
+"arrival": 1788302381.0,
+"delay": 71,
+"departure": 1788302471.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1631",
+"trip_id": "2131450"
+},
+{
+"arrival": 1788303604.0,
+"delay": 184,
+"departure": 1788303664.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1633",
+"trip_id": "2131451"
+},
+{
+"arrival": 1788304590.0,
+"delay": 0,
+"departure": 1788304650.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1635",
+"trip_id": "2131911"
+},
+{
+"arrival": 1788306300.0,
+"delay": 0,
+"departure": 1788306390.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1637",
+"trip_id": "2131454"
+}
+],
+"120": [
+{
+"arrival": 1788302706.0,
+"delay": 21,
+"departure": 1788302796.0,
+"headsign": "Waldwick",
+"route_id": "6",
+"train_num": "1225",
+"trip_id": "2131888"
+},
+{
+"arrival": 1788304065.0,
+"delay": 0,
+"departure": 1788304110.0,
+"headsign": "Hoboken",
+"route_id": "6",
+"train_num": "1128",
+"trip_id": "2131912"
+},
+{
+"arrival": 1788304665.0,
+"delay": 0,
+"departure": 1788304740.0,
+"headsign": "Suffern",
+"route_id": "6",
+"train_num": "1125",
+"trip_id": "2131892"
+}
+],
+"121": [
+{
+"arrival": 1788303375.0,
+"delay": 0,
+"departure": 1788303435.0,
+"headsign": "Waldwick",
+"route_id": "6",
+"train_num": "1225",
+"trip_id": "2131888"
+},
+{
+"arrival": 1788303450.0,
+"delay": 0,
+"departure": 1788303495.0,
+"headsign": "Hoboken",
+"route_id": "6",
+"train_num": "1128",
+"trip_id": "2131912"
+},
+{
+"arrival": 1788305325.0,
+"delay": 0,
+"departure": 1788305385.0,
+"headsign": "Suffern",
+"route_id": "6",
+"train_num": "1125",
+"trip_id": "2131892"
+}
+],
+"122": [
+{
+"arrival": 1788303046.0,
+"delay": 316,
+"departure": 1788303091.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "6431",
+"trip_id": "2132098"
+},
+{
+"arrival": 1788303908.0,
+"delay": 293,
+"departure": 1788303953.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0433",
+"trip_id": "2131923"
+},
+{
+"arrival": 1788304678.0,
+"delay": 28,
+"departure": 1788304708.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0435",
+"trip_id": "2131698"
+},
+{
+"arrival": 1788305640.0,
+"delay": 0,
+"departure": 1788305685.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "6437",
+"trip_id": "2132007"
+},
+{
+"arrival": 1788307200.0,
+"delay": 0,
+"departure": 1788307230.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0439",
+"trip_id": "2131699"
+}
+],
+"123": [
+{
+"arrival": 1788302723.0,
+"delay": 23,
+"departure": 1788302783.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1631",
+"trip_id": "2131450"
+},
+{
+"arrival": 1788303949.0,
+"delay": 139,
+"departure": 1788304009.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1633",
+"trip_id": "2131451"
+},
+{
+"arrival": 1788304980.0,
+"delay": 0,
+"departure": 1788305040.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1635",
+"trip_id": "2131911"
+},
+{
+"arrival": 1788306690.0,
+"delay": 0,
+"departure": 1788306750.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1637",
+"trip_id": "2131454"
+}
+],
+"124": [
+{
+"arrival": 1788304995.0,
+"delay": 0,
+"departure": 1788305040.0,
+"headsign": "Atlantic City Terminal",
+"route_id": "1",
+"train_num": "4639",
+"trip_id": "2131242"
+}
+],
+"125": [
+{
+"arrival": 1788302235.0,
+"delay": 330,
+"departure": 1788302280.0,
+"headsign": "Penn Station New York",
+"route_id": "10",
+"train_num": "3512",
+"trip_id": "2137433"
+},
+{
+"arrival": 1788302709.0,
+"delay": 1629,
+"departure": 1788302754.0,
+"headsign": "Penn Station New York",
+"route_id": "10",
+"train_num": "3270",
+"trip_id": "2134097"
+},
+{
+"arrival": 1788303381.0,
+"delay": -39,
+"departure": 1788303426.0,
+"headsign": "Penn Station New York",
+"route_id": "10",
+"train_num": "3272",
+"trip_id": "2131995"
+},
+{
+"arrival": 1788304331.0,
+"delay": 641,
+"departure": 1788304391.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3271",
+"trip_id": "2134795"
+},
+{
+"arrival": 1788305535.0,
+"delay": 0,
+"departure": 1788305595.0,
+"headsign": "South Amboy",
+"route_id": "10",
+"train_num": "3515",
+"trip_id": "2131927"
+},
+{
+"arrival": 1788306210.0,
+"delay": 0,
+"departure": 1788306255.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3279",
+"trip_id": "2132126"
+}
+],
+"126": [
+{
+"arrival": 1788302416.0,
+"delay": 76,
+"departure": 1788302416.0,
+"headsign": "Philadelphia 30th St.",
+"route_id": "1",
+"train_num": "4632",
+"trip_id": "2131239"
+},
+{
+"arrival": 1788303780.0,
+"delay": 0,
+"departure": 1788303780.0,
+"headsign": "Atlantic City Terminal",
+"route_id": "1",
+"train_num": "4639",
+"trip_id": "2131242"
+}
+],
+"127": [
+{
+"arrival": 1788302535.0,
+"delay": 240,
+"departure": 1788302595.0,
+"headsign": "Raritan",
+"route_id": "15",
+"train_num": "5441",
+"trip_id": "2133763"
+},
+{
+"arrival": 1788303143.0,
+"delay": 203,
+"departure": 1788303188.0,
+"headsign": "High Bridge",
+"route_id": "15",
+"train_num": "5743",
+"trip_id": "2137447"
+},
+{
+"arrival": 1788304245.0,
+"delay": 0,
+"departure": 1788304290.0,
+"headsign": "Penn Station New York",
+"route_id": "15",
+"train_num": "5150",
+"trip_id": "2136510"
+},
+{
+"arrival": 1788304485.0,
+"delay": 0,
+"departure": 1788304545.0,
+"headsign": "Raritan",
+"route_id": "15",
+"train_num": "5445",
+"trip_id": "2133740"
+}
+],
+"128": [
+{
+"arrival": 1788302271.0,
+"delay": 456,
+"departure": 1788302331.0,
+"headsign": "Waldwick",
+"route_id": "5",
+"train_num": "1271",
+"trip_id": "2131363"
+},
+{
+"arrival": 1788303930.0,
+"delay": 0,
+"departure": 1788303990.0,
+"headsign": "Suffern",
+"route_id": "5",
+"train_num": "1173",
+"trip_id": "2131345"
+},
+{
+"arrival": 1788303960.0,
+"delay": 0,
+"departure": 1788304005.0,
+"headsign": "Hoboken",
+"route_id": "5",
+"train_num": "1276",
+"trip_id": "2131445"
+}
+],
+"129": [
+{
+"arrival": 1788306046.0,
+"delay": 2551,
+"departure": 1788306091.0,
+"headsign": "Bay Head",
+"route_id": "10",
+"train_num": "3363",
+"trip_id": "2132094"
+},
+{
+"arrival": 1788306135.0,
+"delay": 0,
+"departure": 1788306180.0,
+"headsign": "Bay Head",
+"route_id": "10",
+"train_num": "4367",
+"trip_id": "2131871"
+}
+],
+"13": [
+{
+"arrival": 1788302361.0,
+"delay": 516,
+"departure": 1788302406.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "6431",
+"trip_id": "2132098"
+},
+{
+"arrival": 1788303124.0,
+"delay": 529,
+"departure": 1788303169.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0433",
+"trip_id": "2131923"
+},
+{
+"arrival": 1788304087.0,
+"delay": 247,
+"departure": 1788304117.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0435",
+"trip_id": "2131698"
+},
+{
+"arrival": 1788304755.0,
+"delay": 0,
+"departure": 1788304800.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "6437",
+"trip_id": "2132007"
+},
+{
+"arrival": 1788306420.0,
+"delay": 0,
+"departure": 1788306450.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0439",
+"trip_id": "2131699"
+}
+],
+"130": [
+{
+"arrival": 1788303690.0,
+"delay": 0,
+"departure": 1788303690.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0053",
+"trip_id": "2131408"
+},
+{
+"arrival": 1788305400.0,
+"delay": 0,
+"departure": 1788305400.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0055",
+"trip_id": "2131723"
+},
+{
+"arrival": 1788307230.0,
+"delay": 0,
+"departure": 1788307230.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0057",
+"trip_id": "2131411"
+},
+{
+"arrival": 1788308700.0,
+"delay": 0,
+"departure": 1788308700.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0059",
+"trip_id": "2132754"
+},
+{
+"arrival": 1788309750.0,
+"delay": 0,
+"departure": 1788309750.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0061",
+"trip_id": "2131413"
+},
+{
+"arrival": 1788311550.0,
+"delay": 0,
+"departure": 1788311550.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0063",
+"trip_id": "2131415"
+}
+],
+"131": [
+{
+"arrival": 1788303120.0,
+"delay": 0,
+"departure": 1788303120.0,
+"headsign": "Princeton Station",
+"route_id": "14",
+"train_num": "4169",
+"trip_id": "2132109"
+},
+{
+"arrival": 1788303420.0,
+"delay": 0,
+"departure": 1788303420.0,
+"headsign": "Princeton Junction",
+"route_id": "14",
+"train_num": "4170",
+"trip_id": "2132110"
+}
+],
+"132": [
+{
+"arrival": 1788302280.0,
+"delay": 0,
+"departure": 1788302280.0,
+"headsign": "Princeton Junction",
+"route_id": "14",
+"train_num": "4168",
+"trip_id": "2132108"
+},
+{
+"arrival": 1788302595.0,
+"delay": 0,
+"departure": 1788302655.0,
+"headsign": "Penn Station New York",
+"route_id": "9",
+"train_num": "3870",
+"trip_id": "2131472"
+},
+{
+"arrival": 1788302820.0,
+"delay": 0,
+"departure": 1788302820.0,
+"headsign": "Princeton Station",
+"route_id": "14",
+"train_num": "4169",
+"trip_id": "2132109"
+},
+{
+"arrival": 1788303197.0,
+"delay": 767,
+"departure": 1788303287.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3867",
+"trip_id": "2132039"
+},
+{
+"arrival": 1788303480.0,
+"delay": 0,
+"departure": 1788303540.0,
+"headsign": "Penn Station New York",
+"route_id": "9",
+"train_num": "3872",
+"trip_id": "2134122"
+},
+{
+"arrival": 1788303720.0,
+"delay": 0,
+"departure": 1788303720.0,
+"headsign": "Princeton Junction",
+"route_id": "14",
+"train_num": "4170",
+"trip_id": "2132110"
+}
+],
+"133": [
+{
+"arrival": 1788302623.0,
+"delay": 328,
+"departure": 1788302713.0,
+"headsign": "Waldwick",
+"route_id": "5",
+"train_num": "1271",
+"trip_id": "2131363"
+},
+{
+"arrival": 1788303495.0,
+"delay": 0,
+"departure": 1788303540.0,
+"headsign": "Hoboken",
+"route_id": "5",
+"train_num": "1276",
+"trip_id": "2131445"
+},
+{
+"arrival": 1788304420.0,
+"delay": 10,
+"departure": 1788304510.0,
+"headsign": "Suffern",
+"route_id": "5",
+"train_num": "1173",
+"trip_id": "2131345"
+}
+],
+"134": [
+{
+"arrival": 1788302952.0,
+"delay": 207,
+"departure": 1788303012.0,
+"headsign": "Penn Station New York",
+"route_id": "10",
+"train_num": "3512",
+"trip_id": "2137433"
+},
+{
+"arrival": 1788303285.0,
+"delay": 0,
+"departure": 1788303345.0,
+"headsign": "Penn Station New York",
+"route_id": "9",
+"train_num": "3868",
+"trip_id": "2132102"
+},
+{
+"arrival": 1788303311.0,
+"delay": 641,
+"departure": 1788303386.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3271",
+"trip_id": "2134795"
+},
+{
+"arrival": 1788303349.0,
+"delay": 214,
+"departure": 1788303439.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3873",
+"trip_id": "2134115"
+},
+{
+"arrival": 1788304005.0,
+"delay": 3900,
+"departure": 1788304065.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3867",
+"trip_id": "2132039"
+},
+{
+"arrival": 1788304440.0,
+"delay": 0,
+"departure": 1788304500.0,
+"headsign": "Penn Station New York",
+"route_id": "10",
+"train_num": "3272",
+"trip_id": "2131995"
+}
+],
+"135": [
+{
+"arrival": 1788302895.0,
+"delay": 495,
+"departure": 1788302955.0,
+"headsign": "Suffern",
+"route_id": "5",
+"train_num": "1169",
+"trip_id": "2131603"
+},
+{
+"arrival": 1788304170.0,
+"delay": 0,
+"departure": 1788304230.0,
+"headsign": "Suffern",
+"route_id": "6",
+"train_num": "1171",
+"trip_id": "2144943"
+},
+{
+"arrival": 1788306030.0,
+"delay": 0,
+"departure": 1788306120.0,
+"headsign": "Suffern",
+"route_id": "5",
+"train_num": "1173",
+"trip_id": "2131345"
+},
+{
+"arrival": 1788306915.0,
+"delay": 0,
+"departure": 1788306975.0,
+"headsign": "Suffern",
+"route_id": "6",
+"train_num": "1125",
+"trip_id": "2131892"
+}
+],
+"136": [
+{
+"arrival": 1788303060.0,
+"delay": 450,
+"departure": 1788303120.0,
+"headsign": "Suffern",
+"route_id": "5",
+"train_num": "1169",
+"trip_id": "2131603"
+},
+{
+"arrival": 1788303960.0,
+"delay": 0,
+"departure": 1788304020.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0061",
+"trip_id": "2131413"
+},
+{
+"arrival": 1788304380.0,
+"delay": 0,
+"departure": 1788304440.0,
+"headsign": "Suffern",
+"route_id": "6",
+"train_num": "1171",
+"trip_id": "2144943"
+},
+{
+"arrival": 1788305760.0,
+"delay": 0,
+"departure": 1788305820.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0063",
+"trip_id": "2131415"
+},
+{
+"arrival": 1788306280.0,
+"delay": 10,
+"departure": 1788306340.0,
+"headsign": "Suffern",
+"route_id": "5",
+"train_num": "1173",
+"trip_id": "2131345"
+},
+{
+"arrival": 1788307125.0,
+"delay": 0,
+"departure": 1788307170.0,
+"headsign": "Suffern",
+"route_id": "6",
+"train_num": "1125",
+"trip_id": "2131892"
+}
+],
+"137": [
+{
+"arrival": 1788302955.0,
+"delay": 0,
+"departure": 1788303000.0,
+"headsign": "Penn Station New York",
+"route_id": "15",
+"train_num": "5150",
+"trip_id": "2136510"
+},
+{
+"arrival": 1788304140.0,
+"delay": 240,
+"departure": 1788304185.0,
+"headsign": "Raritan",
+"route_id": "15",
+"train_num": "5441",
+"trip_id": "2133763"
+},
+{
+"arrival": 1788304320.0,
+"delay": 0,
+"departure": 1788304380.0,
+"headsign": "High Bridge",
+"route_id": "15",
+"train_num": "5743",
+"trip_id": "2137447"
+},
+{
+"arrival": 1788306165.0,
+"delay": 0,
+"departure": 1788306195.0,
+"headsign": "Raritan",
+"route_id": "15",
+"train_num": "5445",
+"trip_id": "2133740"
+}
+],
+"138": [
+{
+"arrival": 1788302553.0,
+"delay": 363,
+"departure": 1788302613.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3265",
+"trip_id": "2135193"
+},
+{
+"arrival": 1788303301.0,
+"delay": 376,
+"departure": 1788303391.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3267",
+"trip_id": "2132029"
+},
+{
+"arrival": 1788303586.0,
+"delay": 2926,
+"departure": 1788303646.0,
+"headsign": "Bay Head",
+"route_id": "10",
+"train_num": "3363",
+"trip_id": "2132094"
+},
+{
+"arrival": 1788306251.0,
+"delay": 641,
+"departure": 1788306311.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3271",
+"trip_id": "2134795"
+},
+{
+"arrival": 1788306380.0,
+"delay": 65,
+"departure": 1788306440.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3275",
+"trip_id": "2132125"
+},
+{
+"arrival": 1788308100.0,
+"delay": 0,
+"departure": 1788308160.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3279",
+"trip_id": "2132126"
+}
+],
+"139": [
+{
+"arrival": 1788302109.0,
+"delay": 624,
+"departure": 1788302199.0,
+"headsign": "Suffern",
+"route_id": "5",
+"train_num": "1169",
+"trip_id": "2131603"
+},
+{
+"arrival": 1788302260.0,
+"delay": 265,
+"departure": 1788302320.0,
+"headsign": "Waldwick",
+"route_id": "6",
+"train_num": "1223",
+"trip_id": "2131887"
+},
+{
+"arrival": 1788302790.0,
+"delay": 0,
+"departure": 1788302850.0,
+"headsign": "Hoboken",
+"route_id": "6",
+"train_num": "1128",
+"trip_id": "2131912"
+},
+{
+"arrival": 1788302952.0,
+"delay": 162,
+"departure": 1788303042.0,
+"headsign": "Waldwick",
+"route_id": "5",
+"train_num": "1271",
+"trip_id": "2131363"
+},
+{
+"arrival": 1788303060.0,
+"delay": 0,
+"departure": 1788303120.0,
+"headsign": "Hoboken",
+"route_id": "5",
+"train_num": "1276",
+"trip_id": "2131445"
+},
+{
+"arrival": 1788303195.0,
+"delay": 0,
+"departure": 1788303285.0,
+"headsign": "Suffern",
+"route_id": "6",
+"train_num": "1171",
+"trip_id": "2144943"
+}
+],
+"14": [
+{
+"arrival": 1788302599.0,
+"delay": 229,
+"departure": 1788302629.0,
+"headsign": "Bay Head",
+"route_id": "10",
+"train_num": "3361",
+"trip_id": "2134081"
+},
+{
+"arrival": 1788306313.0,
+"delay": 2593,
+"departure": 1788306343.0,
+"headsign": "Bay Head",
+"route_id": "10",
+"train_num": "3363",
+"trip_id": "2132094"
+},
+{
+"arrival": 1788306540.0,
+"delay": 0,
+"departure": 1788306600.0,
+"headsign": "Bay Head",
+"route_id": "10",
+"train_num": "4367",
+"trip_id": "2131871"
+}
+],
+"140": [
+{
+"arrival": 1788302359.0,
+"delay": 169,
+"departure": 1788302449.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1633",
+"trip_id": "2131451"
+},
+{
+"arrival": 1788303287.0,
+"delay": -73,
+"departure": 1788303377.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1635",
+"trip_id": "2131911"
+},
+{
+"arrival": 1788305130.0,
+"delay": 0,
+"departure": 1788305190.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1637",
+"trip_id": "2131454"
+}
+],
+"141": [
+{
+"arrival": 1788303090.0,
+"delay": 0,
+"departure": 1788303150.0,
+"headsign": "Raritan",
+"route_id": "15",
+"train_num": "5445",
+"trip_id": "2133740"
+},
+{
+"arrival": 1788305565.0,
+"delay": 0,
+"departure": 1788305610.0,
+"headsign": "Penn Station New York",
+"route_id": "15",
+"train_num": "5150",
+"trip_id": "2136510"
+}
+],
+"142": [
+{
+"arrival": 1788303270.0,
+"delay": 0,
+"departure": 1788303360.0,
+"headsign": "Suffern",
+"route_id": "5",
+"train_num": "1173",
+"trip_id": "2131345"
+},
+{
+"arrival": 1788304500.0,
+"delay": 0,
+"departure": 1788304560.0,
+"headsign": "Hoboken",
+"route_id": "5",
+"train_num": "1276",
+"trip_id": "2131445"
+}
+],
+"143": [
+{
+"arrival": 1788302098.0,
+"delay": -77,
+"departure": 1788302173.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0055",
+"trip_id": "2131723"
+},
+{
+"arrival": 1788304156.0,
+"delay": 106,
+"departure": 1788304216.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0057",
+"trip_id": "2131411"
+},
+{
+"arrival": 1788305490.0,
+"delay": 0,
+"departure": 1788305550.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0059",
+"trip_id": "2132754"
+},
+{
+"arrival": 1788306540.0,
+"delay": 0,
+"departure": 1788306600.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0061",
+"trip_id": "2131413"
+},
+{
+"arrival": 1788308370.0,
+"delay": 0,
+"departure": 1788308430.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0063",
+"trip_id": "2131415"
+}
+],
+"144": [
+{
+"arrival": 1788302220.0,
+"delay": 0,
+"departure": 1788302310.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0061",
+"trip_id": "2131413"
+},
+{
+"arrival": 1788302760.0,
+"delay": 0,
+"departure": 1788302820.0,
+"headsign": "Hoboken",
+"route_id": "6",
+"train_num": "1126",
+"trip_id": "2131901"
+},
+{
+"arrival": 1788302760.0,
+"delay": 0,
+"departure": 1788302850.0,
+"headsign": "Suffern",
+"route_id": "5",
+"train_num": "1173",
+"trip_id": "2131345"
+},
+{
+"arrival": 1788303420.0,
+"delay": 0,
+"departure": 1788303510.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1637",
+"trip_id": "2131454"
+},
+{
+"arrival": 1788303780.0,
+"delay": 0,
+"departure": 1788303870.0,
+"headsign": "Suffern",
+"route_id": "6",
+"train_num": "1125",
+"trip_id": "2131892"
+},
+{
+"arrival": 1788304020.0,
+"delay": 0,
+"departure": 1788304110.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0063",
+"trip_id": "2131415"
+}
+],
+"145": [
+{
+"arrival": 1788302161.0,
+"delay": 61,
+"departure": 1788302191.0,
+"headsign": "Penn Station New York",
+"route_id": "7",
+"train_num": "6664",
+"trip_id": "2131811"
+},
+{
+"arrival": 1788302340.0,
+"delay": 3900,
+"departure": 1788302400.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3867",
+"trip_id": "2132039"
+},
+{
+"arrival": 1788302520.0,
+"delay": 180,
+"departure": 1788302580.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3275",
+"trip_id": "2132125"
+},
+{
+"arrival": 1788302520.0,
+"delay": 0,
+"departure": 1788302580.0,
+"headsign": "South Amboy",
+"route_id": "10",
+"train_num": "3515",
+"trip_id": "2131927"
+},
+{
+"arrival": 1788302660.0,
+"delay": 860,
+"departure": 1788302720.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "6655",
+"trip_id": "2134096"
+},
+{
+"arrival": 1788302700.0,
+"delay": 120,
+"departure": 1788302730.0,
+"headsign": "Penn Station New York",
+"route_id": "9",
+"train_num": "3866",
+"trip_id": "2131835"
+}
+],
+"146": [
+{
+"arrival": 1788302400.0,
+"delay": 420,
+"departure": 1788302460.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0435",
+"trip_id": "2131698"
+},
+{
+"arrival": 1788302866.0,
+"delay": 166,
+"departure": 1788302926.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "6437",
+"trip_id": "2132007"
+},
+{
+"arrival": 1788302897.0,
+"delay": 1817,
+"departure": 1788302957.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "6651",
+"trip_id": "2132038"
+},
+{
+"arrival": 1788303735.0,
+"delay": 0,
+"departure": 1788303780.0,
+"headsign": "Hoboken",
+"route_id": "7",
+"train_num": "0858",
+"trip_id": "2131434"
+},
+{
+"arrival": 1788303720.0,
+"delay": 0,
+"departure": 1788303780.0,
+"headsign": "7 6355",
+"route_id": "7",
+"train_num": "6355",
+"trip_id": "njt:6355"
+},
+{
+"arrival": 1788304950.0,
+"delay": 0,
+"departure": 1788305010.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "0657",
+"trip_id": "2131427"
+}
+],
+"147": [
+{
+"arrival": 1788302307.0,
+"delay": 87,
+"departure": 1788302337.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0057",
+"trip_id": "2131411"
+},
+{
+"arrival": 1788304710.0,
+"delay": 0,
+"departure": 1788304740.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0061",
+"trip_id": "2131413"
+},
+{
+"arrival": 1788306540.0,
+"delay": 0,
+"departure": 1788306570.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0063",
+"trip_id": "2131415"
+}
+],
+"148": [
+{
+"arrival": 1788303135.0,
+"delay": 0,
+"departure": 1788303180.0,
+"headsign": "Penn Station New York",
+"route_id": "15",
+"train_num": "5150",
+"trip_id": "2136510"
+},
+{
+"arrival": 1788303720.0,
+"delay": 240,
+"departure": 1788303780.0,
+"headsign": "Raritan",
+"route_id": "15",
+"train_num": "5441",
+"trip_id": "2133763"
+},
+{
+"arrival": 1788304110.0,
+"delay": 0,
+"departure": 1788304170.0,
+"headsign": "High Bridge",
+"route_id": "15",
+"train_num": "5743",
+"trip_id": "2137447"
+},
+{
+"arrival": 1788305670.0,
+"delay": 0,
+"departure": 1788305730.0,
+"headsign": "Raritan",
+"route_id": "15",
+"train_num": "5445",
+"trip_id": "2133740"
+}
+],
+"149": [
+{
+"arrival": 1788302227.0,
+"delay": 862,
+"departure": 1788302287.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3267",
+"trip_id": "2132029"
+},
+{
+"arrival": 1788302435.0,
+"delay": 1745,
+"departure": 1788302480.0,
+"headsign": "Penn Station New York",
+"route_id": "10",
+"train_num": "3270",
+"trip_id": "2134097"
+},
+{
+"arrival": 1788302599.0,
+"delay": 3424,
+"departure": 1788302644.0,
+"headsign": "Bay Head",
+"route_id": "10",
+"train_num": "3363",
+"trip_id": "2132094"
+},
+{
+"arrival": 1788303093.0,
+"delay": 63,
+"departure": 1788303138.0,
+"headsign": "Penn Station New York",
+"route_id": "10",
+"train_num": "3272",
+"trip_id": "2131995"
+},
+{
+"arrival": 1788304805.0,
+"delay": 65,
+"departure": 1788304865.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3275",
+"trip_id": "2132125"
+},
+{
+"arrival": 1788304814.0,
+"delay": 719,
+"departure": 1788304874.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3271",
+"trip_id": "2134795"
+}
+],
+"15": [
+{
+"arrival": 1788302984.0,
+"delay": 194,
+"departure": 1788303044.0,
+"headsign": "Montclair State University",
+"route_id": "2",
+"train_num": "6279",
+"trip_id": "2132100"
+},
+{
+"arrival": 1788303720.0,
+"delay": 0,
+"departure": 1788303780.0,
+"headsign": "Lake Hopatcong",
+"route_id": "2",
+"train_num": "1011",
+"trip_id": "2131327"
+},
+{
+"arrival": 1788304590.0,
+"delay": 0,
+"departure": 1788304650.0,
+"headsign": "Montclair State University",
+"route_id": "2",
+"train_num": "6283",
+"trip_id": "2131275"
+}
+],
+"150": [
+{
+"arrival": 1788302327.0,
+"delay": 1817,
+"departure": 1788302327.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "6651",
+"trip_id": "2132038"
+},
+{
+"arrival": 1788302392.0,
+"delay": -8,
+"departure": 1788302452.0,
+"headsign": "Penn Station New York",
+"route_id": "7",
+"train_num": "6666",
+"trip_id": "2145229"
+},
+{
+"arrival": 1788302800.0,
+"delay": 430,
+"departure": 1788302860.0,
+"headsign": "Summit",
+"route_id": "7",
+"train_num": "0339",
+"trip_id": "2131423"
+},
+{
+"arrival": 1788303034.0,
+"delay": 64,
+"departure": 1788303094.0,
+"headsign": "7 6355",
+"route_id": "7",
+"train_num": "6355",
+"trip_id": "njt:6355"
+},
+{
+"arrival": 1788303420.0,
+"delay": 0,
+"departure": 1788303480.0,
+"headsign": "Penn Station New York",
+"route_id": "7",
+"train_num": "6368",
+"trip_id": "2134114"
+},
+{
+"arrival": 1788304320.0,
+"delay": 0,
+"departure": 1788304380.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "0657",
+"trip_id": "2131427"
+}
+],
+"151": [
+{
+"arrival": 1788305491.0,
+"delay": 2701,
+"departure": 1788305536.0,
+"headsign": "Bay Head",
+"route_id": "10",
+"train_num": "3363",
+"trip_id": "2132094"
+},
+{
+"arrival": 1788305550.0,
+"delay": 0,
+"departure": 1788305595.0,
+"headsign": "Bay Head",
+"route_id": "10",
+"train_num": "4367",
+"trip_id": "2131871"
+}
+],
+"152": [
+{
+"arrival": 1788303462.0,
+"delay": 102,
+"departure": 1788303492.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1631",
+"trip_id": "2131450"
+},
+{
+"arrival": 1788304701.0,
+"delay": 231,
+"departure": 1788304731.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1633",
+"trip_id": "2131451"
+},
+{
+"arrival": 1788305640.0,
+"delay": 0,
+"departure": 1788305670.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1635",
+"trip_id": "2131911"
+},
+{
+"arrival": 1788307350.0,
+"delay": 0,
+"departure": 1788307380.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1637",
+"trip_id": "2131454"
+}
+],
+"153": [
+{
+"arrival": 1788302209.0,
+"delay": 199,
+"departure": 1788302254.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0433",
+"trip_id": "2131923"
+},
+{
+"arrival": 1788303526.0,
+"delay": 211,
+"departure": 1788303556.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0435",
+"trip_id": "2131698"
+},
+{
+"arrival": 1788304110.0,
+"delay": 0,
+"departure": 1788304155.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "6437",
+"trip_id": "2132007"
+},
+{
+"arrival": 1788305865.0,
+"delay": 0,
+"departure": 1788305895.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0439",
+"trip_id": "2131699"
+}
+],
+"154": [
+{
+"arrival": 1788303444.0,
+"delay": 324,
+"departure": 1788303504.0,
+"headsign": "Suffern",
+"route_id": "5",
+"train_num": "1169",
+"trip_id": "2131603"
+},
+{
+"arrival": 1788304260.0,
+"delay": 0,
+"departure": 1788304320.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0061",
+"trip_id": "2131413"
+},
+{
+"arrival": 1788304890.0,
+"delay": 0,
+"departure": 1788305040.0,
+"headsign": "Suffern",
+"route_id": "6",
+"train_num": "1171",
+"trip_id": "2144943"
+},
+{
+"arrival": 1788306090.0,
+"delay": 0,
+"departure": 1788306150.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0063",
+"trip_id": "2131415"
+},
+{
+"arrival": 1788306780.0,
+"delay": 0,
+"departure": 1788306900.0,
+"headsign": "Suffern",
+"route_id": "5",
+"train_num": "1173",
+"trip_id": "2131345"
+},
+{
+"arrival": 1788307620.0,
+"delay": 0,
+"departure": 1788307680.0,
+"headsign": "Suffern",
+"route_id": "6",
+"train_num": "1125",
+"trip_id": "2131892"
+}
+],
+"155": [
+{
+"arrival": 1788302477.0,
+"delay": -73,
+"departure": 1788302537.0,
+"headsign": "Hackettstown",
+"route_id": "7",
+"train_num": "0881",
+"trip_id": "2131922"
+},
+{
+"arrival": 1788302661.0,
+"delay": 381,
+"departure": 1788302721.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0435",
+"trip_id": "2131698"
+},
+{
+"arrival": 1788302820.0,
+"delay": 0,
+"departure": 1788302820.0,
+"headsign": "Penn Station New York",
+"route_id": "7",
+"train_num": "6368",
+"trip_id": "2134114"
+},
+{
+"arrival": 1788303257.0,
+"delay": 1817,
+"departure": 1788303347.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "6651",
+"trip_id": "2132038"
+},
+{
+"arrival": 1788303435.0,
+"delay": 0,
+"departure": 1788303495.0,
+"headsign": "Hoboken",
+"route_id": "7",
+"train_num": "0858",
+"trip_id": "2131434"
+},
+{
+"arrival": 1788303576.0,
+"delay": 336,
+"departure": 1788303576.0,
+"headsign": "Summit",
+"route_id": "7",
+"train_num": "0339",
+"trip_id": "2131423"
+}
+],
+"156": [
+{
+"arrival": 1788302521.0,
+"delay": 91,
+"departure": 1788302581.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1635",
+"trip_id": "2131911"
+},
+{
+"arrival": 1788304260.0,
+"delay": 0,
+"departure": 1788304320.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1637",
+"trip_id": "2131454"
+}
+],
+"157": [
+{
+"arrival": 1788303045.0,
+"delay": 0,
+"departure": 1788303090.0,
+"headsign": "Dover",
+"route_id": "2",
+"train_num": "1009",
+"trip_id": "2131582"
+},
+{
+"arrival": 1788305940.0,
+"delay": 0,
+"departure": 1788305985.0,
+"headsign": "Lake Hopatcong",
+"route_id": "2",
+"train_num": "1011",
+"trip_id": "2131327"
+}
+],
+"158": [
+{
+"arrival": 1788302160.0,
+"delay": 0,
+"departure": 1788302760.0,
+"headsign": "Penn Station New York",
+"route_id": "9",
+"train_num": "3872",
+"trip_id": "2134122"
+},
+{
+"arrival": 1788302955.0,
+"delay": 0,
+"departure": 1788302985.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3953",
+"trip_id": "2131872"
+},
+{
+"arrival": 1788304382.0,
+"delay": 767,
+"departure": 1788304427.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3867",
+"trip_id": "2132039"
+},
+{
+"arrival": 1788305582.0,
+"delay": 362,
+"departure": 1788305612.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3957",
+"trip_id": "2133279"
+},
+{
+"arrival": 1788306829.0,
+"delay": 214,
+"departure": 1788306844.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3873",
+"trip_id": "2134115"
+},
+{
+"arrival": 1788307020.0,
+"delay": 0,
+"departure": 1788307080.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3961",
+"trip_id": "2133227"
+}
+],
+"159": [
+{
+"arrival": 1788302574.0,
+"delay": 54,
+"departure": 1788302604.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0057",
+"trip_id": "2131411"
+},
+{
+"arrival": 1788305010.0,
+"delay": 0,
+"departure": 1788305040.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0061",
+"trip_id": "2131413"
+},
+{
+"arrival": 1788306840.0,
+"delay": 0,
+"departure": 1788306870.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0063",
+"trip_id": "2131415"
+}
+],
+"16": [
+{
+"arrival": 1788305288.0,
+"delay": 2738,
+"departure": 1788305348.0,
+"headsign": "Bay Head",
+"route_id": "10",
+"train_num": "3363",
+"trip_id": "2132094"
+},
+{
+"arrival": 1788305325.0,
+"delay": 0,
+"departure": 1788305370.0,
+"headsign": "Bay Head",
+"route_id": "10",
+"train_num": "4367",
+"trip_id": "2131871"
+}
+],
+"160": [
+{
+"arrival": 1788302880.0,
+"delay": 0,
+"departure": 1788302910.0,
+"headsign": "Raritan",
+"route_id": "15",
+"train_num": "5445",
+"trip_id": "2133740"
+},
+{
+"arrival": 1788305820.0,
+"delay": 0,
+"departure": 1788305865.0,
+"headsign": "Penn Station New York",
+"route_id": "15",
+"train_num": "5150",
+"trip_id": "2136510"
+}
+],
+"161": [
+{
+"arrival": 1788302289.0,
+"delay": 159,
+"departure": 1788302334.0,
+"headsign": "Montclair State University",
+"route_id": "2",
+"train_num": "0275",
+"trip_id": "2131740"
+},
+{
+"arrival": 1788303577.0,
+"delay": 187,
+"departure": 1788303637.0,
+"headsign": "Montclair State University",
+"route_id": "2",
+"train_num": "6279",
+"trip_id": "2132100"
+},
+{
+"arrival": 1788304260.0,
+"delay": 0,
+"departure": 1788304320.0,
+"headsign": "Lake Hopatcong",
+"route_id": "2",
+"train_num": "1011",
+"trip_id": "2131327"
+},
+{
+"arrival": 1788305130.0,
+"delay": 0,
+"departure": 1788305190.0,
+"headsign": "Montclair State University",
+"route_id": "2",
+"train_num": "6283",
+"trip_id": "2131275"
+}
+],
+"162": [
+{
+"arrival": 1788302430.0,
+"delay": 0,
+"departure": 1788302475.0,
+"headsign": "Hoboken",
+"route_id": "6",
+"train_num": "1128",
+"trip_id": "2131912"
+},
+{
+"arrival": 1788302526.0,
+"delay": 561,
+"departure": 1788302586.0,
+"headsign": "Suffern",
+"route_id": "5",
+"train_num": "1169",
+"trip_id": "2131603"
+},
+{
+"arrival": 1788302652.0,
+"delay": 192,
+"departure": 1788302712.0,
+"headsign": "Waldwick",
+"route_id": "6",
+"train_num": "1223",
+"trip_id": "2131887"
+},
+{
+"arrival": 1788303396.0,
+"delay": 96,
+"departure": 1788303456.0,
+"headsign": "Waldwick",
+"route_id": "5",
+"train_num": "1271",
+"trip_id": "2131363"
+},
+{
+"arrival": 1788303705.0,
+"delay": 0,
+"departure": 1788303795.0,
+"headsign": "Suffern",
+"route_id": "6",
+"train_num": "1171",
+"trip_id": "2144943"
+},
+{
+"arrival": 1788304560.0,
+"delay": 0,
+"departure": 1788304620.0,
+"headsign": "Waldwick",
+"route_id": "6",
+"train_num": "1225",
+"trip_id": "2131888"
+}
+],
+"163": [
+{
+"arrival": 1788303217.0,
+"delay": 217,
+"departure": 1788303307.0,
+"headsign": "Montclair State University",
+"route_id": "2",
+"train_num": "6279",
+"trip_id": "2132100"
+},
+{
+"arrival": 1788303900.0,
+"delay": 0,
+"departure": 1788303960.0,
+"headsign": "Lake Hopatcong",
+"route_id": "2",
+"train_num": "1011",
+"trip_id": "2131327"
+},
+{
+"arrival": 1788304800.0,
+"delay": 0,
+"departure": 1788304860.0,
+"headsign": "Montclair State University",
+"route_id": "2",
+"train_num": "6283",
+"trip_id": "2131275"
+}
+],
+"165": [
+{
+"arrival": 1788302161.0,
+"delay": 196,
+"departure": 1788302206.0,
+"headsign": "Montclair State University",
+"route_id": "2",
+"train_num": "0275",
+"trip_id": "2131740"
+},
+{
+"arrival": 1788303401.0,
+"delay": 221,
+"departure": 1788303491.0,
+"headsign": "Montclair State University",
+"route_id": "2",
+"train_num": "6279",
+"trip_id": "2132100"
+},
+{
+"arrival": 1788304080.0,
+"delay": 0,
+"departure": 1788304140.0,
+"headsign": "Lake Hopatcong",
+"route_id": "2",
+"train_num": "1011",
+"trip_id": "2131327"
+},
+{
+"arrival": 1788304950.0,
+"delay": 0,
+"departure": 1788305010.0,
+"headsign": "Montclair State University",
+"route_id": "2",
+"train_num": "6283",
+"trip_id": "2131275"
+}
+],
+"166": [
+{
+"arrival": 1788302525.0,
+"delay": 275,
+"departure": 1788302585.0,
+"headsign": "Montclair State University",
+"route_id": "2",
+"train_num": "6279",
+"trip_id": "2132100"
+},
+{
+"arrival": 1788304020.0,
+"delay": 0,
+"departure": 1788304080.0,
+"headsign": "Montclair State University",
+"route_id": "2",
+"train_num": "6283",
+"trip_id": "2131275"
+}
+],
+"167": [
+{
+"arrival": 1788302280.0,
+"delay": -60,
+"departure": 1788302325.0,
+"headsign": "Dover",
+"route_id": "2",
+"train_num": "1009",
+"trip_id": "2131582"
+},
+{
+"arrival": 1788305220.0,
+"delay": 0,
+"departure": 1788305265.0,
+"headsign": "Lake Hopatcong",
+"route_id": "2",
+"train_num": "1011",
+"trip_id": "2131327"
+}
+],
+"168": [
+{
+"arrival": 1788303555.0,
+"delay": 0,
+"departure": 1788303615.0,
+"headsign": "Suffern",
+"route_id": "5",
+"train_num": "1173",
+"trip_id": "2131345"
+},
+{
+"arrival": 1788304230.0,
+"delay": 0,
+"departure": 1788304275.0,
+"headsign": "Hoboken",
+"route_id": "5",
+"train_num": "1276",
+"trip_id": "2131445"
+}
+],
+"169": [
+{
+"arrival": 1788302827.0,
+"delay": 262,
+"departure": 1788302887.0,
+"headsign": "High Bridge",
+"route_id": "15",
+"train_num": "5743",
+"trip_id": "2137447"
+},
+{
+"arrival": 1788303795.0,
+"delay": 0,
+"departure": 1788303855.0,
+"headsign": "Raritan",
+"route_id": "15",
+"train_num": "5445",
+"trip_id": "2133740"
+},
+{
+"arrival": 1788304875.0,
+"delay": 0,
+"departure": 1788304920.0,
+"headsign": "Penn Station New York",
+"route_id": "15",
+"train_num": "5150",
+"trip_id": "2136510"
+}
+],
+"17": [
+{
+"arrival": 1788302317.0,
+"delay": 652,
+"departure": 1788302377.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0433",
+"trip_id": "2131923"
+},
+{
+"arrival": 1788303095.0,
+"delay": 110,
+"departure": 1788303155.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0435",
+"trip_id": "2131698"
+},
+{
+"arrival": 1788303601.0,
+"delay": -119,
+"departure": 1788303661.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "6437",
+"trip_id": "2132007"
+},
+{
+"arrival": 1788305535.0,
+"delay": 0,
+"departure": 1788305595.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0439",
+"trip_id": "2131699"
+}
+],
+"170": [
+{
+"arrival": 1788303066.0,
+"delay": 216,
+"departure": 1788303156.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1633",
+"trip_id": "2131451"
+},
+{
+"arrival": 1788304020.0,
+"delay": 0,
+"departure": 1788304110.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1635",
+"trip_id": "2131911"
+},
+{
+"arrival": 1788305760.0,
+"delay": 0,
+"departure": 1788305820.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1637",
+"trip_id": "2131454"
+}
+],
+"171": [
+{
+"arrival": 1788303300.0,
+"delay": 0,
+"departure": 1788303360.0,
+"headsign": "Raritan",
+"route_id": "15",
+"train_num": "5435",
+"trip_id": "2134083"
+},
+{
+"arrival": 1788305190.0,
+"delay": 0,
+"departure": 1788305220.0,
+"headsign": "High Bridge",
+"route_id": "15",
+"train_num": "5743",
+"trip_id": "2137447"
+}
+],
+"174": [
+{
+"arrival": 1788302467.0,
+"delay": 217,
+"departure": 1788302512.0,
+"headsign": "Penn Station New York",
+"route_id": "10",
+"train_num": "3512",
+"trip_id": "2137433"
+},
+{
+"arrival": 1788302906.0,
+"delay": 1481,
+"departure": 1788302951.0,
+"headsign": "Penn Station New York",
+"route_id": "10",
+"train_num": "3270",
+"trip_id": "2134097"
+},
+{
+"arrival": 1788303765.0,
+"delay": 0,
+"departure": 1788303825.0,
+"headsign": "Penn Station New York",
+"route_id": "10",
+"train_num": "3272",
+"trip_id": "2131995"
+},
+{
+"arrival": 1788303911.0,
+"delay": 641,
+"departure": 1788303971.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3271",
+"trip_id": "2134795"
+},
+{
+"arrival": 1788304130.0,
+"delay": 65,
+"departure": 1788304220.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3275",
+"trip_id": "2132125"
+},
+{
+"arrival": 1788305145.0,
+"delay": 0,
+"departure": 1788305205.0,
+"headsign": "South Amboy",
+"route_id": "10",
+"train_num": "3515",
+"trip_id": "2131927"
+}
+],
+"175": [
+{
+"arrival": 1788302223.0,
+"delay": 63,
+"departure": 1788302283.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1631",
+"trip_id": "2131450"
+},
+{
+"arrival": 1788303445.0,
+"delay": 175,
+"departure": 1788303505.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1633",
+"trip_id": "2131451"
+},
+{
+"arrival": 1788304440.0,
+"delay": 0,
+"departure": 1788304500.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1635",
+"trip_id": "2131911"
+},
+{
+"arrival": 1788306150.0,
+"delay": 0,
+"departure": 1788306210.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1637",
+"trip_id": "2131454"
+}
+],
+"176": [
+{
+"arrival": 1788302313.0,
+"delay": 93,
+"departure": 1788302373.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1635",
+"trip_id": "2131911"
+},
+{
+"arrival": 1788304050.0,
+"delay": 0,
+"departure": 1788304110.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1637",
+"trip_id": "2131454"
+}
+],
+"18": [
+{
+"arrival": 1788302420.0,
+"delay": 395,
+"departure": 1788302465.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "6431",
+"trip_id": "2132098"
+},
+{
+"arrival": 1788303176.0,
+"delay": 416,
+"departure": 1788303236.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0433",
+"trip_id": "2131923"
+},
+{
+"arrival": 1788304127.0,
+"delay": 137,
+"departure": 1788304157.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0435",
+"trip_id": "2131698"
+},
+{
+"arrival": 1788304935.0,
+"delay": 0,
+"departure": 1788304980.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "6437",
+"trip_id": "2132007"
+},
+{
+"arrival": 1788306570.0,
+"delay": 0,
+"departure": 1788306600.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0439",
+"trip_id": "2131699"
+}
+],
+"19": [
+{
+"arrival": 1788302679.0,
+"delay": 249,
+"departure": 1788302739.0,
+"headsign": "Montclair State University",
+"route_id": "2",
+"train_num": "6279",
+"trip_id": "2132100"
+},
+{
+"arrival": 1788303375.0,
+"delay": 0,
+"departure": 1788303435.0,
+"headsign": "Lake Hopatcong",
+"route_id": "2",
+"train_num": "1011",
+"trip_id": "2131327"
+},
+{
+"arrival": 1788304200.0,
+"delay": 0,
+"departure": 1788304260.0,
+"headsign": "Montclair State University",
+"route_id": "2",
+"train_num": "6283",
+"trip_id": "2131275"
+}
+],
+"2": [
+{
+"arrival": 1788304590.0,
+"delay": 0,
+"departure": 1788304635.0,
+"headsign": "Atlantic City Terminal",
+"route_id": "1",
+"train_num": "4635",
+"trip_id": "2131237"
+},
+{
+"arrival": 1788308610.0,
+"delay": 0,
+"departure": 1788308655.0,
+"headsign": "Atlantic City Terminal",
+"route_id": "1",
+"train_num": "4639",
+"trip_id": "2131242"
+}
+],
+"20": [
+{
+"arrival": 1788303435.0,
+"delay": 0,
+"departure": 1788303480.0,
+"headsign": "Dover",
+"route_id": "2",
+"train_num": "1009",
+"trip_id": "2131582"
+},
+{
+"arrival": 1788306330.0,
+"delay": 0,
+"departure": 1788306375.0,
+"headsign": "Lake Hopatcong",
+"route_id": "2",
+"train_num": "1011",
+"trip_id": "2131327"
+}
+],
+"21": [
+{
+"arrival": 1788303235.0,
+"delay": 280,
+"departure": 1788303295.0,
+"headsign": "Raritan",
+"route_id": "15",
+"train_num": "5441",
+"trip_id": "2133763"
+},
+{
+"arrival": 1788303615.0,
+"delay": 0,
+"departure": 1788303660.0,
+"headsign": "Penn Station New York",
+"route_id": "15",
+"train_num": "5150",
+"trip_id": "2136510"
+},
+{
+"arrival": 1788303671.0,
+"delay": 86,
+"departure": 1788303731.0,
+"headsign": "High Bridge",
+"route_id": "15",
+"train_num": "5743",
+"trip_id": "2137447"
+},
+{
+"arrival": 1788305145.0,
+"delay": 0,
+"departure": 1788305205.0,
+"headsign": "Raritan",
+"route_id": "15",
+"train_num": "5445",
+"trip_id": "2133740"
+}
+],
+"22": [
+{
+"arrival": 1788305085.0,
+"delay": 0,
+"departure": 1788305130.0,
+"headsign": "Bay Head",
+"route_id": "10",
+"train_num": "4367",
+"trip_id": "2131871"
+},
+{
+"arrival": 1788305114.0,
+"delay": 2804,
+"departure": 1788305159.0,
+"headsign": "Bay Head",
+"route_id": "10",
+"train_num": "3363",
+"trip_id": "2132094"
+}
+],
+"23": [
+{
+"arrival": 1788302295.0,
+"delay": 495,
+"departure": 1788302325.0,
+"headsign": "Summit",
+"route_id": "7",
+"train_num": "0339",
+"trip_id": "2131423"
+},
+{
+"arrival": 1788302578.0,
+"delay": 178,
+"departure": 1788302638.0,
+"headsign": "7 6355",
+"route_id": "7",
+"train_num": "6355",
+"trip_id": "njt:6355"
+},
+{
+"arrival": 1788302730.0,
+"delay": 0,
+"departure": 1788302790.0,
+"headsign": "Penn Station New York",
+"route_id": "7",
+"train_num": "6666",
+"trip_id": "2145229"
+},
+{
+"arrival": 1788303690.0,
+"delay": 0,
+"departure": 1788303750.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "0657",
+"trip_id": "2131427"
+},
+{
+"arrival": 1788304050.0,
+"delay": 0,
+"departure": 1788304110.0,
+"headsign": "Penn Station New York",
+"route_id": "7",
+"train_num": "6368",
+"trip_id": "2134114"
+},
+{
+"arrival": 1788304500.0,
+"delay": 0,
+"departure": 1788304560.0,
+"headsign": "Summit",
+"route_id": "7",
+"train_num": "6359",
+"trip_id": "2131289"
+}
+],
+"24": [
+{
+"arrival": 1788303435.0,
+"delay": 0,
+"departure": 1788303480.0,
+"headsign": "Penn Station New York",
+"route_id": "15",
+"train_num": "5150",
+"trip_id": "2136510"
+},
+{
+"arrival": 1788303430.0,
+"delay": 280,
+"departure": 1788303490.0,
+"headsign": "Raritan",
+"route_id": "15",
+"train_num": "5441",
+"trip_id": "2133763"
+},
+{
+"arrival": 1788303820.0,
+"delay": 40,
+"departure": 1788303880.0,
+"headsign": "High Bridge",
+"route_id": "15",
+"train_num": "5743",
+"trip_id": "2137447"
+},
+{
+"arrival": 1788305340.0,
+"delay": 0,
+"departure": 1788305400.0,
+"headsign": "Raritan",
+"route_id": "15",
+"train_num": "5445",
+"trip_id": "2133740"
+}
+],
+"25": [
+{
+"arrival": 1788302463.0,
+"delay": 363,
+"departure": 1788302523.0,
+"headsign": "Waldwick",
+"route_id": "5",
+"train_num": "1271",
+"trip_id": "2131363"
+},
+{
+"arrival": 1788303690.0,
+"delay": 0,
+"departure": 1788303735.0,
+"headsign": "Hoboken",
+"route_id": "5",
+"train_num": "1276",
+"trip_id": "2131445"
+},
+{
+"arrival": 1788304225.0,
+"delay": 10,
+"departure": 1788304285.0,
+"headsign": "Suffern",
+"route_id": "5",
+"train_num": "1173",
+"trip_id": "2131345"
+}
+],
+"26": [
+{
+"arrival": 1788302835.0,
+"delay": 0,
+"departure": 1788302910.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0055",
+"trip_id": "2131723"
+},
+{
+"arrival": 1788304759.0,
+"delay": -11,
+"departure": 1788304789.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0057",
+"trip_id": "2131411"
+},
+{
+"arrival": 1788306210.0,
+"delay": 0,
+"departure": 1788306270.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0059",
+"trip_id": "2132754"
+},
+{
+"arrival": 1788307260.0,
+"delay": 0,
+"departure": 1788307290.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0061",
+"trip_id": "2131413"
+},
+{
+"arrival": 1788309090.0,
+"delay": 0,
+"departure": 1788309120.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0063",
+"trip_id": "2131415"
+}
+],
+"27": [
+{
+"arrival": 1788302880.0,
+"delay": 0,
+"departure": 1788302940.0,
+"headsign": "Hackettstown",
+"route_id": "7",
+"train_num": "0881",
+"trip_id": "2131922"
+},
+{
+"arrival": 1788303045.0,
+"delay": 0,
+"departure": 1788303105.0,
+"headsign": "Hoboken",
+"route_id": "7",
+"train_num": "0858",
+"trip_id": "2131434"
+},
+{
+"arrival": 1788303495.0,
+"delay": 0,
+"departure": 1788303540.0,
+"headsign": "Penn Station New York",
+"route_id": "7",
+"train_num": "6668",
+"trip_id": "2131311"
+},
+{
+"arrival": 1788303747.0,
+"delay": 1887,
+"departure": 1788303807.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "6651",
+"trip_id": "2132038"
+},
+{
+"arrival": 1788304890.0,
+"delay": 930,
+"departure": 1788304980.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "6655",
+"trip_id": "2134096"
+},
+{
+"arrival": 1788305445.0,
+"delay": 0,
+"departure": 1788305490.0,
+"headsign": "Penn Station New York",
+"route_id": "7",
+"train_num": "6670",
+"trip_id": "2131312"
+}
+],
+"28": [
+{
+"arrival": 1788305415.0,
+"delay": 0,
+"departure": 1788305460.0,
+"headsign": "Atlantic City Terminal",
+"route_id": "1",
+"train_num": "4639",
+"trip_id": "2131242"
+}
+],
+"29": [
+{
+"arrival": 1788302910.0,
+"delay": -15,
+"departure": 1788303000.0,
+"headsign": "Waldwick",
+"route_id": "6",
+"train_num": "1225",
+"trip_id": "2131888"
+},
+{
+"arrival": 1788303840.0,
+"delay": 0,
+"departure": 1788303900.0,
+"headsign": "Hoboken",
+"route_id": "6",
+"train_num": "1128",
+"trip_id": "2131912"
+},
+{
+"arrival": 1788304890.0,
+"delay": 0,
+"departure": 1788304965.0,
+"headsign": "Suffern",
+"route_id": "6",
+"train_num": "1125",
+"trip_id": "2131892"
+}
+],
+"3": [
+{
+"arrival": 1788302223.0,
+"delay": -42,
+"departure": 1788302253.0,
+"headsign": "Hoboken",
+"route_id": "6",
+"train_num": "1128",
+"trip_id": "2131912"
+},
+{
+"arrival": 1788302622.0,
+"delay": 462,
+"departure": 1788302682.0,
+"headsign": "Suffern",
+"route_id": "5",
+"train_num": "1169",
+"trip_id": "2131603"
+},
+{
+"arrival": 1788303930.0,
+"delay": 0,
+"departure": 1788303990.0,
+"headsign": "Suffern",
+"route_id": "6",
+"train_num": "1171",
+"trip_id": "2144943"
+},
+{
+"arrival": 1788305800.0,
+"delay": 10,
+"departure": 1788305860.0,
+"headsign": "Suffern",
+"route_id": "5",
+"train_num": "1173",
+"trip_id": "2131345"
+},
+{
+"arrival": 1788306675.0,
+"delay": 0,
+"departure": 1788306735.0,
+"headsign": "Suffern",
+"route_id": "6",
+"train_num": "1125",
+"trip_id": "2131892"
+}
+],
+"30": [
+{
+"arrival": 1788302534.0,
+"delay": -1,
+"departure": 1788302594.0,
+"headsign": "Hoboken",
+"route_id": "7",
+"train_num": "0858",
+"trip_id": "2131434"
+},
+{
+"arrival": 1788303015.0,
+"delay": 0,
+"departure": 1788303075.0,
+"headsign": "Penn Station New York",
+"route_id": "7",
+"train_num": "6668",
+"trip_id": "2131311"
+},
+{
+"arrival": 1788303420.0,
+"delay": 0,
+"departure": 1788303480.0,
+"headsign": "Hackettstown",
+"route_id": "7",
+"train_num": "0881",
+"trip_id": "2131922"
+},
+{
+"arrival": 1788304287.0,
+"delay": 1887,
+"departure": 1788304347.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "6651",
+"trip_id": "2132038"
+},
+{
+"arrival": 1788304995.0,
+"delay": 0,
+"departure": 1788305040.0,
+"headsign": "Penn Station New York",
+"route_id": "7",
+"train_num": "6670",
+"trip_id": "2131312"
+},
+{
+"arrival": 1788305490.0,
+"delay": 930,
+"departure": 1788305550.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "6655",
+"trip_id": "2134096"
+}
+],
+"31": [
+{
+"arrival": 1788303405.0,
+"delay": 0,
+"departure": 1788303465.0,
+"headsign": "Raritan",
+"route_id": "15",
+"train_num": "5445",
+"trip_id": "2133740"
+},
+{
+"arrival": 1788305250.0,
+"delay": 0,
+"departure": 1788305295.0,
+"headsign": "Penn Station New York",
+"route_id": "15",
+"train_num": "5150",
+"trip_id": "2136510"
+}
+],
+"32": [
+{
+"arrival": 1788302136.0,
+"delay": 6,
+"departure": 1788302196.0,
+"headsign": "Hoboken",
+"route_id": "6",
+"train_num": "1126",
+"trip_id": "2131901"
+},
+{
+"arrival": 1788302563.0,
+"delay": 118,
+"departure": 1788302653.0,
+"headsign": "Waldwick",
+"route_id": "6",
+"train_num": "1225",
+"trip_id": "2131888"
+},
+{
+"arrival": 1788304260.0,
+"delay": 0,
+"departure": 1788304305.0,
+"headsign": "Hoboken",
+"route_id": "6",
+"train_num": "1128",
+"trip_id": "2131912"
+},
+{
+"arrival": 1788304440.0,
+"delay": 0,
+"departure": 1788304515.0,
+"headsign": "Suffern",
+"route_id": "6",
+"train_num": "1125",
+"trip_id": "2131892"
+}
+],
+"33": [
+{
+"arrival": 1788302637.0,
+"delay": 117,
+"departure": 1788302697.0,
+"headsign": "Lake Hopatcong",
+"route_id": "7",
+"train_num": "0807",
+"trip_id": "2134797"
+},
+{
+"arrival": 1788304140.0,
+"delay": 0,
+"departure": 1788304200.0,
+"headsign": "Penn Station New York",
+"route_id": "7",
+"train_num": "6670",
+"trip_id": "2131312"
+},
+{
+"arrival": 1788304200.0,
+"delay": 0,
+"departure": 1788304245.0,
+"headsign": "Dover",
+"route_id": "2",
+"train_num": "1009",
+"trip_id": "2131582"
+},
+{
+"arrival": 1788304560.0,
+"delay": 0,
+"departure": 1788304620.0,
+"headsign": "Hackettstown",
+"route_id": "7",
+"train_num": "0881",
+"trip_id": "2131922"
+},
+{
+"arrival": 1788305277.0,
+"delay": 1887,
+"departure": 1788305337.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "6651",
+"trip_id": "2132038"
+},
+{
+"arrival": 1788306300.0,
+"delay": 0,
+"departure": 1788306360.0,
+"headsign": "Hoboken",
+"route_id": "7",
+"train_num": "0882",
+"trip_id": "2131438"
+}
+],
+"34": [
+{
+"arrival": 1788302280.0,
+"delay": 120,
+"departure": 1788302280.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "6647",
+"trip_id": "2132120"
+},
+{
+"arrival": 1788303015.0,
+"delay": 45,
+"departure": 1788303075.0,
+"headsign": "Lake Hopatcong",
+"route_id": "7",
+"train_num": "0807",
+"trip_id": "2134797"
+},
+{
+"arrival": 1788303720.0,
+"delay": 0,
+"departure": 1788303780.0,
+"headsign": "Penn Station New York",
+"route_id": "7",
+"train_num": "6670",
+"trip_id": "2131312"
+},
+{
+"arrival": 1788304740.0,
+"delay": 0,
+"departure": 1788304785.0,
+"headsign": "Dover",
+"route_id": "2",
+"train_num": "1009",
+"trip_id": "2131582"
+},
+{
+"arrival": 1788305040.0,
+"delay": 0,
+"departure": 1788305100.0,
+"headsign": "Hackettstown",
+"route_id": "7",
+"train_num": "0881",
+"trip_id": "2131922"
+},
+{
+"arrival": 1788305847.0,
+"delay": 1887,
+"departure": 1788305847.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "6651",
+"trip_id": "2132038"
+}
+],
+"35": [
+{
+"arrival": 1788302875.0,
+"delay": 280,
+"departure": 1788302935.0,
+"headsign": "Raritan",
+"route_id": "15",
+"train_num": "5441",
+"trip_id": "2133763"
+},
+{
+"arrival": 1788303390.0,
+"delay": 165,
+"departure": 1788303450.0,
+"headsign": "High Bridge",
+"route_id": "15",
+"train_num": "5743",
+"trip_id": "2137447"
+},
+{
+"arrival": 1788303960.0,
+"delay": 0,
+"departure": 1788304005.0,
+"headsign": "Penn Station New York",
+"route_id": "15",
+"train_num": "5150",
+"trip_id": "2136510"
+},
+{
+"arrival": 1788304785.0,
+"delay": 0,
+"departure": 1788304845.0,
+"headsign": "Raritan",
+"route_id": "15",
+"train_num": "5445",
+"trip_id": "2133740"
+}
+],
+"36": [
+{
+"arrival": 1788302175.0,
+"delay": 495,
+"departure": 1788302205.0,
+"headsign": "Summit",
+"route_id": "7",
+"train_num": "0339",
+"trip_id": "2131423"
+},
+{
+"arrival": 1788303540.0,
+"delay": 0,
+"departure": 1788303600.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "0657",
+"trip_id": "2131427"
+},
+{
+"arrival": 1788304200.0,
+"delay": 0,
+"departure": 1788304260.0,
+"headsign": "Penn Station New York",
+"route_id": "7",
+"train_num": "6368",
+"trip_id": "2134114"
+},
+{
+"arrival": 1788309735.0,
+"delay": 0,
+"departure": 1788309780.0,
+"headsign": "Hoboken",
+"route_id": "7",
+"train_num": "0882",
+"trip_id": "2131438"
+}
+],
+"37": [
+{
+"arrival": 1788302370.0,
+"delay": 0,
+"departure": 1788302430.0,
+"headsign": "Penn Station New York",
+"route_id": "9",
+"train_num": "3868",
+"trip_id": "2132102"
+},
+{
+"arrival": 1788302886.0,
+"delay": 1041,
+"departure": 1788302976.0,
+"headsign": "3127",
+"route_id": null,
+"train_num": "3127",
+"trip_id": "njt:3127"
+},
+{
+"arrival": 1788304390.0,
+"delay": 250,
+"departure": 1788304480.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3873",
+"trip_id": "2134115"
+},
+{
+"arrival": 1788304650.0,
+"delay": 0,
+"departure": 1788304710.0,
+"headsign": "Penn Station New York",
+"route_id": "9",
+"train_num": "3872",
+"trip_id": "2134122"
+},
+{
+"arrival": 1788305655.0,
+"delay": 0,
+"departure": 1788305730.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3875",
+"trip_id": "2131931"
+},
+{
+"arrival": 1788306990.0,
+"delay": 0,
+"departure": 1788307065.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3877",
+"trip_id": "2132064"
+}
+],
+"38": [
+{
+"arrival": 1788303795.0,
+"delay": 0,
+"departure": 1788303840.0,
+"headsign": "Atlantic City Terminal",
+"route_id": "1",
+"train_num": "4635",
+"trip_id": "2131237"
+},
+{
+"arrival": 1788307995.0,
+"delay": 0,
+"departure": 1788308040.0,
+"headsign": "Atlantic City Terminal",
+"route_id": "1",
+"train_num": "4639",
+"trip_id": "2131242"
+}
+],
+"39": [
+{
+"arrival": 1788302319.0,
+"delay": -2136,
+"departure": 1788302364.0,
+"headsign": "Bay Head",
+"route_id": "10",
+"train_num": "4367",
+"trip_id": "2131871"
+},
+{
+"arrival": 1788304509.0,
+"delay": 2844,
+"departure": 1788304554.0,
+"headsign": "Bay Head",
+"route_id": "10",
+"train_num": "3363",
+"trip_id": "2132094"
+}
+],
+"4": [
+{
+"arrival": 1788304710.0,
+"delay": 0,
+"departure": 1788304755.0,
+"headsign": "Bay Head",
+"route_id": "10",
+"train_num": "4367",
+"trip_id": "2131871"
+},
+{
+"arrival": 1788304768.0,
+"delay": 2848,
+"departure": 1788304813.0,
+"headsign": "Bay Head",
+"route_id": "10",
+"train_num": "3363",
+"trip_id": "2132094"
+}
+],
+"40": [
+{
+"arrival": 1788302804.0,
+"delay": 719,
+"departure": 1788302864.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3271",
+"trip_id": "2134795"
+},
+{
+"arrival": 1788303581.0,
+"delay": 221,
+"departure": 1788303671.0,
+"headsign": "Penn Station New York",
+"route_id": "10",
+"train_num": "3512",
+"trip_id": "2137433"
+},
+{
+"arrival": 1788303900.0,
+"delay": 0,
+"departure": 1788303960.0,
+"headsign": "Penn Station New York",
+"route_id": "9",
+"train_num": "3868",
+"trip_id": "2132102"
+},
+{
+"arrival": 1788303945.0,
+"delay": 0,
+"departure": 1788304005.0,
+"headsign": "South Amboy",
+"route_id": "10",
+"train_num": "3515",
+"trip_id": "2131927"
+},
+{
+"arrival": 1788304800.0,
+"delay": 0,
+"departure": 1788304860.0,
+"headsign": "Penn Station New York",
+"route_id": "10",
+"train_num": "3272",
+"trip_id": "2131995"
+},
+{
+"arrival": 1788305460.0,
+"delay": 0,
+"departure": 1788305520.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3877",
+"trip_id": "2132064"
+}
+],
+"41": [
+{
+"arrival": 1788302830.0,
+"delay": 190,
+"departure": 1788302890.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1633",
+"trip_id": "2131451"
+},
+{
+"arrival": 1788303810.0,
+"delay": 0,
+"departure": 1788303870.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1635",
+"trip_id": "2131911"
+},
+{
+"arrival": 1788305550.0,
+"delay": 0,
+"departure": 1788305610.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1637",
+"trip_id": "2131454"
+}
+],
+"42": [
+{
+"arrival": 1788302723.0,
+"delay": 83,
+"departure": 1788302783.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1635",
+"trip_id": "2131911"
+},
+{
+"arrival": 1788304470.0,
+"delay": 0,
+"departure": 1788304530.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1637",
+"trip_id": "2131454"
+}
+],
+"43": [
+{
+"arrival": 1788302170.0,
+"delay": 280,
+"departure": 1788302230.0,
+"headsign": "Raritan",
+"route_id": "15",
+"train_num": "5441",
+"trip_id": "2133763"
+},
+{
+"arrival": 1788304080.0,
+"delay": 0,
+"departure": 1788304140.0,
+"headsign": "Raritan",
+"route_id": "15",
+"train_num": "5445",
+"trip_id": "2133740"
+},
+{
+"arrival": 1788304635.0,
+"delay": 0,
+"departure": 1788304680.0,
+"headsign": "Penn Station New York",
+"route_id": "15",
+"train_num": "5150",
+"trip_id": "2136510"
+}
+],
+"44": [
+{
+"arrival": 1788302754.0,
+"delay": 294,
+"departure": 1788302799.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "6431",
+"trip_id": "2132098"
+},
+{
+"arrival": 1788303592.0,
+"delay": 367,
+"departure": 1788303637.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0433",
+"trip_id": "2131923"
+},
+{
+"arrival": 1788304405.0,
+"delay": 40,
+"departure": 1788304465.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0435",
+"trip_id": "2131698"
+},
+{
+"arrival": 1788305370.0,
+"delay": 0,
+"departure": 1788305415.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "6437",
+"trip_id": "2132007"
+},
+{
+"arrival": 1788306945.0,
+"delay": 0,
+"departure": 1788306975.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0439",
+"trip_id": "2131699"
+}
+],
+"46": [
+{
+"arrival": 1788303745.0,
+"delay": 10,
+"departure": 1788303805.0,
+"headsign": "Suffern",
+"route_id": "5",
+"train_num": "1173",
+"trip_id": "2131345"
+}
+],
+"47": [
+{
+"arrival": 1788303615.0,
+"delay": 0,
+"departure": 1788303645.0,
+"headsign": "Raritan",
+"route_id": "15",
+"train_num": "5445",
+"trip_id": "2133740"
+},
+{
+"arrival": 1788305055.0,
+"delay": 0,
+"departure": 1788305100.0,
+"headsign": "Penn Station New York",
+"route_id": "15",
+"train_num": "5150",
+"trip_id": "2136510"
+}
+],
+"48": [
+{
+"arrival": 1788302117.0,
+"delay": 272,
+"departure": 1788302162.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0433",
+"trip_id": "2131923"
+},
+{
+"arrival": 1788303476.0,
+"delay": 311,
+"departure": 1788303506.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0435",
+"trip_id": "2131698"
+},
+{
+"arrival": 1788303915.0,
+"delay": 0,
+"departure": 1788303960.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "6437",
+"trip_id": "2132007"
+},
+{
+"arrival": 1788305715.0,
+"delay": 0,
+"departure": 1788305745.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0439",
+"trip_id": "2131699"
+}
+],
+"49": [
+{
+"arrival": 1788303393.0,
+"delay": 93,
+"departure": 1788303393.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "6431",
+"trip_id": "2132098"
+},
+{
+"arrival": 1788304290.0,
+"delay": 60,
+"departure": 1788304290.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0433",
+"trip_id": "2131923"
+},
+{
+"arrival": 1788304870.0,
+"delay": -50,
+"departure": 1788304870.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0435",
+"trip_id": "2131698"
+},
+{
+"arrival": 1788306180.0,
+"delay": 0,
+"departure": 1788306180.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "6437",
+"trip_id": "2132007"
+},
+{
+"arrival": 1788307500.0,
+"delay": 0,
+"departure": 1788307500.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0439",
+"trip_id": "2131699"
+}
+],
+"5": [
+{
+"arrival": 1788302885.0,
+"delay": 65,
+"departure": 1788302975.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1635",
+"trip_id": "2131911"
+},
+{
+"arrival": 1788304650.0,
+"delay": 0,
+"departure": 1788304710.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1637",
+"trip_id": "2131454"
+}
+],
+"50": [
+{
+"arrival": 1788302820.0,
+"delay": 240,
+"departure": 1788302910.0,
+"headsign": "Montclair State University",
+"route_id": "2",
+"train_num": "6279",
+"trip_id": "2132100"
+},
+{
+"arrival": 1788303525.0,
+"delay": 0,
+"departure": 1788303585.0,
+"headsign": "Lake Hopatcong",
+"route_id": "2",
+"train_num": "1011",
+"trip_id": "2131327"
+},
+{
+"arrival": 1788304350.0,
+"delay": 0,
+"departure": 1788304440.0,
+"headsign": "Montclair State University",
+"route_id": "2",
+"train_num": "6283",
+"trip_id": "2131275"
+}
+],
+"51": [
+{
+"arrival": 1788302809.0,
+"delay": 259,
+"departure": 1788302899.0,
+"headsign": "Waldwick",
+"route_id": "5",
+"train_num": "1271",
+"trip_id": "2131363"
+},
+{
+"arrival": 1788303270.0,
+"delay": 0,
+"departure": 1788303330.0,
+"headsign": "Hoboken",
+"route_id": "5",
+"train_num": "1276",
+"trip_id": "2131445"
+},
+{
+"arrival": 1788304675.0,
+"delay": 10,
+"departure": 1788304765.0,
+"headsign": "Suffern",
+"route_id": "5",
+"train_num": "1173",
+"trip_id": "2131345"
+}
+],
+"52": [
+{
+"arrival": 1788303000.0,
+"delay": 0,
+"departure": 1788303045.0,
+"headsign": "Hoboken",
+"route_id": "6",
+"train_num": "1128",
+"trip_id": "2131912"
+},
+{
+"arrival": 1788303885.0,
+"delay": 0,
+"departure": 1788303945.0,
+"headsign": "Waldwick",
+"route_id": "6",
+"train_num": "1225",
+"trip_id": "2131888"
+},
+{
+"arrival": 1788305820.0,
+"delay": 0,
+"departure": 1788305880.0,
+"headsign": "Suffern",
+"route_id": "6",
+"train_num": "1125",
+"trip_id": "2131892"
+}
+],
+"54": [
+{
+"arrival": 1788302435.0,
+"delay": 215,
+"departure": 1788302435.0,
+"headsign": "Hackettstown",
+"route_id": "2",
+"train_num": "1079",
+"trip_id": "2133226"
+},
+{
+"arrival": 1788303960.0,
+"delay": 0,
+"departure": 1788303960.0,
+"headsign": "Hoboken",
+"route_id": "7",
+"train_num": "0882",
+"trip_id": "2131438"
+},
+{
+"arrival": 1788307440.0,
+"delay": 0,
+"departure": 1788307440.0,
+"headsign": "Hackettstown",
+"route_id": "7",
+"train_num": "0881",
+"trip_id": "2131922"
+}
+],
+"55": [
+{
+"arrival": 1788302139.0,
+"delay": -51,
+"departure": 1788302199.0,
+"headsign": "Penn Station New York",
+"route_id": "9",
+"train_num": "3870",
+"trip_id": "2131472"
+},
+{
+"arrival": 1788303090.0,
+"delay": 0,
+"departure": 1788303135.0,
+"headsign": "Penn Station New York",
+"route_id": "9",
+"train_num": "3872",
+"trip_id": "2134122"
+},
+{
+"arrival": 1788303504.0,
+"delay": 579,
+"departure": 1788303579.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3867",
+"trip_id": "2132039"
+},
+{
+"arrival": 1788304765.0,
+"delay": 355,
+"departure": 1788304870.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3957",
+"trip_id": "2133279"
+},
+{
+"arrival": 1788306100.0,
+"delay": 250,
+"departure": 1788306160.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3873",
+"trip_id": "2134115"
+},
+{
+"arrival": 1788306285.0,
+"delay": 0,
+"departure": 1788306375.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3961",
+"trip_id": "2133227"
+}
+],
+"56": [
+{
+"arrival": 1788303120.0,
+"delay": -60,
+"departure": 1788303165.0,
+"headsign": "Atlantic City Terminal",
+"route_id": "1",
+"train_num": "4635",
+"trip_id": "2131237"
+},
+{
+"arrival": 1788307380.0,
+"delay": 0,
+"departure": 1788307425.0,
+"headsign": "Atlantic City Terminal",
+"route_id": "1",
+"train_num": "4639",
+"trip_id": "2131242"
+}
+],
+"57": [
+{
+"arrival": 1788303210.0,
+"delay": 60,
+"departure": 1788303270.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0057",
+"trip_id": "2131411"
+},
+{
+"arrival": 1788304590.0,
+"delay": 0,
+"departure": 1788304650.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0059",
+"trip_id": "2132754"
+},
+{
+"arrival": 1788305640.0,
+"delay": 0,
+"departure": 1788305700.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0061",
+"trip_id": "2131413"
+},
+{
+"arrival": 1788307470.0,
+"delay": 0,
+"departure": 1788307530.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0063",
+"trip_id": "2131415"
+}
+],
+"58": [
+{
+"arrival": 1788303210.0,
+"delay": 0,
+"departure": 1788303255.0,
+"headsign": "Hoboken",
+"route_id": "6",
+"train_num": "1128",
+"trip_id": "2131912"
+},
+{
+"arrival": 1788303630.0,
+"delay": 0,
+"departure": 1788303705.0,
+"headsign": "Waldwick",
+"route_id": "6",
+"train_num": "1225",
+"trip_id": "2131888"
+},
+{
+"arrival": 1788305580.0,
+"delay": 0,
+"departure": 1788305640.0,
+"headsign": "Suffern",
+"route_id": "6",
+"train_num": "1125",
+"trip_id": "2131892"
+}
+],
+"59": [
+{
+"arrival": 1788302552.0,
+"delay": 317,
+"departure": 1788302597.0,
+"headsign": "Penn Station New York",
+"route_id": "10",
+"train_num": "3272",
+"trip_id": "2131995"
+},
+{
+"arrival": 1788302789.0,
+"delay": 599,
+"departure": 1788302849.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3267",
+"trip_id": "2132029"
+},
+{
+"arrival": 1788303147.0,
+"delay": 3192,
+"departure": 1788303192.0,
+"headsign": "Bay Head",
+"route_id": "10",
+"train_num": "3363",
+"trip_id": "2132094"
+},
+{
+"arrival": 1788305579.0,
+"delay": 719,
+"departure": 1788305639.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3271",
+"trip_id": "2134795"
+},
+{
+"arrival": 1788305600.0,
+"delay": 65,
+"departure": 1788305660.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3275",
+"trip_id": "2132125"
+},
+{
+"arrival": 1788307365.0,
+"delay": 0,
+"departure": 1788307425.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3279",
+"trip_id": "2132126"
+}
+],
+"6": [
+{
+"arrival": 1788304500.0,
+"delay": 0,
+"departure": 1788304560.0,
+"headsign": "Raritan",
+"route_id": "15",
+"train_num": "5435",
+"trip_id": "2134083"
+},
+{
+"arrival": 1788305850.0,
+"delay": 0,
+"departure": 1788305880.0,
+"headsign": "High Bridge",
+"route_id": "15",
+"train_num": "5743",
+"trip_id": "2137447"
+}
+],
+"60": [
+{
+"arrival": 1788305100.0,
+"delay": 0,
+"departure": 1788305160.0,
+"headsign": "Raritan",
+"route_id": "15",
+"train_num": "5435",
+"trip_id": "2134083"
+},
+{
+"arrival": 1788306480.0,
+"delay": 0,
+"departure": 1788306480.0,
+"headsign": "High Bridge",
+"route_id": "15",
+"train_num": "5743",
+"trip_id": "2137447"
+}
+],
+"61": [
+{
+"arrival": 1788302277.0,
+"delay": 1887,
+"departure": 1788302277.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "6651",
+"trip_id": "2132038"
+},
+{
+"arrival": 1788302561.0,
+"delay": 461,
+"departure": 1788302591.0,
+"headsign": "Summit",
+"route_id": "7",
+"train_num": "0339",
+"trip_id": "2131423"
+},
+{
+"arrival": 1788303705.0,
+"delay": 0,
+"departure": 1788303750.0,
+"headsign": "Penn Station New York",
+"route_id": "7",
+"train_num": "6368",
+"trip_id": "2134114"
+},
+{
+"arrival": 1788304020.0,
+"delay": 0,
+"departure": 1788304080.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "0657",
+"trip_id": "2131427"
+},
+{
+"arrival": 1788309300.0,
+"delay": 0,
+"departure": 1788309345.0,
+"headsign": "Hoboken",
+"route_id": "7",
+"train_num": "0882",
+"trip_id": "2131438"
+}
+],
+"62": [
+{
+"arrival": 1788303240.0,
+"delay": 180,
+"departure": 1788303300.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1633",
+"trip_id": "2131451"
+},
+{
+"arrival": 1788304230.0,
+"delay": 0,
+"departure": 1788304290.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1635",
+"trip_id": "2131911"
+},
+{
+"arrival": 1788305940.0,
+"delay": 0,
+"departure": 1788306000.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1637",
+"trip_id": "2131454"
+}
+],
+"63": [
+{
+"arrival": 1788302160.0,
+"delay": -60,
+"departure": 1788302160.0,
+"headsign": "Suffern",
+"route_id": "5",
+"train_num": "1173",
+"trip_id": "2131345"
+},
+{
+"arrival": 1788302280.0,
+"delay": -60,
+"departure": 1788302280.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "0657",
+"trip_id": "2131427"
+},
+{
+"arrival": 1788302690.0,
+"delay": -10,
+"departure": 1788302690.0,
+"headsign": "Hoboken",
+"route_id": "7",
+"train_num": "0880",
+"trip_id": "2131437"
+},
+{
+"arrival": 1788302820.0,
+"delay": -60,
+"departure": 1788302820.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1637",
+"trip_id": "2131454"
+},
+{
+"arrival": 1788302880.0,
+"delay": -60,
+"departure": 1788302880.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0439",
+"trip_id": "2131699"
+},
+{
+"arrival": 1788303180.0,
+"delay": -60,
+"departure": 1788303180.0,
+"headsign": "Suffern",
+"route_id": "6",
+"train_num": "1125",
+"trip_id": "2131892"
+}
+],
+"64": [
+{
+"arrival": 1788302334.0,
+"delay": 624,
+"departure": 1788302394.0,
+"headsign": "Suffern",
+"route_id": "5",
+"train_num": "1169",
+"trip_id": "2131603"
+},
+{
+"arrival": 1788302455.0,
+"delay": 265,
+"departure": 1788302515.0,
+"headsign": "Waldwick",
+"route_id": "6",
+"train_num": "1223",
+"trip_id": "2131887"
+},
+{
+"arrival": 1788302625.0,
+"delay": 0,
+"departure": 1788302655.0,
+"headsign": "Hoboken",
+"route_id": "6",
+"train_num": "1128",
+"trip_id": "2131912"
+},
+{
+"arrival": 1788303177.0,
+"delay": 162,
+"departure": 1788303237.0,
+"headsign": "Waldwick",
+"route_id": "5",
+"train_num": "1271",
+"trip_id": "2131363"
+},
+{
+"arrival": 1788303420.0,
+"delay": 0,
+"departure": 1788303510.0,
+"headsign": "Suffern",
+"route_id": "6",
+"train_num": "1171",
+"trip_id": "2144943"
+},
+{
+"arrival": 1788304290.0,
+"delay": 0,
+"departure": 1788304350.0,
+"headsign": "Waldwick",
+"route_id": "6",
+"train_num": "1225",
+"trip_id": "2131888"
+}
+],
+"65": [
+{
+"arrival": 1788302229.0,
+"delay": 564,
+"departure": 1788302289.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3867",
+"trip_id": "2132039"
+},
+{
+"arrival": 1788303546.0,
+"delay": 1041,
+"departure": 1788303606.0,
+"headsign": "3127",
+"route_id": null,
+"train_num": "3127",
+"trip_id": "njt:3127"
+},
+{
+"arrival": 1788304930.0,
+"delay": 250,
+"departure": 1788304990.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3873",
+"trip_id": "2134115"
+},
+{
+"arrival": 1788305070.0,
+"delay": 0,
+"departure": 1788305145.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3961",
+"trip_id": "2133227"
+},
+{
+"arrival": 1788306180.0,
+"delay": 0,
+"departure": 1788306225.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3875",
+"trip_id": "2131931"
+},
+{
+"arrival": 1788306885.0,
+"delay": 0,
+"departure": 1788306945.0,
+"headsign": "3963",
+"route_id": null,
+"train_num": "3963",
+"trip_id": "njt:3963"
+}
+],
+"67": [
+{
+"arrival": 1788302730.0,
+"delay": 30,
+"departure": 1788302760.0,
+"headsign": "Mount Olive",
+"route_id": "2",
+"train_num": "1055",
+"trip_id": "2131328"
+},
+{
+"arrival": 1788303648.0,
+"delay": -102,
+"departure": 1788303678.0,
+"headsign": "Lake Hopatcong",
+"route_id": "7",
+"train_num": "0807",
+"trip_id": "2134797"
+},
+{
+"arrival": 1788305190.0,
+"delay": 0,
+"departure": 1788305220.0,
+"headsign": "Hoboken",
+"route_id": "7",
+"train_num": "0882",
+"trip_id": "2131438"
+},
+{
+"arrival": 1788305880.0,
+"delay": 0,
+"departure": 1788305925.0,
+"headsign": "Hackettstown",
+"route_id": "7",
+"train_num": "0881",
+"trip_id": "2131922"
+},
+{
+"arrival": 1788308070.0,
+"delay": 0,
+"departure": 1788308100.0,
+"headsign": "Lake Hopatcong",
+"route_id": "2",
+"train_num": "1011",
+"trip_id": "2131327"
+}
+],
+"68": [
+{
+"arrival": 1788303900.0,
+"delay": 0,
+"departure": 1788303960.0,
+"headsign": "Raritan",
+"route_id": "15",
+"train_num": "5435",
+"trip_id": "2134083"
+},
+{
+"arrival": 1788305550.0,
+"delay": 0,
+"departure": 1788305580.0,
+"headsign": "High Bridge",
+"route_id": "15",
+"train_num": "5743",
+"trip_id": "2137447"
+}
+],
+"69": [
+{
+"arrival": 1788302790.0,
+"delay": 0,
+"departure": 1788302850.0,
+"headsign": "Dover",
+"route_id": "2",
+"train_num": "1009",
+"trip_id": "2131582"
+},
+{
+"arrival": 1788305685.0,
+"delay": 0,
+"departure": 1788305745.0,
+"headsign": "Lake Hopatcong",
+"route_id": "2",
+"train_num": "1011",
+"trip_id": "2131327"
+}
+],
+"7": [
+{
+"arrival": 1788304935.0,
+"delay": 0,
+"departure": 1788304965.0,
+"headsign": "Bay Head",
+"route_id": "10",
+"train_num": "4367",
+"trip_id": "2131871"
+},
+{
+"arrival": 1788304993.0,
+"delay": 2848,
+"departure": 1788305038.0,
+"headsign": "Bay Head",
+"route_id": "10",
+"train_num": "3363",
+"trip_id": "2132094"
+}
+],
+"70": [
+{
+"arrival": 1788303134.0,
+"delay": 719,
+"departure": 1788303209.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3271",
+"trip_id": "2134795"
+},
+{
+"arrival": 1788303206.0,
+"delay": 221,
+"departure": 1788303266.0,
+"headsign": "Penn Station New York",
+"route_id": "10",
+"train_num": "3512",
+"trip_id": "2137433"
+},
+{
+"arrival": 1788303525.0,
+"delay": 0,
+"departure": 1788303585.0,
+"headsign": "Penn Station New York",
+"route_id": "9",
+"train_num": "3868",
+"trip_id": "2132102"
+},
+{
+"arrival": 1788304275.0,
+"delay": 0,
+"departure": 1788304365.0,
+"headsign": "South Amboy",
+"route_id": "10",
+"train_num": "3515",
+"trip_id": "2131927"
+},
+{
+"arrival": 1788304740.0,
+"delay": 0,
+"departure": 1788304800.0,
+"headsign": "Penn Station New York",
+"route_id": "10",
+"train_num": "3272",
+"trip_id": "2131995"
+},
+{
+"arrival": 1788305790.0,
+"delay": 0,
+"departure": 1788305850.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3877",
+"trip_id": "2132064"
+}
+],
+"71": [
+{
+"arrival": 1788306150.0,
+"delay": 0,
+"departure": 1788306195.0,
+"headsign": "Atlantic City Terminal",
+"route_id": "1",
+"train_num": "4639",
+"trip_id": "2131242"
+}
+],
+"72": [
+{
+"arrival": 1788304995.0,
+"delay": 0,
+"departure": 1788305055.0,
+"headsign": "Lake Hopatcong",
+"route_id": "2",
+"train_num": "1011",
+"trip_id": "2131327"
+}
+],
+"73": [
+{
+"arrival": 1788302731.0,
+"delay": 286,
+"departure": 1788302791.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3265",
+"trip_id": "2135193"
+},
+{
+"arrival": 1788303497.0,
+"delay": 287,
+"departure": 1788303557.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3267",
+"trip_id": "2132029"
+},
+{
+"arrival": 1788303803.0,
+"delay": 2888,
+"departure": 1788303863.0,
+"headsign": "Bay Head",
+"route_id": "10",
+"train_num": "3363",
+"trip_id": "2132094"
+},
+{
+"arrival": 1788306506.0,
+"delay": 641,
+"departure": 1788306566.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3271",
+"trip_id": "2134795"
+},
+{
+"arrival": 1788306635.0,
+"delay": 65,
+"departure": 1788306695.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3275",
+"trip_id": "2132125"
+},
+{
+"arrival": 1788308355.0,
+"delay": 0,
+"departure": 1788308415.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3279",
+"trip_id": "2132126"
+}
+],
+"74": [
+{
+"arrival": 1788303085.0,
+"delay": 25,
+"departure": 1788303115.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3265",
+"trip_id": "2135193"
+},
+{
+"arrival": 1788303870.0,
+"delay": -60,
+"departure": 1788303900.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3267",
+"trip_id": "2132029"
+},
+{
+"arrival": 1788304200.0,
+"delay": -60,
+"departure": 1788304200.0,
+"headsign": "Bay Head",
+"route_id": "10",
+"train_num": "4367",
+"trip_id": "2131871"
+},
+{
+"arrival": 1788304165.0,
+"delay": 2815,
+"departure": 1788304225.0,
+"headsign": "Bay Head",
+"route_id": "10",
+"train_num": "3363",
+"trip_id": "2132094"
+},
+{
+"arrival": 1788307199.0,
+"delay": 719,
+"departure": 1788307229.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3271",
+"trip_id": "2134795"
+},
+{
+"arrival": 1788307265.0,
+"delay": 65,
+"departure": 1788307295.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3275",
+"trip_id": "2132125"
+}
+],
+"75": [
+{
+"arrival": 1788302325.0,
+"delay": 0,
+"departure": 1788302385.0,
+"headsign": "Hoboken",
+"route_id": "6",
+"train_num": "1126",
+"trip_id": "2131901"
+},
+{
+"arrival": 1788302387.0,
+"delay": 167,
+"departure": 1788302477.0,
+"headsign": "Waldwick",
+"route_id": "6",
+"train_num": "1225",
+"trip_id": "2131888"
+},
+{
+"arrival": 1788304230.0,
+"delay": 0,
+"departure": 1788304305.0,
+"headsign": "Suffern",
+"route_id": "6",
+"train_num": "1125",
+"trip_id": "2131892"
+},
+{
+"arrival": 1788304440.0,
+"delay": 0,
+"departure": 1788304485.0,
+"headsign": "Hoboken",
+"route_id": "6",
+"train_num": "1128",
+"trip_id": "2131912"
+}
+],
+"76": [
+{
+"arrival": 1788302716.0,
+"delay": 331,
+"departure": 1788302776.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0433",
+"trip_id": "2131923"
+},
+{
+"arrival": 1788303807.0,
+"delay": 147,
+"departure": 1788303837.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0435",
+"trip_id": "2131698"
+},
+{
+"arrival": 1788304530.0,
+"delay": 0,
+"departure": 1788304575.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "6437",
+"trip_id": "2132007"
+},
+{
+"arrival": 1788306210.0,
+"delay": 0,
+"departure": 1788306270.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0439",
+"trip_id": "2131699"
+}
+],
+"77": [
+{
+"arrival": 1788302805.0,
+"delay": 0,
+"departure": 1788302865.0,
+"headsign": "Hoboken",
+"route_id": "7",
+"train_num": "0858",
+"trip_id": "2131434"
+},
+{
+"arrival": 1788303120.0,
+"delay": 0,
+"departure": 1788303180.0,
+"headsign": "Hackettstown",
+"route_id": "7",
+"train_num": "0881",
+"trip_id": "2131922"
+},
+{
+"arrival": 1788303255.0,
+"delay": 0,
+"departure": 1788303315.0,
+"headsign": "Penn Station New York",
+"route_id": "7",
+"train_num": "6668",
+"trip_id": "2131311"
+},
+{
+"arrival": 1788303917.0,
+"delay": 1817,
+"departure": 1788303977.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "6651",
+"trip_id": "2132038"
+},
+{
+"arrival": 1788305090.0,
+"delay": 860,
+"departure": 1788305180.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "6655",
+"trip_id": "2134096"
+},
+{
+"arrival": 1788305220.0,
+"delay": 0,
+"departure": 1788305265.0,
+"headsign": "Penn Station New York",
+"route_id": "7",
+"train_num": "6670",
+"trip_id": "2131312"
+}
+],
+"78": [
+{
+"arrival": 1788303230.0,
+"delay": 410,
+"departure": 1788303290.0,
+"headsign": "Suffern",
+"route_id": "5",
+"train_num": "1169",
+"trip_id": "2131603"
+},
+{
+"arrival": 1788304590.0,
+"delay": 0,
+"departure": 1788304650.0,
+"headsign": "Suffern",
+"route_id": "6",
+"train_num": "1171",
+"trip_id": "2144943"
+},
+{
+"arrival": 1788306480.0,
+"delay": 0,
+"departure": 1788306540.0,
+"headsign": "Suffern",
+"route_id": "5",
+"train_num": "1173",
+"trip_id": "2131345"
+},
+{
+"arrival": 1788307320.0,
+"delay": 0,
+"departure": 1788307365.0,
+"headsign": "Suffern",
+"route_id": "6",
+"train_num": "1125",
+"trip_id": "2131892"
+}
+],
+"79": [
+{
+"arrival": 1788305581.0,
+"delay": 2551,
+"departure": 1788305626.0,
+"headsign": "Bay Head",
+"route_id": "10",
+"train_num": "3363",
+"trip_id": "2132094"
+},
+{
+"arrival": 1788305790.0,
+"delay": 0,
+"departure": 1788305835.0,
+"headsign": "Bay Head",
+"route_id": "10",
+"train_num": "4367",
+"trip_id": "2131871"
+}
+],
+"8": [
+{
+"arrival": 1788302443.0,
+"delay": 58,
+"departure": 1788302488.0,
+"headsign": "Atlantic City Terminal",
+"route_id": "1",
+"train_num": "4635",
+"trip_id": "2131237"
+},
+{
+"arrival": 1788306585.0,
+"delay": 0,
+"departure": 1788306630.0,
+"headsign": "Atlantic City Terminal",
+"route_id": "1",
+"train_num": "4639",
+"trip_id": "2131242"
+}
+],
+"80": [
+{
+"arrival": 1788302238.0,
+"delay": 48,
+"departure": 1788302298.0,
+"headsign": "Penn Station New York",
+"route_id": "7",
+"train_num": "6666",
+"trip_id": "2145229"
+},
+{
+"arrival": 1788302417.0,
+"delay": 1817,
+"departure": 1788302507.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "6651",
+"trip_id": "2132038"
+},
+{
+"arrival": 1788302438.0,
+"delay": 218,
+"departure": 1788302528.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "6437",
+"trip_id": "2132007"
+},
+{
+"arrival": 1788302941.0,
+"delay": 391,
+"departure": 1788303001.0,
+"headsign": "Summit",
+"route_id": "7",
+"train_num": "0339",
+"trip_id": "2131423"
+},
+{
+"arrival": 1788303210.0,
+"delay": 0,
+"departure": 1788303270.0,
+"headsign": "Penn Station New York",
+"route_id": "7",
+"train_num": "6368",
+"trip_id": "2134114"
+},
+{
+"arrival": 1788303237.0,
+"delay": 57,
+"departure": 1788303297.0,
+"headsign": "7 6355",
+"route_id": "7",
+"train_num": "6355",
+"trip_id": "njt:6355"
+}
+],
+"82": [
+{
+"arrival": 1788302256.0,
+"delay": 1041,
+"departure": 1788302346.0,
+"headsign": "3127",
+"route_id": null,
+"train_num": "3127",
+"trip_id": "njt:3127"
+},
+{
+"arrival": 1788302940.0,
+"delay": 0,
+"departure": 1788303000.0,
+"headsign": "Penn Station New York",
+"route_id": "9",
+"train_num": "3868",
+"trip_id": "2132102"
+},
+{
+"arrival": 1788303724.0,
+"delay": 214,
+"departure": 1788303814.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3873",
+"trip_id": "2134115"
+},
+{
+"arrival": 1788304350.0,
+"delay": 3900,
+"departure": 1788304485.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3867",
+"trip_id": "2132039"
+},
+{
+"arrival": 1788305040.0,
+"delay": 0,
+"departure": 1788305130.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3875",
+"trip_id": "2131931"
+},
+{
+"arrival": 1788305220.0,
+"delay": 0,
+"departure": 1788305295.0,
+"headsign": "Penn Station New York",
+"route_id": "9",
+"train_num": "3872",
+"trip_id": "2134122"
+}
+],
+"83": [
+{
+"arrival": 1788302556.0,
+"delay": 1041,
+"departure": 1788302646.0,
+"headsign": "3127",
+"route_id": null,
+"train_num": "3127",
+"trip_id": "njt:3127"
+},
+{
+"arrival": 1788302670.0,
+"delay": 0,
+"departure": 1788302730.0,
+"headsign": "Penn Station New York",
+"route_id": "9",
+"train_num": "3868",
+"trip_id": "2132102"
+},
+{
+"arrival": 1788304024.0,
+"delay": 214,
+"departure": 1788304114.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3873",
+"trip_id": "2134115"
+},
+{
+"arrival": 1788304695.0,
+"delay": 3900,
+"departure": 1788304785.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3867",
+"trip_id": "2132039"
+},
+{
+"arrival": 1788304950.0,
+"delay": 0,
+"departure": 1788305010.0,
+"headsign": "Penn Station New York",
+"route_id": "9",
+"train_num": "3872",
+"trip_id": "2134122"
+},
+{
+"arrival": 1788305340.0,
+"delay": 0,
+"departure": 1788305415.0,
+"headsign": "Trenton Station",
+"route_id": "9",
+"train_num": "3875",
+"trip_id": "2131931"
+}
+],
+"84": [
+{
+"arrival": 1788302245.0,
+"delay": 430,
+"departure": 1788302320.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3265",
+"trip_id": "2135193"
+},
+{
+"arrival": 1788302295.0,
+"delay": 405,
+"departure": 1788302340.0,
+"headsign": "Penn Station New York",
+"route_id": "10",
+"train_num": "3272",
+"trip_id": "2131995"
+},
+{
+"arrival": 1788303028.0,
+"delay": 508,
+"departure": 1788303133.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3267",
+"trip_id": "2132029"
+},
+{
+"arrival": 1788303331.0,
+"delay": 3031,
+"departure": 1788303391.0,
+"headsign": "Bay Head",
+"route_id": "10",
+"train_num": "3363",
+"trip_id": "2132094"
+},
+{
+"arrival": 1788305891.0,
+"delay": 641,
+"departure": 1788305951.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3271",
+"trip_id": "2134795"
+},
+{
+"arrival": 1788305990.0,
+"delay": 65,
+"departure": 1788306080.0,
+"headsign": "Long Branch",
+"route_id": "10",
+"train_num": "3275",
+"trip_id": "2132125"
+}
+],
+"85": [
+{
+"arrival": 1788303300.0,
+"delay": 0,
+"departure": 1788303420.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0055",
+"trip_id": "2131723"
+},
+{
+"arrival": 1788305220.0,
+"delay": 0,
+"departure": 1788305280.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0057",
+"trip_id": "2131411"
+},
+{
+"arrival": 1788306690.0,
+"delay": 0,
+"departure": 1788306750.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0059",
+"trip_id": "2132754"
+},
+{
+"arrival": 1788307710.0,
+"delay": 0,
+"departure": 1788307740.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0061",
+"trip_id": "2131413"
+},
+{
+"arrival": 1788309540.0,
+"delay": 0,
+"departure": 1788309600.0,
+"headsign": "Port Jervis",
+"route_id": "6",
+"train_num": "0063",
+"trip_id": "2131415"
+}
+],
+"86": [
+{
+"arrival": 1788302221.0,
+"delay": 151,
+"departure": 1788302281.0,
+"headsign": "Hackettstown",
+"route_id": "7",
+"train_num": "0881",
+"trip_id": "2131922"
+},
+{
+"arrival": 1788302657.0,
+"delay": 1817,
+"departure": 1788302717.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "6651",
+"trip_id": "2132038"
+},
+{
+"arrival": 1788302670.0,
+"delay": 210,
+"departure": 1788302730.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "6437",
+"trip_id": "2132007"
+},
+{
+"arrival": 1788303156.0,
+"delay": 366,
+"departure": 1788303186.0,
+"headsign": "Summit",
+"route_id": "7",
+"train_num": "0339",
+"trip_id": "2131423"
+},
+{
+"arrival": 1788303452.0,
+"delay": -28,
+"departure": 1788303512.0,
+"headsign": "7 6355",
+"route_id": "7",
+"train_num": "6355",
+"trip_id": "njt:6355"
+},
+{
+"arrival": 1788303900.0,
+"delay": 0,
+"departure": 1788303960.0,
+"headsign": "Hoboken",
+"route_id": "7",
+"train_num": "0858",
+"trip_id": "2131434"
+}
+],
+"87": [
+{
+"arrival": 1788302511.0,
+"delay": 321,
+"departure": 1788302556.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0433",
+"trip_id": "2131923"
+},
+{
+"arrival": 1788303657.0,
+"delay": 177,
+"departure": 1788303687.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0435",
+"trip_id": "2131698"
+},
+{
+"arrival": 1788304320.0,
+"delay": 0,
+"departure": 1788304365.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "6437",
+"trip_id": "2132007"
+},
+{
+"arrival": 1788306030.0,
+"delay": 0,
+"departure": 1788306060.0,
+"headsign": "Gladstone",
+"route_id": "8",
+"train_num": "0439",
+"trip_id": "2131699"
+}
+],
+"89": [
+{
+"arrival": 1788302515.0,
+"delay": 145,
+"departure": 1788302575.0,
+"headsign": "Montclair State University",
+"route_id": "2",
+"train_num": "0275",
+"trip_id": "2131740"
+},
+{
+"arrival": 1788303864.0,
+"delay": 174,
+"departure": 1788303924.0,
+"headsign": "Montclair State University",
+"route_id": "2",
+"train_num": "6279",
+"trip_id": "2132100"
+},
+{
+"arrival": 1788304455.0,
+"delay": 0,
+"departure": 1788304515.0,
+"headsign": "Lake Hopatcong",
+"route_id": "2",
+"train_num": "1011",
+"trip_id": "2131327"
+},
+{
+"arrival": 1788305430.0,
+"delay": 0,
+"departure": 1788305490.0,
+"headsign": "Montclair State University",
+"route_id": "2",
+"train_num": "6283",
+"trip_id": "2131275"
+}
+],
+"9": [
+{
+"arrival": 1788305460.0,
+"delay": 0,
+"departure": 1788305460.0,
+"headsign": "Atlantic City Terminal",
+"route_id": "1",
+"train_num": "4635",
+"trip_id": "2131237"
+},
+{
+"arrival": 1788309420.0,
+"delay": 0,
+"departure": 1788309420.0,
+"headsign": "Atlantic City Terminal",
+"route_id": "1",
+"train_num": "4639",
+"trip_id": "2131242"
+}
+],
+"90": [
+{
+"arrival": 1788302658.0,
+"delay": 78,
+"departure": 1788302718.0,
+"headsign": "Montclair State University",
+"route_id": "2",
+"train_num": "0275",
+"trip_id": "2131740"
+},
+{
+"arrival": 1788304014.0,
+"delay": 54,
+"departure": 1788304074.0,
+"headsign": "Montclair State University",
+"route_id": "2",
+"train_num": "6279",
+"trip_id": "2132100"
+},
+{
+"arrival": 1788304635.0,
+"delay": 0,
+"departure": 1788304695.0,
+"headsign": "Lake Hopatcong",
+"route_id": "2",
+"train_num": "1011",
+"trip_id": "2131327"
+},
+{
+"arrival": 1788305700.0,
+"delay": 0,
+"departure": 1788305760.0,
+"headsign": "Montclair State University",
+"route_id": "2",
+"train_num": "6283",
+"trip_id": "2131275"
+}
+],
+"91": [
+{
+"arrival": 1788302529.0,
+"delay": 39,
+"departure": 1788302589.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1631",
+"trip_id": "2131450"
+},
+{
+"arrival": 1788303755.0,
+"delay": 155,
+"departure": 1788303815.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1633",
+"trip_id": "2131451"
+},
+{
+"arrival": 1788304770.0,
+"delay": 0,
+"departure": 1788304830.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1635",
+"trip_id": "2131911"
+},
+{
+"arrival": 1788306480.0,
+"delay": 0,
+"departure": 1788306540.0,
+"headsign": "Spring Valley",
+"route_id": "13",
+"train_num": "1637",
+"trip_id": "2131454"
+}
+],
+"92": [
+{
+"arrival": 1788302119.0,
+"delay": 49,
+"departure": 1788302164.0,
+"headsign": "Hoboken",
+"route_id": "7",
+"train_num": "0858",
+"trip_id": "2131434"
+},
+{
+"arrival": 1788302550.0,
+"delay": 0,
+"departure": 1788302595.0,
+"headsign": "Penn Station New York",
+"route_id": "7",
+"train_num": "6668",
+"trip_id": "2131311"
+},
+{
+"arrival": 1788303930.0,
+"delay": 0,
+"departure": 1788303990.0,
+"headsign": "Hackettstown",
+"route_id": "7",
+"train_num": "0881",
+"trip_id": "2131922"
+},
+{
+"arrival": 1788304560.0,
+"delay": 0,
+"departure": 1788304590.0,
+"headsign": "Penn Station New York",
+"route_id": "7",
+"train_num": "6670",
+"trip_id": "2131312"
+},
+{
+"arrival": 1788304727.0,
+"delay": 1817,
+"departure": 1788304787.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "6651",
+"trip_id": "2132038"
+},
+{
+"arrival": 1788305930.0,
+"delay": 860,
+"departure": 1788305990.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "6655",
+"trip_id": "2134096"
+}
+],
+"93": [
+{
+"arrival": 1788302309.0,
+"delay": 14,
+"departure": 1788302369.0,
+"headsign": "Hoboken",
+"route_id": "7",
+"train_num": "0858",
+"trip_id": "2131434"
+},
+{
+"arrival": 1788302775.0,
+"delay": 0,
+"departure": 1788302835.0,
+"headsign": "Penn Station New York",
+"route_id": "7",
+"train_num": "6668",
+"trip_id": "2131311"
+},
+{
+"arrival": 1788303660.0,
+"delay": 0,
+"departure": 1788303720.0,
+"headsign": "Hackettstown",
+"route_id": "7",
+"train_num": "0881",
+"trip_id": "2131922"
+},
+{
+"arrival": 1788304457.0,
+"delay": 1817,
+"departure": 1788304517.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "6651",
+"trip_id": "2132038"
+},
+{
+"arrival": 1788304770.0,
+"delay": 0,
+"departure": 1788304815.0,
+"headsign": "Penn Station New York",
+"route_id": "7",
+"train_num": "6670",
+"trip_id": "2131312"
+},
+{
+"arrival": 1788305660.0,
+"delay": 860,
+"departure": 1788305720.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "6655",
+"trip_id": "2134096"
+}
+],
+"94": [
+{
+"arrival": 1788302525.0,
+"delay": 155,
+"departure": 1788302555.0,
+"headsign": "Mount Olive",
+"route_id": "2",
+"train_num": "1055",
+"trip_id": "2131328"
+},
+{
+"arrival": 1788303440.0,
+"delay": 20,
+"departure": 1788303470.0,
+"headsign": "Lake Hopatcong",
+"route_id": "7",
+"train_num": "0807",
+"trip_id": "2134797"
+},
+{
+"arrival": 1788305430.0,
+"delay": 0,
+"departure": 1788305460.0,
+"headsign": "Hoboken",
+"route_id": "7",
+"train_num": "0882",
+"trip_id": "2131438"
+},
+{
+"arrival": 1788305550.0,
+"delay": 0,
+"departure": 1788305580.0,
+"headsign": "Hackettstown",
+"route_id": "7",
+"train_num": "0881",
+"trip_id": "2131922"
+},
+{
+"arrival": 1788307770.0,
+"delay": 0,
+"departure": 1788307800.0,
+"headsign": "Lake Hopatcong",
+"route_id": "2",
+"train_num": "1011",
+"trip_id": "2131327"
+}
+],
+"95": [
+{
+"arrival": 1788303325.0,
+"delay": 25,
+"departure": 1788303325.0,
+"headsign": "Mount Olive",
+"route_id": "2",
+"train_num": "1055",
+"trip_id": "2131328"
+},
+{
+"arrival": 1788304590.0,
+"delay": 0,
+"departure": 1788304620.0,
+"headsign": "Hoboken",
+"route_id": "7",
+"train_num": "0882",
+"trip_id": "2131438"
+},
+{
+"arrival": 1788306540.0,
+"delay": 0,
+"departure": 1788306570.0,
+"headsign": "Hackettstown",
+"route_id": "7",
+"train_num": "0881",
+"trip_id": "2131922"
+}
+],
+"96": [
+{
+"arrival": 1788302489.0,
+"delay": 119,
+"departure": 1788302549.0,
+"headsign": "Lake Hopatcong",
+"route_id": "7",
+"train_num": "0807",
+"trip_id": "2134797"
+},
+{
+"arrival": 1788304410.0,
+"delay": 0,
+"departure": 1788304440.0,
+"headsign": "Hackettstown",
+"route_id": "7",
+"train_num": "0881",
+"trip_id": "2131922"
+},
+{
+"arrival": 1788306480.0,
+"delay": 0,
+"departure": 1788306510.0,
+"headsign": "Hoboken",
+"route_id": "7",
+"train_num": "0882",
+"trip_id": "2131438"
+},
+{
+"arrival": 1788307020.0,
+"delay": 0,
+"departure": 1788307050.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "0657",
+"trip_id": "2131427"
+}
+],
+"97": [
+{
+"arrival": 1788302394.0,
+"delay": 159,
+"departure": 1788302439.0,
+"headsign": "Montclair State University",
+"route_id": "2",
+"train_num": "0275",
+"trip_id": "2131740"
+},
+{
+"arrival": 1788303727.0,
+"delay": 187,
+"departure": 1788303787.0,
+"headsign": "Montclair State University",
+"route_id": "2",
+"train_num": "6279",
+"trip_id": "2132100"
+},
+{
+"arrival": 1788305280.0,
+"delay": 0,
+"departure": 1788305340.0,
+"headsign": "Montclair State University",
+"route_id": "2",
+"train_num": "6283",
+"trip_id": "2131275"
+}
+],
+"98": [
+{
+"arrival": 1788303660.0,
+"delay": 0,
+"departure": 1788303705.0,
+"headsign": "Dover",
+"route_id": "2",
+"train_num": "1009",
+"trip_id": "2131582"
+},
+{
+"arrival": 1788306555.0,
+"delay": 0,
+"departure": 1788306585.0,
+"headsign": "Lake Hopatcong",
+"route_id": "2",
+"train_num": "1011",
+"trip_id": "2131327"
+}
+],
+"99": [
+{
+"arrival": 1788302267.0,
+"delay": 1817,
+"departure": 1788302267.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "6651",
+"trip_id": "2132038"
+},
+{
+"arrival": 1788302650.0,
+"delay": 430,
+"departure": 1788302710.0,
+"headsign": "Summit",
+"route_id": "7",
+"train_num": "0339",
+"trip_id": "2131423"
+},
+{
+"arrival": 1788302884.0,
+"delay": 64,
+"departure": 1788302944.0,
+"headsign": "7 6355",
+"route_id": "7",
+"train_num": "6355",
+"trip_id": "njt:6355"
+},
+{
+"arrival": 1788303570.0,
+"delay": 0,
+"departure": 1788303615.0,
+"headsign": "Penn Station New York",
+"route_id": "7",
+"train_num": "6368",
+"trip_id": "2134114"
+},
+{
+"arrival": 1788304170.0,
+"delay": 0,
+"departure": 1788304230.0,
+"headsign": "Dover",
+"route_id": "7",
+"train_num": "0657",
+"trip_id": "2131427"
+},
+{
+"arrival": 1788309135.0,
+"delay": 0,
+"departure": 1788309180.0,
+"headsign": "Hoboken",
+"route_id": "7",
+"train_num": "0882",
+"trip_id": "2131438"
+}
+]
+},
+"capture_shapes": {
+"added_distinct_entity_ids": 4,
+"added_entity_ids": [
+"3127",
+"3598",
+"3963",
+"6355"
+],
+"added_trips": 4,
+"added_with_empty_trip_id": 4,
+"canceled_trip_ids": [
+"2131240",
+"2131243",
+"2131299",
+"2131304",
+"2131421",
+"2131626",
+"2131819",
+"2131834",
+"2131924",
+"2131988",
+"2132002",
+"2132117",
+"2132756",
+"2133714",
+"2133749",
+"2134100",
+"2134110",
+"2136399",
+"2137444",
+"2137445",
+"2137446",
+"2137570"
+],
+"canceled_trips": 22,
+"cross_check_agreement": 1.0,
+"header_timestamp": 1788302206.0,
+"penn_calls": 54,
+"phantom_penn_calls": 12,
+"skipped_bare": 10,
+"skipped_with_times": 228,
+"trip_relationships": {
+"ADDED": 4,
+"CANCELED": 22,
+"SCHEDULED": 86
+},
+"trips": 112
+},
+"feed_timestamp": 1788302206.0,
+"now": 1788302206.0,
+"trains": [
+{
+"delay": -129,
+"headsign": "Port Jervis",
+"id": "2131408",
+"latitude": 41.471664667779635,
+"longitude": -74.52788627378965,
+"next_time": 1788302211.0,
+"prev_lat": 41.457488,
+"prev_lon": -74.37039,
+"prev_time": 1788301612.0,
+"route_id": "6",
+"status": "in-transit",
+"stop_id": "118",
+"stop_name": "Otisville",
+"system": "njt",
+"train_num": "0053",
+"trip_id": "2131408"
+},
+{
+"delay": 0,
+"headsign": "Port Jervis",
+"id": "2131723",
+"latitude": 41.437763108761324,
+"longitude": -74.1100802734139,
+"next_time": 1788302835.0,
+"prev_lat": 41.437073,
+"prev_lon": -74.101871,
+"prev_time": 1788302173.0,
+"route_id": "6",
+"status": "in-transit",
+"stop_id": "26",
+"stop_name": "Campbell Hall",
+"system": "njt",
+"train_num": "0055",
+"trip_id": "2131723"
+},
+{
+"delay": 87,
+"headsign": "Port Jervis",
+"id": "2131411",
+"latitude": 41.14507389589041,
+"longitude": -74.18082928767123,
+"next_time": 1788302307.0,
+"prev_lat": 41.11354,
+"prev_lon": -74.153442,
+"prev_time": 1788301942.0,
+"route_id": "6",
+"status": "in-transit",
+"stop_id": "147",
+"stop_name": "Sloatsburg",
+"system": "njt",
+"train_num": "0057",
+"trip_id": "2131411"
+},
+{
+"delay": 0,
+"headsign": "Port Jervis",
+"id": "2132754",
+"latitude": 40.87506064556545,
+"longitude": -74.08952617672271,
+"next_time": 1788304590.0,
+"prev_lat": 40.761188,
+"prev_lon": -74.075821,
+"prev_time": 1788301557.0,
+"route_id": "6",
+"status": "in-transit",
+"stop_id": "57",
+"stop_name": "Harriman Station",
+"system": "njt",
+"train_num": "0059",
+"trip_id": "2132754"
+},
+{
+"delay": 0,
+"headsign": "Port Jervis",
+"id": "2131413",
+"latitude": 40.76057328333333,
+"longitude": -74.07470625,
+"next_time": 1788302220.0,
+"prev_lat": 40.734843,
+"prev_lon": -74.028046,
+"prev_time": 1788301620.0,
+"route_id": "6",
+"status": "in-transit",
+"stop_id": "144",
+"stop_name": "Secaucus Junction",
+"system": "njt",
+"train_num": "0061",
+"trip_id": "2131413"
+},
+{
+"delay": 159,
+"headsign": "Montclair State University",
+"id": "2131740",
+"latitude": 40.829516,
+"longitude": -74.206934,
+"next_time": 1788302289.0,
+"prev_lat": 40.829516,
+"prev_lon": -74.206934,
+"prev_time": 1788302206.0,
+"route_id": "2",
+"status": "in-transit",
+"stop_id": "161",
+"stop_name": "Upper Montclair",
+"system": "njt",
+"train_num": "0275",
+"trip_id": "2131740"
+},
+{
+"delay": 495,
+"headsign": "Summit",
+"id": "2131423",
+"latitude": 40.761023188888885,
+"longitude": -74.21055453333334,
+"next_time": 1788302295.0,
+"prev_lat": 40.760977,
+"prev_lon": -74.210464,
+"prev_time": 1788302205.0,
+"route_id": "7",
+"status": "in-transit",
+"stop_id": "23",
+"stop_name": "Brick Church",
+"system": "njt",
+"train_num": "0339",
+"trip_id": "2131423"
+},
+{
+"delay": 652,
+"headsign": "Gladstone",
+"id": "2131923",
+"latitude": 40.68440400145772,
+"longitude": -74.43625517346939,
+"next_time": 1788302317.0,
+"prev_lat": 40.69507,
+"prev_lon": -74.403134,
+"prev_time": 1788301631.0,
+"route_id": "8",
+"status": "in-transit",
+"stop_id": "17",
+"stop_name": "Berkeley Heights",
+"system": "njt",
+"train_num": "0433",
+"trip_id": "2131923"
+},
+{
+"delay": 420,
+"headsign": "Gladstone",
+"id": "2131698",
+"latitude": 40.73072901010101,
+"longitude": -74.28656797222222,
+"next_time": 1788302400.0,
+"prev_lat": 40.747621,
+"prev_lon": -74.171943,
+"prev_time": 1788301608.0,
+"route_id": "8",
+"status": "in-transit",
+"stop_id": "146",
+"stop_name": "Short Hills",
+"system": "njt",
+"train_num": "0435",
+"trip_id": "2131698"
+},
+{
+"delay": -60,
+"headsign": "Dover",
+"id": "2131427",
+"latitude": 40.734843,
+"longitude": -74.028046,
+"next_time": 1788302280.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "7",
+"status": "approaching",
+"stop_id": "63",
+"stop_name": "Hoboken",
+"system": "njt",
+"train_num": "0657",
+"trip_id": "2131427"
+},
+{
+"delay": 119,
+"headsign": "Lake Hopatcong",
+"id": "2134797",
+"latitude": 40.84557294557823,
+"longitude": -74.47952907256236,
+"next_time": 1788302489.0,
+"prev_lat": 40.828639,
+"prev_lon": -74.478197,
+"prev_time": 1788302048.0,
+"route_id": "7",
+"status": "in-transit",
+"stop_id": "96",
+"stop_name": "Mount Tabor",
+"system": "njt",
+"train_num": "0807",
+"trip_id": "2134797"
+},
+{
+"delay": 14,
+"headsign": "Hoboken",
+"id": "2131434",
+"latitude": 40.81950733103449,
+"longitude": -74.4770062275862,
+"next_time": 1788302309.0,
+"prev_lat": 40.828639,
+"prev_lon": -74.478197,
+"prev_time": 1788302164.0,
+"route_id": "7",
+"status": "in-transit",
+"stop_id": "93",
+"stop_name": "Morristown",
+"system": "njt",
+"train_num": "0858",
+"trip_id": "2131434"
+},
+{
+"delay": -10,
+"headsign": "Hoboken",
+"id": "2131437",
+"latitude": 40.74208486416862,
+"longitude": -74.10959886651054,
+"next_time": 1788302690.0,
+"prev_lat": 40.747621,
+"prev_lon": -74.171943,
+"prev_time": 1788301836.0,
+"route_id": "7",
+"status": "in-transit",
+"stop_id": "63",
+"stop_name": "Hoboken",
+"system": "njt",
+"train_num": "0880",
+"trip_id": "2131437"
+},
+{
+"delay": 151,
+"headsign": "Hackettstown",
+"id": "2131922",
+"latitude": 40.72623611111111,
+"longitude": -74.30060744444444,
+"next_time": 1788302221.0,
+"prev_lat": 40.731149,
+"prev_lon": -74.275427,
+"prev_time": 1788302086.0,
+"route_id": "7",
+"status": "in-transit",
+"stop_id": "86",
+"stop_name": "Millburn",
+"system": "njt",
+"train_num": "0881",
+"trip_id": "2131922"
+},
+{
+"delay": -60,
+"headsign": "Dover",
+"id": "2131582",
+"latitude": 40.891771,
+"longitude": -74.24708121818182,
+"next_time": 1788302280.0,
+"prev_lat": 40.880669,
+"prev_lon": -74.235372,
+"prev_time": 1788302115.0,
+"route_id": "2",
+"status": "in-transit",
+"stop_id": "167",
+"stop_name": "Route 23",
+"system": "njt",
+"train_num": "1009",
+"trip_id": "2131582"
+},
+{
+"delay": 0,
+"headsign": "Lake Hopatcong",
+"id": "2131327",
+"latitude": 40.73785115416666,
+"longitude": -74.06192175208334,
+"next_time": 1788302940.0,
+"prev_lat": 40.734843,
+"prev_lon": -74.028046,
+"prev_time": 1788301980.0,
+"route_id": "2",
+"status": "in-transit",
+"stop_id": "111",
+"stop_name": "Newark Broad St.",
+"system": "njt",
+"train_num": "1011",
+"trip_id": "2131327"
+},
+{
+"delay": 155,
+"headsign": "Mount Olive",
+"id": "2131328",
+"latitude": 40.888599838403046,
+"longitude": -74.58612788973385,
+"next_time": 1788302525.0,
+"prev_lat": 40.883415,
+"prev_lon": -74.555887,
+"prev_time": 1788301999.0,
+"route_id": "2",
+"status": "in-transit",
+"stop_id": "94",
+"stop_name": "Mount Arlington",
+"system": "njt",
+"train_num": "1055",
+"trip_id": "2131328"
+},
+{
+"delay": 215,
+"headsign": "Hackettstown",
+"id": "2133226",
+"latitude": 40.872270712195125,
+"longitude": -74.79636651869919,
+"next_time": 1788302435.0,
+"prev_lat": 40.907376,
+"prev_lon": -74.730653,
+"prev_time": 1788301820.0,
+"route_id": "2",
+"status": "in-transit",
+"stop_id": "54",
+"stop_name": "Hackettstown",
+"system": "njt",
+"train_num": "1079",
+"trip_id": "2133226"
+},
+{
+"delay": 0,
+"headsign": "Hoboken",
+"id": "2131901",
+"latitude": 40.83021442635659,
+"longitude": -74.13071176744187,
+"next_time": 1788302325.0,
+"prev_lat": 40.831369,
+"prev_lon": -74.131262,
+"prev_time": 1788302196.0,
+"route_id": "6",
+"status": "in-transit",
+"stop_id": "75",
+"stop_name": "Lyndhurst",
+"system": "njt",
+"train_num": "1126",
+"trip_id": "2131901"
+},
+{
+"delay": -42,
+"headsign": "Hoboken",
+"id": "2131912",
+"latitude": 41.03431806299212,
+"longitude": -74.13241873228345,
+"next_time": 1788302223.0,
+"prev_lat": 41.056422,
+"prev_lon": -74.141877,
+"prev_time": 1788302096.0,
+"route_id": "6",
+"status": "in-transit",
+"stop_id": "3",
+"stop_name": "Allendale",
+"system": "njt",
+"train_num": "1128",
+"trip_id": "2131912"
+},
+{
+"delay": 624,
+"headsign": "Suffern",
+"id": "2131603",
+"latitude": 40.981497,
+"longitude": -74.12022535555556,
+"next_time": 1788302334.0,
+"prev_lat": 40.980629,
+"prev_lon": -74.120592,
+"prev_time": 1788302199.0,
+"route_id": "5",
+"status": "in-transit",
+"stop_id": "64",
+"stop_name": "Ho-Ho-Kus",
+"system": "njt",
+"train_num": "1169",
+"trip_id": "2131603"
+},
+{
+"delay": 0,
+"headsign": "Suffern",
+"id": "2144943",
+"latitude": 40.793051515989625,
+"longitude": -74.08232188850475,
+"next_time": 1788303195.0,
+"prev_lat": 40.761188,
+"prev_lon": -74.075821,
+"prev_time": 1788302038.0,
+"route_id": "6",
+"status": "in-transit",
+"stop_id": "139",
+"stop_name": "Ridgewood",
+"system": "njt",
+"train_num": "1171",
+"trip_id": "2144943"
+},
+{
+"delay": 0,
+"headsign": "Suffern",
+"id": "2131345",
+"latitude": 40.73686278333333,
+"longitude": -74.03170875,
+"next_time": 1788302760.0,
+"prev_lat": 40.734843,
+"prev_lon": -74.028046,
+"prev_time": 1788302160.0,
+"route_id": "5",
+"status": "in-transit",
+"stop_id": "144",
+"stop_name": "Secaucus Junction",
+"system": "njt",
+"train_num": "1173",
+"trip_id": "2131345"
+},
+{
+"delay": 265,
+"headsign": "Waldwick",
+"id": "2131887",
+"latitude": 40.972540853658536,
+"longitude": -74.12625234146341,
+"next_time": 1788302260.0,
+"prev_lat": 40.962206,
+"prev_lon": -74.133485,
+"prev_time": 1788302137.0,
+"route_id": "6",
+"status": "in-transit",
+"stop_id": "139",
+"stop_name": "Ridgewood",
+"system": "njt",
+"train_num": "1223",
+"trip_id": "2131887"
+},
+{
+"delay": 167,
+"headsign": "Waldwick",
+"id": "2131888",
+"latitude": 40.79418781291759,
+"longitude": -74.10467606458798,
+"next_time": 1788302387.0,
+"prev_lat": 40.761188,
+"prev_lon": -74.075821,
+"prev_time": 1788301938.0,
+"route_id": "6",
+"status": "in-transit",
+"stop_id": "75",
+"stop_name": "Lyndhurst",
+"system": "njt",
+"train_num": "1225",
+"trip_id": "2131888"
+},
+{
+"delay": 456,
+"headsign": "Waldwick",
+"id": "2131363",
+"latitude": 40.87445414516129,
+"longitude": -74.10068768817204,
+"next_time": 1788302271.0,
+"prev_lat": 40.854979,
+"prev_lon": -74.096951,
+"prev_time": 1788302085.0,
+"route_id": "5",
+"status": "in-transit",
+"stop_id": "128",
+"stop_name": "Plauderville",
+"system": "njt",
+"train_num": "1271",
+"trip_id": "2131363"
+},
+{
+"delay": 63,
+"headsign": "Spring Valley",
+"id": "2131450",
+"latitude": 41.01884357746479,
+"longitude": -74.04080588732394,
+"next_time": 1788302223.0,
+"prev_lat": 41.002414,
+"prev_lon": -74.041033,
+"prev_time": 1788302081.0,
+"route_id": "13",
+"status": "in-transit",
+"stop_id": "175",
+"stop_name": "Woodcliff Lake",
+"system": "njt",
+"train_num": "1631",
+"trip_id": "2131450"
+},
+{
+"delay": 243,
+"headsign": "Spring Valley",
+"id": "2131451",
+"latitude": 40.910856,
+"longitude": -74.035044,
+"next_time": 1788302223.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "13",
+"status": "at-station",
+"stop_id": "105",
+"stop_name": "New Bridge Landing",
+"system": "njt",
+"train_num": "1633",
+"trip_id": "2131451"
+},
+{
+"delay": 93,
+"headsign": "Spring Valley",
+"id": "2131911",
+"latitude": 40.831061314868805,
+"longitude": -74.07826697959185,
+"next_time": 1788302313.0,
+"prev_lat": 40.761188,
+"prev_lon": -74.075821,
+"prev_time": 1788301627.0,
+"route_id": "13",
+"status": "in-transit",
+"stop_id": "176",
+"stop_name": "Wood-Ridge",
+"system": "njt",
+"train_num": "1635",
+"trip_id": "2131911"
+},
+{
+"delay": 1041,
+"headsign": "3127",
+"id": "njt:3127",
+"latitude": 40.57585439957492,
+"longitude": -74.3220225621679,
+"next_time": 1788302256.0,
+"prev_lat": 40.704415,
+"prev_lon": -74.190717,
+"prev_time": 1788301315.0,
+"route_id": null,
+"status": "in-transit",
+"stop_id": "82",
+"stop_name": "Metropark",
+"system": "njt",
+"train_num": "3127",
+"trip_id": "njt:3127"
+},
+{
+"delay": 430,
+"headsign": "Long Branch",
+"id": "2135193",
+"latitude": 40.39346485239852,
+"longitude": -74.12681815129152,
+"next_time": 1788302245.0,
+"prev_lat": 40.415385,
+"prev_lon": -74.190393,
+"prev_time": 1788301974.0,
+"route_id": "10",
+"status": "in-transit",
+"stop_id": "84",
+"stop_name": "Middletown",
+"system": "njt",
+"train_num": "3265",
+"trip_id": "2135193"
+},
+{
+"delay": 862,
+"headsign": "Long Branch",
+"id": "2132029",
+"latitude": 40.48801127317073,
+"longitude": -74.2800177902439,
+"next_time": 1788302227.0,
+"prev_lat": 40.55661,
+"prev_lon": -74.277754,
+"prev_time": 1788301817.0,
+"route_id": "10",
+"status": "in-transit",
+"stop_id": "149",
+"stop_name": "South Amboy",
+"system": "njt",
+"train_num": "3267",
+"trip_id": "2132029"
+},
+{
+"delay": 1745,
+"headsign": "Penn Station New York",
+"id": "2134097",
+"latitude": 40.44595378851175,
+"longitude": -74.24639508616188,
+"next_time": 1788302435.0,
+"prev_lat": 40.420161,
+"prev_lon": -74.223702,
+"prev_time": 1788302052.0,
+"route_id": "10",
+"status": "in-transit",
+"stop_id": "149",
+"stop_name": "South Amboy",
+"system": "njt",
+"train_num": "3270",
+"trip_id": "2134097"
+},
+{
+"delay": 641,
+"headsign": "Long Branch",
+"id": "2134795",
+"latitude": 40.71378027322404,
+"longitude": -74.18249732786886,
+"next_time": 1788302321.0,
+"prev_lat": 40.734221,
+"prev_lon": -74.164557,
+"prev_time": 1788301955.0,
+"route_id": "10",
+"status": "in-transit",
+"stop_id": "110",
+"stop_name": "Newark Int'l Airport",
+"system": "njt",
+"train_num": "3271",
+"trip_id": "2134795"
+},
+{
+"delay": 405,
+"headsign": "Penn Station New York",
+"id": "2131995",
+"latitude": 40.37568403053435,
+"longitude": -74.10200208015267,
+"next_time": 1788302295.0,
+"prev_lat": 40.348284,
+"prev_lon": -74.074538,
+"prev_time": 1788302033.0,
+"route_id": "10",
+"status": "in-transit",
+"stop_id": "84",
+"stop_name": "Middletown",
+"system": "njt",
+"train_num": "3272",
+"trip_id": "2131995"
+},
+{
+"delay": 180,
+"headsign": "Long Branch",
+"id": "2132125",
+"latitude": 40.75632972222222,
+"longitude": -74.03942185833334,
+"next_time": 1788302520.0,
+"prev_lat": 40.750048,
+"prev_lon": -73.992358,
+"prev_time": 1788301800.0,
+"route_id": "10",
+"status": "in-transit",
+"stop_id": "145",
+"stop_name": "Secaucus Station",
+"system": "njt",
+"train_num": "3275",
+"trip_id": "2132125"
+},
+{
+"delay": 229,
+"headsign": "Bay Head",
+"id": "2134081",
+"latitude": 40.089901375,
+"longitude": -74.04782705,
+"next_time": 1788302599.0,
+"prev_lat": 40.092718,
+"prev_lon": -74.048191,
+"prev_time": 1788302119.0,
+"route_id": "10",
+"status": "in-transit",
+"stop_id": "14",
+"stop_name": "Bay Head",
+"system": "njt",
+"train_num": "3361",
+"trip_id": "2134081"
+},
+{
+"delay": 3424,
+"headsign": "Bay Head",
+"id": "2132094",
+"latitude": 40.49336014590634,
+"longitude": -74.27984127492833,
+"next_time": 1788302599.0,
+"prev_lat": 40.55661,
+"prev_lon": -74.277754,
+"prev_time": 1788299460.0,
+"route_id": "10",
+"status": "in-transit",
+"stop_id": "149",
+"stop_name": "South Amboy",
+"system": "njt",
+"train_num": "3363",
+"trip_id": "2132094"
+},
+{
+"delay": 330,
+"headsign": "Penn Station New York",
+"id": "2137433",
+"latitude": 40.506931525423724,
+"longitude": -74.27437997288136,
+"next_time": 1788302235.0,
+"prev_lat": 40.484308,
+"prev_lon": -74.28014,
+"prev_time": 1788301940.0,
+"route_id": "10",
+"status": "in-transit",
+"stop_id": "125",
+"stop_name": "Perth Amboy",
+"system": "njt",
+"train_num": "3512",
+"trip_id": "2137433"
+},
+{
+"delay": 0,
+"headsign": "South Amboy",
+"id": "2131927",
+"latitude": 40.754710296296295,
+"longitude": -74.0272888111111,
+"next_time": 1788302520.0,
+"prev_lat": 40.750048,
+"prev_lon": -73.992358,
+"prev_time": 1788301980.0,
+"route_id": "10",
+"status": "in-transit",
+"stop_id": "145",
+"stop_name": "Secaucus Station",
+"system": "njt",
+"train_num": "3515",
+"trip_id": "2131927"
+},
+{
+"delay": 152,
+"headsign": "10 3598",
+"id": "njt:3598",
+"latitude": 40.75736643049327,
+"longitude": -74.04718907399104,
+"next_time": 1788302792.0,
+"prev_lat": 40.761188,
+"prev_lon": -74.075821,
+"prev_time": 1788301900.0,
+"route_id": "10",
+"status": "in-transit",
+"stop_id": "109",
+"stop_name": "Penn Station New York",
+"system": "njt",
+"train_num": "3598",
+"trip_id": "njt:3598"
+},
+{
+"delay": 120,
+"headsign": "Penn Station New York",
+"id": "2131835",
+"latitude": 40.7330992688172,
+"longitude": -74.16554151612904,
+"next_time": 1788302220.0,
+"prev_lat": 40.704415,
+"prev_lon": -74.190717,
+"prev_time": 1788301848.0,
+"route_id": "9",
+"status": "in-transit",
+"stop_id": "112",
+"stop_name": "Newark Penn Station",
+"system": "njt",
+"train_num": "3866",
+"trip_id": "2131835"
+},
+{
+"delay": 3900,
+"headsign": "Trenton Station",
+"id": "2132039",
+"latitude": 40.758423629629625,
+"longitude": -74.05510981111111,
+"next_time": 1788302340.0,
+"prev_lat": 40.750048,
+"prev_lon": -73.992358,
+"prev_time": 1788301800.0,
+"route_id": "9",
+"status": "in-transit",
+"stop_id": "145",
+"stop_name": "Secaucus Station",
+"system": "njt",
+"train_num": "3867",
+"trip_id": "2132039"
+},
+{
+"delay": 0,
+"headsign": "Penn Station New York",
+"id": "2132102",
+"latitude": 40.50426551037344,
+"longitude": -74.4346390373444,
+"next_time": 1788302370.0,
+"prev_lat": 40.497278,
+"prev_lon": -74.445751,
+"prev_time": 1788302129.0,
+"route_id": "9",
+"status": "in-transit",
+"stop_id": "37",
+"stop_name": "Edison",
+"system": "njt",
+"train_num": "3868",
+"trip_id": "2132102"
+},
+{
+"delay": 0,
+"headsign": "Penn Station New York",
+"id": "2131472",
+"latitude": 40.25638740656565,
+"longitude": -74.70269937121212,
+"next_time": 1788302595.0,
+"prev_lat": 40.255309,
+"prev_lon": -74.70412,
+"prev_time": 1788302199.0,
+"route_id": "9",
+"status": "in-transit",
+"stop_id": "132",
+"stop_name": "Princeton Junction",
+"system": "njt",
+"train_num": "3870",
+"trip_id": "2131472"
+},
+{
+"delay": 0,
+"headsign": "Penn Station New York",
+"id": "2134122",
+"latitude": 40.218515,
+"longitude": -74.753926,
+"next_time": 1788302760.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "9",
+"status": "at-station",
+"stop_id": "158",
+"stop_name": "Trenton Station",
+"system": "njt",
+"train_num": "3872",
+"trip_id": "2134122"
+},
+{
+"delay": 214,
+"headsign": "Trenton Station",
+"id": "2134115",
+"latitude": 40.74169554891304,
+"longitude": -74.13996169565218,
+"next_time": 1788302359.0,
+"prev_lat": 40.761188,
+"prev_lon": -74.075821,
+"prev_time": 1788301807.0,
+"route_id": "9",
+"status": "in-transit",
+"stop_id": "112",
+"stop_name": "Newark Penn Station",
+"system": "njt",
+"train_num": "3873",
+"trip_id": "2134115"
+},
+{
+"delay": 0,
+"headsign": "Trenton Station",
+"id": "2131872",
+"latitude": 40.25224658629131,
+"longitude": -74.70826541982865,
+"next_time": 1788302955.0,
+"prev_lat": 40.255309,
+"prev_lon": -74.70412,
+"prev_time": 1788302138.0,
+"route_id": "9",
+"status": "in-transit",
+"stop_id": "158",
+"stop_name": "Trenton Station",
+"system": "njt",
+"train_num": "3953",
+"trip_id": "2131872"
+},
+{
+"delay": 392,
+"headsign": "Trenton Station",
+"id": "2133279",
+"latitude": 40.73540846732954,
+"longitude": -74.16064959090909,
+"next_time": 1788302237.0,
+"prev_lat": 40.761188,
+"prev_lon": -74.075821,
+"prev_time": 1788301533.0,
+"route_id": "9",
+"status": "in-transit",
+"stop_id": "112",
+"stop_name": "Newark Penn Station",
+"system": "njt",
+"train_num": "3957",
+"trip_id": "2133279"
+},
+{
+"delay": -60,
+"headsign": "Trenton Station",
+"id": "2133227",
+"latitude": 40.750048,
+"longitude": -73.992358,
+"next_time": 1788302220.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "9",
+"status": "approaching",
+"stop_id": "109",
+"stop_name": "Penn Station New York",
+"system": "njt",
+"train_num": "3961",
+"trip_id": "2133227"
+},
+{
+"delay": 0,
+"headsign": "Princeton Junction",
+"id": "2132108",
+"latitude": 40.322673093333336,
+"longitude": -74.63241519333333,
+"next_time": 1788302280.0,
+"prev_lat": 40.342088,
+"prev_lon": -74.65887,
+"prev_time": 1788301980.0,
+"route_id": "14",
+"status": "in-transit",
+"stop_id": "132",
+"stop_name": "Princeton Junction",
+"system": "njt",
+"train_num": "4168",
+"trip_id": "2132108"
+},
+{
+"delay": 76,
+"headsign": "Philadelphia 30th St.",
+"id": "2131239",
+"latitude": 39.959757150537634,
+"longitude": -75.16418164516129,
+"next_time": 1788302416.0,
+"prev_lat": 39.97777,
+"prev_lon": -75.06179,
+"prev_time": 1788301021.0,
+"route_id": "1",
+"status": "in-transit",
+"stop_id": "126",
+"stop_name": "Philadelphia 30th St.",
+"system": "njt",
+"train_num": "4632",
+"trip_id": "2131239"
+},
+{
+"delay": 58,
+"headsign": "Atlantic City Terminal",
+"id": "2131237",
+"latitude": 39.82081172100314,
+"longitude": -74.97674593730407,
+"next_time": 1788302443.0,
+"prev_lat": 39.833705,
+"prev_lon": -75.000674,
+"prev_time": 1788302124.0,
+"route_id": "1",
+"status": "in-transit",
+"stop_id": "8",
+"stop_name": "Atco",
+"system": "njt",
+"train_num": "4635",
+"trip_id": "2131237"
+},
+{
+"delay": 0,
+"headsign": "Raritan",
+"id": "2134083",
+"latitude": 40.58615535480226,
+"longitude": -74.67000404971752,
+"next_time": 1788302700.0,
+"prev_lat": 40.571007,
+"prev_lon": -74.634364,
+"prev_time": 1788300930.0,
+"route_id": "15",
+"status": "in-transit",
+"stop_id": "113",
+"stop_name": "North Branch",
+"system": "njt",
+"train_num": "5435",
+"trip_id": "2134083"
+},
+{
+"delay": 280,
+"headsign": "Raritan",
+"id": "2133763",
+"latitude": 40.64106,
+"longitude": -74.385003,
+"next_time": 1788302230.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "15",
+"status": "at-station",
+"stop_id": "43",
+"stop_name": "Fanwood",
+"system": "njt",
+"train_num": "5441",
+"trip_id": "2133763"
+},
+{
+"delay": -60,
+"headsign": "Raritan",
+"id": "2133740",
+"latitude": 40.734221,
+"longitude": -74.164557,
+"next_time": 1788302340.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "15",
+"status": "at-station",
+"stop_id": "112",
+"stop_name": "Newark Penn Station",
+"system": "njt",
+"train_num": "5445",
+"trip_id": "2133740"
+},
+{
+"delay": 262,
+"headsign": "High Bridge",
+"id": "2137447",
+"latitude": 40.690998144435675,
+"longitude": -74.25789915627466,
+"next_time": 1788302827.0,
+"prev_lat": 40.734221,
+"prev_lon": -74.164557,
+"prev_time": 1788301560.0,
+"route_id": "15",
+"status": "in-transit",
+"stop_id": "169",
+"stop_name": "Westfield",
+"system": "njt",
+"train_num": "5743",
+"trip_id": "2137447"
+},
+{
+"delay": 10,
+"headsign": "Newark Penn Station",
+"id": "2137246",
+"latitude": 40.71300110810811,
+"longitude": -74.19563596979333,
+"next_time": 1788302470.0,
+"prev_lat": 40.683663,
+"prev_lon": -74.238605,
+"prev_time": 1788301841.0,
+"route_id": "15",
+"status": "in-transit",
+"stop_id": "112",
+"stop_name": "Newark Penn Station",
+"system": "njt",
+"train_num": "5746",
+"trip_id": "2137246"
+},
+{
+"delay": 320,
+"headsign": "Montclair State University",
+"id": "2132100",
+"latitude": 40.747621,
+"longitude": -74.171943,
+"next_time": 1788302240.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "2",
+"status": "at-station",
+"stop_id": "111",
+"stop_name": "Newark Broad St.",
+"system": "njt",
+"train_num": "6279",
+"trip_id": "2132100"
+},
+{
+"delay": 178,
+"headsign": "7 6355",
+"id": "njt:6355",
+"latitude": 40.76123136300418,
+"longitude": -74.16008175799722,
+"next_time": 1788302578.0,
+"prev_lat": 40.750048,
+"prev_lon": -73.992358,
+"prev_time": 1788301140.0,
+"route_id": "7",
+"status": "in-transit",
+"stop_id": "23",
+"stop_name": "Brick Church",
+"system": "njt",
+"train_num": "6355",
+"trip_id": "njt:6355"
+},
+{
+"delay": 516,
+"headsign": "Gladstone",
+"id": "2132098",
+"latitude": 40.69714696193772,
+"longitude": -74.5521592733564,
+"next_time": 1788302361.0,
+"prev_lat": 40.684844,
+"prev_lon": -74.54947,
+"prev_time": 1788302072.0,
+"route_id": "8",
+"status": "in-transit",
+"stop_id": "13",
+"stop_name": "Basking Ridge",
+"system": "njt",
+"train_num": "6431",
+"trip_id": "2132098"
+},
+{
+"delay": 218,
+"headsign": "Gladstone",
+"id": "2132007",
+"latitude": 40.7374501283906,
+"longitude": -74.2335566636528,
+"next_time": 1788302438.0,
+"prev_lat": 40.761188,
+"prev_lon": -74.075821,
+"prev_time": 1788301332.0,
+"route_id": "8",
+"status": "in-transit",
+"stop_id": "80",
+"stop_name": "Maplewood",
+"system": "njt",
+"train_num": "6437",
+"trip_id": "2132007"
+},
+{
+"delay": 120,
+"headsign": "Dover",
+"id": "2132120",
+"latitude": 40.88347288709677,
+"longitude": -74.5470101032258,
+"next_time": 1788302280.0,
+"prev_lat": 40.8839,
+"prev_lon": -74.481513,
+"prev_time": 1788301660.0,
+"route_id": "7",
+"status": "in-transit",
+"stop_id": "34",
+"stop_name": "Dover",
+"system": "njt",
+"train_num": "6647",
+"trip_id": "2132120"
+},
+{
+"delay": 1887,
+"headsign": "Dover",
+"id": "2132038",
+"latitude": 40.769604692307695,
+"longitude": -74.23793101538462,
+"next_time": 1788302277.0,
+"prev_lat": 40.771883,
+"prev_lon": -74.233103,
+"prev_time": 1788302147.0,
+"route_id": "7",
+"status": "in-transit",
+"stop_id": "61",
+"stop_name": "Highland Ave.",
+"system": "njt",
+"train_num": "6651",
+"trip_id": "2132038"
+},
+{
+"delay": 1200,
+"headsign": "Dover",
+"id": "2134096",
+"latitude": 40.750048,
+"longitude": -73.992358,
+"next_time": 1788302460.0,
+"prev_lat": null,
+"prev_lon": null,
+"prev_time": null,
+"route_id": "7",
+"status": "at-station",
+"stop_id": "109",
+"stop_name": "Penn Station New York",
+"system": "njt",
+"train_num": "6655",
+"trip_id": "2134096"
+},
+{
+"delay": 61,
+"headsign": "Penn Station New York",
+"id": "2131811",
+"latitude": 40.7609817037037,
+"longitude": -74.07427538888889,
+"next_time": 1788303001.0,
+"prev_lat": 40.761188,
+"prev_lon": -74.075821,
+"prev_time": 1788302191.0,
+"route_id": "7",
+"status": "in-transit",
+"stop_id": "109",
+"stop_name": "Penn Station New York",
+"system": "njt",
+"train_num": "6664",
+"trip_id": "2131811"
+},
+{
+"delay": 48,
+"headsign": "Penn Station New York",
+"id": "2145229",
+"latitude": 40.72959756140351,
+"longitude": -74.28337871929824,
+"next_time": 1788302238.0,
+"prev_lat": 40.725622,
+"prev_lon": -74.303755,
+"prev_time": 1788302124.0,
+"route_id": "7",
+"status": "in-transit",
+"stop_id": "80",
+"stop_name": "Maplewood",
+"system": "njt",
+"train_num": "6666",
+"trip_id": "2145229"
+},
+{
+"delay": 0,
+"headsign": "Penn Station New York",
+"id": "2131311",
+"latitude": 40.87390039047619,
+"longitude": -74.48091296190476,
+"next_time": 1788302550.0,
+"prev_lat": 40.8839,
+"prev_lon": -74.481513,
+"prev_time": 1788302130.0,
+"route_id": "7",
+"status": "in-transit",
+"stop_id": "92",
+"stop_name": "Morris Plains",
+"system": "njt",
+"train_num": "6668",
+"trip_id": "2131311"
+}
+],
+"warnings": []
+}

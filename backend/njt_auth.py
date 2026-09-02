@@ -35,6 +35,20 @@ attempt boundary in between.
 CONSUMED BY STATIC ONLY IN 15a. njt_static fetches its archive through njt_post,
 so the token path is exercised from birth rather than landing untested alongside
 the realtime work that will need it in 15b.
+
+TWO RULES THAT FOLLOW FROM THE SECRET RIDING IN A BODY (Audit 4, F2 and F3). The
+credentials and the token travel in the multipart body of every request, which is
+a shape none of the other upstreams have, and it breaks two habits that are safe
+everywhere else in this app:
+
+  - A credentialed POST NEVER FOLLOWS A REDIRECT. httpx re-sends a POST body on a
+    307 or 308, to whatever host the Location names, so following would hand the
+    username and password (or the token) to any origin a redirect pointed at. A
+    3xx from RailData therefore arrives here as a non-200 and fails the attempt.
+  - THE getToken RESPONSE BODY IS NEVER QUOTED, at any status. Every other body in
+    this system is the upstream's words (a feed, an error page) and safe to quote
+    into a message; the getToken body IS the token. A message about it reports the
+    status, the byte length, or the key names, never the content.
 """
 
 from __future__ import annotations
@@ -248,13 +262,27 @@ def _quote(body: bytes) -> str:
     the multipart body we SEND, which never appears here. Truncated so an HTML
     error page cannot become a log entry, and decoded with replacement so a binary
     body cannot raise inside an error path.
+
+    THE ONE EXCEPTION TO THAT PREMISE IS THE getToken BODY, and this must never be
+    called on it (Audit 4, F3). A data endpoint's body is a feed or an error page;
+    the getToken body is the secret itself, under whatever key or shape NJ Transit
+    chooses, and a message built from it would put the live token in the logs the
+    moment the upstream answered in a shape extract_token does not recognize. The
+    mint path reports the status, the byte length or the key names instead; see
+    _token_body_shape.
     """
     text = body[: _BODY_QUOTE_CHARS * 4].decode("utf-8", errors="replace").strip()
     text = " ".join(text.split())
     return text[:_BODY_QUOTE_CHARS] if text else "(empty body)"
 
 
-async def _httpx_post(url: str, form: dict[str, str], timeout_s: float) -> tuple[int, bytes]:
+async def _httpx_post(
+    url: str,
+    form: dict[str, str],
+    timeout_s: float,
+    *,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> tuple[int, bytes]:
     """The default transport: one POST as multipart/form-data.
 
     files= RATHER THAN data=, and it is load-bearing. httpx sends a `data` mapping
@@ -266,10 +294,51 @@ async def _httpx_post(url: str, form: dict[str, str], timeout_s: float) -> tuple
     The status is returned rather than raised on, because the caller has to INSPECT
     a 500 before deciding what it is (see is_auth_error); raise_for_status here
     would throw away the body that distinguishes an auth failure from an outage.
+
+    follow_redirects=False, AND IT IS THE POINT, NOT A DEFAULT (Audit 4, F2). Every
+    body this sends carries a secret: the username and password on a mint, the
+    token on every other call. httpx re-sends a POST body on a 307 or 308, to a
+    different origin included, so following a redirect would deliver the credential
+    to whatever host the Location named. The static loaders follow redirects on
+    their GETs because two sources 30x to their zip; that reasoning is about a body
+    the upstream SENDS and does not extend to one we send. A 3xx is returned as the
+    status it is, and the caller treats it as a non-200: NjtAuthError from mint,
+    NjtUpstreamError from _body_or_raise. is_auth_error can never read a 3xx as an
+    auth failure (it keys on status 500), so a redirect never spends the one re-mint.
+
+    `transport` is an injection seam so a test can prove the redirect rule against a
+    real httpx client without a socket. None means the real network.
     """
-    async with httpx.AsyncClient(timeout=timeout_s, follow_redirects=True) as client:
+    async with httpx.AsyncClient(
+        timeout=timeout_s, follow_redirects=False, transport=transport
+    ) as client:
         resp = await client.post(url, files={key: (None, value) for key, value in form.items()})
         return resp.status_code, resp.content
+
+
+def _token_body_shape(payload: object) -> str:
+    """What a getToken body that carried no recognizable token looked like, WITHOUT
+    any of its content: the JSON type, and for an object its sorted key NAMES.
+
+    Key names only, never values, because a value under an unrecognized key is the
+    likeliest place the real token would be sitting. The names are what an operator
+    needs to extend the accepted spellings in extract_token, and they are bounded so
+    an absurd object cannot become a log entry either.
+    """
+    if isinstance(payload, dict):
+        if not payload:
+            return "an empty JSON object"
+        names = ", ".join(sorted(str(key) for key in payload))
+        if len(names) > _BODY_QUOTE_CHARS:
+            names = names[:_BODY_QUOTE_CHARS] + "..."
+        return f"a JSON object with keys [{names}]"
+    if isinstance(payload, list):
+        return f"a JSON array of {len(payload)} items"
+    if isinstance(payload, str):
+        return "an empty JSON string"
+    if payload is None:
+        return "JSON null"
+    return f"a JSON {type(payload).__name__}"
 
 
 def extract_token(body: bytes) -> str:
@@ -278,14 +347,24 @@ def extract_token(body: bytes) -> str:
     The probe recorded the token's SHAPE (~21 characters) but not the JSON key
     holding it, so this accepts the documented spellings case-insensitively rather
     than pinning one that was never observed on the wire. A bare JSON string body
-    is accepted too, for the same reason. Everything else raises NjtAuthError with
-    the body quoted, which is the honest outcome: we asked for a token and did not
-    get something we recognize as one.
+    is accepted too, for the same reason. Everything else raises NjtAuthError,
+    which is the honest outcome: we asked for a token and did not get something we
+    recognize as one.
+
+    THE BODY IS NEVER QUOTED INTO THE ERROR (Audit 4, F3), because on exactly these
+    two paths it may BE the token: under a key this function does not recognize, or
+    as a bare string that is not valid JSON. The non-JSON message carries the byte
+    length only; the no-key message carries the JSON shape and the key names only.
+    Both messages reach the Railway log through pollers and njt_static, and the
+    monitor's job summary through _NjtToken, so this is the line that decides
+    whether a live token lands there.
     """
     try:
         payload = json.loads(body)
     except (ValueError, UnicodeDecodeError) as exc:
-        raise NjtAuthError(f"getToken returned a non-JSON body: {_quote(body)}") from exc
+        raise NjtAuthError(
+            f"getToken returned a non-JSON body ({len(body)} bytes, not quoted)"
+        ) from exc
     if isinstance(payload, str) and payload.strip():
         return payload.strip()
     if isinstance(payload, dict):
@@ -293,7 +372,9 @@ def extract_token(body: bytes) -> str:
             if isinstance(key, str) and key.lower() in ("usertoken", "token"):
                 if isinstance(value, str) and value.strip():
                     return value.strip()
-    raise NjtAuthError(f"getToken response carried no token: {_quote(body)}")
+    raise NjtAuthError(
+        f"getToken response carried no token: {_token_body_shape(payload)} (values not quoted)"
+    )
 
 
 async def mint(
@@ -328,7 +409,12 @@ async def mint(
         # timeout, which is all an operator needs from a mint failure.
         raise NjtAuthError(f"getToken transport failed ({type(exc).__name__})") from exc
     if status != 200:
-        raise NjtAuthError(f"getToken returned HTTP {status}: {_quote(body)}")
+        # STATUS ONLY, never the body (Audit 4, F3). A getToken body is the one
+        # response in this system that may be the secret itself, and a non-200
+        # does not change that: nothing here knows what NJ Transit puts under a
+        # 3xx, a 4xx or a 5xx from this endpoint, so none of it is quoted. A 3xx
+        # lands here too, because _httpx_post never follows a redirect (F2).
+        raise NjtAuthError(f"getToken returned HTTP {status}")
     token = extract_token(body)
     logger.info("Minted an NJ Transit RailData token (%d chars)", len(token))
     return token

@@ -140,7 +140,22 @@ PUBLICATIONS = ("good", "headers-only-stops", "missing-member", "corrupt-zip")
 #                 failure. Without it, "re-mint on invalid token" and "re-mint on
 #                 any 500" are indistinguishable, and the second one spends mints
 #                 against an unpublished rate cap on every real NJT outage.
-TOKEN_MODES = ("ok", "reject-first", "server-error")
+#   redirect      AUDIT 4, F2. getToken answers every mint with a 307 whose
+#                 Location names NJT_REDIRECT_PATH on this same simulator, and that
+#                 route counts what arrives and hands out a working token. httpx
+#                 re-sends a POST body on a 307, so a loader that follows delivers
+#                 the username and password to the Location and then looks
+#                 perfectly healthy; one that never follows fails the attempt on the
+#                 status and the arrival counter stays at zero. The Location is on
+#                 this simulator rather than a second origin because the counter is
+#                 the witness and a second listener would add nothing to it; the
+#                 cross-origin half of the claim is carried by the hermetic
+#                 transport tests in backend/tests.
+TOKEN_MODES = ("ok", "reject-first", "server-error", "redirect")
+
+# Where the `redirect` token mode points a mint. Same simulator, its own route, so
+# a credential that follows the redirect is COUNTED rather than lost.
+NJT_REDIRECT_PATH = "/njt/getToken/elsewhere"
 
 # Byte-for-byte what the 2026-08-05 probes recorded for a rejected token. Written
 # as one literal so a test can assert against the same string the app sniffs for.
@@ -210,6 +225,11 @@ class NjtApi:
     # which is what models "the token we were holding expired" rather than "the
     # endpoint is flaky".
     issued: list[str] = field(default_factory=list)
+    # POSTs that arrived at NJT_REDIRECT_PATH carrying a username and password:
+    # the credentials delivered to a redirect's Location. Under `redirect` this is
+    # the number a scenario asserts is ZERO, and it is counted only when the body
+    # really carried the secret so a stray empty POST cannot fake the finding.
+    redirect_arrivals: int = 0
 
 
 def _restamp(raw: bytes, now: float, drift_deg: float = 0.0, generation: int = 0) -> bytes:
@@ -773,6 +793,9 @@ class UpstreamSim:
         self.not_found: list[str] = []
         self._lock = threading.Lock()
         self._server: ThreadingHTTPServer | None = None
+        # The base URL once bound, so the `redirect` token mode can name an
+        # absolute Location on this simulator.
+        self._base: str = ""
         self._thread: threading.Thread | None = None
         self._build_state()
 
@@ -904,7 +927,8 @@ class UpstreamSim:
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
         host, port = self._server.server_address
-        return f"http://{host}:{port}"
+        self._base = f"http://{host}:{port}"
+        return self._base
 
     def stop(self) -> None:
         if self._server is not None:
@@ -944,7 +968,7 @@ class UpstreamSim:
             self.archives[key].publication = publication
 
     def set_token_mode(self, mode: str) -> None:
-        """ok | reject-first | server-error. Validated like set_mode and
+        """ok | reject-first | server-error | redirect. Validated like set_mode and
         set_publication, and for the sharper of the two reasons: an unknown token
         mode falling through to the healthy body would make a scenario about token
         expiry pass without ever expiring a token."""
@@ -970,6 +994,13 @@ class UpstreamSim:
         """How many getGTFS POSTs NJ Transit has received, accepted or rejected."""
         with self._lock:
             return self.njt.gtfs_requests
+
+    def redirect_arrivals(self) -> int:
+        """How many credentialed POSTs arrived at the `redirect` mode's Location.
+        THE F2 WITNESS: a loader that follows a 307 with its body puts the username
+        and password here; one that never follows leaves this at zero."""
+        with self._lock:
+            return self.njt.redirect_arrivals
 
     def rt_requests(self) -> int:
         """How many REALTIME POSTs (getTripUpdates + getAlerts) NJ Transit has
@@ -1096,12 +1127,35 @@ class UpstreamSim:
             # Counted BEFORE the guard: the POST was made whether or not it yields
             # a token, and it is the POST that costs.
             self.njt.mint_requests += 1
+            if self.njt.token_mode == "redirect":
+                # The body is empty and the status is the whole answer; the handler
+                # adds the Location. The POST still counted above, because it was
+                # made, and a redirect is what it was answered with.
+                return 307, b""
             if not fields.get("username") or not fields.get("password"):
                 return 400, b'{"errorMessage":"Missing credentials."}'
-            self.njt.mints += 1
-            token = f"njt-token-{self.njt.mints}"
-            self.njt.issued.append(token)
-            return 200, json.dumps({"UserToken": token}).encode()
+            return 200, self._issue_token()
+
+    def _issue_token(self) -> bytes:
+        """Mint the next numbered token. Caller holds the lock."""
+        self.njt.mints += 1
+        token = f"njt-token-{self.njt.mints}"
+        self.njt.issued.append(token)
+        return json.dumps({"UserToken": token}).encode()
+
+    def redirect_location(self) -> str:
+        """The absolute Location the `redirect` token mode answers with."""
+        return f"{self._base}{NJT_REDIRECT_PATH}"
+
+    def serve_njt_redirect_target(self, fields: dict[str, str]) -> tuple[int, bytes]:
+        """Where a followed redirect lands. Counts a body that carried the
+        credentials, then hands out a WORKING token, so a loader that followed
+        looks healthy from the outside: the finding is a silent one, and the
+        scenario has to be able to see it through the counter alone."""
+        with self._lock:
+            if fields.get("username") and fields.get("password"):
+                self.njt.redirect_arrivals += 1
+            return 200, self._issue_token()
 
     def serve_njt_gtfs(self, fields: dict[str, str]) -> tuple[int, bytes]:
         """getGTFS: the archive, behind whatever the token mode says about tokens.
@@ -1306,7 +1360,13 @@ def _resolve(path: str) -> tuple[str, str] | None:
 # NJ Transit's two POST routes. Kept out of _resolve, which answers for GETs: the
 # app never GETs these and a GET that reached one would be a real defect worth the
 # 404 (and worth appearing in the not_found list the hermeticity smoke test reads).
-_NJT_ROUTES = ("/njt/getToken", "/njt/getGTFS", "/njt/getTripUpdates", "/njt/getAlerts")
+_NJT_ROUTES = (
+    "/njt/getToken",
+    NJT_REDIRECT_PATH,
+    "/njt/getGTFS",
+    "/njt/getTripUpdates",
+    "/njt/getAlerts",
+)
 
 # Which Feed key each realtime NJT route serves. A dict rather than an if-chain so
 # a new RailData realtime endpoint is one line and cannot be added to _NJT_ROUTES
@@ -1359,10 +1419,18 @@ def _make_handler(sim: UpstreamSim):
         def log_message(self, *args) -> None:  # noqa: A003
             pass  # the app's own logs are the interesting ones
 
-        def _send(self, status: int, body: bytes, content_type: str) -> None:
+        def _send(
+            self,
+            status: int,
+            body: bytes,
+            content_type: str,
+            extra_headers: dict[str, str] | None = None,
+        ) -> None:
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
+            for name, value in (extra_headers or {}).items():
+                self.send_header(name, value)
             self.end_headers()
             self.wfile.write(body)
 
@@ -1394,6 +1462,12 @@ def _make_handler(sim: UpstreamSim):
                 )
                 if path == "/njt/getToken":
                     status, body = sim.serve_njt_token(fields)
+                    # A 307 needs its Location, and it is absolute so the client
+                    # cannot resolve it relative to anything but this simulator.
+                    headers = {"Location": sim.redirect_location()} if status == 307 else None
+                    self._send(status, body, "application/json", headers)
+                elif path == NJT_REDIRECT_PATH:
+                    status, body = sim.serve_njt_redirect_target(fields)
                     self._send(status, body, "application/json")
                 elif path in _NJT_RT_FEEDS:
                     status, body = sim.serve_njt_rt(_NJT_RT_FEEDS[path], fields)

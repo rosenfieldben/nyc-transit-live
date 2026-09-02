@@ -19,6 +19,7 @@ import pytest
 import bus_static
 import feeds
 import main as app_module
+import models
 import warmups
 from tests import negatives
 
@@ -818,7 +819,7 @@ async def test_healthz_passes_with_one_fresh_feed(client, healthz_env):
     _fresh(healthz_env["buses"])
     res = await client.get("/healthz")
     assert res.status_code == 200
-    assert res.json() == {"status": "pass"}
+    assert res.json() == {"status": "pass", "degraded": []}
 
 
 async def test_healthz_lenient_one_fresh_other_stale(client, healthz_env):
@@ -826,6 +827,11 @@ async def test_healthz_lenient_one_fresh_other_stale(client, healthz_env):
     _stale(healthz_env["subways"])  # 300s stale
     res = await client.get("/healthz")
     assert res.status_code == 200  # >= 1 fresh feed -> healthy
+    # LENIENT IS NOT SILENT (F1). The status code is still 200 on purpose, because
+    # a lagging upstream is not fixed by restarting the container. The stale feed
+    # is still a fact something has to be able to watch, and before F1 this
+    # response carried no trace of it at all.
+    assert res.json()["degraded"] == [models.HEALTH_FEED_CONTENT_STALE]
 
 
 async def test_healthz_degraded_when_all_feeds_stale(client, healthz_env):
@@ -866,7 +872,7 @@ async def test_healthz_fresh_with_unknown_feed_timestamp(client, healthz_env):
     healthz_env["buses"].update(data=[1], fetched_at=time.time(), feed_timestamp=None, error=None)
     res = await client.get("/healthz")
     assert res.status_code == 200
-    assert res.json() == {"status": "pass"}
+    assert res.json() == {"status": "pass", "degraded": []}
 
 
 async def test_healthz_degraded_when_poll_loop_stalled(client, healthz_env):
@@ -876,6 +882,75 @@ async def test_healthz_degraded_when_poll_loop_stalled(client, healthz_env):
     healthz_env["buses"].update(data=[1], fetched_at=old, feed_timestamp=old - 5, error=None)
     res = await client.get("/healthz")
     assert res.status_code == 503
+
+
+# ---- the F1 codes: classification without a change of readiness ----
+
+
+async def test_healthz_gating_reasons_all_appear_as_codes(client, healthz_env, monkeypatch):
+    """The three pre-F1 reasons must each carry a code, or the monitor watches a
+    strictly smaller set of states than the probe already knew about."""
+    _stale(healthz_env["buses"])
+    _stale(healthz_env["subways"])
+    monkeypatch.setattr(bus_static, "_status", "failed")
+    monkeypatch.setattr(app_module.app.state, "subway_static_status", "failed", raising=False)
+    res = await client.get("/healthz")
+    assert res.status_code == 503
+    assert res.json()["degraded"] == [
+        models.HEALTH_NO_FEED_FRESH,
+        models.HEALTH_BUS_INDEX_FAILED,
+        models.HEALTH_SUBWAY_STATIC_FAILED,
+        # Every feed being stale is also, separately, stale CONTENT. Two facts
+        # about one cause, and collapsing them would lose the distinction between
+        # "the poller stalled" and "the upstream froze".
+        models.HEALTH_FEED_CONTENT_STALE,
+    ]
+    assert len(res.json()["reasons"]) == 3, "the non-gating code must not reach reasons"
+
+
+@pytest.mark.parametrize(
+    ("total", "ok", "expected"),
+    [
+        (8, 8, False),  # all healthy
+        (8, 5, False),  # 3 of 8 down, below a majority
+        (8, 4, False),  # exactly half down is NOT a majority, the > is strict
+        (8, 3, True),  # 5 of 8 down
+        (8, 0, True),  # everything down
+        (0, 0, False),  # nothing polled yet; not an outage
+    ],
+)
+async def test_healthz_subway_groups_down_is_a_strict_majority(
+    client, healthz_env, monkeypatch, total, ok, expected
+):
+    _fresh(healthz_env["buses"])
+    monkeypatch.setattr(
+        app_module.app.state,
+        "subway_feed_health",
+        {"total": total, "ok": ok, "failed": [f"G{i}" for i in range(total - ok)]},
+        raising=False,
+    )
+    res = await client.get("/healthz")
+    # Never gating, whichever side of the boundary: the subway being mostly dark
+    # is upstream's problem and a restart would not fix it.
+    assert res.status_code == 200
+    assert (models.HEALTH_SUBWAY_GROUPS_DOWN in res.json()["degraded"]) is expected
+
+
+@pytest.mark.parametrize(
+    "health",
+    [None, {}, {"total": 8}, {"total": None, "ok": 0}, {"total": "8", "ok": 0}, {"total": True}],
+)
+async def test_healthz_unreadable_subway_health_is_not_an_outage(
+    client, healthz_env, monkeypatch, health
+):
+    """ "I cannot read this" and "most of the subway is down" are different answers,
+    and only one of them should wake somebody up. app.state is None before the
+    first poll and could be half-built during one."""
+    _fresh(healthz_env["buses"])
+    monkeypatch.setattr(app_module.app.state, "subway_feed_health", health, raising=False)
+    res = await client.get("/healthz")
+    assert res.status_code == 200
+    assert models.HEALTH_SUBWAY_GROUPS_DOWN not in res.json()["degraded"]
 
 
 async def test_healthz_never_leaks_error_details(client, healthz_env):

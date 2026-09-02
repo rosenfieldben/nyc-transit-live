@@ -627,3 +627,65 @@ class StatusResponse(BaseModel):
     # Defaulted so pre-alerts /api/status callers and fixtures validate unchanged;
     # the live handler always populates it.
     alerts: AlertStatus | None = None
+
+
+# ---------------------------------------------------------------------------
+# Readiness probe (/healthz)
+# ---------------------------------------------------------------------------
+
+# THE DEGRADED CODES, defined here beside the model that carries them because
+# they ARE the contract. The contract monitor imports this tuple and matches the
+# probe's response against it, so a code renamed on one side without the other
+# fails at import rather than going quietly unwatched in production, which is the
+# exact class of blindness the F1 audit finding was about.
+#
+# Stable strings rather than an enum: they cross a JSON boundary to a monitor
+# that may be running a different revision than the deployment it probes, so the
+# wire value has to be the identity.
+HEALTH_NO_FEED_FRESH = "no-feed-fresh"
+HEALTH_BUS_INDEX_FAILED = "bus-route-index-failed"
+HEALTH_SUBWAY_STATIC_FAILED = "subway-static-failed"
+HEALTH_FEED_CONTENT_STALE = "feed-content-stale"
+HEALTH_SUBWAY_GROUPS_DOWN = "subway-groups-down"
+
+HEALTH_DEGRADED_CODES = (
+    HEALTH_NO_FEED_FRESH,
+    HEALTH_BUS_INDEX_FAILED,
+    HEALTH_SUBWAY_STATIC_FAILED,
+    HEALTH_FEED_CONTENT_STALE,
+    HEALTH_SUBWAY_GROUPS_DOWN,
+)
+
+# The subset that makes the probe answer 503. READINESS AND SICKNESS ARE TWO
+# DIFFERENT QUESTIONS and this tuple is the seam between them: Railway restarts a
+# container on a failing healthcheck, so "one feed's upstream content is lagging"
+# must not reach the status code, while it must still reach a human. The gating
+# set is therefore exactly the three reasons the probe already had before F1, and
+# the non-gating codes are new information rather than new behavior.
+HEALTH_GATING_CODES = (
+    HEALTH_NO_FEED_FRESH,
+    HEALTH_BUS_INDEX_FAILED,
+    HEALTH_SUBWAY_STATIC_FAILED,
+)
+
+
+class HealthzResponse(BaseModel):
+    """The readiness probe's body.
+
+    `status` and `reasons` are unchanged from before F1: prose for a human
+    reading a deploy log, and the thing that decides the status code. `degraded`
+    is the machine-readable classification the contract monitor reads, and it is
+    a SUPERSET of what drove the status code, so a degraded state that is
+    deliberately not worth a restart is still visible to something that watches.
+
+    ALWAYS PRESENT, EVEN EMPTY, unlike `reasons`. An absent list and an empty one
+    have to be distinguishable: empty means this deployment classified itself and
+    found nothing wrong, absent means it is running code that predates the
+    classification and is therefore unwatched. The monitor treats those
+    differently and cannot do so if a healthy deployment omits the key.
+    """
+
+    status: str  # "pass" | "fail"
+    # Omitted when empty, matching the pre-F1 body exactly.
+    reasons: list[str] = []
+    degraded: list[str] = []

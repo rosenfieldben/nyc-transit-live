@@ -149,6 +149,34 @@ class ContractApp:
             lambda last: f"last /api/status: {json.dumps(last, indent=2)[:4000]}",
         )
 
+    def healthz(self) -> dict:
+        """The readiness probe's BODY, 503 included.
+
+        urlopen raises HTTPError on a 503, and /healthz answers 503 exactly when it
+        is degraded, so reading it the ordinary way raises on precisely the
+        responses a scenario cares about. The contract monitor's own _fetch_health
+        documents the same trap from the other side of the wire.
+        """
+        try:
+            with urllib.request.urlopen(f"{self.base_url}/healthz", timeout=10) as resp:
+                return json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            if exc.code != 503:
+                raise
+            return json.loads(exc.read())
+
+    def await_healthz(
+        self, predicate: Callable[[dict], bool], what: str, deadline_s: float = 60.0
+    ) -> dict:
+        """Poll /healthz until `predicate` holds."""
+        return self._await(
+            self.healthz,
+            predicate,
+            what,
+            deadline_s,
+            lambda last: f"last /healthz: {json.dumps(last, indent=2)[:2000]}",
+        )
+
     def await_railroads(
         self, predicate: Callable[[dict], bool], what: str, deadline_s: float = 60.0
     ) -> dict:

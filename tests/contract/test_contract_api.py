@@ -714,6 +714,54 @@ def test_a_real_njt_500_neither_mints_nor_heals(harness):
         assert app.get("/api/subway-stops"), "one failing system must not take the app down"
 
 
+def test_njt_a_redirected_mint_never_delivers_the_credentials(harness):
+    """Audit 4, F2, at the socket: a credentialed POST never follows a redirect.
+
+    The simulator's getToken answers every mint with a 307 whose Location is a
+    route on the simulator that counts credentialed arrivals and hands out a
+    WORKING token. httpx re-sends a POST body on a 307, so the app this finding
+    describes would deliver the username and password to that Location, mint
+    through it, and reach ready looking perfectly healthy. The fixed app never
+    follows: the arrival counter stays at zero, the mint fails on the status alone,
+    and the NJT group reports failed honestly while the rest of the app is fine.
+
+    WHAT THE COUNTER PROVES AND WHAT IT DOES NOT. Zero arrivals at a same-origin
+    Location proves the client does not follow a redirect with its body, which is
+    the mechanism; it says nothing about a different origin, because a second
+    listener would be needed to observe an arrival there and one was deliberately
+    not built. The cross-origin half is carried by the hermetic transport tests,
+    which record the URL of every request a real httpx client makes.
+
+    Hermetic counterparts:
+    backend/tests/test_njt_auth.py::test_a_credentialed_post_never_follows_a_redirect,
+    backend/tests/test_contract_monitor.py::test_the_post_arm_never_follows_a_redirect.
+    """
+    harness.sim.set_token_mode("redirect")
+    with harness.launch() as app:
+        app.await_status(
+            lambda s: s["njt_static"] == "failed",
+            "the NJT group to fail an attempt whose mint was answered with a 307",
+        )
+        # The app did reach getToken, so "zero arrivals" is a claim about a mint
+        # that was really made and really redirected, not about an app that never
+        # tried. Several attempts have happened by now (the rungs are 1s/2s/3s in
+        # this tier), and every one was answered with the redirect.
+        assert harness.sim.mint_requests() >= 1
+        assert harness.sim.redirect_arrivals() == 0, (
+            "the credentials arrived at the redirect's Location: a POST carrying the "
+            f"username and password followed a 307 {harness.sim.redirect_arrivals()} times"
+        )
+        # The attempt failed ON THE STATUS, which is the whole of what the message
+        # may say about a getToken response. The backend log is the same line
+        # Railway would show, so this is also the F3 claim at the socket: nothing
+        # from the response body, and no credential, rides in it.
+        log = app.log(limit=200_000)
+        assert "getToken returned HTTP 307" in log, log[-2000:]
+        assert "not-a-real-password" not in log and "TooManyRedirects" not in log, log[-2000:]
+        assert app.status()["static_archives"]["njt"]["last_promoted_at"] is None
+        assert app.get("/api/subway-stops"), "one refused mint must not take the app down"
+
+
 # ---------------------------------------------------------------------------
 # 15b: NJ Transit realtime
 # ---------------------------------------------------------------------------

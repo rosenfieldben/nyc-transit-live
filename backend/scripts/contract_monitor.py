@@ -165,17 +165,40 @@ def _fetch_retrying(
     return None, last
 
 
-def make_httpx_fetcher(timeout: float = REQUEST_TIMEOUT_S) -> Fetcher:
-    """The production fetcher: a follow-redirects GET, or a POST when `files` is
-    given. follow_redirects is on because two static sources (ferry utility URL,
-    the MTA developer static paths) 30x to their real zip.
+def make_httpx_fetcher(
+    timeout: float = REQUEST_TIMEOUT_S,
+    client_factory: Callable[[], httpx.Client] | None = None,
+) -> Fetcher:
+    """The production fetcher: a follow-redirects GET, or, when `files` is given, a
+    POST that never follows one.
 
-    THE POST ARM EXISTS FOR NJ TRANSIT AND ONLY FOR IT. Every RailData endpoint is
-    POST multipart/form-data with the token as a form field, so a GET returns
-    nothing usable. httpx sends multipart when handed `files`, and (None, value)
-    is its documented way to put a plain text field into a multipart body without
-    inventing a filename. It stays one fetcher rather than two so the injection
-    seam the whole suite is built on does not fork."""
+    THE GET ARM FOLLOWS REDIRECTS because two static sources (ferry utility URL,
+    the MTA developer static paths) 30x to their real zip. A GET carries no body,
+    so there is nothing a redirect could deliver anywhere it should not go.
+
+    THE POST ARM NEVER FOLLOWS ONE (Audit 4, F2), and the asymmetry is the point.
+    The POST arm exists for NJ Transit and only for it: every RailData endpoint is
+    POST multipart/form-data with the token as a form field, and the mint carries
+    the username and password the same way. httpx re-sends a POST body on a 307 or
+    308, to a different origin included, so a redirect from raildata would deliver
+    this environment's credentials to whatever host the Location named. The GET
+    arm's reasoning is about a body the upstream SENDS and does not extend to one we
+    send. A 3xx comes back as the status it is, and every caller reads it as a
+    non-200: _NjtToken fails the mint, _fetch_retrying fails the fetch.
+
+    httpx sends multipart when handed `files`, and (None, value) is its documented
+    way to put a plain text field into a multipart body without inventing a
+    filename. It stays one fetcher rather than two so the injection seam the whole
+    suite is built on does not fork.
+
+    `client_factory` builds the httpx.Client each request goes through; None means a
+    plain client. It is an injection seam so a test can prove the redirect rule of
+    each arm against a real httpx client over a mock transport, with no socket and
+    no monkeypatching of httpx. The timeout is still passed per request, so an
+    injected client cannot loosen the ceiling by accident."""
+
+    def client() -> httpx.Client:
+        return httpx.Client() if client_factory is None else client_factory()
 
     def fetch(
         url: str,
@@ -183,19 +206,20 @@ def make_httpx_fetcher(timeout: float = REQUEST_TIMEOUT_S) -> Fetcher:
         params: dict[str, str] | None = None,
         files: dict[str, str] | None = None,
     ) -> FetchResult:
-        if files is not None:
-            resp = httpx.post(
-                url,
-                headers=headers,
-                params=params,
-                files={key: (None, value) for key, value in files.items()},
-                follow_redirects=True,
-                timeout=timeout,
-            )
-        else:
-            resp = httpx.get(
-                url, headers=headers, params=params, follow_redirects=True, timeout=timeout
-            )
+        with client() as http:
+            if files is not None:
+                resp = http.post(
+                    url,
+                    headers=headers,
+                    params=params,
+                    files={key: (None, value) for key, value in files.items()},
+                    follow_redirects=False,
+                    timeout=timeout,
+                )
+            else:
+                resp = http.get(
+                    url, headers=headers, params=params, follow_redirects=True, timeout=timeout
+                )
         return FetchResult(resp.status_code, resp.content)
 
     return fetch
@@ -1543,10 +1567,13 @@ class _NjtToken:
         except Exception as exc:  # noqa: BLE001 - any transport failure is a miss
             return None, f"mint failed (transport: {_sanitize(exc)})"
         if minted.status != 200:
-            # The body is quoted because it is the only place NJ Transit says WHY.
-            # Its error bodies are short JSON ({"errorMessage": "..."}), and _quote
-            # bounds anything that is not.
-            return None, f"mint failed (HTTP {minted.status}: {njt_auth._quote(minted.content)})"
+            # STATUS ONLY, NEVER THE BODY (Audit 4, F3). The body used to be quoted
+            # because it is the only place NJ Transit says why, and for every data
+            # endpoint that reasoning holds. Not for getToken: its body may be the
+            # token itself, whatever the status, and this detail is written to the
+            # job summary and the Actions log. A 3xx lands here too, because the
+            # fetcher's POST arm never follows a redirect (F2).
+            return None, f"mint failed (HTTP {minted.status})"
         try:
             return njt_auth.extract_token(minted.content), ""
         except njt_auth.NjtAuthError as exc:

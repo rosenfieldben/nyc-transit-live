@@ -27,6 +27,7 @@ import zipfile
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import httpx
 import pytest
 from google.transit import gtfs_realtime_pb2 as pb
 
@@ -2085,16 +2086,106 @@ class _StatusFetcher:
         return cm.FetchResult(self.status, self.body)
 
 
-def test_njt_static_mint_failure_fails_with_the_body_quoted():
-    """The only place NJ Transit says WHY, so the detail carries it. And a failed
-    mint must not be retried: that would be two mints against an unpublished cap."""
-    fetch = _StatusFetcher(NJT_TOKEN, 401, b'{"errorMessage":"Bad account."}')
+# A canary of the token's own shape (~21 characters) riding in a getToken body.
+# The F3 tests assert it appears NOWHERE in a detail, because the detail is written
+# to the job summary and the Actions log, and on these paths the body may be the
+# live token.
+CANARY = "canary-tok-0123456789"
+
+# Where a hostile redirect would send a body: a different origin from every URL in
+# this file, so a followed redirect is a recorded request naming this host.
+ELSEWHERE = "https://elsewhere.example/collect"
+
+
+def test_njt_static_mint_failure_fails_and_never_quotes_the_body():
+    """INVERTED by Audit 4 (F3). This test used to assert the 401 body reached the
+    operator, on the reasoning that it is the only place NJ Transit says why. For
+    getToken that reasoning loses: the body may be the token, at any status, so the
+    detail names the status and nothing else. And a failed mint is still not
+    retried: that would be two mints against an unpublished cap."""
+    fetch = _StatusFetcher(NJT_TOKEN, 401, json.dumps({"errorMessage": CANARY}).encode())
+    result, parsed = _check_njt(fetch)
+    assert result.status == cm.FAIL
+    assert "mint failed (HTTP 401)" in result.detail
+    assert CANARY not in result.detail, "the getToken body must never reach a detail"
+    assert parsed is None
+    assert len(fetch.calls) == 1, "a failed mint must not be retried"
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "why"),
+    [
+        (
+            200,
+            json.dumps({"accessToken": CANARY}).encode(),
+            "the token under a key extract_token does not recognize",
+        ),
+        (200, CANARY.encode(), "the token as a bare string that is not JSON"),
+        (503, json.dumps({"errorMessage": CANARY}).encode(), "a non-200 carrying the token"),
+    ],
+)
+def test_njt_static_the_gettoken_body_never_reaches_the_detail(status, body, why):
+    """The same three shapes test_njt_auth pins at the mint boundary, driven through
+    the monitor's own mint path, because the monitor builds its detail string
+    itself for the non-200 case and via _sanitize for the other two."""
+    fetch = _StatusFetcher(NJT_TOKEN, status, body)
     result, parsed = _check_njt(fetch)
     assert result.status == cm.FAIL
     assert "mint failed" in result.detail
-    assert "Bad account." in result.detail, "the upstream body must reach the operator"
+    assert CANARY not in result.detail, why
     assert parsed is None
     assert len(fetch.calls) == 1, "a failed mint must not be retried"
+
+
+def _redirecting_client():
+    """A factory for a real httpx.Client over a mock transport that answers the
+    original URL with a 307 to ELSEWHERE, answers ELSEWHERE with a 200, and records
+    every request. A fetcher arm that follows shows up as a second recorded request
+    whose URL names ELSEWHERE; one that does not shows exactly one."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.host == "elsewhere.example":
+            return httpx.Response(200, content=b"followed")
+        return httpx.Response(307, headers={"Location": ELSEWHERE})
+
+    return (lambda: httpx.Client(transport=httpx.MockTransport(handler))), seen
+
+
+def test_the_post_arm_never_follows_a_redirect():
+    """Audit 4, F2, at the production fetcher: a POST whose body carries the
+    credentials sends exactly ONE request when answered with a 307, at the original
+    URL, and the 307 comes back as a status. Then the same fetcher under _NjtToken
+    fails the mint on that status, with no second request anywhere."""
+    factory, seen = _redirecting_client()
+    fetch = cm.make_httpx_fetcher(client_factory=factory)
+    res = fetch(NJT_TOKEN, files={"username": "rider", "password": CANARY})
+    assert res.status == 307
+    assert [str(request.url) for request in seen] == [NJT_TOKEN], (
+        "exactly one request, at the original URL: a second would be the credentials "
+        "delivered to whatever host the Location named"
+    )
+    assert CANARY.encode() in seen[0].content, "the request under test really carried the secret"
+
+    minted, detail = cm._NjtToken(fetch, NJT_TOKEN, "rider", CANARY).get()
+    assert minted is None
+    assert "mint failed (HTTP 307)" in detail
+    assert CANARY not in detail and ELSEWHERE not in detail
+    assert [str(request.url) for request in seen] == [NJT_TOKEN, NJT_TOKEN]
+
+
+def test_the_get_arm_still_follows_a_redirect():
+    """THE CONTROL for the test above: the GET arm keeps following, because two
+    static sources 30x to their zip and a GET carries nothing a redirect could
+    deliver. Both arms through one seam, so the asymmetry is proved rather than
+    assumed."""
+    factory, seen = _redirecting_client()
+    fetch = cm.make_httpx_fetcher(client_factory=factory)
+    res = fetch("https://ferry.example/utility")
+    assert res.status == 200
+    assert res.content == b"followed"
+    assert [str(request.url) for request in seen] == ["https://ferry.example/utility", ELSEWHERE]
 
 
 def test_njt_static_mint_transport_failure_is_a_fail():

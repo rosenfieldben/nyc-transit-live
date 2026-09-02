@@ -37,10 +37,13 @@ the seam BETWEEN layers, or about a poll loop's behavior over time.
   failure the app reports as a bad upstream. NJ Transit adds a third axis and two
   POST routes, because it is the one credentialed upstream: `getToken` hands out a
   numbered token, and `getGTFS` serves the archive behind a TOKEN MODE (`ok` /
-  `reject-first` / `server-error`), validated the same way. `reject-first`
-  reproduces the probe's most dangerous fact, an expired token answered with HTTP
-  500 and `{"errorMessage":"Invalid token."}`; `server-error` is the same-class
-  control, a genuine 500 with a different body that must not provoke a mint.
+  `reject-first` / `server-error` / `redirect`), validated the same way.
+  `reject-first` reproduces the probe's most dangerous fact, an expired token
+  answered with HTTP 500 and `{"errorMessage":"Invalid token."}`; `server-error` is
+  the same-class control, a genuine 500 with a different body that must not
+  provoke a mint. `redirect` answers every mint with a 307 to a route on the
+  simulator that counts credentialed arrivals: a loader that followed it with its
+  body would be counted, and the fixed one leaves the counter at zero.
 - `conftest.py` — launches the real backend as a subprocess with PR 1's env seams
   pointed at the simulator and PR 1's timing knobs compressed, against a fresh
   temp `DATA_DIR`.

@@ -18,6 +18,16 @@ Four things are pinned, in the order they can hurt:
   3. ONE RE-MINT, THEN THE ATTEMPT FAILS. Never a loop, whatever the upstream
      keeps saying.
   4. ABSENT CREDENTIALS REACH NO SOCKET, from either entry point.
+
+Audit 4 added two more, both consequences of the secret riding in a body:
+
+  5. A CREDENTIALED POST NEVER FOLLOWS A REDIRECT (F2). Proved against a real
+     httpx client over a mock transport that answers 307 to a different origin and
+     records every request: exactly one arrives, at the original URL.
+  6. THE getToken BODY IS NEVER QUOTED (F3). Every test carries a canary of the
+     token's own shape in the body and asserts it appears NOWHERE in the message,
+     because on those paths the body may be the live token. The pre-Audit-4 test
+     asserted the opposite and was inverted, not kept.
 """
 
 from __future__ import annotations
@@ -25,6 +35,7 @@ from __future__ import annotations
 import asyncio
 import json
 
+import httpx
 import pytest
 
 import njt_auth
@@ -39,6 +50,15 @@ ENV = {njt_auth.USERNAME_VAR: "rider", njt_auth.PASSWORD_VAR: "secret"}
 INVALID_TOKEN = b'{"errorMessage":"Invalid token."}'
 # Same status, different body: a genuine NJ Transit fault. THE CONTROL.
 REAL_500 = b'{"errorMessage":"An unexpected error occurred."}'
+
+# A canary of the token's own shape (the probe recorded ~21 characters) that rides
+# in a getToken body. The F3 tests assert it appears NOWHERE in a message, which
+# is the same assertion as "the live token never reaches a log".
+CANARY = "canary-tok-0123456789"
+
+# Where a hostile redirect would send the body. A different origin from every URL
+# above, so a followed redirect is a request whose URL names this host.
+ELSEWHERE = "https://elsewhere.example/collect"
 
 
 class RecordingTransport:
@@ -128,6 +148,12 @@ def test_the_probe_shape_is_an_auth_error(body):
         (500, b'["Invalid token."]', "a JSON array, not an object"),
         (401, INVALID_TOKEN, "the right body under 401: NJT does not do this, so neither do we"),
         (403, INVALID_TOKEN, "the right body under 403, same reasoning"),
+        # A redirect is never an auth failure, whatever body rides under it: the
+        # transports never follow one (F2), so a 3xx reaches the sniff as-is, and
+        # reading it as invalid-token would spend the one re-mint on a redirect.
+        (307, INVALID_TOKEN, "a 307 is a redirect, never an auth failure"),
+        (308, INVALID_TOKEN, "a 308 is a redirect, never an auth failure"),
+        (302, b"", "a 302 with no body is a redirect, never an auth failure"),
         (200, INVALID_TOKEN, "a 200 is never an auth error whatever it says"),
         (503, b"", "an ordinary upstream outage"),
     ],
@@ -382,14 +408,170 @@ async def test_a_real_500_never_mints_twice_and_fails_the_attempt():
     assert "unexpected error" in str(excinfo.value)
 
 
-async def test_a_failed_mint_fails_the_attempt_with_the_body_quoted():
-    transport = RecordingTransport(mint_responses=[(401, '{"errorMessage":"Bad credentials."}')])
+async def test_a_failed_mint_fails_the_attempt_and_never_quotes_the_body():
+    """INVERTED by Audit 4 (F3). This test used to assert the 401 body WAS quoted
+    into the message, on the reasoning that the body is the upstream's words. For
+    getToken that premise is false: the body may be the token, and a non-200 does
+    not change what NJ Transit might put in it. So the message names the status and
+    nothing else, and the canary must appear nowhere."""
+    transport = RecordingTransport(mint_responses=[(401, json.dumps({"errorMessage": CANARY}))])
     with pytest.raises(njt_auth.NjtAuthError) as excinfo:
         await njt_auth.njt_post(
             URL, cache=njt_auth.TokenCache(), transport=transport, env=ENV, token_url=TOKEN_URL
         )
-    assert "Bad credentials." in str(excinfo.value)
+    message = str(excinfo.value)
+    assert "HTTP 401" in message
+    assert CANARY not in message, "the getToken body must never reach a message"
     assert transport.data_calls == [], "a failed mint must not be followed by a data request"
+
+
+# ---------------------------------------------------------------------------
+# 6. The getToken body is never quoted (Audit 4, F3)
+# ---------------------------------------------------------------------------
+
+
+def test_the_canary_has_the_tokens_shape():
+    """If the canary stopped looking like a token, the tests below would still pass
+    while proving less; the probe recorded ~21 characters."""
+    assert len(CANARY) == 21
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "why"),
+    [
+        (
+            200,
+            json.dumps({"accessToken": CANARY}),
+            "the token under a key extract_token does not recognize",
+        ),
+        (200, CANARY, "the token as a bare string that is not JSON"),
+        (503, json.dumps({"errorMessage": CANARY}), "a non-200 whose body carries the token"),
+    ],
+)
+async def test_the_gettoken_body_never_reaches_a_mint_failure_message(status, body, why):
+    """The three shapes in which a getToken body would carry the live token into a
+    message. Each one used to be quoted; each one is now described without content,
+    and this is asserted at the mint boundary, where the log line is built."""
+    transport = RecordingTransport(mint_responses=[(status, body)])
+    with pytest.raises(njt_auth.NjtAuthError) as excinfo:
+        await njt_auth.mint(transport=transport, env=ENV, url=TOKEN_URL)
+    assert CANARY not in str(excinfo.value), why
+    assert transport.mints == 1, "a failed mint is never retried"
+
+
+def test_an_unrecognized_key_is_reported_by_name_and_never_by_value():
+    """The names are what an operator needs to extend the accepted spellings; the
+    values are where the token would be."""
+    with pytest.raises(njt_auth.NjtAuthError) as excinfo:
+        njt_auth.extract_token(json.dumps({"accessToken": CANARY, "expires": 3600}).encode())
+    message = str(excinfo.value)
+    assert "carried no token" in message
+    assert "accessToken" in message and "expires" in message
+    assert CANARY not in message
+    assert "3600" not in message, "values are never quoted, not even harmless ones"
+
+
+def test_a_non_json_body_is_reported_by_length_and_never_by_content():
+    with pytest.raises(njt_auth.NjtAuthError) as excinfo:
+        njt_auth.extract_token(CANARY.encode())
+    message = str(excinfo.value)
+    assert "non-JSON body" in message
+    assert f"{len(CANARY)} bytes" in message
+    assert CANARY not in message
+
+
+def test_key_names_are_bounded_so_an_absurd_object_cannot_become_a_log_entry():
+    payload = {f"key{i:04d}": CANARY for i in range(200)}
+    with pytest.raises(njt_auth.NjtAuthError) as excinfo:
+        njt_auth.extract_token(json.dumps(payload).encode())
+    message = str(excinfo.value)
+    assert CANARY not in message
+    assert len(message) < 400
+    assert "..." in message
+
+
+@pytest.mark.parametrize(
+    ("body", "shape"),
+    [
+        (b"[]", "a JSON array of 0 items"),
+        (b'["' + CANARY.encode() + b'"]', "a JSON array of 1 items"),
+        (b'""', "an empty JSON string"),
+        (b"null", "JSON null"),
+        (b"42", "a JSON int"),
+        (b"{}", "an empty JSON object"),
+    ],
+)
+def test_every_other_json_shape_is_named_without_content(body, shape):
+    with pytest.raises(njt_auth.NjtAuthError) as excinfo:
+        njt_auth.extract_token(body)
+    assert shape in str(excinfo.value)
+    assert CANARY not in str(excinfo.value)
+
+
+# ---------------------------------------------------------------------------
+# 5. A credentialed POST never follows a redirect (Audit 4, F2)
+# ---------------------------------------------------------------------------
+
+
+def _redirecting_transport():
+    """A real httpx transport that answers every request with a 307 to a different
+    origin and records every request it receives. "The body never went there" is
+    then a count and a URL rather than an absence of evidence: a client that
+    followed would show a second request whose URL names ELSEWHERE."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(307, headers={"Location": ELSEWHERE})
+
+    return httpx.MockTransport(handler), seen
+
+
+async def test_a_credentialed_post_never_follows_a_redirect():
+    """The default transport, through a real httpx client, sends exactly ONE
+    request when the upstream answers 307, at the original URL, and hands the 307
+    back as a status. The body carried the password, which is what was at stake."""
+    transport, seen = _redirecting_transport()
+    status, _body = await njt_auth._httpx_post(
+        TOKEN_URL, {"username": "rider", "password": CANARY}, 5.0, transport=transport
+    )
+    assert status == 307
+    assert [str(request.url) for request in seen] == [TOKEN_URL], (
+        "exactly one request, at the original URL: a second one would be the body "
+        "delivered to whatever host the Location named"
+    )
+    assert CANARY.encode() in seen[0].content, "the request under test really carried the secret"
+
+
+async def test_a_redirected_mint_fails_the_attempt_on_the_status_alone():
+    """The whole path: the real transport under mint. One request, a NjtAuthError
+    naming the 307, no credential and no body in the message."""
+    transport, seen = _redirecting_transport()
+
+    async def post(url, form, timeout_s):
+        return await njt_auth._httpx_post(url, form, timeout_s, transport=transport)
+
+    env = {njt_auth.USERNAME_VAR: "rider", njt_auth.PASSWORD_VAR: CANARY}
+    with pytest.raises(njt_auth.NjtAuthError) as excinfo:
+        await njt_auth.mint(transport=post, env=env, url=TOKEN_URL)
+    message = str(excinfo.value)
+    assert "HTTP 307" in message
+    assert CANARY not in message and ELSEWHERE not in message
+    assert [str(request.url) for request in seen] == [TOKEN_URL]
+    assert CANARY.encode() in seen[0].content, "the one request carried the secret; no other did"
+
+
+async def test_a_redirect_on_a_data_request_is_an_upstream_error_and_never_mints():
+    """A 3xx on a token-bearing data POST is a non-200 like any other: the attempt
+    fails as NjtUpstreamError, and the one re-mint is not spent on it."""
+    transport = RecordingTransport(data_responses=[(307, "")])
+    with pytest.raises(njt_auth.NjtUpstreamError) as excinfo:
+        await njt_auth.njt_post(
+            URL, cache=njt_auth.TokenCache(), transport=transport, env=ENV, token_url=TOKEN_URL
+        )
+    assert "HTTP 307" in str(excinfo.value)
+    assert transport.mints == 1
+    assert len(transport.data_calls) == 1
 
 
 async def test_a_mint_transport_failure_names_the_type_and_not_the_credentials():

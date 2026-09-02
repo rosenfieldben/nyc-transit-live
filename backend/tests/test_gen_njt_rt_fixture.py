@@ -81,6 +81,11 @@ def _archive(service_date: str = "20991231") -> bytes:
                     "trip_headsign": headsign,
                     "direction_id": "0",
                     "trip_short_name": f"{index:03d}",
+                    # One shape per ROUTE (15c), so the re-trim's geometry slice has
+                    # something to select and the assertion on it is not vacuous: a
+                    # capture that widens the trim to a new route must pull that
+                    # route's shape in with it.
+                    "shape_id": f"sh{route}",
                 }
             )
             for seq, stop_id in enumerate(calls, start=1):
@@ -146,6 +151,7 @@ def _archive(service_date: str = "20991231") -> bytes:
                 "trip_id",
                 "trip_headsign",
                 "direction_id",
+                "shape_id",
                 "trip_short_name",
             ],
             trips,
@@ -162,10 +168,22 @@ def _archive(service_date: str = "20991231") -> bytes:
             ["shape_id", "shape_pt_sequence", "shape_pt_lat", "shape_pt_lon"],
             [
                 {
-                    "shape_id": "s1",
+                    "shape_id": f"sh{route}",
+                    "shape_pt_sequence": str(seq),
+                    "shape_pt_lat": f"40.{700 + seq}",
+                    "shape_pt_lon": f"-74.{100 + seq}",
+                }
+                for route in ROUTES
+                for seq in (1, 2, 3)
+            ]
+            # A shape no trip references, so the slice has something to LEAVE
+            # BEHIND: a re-trim that copied the member through would carry it.
+            + [
+                {
+                    "shape_id": "unreferenced",
                     "shape_pt_sequence": "1",
-                    "shape_pt_lat": "40.7",
-                    "shape_pt_lon": "-74.0",
+                    "shape_pt_lat": "41.0",
+                    "shape_pt_lon": "-75.0",
                 }
             ],
         ),
@@ -275,6 +293,19 @@ def test_a_healthy_capture_writes_a_pair_that_joins(capture):
     expected = json.loads((out / "njt_tu_expected.json").read_text())
 
     # AND THEY JOIN. Every trip in the capture is in the written trips.txt.
+    # THE SEVENTH MEMBER (15c). The re-trim must write geometry for exactly the
+    # routes its kept trips run, and must leave behind the shape nothing references.
+    # Asserted here rather than in a test of its own, because the claim is about
+    # THIS write: a capture that widened the trim has to widen the geometry with it.
+    written_shapes = {row["shape_id"] for row in _rows(static_out / "shapes.txt")}
+    kept_routes = {row["route_id"] for row in _rows(static_out / "trips.txt")}
+    assert written_shapes == {f"sh{route}" for route in kept_routes}
+    assert "unreferenced" not in written_shapes
+    assert len(_rows(static_out / "shapes.txt")) == 3 * len(kept_routes), (
+        "every row of every kept shape, not just the first: a truncated shape draws "
+        "a line that stops short"
+    )
+
     written = {row["trip_id"] for row in _rows(static_out / "trips.txt")}
     assert set(IN_FLIGHT) <= written, (
         "the re-trim must widen the static fixture around the capture's trips; "

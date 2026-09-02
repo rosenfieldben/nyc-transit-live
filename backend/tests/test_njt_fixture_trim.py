@@ -651,3 +651,85 @@ def test_the_junction_survives_stop_times_rows_arriving_out_of_order():
     assert stations == set(WEST_OF_HUDSON) | {"Suffern"}, (
         f"the junction must still be found when rows arrive out of order; got {sorted(stations)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# The seventh member: geometry (15c)
+# ---------------------------------------------------------------------------
+
+
+def _shape_rows(pairs) -> list[dict]:
+    """shapes.txt rows from (shape_id, point count) pairs, in publication order."""
+    return [
+        {"shape_id": shape_id, "shape_pt_sequence": str(seq), "shape_pt_lat": "40.7"}
+        for shape_id, count in pairs
+        for seq in range(1, count + 1)
+    ]
+
+
+def test_referenced_shape_ids_reads_the_trips_and_drops_blanks():
+    trips = [
+        {"trip_id": "T1", "shape_id": "s1"},
+        {"trip_id": "T2", "shape_id": "s2"},
+        {"trip_id": "T3", "shape_id": "s1"},  # a repeat is one shape, not two
+        {"trip_id": "T4", "shape_id": ""},  # a trip may carry no shape
+        {"trip_id": "T5"},  # or no column at all
+    ]
+    assert trim.referenced_shape_ids(trips) == {"s1", "s2"}
+
+
+def test_select_shape_rows_keeps_every_row_of_a_wanted_shape_in_publication_order():
+    rows = _shape_rows([("s1", 3), ("s2", 2), ("s3", 4)])
+    kept = trim.select_shape_rows(rows, {"s1", "s3"})
+    assert [row["shape_id"] for row in kept] == ["s1", "s1", "s1", "s3", "s3", "s3", "s3"]
+    # PUBLICATION ORDER, so the committed file is a faithful slice: the s1 rows keep
+    # their original relative order and still precede s3's, as upstream wrote them.
+    assert [row["shape_pt_sequence"] for row in kept] == ["1", "2", "3", "1", "2", "3", "4"]
+    assert trim.select_shape_rows(rows, set()) == []
+
+
+def test_shapes_txt_is_the_seventh_member_and_the_only_optional_one():
+    """Both facts in one place, because the writers read this tuple to decide what
+    to write and a reader of it has to know one member may be absent."""
+    assert trim.FIXTURE_MEMBERS[-1] == "shapes.txt"
+    assert len(trim.FIXTURE_MEMBERS) == 7
+    assert trim.OPTIONAL_MEMBERS == {"shapes.txt"}
+
+
+def test_the_committed_shapes_are_exactly_what_the_committed_trips_reference():
+    """THE IDENTITY REPLAY'S GEOMETRY HALF: kept shapes == shapes referenced by kept
+    trips, nothing more. Read straight off the two committed files, because that
+    pair is what every route-line golden is built on, and a fixture whose trips
+    point at geometry it does not carry would make those goldens measure the gap
+    instead of the map.
+
+    Guarded on shapes.txt like the line goldens themselves: it skips until the
+    refresh lands and FAILS in CI, rather than passing vacuously in between."""
+    import csv
+    import io
+
+    fixture = Path(__file__).resolve().parent / "fixtures" / "njt_gtfs"
+    shapes_path = fixture / "shapes.txt"
+    if not shapes_path.exists():
+        import os
+
+        import pytest
+
+        reason = (
+            f"golden fixture missing ({shapes_path}); run backend/scripts/gen_njt_fixture.py "
+            "--shapes-only to generate it"
+        )
+        if os.environ.get("CI"):
+            pytest.fail(reason, pytrace=False)
+        pytest.skip(reason)
+
+    def rows(name):
+        text = (fixture / name).read_text(encoding="utf-8-sig")
+        return list(csv.DictReader(io.StringIO(text)))
+
+    referenced = trim.referenced_shape_ids(rows("trips.txt"))
+    committed = {trim.get(row, "shape_id") for row in rows("shapes.txt")} - {""}
+    assert committed == referenced, (
+        f"unreferenced shapes committed: {sorted(committed - referenced)}; "
+        f"referenced shapes missing: {sorted(referenced - committed)}"
+    )

@@ -22,6 +22,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import env_seams
+import route_geometry
 from static_routes import fold_stop_routes
 from static_shared import (
     cached_archive_is_valid,
@@ -276,15 +277,6 @@ def _parse_open(zf: zipfile.ZipFile) -> dict:
     }
 
 
-# A shape variant is kept only if it adds more than this fraction of new
-# geometry vs. variants already kept for the route, the same threshold and
-# rationale as the subway route lines (static_data._MIN_NEW_GEOMETRY):
-# express/local and the reverse-direction shape share almost all points and
-# collapse, while a real branch (e.g. the New Haven line's New Canaan / Danbury
-# / Waterbury legs) survives.
-_MIN_NEW_GEOMETRY = 0.05
-
-
 def build_railroad_route_shapes(
     trips: dict[str, dict], shapes: dict[str, list], route_names: dict[str, dict] | None = None
 ) -> list[dict]:
@@ -309,43 +301,21 @@ def build_railroad_route_shapes(
 
     For each route the distinct shape_ids its trips use are collected (blank
     shape_ids skipped), polylines pulled from `shapes`, and added-geometry dedup
-    (the subway threshold) keeps branch variants while collapsing shared-track
-    and reverse-direction variants (the point-set test is order-independent, so a
-    reversed shape reads as 0% new and drops out). A route whose shapes are all
-    blank or degenerate is dropped.
+    keeps branch variants while collapsing shared-track and reverse-direction
+    variants. Both steps are route_geometry.route_polylines, which is where that
+    rule and its determinism argument now live: 15c gave it a second caller (NJ
+    Transit), and a rule that decides whether a branch appears on the map is the
+    last thing that should exist as two copies drifting apart.
     """
-    shape_ids_by_route: dict[str, set] = defaultdict(set)
-    for trip in trips.values():
-        route_id, shape_id = trip.get("route_id"), trip.get("shape_id")
-        if route_id and shape_id:
-            shape_ids_by_route[route_id].add(shape_id)
-
     routes: list[dict] = []
-    for route_id, shape_ids in sorted(shape_ids_by_route.items()):
-        # sorted(shape_ids) before the stable length sort so the variant order is
-        # deterministic: set iteration of shape_id strings is salted by
-        # PYTHONHASHSEED, and among equal-length variants the dedup loop keeps
-        # whichever it sees first, so an unsorted set could yield a different
-        # polyline order AND a different kept set across process restarts. The
-        # subway builder gets this for free by iterating insertion-ordered
-        # shapes.items(); we sort the shape_ids to match. shapes.get(s) (not [s])
-        # tolerates a trip that references a shape_id absent from shapes.txt.
-        variants = [pts for s in sorted(shape_ids) if len(pts := shapes.get(s) or []) >= 2]
-        variants.sort(key=len, reverse=True)
-        kept: list[list] = []
-        covered: set[tuple] = set()
-        for polyline in variants:
-            point_set = {tuple(p) for p in polyline}
-            if len(point_set - covered) / max(len(point_set), 1) > _MIN_NEW_GEOMETRY:
-                kept.append(polyline)
-                covered |= point_set
-        # Drop a route with no usable geometry (deliberately unlike the subway
-        # load_subway_route_shapes, which appends every route even with empty
-        # polylines); a railroad route line is only emitted when it has geometry.
-        if kept:
-            info = (route_names or {}).get(route_id) or {}
-            name = info.get("long_name") or info.get("short_name")
-            routes.append({"route": route_id, "name": name, "polylines": kept})
+    # Drop a route with no usable geometry (deliberately unlike the subway
+    # load_subway_route_shapes, which appends every route even with empty
+    # polylines); a railroad route line is only emitted when it has geometry.
+    # route_polylines omits such a route, so this comprehension inherits the rule.
+    for route_id, kept in route_geometry.route_polylines(trips, shapes).items():
+        info = (route_names or {}).get(route_id) or {}
+        name = info.get("long_name") or info.get("short_name")
+        routes.append({"route": route_id, "name": name, "polylines": kept})
     return routes
 
 

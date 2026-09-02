@@ -4125,6 +4125,82 @@ async def test_njt_stops_not_configured_serves_empty_under_no_cache(client):
     assert res.headers.get("cache-control") == "no-cache"
 
 
+# ---------------- /api/njt-routes (15c) ----------------
+
+NJT_ROUTES = [
+    {
+        "route": "1",
+        "name": "Northeast Corridor",
+        "color": "EF3E42",
+        "text_color": None,
+        "polylines": [[[40.7, -74.0], [40.71, -74.01]]],
+    },
+    {
+        "route": "10",
+        "name": "North Jersey Coast Line",
+        "color": "03A3DF",
+        # Two polylines: the Long Branch and Bay Head legs, which the dedup keeps
+        # apart. A client draws both or the line stops short of a real terminus.
+        "text_color": None,
+        "polylines": [[[40.3, -74.0], [40.2, -74.0]], [[40.3, -74.0], [40.1, -74.1]]],
+    },
+]
+
+
+async def test_njt_routes_503_while_loading(client):
+    app_module.app.state.njt_static_status = "loading"
+    res = await client.get("/api/njt-routes")
+    assert res.status_code == 503
+    assert "loading" in res.json()["detail"].lower()
+
+
+async def test_njt_routes_served_with_max_age_when_ready(client):
+    app_module.app.state.njt_static_status = "ready"
+    app_module.app.state.njt_routes = NJT_ROUTES
+    res = await client.get("/api/njt-routes")
+    assert res.status_code == 200
+    assert res.json() == NJT_ROUTES
+    assert "max-age" in res.headers.get("cache-control", "")
+    # NO system KEY, unlike /api/railroad-routes: LIRR and MNR route ids collide
+    # with each other and NJ Transit's do not collide with themselves.
+    assert "system" not in res.json()[0]
+    # text_color survives as null rather than being filled in on the way out: this
+    # feed publishes it empty on every route and the client computes its own ink.
+    assert res.json()[0]["text_color"] is None
+
+
+async def test_njt_routes_serve_an_empty_list_when_the_publication_had_no_shapes(client):
+    """A 200 with [], not a 503 and not an error: shapes.txt is optional, so a
+    publication without it is a ready group with nothing to draw."""
+    app_module.app.state.njt_static_status = "ready"
+    app_module.app.state.njt_routes = []
+    res = await client.get("/api/njt-routes")
+    assert res.status_code == 200
+    assert res.json() == []
+    assert "max-age" in res.headers.get("cache-control", "")
+
+
+async def test_njt_routes_failed_serves_empty_under_no_cache(client):
+    app_module.app.state.njt_static_status = "failed"
+    app_module.app.state.njt_routes = []
+    res = await client.get("/api/njt-routes")
+    assert res.status_code == 200
+    assert res.json() == []
+    # THE DISTINCTION THE TEST ABOVE MAKES REAL: both serve [], and only the
+    # header says whether a browser may keep it. A failed load that cached its
+    # empty answer for an hour would mask the retry that fixes it.
+    assert res.headers.get("cache-control") == "no-cache"
+
+
+async def test_njt_routes_not_configured_serves_empty_under_no_cache(client):
+    app_module.app.state.njt_static_status = "not-configured"
+    app_module.app.state.njt_routes = []
+    res = await client.get("/api/njt-routes")
+    assert res.status_code == 200
+    assert res.json() == []
+    assert res.headers.get("cache-control") == "no-cache"
+
+
 async def test_status_publishes_the_njt_group_state(client):
     app_module.app.state.njt_static_status = "not-configured"
     res = await client.get("/api/status")
@@ -4153,6 +4229,41 @@ async def test_njt_static_warmup_loading_to_ready(monkeypatch):
     assert app.state.njt_station_routes == {"112": ["1"], "109": ["1"]}
     assert app.state.njt_trips["T1"]["short_name"] == "3800"
     assert [call["trip_id"] for call in app.state.njt_stop_schedule["112"]] == ["T1"]
+    # 15c's route lines are built here too, from the same already-parsed tables.
+    # NJT_STATIC_DATA carries no shapes at all, which is a real publication shape
+    # (shapes.txt is optional) and the one that proves the warmup still reaches
+    # ready: an empty routes list, never a failed group.
+    assert app.state.njt_routes == []
+
+
+async def test_njt_static_warmup_builds_route_lines_when_the_publication_has_shapes(monkeypatch):
+    """The other half of the warmup's geometry wiring: given shapes, app.state
+    carries drawable lines, so /api/njt-routes has something to serve. Asserted at
+    the warmup rather than only at the builder, because a builder nobody calls
+    draws nothing."""
+    _njt_configured(monkeypatch)
+
+    async def fake_load():
+        return {
+            **NJT_STATIC_DATA,
+            "trips": {"T1": {**NJT_STATIC_DATA["trips"]["T1"], "shape_id": "s1"}},
+            "shapes": {"s1": [[40.7, -74.0], [40.71, -74.01], [40.72, -74.02]]},
+        }
+
+    monkeypatch.setattr(app_module.njt_static, "load_njt_static", fake_load)
+    app = _fake_app(njt_static_status="loading")
+    await app_module._warm_njt_static(app)
+
+    assert app.state.njt_static_status == "ready"
+    assert app.state.njt_routes == [
+        {
+            "route": "1",
+            "name": "Northeast Corridor",
+            "color": "EF3E42",
+            "text_color": None,
+            "polylines": [[[40.7, -74.0], [40.71, -74.01], [40.72, -74.02]]],
+        }
+    ]
 
 
 async def test_njt_warmup_without_credentials_is_terminal_and_touches_nothing(monkeypatch):

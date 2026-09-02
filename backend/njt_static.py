@@ -43,11 +43,32 @@ WHAT IT SHIPS THAT NOTHING ELSE HERE DOES:
   * route_id overlap with the LIRR is 75%, another reason nothing here shares a
     namespace with another system.
 
-shapes.txt IS PRESENT AND DELIBERATELY UNPARSED (15a decision). It is 10 MB of
-the 11.1 MB unzipped payload and nothing in 15a or 15b consumes it: placed-train
-interpolation uses stop coordinates. It stays out of _REQUIRED_MEMBERS too, so a
-publication that dropped it would still serve; parsing and indexing it is 15c's
-call, when the line-drawing decision actually asks for geometry.
+shapes.txt IS PARSED, AND ONLY THE PART THE MAP CAN DRAW (15c decision; 15a
+deferred this and said the line-drawing decision would ask for geometry, which is
+what happened). It is 10 MB of the 11.1 MB unzipped payload, so it is read under
+two bounds rather than loaded whole:
+
+  * ONLY REFERENCED shape_ids. The trips table is parsed first and its shape_ids
+    become the filter; a row for any other shape is dropped AT THE ROW, before its
+    coordinates are ever converted. Nothing on the map can draw a shape no trip
+    references, so reading one would be work that no rider can see.
+  * IT STAYS OUT OF _REQUIRED_MEMBERS. A publication that drops shapes.txt still
+    serves stations and trains and still reports ready, with an empty routes list.
+    Lines are ADDITIVE here: they degrade to nothing, never to a failure.
+
+    THIS IS THIS FEED'S OWN RULE AND NOT AN INHERITED ONE, which is worth stating
+    because the obvious citation is backwards. The ferry and PATH loaders both
+    REQUIRE shapes.txt ("members the load READS and cannot degrade around"), and
+    they are right to: their geometry is the product, and a ferry route with no
+    line is a route nobody can see. NJ Transit is the opposite case. Its stations
+    and its trains stand on their own, the member is 10 MB of an 11.1 MB payload,
+    and rejecting a publication over decoration would trade a working map for a
+    prettier one. The parse-time leniency those two loaders DO have (a missing
+    routes.txt or stop_times.txt) is a different thing again, about surviving an
+    archive already on disk, and conflating the two would misread both.
+
+The dedup that turns a route's shape variants into the polylines a rider sees is
+route_geometry's, shared with the railroad builder rather than copied.
 
 REALTIME, FOR THE PHASE THAT FOLLOWS (15b consumes this module, never re-parses
 it): the 2026-08-05 probes measured 100% trip_id persistence across 633 survivor
@@ -72,6 +93,7 @@ from typing import IO
 
 import env_seams
 import njt_auth
+import route_geometry
 from feeds.shared import NYC_TZ
 from static_routes import fold_stop_routes
 from static_shared import (
@@ -108,9 +130,12 @@ MAX_AGE_DAYS = 30
 #
 # calendar.txt and feed_info.txt are ABSENT BY DESIGN in this feed (see the module
 # docstring) and requiring either would reject every valid publication. shapes.txt
-# is present upstream but deliberately not required: 15a does not parse it, so a
-# publication that dropped it is still fully servable and rejecting one would trade
-# a working map for geometry nothing reads yet.
+# is present upstream and, since 15c, parsed, but it is STILL NOT REQUIRED: route
+# lines are additive, so a publication that dropped it serves stations and trains
+# exactly as before with an empty routes list. Note that the ferry and PATH loaders
+# REQUIRE their shapes.txt and this one deliberately does not; the module docstring
+# says why the two feeds differ rather than leaving the divergence to look like an
+# oversight.
 _REQUIRED_MEMBERS = (
     "agency.txt",
     "routes.txt",
@@ -214,8 +239,15 @@ def _parse_routes(raw: IO[bytes]) -> dict[str, dict]:
 
 def _parse_trips(raw: IO[bytes]) -> dict[str, dict]:
     """trips.txt -> trip_id -> {route_id, direction_id, service_id, headsign,
-    short_name}, each a stripped string or None when blank. Rows with no trip_id
-    are skipped; first-writer-wins on a duplicate trip_id.
+    short_name, shape_id}, each a stripped string or None when blank. Rows with no
+    trip_id are skipped; first-writer-wins on a duplicate trip_id.
+
+    shape_id IS THE ONLY LINK BETWEEN A ROUTE AND ITS GEOMETRY in this feed (15c).
+    NJT shape_ids are opaque integers that encode no route, so the route a shape
+    belongs to can only be learned from the trips that reference it, and this field
+    is also the filter that bounds the 10 MB shapes.txt parse to the shapes some
+    trip actually uses. Carried as published, including blank, which
+    route_geometry.shape_ids_by_route treats as "this trip contributes no shape".
 
     short_name IS THE TRAIN NUMBER, and it is 15b's second join key. The
     2026-08-05 probes measured entity.id == the train number == trip_short_name at
@@ -242,8 +274,55 @@ def _parse_trips(raw: IO[bytes]) -> dict[str, dict]:
             "service_id": (row.get("service_id") or "").strip() or None,
             "headsign": (row.get("trip_headsign") or "").strip() or None,
             "short_name": (row.get("trip_short_name") or "").strip() or None,
+            "shape_id": (row.get("shape_id") or "").strip() or None,
         }
     return trips
+
+
+def _parse_shapes(raw: IO[bytes], wanted: set[str]) -> dict[str, list]:
+    """shapes.txt -> shape_id -> [[lat, lon], ...] ordered by shape_pt_sequence,
+    for the shape_ids in `wanted` and NO OTHERS.
+
+    THE FILTER IS THE POINT, not an optimisation detail. This member is 10 MB of
+    the 11.1 MB unzipped payload and the map can only draw a shape some trip
+    references, so `wanted` (the shape_ids the already-parsed trips carry) bounds
+    the parse to what a rider can see. The test is made FIRST, on the raw
+    shape_id string, so a row for an unwanted shape costs one dict lookup and is
+    dropped before its three coordinates are ever converted to numbers.
+
+    An EMPTY `wanted` therefore reads every row and keeps nothing, which is the
+    honest answer for a publication whose trips carry no shape_ids at all: there
+    is no geometry to draw, and the caller emits an empty routes list.
+
+    Coordinates are rounded to 5 decimals (~1 m), matching the subway, bus and
+    railroad shape rounding, so the frontend's glide index sees one precision
+    across every system. Rows with a blank shape_id or a malformed point are
+    skipped: this member is optional, and one bad row must not cost the whole
+    publication its lines.
+    """
+    raw_points: dict[str, list] = defaultdict(list)
+    reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
+    for row in reader:
+        shape_id = (row.get("shape_id") or "").strip()
+        if not shape_id or shape_id not in wanted:
+            continue
+        try:
+            # Build the point first; a malformed row must not create an empty
+            # shape entry via the defaultdict before the append. Same ordering
+            # rule (and the same reason) as railroad_static._parse_shapes.
+            point = (
+                int(row["shape_pt_sequence"]),
+                round(float(row["shape_pt_lat"]), 5),
+                round(float(row["shape_pt_lon"]), 5),
+            )
+        except (KeyError, ValueError, TypeError):
+            continue  # malformed point row
+        raw_points[shape_id].append(point)
+    shapes: dict[str, list] = {}
+    for shape_id, points in raw_points.items():
+        points.sort()  # by shape_pt_sequence
+        shapes[shape_id] = [[lat, lon] for (_seq, lat, lon) in points]
+    return shapes
 
 
 def gtfs_seconds(value: str) -> int | None:
@@ -424,8 +503,11 @@ def validate_njt_archive(zf: zipfile.ZipFile, *, now: float | None = None) -> No
     1. REQUIRED MEMBERS. Presence only, and the LIST is the interesting part:
        calendar.txt and feed_info.txt are not on it, because this feed ships
        neither and requiring either would reject every valid publication (see the
-       module docstring). shapes.txt is not on it either, because 15a does not
-       parse it.
+       module docstring). shapes.txt is not on it either, and since 15c that is no
+       longer because nothing parses it: it IS parsed, and it stays off this list
+       because route lines are additive and a publication without them is still
+       fully servable. Rejecting one here would take the stations and the trains
+       down with the geometry.
 
     2. NONEMPTY THROUGH THE LOADER'S OWN PARSERS, the finding-4 rule this loader
        gets from birth rather than growing later like the other four did. A
@@ -696,11 +778,16 @@ def _parse_open(zf: zipfile.ZipFile) -> dict:
     """The parse itself, over an already-open archive, so validate_njt_publication
     can run the REAL load against a staged file that has no cache path yet.
 
-    Every member read here is required, so unlike the PATH and ferry parsers there
-    is no per-member leniency: those tolerate a missing routes.txt or stop_times.txt
-    at parse time because pre-C5 caches predate the requirement, and this loader has
-    no such history to survive. shapes.txt is not opened at all (15a decision, see
-    the module docstring).
+    Every REQUIRED member read here is required, so unlike the PATH and ferry
+    parsers there is no per-member leniency for those: PATH and the ferry tolerate a
+    missing routes.txt or stop_times.txt at parse time because pre-C5 caches predate
+    the requirement, and this loader has no such history to survive.
+
+    shapes.txt IS THE ONE OPTIONAL MEMBER (15c), and it takes exactly the ferry's
+    try/except KeyError shape, deliberately: an archive without it parses to empty
+    geometry and the load carries on, because route lines are additive and a
+    publication that dropped them still has stations to place and trains to draw.
+    It is parsed AFTER trips because the trips' shape_ids are what bound the parse.
     """
     with zf.open("stops.txt") as raw:
         stops = _parse_stops(raw)
@@ -708,6 +795,7 @@ def _parse_open(zf: zipfile.ZipFile) -> dict:
         routes = _parse_routes(raw)
     with zf.open("trips.txt") as raw:
         trips = _parse_trips(raw)
+    shapes = _parse_shapes_member(zf, trips)
     with zf.open("stop_times.txt") as raw:
         stop_times = _parse_stop_times(raw)
     with zf.open("calendar_dates.txt") as raw:
@@ -716,9 +804,106 @@ def _parse_open(zf: zipfile.ZipFile) -> dict:
         "stops": stops,
         "routes": routes,
         "trips": trips,
+        "shapes": shapes,
         "stop_times": stop_times,
         "calendar_dates": calendar_dates,
     }
+
+
+def _parse_shapes_member(zf: zipfile.ZipFile, trips: dict[str, dict]) -> dict[str, list]:
+    """shapes.txt if the archive carries one, bounded by the trips' shape_ids.
+
+    ABSENT IS A VALID PUBLICATION, not an error: {} here means the routes list ends
+    up empty and every other layer is untouched. The KeyError arm is the ferry
+    loader's idiom for the same situation.
+
+    AND SO IS AN UNREADABLE ONE, which is the arm that makes "additive" true in
+    code rather than only in a docstring. Every other member here is required, so a
+    csv.Error or a bad encoding in one of those correctly fails the whole
+    publication and load_njt_static discards the archive. Letting shapes.txt do the
+    same would mean a corrupt 10 MB of geometry could take down the stations and
+    the trains, which is precisely the trade _REQUIRED_MEMBERS refuses. It degrades
+    to no lines, loudly, and the rest of the load carries on.
+
+    THE ONE TIMED PARSE IN THIS APP. Not because the bound is known to be a large
+    saving (that depends on how much of a publication's geometry its trips
+    actually reference, which nobody here has measured), but because this is the
+    biggest member the app reads and a cost nobody records is a cost nobody can
+    check later. The first real number arrives with the fixture refresh. It logs at
+    INFO like every other static load line, and it fires TWICE per download
+    (validate_njt_publication runs this same parse against the staged file before
+    the promote, then the load parses the promoted copy), which is the truth about
+    what the process did rather than an accident worth hiding.
+    """
+    wanted = {shape_id for trip in trips.values() if (shape_id := trip.get("shape_id"))}
+    try:
+        member = zf.open("shapes.txt")
+    except KeyError:
+        logger.info("NJ Transit publication carries no shapes.txt; route lines will be empty")
+        return {}
+    started = time.monotonic()
+    try:
+        with member as raw:
+            shapes = _parse_shapes(raw, wanted)
+    except (UnicodeDecodeError, csv.Error, zipfile.BadZipFile, OSError) as exc:
+        logger.warning("NJ Transit shapes.txt is unreadable (%s); serving without route lines", exc)
+        return {}
+    logger.info(
+        "Parsed NJ Transit shapes.txt in %.2fs: %d of %d referenced shapes, %d points",
+        time.monotonic() - started,
+        len(shapes),
+        len(wanted),
+        sum(len(points) for points in shapes.values()),
+    )
+    return shapes
+
+
+def build_njt_route_shapes(
+    trips: dict[str, dict], shapes: dict[str, list], routes: dict[str, dict] | None = None
+) -> list[dict]:
+    """Per-route representative polylines for NJ Transit Rail (15c).
+
+    Returns [{"route", "name", "color", "text_color", "polylines"}, ...] sorted by
+    route_id, mirroring build_railroad_route_shapes' keys and adding the two colour
+    fields this feed publishes. A pure transform over the already-parsed tables (no
+    zip read, no network), so the warmup builds it from what load_njt_static
+    already parsed rather than re-reading the archive.
+
+    THE DEDUP IS route_geometry's, SHARED WITH THE RAILROAD BUILDER rather than
+    copied. What it buys on this feed specifically: North Jersey Coast keeps both
+    the Long Branch and the Bay Head legs, and Montclair-Boonton keeps both
+    Montclair State and Hackettstown, while each line's reverse-direction shape
+    collapses into one polyline. A line that stopped short of a real terminus would
+    read to a rider as service ending there, which is why the branch case is the
+    one this phase's tests pin hardest.
+
+    A ROUTE WITH NO GEOMETRY IS ABSENT, exactly as the railroad builder drops one,
+    and NJ Transit has a standing example rather than a hypothetical: routes.txt
+    carries twelve routes and the Meadowlands Rail Line (route_id 17) runs only for
+    events, so a publication with no Meadowlands trips references no Meadowlands
+    shape and the line has nothing to draw. Its name is lost with it, which costs
+    nothing: a route with no line and no trains is invisible either way. The
+    endpoint documents that.
+
+    `color` is the feed's route_color and is present on all twelve routes;
+    `text_color` is route_text_color and is EMPTY on all twelve (probed 2026-08-05),
+    so it is carried as None and the renderer is expected to have its own contrast
+    fallback. Inventing a readable foreground here would hide that the feed said
+    nothing, which is the same reasoning _parse_routes gives for not defaulting it.
+    """
+    built: list[dict] = []
+    for route_id, kept in route_geometry.route_polylines(trips, shapes).items():
+        info = (routes or {}).get(route_id) or {}
+        built.append(
+            {
+                "route": route_id,
+                "name": info.get("long_name") or info.get("short_name"),
+                "color": info.get("color"),
+                "text_color": info.get("text_color"),
+                "polylines": kept,
+            }
+        )
+    return built
 
 
 async def load_njt_static(*, now: float | None = None) -> dict:
@@ -808,11 +993,12 @@ async def load_njt_static(*, now: float | None = None) -> dict:
         )
     logger.info(
         "Loaded NJ Transit static GTFS: %d stops, %d routes, %d trips, "
-        "%d trips with stop_times, service through %s",
+        "%d trips with stop_times, %d shapes, service through %s",
         len(data["stops"]),
         len(data["routes"]),
         len(data["trips"]),
         len(data["stop_times"]),
+        len(data["shapes"]),
         latest_service_date(data["calendar_dates"]) or "(none)",
     )
     return data

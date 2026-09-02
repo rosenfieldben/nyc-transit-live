@@ -329,6 +329,29 @@ class NjtStop(BaseModel):
     # would read as an affirmative "not accessible" the feed never published.
 
 
+class NjtRoute(BaseModel):
+    """One NJ Transit rail line's drawable geometry (15c).
+
+    Mirrors RailroadRoute and adds the two colour fields, because unlike the LIRR
+    and Metro-North feeds this one publishes route_color. There is no `system`
+    field: NJ Transit is one system whose route ids are its own namespace, so
+    nothing here needs the (system, route) key the railroad model carries.
+    """
+
+    route: str
+    name: str | None  # long_name, else short_name, else null (from routes.txt)
+    # THE FEED'S OWN COLOURS, carried exactly as published. route_color is set on
+    # all twelve routes; route_text_color is EMPTY on all twelve (probed
+    # 2026-08-05), so text_color is null in practice and a renderer must compute a
+    # readable ink itself rather than trusting the feed to supply one. Both stay
+    # None-able so a publication that starts filling text_color needs no change
+    # here, and neither is defaulted: inventing a colour the feed never published
+    # would hide that it said nothing.
+    color: str | None
+    text_color: str | None
+    polylines: list[list[list[float]]]
+
+
 # NJ Transit Rail realtime (15b). SCHEDULE-DERIVED, never GPS: every position
 # below is computed from the TripUpdates feed's own times against 15a's stop
 # coordinates, because NJ Transit's vehicle positions feed is deliberately not

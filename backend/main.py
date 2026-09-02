@@ -248,13 +248,18 @@ async def lifespan(app: FastAPI):
     app.state.ferry_routes = []
     app.state.ferry_station_routes = {}  # {stop_id: [route_id]} (H5)
     app.state.ferry_static_status = "loading"
-    # NJ Transit Rail static (15a; realtime is 15b, the frontend 15c). Own
-    # app.state fields, never merged into a shared namespace: NJT stop ids are
+    # NJ Transit Rail static (15a; realtime is 15b, route lines and the map 15c).
+    # Own app.state fields, never merged into a shared namespace: NJT stop ids are
     # small integers with 84.9% overlap against our other feeds, and route ids
     # overlap the LIRR's at 75%. njt_static holds the full parsed tables so 15b
     # joins realtime without re-parsing, the way ferry_static's trip map did.
-    app.state.njt_static = {}  # {stops, routes, trips, stop_times, calendar_dates} or {}
+    app.state.njt_static = {}  # {stops, routes, trips, shapes, stop_times, calendar_dates} or {}
     app.state.njt_stops = {}
+    # Per-route polylines (15c). [] rather than {} because that is what
+    # /api/njt-routes serves, and [] is also the honest steady state for a
+    # publication that carried no shapes.txt: the group is ready and there is
+    # nothing to draw.
+    app.state.njt_routes = []
     app.state.njt_station_routes = {}  # {stop_id: [route_id]} (H5)
     app.state.njt_trips = {}  # {trip_id: {route_id, headsign, short_name}} for 15b
     app.state.njt_stop_schedule = {}  # {stop_id: [scheduled call]} for the panel era

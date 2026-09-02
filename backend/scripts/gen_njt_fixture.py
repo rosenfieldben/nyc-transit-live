@@ -41,10 +41,26 @@ THE TRIM RULE, and what each part exists to preserve:
     not there. The mandated stops (109, 112, the west-of-Hudson set, the PASC
     trio) are guaranteed by the trip selection above rather than bolted on after.
   - stop_times.txt keeps every row of every kept trip.
-  - shapes.txt is NOT committed at all. 15a deliberately does not parse it (see
-    njt_static's module docstring), it is 90% of the payload, and committing 10 MB
-    of geometry nothing reads would be the worst trade in the repository. 15c
-    revisits this when the line-drawing decision actually asks.
+  - shapes.txt keeps every row of every shape THE KEPT TRIPS REFERENCE, and
+    nothing else. 15a committed none of it, correctly: it is 90% of the payload and
+    nothing parsed it. 15c draws route lines from it, so the fixture now carries
+    the slice the kept trips can actually reach, which is a few dozen shapes rather
+    than the whole 10 MB. The generator REFUSES rather than writing a partial
+    fixture if the live publication is missing a shape the committed trips
+    reference; a fixture whose trips point at geometry it does not carry would make
+    every line golden measure the gap instead of the map.
+
+REFRESHING ONLY THE GEOMETRY:
+
+    python backend/scripts/gen_njt_fixture.py --shapes-only
+
+That mints once, pulls the archive, reads the COMMITTED trips.txt, writes
+njt_gtfs/shapes.txt for exactly the shape_ids those trips reference, and touches
+no other member. It exists because the other six files are a captured slice whose
+trip selection the goldens are written against: re-running the full generator to
+pick up geometry would re-pick trips, move stops, and invalidate golden after
+golden for no reason. A refresh that cannot find every referenced shape writes
+nothing and names the ids it could not find.
 
 The script verifies the live feed still matches the facts probed 2026-08-05 and
 that the trim preserves them, then prints the tables for eyeballing. It exits
@@ -55,6 +71,7 @@ rules.
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import csv
 import importlib.util
@@ -116,8 +133,12 @@ PROBED_PORT_JERVIS_STATIONS = 9
 # curiosity: njt_static's validators are built around it, and a feed that starts
 # shipping calendar.txt is a real change worth a human deciding about.
 EXPECTED_ABSENT = ("calendar.txt", "feed_info.txt")
-# Present upstream, deliberately not committed.
-EXPECTED_PRESENT_UNPARSED = "shapes.txt"
+# Present upstream, and since 15c committed in the trimmed form described above.
+# Still checked for presence here rather than assumed: it is the one member the
+# LOADER treats as optional, so the generator is the only place that can notice the
+# publication dropping it, and it says so as drift rather than writing a fixture
+# whose route lines silently vanished.
+SHAPES_MEMBER = "shapes.txt"
 
 TRIPS_PER_ROUTE = trim.TRIPS_PER_ROUTE
 PASC_TRIO = trim.PASC_TRIO
@@ -147,24 +168,97 @@ def _read_rows(zf: zipfile.ZipFile, name: str) -> tuple[list[str], list[dict]]:
         return list(reader.fieldnames or []), list(reader)
 
 
-def _write_rows(name: str, fieldnames: list[str], rows: list[dict]) -> None:
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    out = OUT_DIR / name
+def _write_rows(
+    name: str, fieldnames: list[str], rows: list[dict], out_dir: Path | None = None
+) -> None:
+    out_dir = OUT_DIR if out_dir is None else out_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / name
     with out.open("w", encoding="utf-8", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=fieldnames)
         writer.writeheader()
         for row in rows:
             writer.writerow({c: row.get(c, "") for c in fieldnames})
-    print(f"  wrote {out.relative_to(REPO_ROOT)} ({len(rows)} rows)")
+    print(f"  wrote {out} ({len(rows)} rows)")
 
 
 def _get(row: dict, key: str) -> str:
     return (row.get(key) or "").strip()
 
 
-def main() -> int:  # noqa: C901 - one linear verify-then-trim pass, split would obscure it
+def run_shapes_only(zf: zipfile.ZipFile, *, out_dir: Path | None = None) -> int:
+    """Rewrite ONLY njt_gtfs/shapes.txt, for exactly the shapes the COMMITTED trips
+    reference. Returns 0 on success, 1 on a refusal that wrote nothing.
+
+    WHY THIS MODE EXISTS. The other six members are a captured slice whose TRIP
+    SELECTION every golden is written against (the Port Jervis coverage pick, the
+    PASC trio, the west-of-Hudson mandate). Re-running the full generator to pick up
+    geometry would re-pick trips against a newer publication, move stops, and
+    invalidate golden after golden to add one file. This mode reads the committed
+    trips.txt instead, so the geometry lands beside a trip selection that does not
+    move.
+
+    IT REFUSES RATHER THAN WRITING A PARTIAL FIXTURE, and the refusal is the point
+    of the mode being separate: if the live publication no longer carries a shape
+    some committed trip references, the honest outcome is no write and the missing
+    ids named. Writing the subset it could find would leave the committed pair
+    internally inconsistent, and every route-line golden would then be measuring
+    that gap rather than the map. Nothing is written on any refusal path, including
+    the partial one, because the write happens after the last check.
+    """
+    out_dir = OUT_DIR if out_dir is None else out_dir
+    trips_path = out_dir / "trips.txt"
+    if not trips_path.exists():
+        print(f"  !! {trips_path} does not exist; run the full generator first.")
+        return 1
+    with trips_path.open(encoding="utf-8-sig", newline="") as fh:
+        committed_trips = list(csv.DictReader(fh))
+    wanted = trim.referenced_shape_ids(committed_trips)
+    print(f"\n{len(committed_trips)} committed trips reference {len(wanted)} distinct shape_ids")
+    if not wanted:
+        print("  !! the committed trips reference no shape_id at all; nothing to refresh.")
+        return 1
+    if SHAPES_MEMBER not in set(zf.namelist()):
+        print(f"  !! the publication carries no {SHAPES_MEMBER}; fixture NOT written.")
+        return 1
+    shapes_cols, shape_rows = _read_rows(zf, SHAPES_MEMBER)
+    kept = trim.select_shape_rows(shape_rows, wanted)
+    missing = sorted(wanted - {_get(row, "shape_id") for row in kept})
+    if missing:
+        print(
+            f"\nFEED DRIFT, fixture NOT written:\n  !! the committed trips reference "
+            f"{len(missing)} shape_id(s) this publication's {SHAPES_MEMBER} does not carry: "
+            f"{missing}. The committed trips and this publication disagree; regenerate the "
+            "whole fixture rather than refreshing geometry against it."
+        )
+        return 1
+    print(f"  {len(kept)} rows for {len(wanted)} shapes, of {len(shape_rows)} rows upstream")
+    _write_rows(SHAPES_MEMBER, shapes_cols, kept, out_dir)
+    print(
+        "\nOnly shapes.txt was rewritten. Eyeball the row count above, then commit it on its own."
+    )
+    return 0
+
+
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--shapes-only",
+        action="store_true",
+        help=(
+            "rewrite only shapes.txt, for the shape_ids the committed trips.txt "
+            "references, and touch no other member"
+        ),
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one linear verify-then-trim pass, split would obscure it
+    args = _parse_args(argv)
     raw = _download()
     zf = zipfile.ZipFile(io.BytesIO(raw))
+    if args.shapes_only:
+        return run_shapes_only(zf)
     members = set(zf.namelist())
     problems: list[str] = []
 
@@ -175,8 +269,8 @@ def main() -> int:  # noqa: C901 - one linear verify-then-trim pass, split would
                 f"{absent} is now PRESENT; njt_static's validators are built on its absence "
                 "and this needs a human decision, not a regeneration"
             )
-    if EXPECTED_PRESENT_UNPARSED not in members:
-        problems.append(f"{EXPECTED_PRESENT_UNPARSED} is missing from the archive")
+    if SHAPES_MEMBER not in members:
+        problems.append(f"{SHAPES_MEMBER} is missing from the archive")
 
     agency_cols, agency = _read_rows(zf, "agency.txt")
     routes_cols, routes = _read_rows(zf, "routes.txt")
@@ -443,6 +537,24 @@ def main() -> int:  # noqa: C901 - one linear verify-then-trim pass, split would
     if dangling:
         problems.append(f"stop_times reference stops that are not in stops.txt: {sorted(dangling)}")
 
+    # THE GEOMETRY SLICE (15c), selected from the trips this run just kept rather
+    # than from the committed ones, because in this mode the trip selection is
+    # being rewritten. Same refusal as --shapes-only: a fixture whose trips point at
+    # shapes it does not carry would make every route-line golden measure that gap.
+    shapes_cols, shape_rows = _read_rows(zf, SHAPES_MEMBER)
+    wanted_shape_ids = trim.referenced_shape_ids(kept_trips)
+    kept_shapes = trim.select_shape_rows(shape_rows, wanted_shape_ids)
+    missing_shapes = sorted(wanted_shape_ids - {_get(row, "shape_id") for row in kept_shapes})
+    if missing_shapes:
+        problems.append(
+            f"the kept trips reference {len(missing_shapes)} shape_id(s) the publication's "
+            f"shapes.txt does not carry: {missing_shapes[:10]}"
+        )
+    print(
+        f"\nshapes.txt: {len(kept_shapes)} rows for {len(wanted_shape_ids)} shapes "
+        f"referenced by the {len(kept_trips)} kept trips (of {len(shape_rows)} rows upstream)"
+    )
+
     if problems:
         print("\nFEED DRIFT, fixture NOT written:")
         for problem in problems:
@@ -455,10 +567,10 @@ def main() -> int:  # noqa: C901 - one linear verify-then-trim pass, split would
     _write_rows("stops.txt", stops_cols, kept_stops)
     _write_rows("trips.txt", trips_cols, kept_trips)
     _write_rows("stop_times.txt", stop_times_cols, kept_stop_times)
+    _write_rows("shapes.txt", shapes_cols, kept_shapes)
     print(
         "\nEyeball the tables above against the golden test expectations in "
-        "backend/tests/test_njt_static.py before committing. shapes.txt is deliberately "
-        "NOT written (15a defers it; it is 10 MB and nothing reads it yet)."
+        "backend/tests/test_njt_static.py before committing."
     )
     return 0
 

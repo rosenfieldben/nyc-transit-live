@@ -326,12 +326,18 @@ def apply_trim(
     return kept_trips, kept_stops, kept_stop_times
 
 
-# The six members a committed NJ Transit static fixture carries. agency, routes and
-# calendar_dates go in WHOLE: calendar_dates in particular must stay whole because
-# it is this feed's only schedule (there is no calendar.txt) and the service-date
-# guard reads the maximum over the entire table, so any per-service trim could
-# silently move the one number that guard is about. shapes.txt is deliberately not
-# written at all: 15a does not parse it, and it is 10 MB of the 11.1 MB payload.
+# The seven members a committed NJ Transit static fixture carries. agency, routes
+# and calendar_dates go in WHOLE: calendar_dates in particular must stay whole
+# because it is this feed's only schedule (there is no calendar.txt) and the
+# service-date guard reads the maximum over the entire table, so any per-service
+# trim could silently move the one number that guard is about.
+#
+# shapes.txt IS THE SEVENTH, ADDED IN 15c, and it is trimmed harder than anything
+# else here: 10 MB of the 11.1 MB payload upstream, of which the fixture keeps only
+# the shapes its kept trips reference. It is also the one OPTIONAL member, so a
+# reader of this tuple must tolerate an archive that does not carry it (see
+# gen_njt_rt_fixture._raw_static_rows) rather than assume seven files are always
+# there.
 FIXTURE_MEMBERS = (
     "agency.txt",
     "routes.txt",
@@ -339,7 +345,36 @@ FIXTURE_MEMBERS = (
     "stops.txt",
     "trips.txt",
     "stop_times.txt",
+    "shapes.txt",
 )
+
+# The member above that an archive is allowed not to have. Named rather than
+# spelled inline at each reader, so "which members are optional" is one fact.
+OPTIONAL_MEMBERS = frozenset({"shapes.txt"})
+
+
+def referenced_shape_ids(trips: list[dict]) -> set[str]:
+    """The shape_ids a set of trip rows references, blanks dropped.
+
+    The FIXTURE's half of the same bound njt_static._parse_shapes applies at load
+    time: geometry is worth keeping only where a trip points at it. Taking it from
+    the kept trips (not from shapes.txt itself) is what makes the committed pair
+    self-consistent, and it is the property the identity replay asserts.
+    """
+    return {get(trip, "shape_id") for trip in trips} - {""}
+
+
+def select_shape_rows(shape_rows: list[dict], shape_ids: set[str]) -> list[dict]:
+    """Every row of every wanted shape, IN PUBLICATION ORDER.
+
+    Publication order rather than sorted, for the same reason the other members
+    keep their original column order: the committed fixture is a faithful SLICE of
+    what NJ Transit published, not a re-serialization in an order this repo
+    preferred. It also happens to be the order shape_pt_sequence already implies,
+    so the loader's sort is a no-op on a healthy publication and would still fix a
+    publication that stopped being ordered.
+    """
+    return [row for row in shape_rows if get(row, "shape_id") in shape_ids]
 
 
 def write_fixture(out_dir, members: dict[str, tuple[list[str], list[dict]]]) -> None:

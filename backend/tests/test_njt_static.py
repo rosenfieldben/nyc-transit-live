@@ -29,7 +29,6 @@ but one day per fixture.
 from __future__ import annotations
 
 import io
-import math
 import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -953,10 +952,45 @@ def test_the_reverse_direction_variant_and_the_short_turn_both_collapse():
     built = njt_static.build_njt_route_shapes(parsed["trips"], parsed["shapes"], parsed["routes"])
     line = next(entry for entry in built if entry["route"] == "1")
     assert len(line["polylines"]) == 3
-    # The reverse carries the same points as the trunk, so its collapse is only
-    # observable as the trunk appearing exactly once.
-    trunk_points = [[round(lat, 5), round(lon, 5)] for lat, lon in _TRUNK]
-    assert sum(1 for p in line["polylines"] if p in (trunk_points, trunk_points[::-1])) == 1
+    # ASSERTED ON ENDPOINTS, not on the point list, because the builder simplifies
+    # before it dedups and this synthetic trunk is straight, so its drawn form is
+    # its two ends. The claim is unchanged: the trunk is drawn once, not once
+    # forwards and once backwards.
+    trunk_ends = {
+        (round(_TRUNK[0][0], 5), round(_TRUNK[0][1], 5)),
+        (round(_TRUNK[-1][0], 5), round(_TRUNK[-1][1], 5)),
+    }
+    drawn_as_trunk = [p for p in line["polylines"] if {tuple(p[0]), tuple(p[-1])} == trunk_ends]
+    assert len(drawn_as_trunk) == 1
+
+
+def test_the_builder_simplifies_the_geometry_it_draws():
+    """THE OTHER HALF OF DEFECT B, and nothing tested it: the fixture arm's
+    simplification was pinned but the LOADER's was not, so deleting it from
+    build_njt_route_shapes passed the whole suite. That is the half that decides
+    what /api/njt-routes ships on every page load, and in production it reads RAW
+    geometry (a point every 10 m, 6.9 MB for 29 shapes), not the already-reduced
+    fixture. A test over committed geometry cannot see it, because simplifying an
+    already-simplified shape is a no-op; this one feeds the builder dense points.
+    """
+    dense = _shapes_table(
+        {"s1": [(40.700 + 0.00002 * i, -74.000 - 0.00002 * i) for i in range(600)]}
+    )
+    trips = (
+        "route_id,service_id,trip_id,trip_headsign,direction_id,trip_short_name,shape_id\n"
+        "1,SVC1,T1,New York,0,3800,s1\n"
+    )
+    parsed = _geom_parsed(**{"shapes.txt": dense, "trips.txt": trips})
+    assert len(parsed["shapes"]["s1"]) == 600, "the parse itself must not reduce anything"
+
+    built = njt_static.build_njt_route_shapes(parsed["trips"], parsed["shapes"], parsed["routes"])
+    drawn = built[0]["polylines"][0]
+    assert len(drawn) < 600, "the builder served every published point"
+    # EXACTLY what simplification would give, not merely fewer points: a builder that
+    # sampled or truncated would also be "fewer".
+    assert drawn == route_geometry.simplify_polyline(
+        parsed["shapes"]["s1"], route_geometry.NJT_SIMPLIFY_EPS
+    )
 
 
 def test_a_route_with_no_trips_is_absent_from_the_build_rather_than_empty():
@@ -1307,36 +1341,11 @@ _STATION_ON_LINE_DIST = 0.0025
 # worth a human look either way.
 _MAX_ROUTE_VARIANTS = 4
 
-_COS_LAT = math.cos(math.radians(40.7))
-
-
-def _iso(lat: float, lon: float) -> tuple[float, float]:
-    """(lat, lon) in the frontend's isotropic basis, so a degree east and a degree
-    north are comparable distances at New York's latitude."""
-    return (lat, lon * _COS_LAT)
-
-
-def _dist_to_segment(point, start, end) -> float:
-    px, py = _iso(*point)
-    ax, ay = _iso(*start)
-    bx, by = _iso(*end)
-    dx, dy = bx - ax, by - ay
-    if dx == 0 and dy == 0:
-        return math.hypot(px - ax, py - ay)
-    # Clamped projection parameter: the nearest point on the SEGMENT, not on the
-    # infinite line, or a station beyond a polyline's end would read as close to it.
-    t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)))
-    return math.hypot(px - (ax + t * dx), py - (ay + t * dy))
-
-
-def _dist_to_polylines(lat: float, lon: float, polylines: list[list]) -> float:
-    """The distance from a station to the nearest point of any of its route's
-    polylines. inf when the route has no drawable geometry at all."""
-    best = math.inf
-    for polyline in polylines:
-        for start, end in zip(polyline, polyline[1:]):
-            best = min(best, _dist_to_segment((lat, lon), start, end))
-    return best
+# THE MEASURE IS PRODUCTION'S, imported rather than restated here (15c Part 1b).
+# route_geometry.distance_to_polylines is what the dedup uses to decide whether two
+# lines are the same line, and this golden uses it to decide whether a station is on
+# its line. One implementation means a change to the measure moves both, instead of
+# the golden quietly asserting something the app no longer does.
 
 
 def _routes_with_service(parsed: dict) -> set[str]:
@@ -1374,8 +1383,7 @@ def _check_stations_sit_on_their_routes(parsed: dict) -> int:
     built = njt_static.build_njt_route_shapes(parsed["trips"], parsed["shapes"], parsed["routes"])
     polylines_by_route = {entry["route"]: entry["polylines"] for entry in built}
     station_routes = njt_static.derive_njt_stop_routes(parsed["trips"], parsed["stop_times"])
-    checked = 0
-    worst = (0.0, None)
+    measured: list[tuple[float, str]] = []
     for stop_id, route_ids in sorted(station_routes.items()):
         stop = parsed["stops"].get(stop_id)
         if stop is None:
@@ -1383,18 +1391,24 @@ def _check_stations_sit_on_their_routes(parsed: dict) -> int:
         for route_id in sorted(route_ids):
             if route_id not in polylines_by_route:
                 continue  # covered by claim 1, which names it there rather than here
-            distance = _dist_to_polylines(stop["lat"], stop["lon"], polylines_by_route[route_id])
-            checked += 1
-            if distance > worst[0]:
-                worst = (distance, f"{stop['name']} ({stop_id}) on route {route_id}")
-            assert distance <= _STATION_ON_LINE_DIST, (
-                f"{stop['name']} ({stop_id}) is {distance:.5f} from route {route_id}'s "
-                f"geometry, past the {_STATION_ON_LINE_DIST} the frontend will project "
-                "within. A station this far off its own line does not glide: its trains "
-                "fall back to a straight chord."
+            distance = route_geometry.distance_to_polylines(
+                [stop["lat"], stop["lon"]], polylines_by_route[route_id]
             )
-    assert checked, "no (station, route) pair was checked, so this asserted nothing"
-    return checked
+            measured.append((distance, f"{stop['name']} ({stop_id}) on route {route_id}"))
+    assert measured, "no (station, route) pair was checked, so this asserted nothing"
+    # THE WORST PAIR, NOT THE FIRST. Asserting inside the loop reported whichever
+    # station came first in stop_id order, which is an arbitrary station that
+    # happened to be over the line; the number a human needs is the worst one in the
+    # fixture, because that is what says how much headroom the tolerance has.
+    worst_distance, worst_pair = max(measured)
+    assert worst_distance <= _STATION_ON_LINE_DIST, (
+        f"the worst station is {worst_pair}, {worst_distance:.5f} from its route's "
+        f"geometry, past the {_STATION_ON_LINE_DIST} the frontend will project within. "
+        "A station that far off its own line does not glide: its trains fall back to a "
+        f"straight chord. {sum(1 for d, _ in measured if d > _STATION_ON_LINE_DIST)} of "
+        f"{len(measured)} pairs are over."
+    )
+    return len(measured)
 
 
 def _check_variant_counts_are_bounded(parsed: dict) -> None:
@@ -1558,6 +1572,84 @@ def test_golden_the_kept_variants_per_route_are_bounded():
     with _fixture_zip() as zf:
         parsed = njt_static._parse_open(zf)
     _check_variant_counts_are_bounded(parsed)
+
+
+# The committed shapes.txt may not exceed this. MEASURED, not guessed: 29 shapes
+# built to the real feed's statistics come to roughly 1,900 rows and 70 KB after
+# simplification at NJT_SIMPLIFY_EPS, against 195,545 rows and 6.9 MB unsimplified.
+# The ceiling sits an order of magnitude above that estimate and two below the
+# unsimplified file, so it absorbs a publication digitized more finely than the
+# model without ever tolerating a fixture where simplification silently stopped.
+# For scale, the largest fixture in the repo before this one is the whole PATH
+# shapes.txt at 216 KB.
+_SHAPES_BYTE_CEILING = 750_000
+
+
+@golden_shapes
+def test_golden_the_committed_geometry_is_a_fixture_and_not_a_publication():
+    """A 6.9 MB member is not a test fixture. This is the size half of the pair
+    below: it catches the file growing back, whatever the cause, and the fixed-point
+    golden catches the reason it would."""
+    size = (FIXTURE_DIR / "shapes.txt").stat().st_size
+    assert size <= _SHAPES_BYTE_CEILING, (
+        f"shapes.txt is {size:,} bytes, over the {_SHAPES_BYTE_CEILING:,} ceiling. "
+        "Either simplification stopped happening in the fixture arm, or this "
+        "publication is digitized far more finely than the one the epsilon was "
+        "measured against."
+    )
+
+
+@golden_shapes
+def test_golden_every_committed_shape_is_already_simplified():
+    """THE COUPLING THAT SAYS THE FIXTURE AND PRODUCTION HOLD THE SAME POINTS.
+
+    The loader simplifies at NJT_SIMPLIFY_EPS on its way to drawing. If the
+    committed geometry is a FIXED POINT of that same simplification, then what the
+    goldens read and what production draws are the same points rather than two
+    different reductions of the feed, and every line golden above is measuring the
+    map rather than an artefact of the fixture being denser.
+
+    ONE ASSERTION CANNOT SAY IT, SO THERE ARE TWO. Douglas-Peucker at a smaller
+    epsilon retains a SUPERSET of what it retains at a larger one, so re-simplifying
+    at the loader's epsilon changes nothing whenever the fixture was built at that
+    epsilon OR ANY COARSER ONE. Measured on a 3,000-point shape: built at the
+    epsilon, 135 points and a fixed point; at a tenth of it, 657 points and NOT a
+    fixed point; unsimplified, 3,000 and not a fixed point; but built at TEN TIMES
+    it, 33 points and still a perfect fixed point. So this arm catches a fixture
+    denser than the loader would draw, and is blind to one already coarser.
+
+    The second arm closes that direction: simplifying the committed geometry at
+    TWICE the epsilon must actually remove points. A fixture built at the epsilon
+    loses some (135 to fewer); one built at ten times it loses none, because 2x is
+    still finer than what already reduced it. The pair brackets the epsilon the
+    fixture was built at into [EPS, 2*EPS), which is as close as a file can be
+    pinned to a constant it does not contain.
+    """
+    with _fixture_zip() as zf:
+        parsed = njt_static._parse_open(zf)
+    assert parsed["shapes"], "the fixture carries no geometry at all"
+    for shape_id, points in sorted(parsed["shapes"].items()):
+        again = route_geometry.simplify_polyline(points, route_geometry.NJT_SIMPLIFY_EPS)
+        assert again == points, (
+            f"shape {shape_id} is not a fixed point of simplification: the loader "
+            f"reduces its {len(points)} committed points to {len(again)}, so the "
+            "committed geometry is denser than what production draws. Re-run "
+            "gen_njt_fixture.py --shapes-only."
+        )
+
+    # THE OTHER DIRECTION. In aggregate rather than per shape, because a short shape
+    # can legitimately be two points at any tolerance and have nothing left to lose.
+    committed = sum(len(points) for points in parsed["shapes"].values())
+    coarser = sum(
+        len(route_geometry.simplify_polyline(points, route_geometry.NJT_SIMPLIFY_EPS * 2))
+        for points in parsed["shapes"].values()
+    )
+    assert coarser < committed, (
+        f"doubling the tolerance removes nothing from the committed geometry "
+        f"({committed} points either way), so the fixture was built at a COARSER "
+        "epsilon than the loader uses and the fixed-point check above cannot see it. "
+        "Re-run gen_njt_fixture.py --shapes-only."
+    )
 
 
 @golden_shapes

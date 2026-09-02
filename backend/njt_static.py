@@ -294,11 +294,14 @@ def _parse_shapes(raw: IO[bytes], wanted: set[str]) -> dict[str, list]:
     honest answer for a publication whose trips carry no shape_ids at all: there
     is no geometry to draw, and the caller emits an empty routes list.
 
-    Coordinates are rounded to 5 decimals (~1 m), matching the subway, bus and
-    railroad shape rounding, so the frontend's glide index sees one precision
-    across every system. Rows with a blank shape_id or a malformed point are
-    skipped: this member is optional, and one bad row must not cost the whole
-    publication its lines.
+    Coordinates are rounded to route_geometry.COORD_PRECISION decimals (~1 m),
+    matching the subway, bus and railroad shape rounding, so the frontend's glide
+    index sees one precision across every system. The constant is shared with the
+    fixture trim rather than spelled here, because the two rounding the same points
+    differently is a defect that hides until a golden compares them.
+
+    Rows with a blank shape_id or a malformed point are skipped: this member is
+    optional, and one bad row must not cost the whole publication its lines.
     """
     raw_points: dict[str, list] = defaultdict(list)
     reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
@@ -312,8 +315,8 @@ def _parse_shapes(raw: IO[bytes], wanted: set[str]) -> dict[str, list]:
             # rule (and the same reason) as railroad_static._parse_shapes.
             point = (
                 int(row["shape_pt_sequence"]),
-                round(float(row["shape_pt_lat"]), 5),
-                round(float(row["shape_pt_lon"]), 5),
+                round(float(row["shape_pt_lat"]), route_geometry.COORD_PRECISION),
+                round(float(row["shape_pt_lon"]), route_geometry.COORD_PRECISION),
             )
         except (KeyError, ValueError, TypeError):
             continue  # malformed point row
@@ -869,13 +872,27 @@ def build_njt_route_shapes(
     zip read, no network), so the warmup builds it from what load_njt_static
     already parsed rather than re-reading the archive.
 
-    THE DEDUP IS route_geometry's, SHARED WITH THE RAILROAD BUILDER rather than
-    copied. What it buys on this feed specifically: North Jersey Coast keeps both
-    the Long Branch and the Bay Head legs, and Montclair-Boonton keeps both
-    Montclair State and Hackettstown, while each line's reverse-direction shape
-    collapses into one polyline. A line that stopped short of a real terminus would
-    read to a rider as service ending there, which is why the branch case is the
-    one this phase's tests pin hardest.
+    TWO STEPS, IN THIS ORDER, AND THE ORDER IS LOAD-BEARING.
+
+    1. EVERY SHAPE IS SIMPLIFIED FIRST, at route_geometry.NJT_SIMPLIFY_EPS. This
+       feed publishes about a point every 10 m, which is detail no map draws and
+       payload every page load pays for. Simplifying first is also what makes step 2
+       affordable: its test is point-to-segment distance against the polylines
+       already kept, which is quadratic in points and hopeless at 10,000 points a
+       shape.
+    2. THEN THE DISTANCE DEDUP, route_geometry.keep_distinct_variants, not the
+       exact-point rule the railroads use. Two reasons, and the first is a defect
+       the real feed exposed: route 2's Hoboken leg is ~5 km of a ~97 km line, at or
+       under the 5% threshold, so the exact rule DISCARDED a branch that reaches a
+       different terminus and the map drew a Montclair-Boonton line that never got
+       to Hoboken. Route 7 published the same pattern. The second is a consequence
+       of step 1: after simplification two shapes tracing one corridor retain
+       different points, so exact coincidence stops recognising the duplicates it
+       used to catch, while distance still does.
+
+    What the pair buys on this feed: North Jersey Coast keeps both the Long Branch
+    and the Bay Head legs, Montclair-Boonton keeps both Hoboken and New York Penn,
+    and each line's reverse-direction shape still collapses into one polyline.
 
     A ROUTE WITH NO GEOMETRY IS ABSENT, exactly as the railroad builder drops one,
     and NJ Transit has a standing example rather than a hypothetical: routes.txt
@@ -891,8 +908,14 @@ def build_njt_route_shapes(
     fallback. Inventing a readable foreground here would hide that the feed said
     nothing, which is the same reasoning _parse_routes gives for not defaulting it.
     """
+    simplified = {
+        shape_id: route_geometry.simplify_polyline(points, route_geometry.NJT_SIMPLIFY_EPS)
+        for shape_id, points in shapes.items()
+    }
     built: list[dict] = []
-    for route_id, kept in route_geometry.route_polylines(trips, shapes).items():
+    for route_id, kept in route_geometry.route_polylines(
+        trips, simplified, select=route_geometry.keep_distinct_variants
+    ).items():
         info = (routes or {}).get(route_id) or {}
         built.append(
             {

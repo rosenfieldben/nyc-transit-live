@@ -27,6 +27,8 @@ instead of hoping.
 
 from __future__ import annotations
 
+import route_geometry
+
 # Two identity stops the fixture must always carry, by id. Checked by NAME in the
 # generator because this feed's ids are small integers with heavy cross-system
 # collision, so presence alone proves nothing.
@@ -365,16 +367,94 @@ def referenced_shape_ids(trips: list[dict]) -> set[str]:
 
 
 def select_shape_rows(shape_rows: list[dict], shape_ids: set[str]) -> list[dict]:
-    """Every row of every wanted shape, IN PUBLICATION ORDER.
+    """The wanted shapes, SIMPLIFIED, as rows in publication order.
 
-    Publication order rather than sorted, for the same reason the other members
-    keep their original column order: the committed fixture is a faithful SLICE of
-    what NJ Transit published, not a re-serialization in an order this repo
-    preferred. It also happens to be the order shape_pt_sequence already implies,
-    so the loader's sort is a no-op on a healthy publication and would still fix a
-    publication that stopped being ordered.
+    TWO REDUCTIONS, AND THE SECOND IS WHY THIS IS NOT A FILTER. Wanted shape_ids
+    only, then Douglas-Peucker at route_geometry.NJT_SIMPLIFY_EPS on each surviving
+    shape. NJ Transit publishes a point every 10 m: the 29 shapes the committed
+    trips reference came to 195,545 rows and 6.9 MB, against 216 KB for the whole
+    PATH shapes.txt, and no map draws 10 m detail.
+
+    THE ROWS ARE THE PUBLICATION'S OWN, NEVER REBUILT. Simplification decides which
+    INDICES survive and this keeps those rows verbatim: the original lat/lon text
+    and the original shape_pt_sequence numbers, so the sequence numbers a committed
+    shape carries are the ones NJ Transit assigned and skip where points were
+    dropped. Reformatting the floats would round-trip the feed's own text through a
+    float and commit something it never said.
+
+    THE EPSILON IS IMPORTED, NOT PASSED, and that is the point: the fixture's
+    geometry has to be a FIXED POINT of the very simplification the loader runs, or
+    the committed points and production's are two different reductions of the feed.
+    A golden asserts exactly that, and it can only mean something while both sides
+    read one constant.
+
+    Publication order rather than sorted, for the same reason the other members keep
+    their original column order: the committed fixture is a faithful SLICE. The
+    points handed to the simplifier ARE sorted by shape_pt_sequence first, because
+    that is the order the loader reconstructs and simplifying a scrambled polyline
+    would decide on a shape nobody draws.
     """
-    return [row for row in shape_rows if get(row, "shape_id") in shape_ids]
+    by_shape: dict[str, list[int]] = {}
+    for position, row in enumerate(shape_rows):
+        shape_id = get(row, "shape_id")
+        if shape_id in shape_ids:
+            by_shape.setdefault(shape_id, []).append(position)
+
+    keep: set[int] = set()
+    for positions in by_shape.values():
+        # SORTED THE WAY THE LOADER SORTS, on the whole (sequence, lat, lon) tuple
+        # rather than on the sequence alone. njt_static._parse_shapes builds exactly
+        # that tuple and sorts it, so a shape repeating a sequence number is ordered
+        # by coordinate there; ordering by publication order here would hand
+        # Douglas-Peucker a different polyline and fail the fixed-point golden on a
+        # file that is otherwise correct.
+        usable: list[tuple[tuple[int, float, float], int]] = []
+        for position in positions:
+            key = _sort_key_of(shape_rows[position])
+            if key is None:
+                # A ROW THAT IS NOT A POINT IS NOT PART OF THE SHAPE, and dropping
+                # it is what keeps the fixture equal to what production reads. The
+                # loader skips a row whose SEQUENCE or whose COORDINATES cannot be
+                # read, so keeping one would commit a row the loader ignores and
+                # leave the fixed-point golden comparing the file against a parse
+                # that never saw all of it.
+                continue
+            usable.append((key, position))
+        usable.sort(key=lambda pair: pair[0])
+        points = [[key[1], key[2]] for key, _position in usable]
+        # POSITIONS, NOT id(). Identity is not position: one dict object appearing
+        # twice in shape_rows would be kept at every occurrence the moment it was
+        # kept at one, so a point simplification dropped could ride back in on its
+        # twin. Positions cannot alias.
+        for index in route_geometry.simplify_indices(points, route_geometry.NJT_SIMPLIFY_EPS):
+            keep.add(usable[index][1])
+    return [row for position, row in enumerate(shape_rows) if position in keep]
+
+
+def _sort_key_of(row: dict) -> tuple[int, float, float] | None:
+    """(sequence, lat, lon) exactly as njt_static._parse_shapes builds it, or None
+    when the row is not a point the loader would read.
+
+    ONE HELPER RATHER THAN TWO, because the two questions are one question. An
+    earlier split had a sequence helper that sorted an unreadable row to the FRONT
+    and a coordinate helper that dropped it; the loader drops it on either count,
+    and sibling helpers that disagree about which rows exist are how a fixture stops
+    matching the parse of itself.
+
+    THE ROUNDING IS PART OF THE KEY. The loader rounds to
+    route_geometry.COORD_PRECISION before it simplifies, and NJ Transit publishes
+    more decimals than that. Simplifying full-precision text here would decide on
+    points production never sees: measured, 82 of 300 synthetic 6-decimal
+    publications then failed to be a fixed point of the loader's own simplification.
+    """
+    try:
+        return (
+            int(get(row, "shape_pt_sequence")),
+            round(float(get(row, "shape_pt_lat")), route_geometry.COORD_PRECISION),
+            round(float(get(row, "shape_pt_lon")), route_geometry.COORD_PRECISION),
+        )
+    except ValueError:
+        return None
 
 
 def write_fixture(out_dir, members: dict[str, tuple[list[str], list[dict]]]) -> None:

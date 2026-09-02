@@ -4247,7 +4247,11 @@ async def test_njt_static_warmup_builds_route_lines_when_the_publication_has_sha
         return {
             **NJT_STATIC_DATA,
             "trips": {"T1": {**NJT_STATIC_DATA["trips"]["T1"], "shape_id": "s1"}},
-            "shapes": {"s1": [[40.7, -74.0], [40.71, -74.01], [40.72, -74.02]]},
+            # A REAL BEND, not three collinear points: the builder simplifies before
+            # it draws, and a midpoint on the straight line between its neighbours
+            # is exactly what simplification is for. Bending it keeps this test
+            # about the wiring rather than about the tolerance.
+            "shapes": {"s1": [[40.7, -74.0], [40.71, -74.05], [40.72, -74.02]]},
         }
 
     monkeypatch.setattr(app_module.njt_static, "load_njt_static", fake_load)
@@ -4261,7 +4265,7 @@ async def test_njt_static_warmup_builds_route_lines_when_the_publication_has_sha
             "name": "Northeast Corridor",
             "color": "EF3E42",
             "text_color": None,
-            "polylines": [[[40.7, -74.0], [40.71, -74.01], [40.72, -74.02]]],
+            "polylines": [[[40.7, -74.0], [40.71, -74.05], [40.72, -74.02]]],
         }
     ]
 

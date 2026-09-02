@@ -186,7 +186,31 @@ def _get(row: dict, key: str) -> str:
     return (row.get(key) or "").strip()
 
 
-def run_shapes_only(zf: zipfile.ZipFile, *, out_dir: Path | None = None) -> int:
+def committed_shape_ids(out_dir: Path) -> set[str] | None:
+    """The shape_ids the COMMITTED trips reference, or None after printing why not.
+
+    SEPARATE FROM THE REFRESH SO IT CAN RUN BEFORE THE DOWNLOAD. Both questions it
+    answers are local (is there a committed trips.txt, does it reference geometry),
+    and a mint costs a token against a rate limit NJ Transit does not publish. There
+    is no reason to spend one to discover that this checkout has nothing to refresh.
+    """
+    trips_path = out_dir / "trips.txt"
+    if not trips_path.exists():
+        print(f"  !! {trips_path} does not exist; run the full generator first.")
+        return None
+    with trips_path.open(encoding="utf-8-sig", newline="") as fh:
+        committed_trips = list(csv.DictReader(fh))
+    wanted = trim.referenced_shape_ids(committed_trips)
+    print(f"\n{len(committed_trips)} committed trips reference {len(wanted)} distinct shape_ids")
+    if not wanted:
+        print("  !! the committed trips reference no shape_id at all; nothing to refresh.")
+        return None
+    return wanted
+
+
+def run_shapes_only(
+    zf: zipfile.ZipFile, *, out_dir: Path | None = None, wanted: set[str] | None = None
+) -> int:
     """Rewrite ONLY njt_gtfs/shapes.txt, for exactly the shapes the COMMITTED trips
     reference. Returns 0 on success, 1 on a refusal that wrote nothing.
 
@@ -205,18 +229,20 @@ def run_shapes_only(zf: zipfile.ZipFile, *, out_dir: Path | None = None) -> int:
     internally inconsistent, and every route-line golden would then be measuring
     that gap rather than the map. Nothing is written on any refusal path, including
     the partial one, because the write happens after the last check.
+
+    `wanted` is the committed reference set when the caller has already computed it,
+    which main() does BEFORE it downloads so a local refusal never spends a mint.
+    Recomputed here when absent, so a direct call is still one call.
     """
     out_dir = OUT_DIR if out_dir is None else out_dir
-    trips_path = out_dir / "trips.txt"
-    if not trips_path.exists():
-        print(f"  !! {trips_path} does not exist; run the full generator first.")
-        return 1
-    with trips_path.open(encoding="utf-8-sig", newline="") as fh:
-        committed_trips = list(csv.DictReader(fh))
-    wanted = trim.referenced_shape_ids(committed_trips)
-    print(f"\n{len(committed_trips)} committed trips reference {len(wanted)} distinct shape_ids")
+    if wanted is None:
+        wanted = committed_shape_ids(out_dir)
+    # FALSY, NOT `is None`. None means "not computed yet"; an EMPTY set means the
+    # committed trips reference no geometry, which committed_shape_ids already
+    # refuses. Checking only for None let an explicitly empty set past that refusal
+    # and straight to the write, where it would have truncated the committed
+    # shapes.txt to a header and reported success.
     if not wanted:
-        print("  !! the committed trips reference no shape_id at all; nothing to refresh.")
         return 1
     if SHAPES_MEMBER not in set(zf.namelist()):
         print(f"  !! the publication carries no {SHAPES_MEMBER}; fixture NOT written.")
@@ -255,10 +281,18 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:  # noqa: C901 - one linear verify-then-trim pass, split would obscure it
     args = _parse_args(argv)
+    # THE LOCAL CHECKS FIRST, BEFORE ANY NETWORK. A shapes-only refresh against a
+    # checkout with no committed trips.txt is refusable without asking NJ Transit
+    # anything, and a mint spends a token against an unpublished rate limit.
+    wanted: set[str] | None = None
+    if args.shapes_only:
+        wanted = committed_shape_ids(OUT_DIR)
+        if wanted is None:
+            return 1
     raw = _download()
     zf = zipfile.ZipFile(io.BytesIO(raw))
     if args.shapes_only:
-        return run_shapes_only(zf)
+        return run_shapes_only(zf, wanted=wanted)
     members = set(zf.namelist())
     problems: list[str] = []
 

@@ -170,11 +170,15 @@ def _archive(service_date: str = "20991231") -> bytes:
                 {
                     "shape_id": f"sh{route}",
                     "shape_pt_sequence": str(seq),
-                    "shape_pt_lat": f"40.{700 + seq}",
-                    "shape_pt_lon": f"-74.{100 + seq}",
+                    "shape_pt_lat": f"{lat:.5f}",
+                    "shape_pt_lon": f"{lon:.5f}",
                 }
                 for route in ROUTES
-                for seq in (1, 2, 3)
+                # A V, because the re-trim simplifies: three collinear points would
+                # be written as two and the count below would measure the tolerance.
+                for seq, (lat, lon) in enumerate(
+                    [(40.700, -74.100), (40.702, -74.102), (40.704, -74.100)], start=1
+                )
             ]
             # A shape no trip references, so the slice has something to LEAVE
             # BEHIND: a re-trim that copied the member through would carry it.

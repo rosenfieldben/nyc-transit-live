@@ -18,6 +18,7 @@ import asyncio
 
 import httpx
 import pytest
+from google.protobuf.message import DecodeError
 
 import main as app_module
 import pollers
@@ -29,7 +30,13 @@ pytestmark = pytest.mark.anyio
 def cache():
     app_module.app.state.feed_cache = {
         name: app_module._fresh_entry()
-        for name in ("buses", "subways", "railroads", "path", "ferry")
+        # EVERY registry key, and it must stay that way: _poll_feeds reads
+        # cache[name] for each registered source BEFORE the TaskGroup children
+        # start, so a missing key raises in the cycle body rather than in a child.
+        # The loop then logs and sleeps, the clock below turns that sleep into a
+        # no-op, and the whole suite spins at full speed instead of failing. That
+        # is what adding "njt" to the registry without this line did.
+        for name in ("buses", "subways", "railroads", "path", "ferry", "njt")
     }
     return app_module.app.state.feed_cache
 
@@ -517,3 +524,224 @@ def test_c4_first_leaf_picks_the_first_failure_and_descends_nested_groups():
     # A nested group must never reach a handler as an opaque repr.
     nested = ExceptionGroup("outer", [ExceptionGroup("inner", [first]), second])
     assert _first_leaf(nested) is first
+
+
+# ---------------------------------------------------------------------------
+# NJ Transit: a failed poll must say so on the block the CLIENT reads (15b)
+# ---------------------------------------------------------------------------
+
+
+async def _run_njt_refresh(monkeypatch, cache, raiser):
+    """Drive _refresh_njt once with a static group that is ready and a fetch that
+    fails the given way, starting from a healthy per-system block."""
+    app = app_module.app
+    monkeypatch.setattr(app.state, "njt_static_status", "ready", raising=False)
+    monkeypatch.setattr(app.state, "njt_stops", {"109": {}}, raising=False)
+    monkeypatch.setattr(app.state, "njt_trips", {"T1": {}}, raising=False)
+    entry = cache["njt"]
+    # A healthy previous generation, exactly as a successful poll leaves it.
+    entry.update(
+        data=[{"id": "T1"}],
+        fetched_at=1000.0,
+        feed_timestamp=1000.0,
+        error=None,
+        systems={"njt": {"fetched_at": 1000.0, "ok": True, "retained_since": None, "routes": None}},
+    )
+
+    async def boom(*_args, **_kwargs):
+        raise raiser
+
+    monkeypatch.setattr(app_module, "fetch_njt_trains", boom)
+    await pollers._refresh_njt(app, client=None)
+    return entry
+
+
+@pytest.mark.parametrize(
+    "raiser",
+    [
+        httpx.ConnectError("upstream refused"),
+        pollers.njt_auth.NjtAuthError("token rejected"),
+        pollers.njt_auth.NjtUpstreamError("HTTP 503"),
+        DecodeError("not a protobuf"),
+    ],
+    ids=["transport", "auth", "upstream", "decode"],
+)
+async def test_a_failed_njt_poll_marks_its_own_system_block_not_just_the_cache_error(
+    monkeypatch, cache, raiser
+):
+    """THE DEFECT THE CONTRACT TIER FOUND, pinned one layer down.
+
+    /api/njt-trains publishes a C2 per-system block, and the client reads THAT to
+    decide whether to draw a train as stale. Every classified failure in
+    _refresh_njt used to record the cache error and the feed_health dict and leave
+    the block reporting ok: True, because only the subway and railroad refreshers
+    called _mark_all_systems_failed and the unclassified-failure degrader was the
+    one path here that did.
+
+    The consequence is the exact trade C2 exists to refuse: retention is honest
+    only when the retained data is drawn AS stale, so a block still claiming ok
+    through an outage turns "last-known trains, dimmed" into "ghost trains at full
+    opacity". Parametrized across all four classified failures because the
+    original defect was per-branch, and one fixed branch would have looked green.
+
+    THE RETAINED TRAINS STAY, which is the other half of the same claim: a failed
+    poll learned nothing new, so the previous answer is still the best available.
+    It is the block, not the data, that has to change.
+    """
+    entry = await _run_njt_refresh(monkeypatch, cache, raiser)
+    assert entry["systems"]["njt"]["ok"] is False, entry["systems"]
+    # fetched_at is deliberately untouched: "this system's data is from then" is
+    # still true, and its divergence from the envelope's advancing clock IS the
+    # staleness signal.
+    assert entry["systems"]["njt"]["fetched_at"] == 1000.0
+    assert entry["data"] == [{"id": "T1"}], "a failed poll keeps the last-known trains"
+    assert entry["error"] is not None
+    assert app_module.app.state.njt_feed_health == {"total": 1, "ok": 0, "failed": ["njt"]}
+
+
+async def test_the_not_configured_njt_poll_also_marks_the_block(monkeypatch, cache):
+    """The same claim on the path that makes no request at all.
+
+    A deployment whose credentials are removed after a healthy start would
+    otherwise keep serving its last trains with a block that says they are fine,
+    forever, because nothing else ever writes to that block again.
+    """
+    app = app_module.app
+    monkeypatch.setattr(app.state, "njt_static_status", "not-configured", raising=False)
+    entry = cache["njt"]
+    entry.update(
+        data=[{"id": "T1"}],
+        fetched_at=1000.0,
+        systems={"njt": {"fetched_at": 1000.0, "ok": True, "retained_since": None, "routes": None}},
+    )
+    await pollers._refresh_njt(app, client=None)
+    assert entry["systems"]["njt"]["ok"] is False
+    assert "not configured" in entry["error"]["detail"]
+
+
+async def test_a_refresh_that_outruns_the_deadline_also_marks_the_system_block(monkeypatch, cache):
+    """THE SAME DISHONESTY ONE LAYER OUT, and the layer NJ Transit is most likely
+    to reach.
+
+    A refresh killed by REFRESH_DEADLINE_S is caught by _bounded_refresh, not by
+    any refresher's own handler, so none of the classified-failure fixes ran for it
+    and the C2 block kept reporting ok: true beside retained trains. NJ Transit is
+    the most exposed source to that path by construction: njt_auth.njt_post's worst
+    case is four requests at REQUEST_TIMEOUT_S each (mint, POST, re-mint, POST),
+    which is 120s against a 45s deadline, so a slow-but-alive RailData lands here
+    rather than at _refresh_njt's own error handling.
+
+    Driven through _bounded_refresh directly with a compressed deadline, because
+    the claim is about that wrapper rather than about any one source.
+    """
+    entry = cache["njt"]
+    entry.update(
+        data=[{"id": "T1"}],
+        fetched_at=1000.0,
+        systems={"njt": {"fetched_at": 1000.0, "ok": True, "retained_since": None, "routes": None}},
+    )
+    monkeypatch.setattr(pollers, "REFRESH_DEADLINE_S", 0.01)
+
+    async def wedged():
+        await asyncio.sleep(5)
+
+    await pollers._bounded_refresh(entry, wedged())
+    assert entry["systems"]["njt"]["ok"] is False, (
+        "a wedged refresh is a total failure for that source; the block must say so"
+    )
+    assert entry["error"]["status"] == 504
+    assert entry["data"] == [{"id": "T1"}], "and the last-known data is still kept"
+
+
+async def test_the_deadline_path_is_a_no_op_for_a_source_with_no_system_block(monkeypatch, cache):
+    """PATH and the ferry publish no per-system block. _mark_all_systems_failed
+    walks whatever is there and must not invent one, or a source that never had
+    C2 freshness would start serving an empty systems map."""
+    entry = cache["path"]
+    monkeypatch.setattr(pollers, "REFRESH_DEADLINE_S", 0.01)
+
+    async def wedged():
+        await asyncio.sleep(5)
+
+    await pollers._bounded_refresh(entry, wedged())
+    assert "systems" not in entry
+    assert entry["error"]["status"] == 504
+
+
+# ---------------------------------------------------------------------------
+# The alert health map tracks the feeds this process actually polls (15b)
+# ---------------------------------------------------------------------------
+
+
+def test_alert_health_drops_a_system_that_lost_its_credentials(monkeypatch):
+    """Seeded-once versus read-per-poll, closed.
+
+    A system left in the health map but absent from the active set is neither
+    fetched nor failed, so _apply_alert_generation's not-failed branch stamps
+    fresh_at = now and last_error = None on it every poll while
+    merge_alert_generations deletes its alerts as neither fresh nor retained. The
+    index thins silently under a health surface that reads perfectly green, which
+    is the one thing that map exists to prevent.
+    """
+    entry = app_module._fresh_alerts_entry()
+    entry["health"]["njt"] = {"fresh_at": 5.0, "retained_since": None, "last_error": None}
+    monkeypatch.setattr(pollers, "active_alert_feeds", lambda: {"subway": "u", "MNR": "u"})
+    pollers._reconcile_alert_health(entry)
+    assert set(entry["health"]) == {"subway", "MNR"}
+
+
+def test_alert_health_seeds_a_system_that_gained_credentials(monkeypatch):
+    """The other direction, and the subtler consequence: without a health key the
+    retention clock threaded out of that map is never persisted, so retained_since
+    restarts at now on every failing poll and ALERT_RETENTION_MAX_S can never
+    fire. The system's alerts would then be carried forward forever."""
+    entry = app_module._fresh_alerts_entry()
+    assert "njt" not in entry["health"], "the test environment has no NJT credentials"
+    monkeypatch.setattr(
+        pollers, "active_alert_feeds", lambda: {"subway": "u", "MNR": "u", "njt": "u"}
+    )
+    pollers._reconcile_alert_health(entry)
+    assert entry["health"]["njt"] == {
+        "fresh_at": None,
+        "retained_since": None,
+        "last_error": None,
+    }
+
+
+def test_alert_health_reconcile_leaves_a_matching_map_untouched(monkeypatch):
+    """The steady state, which is every poll on every deployment: no key added, no
+    key removed, and nothing overwritten. setdefault rather than assignment is what
+    keeps a live system's fresh_at and retention clock intact."""
+    entry = app_module._fresh_alerts_entry()
+    entry["health"]["subway"] = {"fresh_at": 7.0, "retained_since": 3.0, "last_error": "boom"}
+    before = {k: dict(v) for k, v in entry["health"].items()}
+    monkeypatch.setattr(pollers, "active_alert_feeds", lambda: dict.fromkeys(before, "u"))
+    pollers._reconcile_alert_health(entry)
+    assert entry["health"] == before
+
+
+async def test_the_alert_refresher_actually_reconciles_before_it_polls(monkeypatch, cache):
+    """THE WIRING, not the function. _reconcile_alert_health is correct and tested
+    above; a mutation that simply deletes its call from _refresh_alerts survived
+    every one of those tests, because they all call it directly.
+
+    This is the same gap the poll registry's coupling test exists for: a helper
+    that is right and unreachable is worth exactly nothing, and the way that
+    happens is a refactor moving the call rather than the logic.
+    """
+    app = app_module.app
+    app.state.alerts_cache = app_module._fresh_alerts_entry()
+    entry = app.state.alerts_cache
+    entry["health"]["ghost"] = {"fresh_at": 1.0, "retained_since": None, "last_error": None}
+
+    async def no_alerts(_client):
+        return [], 0, []
+
+    monkeypatch.setattr(app_module, "fetch_service_alerts", no_alerts)
+    await pollers._refresh_alerts(app, client=None)
+    assert "ghost" not in entry["health"], (
+        "_refresh_alerts must reconcile the health map against the active feed set "
+        "before it polls; a system nothing fetches cannot be allowed to keep "
+        "reporting itself healthy"
+    )
+    assert set(entry["health"]) == set(pollers.active_alert_feeds())

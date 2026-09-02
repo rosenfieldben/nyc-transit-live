@@ -76,6 +76,7 @@ import path_static  # noqa: E402
 import railroad_static  # noqa: E402
 import static_data  # noqa: E402
 from cache import _sanitize_upstream as _sanitize  # noqa: E402
+from feeds import njt as njt_feed  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Result model
@@ -350,6 +351,85 @@ NJT_REQUIRED_MEMBERS = (
 # it as required turned the 6-hourly schedule red over a member the app was
 # designed to survive losing.
 NJT_WATCHED_MEMBERS = ("shapes.txt",)
+
+# NJ Transit Rail's daily service window in ET, and the two REALTIME bands, all
+# three DERIVED FROM THE PEAK PROBE. The working is at THE FRESHNESS BUDGET,
+# DERIVED in backend/feeds/njt.py and is not repeated here; the one line worth
+# carrying is the probe's own caveat, that "the overnight numbers are optimistic
+# by roughly 2x". A band set from an overnight sample would be about half of what
+# peak needs and would page every weekday morning.
+#
+# THE WINDOW WRAPS MIDNIGHT, unlike the ferry's, because NJ Transit Rail does. The
+# last trains reach their terminals after 01:00 and the first leave before 05:30,
+# so a simple start <= t <= end test would call the busiest end of the night
+# "closed" and the quietest part of the morning "in service". Generous at both
+# ends for the same reason the ferry window is: a schedule that shifts by twenty
+# minutes must not move the monitor.
+NJT_SERVICE_START = dt_time(5, 0)
+NJT_SERVICE_END = dt_time(1, 30)
+
+# Header lag: how far behind the feed's own content clock may fall.
+#
+#   observed at peak   9s to 23s, worst observed rather than a tail estimate
+#   generation period  ~11.8s
+#
+#   < 120s   PASS. Ten generation periods and over 5x the worst observed lag.
+#   120-600s WARN. The publisher has missed several generations. Worth a look, and
+#            deliberately not a page: brief publisher hiccups recover alone.
+#   > 600s   FAIL. Matches the house REALTIME_STALE_S for the MTA feeds, and means
+#            the same thing here: this is not jitter, the upstream stopped.
+#
+# The GAP between the edges is the point, exactly as at PRODUCTION_FEED_STALE_S: a
+# monitor whose red light is usually noise is worse than no monitor.
+NJT_HEADER_LAG_WARN_S = 120.0
+NJT_HEADER_LAG_FAIL_S = 600.0
+
+# Trips in flight before the placement claim below is worth making. The peak probe
+# counted 745; well under any real service level, so a quiet Sunday afternoon
+# still clears it, while a feed that has emptied out does not get a ratio computed
+# from three trips.
+NJT_MIN_TRIPS_FOR_RATIO = 20
+
+# THE WATCHED RATIO, and the assumption it watches (15b directive).
+#
+# WHAT IS ASSUMED. feeds.njt._place records one assumption the probes did not
+# measure directly: that this feed RETAINS ALREADY-PASSED STOPS. Placement is
+# built on it. A running train is expected to have a passed call behind it and a
+# future call ahead, so it lands in the dwelling case or the interpolate-between
+# case. If NJ Transit ever starts PRUNING passed stops the way the railroad feeds
+# do, every running train instead arrives at the not-yet-departed branch, where
+# MAX_FUTURE_FIRST_STOP_S (180s, three minutes) drops anything whose first listed
+# call is further out than that. NJT stop spacing at rush is minutes to tens of
+# minutes, so nearly every train would vanish from the map while its arrivals
+# stayed on the boards.
+#
+# WHY THIS IS A MONITOR CHECK AND NOT A COMMENT. A detectable failure signature
+# belongs to the monitor rather than to a future rider's confusion. The decoder
+# comment says what breaks; this says it out loud, on a schedule, before anyone
+# has to notice a thinning map.
+#
+# THE DERIVATION, and why there is no invented percentage in it. The denominator
+# is not "all trips": whether this feed carries the whole service day or only what
+# is in flight is not something either probe settled, so a ratio over all trips
+# would have an unknown healthy value and could not be banded honestly. The
+# denominator is instead trips whose calls STRADDLE now, one behind and one ahead,
+# which is the feed's own statement that the train is running this minute. That
+# makes both halves of the check derivable rather than guessed:
+#
+#   1. STRADDLING COUNT. Under the assumption, service hours with hundreds of
+#      trips in the feed always produce some straddling trips. Under the broken
+#      assumption there are NONE, because there are no passed calls to straddle
+#      with. Zero straddling trips while the feed is full IS the signature, and it
+#      needs no percentage at all.
+#   2. PLACED OVER STRADDLING. A trip with a call behind and a call ahead lands in
+#      _place case 1 or case 3 by construction, so the healthy value is 1.0, not
+#      an estimate. The floor allows for the handful of trips whose straddling
+#      pair is missing both times on one side (the probe found both times present
+#      on 103 of 103 calls, so this is headroom rather than an expected loss).
+#
+# Both are WARN. This watches an ASSUMPTION, and the honest response to "the thing
+# we assumed may have changed" is a human reading the feed, not a page.
+NJT_PLACEMENT_FLOOR = 0.95
 
 # NYC Ferry daily service window in ET (~06:00 first departures to ~22:30 last
 # arrivals). Used so an empty realtime feed reads as FAIL-worthy only when boats
@@ -744,10 +824,18 @@ def check_alerts_realtime(
     *,
     feed_urls: dict[str, str] | None = None,
 ) -> Result:
-    """Every service-alerts feed: reachable and decodable by the production
+    """Every KEYLESS service-alerts feed: reachable and decodable by the production
     _decode_alerts. NO entity floor: zero active alerts is a valid, common, and
-    good steady state, so emptiness is never a fault here."""
-    feed_urls = feed_urls if feed_urls is not None else feeds.ALERT_FEED_URLS
+    good steady state, so emptiness is never a fault here.
+
+    NJ TRANSIT'S ALERT FEED IS NOT CHECKED HERE, and its absence is structural
+    rather than an oversight. That feed is a POST carrying a token, so a GET at it
+    returns nothing decodable and this check would report a permanent FAIL against
+    a feed it never spoke to. It is checked by check_njt_realtime, which holds the
+    run's one minted token; feeds.KEYLESS_ALERT_FEEDS is the seam, and the tests
+    below pin njt out of this set and into the full one so the split stays
+    deliberate."""
+    feed_urls = feed_urls if feed_urls is not None else feeds.KEYLESS_ALERT_FEEDS
     statuses: list[str] = []
     details: list[str] = []
     for key, url in feed_urls.items():
@@ -767,6 +855,248 @@ def check_alerts_realtime(
     if not statuses:
         return Result("alerts-realtime", PASS, f"{len(feed_urls)} alert feeds decodable")
     return Result("alerts-realtime", _worst(statuses), "; ".join(details))
+
+
+def _in_njt_service_hours(now: float, tz) -> bool:
+    """True when `now` falls inside NJ Transit Rail's daily service window in ET.
+
+    THE WINDOW WRAPS MIDNIGHT (05:00 to 01:30), so this cannot be the ferry's
+    simple start <= t <= end test: that would call 00:30, when the last trains are
+    still running, "closed", and it would call 04:00, when nothing is moving,
+    "in service". Judged in local time so it stays correct across DST with no
+    offset arithmetic here.
+    """
+    local = datetime.fromtimestamp(now, tz).time()
+    return local >= NJT_SERVICE_START or local <= NJT_SERVICE_END
+
+
+def _njt_straddling_trips(feed, now: float, stops: dict[str, dict]) -> set[str]:
+    """Trip ids the feed itself says are running RIGHT NOW: one call behind `now`,
+    one ahead.
+
+    READ STRAIGHT OFF THE WIRE, never through the decoder, and that is the whole
+    point of the check this feeds. Computing the denominator with the code whose
+    output is the numerator would make a decoder that placed nothing look like a
+    feed with nothing running in it, which is the exact failure being watched for.
+
+    CANCELED trips are excluded, because they are not running and the decoder is
+    right to drop them; counting them would put a permanent gap between numerator
+    and denominator that has nothing to do with the assumption.
+    """
+    straddling: set[str] = set()
+    for entity in feed.entity:
+        if not entity.HasField("trip_update"):
+            continue
+        tu = entity.trip_update
+        if tu.trip.schedule_relationship in feeds._DROP_TRIP_RELATIONSHIPS:
+            continue
+        behind = ahead = False
+        for stu in tu.stop_time_update:
+            # THE SAME TWO DROP RULES THE DECODER APPLIES, both of them, because a
+            # ratio whose numerator and denominator filter differently reports a
+            # gap that is its own arithmetic rather than a change in the feed.
+            # feeds.njt._ordered_calls drops a call for EITHER reason:
+            #
+            #   * an unknown stop_id. njt_static drops a stops.txt row whose
+            #     coordinates will not parse, so a live feed can name a stop the
+            #     static table does not have.
+            #   * any relationship in _DROP_STOP_RELATIONSHIPS, which is SKIPPED
+            #     AND NO_DATA. Checking SKIPPED alone left NO_DATA counted here and
+            #     dropped there, and this producer already ships 238
+            #     relationship-with-times calls a peak poll, so a NO_DATA carrying
+            #     times is exactly its habit.
+            #
+            # Either mismatch pushes placed/straddling below the floor and reports
+            # "the feed stopped retaining passed stops" when nothing of the kind
+            # happened. NJT_PLACEMENT_FLOOR's derivation claims the healthy value
+            # is 1.0 by construction, and that claim is only true if both sides
+            # filter identically.
+            if not stu.stop_id or stu.stop_id not in stops:
+                continue
+            if stu.schedule_relationship in feeds._DROP_STOP_RELATIONSHIPS:
+                continue
+            for when in (stu.arrival, stu.departure):
+                if not when.time:
+                    continue
+                behind = behind or when.time <= now
+                ahead = ahead or when.time > now
+        if behind and ahead and tu.trip.trip_id:
+            straddling.add(tu.trip.trip_id)
+    return straddling
+
+
+def check_njt_realtime(
+    fetch: Fetcher,
+    sleep: Callable[[float], None],
+    now: float,
+    parsed: dict | None,
+    username: str | None,
+    password: str | None,
+    *,
+    token: _NjtToken | None = None,
+    token_url: str | None = None,
+    tu_url: str | None = None,
+    alerts_url: str | None = None,
+    tz=None,
+) -> Result:
+    """NJ Transit realtime: TripUpdates and alerts, both POSTed behind the run's
+    one token, both decoded by the production code.
+
+    WARN-SKIPPED WITH NO CREDENTIALS, exactly like check_njt_static and
+    check_bus_realtime: the monitor cannot reach a credentialed feed without
+    credentials, and that is a configuration choice rather than an outage. Every
+    fork and pull request context takes this path, which is precisely where a live
+    NJ Transit POST must not happen.
+
+    IT SHARES THE STATIC CHECK'S TOKEN. run_all builds one _NjtToken and hands it
+    to both, so a run with three RailData consumers still costs one mint. The
+    tests assert that arithmetic through run_all rather than trusting the wiring.
+
+    THE ALERTS FEED IS CHECKED HERE rather than in check_alerts_realtime, and the
+    split is structural: that check's fetcher GETs, and this endpoint answers only
+    a POST carrying a token. feeds.KEYLESS_ALERT_FEEDS is the seam, and both sides
+    of the split are asserted so it cannot decay into a gap.
+
+    WHAT IT ASSERTS, in order of what a failure would mean:
+
+      1. BOTH FEEDS REACHABLE AND STRICTLY PARSEABLE, through feeds.parse_feed and
+         the production decoders. A pass means the real code path works against
+         today's bytes, not that a protobuf arrived.
+      2. HEADER LAG inside the bands derived at NJT_HEADER_LAG_WARN_S from the
+         PEAK probe (never the overnight one).
+      3. TRIPS PRESENT during service hours. Empty overnight is the correct
+         answer, and the probe's own 13-byte valid feed is why an empty feed is
+         never a fault outside those hours.
+      4. THE WATCHED PLACEMENT RATIO, which is the 15b directive: the derivation
+         and the assumption it guards are at NJT_PLACEMENT_FLOOR above.
+    """
+    creds = _njt_credentials(username, password)
+    if creds is None:
+        return Result(
+            "njt-realtime",
+            WARN,
+            f"skipped ({njt_auth.USERNAME_VAR}/{njt_auth.PASSWORD_VAR} not set)",
+        )
+    username, password = creds
+    tz = tz if tz is not None else feeds.NYC_TZ
+    mint_url = token_url if token_url is not None else njt_auth.NJT_TOKEN_URL
+    trip_url = tu_url if tu_url is not None else njt_feed.NJT_TU_URL
+    alert_url = alerts_url if alerts_url is not None else njt_feed.NJT_ALERTS_URL
+
+    minter = token if token is not None else _NjtToken(fetch, mint_url, username, password)
+    minted_token, mint_detail = minter.get()
+    if minted_token is None:
+        return Result("njt-realtime", FAIL, mint_detail)
+    form = {"token": minted_token}
+
+    statuses: list[str] = []
+    details: list[str] = []
+    in_service = _in_njt_service_hours(now, tz)
+
+    # -- the alerts feed, the simpler of the two ---------------------------
+    alerts_res, alerts_detail = _fetch_retrying(fetch, alert_url, sleep, files=form)
+    if alerts_res is None:
+        statuses.append(FAIL)
+        details.append(f"alerts down ({alerts_detail})")
+    else:
+        try:
+            feeds._decode_alerts(alerts_res.content, feeds.NJT_ALERT_SYSTEM, now)
+        except Exception as exc:  # noqa: BLE001 - the decoder raising on live data IS the break
+            statuses.append(FAIL)
+            details.append(f"alerts undecodable ({_sanitize(exc)})")
+    # NO ENTITY FLOOR ON ALERTS, matching check_alerts_realtime: zero active
+    # alerts is a valid, common and good steady state.
+
+    # -- trip updates ------------------------------------------------------
+    tu_res, tu_detail = _fetch_retrying(fetch, trip_url, sleep, files=form)
+    if tu_res is None:
+        statuses.append(FAIL)
+        details.append(f"trip updates down ({tu_detail})")
+        return Result("njt-realtime", _worst(statuses), "; ".join(details))
+    try:
+        feed = feeds.parse_feed(tu_res.content)
+    except Exception as exc:  # noqa: BLE001 - a strict-parse failure is the break
+        statuses.append(FAIL)
+        details.append(f"trip updates undecodable ({_sanitize(exc)})")
+        return Result("njt-realtime", _worst(statuses), "; ".join(details))
+
+    header_ts = feeds._header_timestamp(feed)
+    if header_ts is None:
+        statuses.append(WARN)
+        details.append("trip updates carry no header timestamp, so freshness cannot be judged")
+    else:
+        lag = now - header_ts
+        if lag > NJT_HEADER_LAG_FAIL_S:
+            statuses.append(FAIL)
+            details.append(f"header {int(lag)}s behind (> {int(NJT_HEADER_LAG_FAIL_S)}s)")
+        elif lag > NJT_HEADER_LAG_WARN_S:
+            statuses.append(WARN)
+            details.append(f"header {int(lag)}s behind (> {int(NJT_HEADER_LAG_WARN_S)}s)")
+
+    trips_table = (parsed or {}).get("trips") or {}
+    stops_table = (parsed or {}).get("stops") or {}
+    entities = sum(1 for e in feed.entity if e.HasField("trip_update"))
+    if not entities:
+        if in_service:
+            statuses.append(WARN)
+            details.append("no trip updates during service hours")
+        # Outside service hours an empty feed is the normal closed state and the
+        # probe recorded exactly that as a 13-byte valid body. The "(closed)"
+        # summary already conveys it, so no note is added.
+        return _njt_rt_result(statuses, details, in_service, entities)
+
+    if not stops_table or not trips_table:
+        # The static check failed and its own result says why. The placement claim
+        # cannot be assessed without those tables, and emitting a 0%-placed WARN
+        # here would misattribute a monitor-side archive blip to the realtime feed.
+        details.append("placement not checked (static NJ Transit tables unavailable)")
+        return _njt_rt_result(statuses, details, in_service, entities)
+
+    trains, _arrivals, _ts, warnings = njt_feed.decode_njt_trip_updates(
+        tu_res.content, stops_table, trips_table, now
+    )
+    if warnings:
+        # The entity.id / trip_short_name cross-check the probe measured at 745 of
+        # 745. WARN rather than FAIL: nothing is served wrong when it drifts, but
+        # it is the assumption feeds.njt._identity is built on and a drift that
+        # STARTS is worth a human deciding about rather than a log line nobody reads.
+        statuses.append(WARN)
+        details.append(f"{len(warnings)} entity.id/trip_short_name mismatches (probe: 0 of 745)")
+
+    straddling = _njt_straddling_trips(feed, now, stops_table)
+    if entities >= NJT_MIN_TRIPS_FOR_RATIO and in_service:
+        if not straddling:
+            # THE ASSUMPTION'S SIGNATURE, and the reason this check exists. No trip
+            # in a busy feed has a call behind it and a call ahead of it, which is
+            # what "NJ Transit stopped retaining passed stops" looks like from
+            # here. Placement would collapse next (see NJT_PLACEMENT_FLOOR).
+            statuses.append(WARN)
+            details.append(
+                f"{entities} trips and NONE straddle now: the feed may have stopped "
+                "retaining passed stops, which feeds.njt._place assumes it does"
+            )
+        else:
+            placed = {t["trip_id"] for t in trains} & straddling
+            rate = len(placed) / len(straddling)
+            if rate < NJT_PLACEMENT_FLOOR:
+                statuses.append(WARN)
+                details.append(
+                    f"only {len(placed)}/{len(straddling)} running trips placed "
+                    f"({rate:.0%} < {NJT_PLACEMENT_FLOOR:.0%})"
+                )
+    return _njt_rt_result(statuses, details, in_service, entities)
+
+
+def _njt_rt_result(
+    statuses: list[str], details: list[str], in_service: bool, entities: int
+) -> Result:
+    """The njt-realtime summary line, shared by every return above so a healthy run
+    and a noted-but-healthy run read the same way."""
+    if not statuses:
+        note = "in service" if in_service else "closed"
+        base = f"{entities} trip updates, both feeds decodable ({note})"
+        return Result("njt-realtime", PASS, base + ("; " + "; ".join(details) if details else ""))
+    return Result("njt-realtime", _worst(statuses), "; ".join(details))
 
 
 def check_bus_realtime(
@@ -1166,6 +1496,82 @@ def _njt_service_status(latest: str | None, now: float, tz) -> tuple[str, str]:
     return (PASS, f"service through {latest}")
 
 
+class _NjtToken:
+    """THE RUN'S SINGLE NJ TRANSIT TOKEN, minted on first use and shared after.
+
+    THE MONITOR'S ANSWER TO njt_auth.TokenCache, and deliberately a much smaller
+    one: this process is single-threaded and lives for one run, so there is no
+    lock, no age ceiling, and no re-mint. Only the property that matters here is
+    kept, and by 15b there are three consumers of it (the static archive, the
+    realtime trip updates, and the realtime alerts).
+
+    ONE MINT PER RUN. Minting is rate-limited below the data cap, the limit is
+    unpublished, and tokens are product-scoped so we cannot even read our own
+    usage counters. Three checks that each minted would triple a run's cost
+    against that cap for no benefit at all, and the 6-hourly schedule would spend
+    twelve mints a day where it needs four.
+
+    A FAILED MINT IS REMEMBERED, NOT RETRIED. Every consumer after the first gets
+    the same failure detail rather than a second doomed POST at the same endpoint,
+    which is the shape a rate limit punishes hardest. `get` therefore returns
+    (token, detail) with exactly one of them set.
+    """
+
+    def __init__(self, fetch: Fetcher, url: str, username: str, password: str) -> None:
+        self._fetch = fetch
+        self._url = url
+        self._username = username
+        self._password = password
+        self._done = False
+        self._token: str | None = None
+        self._detail = ""
+
+    def get(self) -> tuple[str | None, str]:
+        if not self._done:
+            self._done = True
+            self._token, self._detail = self._mint()
+        return self._token, self._detail
+
+    def _mint(self) -> tuple[str | None, str]:
+        # Deliberately not through _fetch_retrying: that helper retries once on a
+        # non-200, which for getToken would mean two mints against a cap we cannot
+        # measure. A single miss here is worth a FAIL a human reads.
+        try:
+            minted = self._fetch(
+                self._url, files={"username": self._username, "password": self._password}
+            )
+        except Exception as exc:  # noqa: BLE001 - any transport failure is a miss
+            return None, f"mint failed (transport: {_sanitize(exc)})"
+        if minted.status != 200:
+            # The body is quoted because it is the only place NJ Transit says WHY.
+            # Its error bodies are short JSON ({"errorMessage": "..."}), and _quote
+            # bounds anything that is not.
+            return None, f"mint failed (HTTP {minted.status}: {njt_auth._quote(minted.content)})"
+        try:
+            return njt_auth.extract_token(minted.content), ""
+        except njt_auth.NjtAuthError as exc:
+            return None, f"mint failed ({_sanitize(exc)})"
+
+
+def _njt_credentials(username: str | None, password: str | None):
+    """The monitor's idea of "configured", taken from the app rather than re-derived.
+
+    THROUGH njt_auth.credentials, NEVER a bare truthiness test on the two strings.
+    Reuse, never reimplement, is this file's second guiding principle, and here it
+    is load-bearing rather than tidy: the app treats the placeholders .env.example
+    ships as ABSENT, and a re-derived `if not username or not password` reads
+    "your-njt-username" as configured. That sends a doomed mint to the live
+    getToken endpoint on every run, against the unpublished cap, and reports the
+    rejection as an NJ Transit outage instead of the WARN-skip the operator was
+    promised. Whitespace-only values behave the same way, and GitHub renders an
+    unavailable secret as an EMPTY STRING rather than leaving it unset, so this is
+    also the path every fork and pull request context takes.
+    """
+    return njt_auth.credentials(
+        {njt_auth.USERNAME_VAR: username or "", njt_auth.PASSWORD_VAR: password or ""}
+    )
+
+
 def check_njt_static(
     fetch: Fetcher,
     sleep: Callable[[float], None],
@@ -1173,6 +1579,7 @@ def check_njt_static(
     username: str | None,
     password: str | None,
     *,
+    token: _NjtToken | None = None,
     token_url: str | None = None,
     url: str | None = None,
     tz=None,
@@ -1187,10 +1594,13 @@ def check_njt_static(
 
     ONE MINT PER RUN, and it is not an optimization. Minting is rate-limited below
     the data cap, the limit is unpublished, and tokens are product-scoped so we
-    cannot even read our own usage counters. So the mint below is a single POST
-    with NO retry (a mint that fails is a FAIL, reported with the upstream body
-    quoted), while the archive fetch that follows keeps the house one-retry
-    behavior because it REUSES that token and therefore costs nothing extra.
+    cannot even read our own usage counters. Since 15b the mint lives in _NjtToken
+    and is SHARED with the realtime check rather than made here, so a run with
+    three NJ Transit consumers still costs one token; run_all builds that object
+    and hands the same one to both checks. The `token` argument defaults to None
+    so a standalone call still works exactly as before, minting its own. The
+    archive fetch that follows keeps the house one-retry behavior, because it
+    REUSES the token and therefore costs nothing extra.
 
     Everything else is the ordinary static shape: reachable, a valid zip, required
     members present, parseable by the production parser (njt_static._parse_zip, so
@@ -1198,18 +1608,7 @@ def check_njt_static(
     their floors, an identity spot check, and the service-date band above. Returns
     the parsed tables so a future NJT realtime check can join against them.
     """
-    # THROUGH njt_auth.credentials, NEVER a bare truthiness test on the two strings.
-    # Reuse, never reimplement, is this file's second guiding principle, and here it
-    # is load-bearing rather than tidy: the app treats the placeholders .env.example
-    # ships as ABSENT, and a re-derived `if not username or not password` reads
-    # "your-njt-username" as configured. That sends a doomed mint to the live
-    # getToken endpoint on every run, against the unpublished cap, and reports the
-    # rejection as an NJ Transit outage instead of the WARN-skip the operator was
-    # promised. Whitespace-only values behave the same way. One call keeps the
-    # monitor's idea of "configured" identical to the app's, by construction.
-    creds = njt_auth.credentials(
-        {njt_auth.USERNAME_VAR: username or "", njt_auth.PASSWORD_VAR: password or ""}
-    )
+    creds = _njt_credentials(username, password)
     if creds is None:
         return (
             Result(
@@ -1224,31 +1623,12 @@ def check_njt_static(
     mint_url = token_url if token_url is not None else njt_auth.NJT_TOKEN_URL
     data_url = url if url is not None else njt_static.NJT_STATIC_URL
 
-    # THE ONE MINT. Deliberately not through _fetch_retrying: that helper retries
-    # once on a non-200, which for getToken would mean two mints against a cap we
-    # cannot measure. A single miss here is worth a FAIL a human reads.
-    try:
-        minted = fetch(mint_url, files={"username": username, "password": password})
-    except Exception as exc:  # noqa: BLE001 - any transport failure is a miss
-        return Result("njt-static", FAIL, f"mint failed (transport: {_sanitize(exc)})"), None
-    if minted.status != 200:
-        # The body is quoted because it is the only place NJ Transit says WHY. Its
-        # error bodies are short JSON ({"errorMessage": "..."}), and _quote bounds
-        # anything that is not.
-        return (
-            Result(
-                "njt-static",
-                FAIL,
-                f"mint failed (HTTP {minted.status}: {njt_auth._quote(minted.content)})",
-            ),
-            None,
-        )
-    try:
-        token = njt_auth.extract_token(minted.content)
-    except njt_auth.NjtAuthError as exc:
-        return Result("njt-static", FAIL, f"mint failed ({_sanitize(exc)})"), None
+    minter = token if token is not None else _NjtToken(fetch, mint_url, username, password)
+    minted_token, mint_detail = minter.get()
+    if minted_token is None:
+        return Result("njt-static", FAIL, mint_detail), None
 
-    res, detail = _fetch_retrying(fetch, data_url, sleep, files={"token": token})
+    res, detail = _fetch_retrying(fetch, data_url, sleep, files={"token": minted_token})
     if res is None:
         return Result("njt-static", FAIL, f"unreachable ({detail})"), None
     # A 200 is not proof of authorization here: the probe's invalid-token response
@@ -1920,11 +2300,29 @@ def run_all(
     railroad_res, railroad = check_railroad_static(fetch, sleep, now)
     path_res, path = check_path_static(fetch, sleep, now)
     ferry_res, ferry = check_ferry_static(fetch, sleep, now)
-    # NJT has no realtime check yet (15b), so its parsed tables are discarded here
-    # rather than threaded onward. Named `_njt` rather than dropped so the shape
-    # matches its siblings and 15b only has to change the name.
-    njt_res, _njt = check_njt_static(
-        fetch, sleep, now, env.get(njt_auth.USERNAME_VAR), env.get(njt_auth.PASSWORD_VAR)
+    # ONE TOKEN FOR THE WHOLE RUN, built here and handed to both NJ Transit checks.
+    # This is the only place the sharing is expressed, which is why the tests make
+    # their conservation claim against run_all rather than against either check:
+    # a wiring mistake here would leave both checks passing and the run quietly
+    # spending two mints a time against a cap NJ Transit does not publish.
+    #
+    # BUILT EVEN WHEN CREDENTIALS ARE ABSENT, and it costs nothing: _NjtToken mints
+    # lazily on first `get`, and with no credentials both checks WARN-skip before
+    # reaching it. That is what keeps a fork or pull request context, where the
+    # secrets resolve to empty strings, from touching NJ Transit at all.
+    njt_creds = _njt_credentials(env.get(njt_auth.USERNAME_VAR), env.get(njt_auth.PASSWORD_VAR))
+    njt_token = (
+        _NjtToken(fetch, njt_auth.NJT_TOKEN_URL, njt_creds[0], njt_creds[1])
+        if njt_creds is not None
+        else None
+    )
+    njt_res, njt = check_njt_static(
+        fetch,
+        sleep,
+        now,
+        env.get(njt_auth.USERNAME_VAR),
+        env.get(njt_auth.PASSWORD_VAR),
+        token=njt_token,
     )
     results += [subway_res, railroad_res, path_res, ferry_res, njt_res]
 
@@ -1933,6 +2331,17 @@ def run_all(
     results.append(check_path_realtime(fetch, sleep, now, (path or {}).get("stops", {})))
     results.append(check_ferry_realtime(fetch, sleep, now, (ferry or {}).get("trips", {})))
     results.append(check_alerts_realtime(fetch, sleep, now))
+    results.append(
+        check_njt_realtime(
+            fetch,
+            sleep,
+            now,
+            njt,
+            env.get(njt_auth.USERNAME_VAR),
+            env.get(njt_auth.PASSWORD_VAR),
+            token=njt_token,
+        )
+    )
     results.append(check_bus_realtime(fetch, sleep, now, env.get("MTA_BUS_API_KEY")))
 
     # MONITOR_SKIP_PRODUCTION is read as "set to anything non-empty", the usual

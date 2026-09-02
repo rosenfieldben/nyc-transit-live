@@ -14,6 +14,7 @@ tests/contract/README.md for the four determinism rules this suite holds itself 
 
 from __future__ import annotations
 
+import json
 import time
 
 from conftest import CONTRACT_TIMING
@@ -377,9 +378,18 @@ def test_an_alert_expires_during_a_total_outage(contract_app):
 
     # Now take EVERY alert feed down. Nothing new can arrive; the only thing that
     # may change the index is the passage of the alerts' own window.
-    every_system = ["LIRR", "MNR", "bus", "ferry", "subway"]
+    #
+    # SIX SYSTEMS SINCE 15b, and NJ Transit's is not keyed like the other five: it
+    # is POSTed behind a token, so it lives at "njt:alerts" beside its sibling
+    # realtime route rather than under the alerts: prefix. The contract app runs
+    # WITH NJT credentials, so njt is in the active feed set and a total outage
+    # that left it up would not be total. This list is hand-written against
+    # feeds.active_alert_feeds on purpose, the same coupling the poll registry's
+    # fixture guard uses: a seventh alert feed must fail here rather than quietly
+    # make this scenario about a partial outage.
+    every_system = ["LIRR", "MNR", "bus", "ferry", "njt", "subway"]
     for system in every_system:
-        app.sim.set_mode(f"alerts:{system}", "error")
+        app.sim.set_mode("njt:alerts" if system == "njt" else f"alerts:{system}", "error")
     app.await_status(
         lambda s: sorted(s["alerts"]["degraded_systems"]) == every_system,
         "every alert system to report degraded",
@@ -412,7 +422,8 @@ def test_a_rejected_publication_keeps_the_cached_archive_serving(harness):
     """
     with harness.launch() as app:
         app.await_status(
-            lambda s: s["subway_static"] == "ready", "a good publication to warm the subway"
+            lambda s: s["subway_static"] == "ready",
+            "a good publication to warm the subway",
         )
         stops_before = app.get("/api/subway-stops")
     archive = harness.data_dir / "gtfs_static" / "gtfs_subway.zip"
@@ -701,6 +712,323 @@ def test_a_real_njt_500_neither_mints_nor_heals(harness):
         assert app.status()["njt_static"] == "failed"
         assert app.status()["static_archives"]["njt"]["failed_downloads"] >= 1
         assert app.get("/api/subway-stops"), "one failing system must not take the app down"
+
+
+# ---------------------------------------------------------------------------
+# 15b: NJ Transit realtime
+# ---------------------------------------------------------------------------
+#
+# THE TRAP MATRIX IS THE CENTREPIECE. upstream_sim._njt_trip_updates serves six
+# trips at once, five of which are shapes the 2026-08-05 rush probe watched NJ
+# Transit publish and one (ADDED) that it never did. The claims below are made BY
+# NAME against served endpoints rather than against a decoder return value,
+# because "no phantom arrival at stop 109" is a statement about what a rider's
+# departure board shows, and only a served surface can carry it.
+#
+# WHY /api/njt-arrivals AND NOT ONLY /api/njt-trains: a canceled trip fails BOTH
+# products, and the two fail differently. Placement drops it because it has no
+# live segment; arrivals drop it because the decoder filters CANCELED above the
+# split. Asserting only on trains would leave the board untested, and the board is
+# where the phantom would actually be read.
+
+# The trap matrix's train numbers, by role. Named so a failure says which trap
+# broke rather than which integer is missing.
+_HEALTHY = "3800"  # T1, the control
+_PHANTOM = "3802"  # T3, trip-level CANCELED with full times on every skipped stop
+_PARTIAL = "3804"  # T4, running, with Penn dropped and Newark surviving
+_BARE_SKIP = "1602"  # T5, the times-less SKIPPED variant
+_HEADSIGN_VICTIM = "3806"  # T7, skipping Penn while headsigned for New York
+_ADDED = "9001"  # A9, a trip no static knows; its trip_id is EMPTY on the wire
+_ADDED_2 = "9002"  # A9b, the second extra, sharing that same empty trip_id
+
+
+def _trains_by_num(body: dict) -> dict:
+    return {train["train_num"]: train for train in body["trains"]}
+
+
+def _await_njt_trains(app):
+    """Wait for the first NJT realtime poll to land, and return the envelope.
+
+    Waits on the SERVED envelope rather than on the simulator's fetch counter,
+    because a fetch that the app then failed to decode would satisfy the counter
+    and leave every assertion below reading an empty list.
+    """
+    app.await_status(
+        lambda s: s["njt_static"] == "ready",
+        "the NJ Transit static group to reach ready (realtime cannot poll before it)",
+    )
+    return app._await(
+        lambda: app.get("/api/njt-trains"),
+        lambda body: bool(body.get("trains")),
+        "the first NJ Transit realtime poll to place trains",
+        60.0,
+        lambda last: f"last /api/njt-trains: {json.dumps(last, indent=2)[:3000]}",
+    )
+
+
+def test_njt_realtime_healthy_places_trains_and_serves_a_board(contract_app):
+    """The ordinary path, end to end: mint, POST getTripUpdates, decode, place, serve.
+
+    Worth its own scenario for the same reason the 15a cold start was: everything
+    here is new. A POST realtime feed behind a token, a schedule-derived placement
+    with no GPS anywhere in it, and a per-system freshness block on an envelope
+    this tier has never seen before.
+
+    THE PLACEMENT CLAIM IS THE SHARP ONE. NJ Transit's vehicle positions feed is
+    never fetched (89% frozen coordinates at peak, worst age 3h18m), so every
+    coordinate here was computed from the TripUpdates feed's own times against
+    15a's stop table. Asserting a train sits BETWEEN its two stops is asserting
+    that arithmetic ran, which no amount of feed liveness would give for free.
+
+    Hermetic counterpart: backend/tests/test_njt_rt.py (the decode and _place).
+    """
+    app = contract_app
+    body = _await_njt_trains(app)
+    trains = _trains_by_num(body)
+
+    assert _HEALTHY in trains, f"the healthy control train must be placed: {sorted(trains)}"
+    control = trains[_HEALTHY]
+    assert control["headsign"] == "New York", "the static join must supply the real headsign"
+    assert control["route_id"] == "1"
+    # BETWEEN Newark Penn (-74.1646) and New York Penn (-73.9935), which is only
+    # true if the interpolation ran. A decoder that snapped every train to its next
+    # stop, or dropped the placement entirely, fails here.
+    assert -74.1646 < control["longitude"] < -73.9935, control
+    assert 40.734 < control["latitude"] < 40.751, control
+    assert control["status"] in ("in-transit", "at-station"), control
+
+    # THE C2 BLOCK, keyed "njt": a single-entry map on purpose, so a client reads
+    # the same shape here as on the subway and railroad envelopes.
+    assert set(body["systems"]) == {"njt"}, body["systems"]
+    assert body["systems"]["njt"]["ok"] is True
+    assert body["feed_timestamp"] is not None, "the feed header must survive to the envelope"
+
+    # And the board at Penn, which the trap assertions below are all about.
+    board = app.get("/api/njt-arrivals/109")
+    assert board["stop_name"] == "New York Penn Station"
+    assert _HEALTHY in {row["train_num"] for row in board["arrivals"]}
+
+
+def test_njt_the_trap_matrix_never_reaches_a_riders_board(contract_app):
+    """THE SCENARIO THIS PHASE EXISTS FOR. Every probed trap, in one feed, at once.
+
+    Each assertion below is a claim about a specific train at a specific station,
+    and each names the shape that would produce it if the decoder were wrong.
+
+    THE POSITIVE CONTROLS ARE NOT DECORATION. Every "not on the board" claim here
+    would pass on an app that served an empty board, so each is paired with a
+    train that MUST be there. A decoder that dropped everything would fail this
+    test on the positives before it could pass on the negatives.
+
+    Hermetic counterpart: backend/tests/test_njt_rt.py, which pins each rule
+    against a synthetic protobuf; what only this tier shows is the whole matrix
+    surviving one real decode, one real poll, and two real endpoints.
+    """
+    app = contract_app
+    body = _await_njt_trains(app)
+    trains = _trains_by_num(body)
+    penn = {row["train_num"]: row for row in app.get("/api/njt-arrivals/109")["arrivals"]}
+    newark = {row["train_num"]: row for row in app.get("/api/njt-arrivals/112")["arrivals"]}
+    hoboken = {row["train_num"]: row for row in app.get("/api/njt-arrivals/38")["arrivals"]}
+
+    # -- 1. THE PHANTOM (decoder law 1) ------------------------------------
+    # T3 is CANCELED at the trip level and still carries a full, plausible,
+    # nearly-arriving time at Penn on a stop it marks SKIPPED. 8% of peak Penn
+    # stop_time_updates were this shape. It must appear NOWHERE.
+    assert _PHANTOM not in penn, (
+        "a trip-level CANCELED train is on the Penn departure board. It keeps full "
+        "arrival and departure times on every SKIPPED stop, so only the trip-level "
+        "relationship distinguishes it from a running train."
+    )
+    assert _PHANTOM not in trains, "and it must not be on the map either"
+    assert _HEALTHY in penn, "positive control: the board is not simply empty"
+
+    # -- 2. THE PARTIAL CANCELLATION ---------------------------------------
+    # T4 is running normally and loses ONLY the stops it drops. The probe watched
+    # exactly this: normal through Newark, then Penn dropped with a plausible
+    # delay still attached to the dropped row.
+    assert _PARTIAL in newark, (
+        "a partially canceled train's SURVIVING stops must still serve. Filtering "
+        "the whole trip on any SKIPPED stop would erase a train that is running."
+    )
+    assert _PARTIAL not in penn, "but its DROPPED stop must not appear"
+    assert _PARTIAL in trains, "and the train itself is still on the map, because it is running"
+
+    # -- 3. BOTH SKIPPED VARIANTS (decoder law 2) --------------------------
+    # T5 marks Newark SKIPPED with NO times at all, the second observed variant
+    # (35 seen against 238 of the with-times shape). Both drop the stop.
+    assert _BARE_SKIP not in newark, (
+        "a stop marked SKIPPED with no arrival or departure time still has to drop. "
+        "A decoder that reads times before relationships cannot see this variant."
+    )
+    assert _BARE_SKIP in hoboken, "positive control: its surviving future stop still serves"
+    assert _BARE_SKIP in trains, "and a bare SKIPPED stop must not unplace the train"
+
+    # -- 4. THE NAMED VICTIM (decoder law 2's rider-facing case) -----------
+    # T7 is headsigned "New York" in the static and its only remaining call is
+    # New York, SKIPPED. The row a rider would actually act on.
+    assert _HEADSIGN_VICTIM not in penn, (
+        "a train headsigned FOR New York, skipping New York, is on the New York board"
+    )
+    # It is also absent from the map, and that is placement being honest rather
+    # than a second filter: with its only future call dropped there is no segment
+    # left to interpolate along, so there is no position that would not be invented.
+    assert _HEADSIGN_VICTIM not in trains, (
+        "a train whose only remaining stop is skipped has no segment to be placed on; "
+        "drawing it anyway would be a guess"
+    )
+
+    # -- 5. ADDED (decoder law 3) ------------------------------------------
+    # Never observed in either probe, accepted anyway, joins no static.
+    assert _ADDED in trains, "an ADDED trip must be accepted, not dropped and not crashed on"
+    added = trains[_ADDED]
+    assert added["headsign"] == "1 9001", (
+        "an ADDED trip joins no static, so its display name is synthesized from the "
+        f"realtime route plus the train number; got {added['headsign']!r}"
+    )
+    assert _ADDED in penn, "and it reaches a rider's board like any other train"
+
+    # BOTH EXTRAS, AND THAT IS THE POINT OF THERE BEING TWO. NJ Transit publishes
+    # ADDED trips with an EMPTY trip_id (36 of 164 on a live capture), so a decoder
+    # keying on trip_id merges every extra into one train. One ADDED trip in the
+    # matrix could never show that; two sharing the empty id can.
+    assert _ADDED_2 in trains, "the second extra must survive as its own train"
+    assert trains[_ADDED]["trip_id"] != trains[_ADDED_2]["trip_id"], (
+        "two extras sharing an empty trip_id must not share a key: at the scale the "
+        "real feed runs extras that is 35 trains vanishing from the map"
+    )
+    assert {_ADDED, _ADDED_2} <= set(penn), "and both reach the board"
+
+
+def test_njt_realtime_outage_degrades_only_njt(harness):
+    """A partial outage across systems, with NJ Transit as the failing one.
+
+    THE POINT IS THE NEGATIVE SPACE. NJ Transit is the first system in this app
+    behind a credentialed POST, so it has failure modes none of its siblings do,
+    and a failure that leaked out of them would be invisible in an aggregate. The
+    subway must keep advancing, /api/status must stay serveable, and the NJT
+    envelope must report its own outage on its own block.
+
+    THE LAST-KNOWN TRAINS ARE KEPT, unlike an EMPTY SUCCESS (the scenario below),
+    and the pair is the whole distinction: a poll that failed knows nothing new, so
+    the previous answer is still the best available; a poll that SUCCEEDED with no
+    entities knows there are no trains.
+    """
+    with harness.launch() as app:
+        _await_njt_trains(app)
+        before = app.get("/api/njt-trains")
+        assert before["trains"], "the outage has to start from a healthy state"
+
+        harness.sim.set_mode("njt:tripupdate", "error")
+        app.await_status(
+            lambda s: s["feeds"].get("njt", {}).get("last_error") is not None,
+            "the NJ Transit realtime poll to record its upstream failure",
+        )
+        # The subway is untouched and must prove it by advancing, not merely by
+        # being non-null: a frozen-but-present subway cache would satisfy a
+        # weaker assertion while the poll loop was actually wedged.
+        harness.sim.await_polls("subway:1-7+S", 2)
+
+        during = app.get("/api/njt-trains")
+        assert during["trains"], (
+            "a FAILED poll must keep the last-known trains: it learned nothing new, "
+            "and the C2 block below is what tells the client to draw them as stale"
+        )
+        assert during["systems"]["njt"]["ok"] is False, during["systems"]
+        assert app.status()["feeds"]["njt"]["last_error"], "the failure is named on /api/status"
+        # `data`, not `trains`: the subway envelope predates the per-system naming
+        # the NJT one uses.
+        assert app.get("/api/subways")["data"], "one credentialed system down is not an outage"
+
+        # And it heals on its own, which is what makes the degradation a state
+        # rather than a terminal condition.
+        harness.sim.set_mode("njt:tripupdate", "live")
+        app._await(
+            lambda: app.get("/api/njt-trains"),
+            lambda body: body["systems"]["njt"]["ok"] is True,
+            "the NJ Transit realtime poll to recover once its upstream returns",
+            60.0,
+            lambda last: f"last systems block: {json.dumps(last.get('systems'))}",
+        )
+
+
+def test_njt_overnight_empty_feed_is_a_served_state_not_a_failure(harness):
+    """The 13-byte valid feed the overnight probe recorded (decoder law 6).
+
+    ZERO TRAINS AT 03:00 IS THE CORRECT ANSWER. Retaining the evening's trains
+    through the night would leave a map full of ghosts, so an EMPTY SUCCESS
+    replaces the cache where a FAILURE keeps it. That divergence from the other
+    systems is deliberate and is the only thing this scenario is about.
+
+    It also pins that empty is not an error: /api/njt-trains serves 200 with an
+    empty list, the system block stays ok, and nothing lands in degraded_systems.
+    A C3 parse failure on a truly empty body would fail all three, which is why
+    the simulator's NJT "empty" mode serves a valid entity-less feed rather than
+    zero bytes.
+    """
+    with harness.launch() as app:
+        _await_njt_trains(app)
+
+        harness.sim.set_mode("njt:tripupdate", "empty")
+        body = app._await(
+            lambda: app.get("/api/njt-trains"),
+            lambda last: last["trains"] == [],
+            "the empty overnight feed to REPLACE the trains rather than be retained",
+            60.0,
+            lambda last: f"last /api/njt-trains: {json.dumps(last)[:2000]}",
+        )
+        assert body["systems"]["njt"]["ok"] is True, (
+            "an empty feed decoded successfully, so the system is healthy; marking it "
+            "degraded would put a permanent warning on every overnight deployment"
+        )
+        assert app.status()["feeds"]["njt"]["last_error"] is None
+        # The board empties with it, from the same generation.
+        assert app.get("/api/njt-arrivals/109")["arrivals"] == []
+
+
+def test_njt_token_expiry_mid_poll_costs_exactly_one_mint_across_three_consumers(
+    harness,
+):
+    """THE CONSERVATION CLAIM, made where it is hardest: three consumers at once.
+
+    By 15b the static loader, the trains poller and the alerts poller all POST
+    behind the SAME token, on three different cadences, from three different tasks.
+    When that token dies they can meet the rejection concurrently. njt_auth's
+    single-flight cache is what turns that into ONE re-mint instead of three, and
+    the failure it prevents is spending mints against a rate limit NJ Transit does
+    not publish, at the exact moment the integration is already in trouble.
+
+    THE ASSERTION IS ARITHMETIC ON THE WIRE. The simulator rejects the first token
+    it ever issued, on EVERY route, and accepts its replacement. Two getToken POSTs
+    total is the whole claim: one cold, one to replace the dead token. A third
+    would mean two consumers each minted their own.
+
+    The realtime counter is what makes it non-vacuous: it proves the realtime
+    routes were actually being polled across the expiry rather than idle.
+
+    Hermetic counterpart: backend/tests/test_njt_auth.py's single-flight tests,
+    which pin the same lock against concurrent callers with no sockets involved.
+    """
+    harness.sim.set_token_mode("reject-first")
+    with harness.launch() as app:
+        _await_njt_trains(app)
+        # Let realtime poll several times past the recovery, so "no further mints"
+        # is a claim about a RUNNING app rather than one that has polled once.
+        harness.sim.await_polls("njt:tripupdate", 3)
+
+        assert harness.sim.mint_requests() == 2, (
+            "one dead token shared by three consumers must cost exactly one re-mint: "
+            f"one cold, one replacement. Got {harness.sim.mint_requests()} getToken POSTs, "
+            "which means a consumer minted its own instead of waiting on the shared lock."
+        )
+        assert harness.sim.rt_requests() >= 3, (
+            "the claim is only meaningful if realtime was actually being polled across "
+            f"the expiry; got {harness.sim.rt_requests()} realtime POSTs"
+        )
+        assert app.get("/api/njt-trains")["trains"], "and the app recovered inside the poll"
+        assert app.status()["njt_static"] == "ready", (
+            "the static loader recovered on the same token"
+        )
 
 
 # ---------------------------------------------------------------------------

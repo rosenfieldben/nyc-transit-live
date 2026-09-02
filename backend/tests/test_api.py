@@ -71,11 +71,13 @@ def cache():
         "railroads": app_module._fresh_entry(),
         "path": app_module._fresh_entry(),
         "ferry": app_module._fresh_entry(),
+        "njt": app_module._fresh_entry(),
     }
     app_module.app.state.subway_feed_health = None
     app_module.app.state.railroad_feed_health = None
     app_module.app.state.path_feed_health = None
     app_module.app.state.ferry_feed_health = None
+    app_module.app.state.njt_feed_health = None
     return app_module.app.state.feed_cache
 
 
@@ -2687,6 +2689,22 @@ def alerts_cache():
     return app_module.app.state.alerts_cache
 
 
+async def test_unconfigured_njt_is_absent_from_the_alert_health_map(client, alerts_cache):
+    """The direct statement of what the two envelope tests below merely reflect.
+
+    An unconfigured NJ Transit is NOT SEEDED at all, rather than seeded and left
+    permanently unfresh. Seeded-but-never-fresh is what makes degraded_systems
+    dishonest: "njt" would sit in it forever on every deployment that does not run
+    NJ Transit, and the monitor's production:alerts check reads exactly that list.
+    An unconfigured system is not a degraded one.
+    """
+    assert "njt" in feeds.ALERT_FEED_URLS, "the feed exists in the table"
+    assert "njt" not in alerts_cache["health"], "but this process does not poll it"
+    alerts_cache.update(alerts=[], fetched_at=1000.0)  # past the warming 503
+    res = await client.get("/api/alerts")
+    assert "njt" not in res.json()["systems"], "and it never reaches a rider-facing block"
+
+
 async def test_alerts_served_from_seeded_index(client, alerts_cache):
     alerts_cache.update(alerts=[ALERT], fetched_at=1000.0, active=1, suppressed=2)
     res = await client.get("/api/alerts")
@@ -2701,7 +2719,11 @@ async def test_alerts_served_from_seeded_index(client, alerts_cache):
             # routes is null on the alerts blocks: route coverage is the SUBWAY's
             # join key (its trains name no system), and an alert already names its own.
             s: {"fetched_at": None, "ok": True, "retained_since": None, "routes": None}
-            for s in feeds.ALERT_FEED_URLS
+            # THE ACTIVE SET, not the full table: this test environment has no NJ
+            # Transit credentials, so "njt" is never seeded and never appears here.
+            # test_unconfigured_njt_is_absent_from_the_alert_health_map is the
+            # direct statement of that; this is the envelope shape that follows.
+            for s in feeds.active_alert_feeds()
         },
     }
     assert res.headers.get("cache-control") == "no-store"
@@ -2721,7 +2743,11 @@ async def test_alerts_empty_index_is_empty_list_not_error(client, alerts_cache):
             # routes is null on the alerts blocks: route coverage is the SUBWAY's
             # join key (its trains name no system), and an alert already names its own.
             s: {"fetched_at": None, "ok": True, "retained_since": None, "routes": None}
-            for s in feeds.ALERT_FEED_URLS
+            # THE ACTIVE SET, not the full table: this test environment has no NJ
+            # Transit credentials, so "njt" is never seeded and never appears here.
+            # test_unconfigured_njt_is_absent_from_the_alert_health_map is the
+            # direct statement of that; this is the envelope shape that follows.
+            for s in feeds.active_alert_feeds()
         },
     }
 

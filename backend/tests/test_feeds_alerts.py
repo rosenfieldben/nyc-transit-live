@@ -382,6 +382,100 @@ async def test_fetch_raises_when_all_feeds_fail():
         await feeds.fetch_service_alerts(_FakeClient(by_url))
 
 
+# ---- NJ Transit membership (15b): the sixth feed, POSTed and credential-gated ----
+#
+# THE HONESTY THIS PROTECTS. An unconfigured NJ Transit must be ABSENT from the
+# feed set, not present-and-failing. Present-and-failing would put "njt" in
+# degraded_systems on every deployment that does not run NJ Transit, permanently,
+# and a degraded banner that is always on is one nobody reads. 15a drew this line
+# for the static loader ("not-configured" is its own state, distinct from failed);
+# these are the same line for alerts.
+
+
+def test_unconfigured_njt_is_dropped_from_the_active_feed_set():
+    # Explicit empty credentials, the shape a missing environment variable actually
+    # reaches this code as (see njt_auth.credentials).
+    active = feeds.active_alert_feeds({"NJT_USERNAME": "", "NJT_PASSWORD": ""})
+    assert "njt" not in active
+    assert set(active) == set(feeds.ALERT_FEED_URLS) - {"njt"}
+
+
+def test_configured_njt_is_in_the_active_feed_set():
+    active = feeds.active_alert_feeds({"NJT_USERNAME": "u", "NJT_PASSWORD": "p"})
+    assert active["njt"] == feeds.ALERT_FEED_URLS["njt"]
+    assert set(active) == set(feeds.ALERT_FEED_URLS)
+
+
+def test_half_configured_njt_is_dropped():
+    # A username with no password is not "configured enough to try": it would spend
+    # a doomed mint against a rate limit NJ Transit does not publish.
+    assert "njt" not in feeds.active_alert_feeds({"NJT_USERNAME": "u", "NJT_PASSWORD": ""})
+    assert "njt" not in feeds.active_alert_feeds({"NJT_USERNAME": "", "NJT_PASSWORD": "p"})
+
+
+def test_placeholder_credentials_are_not_configured():
+    # The .env.example values copied verbatim. Same rule as 15a's static loader.
+    assert "njt" not in feeds.active_alert_feeds(
+        {"NJT_USERNAME": "your-njt-username", "NJT_PASSWORD": "your-njt-password"}
+    )
+
+
+@pytest.mark.anyio
+async def test_configured_njt_alerts_go_through_the_token_door_not_the_shared_client(
+    monkeypatch,
+):
+    """The dispatch, asserted by making the WRONG path impossible rather than by
+    watching for the right one: the fake client raises on any GET of the NJT URL,
+    so a client.get here fails the test loudly instead of quietly working against
+    a live endpoint.
+
+    Why it matters beyond tidiness: njt_auth owns the process-wide single-flight
+    token cache. Three callers (this feed, the trains poller, the static loader)
+    meeting an expired token together must produce ONE re-mint. A client.post here
+    would route around that lock and spend three.
+    """
+    monkeypatch.setattr(
+        feeds.alerts.njt_auth,
+        "is_configured",
+        lambda env=None: True,
+    )
+    posted: list[tuple[str, dict]] = []
+
+    async def fake_post(url, form):
+        posted.append((url, form))
+        return _one_active("NEC")
+
+    monkeypatch.setattr(feeds.alerts.njt_auth, "njt_post", fake_post)
+
+    by_url = {url: _one_active("Q") for url in feeds.ALERT_FEED_URLS.values()}
+    # Any GET at the NJT url is a routing bug, so make it explode.
+    by_url[feeds.ALERT_FEED_URLS["njt"]] = AssertionError(
+        "the NJT alerts feed was GETed through the shared client instead of POSTed through njt_auth"
+    )
+
+    alerts, _suppressed, failed = await feeds.fetch_service_alerts(_FakeClient(by_url))
+    assert failed == []
+    assert [url for url, _form in posted] == [feeds.ALERT_FEED_URLS["njt"]]
+    njt_alerts = [a for a in alerts if a["system"] == "njt"]
+    assert len(njt_alerts) == 1, "the POSTed feed's alerts are decoded like any other"
+    assert njt_alerts[0]["routes"] == ["NEC"]
+
+
+@pytest.mark.anyio
+async def test_all_feeds_failed_is_measured_against_the_active_set(monkeypatch):
+    """The total-outage raise counts against the feeds actually polled.
+
+    Measured against the full table instead, a five-of-five outage on a deployment
+    without NJ Transit would be 5 != 6 and would NOT raise: the poll would report a
+    healthy generation with zero alerts, which is the false-green C4 exists to
+    remove.
+    """
+    monkeypatch.setattr(feeds.alerts.njt_auth, "is_configured", lambda env=None: False)
+    by_url = {url: httpx.ConnectError("down") for url in feeds.ALERT_FEED_URLS.values()}
+    with pytest.raises(RuntimeError, match="All alert feeds failed"):
+        await feeds.fetch_service_alerts(_FakeClient(by_url))
+
+
 # ---- merge_alert_generations (per-system retention across partial outages) ----
 #
 # Pure and clock-injected, so every case fixes `now` and the prior retention clock

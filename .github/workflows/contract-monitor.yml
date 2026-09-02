@@ -40,9 +40,10 @@ jobs:
     # and NJT_PASSWORD are ENVIRONMENT secrets on an environment named "monitor",
     # not repository secrets. Environment secrets resolve only for a job that
     # declares the environment, so without this line the two `secrets.NJT_*`
-    # mappings below are silently empty strings and the njt-static check
-    # WARN-skips forever while looking exactly like a deliberate opt-out. The
-    # declaration is the whole mechanism; there is nothing else to configure.
+    # mappings below are silently empty strings and BOTH NJ Transit checks
+    # (njt-static and, since 15b, njt-realtime) WARN-skip forever while looking
+    # exactly like a deliberate opt-out. The declaration is the whole mechanism;
+    # there is nothing else to configure.
     #
     # THE ENVIRONMENT IS DEPLOYMENT-BRANCH-RESTRICTED TO main, and the resulting
     # degradation is by design rather than by accident: a context that is not
@@ -94,16 +95,19 @@ jobs:
           # NJ Transit's credentialed RailData API (15a). These are ENVIRONMENT
           # secrets on the "monitor" environment declared at the job level above,
           # NOT repository secrets, so this mapping is inert without that
-          # declaration. When either resolves empty the njt-static check
-          # WARN-skips, exactly like the bus check above: the monitor cannot reach
+          # declaration. When either resolves empty BOTH NJ Transit checks
+          # WARN-skip, exactly like the bus check above: the monitor cannot reach
           # a credentialed feed without credentials, and that is a configuration
           # state rather than an outage.
           #
-          # THE MONITOR MINTS EXACTLY ONCE PER RUN when they are set (see
-          # check_njt_static). At the 6-hourly cadence above that is four mints a
-          # day against a rate limit NJ Transit does not publish, which is why the
-          # single-mint discipline is enforced in the check rather than left to
-          # the retry helper.
+          # STILL EXACTLY ONE MINT PER RUN, though 15b added two more consumers.
+          # The run's token is built once in run_all and shared by njt-static (the
+          # archive) and njt-realtime (trip updates AND alerts); see _NjtToken. At
+          # the 6-hourly cadence above that is four mints a day against a rate
+          # limit NJ Transit does not publish, and it stays four rather than
+          # twelve because the sharing is structural, not conventional. A hermetic
+          # test asserts the count against run_all, which is the only place the
+          # sharing is expressed.
           NJT_USERNAME: ${{ secrets.NJT_USERNAME }}
           NJT_PASSWORD: ${{ secrets.NJT_PASSWORD }}
         run: python scripts/contract_monitor.py

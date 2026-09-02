@@ -200,6 +200,11 @@ class NjtApi:
     mints: int = 0
     mint_requests: int = 0
     gtfs_requests: int = 0
+    # 15b: the two realtime routes, counted together. Separate from gtfs_requests
+    # because the conservation claim is about mints ACROSS all three consumers, so
+    # a scenario has to be able to say "the archive was fetched once and realtime
+    # many times, and there was still exactly one mint".
+    rt_requests: int = 0
     # Tokens this simulator has issued, in order. reject-first keys on POSITION:
     # the FIRST token ever minted is the dead one, everything after it is live,
     # which is what models "the token we were holding expired" rather than "the
@@ -257,6 +262,21 @@ def _restamp(raw: bytes, now: float, drift_deg: float = 0.0, generation: int = 0
                 for when in (stop_time.arrival, stop_time.departure):
                     if when.time:
                         when.time += delta
+    return feed.SerializeToString()
+
+
+def _njt_empty_feed(now: float) -> bytes:
+    """A VALID GTFS-RT feed with a header and no entities.
+
+    The overnight state the probe recorded as a 13-byte body (decoder law 6), and
+    the reason NJT's "empty" mode cannot reuse the zero-byte body the keyless
+    feeds use: zero bytes is a C3 parse failure and the app is right to record it
+    as one. Zero TRAINS is a served state; zero BYTES is an outage, and a scenario
+    about the first must not accidentally be about the second.
+    """
+    feed = pb.FeedMessage()
+    feed.header.gtfs_realtime_version = "2.0"
+    feed.header.timestamp = int(now)
     return feed.SerializeToString()
 
 
@@ -424,6 +444,188 @@ def _ferry_members() -> dict[str, str]:
     return members
 
 
+# ---------------------------------------------------------------------------
+# NJ Transit realtime (15b): THE TRAP MATRIX
+# ---------------------------------------------------------------------------
+#
+# HANDWRITTEN, and the one place in this simulator where that is the right call.
+# Everywhere else a capture beats a synthetic feed because real upstreams carry
+# shapes nobody thinks to write down. Here the opposite holds: the shapes under
+# test are exactly the ones the 2026-08-05 rush probe NAMED, they must all be
+# present in one feed at one moment, and a real capture cannot be relied on to
+# contain a partial cancellation and an ADDED trip on the same poll. (ADDED was
+# never observed in either probe at all, so no capture will ever carry it.)
+#
+# EVERY TRIP JOINS THE SYNTHESIZED ARCHIVE ABOVE except the ADDED one, which is
+# supposed to miss. The ids here and the ids in _njt_members are two hand-written
+# lists that must agree; _njt_static_ids below is asserted against both, so a stop
+# or trip renamed on one side fails loudly instead of producing a feed that
+# decodes to nothing and a scenario that passes because it found nothing to
+# object to.
+#
+# THE SIX ROWS, and what each one is the trap for:
+#
+#   T1  healthy       NEC 3800, Newark Penn -> NY Penn. The control. Places, and
+#                     serves the arrival at 109 that every "no phantom" claim is
+#                     measured against.
+#   T3  CANCELED      Trip-level CANCELED, every stop SKIPPED WITH FULL TIMES
+#                     (decoder law 1, and 8% of peak Penn stop_time_updates).
+#                     THE PHANTOM. Its 109 time is deliberately plausible and
+#                     close, so a decoder that reads only the stop level or only
+#                     the trip level puts a train that is not running on a
+#                     rider's board.
+#   T4  partial       Trip-level SCHEDULED, running normally through Newark, then
+#                     109 SKIPPED with a plausible delay still attached. The probe
+#                     watched this exact shape. Its SURVIVING stop must still
+#                     serve; only the dropped one goes.
+#   T5  bare SKIPPED  The second observed SKIPPED variant (35 seen): the stop is
+#                     marked skipped and carries NO times at all. Ordering must
+#                     survive a call with nothing to sort by.
+#   T7  headsigned    Skipping Penn while headsigned FOR Penn. Decoder law 2's
+#       victim        named victim, kept as its own row because it is the row a
+#                     rider would actually act on.
+#   A9  ADDED         TWO of them, both with an EMPTY trip_id, which is what the
+#       A9b            live feed publishes (36 of 164 trip_updates, all empty).
+#                      Route lives on the realtime descriptor only (decoder law 3).
+#                      Must render from synthesized names and stay TWO trains: a
+#                      decoder keying on trip_id merges them, and that is 35 trains
+#                      vanishing at the scale the real feed runs extras.
+NJT_TRAP_TRIPS = ("T1", "T3", "T4", "T5", "T7", "A9", "A9b")
+
+# Stop and trip ids _njt_members publishes, restated so the trap feed can be
+# checked against them rather than trusted to match.
+_NJT_STATIC_STOPS = ("109", "112", "38")
+_NJT_STATIC_TRIPS = ("T1", "T2", "T3", "T4", "T5", "T7")
+
+
+def _njt_trip_updates(now: float) -> bytes:
+    """The trap matrix as a TripUpdates feed, timed relative to `now`.
+
+    Times are minutes either side of now so every trip has a PASSED stop and a
+    FUTURE one. That is not decoration: feeds.njt._place needs a call behind the
+    train to interpolate from, and feeds.shared.MAX_FUTURE_FIRST_STOP_S drops a
+    trip whose first call is implausibly far ahead, so a feed of future-only stops
+    would decode to zero trains and every assertion below would pass vacuously.
+    The same requirement is recorded at _place in the decoder.
+    """
+    feed = pb.FeedMessage()
+    feed.header.gtfs_realtime_version = "2.0"
+    feed.header.timestamp = int(now)
+
+    def add(
+        trip_id: str,
+        entity_id: str,
+        route_id: str,
+        calls,
+        *,
+        canceled=False,
+        added=False,
+    ):
+        entity = feed.entity.add()
+        entity.id = entity_id
+        tu = entity.trip_update
+        tu.trip.trip_id = trip_id
+        tu.trip.route_id = route_id
+        if canceled:
+            tu.trip.schedule_relationship = pb.TripDescriptor.CANCELED
+        elif added:
+            tu.trip.schedule_relationship = pb.TripDescriptor.ADDED
+        tu.timestamp = int(now)
+        for seq, stop_id, offset_s, skipped, with_times, delay in calls:
+            stu = tu.stop_time_update.add()
+            # SPARSE AND NON-CONTIGUOUS sequence numbers, matching decoder law 5:
+            # stop_sequence is an ordering key and never an index, and a decoder
+            # using it to index would fail here rather than in production.
+            stu.stop_sequence = seq
+            stu.stop_id = stop_id
+            if skipped:
+                stu.schedule_relationship = pb.TripUpdate.StopTimeUpdate.SKIPPED
+            if with_times:
+                when = int(now + offset_s)
+                stu.arrival.time = when
+                stu.departure.time = when + 30
+                if delay:
+                    stu.arrival.delay = delay
+                    stu.departure.delay = delay
+
+    # T1: the healthy control. Left Newark 4 minutes ago, into Penn in 6.
+    add(
+        "T1",
+        "3800",
+        "1",
+        [(10, "112", -240, False, True, 0), (20, "109", 360, False, True, 0)],
+    )
+    # T3: THE PHANTOM. Canceled at the trip level, every stop still carrying a
+    # full, plausible, nearly-arriving time.
+    add(
+        "T3",
+        "3802",
+        "1",
+        [(10, "112", -180, True, True, 120), (20, "109", 420, True, True, 120)],
+        canceled=True,
+    )
+    # T4: the partial cancellation. Hoboken passed, Newark still served and still
+    # ahead, Penn dropped with a two-minute delay still attached to the dropped row.
+    add(
+        "T4",
+        "3804",
+        "1",
+        [
+            (5, "38", -600, False, True, 0),
+            (15, "112", 300, False, True, 0),
+            (25, "109", 900, True, True, 120),
+        ],
+    )
+    # T5: the bare SKIPPED variant, and the only westbound row (Penn -> Newark ->
+    # Hoboken, PASC 1602). Newark is skipped carrying NO arrival, NO departure and
+    # no delay at all, so the ordering pass has to survive a call with nothing to
+    # sort by; Hoboken is the future call that keeps the train on the map.
+    add(
+        "T5",
+        "1602",
+        "13",
+        [
+            (5, "109", -300, False, True, 0),
+            (15, "112", 0, True, False, 0),
+            (25, "38", 600, False, True, 0),
+        ],
+    )
+    # T7: decoder law 2's named victim, and the sharpest row here. It joins a
+    # static trip HEADSIGNED "New York" and its only future call is New York,
+    # SKIPPED. A decoder that drops the stop but keeps the train shows a rider a
+    # train to Penn that will not stop at Penn.
+    add(
+        "T7",
+        "3806",
+        "1",
+        [(10, "112", -120, False, True, 0), (20, "109", 480, True, True, 0)],
+    )
+    # A9: ADDED, an extra Northeast Corridor train into Penn. No static trip, so
+    # the display name has to be synthesized from the realtime route plus the
+    # train number. Routed INTO 109 on purpose: the claim worth making about ADDED
+    # is that it reaches a rider's board, not merely that it fails to crash.
+    # TWO of them, with EMPTY trip_ids, which is the shape NJ Transit actually
+    # publishes: a live capture carried 36 ADDED trips out of 164 trip_updates and
+    # every one had trip_id "". One extra could never reveal the hazard, because a
+    # collapse needs at least two entities sharing the empty id before merging them
+    # is visible; the matrix carried exactly one until that capture landed.
+    add(
+        "",
+        "9001",
+        "1",
+        [(10, "112", -200, False, True, 0), (20, "109", 540, False, True, 0)],
+        added=True,
+    )
+    add(
+        "",
+        "9002",
+        "1",
+        [(10, "112", -160, False, True, 0), (20, "109", 600, False, True, 0)],
+        added=True,
+    )
+    return feed.SerializeToString()
+
+
 def _njt_members(now: float) -> dict[str, str]:
     """NJ Transit archive members, SYNTHESIZED rather than taken from a fixture.
 
@@ -474,7 +676,10 @@ def _njt_members(now: float) -> dict[str, str]:
         # Valley as the one first-class west-of-Hudson route.
         "routes.txt": _csv(
             "route_id,route_short_name,route_long_name,route_type,route_color,route_text_color",
-            ["1,NEC,Northeast Corridor,113,EF3E42,", "13,PASC,Pascack Valley,113,A2A4A3,"],
+            [
+                "1,NEC,Northeast Corridor,113,EF3E42,",
+                "13,PASC,Pascack Valley,113,A2A4A3,",
+            ],
         ),
         "stops.txt": _csv(
             "stop_id,stop_code,stop_name,stop_lat,stop_lon",
@@ -484,9 +689,23 @@ def _njt_members(now: float) -> dict[str, str]:
                 "38,HB,Hoboken,40.734984,-74.027683",
             ],
         ),
+        # EVERY TRAP-MATRIX TRIP EXCEPT THE ADDED ONE JOINS HERE, which is what
+        # makes the realtime scenarios assert on real headsigns and train numbers
+        # rather than on synthesized fallbacks. trip_short_name matches the
+        # realtime entity.id on each row, so the decoder's 745-of-745 cross-check
+        # stays silent unless something drifts. T7 is headsigned NEW YORK and its
+        # realtime row skips New York: decoder law 2's named victim needs the
+        # static side to supply the headsign it is lying about.
         "trips.txt": _csv(
             "route_id,service_id,trip_id,trip_headsign,direction_id,trip_short_name",
-            ["1,SVC1,T1,New York,0,3800", "13,SVC1,T2,Hoboken,1,1600"],
+            [
+                "1,SVC1,T1,New York,0,3800",
+                "13,SVC1,T2,Hoboken,1,1600",
+                "1,SVC1,T3,New York,0,3802",
+                "1,SVC1,T4,New York,0,3804",
+                "13,SVC1,T5,Hoboken,1,1602",
+                "1,SVC1,T7,New York,0,3806",
+            ],
         ),
         "stop_times.txt": _csv(
             "trip_id,arrival_time,departure_time,stop_id,stop_sequence",
@@ -495,6 +714,16 @@ def _njt_members(now: float) -> dict[str, str]:
                 "T1,07:20:00,07:20:00,109,2",
                 "T2,08:00:00,08:00:00,38,1",
                 "T2,08:25:00,08:25:00,112,2",
+                "T3,07:05:00,07:05:00,112,1",
+                "T3,07:25:00,07:25:00,109,2",
+                "T4,06:45:00,06:45:00,38,1",
+                "T4,07:10:00,07:10:00,112,2",
+                "T4,07:30:00,07:30:00,109,3",
+                "T5,06:50:00,06:50:00,109,1",
+                "T5,07:15:00,07:15:00,112,2",
+                "T5,07:35:00,07:35:00,38,3",
+                "T7,07:12:00,07:12:00,112,1",
+                "T7,07:32:00,07:32:00,109,2",
             ],
         ),
         "calendar_dates.txt": _csv(
@@ -637,12 +866,28 @@ class UpstreamSim:
         # fine, which is the failure bus_static is most likely to meet in production.
         for borough in BUS_BOROUGHS:
             self.archives[f"bus:{borough}"] = Archive(
-                f"bus:{borough}", bodies=_publications(_archive_members(subway_stops, "platforms"))
+                f"bus:{borough}",
+                bodies=_publications(_archive_members(subway_stops, "platforms")),
             )
         # NJ Transit (15a). Synthesized rather than fixture-derived, for the reason
         # _njt_members states at length; served over POST behind a token, which is
-        # what the two routes and the token mode below are for.
+        # what the routes and the token mode below are for.
         self.archives["njt"] = Archive("njt", bodies=_publications(_njt_members(time.time())))
+        # NJ Transit realtime (15b), two more POST routes behind the SAME token.
+        # Ordinary Feed objects, so every mode the other realtime upstreams have
+        # (live / frozen / empty / error) works here unchanged and a scenario can
+        # take NJT down without inventing a second control vocabulary.
+        #
+        # THE TRAP FEED IS BUILT ONCE AND RESTAMPED PER SERVE, exactly like the
+        # captures: _restamp shifts every stop time by the same delta it moves the
+        # header, so a trip whose calls sit at now-4min and now+6min at
+        # construction still sits four minutes behind and six ahead when a scenario
+        # fetches it ten minutes later. The relative spacing is the data.
+        self.feeds["njt:tripupdate"] = Feed("njt:tripupdate", _njt_trip_updates(time.time()))
+        # NJ Transit's ALERTS feed borrows the Metro-North capture, with the same
+        # limitation stated for the five GET alert feeds above: what this tier can
+        # assert is per-system health and membership, never an alert-to-route join.
+        self.feeds["njt:alerts"] = Feed("njt:alerts", alerts)
 
         # Alerts end this far out by default: comfortably beyond any scenario, so
         # nothing expires unless a test asks for it.
@@ -726,6 +971,14 @@ class UpstreamSim:
         with self._lock:
             return self.njt.gtfs_requests
 
+    def rt_requests(self) -> int:
+        """How many REALTIME POSTs (getTripUpdates + getAlerts) NJ Transit has
+        received, accepted or rejected. Counted together and separately from
+        gtfs_requests so a scenario can say "realtime was polled many times and
+        there was still exactly one mint", which is the 15b conservation claim."""
+        with self._lock:
+            return self.njt.rt_requests
+
     def await_mints(self, count: int, deadline_s: float = 30.0) -> int:
         """Block until at least `count` getToken POSTs have arrived, then return the
         total. Used to reach a known point before asserting NO FURTHER mints
@@ -784,12 +1037,21 @@ class UpstreamSim:
 
     # -- bodies ------------------------------------------------------------
 
+    # Every feed whose body is an ALERTS feed, whatever its key looks like. A set
+    # rather than a key prefix test, because 15b's NJ Transit alerts feed is served
+    # over POST and is keyed "njt:alerts" to sit with its sibling realtime route:
+    # under the old startswith("alerts:") test it would have fallen through to
+    # _restamp, which leaves active_period alone, and every alert in it would have
+    # sat at the capture's months-old window. The alerts would simply never have
+    # been active, and the membership scenario would have failed blaming the app.
+    _ALERTS_BODY_FEEDS = frozenset({f"alerts:{system}" for system in ALERT_FEEDS} | {"njt:alerts"})
+
     def _body_for(self, feed: Feed, age_s: float = 0.0) -> bytes:
         # age_s backdates the whole body, header and entity times together, which
         # is what _restamp's single-delta rule already guarantees. An upstream
         # publishing late is late about everything, not just its header.
         now = time.time() - age_s
-        if feed.key.startswith("alerts:"):
+        if feed.key in self._ALERTS_BODY_FEEDS:
             return _alerts_body(feed.template, now, self.alerts_end_in_s)
         return _restamp(feed.template, now, feed.drift_deg, feed.generation)
 
@@ -877,6 +1139,49 @@ class UpstreamSim:
                 return 500, NJT_INVALID_TOKEN_BODY
             return 200, archive.bodies[archive.publication]
 
+    def serve_njt_rt(self, key: str, fields: dict[str, str]) -> tuple[int, bytes]:
+        """A realtime NJT feed, behind the same token gate as getGTFS.
+
+        THE TOKEN LOGIC IS SHARED WITH THE ARCHIVE ROUTE ON PURPOSE, because the
+        claim 15b has to prove is about the door and not about one endpoint: when
+        the static loader, the trains poller and the alerts poller all meet an
+        expired token in the same window, njt_auth's single-flight cache must turn
+        that into exactly ONE re-mint. That claim is only expressible if every
+        route can reject the same dead token, so reject-first keys on the same
+        issued-token list here as there.
+
+        The feed's own mode is applied FIRST. A scenario that takes NJT realtime
+        down wants a transport failure, not a token failure, and an "error" feed
+        that still checked the token would make the two indistinguishable.
+        """
+        with self._lock:
+            feed = self.feeds[key]
+            feed.fetches += 1
+            feed.generation += 1
+            mode = feed.mode
+            self.njt.rt_requests += 1
+            if mode == "error":
+                return 503, b""
+            if mode == "empty":
+                # THE OVERNIGHT SHAPE (decoder law 6) is a VALID feed with no
+                # entities, not zero bytes, so "empty" means something different
+                # for NJT than it does for the keyless feeds: an empty body would
+                # be a C3 parse failure and the app would be right to call it one.
+                # A 13-byte valid header is what the probe actually recorded.
+                return 200, _njt_empty_feed(time.time())
+            token = fields.get("token") or ""
+            mode_token = self.njt.token_mode
+            if mode_token == "server-error":
+                return 500, NJT_SERVER_ERROR_BODY
+            if token not in self.njt.issued:
+                return 500, NJT_INVALID_TOKEN_BODY
+            if mode_token == "reject-first" and token == self.njt.issued[0]:
+                return 500, NJT_INVALID_TOKEN_BODY
+            if mode == "frozen":
+                assert feed.frozen_body is not None
+                return 200, feed.frozen_body
+            return 200, self._body_for(feed)
+
     def record_not_found(self, path: str) -> None:
         """Remember a path the app asked for that no route matched.
 
@@ -903,6 +1208,7 @@ class UpstreamSim:
                     "mints": self.njt.mints,
                     "mint_requests": self.njt.mint_requests,
                     "gtfs_requests": self.njt.gtfs_requests,
+                    "rt_requests": self.njt.rt_requests,
                 },
                 "not_found": list(self.not_found),
             }
@@ -932,6 +1238,11 @@ class UpstreamSim:
             # stop being hermetic in the one place it is hardest to notice.
             "NJT_TOKEN_URL": f"{base}/njt/getToken",
             "NJT_STATIC_URL": f"{base}/njt/getGTFS",
+            # 15b's two realtime seams, pointed here for the same reason: leaving
+            # either aimed at raildata.njtransit.com would have every contract run
+            # poll the real API every 20 seconds behind a real token.
+            "NJT_TU_URL": f"{base}/njt/getTripUpdates",
+            "NJT_ALERTS_URL": f"{base}/njt/getAlerts",
             "DATA_DIR": str(data_dir),
             "BUS_TIME_API_KEY": "contract-tier-not-a-real-key",
             # Credentials, not seams (the monitor needs the real ones set, so they
@@ -995,7 +1306,15 @@ def _resolve(path: str) -> tuple[str, str] | None:
 # NJ Transit's two POST routes. Kept out of _resolve, which answers for GETs: the
 # app never GETs these and a GET that reached one would be a real defect worth the
 # 404 (and worth appearing in the not_found list the hermeticity smoke test reads).
-_NJT_ROUTES = ("/njt/getToken", "/njt/getGTFS")
+_NJT_ROUTES = ("/njt/getToken", "/njt/getGTFS", "/njt/getTripUpdates", "/njt/getAlerts")
+
+# Which Feed key each realtime NJT route serves. A dict rather than an if-chain so
+# a new RailData realtime endpoint is one line and cannot be added to _NJT_ROUTES
+# while being forgotten in the handler.
+_NJT_RT_FEEDS = {
+    "/njt/getTripUpdates": "njt:tripupdate",
+    "/njt/getAlerts": "njt:alerts",
+}
 
 
 def _multipart_fields(body: bytes, content_type: str) -> dict[str, str]:
@@ -1076,6 +1395,10 @@ def _make_handler(sim: UpstreamSim):
                 if path == "/njt/getToken":
                     status, body = sim.serve_njt_token(fields)
                     self._send(status, body, "application/json")
+                elif path in _NJT_RT_FEEDS:
+                    status, body = sim.serve_njt_rt(_NJT_RT_FEEDS[path], fields)
+                    kind = "application/x-protobuf" if status == 200 else "application/json"
+                    self._send(status, body, kind)
                 else:
                     status, body = sim.serve_njt_gtfs(fields)
                     # An error body is JSON, a success body is the zip. Sending the

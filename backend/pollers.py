@@ -27,6 +27,7 @@ from google.protobuf.message import DecodeError
 
 import env_seams
 import main
+import njt_auth
 from cache import (
     FEED_RETENTION_ENABLED,
     FEED_RETENTION_MAX_S,
@@ -34,10 +35,10 @@ from cache import (
     _sanitize_upstream,
 )
 from feeds import (
-    ALERT_FEED_URLS,
     ALERT_RETENTION_MAX_S,
     RAILROAD_FEED_URLS,
     SUBWAY_FEED_URLS,
+    active_alert_feeds,
     carry_forward_prev,
     combine_group_arrivals,
     combine_group_trains,
@@ -46,6 +47,7 @@ from feeds import (
     merge_alert_generations,
     merge_system_generations,
 )
+from feeds import njt as njt_feed
 
 # Log through the "main" logger (not __name__) so records and main.py's logging
 # config are unchanged by the split.
@@ -110,14 +112,33 @@ async def _bounded_refresh(entry: dict, coro) -> None:
     can only cancel the fetch, never a half-applied update: last-known state is left
     intact for _note_failure to preserve.
 
-    Only the cache entry's error is recorded here; the per-system feed_health dict
-    (a secondary /api/status signal) is deliberately left at its last value, because
-    this generic wrapper does not know each system's health shape and the recorded
-    504 is the authoritative failure indicator either way."""
+    Only the app.state per-system feed_health DICT is left at its last value, and
+    only because this generic wrapper does not know each system's health shape; the
+    recorded 504 is the authoritative failure indicator either way.
+
+    THE C2 BLOCK IS NOT IN THAT EXEMPTION, and used to be by omission. A timeout
+    lands HERE rather than in any refresher's own error handling, so the three
+    envelopes that publish per-system freshness (subways, railroads and, since 15b,
+    njt) kept serving `ok: true` beside retained data whenever a refresh was
+    killed by this deadline. That is the same dishonesty the classified failure
+    paths were fixed for: retention is only honest when the retained data is drawn
+    AS stale, and a block still claiming ok is what turns dimmed last-known trains
+    into ghost trains at full opacity.
+
+    NJ TRANSIT IS THE MOST EXPOSED SOURCE TO THIS PATH, which is why 15b is where
+    it surfaced. njt_auth.njt_post's worst case is four requests at
+    REQUEST_TIMEOUT_S each (mint, POST, re-mint, POST) = 120s, comfortably past
+    this 45s deadline, so a slow-but-alive RailData reliably arrives here rather
+    than at _refresh_njt's own handler.
+
+    _mark_all_systems_failed is generic (it walks whatever entry["systems"] holds
+    and is a no-op when there is none), so it is safe for every source including
+    the ones with no such block."""
     try:
         async with asyncio.timeout(REFRESH_DEADLINE_S):
             await coro
     except TimeoutError:
+        _mark_all_systems_failed(entry)
         _note_failure(
             entry,
             504,
@@ -130,7 +151,7 @@ async def _bounded_refresh(entry: dict, coro) -> None:
 # unclassified failure has to mark. Buses are absent on purpose: that source
 # publishes no per-feed health dict, so there is nothing to mark beyond its error.
 _FEED_HEALTH_TOTALS = {"subways": len(SUBWAY_FEED_URLS), "railroads": len(RAILROAD_FEED_URLS)}
-_SINGLE_FEED_HEALTH = {"path": "PATH", "ferry": "ferry"}
+_SINGLE_FEED_HEALTH = {"path": "PATH", "ferry": "ferry", "njt": "njt"}
 
 
 def _feed_degrader(app: FastAPI, name: str, entry: dict):
@@ -727,6 +748,175 @@ async def _refresh_ferry(app: FastAPI, client: httpx.AsyncClient) -> None:
     app.state.ferry_arrivals = arrivals
 
 
+async def _refresh_njt(app: FastAPI, client: httpx.AsyncClient) -> None:
+    """Refresh the NJ Transit trains + arrivals from the TripUpdates feed.
+
+    THE CLIENT ARGUMENT IS UNUSED, and that is the point rather than an oversight.
+    Every other refresher fetches with the poll loop's shared httpx client; NJT
+    goes through njt_auth.njt_post, because the token cache behind that door is
+    what makes this poller, the alerts poller and the static loader share ONE
+    token and produce exactly one re-mint when it expires. A direct client.post
+    here would route around the single-flight lock and turn one expiry into three
+    mints, against a rate limit NJ Transit does not publish. The parameter stays
+    so this refresher has the same signature as its five siblings and the registry
+    below needs no special case.
+
+    NOT-CONFIGURED EXTENDS FROM 15a UNCHANGED. With no credentials the loader
+    never reached ready, so the static guard below already short-circuits this
+    poll before any network call; njt_post would refuse anyway. The two together
+    are why an unconfigured deployment makes zero NJT requests of any kind rather
+    than merely failing them quietly.
+
+    Same cache contract as the other systems with the ferry's deliberate
+    divergence, and for a sharper reason: an EMPTY successful poll REPLACES the
+    trains. The overnight probe recorded a 13-byte valid feed with no entities, so
+    zero trains at 03:00 is the correct answer; retaining the evening's trains
+    through the night would be a map full of ghosts. Only a FAILED poll keeps the
+    last-known trains.
+    """
+    entry = app.state.feed_cache["njt"]
+
+    def fail(status: int, detail: str, *, log: bool = True) -> None:
+        """Record one failed NJT poll on all three surfaces it has to reach.
+
+        THE THIRD SURFACE IS THE ONE THAT WAS MISSED, and the contract tier is what
+        found it: the C2 per-system block on the /api/njt-trains envelope kept
+        reporting ok: True through an outage, because only the subway and railroad
+        refreshers called _mark_all_systems_failed and the unclassified-failure
+        degrader was the sole path here that did. So a CLASSIFIED failure (an
+        upstream 502, a refused token) left the client every reason to draw the
+        retained trains at full opacity with no staleness marker, which is exactly
+        the ghost-train trade C2 exists to refuse. Retention is only honest when
+        the retained data is drawn AS stale.
+
+        A single system's envelope makes every failure a TOTAL one, so there is no
+        partial case to distinguish here. _mark_all_systems_failed leaves each
+        block's fetched_at alone on purpose: "this system's data is from then" is
+        already true, and the frozen fetched_at beside the envelope's advancing one
+        IS the staleness signal the client measures.
+        """
+        app.state.njt_feed_health = {"total": 1, "ok": 0, "failed": ["njt"]}
+        _mark_all_systems_failed(entry)
+        _note_failure(entry, status, detail, log=log)
+
+    if getattr(app.state, "njt_static_status", None) != "ready":
+        # Not ready covers BOTH the warming case and the not-configured one, and
+        # they must read differently to an operator. "not-configured" is terminal
+        # and says so; anything else is the ordinary quiet warming path the PATH
+        # and ferry refreshers take (log=False, because the single transition log
+        # belongs to _set_static_status rather than to a poll loop running every
+        # POLL_INTERVAL_S).
+        if getattr(app.state, "njt_static_status", None) == "not-configured":
+            fail(
+                503,
+                "NJ Transit is not configured (NJT_USERNAME/NJT_PASSWORD are unset); "
+                "no realtime poll is attempted.",
+                log=False,
+            )
+        else:
+            fail(
+                503,
+                "Static NJ Transit GTFS is still loading; it will retry automatically. "
+                "Try again shortly.",
+                log=False,
+            )
+        return
+    try:
+        trains, arrivals, feed_timestamp, warnings = await main.fetch_njt_trains(
+            getattr(app.state, "njt_stops", None) or {},
+            getattr(app.state, "njt_trips", None) or {},
+        )
+    except njt_auth.NjtNotConfigured as exc:
+        # Unreachable behind the status guard above, and handled anyway so the
+        # distinct state cannot degrade into a generic 500 two frames from where
+        # the distinction was made.
+        fail(503, str(exc), log=False)
+        return
+    except njt_auth.NjtAuthError as exc:
+        # A rejected token AFTER the one permitted re-mint, or a failed mint. Not
+        # a 500: the upstream answered, it just refused us.
+        fail(502, f"NJ Transit rejected our credentials: {_sanitize_upstream(exc)}")
+        return
+    except (njt_auth.NjtUpstreamError, httpx.HTTPError) as exc:
+        fail(502, f"Upstream NJ Transit feed error: {_sanitize_upstream(exc)}")
+        return
+    except DecodeError:
+        # HTTP 200 with a non-protobuf body (an error page, a proxy's HTML).
+        fail(502, "Upstream NJ Transit feed returned undecodable data")
+        return
+    njt_feed.log_cross_check(warnings)
+    app.state.njt_feed_health = {
+        "total": 1,
+        "ok": 1,
+        "failed": [],
+        # The entity.id / trip_short_name cross-check count, which the probe
+        # measured at 745/745 agreement. Surfaced on /api/status rather than only
+        # logged, so a drift that starts is visible without reading logs.
+        "cross_check_failures": len(warnings),
+    }
+    now = time.time()
+    entry.update(
+        data=trains,
+        fetched_at=now,
+        feed_timestamp=feed_timestamp,
+        error=None,
+        # THE C2 PER-SYSTEM BLOCK, single-entry. Written on every successful poll so
+        # the envelope's block and its top-level fetched_at agree while healthy;
+        # a failed poll leaves this untouched, which is exactly the divergence the
+        # client dims on.
+        systems=_system_freshness(entry.get("systems"), [njt_feed.SYSTEM], [], {}, now),
+    )
+    # Replace the arrivals index only on success, so a failed poll keeps the
+    # last-known arrivals on the same fetched_at, consistent with the cache.
+    app.state.njt_arrivals = arrivals
+
+
+# EVERY SOURCE THE POLL CYCLE REFRESHES, and the single place that list exists.
+#
+# MODULE LEVEL RATHER THAN INLINE IN THE CYCLE, so a test can read it. That is not
+# tidiness: _poll_feeds looks up cache[name] for each entry BEFORE the TaskGroup
+# children start, so a feed_cache missing one key raises in the cycle BODY rather
+# than in a child. The loop then logs, sleeps, and goes round again, and under a
+# test clock that turns the sleep into a no-op the whole suite spins at full speed
+# instead of failing. Adding "njt" here without updating the fixtures did exactly
+# that. tests/test_pollers_registry.py is the coupling test that makes it
+# impossible to repeat: comments had already failed as this project's
+# countermeasure, so this one has a test behind it.
+#
+# NJ TRANSIT'S VEHICLE POSITIONS FEED IS DELIBERATELY ABSENT, AND THAT IS A
+# DECISION WITH NUMBERS BEHIND IT (15b). getVehiclePositions is not fetched, not
+# parsed, and not modelled. The 2026-08-05 probes measured, at peak: 89% of
+# coordinates FROZEN, a worst observed age of 3h18m, and a CANCELED train still
+# broadcasting a position. Serving any of that would put confidently wrong trains
+# on the map, which is strictly worse than the schedule-derived placement the
+# TripUpdates feed supports (and which /api/njt-trains labels as derived through
+# `status`).
+#
+# This note is HERE, at the registry, because this is where the next person adding
+# a feed will be standing. If you are about to helpfully add it: the numbers above
+# are the reason not to, and they have not changed unless you re-probed.
+# occupancy_status is the ONE field that could ever earn a gated return, since it
+# has no position to be wrong about; that is a ledger followup, not code.
+# NAMES, NOT FUNCTION OBJECTS, and that is load-bearing rather than a style
+# choice. The concurrency suite swaps refreshers with
+# monkeypatch.setattr(pollers, "_refresh_subways", ...) to hold a child open and
+# watch what the cycle does meanwhile. A tuple of function OBJECTS binds at import
+# and freezes the originals, so those patches would apply to a module attribute
+# the cycle no longer reads and every one of those tests would silently exercise
+# the real refresher instead. (Measured: the first extraction did exactly that and
+# five C4 tests went red on the real subway refresher reaching for app state a
+# fake app does not have.) Resolving through globals() at call time is the same
+# read-it-back-at-call-time discipline main and the warmups already document.
+FEED_REFRESHERS = (
+    ("buses", "_refresh_buses"),
+    ("subways", "_refresh_subways"),
+    ("railroads", "_refresh_railroads"),
+    ("path", "_refresh_path"),
+    ("ferry", "_refresh_ferry"),
+    ("njt", "_refresh_njt"),
+)
+
+
 async def _poll_feeds(app: FastAPI) -> None:
     """Refresh the feeds every POLL_INTERVAL_S for the app's lifetime.
 
@@ -780,13 +970,10 @@ async def _poll_feeds(app: FastAPI) -> None:
                 # wedged upstream still bounds only its system, exactly as R2 left it.
                 cache = app.state.feed_cache
                 async with asyncio.TaskGroup() as group:
-                    for name, refresh in (
-                        ("buses", _refresh_buses),
-                        ("subways", _refresh_subways),
-                        ("railroads", _refresh_railroads),
-                        ("path", _refresh_path),
-                        ("ferry", _refresh_ferry),
-                    ):
+                    for name, refresher_name in FEED_REFRESHERS:
+                        # Resolved HERE, per cycle, so a monkeypatched refresher
+                        # is the one that runs (see the registry's comment).
+                        refresh = globals()[refresher_name]
                         entry = cache[name]
                         group.create_task(
                             _total_refresh(
@@ -877,6 +1064,41 @@ def _apply_alert_generation(
         entry.update(alerts=merged, active=len(merged))
 
 
+def _reconcile_alert_health(entry: dict) -> None:
+    """Make the health map's keys match the feeds this process will actually poll.
+
+    THE HEALTH MAP IS SEEDED ONCE, at cache construction, while the active set is
+    re-read on every poll (feeds.active_alert_feeds calls njt_auth.credentials,
+    which reads os.environ live). Those two can therefore disagree if credentials
+    change in-process, and every other rule in this module reads the health map's
+    keys as the authoritative system list, so the disagreement propagates:
+
+      * CREDENTIALS DISAPPEAR. "njt" stays in health but leaves the active set, so
+        it is neither fetched nor failed. _apply_alert_generation's not-failed
+        branch then stamps fresh_at = now and last_error = None on it every poll,
+        for a feed nobody is fetching, while merge_alert_generations deletes its
+        alerts as neither fresh nor retained. Silent thinning under a green health
+        surface, which is the exact failure the health map exists to prevent.
+      * CREDENTIALS APPEAR. "njt" is fetched and merged but has no health key, so
+        the retention clock threaded out of that map is never persisted for it. Its
+        retained_since restarts at now on every failing poll and
+        ALERT_RETENTION_MAX_S can never fire, so its alerts are carried forward
+        indefinitely.
+
+    Cold start is already safe (load_dotenv runs at feeds.shared import, well
+    before main builds the cache), so this closes a structural gap rather than a
+    live bug. It is four lines, it runs once per poll, and it means the rest of
+    this module's "take the system list from health's own keys" rule stays true
+    instead of being true only while the environment holds still.
+    """
+    active = active_alert_feeds()
+    health = entry["health"]
+    for system in active:
+        health.setdefault(system, {"fresh_at": None, "retained_since": None, "last_error": None})
+    for system in [s for s in health if s not in active]:
+        del health[system]
+
+
 async def _refresh_alerts(app: FastAPI, client: httpx.AsyncClient) -> None:
     """Refresh the active-alerts index. Same cache contract as the feeds: a failed
     poll keeps the last-known index and its fetched_at (the error is recorded but
@@ -910,6 +1132,7 @@ async def _refresh_alerts(app: FastAPI, client: httpx.AsyncClient) -> None:
     which R4's monitor had to work around by consulting the poll age first, because
     the frozen per-system map used to read fully healthy while every feed was down."""
     entry = app.state.alerts_cache
+    _reconcile_alert_health(entry)
     try:
         # THIS REFRESHER OWNS ITS OWN DEADLINE rather than riding _bounded_refresh the
         # way the feed refreshers do (see _poll_alerts, which calls this directly).
@@ -954,10 +1177,14 @@ async def _refresh_alerts(app: FastAPI, client: httpx.AsyncClient) -> None:
             _apply_alert_generation(entry, [], set(entry["health"]), time.time(), write_index=False)
             return
         # Run the ordinary machinery with nothing fresh and every system failed.
-        # health is seeded from ALERT_FEED_URLS (cache._fresh_alerts_entry), so its
-        # key set IS the full system list; taking it from the map we are about to
-        # rewrite keeps the failed set and the health write consistent by
-        # construction rather than by a second import agreeing with the first.
+        # health is seeded from the ACTIVE feed set (cache._fresh_alerts_entry reads
+        # feeds.active_alert_feeds), so its key set IS the list of systems this
+        # process polls; taking it from the map we are about to rewrite keeps the
+        # failed set and the health write consistent by construction rather than by a
+        # second import agreeing with the first. That matters more since 15b, because
+        # the active set is now smaller than the full table on any deployment without
+        # NJ Transit credentials: reading the table here would mark "njt" failed in a
+        # health map that never had the key.
         _apply_alert_generation(entry, [], set(entry["health"]), time.time())
         # suppressed is deliberately left alone: like fetched_at it describes the last
         # poll that DECODED, and this poll decoded nothing to recount. NOTE the
@@ -1016,8 +1243,11 @@ async def _poll_alerts(app: FastAPI) -> None:
                     # deployment into one confidently serving "no active alerts".
                     lambda: _apply_alert_generation(
                         entry,
+                        # Same reasoning as the total-outage path above, and taken
+                        # from the same place for the same reason: the health map's
+                        # own keys, never the URL table.
                         [],
-                        set(ALERT_FEED_URLS),
+                        set(entry["health"]),
                         time.time(),
                         write_index=entry["alerts"] is not None,
                     ),

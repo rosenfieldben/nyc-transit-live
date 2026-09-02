@@ -14,10 +14,13 @@ from feeds.alerts import (
     _ALERT_EFFECT,
     ALERT_FEED_URLS,
     ALERT_RETENTION_MAX_S,
+    KEYLESS_ALERT_FEEDS,
+    NJT_ALERT_SYSTEM,
     _alert_window_status,
     _decode_alerts,
     _enum_name,
     _translated,
+    active_alert_feeds,
     fetch_service_alerts,
     merge_alert_generations,
 )
@@ -35,6 +38,10 @@ from feeds.ferry import (
     _status_name,
     _trim_ferry_arrivals,
     fetch_ferry_data,
+)
+from feeds.njt import (
+    decode_njt_trip_updates,
+    fetch_njt_trains,
 )
 from feeds.path import (
     _PATH_DIRECTION,
@@ -157,6 +164,8 @@ __all__ = [
     "_decode_ferry_arrivals",
     "_trim_ferry_arrivals",
     "fetch_ferry_data",
+    "fetch_njt_trains",
+    "decode_njt_trip_updates",
     "_SUBWAY_BASE",
     "SUBWAY_FEED_URLS",
     "_platform_direction",
@@ -191,6 +200,9 @@ __all__ = [
     "_path_time_delta",
     "match_path_identities",
     "ALERT_FEED_URLS",
+    "KEYLESS_ALERT_FEEDS",
+    "NJT_ALERT_SYSTEM",
+    "active_alert_feeds",
     "_ALERT_EFFECT",
     "_ALERT_CAUSE",
     "_alert_window_status",

@@ -177,28 +177,59 @@ def test_a_refresh_refuses_when_the_committed_trips_reference_no_geometry(tmp_pa
     assert "reference no shape_id at all" in capsys.readouterr().out
 
 
-def test_a_refused_mint_is_one_line_and_a_nonzero_exit_rather_than_a_traceback(monkeypatch):
-    """NJ Transit caps getToken at TEN MINTS PER ACCOUNT PER EASTERN DAY (learned
-    2026-09-02) and production shares that budget, so a developer running this
-    script into an exhausted budget is an ordinary Tuesday, not an exceptional
-    event. It leaves by the same door as every other refusal here: one line, a
-    nonzero exit, and nothing written."""
-    import njt_auth
+def _refused_mint(monkeypatch, exc: Exception) -> str:
+    """Drive _download into a refused mint and return the one line it exits with."""
+    import njt_auth  # noqa: F401  (imported for the module's side of the seam)
 
     async def refused(*_args, **_kwargs):
-        raise njt_auth.NjtAuthError("getToken returned HTTP 429")
+        raise exc
 
     monkeypatch.setattr(gen.njt_auth, "is_configured", lambda *a, **k: True)
     monkeypatch.setattr(gen.njt_auth, "njt_post", refused)
     with pytest.raises(SystemExit) as excinfo:
         gen._download()
-    message = str(excinfo.value)
+    return str(excinfo.value)
+
+
+def test_a_refused_mint_is_one_line_and_a_nonzero_exit_rather_than_a_traceback(monkeypatch):
+    """A developer running this script into a refused mint is an ordinary Tuesday
+    rather than an exceptional event: njt_auth.DAILY_MINT_LIMIT is the whole budget
+    and the monitor and production have most of it committed. So the refusal leaves
+    by the same door as every other refusal here: one line, a nonzero exit, and
+    nothing written."""
+    import njt_auth
+
+    message = _refused_mint(monkeypatch, njt_auth.NjtAuthError("getToken returned HTTP 429"))
     assert "\n" not in message, "one line, not a stack"
     assert "HTTP 429" in message, "the refusal must say what NJ Transit said"
     assert "fixture NOT written" in message
     # AND NOTHING OF THE CREDENTIALS OR THE BODY, which is only safe to quote at all
-    # because 15c's F3 work made an NjtAuthError from the mint path carry a status
-    # and nothing else.
+    # because Audit 4's F3 (PR 95, before this phase) made an NjtAuthError from the
+    # mint path carry a status and nothing else.
+    assert "password" not in message.lower()
+
+
+def test_a_spent_mint_budget_leaves_by_that_same_door_and_names_itself(monkeypatch):
+    """THE SHARPEST CASE THAT BLOCK HANDLES, and it is caught with no clause of its
+    own. njt_auth.NjtMintQuotaError is a SUBCLASS of NjtAuthError on purpose, so
+    every caller that already handles a failed mint keeps handling this one
+    unchanged; _download's except therefore catches it for free. Pinned here because
+    the freeness is exactly what a later refactor could take away: making the quota
+    error a SIBLING of NjtAuthError would leave this generator printing a traceback
+    at the one refusal it most needs to explain in a sentence, and nothing else in
+    this file would notice.
+    """
+    import njt_auth
+
+    message = _refused_mint(monkeypatch, njt_auth.NjtMintQuotaError(njt_auth.MINT_QUOTA_MESSAGE))
+    assert "\n" not in message, "one line, not a stack"
+    assert njt_auth.MINT_QUOTA_MESSAGE in message
+    assert "NJ Transit daily mint limit reached" in message, (
+        "read as a literal as well as through the constant: the docstring quotes this "
+        "string, and a reworded constant would leave the prose stale rather than red"
+    )
+    assert "fixture NOT written" in message
+    assert "try again tomorrow" in message, "and the only correct response to it"
     assert "password" not in message.lower()
 
 

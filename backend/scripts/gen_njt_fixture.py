@@ -149,17 +149,29 @@ def _download() -> bytes:
 
     One mint, like everything else that talks to this API: njt_post takes its token
     from the shared cache and re-mints at most once. A regeneration therefore costs
-    one token against a cap of TEN MINTS PER ACCOUNT PER EASTERN DAY (learned
-    2026-09-02), which production shares.
+    one token out of the ten NJ Transit allows this account per Eastern day
+    (njt_auth.DAILY_MINT_LIMIT, observed 2026-09-02), of which the contract monitor
+    and production have 6 committed already. A regeneration takes one of the four
+    spare, so it is a deliberate act rather than a routine one.
 
     A REFUSED MINT IS AN ORDINARY OUTCOME HERE, not an exceptional one, which is why
     it leaves by the same door as every other refusal in this script rather than as
-    a traceback. Ten a day across production and every developer is a budget a human
-    can exhaust before lunch, and the answer to "you have no mints left" is one line
-    saying so, not forty lines of stack ending in someone wondering whether they
-    broke the generator. The message quotes the error because 15c's F3 work made
-    that safe: an NjtAuthError from the mint path carries a status, never the
-    response body, and never the credentials.
+    a traceback. Four spare across every developer is a budget a human can exhaust
+    before lunch, and the answer to "you have no mints left" is one line saying so,
+    not forty lines of stack ending in someone wondering whether they broke the
+    generator. The message quotes the error because Audit 4's F3 (PR 95, landed
+    before this phase began) made that safe: an NjtAuthError from the mint path
+    carries a status, never the response body, and never the credentials.
+
+    A SPENT BUDGET LEAVES BY THAT SAME DOOR, and it is now the sharpest case the
+    block below handles rather than a hypothetical one. njt_auth.NjtMintQuotaError
+    is a SUBCLASS of NjtAuthError, deliberately so that every caller which already
+    handles a failed mint keeps handling this one unchanged, which means it is caught
+    here without a clause of its own and prints njt_auth.MINT_QUOTA_MESSAGE, the
+    fixed string "NJ Transit daily mint limit reached". Retrying is the one real
+    mistake available on that refusal: it is not the upstream failing, so it reads as
+    recoverable and is not, and every attempt made while waiting is spent against the
+    very budget it is waiting on.
     """
     if not njt_auth.is_configured():
         raise SystemExit(

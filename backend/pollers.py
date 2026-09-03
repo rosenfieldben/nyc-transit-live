@@ -757,7 +757,8 @@ async def _refresh_njt(app: FastAPI, client: httpx.AsyncClient) -> None:
     what makes this poller, the alerts poller and the static loader share ONE
     token and produce exactly one re-mint when it expires. A direct client.post
     here would route around the single-flight lock and turn one expiry into three
-    mints, against a rate limit NJ Transit does not publish. The parameter stays
+    mints, out of the ten NJ Transit allows this account per Eastern day
+    (njt_auth.DAILY_MINT_LIMIT). The parameter stays
     so this refresher has the same signature as its five siblings and the registry
     below needs no special case.
 
@@ -835,7 +836,34 @@ async def _refresh_njt(app: FastAPI, client: httpx.AsyncClient) -> None:
     except njt_auth.NjtAuthError as exc:
         # A rejected token AFTER the one permitted re-mint, or a failed mint. Not
         # a 500: the upstream answered, it just refused us.
-        fail(502, f"NJ Transit rejected our credentials: {_sanitize_upstream(exc)}")
+        #
+        # ONE ARM, TWO SENTENCES, AND THE SINGLE ARM IS THE POINT. A spent daily
+        # mint budget arrives here as NjtMintQuotaError, a SUBCLASS of this type,
+        # and is routed by that inheritance rather than by an except clause of its
+        # own. An arm of its own would work exactly as well if the type were
+        # unrelated to this one, which is precisely the property that must not be
+        # allowed to rot: every other NJT caller (the warmup's rung schedule,
+        # njt_static's lenient empty result, any future consumer that catches the
+        # documented error) depends on the subclassing and none of them can witness
+        # it. This handler can, so it does the witnessing for all of them, and a
+        # regression to an unrelated type escapes here as an unhandled RuntimeError
+        # instead of degrading quietly.
+        #
+        # The branch below is ONLY about the wording. Same 502, same `fail`, same
+        # absence of a retry: "rejected our credentials" is true of a refused token
+        # and false of a spent budget, where the credentials are fine, NJ Transit is
+        # fine, and nothing is wrong but the clock. /api/status is a surface an
+        # operator reads, so it says which of the two happened rather than
+        # describing a credential problem nobody has.
+        #
+        # THE QUOTA DETAIL IS njt_auth's CONSTANT AND NOTHING ELSE (F3). It rides
+        # through _sanitize_upstream like every sibling here, which strips URLs and
+        # leaves a message carrying none unchanged, so the getToken body still has
+        # no path to /api/status.
+        if isinstance(exc, njt_auth.NjtMintQuotaError):
+            fail(502, _sanitize_upstream(exc))
+        else:
+            fail(502, f"NJ Transit rejected our credentials: {_sanitize_upstream(exc)}")
         return
     except (njt_auth.NjtUpstreamError, httpx.HTTPError) as exc:
         fail(502, f"Upstream NJ Transit feed error: {_sanitize_upstream(exc)}")

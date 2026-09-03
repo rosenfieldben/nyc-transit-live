@@ -302,7 +302,22 @@ PRODUCTION_HEALTH_CODES = (
     "subway-static-failed",
     "feed-content-stale",
     "subway-groups-down",
+    "njt-mint-quota",
 )
+
+# Prose for the codes whose NAME does not say what the operator should do. Only one
+# needs it: every other code reports something broken, and "njt-mint-quota" reports
+# a budget that is spent, which is a different instruction entirely. OURS, not the
+# deployment's: this is a literal in this file keyed by a code from this file's own
+# tuple, so the "only recognized codes are printed" rule in _check_production_health
+# is not widened by it. Nothing from the wire is echoed.
+_HEALTH_CODE_NOTES = {
+    "njt-mint-quota": (
+        "production has spent NJ Transit's ten mints for the Eastern day, so its NJ "
+        "Transit layer is dark until midnight; this is the budget, not an NJ Transit "
+        "outage, and a redeploy would spend another mint rather than fix it"
+    ),
+}
 
 # How far apart the two /api/status probes sit when witnessing a replayed
 # served_at. Two seconds, and both ends of that are chosen: long enough that a
@@ -1529,11 +1544,16 @@ class _NjtToken:
     kept, and by 15b there are three consumers of it (the static archive, the
     realtime trip updates, and the realtime alerts).
 
-    ONE MINT PER RUN. Minting is rate-limited below the data cap, the limit is
-    unpublished, and tokens are product-scoped so we cannot even read our own
-    usage counters. Three checks that each minted would triple a run's cost
-    against that cap for no benefit at all, and the 6-hourly schedule would spend
-    twelve mints a day where it needs four.
+    ONE MINT PER RUN, AND THE ARITHMETIC IS TIGHT ENOUGH TO CARE. NJ Transit
+    issues ten tokens per account per Eastern day (observed 2026-09-02; the whole
+    budget is at njt_auth.DAILY_MINT_LIMIT), every attempt counts whether or not it
+    yields a token, and tokens are product-scoped so we cannot read our own counter.
+    This job spends 4 of the 10 at its 6-hourly cadence and production spends 2 more
+    from its own twelve-hour MAX_TOKEN_AGE_S ceiling, which is 6 committed on a
+    quiet day. Three checks that each minted would make this job's line 12 on its
+    own and
+    take NJ Transit dark IN PRODUCTION, because the monitor and the deployment share
+    one account.
 
     A FAILED MINT IS REMEMBERED, NOT RETRIED. Every consumer after the first gets
     the same failure detail rather than a second doomed POST at the same endpoint,
@@ -1567,6 +1587,23 @@ class _NjtToken:
         except Exception as exc:  # noqa: BLE001 - any transport failure is a miss
             return None, f"mint failed (transport: {_sanitize(exc)})"
         if minted.status != 200:
+            # THE DAILY CAP FIRST, through the app's own sniff. The refusal is an
+            # HTTP 500, so without this it reports as "mint failed (HTTP 500)",
+            # which is what a dead getToken endpoint also says, and a run at 06:17
+            # would send somebody looking for an NJ Transit outage when the answer
+            # is that the account's ten mints are gone until Eastern midnight. The
+            # detail is njt_auth's constant, never the body, so the F3 rule below
+            # holds on this arm too: a constant matched against a known phrase is
+            # not a quote.
+            #
+            # IMPORTED RATHER THAN MIRRORED, unlike PRODUCTION_HEALTH_CODES just
+            # above, and the two rules do not conflict. A mirrored constant is what
+            # this monitor DEMANDS of a deployment that may be running a different
+            # revision. This is a fact about the UPSTREAM, which both sides read
+            # from the same wire on the same day, and reimplementing it would be
+            # the "reuse, never reimplement" rule broken in the file that states it.
+            if njt_auth.is_mint_quota_error(minted.status, minted.content):
+                return None, f"mint failed ({njt_auth.MINT_QUOTA_MESSAGE})"
             # STATUS ONLY, NEVER THE BODY (Audit 4, F3). The body used to be quoted
             # because it is the only place NJ Transit says why, and for every data
             # endpoint that reasoning holds. Not for getToken: its body may be the
@@ -1588,11 +1625,11 @@ def _njt_credentials(username: str | None, password: str | None):
     is load-bearing rather than tidy: the app treats the placeholders .env.example
     ships as ABSENT, and a re-derived `if not username or not password` reads
     "your-njt-username" as configured. That sends a doomed mint to the live
-    getToken endpoint on every run, against the unpublished cap, and reports the
-    rejection as an NJ Transit outage instead of the WARN-skip the operator was
-    promised. Whitespace-only values behave the same way, and GitHub renders an
-    unavailable secret as an EMPTY STRING rather than leaving it unset, so this is
-    also the path every fork and pull request context takes.
+    getToken endpoint on every run, out of the ten the account gets for the day,
+    and reports the rejection as an NJ Transit outage instead of the WARN-skip the
+    operator was promised. Whitespace-only values behave the same way, and GitHub
+    renders an unavailable secret as an EMPTY STRING rather than leaving it unset,
+    so this is also the path every fork and pull request context takes.
     """
     return njt_auth.credentials(
         {njt_auth.USERNAME_VAR: username or "", njt_auth.PASSWORD_VAR: password or ""}
@@ -1619,12 +1656,13 @@ def check_njt_static(
     NJT_USERNAME and NJT_PASSWORD added as Actions secrets, which is a repo-owner
     decision and is flagged in the 15a handoff rather than assumed here.
 
-    ONE MINT PER RUN, and it is not an optimization. Minting is rate-limited below
-    the data cap, the limit is unpublished, and tokens are product-scoped so we
-    cannot even read our own usage counters. Since 15b the mint lives in _NjtToken
-    and is SHARED with the realtime check rather than made here, so a run with
-    three NJ Transit consumers still costs one token; run_all builds that object
-    and hands the same one to both checks. The `token` argument defaults to None
+    ONE MINT PER RUN, and it is not an optimization. NJ Transit issues ten tokens
+    per account per Eastern day (observed 2026-09-02, njt_auth.DAILY_MINT_LIMIT),
+    this job and production share the account, and 6 of the 10 are already committed
+    on a quiet day. Since 15b the mint lives in _NjtToken and is SHARED with the
+    realtime check rather than made here, so a run with three NJ Transit consumers
+    still costs one token; run_all builds that object and hands the same one to both
+    checks. The `token` argument defaults to None
     so a standalone call still works exactly as before, minting its own. The
     archive fetch that follows keeps the house one-retry behavior, because it
     REUSES the token and therefore costs nothing extra.
@@ -1894,6 +1932,10 @@ def _check_production_health(
         parts = []
         if known:
             parts.append("degraded: " + ", ".join(known))
+            # A code whose name reads like an outage and is not one gets its
+            # sentence, so the job summary answers "what do I do about this"
+            # without the reader having to know the vocabulary.
+            parts += [_HEALTH_CODE_NOTES[code] for code in known if code in _HEALTH_CODE_NOTES]
         if unknown:
             # Counted, never quoted. See the docstring.
             parts.append(f"{unknown} unrecognized code(s), newer than this monitor")
@@ -2331,7 +2373,8 @@ def run_all(
     # This is the only place the sharing is expressed, which is why the tests make
     # their conservation claim against run_all rather than against either check:
     # a wiring mistake here would leave both checks passing and the run quietly
-    # spending two mints a time against a cap NJ Transit does not publish.
+    # spending two mints a time out of the ten the account gets for the Eastern day
+    # (njt_auth.DAILY_MINT_LIMIT), 6 of which are already committed.
     #
     # BUILT EVEN WHEN CREDENTIALS ARE ABSENT, and it costs nothing: _NjtToken mints
     # lazily on first `get`, and with no credentials both checks WARN-skip before

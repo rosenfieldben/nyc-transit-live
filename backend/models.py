@@ -670,6 +670,15 @@ HEALTH_BUS_INDEX_FAILED = "bus-route-index-failed"
 HEALTH_SUBWAY_STATIC_FAILED = "subway-static-failed"
 HEALTH_FEED_CONTENT_STALE = "feed-content-stale"
 HEALTH_SUBWAY_GROUPS_DOWN = "subway-groups-down"
+# THE ONE CODE THAT IS NOT ABOUT AN UPSTREAM BEING UNWELL. NJ Transit allows ten
+# getToken calls per account per Eastern day (observed 2026-09-02; the budget and
+# what spends it are set out at njt_auth.DAILY_MINT_LIMIT) and refuses the
+# eleventh. When that happens the NJ Transit layer is dark until Eastern midnight
+# and there is nothing wrong with NJ Transit at all, so reporting it as an ordinary
+# failure would send whoever is on call hunting an outage that does not exist. It
+# gets its own code so the answer reads "the budget is spent", not "something
+# broke", and so the fix reads "wait, or stop spending mints" rather than "restart".
+HEALTH_NJT_MINT_QUOTA = "njt-mint-quota"
 
 HEALTH_DEGRADED_CODES = (
     HEALTH_NO_FEED_FRESH,
@@ -677,6 +686,7 @@ HEALTH_DEGRADED_CODES = (
     HEALTH_SUBWAY_STATIC_FAILED,
     HEALTH_FEED_CONTENT_STALE,
     HEALTH_SUBWAY_GROUPS_DOWN,
+    HEALTH_NJT_MINT_QUOTA,
 )
 
 # The subset that makes the probe answer 503. READINESS AND SICKNESS ARE TWO
@@ -685,6 +695,10 @@ HEALTH_DEGRADED_CODES = (
 # must not reach the status code, while it must still reach a human. The gating
 # set is therefore exactly the three reasons the probe already had before F1, and
 # the non-gating codes are new information rather than new behavior.
+#
+# HEALTH_NJT_MINT_QUOTA IS THE SHARPEST CASE FOR THE SPLIT YET. Restarting on it
+# would not merely fail to help: a fresh process mints on its first NJ Transit
+# request, spending another of the ten the account has already run out of.
 HEALTH_GATING_CODES = (
     HEALTH_NO_FEED_FRESH,
     HEALTH_BUS_INDEX_FAILED,

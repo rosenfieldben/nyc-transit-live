@@ -469,11 +469,33 @@ and each is a way a conventional poller gets this wrong:
 1. **Every endpoint is `POST multipart/form-data`, and the token rides as a form
    field**, not an `Authorization` header and not a query parameter. A GET returns
    nothing usable.
-2. **Minting is rate-limited below the data cap, and the number is unpublished.**
-   Tokens are product-scoped, so a GTFSRT token is rejected by the Usage API and we
-   cannot read our own counters either. Mints are therefore treated as a scarce,
-   unmeasurable resource: a single-flight cache turns concurrent callers into one
-   mint, and a rejected token buys exactly one re-mint per attempt.
+2. **Minting is rate-limited below the data cap, at ten a day per account.** The
+   day is an Eastern one, every attempt counts whether or not it yields a token, and
+   the eleventh comes back `HTTP 500` with a JSON body whose `errorMessage` begins
+   `Daily usage limit` (observed 2026-09-02). Tokens are product-scoped, so a GTFSRT
+   token is rejected by the Usage API and we cannot read our own counter either: the
+   cap is a known number, our position against it is not.
+
+   **Eight of the ten are committed on a quiet day**, and the deployment and the
+   contract monitor share one account:
+
+   | Consumer | Mints/day | Why |
+   | --- | --- | --- |
+   | Contract monitor | 4 | 6-hourly, one mint per run shared across `njt-static` and `njt-realtime` |
+   | Production | 4 | `njt_auth.MAX_TOKEN_AGE_S` is a six-hour ceiling on holding an unproven token |
+   | **Committed** | **8** | leaving two |
+
+   A deploy (cold token cache), a manual `workflow_dispatch` of the monitor, a
+   fixture pull (`gen_njt_fixture.py` and `gen_njt_rt_fixture.py`, one each), or a
+   genuine token expiry each spend one of the remaining two. So mints are conserved
+   structurally rather than by convention: a single-flight cache turns concurrent
+   callers into one mint, a rejected token buys exactly one re-mint per attempt, and
+   nothing anywhere retries a failed mint. When the cap is hit, `njt_auth` raises the
+   fixed string `NJ Transit daily mint limit reached`, `/healthz` publishes
+   `njt-mint-quota`, and the monitor's summary says the budget is spent rather than
+   reporting an NJ Transit outage. Nothing is retried harder: NJ Transit alone
+   degrades until Eastern midnight. The full arithmetic lives at
+   `njt_auth.DAILY_MINT_LIMIT`.
 3. **An expired token is `HTTP 500` with `{"errorMessage":"Invalid token."}`, not
    401 or 403.** This is the dangerous one. A poller that classifies 500 as a server
    error backs off forever while the fix is a single re-mint; one that treats *all*
@@ -652,6 +674,15 @@ rather than a healthz reason. That leniency is per system, not absolute: a load
 where *every* railroad system came back empty is treated as a failed attempt and
 retried, because a total failure marked ready would never be retried at all.
 
+Beside `status` and `reasons`, the body always carries `degraded`: the
+machine-readable classification the contract monitor reads, and a **superset** of
+what drove the status code, so a degraded state that is deliberately not worth a
+restart is still visible to something that watches. One of its codes is not a
+sickness at all. `njt-mint-quota` says this instance spent NJ Transit's ten mints
+for the Eastern day, so that layer is dark until midnight with nothing broken
+upstream; it never gates the 503, because a restart would mint again and spend one
+more. It clears itself on the next mint that succeeds.
+
 **Deployment invariant: the first retry rungs must fit well inside the healthcheck
 window.** A failed static warmup retries on a backoff schedule
 (`STATIC_RETRY_SCHEDULE_S` in `backend/main.py`, currently 15s, 30s, 60s, then 300s
@@ -807,10 +838,14 @@ Config:
   permitted side of that restriction.
 
   When they *are* set the monitor **mints exactly one token per run** (four a day at
-  the 6-hourly cadence). NJ Transit's mint rate limit sits below its data cap and the
-  number is unpublished, so `check_njt_static` mints once with no retry and reuses
-  that token for the archive fetch, rather than leaving conservation to the shared
-  retry helper.
+  the 6-hourly cadence). NJ Transit's mint rate limit sits below its data cap at
+  **ten a day per account** (observed 2026-09-02), and the monitor shares that
+  account with production, which spends about four more from its own six-hour token
+  ceiling. Four plus four is eight of the ten before any deploy, dispatch or fixture
+  pull, so `check_njt_static` mints once with no retry and reuses that token for the
+  archive fetch, rather than leaving conservation to the shared retry helper. A run
+  that meets the cap reports `mint failed (NJ Transit daily mint limit reached)` on
+  both NJ Transit checks instead of an anonymous `HTTP 500`.
 
 The production section's bands are deliberately two-tiered so the red light stays
 meaningful. A static group in any state but `ready` is a `FAIL`, because a mode

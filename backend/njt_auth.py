@@ -13,16 +13,21 @@ this wrong, so they are stated here rather than discovered later:
      MAX_TOKEN_AGE_S is not that assumption in disguise: it is a ceiling on how
      long we will hold a token without proof it still works, which is what stops a
      rejection the sniff fails to recognise from wedging the cache permanently.
-  3. Minting is rate-limited BELOW the data cap, and the number is unpublished.
-     Tokens are also product-scoped, so a GTFSRT token is rejected by the Usage
-     API and we cannot read our own counters. Mints are therefore treated as a
-     scarce, unmeasurable resource: one per attempt at worst, never a loop.
+  3. Minting is rate-limited BELOW the data cap, at TEN A DAY PER ACCOUNT, and
+     the day is an Eastern one. Observed 2026-09-02: an eleventh getToken comes
+     back HTTP 500 with a JSON body whose errorMessage begins "Daily usage
+     limit", and EVERY ATTEMPT COUNTS, refused ones included. Tokens are also
+     product-scoped, so a GTFSRT token is rejected by the Usage API and we cannot
+     read our own counters; the cap is now a known number, but our position
+     against it is still unmeasurable. What that budget is spent on, and why
+     eight of the ten are already committed on a quiet day, is at
+     DAILY_MINT_LIMIT below.
   4. AUTH FAILURE IS HTTP 500, NOT 401 OR 403. Probed 2026-08-05 (overnight
      02:37 EDT and rush 18:15 EDT): the body is {"errorMessage":"Invalid token."}
      under a 500 status. This is the most dangerous fact in the probe. A poller
      that classifies 500 as "server error" backs off forever while the actual fix
      is a single re-mint, and a poller that treats ALL 500s as auth failures burns
-     mints against an unpublished cap every time NJ Transit has a real outage.
+     mints against a ten-a-day cap every time NJ Transit has a real outage.
      is_auth_error below is the exact-shape sniff that separates the two.
 
 WHAT THIS MODULE DOES NOT DO. It never retries on a schedule. A second auth
@@ -93,6 +98,53 @@ _PLACEHOLDERS = {
     PASSWORD_VAR: "your-njt-password",
 }
 
+# THE DAILY MINT BUDGET. Ten getToken calls per ACCOUNT per EASTERN DAY, observed
+# 2026-09-02, and EVERY ATTEMPT COUNTS against it whether or not it yields a token.
+# The eleventh comes back HTTP 500 with a JSON body whose errorMessage begins
+# "Daily usage limit"; is_mint_quota_error below is the sniff for it.
+#
+# THE NUMBER IS NOT ENFORCED HERE AND CANNOT BE. Tokens are product-scoped, so the
+# Usage API rejects a GTFSRT token and we cannot read our own counter, and one
+# process has no idea what the account's other consumers spent today. This
+# constant exists so the arithmetic below has a name to hang on and so every
+# "conserve mints" comment in this repo points at one number, not to gate anything.
+#
+# WHERE THE TEN GO ON A QUIET DAY, and eight are committed before anything unusual
+# happens at all:
+#
+#     4   the contract monitor. Six-hourly (.github/workflows/contract-monitor.yml),
+#         minting ONCE per run and sharing that token across njt-static and
+#         njt-realtime's two feeds. See contract_monitor._NjtToken.
+#     4   production, from MAX_TOKEN_AGE_S alone: the ceiling below is six hours, so
+#         a process that stays up through the day re-mints four times.
+#   ---
+#     8   committed. Two left.
+#
+# What spends the other two is ordinary work rather than an incident: a deploy (a
+# cold TokenCache mints on the first NJT request), a manual workflow_dispatch of
+# the monitor (one more run, one more mint), a fixture pull (gen_njt_fixture.py and
+# gen_njt_rt_fixture.py mint one each), and a genuine token expiry (njt_post buys
+# exactly one re-mint per attempt). Two of those on one day take NJ Transit dark in
+# PRODUCTION until Eastern midnight, because production and the monitor share the
+# account. That is why every mint in this repo is conserved structurally rather
+# than by convention, and why a loop that re-mints on failure is the one bug this
+# module is built to make unwritable.
+DAILY_MINT_LIMIT = 10
+
+# The fixed message every quota refusal is reported with, here and in the contract
+# monitor. A CONSTANT MATCHED AGAINST A KNOWN PHRASE IS NOT A QUOTE (Audit 4, F3):
+# is_mint_quota_error compares the body against our own literal prefix and returns
+# a bool, and this string, also ours, is what gets raised and logged. No byte of
+# the response travels with it, so a refusal whose body happened to carry a live
+# token still cannot reach a log line.
+MINT_QUOTA_MESSAGE = "NJ Transit daily mint limit reached"
+
+# The prefix observed on that refusal, lowercased for the case-insensitive compare
+# is_auth_error already uses. A PREFIX because a prefix is all that was observed:
+# the message continues past it, and pinning the whole sentence would turn the
+# sniff into a false negative the first time NJ Transit reworded its tail.
+_QUOTA_PREFIX = "daily usage limit"
+
 # Whole-request ceiling for one NJT POST. The static endpoint answered in 428 ms
 # overnight and 8.9 s at peak on 2026-08-05, so this is a wedge guard rather than
 # a latency budget.
@@ -126,7 +178,9 @@ REQUEST_TIMEOUT_S = 30.0
 # itself within one ceiling, without widening the sniff toward real 500s.
 #
 # WHY SIX HOURS: it bounds the worst case at four mints a day per process from this
-# rule alone, which is negligible against any plausible cap, while being short
+# rule alone. Against DAILY_MINT_LIMIT that is a large share, four of ten, and it is
+# what the ceiling costs: halving it would make this line eight on its own and leave
+# nothing for the contract monitor, which spends the other four. Six is also short
 # enough that a self-heal lands inside a single contract-monitor cycle (the monitor
 # runs every six hours) rather than after a day of a dark layer.
 MAX_TOKEN_AGE_S = 6 * 3600.0
@@ -155,6 +209,25 @@ class NjtAuthError(RuntimeError):
     Covers a mint that failed and a request that still read as invalid-token after
     exactly one re-mint. Either way the attempt is over; the caller's schedule
     decides the next one.
+    """
+
+
+class NjtMintQuotaError(NjtAuthError):
+    """getToken refused because the account's daily mint budget is spent.
+
+    A SUBCLASS, NOT A SIBLING, AND THAT IS THE DESIGN RATHER THAN A SHORTCUT.
+    Every caller that already handles a failed mint keeps handling this one
+    unchanged: the warmup's rung schedule, the poller's NjtAuthError arm,
+    njt_static's lenient empty result. NJ Transit alone degrades, the attempt is
+    over, and nothing anywhere retries harder. The distinct type buys exactly one
+    thing, the ability to SAY SO: TokenCache.mint_quota_refused records it and
+    /healthz publishes it, so an operator can tell a spent budget from an NJ
+    Transit outage without reading a log.
+
+    RETRYING HARDER IS THE ONE REAL MISTAKE AVAILABLE HERE, and it is worth naming
+    because it is tempting: this refusal is not the upstream failing, so it reads
+    as recoverable. It is not, for the rest of the Eastern day, and every attempt
+    made while waiting is spent against the very budget it is waiting on.
     """
 
 
@@ -207,8 +280,8 @@ def is_auth_error(status: int, body: bytes) -> bool:
 
     not 401 and not 403. So the sniff cannot key on the status code alone, and it
     must not: NJ Transit also serves genuine 500s, and treating those as auth
-    failures would spend a mint against an unpublished, unreadable rate cap on
-    every real outage.
+    failures would spend a mint out of ten a day, against a counter we cannot
+    read, on every real outage.
 
     THE ASYMMETRY IS DELIBERATE AND IT POINTS THIS WAY ON PURPOSE. A false
     POSITIVE (a real outage read as an auth failure) costs a MINT, repeatedly,
@@ -253,6 +326,49 @@ def is_auth_error(status: int, body: bytes) -> bool:
     if not isinstance(message, str):
         return False
     return message.strip().casefold() == "invalid token."
+
+
+def is_mint_quota_error(status: int, body: bytes) -> bool:
+    """Is this getToken response the daily-cap refusal, and ONLY that?
+
+    THE EVIDENCE (observed 2026-09-02): the eleventh mint of an Eastern day comes
+    back as
+
+        HTTP 500  {"errorMessage":"Daily usage limit ..."}
+
+    the same status an ordinary NJ Transit fault carries and the same status the
+    invalid-token rejection carries, which is why this has to read the body at all.
+    Without it a spent budget is reported as "getToken returned HTTP 500", which is
+    indistinguishable from the endpoint being down and sends an operator looking
+    for an outage that is not there.
+
+    THE ONE PLACE THE getToken BODY MAY BE READ, AND IT IS STILL NOT A QUOTE (F3).
+    The comparison is against _QUOTA_PREFIX, a literal in this file; what comes out
+    is a bool; the caller then raises MINT_QUOTA_MESSAGE, also a literal in this
+    file. Nothing from the response reaches a message, so a refusal whose body
+    happened to carry a live token past that prefix cannot leak it, which is the
+    property the F3 canary tests hold.
+
+    NARROW, THE WAY is_auth_error IS NARROW, though the asymmetry points elsewhere.
+    A false positive here costs no mint: it misreports a real NJ Transit outage as
+    a spent budget, which is a wrong /healthz code and a wrong answer for whoever
+    is on call. A false negative costs nothing at all beyond today's behavior, a
+    mint failure named by its status. So the match stays exact: status 500, a body
+    that parses as a JSON object, an errorMessage that is a string, and that string
+    beginning with the observed prefix after stripping and case-folding.
+    """
+    if status != 500:
+        return False
+    try:
+        payload = json.loads(body)
+    except (ValueError, UnicodeDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    message = payload.get("errorMessage")
+    if not isinstance(message, str):
+        return False
+    return message.strip().casefold().startswith(_QUOTA_PREFIX)
 
 
 def _quote(body: bytes) -> str:
@@ -409,6 +525,13 @@ async def mint(
         # timeout, which is all an operator needs from a mint failure.
         raise NjtAuthError(f"getToken transport failed ({type(exc).__name__})") from exc
     if status != 200:
+        # THE QUOTA ARM FIRST, because the refusal it recognizes is an HTTP 500 and
+        # would otherwise leave here as "getToken returned HTTP 500", the same
+        # sentence a dead endpoint produces. The message raised is the module's own
+        # constant and carries nothing from the body, so this stays inside the F3
+        # rule below rather than being an exception to it.
+        if is_mint_quota_error(status, body):
+            raise NjtMintQuotaError(MINT_QUOTA_MESSAGE)
         # STATUS ONLY, never the body (Audit 4, F3). A getToken body is the one
         # response in this system that may be the secret itself, and a non-200
         # does not change that: nothing here knows what NJ Transit puts under a
@@ -426,8 +549,8 @@ class TokenCache:
     THE INVARIANT: however many callers find the cache empty at once, exactly one
     mint happens and every caller gets that token. The double check around the lock
     is what does it. Without the second check inside the lock, every waiter would
-    mint in turn as it acquired, which is the exact shape that exhausts an
-    unpublished rate cap the first time the app restarts under load.
+    mint in turn as it acquired, which is the exact shape that exhausts a ten-a-day
+    cap the first time the app restarts under load.
 
     invalidate() is a COMPARE-AND-CLEAR rather than a plain clear, and that matters
     under concurrency: caller A can meet an invalid-token response for token T1
@@ -470,11 +593,27 @@ class TokenCache:
         # TWO COUNTERS, AND THE DISTINCTION IS THE WHOLE POINT OF HAVING BOTH.
         # `mints` counts tokens successfully ISSUED; `mint_requests` counts getToken
         # POSTS ACTUALLY SENT. A failed mint raises before the token is stored, so it
-        # advances the second and not the first, and it is the second that spends the
-        # unpublished rate cap. Asserting conservation on `mints` alone is blind to
+        # advances the second and not the first, and it is the second that spends
+        # DAILY_MINT_LIMIT. Asserting conservation on `mints` alone is blind to
         # exactly the worst path: a loop that mints unsuccessfully forever.
         self.mints = 0
         self.mint_requests = 0
+        # WHETHER THE MOST RECENT MINT ATTEMPT WAS REFUSED FOR THE DAILY CAP, and
+        # nothing more than that: not a count, not a timestamp, not a prediction
+        # about the rest of the day. /healthz turns it into a degraded code, which
+        # is what lets an operator tell a spent budget from an NJ Transit outage.
+        #
+        # HERE RATHER THAN ON app.state, because THIS is the object every mint in
+        # the app goes through (see the class docstring and mint's), so recording
+        # it here is complete by construction. Plumbing it through the warmup and
+        # the poller instead would mean two places to remember and a third the day
+        # a new consumer appears.
+        #
+        # SELF-CLEARING, WITH NO DATE ARITHMETIC. It is set on a quota refusal and
+        # cleared by the next mint attempt that answers anything else, so the
+        # Eastern-midnight reset needs no clock here: the first mint that succeeds
+        # after it clears the flag as a side effect of working.
+        self.mint_quota_refused = False
 
     def _get_lock(self) -> asyncio.Lock:
         loop = asyncio.get_running_loop()
@@ -522,7 +661,16 @@ class TokenCache:
             if live is not None:
                 return live
             self.mint_requests += 1
-            token = await mint_token()
+            try:
+                token = await mint_token()
+            except Exception as exc:
+                # Exception, NOT BaseException, so a CANCELLED mint leaves the flag
+                # exactly as it was. A cancellation is this process giving up, not
+                # NJ Transit answering, and it says nothing either way about the
+                # budget.
+                self.mint_quota_refused = isinstance(exc, NjtMintQuotaError)
+                raise
+            self.mint_quota_refused = False
             self.mints += 1
             self._token = token
             self._minted_at = self._clock()
@@ -567,7 +715,7 @@ async def njt_post(
     function. Step 4 exists once, in straight-line code, and a second invalid-token
     response after it raises NjtAuthError rather than trying again. A convention
     ("remember not to retry twice") would be one refactor away from a mint storm
-    against a cap nobody can read; the absence of a loop is not.
+    against a budget of ten a day; the absence of a loop is not.
 
     Worst case per attempt is therefore two mints (a cold cache plus one re-mint),
     which is exactly what the token-expiry contract scenario asserts. The retry

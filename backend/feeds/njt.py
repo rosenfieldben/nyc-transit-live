@@ -152,8 +152,11 @@ NJT_ALERTS_URL = env_seams.url(
 # A feed skipped for cadence would have to be reported as one or the other, so
 # throttling NJT alerts alone would either drop its alerts from the served index
 # or mark it degraded on every skipped poll. At 20s/60s this is ~5,800 requests a
-# day against a rate limit NJ Transit does not publish, and 4 token mints (the
-# 6h MAX_TOKEN_AGE_S ceiling); if that ever proves too warm, POLL_INTERVAL_S and
+# day, comfortably inside the data cap, and 4 token mints from the 6h
+# MAX_TOKEN_AGE_S ceiling, which is NOT comfortable: that is 4 of the 10 mints NJ
+# Transit allows this account per Eastern day (observed 2026-09-02, see
+# njt_auth.DAILY_MINT_LIMIT), beside the contract monitor's 4 out of the same 10.
+# If that ever proves too warm, POLL_INTERVAL_S and
 # ALERT_POLL_INTERVAL_S are already C6 seams and moving them is a config change,
 # not a code one.
 
@@ -747,9 +750,9 @@ async def fetch_njt_trains(
     THROUGH njt_post AND NOTHING ELSE. That is not a style preference: the token
     cache behind it is what makes three NJT callers (this poller, the alerts
     poller, the static loader) share one token and produce exactly one re-mint
-    when it expires, against a rate limit NJ Transit does not publish. A direct
-    POST here would route around the single-flight lock and turn every concurrent
-    expiry into N mints.
+    when it expires, out of ten a day per account (njt_auth.DAILY_MINT_LIMIT). A
+    direct POST here would route around the single-flight lock and turn every
+    concurrent expiry into N mints.
 
     `post` is injectable for tests; production uses njt_auth.njt_post. Nothing is
     caught here: an unconfigured deployment raises NjtNotConfigured and every

@@ -10,7 +10,8 @@ Four things are pinned, in the order they can hurt:
   1. THE SNIFF, BOTH WAYS. is_auth_error must be true for exactly the probe's
      shape (HTTP 500 with {"errorMessage":"Invalid token."}) and false for
      everything else, including a genuine 500. A false positive spends a mint
-     against an unpublished rate cap; a false negative costs one retry on the
+     out of ten a day (njt_auth.DAILY_MINT_LIMIT, observed 2026-09-02, of which 8
+     are committed on a quiet day); a false negative costs one retry on the
      caller's schedule. The mutation check in the 15a handoff loosens this to
      "any 500" and the control tests below are what must go red.
   2. MINT CONSERVATION UNDER CONCURRENCY. N callers finding an empty cache
@@ -28,6 +29,17 @@ Audit 4 added two more, both consequences of the secret riding in a body:
      token's own shape in the body and asserts it appears NOWHERE in the message,
      because on those paths the body may be the live token. The pre-Audit-4 test
      asserted the opposite and was inverted, not kept.
+
+And one more, which is the reason the cap has a number at all now:
+
+  7. THE DAILY MINT BUDGET (observed 2026-09-02). Ten mints per account per Eastern
+     day, every attempt counted. The refusal is another HTTP 500, so it needs its
+     own exact-shape sniff beside is_auth_error's, and the message it produces is a
+     CONSTANT: matching the body against a known phrase is not quoting it, so the
+     canary rides in the refusal body here too and must still appear nowhere. The
+     rest is deliberately unremarkable, and that is asserted rather than assumed:
+     a spent budget is a mint failure like any other, with no extra retry and no
+     effect on any other feed.
 """
 
 from __future__ import annotations
@@ -55,6 +67,15 @@ REAL_500 = b'{"errorMessage":"An unexpected error occurred."}'
 # in a getToken body. The F3 tests assert it appears NOWHERE in a message, which
 # is the same assertion as "the live token never reaches a log".
 CANARY = "canary-tok-0123456789"
+
+# The daily-cap refusal, observed 2026-09-02: an HTTP 500 whose errorMessage BEGINS
+# "Daily usage limit". The tail carries the canary deliberately. The tail is exactly
+# the part the app must never repeat, and a body shaped like this is the F3 hazard
+# in its most tempting form: the app now READS this body, so "reads it" and "quotes
+# it" have to be visibly different things.
+QUOTA_REFUSAL = json.dumps(
+    {"errorMessage": f"Daily usage limit of 10 reached. Token {CANARY} was the last."}
+).encode()
 
 # Where a hostile redirect would send the body. A different origin from every URL
 # above, so a followed redirect is a request whose URL names this host.
@@ -337,7 +358,7 @@ async def test_the_ceiling_does_not_widen_the_sniff():
 async def test_mint_requests_counts_posts_sent_not_tokens_issued():
     """THE COUNTER THAT MATTERS FOR THE RATE CAP. A failed mint raises before the
     token is stored, so it never advances `mints` -- and a failed mint is exactly the
-    traffic that spends the unpublished cap. Asserting conservation on `mints` alone
+    traffic that spends the ten-a-day cap. Asserting conservation on `mints` alone
     is blind to a loop that mints unsuccessfully forever."""
     transport = RecordingTransport(mint_responses=[(503, "upstream down")])
     cache = njt_auth.TokenCache()
@@ -707,3 +728,185 @@ def test_extract_token_accepts_the_spellings_the_probe_left_open(body):
 def test_extract_token_rejects_a_response_carrying_no_token(body):
     with pytest.raises(njt_auth.NjtAuthError):
         njt_auth.extract_token(body)
+
+
+# ---------------------------------------------------------------------------
+# 7. The daily mint budget (observed 2026-09-02)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("body", "why"),
+    [
+        (QUOTA_REFUSAL, "the observed refusal, canary tail and all"),
+        (b'{"errorMessage":"Daily usage limit"}', "the prefix alone, with no tail"),
+        (b'{"errorMessage":"  Daily usage limit exceeded.  "}', "padded, stripped before compare"),
+        (b'{"errorMessage":"DAILY USAGE LIMIT EXCEEDED"}', "shouted"),
+        (b'{"errorMessage":"daily usage limit exceeded"}', "lowercased"),
+        (b'{"errorMessage":"Daily usage limit.","detail":"x"}', "extra keys are fine"),
+    ],
+)
+def test_the_refusal_shape_is_a_quota_error(body, why):
+    """A PREFIX, not a sentence, and the parametrization is the reason. Only the
+    first three words were observed; the tail varies and may be reworded upstream at
+    any time. Pinning the whole sentence would turn this into a false negative on
+    NJ Transit's next copy edit, and a false negative here is a spent budget
+    reported as an anonymous HTTP 500 again."""
+    assert njt_auth.is_mint_quota_error(500, body) is True, why
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "why"),
+    [
+        (500, REAL_500, "a genuine NJT 500: THE CONTROL"),
+        (500, INVALID_TOKEN, "the OTHER 500 this module knows; the two must not overlap"),
+        (500, b"", "a 500 with no body at all"),
+        (500, b"<html>Daily usage limit</html>", "the words in an HTML page, not JSON"),
+        (500, b'"Daily usage limit exceeded."', "the right words, but a bare JSON string"),
+        (500, b'["Daily usage limit exceeded."]', "a JSON array, not an object"),
+        (500, b'{"errorMessage":null}', "errorMessage present but not a string"),
+        (
+            500,
+            b'{"errorMessage":"Request refused: daily usage limit exceeded."}',
+            "the phrase is present but does not BEGIN the message, so this is some "
+            "other refusal that happens to mention the cap",
+        ),
+        (200, QUOTA_REFUSAL, "a 200 is never a refusal whatever it says"),
+        (429, QUOTA_REFUSAL, "the obvious status for a rate limit is NOT the one NJT uses"),
+        (503, QUOTA_REFUSAL, "an ordinary outage carrying the same body"),
+        (307, QUOTA_REFUSAL, "a redirect is never a quota refusal (F2 keeps 3xx unfollowed)"),
+    ],
+)
+def test_everything_else_is_not_a_quota_error(status, body, why):
+    """THE CONTROL SIDE, and it carries a burden the invalid-token controls do not:
+    NJ Transit answers a dead token, a real fault AND a spent budget with the same
+    status code, so these two sniffs run over the same 500s and must never both be
+    true. Loosening this one to `status == 500` reports every NJ Transit outage as a
+    spent budget on /healthz, which is a wrong answer for whoever is on call."""
+    assert njt_auth.is_mint_quota_error(status, body) is False, why
+
+
+def test_the_two_sniffs_never_agree_about_the_same_500():
+    """Stated once as its own claim rather than left implicit in the two tables
+    above, because it is the property that keeps them separable: each body is one
+    thing, and a response that reads as both would mean the app re-mints (spending
+    a mint) on a refusal that exists because there are no mints left."""
+    for body in (INVALID_TOKEN, QUOTA_REFUSAL, REAL_500):
+        assert not (njt_auth.is_auth_error(500, body) and njt_auth.is_mint_quota_error(500, body))
+    assert njt_auth.is_auth_error(500, INVALID_TOKEN) is True
+    assert njt_auth.is_mint_quota_error(500, QUOTA_REFUSAL) is True
+
+
+async def test_a_refused_mint_raises_the_fixed_string_and_nothing_from_the_body():
+    """THE F3 CLAIM ON THE ONE PATH THAT READS THE BODY. is_mint_quota_error is the
+    only thing in the module allowed to look at a getToken response, and what comes
+    back out is a bool; the message is njt_auth's own constant. So the assertion is
+    EQUALITY, not containment: nothing was appended, nothing was interpolated, and
+    the canary sitting in the refusal's tail has nowhere to travel.
+
+    The mutation this kills is the tempting one: reporting the body because "the
+    upstream is the only thing that knows why". For getToken that premise is false
+    at any status, which is what Audit 4 established."""
+    transport = RecordingTransport(mint_responses=[(500, QUOTA_REFUSAL)])
+    with pytest.raises(njt_auth.NjtMintQuotaError) as excinfo:
+        await njt_auth.mint(transport=transport, env=ENV, url=TOKEN_URL)
+    assert str(excinfo.value) == njt_auth.MINT_QUOTA_MESSAGE
+    assert CANARY not in str(excinfo.value), "the getToken body must never reach a message"
+    assert transport.mints == 1, "a refused mint is never retried"
+
+
+async def test_a_refused_mint_is_a_mint_failure_like_any_other():
+    """THE 'OTHERWISE NOTHING CHANGES' CLAIM, asserted rather than assumed.
+
+    NjtMintQuotaError is a SUBCLASS of NjtAuthError, so every caller that already
+    handles a failed mint keeps handling this one with no new arm: the warmup's rung
+    schedule, the poller's NjtAuthError branch, njt_static's lenient empty result.
+    And njt_post does what it does for any failed mint: no data request goes out, no
+    second getToken follows, and the attempt is over. Retrying harder is the one
+    real mistake available on this path, because every attempt is charged to the
+    very budget it would be waiting on."""
+    transport = RecordingTransport(mint_responses=[(500, QUOTA_REFUSAL)])
+    with pytest.raises(njt_auth.NjtAuthError) as excinfo:
+        await njt_auth.njt_post(
+            URL, cache=njt_auth.TokenCache(), transport=transport, env=ENV, token_url=TOKEN_URL
+        )
+    assert isinstance(excinfo.value, njt_auth.NjtMintQuotaError)
+    assert transport.mints == 1, "a refused mint must not provoke a second getToken"
+    assert transport.data_calls == [], "and no data request follows a mint that failed"
+
+
+async def test_repeated_attempts_never_retry_into_the_cap():
+    """The caller's schedule is what tries again, and each attempt costs exactly one
+    getToken. Four attempts, four POSTs, never eight: the absence of a loop in
+    njt_post is the enforcement and this is the proof, made with the refusal that
+    makes a loop most expensive."""
+    transport = RecordingTransport(mint_responses=[(500, QUOTA_REFUSAL)])
+    cache = njt_auth.TokenCache()
+    for _ in range(4):
+        with pytest.raises(njt_auth.NjtMintQuotaError):
+            await njt_auth.njt_post(
+                URL, cache=cache, transport=transport, env=ENV, token_url=TOKEN_URL
+            )
+    assert transport.mints == 4
+    assert cache.mint_requests == 4
+    assert cache.mints == 0, "no token was ever issued"
+
+
+async def test_the_cache_records_the_refusal_and_the_next_good_mint_clears_it():
+    """WHAT /healthz READS. The flag says one thing only: the most recent mint
+    attempt was refused for the cap. It lives on the cache because the cache is what
+    every mint in the app goes through, so it cannot be stale the way a flag
+    somebody remembered to set could be.
+
+    THE CLEARING IS THE HALF THAT MATTERS AFTER MIDNIGHT. There is no date
+    arithmetic anywhere: the first mint that succeeds after the Eastern reset clears
+    the flag as a side effect of working, so /healthz stops publishing the code
+    without anything having to notice a clock."""
+    transport = RecordingTransport(
+        mint_responses=[(500, QUOTA_REFUSAL), (200, json.dumps({"UserToken": "t1"}))]
+    )
+    cache = njt_auth.TokenCache()
+    assert cache.mint_quota_refused is False, "a fresh cache has not been refused anything"
+    with pytest.raises(njt_auth.NjtMintQuotaError):
+        await njt_auth.njt_post(URL, cache=cache, transport=transport, env=ENV, token_url=TOKEN_URL)
+    assert cache.mint_quota_refused is True
+    body = await njt_auth.njt_post(
+        URL, cache=cache, transport=transport, env=ENV, token_url=TOKEN_URL
+    )
+    assert body == b"zip-bytes"
+    assert cache.mint_quota_refused is False, "the mint that worked cleared it"
+
+
+async def test_an_ordinary_mint_failure_clears_the_flag_too():
+    """A LINGERING FLAG WOULD BE A LIE, and this is the shape that would produce
+    one: the cap is met at 23:50, the next attempt after midnight fails for some
+    entirely different reason, and /healthz would keep reporting a spent budget
+    through an actual outage. The flag tracks the MOST RECENT attempt, not the most
+    recent refusal."""
+    transport = RecordingTransport(mint_responses=[(500, QUOTA_REFUSAL), (503, "upstream down")])
+    cache = njt_auth.TokenCache()
+    with pytest.raises(njt_auth.NjtMintQuotaError):
+        await njt_auth.njt_post(URL, cache=cache, transport=transport, env=ENV, token_url=TOKEN_URL)
+    assert cache.mint_quota_refused is True
+    with pytest.raises(njt_auth.NjtAuthError) as excinfo:
+        await njt_auth.njt_post(URL, cache=cache, transport=transport, env=ENV, token_url=TOKEN_URL)
+    assert not isinstance(excinfo.value, njt_auth.NjtMintQuotaError)
+    assert cache.mint_quota_refused is False
+
+
+async def test_a_cancelled_mint_leaves_the_flag_exactly_as_it_was():
+    """Exception, not BaseException, in the cache's bookkeeping. A cancellation is
+    this process giving up (a shutdown, an attempt deadline), not NJ Transit
+    answering, so it says nothing either way about the budget and must not clear a
+    refusal that really happened."""
+
+    async def cancelling(url, form, timeout_s):
+        raise asyncio.CancelledError
+
+    cache = njt_auth.TokenCache()
+    cache.mint_quota_refused = True
+    with pytest.raises(asyncio.CancelledError):
+        await njt_auth.njt_post(
+            URL, cache=cache, transport=cancelling, env=ENV, token_url=TOKEN_URL
+        )
+    assert cache.mint_quota_refused is True

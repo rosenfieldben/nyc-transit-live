@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
 import bus_static
+import njt_auth
 import static_data
 import static_shared
 from cache import FEED_STALE_AFTER_S, _feed_age
@@ -15,6 +16,7 @@ from models import (
     HEALTH_BUS_INDEX_FAILED,
     HEALTH_FEED_CONTENT_STALE,
     HEALTH_GATING_CODES,
+    HEALTH_NJT_MINT_QUOTA,
     HEALTH_NO_FEED_FRESH,
     HEALTH_SUBWAY_GROUPS_DOWN,
     HEALTH_SUBWAY_STATIC_FAILED,
@@ -193,6 +195,7 @@ def _health_codes(
     bus_index_status: str,
     subway_static_status: str | None,
     subway_feed_health: dict | None,
+    njt_mint_quota: bool,
     now: float,
 ) -> list[str]:
     """Every degraded classification true of this instance right now, as codes.
@@ -255,6 +258,27 @@ def _health_codes(
     # still answers 200.
     if _most_subway_groups_down(subway_feed_health):
         codes.append(HEALTH_SUBWAY_GROUPS_DOWN)
+
+    # THE BUDGET, NOT AN OUTAGE, and the only code here that describes something
+    # about US rather than about an upstream. NJ Transit issues ten tokens per
+    # account per Eastern day (njt_auth.DAILY_MINT_LIMIT, observed 2026-09-02) and
+    # this instance shares that account with the contract monitor and with every
+    # fixture pull. When the eleventh is refused, the NJ Transit layer goes dark
+    # while NJ Transit itself is perfectly healthy, and every other signal the app
+    # publishes says exactly what a real outage says: njt_static "failed", the njt
+    # feed erroring, the archive's last_download_error set. This code is the one
+    # place the difference is written down.
+    #
+    # NOT GATING, and see HEALTH_GATING_CODES for the reason, which is stronger
+    # here than for any other non-gating code: a restart would spend another mint.
+    #
+    # Read off the token cache rather than app.state because that cache is what
+    # every mint in this process goes through, so the answer cannot be stale in the
+    # way a flag somebody remembered to set would be. It clears itself on the next
+    # mint that answers anything else, which after Eastern midnight is the first
+    # one the warmup's retry schedule makes.
+    if njt_mint_quota:
+        codes.append(HEALTH_NJT_MINT_QUOTA)
     return codes
 
 
@@ -299,7 +323,13 @@ async def healthz(request: Request) -> JSONResponse:
     lagging upstream is not something a fresh process fixes. `degraded` means "is
     this instance sick", is a superset of the gating reasons, and is what the
     contract monitor reads: before F1 the monitor probed only /api/status and
-    could tell that production was dead but never that it was ill."""
+    could tell that production was dead but never that it was ill.
+
+    ONE OF THE CODES IS NOT A SICKNESS AT ALL. `njt-mint-quota` says this instance
+    spent the NJ Transit account's ten mints for the Eastern day, so that layer is
+    dark until midnight without anything being broken. It is published here because
+    every other surface reports it exactly as it reports a real NJ Transit outage,
+    and telling the two apart is otherwise a matter of finding the right log line."""
     app = request.app
     now = time.time()
     codes = _health_codes(
@@ -307,6 +337,7 @@ async def healthz(request: Request) -> JSONResponse:
         bus_index_status=bus_static.status(),
         subway_static_status=getattr(app.state, "subway_static_status", None),
         subway_feed_health=getattr(app.state, "subway_feed_health", None),
+        njt_mint_quota=njt_auth.TOKEN_CACHE.mint_quota_refused,
         now=now,
     )
     reasons = [_HEALTH_REASONS[code] for code in codes if code in HEALTH_GATING_CODES]

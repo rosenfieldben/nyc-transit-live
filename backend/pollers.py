@@ -757,7 +757,8 @@ async def _refresh_njt(app: FastAPI, client: httpx.AsyncClient) -> None:
     what makes this poller, the alerts poller and the static loader share ONE
     token and produce exactly one re-mint when it expires. A direct client.post
     here would route around the single-flight lock and turn one expiry into three
-    mints, against a rate limit NJ Transit does not publish. The parameter stays
+    mints, out of the ten NJ Transit allows this account per Eastern day
+    (njt_auth.DAILY_MINT_LIMIT). The parameter stays
     so this refresher has the same signature as its five siblings and the registry
     below needs no special case.
 

@@ -65,7 +65,7 @@ EXPECTED_DEFAULTS: dict[str, object] = {
     # NJ Transit (15a). TWO seams for one upstream, because the mint and the
     # archive live in different modules and both must be redirectable together:
     # pointing only the archive at a simulator would leave every contract run
-    # minting real tokens against a rate limit NJ Transit does not publish.
+    # minting real tokens out of ten a day (njt_auth.DAILY_MINT_LIMIT).
     "NJT_TOKEN_URL": _NJT_RAILDATA + "/getToken",
     "NJT_STATIC_URL": _NJT_RAILDATA + "/getGTFS",
     # NJ Transit realtime (15b). Two more whole URLs for the reason the 15a pair

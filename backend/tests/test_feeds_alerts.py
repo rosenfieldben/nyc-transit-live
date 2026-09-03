@@ -408,7 +408,7 @@ def test_configured_njt_is_in_the_active_feed_set():
 
 def test_half_configured_njt_is_dropped():
     # A username with no password is not "configured enough to try": it would spend
-    # a doomed mint against a rate limit NJ Transit does not publish.
+    # a doomed mint out of ten a day (njt_auth.DAILY_MINT_LIMIT).
     assert "njt" not in feeds.active_alert_feeds({"NJT_USERNAME": "u", "NJT_PASSWORD": ""})
     assert "njt" not in feeds.active_alert_feeds({"NJT_USERNAME": "", "NJT_PASSWORD": "p"})
 

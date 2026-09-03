@@ -128,7 +128,10 @@ def _download() -> bytes:
 
     One mint, like everything else that talks to this API: njt_post takes its token
     from the shared cache and re-mints at most once. A regeneration therefore costs
-    one token against a rate limit NJ Transit does not publish.
+    one token out of the ten NJ Transit allows this account per Eastern day
+    (njt_auth.DAILY_MINT_LIMIT, observed 2026-09-02), of which the contract monitor
+    and production have about 8 committed already. A regeneration is therefore a
+    deliberate act on a day nobody is redeploying, not a routine one.
     """
     if not njt_auth.is_configured():
         raise SystemExit(

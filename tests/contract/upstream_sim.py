@@ -139,7 +139,7 @@ PUBLICATIONS = ("good", "headers-only-stops", "missing-member", "corrupt-zip")
 #                 It must not provoke a mint and must classify as an attempt
 #                 failure. Without it, "re-mint on invalid token" and "re-mint on
 #                 any 500" are indistinguishable, and the second one spends mints
-#                 against an unpublished rate cap on every real NJT outage.
+#                 out of ten a day per account on every real NJT outage.
 #   redirect      AUDIT 4, F2. getToken answers every mint with a 307 whose
 #                 Location names NJT_REDIRECT_PATH on this same simulator, and that
 #                 route counts what arrives and hands out a working token. httpx
@@ -151,7 +151,15 @@ PUBLICATIONS = ("good", "headers-only-stops", "missing-member", "corrupt-zip")
 #                 the witness and a second listener would add nothing to it; the
 #                 cross-origin half of the claim is carried by the hermetic
 #                 transport tests in backend/tests.
-TOKEN_MODES = ("ok", "reject-first", "server-error", "redirect")
+#   quota         THE DAILY BUDGET, SPENT. getToken answers every mint HTTP 500 with
+#                 a body whose errorMessage begins "Daily usage limit", which is what
+#                 NJ Transit does after the tenth mint of an Eastern day (observed
+#                 2026-09-02). The status is the SAME 500 that server-error and
+#                 reject-first use, and that is the whole difficulty: three different
+#                 answers wear one status code and the app has to tell them apart
+#                 from the body alone. One that gets it wrong reports a spent budget
+#                 as an NJ Transit outage and sends its operator hunting one.
+TOKEN_MODES = ("ok", "reject-first", "server-error", "redirect", "quota")
 
 # Where the `redirect` token mode points a mint. Same simulator, its own route, so
 # a credential that follows the redirect is COUNTED rather than lost.
@@ -160,6 +168,17 @@ NJT_REDIRECT_PATH = "/njt/getToken/elsewhere"
 # Byte-for-byte what the 2026-08-05 probes recorded for a rejected token. Written
 # as one literal so a test can assert against the same string the app sniffs for.
 NJT_INVALID_TOKEN_BODY = b'{"errorMessage":"Invalid token."}'
+
+# The daily-cap refusal. Only the PREFIX was observed, so the tail here is this
+# simulator's invention, and it carries a token-shaped canary on purpose: a scenario
+# asserts that nothing after the prefix reaches the backend log, which is the F3
+# claim on the one getToken body the app is now allowed to read at all.
+NJT_QUOTA_CANARY = "canary-tok-0123456789"
+NJT_QUOTA_BODY = (
+    b'{"errorMessage":"Daily usage limit of 10 reached. Token '
+    + NJT_QUOTA_CANARY.encode()
+    + b' was the last."}'
+)
 
 # A genuine NJT server error: same status, different body. The whole point is that
 # only the BODY tells them apart.
@@ -1132,6 +1151,11 @@ class UpstreamSim:
                 # adds the Location. The POST still counted above, because it was
                 # made, and a redirect is what it was answered with.
                 return 307, b""
+            if self.njt.token_mode == "quota":
+                # Refused, and STILL COUNTED above: NJ Transit charges every attempt
+                # against the ten, refused ones included, which is exactly why a
+                # retry loop is the worst available reaction to this response.
+                return 500, NJT_QUOTA_BODY
             if not fields.get("username") or not fields.get("password"):
                 return 400, b'{"errorMessage":"Missing credentials."}'
             return 200, self._issue_token()
@@ -1288,7 +1312,7 @@ class UpstreamSim:
             "BUS_STATIC_BASE": f"{base}/static/bus",
             # BOTH NJT seams, together. Pointing only the archive here would leave
             # the MINT aimed at raildata.njtransit.com, so every contract run would
-            # spend a real token against an unpublished rate cap and the tier would
+            # spend a real token out of the account's ten a day and the tier would
             # stop being hermetic in the one place it is hardest to notice.
             "NJT_TOKEN_URL": f"{base}/njt/getToken",
             "NJT_STATIC_URL": f"{base}/njt/getGTFS",

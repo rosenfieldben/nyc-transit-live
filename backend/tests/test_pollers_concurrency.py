@@ -561,10 +561,14 @@ async def _run_njt_refresh(monkeypatch, cache, raiser):
     [
         httpx.ConnectError("upstream refused"),
         pollers.njt_auth.NjtAuthError("token rejected"),
+        # A SPENT DAILY MINT BUDGET, which is a subclass of the line above and is
+        # listed here to prove the subclassing is doing its job: the poller grew no
+        # arm for it, and it must degrade exactly like every other refused mint.
+        pollers.njt_auth.NjtMintQuotaError(pollers.njt_auth.MINT_QUOTA_MESSAGE),
         pollers.njt_auth.NjtUpstreamError("HTTP 503"),
         DecodeError("not a protobuf"),
     ],
-    ids=["transport", "auth", "upstream", "decode"],
+    ids=["transport", "auth", "mint-quota", "upstream", "decode"],
 )
 async def test_a_failed_njt_poll_marks_its_own_system_block_not_just_the_cache_error(
     monkeypatch, cache, raiser
@@ -745,3 +749,31 @@ async def test_the_alert_refresher_actually_reconciles_before_it_polls(monkeypat
         "reporting itself healthy"
     )
     assert set(entry["health"]) == set(pollers.active_alert_feeds())
+
+
+async def test_a_spent_mint_budget_degrades_nj_transit_alone(monkeypatch, cache):
+    """THE "OTHERWISE NOTHING CHANGES" CLAIM AT THE POLLER.
+
+    NJ Transit refuses the eleventh mint of an Eastern day (observed 2026-09-02),
+    and njt_auth reports that as NjtMintQuotaError, a SUBCLASS of NjtAuthError. The
+    poller was not taught about it and must not need to be: the existing arm catches
+    it, the failure is a 502 (the upstream answered, it just refused us), the
+    last-known trains are retained and drawn as stale, and no other feed in the
+    cache is touched. Nothing retries harder, which is the property that matters
+    most on this particular failure, since every extra attempt is charged to the
+    same budget it is waiting on.
+
+    The fixed string reaching the cache error is what makes the state legible on
+    /api/status; /healthz says the same thing as a code, off the token cache."""
+    refusal = pollers.njt_auth.NjtMintQuotaError(pollers.njt_auth.MINT_QUOTA_MESSAGE)
+    entry = await _run_njt_refresh(monkeypatch, cache, refusal)
+    assert entry["error"]["status"] == 502
+    assert pollers.njt_auth.MINT_QUOTA_MESSAGE in entry["error"]["detail"]
+    assert entry["data"] == [{"id": "T1"}], "a refused mint keeps the last-known trains"
+    assert entry["systems"]["njt"]["ok"] is False, "and they are drawn as stale"
+    # NJ TRANSIT ALONE. Every other registered feed is untouched by this poll, which
+    # is what "one layer degrades" means on the surface the client reads.
+    for name, other in cache.items():
+        if name != "njt":
+            assert other["error"] is None, f"{name} must be untouched by an NJT refusal"
+            assert other["data"] is None

@@ -181,6 +181,23 @@
       <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="10" cy="10" r="4.5" fill="#0e7490" stroke="#fff" stroke-width="1.5"/></svg>
       Ferry dock (click for arrivals)
     </div>
+    <div class="legend-row">
+      <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M2 15 C9 15 9 5 18 5" stroke="#075AAA" stroke-width="2.5" fill="none" opacity="0.6"/></svg>
+      NJ Transit route line
+    </div>
+    <div class="legend-row">
+      <svg aria-hidden="true" viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="12" rx="1.5" fill="#fff" stroke="#075AAA" stroke-width="2.5"/></svg>
+      NJ Transit train (scheduled position, no GPS)
+    </div>
+    <div class="legend-row">
+      <!-- viewBox 16, matching the train row above it. .legend-row svg is a fixed 16px
+           box, so the viewBox alone decides a swatch's apparent size: at viewBox 12
+           this 10-unit square scaled UP to 13.3px and read LARGER than the 12px train
+           square, which is the reverse of what the map draws and of what this file and
+           systems/njt.js both say about it. -->
+      <svg aria-hidden="true" viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="10" rx="1.5" fill="#334155" stroke="#fff" stroke-width="1.5"/></svg>
+      NJ Transit station (click for departures)
+    </div>
     <div class="legend-note">Color indicates route &middot; click a bus to draw its route</div>
     </div><!-- /#legend -->
     <div id="route-banner" hidden>
@@ -200,6 +217,9 @@
       <label><input type="checkbox" id="toggle-airtrain" checked> AirTrain JFK</label>
       <label><input type="checkbox" id="toggle-path" checked> PATH</label>
       <label><input type="checkbox" id="toggle-ferries" checked> Ferries</label>
+      <!-- "NJ Transit" spelled out rather than "NJT": the abbreviation is what the
+           feed and the code call it, and the label is what a rider reads. -->
+      <label><input type="checkbox" id="toggle-njt" checked> NJ Transit</label>
     </div>
     <div id="status">Loading&hellip;</div>
   </aside>
@@ -216,6 +236,14 @@
   <script src="systems/airtrain.js"></script>
   <script src="systems/path.js"></script>
   <script src="systems/ferry.js"></script>
+  <!-- NJ Transit last among the systems, and its position carries no requirement: the
+       constants it borrows from the railroads (RAILROAD_ROUTE_MAX_SLICE and
+       RAILROAD_ROUTE_ACCEPT_DIST) live in helpers.js rather than in railroad.js, so
+       njt.js depends only on helpers.js and systems/shared.js like every file here and
+       could sit anywhere after them. An earlier version of this comment claimed it sat
+       beside railroad.js "as the phase decision states"; it sits three files below it,
+       and no such decision is written down anywhere. -->
+  <script src="systems/njt.js"></script>
   <!-- A1 after the system files, because it reads the station registry they fill,
        and before map.js, which wires its refresh into the poll loop. -->
   <script src="stations.js"></script>

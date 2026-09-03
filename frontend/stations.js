@@ -298,7 +298,11 @@ function stationChipStyle(entry, routeId) {
     const bg = railroadColor(routeId);
     return { bg, fg: readableTextOn(bg) };
   }
-  if (entry.kind === "path" || entry.kind === "ferry") {
+  // NJT joins the colorFor branch rather than getting its own: its route colours
+  // are served per route by the backend and validated (njtColor) exactly as PATH's
+  // and the ferry's are, and its fallback is the one njtRouteColor supplies, which
+  // is what a route with no line (17, the Meadowlands) lands on.
+  if (entry.kind === "path" || entry.kind === "ferry" || entry.kind === "njt") {
     const colorFor = entry.colorFor || (() => null);
     const bg = colorFor(routeId) || "#546e7a";
     return { bg, fg: readableTextOn(bg) };

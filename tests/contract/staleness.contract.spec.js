@@ -118,6 +118,13 @@ function railroadOpacities(page, system) {
   );
 }
 
+/** Opacities of every NJ Transit marker, read from the marker exactly as
+ * railroadOpacities does. No system filter: NJ Transit is one system, so every
+ * marker on the layer shares its freshness and a filter would suggest otherwise. */
+function njtOpacities(page) {
+  return page.evaluate(() => [...njtTrainRecords.values()].map((r) => r.marker.options.opacity ?? 1));
+}
+
 test.afterEach(async ({ request }) => {
   const unexpected = [...blockedHosts].filter((host) => !EXPECTED_EXTERNAL_HOSTS.includes(host));
   blockedHosts = new Set();
@@ -264,4 +271,56 @@ test("C6e3. PATH, a single-feed source, dims like any other and recovers", async
       { timeout: DIM_TIMEOUT_MS },
     )
     .toBe(true);
+});
+
+test("C6e4. NJT down: its markers dim, the railroads' do not", async ({ page, request }) => {
+  // Hermetic counterpart: tests/e2e/smoke.spec.js "C2f", which drives the same
+  // rendering from a stubbed /api/njt-trains. What only this tier shows is that a
+  // REAL backend, polling a REAL socket that stopped answering, produces the
+  // envelope that makes the page dim.
+  //
+  // NOT A HYPOTHETICAL. NJ Transit caps getToken at TEN MINTS PER ACCOUNT PER
+  // EASTERN DAY (learned 2026-09-02), and production shares that one budget with
+  // every developer who runs the fixture generator or the contract monitor. A
+  // budget-exhausted NJ Transit is therefore a RECURRING PRODUCTION STATE, not an
+  // outage scenario: NJT stops answering while the subway, the railroads, PATH and
+  // the ferries all keep decoding, for hours, on an ordinary day. What a rider must
+  // see then is exactly this: New Jersey dim and honest about its age, and every
+  // other mode untouched.
+  await openMap(page);
+  await expect.poll(async () => (await njtOpacities(page)).length, { timeout: 60_000 }).toBeGreaterThan(0);
+  expect((await njtOpacities(page)).every((o) => o === 1)).toBe(true);
+
+  await control(request, { key: "njt:tripupdate", mode: "error" });
+  await awaitPolls(request, "njt:tripupdate", 2);
+
+  // THE PER-SYSTEM CLAIM, stated as a contrast rather than as an absolute, exactly
+  // as C6e1 states it for MNR against LIRR: NJ Transit goes dim WHILE the railroads
+  // stay bright. A frontend whose stale sweep dimmed every layer on any trouble
+  // would satisfy the first half and fail here.
+  // The length check is load-bearing: `[].every(...)` is true, so without it this
+  // would pass the moment NJT's retention window dropped its trains off the map.
+  await expect
+    .poll(
+      async () => {
+        const njt = await njtOpacities(page);
+        return njt.length > 0 && njt.every((o) => o < 1);
+      },
+      { timeout: DIM_TIMEOUT_MS },
+    )
+    .toBe(true);
+  for (const system of ["LIRR", "MNR"]) {
+    const railroad = await railroadOpacities(page, system);
+    expect(railroad.length, `${system} must still have markers to be bright`).toBeGreaterThan(0);
+    expect(railroad.every((o) => o === 1), `${system} must stay live while NJT is down`).toBe(true);
+  }
+
+  // And the status line names NJ Transit rather than going generically red, which is
+  // the other half of the C2 granularity claim. MATCHED ON THE PROBLEMS CLAUSE, not
+  // on the words alone: map.js builds the counts from every source's label
+  // unconditionally, so "5 NJ Transit" is in the line at all times and a bare
+  // /NJ Transit/ would have passed against the healthy baseline measured at the top
+  // of this spec.
+  await expect(page.locator("#status")).toContainText(/NJ Transit: /, { timeout: DIM_TIMEOUT_MS });
+  await expect(page.locator("#status")).toHaveClass(/error/);
 });

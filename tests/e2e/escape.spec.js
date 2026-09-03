@@ -33,11 +33,9 @@ async function open(page) {
   await page.clock.install({ time: new Date(fx.FROZEN_MS) });
   await page.clock.pauseAt(new Date(fx.FROZEN_MS));
   await page.goto("/");
-  await expect
-    .poll(async () => page.evaluate(() => document.querySelectorAll(".leaflet-marker-icon").length), {
-      timeout: 15_000,
-    })
-    .toBeGreaterThan(5);
+  // The STATE these specs need, not a marker count that any fast feed can satisfy;
+  // see the witness's own comment in state.js for what the count cost.
+  await expectState(page, "every vehicle system loaded", "opening the map");
 }
 
 async function withBanner(page) {

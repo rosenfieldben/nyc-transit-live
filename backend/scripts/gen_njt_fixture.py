@@ -149,7 +149,17 @@ def _download() -> bytes:
 
     One mint, like everything else that talks to this API: njt_post takes its token
     from the shared cache and re-mints at most once. A regeneration therefore costs
-    one token against a rate limit NJ Transit does not publish.
+    one token against a cap of TEN MINTS PER ACCOUNT PER EASTERN DAY (learned
+    2026-09-02), which production shares.
+
+    A REFUSED MINT IS AN ORDINARY OUTCOME HERE, not an exceptional one, which is why
+    it leaves by the same door as every other refusal in this script rather than as
+    a traceback. Ten a day across production and every developer is a budget a human
+    can exhaust before lunch, and the answer to "you have no mints left" is one line
+    saying so, not forty lines of stack ending in someone wondering whether they
+    broke the generator. The message quotes the error because 15c's F3 work made
+    that safe: an NjtAuthError from the mint path carries a status, never the
+    response body, and never the credentials.
     """
     if not njt_auth.is_configured():
         raise SystemExit(
@@ -157,7 +167,14 @@ def _download() -> bytes:
             "environment or the project-root .env) to download the NJ Transit archive."
         )
     print(f"Minting a token and POSTing {njt_static.NJT_STATIC_URL} ...")
-    raw = asyncio.run(njt_auth.njt_post(njt_static.NJT_STATIC_URL))
+    try:
+        raw = asyncio.run(njt_auth.njt_post(njt_static.NJT_STATIC_URL))
+    except (njt_auth.NjtAuthError, njt_auth.NjtUpstreamError) as exc:
+        raise SystemExit(
+            f"  !! NJ Transit refused the request ({exc}); fixture NOT written. If the "
+            "daily mint budget is spent, the answer is to try again tomorrow rather "
+            "than to retry now."
+        ) from exc
     print(f"  got {len(raw)} bytes")
     return raw
 

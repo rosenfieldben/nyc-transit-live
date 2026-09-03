@@ -13,6 +13,7 @@
 const { test, expect } = require("@playwright/test");
 const { installMocks, json } = require("./mock");
 const fx = require("./fixtures/api");
+const { expectState } = require("./state");
 
 // The poll cadence from map.js. Advancing the frozen clock by more than this drives
 // exactly one refresh of every source.
@@ -22,11 +23,9 @@ async function open(page, ctx) {
   await page.clock.install({ time: new Date(fx.FROZEN_MS) });
   await page.clock.pauseAt(new Date(fx.FROZEN_MS));
   await page.goto("/");
-  await expect
-    .poll(async () => page.evaluate(() => document.querySelectorAll(".leaflet-marker-icon").length), {
-      timeout: 15_000,
-    })
-    .toBeGreaterThan(5);
+  // The STATE these specs need, not a marker count that any fast feed can satisfy;
+  // see the witness's own comment in state.js for what the count cost.
+  await expectState(page, "every vehicle system loaded", "opening the map");
   return ctx;
 }
 
@@ -39,7 +38,10 @@ async function open(page, ctx) {
 // probe fails inside the page for reasons that have nothing to do with the label.
 function labelOf(page, system, id) {
   return page.evaluate(([which, key]) => {
-    const registry = { subway: trains, bus: buses, ferry: ferryBoatRecords, path: pathTrainRecords }[which];
+    const registry = {
+      subway: trains, bus: buses, ferry: ferryBoatRecords, path: pathTrainRecords,
+      njt: njtTrainRecords,
+    }[which];
     const marker = registry && registry.get(key) ? registry.get(key).marker : null;
     const el = marker && marker.getElement ? marker.getElement() : null;
     return {
@@ -210,4 +212,87 @@ test("A2e. no marker is reachable by Tab, and the map container still is", async
   // unchanged and the spec would report a missing affordance that is actually there.
   await page.clock.runFor(1000);
   await expect.poll(async () => page.evaluate(() => map.getCenter().lng)).toBeGreaterThan(before);
+});
+
+test("A2j. an NJT train's label picks up its route name late, and its delay every poll", async ({
+  page,
+}) => {
+  // TWO GATES IN ONE SPEC, because njt.js has both of the traps the other systems
+  // taught. The route table loads asynchronously with retry backoff (A2c's trap: a
+  // name gated on route_id changing is stranded on the fallback forever), and the
+  // DELAY moves poll to poll while nothing else about the train does (A2b's trap: a
+  // label refreshed only on a re-icon never hears about it).
+  const ctx = await installMocks(page);
+  let routeCalls = 0;
+  ctx.overrides.njtRoutes = (route, fixtures) => {
+    routeCalls++;
+    // An override must serve every call itself: mock.js hands it the route and does
+    // not fall back to the fixture, so returning nothing hangs the request.
+    if (routeCalls === 1) return json(route, { detail: "warming up" }, 503);
+    return json(route, fixtures.njtRoutes());
+  };
+  // THE DELAY MOVES ON A POLL OF ITS OWN, after the route table and the colour have
+  // both settled. The first draft flipped it on the SAME poll the table landed,
+  // which is also the poll that rebuilds the icon, so a setMarkerName gated on the
+  // re-skin still picked it up and the second half of this spec measured nothing: a
+  // review round moved setMarkerName inside the re-skin block and A2f stayed green.
+  let polls = 0;
+  ctx.overrides.njt = (route, fixtures) => {
+    polls++;
+    const body = fixtures.njt();
+    if (polls > 4) body.trains[0].delay = -180; // 4 min late becomes 3 min early
+    return json(route, body);
+  };
+  await open(page, ctx);
+
+  // Before the table lands: the route id, never a blank.
+  await expect.poll(async () => (await labelOf(page, "njt", "NJ_3800")).aria).toContain(
+    "NJ Transit route 9",
+  );
+  const early = await labelOf(page, "njt", "NJ_3800");
+  expect(early.aria).toContain("4 min late");
+  // The whole tab-order policy, asserted on a real NJT marker rather than in the
+  // abstract: markers carry a name and a role and are NOT a tab stop.
+  expect(early.role).toBe("img");
+  expect(early.tabindex).toBeNull();
+
+  // The retry lands the table: the name must follow, even though route_id never
+  // changed, which is the gate A2c's trap is about.
+  await page.clock.runFor(POLL_MS * 2);
+  await expect
+    .poll(async () => (await labelOf(page, "njt", "NJ_3800")).aria, { timeout: 15_000 })
+    .toContain("Northeast Corridor");
+  expect((await labelOf(page, "njt", "NJ_3800")).aria).toContain("4 min late");
+
+  // NOW the delay flips, on a poll where nothing else about the train moves and the
+  // icon is not rebuilt. The direction must not be rounded away into "late": NJ
+  // Transit does publish early trains.
+  await page.clock.runFor(POLL_MS * 3);
+  await expect
+    .poll(async () => (await labelOf(page, "njt", "NJ_3800")).aria, { timeout: 15_000 })
+    .toContain("3 min early");
+  const later = (await labelOf(page, "njt", "NJ_3800")).aria;
+  expect(later).not.toContain("late");
+  // Every NJT train is a schedule estimate and the name says so, on every poll.
+  expect(later).toContain("scheduled position, no GPS");
+
+  // AND THE MARKER RE-SKINS, not just the label. njt.js gates its re-icon on the
+  // RESOLVED COLOUR rather than on route_id, because route_id never changes after a
+  // late route table lands and a colour-blind gate would leave every train that
+  // existed before the table drawn in the neutral fallback for the rest of the
+  // session. Read off the rendered svg, which is the only place the rider sees it.
+  const strokeOf = (id) =>
+    page.evaluate(
+      (key) => njtTrainRecords.get(key).marker.getElement().querySelector("rect").getAttribute("stroke"),
+      id,
+    );
+  expect(await strokeOf("NJ_3800")).toBe("#DD3439");
+
+  // AMENDMENT A on a live marker: route 17 never reaches the route table at all, so
+  // its label is the route id rather than a hole where the name would be, and its
+  // marker keeps the neutral fallback rather than losing its stroke.
+  const added = (await labelOf(page, "njt", "njt:9001")).aria;
+  expect(added).toContain("NJ Transit route 17");
+  expect(added).not.toContain("undefined");
+  expect(await strokeOf("njt:9001")).toBe("#4a4e69");
 });

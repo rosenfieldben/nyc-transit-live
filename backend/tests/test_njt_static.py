@@ -29,6 +29,7 @@ but one day per fixture.
 from __future__ import annotations
 
 import io
+import re
 import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1428,6 +1429,40 @@ def _check_variant_counts_are_bounded(parsed: dict) -> None:
         f"{total_kept} polylines from {total_referenced} referenced shapes: nothing "
         "collapsed, so the dedup is not running. A feed publishing one shape per "
         "direction always has variants to collapse."
+    )
+
+
+def test_the_station_tolerance_is_the_frontends_own_number_and_not_a_local_one():
+    """THE TOLERANCE IS A SEAM, so it is asserted rather than commented.
+
+    _STATION_ON_LINE_DIST is not a judgement this file gets to make: it is
+    RAILROAD_ROUTE_ACCEPT_DIST from frontend/helpers.js, the distance beyond which
+    computeRouteSlice refuses a projection and the train falls back to a straight
+    chord. A number written down twice drifts, and the drift here is invisible in
+    both directions: loosened, this golden stops catching geometry that would glide
+    badly; tightened, it fails on a fixture the map renders perfectly.
+
+    WHAT IT DOES NOT ADD, stated because the first draft of this docstring claimed
+    it and measurement said otherwise: it is NOT what makes an infinite tolerance
+    fatal. 15c mutation M2 set _STATION_ON_LINE_DIST to inf and
+    test_the_station_projection_claim_fails_when_a_station_leaves_its_line, which
+    already existed, went red on its own (the negative control stops being able to
+    fail). This test catches the OTHER direction, which nothing else could see: the
+    FRONTEND'S constant moving while the golden's stays, leaving a golden that
+    passes happily while asserting a distance the map no longer projects within.
+
+    Read out of the file rather than restated, for the reason the MOBILE_MAX_WIDTH_PX
+    node test reads style.css rather than trusting a comment.
+    """
+    helpers = (Path(__file__).resolve().parents[2] / "frontend" / "helpers.js").read_text(
+        encoding="utf-8"
+    )
+    match = re.search(r"const RAILROAD_ROUTE_ACCEPT_DIST = ([0-9.]+);", helpers)
+    assert match, "frontend/helpers.js no longer declares RAILROAD_ROUTE_ACCEPT_DIST"
+    assert float(match.group(1)) == _STATION_ON_LINE_DIST, (
+        f"the golden projects stations within {_STATION_ON_LINE_DIST} while the "
+        f"frontend accepts {match.group(1)}: one of the two moved alone, so this "
+        "golden is no longer asking the question a rider would ask"
     )
 
 

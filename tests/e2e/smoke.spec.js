@@ -53,6 +53,7 @@ const trainMarkers = (page) => page.locator(".train-marker");
 const railroadMarkers = (page) => page.locator(".railroad-marker");
 const pathMarkers = (page) => page.locator(".path-marker");
 const ferryMarkers = (page) => page.locator(".ferry-marker");
+const njtMarkers = (page) => page.locator(".njt-marker");
 const popup = (page) => page.locator(".leaflet-popup-content");
 
 // Wait until the first poll and the one-shot static loads (stations, route names)
@@ -61,13 +62,18 @@ async function waitForReady(page) {
   await expect(busMarkers(page)).toHaveCount(2);
   await expect(trainMarkers(page)).toHaveCount(2);
   await expect(railroadMarkers(page)).toHaveCount(2);
+  await expect(njtMarkers(page)).toHaveCount(4);
   await page.waitForFunction(
     () =>
       typeof stationLayer !== "undefined" &&
       stationLayer.getLayers().length === 2 &&
       railroadStationLayer.getLayers().length === 2 &&
       railroadRouteNames.size >= 1 &&
-      routeIndex.size === 2,
+      routeIndex.size === 2 &&
+      // NJT's static pair, so a spec that opens an NJT popup or reads a route
+      // colour is never racing the loader that fills them.
+      njtStations.getLayers().length === 3 &&
+      njtRouteNames.size === 2,
   );
 }
 
@@ -1760,4 +1766,517 @@ test("C2e. PATH staleness: gliding halts and markers dim, then recovery resumes 
   await expect.poll(() => markerOpacities(page, ".path-marker")).toEqual(["1", "1"]);
   await page.clock.runFor(1_000);
   expect(await page.evaluate(() => pathTrainRecords.get("p-2").marker.getLatLng().lat)).not.toBe(frozen);
+});
+
+/* ---- 15c: NJ Transit Rail ---------------------------------------------------
+   Two specs. The first is the layer existing and being right about the two things
+   about it that are easy to get wrong (the marker key, and a route with no line);
+   the second is the C2a counterpart, which is the one the phase brief names.
+--------------------------------------------------------------------------- */
+
+test("33. NJ Transit: lines, station squares, and two ADDED trips that share an empty trip_id", async ({
+  page,
+}) => {
+  const ctx = await boot(page);
+  await waitForReady(page);
+  expect(ctx.leaks).toEqual([]);
+
+  // THE MARKER KEY, ASSERTED AS A COUNT. The fixture's two ADDED trips both carry
+  // trip_id "" and distinct backend ids, which is what NJ Transit publishes. Four
+  // trains in the payload must be four markers on the map; a trip_id key would draw
+  // three, and the count is the whole difference between the two.
+  expect(await page.evaluate(() => njtTrainRecords.size)).toBe(4);
+  expect(await page.evaluate(() => [...njtTrainRecords.keys()].sort())).toEqual([
+    "NJ_3800",
+    "NJ_6633",
+    "njt:9001",
+    "njt:9002",
+  ]);
+  expect(
+    await page.evaluate(() => [...njtTrainRecords.values()].filter((r) => r.latest.trip_id === "").length),
+  ).toBe(2);
+
+  // The static pair: three station squares, and both drawable routes in the glide
+  // index with route 2 keeping BOTH of its variants (the branch case the backend's
+  // dedup exists to preserve).
+  // Counted through the class the stylesheet sizes, not only through the layer, so
+  // .njt-station-marker is read by a spec rather than merely declared.
+  await expect(page.locator(".njt-station-marker")).toHaveCount(3);
+  // AND EVERY ONE OF THEM IS NAMED, which the A2d shape already asserts for AirTrain
+  // and which nothing asserted here: applyMarkerName early-returns on a falsy name, so
+  // a station square with no name gets no role, no aria-label and no aria-hidden on its
+  // svg, and axe does not flag a bare div. A review round blanked njtStationName's
+  // argument and all 187 node and 174 e2e tests stayed green. This is the surface it
+  // matters most on: at New York Penn Station an LIRR circle sits on the same pixel.
+  const stationNames = await page.$$eval(".njt-station-marker", (els) =>
+    els.map((el) => ({ aria: el.getAttribute("aria-label"), role: el.getAttribute("role") })),
+  );
+  expect(stationNames).toHaveLength(3);
+  for (const named of stationNames) {
+    expect(named.aria).toMatch(/, NJ Transit, station$/);
+    expect(named.role).toBe("img");
+  }
+  expect(stationNames.map((n) => n.aria)).toContain("New York Penn Station, NJ Transit, station");
+  const built = await page.evaluate(() => ({
+    stations: njtStations.getLayers().length,
+    lines: njtRouteLines.getLayers().length,
+    indexed: [...njtRouteIndex.keys()].sort(),
+    variantsOn2: njtRouteIndex.get("2").length,
+    colorOf9: njtRouteColors.get("9"),
+    nameOf9: njtRouteNames.get("9"),
+    // AMENDMENT A, on the live page: route 17 has trains and a station listing it,
+    // and no entry in any of the three tables.
+    color17: njtRouteColors.get("17"),
+    name17: njtRouteNames.get("17"),
+    index17: njtRouteIndex.get("17"),
+  }));
+  expect(built).toEqual({
+    stations: 3,
+    lines: 3, // one polyline for route 9, two for route 2
+    indexed: ["2", "9"],
+    variantsOn2: 2,
+    colorOf9: "#DD3439",
+    nameOf9: "Northeast Corridor",
+    color17: undefined,
+    name17: undefined,
+    index17: undefined,
+  });
+
+  // AND THE LINELESS ROUTE STILL DRAWS A MARKER AND OPENS A POPUP. This is the
+  // failure amendment a is about: not a wrong colour, a blank or a crash.
+  await page.evaluate(() => njtTrainRecords.get("njt:9001").marker.openPopup());
+  await expect(popup(page)).toContainText("NJ Transit route 17");
+  await expect(popup(page)).toContainText("To Meadowlands");
+  await expect(popup(page)).toContainText("scheduled position (no GPS)");
+  expect(await popup(page).textContent()).not.toContain("undefined");
+  // Its marker carries the neutral fallback rather than a missing stroke.
+  expect(
+    await page.evaluate(() =>
+      njtTrainRecords.get("njt:9001").marker.getElement().querySelector("rect").getAttribute("stroke"),
+    ),
+  ).toBe("#4a4e69");
+  // Closed on the marker rather than with Escape: at 1280 the station panel is
+  // docked open, so focus is inside the PANEL and the Escape ladder takes the panel
+  // rung, leaving this popup up and the next assertion reading two at once.
+  //
+  // AND THE CLOCK HAS TO MOVE FOR IT TO LEAVE THE DOM. Leaflet fades a closing
+  // popup out and removes the element from a setTimeout, which page.clock has
+  // faked; under a paused clock the closed popup lingers forever and the next
+  // assertion still sees two.
+  await page.evaluate(() => njtTrainRecords.get("njt:9001").marker.closePopup());
+  await page.clock.runFor(300);
+  await expect(popup(page)).toHaveCount(0);
+
+  // A train dwelling at a station covers the station square it is drawn on, so its
+  // popup carries the cross-link that makes the departures reachable at that pixel.
+  await page.evaluate(() => njtTrainRecords.get("NJ_6633").marker.openPopup());
+  await expect(popup(page)).toContainText("Montclair-Boonton Line");
+  // HOBOKEN, NOT JAMAICA. The NJT fixture gives Hoboken the id "12", which LIRR
+  // Jamaica also uses, because that is what these two id spaces really do. The
+  // railroad stations register first, so a registry key that was not
+  // system-qualified would send a rider standing in New Jersey to Queens.
+  await expect(popup(page)).toContainText("Also here: Hoboken");
+  expect(await popup(page).textContent()).not.toContain("Jamaica");
+  await page.evaluate(() => njtTrainRecords.get("NJ_6633").marker.closePopup());
+  await page.clock.runFor(300);
+
+  // AND AN IN-TRANSIT TRAIN DOES NOT GET ONE, which is the other half and the half a
+  // review round found missing. models.NjtTrain's stop_id is "where it is, OR the
+  // stop it is heading for", so gating the cross-link on stop_id alone put "Also
+  // here: New York Penn Station" on a train drawn 8.7 km short of it, one line under
+  // "Next stop: New York Penn Station".
+  await page.evaluate(() => njtTrainRecords.get("NJ_3800").marker.openPopup());
+  await expect(popup(page)).toContainText("Next stop: New York Penn Station");
+  expect(await popup(page).textContent()).not.toContain("Also here");
+  await page.evaluate(() => njtTrainRecords.get("NJ_3800").marker.closePopup());
+  await page.clock.runFor(300);
+
+  /* THE IN-TRANSIT TRAIN IS DRAWN WHERE THE SERVER PUT IT, which is the assertion
+     the f-squared defect needed and the old fixture could not make. This feed serves
+     the train's CURRENT interpolated position in latitude/longitude, where the glide
+     helpers expect its NEXT STATION; handing the payload straight to trainLatLng
+     walks prev -> current-position by f a second time. Measured on this very
+     fixture: correct is [40.74041, -74.09603], a few metres off the served
+     [40.741182, -74.096156] because the route polyline bends between the two stops;
+     the defect drew [40.73712, -74.13717], about 3.5 km back down the line, AT THE
+     POLL INSTANT rather than between polls. The tolerance is 0.002 degrees, which
+     admits the polyline bend and excludes the defect by a factor of twenty. */
+  const drawn = await page.evaluate(() => {
+    const ll = njtTrainRecords.get("NJ_3800").marker.getLatLng();
+    return { lat: ll.lat, lon: ll.lng, servedLat: njtTrainRecords.get("NJ_3800").latest.latitude,
+      servedLon: njtTrainRecords.get("NJ_3800").latest.longitude };
+  });
+  expect(Math.abs(drawn.lat - drawn.servedLat)).toBeLessThan(0.002);
+  expect(Math.abs(drawn.lon - drawn.servedLon)).toBeLessThan(0.002);
+  // And the reconciliation really happened: the object the glide interpolates
+  // toward carries station 109's coordinates, not the served position.
+  expect(await page.evaluate(() => njtTrainRecords.get("NJ_3800").glide.latitude)).toBe(40.750568);
+  // A train drawn AT its stop is not glided at all, so it has no reconciled copy.
+  expect(await page.evaluate(() => njtTrainRecords.get("NJ_6633").glide)).toBeNull();
+
+  // THE DEPARTURE BOARD A RIDER CLICKS, rendered in a browser at least once: every
+  // other assertion about njtArrivalsHtml is a node test, and a station popup that
+  // no spec ever opens is a surface nothing has seen assembled.
+  await page.evaluate(() => njtStations.getLayers()[0].openPopup());
+  await expect(popup(page)).toContainText("New York Penn Station");
+  await expect(popup(page)).toContainText("Trenton");
+  // The route-less row keeps its destination and its countdown behind a "?" badge.
+  await expect(popup(page)).toContainText("Bay Head");
+  // A countdown is rendered, without pinning the minute: the popups opened and closed
+  // above have each advanced the fake clock, and the exact value is pinned by the
+  // node tests, which control the clock exactly.
+  expect(await popup(page).textContent()).toMatch(/\d+ min/);
+  expect(await popup(page).textContent()).not.toContain("null");
+  await page.evaluate(() => njtStations.getLayers()[0].closePopup());
+  await page.clock.runFor(300);
+
+  // The status line counts NJ Transit alongside everything else.
+  await expect(page.locator("#status")).toContainText("4 NJ Transit");
+
+  // The toggle takes all three layers together, which is the whole system.
+  await page.locator("#toggle-njt").uncheck();
+  expect(
+    await page.evaluate(() => [map.hasLayer(njtRouteLines), map.hasLayer(njtStations), map.hasLayer(njtTrains)]),
+  ).toEqual([false, false, false]);
+  await page.locator("#toggle-njt").check();
+  expect(
+    await page.evaluate(() => [map.hasLayer(njtRouteLines), map.hasLayer(njtStations), map.hasLayer(njtTrains)]),
+  ).toEqual([true, true, true]);
+});
+
+test("C2f. NJ Transit dims and ages on its own while the railroads stay live (C2)", async ({ page }) => {
+  // THE HERMETIC COUNTERPART of tests/contract/staleness.contract.spec.js "C6e4",
+  // and the same claim C2a makes for MNR against LIRR: NJ Transit goes dim WHILE
+  // the railroads stay bright. A frontend that dimmed everything on any trouble
+  // would satisfy the first half and fail the second, which is the regression the
+  // per-system sweep registrations exist to prevent.
+  //
+  // NOT A HYPOTHETICAL OUTAGE. NJ Transit caps getToken at ten mints per account
+  // per Eastern day (learned 2026-09-02) and production shares that budget with
+  // every developer running the generator or the monitor, so an NJT that has gone
+  // dark while every other feed keeps decoding is a recurring production state.
+  // NJ_3800's segment is stretched to an hour, for the reason C2e states: with the
+  // fixture's stock five-minute one the interpolation fraction is clamped at 1.0
+  // both frozen and running by the time the assertions fire, so a deleted freeze
+  // would be undetectable and this spec would pass without testing it.
+  const longGlide = (over = {}) => {
+    const body = fx.njtWithSystems(over);
+    return {
+      ...body,
+      trains: body.trains.map((t) => (t.id === "NJ_3800" ? { ...t, next_time: fx.FROZEN_S + 3600 } : t)),
+    };
+  };
+
+  // SEEDED BEFORE NAVIGATION, not swapped in after the first poll, and the
+  // difference is the whole spec. trainLatLng clamps its interpolation fraction
+  // MONOTONICALLY within a segment (segKey is prev_time plus stop_id, neither of
+  // which this override changes), so one poll served with the stock five-minute
+  // segment pins lastF at 0.45 before the stretched segment ever arrives, and the
+  // stretched one can never lower it again. Every later reading then comes back
+  // byte-identical for a reason that has nothing to do with the freeze under test:
+  // measured, both the gliding and the frozen reading were 40.741096.
+  const ctx = await boot(page, (c) => {
+    c.overrides.njt = (route) => json(route, longGlide());
+  });
+  await waitForReady(page);
+  const status = page.locator("#status");
+  const njtOpacities = () =>
+    page.evaluate(() => [...njtTrainRecords.values()].map((r) => r.marker.options.opacity ?? 1));
+  const railroadOpacities = () =>
+    page.evaluate(() => [...railroads.values()].map((r) => r.marker.options.opacity ?? 1));
+
+  // The healthy baseline first, so the dimming below is a CHANGE rather than the
+  // state the page happened to load in.
+  expect((await njtOpacities()).every((o) => o === 1)).toBe(true);
+  await expect(status).not.toHaveClass(/error/);
+  await page.clock.runFor(1_000); // let the animation tick place it mid-glide
+  const gliding = await page.evaluate(() => njtTrainRecords.get("NJ_3800").marker.getLatLng().lat);
+
+  // NJ Transit goes dark: its own block freezes at FROZEN_S while the envelope's
+  // fetched_at keeps advancing, which is exactly the partial outage every
+  // whole-source freshness signal was blind to before C2. THE RAILROADS ARE HELD
+  // FRESH DELIBERATELY: their stock fixture stamps a fixed fetched_at, so without
+  // this override they would age with the clock and the contrast this spec is about
+  // would be two stale systems rather than one.
+  const OUTAGE_AT = fx.FROZEN_S + 400;
+  ctx.overrides.njt = (route) => json(route, longGlide({ fetchedAt: OUTAGE_AT, at: fx.FROZEN_S, ok: false }));
+  ctx.overrides.railroads = (route, fixtures) =>
+    json(route, fixtures.railroadsWithSystems({ fetchedAt: OUTAGE_AT }));
+  await page.clock.fastForward(400_000);
+  await page.clock.runFor(15_000); // one more poll, so the railroads' fresh stamp has landed
+
+  // The length check is load-bearing: [].every(...) is true, so without it this
+  // would pass the moment the layer emptied.
+  await expect
+    .poll(async () => {
+      const seen = await njtOpacities();
+      return seen.length > 0 && seen.every((o) => o < 1);
+    })
+    .toBe(true);
+  const railroad = await railroadOpacities();
+  expect(railroad.length).toBeGreaterThan(0);
+  expect(railroad.every((o) => o === 1)).toBe(true);
+
+  // The status line NAMES NJ Transit and leaves the railroads out of it.
+  await expect(status).toContainText("NJ Transit: as of");
+  await expect(status).toHaveClass(/error/);
+  expect(await status.textContent()).not.toContain("railroad: ");
+
+  // The glide is FROZEN, not merely dimmed. Asserted against where the LIVE clock
+  // would have put it, which is what a deleted freeze produces; equality with the
+  // previous reading alone would also be satisfied by a train that had simply run
+  // out of segment.
+  const frozen = await page.evaluate(() => njtTrainRecords.get("NJ_3800").marker.getLatLng().lat);
+  await page.clock.fastForward(2_000);
+  expect(await page.evaluate(() => njtTrainRecords.get("NJ_3800").marker.getLatLng().lat)).toBe(frozen);
+  expect(frozen).not.toBe(gliding); // it did keep gliding while the feed was healthy
+  const live = await page.evaluate(
+    () => trainLatLng(njtTrainRecords.get("NJ_3800").glide, Date.now() / 1000 - (minClockOffset ?? 0), {})[0],
+  );
+  expect(live).not.toBe(frozen);
+
+  // And the popup says how old the data is.
+  await page.evaluate(() => njtTrainRecords.get("NJ_3800").marker.openPopup());
+  await expect(popup(page)).toContainText("as of");
+});
+
+test("C2g. NJ Transit dims with no poll landing at all, which is the sweep's own job", async ({
+  page,
+}) => {
+  /* WRITTEN BECAUSE A MUTATION SURVIVED. 15c mutation M4 deleted njt.js's
+     staleTreatments registration outright and BOTH dimming specs stayed green,
+     hermetic C2f and contract C6e4 alike. The reason is structural rather than
+     lucky: in each of them the backend keeps SERVING (retained data behind a dead
+     upstream), so a poll lands every 15s, applyNjt runs, and its own per-marker
+     dimMarker call re-dims everything the sweep would have. The sweep was doing no
+     work either spec could see.
+
+     The state that needs it is the one where NO poll lands: /api/njt-trains itself
+     unreachable, so applyNjt is never entered again while the clock walks past the
+     staleness threshold. Then the only thing left that can dim a marker is the
+     sweep, from refreshAll's tail and from the animation tick. It is not an exotic
+     state either: a backend restart, a deploy, or a wedged worker produces it, and
+     what a rider must not see is a map that stays confident because nobody told it
+     anything.
+
+     WHAT THE OTHER TWO STILL EARN, so nobody deletes them for redundancy: C2f is
+     the contrast (NJT dim WHILE the railroads stay bright) and the glide freeze,
+     C6e4 is the same claim against a real backend and a real socket. Neither of
+     those claims is made here. */
+  const ctx = await boot(page);
+  await waitForReady(page);
+  const njtOpacities = () =>
+    page.evaluate(() => [...njtTrainRecords.values()].map((r) => r.marker.options.opacity ?? 1));
+  expect((await njtOpacities()).every((o) => o === 1)).toBe(true);
+
+  // Every poll from here is a FAILED poll. Counted, so "applyNjt never ran again"
+  // is a measured fact rather than an inference from the override's existence.
+  const markersBefore = await page.evaluate(() => njtTrainRecords.size);
+  let failed = 0;
+  ctx.overrides.njt = (route) => {
+    failed++;
+    return json(route, { detail: "upstream unavailable" }, 502);
+  };
+  await page.clock.fastForward(200_000);
+
+  await expect
+    .poll(async () => {
+      const seen = await njtOpacities();
+      return seen.length > 0 && seen.every((o) => o < 1);
+    })
+    .toBe(true);
+  expect(failed).toBeGreaterThan(0);
+  // The markers are the SAME ones, still on the map: a failed poll keeps last-known
+  // data (that is the whole retention contract), so this is dimming rather than a
+  // layer that emptied and refilled.
+  expect(await page.evaluate(() => njtTrainRecords.size)).toBe(markersBefore);
+  // And the status line says so, from the same index the dimming used. THE
+  // DISCRIMINATING FORM: "N NJ Transit" is in the counts at all times, healthy or
+  // not, so `toContainText("NJ Transit")` alone would hold before anything went
+  // down. The problems clause and the error class are what only a degraded NJT
+  // produces.
+  await expect(page.locator("#status")).toContainText("NJ Transit: as of");
+  await expect(page.locator("#status")).toHaveClass(/error/);
+});
+
+test("34. an NJT train leaving the feed leaves the map, and no lines is a served answer", async ({
+  page,
+}) => {
+  /* TWO CLAIMS A REVIEW ROUND FOUND UNTESTED, both of them the client half of
+     something the backend tier already proves.
+
+     THE SWEEP. applyNjt's unseen-marker loop is the only thing that removes an NJT
+     marker when the backend stops serving a train, and deleting it left the entire
+     suite green: no spec at any tier ever shrank the NJT payload, because every
+     override served all four fixture trains or a 502.
+
+     DECISION (a). /api/njt-routes serves [] when the publication carried no
+     shapes.txt, and the contract tier proves the backend reaches that state
+     (test_njt_publication_without_shapes_reaches_ready_with_no_routes). What had no
+     test was the CLIENT'S answer to it, which is the half a rider sees: stations and
+     trains draw, the lines simply are not there, and the popups still name their
+     routes. Route lines are additive and degrade to nothing, never to a failure. */
+  const ctx = await boot(page, (c) => {
+    c.overrides.njtRoutes = (route) => json(route, []);
+  });
+  await expect(njtMarkers(page)).toHaveCount(4);
+  await page.waitForFunction(() => njtStations.getLayers().length === 3);
+
+  // Decision (a): the whole railroad minus the lines.
+  expect(
+    await page.evaluate(() => ({
+      lines: njtRouteLines.getLayers().length,
+      indexed: njtRouteIndex.size,
+      named: njtRouteNames.size,
+    })),
+  ).toEqual({ lines: 0, indexed: 0, named: 0 });
+  await page.evaluate(() => njtTrainRecords.get("NJ_3800").marker.openPopup());
+  await expect(popup(page)).toContainText("NJ Transit route 9");
+  expect(await popup(page).textContent()).not.toContain("undefined");
+  await page.evaluate(() => njtTrainRecords.get("NJ_3800").marker.closePopup());
+  await page.clock.runFor(300);
+
+  // AND THE LOADER KEEPS ASKING, which is the guard rather than the rendering.
+  // /api/njt-routes serves [] for three different states (a failed load, an
+  // unconfigured deployment, and a ready load whose publication carried no
+  // shapes.txt), so accepting it as final would leave a map permanently lineless the
+  // first time a cold start served one. Without this the `if (!routes.length) return
+  // false` line could be deleted outright with every tier still green: the rendering
+  // above is identical either way.
+  const asked = ctx.counts.njtRoutes;
+  // 40s of faked clock, which is past the retry's 30s cap and so guarantees at least
+  // one more attempt without walking the page through two minutes of animation
+  // frames (which times the spec out on this runner).
+  await page.clock.runFor(40_000);
+  expect(ctx.counts.njtRoutes).toBeGreaterThan(asked);
+
+  // The sweep: one train stops being served and its marker goes with it, while the
+  // other three stay. Asserted by identity, not only by count: a layer that emptied
+  // and refilled would satisfy a count.
+  ctx.overrides.njt = (route, fixtures) => {
+    const body = fixtures.njt();
+    return json(route, { ...body, trains: body.trains.filter((t) => t.id !== "njt:9002") });
+  };
+  await page.clock.runFor(15_000);
+  await expect
+    .poll(async () => page.evaluate(() => [...njtTrainRecords.keys()].sort()))
+    .toEqual(["NJ_3800", "NJ_6633", "njt:9001"]);
+  await expect(njtMarkers(page)).toHaveCount(3);
+  // And the layer really lost it, rather than the record map alone.
+  expect(await page.evaluate(() => njtTrains.getLayers().length)).toBe(3);
+});
+
+test("35. two NJT states with nothing to draw: an empty feed clears, an absent one is not an error", async ({
+  page,
+}) => {
+  /* TWO DEPLOYMENT-SHAPED STATES, both of which a review round found the njt source
+     row getting wrong, and both of which are the ordinary state of a real machine
+     rather than a failure to simulate.
+
+     AN EMPTY 200 REPLACES. pollers._refresh_njt says it outright: "an EMPTY
+     successful poll REPLACES the trains ... retaining the evening's trains through
+     the night would be a map full of ghosts. Only a FAILED poll keeps the
+     last-known trains." The row's first draft omitted clearOnEmpty and argued for
+     the shared transient grace instead, which left four trains gliding at full
+     opacity for ninety seconds after the backend had already replaced them.
+
+     A NOT-CONFIGURED 503 IS NOT RED. A deployment with no NJT credentials is a
+     first-class state (15a's F1 decided that a deployment which does not run NJT
+     must not be painted red), and its /api/njt-trains answers 503 with an
+     operator-facing sentence forever. That sentence was reaching the rider's status
+     line, in the error class, permanently. */
+  const ctx = await boot(page);
+  await waitForReady(page);
+  const status = page.locator("#status");
+
+  // The empty feed, stamped as a SUCCESSFUL poll (systems ok, fetched_at advancing),
+  // which is what an overnight NJ Transit really serves.
+  ctx.overrides.njt = (route, fixtures) =>
+    json(route, fixtures.njtWithSystems({ trains: [], fetchedAt: fx.FROZEN_S + 15 }));
+  await page.clock.runFor(15_000);
+  await expect(njtMarkers(page)).toHaveCount(0);
+  expect(await page.evaluate(() => njtTrainRecords.size)).toBe(0);
+  // IMMEDIATELY, not after the stale window: no clock advance beyond the one poll.
+  // And an empty NJT night is not an error, exactly as an empty ferry night is not.
+  await expect(status).toContainText("0 NJ Transit");
+  await expect(status).not.toHaveClass(/error/);
+  expect(await status.textContent()).not.toContain("NJ Transit:");
+  // The stations and the lines are untouched: they are static and have nothing to
+  // do with whether trains are running.
+  expect(await page.evaluate(() => njtStations.getLayers().length)).toBe(3);
+
+  // The unconfigured deployment: the backend's own detail, forever.
+  ctx.overrides.njt = (route) =>
+    json(
+      route,
+      {
+        detail:
+          "NJ Transit is not configured (NJT_USERNAME/NJT_PASSWORD are unset); " +
+          "no realtime poll is attempted.",
+      },
+      503,
+    );
+  await page.clock.runFor(15_000);
+  await page.clock.runFor(15_000);
+  await expect(status).toContainText("0 NJ Transit");
+  await expect(status).not.toHaveClass(/error/);
+  expect(await status.textContent()).not.toContain("NJT_USERNAME");
+  // A warming 503 is a different thing and MUST still surface, which is why the
+  // quiet arm matches the words rather than the status.
+  ctx.overrides.njt = (route) =>
+    json(route, { detail: "Feed cache is warming up; try again in a few seconds." }, 503);
+  await page.clock.runFor(15_000);
+  await expect(status).toHaveClass(/error/);
+  await expect(status).toContainText("NJ Transit: Feed cache is warming up");
+});
+
+test("36. an NJT marker born from retained data is dim on its first frame, and an open popup keeps up", async ({
+  page,
+}) => {
+  /* THE C2b TREATMENT, for NJ Transit. C2b pins "retained data must never render
+     live, not even for one frame" for the subway and drives applyTrains DIRECTLY to
+     do it, because refreshAll always runs the stale sweep after the poll it awaited
+     and no observable frame sits between them. njt.js carries the same claim in a
+     comment on its creation path and had nothing behind it: a review round replaced
+     `opacity: markerOpacity(age)` with `opacity: 1` and every tier stayed green.
+
+     THE SECOND HALF is the update path's other unobserved branch: no NJT spec held a
+     popup open across a poll, so `if (record.marker.isPopupOpen())
+     updatePopupKeepingFocus(...)` never fired, and a rider watching a train's delay
+     would have kept reading the first value forever. */
+  const ctx = await boot(page, (c) => {
+    c.overrides.njt = (route, fixtures) =>
+      json(route, fixtures.njtWithSystems({ fetchedAt: fx.FROZEN_S, at: fx.FROZEN_S - 300, ok: false }));
+  });
+  await waitForReady(page);
+
+  // Every marker is already dim, retention and all, and the rendered inline style is
+  // what a rider sees.
+  expect(await page.$$eval(".njt-marker", (els) => [...new Set(els.map((el) => el.style.opacity || "1"))]))
+    .toEqual(["0.45"]);
+
+  // AND THE DIMMING IS DONE BY THE CONSTRUCTOR, not by the sweep behind it. Drives
+  // applyNjt directly with a new train in the same stale system and reads the marker
+  // before any sweep can run, which is the only way to see that first frame.
+  const born = await page.evaluate(() => {
+    const seed = njtTrainRecords.get("NJ_3800").latest;
+    applyNjt([...[...njtTrainRecords.values()].map((r) => r.latest), { ...seed, id: "njt:born" }]);
+    return njtTrainRecords.get("njt:born").marker.options.opacity;
+  });
+  expect(born).toBeCloseTo(0.45);
+
+  // The open popup tracks the data. The delay is the field that moves poll to poll
+  // while nothing else about the train does, so it is the one to watch.
+  ctx.overrides.njt = (route, fixtures) => {
+    const body = fixtures.njtWithSystems({ fetchedAt: fx.FROZEN_S + 15 });
+    return json(route, {
+      ...body,
+      trains: body.trains.map((t) => (t.id === "NJ_3800" ? { ...t, delay: -180 } : t)),
+    });
+  };
+  await page.evaluate(() => njtTrainRecords.get("NJ_3800").marker.openPopup());
+  await expect(popup(page)).toContainText("4 min late");
+  await page.clock.runFor(15_000);
+  await expect(popup(page)).toContainText("3 min early");
+  expect(await popup(page).textContent()).not.toContain("late");
 });

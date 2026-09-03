@@ -38,12 +38,19 @@ main {
    AND IT IS BOUNDED BY THE VIEWPORT, which is a SEPARATE fix that happens to live in
    the same rule. RE-MEASURED after A3's review round 2 found the numbers here had gone
    stale (the mobile override below moved one of them, and this comment still quoted the
-   pre-fix figure as the fixed one). With the legend expanded and no alert showing:
+   pre-fix figure as the fixed one), and RE-MEASURED AGAIN in 15c, which added three
+   legend rows and a toggle and moved both unbounded numbers by about a hundred pixels.
+   Twice now the stale figure has been in this block, so read the pair below as what it
+   is: a measurement that a row added to the legend invalidates.
+   With the legend expanded and no alert showing:
 
-     unbounded  1280x720  content 771px, runs to y=781, so 61px off the bottom
-     unbounded   375x667  content 884px, runs to y=894, so 227px off the bottom
+     unbounded  1280x720  content 869px, runs to y=879, so 159px off the bottom
+     unbounded   375x667  content 982px, runs to y=992, so 325px off the bottom
      bounded    1280x720  ends at y=710 (max-height 700)
      bounded     375x667  ends at y=637 (max-height 627, from the mobile rule below)
+
+   The BOUNDED pair is unchanged by 15c and cannot move with the row count: it is what
+   max-height produces, which is the whole reason the bound exists.
 
    With one agency-wide alert at 375x667 the mobile rule takes it to 587, clear of the
    banner. Bounded it scrolls its own overflow, so every row stays reachable and the
@@ -189,6 +196,20 @@ main {
 .path-marker svg {
   width: 16px;
   height: 16px;
+}
+
+/* Hollow square NJ Transit train markers, and the smaller filled square its
+   stations use. Two classes rather than one because they are different sizes and
+   the e2e suite reads each on its own; the shapes and fills are argued in
+   systems/njt.js. */
+.njt-marker svg {
+  width: 16px;
+  height: 16px;
+}
+
+.njt-station-marker svg {
+  width: 12px;
+  height: 12px;
 }
 
 /* NYC Ferry boat markers: a horizontal hull shape. Boats snap to their reported

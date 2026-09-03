@@ -636,6 +636,186 @@ def test_njt_bad_publication_stays_failed_then_heals(harness):
         assert app.get("/api/njt-stops"), "healing must actually place stations"
 
 
+# ---------------------------------------------------------------------------
+# 15c: the route lines, and the publication that carries none
+# ---------------------------------------------------------------------------
+
+# The isotropic degree basis the geometry is judged in, WRITTEN OUT HERE rather than
+# imported from backend/route_geometry.py. Importing it would make this scenario
+# agree with the code it is testing by construction: a sign error in the module's
+# own distance would cancel out and the assertion would still pass. Twelve lines of
+# independent arithmetic is the cheaper half of that trade.
+#
+# cos(40.7 degrees), New York's latitude: a degree of longitude is that much shorter
+# than a degree of latitude here, so comparing raw degree deltas without it makes
+# east-west error read as smaller than it is.
+_COS_LAT = 0.7581
+
+# The station-to-line tolerance, stated as the same 0.0025 the hermetic golden uses
+# (route_geometry.COVER_DIST, about 275 m in the latitude direction). The simulator's
+# shapes trace the stops vertex for vertex, so the real distance here is zero and
+# this is a ceiling rather than a fitted value; it is written as the golden's number
+# so the two tiers are asking one question.
+_ON_THE_LINE = 0.0025
+
+
+def _iso_distance_to_segment(point, start, end) -> float:
+    """Distance from `point` to the segment start..end, in isotropic degrees."""
+    px, py = (point[1] - start[1]) * _COS_LAT, point[0] - start[0]
+    qx, qy = (end[1] - start[1]) * _COS_LAT, end[0] - start[0]
+    span = qx * qx + qy * qy
+    if span == 0:
+        return (px * px + py * py) ** 0.5
+    t = max(0.0, min(1.0, (px * qx + py * qy) / span))
+    dx, dy = px - t * qx, py - t * qy
+    return (dx * dx + dy * dy) ** 0.5
+
+
+def _distance_to_polylines(point, polylines) -> float:
+    """The closest approach of `point` to any segment of any of `polylines`."""
+    best = float("inf")
+    for line in polylines:
+        for start, end in zip(line, line[1:]):
+            best = min(best, _iso_distance_to_segment(point, start, end))
+    return best
+
+
+def test_njt_route_lines_pass_through_the_stations_their_trips_call_at(contract_app):
+    """THE GEOMETRY AND THE STATIONS DESCRIBE ONE RAILROAD, end to end.
+
+    /api/njt-routes is built from shapes.txt by a chain nothing short of this tier
+    runs whole: a credentialed POST for the archive, the bounded shapes parse, the
+    simplifier, the distance dedup, and the endpoint's warming gate. The claim that
+    survives all of it is the one a rider would notice failing: every station a
+    route's trips call at lies ON the line drawn for that route.
+
+    WHAT THIS SCENARIO CANNOT CATCH, and the first draft of this docstring claimed it
+    could. A route/shape join that CROSSED two routes is undetectable here, because
+    the simulator publishes s1 and s13 along the same corridor and both routes call at
+    the same three stops: measured, a build that hands route 1 route 13's polylines
+    and vice versa passes this scenario and fails four hermetic tests, worst pair
+    1.11908 against the 0.0025 tolerance. A dedup that discarded the wrong variant is
+    likewise unmeasurable, since each route here keeps exactly one. Both belong to
+    backend/tests/test_njt_static.py, over a fixture with eleven real routes and four
+    branching ones, and the credit is theirs.
+
+    What IS this tier's own is that the whole chain runs and its output still lines
+    up with the stations: a shapes parse that silently dropped rows would shorten the
+    polyline and move a station off it, and only a real archive over a real socket
+    exercises the parse at all.
+
+    Hermetic counterparts: backend/tests/test_njt_static.py's
+    _check_stations_sit_on_their_routes over the committed fixture, and
+    backend/tests/test_route_geometry.py for the dedup itself.
+    """
+    app = contract_app
+    app.await_status(
+        lambda s: s["njt_static"] == "ready",
+        "the NJ Transit static group to reach ready from a simulator archive",
+    )
+    routes = app.get("/api/njt-routes")
+    assert routes, "a ready NJT group whose publication carries shapes must serve lines"
+    by_route = {route["route"]: route for route in routes}
+    # Both routes the simulator publishes trips for, and only those: shapes.txt also
+    # carries s99, referenced by no trip, and decision (b) of this phase is that the
+    # parse never reads it. A route that appeared here from an unreferenced shape
+    # would be a route the map draws and no train ever runs on.
+    assert sorted(by_route) == ["1", "13"], routes
+
+    # The feed's own colours, carried verbatim, and text_color null on both because
+    # NJ Transit publishes it empty on every route. A client that printed text on
+    # `color` has to compute its own ink; the endpoint documents that and this is
+    # what makes the documentation checkable.
+    assert by_route["1"]["color"] == "EF3E42"
+    assert by_route["1"]["text_color"] is None
+    assert by_route["1"]["name"] == "Northeast Corridor"
+
+    served_stops = app.get("/api/njt-stops")
+    stops = {stop["id"]: stop for stop in served_stops}
+    # WHICH STATIONS EACH ROUTE SERVES IS READ OFF THE ENDPOINT, not restated here.
+    # /api/njt-stops merges the routes-per-station index (H5) onto every marker, and
+    # that index is derived from the same trips table the geometry is joined through,
+    # so a simulator whose trips drift takes this assertion with it instead of leaving
+    # it agreeing with a list nobody updated. The first draft did restate the ids
+    # inline under a comment claiming otherwise.
+    calls: dict[str, list[str]] = {}
+    for stop in served_stops:
+        for route_id in stop["routes"]:
+            calls.setdefault(route_id, []).append(stop["id"])
+    assert sorted(calls) == ["1", "13"], calls
+    assert all(len(ids) == 3 for ids in calls.values()), calls
+    for route_id, stop_ids in calls.items():
+        polylines = by_route[route_id]["polylines"]
+        assert polylines, f"route {route_id} reached the endpoint with nothing to draw"
+        assert all(len(line) >= 2 for line in polylines), "a one-point line draws nothing"
+        # EVERY PUBLISHED ROW SURVIVED. The simulator publishes three points per
+        # shape and the simplifier keeps all three (the middle one is 0.0124 off the
+        # chord, fifty times the epsilon), so a parse that dropped a row would show
+        # up as a shorter polyline here before it showed up as a station off its line.
+        assert [len(line) for line in polylines] == [3], polylines
+        for stop_id in stop_ids:
+            stop = stops[stop_id]
+            distance = _distance_to_polylines((stop["lat"], stop["lon"]), polylines)
+            assert distance <= _ON_THE_LINE, (
+                f"{stop['name']} is {distance:.5f} from every polyline of route "
+                f"{route_id}, past the {_ON_THE_LINE} tolerance: the line served and "
+                f"the stations served do not describe the same railroad"
+            )
+
+
+def test_njt_publication_without_shapes_reaches_ready_with_no_routes(harness):
+    """DECISION (a) OF THIS PHASE, at the tier where it can be a whole publication.
+
+    shapes.txt is deliberately OUT of njt_static._REQUIRED_MEMBERS: route lines are
+    additive, so a publication that drops it must still place stations, still serve
+    trains, and still report READY, with an empty routes list rather than a failure.
+    That is a real divergence from the PATH and ferry loaders, which both list their
+    own shapes.txt among the members they read and cannot degrade around, and the
+    simulator's "no-shapes" publication exists to make the divergence expressible.
+
+    THE EMPTY LIST IS NOT THE INTERESTING HALF. /api/njt-routes serves [] for a
+    failed load and for an unconfigured deployment too, so an empty list on its own
+    says nothing. What this asserts is empty ROUTES beside a ready STATUS and served
+    STATIONS, which is the combination no other state produces.
+
+    Hermetic counterpart: backend/tests/test_njt_static.py's shapes-absent arm.
+    """
+    harness.sim.set_publication("njt", "no-shapes")
+    with harness.launch() as app:
+        app.await_status(
+            lambda s: s["njt_static"] == "ready",
+            "a publication with no shapes.txt to still reach ready",
+        )
+        assert app.get("/api/njt-stops"), "a publication with no geometry still places stations"
+        assert app.get("/api/njt-routes") == [], (
+            "a publication with no shapes.txt has no lines to draw, and that is a "
+            "served answer rather than a failure"
+        )
+        # AND NOT AS A QUIET DEGRADATION EITHER: the archive was promoted, so nothing
+        # downstream is waiting for a retry that will fix it.
+        assert app.status()["static_archives"]["njt"]["last_promoted_at"] is not None
+        assert app.status()["static_archives"]["njt"]["last_download_error"] is None
+
+        # AND THE REST OF NJ TRANSIT IS UNTOUCHED, which is what "additive" has to
+        # mean if it means anything: the realtime side keeps polling and serving
+        # while the static side has no geometry to offer. Waited for rather than
+        # read on the spot, because the static group reaches ready before the first
+        # realtime poll lands and /api/njt-trains answers 503 until it does.
+        app.await_status(
+            lambda s: s["feeds"].get("njt", {}).get("fetched_at") is not None,
+            "the first NJ Transit realtime poll to land alongside a geometry-less static load",
+        )
+        assert "trains" in app.get("/api/njt-trains")
+        assert app.status()["njt_static"] == "ready"
+
+        # NO HEAL HALF HERE, deliberately, and the reason is worth writing down so
+        # nobody adds one: warmups._warm_njt_static RETURNS once the group is ready
+        # and never re-downloads, so a later set_publication("njt", "good") would
+        # change nothing in this process and the wait would time out. The healing
+        # path is the FAILED one, and test_njt_bad_publication_stays_failed_then_heals
+        # is where it belongs, because only a failed group is still asking.
+
+
 def test_njt_token_expiry_costs_exactly_one_extra_mint(harness):
     """THE MOST DANGEROUS PROBE FACT, pinned: a dead token is an HTTP 500.
 

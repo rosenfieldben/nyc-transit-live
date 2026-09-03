@@ -50,6 +50,31 @@ const sources = {
   // refreshSource branch) rather than riding out the transient-blip grace the
   // other feeds use, preserving 14b's empty-replaces / failure-retains split.
   ferry: { url: "/api/ferry", apply: applyFerryBoats, label: "ferries", dataKey: "boats", clearOnEmpty: true, count: 0, error: null, fetchedAt: null, feedTimestamp: null, servedAt: null, systems: null, emptyRunStart: null, inFlight: false },
+  // NJ Transit carries the `trains` envelope key (models.NjtFeed) and a real
+  // single-entry `systems` block keyed "njt", so it flows through ingestSystems as a
+  // per-system source rather than a synthesized one.
+  //
+  // clearOnEmpty, THE FERRY'S ARM, and the first draft of this row got it backwards
+  // with a comment that argued the opposite. pollers._refresh_njt says it in as many
+  // words: "an EMPTY successful poll REPLACES the trains ... retaining the evening's
+  // trains through the night would be a map full of ghosts. Only a FAILED poll keeps
+  // the last-known trains." So there is no transient blip to ride out here, exactly
+  // as with the ferry: an upstream problem is a FAILED poll, and an empty 200 means
+  // the feed really decoded zero trains, which at 03:00 is the right answer (the
+  // overnight probe caught a 13-byte valid-but-empty feed). Taking the shared grace
+  // instead left four trains gliding at full opacity for 90 seconds after the
+  // backend had already replaced them, and then put "NJ Transit: feed empty" in the
+  // error class for the rest of the lull.
+  //
+  // quiet: THE ONE DEPLOYMENT-SHAPED 503 THAT IS NOT AN ERROR. A deployment with no
+  // NJT credentials is a first-class supported state (main.py publishes
+  // "not-configured" as its own status, and 15a's F1 decided explicitly that such a
+  // deployment must not be painted red), and its /api/njt-trains answers 503 with
+  // that reason forever. Without this the status line carried an operator-facing
+  // configuration sentence, in the error class, permanently, on the surface a RIDER
+  // reads. Matching on the served detail rather than on the status, because a 503 is
+  // also what a warming cache answers and that one IS worth surfacing.
+  njt: { url: "/api/njt-trains", apply: applyNjt, label: "NJ Transit", dataKey: "trains", clearOnEmpty: true, quiet: isNotConfigured, count: 0, error: null, fetchedAt: null, feedTimestamp: null, servedAt: null, systems: null, emptyRunStart: null, inFlight: false },
 };
 
 // Which key in `sources` a descriptor is, for the "<sourceKey>|<system>" freshness
@@ -131,7 +156,12 @@ async function refreshSource(source) {
     // wording ("signal timed out" in Chromium) to a stable, plain "timed out" so the
     // status line reads the same across browsers. No new error state: a timed-out
     // fetch is just a failed poll.
-    source.error = err.name === "TimeoutError" ? "timed out" : err.message;
+    const message = err.name === "TimeoutError" ? "timed out" : err.message;
+    // A source may declare one failure that is a DEPLOYMENT FACT rather than a
+    // fault (see the njt row). It still counts zero and still draws nothing; what
+    // it does not do is turn the rider's status line red and quote a sentence
+    // written for an operator.
+    source.error = source.quiet && source.quiet(message) ? null : message;
   } finally {
     // Cleared here (not per-return) because the success path and both empty
     // branches return early out of the try: finally is the one place that always
@@ -217,6 +247,8 @@ retryUntil(loadPathRoutes, staticRetryOpts);
 retryUntil(loadPathStops, staticRetryOpts);
 retryUntil(loadFerryRoutes, staticRetryOpts);
 retryUntil(loadFerryStops, staticRetryOpts);
+retryUntil(loadNjtRoutes, staticRetryOpts);
+retryUntil(loadNjtStops, staticRetryOpts);
 
 /* A4: THE ESCAPE LADDER, and it is the page's ONLY Escape handler.
 

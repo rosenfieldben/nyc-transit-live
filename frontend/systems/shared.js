@@ -178,6 +178,12 @@ const pathTrains = L.layerGroup().addTo(map); // trains gliding between (or plac
 const ferryRouteLines = L.layerGroup().addTo(map); // route geometry, modal polyline per direction
 const ferryDocks = L.layerGroup().addTo(map); // clickable landing docks
 const ferryBoats = L.layerGroup().addTo(map); // live GPS boat markers
+// NJ Transit Rail (15c) gets the same trio, for the same reason: the whole system
+// toggles as one. Its lines are drawn from shapes.txt, its stations are squares
+// (systems/njt.js says why), and every train on it is a schedule estimate.
+const njtRouteLines = L.layerGroup().addTo(map); // per-route geometry, branch variants kept
+const njtStations = L.layerGroup().addTo(map); // clickable stations, flat (no parent stations)
+const njtTrains = L.layerGroup().addTo(map); // placed trains gliding between stops
 
 /* A4: LEAFLET'S POPUP CLOSE BUTTON IS AN ANCHOR TO NOWHERE, and page-wide scanning is
    what finally saw it. Leaflet renders
@@ -482,6 +488,7 @@ bindToggle("toggle-railroads", [railroadLayer, railroadRouteLinesLayer, railroad
 bindToggle("toggle-airtrain", [airtrainRouteLinesLayer, airtrainStationLayer]);
 bindToggle("toggle-path", [pathRouteLines, pathStations, pathTrains]);
 bindToggle("toggle-ferries", [ferryRouteLines, ferryDocks, ferryBoats]);
+bindToggle("toggle-njt", [njtRouteLines, njtStations, njtTrains]);
 
 const statusEl = document.getElementById("status");
 
@@ -1492,8 +1499,8 @@ const TRAIN_TICK_MS = 100;
 let lastTrainTick = 0;
 
 function animateTrains(ts) {
-  // Glides subway trains, placed railroad trains, and PATH trains between
-  // polls. GPS railroad trains are not animated here: they move by their
+  // Glides subway trains, placed railroad trains, PATH trains and NJ Transit
+  // trains between polls. GPS railroad trains are not animated here: they move by their
   // reported position in applyRailroads. Anchorless PATH trains cost one
   // trainLatLng fallback each and stay put, so no per-record gate is needed.
   // Each layer is gated on its own visibility; rAF keeps rescheduling so
@@ -1542,6 +1549,19 @@ function animateTrains(ts) {
           const at = glideClock(now, systemStaleAtOf("railroads", record.latest.system));
           record.marker.setLatLng(trainLatLng(record.latest, at, record.fState));
         }
+      }
+    }
+    if (map.hasLayer(njtTrains)) {
+      // Every NJT POSITION is a schedule estimate, so there is no GPS half to skip
+      // the way the railroad loop skips its own. Only the IN-TRANSIT ones move,
+      // though, which is the PATH sentence above rather than the stronger claim an
+      // earlier draft of this comment made: a train drawn at its stop carries null
+      // anchors and njtGlideTrain returns null for it, so njtPointFor hands back the
+      // served position and it stays put. The freeze clock is inside njtPointFor,
+      // which is also where the payload's current-position/next-station mismatch is
+      // reconciled, so this loop and the poll path cannot disagree about either.
+      for (const record of njtTrainRecords.values()) {
+        record.marker.setLatLng(njtPointFor(record, now));
       }
     }
     if (map.hasLayer(pathTrains)) {

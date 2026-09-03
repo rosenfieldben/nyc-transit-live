@@ -24,6 +24,8 @@ import io
 import zipfile
 from pathlib import Path
 
+import pytest
+
 _GEN_PATH = Path(__file__).resolve().parent.parent / "scripts" / "gen_njt_fixture.py"
 _spec = importlib.util.spec_from_file_location("gen_njt_fixture", _GEN_PATH)
 gen = importlib.util.module_from_spec(_spec)
@@ -173,6 +175,31 @@ def test_a_refresh_refuses_when_the_committed_trips_reference_no_geometry(tmp_pa
         assert gen.run_shapes_only(zf, out_dir=out) == 1
     assert sorted(path.name for path in out.iterdir()) == ["trips.txt"]
     assert "reference no shape_id at all" in capsys.readouterr().out
+
+
+def test_a_refused_mint_is_one_line_and_a_nonzero_exit_rather_than_a_traceback(monkeypatch):
+    """NJ Transit caps getToken at TEN MINTS PER ACCOUNT PER EASTERN DAY (learned
+    2026-09-02) and production shares that budget, so a developer running this
+    script into an exhausted budget is an ordinary Tuesday, not an exceptional
+    event. It leaves by the same door as every other refusal here: one line, a
+    nonzero exit, and nothing written."""
+    import njt_auth
+
+    async def refused(*_args, **_kwargs):
+        raise njt_auth.NjtAuthError("getToken returned HTTP 429")
+
+    monkeypatch.setattr(gen.njt_auth, "is_configured", lambda *a, **k: True)
+    monkeypatch.setattr(gen.njt_auth, "njt_post", refused)
+    with pytest.raises(SystemExit) as excinfo:
+        gen._download()
+    message = str(excinfo.value)
+    assert "\n" not in message, "one line, not a stack"
+    assert "HTTP 429" in message, "the refusal must say what NJ Transit said"
+    assert "fixture NOT written" in message
+    # AND NOTHING OF THE CREDENTIALS OR THE BODY, which is only safe to quote at all
+    # because 15c's F3 work made an NjtAuthError from the mint path carry a status
+    # and nothing else.
+    assert "password" not in message.lower()
 
 
 def test_a_local_refusal_never_reaches_the_network(tmp_path, monkeypatch, capsys):

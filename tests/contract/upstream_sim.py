@@ -121,7 +121,7 @@ MODES = ("live", "frozen", "empty", "error", "stale")
 # be shrunk: a scenario has to arrive already stale rather than wait to become so.
 # 300 matches the hermetic suite's own _stale helper.
 STALE_CONTENT_BY_S = 300.0
-PUBLICATIONS = ("good", "headers-only-stops", "missing-member", "corrupt-zip")
+PUBLICATIONS = ("good", "headers-only-stops", "missing-member", "corrupt-zip", "no-shapes")
 
 # What NJ Transit's getGTFS does with the token it is handed. Enumerated and
 # validated for the same reason MODES and PUBLICATIONS are: an unknown name must
@@ -716,15 +716,21 @@ def _njt_members(now: float) -> dict[str, str]:
         # stays silent unless something drifts. T7 is headsigned NEW YORK and its
         # realtime row skips New York: decoder law 2's named victim needs the
         # static side to supply the headsign it is lying about.
+        # shape_id ARRIVED IN 15c and is the only link between a route and its
+        # geometry in this feed: NJT shape_ids encode no route, so the route a shape
+        # belongs to can only be learned from the trips that reference it. One shape
+        # per route here, which is what makes the route-lines scenario's claim
+        # ("the served line passes through the stations the trips call at") a
+        # statement about the whole pipeline rather than about one member.
         "trips.txt": _csv(
-            "route_id,service_id,trip_id,trip_headsign,direction_id,trip_short_name",
+            "route_id,service_id,trip_id,trip_headsign,direction_id,trip_short_name,shape_id",
             [
-                "1,SVC1,T1,New York,0,3800",
-                "13,SVC1,T2,Hoboken,1,1600",
-                "1,SVC1,T3,New York,0,3802",
-                "1,SVC1,T4,New York,0,3804",
-                "13,SVC1,T5,Hoboken,1,1602",
-                "1,SVC1,T7,New York,0,3806",
+                "1,SVC1,T1,New York,0,3800,s1",
+                "13,SVC1,T2,Hoboken,1,1600,s13",
+                "1,SVC1,T3,New York,0,3802,s1",
+                "1,SVC1,T4,New York,0,3804,s1",
+                "13,SVC1,T5,Hoboken,1,1602,s13",
+                "1,SVC1,T7,New York,0,3806,s1",
             ],
         ),
         "stop_times.txt": _csv(
@@ -750,12 +756,27 @@ def _njt_members(now: float) -> dict[str, str]:
             "service_id,date,exception_type",
             [f"SVC1,{date},1" for date in dates],
         ),
-        # Present and never parsed, exactly as in the real feed (15a defers
-        # shapes.txt). Carried so a publication that DROPS it is expressible if a
-        # later phase ever requires it.
+        # PARSED AS OF 15c, and its coordinates are the STOPS' OWN, vertex for
+        # vertex. That is what lets the route-lines scenario assert something a
+        # synthesized-but-arbitrary polyline could not: every station a route's trips
+        # call at lies ON the line served for that route, which is the end-to-end
+        # form of the hermetic geometry golden. Both shapes trace the same corridor
+        # in the same direction (112, 38, 109) because both routes call at all three
+        # stops here; s99 is referenced by nothing and must never be parsed, which is
+        # decision (b) of the phase (the parse is bounded to what the map can draw)
+        # made observable at this tier.
         "shapes.txt": _csv(
             "shape_id,shape_pt_sequence,shape_pt_lat,shape_pt_lon",
-            ["s1,1,40.73,-74.16", "s1,2,40.75,-73.99"],
+            [
+                "s1,1,40.734924,-74.164581",
+                "s1,2,40.734984,-74.027683",
+                "s1,3,40.750568,-73.993519",
+                "s13,1,40.734924,-74.164581",
+                "s13,2,40.734984,-74.027683",
+                "s13,3,40.750568,-73.993519",
+                "s99,1,41.100000,-75.100000",
+                "s99,2,41.200000,-75.200000",
+            ],
         ),
     }
 
@@ -780,6 +801,16 @@ def _publications(members: dict[str, str]) -> dict[str, bytes]:
         ),
         "missing-member": _zip_of(members, drop=("stops.txt",)),
         "corrupt-zip": b"<!doctype html><html><body>503 from the origin</body></html>",
+        # 15c: the archive with no shapes.txt. It is here rather than in the NJT
+        # branch alone because the same drop means DIFFERENT THINGS per loader, and
+        # being able to say both is the point: NJ Transit treats shapes.txt as
+        # optional (route lines are additive, so the group still reaches ready and
+        # serves an empty /api/njt-routes), while PATH and the ferry both list it
+        # among the members they READ and cannot degrade around, so for them this is
+        # a missing REQUIRED member and the load fails. A member set that has no
+        # shapes.txt at all gets a body identical to "good", which is honest: there
+        # is nothing to drop.
+        "no-shapes": _zip_of(members, drop=("shapes.txt",)),
     }
 
 

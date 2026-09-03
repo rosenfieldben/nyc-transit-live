@@ -1276,6 +1276,349 @@ function ferryArrivalsHtml(station, body, now, colorFor = () => FERRY_FALLBACK_C
   return html;
 }
 
+// ---- NJ Transit Rail (phase 15c: map layer over the 15a/15b/15c endpoints) ----
+
+// Neutral indigo-grey for an NJT route the colour table does not know. Every
+// lookup in systems/njt.js lands here rather than on a blank, which is the
+// amendment-a rule: a route with no line still colours a badge and a popup.
+//
+// PICKED AGAINST THE PUBLISHED TABLE RATHER THAN BY TASTE. The route most likely
+// to reach this fallback is 17, the event-only Meadowlands Rail Line, which has no
+// trips in an ordinary publication and therefore no entry on /api/njt-routes; its
+// published route_color is C1AA72, a khaki, so a warm neutral would have been
+// indistinguishable from the real colour of the very route it stands in for. None
+// of the other eleven is close to this value either. It is also kept clear of
+// PATH's #546e7a and the ferry's #78909c, both blue-greys: a fallback that looked
+// like another mode's fallback would be worse than an obvious placeholder.
+const NJT_FALLBACK_COLOR = "#4a4e69";
+
+// /api/njt-routes serves route_color verbatim from routes.txt: bare hex, no "#",
+// possibly null (the endpoint says so). Validated before prefixing for the same
+// reason pathColor validates: a malformed value must fall back rather than reach a
+// style attribute.
+function njtColor(hex, fallback = NJT_FALLBACK_COLOR) {
+  return /^[0-9a-fA-F]{6}$/.test(hex ?? "") ? `#${hex}` : fallback;
+}
+
+// The two lookups amendment a is about, as functions rather than as `.get(...) ??`
+// spelled out at each call site. `table` is any Map-like; a missing route is the
+// ORDINARY case here, not an error:
+//
+//   * route 17 has no geometry in any publication we have seen, so it is absent
+//     from /api/njt-routes while remaining a real route id a trip can name, and
+//   * both tables are EMPTY until loadNjtRoutes resolves, which is several
+//     seconds after the first /api/njt-trains poll paints markers on a cold start.
+//
+// The colour falls back to the neutral above; the NAME falls back to null, and it
+// is formatNjtHead / njtTrainName that turn null into "NJ Transit route 17". They
+// are separate steps because the panel's chips want the raw name-or-nothing while
+// the popups want a sentence.
+//
+// THE GUARD IS `table &&` AND NOTHING MORE, after a review round measured the two
+// clauses the first draft also carried. `routeId != null` cannot change the answer,
+// because Map.prototype.get(null) returns undefined and the `||` below already
+// takes the fallback; `typeof table.get === "function"` was reachable from no call
+// site in the app. Both survived deletion with the whole suite green, which under
+// this project's rule (every guard is shown to fire) makes them decoration rather
+// than defence. What remains is the one state that really happens: the tables are
+// null-ish before loadNjtRoutes has ever run.
+function njtRouteColor(routeId, table) {
+  return (table ? table.get(routeId) : null) || NJT_FALLBACK_COLOR;
+}
+
+function njtRouteName(routeId, table) {
+  return (table ? table.get(routeId) : null) || null;
+}
+
+// IS THIS TRAIN DRAWN EXACTLY ON ITS STATION? The whole layer turns on the answer,
+// twice, so it is one predicate rather than two spellings of it.
+//
+// backend/feeds/njt.py places a train four ways. Cases 1, 2 and 4 (dwelling,
+// approaching its first call, and inside the terminal grace) all emit the STOP'S
+// OWN COORDINATES with null anchors; case 3, and only case 3, interpolates a
+// position between two stops and carries prev_lat / prev_time / next_time. So a
+// null prev_lat is exactly "drawn at stop_id", which is what the cross-link needs
+// (a link naming a station the train is NOT at is the failure shared.js's own
+// principle comment forbids) and the negation of what the glide needs.
+//
+// Read off prev_lat rather than off `status`, for the reason isPlacedRailroad reads
+// stop_id rather than the time anchors: the coordinates and the anchors are emitted
+// by the same branch, while `status` is a label beside them that a later decoder
+// change could reword.
+function njtAtItsStation(train) {
+  const t = train || {};
+  return t.prev_lat == null && t.stop_id != null;
+}
+
+// THE PAYLOAD'S latitude/longitude IS NOT WHAT THE GLIDE HELPERS EXPECT, and this is
+// the one place that difference is reconciled.
+//
+// trainLatLng and computeRouteSlice were written against the subway and railroad
+// decoders, which place a train AT ITS NEXT STATION and leave the interpolation to
+// the client: latitude/longitude is the FAR END of the segment, prev_lat/prev_lon is
+// the near end, and f walks between them. NJ Transit's decoder does the
+// interpolation ON THE SERVER (feeds/njt.py case 3 calls _interpolate, and its
+// docstring says why), so latitude/longitude is the train's CURRENT position,
+// already f of the way along. Handing that straight to trainLatLng walks
+// prev -> current-position by f a SECOND time and draws the train at f SQUARED.
+// Measured, before this existed: a train the backend placed halfway between Newark
+// Penn and New York Penn was drawn a quarter of the way along, 3.6 km short on a
+// 14.5 km leg, AT THE INSTANT OF THE POLL rather than merely between polls. Across
+// the segment the drawn fraction ran 0.010, 0.062, 0.250, 0.563, 0.810 for a true
+// 0.10, 0.25, 0.50, 0.75, 0.90.
+//
+// The reconciliation is to put the NEXT STOP back where the helpers expect it, which
+// the client can do without a payload change because /api/njt-stops already gives
+// every stop's coordinates and the payload names the stop it is heading for.
+// Returns a train object safe to hand to computeRouteSlice and trainLatLng, or NULL
+// when it must not be handed to them at all: a train drawn at its own station has
+// nothing to interpolate, and a train whose next stop is not in the table yet (the
+// seconds before loadNjtStops resolves, or a stop the static load dropped) would be
+// interpolating toward a point nobody knows. Both cases draw at the served position,
+// which is right rather than merely safe: the server's position is correct at the
+// instant it was polled.
+function njtGlideTrain(train, stopCoords) {
+  const t = train || {};
+  if (njtAtItsStation(t) || t.prev_lat == null || t.prev_time == null || t.next_time == null) {
+    return null;
+  }
+  const target = stopCoords && t.stop_id != null ? stopCoords.get(t.stop_id) : null;
+  if (!target) return null;
+  return { ...t, latitude: target[0], longitude: target[1] };
+}
+
+// THE MARKER KEY, and it is `id` rather than `trip_id` on purpose. NJ Transit's
+// TripUpdates feed emits ADDED trips with an EMPTY trip_id (36 of them in the
+// first capture that caught a disrupted evening), so keying a marker map by
+// trip_id would collapse every added train in the system onto one marker: one
+// dot standing for a dozen trains, the rest swept off the map as unseen on the
+// next poll. models.NjtTrain guarantees `id` is never empty, falling back to
+// "njt:<entity.id>" exactly where trip_id is blank, which is what makes it the
+// key the backend intends a client to use.
+function njtKey(train) {
+  return (train || {}).id;
+}
+
+// Rider-facing head text for an NJT popup or accessible name: the route's own
+// name ("Morris & Essex Line") when the route table knows it, else the route id,
+// else the system. PLAIN text; the caller escapes it (the railroad precedent).
+function formatNjtHead(routeId, name) {
+  if (name) return name;
+  if (routeId) return `NJ Transit route ${routeId}`;
+  return "NJ Transit";
+}
+
+// Build the three per-route tables systems/njt.js reads, from one /api/njt-routes
+// payload. Pure and node-testable: the polyline geometry that DRAWS and the
+// geometry that GLIDES come out of the same pass over the same list, which is the
+// property path.js states in prose and this makes structural (they cannot be
+// built from different payloads because there is only one).
+//
+// `cumLengths` is injected so a node test can build the index without the
+// arc-length helper's real arithmetic; systems/njt.js passes polylineCumLengths.
+// A route whose polylines list is empty still gets a name and a colour entry: it
+// has nothing to draw and nothing to glide along, and dropping it from the name
+// table would make the popup say "NJ Transit route 9" for a route the payload
+// named.
+function njtRouteTables(routes, cumLengths = polylineCumLengths) {
+  const names = new Map();
+  const colors = new Map();
+  const index = new Map();
+  for (const route of routes || []) {
+    const id = route.route;
+    if (id == null) continue;
+    if (route.name) names.set(id, route.name);
+    colors.set(id, njtColor(route.color));
+    const polylines = route.polylines || [];
+    if (polylines.length) {
+      index.set(id, polylines.map((points) => ({ points, cum: cumLengths(points) })));
+    }
+  }
+  return { names, colors, index };
+}
+
+// NJT train popup HTML. `name` is the rider-facing route name (null when the
+// route table has none) and `color` a css colour, both resolved by the caller
+// through the two fallbacks above so this stays pure.
+//
+// EVERY NJT TRAIN SAYS "scheduled position, no GPS", unconditionally, where the
+// railroad popup says it only for its placed trains. That is not a copy of the
+// railroad line with the branch left in: NJ Transit's vehicle positions feed is
+// deliberately never fetched (the numbers are at the poller registry in
+// pollers.py), so every position on this layer is computed from the TripUpdates
+// times against 15a's stop coordinates. There is no GPS variant to switch on.
+//
+// The delay line is printed only when the feed carries one AND it is not zero: a
+// train running to schedule is the unremarkable case and "0 min late" is noise.
+// Sign is respected, because NJ Transit does publish negative delays (running
+// early) and rendering one as "late" would be a lie about the direction.
+function njtTrainPopupHtml(train, name, color) {
+  const t = train || {};
+  return (
+    `<b style="color:${readableInk(color)}">${esc(formatNjtHead(t.route_id, name))}</b>` +
+    ` <span class="popup-sub">NJ Transit</span>` +
+    (t.train_num ? `<br>Train ${esc(t.train_num)}` : "") +
+    (t.headsign ? `<br>To ${esc(t.headsign)}` : "") +
+    (t.stop_name ? `<br>Next stop: ${esc(t.stop_name)}` : "") +
+    njtDelayLine(t.delay) +
+    `<br><span class="popup-sub">scheduled position (no GPS)</span>`
+  );
+}
+
+// "<br>4 min late" / "<br>2 min early" / "" . Seconds in, rider words out, so the
+// popup and the accessible name cannot word the same delay differently. Rounded
+// to the nearest minute because the feed's own precision does not survive the
+// journey (the endpoint says absolute times stay authoritative), and a delay under
+// half a minute rounds to zero and prints nothing.
+function njtDelayText(delaySeconds) {
+  if (delaySeconds == null) return "";
+  // NaN needs no clause of its own and the first draft's was DEAD: Math.round of it
+  // is NaN, and `!minutes` is true for NaN, so the zero-delay line below already
+  // returns "". A review round measured that deleting the clause left every test
+  // green, which is this project's definition of a guard that is not one.
+  const minutes = Math.round(Math.abs(delaySeconds) / 60);
+  if (!minutes) return "";
+  return `${minutes} min ${delaySeconds < 0 ? "early" : "late"}`;
+}
+
+function njtDelayLine(delaySeconds) {
+  const text = njtDelayText(delaySeconds);
+  return text ? `<br>${esc(text)}` : "";
+}
+
+// "Newark Penn Station, NJ Transit, station". A builder rather than a literal at
+// the call site for the reason airtrainStationName is one: the station markers are
+// the only NJT markers a touch screen-reader user meets before any train has
+// loaded, and the system word is what tells them which railroad's platform they
+// have landed on at New York Penn Station, where an LIRR circle sits on the same
+// pixel. NJT stop names are already rider-facing, so there is nothing to reword.
+function njtStationName(station) {
+  const s = station || {};
+  return joinName([s.name || s.id || "NJ Transit", "NJ Transit", "station"]);
+}
+
+// "Morris & Essex Line, NJ Transit, train 6633, to Dover, next stop Summit, 4 min
+// late, scheduled position, no GPS". The A2 accessible name, built from the same
+// fallbacks and the same delay wording the popup uses.
+function njtTrainName(train, routeName = null) {
+  const t = train || {};
+  return joinName([
+    formatNjtHead(t.route_id, routeName),
+    "NJ Transit",
+    t.train_num ? `train ${t.train_num}` : null,
+    t.headsign ? `to ${t.headsign}` : null,
+    t.stop_name ? `next stop ${t.stop_name}` : null,
+    njtDelayText(t.delay) || null,
+    "scheduled position, no GPS",
+  ]);
+}
+
+// Is this failure the "this deployment does not run NJ Transit" answer?
+//
+// The backend serves it as a 503 whose detail names the two environment variables,
+// and refreshSource surfaces that detail as the source's error. A deployment without
+// NJT credentials is a supported state rather than a fault (15a's F1 settled that,
+// for the monitor; this is the same decision on the rider's status line), so it must
+// read as nothing rather than as red.
+//
+// MATCHED ON THE WORDS, NOT ON THE STATUS, and that is the whole care in it: 503 is
+// also what a WARMING cache answers, and a warming NJT is worth surfacing. The
+// phrase is the backend's own ("NJ Transit is not configured"), pinned by a test on
+// both sides so a reworded detail cannot silently start reading as an outage.
+const NOT_CONFIGURED_RE = /is not configured/i;
+
+function isNotConfigured(detail) {
+  return typeof detail === "string" && NOT_CONFIGURED_RE.test(detail);
+}
+
+// The dwell rule for an NJT departure row is the ferry's rule exactly: count down
+// to the ARRIVAL while it is still ahead, and to the DEPARTURE once the train is
+// standing at the platform or the stop is an origin with no arrival at all. An
+// alias rather than a second copy, because two copies of one rule drift and the
+// drift is invisible: both surfaces would still render a plausible countdown.
+const njtArrivalDisplay = ferryArrivalDisplay;
+
+// NJT station arrivals popup HTML. FLAT AND CHRONOLOGICAL, with no bucket
+// headings at all, because /api/njt-arrivals is flat and chronological: every row
+// carries its own route and headsign, and a departure board reads by time. The
+// other systems' renderers bucket by direction because their endpoints do.
+//
+// `colorFor(routeId)` resolves a route's badge colour and `nameFor(routeId)` its
+// rider-facing name; systems/njt.js closes both over the /api/njt-routes tables,
+// keeping this pure. Every feed-derived string is escaped.
+//
+// THE HEADSIGN IS THE LINE'S DESTINATION AND IT IS WHAT A BOARD SHOWS, so it takes
+// the one text slot between the badge and the countdown; the route NAME appears
+// there only when the feed gives no headsign, and the badge always carries the route
+// id. (An earlier draft of this comment described a two-slot row the function has
+// never rendered; njtRowLabel is the authority and it returns one string.) A row with
+// neither still renders its countdown rather than being dropped: the train is real
+// and the time is the thing the rider came for.
+function njtArrivalsHtml(station, body, now, colorFor = () => NJT_FALLBACK_COLOR, nameFor = () => null) {
+  const header =
+    `<b>${esc(station.name ?? station.id)}</b> ` +
+    `<span class="popup-sub">NJ Transit</span>` +
+    feedAgeLine(body.fetched_at, now); // "as of Xm ago" when the rows are stale (R1)
+  const rows = njtOrderedArrivals(body.arrivals, now);
+  if (!rows.length) return `${header}<div class="arr-none">No trains</div>`;
+  return (
+    header +
+    rows
+      .map((row) => {
+        const color = colorFor(row.route_id);
+        const badge =
+          `<span class="arr-badge" style="background:${color};color:${readableTextOn(color)}">` +
+          `${esc(row.route_id || "?")}</span>`;
+        const label = njtRowLabel(row, nameFor);
+        const display = njtArrivalDisplay(row, now);
+        const prefix = display.mode === "departing" ? "departs " : "";
+        const num = row.train_num ? ` <span class="popup-sub">${esc(row.train_num)}</span>` : "";
+        return `${badge}${label}${num} ${esc(prefix + formatCountdown(display.seconds))}`;
+      })
+      .join("<br>")
+  );
+}
+
+// The one text a row shows between its badge and its countdown: the destination
+// where the feed gives one, else the route's name, else nothing. Leading space
+// included so the caller concatenates rather than deciding about spacing.
+// THE ROWS ARE ORDERED BY THE NUMBER THE RIDER READS, which is not the order the
+// backend serves them in, and the gap between the two is real rather than
+// theoretical. feeds/njt._trim_njt_arrivals sorts on max(arrival, departure), so a
+// train dwelling at the platform does not sort by an arrival already in the past;
+// the countdown, though, is njtArrivalDisplay's, which counts to the ARRIVAL while
+// it is still ahead. Two trains at one station with different dwell lengths make the
+// two keys disagree, and a board whose numbers descend out of order is worse than
+// one that reorders two rows: measured, a Dover row at 3 min printed above a Trenton
+// row at 2 min, both in the order the endpoint served them.
+//
+// Sorted HERE rather than in the backend because the key is the display's, and the
+// display's key depends on `now`, which the backend does not have at serve time. A
+// row whose countdown is unknowable sorts last rather than first, where a NaN would
+// otherwise put it.
+function njtOrderedArrivals(rows, now) {
+  const present = (rows || []).map((row, index) => ({ row, index }));
+  return present
+    .sort((a, b) => {
+      const sa = njtArrivalDisplay(a.row, now).seconds;
+      const sb = njtArrivalDisplay(b.row, now).seconds;
+      const ka = sa == null || Number.isNaN(sa) ? Infinity : sa;
+      const kb = sb == null || Number.isNaN(sb) ? Infinity : sb;
+      // Stable on a tie, so two trains due the same minute keep the backend's order
+      // rather than an order the sort happened to produce.
+      return ka === kb ? a.index - b.index : ka - kb;
+    })
+    .map((entry) => entry.row);
+}
+
+function njtRowLabel(row, nameFor = () => null) {
+  const r = row || {};
+  const headsign = r.headsign || null;
+  const routeName = r.route_id ? nameFor(r.route_id) : null;
+  const text = headsign || routeName;
+  return text ? ` ${esc(text)}` : "";
+}
+
 // ---- Service alerts in the station popups (phase 12b) ----
 
 // Alerts staleness threshold. The alerts feed polls every 60s (vs 15s for the vehicle
@@ -1646,18 +1989,39 @@ function shapeStationArrivals(kind, body, now, opts = {}) {
     raw = orderedRailroadBuckets(payload.directions);
   } else if (kind === "path") {
     raw = orderedPathBuckets(payload.directions);
+  } else if (kind === "njt") {
+    // ONE BUCKET, because /api/njt-arrivals is a flat chronological list with no
+    // direction on it at all. The panel renders a bucket heading per bucket, so
+    // the single name is what a rider reads above the list, and "Departures" is
+    // what NJ Transit calls that board. An empty list yields NO bucket rather
+    // than an empty one, which is how every other kind reaches the panel's
+    // "No trains." line.
+    // Ordered by the displayed countdown, the same way the popup renders them, so
+    // the two surfaces cannot list one station's board in two different orders.
+    raw = (payload.arrivals || []).length
+      ? [["Departures", njtOrderedArrivals(payload.arrivals, now)]]
+      : [];
   } else {
     raw = orderedBuckets(SUBWAY_BUCKET_ORDER, payload.directions);
   }
   const buckets = raw.map(([name, rows]) => ({
     name,
     rows: (rows || []).map((row) => {
-      const display = kind === "ferry" ? ferryArrivalDisplay(row, now) : null;
+      // NJT rows carry the same arrival/departure pair the ferry's do, so they take
+      // the same dwell rule (njtArrivalDisplay is that rule under its NJT name).
+      const display =
+        kind === "ferry" || kind === "njt" ? ferryArrivalDisplay(row, now) : null;
       const seconds = display ? display.seconds : row.arrival - now;
       return {
         routeId: row.route_id ?? null,
         routeName: row.route_id ? nameFor(row.route_id) : null,
         trainNum: row.train_num ?? null,
+        // The destination, where the endpoint publishes one. Only NjtArrival does
+        // (checked across every arrivals model), so this is null on every other
+        // kind and the sentence below is unchanged for them; it is read generically
+        // rather than gated on kind because a future endpoint that starts carrying
+        // a headsign should reach the rider, not a branch nobody remembered.
+        headsign: row.headsign ?? null,
         mode: display ? display.mode : "arriving",
         seconds,
         // The ABSOLUTE instant this row is about, kept alongside the countdown
@@ -1712,7 +2076,12 @@ function arrivalSentence(row, noun = "train", timeZone = "America/New_York") {
   const label = row.routeName || row.routeId || "";
   const countdown = spokenCountdown(row.seconds);
   const departing = row.mode === "departing";
-  const parts = [label, noun, departing ? "departs" : "", countdown].filter(Boolean);
+  // The destination rides between the label and the noun ("Morris & Essex Line to
+  // Dover train in 4 minutes"), which is the order a departure board reads in and
+  // the order the popup renders. Absent on every kind but NJT, so every other
+  // sentence is byte-identical to what it was.
+  const destination = row.headsign ? `to ${row.headsign}` : "";
+  const parts = [label, destination, noun, departing ? "departs" : "", countdown].filter(Boolean);
   let sentence = parts.join(" ");
   const clock = clockTimeLabel(row.at, timeZone);
   if (clock) sentence += `, ${clock} ${departing ? "departure" : "arrival"}`;
@@ -1980,6 +2349,11 @@ const SOURCE_WORDS = {
   railroads: { qualifier: null, whole: "Railroad", spoken: railroadSystemLabel },
   path: { qualifier: "PATH", whole: "PATH" },
   ferry: { qualifier: "Ferry", whole: "Ferry" },
+  // NJ Transit is one system named after its source, so describeIdentity returns
+  // `whole` and the qualifier is never reached. It is still filled in rather than
+  // left null: an entry missing here falls through to the raw payload key, which
+  // is how "Live data delayed for railroads" reached the live region once already.
+  njt: { qualifier: "NJ Transit", whole: "NJ Transit" },
 };
 
 function describeIdentity(identity) {
@@ -2177,6 +2551,12 @@ if (typeof module !== "undefined" && module.exports) {
     PATH_ROUTE_MAX_SLICE, PATH_ROUTE_ACCEPT_DIST, computePathRouteSlice,
     FERRY_FALLBACK_COLOR, orderedFerryBuckets, ferryArrivalDisplay, ferryBoatIconState,
     ferryStatusText, ferrySpeedKnots, ferryBoatPopupHtml, ferryArrivalsHtml,
+    // 15c: NJ Transit Rail.
+    NJT_FALLBACK_COLOR, njtColor, njtRouteColor, njtRouteName, njtKey, formatNjtHead,
+    njtRouteTables, njtTrainPopupHtml, njtDelayText, njtDelayLine, njtTrainName,
+    njtStationName,
+    njtArrivalDisplay, njtArrivalsHtml, njtRowLabel, njtAtItsStation, njtGlideTrain,
+    njtOrderedArrivals, isNotConfigured,
     // A1: the accessible station surface.
     countdownParts, spokenCountdown, STATION_RESULT_CAP, SUBWAY_BUCKET_ORDER,
     foldStationName, stationQueryTokens, stationMatchesTokens, searchStations,

@@ -24,16 +24,17 @@ const { test, expect } = require("@playwright/test");
 const { installMocks, json } = require("./mock");
 const { expectPopupState } = require("./popup");
 const fx = require("./fixtures/api");
+const { expectState } = require("./state");
 
 async function open(page) {
   await page.clock.install({ time: new Date(fx.FROZEN_MS) });
   await page.clock.pauseAt(new Date(fx.FROZEN_MS));
   await page.goto("/");
-  await expect
-    .poll(async () => page.evaluate(() => document.querySelectorAll(".leaflet-marker-icon").length), {
-      timeout: 15_000,
-    })
-    .toBeGreaterThan(5);
+  // The STATE these specs need, not a marker count. Four of them read
+  // `[...railroads.keys()][0]` on the next line, and a count of five is satisfied by
+  // whichever feeds land first: a full-suite run really did fail here with
+  // `railroads.get(undefined)` at A8c. See the witness's comment in state.js.
+  await expectState(page, "every vehicle system loaded", "opening the map");
 }
 
 // Where focus is and what the page said, asked together because the two halves of the

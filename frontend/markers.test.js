@@ -77,6 +77,8 @@ test("A2: every system that builds markers gives them a name", () => {
     "pathTrainName",
     "ferryBoatName",
     "airtrainStationName",
+    "njtTrainName",
+    "njtStationName",
   ];
   for (const file of systemFiles()) {
     const source = fs.readFileSync(file, "utf8");
@@ -92,7 +94,7 @@ test("A2: a reused marker is relabeled, so a name cannot describe a stale vehicl
   // Every system whose markers survive between polls must call setMarkerName on the
   // reuse path, not only at creation. AirTrain is exempt and says so in its own file:
   // it is static, built once, and has no apply path at all.
-  const live = ["buses.js", "subway.js", "railroad.js", "path.js", "ferry.js"];
+  const live = ["buses.js", "subway.js", "railroad.js", "path.js", "ferry.js", "njt.js"];
   for (const name of live) {
     const source = fs.readFileSync(path.join(SYSTEMS_DIR, name), "utf8");
     assert.match(

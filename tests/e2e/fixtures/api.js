@@ -235,6 +235,153 @@ const railroadArrivals = () => ({
   },
 });
 
+// ---- NJ Transit Rail (15c) ----
+//
+// Three stations, two drawable routes, and four trains, chosen so the layer's two
+// awkward cases are both on the page rather than described in a comment:
+//
+//   * ROUTE 17 HAS NO LINE. Hoboken lists it among the routes serving the station
+//     and two trains run on it, and it never appears on /api/njt-routes. In the real
+//     feed that is the event-only Meadowlands Rail Line, which has no trips at all
+//     in an ordinary publication; the shape modeled here is the one a CLIENT can
+//     actually meet, a route with trips whose geometry the publication does not
+//     draw, because a route with no trips also has no trains and no station listing
+//     it. Either way the client's question is the same: a route id it has no entry
+//     for. Every name and colour lookup must fall back rather than blank.
+//   * TWO ADDED TRIPS SHARE AN EMPTY trip_id. NJ Transit publishes them that way,
+//     which is why the marker map is keyed on the backend-minted `id`. Two entries
+//     here means the ADDED-trips coverage is a count assertion rather than a claim.
+const njtStops = () => [
+  { id: "109", name: "New York Penn Station", lat: 40.750568, lon: -73.993519, routes: ["9", "2"] },
+  { id: "112", name: "Newark Penn Station", lat: 40.734924, lon: -74.164581, routes: ["9"] },
+  // HOBOKEN'S ID COLLIDES WITH LIRR JAMAICA'S ON PURPOSE. NJT ids are bare integers
+  // 1..176 and the railroad's are bare integers too; the contract tier has measured
+  // 21 of 24 ferry dock ids colliding with Metro-North station ids, so this is the
+  // real shape rather than an invented one. It is here so the system-qualified
+  // registry key is FALSIFIABLE: crossLinkHtml finds the first row whose key
+  // matches, the railroad stations register before the NJT ones, and a bare-id key
+  // therefore sends a rider standing at Hoboken to Jamaica, Queens.
+  { id: "12", name: "Hoboken", lat: 40.734984, lon: -74.027683, routes: ["2", "17"] },
+];
+
+// text_color is null on every route, exactly as the feed publishes it (empty on all
+// twelve as of the 2026-08-05 probe), so the client has to compute its own ink.
+// Route 2 carries TWO polylines, which is what the backend's dedup leaves on a
+// branching line: the Hoboken leg and the New York Penn leg both reach a terminus
+// the other does not.
+const njtRoutes = () => [
+  {
+    route: "9", name: "Northeast Corridor", color: "DD3439", text_color: null,
+    polylines: [[[40.734924, -74.164581], [40.7425, -74.07], [40.750568, -73.993519]]],
+  },
+  {
+    route: "2", name: "Montclair-Boonton Line", color: "E66859", text_color: null,
+    polylines: [
+      [[40.734984, -74.027683], [40.79, -74.15], [40.86, -74.22]],
+      [[40.750568, -73.993519], [40.79, -74.15], [40.86, -74.22]],
+    ],
+  },
+];
+
+// The NJT envelope, with the single-entry `systems` block keyed "njt" that
+// models.NjtFeed serves. `at` is NJT's own last decode, so a test can freeze NJ
+// Transit while the envelope's fetched_at keeps advancing, which is the partial
+// outage the whole C2 apparatus exists for.
+const njtWithSystems = ({
+  trains,
+  fetchedAt = FROZEN_S,
+  servedAt = fetchedAt,
+  at = fetchedAt,
+  ok = true,
+  retainedSince = null,
+} = {}) => ({
+  fetched_at: fetchedAt,
+  feed_timestamp: fetchedAt - 5,
+  served_at: servedAt,
+  trains: trains ?? njt().trains,
+  systems: { njt: systemBlock(at, { ok, retainedSince }) },
+});
+
+const njt = () => ({
+  fetched_at: FROZEN_S,
+  feed_timestamp: FROZEN_S - 5,
+  served_at: FROZEN_S,
+  trains: [
+    // In transit on route 9 with both anchors, so it glides Newark -> New York along
+    // the route polyline rather than the straight chord.
+    //
+    // ITS latitude/longitude IS THE INTERPOLATED CURRENT POSITION, not station 109's
+    // coordinates, and the difference is the whole point of writing it out. This is
+    // what backend/feeds/njt.py case 3 emits (it calls _interpolate and puts the
+    // result here), and the first draft of this fixture hand-wrote 109's coordinates
+    // instead, which is a payload that decoder cannot produce for an in-transit
+    // train. That made the fixture agree with a client bug: the glide helpers expect
+    // the NEXT STATION in these fields, so a fixture that supplied one hid a marker
+    // being drawn at f squared of its segment. 40.741182 / -74.096156 is exactly 0.4
+    // of the way from 112 to 109, matching prev_time and next_time below (120s of a
+    // 300s leg elapsed at FROZEN_S).
+    {
+      id: "NJ_3800", trip_id: "NJ_3800", route_id: "9", headsign: "New York",
+      train_num: "3800", latitude: 40.741182, longitude: -74.096156,
+      status: "in-transit", stop_id: "109", stop_name: "New York Penn Station",
+      delay: 250,
+      prev_lat: 40.734924, prev_lon: -74.164581, prev_time: FROZEN_S - 120,
+      next_time: FROZEN_S + 180,
+    },
+    // Dwelling at Hoboken: null anchors, so it sits placed on the station square
+    // (trainLatLng's own fallback) and its popup carries the cross-link.
+    {
+      id: "NJ_6633", trip_id: "NJ_6633", route_id: "2", headsign: "Hackettstown",
+      train_num: "6633", latitude: 40.734984, longitude: -74.027683,
+      status: "at-station", stop_id: "12", stop_name: "Hoboken", delay: 0,
+      prev_lat: null, prev_lon: null, prev_time: null, next_time: null,
+    },
+    // The two ADDED trips. Empty trip_id on both, distinct backend ids, and a route
+    // that /api/njt-routes never serves.
+    {
+      id: "njt:9001", trip_id: "", route_id: "17", headsign: "Meadowlands",
+      train_num: "9001", latitude: 40.7401, longitude: -74.0701,
+      status: "approaching", stop_id: null, stop_name: null, delay: null,
+      prev_lat: null, prev_lon: null, prev_time: null, next_time: null,
+    },
+    {
+      id: "njt:9002", trip_id: "", route_id: "17", headsign: "Hoboken",
+      train_num: "9002", latitude: 40.7402, longitude: -74.0702,
+      status: "approaching", stop_id: null, stop_name: null, delay: null,
+      prev_lat: null, prev_lon: null, prev_time: null, next_time: null,
+    },
+  ],
+});
+
+// NJT station departures for New York Penn Station: FLAT and chronological, with no
+// direction buckets, which is what /api/njt-arrivals serves. The first row is at
+// +90s, the same countdown boundary the subway and PATH fixtures use.
+const njtArrivals = () => ({
+  fetched_at: FROZEN_S,
+  stop_id: "109",
+  stop_name: "New York Penn Station",
+  arrivals: [
+    {
+      train_num: "3800", route_id: "9", headsign: "Trenton",
+      arrival: FROZEN_S + 90, departure: FROZEN_S + 120, delay: 250, trip_id: "NJ_3800",
+    },
+    {
+      train_num: "6634", route_id: "2", headsign: "Dover",
+      arrival: FROZEN_S + 300, departure: FROZEN_S + 330, delay: null, trip_id: "NJ_6634",
+    },
+    // A ROUTE-LESS ROW, which models.NjtArrival declares (route_id: str | None) and
+    // feeds/njt.py really produces: an ADDED trip whose TripDescriptor omits
+    // route_id and joins no static trip has none to recover. Present here because
+    // the badge's own fallback was otherwise exercised by nothing at any tier, and a
+    // board that printed the literal "null" in a route badge is what that guard is
+    // for.
+    {
+      train_num: null, route_id: null, headsign: "Bay Head",
+      arrival: FROZEN_S + 480, departure: FROZEN_S + 500, delay: null, trip_id: "",
+    },
+  ],
+});
+
 const busRoute = () => ({
   route: "M15",
   directions: [[[40.72, -73.98], [40.73, -73.98], [40.74, -73.97]]],
@@ -508,6 +655,11 @@ module.exports = {
   ferryMoved,
   ferryDocked,
   ferryArrivals,
+  njtStops,
+  njtRoutes,
+  njtWithSystems,
+  njt,
+  njtArrivals,
   alerts,
   ferryAlerts,
 };

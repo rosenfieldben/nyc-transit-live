@@ -568,9 +568,12 @@ async def _run_njt_refresh(monkeypatch, cache, raiser=None, *, fetch=None):
     [
         httpx.ConnectError("upstream refused"),
         pollers.njt_auth.NjtAuthError("token rejected"),
-        # A SPENT DAILY MINT BUDGET, which is a subclass of the line above and is
-        # listed here to prove the subclassing is doing its job: the poller grew no
-        # arm for it, and it must degrade exactly like every other refused mint.
+        # A SPENT DAILY MINT BUDGET, a SUBCLASS of the line above, listed here to
+        # prove the subclassing is doing its job. _refresh_njt has no except clause
+        # of its own for this type: it reaches the NjtAuthError handler by
+        # inheritance, and must degrade exactly like every other refused mint once
+        # it gets there. Break the inheritance and this row stops being handled at
+        # all rather than being handled differently.
         pollers.njt_auth.NjtMintQuotaError(pollers.njt_auth.MINT_QUOTA_MESSAGE),
         pollers.njt_auth.NjtUpstreamError("HTTP 503"),
         DecodeError("not a protobuf"),
@@ -763,12 +766,17 @@ async def test_a_spent_mint_budget_degrades_nj_transit_alone(monkeypatch, cache)
 
     NJ Transit refuses the eleventh mint of an Eastern day (observed 2026-09-02),
     and njt_auth reports that as NjtMintQuotaError, a SUBCLASS of NjtAuthError. The
-    poller was not taught about it and must not need to be: the existing arm catches
-    it, the failure is a 502 (the upstream answered, it just refused us), the
+    poller has no except clause for it: it lands in the NjtAuthError handler by
+    inheritance, which is where every other caller relies on it landing too. Once
+    there the failure is a 502 (the upstream answered, it just refused us), the
     last-known trains are retained and drawn as stale, and no other feed in the
     cache is touched. Nothing retries harder, which is the property that matters
     most on this particular failure, since every extra attempt is charged to the
     same budget it is waiting on.
+
+    THE HANDLER BRANCHES ON THE TYPE, IT DOES NOT CATCH IT SEPARATELY, and this test
+    is one of the three that notice the difference: a sibling type would escape
+    _refresh_njt entirely rather than reach a differently worded failure.
 
     The fixed string reaching the cache error is what makes the state legible on
     /api/status; /healthz says the same thing as a code, off the token cache."""

@@ -187,7 +187,7 @@ def _download() -> tuple[bytes, bytes, bytes, float]:
     a process-wide cache and re-mints at most once per attempt. A regeneration
     therefore costs one token, exactly as a production poll cycle does, out of the
     ten NJ Transit allows this account per Eastern day (njt_auth.DAILY_MINT_LIMIT,
-    observed 2026-09-02). Running both generators on the same day spends 2 of the 2
+    observed 2026-09-02). Running both generators on the same day spends 2 of the 4
     that are not already committed to the monitor and to production.
 
     THE STATIC ARCHIVE IS FETCHED HERE, AND THAT IS THE FIX. The join check below

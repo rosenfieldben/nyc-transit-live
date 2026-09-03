@@ -476,26 +476,27 @@ and each is a way a conventional poller gets this wrong:
    token is rejected by the Usage API and we cannot read our own counter either: the
    cap is a known number, our position against it is not.
 
-   **Eight of the ten are committed on a quiet day**, and the deployment and the
+   **Six of the ten are committed on a quiet day**, and the deployment and the
    contract monitor share one account:
 
    | Consumer | Mints/day | Why |
    | --- | --- | --- |
    | Contract monitor | 4 | 6-hourly, one mint per run shared across `njt-static` and `njt-realtime` |
-   | Production | 4 | `njt_auth.MAX_TOKEN_AGE_S` is a six-hour ceiling on holding an unproven token |
-   | **Committed** | **8** | leaving two |
+   | Production | 2 | `njt_auth.MAX_TOKEN_AGE_S` is a twelve-hour ceiling on holding an unproven token |
+   | **Committed** | **6** | leaving four |
 
    A deploy (cold token cache), a manual `workflow_dispatch` of the monitor, a
    fixture pull (`gen_njt_fixture.py` and `gen_njt_rt_fixture.py`, one each), or a
-   genuine token expiry each spend one of the remaining two. So mints are conserved
+   genuine token expiry each spend one of the remaining four. So mints are conserved
    structurally rather than by convention: a single-flight cache turns concurrent
    callers into one mint, a rejected token buys exactly one re-mint per attempt, and
    nothing anywhere retries a failed mint. When the cap is hit, `njt_auth` raises the
    fixed string `NJ Transit daily mint limit reached`, `/healthz` publishes
-   `njt-mint-quota`, and the monitor's summary says the budget is spent rather than
-   reporting an NJ Transit outage. Nothing is retried harder: NJ Transit alone
-   degrades until Eastern midnight. The full arithmetic lives at
-   `njt_auth.DAILY_MINT_LIMIT`.
+   `njt-mint-quota`, `/api/status` records that string alone (not the "rejected our
+   credentials" wording a refused *token* gets, because the credentials are fine),
+   and the monitor's summary says the budget is spent rather than reporting an NJ
+   Transit outage. Nothing is retried harder: NJ Transit alone degrades until
+   Eastern midnight. The full arithmetic lives at `njt_auth.DAILY_MINT_LIMIT`.
 3. **An expired token is `HTTP 500` with `{"errorMessage":"Invalid token."}`, not
    401 or 403.** This is the dangerous one. A poller that classifies 500 as a server
    error backs off forever while the fix is a single re-mint; one that treats *all*
@@ -840,8 +841,8 @@ Config:
   When they *are* set the monitor **mints exactly one token per run** (four a day at
   the 6-hourly cadence). NJ Transit's mint rate limit sits below its data cap at
   **ten a day per account** (observed 2026-09-02), and the monitor shares that
-  account with production, which spends about four more from its own six-hour token
-  ceiling. Four plus four is eight of the ten before any deploy, dispatch or fixture
+  account with production, which spends two more from its own twelve-hour token
+  ceiling. Four plus two is six of the ten before any deploy, dispatch or fixture
   pull, so `check_njt_static` mints once with no retry and reuses that token for the
   archive fetch, rather than leaving conservation to the shared retry helper. A run
   that meets the cap reports `mint failed (NJ Transit daily mint limit reached)` on

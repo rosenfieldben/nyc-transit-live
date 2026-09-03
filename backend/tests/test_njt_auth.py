@@ -10,7 +10,7 @@ Four things are pinned, in the order they can hurt:
   1. THE SNIFF, BOTH WAYS. is_auth_error must be true for exactly the probe's
      shape (HTTP 500 with {"errorMessage":"Invalid token."}) and false for
      everything else, including a genuine 500. A false positive spends a mint
-     out of ten a day (njt_auth.DAILY_MINT_LIMIT, observed 2026-09-02, of which 8
+     out of ten a day (njt_auth.DAILY_MINT_LIMIT, observed 2026-09-02, of which 6
      are committed on a quiet day); a false negative costs one retry on the
      caller's schedule. The mutation check in the 15a handoff loosens this to
      "any 500" and the control tests below are what must go red.
@@ -253,9 +253,40 @@ def _fixed(token: str):
 # --- the age ceiling, which is what makes a false negative recoverable ------
 
 
+def test_the_age_ceiling_is_the_budget_line_it_claims_to_be():
+    """THE CONSTANT PINNED, because it is now a budget line rather than a taste.
+
+    Twelve hours is TWO mints a day per process, and the arithmetic at
+    DAILY_MINT_LIMIT depends on that number being what it says: the contract
+    monitor's 4 plus this 2 is 6 of the 10, leaving 4 spare for deploys, manual
+    dispatches, fixture pulls and real expiries. At six hours this line was 4, the
+    budget was 8 committed with 2 spare, and a deploy on the same day as a fixture
+    pull took NJ Transit dark for riders.
+
+    WHY LENGTHENING IT IS NOT A GAMBLE ON THE TOKEN'S LIFETIME, which is still
+    undocumented and still may not be assumed. This ceiling is not what carries an
+    expiry: a token that dies is recognised by is_auth_error and replaced inside the
+    same attempt for exactly one extra mint, which the two tests below and the
+    contract tier's three-consumer scenario measure. So the trade is at most one
+    REACTIVE mint per real expiry against two PROACTIVE mints saved every day.
+
+    The assertion is the arithmetic rather than the number alone, so a future change
+    to either constant has to face the budget rather than just this literal.
+    """
+    assert njt_auth.MAX_TOKEN_AGE_S == 12 * 3600.0
+    mints_a_day = 24 * 3600.0 / njt_auth.MAX_TOKEN_AGE_S
+    assert mints_a_day == 2
+    monitor_mints_a_day = 4  # 6-hourly, one shared token per run
+    spare = njt_auth.DAILY_MINT_LIMIT - monitor_mints_a_day - mints_a_day
+    assert spare >= 4, (
+        f"a deploy, a dispatch, a fixture pull and a real expiry can all land on one "
+        f"day, and only {spare} of DAILY_MINT_LIMIT are left for them"
+    )
+
+
 class _Clock:
     """A hand-cranked monotonic clock, so the ceiling is tested by advancing time
-    rather than by waiting six hours."""
+    rather than by waiting twelve hours."""
 
     def __init__(self):
         self.now = 1000.0

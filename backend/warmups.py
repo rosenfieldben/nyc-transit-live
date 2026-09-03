@@ -374,7 +374,7 @@ async def _warm_njt_static(app: FastAPI) -> None:
     loop and stay in it forever: every attempt would fail identically, every
     failure would look like a broken upstream on /api/status, and each attempt
     would POST at a mint endpoint that allows ten calls per account per Eastern day
-    (observed 2026-09-02; see njt_auth.DAILY_MINT_LIMIT, where 8 of the 10 are
+    (observed 2026-09-02; see njt_auth.DAILY_MINT_LIMIT, where 6 of the 10 are
     already committed on a quiet day and production shares the account). So the
     check runs BEFORE the loop, the state is its own string rather than a shade of
     "failed", and the task RETURNS rather than sleeping. Credentials cannot appear

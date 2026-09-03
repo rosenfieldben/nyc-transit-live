@@ -20,8 +20,8 @@ this wrong, so they are stated here rather than discovered later:
      product-scoped, so a GTFSRT token is rejected by the Usage API and we cannot
      read our own counters; the cap is now a known number, but our position
      against it is still unmeasurable. What that budget is spent on, and why
-     eight of the ten are already committed on a quiet day, is at
-     DAILY_MINT_LIMIT below.
+     six of the ten are already committed on a quiet day, is at DAILY_MINT_LIMIT
+     below.
   4. AUTH FAILURE IS HTTP 500, NOT 401 OR 403. Probed 2026-08-05 (overnight
      02:37 EDT and rush 18:15 EDT): the body is {"errorMessage":"Invalid token."}
      under a 500 status. This is the most dangerous fact in the probe. A poller
@@ -109,24 +109,24 @@ _PLACEHOLDERS = {
 # constant exists so the arithmetic below has a name to hang on and so every
 # "conserve mints" comment in this repo points at one number, not to gate anything.
 #
-# WHERE THE TEN GO ON A QUIET DAY, and eight are committed before anything unusual
+# WHERE THE TEN GO ON A QUIET DAY, and six are committed before anything unusual
 # happens at all:
 #
 #     4   the contract monitor. Six-hourly (.github/workflows/contract-monitor.yml),
 #         minting ONCE per run and sharing that token across njt-static and
 #         njt-realtime's two feeds. See contract_monitor._NjtToken.
-#     4   production, from MAX_TOKEN_AGE_S alone: the ceiling below is six hours, so
-#         a process that stays up through the day re-mints four times.
+#     2   production, from MAX_TOKEN_AGE_S alone: the ceiling below is twelve hours,
+#         so a process that stays up through the day re-mints twice.
 #   ---
-#     8   committed. Two left.
+#     6   committed. Four spare.
 #
-# What spends the other two is ordinary work rather than an incident: a deploy (a
-# cold TokenCache mints on the first NJT request), a manual workflow_dispatch of
-# the monitor (one more run, one more mint), a fixture pull (gen_njt_fixture.py and
+# What spends the four is ordinary work rather than an incident: a deploy (a cold
+# TokenCache mints on the first NJT request), a manual workflow_dispatch of the
+# monitor (one more run, one more mint), a fixture pull (gen_njt_fixture.py and
 # gen_njt_rt_fixture.py mint one each), and a genuine token expiry (njt_post buys
-# exactly one re-mint per attempt). Two of those on one day take NJ Transit dark in
-# PRODUCTION until Eastern midnight, because production and the monitor share the
-# account. That is why every mint in this repo is conserved structurally rather
+# exactly one re-mint per attempt). Four of those on one day take NJ Transit dark
+# in PRODUCTION until Eastern midnight, because production and the monitor share
+# the account. That is why every mint in this repo is conserved structurally rather
 # than by convention, and why a loop that re-mints on failure is the one bug this
 # module is built to make unwritable.
 DAILY_MINT_LIMIT = 10
@@ -177,13 +177,26 @@ REQUEST_TIMEOUT_S = 30.0
 # documented price true. Any rejection this module fails to recognise now heals by
 # itself within one ceiling, without widening the sniff toward real 500s.
 #
-# WHY SIX HOURS: it bounds the worst case at four mints a day per process from this
-# rule alone. Against DAILY_MINT_LIMIT that is a large share, four of ten, and it is
-# what the ceiling costs: halving it would make this line eight on its own and leave
-# nothing for the contract monitor, which spends the other four. Six is also short
-# enough that a self-heal lands inside a single contract-monitor cycle (the monitor
-# runs every six hours) rather than after a day of a dark layer.
-MAX_TOKEN_AGE_S = 6 * 3600.0
+# WHY TWELVE HOURS. It bounds the worst case at TWO mints a day per process from
+# this rule alone, which is 2 of the ten at DAILY_MINT_LIMIT: with the monitor's 4
+# that is 6 committed and 4 spare. At six hours this line was 4, the budget was 8
+# committed with 2 spare, and a deploy on the same day as a fixture pull took NJ
+# Transit dark for riders.
+#
+# THIS CEILING IS NOT WHAT CARRIES AN EXPIRY, which is what makes twelve safe rather
+# than reckless. A token that actually dies is recognised by is_auth_error and
+# replaced INSIDE the same attempt, for exactly one extra mint: njt_post buys one
+# re-mint and no more, and the contract tier measures that at one across all three
+# NJT consumers at once. So lengthening this trades at most one REACTIVE mint per
+# real expiry against two PROACTIVE mints saved every day, and a real expiry is not
+# a daily event.
+#
+# WHAT IT COSTS, stated rather than glossed: a rejection the sniff fails to
+# recognise now heals in up to twelve hours instead of six, so the self-heal spans
+# two contract-monitor cycles rather than landing inside one. The monitor still sees
+# the state on the first of those cycles, which is what an operator needs; a dark
+# layer for one extra cycle is the price of four spare mints instead of two.
+MAX_TOKEN_AGE_S = 12 * 3600.0
 
 # How much of an upstream body a failure message may quote. Enough to carry
 # {"errorMessage":"..."} whole, short enough that an HTML error page does not
@@ -564,7 +577,7 @@ class TokenCache:
     or a real outage would mint on every attempt), so without this ceiling a
     rejection is_auth_error does not recognise would leave the dead token here for
     the life of the process while the retry loop re-posted it forever. See the
-    constant for why six hours and what it does and does not claim.
+    constant for why twelve hours and what it does and does not claim.
 
     THE LOCK IS REBOUND WHEN THE RUNNING LOOP CHANGES. asyncio.Lock binds itself to
     the loop that first awaits it and raises if awaited from another, and this

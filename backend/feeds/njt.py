@@ -152,11 +152,11 @@ NJT_ALERTS_URL = env_seams.url(
 # A feed skipped for cadence would have to be reported as one or the other, so
 # throttling NJT alerts alone would either drop its alerts from the served index
 # or mark it degraded on every skipped poll. At 20s/60s this is ~5,800 requests a
-# day, comfortably inside the data cap, and 4 token mints from the 6h
-# MAX_TOKEN_AGE_S ceiling, which is NOT comfortable: that is 4 of the 10 mints NJ
-# Transit allows this account per Eastern day (observed 2026-09-02, see
-# njt_auth.DAILY_MINT_LIMIT), beside the contract monitor's 4 out of the same 10.
-# If that ever proves too warm, POLL_INTERVAL_S and
+# day, comfortably inside the data cap, and 2 token mints from the 12h
+# MAX_TOKEN_AGE_S ceiling, which is 2 of the 10 mints NJ Transit allows this account
+# per Eastern day (observed 2026-09-02, see njt_auth.DAILY_MINT_LIMIT), beside the
+# contract monitor's 4 out of the same 10. If that ever proves too warm,
+# POLL_INTERVAL_S and
 # ALERT_POLL_INTERVAL_S are already C6 seams and moving them is a config change,
 # not a code one.
 

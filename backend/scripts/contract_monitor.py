@@ -1548,9 +1548,10 @@ class _NjtToken:
     issues ten tokens per account per Eastern day (observed 2026-09-02; the whole
     budget is at njt_auth.DAILY_MINT_LIMIT), every attempt counts whether or not it
     yields a token, and tokens are product-scoped so we cannot read our own counter.
-    This job spends 4 of the 10 at its 6-hourly cadence and production spends about
-    4 more from its own MAX_TOKEN_AGE_S ceiling, which is 8 committed on a quiet
-    day. Three checks that each minted would make this job's line 12 on its own and
+    This job spends 4 of the 10 at its 6-hourly cadence and production spends 2 more
+    from its own twelve-hour MAX_TOKEN_AGE_S ceiling, which is 6 committed on a
+    quiet day. Three checks that each minted would make this job's line 12 on its
+    own and
     take NJ Transit dark IN PRODUCTION, because the monitor and the deployment share
     one account.
 
@@ -1657,7 +1658,7 @@ def check_njt_static(
 
     ONE MINT PER RUN, and it is not an optimization. NJ Transit issues ten tokens
     per account per Eastern day (observed 2026-09-02, njt_auth.DAILY_MINT_LIMIT),
-    this job and production share the account, and 8 of the 10 are already committed
+    this job and production share the account, and 6 of the 10 are already committed
     on a quiet day. Since 15b the mint lives in _NjtToken and is SHARED with the
     realtime check rather than made here, so a run with three NJ Transit consumers
     still costs one token; run_all builds that object and hands the same one to both
@@ -2373,7 +2374,7 @@ def run_all(
     # their conservation claim against run_all rather than against either check:
     # a wiring mistake here would leave both checks passing and the run quietly
     # spending two mints a time out of the ten the account gets for the Eastern day
-    # (njt_auth.DAILY_MINT_LIMIT), 8 of which are already committed.
+    # (njt_auth.DAILY_MINT_LIMIT), 6 of which are already committed.
     #
     # BUILT EVEN WHEN CREDENTIALS ARE ABSENT, and it costs nothing: _NjtToken mints
     # lazily on first `get`, and with no credentials both checks WARN-skip before

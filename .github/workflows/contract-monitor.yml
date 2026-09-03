@@ -111,11 +111,11 @@ jobs:
           # FOUR IS A LARGE SHARE OF WHAT THERE IS. NJ Transit issues TEN tokens per
           # account per Eastern day (observed 2026-09-02; every attempt counts, and
           # the eleventh comes back HTTP 500 with an errorMessage beginning "Daily
-          # usage limit"). Production spends about four more from its own six-hour
-          # token ceiling, and it uses THE SAME ACCOUNT, so this job's four plus
-          # production's four is eight of the ten before anyone deploys, dispatches
+          # usage limit"). Production spends two more from its own twelve-hour token
+          # ceiling, and it uses THE SAME ACCOUNT, so this job's four plus
+          # production's two is six of the ten before anyone deploys, dispatches
           # this workflow by hand, or pulls a fixture. Anything added here comes out
-          # of the two that are left, and running out takes NJ Transit dark for
+          # of the four that are left, and running out takes NJ Transit dark for
           # riders, not just for the monitor. The full arithmetic is at
           # njt_auth.DAILY_MINT_LIMIT.
           NJT_USERNAME: ${{ secrets.NJT_USERNAME }}

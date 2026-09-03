@@ -833,9 +833,24 @@ async def _refresh_njt(app: FastAPI, client: httpx.AsyncClient) -> None:
         # the distinction was made.
         fail(503, str(exc), log=False)
         return
+    except njt_auth.NjtMintQuotaError as exc:
+        # THE SAME 502, THE SAME `fail`, THE SAME ABSENCE OF A RETRY as the arm
+        # below, and this arm exists only for the sentence. "rejected our
+        # credentials" is what a refused token means and is simply untrue of a
+        # spent daily budget: the credentials are fine, NJ Transit is fine, and
+        # there are no mints left until Eastern midnight. /api/status is a surface
+        # an operator reads, so it says which of the two happened rather than
+        # describing a credential problem nobody has.
+        #
+        # THE DETAIL IS njt_auth's CONSTANT AND NOTHING ELSE (F3). It rides through
+        # _sanitize_upstream like its siblings, which strips URLs and leaves a
+        # message with none unchanged, so the getToken body still has no path here.
+        fail(502, _sanitize_upstream(exc))
+        return
     except njt_auth.NjtAuthError as exc:
         # A rejected token AFTER the one permitted re-mint, or a failed mint. Not
-        # a 500: the upstream answered, it just refused us.
+        # a 500: the upstream answered, it just refused us. The quota subclass is
+        # caught above, so this arm is the credential case it names.
         fail(502, f"NJ Transit rejected our credentials: {_sanitize_upstream(exc)}")
         return
     except (njt_auth.NjtUpstreamError, httpx.HTTPError) as exc:

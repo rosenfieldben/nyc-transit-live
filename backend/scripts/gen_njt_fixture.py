@@ -130,8 +130,8 @@ def _download() -> bytes:
     from the shared cache and re-mints at most once. A regeneration therefore costs
     one token out of the ten NJ Transit allows this account per Eastern day
     (njt_auth.DAILY_MINT_LIMIT, observed 2026-09-02), of which the contract monitor
-    and production have about 8 committed already. A regeneration is therefore a
-    deliberate act on a day nobody is redeploying, not a routine one.
+    and production have 6 committed already. A regeneration takes one of the four
+    spare, so it is a deliberate act rather than a routine one.
     """
     if not njt_auth.is_configured():
         raise SystemExit(

@@ -37,6 +37,26 @@ const { expect } = require("@playwright/test");
    a lot is a second test, and a state a spec cannot reach should fail on the state, not on
    an assertion that happens to notice. */
 const WITNESSES = {
+  // WHAT ".leaflet-marker-icon > 5" WAS REACHING FOR, and it took 15c to expose the
+  // difference. Two spec files opened the page by polling that the marker COUNT had
+  // passed five, then immediately read a specific registry (escape.spec.js takes the
+  // first railroad key, markers.spec.js takes a subway trip). Five is not a state: it
+  // is satisfied by whichever feeds happen to land first, so adding a sixth vehicle
+  // system (NJ Transit, four markers) let the threshold pass before the RAILROADS had
+  // landed, and A9j read `railroads.get(undefined)`. It failed loudly, which was luck;
+  // a count threshold that stops being a proxy usually just changes what a spec is
+  // measuring. Every vehicle registry non-empty is the state those specs actually
+  // need, and it is a state rather than a count.
+  "every vehicle system loaded": {
+    ask: () =>
+      [buses, trains, railroads, pathTrainRecords, ferryBoatRecords, njtTrainRecords].every(
+        (registry) => registry.size > 0,
+      ),
+    absent:
+      "at least one vehicle system has no markers yet, so a spec that reaches into a " +
+      "specific registry is reading an empty map. Name the registry that is empty rather " +
+      "than waiting on a marker count: a count is satisfied by whichever feed wins the race",
+  },
   "panel open": {
     ask: () => !document.getElementById("stations-panel").hidden,
     absent: "the station panel is closed, so nothing inside it exists to assert about",

@@ -74,6 +74,24 @@ const {
   ferrySpeedKnots,
   ferryBoatPopupHtml,
   ferryArrivalsHtml,
+  NJT_FALLBACK_COLOR,
+  njtColor,
+  njtRouteColor,
+  njtRouteName,
+  njtKey,
+  formatNjtHead,
+  njtRouteTables,
+  njtTrainPopupHtml,
+  njtDelayText,
+  njtTrainName,
+  njtStationName,
+  njtArrivalsHtml,
+  njtRowLabel,
+  njtAtItsStation,
+  njtGlideTrain,
+  njtOrderedArrivals,
+  isNotConfigured,
+  describeIdentity,
   ROUTE_MAX_SLICE,
   RAILROAD_ROUTE_MAX_SLICE,
   FEED_STALE_AFTER_S,
@@ -2629,4 +2647,506 @@ test("popupClearingShift re-checks a move against obstacles that were NOT blocki
   const moved = shiftBox(popup, shift.dx, shift.dy);
   assert.equal(boxesOverlap(moved, legend), false, "clears what blocked it");
   assert.equal(boxesOverlap(moved, banner), false, "and does not land on what did not");
+});
+
+/* ---- 15c: NJ Transit Rail helpers ------------------------------------------
+   The whole point of this block is the AMENDMENT-A CASE: a route that has no line.
+   NJ Transit's routes.txt carries twelve routes and route 17, the event-only
+   Meadowlands Rail Line, has trips in no publication anyone has seen, so it never
+   reaches /api/njt-routes at all. Every colour and name lookup on the layer has to
+   survive that, and so does every lookup made in the seconds between the first
+   /api/njt-trains poll painting markers and loadNjtRoutes resolving, which is the
+   same hole reached by a different road.
+--------------------------------------------------------------------------- */
+
+test("njtColor validates the feed's bare hex and falls back on anything else", () => {
+  assert.equal(njtColor("075AAA"), "#075AAA");
+  assert.equal(njtColor("dd3439"), "#dd3439");
+  // The three shapes the endpoint can actually serve or a caller can reach it with.
+  assert.equal(njtColor(null), NJT_FALLBACK_COLOR, "route_color is nullable");
+  assert.equal(njtColor(""), NJT_FALLBACK_COLOR, "an empty string is what an absent column parses to");
+  assert.equal(njtColor("#075AAA"), NJT_FALLBACK_COLOR, "already-prefixed is malformed for this feed");
+  assert.equal(njtColor("nothex"), NJT_FALLBACK_COLOR);
+  assert.equal(njtColor("075AA"), NJT_FALLBACK_COLOR, "five digits is not a colour");
+});
+
+test("the NJT fallback colour is none of the twelve published route colours", () => {
+  // Stated as a test rather than as a comment because the fallback's whole job is to
+  // look like a placeholder, and the route most likely to reach it (17) publishes a
+  // khaki that a warm neutral would have been indistinguishable from.
+  const published = [
+    "075AAA", "E66859", "FFD411", "FFD411", "08A652", "A4C9AA",
+    "DD3439", "03A3DF", "94219A", "E87725", "F2A537", "C1AA72",
+  ];
+  for (const hex of published) {
+    assert.notEqual(njtColor(hex).toLowerCase(), NJT_FALLBACK_COLOR.toLowerCase());
+  }
+  // And it is not another mode's fallback either: a placeholder that looked like
+  // PATH's or the ferry's would be read as that mode rather than as a placeholder.
+  assert.notEqual(NJT_FALLBACK_COLOR, PATH_FALLBACK_COLOR);
+  assert.notEqual(NJT_FALLBACK_COLOR, FERRY_FALLBACK_COLOR);
+});
+
+test("AMENDMENT A: a route with no line still gets a colour and a head, never a blank", () => {
+  // The tables as they exist for a publication with no Meadowlands trips: eleven
+  // routes with geometry, and route 17 in neither table.
+  const { colors, names, index } = njtRouteTables([
+    { route: "9", name: "Northeast Corridor", color: "DD3439", polylines: [[[40.7, -74.1], [40.75, -73.99]]] },
+  ]);
+  assert.equal(njtRouteColor("17", colors), NJT_FALLBACK_COLOR);
+  assert.equal(njtRouteName("17", names), null, "no name is null, not the string 'undefined'");
+  assert.equal(formatNjtHead("17", njtRouteName("17", names)), "NJ Transit route 17");
+  assert.equal(index.get("17"), undefined, "and no geometry, which computeRouteSlice reads as no glide");
+  // The popup a rider would actually see. No crash, and no blank heading: the
+  // amendment's "no blank popup" made checkable.
+  const html = njtTrainPopupHtml(
+    { route_id: "17", train_num: "1701", headsign: "Meadowlands", stop_name: "Secaucus Junction" },
+    njtRouteName("17", names),
+    njtRouteColor("17", colors),
+  );
+  assert.match(html, /NJ Transit route 17/);
+  assert.match(html, /Train 1701/);
+  assert.match(html, /To Meadowlands/);
+  assert.match(html, /scheduled position \(no GPS\)/);
+  assert.doesNotMatch(html, /undefined|null/, "a missing route must not leak a placeholder word");
+  // The accessible name takes the same fallback, so the marker a screen reader
+  // reaches is not "undefined, NJ Transit" either.
+  assert.match(njtTrainName({ route_id: "17" }, njtRouteName("17", names)), /^NJ Transit route 17, NJ Transit/);
+});
+
+test("AMENDMENT A: the same fallbacks hold before the route table has loaded at all", () => {
+  // The empty-Map case is not the same code path as the missing-key case only by
+  // accident: it is the state the page is in for several seconds on every cold
+  // start, while /api/njt-trains has answered and /api/njt-routes has not.
+  const empty = new Map();
+  assert.equal(njtRouteColor("9", empty), NJT_FALLBACK_COLOR);
+  assert.equal(njtRouteName("9", empty), null);
+  // And the shapes a caller can reach these with before anything is assigned.
+  assert.equal(njtRouteColor("9", null), NJT_FALLBACK_COLOR);
+  assert.equal(njtRouteColor("9", undefined), NJT_FALLBACK_COLOR);
+  assert.equal(njtRouteName("9", null), null);
+  assert.equal(njtRouteColor(null, empty), NJT_FALLBACK_COLOR, "a train with no route_id at all");
+  assert.equal(formatNjtHead(null, null), "NJ Transit");
+});
+
+test("njtRouteTables builds the drawn geometry and the glide index from ONE payload", () => {
+  const cumCalls = [];
+  const { names, colors, index } = njtRouteTables(
+    [
+      { route: "9", name: "Northeast Corridor", color: "DD3439", polylines: [[[40.7, -74.1], [40.75, -73.99]]] },
+      // Two kept variants, which is what the backend's dedup leaves on the branchy
+      // routes (2, 7, 8 and 10 in the committed fixture).
+      { route: "10", name: "North Jersey Coast Line", color: "03A3DF", polylines: [[[40.3, -74.0]], [[40.2, -74.0]]] },
+      // A route the payload named but drew nothing for. It keeps its name and its
+      // colour and gets no index entry: the popup can still say "Pascack Valley
+      // Line" while the train glides its straight chord.
+      { route: "13", name: "Pascack Valley Line", color: "94219A", polylines: [] },
+      { route: null, name: "junk", color: "000000", polylines: [[[0, 0]]] },
+    ],
+    (points) => {
+      cumCalls.push(points.length);
+      return points.map((_, i) => i);
+    },
+  );
+  assert.deepEqual([...names.keys()], ["9", "10", "13"], "a route with no id is skipped entirely");
+  assert.deepEqual([...colors.keys()], ["9", "10", "13"]);
+  assert.equal(colors.get("13"), "#94219A", "a lineless route still colours its badge");
+  assert.deepEqual([...index.keys()], ["9", "10"], "and contributes no glide geometry");
+  assert.equal(index.get("10").length, 2, "both kept variants reach the glide index");
+  assert.deepEqual(cumCalls, [2, 1, 1], "arc lengths are computed once per drawn polyline");
+  // THE PROPERTY THE FUNCTION EXISTS FOR: the points the map draws and the points a
+  // train glides along are the same arrays, not two reads of one payload.
+  assert.equal(index.get("9")[0].points[0][0], 40.7);
+});
+
+test("njtKey is the backend id, which is what makes ADDED trips distinct markers", () => {
+  // NJ Transit emits ADDED trips with an EMPTY trip_id (36 of them in the first
+  // capture that caught a disrupted evening). Keying on trip_id would collapse
+  // every one of them onto a single marker, which is the 15b finding reappearing on
+  // the client; models.NjtTrain guarantees `id` is never empty for exactly this.
+  const added = [
+    { id: "njt:9001", trip_id: "", route_id: "9" },
+    { id: "njt:9002", trip_id: "", route_id: "9" },
+  ];
+  assert.equal(new Set(added.map(njtKey)).size, 2, "two added trains are two markers");
+  assert.equal(new Set(added.map((t) => t.trip_id)).size, 1, "and would have been one under trip_id");
+  assert.equal(njtKey({ id: "NJ_1234", trip_id: "NJ_1234" }), "NJ_1234");
+  // The family's null guards, asserted rather than assumed. A review round deleted
+  // each of these one at a time and watched the whole suite stay green, which under
+  // this project's rule made them decoration; one line each turns them back into
+  // guards. They are kept rather than removed because every one of these helpers is
+  // also reachable from a node test or a future caller with nothing in hand.
+  assert.equal(njtKey(null), undefined);
+  assert.equal(njtKey(undefined), undefined);
+  assert.match(njtTrainPopupHtml(null, null, "#DD3439"), /NJ Transit/);
+  assert.equal(njtTrainName(null), "NJ Transit, NJ Transit, scheduled position, no GPS");
+  assert.deepEqual([...njtRouteTables(null).names], [], "a payload that never arrived");
+  assert.deepEqual(
+    [...njtRouteTables([{ route: "9", name: "Northeast Corridor", color: "DD3439" }]).index],
+    [],
+    "and a route entry with no polylines key at all",
+  );
+});
+
+test("njtDelayText says late, early, or nothing, and rounds to the minute", () => {
+  assert.equal(njtDelayText(250), "4 min late");
+  // NEAREST-MINUTE, NOT TRUNCATION, and only these two values say so: every other
+  // case in this test reads the same under Math.floor, which a review round proved
+  // by mutating Math.round away and watching all 183 tests stay green. A truncating
+  // rewrite would silently drop every 30-to-59 second delay from both the popup and
+  // the accessible name.
+  assert.equal(njtDelayText(40), "1 min late");
+  assert.equal(njtDelayText(-40), "1 min early");
+  assert.equal(njtDelayText(29), "", "and under half a minute is still nothing");
+  // NJ Transit publishes negative delays. Rendering one as "late" would be a lie
+  // about the direction, which is worse than saying nothing.
+  assert.equal(njtDelayText(-250), "4 min early");
+  assert.equal(njtDelayText(0), "", "on time is the unremarkable case and prints nothing");
+  assert.equal(njtDelayText(20), "", "under half a minute rounds to zero");
+  assert.equal(njtDelayText(null), "");
+  assert.equal(njtDelayText(undefined), "");
+  assert.equal(njtDelayText(NaN), "");
+  assert.equal(njtDelayText(3600), "60 min late");
+});
+
+test("njtTrainPopupHtml and njtTrainName word one train the same way", () => {
+  const train = {
+    route_id: "7", train_num: "6633", headsign: "Dover",
+    stop_name: "Summit", delay: 250,
+  };
+  const html = njtTrainPopupHtml(train, "Morris & Essex Line", "#08A652");
+  assert.match(html, /Morris &amp; Essex Line/, "the ampersand in a real route name is escaped");
+  assert.match(html, /Train 6633/);
+  assert.match(html, /To Dover/);
+  assert.match(html, /Next stop: Summit/);
+  assert.match(html, /4 min late/);
+  assert.equal(
+    njtTrainName(train, "Morris & Essex Line"),
+    "Morris & Essex Line, NJ Transit, train 6633, to Dover, next stop Summit, 4 min late, scheduled position, no GPS",
+  );
+});
+
+test("EVERY NJT train popup says it is a scheduled position, with no GPS branch to take", () => {
+  // The railroad popup prints this line only for its placed trains. NJ Transit's
+  // vehicle positions feed is deliberately never fetched, so there is no GPS
+  // variant here and a train that looks like one (a full lat/lon and a status of
+  // in-transit) must still say so.
+  for (const train of [
+    { route_id: "9" },
+    { route_id: "9", status: "in-transit", latitude: 40.7, longitude: -74.1 },
+    { route_id: "9", status: "at-station", stop_name: "Trenton" },
+  ]) {
+    assert.match(njtTrainPopupHtml(train, "Northeast Corridor", "#DD3439"), /scheduled position \(no GPS\)/);
+    assert.match(njtTrainName(train, "Northeast Corridor"), /scheduled position, no GPS$/);
+  }
+});
+
+test("njtTrainPopupHtml escapes every feed-derived string", () => {
+  const html = njtTrainPopupHtml(
+    {
+      route_id: "<script>", train_num: "<img src=x>", headsign: "a\"b",
+      stop_name: "<b>Newark</b>", delay: null,
+    },
+    null,
+    "#DD3439",
+  );
+  assert.doesNotMatch(html, /<script>|<img|<b>Newark/);
+  assert.match(html, /&lt;script&gt;/);
+  assert.match(html, /&quot;/);
+});
+
+test("njtStationName names the railroad, which is what a shared platform needs", () => {
+  assert.equal(njtStationName({ id: "109", name: "New York Penn Station" }), "New York Penn Station, NJ Transit, station");
+  assert.equal(njtStationName({ id: "109", name: null }), "109, NJ Transit, station", "id when the feed has no name");
+  assert.equal(njtStationName(null), "NJ Transit, NJ Transit, station");
+});
+
+test("njtArrivalsHtml renders a flat chronological board with badges and countdowns", () => {
+  const station = { id: "109", name: "New York Penn Station" };
+  const body = {
+    fetched_at: 100,
+    arrivals: [
+      { route_id: "9", headsign: "Trenton", train_num: "3800", arrival: 190, departure: 200, delay: 0 },
+      { route_id: "2", headsign: "Dover", train_num: "6633", arrival: 400, departure: 410, delay: 250 },
+    ],
+  };
+  const colorFor = (id) => ({ 9: "#DD3439", 2: "#E66859" })[id] || NJT_FALLBACK_COLOR;
+  const html = njtArrivalsHtml(station, body, 100, colorFor, (id) => (id === "9" ? "Northeast Corridor" : null));
+  assert.match(html, /New York Penn Station/);
+  assert.match(html, /NJ Transit/);
+  // NO DIRECTION HEADINGS AT ALL. /api/njt-arrivals is flat and chronological;
+  // inventing buckets here would be inventing a field the endpoint does not serve.
+  assert.doesNotMatch(html, /arr-dir/);
+  assert.match(html, /background:#DD3439/);
+  assert.match(html, /Trenton/);
+  assert.match(html, /3800/);
+  assert.match(html, /2 min/);
+  assert.match(html, /5 min/);
+  // Row order is the payload's, which is the board's chronological order.
+  assert.ok(html.indexOf("Trenton") < html.indexOf("Dover"), "chronological, not re-sorted");
+});
+
+test("an NJT board past the staleness threshold says how old it is", () => {
+  // The R1 line, which the header appends and nothing exercised: every other node
+  // test here passes a fresh payload, and no browser spec opened an NJT station
+  // popup at all until spec 33 did. A departure board that keeps ticking on a feed
+  // that stopped updating is the exact failure feedAgeLine exists to prevent.
+  const body = { fetched_at: 100, arrivals: [{ route_id: "9", headsign: "Trenton", arrival: 400 }] };
+  const fresh = njtArrivalsHtml({ id: "109", name: "Penn" }, body, 100);
+  assert.doesNotMatch(fresh, /as of/, "a fresh board says nothing about its age");
+  const stale = njtArrivalsHtml({ id: "109", name: "Penn" }, body, 100 + 200);
+  assert.match(stale, /popup-stale/);
+  assert.match(stale, /as of 3m ago/);
+});
+
+test("njtArrivalsHtml counts down to the DEPARTURE once the train has arrived", () => {
+  // The dwell rule, which NJT rows carry both halves of. Before the train reaches
+  // the platform the rider wants the arrival; once it is standing there, the thing
+  // they need is when it leaves.
+  const body = { fetched_at: 100, arrivals: [{ route_id: "9", headsign: "Trenton", arrival: 90, departure: 160 }] };
+  const html = njtArrivalsHtml({ id: "109", name: "Penn" }, body, 100);
+  assert.match(html, /departs 1 min/);
+});
+
+test("njtArrivalsHtml renders No trains for an empty board and escapes hostile fields", () => {
+  const empty = njtArrivalsHtml({ id: "109", name: "Penn" }, { arrivals: [] }, 100);
+  assert.match(empty, /No trains/);
+  assert.doesNotMatch(empty, /arr-badge/);
+  const hostile = njtArrivalsHtml(
+    { id: "1", name: "<script>alert(1)</script>" },
+    { fetched_at: 0, arrivals: [{ route_id: "<svg>", headsign: "<i>x</i>", train_num: "<u>", arrival: 60 }] },
+    0,
+  );
+  // Tags chosen so none of them is one the renderer itself emits: <b> wraps the
+  // station name legitimately, so asserting on it would pass or fail for the wrong
+  // reason. Every tag below can only have come from the payload.
+  assert.doesNotMatch(hostile, /<script>|<svg>|<i>x|<u>/);
+});
+
+test("njtRowLabel prefers the destination, falls back to the route name, else nothing", () => {
+  const nameFor = (id) => (id === "9" ? "Northeast Corridor" : null);
+  assert.equal(njtRowLabel({ route_id: "9", headsign: "Trenton" }, nameFor), " Trenton");
+  assert.equal(njtRowLabel({ route_id: "9" }, nameFor), " Northeast Corridor");
+  // A row with neither still renders (the caller keeps its countdown): the train is
+  // real and the time is what the rider came for.
+  assert.equal(njtRowLabel({ route_id: "17" }, nameFor), "");
+  assert.equal(njtRowLabel({}, nameFor), "");
+});
+
+test("shapeStationArrivals gives the NJT board one bucket, with the destination on the row", () => {
+  const body = {
+    fetched_at: 100,
+    arrivals: [{ route_id: "9", headsign: "Trenton", train_num: "3800", arrival: 190, departure: 200 }],
+  };
+  const shaped = shapeStationArrivals("njt", body, 100, { nameFor: () => "Northeast Corridor" });
+  assert.equal(shaped.buckets.length, 1);
+  assert.equal(shaped.buckets[0].name, "Departures");
+  assert.deepEqual(shaped.buckets[0].rows, [
+    {
+      routeId: "9", routeName: "Northeast Corridor", trainNum: "3800",
+      headsign: "Trenton", mode: "arriving", seconds: 90, at: 190,
+    },
+  ]);
+  // An empty board yields NO bucket, which is how the panel reaches its "No trains."
+  assert.deepEqual(shapeStationArrivals("njt", { fetched_at: 100, arrivals: [] }, 100).buckets, []);
+  assert.deepEqual(shapeStationArrivals("njt", {}, 100).buckets, []);
+});
+
+test("arrivalSentence reads the destination for NJT and is unchanged for everyone else", () => {
+  assert.equal(
+    arrivalSentence(
+      { routeName: "Morris & Essex Line", headsign: "Dover", trainNum: "6633", mode: "arriving", seconds: 240, at: 1000 },
+      "train",
+      "UTC",
+    ),
+    "Morris & Essex Line to Dover train in 4 minutes, 12:16 AM arrival, train 6633",
+  );
+  // The other kinds carry no headsign at all (checked against every arrivals model),
+  // so their sentence is byte-identical to what it was before the field existed.
+  assert.equal(
+    arrivalSentence({ routeName: "Babylon", trainNum: "8412", mode: "arriving", seconds: 240, at: 1000 }, "train", "UTC"),
+    "Babylon train in 4 minutes, 12:16 AM arrival, train 8412",
+  );
+});
+
+test("njtAtItsStation is true exactly when the decoder drew the train on its stop", () => {
+  // backend/feeds/njt.py places a train four ways. Cases 1, 2 and 4 emit the STOP'S
+  // coordinates with null anchors; only case 3 interpolates and carries them. So the
+  // anchors are the discriminator, and every one of these is a real payload shape.
+  assert.equal(njtAtItsStation({ prev_lat: null, stop_id: "109" }), true, "case 1, dwelling");
+  assert.equal(njtAtItsStation({ prev_lat: null, stop_id: "112" }), true, "case 2, approaching");
+  assert.equal(
+    njtAtItsStation({ prev_lat: 40.73, prev_lon: -74.16, stop_id: "109" }),
+    false,
+    "case 3 carries the stop it is HEADING FOR, which is not where it is drawn",
+  );
+  // No stop at all: nothing to be at, and nothing to link to.
+  assert.equal(njtAtItsStation({ prev_lat: null, stop_id: null }), false);
+  assert.equal(njtAtItsStation(null), false);
+});
+
+test("njtGlideTrain puts the NEXT STATION where the glide helpers expect it", () => {
+  /* THE f-SQUARED DEFECT, pinned. trainLatLng was written for the subway and
+     railroad decoders, whose latitude/longitude is the FAR END of the segment. NJ
+     Transit's decoder interpolates on the server, so its latitude/longitude is the
+     train's CURRENT position, already f of the way along; feeding that to
+     trainLatLng walks prev -> current-position by f a second time and draws the
+     train at f squared. Measured below on the real Newark Penn to New York Penn
+     leg. */
+  const prev = [40.734924, -74.164581];
+  const next = [40.750568, -73.993519];
+  const now = 1786061700;
+  const half = [(prev[0] + next[0]) / 2, (prev[1] + next[1]) / 2];
+  const served = {
+    prev_lat: prev[0], prev_lon: prev[1], prev_time: now - 600, next_time: now + 600,
+    latitude: half[0], longitude: half[1], stop_id: "109",
+  };
+  const stops = new Map([["109", next], ["112", prev]]);
+
+  // What the payload alone would draw: a quarter of the way, at the poll instant.
+  const naive = trainLatLng(served, now, {});
+  assert.ok(Math.abs((naive[0] - prev[0]) / (next[0] - prev[0]) - 0.25) < 1e-9, "f squared");
+
+  // What the reconciliation draws: the half the server said.
+  const glide = njtGlideTrain(served, stops);
+  assert.deepEqual([glide.latitude, glide.longitude], next, "the far end is the next STOP");
+  const drawn = trainLatLng(glide, now, {});
+  assert.ok(Math.abs((drawn[0] - prev[0]) / (next[0] - prev[0]) - 0.5) < 1e-9);
+  assert.deepEqual(drawn, half, "and it lands exactly where the server placed it");
+
+  // Everything else it carries is untouched, so the caller can attach _route to it
+  // and read stop_id for the segment key.
+  assert.equal(glide.stop_id, "109");
+  assert.equal(glide.prev_time, now - 600);
+});
+
+test("njtGlideTrain returns null rather than guessing, in every state that cannot glide", () => {
+  const stops = new Map([["109", [40.750568, -73.993519]]]);
+  const anchors = { prev_lat: 40.73, prev_lon: -74.16, prev_time: 1, next_time: 2, latitude: 40.74, longitude: -74.1 };
+  // Drawn at its own stop: nothing to interpolate, and substituting the stop would
+  // be substituting the position it is already at.
+  assert.equal(njtGlideTrain({ ...anchors, prev_lat: null, stop_id: "109" }, stops), null);
+  // Heading for a stop the table does not carry (the seconds before loadNjtStops
+  // resolves, or a stop the static load dropped). Drawing at the served position is
+  // right; interpolating toward an unknown point is not.
+  assert.equal(njtGlideTrain({ ...anchors, stop_id: "999" }, stops), null);
+  assert.equal(njtGlideTrain({ ...anchors, stop_id: "109" }, new Map()), null, "empty table");
+  assert.equal(njtGlideTrain({ ...anchors, stop_id: "109" }, null), null, "no table at all");
+  assert.equal(njtGlideTrain({ ...anchors, stop_id: null }, stops), null);
+  // Half a pair of time anchors is not a segment.
+  assert.equal(njtGlideTrain({ ...anchors, next_time: null, stop_id: "109" }, stops), null);
+  assert.equal(njtGlideTrain({ ...anchors, prev_time: null, stop_id: "109" }, stops), null);
+  assert.equal(njtGlideTrain(null, stops), null);
+});
+
+test("a route-less arrivals row renders its countdown rather than the word null", () => {
+  // models.NjtArrival declares route_id as nullable and feeds/njt.py produces one:
+  // an ADDED trip whose TripDescriptor omits route_id and joins no static trip has
+  // no route to recover. The badge's "?" is the only thing between that and a
+  // literal "null" in a rider-visible chip, and nothing exercised it until a review
+  // round mutated the fallback away and watched the whole suite stay green.
+  const html = njtArrivalsHtml(
+    { id: "109", name: "New York Penn Station" },
+    { fetched_at: 100, arrivals: [{ route_id: null, headsign: "Bay Head", train_num: null, arrival: 190 }] },
+    100,
+  );
+  assert.match(html, /arr-badge[^>]*>\?</, "the badge says it does not know, in one character");
+  assert.match(html, /Bay Head/, "and the row keeps the destination and its countdown");
+  assert.match(html, /2 min/);
+  assert.doesNotMatch(html, /null|undefined/);
+  // The row's label still resolves without a route, and njtRowLabel survives a
+  // missing row entirely, which its siblings in this family already did.
+  assert.equal(njtRowLabel({ route_id: null, headsign: "Bay Head" }), " Bay Head");
+  assert.equal(njtRowLabel(null), "");
+  assert.equal(njtRowLabel(undefined), "");
+});
+
+test("the NJT panel gets the dwell rule too, not only the popup", () => {
+  /* THE BRANCH A REVIEW ROUND FOUND UNTESTED. shapeStationArrivals takes the ferry's
+     dwell rule for "njt" as well, and deleting `|| kind === "njt"` left every tier
+     green: the one njt case in this file used arrival 190 / departure 200 against
+     now = 100, where the dwell rule and the plain `arrival - now` fallback agree.
+     The row that separates them is the one the backend deliberately keeps on the
+     board: a train standing at the platform, arrival already past, departure ahead. */
+  const dwelling = { route_id: "9", headsign: "Trenton", train_num: "3800", arrival: 70, departure: 340 };
+  const shaped = shapeStationArrivals("njt", { fetched_at: 100, arrivals: [dwelling] }, 100, {
+    nameFor: () => "Northeast Corridor",
+  });
+  const row = shaped.buckets[0].rows[0];
+  assert.equal(row.mode, "departing");
+  assert.equal(row.seconds, 240, "counts to the DEPARTURE, not to an arrival in the past");
+  assert.equal(row.at, 340);
+  // And the sentence the panel speaks says so, rather than announcing the train as
+  // due "now" while the popup says it leaves in four minutes.
+  assert.equal(
+    arrivalSentence(row, "train", "UTC"),
+    "Northeast Corridor to Trenton train departs in 4 minutes, 12:05 AM departure, train 3800",
+  );
+  // The popup renders the same train the same way, from the same rule.
+  assert.match(
+    njtArrivalsHtml({ id: "109", name: "Penn" }, { fetched_at: 100, arrivals: [dwelling] }, 100),
+    /departs 4 min/,
+  );
+});
+
+test("the NJT board is ordered by the number it prints, not by the backend's sort key", () => {
+  /* THE SEAM. feeds/njt._trim_njt_arrivals sorts on max(arrival, departure) so a
+     dwelling train does not sort by a past arrival; the countdown counts to the
+     ARRIVAL while it is still ahead. Two trains with different dwell lengths make
+     the two keys disagree, and these two rows are already in the order the endpoint
+     serves them (sort keys 210 then 300, ascending). */
+  const dover = { route_id: "2", headsign: "Dover", arrival: 180, departure: 210 };
+  const trenton = { route_id: "9", headsign: "Trenton", arrival: 120, departure: 300 };
+  assert.deepEqual(
+    njtOrderedArrivals([dover, trenton], 0).map((r) => r.headsign),
+    ["Trenton", "Dover"],
+    "2 min must print above 3 min",
+  );
+  // The popup and the panel both take the ordering, so one station's board cannot
+  // read two ways.
+  const body = { fetched_at: 0, arrivals: [dover, trenton] };
+  const html = njtArrivalsHtml({ id: "109", name: "Penn" }, body, 0);
+  assert.ok(html.indexOf("Trenton") < html.indexOf("Dover"));
+  assert.deepEqual(
+    shapeStationArrivals("njt", body, 0).buckets[0].rows.map((r) => r.headsign),
+    ["Trenton", "Dover"],
+  );
+  // A tie keeps the backend's order rather than whatever the sort produces, and a
+  // row with no usable time sorts LAST rather than ahead of every real train.
+  const a = { route_id: "1", headsign: "A", arrival: 60 };
+  const b = { route_id: "2", headsign: "B", arrival: 60 };
+  const unknown = { route_id: "3", headsign: "C", arrival: null, departure: null };
+  assert.deepEqual(
+    njtOrderedArrivals([a, unknown, b], 0).map((r) => r.headsign),
+    ["A", "B", "C"],
+  );
+  assert.deepEqual(njtOrderedArrivals(null, 0), []);
+});
+
+test("a deployment that does not run NJ Transit is not an error on the status line", () => {
+  // The backend's own words, quoted from routes/pollers so a reworded detail cannot
+  // silently start reading as an outage.
+  assert.equal(
+    isNotConfigured(
+      "NJ Transit is not configured (NJT_USERNAME/NJT_PASSWORD are unset); no realtime poll is attempted.",
+    ),
+    true,
+  );
+  // A WARMING cache answers 503 too, and that one IS worth surfacing, which is why
+  // the match is on the words rather than on the status.
+  assert.equal(isNotConfigured("Feed cache is warming up; try again in a few seconds."), false);
+  assert.equal(isNotConfigured("HTTP 502"), false);
+  assert.equal(isNotConfigured("timed out"), false);
+  assert.equal(isNotConfigured(null), false);
+  assert.equal(isNotConfigured(undefined), false);
+});
+
+test("the live region calls NJ Transit by name, never by its payload key", () => {
+  // The guard is SOURCE_WORDS.njt, and nothing exercised it: deleting the entry left
+  // all 183 node tests and the whole e2e suite green while a screen reader was told
+  // "Live data delayed for njt." That is the same defect the railroads' own entry was
+  // added for, one source later.
+  assert.equal(statusAnnouncement([], ["njt|njt"]), "Live data delayed for NJ Transit.");
+  assert.equal(describeIdentity("njt|njt"), "NJ Transit");
+  assert.equal(statusAnnouncement(["njt|njt"], []), "Live data current again for NJ Transit.");
 });

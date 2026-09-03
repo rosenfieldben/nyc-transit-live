@@ -1,8 +1,9 @@
 """NJ Transit Rail endpoints: station markers (15a) plus live trains and the
 realtime arrivals index (15b).
 
-Still no route lines: shapes.txt stays unparsed until 15c's line-drawing decision,
-and there are no frontend changes in either phase.
+Route lines arrived in 15c: /api/njt-routes serves the per-route polylines built
+from shapes.txt, on the same warming and caching semantics as every other
+static-derived endpoint here.
 
 WHY AN ARRIVALS ENDPOINT EXISTS HERE when the 15b deliverables name only
 /api/njt-trains: the trap matrix's central claim is "no phantom arrival at stop
@@ -19,7 +20,7 @@ import re
 from fastapi import APIRouter, HTTPException, Request, Response
 
 from cache import _require_filled_cache, _serve_cached, _static_endpoint_ready
-from models import NjtFeed, NjtStationArrivals, NjtStop
+from models import NjtFeed, NjtRoute, NjtStationArrivals, NjtStop
 
 router = APIRouter()
 
@@ -62,6 +63,43 @@ async def get_njt_stops(request: Request, response: Response) -> list[dict]:
     # BERG, which is what the feed says: Port Jervis has no route id of its own and
     # its identity lives only in trip_headsign (see njt_static.derive_njt_stop_routes).
     return [{**stop, "routes": station_routes.get(sid, [])} for sid, stop in stops.items()]
+
+
+@router.get("/api/njt-routes", response_model=list[NjtRoute])
+async def get_njt_routes(request: Request, response: Response) -> list[dict]:
+    """Static NJ Transit rail route geometry for drawing and gliding: one entry per
+    route with its rider-facing `name`, the feed's own `color` and `text_color`,
+    and `polylines` as [lat, lon] point lists. Built once at startup from
+    shapes.txt, so clients can cache it between loads.
+
+    NOT KEYED BY SYSTEM, unlike /api/railroad-routes: LIRR and Metro-North route
+    ids collide with each other, NJ Transit's do not collide with themselves.
+
+    text_color IS NULL ON EVERY ROUTE as this feed publishes it, so a client that
+    prints text on `color` has to compute its own readable ink. Said here rather
+    than left to be discovered, because the failure mode is dark text on a dark
+    line, which is invisible rather than obviously broken.
+
+    AN EMPTY LIST IS A VALID ANSWER, and it means the publication carried no
+    drawable geometry: shapes.txt is optional (route lines are additive, so a
+    publication without it still serves stations and trains and still reports
+    ready). A route with no geometry is likewise absent rather than present with an
+    empty polyline list, the same known gap /api/railroad-routes documents: such a
+    route has no line to draw and no trains to place, so it is invisible either
+    way. NJ Transit has a live example rather than a hypothetical, the
+    event-only Meadowlands Rail Line, which a publication without Meadowlands
+    service references no shape for.
+
+    503 while the NJT static GTFS is still loading; once ready, cacheable. A failed
+    (and retrying) load, and a deployment with no NJT credentials, both serve []
+    under no-cache, so an empty 200 never means "there is definitively nothing
+    here"; /api/status carries the reason.
+    """
+    app = request.app
+    status = getattr(app.state, "njt_static_status", "loading")
+    if not _static_endpoint_ready(status, response, "Static NJ Transit GTFS is still loading."):
+        return []
+    return getattr(app.state, "njt_routes", None) or []
 
 
 @router.get("/api/njt-trains", response_model=NjtFeed)

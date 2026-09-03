@@ -484,3 +484,71 @@ test("A1o. a stale payload's age is spoken, not left on screen alone", async ({ 
   await expect(page.locator(".station-detail-stale")).toContainText(/as of \d+m ago/);
   await expect(page.locator("#stations-announce")).toContainText(/as of \d+m ago/);
 });
+
+test("A1s. an NJ Transit station reaches the panel and reads its flat departure board", async ({
+  page,
+}) => {
+  // THE PANEL IS THE TEXT EQUIVALENT OF THE MAP, so a system that draws markers and
+  // is unreachable here is half-shipped. NJT is also the first system whose arrivals
+  // endpoint is FLAT: no direction buckets at all, one chronological list, with the
+  // destination on the row. That shape had to be given a bucket name the panel could
+  // print rather than being dropped for having no directions dict.
+  await open(page);
+  await page.locator("#stations-search").fill("newark penn");
+  const rows = page.locator("#stations-results button.station-row");
+  // ONE ROW, not two: the PATH fixture also has a "Newark", and the id spaces of the
+  // two systems overlap freely, so a registry key that was not system-qualified would
+  // have merged them. Searching the fuller name pins which station this is.
+  await expect(rows).toHaveCount(1);
+  await expect(rows.first()).toContainText("NJ Transit");
+  await rows.first().press("Enter");
+
+  const detail = page.locator("#stations-detail");
+  await expect(detail).toContainText("Newark Penn Station");
+  await expect(detail).toContainText("NJ Transit");
+
+  // New York Penn Station is the one with a board in the fixture. Selected by name so
+  // the spec does not depend on registry order.
+  await page.locator("#stations-search").fill("new york penn");
+  await expect(rows).toHaveCount(1);
+  await rows.first().press("Enter");
+  await expect(detail).toContainText("Departures");
+  // The destination reads in the sentence, which is what a departure board is for,
+  // and the train number rides along as the aside every other system already gets.
+  const lines = detail.locator("li");
+  await expect(lines).toHaveText([
+    "Northeast Corridor to Trenton train in 2 minutes, 8:01 AM arrival, train 3800",
+    "Montclair-Boonton Line to Dover train in 5 minutes, 8:05 AM arrival, train 6634",
+    // The route-less row, which models.NjtArrival really serves. It keeps its
+    // destination and its countdown and simply has no route to name, which is the
+    // honest rendering: dropping the row would hide a departure the rider can catch.
+    "to Bay Head train in 8 minutes, 8:08 AM arrival",
+  ]);
+  // A fresh payload says nothing about its age, exactly as the popups do.
+  await expect(detail.locator(".station-detail-stale")).toHaveCount(0);
+
+  // AND IT IS SPOKEN. The panel's live region is the surface a rider who cannot see
+  // the detail actually gets.
+  await expect(page.locator("#stations-announce")).toContainText("Northeast Corridor to Trenton");
+});
+
+test("A1t. an NJ Transit station whose route has no line still gets a chip, not a blank", async ({
+  page,
+}) => {
+  // AMENDMENT A, on the panel. Hoboken lists routes 2 and 17; route 17 never reaches
+  // /api/njt-routes, so its chip has no served colour and no name. The chip must
+  // still render, in the neutral fallback, with the route id as its text: a station
+  // that silently dropped a route it serves would be worse than an ugly chip.
+  await open(page);
+  await page.locator("#stations-search").fill("hoboken");
+  const rows = page.locator("#stations-results button.station-row");
+  const njtRow = rows.filter({ hasText: "NJ Transit" });
+  await expect(njtRow).toHaveCount(1);
+  const chips = njtRow.locator(".station-chip");
+  await expect(chips).toHaveText(["2", "17"]);
+  const styles = await chips.evaluateAll((els) => els.map((el) => el.style.background));
+  // Route 2's own colour from the feed, and the neutral fallback for the route that
+  // has none. Written as the rendered rgb() rather than the hex the code carries,
+  // because that is what the browser reports back.
+  expect(styles).toEqual(["rgb(230, 104, 89)", "rgb(74, 78, 105)"]);
+});

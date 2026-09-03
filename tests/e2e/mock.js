@@ -87,6 +87,12 @@ async function installMocks(page) {
   await endpoint("**/api/ferry-stops", "ferryStops", () => fx.ferryStops());
   await endpoint("**/api/ferry-routes", "ferryRoutes", () => fx.ferryRoutes());
   await endpoint("**/api/ferry-arrivals/**", "ferryArrivals", () => fx.ferryArrivals());
+  // NJ Transit (15c). "**/api/njt-trains" is its own path, so unlike "**/api/path"
+  // and "**/api/ferry" there is no bare prefix here that could swallow the others.
+  await endpoint("**/api/njt-trains", "njt", () => fx.njt());
+  await endpoint("**/api/njt-stops", "njtStops", () => fx.njtStops());
+  await endpoint("**/api/njt-routes", "njtRoutes", () => fx.njtRoutes());
+  await endpoint("**/api/njt-arrivals/**", "njtArrivals", () => fx.njtArrivals());
   await endpoint("**/api/alerts", "alerts", () => fx.alerts());
   await endpoint("**/api/subway-arrivals/**", "subwayArrivals", () => fx.subwayArrivals());
   await endpoint("**/api/railroad-arrivals/**", "railroadArrivals", () => fx.railroadArrivals());

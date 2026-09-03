@@ -227,3 +227,57 @@ identical-id trains serialize to 36 rows). `njt_static` skips blank `trip_id`s, 
 `trips.get("")` can never falsely join. An extra whose `entity.id` equals a
 scheduled trip's `trip_id` does not collide, because the synthesized key is
 prefixed. Cross-poll identity survives feed reordering.
+
+---
+
+## Close-out: 15b in production
+
+Recorded when the phase left the branch, because a review record that stops at its
+last fix cannot say whether the thing it reviewed ever worked. Every line below was
+measured after the merge rather than predicted before it.
+
+**Merged as `f707f94`, and it is a true merge.** Two parents, `e50c0e6` (main, at
+PR 93's merge) and `d26e245` (the branch tip), at 2026-09-02T02:27:50Z, from PR 91
+"15b: NJ Transit realtime, on the door and the index 15a already built". Neither a
+squash nor a fast-forward, so the branch's own history stays reachable from main:
+the capture-night commits and the adversarial round's seven fixes are still
+individually addressable, which is what the findings above cite.
+
+**PR 91 CI green.** Ten check runs on `d26e245`, every one success, across the five
+jobs the pipeline runs: `backend-tests`, `frontend-tests`, `frontend-e2e`,
+`contract-api`, `contract-e2e`.
+
+**The first production serve of NJ Transit, measured rather than assumed.** The
+6-hourly monitor's `production:feeds` line counts the deployment's own feed cache,
+and it steps across the merge:
+
+| Monitor run | Head | When | `production:feeds` |
+| --- | --- | --- | --- |
+| #208 | `e50c0e6` | 2026-09-01T21:06Z | 5 feeds fresh |
+| #209 | `f707f94` | 2026-09-02T04:42Z | **6 feeds fresh** |
+| #210 | `f707f94` | 2026-09-02T11:25Z | 6 feeds fresh |
+| #211 | `f707f94` | 2026-09-02T16:38Z | 6 feeds fresh |
+
+The sixth feed is NJ Transit, and it is what closes the one ambiguity in the
+neighbouring `production:statics` line. That check accepts `njt_static` in `ready`
+OR in `not-configured` (15a, F1: failing on the second would paint every deployment
+that runs no NJT permanently red), so its PASS alone cannot tell a live NJT layer
+from a deployment nobody gave credentials. The NJT pollers gate on the static being
+loaded, so a FRESH NJT feed can only come from a `ready` static, and the count is
+therefore the honest witness the states are not. Nothing draws those trains on the
+map yet; that is 15c.
+
+**Two green monitor runs on the deployed code, and the njt-realtime check is in
+them.** Runs #209 and #210 each finished `0 FAIL, 3 WARN, 18 checks total` with
+`PASS njt-realtime`; #211 has since done the same. That check does not appear in
+run #208 at all, because it shipped with this phase, so its first appearance is
+also the first scheduled probe of the RailData realtime endpoints from outside a
+test.
+
+**One standing WARN, and it is not this phase's.** `njt-static` has warned
+"stops.txt now carries location_type, parent_station; the loader treats this feed
+as FLAT and a parent/child model is a human decision" on every run in the window,
+including runs from before 15b existed (checked back to run #111, 2026-08-07). A
+WARN never fails a run, and this one is a question rather than a fault. It is
+recorded here because 15c puts those stations on a map beside route geometry, which
+is where flat-versus-parent/child stops being theoretical.

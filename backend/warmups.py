@@ -437,6 +437,16 @@ async def _warm_njt_static(app: FastAPI) -> None:
         app.state.njt_station_routes = njt_static.derive_njt_stop_routes(
             data["trips"], data["stop_times"]
         )
+        # Route lines (15c), built here from the tables the load already parsed, the
+        # same place and the same way the railroad block builds its own. Empty when
+        # the publication carried no shapes.txt: the group still reaches ready,
+        # because lines are additive and stations and trains do not depend on them.
+        # .get("shapes"): a zip cached before 15c parses without the table, so the
+        # builder sees no geometry and the routes list comes up empty rather than
+        # the load failing on a key that a pre-15c cache never had.
+        app.state.njt_routes = njt_static.build_njt_route_shapes(
+            data["trips"], data.get("shapes") or {}, data["routes"]
+        )
         # 15b's join target (trip_id -> route, headsign, train number) and the
         # panel era's scheduled calls per stop. Built here, from the tables the
         # load already parsed, so neither later phase re-reads the zip.

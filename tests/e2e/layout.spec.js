@@ -137,7 +137,11 @@ test(`A4b. every interactive thing on the map surface meets the 24px floor at ${
   // naming them individually says which system regressed.
   const markers = await page.evaluate((floor) => {
     const out = {};
-    for (const cls of ["bus-marker", "train-marker", "railroad-marker", "path-marker", "ferry-marker", "airtrain-marker"]) {
+    // njt-station-marker is the smallest interactive icon on the map (a 12px square),
+    // so it is the one most dependent on the shared halo and the one this gate most
+    // needs to name. A review round proved the omission mattered: shrinking both NJT
+    // halos to 10px passed the entire suite.
+    for (const cls of ["bus-marker", "train-marker", "railroad-marker", "path-marker", "ferry-marker", "airtrain-marker", "njt-marker", "njt-station-marker"]) {
       const el = document.querySelector(`.${cls}`);
       if (!el) continue;
       const style = getComputedStyle(el, "::before");
@@ -444,6 +448,39 @@ test("A4g. every rendered route colour meets AA where it carries or is text", as
       route,
       fixtures.subwayStops().map((stop) => (stop.id === "127" ? { ...stop, routes: [...stop.routes, "N"] } : stop)),
     );
+  // AND THE NJT SURFACES, which are new call sites of the same two helpers and which
+  // this spec could not see: it opened a subway popup and searched "times", so no NJT
+  // badge and no NJT popup heading was ever in the sample. a11y.spec.js names THIS
+  // spec as the decider for the `span.arr-badge` contrast shape, so a class of arrival
+  // badge nothing measured was being reported as decided. A review round mutated both
+  // NJT call sites to raw colours and all 187 node and 174 e2e tests stayed green.
+  //
+  // ROUTE 5 IS THE DISCRIMINATING ONE, for the same reason the N is on the subway
+  // half: NJ Transit publishes the Bergen County Line at FFD411, a yellow that
+  // measures 1.43:1 on white as ink and needs DARK ink on a chip, so a sample built
+  // from the stock fixture's DD3439 and E66859 would pass whether the helpers were
+  // called or not.
+  ctx.overrides.njtRoutes = (route, fixtures) => {
+    const routes = fixtures.njtRoutes();
+    return json(route, [
+      ...routes,
+      { route: "5", name: "Bergen County Line", color: "FFD411", text_color: null, polylines: routes[0].polylines },
+    ]);
+  };
+  ctx.overrides.njtArrivals = (route, fixtures) => {
+    const body = fixtures.njtArrivals();
+    return json(route, {
+      ...body,
+      arrivals: [{ ...body.arrivals[0], route_id: "5", headsign: "Suffern" }, ...body.arrivals],
+    });
+  };
+  ctx.overrides.njt = (route, fixtures) => {
+    const body = fixtures.njt();
+    return json(route, {
+      ...body,
+      trains: body.trains.map((t) => (t.id === "NJ_3800" ? { ...t, route_id: "5" } : t)),
+    });
+  };
   await open(page, ctx);
 
   // A station popup as well as the vehicle popups, because the chips and the arrival
@@ -456,6 +493,14 @@ test("A4g. every rendered route colour meets AA where it carries or is text", as
     if (entry && entry.marker) entry.marker.openPopup();
   });
   await expect.poll(async () => page.locator(".leaflet-popup-content").count()).toBeGreaterThan(0);
+  // The NJT pair, opened with autoClose off so they join the sample rather than
+  // replacing the subway popup that is already in it.
+  await page.evaluate(() => {
+    njtStations.getLayers()[0].openPopup();
+  });
+  await expect
+    .poll(async () => page.locator(".leaflet-popup-content .arr-badge").count())
+    .toBeGreaterThan(0);
   await page.locator("#stations-search").fill("times");
   await expect(page.locator("#stations-results button.station-row").first()).toBeVisible();
 

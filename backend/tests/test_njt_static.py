@@ -29,6 +29,7 @@ but one day per fixture.
 from __future__ import annotations
 
 import io
+import re
 import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -37,6 +38,7 @@ import pytest
 
 import njt_auth
 import njt_static
+import route_geometry
 from conftest import golden_fixture_guard
 from feeds.shared import NYC_TZ
 from static_shared import StaticValidationError
@@ -51,6 +53,16 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures" / "njt_gtfs"
 golden = golden_fixture_guard(
     FIXTURE_DIR / "stops.txt",
     "backend/scripts/gen_njt_fixture.py (needs NJT_USERNAME and NJT_PASSWORD)",
+)
+# A SECOND SENTINEL, for the route-line goldens only (15c). shapes.txt arrives in
+# its own refresh after the other six members are already committed, so gating it
+# on stops.txt would make every line golden pass vacuously the moment the 15a
+# fixture existed. Same rule as the first guard: skip locally, FAIL in CI, and name
+# the command that fixes it. test_feeds_path.py carries two guards for the same
+# reason.
+golden_shapes = golden_fixture_guard(
+    FIXTURE_DIR / "shapes.txt",
+    "backend/scripts/gen_njt_fixture.py --shapes-only (needs NJT_USERNAME and NJT_PASSWORD)",
 )
 
 # A fixed instant with a comfortable margin from any local midnight, so the
@@ -134,7 +146,9 @@ def _members(**overrides: str) -> dict[str, str]:
         "trips.txt": TRIPS,
         "stop_times.txt": STOP_TIMES,
         "calendar_dates.txt": _calendar_dates(),
-        # Present and never parsed, exactly as upstream ships it (15a defers it).
+        # Present, and since 15c parsed, though the trips above carry no shape_id
+        # column: `wanted` is empty for this archive, so the parse reads every row
+        # and keeps nothing, which is the case the shapes tests below start from.
         "shapes.txt": "shape_id,shape_pt_sequence,shape_pt_lat,shape_pt_lon\ns1,1,40.7,-74.0\n",
     }
     members.update(overrides)
@@ -399,10 +413,14 @@ def test_non_boardable_rows_never_become_markers():
     )
 
 
-def test_shapes_may_be_absent_because_nothing_parses_it_yet():
-    """15a defers shapes.txt (10 MB of the 11.1 MB payload, no consumer). It is
-    deliberately not required, so a publication that dropped it still serves rather
-    than trading a working map for geometry nothing reads."""
+def test_a_publication_may_omit_shapes_and_still_be_servable():
+    """RENAMED IN 15c, because the old name gave the old reason. It used to be
+    "shapes may be absent because nothing parses it yet", which was true in 15a and
+    is now false: shapes.txt IS parsed. The member stays optional for a different
+    and better reason, and one the ferry and PATH loaders do NOT share (both
+    require their own shapes.txt): NJ Transit's stations and trains stand without
+    geometry, so a publication that dropped 10 MB of lines is still fully servable
+    and rejecting it would take the map down to save the decoration."""
     with _open(_members(), drop=("shapes.txt",)) as zf:
         njt_static.validate_njt_archive(zf, now=NOW)
 
@@ -758,6 +776,320 @@ async def test_an_expired_cached_archive_is_treated_as_absent(monkeypatch, tmp_p
 
 
 # ---------------------------------------------------------------------------
+# Shapes and route lines (15c)
+# ---------------------------------------------------------------------------
+#
+# THE SYNTHETIC RAILWAY BELOW IS SHAPED LIKE THE REAL PROBLEM. NJ Transit's North
+# Jersey Coast Line splits for Long Branch and Bay Head, and Montclair-Boonton
+# splits for Montclair State and Hackettstown, so a dedup that collapses branch
+# variants draws a line that stops short of a real terminus, which a rider reads
+# as "service ends here". The same feed also publishes a reverse-direction shape
+# and short-turn workings for the same route, which must NOT each become their own
+# polyline. One trunk, two branches, one reversal and one short-turn is the
+# smallest thing that can tell those two apart.
+
+# Lengths are deliberately distinct where the order matters: route_polylines sorts
+# variants longest first, and among EQUAL lengths the pre-sort by shape_id decides.
+# The trunk is longest, so it seeds `covered` and every other variant is measured
+# against a line that already exists.
+_TRUNK = [(40.700 + 0.010 * i, -74.100 + 0.010 * i) for i in range(14)]
+# Shares the trunk's first 8 points, then leaves it. 4 of its 12 points are new
+# (0.33), comfortably over the 0.05 threshold.
+_BRANCH_A = _TRUNK[:8] + [(40.780 + 0.010 * i, -74.020 - 0.010 * i) for i in range(4)]
+# The other branch off the same 8 shared points, diverging the other way.
+_BRANCH_B = _TRUNK[:8] + [(40.760 - 0.010 * i, -73.980 + 0.010 * i) for i in range(4)]
+# The same points as the trunk in the opposite order: 0 new, and the point-set
+# test is what makes that true without anyone detecting reversal.
+_REVERSE = list(reversed(_TRUNK))
+# A short-turn working over the middle of the trunk: every point already covered.
+_SHORT_TURN = _TRUNK[3:9]
+
+
+def _shapes_table(shapes: dict[str, list[tuple[float, float]]]) -> str:
+    """shapes.txt text for {shape_id: [(lat, lon), ...]}, sequence-numbered from 1."""
+    lines = ["shape_id,shape_pt_sequence,shape_pt_lat,shape_pt_lon"]
+    for shape_id, points in shapes.items():
+        for seq, (lat, lon) in enumerate(points, start=1):
+            lines.append(f"{shape_id},{seq},{lat},{lon}")
+    return "\n".join(lines) + "\n"
+
+
+# route 1 gets the whole trunk/branch/reverse/short-turn family; route 6 gets one
+# plain line; route 13 references a shape the table does not carry (a dangling
+# reference, which a publication is entitled to produce); route 99 exists in
+# routes.txt with no trips at all, which is the Meadowlands case.
+_GEOM_TRIPS = (
+    "route_id,service_id,trip_id,trip_headsign,direction_id,trip_short_name,shape_id\n"
+    "1,SVC1,T1,Bay Head,0,3800,s1\n"
+    "1,SVC1,T2,Long Branch,0,3802,s2\n"
+    "1,SVC1,T3,Bay Head,0,3804,s3\n"
+    "1,SVC1,T4,New York,1,3806,s9\n"
+    "1,SVC1,T5,Matawan,0,3808,s4\n"
+    "6,SVC1,T6,Port Jervis,1,1600,s5\n"
+    "13,SVC1,T7,Hoboken,1,1610,s404\n"
+)
+_GEOM_SHAPES = _shapes_table(
+    {
+        "s1": _TRUNK,
+        "s2": _BRANCH_A,
+        "s3": _BRANCH_B,
+        "s4": _SHORT_TURN,
+        "s5": [(40.90, -74.20), (40.95, -74.30), (41.00, -74.40)],
+        "s9": _REVERSE,
+        # Referenced by no trip at all: the bound is what must drop it.
+        "s7": [(0.0, 0.0), (1.0, 1.0), (2.0, 2.0)],
+    }
+)
+_GEOM_ROUTES = (
+    "route_id,route_short_name,route_long_name,route_type,route_color,route_text_color\n"
+    "1,NJCL,North Jersey Coast Line,113,03A3DF,\n"
+    "6,MAIN,Main Line,113,FFD411,\n"
+    "13,PASC,Pascack Valley Line,113,94219A,\n"
+    "99,MRL,Meadowlands Rail Line,113,C1AA72,\n"
+)
+
+
+def _geom_members(**overrides: str) -> dict[str, str]:
+    return _members(
+        **{
+            "trips.txt": _GEOM_TRIPS,
+            "shapes.txt": _GEOM_SHAPES,
+            "routes.txt": _GEOM_ROUTES,
+            **overrides,
+        }
+    )
+
+
+def _geom_parsed(**overrides: str) -> dict:
+    with _open(_geom_members(**overrides)) as zf:
+        return njt_static._parse_open(zf)
+
+
+def test_trips_carry_shape_id_because_nothing_else_links_a_route_to_geometry():
+    trips = _parse(_GEOM_TRIPS, njt_static._parse_trips)
+    assert trips["T1"]["shape_id"] == "s1"
+    # Blank stays None rather than "", so route_geometry's truthiness test reads
+    # "this trip contributes no shape" without a second spelling of empty.
+    blank = _parse(
+        "route_id,service_id,trip_id,trip_headsign,direction_id,trip_short_name,shape_id\n"
+        "1,SVC1,T1,New York,0,3800,\n",
+        njt_static._parse_trips,
+    )
+    assert blank["T1"]["shape_id"] is None
+
+
+def test_only_shape_ids_some_trip_references_are_parsed():
+    """THE BOUND, and it is the reason parsing this member is affordable at all:
+    shapes.txt is 10 MB of the 11.1 MB payload upstream. s7 is in the table and in
+    nobody's trips, so it must not survive; s404 is referenced by a trip and absent
+    from the table, which is a publication's right and must not raise."""
+    parsed = _geom_parsed()
+    assert set(parsed["shapes"]) == {"s1", "s2", "s3", "s4", "s5", "s9"}
+    assert "s7" not in parsed["shapes"], "an unreferenced shape must be dropped at the row"
+    assert "s404" not in parsed["shapes"], "a dangling reference is absent, never a KeyError"
+
+
+def test_a_shape_with_no_referencing_trip_costs_nothing_even_when_it_is_enormous():
+    """The bound is measured, not asserted: an unreferenced shape with 10,000 points
+    leaves the parse output byte-identical, which is what "skipped at the row" means."""
+    huge = _shapes_table({"s8": [(40.0 + i / 10000, -74.0) for i in range(10000)]})
+    with_huge = _GEOM_SHAPES + huge.split("\n", 1)[1]
+    assert _geom_parsed(**{"shapes.txt": with_huge})["shapes"] == _geom_parsed()["shapes"]
+
+
+def test_shape_points_are_ordered_by_sequence_not_by_file_order():
+    scrambled = (
+        "shape_id,shape_pt_sequence,shape_pt_lat,shape_pt_lon\n"
+        "s1,3,40.3,-74.3\n"
+        "s1,1,40.1,-74.1\n"
+        "s1,2,40.2,-74.2\n"
+    )
+    shapes = njt_static._parse_shapes(io.BytesIO(scrambled.encode()), {"s1"})
+    assert shapes["s1"] == [[40.1, -74.1], [40.2, -74.2], [40.3, -74.3]]
+
+
+def test_a_malformed_shape_row_is_skipped_without_costing_its_shape():
+    """One bad row must not cost the publication its lines: this member is optional,
+    so the whole-file failure it could cause would be a worse answer than a shape
+    one point shorter."""
+    table = (
+        "shape_id,shape_pt_sequence,shape_pt_lat,shape_pt_lon\n"
+        "s1,1,40.1,-74.1\n"
+        "s1,2,NOT-A-NUMBER,-74.2\n"
+        "s1,3,40.3,-74.3\n"
+        ",4,40.4,-74.4\n"
+    )
+    shapes = njt_static._parse_shapes(io.BytesIO(table.encode()), {"s1", ""})
+    assert shapes == {"s1": [[40.1, -74.1], [40.3, -74.3]]}
+
+
+def test_coordinates_are_rounded_to_five_decimals_like_every_other_system():
+    table = (
+        "shape_id,shape_pt_sequence,shape_pt_lat,shape_pt_lon\ns1,1,40.7505681234,-73.9935194321\n"
+    )
+    shapes = njt_static._parse_shapes(io.BytesIO(table.encode()), {"s1"})
+    assert shapes["s1"] == [[40.75057, -73.99352]]
+
+
+def test_both_branches_of_a_two_branch_route_survive_the_dedup():
+    """THE CLAIM THE WHOLE ARM EXISTS FOR. A line that stops short of a real
+    terminus reads to a rider as service ending there, so the branch case is
+    asserted by IDENTITY (the branch's own far end is present), not by a count that
+    a collapsed pair could still satisfy."""
+    parsed = _geom_parsed()
+    built = njt_static.build_njt_route_shapes(parsed["trips"], parsed["shapes"], parsed["routes"])
+    line = next(entry for entry in built if entry["route"] == "1")
+    assert len(line["polylines"]) == 3, "trunk plus both branches, and nothing else"
+    drawn = {tuple(point) for polyline in line["polylines"] for point in polyline}
+    for name, branch in (("A", _BRANCH_A), ("B", _BRANCH_B)):
+        far_end = [round(branch[-1][0], 5), round(branch[-1][1], 5)]
+        assert tuple(far_end) in drawn, f"branch {name} lost its terminus"
+
+
+def test_the_reverse_direction_variant_and_the_short_turn_both_collapse():
+    """THE CONTROL for the test above: keeping every variant would also keep both
+    branches, so the branch claim only means something beside this one."""
+    parsed = _geom_parsed()
+    built = njt_static.build_njt_route_shapes(parsed["trips"], parsed["shapes"], parsed["routes"])
+    line = next(entry for entry in built if entry["route"] == "1")
+    assert len(line["polylines"]) == 3
+    # ASSERTED ON ENDPOINTS, not on the point list, because the builder simplifies
+    # before it dedups and this synthetic trunk is straight, so its drawn form is
+    # its two ends. The claim is unchanged: the trunk is drawn once, not once
+    # forwards and once backwards.
+    trunk_ends = {
+        (round(_TRUNK[0][0], 5), round(_TRUNK[0][1], 5)),
+        (round(_TRUNK[-1][0], 5), round(_TRUNK[-1][1], 5)),
+    }
+    drawn_as_trunk = [p for p in line["polylines"] if {tuple(p[0]), tuple(p[-1])} == trunk_ends]
+    assert len(drawn_as_trunk) == 1
+
+
+def test_the_builder_simplifies_the_geometry_it_draws():
+    """THE OTHER HALF OF DEFECT B, and nothing tested it: the fixture arm's
+    simplification was pinned but the LOADER's was not, so deleting it from
+    build_njt_route_shapes passed the whole suite. That is the half that decides
+    what /api/njt-routes ships on every page load, and in production it reads RAW
+    geometry (a point every 10 m, 6.9 MB for 29 shapes), not the already-reduced
+    fixture. A test over committed geometry cannot see it, because simplifying an
+    already-simplified shape is a no-op; this one feeds the builder dense points.
+    """
+    dense = _shapes_table(
+        {"s1": [(40.700 + 0.00002 * i, -74.000 - 0.00002 * i) for i in range(600)]}
+    )
+    trips = (
+        "route_id,service_id,trip_id,trip_headsign,direction_id,trip_short_name,shape_id\n"
+        "1,SVC1,T1,New York,0,3800,s1\n"
+    )
+    parsed = _geom_parsed(**{"shapes.txt": dense, "trips.txt": trips})
+    assert len(parsed["shapes"]["s1"]) == 600, "the parse itself must not reduce anything"
+
+    built = njt_static.build_njt_route_shapes(parsed["trips"], parsed["shapes"], parsed["routes"])
+    drawn = built[0]["polylines"][0]
+    assert len(drawn) < 600, "the builder served every published point"
+    # EXACTLY what simplification would give, not merely fewer points: a builder that
+    # sampled or truncated would also be "fewer".
+    assert drawn == route_geometry.simplify_polyline(
+        parsed["shapes"]["s1"], route_geometry.NJT_SIMPLIFY_EPS
+    )
+
+
+def test_a_route_with_no_trips_is_absent_from_the_build_rather_than_empty():
+    """The Meadowlands case in miniature: route 99 is in routes.txt, no trip
+    references it, so it has no line to draw and no name to carry."""
+    parsed = _geom_parsed()
+    built = njt_static.build_njt_route_shapes(parsed["trips"], parsed["shapes"], parsed["routes"])
+    assert "99" not in {entry["route"] for entry in built}
+    # And a route whose only shape reference dangles goes the same way.
+    assert "13" not in {entry["route"] for entry in built}
+
+
+def test_the_build_carries_the_feeds_own_colours_and_invents_no_text_colour():
+    parsed = _geom_parsed()
+    built = njt_static.build_njt_route_shapes(parsed["trips"], parsed["shapes"], parsed["routes"])
+    line = next(entry for entry in built if entry["route"] == "1")
+    assert line["name"] == "North Jersey Coast Line"
+    assert line["color"] == "03A3DF"
+    # NULL, not a computed contrast colour: this feed publishes route_text_color
+    # empty on every route, and inventing one here would hide that it said nothing.
+    assert line["text_color"] is None
+
+
+def test_the_build_is_sorted_and_stable_across_calls():
+    parsed = _geom_parsed()
+    first = njt_static.build_njt_route_shapes(parsed["trips"], parsed["shapes"], parsed["routes"])
+    again = njt_static.build_njt_route_shapes(parsed["trips"], parsed["shapes"], parsed["routes"])
+    assert [entry["route"] for entry in first] == sorted(entry["route"] for entry in first)
+    assert first == again
+
+
+def test_a_publication_with_no_shapes_txt_still_parses_and_draws_nothing():
+    """LINES ARE ADDITIVE. shapes.txt stays out of _REQUIRED_MEMBERS, so a
+    publication that drops it validates, parses, keeps every station and trip, and
+    yields an empty routes list rather than a failed load."""
+    members = _geom_members()
+    with _open(members, drop=("shapes.txt",)) as zf:
+        njt_static.validate_njt_archive(zf, now=NOW)  # must not raise
+        parsed = njt_static._parse_open(zf)
+    assert parsed["shapes"] == {}
+    assert parsed["stops"] and parsed["trips"], "stations and trains are untouched"
+    assert (
+        njt_static.build_njt_route_shapes(parsed["trips"], parsed["shapes"], parsed["routes"]) == []
+    )
+
+
+def test_an_unreadable_shapes_txt_costs_the_lines_and_nothing_else():
+    """THE GUARD SEEN TO FIRE for the additive promise. Undecodable bytes in a
+    REQUIRED member correctly fail the publication; in this one they must not,
+    because a corrupt 10 MB of geometry taking down the stations and the trains is
+    exactly the trade keeping shapes.txt out of _REQUIRED_MEMBERS refuses.
+
+    The control is the second half: the same bytes in stops.txt DO raise, so this
+    test cannot pass by the parse being tolerant everywhere."""
+    # RAW BYTES, not a str with high code points: writestr would re-encode those as
+    # valid UTF-8 and the test would pass while decoding fine, which is the shape of
+    # a test that proves nothing.
+    undecodable = b"shape_id,shape_pt_sequence,shape_pt_lat,shape_pt_lon\n\xff\xfe\xff\n"
+    members = dict(_geom_members())
+    members["shapes.txt"] = undecodable
+    with _open(members) as zf:
+        parsed = njt_static._parse_open(zf)
+    assert parsed["shapes"] == {}
+    assert parsed["stops"] and parsed["trips"] and parsed["routes"]
+
+    broken_required = dict(_geom_members())
+    broken_required["stops.txt"] = b"stop_id,stop_name,stop_lat,stop_lon\n\xff\xfe\xff\n"
+    with _open(broken_required) as zf:
+        with pytest.raises(UnicodeDecodeError):
+            njt_static._parse_open(zf)
+
+
+def test_shapes_txt_is_not_a_required_member():
+    """Stated as its own assertion because the whole additive-degradation claim
+    rests on it, and a future edit to _REQUIRED_MEMBERS would otherwise only show
+    up as a mysterious failure three tests away."""
+    assert "shapes.txt" not in njt_static._REQUIRED_MEMBERS
+
+
+def test_the_dedup_threshold_is_a_strict_inequality():
+    """A variant adding EXACTLY nothing new must never be kept. Pinned directly at
+    route_geometry because the boundary is one character (> versus >=) and a
+    mutation there is invisible in any test that only counts branches."""
+    trunk = [[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]]
+    assert route_geometry.keep_added_geometry([trunk, list(reversed(trunk))]) == [trunk]
+    # AT the threshold, refused. Both variants are 20 points, so the length sort is
+    # a no-op and the seed is kept first; the second shares 19 of its 20 points, so
+    # it adds exactly 1/20 = 0.05, which is not MORE than 0.05.
+    seed = [[float(i), 0.0] for i in range(20)]
+    at_threshold = seed[:19] + [[99.0, 99.0]]
+    assert route_geometry.keep_added_geometry([seed, at_threshold]) == [seed]
+    # One point over it, kept: 2/20 = 0.10. The pair is what shows the line sits
+    # where the constant says rather than somewhere either case alone would allow.
+    over_threshold = seed[:18] + [[99.0, 99.0], [98.0, 98.0]]
+    assert route_geometry.keep_added_geometry([seed, over_threshold]) == [seed, over_threshold]
+
+
+# ---------------------------------------------------------------------------
 # Goldens, against the committed trim of the real feed
 # ---------------------------------------------------------------------------
 
@@ -933,19 +1265,35 @@ def test_golden_the_committed_fixture_holds_exactly_the_trim_rule_writes():
 
     UPSTREAM DRIFT IS THE GENERATOR'S JOB, and it does it against the live archive's
     own member list, which is the only place the question can be asked. What a
-    committed fixture can honestly pin is the TRIM: exactly these six members, no
-    more (shapes.txt is deliberately not committed, being 10 MB of geometry no phase
-    reads yet) and no fewer.
+    committed fixture can honestly pin is the TRIM: these six members always, and
+    at most one more.
+
+    THE SEVENTH IS SPLIT ACROSS TWO ASSERTIONS ON PURPOSE (15c). shapes.txt arrives
+    in its own refresh after the other six are already committed, so this test
+    cannot demand it without going red for every checkout between the two commits,
+    and cannot forbid it without going red the moment it lands. So this one says
+    "the six, plus at most shapes.txt and nothing else", and its PRESENCE is pinned
+    by the golden_shapes sentinel instead, which skips locally and FAILS in CI. A
+    conditional here would have been the dormant-golden disease; a sentinel is the
+    house answer to exactly this.
     """
     committed = {path.name for path in FIXTURE_DIR.iterdir() if path.suffix == ".txt"}
-    assert committed == {
+    required = {
         "agency.txt",
         "routes.txt",
         "stops.txt",
         "trips.txt",
         "stop_times.txt",
         "calendar_dates.txt",
-    }, f"the trim rule writes six members; the fixture holds {sorted(committed)}"
+    }
+    assert required <= committed, (
+        f"the trim rule writes these six members; the fixture is missing "
+        f"{sorted(required - committed)}"
+    )
+    assert committed - required <= {"shapes.txt"}, (
+        f"the fixture holds a member the trim rule does not write: "
+        f"{sorted(committed - required - {'shapes.txt'})}"
+    )
 
 
 @golden
@@ -960,3 +1308,395 @@ def test_golden_the_fixture_validates_against_its_own_service_window():
         assert latest is not None
         inside = datetime.strptime(latest, "%Y%m%d").replace(tzinfo=NYC_TZ).timestamp()
         njt_static.validate_njt_publication(zf, now=inside)
+
+
+# ---------------------------------------------------------------------------
+# Route lines against the fixture: the three claims, and their synthetic twin
+# ---------------------------------------------------------------------------
+#
+# EACH CLAIM IS A FUNCTION, CALLED TWICE. Once by a golden over the committed
+# fixture (guarded on shapes.txt, so it skips locally until the refresh lands and
+# FAILS in CI), and once by a hermetic test over an archive this module builds,
+# stations and all. That is what stops the goldens being written blind: the
+# assertions run today, against geometry whose right answer is known by
+# construction, so what the refresh adds is real data rather than the first
+# execution of the code path.
+
+# A station must sit within this distance of its own route's drawn geometry, in
+# the isotropic degree basis the frontend projects in (longitude scaled by
+# cos(40.7 deg); frontend/helpers.js builds the same basis at _COS_LAT).
+#
+# THE VALUE IS THE FRONTEND'S OWN, NOT A NEW JUDGEMENT. helpers.js sets
+# RAILROAD_ROUTE_ACCEPT_DIST = 0.0025 and rejects any projection beyond it, so a
+# station further from the line than this does not glide: the train falls back to
+# a straight chord between stops. Asserting at exactly that number makes this
+# golden the question a rider would ask ("do the stations and the track describe
+# the same railroad"), and makes a fixture whose geometry would glide badly fail
+# HERE rather than silently on the map.
+_STATION_ON_LINE_DIST = 0.0025
+
+# No route may draw more variants than this. The trim's most-branched routes
+# reference four distinct shape_ids, so four is the ceiling its input allows: a
+# route above it would mean the builder emitted geometry no trip referenced, and a
+# route at it would mean four genuinely divergent branches on one line, which is
+# worth a human look either way.
+_MAX_ROUTE_VARIANTS = 4
+
+# THE MEASURE IS PRODUCTION'S, imported rather than restated here (15c Part 1b).
+# route_geometry.distance_to_polylines is what the dedup uses to decide whether two
+# lines are the same line, and this golden uses it to decide whether a station is on
+# its line. One implementation means a change to the measure moves both, instead of
+# the golden quietly asserting something the app no longer does.
+
+
+def _routes_with_service(parsed: dict) -> set[str]:
+    """Route ids some trip actually runs. NOT routes.txt's twelve: the Meadowlands
+    Rail Line (17) is published as a route and runs only for events, so a
+    publication can carry it with no trips at all, and a route with no trips has no
+    geometry by construction rather than by defect."""
+    return {trip["route_id"] for trip in parsed["trips"].values() if trip.get("route_id")}
+
+
+def _check_every_serviced_route_draws_a_line(parsed: dict) -> list[dict]:
+    """CLAIM 1: every route that runs trips carries at least one polyline, and no
+    route without service sneaks in. Returns the build so a caller can assert more."""
+    built = njt_static.build_njt_route_shapes(parsed["trips"], parsed["shapes"], parsed["routes"])
+    drawn = {entry["route"] for entry in built}
+    serviced = _routes_with_service(parsed)
+    assert drawn <= serviced, f"routes drawn with no service: {sorted(drawn - serviced)}"
+    missing = sorted(serviced - drawn)
+    assert not missing, (
+        f"routes run trips but draw no line: {missing}. Every trip carries a shape_id in "
+        "this feed, so a serviced route with no geometry means the shapes slice and the "
+        "trips slice disagree."
+    )
+    for entry in built:
+        assert entry["polylines"], f"route {entry['route']} is present with no polyline"
+        assert all(len(p) >= 2 for p in entry["polylines"]), "a polyline needs two points to draw"
+    return built
+
+
+def _check_stations_sit_on_their_routes(parsed: dict) -> int:
+    """CLAIM 2, and the one that says the geometry and the stations describe the
+    same railroad: every station projects onto the geometry of every route that
+    serves it. Returns the number of (station, route) pairs checked, so a caller
+    can refuse a vacuous pass."""
+    built = njt_static.build_njt_route_shapes(parsed["trips"], parsed["shapes"], parsed["routes"])
+    polylines_by_route = {entry["route"]: entry["polylines"] for entry in built}
+    station_routes = njt_static.derive_njt_stop_routes(parsed["trips"], parsed["stop_times"])
+    measured: list[tuple[float, str]] = []
+    for stop_id, route_ids in sorted(station_routes.items()):
+        stop = parsed["stops"].get(stop_id)
+        if stop is None:
+            continue  # a stop with no usable coordinate: the parser already dropped it
+        for route_id in sorted(route_ids):
+            if route_id not in polylines_by_route:
+                continue  # covered by claim 1, which names it there rather than here
+            distance = route_geometry.distance_to_polylines(
+                [stop["lat"], stop["lon"]], polylines_by_route[route_id]
+            )
+            measured.append((distance, f"{stop['name']} ({stop_id}) on route {route_id}"))
+    assert measured, "no (station, route) pair was checked, so this asserted nothing"
+    # THE WORST PAIR, NOT THE FIRST. Asserting inside the loop reported whichever
+    # station came first in stop_id order, which is an arbitrary station that
+    # happened to be over the line; the number a human needs is the worst one in the
+    # fixture, because that is what says how much headroom the tolerance has.
+    worst_distance, worst_pair = max(measured)
+    assert worst_distance <= _STATION_ON_LINE_DIST, (
+        f"the worst station is {worst_pair}, {worst_distance:.5f} from its route's "
+        f"geometry, past the {_STATION_ON_LINE_DIST} the frontend will project within. "
+        "A station that far off its own line does not glide: its trains fall back to a "
+        f"straight chord. {sum(1 for d, _ in measured if d > _STATION_ON_LINE_DIST)} of "
+        f"{len(measured)} pairs are over."
+    )
+    return len(measured)
+
+
+def _check_variant_counts_are_bounded(parsed: dict) -> None:
+    """CLAIM 3: the dedup demonstrably ran. Per route a bound on variants, and in
+    aggregate strictly fewer polylines than referenced shapes, which is what a
+    builder that kept every variant would fail."""
+    built = njt_static.build_njt_route_shapes(parsed["trips"], parsed["shapes"], parsed["routes"])
+    for entry in built:
+        assert 1 <= len(entry["polylines"]) <= _MAX_ROUTE_VARIANTS, (
+            f"route {entry['route']} draws {len(entry['polylines'])} variants, outside "
+            f"1..{_MAX_ROUTE_VARIANTS}"
+        )
+    referenced = route_geometry.shape_ids_by_route(parsed["trips"])
+    total_referenced = sum(len(ids) for ids in referenced.values())
+    total_kept = sum(len(entry["polylines"]) for entry in built)
+    assert total_kept < total_referenced, (
+        f"{total_kept} polylines from {total_referenced} referenced shapes: nothing "
+        "collapsed, so the dedup is not running. A feed publishing one shape per "
+        "direction always has variants to collapse."
+    )
+
+
+def test_the_station_tolerance_is_the_frontends_own_number_and_not_a_local_one():
+    """THE TOLERANCE IS A SEAM, so it is asserted rather than commented.
+
+    _STATION_ON_LINE_DIST is not a judgement this file gets to make: it is
+    RAILROAD_ROUTE_ACCEPT_DIST from frontend/helpers.js, the distance beyond which
+    computeRouteSlice refuses a projection and the train falls back to a straight
+    chord. A number written down twice drifts, and the drift here is invisible in
+    both directions: loosened, this golden stops catching geometry that would glide
+    badly; tightened, it fails on a fixture the map renders perfectly.
+
+    WHAT IT DOES NOT ADD, stated because the first draft of this docstring claimed
+    it and measurement said otherwise: it is NOT what makes an infinite tolerance
+    fatal. 15c mutation M2 set _STATION_ON_LINE_DIST to inf and
+    test_the_station_projection_claim_fails_when_a_station_leaves_its_line, which
+    already existed, went red on its own (the negative control stops being able to
+    fail). This test catches the OTHER direction, which nothing else could see: the
+    FRONTEND'S constant moving while the golden's stays, leaving a golden that
+    passes happily while asserting a distance the map no longer projects within.
+
+    Read out of the file rather than restated, for the reason the MOBILE_MAX_WIDTH_PX
+    node test reads style.css rather than trusting a comment.
+    """
+    helpers = (Path(__file__).resolve().parents[2] / "frontend" / "helpers.js").read_text(
+        encoding="utf-8"
+    )
+    match = re.search(r"const RAILROAD_ROUTE_ACCEPT_DIST = ([0-9.]+);", helpers)
+    assert match, "frontend/helpers.js no longer declares RAILROAD_ROUTE_ACCEPT_DIST"
+    assert float(match.group(1)) == _STATION_ON_LINE_DIST, (
+        f"the golden projects stations within {_STATION_ON_LINE_DIST} while the "
+        f"frontend accepts {match.group(1)}: one of the two moved alone, so this "
+        "golden is no longer asking the question a rider would ask"
+    )
+
+
+# The stations for the synthetic railway, placed ON the geometry the shapes table
+# above draws: two termini, the junction the branches leave from, and one station
+# deliberately offset from the track to prove the tolerance is doing work rather
+# than only matching coordinates that are identical.
+_GEOM_STOPS = (
+    "stop_id,stop_code,stop_name,stop_lat,stop_lon\n"
+    f"201,A,Trunk Origin,{_TRUNK[0][0]},{_TRUNK[0][1]}\n"
+    f"202,J,Branch Junction,{_TRUNK[8][0]},{_TRUNK[8][1]}\n"
+    f"203,LB,Long Branch End,{_BRANCH_A[-1][0]},{_BRANCH_A[-1][1]}\n"
+    f"204,BH,Bay Head End,{_BRANCH_B[-1][0]},{_BRANCH_B[-1][1]}\n"
+    # 0.002 north of the track: inside the 0.0025 the frontend projects within, so
+    # this station glides, and it would stop gliding if the tolerance shrank.
+    f"205,OFF,Platform Offset,{_TRUNK[4][0] + 0.002},{_TRUNK[4][1]}\n"
+    "206,ML,Main Line Stop,40.90,-74.20\n"
+)
+_GEOM_STOP_TIMES = (
+    "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n"
+    "T1,07:00:00,07:00:30,201,1\n"
+    "T1,07:10:00,07:10:30,205,2\n"
+    "T1,07:20:00,07:20:30,202,3\n"
+    "T2,08:00:00,08:00:30,202,1\n"
+    "T2,08:20:00,08:20:30,203,2\n"
+    "T3,09:00:00,09:00:30,202,1\n"
+    "T3,09:20:00,09:20:30,204,2\n"
+    "T6,10:00:00,10:00:30,206,1\n"
+    "T6,10:20:00,10:20:30,206,2\n"
+)
+
+
+# The railway drops _GEOM_TRIPS' deliberately-dangling route 13 trip. That trip
+# exists to prove the PARSE tolerates a shape_id the table does not carry; claim 1
+# forbids exactly that situation in a committed fixture, and both are right: a
+# publication may dangle, and a fixture the goldens read may not. The generator's
+# --shapes-only mode refuses rather than committing one, so the two agree.
+_RAILWAY_TRIPS = "".join(
+    line + "\n" for line in _GEOM_TRIPS.splitlines() if not line.startswith("13,")
+)
+
+
+def _railway_parsed() -> dict:
+    """The synthetic railway: trips, shapes, routes, and stations standing on the
+    track. Everything the three claims read, with the right answer known."""
+    return _geom_parsed(
+        **{
+            "trips.txt": _RAILWAY_TRIPS,
+            "stops.txt": _GEOM_STOPS,
+            "stop_times.txt": _GEOM_STOP_TIMES,
+        }
+    )
+
+
+def _disjoint_railway(count: int) -> dict:
+    """A parsed archive where `count` mutually disjoint shapes serve one route, so
+    the dedup has nothing to collapse and keeps every one of them."""
+    trips = "route_id,service_id,trip_id,trip_headsign,direction_id,trip_short_name,shape_id\n"
+    shapes = {}
+    for i in range(count):
+        trips += f"6,SVC1,D{i},Nowhere,0,90{i},d{i}\n"
+        # Each line sits a whole degree from the last: no shared points anywhere.
+        shapes[f"d{i}"] = [(40.0 + i, -74.0), (40.5 + i, -74.5), (41.0 + i, -75.0)]
+    return _geom_parsed(**{"trips.txt": trips, "shapes.txt": _shapes_table(shapes)})
+
+
+def test_the_three_line_claims_hold_on_a_synthetic_railway():
+    """The goldens' code path, exercised now rather than when the fixture lands."""
+    parsed = _railway_parsed()
+    built = _check_every_serviced_route_draws_a_line(parsed)
+    assert {entry["route"] for entry in built} == {"1", "6"}
+    assert _check_stations_sit_on_their_routes(parsed) == 6
+    _check_variant_counts_are_bounded(parsed)
+
+
+def test_the_station_projection_claim_fails_when_a_station_leaves_its_line():
+    """THE GUARD SEEN TO FIRE. Without this, claim 2 passing over real data could
+    mean the check is sound or could mean it never measured anything."""
+    adrift = _GEOM_STOPS.replace(
+        f"205,OFF,Platform Offset,{_TRUNK[4][0] + 0.002},{_TRUNK[4][1]}",
+        f"205,OFF,Platform Offset,{_TRUNK[4][0] + 0.2},{_TRUNK[4][1]}",
+    )
+    parsed = _geom_parsed(**{"stops.txt": adrift, "stop_times.txt": _GEOM_STOP_TIMES})
+    with pytest.raises(AssertionError, match="does not glide|past the"):
+        _check_stations_sit_on_their_routes(parsed)
+
+
+def test_the_variant_bound_fails_when_nothing_collapses():
+    """THE GUARD SEEN TO FIRE for claim 3, both arms, with data rather than a
+    patched threshold: three disjoint shapes on one route give the dedup nothing to
+    collapse, so the aggregate arm fires; five trip the per-route cap as well."""
+    with pytest.raises(AssertionError, match="nothing collapsed"):
+        _check_variant_counts_are_bounded(_disjoint_railway(3))
+    with pytest.raises(AssertionError, match=f"outside 1..{_MAX_ROUTE_VARIANTS}"):
+        _check_variant_counts_are_bounded(_disjoint_railway(5))
+
+
+def test_the_serviced_route_claim_fails_when_a_line_loses_its_geometry():
+    """THE GUARD SEEN TO FIRE for claim 1: drop the shapes a route's trips point at
+    and the route runs trips with nothing to draw, which is the failure this claim
+    exists to catch."""
+    without_route_one = _shapes_table({"s5": [(40.90, -74.20), (40.95, -74.30), (41.00, -74.40)]})
+    parsed = _geom_parsed(
+        **{
+            "shapes.txt": without_route_one,
+            "stops.txt": _GEOM_STOPS,
+            "stop_times.txt": _GEOM_STOP_TIMES,
+        }
+    )
+    with pytest.raises(AssertionError, match="draw no line"):
+        _check_every_serviced_route_draws_a_line(parsed)
+
+
+@golden_shapes
+def test_golden_every_nj_transit_route_with_service_draws_a_line():
+    with _fixture_zip() as zf:
+        parsed = njt_static._parse_open(zf)
+    built = _check_every_serviced_route_draws_a_line(parsed)
+    # THE TWELFTH ROUTE IS NOT A DEFECT. routes.txt carries twelve; this
+    # publication's trips cover eleven, because the Meadowlands Rail Line (17)
+    # runs for events and this trim caught none. Asserted BY NAME rather than as a
+    # count, so a fixture that lost a real line cannot pass by arithmetic.
+    assert len(parsed["routes"]) == 12
+    assert "17" not in _routes_with_service(parsed), (
+        "this publication now runs Meadowlands trips; the line below should draw"
+    )
+    assert {entry["route"] for entry in built} == _routes_with_service(parsed)
+    assert len(built) == 11
+
+
+@golden_shapes
+def test_golden_every_nj_transit_station_sits_on_the_line_that_serves_it():
+    with _fixture_zip() as zf:
+        parsed = njt_static._parse_open(zf)
+    # Every station of every route, so the count is a floor nobody can shrink by
+    # accident: the fixture carries 164 stations across eleven serviced routes.
+    assert _check_stations_sit_on_their_routes(parsed) >= 100
+
+
+@golden_shapes
+def test_golden_the_kept_variants_per_route_are_bounded():
+    with _fixture_zip() as zf:
+        parsed = njt_static._parse_open(zf)
+    _check_variant_counts_are_bounded(parsed)
+
+
+# The committed shapes.txt may not exceed this. MEASURED, not guessed: 29 shapes
+# built to the real feed's statistics come to roughly 1,900 rows and 70 KB after
+# simplification at NJT_SIMPLIFY_EPS, against 195,545 rows and 6.9 MB unsimplified.
+# The ceiling sits an order of magnitude above that estimate and two below the
+# unsimplified file, so it absorbs a publication digitized more finely than the
+# model without ever tolerating a fixture where simplification silently stopped.
+# For scale, the largest fixture in the repo before this one is the whole PATH
+# shapes.txt at 216 KB.
+_SHAPES_BYTE_CEILING = 750_000
+
+
+@golden_shapes
+def test_golden_the_committed_geometry_is_a_fixture_and_not_a_publication():
+    """A 6.9 MB member is not a test fixture. This is the size half of the pair
+    below: it catches the file growing back, whatever the cause, and the fixed-point
+    golden catches the reason it would."""
+    size = (FIXTURE_DIR / "shapes.txt").stat().st_size
+    assert size <= _SHAPES_BYTE_CEILING, (
+        f"shapes.txt is {size:,} bytes, over the {_SHAPES_BYTE_CEILING:,} ceiling. "
+        "Either simplification stopped happening in the fixture arm, or this "
+        "publication is digitized far more finely than the one the epsilon was "
+        "measured against."
+    )
+
+
+@golden_shapes
+def test_golden_every_committed_shape_is_already_simplified():
+    """THE COUPLING THAT SAYS THE FIXTURE AND PRODUCTION HOLD THE SAME POINTS.
+
+    The loader simplifies at NJT_SIMPLIFY_EPS on its way to drawing. If the
+    committed geometry is a FIXED POINT of that same simplification, then what the
+    goldens read and what production draws are the same points rather than two
+    different reductions of the feed, and every line golden above is measuring the
+    map rather than an artefact of the fixture being denser.
+
+    ONE ASSERTION CANNOT SAY IT, SO THERE ARE TWO. Douglas-Peucker at a smaller
+    epsilon retains a SUPERSET of what it retains at a larger one, so re-simplifying
+    at the loader's epsilon changes nothing whenever the fixture was built at that
+    epsilon OR ANY COARSER ONE. Measured on a 3,000-point shape: built at the
+    epsilon, 135 points and a fixed point; at a tenth of it, 657 points and NOT a
+    fixed point; unsimplified, 3,000 and not a fixed point; but built at TEN TIMES
+    it, 33 points and still a perfect fixed point. So this arm catches a fixture
+    denser than the loader would draw, and is blind to one already coarser.
+
+    The second arm closes that direction: simplifying the committed geometry at
+    TWICE the epsilon must actually remove points. A fixture built at the epsilon
+    loses some (135 to fewer); one built at ten times it loses none, because 2x is
+    still finer than what already reduced it. The pair brackets the epsilon the
+    fixture was built at into [EPS, 2*EPS), which is as close as a file can be
+    pinned to a constant it does not contain.
+    """
+    with _fixture_zip() as zf:
+        parsed = njt_static._parse_open(zf)
+    assert parsed["shapes"], "the fixture carries no geometry at all"
+    for shape_id, points in sorted(parsed["shapes"].items()):
+        again = route_geometry.simplify_polyline(points, route_geometry.NJT_SIMPLIFY_EPS)
+        assert again == points, (
+            f"shape {shape_id} is not a fixed point of simplification: the loader "
+            f"reduces its {len(points)} committed points to {len(again)}, so the "
+            "committed geometry is denser than what production draws. Re-run "
+            "gen_njt_fixture.py --shapes-only."
+        )
+
+    # THE OTHER DIRECTION. In aggregate rather than per shape, because a short shape
+    # can legitimately be two points at any tolerance and have nothing left to lose.
+    committed = sum(len(points) for points in parsed["shapes"].values())
+    coarser = sum(
+        len(route_geometry.simplify_polyline(points, route_geometry.NJT_SIMPLIFY_EPS * 2))
+        for points in parsed["shapes"].values()
+    )
+    assert coarser < committed, (
+        f"doubling the tolerance removes nothing from the committed geometry "
+        f"({committed} points either way), so the fixture was built at a COARSER "
+        "epsilon than the loader uses and the fixed-point check above cannot see it. "
+        "Re-run gen_njt_fixture.py --shapes-only."
+    )
+
+
+@golden_shapes
+def test_golden_the_bounded_parse_reaches_every_shape_the_committed_trips_reference():
+    """The PARSE half of the identity claim: whatever the fixture carries, the
+    bounded read reaches exactly the shapes the trips point at. The file-level half
+    (nothing committed that no trip references) is the identity replay's, in
+    test_njt_fixture_trim.py, beside the rest of that replay."""
+    with _fixture_zip() as zf:
+        parsed = njt_static._parse_open(zf)
+    referenced = {trip["shape_id"] for trip in parsed["trips"].values() if trip.get("shape_id")}
+    assert referenced, "the committed trips reference no geometry at all"
+    assert set(parsed["shapes"]) == referenced, (
+        "the bounded parse and the committed trips disagree about which shapes exist"
+    )

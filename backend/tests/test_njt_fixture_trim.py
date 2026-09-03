@@ -21,6 +21,7 @@ its file path, the same way the generators load it.
 from __future__ import annotations
 
 import importlib.util
+import random
 from collections import defaultdict
 from pathlib import Path
 
@@ -28,6 +29,8 @@ _TRIM_PATH = Path(__file__).resolve().parent.parent / "scripts" / "njt_fixture_t
 _spec = importlib.util.spec_from_file_location("njt_fixture_trim", _TRIM_PATH)
 trim = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(trim)
+
+import route_geometry  # noqa: E402  (after the path-loaded trim, like the generators)
 
 
 def _calls(pairs) -> dict[str, list[dict]]:
@@ -650,4 +653,215 @@ def test_the_junction_survives_stop_times_rows_arriving_out_of_order():
     stations = trim.west_of_hudson_stops({"OUT"}, shuffled)
     assert stations == set(WEST_OF_HUDSON) | {"Suffern"}, (
         f"the junction must still be found when rows arrive out of order; got {sorted(stations)}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# The seventh member: geometry (15c)
+# ---------------------------------------------------------------------------
+
+
+def _shape_rows(pairs) -> list[dict]:
+    """shapes.txt rows from (shape_id, point count) pairs, in publication order.
+
+    THE POINTS ZIG-ZAG rather than running straight, because the selection
+    simplifies: three collinear points are two after Douglas-Peucker, and a helper
+    that produced them would make every count below a statement about the tolerance
+    instead of about the selection. The deflection here is far larger than
+    NJT_SIMPLIFY_EPS, so every point survives and the counts mean what they say.
+    """
+    return [
+        {
+            "shape_id": shape_id,
+            "shape_pt_sequence": str(seq),
+            "shape_pt_lat": f"{40.7 + 0.01 * (seq % 2):.5f}",
+            "shape_pt_lon": f"{-74.0 - 0.01 * seq:.5f}",
+        }
+        for shape_id, count in pairs
+        for seq in range(1, count + 1)
+    ]
+
+
+def test_referenced_shape_ids_reads_the_trips_and_drops_blanks():
+    trips = [
+        {"trip_id": "T1", "shape_id": "s1"},
+        {"trip_id": "T2", "shape_id": "s2"},
+        {"trip_id": "T3", "shape_id": "s1"},  # a repeat is one shape, not two
+        {"trip_id": "T4", "shape_id": ""},  # a trip may carry no shape
+        {"trip_id": "T5"},  # or no column at all
+    ]
+    assert trim.referenced_shape_ids(trips) == {"s1", "s2"}
+
+
+def test_select_shape_rows_keeps_every_row_of_a_wanted_shape_in_publication_order():
+    rows = _shape_rows([("s1", 3), ("s2", 2), ("s3", 4)])
+    kept = trim.select_shape_rows(rows, {"s1", "s3"})
+    assert [row["shape_id"] for row in kept] == ["s1", "s1", "s1", "s3", "s3", "s3", "s3"]
+    # PUBLICATION ORDER, so the committed file is a faithful slice: the s1 rows keep
+    # their original relative order and still precede s3's, as upstream wrote them.
+    assert [row["shape_pt_sequence"] for row in kept] == ["1", "2", "3", "1", "2", "3", "4"]
+    assert trim.select_shape_rows(rows, set()) == []
+
+
+def test_select_shape_rows_simplifies_and_keeps_the_publications_own_rows():
+    """THE SECOND REDUCTION. A shape whose middle points sit on the straight line
+    between its ends is committed as its ends, and the rows that survive are the
+    publication's own: original coordinate text, original shape_pt_sequence numbers,
+    which therefore SKIP where points were dropped."""
+    straight = [
+        {
+            "shape_id": "s1",
+            "shape_pt_sequence": str(seq),
+            "shape_pt_lat": f"{40.70000 + 0.001 * seq:.5f}",
+            "shape_pt_lon": f"{-74.00000 - 0.001 * seq:.5f}",
+        }
+        for seq in range(1, 6)
+    ]
+    kept = trim.select_shape_rows(straight, {"s1"})
+    assert [row["shape_pt_sequence"] for row in kept] == ["1", "5"]
+    # VERBATIM: the same dict objects, so the text NJ Transit published is what
+    # gets written, never a float reformatted back into a string.
+    assert kept[0] is straight[0] and kept[1] is straight[-1]
+
+    # A BEND KEEPS ITS VERTEX, AND ONLY ITS VERTEX. An explicit V: points 1-2-3 lie
+    # on one straight leg and 3-4-5 on the other, so 2 and 4 are exactly on the legs
+    # that replace them and 3 is the only point the line cannot do without.
+    v_shape = [
+        {
+            "shape_id": "s1",
+            "shape_pt_sequence": str(seq),
+            "shape_pt_lat": f"{lat:.5f}",
+            "shape_pt_lon": f"{lon:.5f}",
+        }
+        for seq, (lat, lon) in enumerate(
+            [
+                (40.700, -74.000),
+                (40.701, -74.001),
+                (40.702, -74.002),
+                (40.703, -74.001),
+                (40.704, -74.000),
+            ],
+            start=1,
+        )
+    ]
+    assert [row["shape_pt_sequence"] for row in trim.select_shape_rows(v_shape, {"s1"})] == [
+        "1",
+        "3",
+        "5",
+    ]
+
+
+def test_what_the_trim_writes_is_a_fixed_point_of_what_the_loader_reads():
+    """THE COUPLING, ON A PUBLICATION WITH MORE DECIMALS THAN THE LOADER KEEPS.
+
+    NJ Transit publishes six decimals (its stops are 40.750568) and the loader
+    rounds every coordinate to five before it simplifies. This trim used to
+    simplify the full-precision text instead, so it decided on points production
+    never sees: a rounding shift of half a metre moved points across the keep/drop
+    threshold and the committed file stopped being a fixed point of the loader's own
+    simplification. Measured before the fix, 82 of 300 synthetic publications like
+    these failed; the guarded fixed-point golden would have gone red on the first
+    real refresh, with no hermetic test to explain why.
+
+    Twenty seeds rather than one, because the failure was data-dependent: any single
+    shape had a better than even chance of passing while the coupling was broken.
+    """
+    for seed in range(20):
+        rnd = random.Random(seed)
+        lat, lon = 40.7, -74.0
+        rows = []
+        for seq in range(1, 120):
+            lat += rnd.gauss(0, 0.00012)
+            lon += rnd.gauss(0, 0.00012)
+            rows.append(
+                {
+                    "shape_id": "s1",
+                    "shape_pt_sequence": str(seq),
+                    "shape_pt_lat": f"{lat:.6f}",
+                    "shape_pt_lon": f"{lon:.6f}",
+                }
+            )
+        committed = trim.select_shape_rows(rows, {"s1"})
+        # What the loader makes of that committed file: parse, round, simplify.
+        parsed = [
+            [
+                round(float(row["shape_pt_lat"]), route_geometry.COORD_PRECISION),
+                round(float(row["shape_pt_lon"]), route_geometry.COORD_PRECISION),
+            ]
+            for row in committed
+        ]
+        again = route_geometry.simplify_polyline(parsed, route_geometry.NJT_SIMPLIFY_EPS)
+        assert again == parsed, (
+            f"seed {seed}: the loader reduces the {len(parsed)} committed points to "
+            f"{len(again)}, so the trim and the loader are not simplifying the same points"
+        )
+
+
+def test_select_shape_rows_skips_a_row_that_is_not_a_point():
+    """The loader skips a malformed shapes row, so the fixture must not carry one:
+    a committed row the loader ignores would make the fixed-point golden compare the
+    file against a parse that never saw all of it."""
+    rows = [
+        {
+            "shape_id": "s1",
+            "shape_pt_sequence": "1",
+            "shape_pt_lat": "40.7",
+            "shape_pt_lon": "-74.0",
+        },
+        {"shape_id": "s1", "shape_pt_sequence": "2", "shape_pt_lat": "", "shape_pt_lon": "-74.1"},
+        {
+            "shape_id": "s1",
+            "shape_pt_sequence": "3",
+            "shape_pt_lat": "40.9",
+            "shape_pt_lon": "-74.2",
+        },
+    ]
+    kept = trim.select_shape_rows(rows, {"s1"})
+    assert [row["shape_pt_sequence"] for row in kept] == ["1", "3"]
+
+
+def test_shapes_txt_is_the_seventh_member_and_the_only_optional_one():
+    """Both facts in one place, because the writers read this tuple to decide what
+    to write and a reader of it has to know one member may be absent."""
+    assert trim.FIXTURE_MEMBERS[-1] == "shapes.txt"
+    assert len(trim.FIXTURE_MEMBERS) == 7
+    assert trim.OPTIONAL_MEMBERS == {"shapes.txt"}
+
+
+def test_the_committed_shapes_are_exactly_what_the_committed_trips_reference():
+    """THE IDENTITY REPLAY'S GEOMETRY HALF: kept shapes == shapes referenced by kept
+    trips, nothing more. Read straight off the two committed files, because that
+    pair is what every route-line golden is built on, and a fixture whose trips
+    point at geometry it does not carry would make those goldens measure the gap
+    instead of the map.
+
+    Guarded on shapes.txt like the line goldens themselves: it skips until the
+    refresh lands and FAILS in CI, rather than passing vacuously in between."""
+    import csv
+    import io
+
+    fixture = Path(__file__).resolve().parent / "fixtures" / "njt_gtfs"
+    shapes_path = fixture / "shapes.txt"
+    if not shapes_path.exists():
+        import os
+
+        import pytest
+
+        reason = (
+            f"golden fixture missing ({shapes_path}); run backend/scripts/gen_njt_fixture.py "
+            "--shapes-only to generate it"
+        )
+        if os.environ.get("CI"):
+            pytest.fail(reason, pytrace=False)
+        pytest.skip(reason)
+
+    def rows(name):
+        text = (fixture / name).read_text(encoding="utf-8-sig")
+        return list(csv.DictReader(io.StringIO(text)))
+
+    referenced = trim.referenced_shape_ids(rows("trips.txt"))
+    committed = {trim.get(row, "shape_id") for row in rows("shapes.txt")} - {""}
+    assert committed == referenced, (
+        f"unreferenced shapes committed: {sorted(committed - referenced)}; "
+        f"referenced shapes missing: {sorted(referenced - committed)}"
     )

@@ -272,7 +272,14 @@ def _raw_static_rows(archive: bytes) -> dict[str, tuple[list[str], list[dict]]]:
     """
     members: dict[str, tuple[list[str], list[dict]]] = {}
     with zipfile.ZipFile(io.BytesIO(archive)) as zf:
+        carried = set(zf.namelist())
         for name in trim.FIXTURE_MEMBERS:
+            if name not in carried and name in trim.OPTIONAL_MEMBERS:
+                # shapes.txt (15c) is the one member a publication may omit. Skipping
+                # it here means the re-trim writes six files and leaves the committed
+                # seventh alone, rather than dying on a KeyError over geometry that
+                # the loader itself treats as optional.
+                continue
             with zf.open(name) as fh:
                 reader = csv.DictReader(io.TextIOWrapper(fh, encoding="utf-8-sig"))
                 members[name] = (list(reader.fieldnames or []), list(reader))
@@ -657,6 +664,25 @@ def main() -> int:
             "stops.txt": (raw_members["stops.txt"][0], kept_stops),
             "trips.txt": (raw_members["trips.txt"][0], kept_trips),
             "stop_times.txt": (raw_members["stop_times.txt"][0], kept_stop_times),
+            # 15c: the seventh member, re-trimmed around THIS capture's trips like
+            # every other one. Written from the kept trips' own shape_ids, so a
+            # capture that widened the trim widens the geometry with it and the
+            # committed pair stays self-consistent. Absent from the dict (and so
+            # from the write) when the publication carried no shapes.txt; the
+            # committed file is then left untouched rather than emptied.
+            **(
+                {
+                    "shapes.txt": (
+                        raw_members["shapes.txt"][0],
+                        trim.select_shape_rows(
+                            raw_members["shapes.txt"][1],
+                            trim.referenced_shape_ids(kept_trips),
+                        ),
+                    )
+                }
+                if "shapes.txt" in raw_members
+                else {}
+            ),
         },
     )
 

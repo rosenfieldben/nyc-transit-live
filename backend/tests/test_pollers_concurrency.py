@@ -15,6 +15,7 @@ where their writes landed in app.state after a new cycle had already started.
 from __future__ import annotations
 
 import asyncio
+import json
 
 import httpx
 import pytest
@@ -531,9 +532,15 @@ def test_c4_first_leaf_picks_the_first_failure_and_descends_nested_groups():
 # ---------------------------------------------------------------------------
 
 
-async def _run_njt_refresh(monkeypatch, cache, raiser):
+async def _run_njt_refresh(monkeypatch, cache, raiser=None, *, fetch=None):
     """Drive _refresh_njt once with a static group that is ready and a fetch that
-    fails the given way, starting from a healthy per-system block."""
+    fails the given way, starting from a healthy per-system block.
+
+    `raiser` is the exception a stubbed fetch raises, which is what almost every
+    caller wants. `fetch` replaces the fetch outright, for the one test that needs
+    the REAL token door to build the failure rather than a hand-made exception: a
+    canary claim about what reaches /api/status is only worth making if the message
+    was produced by the code that produces it in production."""
     app = app_module.app
     monkeypatch.setattr(app.state, "njt_static_status", "ready", raising=False)
     monkeypatch.setattr(app.state, "njt_stops", {"109": {}}, raising=False)
@@ -551,7 +558,7 @@ async def _run_njt_refresh(monkeypatch, cache, raiser):
     async def boom(*_args, **_kwargs):
         raise raiser
 
-    monkeypatch.setattr(app_module, "fetch_njt_trains", boom)
+    monkeypatch.setattr(app_module, "fetch_njt_trains", fetch if fetch is not None else boom)
     await pollers._refresh_njt(app, client=None)
     return entry
 
@@ -561,10 +568,17 @@ async def _run_njt_refresh(monkeypatch, cache, raiser):
     [
         httpx.ConnectError("upstream refused"),
         pollers.njt_auth.NjtAuthError("token rejected"),
+        # A SPENT DAILY MINT BUDGET, a SUBCLASS of the line above, listed here to
+        # prove the subclassing is doing its job. _refresh_njt has no except clause
+        # of its own for this type: it reaches the NjtAuthError handler by
+        # inheritance, and must degrade exactly like every other refused mint once
+        # it gets there. Break the inheritance and this row stops being handled at
+        # all rather than being handled differently.
+        pollers.njt_auth.NjtMintQuotaError(pollers.njt_auth.MINT_QUOTA_MESSAGE),
         pollers.njt_auth.NjtUpstreamError("HTTP 503"),
         DecodeError("not a protobuf"),
     ],
-    ids=["transport", "auth", "upstream", "decode"],
+    ids=["transport", "auth", "mint-quota", "upstream", "decode"],
 )
 async def test_a_failed_njt_poll_marks_its_own_system_block_not_just_the_cache_error(
     monkeypatch, cache, raiser
@@ -745,3 +759,85 @@ async def test_the_alert_refresher_actually_reconciles_before_it_polls(monkeypat
         "reporting itself healthy"
     )
     assert set(entry["health"]) == set(pollers.active_alert_feeds())
+
+
+async def test_a_spent_mint_budget_degrades_nj_transit_alone(monkeypatch, cache):
+    """THE "OTHERWISE NOTHING CHANGES" CLAIM AT THE POLLER.
+
+    NJ Transit refuses the eleventh mint of an Eastern day (observed 2026-09-02),
+    and njt_auth reports that as NjtMintQuotaError, a SUBCLASS of NjtAuthError. The
+    poller has no except clause for it: it lands in the NjtAuthError handler by
+    inheritance, which is where every other caller relies on it landing too. Once
+    there the failure is a 502 (the upstream answered, it just refused us), the
+    last-known trains are retained and drawn as stale, and no other feed in the
+    cache is touched. Nothing retries harder, which is the property that matters
+    most on this particular failure, since every extra attempt is charged to the
+    same budget it is waiting on.
+
+    THE HANDLER BRANCHES ON THE TYPE, IT DOES NOT CATCH IT SEPARATELY, and this test
+    is one of the three that notice the difference: a sibling type would escape
+    _refresh_njt entirely rather than reach a differently worded failure.
+
+    The fixed string reaching the cache error is what makes the state legible on
+    /api/status; /healthz says the same thing as a code, off the token cache."""
+    refusal = pollers.njt_auth.NjtMintQuotaError(pollers.njt_auth.MINT_QUOTA_MESSAGE)
+    entry = await _run_njt_refresh(monkeypatch, cache, refusal)
+    assert entry["error"]["status"] == 502
+    # THE FIXED STRING ALONE. The sibling NjtAuthError arm prefixes its detail with
+    # "NJ Transit rejected our credentials", which is true of a refused token and
+    # false of a spent budget: the credentials are fine and there is nothing to fix
+    # but the clock. Equality rather than containment, so the prefix cannot creep
+    # back by being appended somewhere else.
+    assert entry["error"]["detail"] == pollers.njt_auth.MINT_QUOTA_MESSAGE
+    assert "rejected our credentials" not in entry["error"]["detail"]
+    assert entry["data"] == [{"id": "T1"}], "a refused mint keeps the last-known trains"
+    assert entry["systems"]["njt"]["ok"] is False, "and they are drawn as stale"
+    # NJ TRANSIT ALONE. Every other registered feed is untouched by this poll, which
+    # is what "one layer degrades" means on the surface the client reads.
+    for name, other in cache.items():
+        if name != "njt":
+            assert other["error"] is None, f"{name} must be untouched by an NJT refusal"
+            assert other["data"] is None
+
+
+async def test_the_gettoken_body_never_reaches_api_status(monkeypatch, cache):
+    """THE F3 CANARY ON THE /api/status PATH, through the real door.
+
+    This test does not hand _refresh_njt a hand-made exception. It lets the poller
+    call njt_auth.njt_post against a transport serving the actual refusal, an HTTP
+    500 whose errorMessage begins with the observed prefix and whose TAIL carries a
+    token-shaped canary. So the message under test is built by the code that builds
+    it in production, and the claim covers every frame between the socket and the
+    field an operator reads.
+
+    The refusal body is the one getToken response the app is now allowed to READ, so
+    "reads it" and "quotes it" have to be visibly different things at this boundary
+    too: the detail is njt_auth's constant exactly, and nothing after the prefix
+    travels with it.
+    """
+    canary = "canary-tok-0123456789"
+    refusal = json.dumps(
+        {"errorMessage": f"Daily usage limit of 10 reached. Token {canary} was the last."}
+    ).encode()
+
+    async def transport(url, form, timeout_s):
+        return 500, refusal
+
+    async def through_the_real_door(*_args, **_kwargs):
+        return await pollers.njt_auth.njt_post(
+            "https://njt.example/getTripUpdates",
+            cache=pollers.njt_auth.TokenCache(),
+            transport=transport,
+            env={
+                pollers.njt_auth.USERNAME_VAR: "rider",
+                pollers.njt_auth.PASSWORD_VAR: "secret",
+            },
+            token_url="https://njt.example/getToken",
+        )
+
+    entry = await _run_njt_refresh(monkeypatch, cache, fetch=through_the_real_door)
+    detail = entry["error"]["detail"]
+    assert detail == pollers.njt_auth.MINT_QUOTA_MESSAGE
+    assert canary not in detail, "the getToken body reached /api/status"
+    assert "Daily usage limit" not in detail, "not even the part we matched on"
+    assert entry["error"]["status"] == 502

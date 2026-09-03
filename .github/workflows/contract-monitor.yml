@@ -103,11 +103,21 @@ jobs:
           # STILL EXACTLY ONE MINT PER RUN, though 15b added two more consumers.
           # The run's token is built once in run_all and shared by njt-static (the
           # archive) and njt-realtime (trip updates AND alerts); see _NjtToken. At
-          # the 6-hourly cadence above that is four mints a day against a rate
-          # limit NJ Transit does not publish, and it stays four rather than
-          # twelve because the sharing is structural, not conventional. A hermetic
-          # test asserts the count against run_all, which is the only place the
-          # sharing is expressed.
+          # the 6-hourly cadence above that is four mints a day, and it stays four
+          # rather than twelve because the sharing is structural, not conventional.
+          # A hermetic test asserts the count against run_all, which is the only
+          # place the sharing is expressed.
+          #
+          # FOUR IS A LARGE SHARE OF WHAT THERE IS. NJ Transit issues TEN tokens per
+          # account per Eastern day (observed 2026-09-02; every attempt counts, and
+          # the eleventh comes back HTTP 500 with an errorMessage beginning "Daily
+          # usage limit"). Production spends two more from its own twelve-hour token
+          # ceiling, and it uses THE SAME ACCOUNT, so this job's four plus
+          # production's two is six of the ten before anyone deploys, dispatches
+          # this workflow by hand, or pulls a fixture. Anything added here comes out
+          # of the four that are left, and running out takes NJ Transit dark for
+          # riders, not just for the monitor. The full arithmetic is at
+          # njt_auth.DAILY_MINT_LIMIT.
           NJT_USERNAME: ${{ secrets.NJT_USERNAME }}
           NJT_PASSWORD: ${{ secrets.NJT_PASSWORD }}
         run: python scripts/contract_monitor.py

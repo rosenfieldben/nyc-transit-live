@@ -185,8 +185,10 @@ def _download() -> tuple[bytes, bytes, bytes, float]:
     ONE TOKEN FOR ALL THREE, which is not an optimization but the same
     single-flight cache the app relies on: njt_auth.njt_post takes its token from
     a process-wide cache and re-mints at most once per attempt. A regeneration
-    therefore costs one token against a rate limit NJ Transit does not publish,
-    exactly as a production poll cycle does.
+    therefore costs one token, exactly as a production poll cycle does, out of the
+    ten NJ Transit allows this account per Eastern day (njt_auth.DAILY_MINT_LIMIT,
+    observed 2026-09-02). Running both generators on the same day spends 2 of the 4
+    that are not already committed to the monitor and to production.
 
     THE STATIC ARCHIVE IS FETCHED HERE, AND THAT IS THE FIX. The join check below
     has to ask "do these live trips exist in the schedule this feed is running

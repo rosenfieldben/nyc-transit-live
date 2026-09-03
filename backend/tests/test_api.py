@@ -20,6 +20,7 @@ import bus_static
 import feeds
 import main as app_module
 import models
+import njt_auth
 import warmups
 from tests import negatives
 
@@ -906,6 +907,37 @@ async def test_healthz_gating_reasons_all_appear_as_codes(client, healthz_env, m
         models.HEALTH_FEED_CONTENT_STALE,
     ]
     assert len(res.json()["reasons"]) == 3, "the non-gating code must not reach reasons"
+
+
+async def test_healthz_publishes_a_spent_njt_mint_budget_without_gating_on_it(
+    client, healthz_env, monkeypatch
+):
+    """THE ONE DEGRADED CODE THAT IS NOT A SICKNESS. NJ Transit issues ten tokens
+    per account per Eastern day (observed 2026-09-02, njt_auth.DAILY_MINT_LIMIT) and
+    this deployment shares that account with the contract monitor. When the budget
+    is spent the NJ Transit layer goes dark while NJ Transit itself is perfectly
+    healthy, and every other signal the app publishes says what a real outage says.
+
+    NEVER 503, and the reason is sharper than for the other non-gating codes: a
+    restart does not merely fail to help, it mints on the fresh process's first NJ
+    Transit request and spends another of the ten that already ran out."""
+    _fresh(healthz_env["buses"])
+    monkeypatch.setattr(njt_auth.TOKEN_CACHE, "mint_quota_refused", True)
+    res = await client.get("/healthz")
+    assert res.status_code == 200, "a spent budget must never restart the container"
+    assert res.json()["status"] == "pass"
+    assert models.HEALTH_NJT_MINT_QUOTA in res.json()["degraded"]
+    assert "reasons" not in res.json(), "the non-gating code must not reach reasons"
+
+
+async def test_healthz_is_quiet_about_njt_when_no_mint_has_been_refused(client, healthz_env):
+    """The other side, and it is what makes the test above mean anything: the code
+    is absent by default, including on a deployment with no NJ Transit credentials
+    at all, which never mints and so can never be refused."""
+    _fresh(healthz_env["buses"])
+    assert njt_auth.TOKEN_CACHE.mint_quota_refused is False
+    res = await client.get("/healthz")
+    assert res.json() == {"status": "pass", "degraded": []}
 
 
 @pytest.mark.parametrize(

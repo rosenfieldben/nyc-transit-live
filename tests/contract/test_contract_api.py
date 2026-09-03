@@ -18,7 +18,7 @@ import json
 import time
 
 from conftest import CONTRACT_TIMING
-from upstream_sim import SUBWAY_GROUPS
+from upstream_sim import NJT_QUOTA_CANARY, SUBWAY_GROUPS
 
 
 def _system(body: dict, name: str) -> dict:
@@ -619,7 +619,7 @@ def test_njt_bad_publication_stays_failed_then_heals(harness):
 
         # RETRIES DO NOT RE-MINT. The token is still good, so the cache hands the
         # same one to every attempt; a loader that minted per attempt would burn
-        # through an unpublished rate cap during any upstream outage.
+        # through the account's ten mints a day during any upstream outage.
         assert app.sim.mint_requests() == 1, (
             f"repeated failed attempts must reuse one token, got "
             f"{app.sim.mint_requests()} getToken POSTs"
@@ -648,7 +648,7 @@ def test_njt_token_expiry_costs_exactly_one_extra_mint(harness):
     THE ASSERTION IS ARITHMETIC, not a log line: exactly two mints across the whole
     scenario. One for the cold cache, one to replace the token that died, and no
     more, because "re-mint once" must be structural rather than a convention that
-    drifts into a loop against an unpublished rate cap.
+    drifts into a loop against a cap of ten mints a day.
 
     Hermetic counterpart:
     backend/tests/test_njt_auth.py::test_one_remint_then_the_attempt_fails.
@@ -687,9 +687,9 @@ def test_a_real_njt_500_neither_mints_nor_heals(harness):
     """THE CONTROL for the scenario above, and it is not optional.
 
     Same status code, different body: a genuine NJ Transit fault. The app must NOT
-    re-mint (mints are rate-limited below the data cap, the limit is unpublished,
-    and spending them on someone else's outage is how an integration gets itself
-    throttled) and it MUST classify the attempt as a failure.
+    re-mint (mints are rate-limited below the data cap, at ten per account per
+    Eastern day, and spending them on someone else's outage is how an integration
+    takes its own layer dark) and it MUST classify the attempt as a failure.
 
     Loosening njt_auth.is_auth_error to "any HTTP 500" passes the expiry scenario
     above and fails HERE, which is what makes that mutation detectable; the 15a
@@ -712,6 +712,84 @@ def test_a_real_njt_500_neither_mints_nor_heals(harness):
         assert app.status()["njt_static"] == "failed"
         assert app.status()["static_archives"]["njt"]["failed_downloads"] >= 1
         assert app.get("/api/subway-stops"), "one failing system must not take the app down"
+
+
+def test_njt_a_spent_mint_budget_is_reported_as_a_budget_not_an_outage(harness):
+    """THE DAILY CAP, END TO END, and it is the third thing an HTTP 500 can mean.
+
+    NJ Transit issues ten tokens per account per Eastern day (observed 2026-09-02)
+    and refuses the eleventh with an HTTP 500 whose errorMessage begins "Daily usage
+    limit". That is the same status a dead token carries and the same status a
+    genuine fault carries, so this scenario runs beside those two rather than
+    replacing either: three answers, one status code, told apart by the body alone.
+
+    WHAT THE APP MUST DO, and each half is asserted here:
+
+      1. NOTHING NEW. The NJT group fails and retries on its rung schedule, the rest
+         of the app is untouched, and no attempt re-mints. A refusal that says "you
+         have spent your budget" is the single worst response to retry harder at,
+         because every retry is charged to the budget it is waiting on.
+      2. SAY WHICH 500 IT WAS. /healthz publishes njt-mint-quota, and the log carries
+         njt_auth's fixed string. Without this the operator's only signal is
+         njt_static "failed", which is what a real NJ Transit outage looks like.
+
+    THE PROBE MUST STILL ANSWER 200. A spent budget is not a reason to restart the
+    container: Railway would, the fresh process would mint on its first NJ Transit
+    request, and that spends another of the ten that already ran out.
+
+    Hermetic counterparts:
+    backend/tests/test_njt_auth.py::test_a_refused_mint_raises_the_fixed_string_and_nothing_from_the_body,
+    backend/tests/test_api.py::test_healthz_publishes_a_spent_njt_mint_budget_without_gating_on_it.
+    """
+    harness.sim.set_token_mode("quota")
+    with harness.launch() as app:
+        app.await_status(
+            lambda s: s["njt_static"] == "failed",
+            "the NJT group to fail once its mints for the day are gone",
+        )
+        # THE CODE, off the live probe. This is the only surface that distinguishes
+        # this run from test_a_real_njt_500_neither_mints_nor_heals, whose /api/status
+        # looks identical.
+        health = app.await_healthz(
+            lambda body: "njt-mint-quota" in body.get("degraded", []),
+            "/healthz to publish the spent NJ Transit budget",
+        )
+        assert health["status"] == "pass", health
+        assert "reasons" not in health, "a spent budget must never gate the probe"
+
+        # LET SEVERAL ATTEMPTS HAPPEN, so what follows is a claim about a RETRYING
+        # app rather than one that has tried once. await_mints rather than a bare
+        # read of the counter: the rungs are 1s/2s/3s in this tier and the probe can
+        # publish the code before the second attempt lands, so reading the counter
+        # here would be a race that passes on a slow machine and fails on a fast one.
+        harness.sim.await_mints(3)
+        # And each of those attempts cost exactly ONE getToken, with no archive
+        # fetch behind a token that was never issued. That is what "no retry loop"
+        # means on the wire: the app is not doubling up inside an attempt, only
+        # trying again on the schedule the warmup owns.
+        assert harness.sim.gtfs_requests() == 0, (
+            "a mint that was refused must never be followed by an archive fetch"
+        )
+
+        # THE F3 CANARY, at the socket. The app now READS this body, so "reads it"
+        # and "quotes it" have to be visibly different: the fixed string is present,
+        # the refusal's tail is not.
+        log = app.log(limit=200_000)
+        assert "NJ Transit daily mint limit reached" in log, log[-2000:]
+        assert NJT_QUOTA_CANARY not in log, "the getToken body reached the log"
+
+        # ONE LAYER, and the rest of the app is entirely well.
+        assert app.get("/api/subway-stops"), "a spent NJT budget must not dim anything else"
+
+        # AND IT CLEARS ITSELF. Eastern midnight is not reachable from a test, but
+        # the mechanism is: the flag tracks the most recent mint attempt, so the
+        # first one that succeeds retires the code with no clock involved.
+        harness.sim.set_token_mode("ok")
+        app.await_status(
+            lambda s: s["njt_static"] == "ready",
+            "the group to heal on the first mint that is not refused",
+        )
+        assert "njt-mint-quota" not in app.healthz()["degraded"]
 
 
 def test_njt_a_redirected_mint_never_delivers_the_credentials(harness):

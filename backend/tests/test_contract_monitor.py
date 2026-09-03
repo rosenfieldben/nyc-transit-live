@@ -1483,10 +1483,11 @@ def test_production_non_json_is_fail():
 # NJ Transit static (credentialed, mint-conserving)
 # ---------------------------------------------------------------------------
 #
-# The check has one property no other check here has: it SPENDS something. Minting
-# is rate-limited below the data cap and the limit is unpublished, so "exactly one
-# mint per run" is asserted directly rather than trusted, and the WARN-skip with no
-# credentials is asserted to make no request at all.
+# The check has one property no other check here has: it SPENDS something. NJ
+# Transit issues ten tokens per account per Eastern day (njt_auth.DAILY_MINT_LIMIT,
+# observed 2026-09-02) and this job shares the account with production, so "exactly
+# one mint per run" is asserted directly rather than trusted, and the WARN-skip with
+# no credentials is asserted to make no request at all.
 
 NJT_TOKEN = "https://njt.example/getToken"
 NJT_DATA = "https://njt.example/getGTFS"
@@ -1900,10 +1901,12 @@ def test_run_all_mints_exactly_one_token_for_both_njt_checks():
 
     By 15b three RailData consumers run in one pass (the static archive, the
     realtime trip updates, and the realtime alerts). Minting is rate-limited below
-    the data cap, the limit is unpublished, and tokens are product-scoped so we
-    cannot read our own usage. A wiring mistake that let each check mint its own
-    would leave every check PASSING and quietly triple what the 6-hourly schedule
-    spends, which is exactly the kind of defect no per-check test can see.
+    the data cap at ten a day per account (njt_auth.DAILY_MINT_LIMIT, observed
+    2026-09-02), and tokens are product-scoped so we cannot read our own usage.
+    Production shares that account, so this job overspending takes NJ Transit dark
+    for RIDERS, not just for the run. A wiring mistake that let each check mint its
+    own would leave every check PASSING and quietly triple what the 6-hourly
+    schedule spends, which is exactly the kind of defect no per-check test can see.
 
     Asserted against run_all rather than either check, because run_all is the only
     place the sharing is expressed.
@@ -1942,7 +1945,7 @@ def test_run_all_mints_exactly_one_token_for_both_njt_checks():
     assert len(mints) == 1, (
         f"one token for the whole run, got {len(mints)}. Each NJ Transit check "
         "minting its own would pass every other test here and triple what the "
-        "schedule spends against an unpublished cap."
+        "schedule spends out of the account's ten a day."
     )
     # Non-vacuous: all three consumers really did fetch behind that one token.
     assert cm.njt_static.NJT_STATIC_URL in calls
@@ -1951,6 +1954,63 @@ def test_run_all_mints_exactly_one_token_for_both_njt_checks():
     by_name = {r.name: r for r in results}
     assert by_name["njt-static"].status == cm.PASS, by_name["njt-static"].detail
     assert by_name["njt-realtime"].status == cm.PASS, by_name["njt-realtime"].detail
+
+
+def test_run_all_a_failed_mint_fails_both_njt_checks_with_the_same_reason():
+    """THE OTHER HALF OF THE CONSERVATION CLAIM, and the half a mint counter cannot
+    make. One token per run is only correct if the FAILURE is shared too: a run
+    whose mint is refused must fail both NJ Transit checks off that one refusal,
+    rather than the second check quietly trying again on its own.
+
+    The assertion is therefore the count AND the two details together. Each check
+    minting for itself would produce two getToken POSTs here and could produce two
+    different-looking failures, which is the shape that turns one refused mint into
+    two spent attempts against a budget of ten a day.
+
+    A REFUSED BUDGET IS THE RIGHT REFUSAL TO TEST IT WITH, because it is the one
+    where a second attempt is worst: it is charged to the same ten it is waiting on.
+    _NjtToken remembers the failure rather than re-minting, and both checks read
+    that memory.
+    """
+    calls = []
+
+    def fetch(url, headers=None, params=None, files=None):
+        calls.append(url)
+        if url == cm.njt_auth.NJT_TOKEN_URL:
+            return cm.FetchResult(500, NJT_QUOTA_REFUSAL)
+        return cm.FetchResult(500, b"")
+
+    results = cm.run_all(
+        fetch,
+        NO_SLEEP,
+        NJT_RT_NOW,
+        env={
+            "NJT_USERNAME": "rider",
+            "NJT_PASSWORD": "secret",
+            "MONITOR_SKIP_PRODUCTION": "1",
+        },
+    )
+    mints = [url for url in calls if url == cm.njt_auth.NJT_TOKEN_URL]
+    assert len(mints) == 1, (
+        f"one refused mint must be remembered, not repeated, got {len(mints)} getToken POSTs"
+    )
+    by_name = {r.name: r for r in results}
+    expected = f"mint failed ({cm.njt_auth.MINT_QUOTA_MESSAGE})"
+    assert by_name["njt-static"].status == cm.FAIL
+    assert by_name["njt-realtime"].status == cm.FAIL
+    assert by_name["njt-static"].detail == expected
+    assert by_name["njt-realtime"].detail == expected, (
+        "both checks must fail off the SAME refusal; a second, differently worded "
+        "failure means the realtime check minted for itself"
+    )
+    # Non-vacuous: neither check went on to fetch behind a token it never got.
+    assert cm.njt_static.NJT_STATIC_URL not in calls
+    assert cm.njt_feed.NJT_TU_URL not in calls
+    assert cm.njt_feed.NJT_ALERTS_URL not in calls
+    # And NJ Transit alone is dark. Every other upstream in this run is answering
+    # 500 too, so the useful claim is the reverse one: nothing about the shared
+    # token stopped the other checks from running and reporting for themselves.
+    assert {"subway-static", "railroad-static", "alerts-realtime"} <= set(by_name)
 
 
 def test_run_all_does_not_mint_at_all_without_credentials():
@@ -2036,10 +2096,11 @@ def test_njt_static_skipped_without_credentials():
         # contract_monitor imports env_seams (which runs load_dotenv), so an operator
         # who copied it and edited only the bus key hands these straight through. A
         # bare `if not username or not password` reads them as configured and POSTs
-        # a doomed mint to the live getToken endpoint against the unpublished cap,
-        # then reports the rejection as an NJ Transit outage rather than the promised
-        # WARN-skip. Routing the guard through njt_auth.credentials is what keeps the
-        # monitor's idea of "configured" identical to the app's, by construction.
+        # a doomed mint to the live getToken endpoint, out of the ten a day the
+        # account gets, then reports the rejection as an NJ Transit outage rather
+        # than the promised WARN-skip. Routing the guard through njt_auth.credentials
+        # is what keeps the monitor's idea of "configured" identical to the app's,
+        # by construction.
         ("your-njt-username", "your-njt-password"),
         ("realuser", "your-njt-password"),  # the realistic half-edit
     ]
@@ -2096,13 +2157,20 @@ CANARY = "canary-tok-0123456789"
 # this file, so a followed redirect is a recorded request naming this host.
 ELSEWHERE = "https://elsewhere.example/collect"
 
+# The daily-cap refusal, observed 2026-09-02: HTTP 500 with an errorMessage that
+# BEGINS "Daily usage limit". The canary rides in the tail, which is the part the
+# monitor must never repeat into a job summary.
+NJT_QUOTA_REFUSAL = json.dumps(
+    {"errorMessage": f"Daily usage limit of 10 reached. Token {CANARY} was the last."}
+).encode()
+
 
 def test_njt_static_mint_failure_fails_and_never_quotes_the_body():
     """INVERTED by Audit 4 (F3). This test used to assert the 401 body reached the
     operator, on the reasoning that it is the only place NJ Transit says why. For
     getToken that reasoning loses: the body may be the token, at any status, so the
     detail names the status and nothing else. And a failed mint is still not
-    retried: that would be two mints against an unpublished cap."""
+    retried: that would be two of the day's ten mints."""
     fetch = _StatusFetcher(NJT_TOKEN, 401, json.dumps({"errorMessage": CANARY}).encode())
     result, parsed = _check_njt(fetch)
     assert result.status == cm.FAIL
@@ -2151,6 +2219,43 @@ def _redirecting_client():
         return httpx.Response(307, headers={"Location": ELSEWHERE})
 
     return (lambda: httpx.Client(transport=httpx.MockTransport(handler))), seen
+
+
+def test_njt_static_a_spent_daily_budget_is_named_and_never_quoted():
+    """THE REFUSAL THAT USED TO LOOK LIKE AN OUTAGE. NJ Transit issues ten tokens
+    per account per Eastern day (observed 2026-09-02) and refuses the eleventh with
+    an HTTP 500, which reached the job summary as "mint failed (HTTP 500)": exactly
+    what a dead getToken endpoint says. A run at 06:17 therefore sent whoever read
+    it hunting an NJ Transit outage when the real answer was that the account's
+    mints were gone until midnight, and that the monitor's own four are a large
+    share of them.
+
+    The detail is njt_auth's constant, matched against njt_auth's literal prefix, so
+    F3 is intact on this arm too: reading the body is not quoting it, and the canary
+    in the refusal's tail must appear nowhere. And it is STILL not retried, which
+    matters more here than anywhere else: a retry would be charged to the very
+    budget the refusal is about."""
+    fetch = _StatusFetcher(NJT_TOKEN, 500, NJT_QUOTA_REFUSAL)
+    result, parsed = _check_njt(fetch)
+    assert result.status == cm.FAIL
+    assert result.detail == f"mint failed ({cm.njt_auth.MINT_QUOTA_MESSAGE})"
+    assert "HTTP 500" not in result.detail, "a spent budget is not an anonymous 500"
+    assert CANARY not in result.detail, "the getToken body must never reach a detail"
+    assert parsed is None
+    assert len(fetch.calls) == 1, "a refused mint must not be retried"
+
+
+def test_njt_static_a_real_getToken_500_is_still_reported_by_status_alone():
+    """THE CONTROL. Same status, a body that is not the refusal: getToken really is
+    down, and the detail must say so rather than blaming a budget that has not been
+    spent. Loosening the sniff to "any 500 from getToken" passes the test above and
+    fails here, which is what makes that mutation detectable."""
+    fetch = _StatusFetcher(NJT_TOKEN, 500, json.dumps({"errorMessage": CANARY}).encode())
+    result, _parsed = _check_njt(fetch)
+    assert result.status == cm.FAIL
+    assert result.detail == "mint failed (HTTP 500)"
+    assert cm.njt_auth.MINT_QUOTA_MESSAGE not in result.detail
+    assert CANARY not in result.detail
 
 
 def test_the_post_arm_never_follows_a_redirect():
@@ -2215,8 +2320,8 @@ def test_njt_static_an_invalid_token_500_is_reported_as_unreachable():
 
     The monitor deliberately does NOT re-mint here: it has already spent its one
     mint, and a token that died between minting and fetching (seconds apart) is a
-    real fault worth a human look rather than another mint against an unpublished
-    cap. _fetch_retrying reports it as an unreachable upstream, which is a FAIL.
+    real fault worth a human look rather than another of the day's ten mints.
+    _fetch_retrying reports it as an unreachable upstream, which is a FAIL.
     """
 
     class _MintThenReject:
@@ -2609,6 +2714,32 @@ def test_the_health_url_comes_off_the_same_variable_in_every_form(configured):
 
 
 # ---- the four degraded states, each seen to fire ----
+
+
+def test_the_quota_code_is_explained_in_words_and_the_others_are_not():
+    """A CODE THAT READS LIKE AN OUTAGE AND IS NOT ONE NEEDS A SENTENCE. Every other
+    code names something broken, so its name is the whole instruction. "njt-mint-quota"
+    names a budget that is spent: the layer really is dark, nothing upstream is
+    wrong, and the two obvious reactions (redeploy, or dispatch this workflow to
+    check again) each spend one of the mints that ran out. So the summary says that,
+    out of the monitor's OWN literal, keyed by a code from its own tuple. Nothing
+    from the wire is echoed, which is the rule _check_production_health is built on.
+    """
+    fetch = _healthy_prod(health=_healthz_json(status="pass", degraded=["njt-mint-quota"]))
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
+    health = next(r for r in results if r.name == "production:healthz")
+    assert health.status == cm.FAIL
+    assert "njt-mint-quota" in health.detail
+    assert "Eastern day" in health.detail and "not an NJ Transit outage" in health.detail
+
+    # The others stay bare: a note per code would be a glossary nobody reads.
+    other = _healthy_prod(health=_healthz_json(status="pass", degraded=["feed-content-stale"]))
+    detail = next(
+        r
+        for r in cm.check_production(other, NO_SLEEP, 1000.0, _PROD_BASE)
+        if r.name == "production:healthz"
+    ).detail
+    assert detail == "degraded: feed-content-stale"
 
 
 @pytest.mark.parametrize("code", cm.PRODUCTION_HEALTH_CODES)

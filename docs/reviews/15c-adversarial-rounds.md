@@ -292,8 +292,8 @@ two are Part 1b's M2 and this round's F16.
 
 Recorded when the phase left the branch, for the reason the 15b entry gives: a
 review record that stops at its last fix cannot say whether the thing it reviewed
-ever worked. Every line below was measured after the merge. Two of them could not be
-measured from where this entry was written, and both say so rather than assert a
+ever worked. Every line below was measured after the merge. One of them still cannot
+be measured from where this entry is written, and it says so rather than assert a
 number.
 
 **Merged as `fa494a5`, and it is a true merge.** Two parents, `dd64707` (main, at PR
@@ -377,11 +377,46 @@ witness it either.** Three separate lines look like they might and none of them 
   stations and trains and still reports ready.
 - `production:feeds` counts feeds, per the paragraph above.
 
-So the witness for route lines actually reaching a rider is the rider's own screenshot
-of 2026-09-03, plus a direct read of `/api/njt-routes` against the deployment. **This
-entry did not make that read.** It is named here as the outstanding measurement rather
-than folded into the green runs above, because a monitor that cannot see a dark route
-layer cannot be cited as having seen a live one.
+So the witness for route lines actually reaching a rider has to come from outside the
+monitor: the rider's own screenshot of 2026-09-03, and a direct read of
+`/api/njt-routes` against the deployment. That read is below, kept separate from the
+green runs above rather than folded into them, because a monitor that cannot see a
+dark route layer cannot be cited as having seen a live one.
+
+**The direct read, and it is the route-geometry witness this section was missing.**
+`GET /api/njt-routes` against production at 2026-09-04T14:37:54Z: **HTTP 200**,
+`application/json`, **34,449 bytes**.
+
+| Measure | Served by production | Committed fixture |
+| --- | --- | --- |
+| Routes | 11 | 11 |
+| Polylines | 15 | 15 |
+| Points | 1,609 | 1,609 |
+| Routes drawing two variants | 2, 7, 8, 10 | 2, 7, 8, 10 |
+
+The two columns agree, and they agree per route rather than only in total: 1/74,
+2/306, 5/189, 6/187, 7/336, 8/224, 9/47, 10/129, 13/58, 14/8, 15/51 as
+(route, points) on both sides. The fixture column is
+`njt_static.build_njt_route_shapes` run over the committed `njt_gtfs` members, which is
+the same call the goldens make.
+
+**Why these are the numbers that settle it, and not merely numbers.** An empty list
+would have been a 200 as well, and `njt_static_status` would still have read `ready`,
+which is the exact ambiguity the three monitor lines above cannot resolve; 34,449 bytes
+of geometry is the thing an `[]` cannot fake. The 11 is the golden's own assertion
+(`len(built) == 11`, with the twelfth route, the event-only Meadowlands Rail Line,
+absent by name rather than by arithmetic), so production is serving neither more nor
+fewer lines than the record says it should. The 15 against 11 is the dedup having run
+in production exactly as it ran in the fixture: four routes keep a second variant and
+the rest collapse to one, which is what `_check_variant_counts_are_bounded` asserts as
+a bound and this read pins as a number. And 1,609 points is the simplification having
+survived the trip through the deployment: unsimplified, this geometry is the 195,545
+rows and 6.9 MB that Part 1b's second defect was about.
+
+**What the read does not establish.** It proves the payload a browser receives, not
+what the browser drew with it. The rider's screenshot of 2026-09-03 remains the only
+witness that these polylines reached a map as visible lines, and that half of the
+question is still evidenced by a human's eyes rather than by a measurement.
 
 **The mint budget in force at this deploy.** PR 96 shipped `MAX_TOKEN_AGE_S` at twelve
 hours, and the arithmetic that ceiling produces is now the one running in production:

@@ -285,3 +285,140 @@ again while the clock walks past the threshold. **C2g was written for exactly th
 and M4 dies on it. This is the third time in this phase that a mutation's predicted
 victim was wrong and the measurement was worth more than the prediction; the other
 two are Part 1b's M2 and this round's F16.
+
+---
+
+## Close-out: 15c in production
+
+Recorded when the phase left the branch, for the reason the 15b entry gives: a
+review record that stops at its last fix cannot say whether the thing it reviewed
+ever worked. Every line below was measured after the merge. Two of them could not be
+measured from where this entry was written, and both say so rather than assert a
+number.
+
+**Merged as `fa494a5`, and it is a true merge.** Two parents, `dd64707` (main, at PR
+96's merge) and `a52532c` (the branch tip), at 2026-09-03T14:43:14Z, from PR 97 "15c:
+NJ Transit route lines from shapes.txt and map layer". Neither a squash nor a
+fast-forward, which is what keeps the ledger at the top of this file addressable:
+
+| Pinned hash | Resolves to | Ancestor of main |
+| --- | --- | --- |
+| `ba2ee26` | `ba2ee267fb74d7632efa859991765dcbd47bace1` | yes |
+| `e62bb78` | `e62bb78a4dd8ca1b0ceae6e40c0a3945258e3a77` | yes |
+| `468fdad` | `468fdadfafc7f7fb5de8d2c86c67a61b7d6566e3` | yes |
+| `7ef0353` | `7ef0353928880fed63253aad626ed0a0b615c56e` | yes |
+
+Checked with `git merge-base --is-ancestor` against main at `fa494a5`, not by reading
+the branch. The first three are the Round 1 and Round 1b ledger, which is the whole
+record for those rounds; the fourth is the 15b close-out this entry is written in the
+form of. A squash would have left all four unreachable from main and turned that
+ledger into four dangling citations, which is why the merge shape is recorded as a
+fact rather than assumed from the PR being green.
+
+**PR 97 CI green.** Ten check runs on `a52532c`, every one `success`, across the five
+jobs the pipeline runs: `backend-tests`, `frontend-tests`, `frontend-e2e`,
+`contract-api`, `contract-e2e`. Ten rather than five because the head commit was built
+twice, once on `push` and once for the pull request.
+
+| Workflow run | Event | Started | Finished | Jobs |
+| --- | --- | --- | --- | --- |
+| #449 | `push` | 2026-09-03T14:09:07Z | 2026-09-03T14:13:44Z | 5 of 5 success |
+| #450 | `pull_request` | 2026-09-03T14:37:52Z | 2026-09-03T14:42:19Z | 5 of 5 success |
+
+Per job, #449 then #450: `backend-tests` 34s and 48s, `frontend-tests` 10s and 7s,
+`contract-e2e` 2m54s and 3m28s, `frontend-e2e` 3m54s and 3m50s, `contract-api` 4m31s
+and 4m23s. Both runs are on `a52532c` itself, which is the merge of `dd64707` into the
+branch, so the five jobs were green on the exact tree the merge published rather than
+on a pre-merge branch tip.
+
+**Deployed, and the gap between merge and serve is small enough to pin.** The
+production deployment for `fa494a5` (GitHub deployment `6246319039`) went
+`in_progress` at 2026-09-03T14:43:19Z, five seconds after the merge commit, and
+`success` at 14:44:00Z. The deployment it replaced was marked `inactive` at 14:44:03Z.
+
+**The first two green monitor runs on the deployed code.** The 6-hourly contract
+monitor has run four times on `fa494a5` and every one is green; the first two are the
+record here.
+
+| Monitor run | Head | Job start | `njt-static` | `njt-realtime` | `production:feeds` | Totals |
+| --- | --- | --- | --- | --- | --- | --- |
+| #215 | `fa494a5` | 2026-09-03T16:30:13Z | **WARN** (standing) | PASS, 63 trip updates | PASS, 6 feeds fresh | 0 FAIL, 3 WARN, 18 checks total |
+| #216 | `fa494a5` | 2026-09-03T21:06:29Z | **WARN** (standing) | PASS, 103 trip updates | PASS, 6 feeds fresh | 0 FAIL, 3 WARN, 18 checks total |
+
+Runs #217 (2026-09-04T04:40Z, 44 trip updates) and #218 (2026-09-04T11:25Z, 143 trip
+updates) have since reported the same three lines and the same totals.
+
+**`njt-static` is a WARN in both runs, not a PASS, and the distinction is the
+entry's.** The check reaches upstream and parses the archive successfully; it warns,
+and it is the same standing warning recorded at the end of this section. A WARN never
+fails a run, so "green" and "PASS njt-static" are not the same claim, and only the
+first one is true here.
+
+**`production:feeds` reads 6 in both runs, and it does not step across this merge.**
+That is the correct result rather than a disappointing one, and the reason is worth
+stating because the same line was the load-bearing witness one phase ago. Under 15b
+the count stepped 5 to 6 because that phase added a feed, and the step was the proof
+the NJT realtime poller was alive in production. 15c adds no feed. It draws geometry
+that was already in the static archive. So the number that settled 15b is structurally
+incapable of settling 15c, and reading a steady 6 as evidence for route lines would be
+reading it as evidence for 15b a second time.
+
+**Nothing in the monitor witnesses route geometry being served, and this entry did not
+witness it either.** Three separate lines look like they might and none of them does:
+
+- `check_njt_static` fetches the RailData archive *from the runner*. `shapes.txt` sits
+  in `NJT_WATCHED_MEMBERS`, so its absence would be a WARN, which means the check can
+  report on NJ Transit's publication and says nothing at all about the deployment's
+  response.
+- `production:statics` accepts `njt_static` in `ready` or `not-configured` by design
+  (15a, F1). Worse for this purpose, `ready` is explicitly compatible with no geometry:
+  `/api/njt-routes` documents `[]` as a valid answer for a publication that carried no
+  `shapes.txt`, because route lines are additive and such a publication still serves
+  stations and trains and still reports ready.
+- `production:feeds` counts feeds, per the paragraph above.
+
+So the witness for route lines actually reaching a rider is the rider's own screenshot
+of 2026-09-03, plus a direct read of `/api/njt-routes` against the deployment. **This
+entry did not make that read.** It is named here as the outstanding measurement rather
+than folded into the green runs above, because a monitor that cannot see a dark route
+layer cannot be cited as having seen a live one.
+
+**The mint budget in force at this deploy.** PR 96 shipped `MAX_TOKEN_AGE_S` at twelve
+hours, and the arithmetic that ceiling produces is now the one running in production:
+
+| Consumer | Mints per Eastern day | From |
+| --- | --- | --- |
+| Contract monitor | 4 | `cron: "17 */6 * * *"`, one mint per run shared across `njt-static` and `njt-realtime`'s two feeds (`_NjtToken`) |
+| Production | 2 | `MAX_TOKEN_AGE_S = 12 * 3600`, so a process that stays up through the day re-mints twice |
+| | **6 of 10 committed, 4 spare** | `njt_auth.DAILY_MINT_LIMIT`, ten per account per Eastern day, observed 2026-09-02 |
+
+A deploy spends one of the four spare: the restart gives the new process a cold
+`TokenCache`, which mints on its first NJT request. This deploy did that at
+2026-09-03T14:44:00Z.
+
+**A correction to the premise this section was asked to record.** The 15c deploy is not
+the first production run of PR 96. PR 96 merged as `dd64707` at 2026-09-03T06:11:15Z
+and reached production on its own (GitHub deployment `6238082417`, `success` at
+2026-09-03T06:12:00Z), where it ran until this merge replaced it at 14:44:03Z. Monitor
+run #214 at 2026-09-03T11:22Z was already probing a production carrying the twelve-hour
+ceiling. So the Eastern day 2026-09-03 carried **two** restart mints rather than one,
+at 02:12 and 10:44 ET, and the 15c deploy is the second process under the new ceiling,
+not the first.
+
+**What the account actually spent that day is not measurable from here, and is not
+claimed.** Tokens are product-scoped, so the Usage API rejects a GTFSRT token and no
+process can read its own counter; `DAILY_MINT_LIMIT` exists to name the number, not to
+gate anything. The table above is therefore the schedule's *commitment*, derived from
+the cron cadence and the ceiling constant, and the two restart mints are derived from
+two observed deployments. Neither is an observed count against NJ Transit's limit.
+
+**One standing WARN, and it is still not this phase's.** `njt-static` warns "stops.txt
+now carries location_type, parent_station; the loader treats this feed as FLAT and a
+parent/child model is a human decision" in both runs above. It is unchanged and
+unresolved since run #111 (2026-08-07T00:17:49Z), which reported it when the monitor
+still ran 15 checks rather than 18, and the 15b close-out already recorded it as
+predating that phase. 15c did not resolve it: this phase drew the stations the loader
+already produces, flat, so the parent/child question is exactly where 15b left it and
+is now a question about what is on a map rather than about what is in a dict. The other
+two WARNs in each run are `path-static` (acknowledged 2026-07-12) and `bus-realtime`
+(skipped, `MTA_BUS_API_KEY` not set).

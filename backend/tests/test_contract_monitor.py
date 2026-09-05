@@ -1005,11 +1005,33 @@ def _status_json(**overrides):
 _PROD_BASE = "https://app.example"
 _PROD_STATUS = f"{_PROD_BASE}/api/status"
 _PROD_HEALTH = f"{_PROD_BASE}/healthz"
+_PROD_NJT_ROUTES = f"{_PROD_BASE}/api/njt-routes"
 _PROD_SERVED_AT = 1000.0
 
 # NOTE what _status_json deliberately does NOT carry: served_at. Several tests
 # below depend on its absence to reach the "cannot age this honestly" branches, so
 # the happy path adds it explicitly rather than the builder defaulting it.
+
+
+def _njt_routes_json(routes=None):
+    """An /api/njt-routes body. The default is the 15c shape: twelve routes, each
+    with drawable geometry. `polylines` is a LIST of polylines and each polyline is
+    a list of [lat, lon] pairs, so a route's point count is the total across all of
+    them and a route with no geometry is [] rather than [[]]."""
+    if routes is None:
+        routes = [(str(i), 40) for i in range(1, 13)]
+    return json.dumps(
+        [
+            {
+                "route": route,
+                "name": f"Line {route}",
+                "color": "EF3E42",
+                "text_color": None,
+                "polylines": [[[40.7 + n / 1000, -74.0] for n in range(points)]] if points else [],
+            }
+            for route, points in routes
+        ]
+    ).encode()
 
 
 def _healthz_json(**overrides):
@@ -1020,7 +1042,7 @@ def _healthz_json(**overrides):
     return json.dumps(body).encode()
 
 
-def _healthy_prod(*, health=None, advance=None, **status_overrides):
+def _healthy_prod(*, health=None, advance=None, njt_routes=None, **status_overrides):
     """Both URLs check_production probes, wired for the full happy path.
 
     /api/status is a LIST, which FakeFetcher consumes one entry per call, so the
@@ -1037,6 +1059,7 @@ def _healthy_prod(*, health=None, advance=None, **status_overrides):
                 _status_json(served_at=_PROD_SERVED_AT + gap, **status_overrides),
             ],
             _PROD_HEALTH: _healthz_json() if health is None else health,
+            _PROD_NJT_ROUTES: _njt_routes_json(njt_routes),
         }
     )
 
@@ -1094,11 +1117,17 @@ def test_production_accepts_both_url_forms(configured):
     # Every form must resolve to the same single request.
     fetch = _healthy_prod()
     results = cm.check_production(fetch, NO_SLEEP, 1000.0, configured)
-    # BOTH paths resolve off the one variable, in every form. F1 added /healthz
-    # without adding a second environment variable, so the form that used to be
-    # only about /api/status is now also what proves the health probe is pointed
-    # at the same deployment.
-    assert [call[0] for call in fetch.calls] == [_PROD_STATUS, _PROD_STATUS, _PROD_HEALTH]
+    # ALL THREE paths resolve off the one variable, in every form. F1 added
+    # /healthz without adding a second environment variable and 15c added
+    # /api/njt-routes the same way, so the form that used to be only about
+    # /api/status is now also what proves both extra probes are pointed at the same
+    # deployment.
+    assert [call[0] for call in fetch.calls] == [
+        _PROD_STATUS,
+        _PROD_STATUS,
+        _PROD_HEALTH,
+        _PROD_NJT_ROUTES,
+    ]
     assert all(r.status == cm.PASS for r in results)
 
 
@@ -2968,6 +2997,119 @@ def test_an_unreachable_probe_is_a_fail(response):
     assert "unreachable" in health.detail
 
 
+# ---------------------------------------------------------------------------
+# production:njt-routes (15c): the deployment serves route lines, or says so
+# ---------------------------------------------------------------------------
+
+
+def _njt_routes_line(fetch):
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
+    return next(r for r in results if r.name == "production:njt-routes")
+
+
+def test_production_njt_routes_pass_carries_the_counts():
+    """THE GREEN PATH, and the counts are the deliverable. "12 routes, 480 points"
+    is what makes the next run's "12 routes, 0 points" legible at a glance, so they
+    are in the summary on the passing arm too, not only when something is wrong."""
+    line = _njt_routes_line(_healthy_prod())
+    assert line.status == cm.PASS
+    assert line.detail == "12 routes, 480 points"
+
+
+def test_production_njt_routes_empty_list_is_warn():
+    """THE STATE 15c CHOSE, and the one nothing else could see. Route geometry is
+    ADDITIVE: a publication carrying no shapes.txt still parses, still serves
+    stations and trains, and still reaches njt_static="ready", so /api/njt-routes
+    answers 200 with []. Every other production line reads green while the map has
+    no NJ Transit lines on it at all."""
+    line = _njt_routes_line(_healthy_prod(njt_routes=[]))
+    assert line.status == cm.WARN
+    assert "0 routes, 0 points" in line.detail
+    assert "shapes.txt" in line.detail, "the detail must say what usually causes this"
+
+
+def test_production_njt_routes_a_zero_point_route_is_warn():
+    """A route SERVED with no geometry. Distinct from the empty list and worth its
+    own line: eleven lines drawing and one missing is the shape a count alone
+    hides, and /api/njt-routes' own docstring says a route with no geometry is
+    normally ABSENT rather than present-and-empty, so seeing one is a change."""
+    line = _njt_routes_line(_healthy_prod(njt_routes=[("1", 40), ("2", 0), ("3", 40)]))
+    assert line.status == cm.WARN
+    assert "3 routes, 80 points" in line.detail
+    assert "1 of 3 routes carry NO points" in line.detail
+    assert "route 2" in line.detail
+
+
+def test_production_njt_routes_counts_an_unprintable_route_id():
+    """SAME RULE AS production:healthz: what matches the safe pattern is named,
+    what does not is COUNTED. This detail is written to $GITHUB_STEP_SUMMARY, which
+    GitHub renders as markdown, and the payload comes from a URL an operator pasted
+    into a repository variable."""
+    hostile = "[click](https://evil.example)"
+    line = _njt_routes_line(_healthy_prod(njt_routes=[("1", 40), (hostile, 0)]))
+    assert line.status == cm.WARN
+    assert "1 with an unprintable route id" in line.detail
+    assert "evil.example" not in line.detail and "[click]" not in line.detail
+    assert "evil.example" not in cm.format_summary_table([line])
+
+
+def test_production_njt_routes_not_configured_is_not_an_empty_map():
+    """A deployment with no NJ Transit credentials serves [] for a reason
+    production:statics already reports and already accepts. Warning here too would
+    manufacture a standing WARN on every deliberately-unconfigured deployment,
+    which is how a monitor gets muted, so the state is read from the payload rather
+    than guessed at from the empty list."""
+    fetch = _healthy_prod(njt_static="not-configured", njt_routes=[])
+    line = _njt_routes_line(fetch)
+    assert line.status == cm.PASS
+    assert "not-configured" in line.detail
+    assert _PROD_NJT_ROUTES not in [call[0] for call in fetch.calls], (
+        "an unconfigured deployment must not even be asked for route geometry"
+    )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [500, b"not json at all", b'{"routes": []}', b"[1, 2, 3]"],
+    ids=["unreachable", "non-json", "non-list", "no-objects"],
+)
+def test_production_njt_routes_never_fails_the_run(body):
+    """NON-GATING ON EVERY ARM, including the malformed ones. Route lines are
+    additive, so their absence must never exit the 6-hourly run non-zero and page
+    someone; a deployment that is actually down is already red on
+    production:status, which probes the same host. This line adds detection, not
+    severity."""
+    fetch = _healthy_prod()
+    fetch.mapping[_PROD_NJT_ROUTES] = body
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
+    line = next(r for r in results if r.name == "production:njt-routes")
+    assert line.status == cm.WARN, line.detail
+    assert [r for r in results if r.status == cm.FAIL] == [], (
+        "a malformed njt-routes response must not turn any other line red either"
+    )
+
+
+def test_production_njt_routes_sums_across_polylines_of_one_route():
+    """A route's geometry is a LIST of polylines (a branching line has several), so
+    the point count is the total across them. A per-route "does it have any
+    polylines" test would call a route with three empty ones healthy."""
+    body = json.dumps(
+        [
+            {"route": "1", "polylines": [[[40.7, -74.0], [40.8, -74.1]], [[40.9, -74.2]]]},
+            {"route": "2", "polylines": [[], []]},
+        ]
+    ).encode()
+    fetch = _healthy_prod()
+    fetch.mapping[_PROD_NJT_ROUTES] = body
+    line = next(
+        r
+        for r in cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
+        if r.name == "production:njt-routes"
+    )
+    assert "2 routes, 3 points" in line.detail
+    assert "route 2" in line.detail
+
+
 # ---- the replayed served_at ----
 
 
@@ -2977,6 +3119,7 @@ def _replay_prod(first, second, *, health=None):
         {
             _PROD_STATUS: [_status_json(served_at=first), _status_json(served_at=second)],
             _PROD_HEALTH: _healthz_json() if health is None else health,
+            _PROD_NJT_ROUTES: _njt_routes_json(),
         }
     )
 

@@ -48,6 +48,7 @@ import csv
 import io
 import json
 import os
+import re
 import sys
 import tempfile
 import time
@@ -1894,6 +1895,12 @@ def _resolve_health_url(configured: str) -> str:
     return _deployment_base(configured) + "/healthz"
 
 
+def _resolve_njt_routes_url(configured: str) -> str:
+    """The /api/njt-routes URL to probe, from that same one variable. Third path on
+    it, and for the reason _deployment_base gives: one deployment, one variable."""
+    return _deployment_base(configured) + "/api/njt-routes"
+
+
 def _resolve_status_url(configured: str) -> str:
     """Accept either operator form of MONITOR_STATUS_URL and return the /api/status
     URL to fetch.
@@ -2281,6 +2288,15 @@ def check_production(
     # add a line rather than change one.
     results.append(_check_production_served_at(fetch, sleep, data, url))
     results.append(_check_production_health(fetch, sleep, _resolve_health_url(status_url)))
+    # 15c, and LAST for the same reason the F1 pair comes after the payload lines:
+    # it is another READ of the deployment, not another field of the one already
+    # parsed. /api/status publishes nothing at all about route geometry, which is
+    # exactly why nothing above could see a deployment serving no NJ Transit lines.
+    results.append(
+        _check_production_njt_routes(
+            fetch, sleep, _resolve_njt_routes_url(status_url), data.get("njt_static")
+        )
+    )
     return results
 
 
@@ -2417,6 +2433,101 @@ def _check_production_alerts(data: dict) -> Result:
             "production:alerts", WARN, "degraded alert systems (alerts still retained): " + names
         )
     return Result("production:alerts", PASS, "no degraded alert systems")
+
+
+# Route ids safe to print. The detail string below is written to the run log AND to
+# $GITHUB_STEP_SUMMARY, which GitHub renders as MARKDOWN, and this payload comes
+# from a URL an operator pasted into a repository variable. Same rule
+# _check_production_health holds itself to: what matches is named, what does not is
+# counted, so nothing that can answer that URL gets to write into the job summary.
+# NJ Transit rail route ids are 1..12 today, so this is wide, not tight.
+_SAFE_ROUTE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,16}$")
+
+
+def _check_production_njt_routes(
+    fetch: Fetcher,
+    sleep: Callable[[float], None],
+    routes_url: str,
+    njt_static_state: object,
+) -> Result:
+    """Does the deployment actually serve NJ Transit route lines?
+
+    THE BLIND SPOT THIS CLOSES. 15c made route geometry ADDITIVE on purpose: a
+    publication carrying no shapes.txt still parses, still serves stations and
+    trains, and still reaches njt_static="ready", so /api/njt-routes answers 200
+    with []. That is the state the app chose, and it is the right one, because the
+    alternative is a whole mode dark over a member the loader does not need. But it
+    means every existing production line reads green while the map has no NJ
+    Transit lines on it at all: production:statics sees "ready", production:feeds
+    sees fresh polls, and /healthz classifies nothing, because from the app's point
+    of view nothing is wrong.
+
+    ALWAYS WARN, NEVER FAIL, including on an unreachable or malformed response.
+    Route lines are additive, so their absence must never exit the 6-hourly run
+    non-zero and page someone; a deployment that is actually down is already red on
+    production:status, which probes the same host. This line adds detection, not
+    severity.
+
+    NOT-CONFIGURED IS NOT AN EMPTY MAP. A deployment given no NJ Transit
+    credentials serves [] here for a reason production:statics already reports and
+    already accepts, so warning on it too would manufacture exactly the kind of
+    standing WARN a monitor gets muted for. Read from the /api/status payload the
+    caller already has rather than guessed at from the empty list, which is what
+    the endpoint's own docstring says to do.
+
+    THE COUNTS ARE IN THE SUMMARY on every arm, because "12 routes, 8214 points" is
+    the number that makes the next run's "12 routes, 0 points" legible at a glance.
+    """
+    name = "production:njt-routes"
+    if njt_static_state == "not-configured":
+        return Result(name, PASS, "njt_static is not-configured, so no route geometry is expected")
+    res, detail = _fetch_retrying(fetch, routes_url, sleep)
+    if res is None:
+        return Result(name, WARN, f"/api/njt-routes unreachable ({detail})")
+    try:
+        body = json.loads(res.content)
+    except (ValueError, UnicodeDecodeError) as exc:
+        return Result(name, WARN, f"/api/njt-routes non-JSON ({_sanitize(exc)})")
+    if not isinstance(body, list):
+        return Result(name, WARN, "/api/njt-routes returned non-list JSON")
+    if not any(isinstance(entry, dict) for entry in body) and body:
+        return Result(name, WARN, f"/api/njt-routes served {len(body)} entries, none an object")
+    if not body:
+        return Result(
+            name,
+            WARN,
+            "0 routes, 0 points: the deployment is serving no NJ Transit route geometry, so "
+            "the map draws no NJT lines. Expected when the publication carries no shapes.txt, "
+            "which reaches ready by design; nothing else reports it.",
+        )
+
+    points = {}
+    for index, entry in enumerate(body):
+        route = entry.get("route") if isinstance(entry, dict) else None
+        polylines = entry.get("polylines") if isinstance(entry, dict) else None
+        total = (
+            sum(len(line) for line in polylines if isinstance(line, list))
+            if isinstance(polylines, list)
+            else 0
+        )
+        # The index keys the dict so two entries claiming the same route id (or a
+        # missing one) are still counted separately rather than collapsing.
+        points[index] = (route, total)
+
+    total_points = sum(count for _route, count in points.values())
+    summary = f"{len(points)} routes, {total_points} points"
+    empty = [route for route, count in points.values() if count == 0]
+    if not empty:
+        return Result(name, PASS, summary)
+    named = sorted(str(r) for r in empty if _SAFE_ROUTE_ID_RE.match(str(r)))
+    unnamed = len(empty) - len(named)
+    parts = [f"{len(empty)} of {len(points)} routes carry NO points"]
+    if named:
+        parts.append("route " + ", ".join(named))
+    if unnamed:
+        # Counted, never quoted. See _SAFE_ROUTE_ID_RE.
+        parts.append(f"{unnamed} with an unprintable route id")
+    return Result(name, WARN, f"{summary}; " + "; ".join(parts))
 
 
 # ---------------------------------------------------------------------------

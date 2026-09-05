@@ -391,6 +391,27 @@ NJT_REQUIRED_MEMBERS = (
 # designed to survive losing.
 NJT_WATCHED_MEMBERS = ("shapes.txt",)
 
+# stops.txt columns njt_static._parse_stops READS to build a marker: the id, the
+# name the identity spot check compares, and the two coordinates a row without
+# which is dropped. Watched BY NAME because that is the only way to notice the
+# loss early: a publication that drops stop_lat still parses cleanly and simply
+# yields zero stops, which arrives here as the min-stops FAIL with no hint that a
+# column went missing rather than the feed emptying.
+NJT_STOPS_REQUIRED_COLUMNS = ("stop_id", "stop_name", "stop_lat", "stop_lon")
+
+# The two OPTIONAL GTFS columns that DESCRIBE a parent/child station model, listed
+# by name rather than accepted as "any new column": a third column appearing is
+# still worth someone reading the spec for, and a blanket allowance would hide it.
+#
+# THEIR PRESENCE IN THE HEADER MEANS NOTHING, which is the whole diagnosis behind
+# the standing WARN this replaced. GTFS makes both optional and lets a publisher
+# declare them with an EMPTY value on every row, which is exactly how a flat feed
+# spells "flat"; NJ Transit began doing that between runs #110 and #111
+# (2026-08-07). A header test therefore cannot tell "the feed went hierarchical"
+# from "the publisher widened its header", and it answered WARN to both for a
+# month. The shape lives in the ROWS, so that is where _njt_stops_shape looks.
+NJT_STOPS_HIERARCHY_COLUMNS = ("location_type", "parent_station")
+
 # NJ Transit Rail's daily service window in ET, and the two REALTIME bands, all
 # three DERIVED FROM THE PEAK PROBE. The working is at THE FRESHNESS BUDGET,
 # DERIVED in backend/feeds/njt.py and is not repeated here; the one line worth
@@ -1711,30 +1732,28 @@ def check_njt_static(
     _check_members(statuses, details, members, NJT_REQUIRED_MEMBERS)
     _check_members(statuses, details, members, NJT_WATCHED_MEMBERS, status=WARN)
     # THE SHAPE-CHANGE WATCH, which is the monitor's job in the way a floor is not.
-    # njt_static treats this feed as FLAT on the strength of the 2026-08-05 probe:
-    # no location_type, no parent_station, 172 stops that are all boardable. If that
-    # changes, the loader's parser drops the non-boardable rows (correct, and it
-    # keeps entrances off the map), but "should the marker set become the PARENT
-    # stations, the way subway and PATH do it" is a design decision a human owes an
-    # answer to. Nothing else can see it: NJT_STATIC_MIN_STOPS is a lower bound, so
-    # 172 becoming 400 sails past, and the 109/112 identity check still passes
-    # because a parent keeps the station's name. WARN, not FAIL: the app keeps
-    # serving correctly throughout, and this is a "come and look" rather than a
-    # "something is broken".
+    # njt_static treats this feed as FLAT: every parsed row is a boardable marker.
+    # If that stops being true the loader's parser drops the non-boardable rows
+    # (correct, and it keeps entrances off the map), but "should the marker set
+    # become the PARENT stations, the way subway and PATH do it" is a design
+    # decision a human owes an answer to. Nothing else can see it: NJT_STATIC_MIN_STOPS
+    # is a lower bound, so 172 becoming 400 sails past, and the 109/112 identity
+    # check still passes because a parent keeps the station's name. Both arms below
+    # are WARN, not FAIL: the app keeps serving correctly throughout, and each is a
+    # "come and look" rather than a "something is broken".
     if "stops.txt" in members:
-        with zipfile.ZipFile(io.BytesIO(res.content)) as zf:
-            with zf.open("stops.txt") as raw:
-                header = io.TextIOWrapper(raw, encoding="utf-8-sig").readline()
-        grown = sorted(
-            column
-            for column in ("location_type", "parent_station")
-            if column in {c.strip() for c in header.split(",")}
-        )
-        if grown:
+        missing_columns, hierarchy_in_use = _njt_stops_shape(res.content)
+        if missing_columns:
             statuses.append(WARN)
             details.append(
-                f"stops.txt now carries {', '.join(grown)}; the loader treats this feed as "
-                "FLAT and a parent/child model is a human decision"
+                f"stops.txt header no longer carries {', '.join(missing_columns)}, which "
+                "njt_static._parse_stops reads on every row"
+            )
+        if hierarchy_in_use:
+            statuses.append(WARN)
+            details.append(
+                f"stops.txt now USES {', '.join(hierarchy_in_use)}; the loader treats this "
+                "feed as FLAT and a parent/child model is a human decision"
             )
     routes = parsed.get("routes") or {}
     stops = parsed.get("stops") or {}
@@ -1774,6 +1793,55 @@ def check_njt_static(
             parsed,
         )
     return Result("njt-static", _worst(statuses), "; ".join(details)), parsed
+
+
+def _njt_stops_shape(body: bytes) -> tuple[list[str], list[str]]:
+    """Read stops.txt out of the archive and answer the two questions that matter.
+
+    Returns (required columns the header no longer carries, hierarchy columns the
+    ROWS actually use). Both lists empty is the current publication.
+
+    THE DIAGNOSIS THIS FUNCTION ENCODES, because the version it replaces produced a
+    WARN on every run from #111 (2026-08-07) onward and three ledger entries noted
+    it as pre-existing. That version read the first line of stops.txt and warned if
+    the strings "location_type" or "parent_station" appeared among the column
+    names. It was reading a HEADER to answer a question about DATA. GTFS makes both
+    columns optional and a publisher may declare either with an empty value on
+    every row, which is precisely how a flat feed spells "flat", so the header
+    cannot distinguish a feed that went hierarchical from a publisher that widened
+    its header. NJ Transit did the second: the archive captured on 2026-09-04
+    (backend/tests/fixtures/njt_gtfs/stops.txt) carries both columns and an EMPTY
+    value in both on all 164 of its rows, that capture being the trim of a 172-stop
+    publication, and njt_static._parse_stops keeps every one of them, because its
+    filter is `location_type not in ("", "0")`. The feed is as flat as it was on
+    2026-08-05. Only the header grew.
+
+    So the columns are accepted BY NAME (NJT_STOPS_HIERARCHY_COLUMNS) and the watch
+    moved to the values: a non-empty parent_station, or a location_type that is not
+    "" or "0", is the parser's own definition of a row that is not a boardable
+    stop, and one of those really is the design question a human owes an answer to.
+
+    A ROW SCAN, and it costs nothing worth naming: 164 rows today, and the loop
+    stops as soon as both columns have been seen in use.
+    """
+    with zipfile.ZipFile(io.BytesIO(body)) as zf:
+        with zf.open("stops.txt") as raw:
+            reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
+            declared = set(reader.fieldnames or ())
+            missing = [c for c in NJT_STOPS_REQUIRED_COLUMNS if c not in declared]
+            in_use: set[str] = set()
+            for row in reader:
+                if (row.get("parent_station") or "").strip():
+                    in_use.add("parent_station")
+                # The parser's own test, verbatim (njt_static._parse_stops): blank
+                # and "0" are boardable stops, every other location_type is a
+                # parent, entrance, node or boarding area, and none of those is a
+                # place a train calls at.
+                if (row.get("location_type") or "").strip() not in ("", "0"):
+                    in_use.add("location_type")
+                if len(in_use) == len(NJT_STOPS_HIERARCHY_COLUMNS):
+                    break
+    return missing, [c for c in NJT_STOPS_HIERARCHY_COLUMNS if c in in_use]
 
 
 def _check_members(

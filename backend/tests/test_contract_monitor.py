@@ -20,6 +20,7 @@ The monitor lives under scripts/ (not an importable package), so it is loaded
 from its file path, the same way it would run.
 """
 
+import csv
 import importlib.util
 import io
 import json
@@ -2379,27 +2380,135 @@ def test_njt_static_a_missing_shapes_is_a_warn_not_a_fail():
     assert parsed is not None, "a WARN must still return the parsed tables"
 
 
-def test_njt_static_warns_when_the_feed_stops_being_flat():
-    """The shape-change watch. njt_static treats this feed as FLAT on the strength
-    of the probe; if parent stations or entrances appear, the parser correctly drops
-    the non-boardable rows but "should the marker set become the PARENTS" is a
-    design decision a human owes an answer to. Nothing else can see it: the stop
-    floor is a lower bound, so 172 becoming 400 sails past, and the identity check
-    still passes because a parent keeps the station's name."""
-    grown = (
-        "stop_id,stop_code,stop_name,stop_lat,stop_lon,location_type,parent_station\n"
-        + "".join(
-            f"{i},C{i},Station {i},40.7{i:03d},-74.0{i:03d},0,\n"
-            for i in range(1, 200)
-            if i not in (109, 112)
+# The stops.txt shape watch: the header is not the shape, the rows are.
+#
+# A HEADER carrying location_type and parent_station is what NJ Transit has
+# published since 2026-08-07, and it is still a flat feed. The three tests below
+# are the acceptance case, the real shape change, and the header regression.
+
+# The header the live publication serves, with both hierarchy columns declared and
+# empty. Written out rather than derived, so a fixture regenerated into a
+# hierarchical feed changes the fixture test below and not this one.
+_NJT_WIDE_HEADER = (
+    "stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon,zone_id,stop_url,"
+    "location_type,parent_station,stop_timezone,wheelchair_boarding\n"
+)
+
+
+def _njt_wide_stops(location_type="", parent_station="", extra_rows=""):
+    """A stops.txt on the live publication's header, with the two hierarchy columns
+    set to whatever the caller wants on every non-identity row, plus any extra rows
+    the caller appends verbatim."""
+    body = _NJT_WIDE_HEADER
+    for i in range(1, 200):
+        if i in (109, 112):
+            continue
+        body += (
+            f"{i},C{i},Station {i},D{i},40.7{i:03d},-74.0{i:03d},{i},,"
+            f"{location_type},{parent_station},,\n"
         )
-        + "109,NY,New York Penn Station,40.750568,-73.993519,0,\n"
-        + "112,NP,Newark Penn Station,40.734924,-74.164581,0,\n"
+    body += "109,NY,Penn Station New York,NYP,40.750048,-73.992358,329,,,,,\n"
+    body += "112,NP,Newark Penn Station,NWK,40.734221,-74.164557,336,,,,,\n"
+    return body + extra_rows
+
+
+def test_njt_static_passes_on_the_publications_own_stops_header():
+    """THE REGRESSION THIS FILE MISSED FOR A MONTH, pinned against the real bytes.
+
+    Every njt-static run from #111 (2026-08-07) onward reported WARN, and three
+    ledger entries carried it forward as pre-existing. The cause was that the watch
+    read the stops.txt HEADER and warned on the mere presence of location_type or
+    parent_station. GTFS makes both optional and lets a publisher declare them with
+    an empty value on every row, which is how a flat feed spells "flat", so the
+    header cannot tell a hierarchical feed from a widened one. NJ Transit widened.
+
+    This test could not have caught it, because _NJT_STOPS writes a header the
+    publication stopped serving. So it reads the COMMITTED CAPTURE instead: a test
+    that restates the feed's shape cannot notice the feed's shape changing.
+    """
+    stops = (FIX / "njt_gtfs" / "stops.txt").read_bytes()
+    # Non-vacuous, and it is the whole premise: both columns really are declared,
+    # and really are empty everywhere. If a future capture makes either untrue this
+    # assertion says so, rather than the PASS below quietly changing meaning.
+    rows = list(csv.DictReader(io.StringIO(stops.decode("utf-8-sig"))))
+    assert {"location_type", "parent_station"} <= set(rows[0])
+    assert {r["location_type"] for r in rows} == {""}
+    assert {r["parent_station"] for r in rows} == {""}
+
+    result, parsed = _check_njt(_njt_fetch(**{NJT_DATA: _njt_zip(**{"stops.txt": stops})}))
+    assert result.status == cm.PASS, result.detail
+    assert len(parsed["stops"]) == len(rows), "every row of a flat feed is a marker"
+
+
+def test_njt_static_warns_when_the_feed_stops_being_flat():
+    """The shape-change watch, now keyed on the VALUES. njt_static treats this feed
+    as FLAT; if parent stations or entrances appear, the parser correctly drops the
+    non-boardable rows but "should the marker set become the PARENTS" is a design
+    decision a human owes an answer to. Nothing else can see it: the stop floor is a
+    lower bound, so 172 becoming 400 sails past, and the identity check still passes
+    because a parent keeps the station's name.
+
+    The header here is BYTE-IDENTICAL to the passing test above. That is the point:
+    only the values differ, so this cannot pass for the old reason.
+
+    THE FEED IS BUILT THE WAY A REAL ONE WOULD GO HIERARCHICAL, not by setting
+    location_type=1 on everything: every station becomes a boardable CHILD (still
+    location_type 0, now with a parent_station), and two entrance rows are added
+    alongside. So the stop floor is still met and the identity check still passes,
+    which is exactly the condition the docstring claims makes this watch the only
+    thing that can see the change. A cruder feed would have been caught by the
+    floor instead and this test would have proved nothing about the watch.
+    """
+    entrances = (
+        "900,E1,Penn Station New York entrance,NYP,40.750100,-73.992400,329,,2,109,,\n"
+        "901,E2,Newark Penn Station entrance,NWK,40.734300,-74.164600,336,,2,112,,\n"
     )
-    fetch = _njt_fetch(**{NJT_DATA: _njt_zip(**{"stops.txt": grown})})
-    result, _parsed = _check_njt(fetch)
+    grown = _njt_wide_stops(location_type="0", parent_station="P1", extra_rows=entrances)
+    result, parsed = _check_njt(_njt_fetch(**{NJT_DATA: _njt_zip(**{"stops.txt": grown})}))
     assert result.status == cm.WARN, result.detail
-    assert "location_type" in result.detail and "parent_station" in result.detail
+    assert "now USES location_type, parent_station" in result.detail
+    assert len(parsed["stops"]) >= cm.NJT_STATIC_MIN_STOPS, (
+        "the floor and the identity check must both still be satisfied, or this "
+        "test is not about the shape watch"
+    )
+
+
+def test_njt_static_warns_when_stops_drops_a_column_the_parser_reads():
+    """The other half: the header is still watched, for LOSS rather than growth.
+
+    THE RUN IS FAIL, NOT WARN, and deliberately so. Every one of
+    NJT_STOPS_REQUIRED_COLUMNS is load-bearing for some later check, so dropping
+    one always trips a FAIL as well: without stop_lat every row is discarded and
+    the stop floor fails, without stop_name the 109/112 identity check fails. The
+    WARN is not competing with that. It names the CAUSE, next to a FAIL that only
+    shows the symptom, which is the difference between "only 0 stops (< 140)" and
+    knowing a column went missing.
+    """
+    narrow = _njt_wide_stops().replace("stop_lat,", "", 1)
+    result, _parsed = _check_njt(_njt_fetch(**{NJT_DATA: _njt_zip(**{"stops.txt": narrow})}))
+    assert "no longer carries stop_lat" in result.detail
+    assert result.status == cm.FAIL, result.detail
+
+
+@pytest.mark.parametrize(
+    "location_type,parent_station,expected",
+    [
+        ("", "", []),
+        ("0", "", []),  # "0" IS a boardable stop; the parser's own test, verbatim
+        ("1", "", ["location_type"]),
+        ("2", "", ["location_type"]),
+        ("", "P1", ["parent_station"]),
+        ("1", "P1", ["location_type", "parent_station"]),
+    ],
+)
+def test_njt_stops_shape_reads_values_not_the_header(location_type, parent_station, expected):
+    """_njt_stops_shape in isolation, across the values that decide it. Every row
+    here carries BOTH columns in the header, so a check that read the header would
+    answer the same thing six times."""
+    body = _njt_zip(**{"stops.txt": _njt_wide_stops(location_type, parent_station)})
+    missing, in_use = cm._njt_stops_shape(body)
+    assert missing == []
+    assert in_use == expected
 
 
 def test_njt_static_does_not_require_calendar_or_feed_info():

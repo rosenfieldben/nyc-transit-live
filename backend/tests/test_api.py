@@ -22,6 +22,7 @@ import main as app_module
 import models
 import njt_auth
 import warmups
+from conftest import configure_njt
 from tests import negatives
 
 pytestmark = pytest.mark.anyio
@@ -2392,9 +2393,9 @@ async def test_every_warmup_failure_path_advances_the_schedule(monkeypatch, warm
         monkeypatch.setattr(app_module.ferry_static, "load_ferry_static", empty_dict)
     elif patch.startswith("njt_"):
         # Credentials first, or the warmup takes its not-configured short circuit
-        # and never reaches the retry loop this test is about.
-        monkeypatch.setenv("NJT_USERNAME", "rider")
-        monkeypatch.setenv("NJT_PASSWORD", "secret")
+        # and never reaches the retry loop this test is about. configure_njt is the
+        # opt-in to conftest's session-wide credential scrub.
+        configure_njt(monkeypatch)
         monkeypatch.setattr(
             app_module.njt_static,
             "load_njt_static",
@@ -4103,11 +4104,15 @@ NJT_STATIC_DATA = {
 
 
 def _njt_configured(monkeypatch):
-    monkeypatch.setenv("NJT_USERNAME", "rider")
-    monkeypatch.setenv("NJT_PASSWORD", "secret")
+    # conftest.configure_njt is the opt-in to the session-wide credential scrub;
+    # this wrapper keeps the local name the tests below already read by.
+    configure_njt(monkeypatch)
 
 
 def _njt_unconfigured(monkeypatch):
+    # Already the session default (conftest.scrub_developer_credentials), and kept
+    # explicit: these tests are ABOUT the unconfigured branch, so they should say so
+    # at the point of use rather than inherit it silently.
     monkeypatch.delenv("NJT_USERNAME", raising=False)
     monkeypatch.delenv("NJT_PASSWORD", raising=False)
 

@@ -1,7 +1,7 @@
 """Golden test: a real captured subway feed decodes to stable output.
 
 The riskiest logic in the app is subway trip decoding and the start-time
-heuristics in feeds._decode_trains / _trip_start_ts — synthetic protobufs
+heuristics in feeds._decode_trains / _trip_start_ts. Synthetic protobufs
 (test_feeds.py) exercise the branches, but only a real feed exercises the
 true shape of the data. The fixtures here were captured once from the live
 keyless numbered-lines feed (the payload carries no PII), with `now` frozen

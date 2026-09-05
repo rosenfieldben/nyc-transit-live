@@ -24,7 +24,7 @@ logger = logging.getLogger("main")
 
 # Upstream-staleness threshold: how far the feed's CONTENT time (MTA's clock)
 # may lag the poll time (this server's clock) before the data is considered
-# stale — used by /healthz and reported via /api/status. Computed from two
+# stale. Used by /healthz and reported via /api/status. Computed from two
 # server-captured timestamps (fetched_at - feed_timestamp), so the browser
 # clock is never involved; the frontend mirrors this in helpers.js.
 FEED_STALE_AFTER_S = 90
@@ -126,7 +126,7 @@ def _feed_age(entry: dict) -> float | None:
 def _fresh_entry() -> dict:
     # fetched_at = this server's poll time; feed_timestamp = the feed's content
     # time (MTA's clock). Both are stored so freshness can be judged without the
-    # browser clock — see _feed_age and FEED_STALE_AFTER_S.
+    # browser clock (see _feed_age and FEED_STALE_AFTER_S).
     return {"data": None, "fetched_at": None, "feed_timestamp": None, "error": None}
 
 

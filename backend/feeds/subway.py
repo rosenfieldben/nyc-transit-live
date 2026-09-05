@@ -47,8 +47,8 @@ SUBWAY_FEED_URLS = {
 def _platform_direction(stop_id: str) -> tuple[str | None, str]:
     """(direction, station_id) for a platform stop_id via its N/S suffix.
 
-    NYC platform ids are the parent-station id plus a trailing N or S — the
-    same convention used for train direction — so the station id is the
+    NYC platform ids are the parent-station id plus a trailing N or S (the
+    same convention used for train direction), so the station id is the
     platform id with that suffix stripped.
     """
     if stop_id.endswith("N"):
@@ -73,7 +73,7 @@ def _decode_feed(
     Arrivals deliberately do the OPPOSITE: every still-upcoming resolvable stop
     is recorded with NO unstarted-trip filter, because a train departing its
     origin in 20 minutes is a legitimate future arrival at the stations
-    downstream of it — exactly what a rider clicking a station wants to see.
+    downstream of it, exactly what a rider clicking a station wants to see.
     """
     # parse_feed rejects an empty or malformed body (C3); _aggregate_feeds catches
     # it per GROUP, so one poisoned feed degrades one line group and the survivors
@@ -186,7 +186,7 @@ def _decode_feed(
 
 
 def _decode_trains(raw: bytes, stops: dict[str, dict], feed_key: str, now: float) -> list[dict]:
-    """Train placements for one feed — the placement half of _decode_feed.
+    """Train placements for one feed: the placement half of _decode_feed.
     Kept as a thin wrapper so the placement logic stays directly testable."""
     return _decode_feed(raw, stops, feed_key, now)[0]
 

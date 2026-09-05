@@ -1,10 +1,10 @@
-"""Pydantic response models — make API shape drift fail loudly.
+"""Pydantic response models: make API shape drift fail loudly.
 
 These document the JSON each endpoint returns and validate it at the response
 boundary, so a decode/cache change that drops or mistypes a field surfaces as
 a loud 500 (and a test failure) instead of silently reshaping the API. They
-are intentionally permissive about EXTRA keys at runtime — an added field is
-dropped, not a 500 — so production stays resilient; the tests assert the field
+are intentionally permissive about EXTRA keys at runtime (an added field is
+dropped, not a 500), so production stays resilient; the tests assert the field
 sets match the decode output exactly, catching additions in CI instead.
 """
 
@@ -24,7 +24,7 @@ class Vehicle(BaseModel):
 class Train(BaseModel):
     trip_id: str
     route_id: str | None
-    latitude: float  # next/current station — the static-fallback position
+    latitude: float  # next/current station, the static-fallback position
     longitude: float
     stop_id: str
     stop_name: str | None

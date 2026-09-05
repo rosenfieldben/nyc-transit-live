@@ -487,7 +487,7 @@ async def test_status_reports_ferry_feed_health_and_cache_entry(client, cache, s
 
 
 async def test_bus_refresh_error_never_records_url_or_key(client, cache, monkeypatch):
-    # httpx error text embeds the request URL — for the bus feed that URL
+    # httpx error text embeds the request URL. For the bus feed that URL
     # carries the API key, and recorded details are served to clients.
     async def boom(client_arg):
         raise httpx.ConnectError(
@@ -879,7 +879,7 @@ async def test_healthz_fresh_with_unknown_feed_timestamp(client, healthz_env):
 
 async def test_healthz_degraded_when_poll_loop_stalled(client, healthz_env):
     # Upstream content was fresh at the last poll, but that poll was long ago
-    # (a stuck poller serving frozen data) — the poll-age term must catch it.
+    # (a stuck poller serving frozen data), so the poll-age term must catch it.
     old = time.time() - 600
     healthz_env["buses"].update(data=[1], fetched_at=old, feed_timestamp=old - 5, error=None)
     res = await client.get("/healthz")

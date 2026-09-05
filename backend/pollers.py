@@ -258,7 +258,7 @@ async def _refresh_buses(app: FastAPI, client: httpx.AsyncClient) -> None:
     try:
         data, feed_timestamp = await main.fetch_vehicle_positions(client)
     except RuntimeError as exc:
-        # Missing/placeholder API key — a configuration problem, not a 500.
+        # Missing/placeholder API key: a configuration problem, not a 500.
         _note_failure(entry, 503, str(exc))
         return
     except httpx.HTTPError as exc:

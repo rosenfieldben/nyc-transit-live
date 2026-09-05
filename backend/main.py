@@ -332,7 +332,7 @@ async def lifespan(app: FastAPI):
     app.state.feed_poll_task = asyncio.create_task(_poll_feeds(app))
     # Service alerts poll on their own slower loop, independent of the position poll.
     app.state.alert_poll_task = asyncio.create_task(_poll_alerts(app))
-    # Bus route geometry indexes in the background — startup never waits on
+    # Bus route geometry indexes in the background, so startup never waits on
     # the ~52 MB of borough GTFS zips; /api/bus-route reports until ready.
     app.state.bus_index_task = asyncio.create_task(bus_static.ensure_index())
     yield

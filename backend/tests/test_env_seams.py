@@ -468,3 +468,41 @@ def test_a_relative_data_root_stays_under_the_checkout():
     # is why only that one carries the PosixPath wrapper.
     out = _resolve("__import__('static_data').SUBWAY_GTFS_ZIP", {"DATA_DIR": "tmpdata"})
     assert out == f"{BACKEND.parent}/tmpdata/gtfs_static/gtfs_subway.zip"
+
+
+# ---------------------------------------------------------------------------
+# The credential scrub: .env must not decide what this suite measures
+# ---------------------------------------------------------------------------
+
+
+def test_the_suite_runs_with_no_credentials_in_the_environment():
+    """The invariant conftest.scrub_developer_credentials holds, asserted directly.
+
+    Both load_dotenv calls in this app copy the project-root .env into os.environ at
+    import, so on a machine whose .env carries real NJ Transit credentials this
+    suite would otherwise measure a CONFIGURED deployment while seven tests assert
+    the unconfigured branch. Asserted through njt_auth as well as through the raw
+    names, because that is the reader the app actually branches on.
+    """
+    import conftest
+
+    present = [name for name in conftest.CREDENTIAL_VARS if os.environ.get(name)]
+    assert present == [], (
+        f"{', '.join(present)} reached the hermetic suite; the .env scrub in "
+        "backend/tests/conftest.py is not doing its job"
+    )
+    assert njt_auth.credentials() is None
+    assert njt_auth.is_configured() is False
+
+
+def test_the_opt_in_puts_credentials_back_for_one_test(monkeypatch):
+    """The scrub is not a one-way door: the tests that need a configured NJ Transit
+    still get one, and monkeypatch undoes it back to the scrubbed state afterwards.
+    Without this the previous test would pass just as happily against a suite that
+    could never configure NJT at all."""
+    import conftest
+
+    conftest.configure_njt(monkeypatch)
+    assert njt_auth.credentials() == ("rider", "secret")
+    monkeypatch.undo()
+    assert njt_auth.credentials() is None

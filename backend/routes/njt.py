@@ -36,8 +36,8 @@ _NJT_STOP_ID_RE = re.compile(r"^[0-9]{1,6}$")
 async def get_njt_stops(request: Request, response: Response) -> list[dict]:
     """NJ Transit rail station markers ({id, name, lat, lon, routes}) from the
     static GTFS. Flat, like the ferry docks and unlike PATH's platforms: this feed
-    ships no parent stations and no location_type, so every parsed stop is a
-    marker.
+    declares location_type and parent_station and leaves both empty on every row,
+    so every parsed stop is a marker.
 
     NO wheelchair FIELD, unlike /api/ferry-stops. The ferry feed publishes
     wheelchair_boarding and NJ Transit's publishes no accessibility data at all, so

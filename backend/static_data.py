@@ -235,8 +235,8 @@ def load_subway_stations() -> dict[str, dict]:
 _MIN_NEW_GEOMETRY = 0.05
 
 # Subway shape_ids look like "A..N04R" / "GS.N01R": route prefix, dots, then
-# the direction letter. We keep one direction per route — N and S trace the
-# same tracks at map scale.
+# the direction letter. We keep one direction per route (N and S trace the
+# same tracks at map scale).
 _SHAPE_ID_RE = re.compile(r"^([A-Za-z0-9]+)\.\.?N")
 
 

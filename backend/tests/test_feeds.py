@@ -87,7 +87,7 @@ def test_stop_time_departure_only():
 
 
 def test_stop_time_returns_latest_of_both():
-    # Dwelling train: arrival in the past, departure in the future — the
+    # Dwelling train: arrival in the past, departure in the future. The
     # LATEST event time must win or held trains get plotted a stop ahead.
     assert _stop_time(make_stu("A01N", arrival=100, departure=200)) == 200
     assert _stop_time(make_stu("A01N", arrival=200, departure=100)) == 200

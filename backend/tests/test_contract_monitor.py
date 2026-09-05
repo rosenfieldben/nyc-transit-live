@@ -20,6 +20,7 @@ The monitor lives under scripts/ (not an importable package), so it is loaded
 from its file path, the same way it would run.
 """
 
+import csv
 import importlib.util
 import io
 import json
@@ -1004,11 +1005,33 @@ def _status_json(**overrides):
 _PROD_BASE = "https://app.example"
 _PROD_STATUS = f"{_PROD_BASE}/api/status"
 _PROD_HEALTH = f"{_PROD_BASE}/healthz"
+_PROD_NJT_ROUTES = f"{_PROD_BASE}/api/njt-routes"
 _PROD_SERVED_AT = 1000.0
 
 # NOTE what _status_json deliberately does NOT carry: served_at. Several tests
 # below depend on its absence to reach the "cannot age this honestly" branches, so
 # the happy path adds it explicitly rather than the builder defaulting it.
+
+
+def _njt_routes_json(routes=None):
+    """An /api/njt-routes body. The default is the 15c shape: twelve routes, each
+    with drawable geometry. `polylines` is a LIST of polylines and each polyline is
+    a list of [lat, lon] pairs, so a route's point count is the total across all of
+    them and a route with no geometry is [] rather than [[]]."""
+    if routes is None:
+        routes = [(str(i), 40) for i in range(1, 13)]
+    return json.dumps(
+        [
+            {
+                "route": route,
+                "name": f"Line {route}",
+                "color": "EF3E42",
+                "text_color": None,
+                "polylines": [[[40.7 + n / 1000, -74.0] for n in range(points)]] if points else [],
+            }
+            for route, points in routes
+        ]
+    ).encode()
 
 
 def _healthz_json(**overrides):
@@ -1019,7 +1042,7 @@ def _healthz_json(**overrides):
     return json.dumps(body).encode()
 
 
-def _healthy_prod(*, health=None, advance=None, **status_overrides):
+def _healthy_prod(*, health=None, advance=None, njt_routes=None, **status_overrides):
     """Both URLs check_production probes, wired for the full happy path.
 
     /api/status is a LIST, which FakeFetcher consumes one entry per call, so the
@@ -1036,6 +1059,7 @@ def _healthy_prod(*, health=None, advance=None, **status_overrides):
                 _status_json(served_at=_PROD_SERVED_AT + gap, **status_overrides),
             ],
             _PROD_HEALTH: _healthz_json() if health is None else health,
+            _PROD_NJT_ROUTES: _njt_routes_json(njt_routes),
         }
     )
 
@@ -1093,11 +1117,17 @@ def test_production_accepts_both_url_forms(configured):
     # Every form must resolve to the same single request.
     fetch = _healthy_prod()
     results = cm.check_production(fetch, NO_SLEEP, 1000.0, configured)
-    # BOTH paths resolve off the one variable, in every form. F1 added /healthz
-    # without adding a second environment variable, so the form that used to be
-    # only about /api/status is now also what proves the health probe is pointed
-    # at the same deployment.
-    assert [call[0] for call in fetch.calls] == [_PROD_STATUS, _PROD_STATUS, _PROD_HEALTH]
+    # ALL THREE paths resolve off the one variable, in every form. F1 added
+    # /healthz without adding a second environment variable and 15c added
+    # /api/njt-routes the same way, so the form that used to be only about
+    # /api/status is now also what proves both extra probes are pointed at the same
+    # deployment.
+    assert [call[0] for call in fetch.calls] == [
+        _PROD_STATUS,
+        _PROD_STATUS,
+        _PROD_HEALTH,
+        _PROD_NJT_ROUTES,
+    ]
     assert all(r.status == cm.PASS for r in results)
 
 
@@ -2379,27 +2409,135 @@ def test_njt_static_a_missing_shapes_is_a_warn_not_a_fail():
     assert parsed is not None, "a WARN must still return the parsed tables"
 
 
-def test_njt_static_warns_when_the_feed_stops_being_flat():
-    """The shape-change watch. njt_static treats this feed as FLAT on the strength
-    of the probe; if parent stations or entrances appear, the parser correctly drops
-    the non-boardable rows but "should the marker set become the PARENTS" is a
-    design decision a human owes an answer to. Nothing else can see it: the stop
-    floor is a lower bound, so 172 becoming 400 sails past, and the identity check
-    still passes because a parent keeps the station's name."""
-    grown = (
-        "stop_id,stop_code,stop_name,stop_lat,stop_lon,location_type,parent_station\n"
-        + "".join(
-            f"{i},C{i},Station {i},40.7{i:03d},-74.0{i:03d},0,\n"
-            for i in range(1, 200)
-            if i not in (109, 112)
+# The stops.txt shape watch: the header is not the shape, the rows are.
+#
+# A HEADER carrying location_type and parent_station is what NJ Transit has
+# published since 2026-08-07, and it is still a flat feed. The three tests below
+# are the acceptance case, the real shape change, and the header regression.
+
+# The header the live publication serves, with both hierarchy columns declared and
+# empty. Written out rather than derived, so a fixture regenerated into a
+# hierarchical feed changes the fixture test below and not this one.
+_NJT_WIDE_HEADER = (
+    "stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon,zone_id,stop_url,"
+    "location_type,parent_station,stop_timezone,wheelchair_boarding\n"
+)
+
+
+def _njt_wide_stops(location_type="", parent_station="", extra_rows=""):
+    """A stops.txt on the live publication's header, with the two hierarchy columns
+    set to whatever the caller wants on every non-identity row, plus any extra rows
+    the caller appends verbatim."""
+    body = _NJT_WIDE_HEADER
+    for i in range(1, 200):
+        if i in (109, 112):
+            continue
+        body += (
+            f"{i},C{i},Station {i},D{i},40.7{i:03d},-74.0{i:03d},{i},,"
+            f"{location_type},{parent_station},,\n"
         )
-        + "109,NY,New York Penn Station,40.750568,-73.993519,0,\n"
-        + "112,NP,Newark Penn Station,40.734924,-74.164581,0,\n"
+    body += "109,NY,Penn Station New York,NYP,40.750048,-73.992358,329,,,,,\n"
+    body += "112,NP,Newark Penn Station,NWK,40.734221,-74.164557,336,,,,,\n"
+    return body + extra_rows
+
+
+def test_njt_static_passes_on_the_publications_own_stops_header():
+    """THE REGRESSION THIS FILE MISSED FOR A MONTH, pinned against the real bytes.
+
+    Every njt-static run from #111 (2026-08-07) onward reported WARN, and three
+    ledger entries carried it forward as pre-existing. The cause was that the watch
+    read the stops.txt HEADER and warned on the mere presence of location_type or
+    parent_station. GTFS makes both optional and lets a publisher declare them with
+    an empty value on every row, which is how a flat feed spells "flat", so the
+    header cannot tell a hierarchical feed from a widened one. NJ Transit widened.
+
+    This test could not have caught it, because _NJT_STOPS writes a header the
+    publication stopped serving. So it reads the COMMITTED CAPTURE instead: a test
+    that restates the feed's shape cannot notice the feed's shape changing.
+    """
+    stops = (FIX / "njt_gtfs" / "stops.txt").read_bytes()
+    # Non-vacuous, and it is the whole premise: both columns really are declared,
+    # and really are empty everywhere. If a future capture makes either untrue this
+    # assertion says so, rather than the PASS below quietly changing meaning.
+    rows = list(csv.DictReader(io.StringIO(stops.decode("utf-8-sig"))))
+    assert {"location_type", "parent_station"} <= set(rows[0])
+    assert {r["location_type"] for r in rows} == {""}
+    assert {r["parent_station"] for r in rows} == {""}
+
+    result, parsed = _check_njt(_njt_fetch(**{NJT_DATA: _njt_zip(**{"stops.txt": stops})}))
+    assert result.status == cm.PASS, result.detail
+    assert len(parsed["stops"]) == len(rows), "every row of a flat feed is a marker"
+
+
+def test_njt_static_warns_when_the_feed_stops_being_flat():
+    """The shape-change watch, now keyed on the VALUES. njt_static treats this feed
+    as FLAT; if parent stations or entrances appear, the parser correctly drops the
+    non-boardable rows but "should the marker set become the PARENTS" is a design
+    decision a human owes an answer to. Nothing else can see it: the stop floor is a
+    lower bound, so 172 becoming 400 sails past, and the identity check still passes
+    because a parent keeps the station's name.
+
+    The header here is BYTE-IDENTICAL to the passing test above. That is the point:
+    only the values differ, so this cannot pass for the old reason.
+
+    THE FEED IS BUILT THE WAY A REAL ONE WOULD GO HIERARCHICAL, not by setting
+    location_type=1 on everything: every station becomes a boardable CHILD (still
+    location_type 0, now with a parent_station), and two entrance rows are added
+    alongside. So the stop floor is still met and the identity check still passes,
+    which is exactly the condition the docstring claims makes this watch the only
+    thing that can see the change. A cruder feed would have been caught by the
+    floor instead and this test would have proved nothing about the watch.
+    """
+    entrances = (
+        "900,E1,Penn Station New York entrance,NYP,40.750100,-73.992400,329,,2,109,,\n"
+        "901,E2,Newark Penn Station entrance,NWK,40.734300,-74.164600,336,,2,112,,\n"
     )
-    fetch = _njt_fetch(**{NJT_DATA: _njt_zip(**{"stops.txt": grown})})
-    result, _parsed = _check_njt(fetch)
+    grown = _njt_wide_stops(location_type="0", parent_station="P1", extra_rows=entrances)
+    result, parsed = _check_njt(_njt_fetch(**{NJT_DATA: _njt_zip(**{"stops.txt": grown})}))
     assert result.status == cm.WARN, result.detail
-    assert "location_type" in result.detail and "parent_station" in result.detail
+    assert "now USES location_type, parent_station" in result.detail
+    assert len(parsed["stops"]) >= cm.NJT_STATIC_MIN_STOPS, (
+        "the floor and the identity check must both still be satisfied, or this "
+        "test is not about the shape watch"
+    )
+
+
+def test_njt_static_warns_when_stops_drops_a_column_the_parser_reads():
+    """The other half: the header is still watched, for LOSS rather than growth.
+
+    THE RUN IS FAIL, NOT WARN, and deliberately so. Every one of
+    NJT_STOPS_REQUIRED_COLUMNS is load-bearing for some later check, so dropping
+    one always trips a FAIL as well: without stop_lat every row is discarded and
+    the stop floor fails, without stop_name the 109/112 identity check fails. The
+    WARN is not competing with that. It names the CAUSE, next to a FAIL that only
+    shows the symptom, which is the difference between "only 0 stops (< 140)" and
+    knowing a column went missing.
+    """
+    narrow = _njt_wide_stops().replace("stop_lat,", "", 1)
+    result, _parsed = _check_njt(_njt_fetch(**{NJT_DATA: _njt_zip(**{"stops.txt": narrow})}))
+    assert "no longer carries stop_lat" in result.detail
+    assert result.status == cm.FAIL, result.detail
+
+
+@pytest.mark.parametrize(
+    "location_type,parent_station,expected",
+    [
+        ("", "", []),
+        ("0", "", []),  # "0" IS a boardable stop; the parser's own test, verbatim
+        ("1", "", ["location_type"]),
+        ("2", "", ["location_type"]),
+        ("", "P1", ["parent_station"]),
+        ("1", "P1", ["location_type", "parent_station"]),
+    ],
+)
+def test_njt_stops_shape_reads_values_not_the_header(location_type, parent_station, expected):
+    """_njt_stops_shape in isolation, across the values that decide it. Every row
+    here carries BOTH columns in the header, so a check that read the header would
+    answer the same thing six times."""
+    body = _njt_zip(**{"stops.txt": _njt_wide_stops(location_type, parent_station)})
+    missing, in_use = cm._njt_stops_shape(body)
+    assert missing == []
+    assert in_use == expected
 
 
 def test_njt_static_does_not_require_calendar_or_feed_info():
@@ -2859,6 +2997,119 @@ def test_an_unreachable_probe_is_a_fail(response):
     assert "unreachable" in health.detail
 
 
+# ---------------------------------------------------------------------------
+# production:njt-routes (15c): the deployment serves route lines, or says so
+# ---------------------------------------------------------------------------
+
+
+def _njt_routes_line(fetch):
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
+    return next(r for r in results if r.name == "production:njt-routes")
+
+
+def test_production_njt_routes_pass_carries_the_counts():
+    """THE GREEN PATH, and the counts are the deliverable. "12 routes, 480 points"
+    is what makes the next run's "12 routes, 0 points" legible at a glance, so they
+    are in the summary on the passing arm too, not only when something is wrong."""
+    line = _njt_routes_line(_healthy_prod())
+    assert line.status == cm.PASS
+    assert line.detail == "12 routes, 480 points"
+
+
+def test_production_njt_routes_empty_list_is_warn():
+    """THE STATE 15c CHOSE, and the one nothing else could see. Route geometry is
+    ADDITIVE: a publication carrying no shapes.txt still parses, still serves
+    stations and trains, and still reaches njt_static="ready", so /api/njt-routes
+    answers 200 with []. Every other production line reads green while the map has
+    no NJ Transit lines on it at all."""
+    line = _njt_routes_line(_healthy_prod(njt_routes=[]))
+    assert line.status == cm.WARN
+    assert "0 routes, 0 points" in line.detail
+    assert "shapes.txt" in line.detail, "the detail must say what usually causes this"
+
+
+def test_production_njt_routes_a_zero_point_route_is_warn():
+    """A route SERVED with no geometry. Distinct from the empty list and worth its
+    own line: eleven lines drawing and one missing is the shape a count alone
+    hides, and /api/njt-routes' own docstring says a route with no geometry is
+    normally ABSENT rather than present-and-empty, so seeing one is a change."""
+    line = _njt_routes_line(_healthy_prod(njt_routes=[("1", 40), ("2", 0), ("3", 40)]))
+    assert line.status == cm.WARN
+    assert "3 routes, 80 points" in line.detail
+    assert "1 of 3 routes carry NO points" in line.detail
+    assert "route 2" in line.detail
+
+
+def test_production_njt_routes_counts_an_unprintable_route_id():
+    """SAME RULE AS production:healthz: what matches the safe pattern is named,
+    what does not is COUNTED. This detail is written to $GITHUB_STEP_SUMMARY, which
+    GitHub renders as markdown, and the payload comes from a URL an operator pasted
+    into a repository variable."""
+    hostile = "[click](https://evil.example)"
+    line = _njt_routes_line(_healthy_prod(njt_routes=[("1", 40), (hostile, 0)]))
+    assert line.status == cm.WARN
+    assert "1 with an unprintable route id" in line.detail
+    assert "evil.example" not in line.detail and "[click]" not in line.detail
+    assert "evil.example" not in cm.format_summary_table([line])
+
+
+def test_production_njt_routes_not_configured_is_not_an_empty_map():
+    """A deployment with no NJ Transit credentials serves [] for a reason
+    production:statics already reports and already accepts. Warning here too would
+    manufacture a standing WARN on every deliberately-unconfigured deployment,
+    which is how a monitor gets muted, so the state is read from the payload rather
+    than guessed at from the empty list."""
+    fetch = _healthy_prod(njt_static="not-configured", njt_routes=[])
+    line = _njt_routes_line(fetch)
+    assert line.status == cm.PASS
+    assert "not-configured" in line.detail
+    assert _PROD_NJT_ROUTES not in [call[0] for call in fetch.calls], (
+        "an unconfigured deployment must not even be asked for route geometry"
+    )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [500, b"not json at all", b'{"routes": []}', b"[1, 2, 3]"],
+    ids=["unreachable", "non-json", "non-list", "no-objects"],
+)
+def test_production_njt_routes_never_fails_the_run(body):
+    """NON-GATING ON EVERY ARM, including the malformed ones. Route lines are
+    additive, so their absence must never exit the 6-hourly run non-zero and page
+    someone; a deployment that is actually down is already red on
+    production:status, which probes the same host. This line adds detection, not
+    severity."""
+    fetch = _healthy_prod()
+    fetch.mapping[_PROD_NJT_ROUTES] = body
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
+    line = next(r for r in results if r.name == "production:njt-routes")
+    assert line.status == cm.WARN, line.detail
+    assert [r for r in results if r.status == cm.FAIL] == [], (
+        "a malformed njt-routes response must not turn any other line red either"
+    )
+
+
+def test_production_njt_routes_sums_across_polylines_of_one_route():
+    """A route's geometry is a LIST of polylines (a branching line has several), so
+    the point count is the total across them. A per-route "does it have any
+    polylines" test would call a route with three empty ones healthy."""
+    body = json.dumps(
+        [
+            {"route": "1", "polylines": [[[40.7, -74.0], [40.8, -74.1]], [[40.9, -74.2]]]},
+            {"route": "2", "polylines": [[], []]},
+        ]
+    ).encode()
+    fetch = _healthy_prod()
+    fetch.mapping[_PROD_NJT_ROUTES] = body
+    line = next(
+        r
+        for r in cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
+        if r.name == "production:njt-routes"
+    )
+    assert "2 routes, 3 points" in line.detail
+    assert "route 2" in line.detail
+
+
 # ---- the replayed served_at ----
 
 
@@ -2868,6 +3119,7 @@ def _replay_prod(first, second, *, health=None):
         {
             _PROD_STATUS: [_status_json(served_at=first), _status_json(served_at=second)],
             _PROD_HEALTH: _healthz_json() if health is None else health,
+            _PROD_NJT_ROUTES: _njt_routes_json(),
         }
     )
 

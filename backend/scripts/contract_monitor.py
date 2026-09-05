@@ -48,6 +48,7 @@ import csv
 import io
 import json
 import os
+import re
 import sys
 import tempfile
 import time
@@ -390,6 +391,27 @@ NJT_REQUIRED_MEMBERS = (
 # it as required turned the 6-hourly schedule red over a member the app was
 # designed to survive losing.
 NJT_WATCHED_MEMBERS = ("shapes.txt",)
+
+# stops.txt columns njt_static._parse_stops READS to build a marker: the id, the
+# name the identity spot check compares, and the two coordinates a row without
+# which is dropped. Watched BY NAME because that is the only way to notice the
+# loss early: a publication that drops stop_lat still parses cleanly and simply
+# yields zero stops, which arrives here as the min-stops FAIL with no hint that a
+# column went missing rather than the feed emptying.
+NJT_STOPS_REQUIRED_COLUMNS = ("stop_id", "stop_name", "stop_lat", "stop_lon")
+
+# The two OPTIONAL GTFS columns that DESCRIBE a parent/child station model, listed
+# by name rather than accepted as "any new column": a third column appearing is
+# still worth someone reading the spec for, and a blanket allowance would hide it.
+#
+# THEIR PRESENCE IN THE HEADER MEANS NOTHING, which is the whole diagnosis behind
+# the standing WARN this replaced. GTFS makes both optional and lets a publisher
+# declare them with an EMPTY value on every row, which is exactly how a flat feed
+# spells "flat"; NJ Transit began doing that between runs #110 and #111
+# (2026-08-07). A header test therefore cannot tell "the feed went hierarchical"
+# from "the publisher widened its header", and it answered WARN to both for a
+# month. The shape lives in the ROWS, so that is where _njt_stops_shape looks.
+NJT_STOPS_HIERARCHY_COLUMNS = ("location_type", "parent_station")
 
 # NJ Transit Rail's daily service window in ET, and the two REALTIME bands, all
 # three DERIVED FROM THE PEAK PROBE. The working is at THE FRESHNESS BUDGET,
@@ -1711,30 +1733,28 @@ def check_njt_static(
     _check_members(statuses, details, members, NJT_REQUIRED_MEMBERS)
     _check_members(statuses, details, members, NJT_WATCHED_MEMBERS, status=WARN)
     # THE SHAPE-CHANGE WATCH, which is the monitor's job in the way a floor is not.
-    # njt_static treats this feed as FLAT on the strength of the 2026-08-05 probe:
-    # no location_type, no parent_station, 172 stops that are all boardable. If that
-    # changes, the loader's parser drops the non-boardable rows (correct, and it
-    # keeps entrances off the map), but "should the marker set become the PARENT
-    # stations, the way subway and PATH do it" is a design decision a human owes an
-    # answer to. Nothing else can see it: NJT_STATIC_MIN_STOPS is a lower bound, so
-    # 172 becoming 400 sails past, and the 109/112 identity check still passes
-    # because a parent keeps the station's name. WARN, not FAIL: the app keeps
-    # serving correctly throughout, and this is a "come and look" rather than a
-    # "something is broken".
+    # njt_static treats this feed as FLAT: every parsed row is a boardable marker.
+    # If that stops being true the loader's parser drops the non-boardable rows
+    # (correct, and it keeps entrances off the map), but "should the marker set
+    # become the PARENT stations, the way subway and PATH do it" is a design
+    # decision a human owes an answer to. Nothing else can see it: NJT_STATIC_MIN_STOPS
+    # is a lower bound, so 172 becoming 400 sails past, and the 109/112 identity
+    # check still passes because a parent keeps the station's name. Both arms below
+    # are WARN, not FAIL: the app keeps serving correctly throughout, and each is a
+    # "come and look" rather than a "something is broken".
     if "stops.txt" in members:
-        with zipfile.ZipFile(io.BytesIO(res.content)) as zf:
-            with zf.open("stops.txt") as raw:
-                header = io.TextIOWrapper(raw, encoding="utf-8-sig").readline()
-        grown = sorted(
-            column
-            for column in ("location_type", "parent_station")
-            if column in {c.strip() for c in header.split(",")}
-        )
-        if grown:
+        missing_columns, hierarchy_in_use = _njt_stops_shape(res.content)
+        if missing_columns:
             statuses.append(WARN)
             details.append(
-                f"stops.txt now carries {', '.join(grown)}; the loader treats this feed as "
-                "FLAT and a parent/child model is a human decision"
+                f"stops.txt header no longer carries {', '.join(missing_columns)}, which "
+                "njt_static._parse_stops reads on every row"
+            )
+        if hierarchy_in_use:
+            statuses.append(WARN)
+            details.append(
+                f"stops.txt now USES {', '.join(hierarchy_in_use)}; the loader treats this "
+                "feed as FLAT and a parent/child model is a human decision"
             )
     routes = parsed.get("routes") or {}
     stops = parsed.get("stops") or {}
@@ -1774,6 +1794,55 @@ def check_njt_static(
             parsed,
         )
     return Result("njt-static", _worst(statuses), "; ".join(details)), parsed
+
+
+def _njt_stops_shape(body: bytes) -> tuple[list[str], list[str]]:
+    """Read stops.txt out of the archive and answer the two questions that matter.
+
+    Returns (required columns the header no longer carries, hierarchy columns the
+    ROWS actually use). Both lists empty is the current publication.
+
+    THE DIAGNOSIS THIS FUNCTION ENCODES, because the version it replaces produced a
+    WARN on every run from #111 (2026-08-07) onward and three ledger entries noted
+    it as pre-existing. That version read the first line of stops.txt and warned if
+    the strings "location_type" or "parent_station" appeared among the column
+    names. It was reading a HEADER to answer a question about DATA. GTFS makes both
+    columns optional and a publisher may declare either with an empty value on
+    every row, which is precisely how a flat feed spells "flat", so the header
+    cannot distinguish a feed that went hierarchical from a publisher that widened
+    its header. NJ Transit did the second: the archive captured on 2026-09-04
+    (backend/tests/fixtures/njt_gtfs/stops.txt) carries both columns and an EMPTY
+    value in both on all 164 of its rows, that capture being the trim of a 172-stop
+    publication, and njt_static._parse_stops keeps every one of them, because its
+    filter is `location_type not in ("", "0")`. The feed is as flat as it was on
+    2026-08-05. Only the header grew.
+
+    So the columns are accepted BY NAME (NJT_STOPS_HIERARCHY_COLUMNS) and the watch
+    moved to the values: a non-empty parent_station, or a location_type that is not
+    "" or "0", is the parser's own definition of a row that is not a boardable
+    stop, and one of those really is the design question a human owes an answer to.
+
+    A ROW SCAN, and it costs nothing worth naming: 164 rows today, and the loop
+    stops as soon as both columns have been seen in use.
+    """
+    with zipfile.ZipFile(io.BytesIO(body)) as zf:
+        with zf.open("stops.txt") as raw:
+            reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
+            declared = set(reader.fieldnames or ())
+            missing = [c for c in NJT_STOPS_REQUIRED_COLUMNS if c not in declared]
+            in_use: set[str] = set()
+            for row in reader:
+                if (row.get("parent_station") or "").strip():
+                    in_use.add("parent_station")
+                # The parser's own test, verbatim (njt_static._parse_stops): blank
+                # and "0" are boardable stops, every other location_type is a
+                # parent, entrance, node or boarding area, and none of those is a
+                # place a train calls at.
+                if (row.get("location_type") or "").strip() not in ("", "0"):
+                    in_use.add("location_type")
+                if len(in_use) == len(NJT_STOPS_HIERARCHY_COLUMNS):
+                    break
+    return missing, [c for c in NJT_STOPS_HIERARCHY_COLUMNS if c in in_use]
 
 
 def _check_members(
@@ -1824,6 +1893,12 @@ def _deployment_base(configured: str) -> str:
 def _resolve_health_url(configured: str) -> str:
     """The /healthz URL to probe, from the same variable /api/status comes from."""
     return _deployment_base(configured) + "/healthz"
+
+
+def _resolve_njt_routes_url(configured: str) -> str:
+    """The /api/njt-routes URL to probe, from that same one variable. Third path on
+    it, and for the reason _deployment_base gives: one deployment, one variable."""
+    return _deployment_base(configured) + "/api/njt-routes"
 
 
 def _resolve_status_url(configured: str) -> str:
@@ -2213,6 +2288,15 @@ def check_production(
     # add a line rather than change one.
     results.append(_check_production_served_at(fetch, sleep, data, url))
     results.append(_check_production_health(fetch, sleep, _resolve_health_url(status_url)))
+    # 15c, and LAST for the same reason the F1 pair comes after the payload lines:
+    # it is another READ of the deployment, not another field of the one already
+    # parsed. /api/status publishes nothing at all about route geometry, which is
+    # exactly why nothing above could see a deployment serving no NJ Transit lines.
+    results.append(
+        _check_production_njt_routes(
+            fetch, sleep, _resolve_njt_routes_url(status_url), data.get("njt_static")
+        )
+    )
     return results
 
 
@@ -2349,6 +2433,101 @@ def _check_production_alerts(data: dict) -> Result:
             "production:alerts", WARN, "degraded alert systems (alerts still retained): " + names
         )
     return Result("production:alerts", PASS, "no degraded alert systems")
+
+
+# Route ids safe to print. The detail string below is written to the run log AND to
+# $GITHUB_STEP_SUMMARY, which GitHub renders as MARKDOWN, and this payload comes
+# from a URL an operator pasted into a repository variable. Same rule
+# _check_production_health holds itself to: what matches is named, what does not is
+# counted, so nothing that can answer that URL gets to write into the job summary.
+# NJ Transit rail route ids are 1..12 today, so this is wide, not tight.
+_SAFE_ROUTE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,16}$")
+
+
+def _check_production_njt_routes(
+    fetch: Fetcher,
+    sleep: Callable[[float], None],
+    routes_url: str,
+    njt_static_state: object,
+) -> Result:
+    """Does the deployment actually serve NJ Transit route lines?
+
+    THE BLIND SPOT THIS CLOSES. 15c made route geometry ADDITIVE on purpose: a
+    publication carrying no shapes.txt still parses, still serves stations and
+    trains, and still reaches njt_static="ready", so /api/njt-routes answers 200
+    with []. That is the state the app chose, and it is the right one, because the
+    alternative is a whole mode dark over a member the loader does not need. But it
+    means every existing production line reads green while the map has no NJ
+    Transit lines on it at all: production:statics sees "ready", production:feeds
+    sees fresh polls, and /healthz classifies nothing, because from the app's point
+    of view nothing is wrong.
+
+    ALWAYS WARN, NEVER FAIL, including on an unreachable or malformed response.
+    Route lines are additive, so their absence must never exit the 6-hourly run
+    non-zero and page someone; a deployment that is actually down is already red on
+    production:status, which probes the same host. This line adds detection, not
+    severity.
+
+    NOT-CONFIGURED IS NOT AN EMPTY MAP. A deployment given no NJ Transit
+    credentials serves [] here for a reason production:statics already reports and
+    already accepts, so warning on it too would manufacture exactly the kind of
+    standing WARN a monitor gets muted for. Read from the /api/status payload the
+    caller already has rather than guessed at from the empty list, which is what
+    the endpoint's own docstring says to do.
+
+    THE COUNTS ARE IN THE SUMMARY on every arm, because "12 routes, 8214 points" is
+    the number that makes the next run's "12 routes, 0 points" legible at a glance.
+    """
+    name = "production:njt-routes"
+    if njt_static_state == "not-configured":
+        return Result(name, PASS, "njt_static is not-configured, so no route geometry is expected")
+    res, detail = _fetch_retrying(fetch, routes_url, sleep)
+    if res is None:
+        return Result(name, WARN, f"/api/njt-routes unreachable ({detail})")
+    try:
+        body = json.loads(res.content)
+    except (ValueError, UnicodeDecodeError) as exc:
+        return Result(name, WARN, f"/api/njt-routes non-JSON ({_sanitize(exc)})")
+    if not isinstance(body, list):
+        return Result(name, WARN, "/api/njt-routes returned non-list JSON")
+    if not any(isinstance(entry, dict) for entry in body) and body:
+        return Result(name, WARN, f"/api/njt-routes served {len(body)} entries, none an object")
+    if not body:
+        return Result(
+            name,
+            WARN,
+            "0 routes, 0 points: the deployment is serving no NJ Transit route geometry, so "
+            "the map draws no NJT lines. Expected when the publication carries no shapes.txt, "
+            "which reaches ready by design; nothing else reports it.",
+        )
+
+    points = {}
+    for index, entry in enumerate(body):
+        route = entry.get("route") if isinstance(entry, dict) else None
+        polylines = entry.get("polylines") if isinstance(entry, dict) else None
+        total = (
+            sum(len(line) for line in polylines if isinstance(line, list))
+            if isinstance(polylines, list)
+            else 0
+        )
+        # The index keys the dict so two entries claiming the same route id (or a
+        # missing one) are still counted separately rather than collapsing.
+        points[index] = (route, total)
+
+    total_points = sum(count for _route, count in points.values())
+    summary = f"{len(points)} routes, {total_points} points"
+    empty = [route for route, count in points.values() if count == 0]
+    if not empty:
+        return Result(name, PASS, summary)
+    named = sorted(str(r) for r in empty if _SAFE_ROUTE_ID_RE.match(str(r)))
+    unnamed = len(empty) - len(named)
+    parts = [f"{len(empty)} of {len(points)} routes carry NO points"]
+    if named:
+        parts.append("route " + ", ".join(named))
+    if unnamed:
+        # Counted, never quoted. See _SAFE_ROUTE_ID_RE.
+        parts.append(f"{unnamed} with an unprintable route id")
+    return Result(name, WARN, f"{summary}; " + "; ".join(parts))
 
 
 # ---------------------------------------------------------------------------

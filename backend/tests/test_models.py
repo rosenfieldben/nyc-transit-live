@@ -351,8 +351,8 @@ def test_status_model_validates_handler_shape():
 
 def test_decoded_train_keys_cover_model():
     # Decode a fresh train from the golden bytes and confirm its keys are
-    # exactly the model's — ties the model to the live code path, not just the
-    # serialized fixture.
+    # exactly the model's. This ties the model to the live code path, not just
+    # the serialized fixture.
     raw = (FIXTURES / "subway_1_7_s.pb").read_bytes()
     stops = json.loads((FIXTURES / "subway_1_7_s_stops.json").read_text())
     expected = json.loads((FIXTURES / "subway_1_7_s_expected.json").read_text())

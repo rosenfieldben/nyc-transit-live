@@ -25,9 +25,54 @@ from __future__ import annotations
 import ast
 import importlib.util
 import re
+import subprocess
+from pathlib import Path
 
 from conftest import REPO_ROOT
 from upstream_sim import UpstreamSim
+
+
+def _shipped_backend_modules() -> list[Path]:
+    """Every backend .py file this repository SHIPS, as absolute paths.
+
+    TRACKED FILES, NOT A TREE WALK, and the difference is not academic. The scanner
+    below used (REPO_ROOT / "backend").rglob("*.py"), which walks whatever is on
+    disk. A developer who runs the backend from backend/.venv (the documented way,
+    backend/requirements-dev.txt) therefore had every installed third-party package
+    scanned as if it were a shipped module: 646 URL literals from httpx, uvicorn,
+    protobuf and friends, none of them ours, none routable through env_seams, and a
+    permanently red test that could only be worked around by running this tier from
+    a git-archive export. A guard that a developer has to route around is a guard
+    that gets deleted.
+
+    TRACKED rather than "not gitignored", because tracked is the SAME question the
+    test is asking. The claim is about modules this repository ships, and shipping
+    is exactly what being tracked means; asking git-check-ignore instead would make
+    the answer depend on how complete .gitignore happens to be, which is a second
+    thing to keep right. ACCEPTED COST, stated so it is a choice rather than an
+    oversight: a brand new module that a developer has written and not yet `git
+    add`ed is invisible here until it is staged. It is visible the moment it can
+    reach a reviewer or CI, which is the moment this test's verdict matters.
+
+    THE FALLBACK IS FOR A SOURCE EXPORT, not for a broken checkout. `git ls-files`
+    needs a git directory, and a tarball or `git archive` export has none. Falling
+    back to the tree walk there is right rather than merely tolerable: an export
+    contains only tracked files by construction, so the two branches compute the
+    same set from the same content, and an export carries no .venv to trip over.
+    """
+    try:
+        listing = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "ls-files", "-z", "--", "backend"],
+            capture_output=True,
+            check=True,
+            text=True,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return sorted((REPO_ROOT / "backend").rglob("*.py"))
+    paths = (REPO_ROOT / name for name in listing.split("\0") if name.endswith(".py"))
+    # exists() because ls-files reports a tracked file that has been deleted in the
+    # working tree. That is a mid-edit state, not shipped code to scan.
+    return sorted(path for path in paths if path.exists())
 
 
 def _load_env_seams():
@@ -167,10 +212,11 @@ def test_no_backend_module_hardcodes_an_upstream_url():
     url_re = re.compile(r"^https?://")
     modules = [
         path
-        for path in sorted((REPO_ROOT / "backend").rglob("*.py"))
+        for path in _shipped_backend_modules()
         if not {"tests", "scripts"} & set(path.relative_to(REPO_ROOT).parts)
         and path.name != "env_seams.py"  # the seam helper itself declares no upstream
     ]
+    assert modules, "the scanner found no backend modules at all, so it proves nothing"
     trees = {path: ast.parse(path.read_text(encoding="utf-8")) for path in modules}
 
     # A literal is a seam default if it reaches env_seams.url(), OR if it is the

@@ -192,9 +192,31 @@ def test_a_frozen_upstream_leaves_every_liveness_signal_green(contract_app):
 
     The sim's freeze is STRICTER than anything the real bridge produces: it holds
     the header timestamp still too, which the bridge would not. That is what makes
-    the one surviving signal assertable. If a content-staleness heuristic is ever
-    added, feed_timestamp falling behind fetched_at is the evidence it would key
-    on, and this test is where its arrival should be felt.
+    the one surviving signal assertable.
+
+    THE CONTENT-STALENESS HEURISTIC THIS ONCE PREDICTED HAS SHIPPED, and it keys on
+    exactly the evidence named above. F1 added `feed-content-stale` to the
+    `degraded` list /healthz publishes: routes/status.py names any cached ENDPOINT
+    whose feed_age has reached FEED_STALE_AFTER_S, feed_age being fetched_at minus
+    feed_timestamp, the gap this scenario grows. It reports per endpoint and never
+    per subway line group, because feeds/subway.py folds the eight group headers
+    with min() before the cache sees them.
+
+    IT DOES NOT MOVE THE STATUS CODE. feed-content-stale is outside
+    HEALTH_GATING_CODES, so `status` stays "pass" and the probe still answers 200:
+    Railway restarts a container on a failing healthcheck and a fresh process would
+    be exactly as late, so a lagging upstream has to reach a human without reaching
+    the platform. The contract monitor is the stricter reader and fails its run on
+    any degraded code at all.
+
+    THIS SCENARIO IS STILL GREEN THROUGHOUT, and that is not an oversight.
+    FEED_STALE_AFTER_S is deliberately not overridable (cache.py), so a freeze
+    started here would need 90 seconds of waiting to cross it, which this tier's
+    budget cannot afford. What the assertions below measure is therefore unchanged:
+    for the first 90 seconds a stuck upstream still moves no signal but
+    feed_timestamp. The classification's own witness is
+    test_stale_upstream_content_reaches_healthz_without_taking_the_app_down, which
+    uses the simulator's `stale` mode to reach the same end state immediately.
 
     No hermetic counterpart, deliberately: the claim is about a whole poll loop
     against a socket that keeps answering, which is exactly what a stub cannot be.

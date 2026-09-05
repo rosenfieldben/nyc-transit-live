@@ -155,7 +155,7 @@ def parse_feed(raw: bytes) -> gtfs_realtime_pb2.FeedMessage:
 def _header_timestamp(feed) -> float | None:
     """The feed's content time (FeedHeader.timestamp, MTA's clock) as a float,
     or None when the feed omits it (the field is 0). This is distinct from the
-    app server's poll time — see the freshness handling in main.py."""
+    app server's poll time (see the freshness handling in main.py)."""
     return float(feed.header.timestamp) or None
 
 
@@ -177,8 +177,8 @@ def _stop_time(stu) -> int | None:
 
     Latest (departure when both are set) matters for the "still upcoming"
     test: a train dwelling or held at a station has arrival in the past but
-    departure in the future, and must not be treated as past that stop —
-    otherwise held trains get plotted one station ahead.
+    departure in the future, and must not be treated as past that stop.
+    Otherwise held trains get plotted one station ahead.
     """
     times = []
     for field in ("arrival", "departure"):

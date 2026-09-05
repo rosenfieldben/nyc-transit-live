@@ -25,7 +25,10 @@ treated as ground truth by the validators below:
     deliberately carries no wheelchair field rather than a hardcoded False, which
     would read downstream as an affirmative "not accessible" that this feed never
     said. Ferry's marker has one because the ferry feed publishes one.
-  * NO parent stations, NO location_type. 172 flat stops with ids 1..176.
+  * NO parent stations and NO location_type VALUES. Both columns are declared in
+    the stops.txt header (they were not on 2026-08-05; they are as of the
+    2026-09-04 capture) and both are empty on every row, so the feed is still
+    172 flat stops with ids 1..176.
 
 WHAT IT SHIPS THAT NOTHING ELSE HERE DOES:
 
@@ -155,10 +158,13 @@ _SERVICE_ADDED = "1"
 def _parse_stops(raw: IO[bytes]) -> dict[str, dict]:
     """stops.txt -> stop_id -> {id, name, lat, lon}.
 
-    FLAT, like the ferry and unlike PATH: as of the 2026-08-05 probe this feed ships
-    no location_type and no parent_station at all, so every row with a usable id and
-    coordinate is a marker. Rows with a blank stop_id or a missing/malformed
-    coordinate are skipped; first-writer-wins on a duplicate stop_id.
+    FLAT, like the ferry and unlike PATH: this feed declares location_type and
+    parent_station in its stops.txt header and leaves both EMPTY on every row (164 of
+    164 in the trimmed 2026-09-04 capture, the publication's own 172 of 172; the
+    columns were absent altogether in the 2026-08-05 probe), so every row with a
+    usable id and coordinate is a marker.
+    Rows with a blank stop_id or a missing/malformed coordinate are skipped;
+    first-writer-wins on a duplicate stop_id.
 
     THE ONE THING NOT ASSUMED, because the cost of being wrong is visible to riders:
     a row whose location_type is anything but blank or "0" is NOT a boardable stop.

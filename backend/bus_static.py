@@ -1,11 +1,11 @@
 """Background-built, on-demand index of bus route geometry.
 
 Bus shapes live in six borough GTFS zips (~52 MB compressed) whose bulk is
-stop_times.txt — which we never read. A background task downloads the zips
+stop_times.txt, which we never read. A background task downloads the zips
 one at a time, selects one representative shape per route and direction (the
 variant used by the most trips), and writes one small JSON file per route
 under data/cache/bus_routes/. Request handlers read single per-route files on
-demand — the on-disk cache is the source of truth and nothing but a status
+demand: the on-disk cache is the source of truth and nothing but a status
 flag stays in memory. Startup is not blocked: the endpoint reports "building"
 until the index is ready.
 """
@@ -67,13 +67,13 @@ BUS_GTFS_URLS = {
 _ROUTE_ID_RE = re.compile(r"^[A-Za-z0-9+\-]{1,16}$")
 
 # missing -> building -> ready | failed
-# NOTE: per-process state — the deploy runs a single uvicorn worker. The
+# NOTE: per-process state (the deploy runs a single uvicorn worker). The
 # request path reads geometry from disk, so workers would only disagree
 # about status, not data.
 _status = "missing"
 
 # Whether the manifest behind the current "ready" status recorded failed
-# boroughs — lets the API say "index is incomplete" instead of a plain 404.
+# boroughs. Lets the API say "index is incomplete" instead of a plain 404.
 _partial = False
 
 # Set on shutdown so the build thread exits at the next check point instead
@@ -261,7 +261,7 @@ def _build_index_sync() -> set[str]:
 async def ensure_index() -> None:
     """Load a fresh cached index, or (re)build it in a worker thread.
 
-    Called as a background task at startup — never blocks serving. A cached
+    Called as a background task at startup, so it never blocks serving. A cached
     manifest that records failed boroughs is served immediately (partial data
     beats none) but still triggers a rebuild so a transient download failure
     doesn't leave whole boroughs missing for 30 days.

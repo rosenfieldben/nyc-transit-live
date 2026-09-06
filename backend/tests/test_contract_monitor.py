@@ -20,6 +20,8 @@ The monitor lives under scripts/ (not an importable package), so it is loaded
 from its file path, the same way it would run.
 """
 
+import asyncio
+import contextlib
 import csv
 import importlib.util
 import io
@@ -2041,6 +2043,88 @@ def test_run_all_a_failed_mint_fails_both_njt_checks_with_the_same_reason():
     # 500 too, so the useful claim is the reverse one: nothing about the shared
     # token stopped the other checks from running and reporting for themselves.
     assert {"subway-static", "railroad-static", "alerts-realtime"} <= set(by_name)
+
+
+def test_the_monitor_does_not_share_the_app_cache_or_inherit_its_cooldown():
+    """THE MONITOR'S TOKEN IS ITS OWN (Audit 5, F05).
+
+    _NjtToken is this process's whole answer to njt_auth.TokenCache and it mints
+    once per run with no retry, so the cooldown the app grew in F05 buys it nothing
+    and must cost it nothing either. TWO DIRECTIONS, and both are failures worth
+    naming:
+
+      * A monitor that reached njt_auth.TOKEN_CACHE would be gated by a cooldown
+        some OTHER process started, and would report an NJ Transit fault it never
+        observed. The monitor's entire value is being an independent vantage point.
+      * A monitor whose own failure landed on the app's shared cache would leave a
+        window behind for a production process to trip over.
+
+    The cache is pre-loaded with a live token here, so a monitor that consulted it
+    would skip minting altogether and this test would see zero getToken POSTs. Then
+    a failing run is driven and the cache is asserted untouched.
+    """
+    # A cache that already holds a live token AND is inside a cooldown, so both
+    # failure directions are observable: a monitor that read this cache would use
+    # "app-token" and mint nothing, and a monitor that wrote to it would move one of
+    # the counters below.
+    loaded = cm.njt_auth.TokenCache()
+
+    async def _load():
+        await loaded.get(_returns("app-token"))
+        with contextlib.suppress(cm.njt_auth.NjtAuthError):
+            loaded.invalidate(None)
+            await loaded.get(_raises(cm.njt_auth.NjtAuthError("getToken returned HTTP 503")))
+
+    asyncio.run(_load())
+    assert loaded.cooldown() is not None, "the fixture really is in a cooldown"
+    monkeypatch_global = cm.njt_auth.TOKEN_CACHE
+    cm.njt_auth.TOKEN_CACHE = loaded
+    try:
+        _assert_monitor_keeps_its_own_token(loaded)
+    finally:
+        cm.njt_auth.TOKEN_CACHE = monkeypatch_global
+
+
+def _returns(token):
+    async def mint():
+        return token
+
+    return mint
+
+
+def _raises(exc):
+    async def mint():
+        raise exc
+
+    return mint
+
+
+def _assert_monitor_keeps_its_own_token(shared):
+    before = (shared.peek(), shared.mints, shared.mint_requests, shared.cooldown()[1])
+
+    calls = []
+
+    def fetch(url, headers=None, params=None, files=None):
+        calls.append(url)
+        return cm.FetchResult(500, b"")
+
+    cm.run_all(
+        fetch,
+        NO_SLEEP,
+        NJT_RT_NOW,
+        env={
+            "NJT_USERNAME": "rider",
+            "NJT_PASSWORD": "secret",
+            "MONITOR_SKIP_PRODUCTION": "1",
+        },
+    )
+    assert [url for url in calls if url == cm.njt_auth.NJT_TOKEN_URL], (
+        "the monitor minted for itself rather than reading a token out of the app's cache"
+    )
+    assert "app-token" not in [str(url) for url in calls], "and never carried the app's token"
+    assert (shared.peek(), shared.mints, shared.mint_requests, shared.cooldown()[1]) == before, (
+        "and its failure left no state on the process-wide cache for anyone else to meet"
+    )
 
 
 def test_run_all_does_not_mint_at_all_without_credentials():

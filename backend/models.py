@@ -612,6 +612,24 @@ class AlertStatus(BaseModel):
     degraded_systems: list[str] = []
 
 
+class NjtMintCooldown(BaseModel):
+    """Why the app is not asking NJ Transit for a token right now, and for how long.
+
+    TWO FIELDS BECAUSE TWO READERS. `seconds_remaining` is for anything that does
+    arithmetic (a monitor deciding whether a window outlasts its own cadence);
+    `detail` is the sentence an operator reads, and it names the failure that
+    started the window as well as the time left, so "NJ Transit is down" and "we
+    are deliberately not asking" stop looking alike on this surface.
+
+    NO getToken BODY CAN REACH EITHER (Audit 4, F3): the detail is built from the
+    failing mint's message, which njt_auth composes from a status code, an
+    exception type name or one of its own constants, never from the response.
+    """
+
+    seconds_remaining: float
+    detail: str
+
+
 class StatusResponse(BaseModel):
     served_at: float  # this snapshot's build time (see cache.py)
     feeds: dict[str, FeedStatus]
@@ -631,6 +649,15 @@ class StatusResponse(BaseModel):
     # which is a deliberate configuration choice and must never look like a broken
     # upstream. Defaulted so pre-15a fixtures validate unchanged.
     njt_static: str | None = None
+    # THE MINT COOLDOWN (Audit 5, F05), and it is a sibling of njt_static rather
+    # than a fifth state of it for the reason static_archives is a sibling of the
+    # *_static strings: the group state says whether NJ Transit can be SERVED, this
+    # says whether a token can currently be ASKED FOR, and the two are independent.
+    # A running cooldown with an over-age token in hand leaves njt_static "ready"
+    # and this populated, which is the state the fix exists to make possible.
+    # Null whenever a mint may be attempted, and defaulted so every pre-F05
+    # /api/status fixture validates unchanged.
+    njt_mint_cooldown: NjtMintCooldown | None = None
     subway_feeds: SubwayFeedHealth | None
     railroad_feeds: RailroadFeedHealth | None
     path_feeds: PathFeedHealth | None

@@ -490,13 +490,51 @@ and each is a way a conventional poller gets this wrong:
    genuine token expiry each spend one of the remaining four. So mints are conserved
    structurally rather than by convention: a single-flight cache turns concurrent
    callers into one mint, a rejected token buys exactly one re-mint per attempt, and
-   nothing anywhere retries a failed mint. When the cap is hit, `njt_auth` raises the
-   fixed string `NJ Transit daily mint limit reached`, `/healthz` publishes
-   `njt-mint-quota`, `/api/status` records that string alone (not the "rejected our
-   credentials" wording a refused *token* gets, because the credentials are fine),
-   and the monitor's summary says the budget is spent rather than reporting an NJ
-   Transit outage. Nothing is retried harder: NJ Transit alone degrades until
-   Eastern midnight. The full arithmetic lives at `njt_auth.DAILY_MINT_LIMIT`.
+   **a failed mint puts the next one on a cooldown that every caller shares.**
+
+   That last clause used to promise that nothing anywhere retried a failed mint,
+   which was true of `njt_auth` and false of the repository (Audit 5, F05). The
+   module never retried; its three callers all had schedules of their own, so a mint
+   that failed at `t=0` was attempted again at `t=20` by somebody else. Measured: **4 getToken
+   POSTs in the first minute and 240 in the first hour**, which took the four spare
+   mints at 40 seconds and the whole ten at two minutes. What the cooldown replaced
+   it with:
+
+   | | before | after |
+   | --- | --- | --- |
+   | N concurrent callers, mint failing | N attempts | **1** |
+   | first minute of unbroken failure | 4 | **1** |
+   | first hour | 240 | **6** |
+   | a full day, worst case | 5760 | **52** |
+   | a *known* daily-cap refusal | 240/hour until midnight | **1, then nothing until midnight** |
+
+   The policy is two-armed, chosen by which failure arrived. A quota refusal holds
+   until the next Eastern midnight, because that is when the answer changes.
+   Everything else (transport, a non-200, an unrecognised body, and whatever bad
+   credentials turn out to look like, which has never been probed) backs off from
+   `njt_auth.MINT_COOLDOWN_BASE_S` (60s, longer than a feed poll or the cooldown
+   would change nothing) doubling to `MINT_COOLDOWN_CAP_S` (1800s, short enough that
+   a real outage heals inside the hour it ends), and one working mint resets the
+   ladder. 52 a day is still more than ten, and honestly so: once those attempts do
+   spend the account's ten, NJ Transit answers with the quota refusal instead and the
+   hold latches until midnight at one attempt for the rest of the day.
+
+   During a cooldown, `get()` raises `NjtMintCooldownError` **without calling
+   getToken**, and an over-age token keeps serving: `MAX_TOKEN_AGE_S` is a budget
+   ceiling on holding an unproven token, not an expiry, so a failed *proactive*
+   re-mint must not take the layer dark. Only a *rejected* token (there is nothing
+   left to serve) or a cooldown that began with no token at all does that.
+   `/api/status` publishes `njt_mint_cooldown` with the seconds remaining and the
+   failure that started the window.
+
+   When the cap itself is hit, `njt_auth` raises the fixed string `NJ Transit daily
+   mint limit reached`, `/healthz` publishes `njt-mint-quota`, `/api/status` records
+   that string alone (not the "rejected our credentials" wording a refused *token*
+   gets, because the credentials are fine), and the monitor's summary says the budget
+   is spent rather than reporting an NJ Transit outage. There is deliberately **no**
+   `/healthz` code for the backoff arm: a cooldown is not a state a restart could
+   fix, and a restart would spend another mint discovering that. The full arithmetic
+   lives at `njt_auth.DAILY_MINT_LIMIT` and `njt_auth.MINT_COOLDOWN_BASE_S`.
 3. **An expired token is `HTTP 500` with `{"errorMessage":"Invalid token."}`, not
    401 or 403.** This is the dangerous one. A poller that classifies 500 as a server
    error backs off forever while the fix is a single re-mint; one that treats *all*

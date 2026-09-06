@@ -959,19 +959,35 @@ def test_njt_a_spent_mint_budget_is_reported_as_a_budget_not_an_outage(harness):
         assert health["status"] == "pass", health
         assert "reasons" not in health, "a spent budget must never gate the probe"
 
-        # LET SEVERAL ATTEMPTS HAPPEN, so what follows is a claim about a RETRYING
-        # app rather than one that has tried once. await_mints rather than a bare
-        # read of the counter: the rungs are 1s/2s/3s in this tier and the probe can
-        # publish the code before the second attempt lands, so reading the counter
-        # here would be a race that passes on a slow machine and fails on a fast one.
-        harness.sim.await_mints(3)
-        # And each of those attempts cost exactly ONE getToken, with no archive
-        # fetch behind a token that was never issued. That is what "no retry loop"
-        # means on the wire: the app is not doubling up inside an attempt, only
-        # trying again on the schedule the warmup owns.
+        # ONE ATTEMPT, AND THE APP KEEPS RUNNING AROUND IT (Audit 5, F05). This used
+        # to read await_mints(3) and assert the app kept trying on its rung schedule.
+        # That was the finding: a refusal that says "you have spent your budget" was
+        # retried at every rung and every alert poll, four times in the first minute
+        # of the real cadences, each one charged to the budget it was waiting on.
+        # The wait is on ANOTHER upstream's polls, which is the only honest way to
+        # let time pass here: it proves the app is alive and working through its
+        # cadences while NJ Transit is asked nothing at all.
+        harness.sim.await_polls("subway:BDFM", 4)
+        assert harness.sim.mint_requests() == 1, (
+            f"a known-spent budget must cost exactly one getToken; got "
+            f"{harness.sim.mint_requests()} across four poll cycles of a live app"
+        )
+        # And that one attempt cost exactly one getToken, with no archive fetch
+        # behind a token that was never issued. That is what "no retry loop" means on
+        # the wire: the app is not doubling up inside an attempt either.
         assert harness.sim.gtfs_requests() == 0, (
             "a mint that was refused must never be followed by an archive fetch"
         )
+
+        # THE COOLDOWN, IN WORDS, ON THE LIVE SURFACE. This is what an operator gets
+        # instead of the retrying the app used to do, and it is the only thing that
+        # distinguishes "deliberately not asking" from "NJ Transit is down".
+        cooldown = app.status()["njt_mint_cooldown"]
+        assert cooldown is not None, "a held-off mint must be visible in /api/status"
+        assert cooldown["seconds_remaining"] > 0
+        assert "cooldown" in cooldown["detail"], cooldown
+        assert "NJ Transit daily mint limit reached" in cooldown["detail"], cooldown
+        assert NJT_QUOTA_CANARY not in cooldown["detail"], "the getToken body reached /api/status"
 
         # THE F3 CANARY, at the socket. The app now READS this body, so "reads it"
         # and "quotes it" have to be visibly different: the fixed string is present,
@@ -983,15 +999,22 @@ def test_njt_a_spent_mint_budget_is_reported_as_a_budget_not_an_outage(harness):
         # ONE LAYER, and the rest of the app is entirely well.
         assert app.get("/api/subway-stops"), "a spent NJT budget must not dim anything else"
 
-        # AND IT CLEARS ITSELF. Eastern midnight is not reachable from a test, but
-        # the mechanism is: the flag tracks the most recent mint attempt, so the
-        # first one that succeeds retires the code with no clock involved.
+        # WHAT THIS TIER CANNOT WITNESS, stated rather than quietly dropped. Healing
+        # a quota hold means reaching Eastern midnight, and healing a backoff one
+        # means outliving njt_auth.MINT_COOLDOWN_BASE_S (60s), which is longer than
+        # this whole suite's budget and is deliberately NOT one of the cadences
+        # CONTRACT_TIMING compresses: a cooldown shorter than a poll interval would
+        # not be a cooldown. So the heal, the doubling and the midnight release are
+        # pinned hermetically with an injected clock, in
+        # backend/tests/test_njt_auth.py section 8. What this scenario carries is the
+        # half that needs a real app and a real socket: three consumers, four poll
+        # cycles, one getToken POST.
         harness.sim.set_token_mode("ok")
-        app.await_status(
-            lambda s: s["njt_static"] == "ready",
-            "the group to heal on the first mint that is not refused",
+        harness.sim.await_polls("subway:BDFM", 2)
+        assert harness.sim.mint_requests() == 1, (
+            "and flipping the upstream healthy does not itself provoke an attempt: "
+            "the app is waiting on its own clock, not watching NJ Transit"
         )
-        assert "njt-mint-quota" not in app.healthz()["degraded"]
 
 
 def test_njt_a_redirected_mint_never_delivers_the_credentials(harness):

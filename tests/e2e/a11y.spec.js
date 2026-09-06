@@ -332,12 +332,28 @@ const STATES = [
       // heading-order as undecidable: a finding about our timer, not about the markup.
       // Reproduced by sweeping a delay before analyze(), failing at d=700 in one run and
       // d=800 in the next, which is why a longer wait was never the fix.
-      const live = await page.evaluate(() => {
-        const running = panelTimer !== null;
-        stopPanelArrivals();
-        return running;
-      });
-      expect(live, "the panel countdown must be running for stopping it to mean anything").toBe(true);
+      //
+      // POLLED, NOT SAMPLED, AND THE DIFFERENCE WAS A ONE-IN-FIVE FAILURE. The h3 waited
+      // for above renders from the STATION SELECTION, synchronously; panelTimer is armed
+      // by startPanelTick, which stations.js reaches only after the arrivals fetch
+      // RESOLVES. So the two are not ordered, and reading the timer once at that instant
+      // races the mock: measured on unmodified main, 7 of 30 runs of this state failed,
+      // then 6 of 30, at both viewports. stations.spec.js does not carry the bug because
+      // it waits for text that comes FROM the payload ("Northbound") before it looks;
+      // this state has no such text to wait for, because the whole point of it is to scan
+      // the detail subtree whatever the arrivals say. Polling is what orders them.
+      //
+      // The budget is the 5s this spec already gives assertNothingIsMidTransition, and it
+      // is a ceiling rather than a wait: the poll returns as soon as the timer is armed,
+      // which is why the suite is no slower for it.
+      await expect
+        .poll(() => page.evaluate(() => panelTimer !== null), {
+          timeout: 5_000,
+          message: "the panel countdown must be running for stopping it to mean anything",
+        })
+        .toBe(true);
+      // Stopped in its own step, once the poll has proved there was something to stop.
+      await page.evaluate(() => stopPanelArrivals());
     },
     targets: ["#stations-detail", "station-arrivals", "h3"],
   },

@@ -94,10 +94,14 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 BACKEND = REPO_ROOT / "backend"
 sys.path.insert(0, str(BACKEND))
 
-# HARD CONSTRAINT: no NJ Transit mint may be spent. Scrub before the import (env_seams
-# calls load_dotenv at import time) and again after, then assert.
-for _var in ("NJT_USERNAME", "NJT_PASSWORD"):
-    os.environ.pop(_var, None)
+# HARD CONSTRAINT: no NJ Transit mint may be spent. This script always scrubbed before
+# the import and again after, which is the correct order and was the model for the
+# other ten; what it lacked was the ADDRESS wall, so its safety rested entirely on the
+# scrub being right. Now neither wall is load bearing alone. See _hermetic.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _hermetic  # noqa: E402
+
+_hermetic.contain()
 
 import httpx  # noqa: E402
 
@@ -111,10 +115,18 @@ from feeds import (  # noqa: E402
 )
 from routes import status as status_routes  # noqa: E402
 
-for _var in ("NJT_USERNAME", "NJT_PASSWORD"):
-    os.environ.pop(_var, None)
-assert not os.environ.get("NJT_USERNAME"), "NJT credentials must not be present"
-assert not os.environ.get("NJT_PASSWORD"), "NJT credentials must not be present"
+# CONTAINMENT, ASSERTED NOW THAT THE BACKEND HAS BEEN IMPORTED. env_seams ran
+# load_dotenv during those imports, so this is where the credentials it may have
+# refilled are dropped again and where the addresses are checked against the real
+# NJ Transit host. Raises rather than warns: a script that cannot prove it is
+# contained must not run at all.
+_hermetic.verify()
+
+
+# The after-import scrub this script always had, now through the shared helper so it
+# blanks rather than pops (a pop is refilled by feeds.shared's own load_dotenv) and so
+# the assertion covers the addresses too.
+_hermetic.verify()
 
 
 # --------------------------------------------------------------------------------

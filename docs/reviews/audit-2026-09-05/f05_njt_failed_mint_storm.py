@@ -119,6 +119,16 @@ os.environ["NJT_PASSWORD"] = "f05-fake-password"
 _TMP_DATA_DIR = tempfile.mkdtemp(prefix="f05-njt-data-")
 os.environ["DATA_DIR"] = _TMP_DATA_DIR
 
+# CONTAINMENT. This script drives the app as a CONFIGURED deployment, which is the
+# finding rather than an oversight, so it keeps the fabricated credentials it set
+# above. contain() leaves those alone and fills every NJ Transit address seam this
+# script did not set for itself, so a route it never thought about still cannot leave
+# the machine. See _hermetic.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _hermetic  # noqa: E402
+
+_hermetic.contain(keep_credentials=True)
+
 sys.path.insert(0, str(BACKEND))
 
 import asyncio  # noqa: E402
@@ -135,6 +145,12 @@ import njt_static  # noqa: E402
 import pollers  # noqa: E402
 import warmups  # noqa: E402
 from feeds import alerts as alerts_feed  # noqa: E402
+
+# CONTAINMENT, ASSERTED. This script is configured on purpose, so what is checked is
+# that the credentials in this process are its OWN fabricated pair and that no NJ
+# Transit address survived the imports.
+_hermetic.verify(expect_configured=True)
+
 
 FAILURES: list[str] = []
 

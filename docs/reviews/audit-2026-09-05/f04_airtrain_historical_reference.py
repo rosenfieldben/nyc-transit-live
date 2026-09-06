@@ -122,6 +122,15 @@ import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+# CONTAINMENT, INSTALLED BEFORE THE FIRST BACKEND IMPORT. env_seams calls load_dotenv
+# when it is imported, so a credential scrub that runs before that import is undone by
+# it; the addresses set here are what make this process unable to reach NJ Transit at
+# all. See _hermetic for the leak this closes and the measurement behind it.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _hermetic  # noqa: E402
+
+_hermetic.contain()
+
 sys.path.insert(0, str(REPO_ROOT / "backend"))
 
 import httpx  # noqa: E402
@@ -129,6 +138,14 @@ import httpx  # noqa: E402
 import airtrain_static  # noqa: E402
 import main as app_module  # noqa: E402
 from models import AirTrainData  # noqa: E402
+
+# CONTAINMENT, ASSERTED NOW THAT THE BACKEND HAS BEEN IMPORTED. env_seams ran
+# load_dotenv during those imports, so this is where the credentials it may have
+# refilled are dropped again and where the addresses are checked against the real
+# NJ Transit host. Raises rather than warns: a script that cannot prove it is
+# contained must not run at all.
+_hermetic.verify()
+
 
 TERMINAL_2_ID = "160561"
 TERMINAL_2_NAME = "Terminal 2"

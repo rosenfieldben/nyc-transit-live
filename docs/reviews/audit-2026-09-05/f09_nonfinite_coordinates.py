@@ -89,6 +89,16 @@ REPO = Path(__file__).resolve().parents[3]
 BACKEND = REPO / "backend"
 FIXTURES = BACKEND / "tests" / "fixtures"
 FRONTEND = REPO / "frontend"
+# CONTAINMENT, INSTALLED BEFORE THE FIRST BACKEND IMPORT. The pop below this used to
+# be the whole scrub and it was not one: env_seams calls load_dotenv when it is
+# imported, which refills any credential the pop removed. The addresses set here are
+# what make this process unable to reach NJ Transit at all, credentials or not. See
+# _hermetic for the leak this closes and the measurement behind it.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _hermetic  # noqa: E402
+
+_hermetic.contain()
+
 sys.path.insert(0, str(BACKEND))
 
 
@@ -122,6 +132,14 @@ import httpx  # noqa: E402
 import njt_auth  # noqa: E402
 import njt_static  # noqa: E402
 import static_data  # noqa: E402
+
+# CONTAINMENT, ASSERTED NOW THAT THE BACKEND HAS BEEN IMPORTED. env_seams ran
+# load_dotenv during those imports, so this is where the credentials it may have
+# refilled are dropped again and where the addresses are checked against the real
+# NJ Transit host. Raises rather than warns: a script that cannot prove it is
+# contained must not run at all.
+_hermetic.verify()
+
 
 
 CHECKS: list[tuple[bool, str, str]] = []
@@ -775,6 +793,36 @@ REALTIME_MODULES = [
 ]
 
 
+def tracked_backend_modules() -> list[Path]:
+    """Every backend .py file GIT TRACKS, outside tests. Not whatever is on disk.
+
+    THE DIFFERENCE IS THE WHOLE MEASUREMENT. This scan asserts that the backend
+    contains NO math.isfinite / isnan / isinf call at all, which is the audit's
+    finding. BACKEND.rglob("*.py") walks the directory, and a developer checkout has
+    backend/.venv inside it: measured on this machine, 22 call sites, every one of
+    them in a vendored package under .venv and none in this repository. So the scan
+    reported the finding as refuted on any checkout with a virtualenv in the
+    conventional place, which is every checkout the contract tier documents.
+
+    Same rule and same fix as the tracked-file scans in f13, and the same one PR 99
+    applied to the backend module scan ("Scan tracked backend modules, not whatever
+    is on disk"). git ls-files answers with the repository's own contents, so a venv,
+    a build directory, an editor backup and a stray notebook are all invisible to it.
+    """
+    out = subprocess.run(
+        ["git", "ls-files", "--", "backend/*.py"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split("\n")
+    return [
+        REPO / rel
+        for rel in (line.strip() for line in out)
+        if rel and "/tests/" not in rel and not rel.startswith("backend/tests/")
+    ]
+
+
 def call_sites(relative: str) -> int:
     text = (BACKEND / relative).read_text().splitlines()
     return sum(
@@ -806,8 +854,7 @@ print(f"   TOTAL static parsers: {static_total}     TOTAL realtime decoders: {re
 print()
 finite_calls = sum(
     len(re.findall(r"math\.(isfinite|isnan|isinf)\(", path.read_text()))
-    for path in BACKEND.rglob("*.py")
-    if "tests" not in path.parts
+    for path in tracked_backend_modules()
 )
 print(f"math.isfinite / isnan / isinf call sites in backend production code: {finite_calls}")
 print()

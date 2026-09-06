@@ -79,6 +79,15 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[3]
 BACKEND = REPO / "backend"
 FIXTURES = BACKEND / "tests" / "fixtures"
+# CONTAINMENT, INSTALLED BEFORE THE FIRST BACKEND IMPORT. env_seams calls load_dotenv
+# when it is imported, so a credential scrub that runs before that import is undone by
+# it; the addresses set here are what make this process unable to reach NJ Transit at
+# all. See _hermetic for the leak this closes and the measurement behind it.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _hermetic  # noqa: E402
+
+_hermetic.contain()
+
 sys.path.insert(0, str(BACKEND))
 
 import httpx  # noqa: E402
@@ -87,6 +96,14 @@ from google.transit import gtfs_realtime_pb2 as pb  # noqa: E402
 import feeds  # noqa: E402  (the feeds package re-exports the railroad decoders)
 import main as app_module  # noqa: E402  (the real FastAPI app plus its poller seams)
 import models  # noqa: E402
+
+# CONTAINMENT, ASSERTED NOW THAT THE BACKEND HAS BEEN IMPORTED. env_seams ran
+# load_dotenv during those imports, so this is where the credentials it may have
+# refilled are dropped again and where the addresses are checked against the real
+# NJ Transit host. Raises rather than warns: a script that cannot prove it is
+# contained must not run at all.
+_hermetic.verify()
+
 
 FAILURES: list[str] = []
 

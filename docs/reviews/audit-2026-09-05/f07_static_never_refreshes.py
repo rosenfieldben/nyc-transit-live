@@ -98,6 +98,16 @@ os.environ["NJT_PASSWORD"] = "f07-fabricated-pass"
 os.environ["NJT_TOKEN_URL"] = "http://f07-no-such-host.invalid/getToken"
 os.environ["NJT_STATIC_URL"] = "http://f07-no-such-host.invalid/getGTFS"
 
+# CONTAINMENT. This script drives the app as a CONFIGURED deployment, which is the
+# finding rather than an oversight, so it keeps the fabricated credentials it set
+# above. contain() leaves those alone and fills every NJ Transit address seam this
+# script did not set for itself, so a route it never thought about still cannot leave
+# the machine. See _hermetic.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _hermetic  # noqa: E402
+
+_hermetic.contain(keep_credentials=True)
+
 sys.path.insert(0, str(BACKEND))
 
 import httpx  # noqa: E402
@@ -158,8 +168,12 @@ async def _fake_njt_transport(url: str, form: dict, timeout_s: float):
 njt_auth._httpx_post = _fake_njt_transport
 njt_auth.TOKEN_CACHE = njt_auth.TokenCache()
 
-assert "njtransit" not in njt_auth.NJT_TOKEN_URL, njt_auth.NJT_TOKEN_URL
-assert "njtransit" not in njt_static.NJT_STATIC_URL, njt_static.NJT_STATIC_URL
+# CONTAINMENT, ASSERTED. The two lines that were here checked exactly this and are now
+# checked for every script at once, on every seam rather than the two this file names,
+# and through njt_auth's RESOLVED value rather than the environment alone. This script
+# is configured on purpose (a static load is the finding), so what verify() asserts is
+# that the credentials in this process are its OWN fabricated pair.
+_hermetic.verify(expect_configured=True)
 
 
 # ---------------------------------------------------------------------------

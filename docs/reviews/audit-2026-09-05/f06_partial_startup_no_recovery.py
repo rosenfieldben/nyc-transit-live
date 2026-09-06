@@ -84,6 +84,16 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
 BACKEND = REPO / "backend"
+# CONTAINMENT, INSTALLED BEFORE THE FIRST BACKEND IMPORT. The pop below this used to
+# be the whole scrub and it was not one: env_seams calls load_dotenv when it is
+# imported, which refills any credential the pop removed. The addresses set here are
+# what make this process unable to reach NJ Transit at all, credentials or not. See
+# _hermetic for the leak this closes and the measurement behind it.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _hermetic  # noqa: E402
+
+_hermetic.contain()
+
 sys.path.insert(0, str(BACKEND))
 
 import httpx  # noqa: E402
@@ -94,11 +104,21 @@ import main  # noqa: E402
 import railroad_static  # noqa: E402
 import warmups  # noqa: E402
 
+# CONTAINMENT, ASSERTED NOW THAT THE BACKEND HAS BEEN IMPORTED. env_seams ran
+# load_dotenv during those imports, so this is where the credentials it may have
+# refilled are dropped again and where the addresses are checked against the real
+# NJ Transit host. Raises rather than warns: a script that cannot prove it is
+# contained must not run at all.
+_hermetic.verify()
+
+
 # The backend modules call load_dotenv at import, which copies backend/.env (if a
 # developer has one) into os.environ. Nothing below touches NJ Transit, but the
 # variables are removed anyway so no code path reached from here could mint.
-for _name in ("NJT_USERNAME", "NJT_PASSWORD", "BUS_TIME_API_KEY"):
-    os.environ.pop(_name, None)
+# BLANKED, NOT POPPED. A pop deletes the key, and load_dotenv fills deleted keys:
+# this backend loads the .env twice (env_seams and feeds.shared), so a pop here was
+# undone by whichever import came next. See _hermetic.blank.
+_hermetic.blank("NJT_USERNAME", "NJT_PASSWORD", "BUS_TIME_API_KEY")
 
 
 # --------------------------------------------------------------------------

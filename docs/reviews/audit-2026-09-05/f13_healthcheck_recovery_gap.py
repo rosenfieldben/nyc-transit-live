@@ -117,13 +117,37 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
 BACKEND = REPO / "backend"
+# CONTAINMENT, INSTALLED BEFORE THE FIRST BACKEND IMPORT. The pop below this used to
+# be the whole scrub and it was not one: env_seams calls load_dotenv when it is
+# imported, which refills any credential the pop removed. The addresses set here are
+# what make this process unable to reach NJ Transit at all, credentials or not. See
+# _hermetic for the leak this closes and the measurement behind it.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _hermetic  # noqa: E402
+
+_hermetic.contain()
+
 sys.path.insert(0, str(BACKEND))
 
 # Hermetic by construction: run as an UNCONFIGURED deployment whatever the machine
 # holds, so the NJT warmup and the NJT refresher both short-circuit before any
-# network call and no mint can be spent. Same discipline as backend/tests/conftest.py.
-for _var in ("NJT_USERNAME", "NJT_PASSWORD", "BUS_TIME_API_KEY", "MTA_BUS_API_KEY"):
-    os.environ.pop(_var, None)
+# network call and no mint can be spent.
+#
+# THIS POP USED TO BE THE WHOLE CLAIM AND IT WAS FALSE. It runs before the first
+# backend import, and env_seams calls load_dotenv when it is imported, so on a
+# checkout whose .env carries RailData credentials this process came back CONFIGURED
+# and pointed at the real host. Measured: njt_static_status reached "failed" here,
+# which is only reachable after load_njt_static actually tried. verify() below drops
+# them again on the far side of the import and asserts, and _hermetic.contain() above
+# has already made the address unreachable either way.
+# BLANKED, NOT POPPED, which is the half of this that was actually wrong. A pop
+# deletes the key and load_dotenv fills deleted keys, and this backend loads the .env
+# TWICE: env_seams.py:46, reached by the njt_auth import below, and feeds/shared.py:35,
+# reached much later when this script imports the app inside a function. So the pop was
+# undone by an import several hundred lines away, and the warmup came up configured and
+# reached "failed" against the real host. See _hermetic.blank.
+_hermetic.blank("NJT_USERNAME", "NJT_PASSWORD", "BUS_TIME_API_KEY", "MTA_BUS_API_KEY")
+_hermetic.verify()
 
 FAILURES: list[str] = []
 LINES: list[str] = []
@@ -194,8 +218,14 @@ def part1_cadence() -> dict:
     crons = re.findall(r'^\s*-\s*cron:\s*"([^"]+)"', wf, flags=re.M)
     say(f"  .github/workflows/contract-monitor.yml cron entries : {crons}")
 
+    # POSIX BRACKET EXPRESSION, NOT \s, AND THE DIFFERENCE IS A SILENT ZERO. git grep
+    # -E hands the pattern to the platform's regex engine: \s is a GNU extension, so
+    # on glibc it matches whitespace and on macOS it matches nothing at all. The check
+    # below counts the cron lines this finds and asserts there is exactly one, so on a
+    # Mac it asserted 0 == 1 and reported the audit record as refuted, while the same
+    # scan passed in CI. [[:space:]] is POSIX and means the same thing everywhere.
     all_crons = subprocess.run(
-        ["git", "grep", "-h", "-E", r"^\s*- cron:", "--", ".github/workflows"],
+        ["git", "grep", "-h", "-E", r"^[[:space:]]*- cron:", "--", ".github/workflows"],
         cwd=REPO,
         capture_output=True,
         text=True,
@@ -668,6 +698,18 @@ async def part3_dead_task(cadence: dict) -> dict:
                     # credentials scrubbed above the NJT warmup reaches
                     # "not-configured" without a single request, so no NJ Transit host
                     # is contacted and no mint is spent by this script.
+                    #
+                    # WAITED FOR, NOT SAMPLED. njt_static_status starts at "loading",
+                    # set synchronously by the lifespan, and _warm_njt_static replaces
+                    # it from its own task. The wait above is for the BUSES cache, which
+                    # is a different task, so the two are unordered and reading the NJT
+                    # status at that moment is a race this script kept losing on a warm
+                    # checkout. Bounded, because a status that never settles is itself
+                    # the failure this line is here to catch.
+                    for _ in range(400):
+                        if app.state.njt_static_status != "loading":
+                            break
+                        await asyncio.sleep(0.01)
                     check(app.state.njt_static_status == "not-configured",
                           "NJ Transit stayed unconfigured, so no mint was spent",
                           str(app.state.njt_static_status))

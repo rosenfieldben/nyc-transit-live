@@ -98,15 +98,35 @@ DEAD_URL = "http://127.0.0.1:9/gtfs_subway.zip"  # discard port; nothing listens
 os.environ["DATA_DIR"] = str(_TMP / "data")
 os.environ["SUBWAY_GTFS_URL"] = DEAD_URL
 
+# CONTAINMENT, INSTALLED BEFORE THE FIRST BACKEND IMPORT. The pop below this used to
+# be the whole scrub and it was not one: env_seams calls load_dotenv when it is
+# imported, which refills any credential the pop removed. The addresses set here are
+# what make this process unable to reach NJ Transit at all, credentials or not. See
+# _hermetic for the leak this closes and the measurement behind it.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _hermetic  # noqa: E402
+
+_hermetic.contain()
+
 sys.path.insert(0, str(_BACKEND))
 
 import static_data  # noqa: E402
 import static_shared  # noqa: E402
 
+# CONTAINMENT, ASSERTED NOW THAT THE BACKEND HAS BEEN IMPORTED. env_seams ran
+# load_dotenv during those imports, so this is where the credentials it may have
+# refilled are dropped again and where the addresses are checked against the real
+# NJ Transit host. Raises rather than warns: a script that cannot prove it is
+# contained must not run at all.
+_hermetic.verify()
+
+
 # Belt and braces: this script imports no NJT module, but backend/.env is loaded
 # by env_seams at import time, so drop anything that could authenticate.
-for _name in ("NJT_USERNAME", "NJT_PASSWORD", "NJT_API_KEY", "NJT_TOKEN"):
-    os.environ.pop(_name, None)
+# BLANKED, NOT POPPED. A pop deletes the key, and load_dotenv fills deleted keys:
+# this backend loads the .env twice (env_seams and feeds.shared), so a pop here was
+# undone by whichever import came next. See _hermetic.blank.
+_hermetic.blank("NJT_USERNAME", "NJT_PASSWORD", "NJT_API_KEY", "NJT_TOKEN")
 
 FAILURES: list[str] = []
 

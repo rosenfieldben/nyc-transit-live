@@ -41,7 +41,79 @@ that the scan cannot see itself. Every other script scans only `backend/` or
   and six are already committed (see the NJ Transit section of the README), so the
   NJT reproductions use fake transports and fake mint callbacks, point every NJT
   env seam at a dead local port before importing the backend, and refuse to run if a
-  real credential is present. F05 measures a mint storm without making one.
+  real credential survives. F05 measures a mint storm without making one. The rule
+  and its enforcement are below; this paragraph described them for a while before
+  they were true.
+
+## THE CONTAINMENT RULE, and why a scrub is not one
+
+**Every script that imports a backend module must call `_hermetic.contain()` before
+that import and `_hermetic.verify()` after it.** Two lines, and they are not
+ceremony: the four scripts that hand-rolled the same intention were all reaching the
+real NJ Transit API on a developer checkout, and none of them could tell.
+
+Here is the thing to understand, because it defeats the obvious fix and the obvious
+workaround in turn:
+
+```python
+for var in ("NJT_USERNAME", "NJT_PASSWORD"):
+    os.environ.pop(var, None)     # looks like a scrub
+import njt_auth                   # the credentials come back HERE
+```
+
+`load_dotenv` fills environment keys that are **absent** and leaves keys that are
+**set**. Popping makes a key absent, so a pop before a backend import is not a scrub,
+it is an invitation, and this backend loads the `.env` in **two** places
+(`backend/env_seams.py:46` and `backend/feeds/shared.py:35`). A script that dropped
+the credentials after the first import had them back after the second, which happens
+hundreds of lines later if the script imports the app inside a function.
+
+Blanking in the parent shell does not save you either: `NJT_USERNAME= script.py` sets
+an empty value that `load_dotenv` will not overwrite, and then the script's own `pop`
+deletes it and the next import refills it from the `.env`.
+
+So the rule is two walls, and the first one is the load-bearing one:
+
+1. **The address.** Every NJ Transit URL seam is pointed at `127.0.0.1:9` before any
+   backend import. `env_seams` reads these once at import and `load_dotenv` never
+   overrides a key that is already set, so this cannot be undone. A process contained
+   this way cannot reach NJ Transit while holding perfect credentials, which is what
+   makes it the wall that also covers F05 and F07, both of which must look
+   *configured* because that is the finding.
+2. **The credentials.** Set **empty**, never deleted, so no `load_dotenv` anywhere,
+   now or later, can refill them. Every consumer reads them through a helper that
+   treats empty as missing.
+
+`verify()` then asserts, on the far side of the imports, that `is_configured()` is
+false (or that the credentials are the script's own fabricated pair) and that no
+seam and no resolved `njt_auth` URL names `raildata.njtransit.com`. It raises
+`SystemExit`, so a script that cannot prove it is contained does not run at all.
+Remove `contain()` from any script and it exits 1 with a breach message rather than
+quietly reaching the vendor.
+
+**Prove it, do not assume it.** `_hermetic_selftest.py` measures the containment
+against a fake in four subprocesses: it reproduces the leak, refutes the shell
+workaround, contains the unconfigured path, and drives a real `njt_auth.mint()` on
+the configured path to show it lands on the discard port. Run it after touching
+`_hermetic.py`:
+
+```
+./backend/.venv/bin/python docs/reviews/audit-2026-09-05/_hermetic_selftest.py
+```
+
+To watch the whole suite at the socket level, put `_tracer/` on `PYTHONPATH`. It
+installs an audit hook in every interpreter and logs one line per process plus every
+resolution and connection:
+
+```
+NJT_SOCKET_TRACE=/tmp/sockets.log \
+  PYTHONPATH=$PWD/docs/reviews/audit-2026-09-05/_tracer \
+  PY=backend/.venv/bin/python bash docs/reviews/audit-2026-09-05/run_all.sh
+```
+
+Measured on a checkout whose `.env` holds real RailData credentials, with nothing
+blanked in the shell: fourteen passed, twelve interpreters instrumented, **zero**
+hostname resolutions and **zero** socket connections of any kind.
 
 ## The scripts
 

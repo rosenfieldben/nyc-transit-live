@@ -21,6 +21,21 @@ THE AUDIT'S CLAIM (section 1 of docs/reviews/audit-2026-09-05.md, finding F05):
     backend/tests/test_njt_auth.py L389 (the existing failed-mint test),
     README.md L472 (the documented account budget).
 
+THE FIX, and what this script now measures (branch claude/f05-mint-cooldown).
+njt_auth.TokenCache records a failed mint and a NOT-BEFORE instant, and until it
+lapses every get() raises NjtMintCooldownError WITHOUT calling getToken. Two
+policies, chosen by the exception type: a quota refusal holds to the next Eastern
+midnight (the reset observed 2026-09-03), everything else backs off from
+MINT_COOLDOWN_BASE_S doubling to MINT_COOLDOWN_CAP_S, and a success resets it. An
+over-age token keeps serving through a cooldown, because MAX_TOKEN_AGE_S is a
+budget ceiling and not an expiry.
+
+SO EVERY NUMBER BELOW IS NOW A BEFORE AND AN AFTER, measured the same way, and
+the script fails if the AFTER stops holding. The "before" figures are not
+retyped from the audit: they are the count of scheduled attempts the same drive
+produces, which is exactly what the old code turned into getToken POSTs one for
+one.
+
 NO MINT IS EVER SPENT BY THIS SCRIPT, AND THAT IS ENFORCED RATHER THAN INTENDED.
 There are no NJ Transit credentials in this environment and none are created. The
 script sets deliberately fake credential values, points every NJT env seam at
@@ -89,8 +104,10 @@ HERMETIC AND DETERMINISTIC: no network, no credentials, no NJT host, no wall
 clock dependence (every timeline below is relative to t=0 of a simulated
 failure, never to today's date), and the jitter source is seeded.
 
-RECORDED DISPOSITION: VERIFIED. The script exits 0 while the finding still
-behaves as recorded and non-zero the moment any part of it changes.
+RECORDED DISPOSITION: FIXED (claude/f05-mint-cooldown). The script exits 0 while
+the FIXED behaviour holds and non-zero the moment it regresses, which is the same
+contract it had as a reproduction with the expectations moved: it used to prove
+that N concurrent callers cost N getToken POSTs, and it now proves they cost one.
 """
 
 from __future__ import annotations
@@ -134,6 +151,8 @@ sys.path.insert(0, str(BACKEND))
 import asyncio  # noqa: E402
 import random  # noqa: E402
 import unittest.mock  # noqa: E402
+from datetime import datetime  # noqa: E402
+from zoneinfo import ZoneInfo  # noqa: E402
 
 import httpx  # noqa: E402
 from google.transit import gtfs_realtime_pb2 as pb  # noqa: E402
@@ -202,21 +221,43 @@ class FakeRailData:
         mint: tuple[int, bytes] = (500, REAL_500),
         data: tuple[int, bytes] = (200, b"body"),
         hold_first_mint: asyncio.Event | None = None,
+        clock: "Clock | None" = None,
+        quota_after: int | None = None,
     ) -> None:
         self.mint_response = mint
         self.data_response = data
         self.hold_first_mint = hold_first_mint
+        self.clock = clock
+        # WHAT NJ TRANSIT ACTUALLY DOES AFTER THE TENTH. Past this many getToken
+        # POSTs the answer becomes the observed daily-cap refusal, which models the
+        # end state honestly: a run of ordinary failures does not go on being
+        # ordinary forever, it spends the budget and then gets told so.
+        self.quota_after = quota_after
         self.token_posts = 0
         self.data_posts = 0
+        # WHEN each getToken POST arrived, on the drive's simulated clock. The
+        # counts below say how many attempts reached NJ Transit; these say how far
+        # apart they were, which is the property the cooldown actually promises and
+        # the one a count alone cannot distinguish from a lucky schedule.
+        self.token_post_times: list[float] = []
+
+    def gaps(self) -> list[float]:
+        """Seconds between consecutive getToken POSTs, in order."""
+        t = self.token_post_times
+        return [round(b - a, 2) for a, b in zip(t, t[1:], strict=False)]
 
     async def __call__(self, url: str, form: dict, timeout_s: float, **_: object):
         guard(url)
         if "getToken" in url:
             self.token_posts += 1
+            if self.clock is not None:
+                self.token_post_times.append(self.clock.now)
             if self.hold_first_mint is not None and self.token_posts == 1:
                 # Hold the first mint open so every other caller is provably
                 # parked inside TokenCache.get while it runs.
                 await self.hold_first_mint.wait()
+            if self.quota_after is not None and self.token_posts > self.quota_after:
+                return (500, QUOTA_REFUSAL)
             return self.mint_response
         self.data_posts += 1
         return self.data_response
@@ -239,10 +280,48 @@ def uninstall() -> None:
     njt_auth._httpx_post = _forbidden_transport
 
 
-def reset_token_cache() -> None:
-    """Clear the process-wide cache between sections so each starts cold."""
-    njt_auth.TOKEN_CACHE.invalidate(None)
-    njt_auth.TOKEN_CACHE.mint_quota_refused = False
+class Clock:
+    """A hand-cranked pair of clocks, cranked by the delays production asks for.
+
+    The cooldown is measured on a monotonic clock, and the quota hold's LENGTH is
+    measured once against a wall clock. Both advance together here, so a drive that
+    replays a warmup's rung schedule or a poller's cadence moves simulated time by
+    exactly the interval the production code asked to sleep. Nothing waits.
+    """
+
+    # 2026-09-05 12:00:00 EDT: a plain summer noon, twelve hours before the mint
+    # budget resets. Fixed, so this script's output does not depend on the day it
+    # is run, which is the same discipline every other timeline here follows.
+    NOON_EDT = datetime(2026, 9, 5, 12, 0, tzinfo=ZoneInfo("America/New_York")).timestamp()
+
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.wall = self.NOON_EDT
+
+    def __call__(self) -> float:
+        return self.now
+
+    def wall_clock(self) -> float:
+        return self.wall
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+        self.wall += seconds
+
+
+def reset_token_cache(clock: Clock | None = None) -> njt_auth.TokenCache:
+    """Stand a COLD cache in front of the app for the next drive, and return it.
+
+    A fresh instance rather than a clear, because since the fix a cache carries a
+    cooldown as well as a token and a flag, and a drive that inherited the previous
+    section's window would measure the previous section. Every consumer in this
+    script reaches njt_auth.TOKEN_CACHE by name, so replacing the module global is
+    what puts the clock in front of all three of them at once.
+    """
+    clock = clock or Clock()
+    fresh = njt_auth.TokenCache(clock=clock, wall_clock=clock.wall_clock)
+    njt_auth.TOKEN_CACHE = fresh
+    return fresh
 
 
 def empty_alert_feed() -> bytes:
@@ -408,9 +487,9 @@ async def section_protections() -> None:
 
     print()
     print("  So the lock, the one-re-mint branch, the quota type and the quota flag")
-    print("  all exist and all work. Every one of them is on the SUCCESS or the")
-    print("  classification side. None of them is a shared failure state, and none")
-    print("  of them is a cooldown. Section B is what happens on the other side.")
+    print("  all exist and all work, and every one of them is on the SUCCESS or the")
+    print("  classification side. The finding was that none of them was a shared")
+    print("  FAILURE state. Section B measures the one that now is.")
 
 
 # ---------------------------------------------------------------------------
@@ -426,7 +505,8 @@ async def fan_out(n: int, mint_response: tuple[int, bytes]) -> dict:
     """
     gate = asyncio.Event()
     fake = FakeRailData(mint=mint_response, hold_first_mint=gate)
-    cache = njt_auth.TokenCache()
+    clock = Clock()
+    cache = njt_auth.TokenCache(clock=clock, wall_clock=clock.wall_clock)
     callback_calls = 0
     entered = 0
 
@@ -437,11 +517,17 @@ async def fan_out(n: int, mint_response: tuple[int, bytes]) -> dict:
         # is production's, not the script's.
         return await njt_auth.mint(transport=fake, env=DIRECT_ENV, url=DIRECT_TOKEN_URL)
 
+    cooled: list[BaseException] = []
+
     async def caller() -> str | None:
         nonlocal entered
         entered += 1
         try:
             return await cache.get(failing_mint)
+        except njt_auth.NjtMintCooldownError as exc:
+            # Refused HERE, without a request. This arm did not exist before the fix.
+            cooled.append(exc)
+            return None
         except njt_auth.NjtAuthError:
             return None
 
@@ -464,6 +550,8 @@ async def fan_out(n: int, mint_response: tuple[int, bytes]) -> dict:
         "mints": cache.mints,
         "tokens": [r for r in results if r is not None],
         "quota_flag": cache.mint_quota_refused,
+        "cooled": len(cooled),
+        "cooldown_s": cache.cooldown_remaining(),
     }
 
 
@@ -476,15 +564,15 @@ async def section_fanout() -> list[dict]:
     print("  Real njt_auth.TokenCache, real njt_auth.mint, fake upstream answering")
     print("  HTTP 500 with the suite's control body. One row per burst size.")
     print()
-    print("    N   in-flight   mint_requests   callback   getToken   cache   tokens")
-    print("        at gate     at gate         calls      POSTs      .mints  obtained")
-    print("    " + "-" * 68)
+    print("    N   in-flight   mint_requests   callback   getToken   refused   cache   tokens")
+    print("        at gate     at gate         calls      POSTs      here      .mints  obtained")
+    print("    " + "-" * 78)
     for row in rows:
         gate = row["at_gate"]
         print(
             f"    {row['n']:>2}   {gate['entered']:>9}   {gate['mint_requests']:>13}   "
             f"{row['callback_calls']:>8}   {row['getToken_posts']:>8}   "
-            f"{row['mints']:>6}   {len(row['tokens']):>8}"
+            f"{row['cooled']:>7}   {row['mints']:>6}   {len(row['tokens']):>8}"
         )
     print()
     for row in rows:
@@ -497,9 +585,14 @@ async def section_fanout() -> list[dict]:
     for row in rows:
         n = row["n"]
         check(
-            f"B N={n}: the failing mint callback ran exactly N times",
-            row["callback_calls"] == n and row["getToken_posts"] == n,
+            f"B N={n}: the failing mint callback ran exactly ONCE, whatever N is",
+            row["callback_calls"] == 1 and row["getToken_posts"] == 1,
             f"{row['callback_calls']} callback calls, {row['getToken_posts']} getToken POSTs",
+        )
+        check(
+            f"B N={n}: the other N-1 callers were refused here, without a request",
+            row["cooled"] == n - 1,
+            f"{row['cooled']} of {n - 1} raised NjtMintCooldownError",
         )
         check(
             f"B N={n}: TokenCache.mint_requests agrees with the callback's own count",
@@ -510,26 +603,32 @@ async def section_fanout() -> list[dict]:
             f"B N={n}: zero tokens obtained and cache.mints stayed 0",
             row["tokens"] == [] and row["mints"] == 0,
         )
+        check(
+            f"B N={n}: and the burst left a cooldown behind for whoever comes next",
+            row["cooldown_s"] == njt_auth.MINT_COOLDOWN_BASE_S,
+            f"{row['cooldown_s']}s",
+        )
     twelve = next(r for r in rows if r["n"] == 12)
     print()
-    print("  THE AUDIT'S SENTENCE, RE-DERIVED: 12 concurrent callers invoked the")
-    print(f"  failing mint callback {twelve['callback_calls']} times and obtained "
-          f"{len(twelve['tokens'])} tokens.")
-    print("  The relationship across the table is attempts == N exactly, with no")
-    print("  sublinearity anywhere: the lock serializes the callers and then lets")
-    print("  each one mint in turn, because the second check inside the lock only")
-    print("  looks for a TOKEN and a failure leaves none behind.")
+    print("  THE AUDIT'S SENTENCE, RE-MEASURED. It recorded: 12 concurrent callers")
+    print("  invoked the failing mint callback 12 times and obtained zero tokens.")
+    print(f"  Now: {twelve['callback_calls']} callback call, {twelve['getToken_posts']} getToken "
+          f"POST, {len(twelve['tokens'])} tokens, and the other")
+    print(f"  {twelve['cooled']} callers were refused inside the process. The relationship")
+    print("  across the table is attempts == 1 at every N: the second check inside")
+    print("  the lock now looks for a COOLDOWN as well as a token, and a failure")
+    print("  leaves one behind.")
     check(
-        "B the audit's headline number reproduces exactly (12 callers, 12 mints, 0 tokens)",
-        twelve["callback_calls"] == 12 and twelve["getToken_posts"] == 12 and twelve["tokens"] == [],
+        "B the audit's headline number is fixed (12 callers, 1 mint, 0 tokens)",
+        twelve["callback_calls"] == 1 and twelve["getToken_posts"] == 1 and twelve["tokens"] == [],
     )
     check(
         "B the two counters agree at every burst size (no hidden attempt, no double count)",
         all(r["mint_requests"] == r["callback_calls"] == r["getToken_posts"] for r in rows),
     )
     check(
-        "B attempts are exactly N, not 1 and not log N",
-        [r["callback_calls"] for r in rows] == [r["n"] for r in rows],
+        "B attempts are exactly 1, not N and not log N",
+        [r["callback_calls"] for r in rows] == [1] * len(rows),
     )
 
     # The worst case: the same fan-out against a budget that is ALREADY spent.
@@ -539,11 +638,18 @@ async def section_fanout() -> list[dict]:
     print(f"    getToken POSTs sent      : {quota['getToken_posts']}")
     print(f"    tokens obtained          : {len(quota['tokens'])}")
     print(f"    cache.mint_quota_refused : {quota['quota_flag']}")
-    print("    Each of those 12 is an attempt that counts against the very cap it")
-    print("    just bounced off, and the flag is set only after the twelfth.")
+    print(f"    cooldown left behind     : {quota['cooldown_s']:.0f}s "
+          f"({quota['cooldown_s'] / 3600:.1f}h, to the next Eastern midnight)")
+    print("    One attempt is charged to the cap it just bounced off, the flag is")
+    print("    set by that one, and nothing asks again today.")
     check(
-        "B a known-spent budget produces the same 12-fold fan-out",
-        quota["getToken_posts"] == 12 and quota["tokens"] == [] and quota["quota_flag"] is True,
+        "B a known-spent budget costs ONE attempt, not twelve",
+        quota["getToken_posts"] == 1 and quota["tokens"] == [] and quota["quota_flag"] is True,
+    )
+    check(
+        "B and it holds until the Eastern reset rather than for a backoff window",
+        quota["cooldown_s"] > njt_auth.MINT_COOLDOWN_CAP_S * 20,
+        f"{quota['cooldown_s']:.0f}s",
     )
     return rows
 
@@ -572,16 +678,24 @@ def seed_feed_cache() -> dict:
 
 
 async def drive_feed_poller(polls: int, status: str, mint_response: tuple[int, bytes]) -> dict:
-    """Run pollers._refresh_njt `polls` times with the static gate in `status`."""
-    reset_token_cache()
-    fake = FakeRailData(mint=mint_response)
+    """Run pollers._refresh_njt `polls` times with the static gate in `status`.
+
+    THE CLOCK ADVANCES BY THE REAL CADENCE between polls, which is what makes the
+    count below a claim about production rather than about a tight loop: three
+    polls twenty seconds apart is one minute of a running deployment.
+    """
+    clock = Clock()
+    cache = reset_token_cache(clock)
+    fake = FakeRailData(mint=mint_response, clock=clock)
     install(fake)
     app = main_module.app
     entry = seed_feed_cache()
     app.state.njt_static_status = status
-    before = njt_auth.TOKEN_CACHE.mint_requests
+    before = cache.mint_requests
     try:
-        for _ in range(polls):
+        for i in range(polls):
+            if i:
+                clock.advance(pollers.POLL_INTERVAL_S)
             await pollers._refresh_njt(app, client=None)
     finally:
         uninstall()
@@ -589,28 +703,36 @@ async def drive_feed_poller(polls: int, status: str, mint_response: tuple[int, b
         "polls": polls,
         "status": status,
         "getToken_posts": fake.token_posts,
-        "cache_delta": njt_auth.TOKEN_CACHE.mint_requests - before,
+        "cache_delta": cache.mint_requests - before,
         "error": entry["error"],
+        "cooldown_s": cache.cooldown_remaining(),
     }
 
 
 async def drive_alert_poller(polls: int, mint_response: tuple[int, bytes], *, creds: bool) -> dict:
     """Run pollers._refresh_alerts `polls` times. `creds` False removes the NJT
     credentials from the environment for the duration, which is what
-    feeds.alerts.active_alert_feeds reads."""
-    reset_token_cache()
-    fake = FakeRailData(mint=mint_response)
+    feeds.alerts.active_alert_feeds reads.
+
+    The clock advances by ALERT_POLL_INTERVAL_S between polls, as the feed poller's
+    drive advances by its own cadence.
+    """
+    clock = Clock()
+    cache = reset_token_cache(clock)
+    fake = FakeRailData(mint=mint_response, clock=clock)
     install(fake)
     app = main_module.app
     saved = (os.environ.get("NJT_USERNAME"), os.environ.get("NJT_PASSWORD"))
     if not creds:
         os.environ.pop("NJT_USERNAME", None)
         os.environ.pop("NJT_PASSWORD", None)
-    before = njt_auth.TOKEN_CACHE.mint_requests
+    before = cache.mint_requests
     try:
         app.state.alerts_cache = cache_module._fresh_alerts_entry()
         async with alerts_client() as client:
-            for _ in range(polls):
+            for i in range(polls):
+                if i:
+                    clock.advance(pollers.ALERT_POLL_INTERVAL_S)
                 await pollers._refresh_alerts(app, client)
         health_keys = sorted(app.state.alerts_cache["health"])
     finally:
@@ -623,22 +745,30 @@ async def drive_alert_poller(polls: int, mint_response: tuple[int, bytes], *, cr
         "polls": polls,
         "creds": creds,
         "getToken_posts": fake.token_posts,
-        "cache_delta": njt_auth.TOKEN_CACHE.mint_requests - before,
+        "cache_delta": cache.mint_requests - before,
         "health_keys": health_keys,
     }
 
 
 async def drive_warmup(max_attempts: int, mint_response: tuple[int, bytes]) -> dict:
-    """Run warmups._warm_njt_static until it has made `max_attempts` mint attempts,
+    """Run warmups._warm_njt_static until it has made `max_attempts` retry attempts,
     recording the backoff delay it asked for after each one.
 
     asyncio.sleep is replaced for the duration of this drive only: the requested
     delay is recorded and the coroutine returns immediately, so the production
     retry loop runs its real schedule at full speed.
+
+    THE RECORDED DELAY ALSO CRANKS THE CLOCK, which is what makes the mint count
+    here a production number: the warmup's rungs are 15s, 30s, 60s and then 300s,
+    and whether an attempt reaches getToken depends entirely on where those land
+    against the cooldown windows. A drive that returned from sleep without moving
+    time would measure a tight loop and report one mint for a reason that has
+    nothing to do with the schedule.
     """
-    reset_token_cache()
+    clock = Clock()
+    cache = reset_token_cache(clock)
     random.seed(20260905)
-    fake = FakeRailData(mint=mint_response)
+    fake = FakeRailData(mint=mint_response, clock=clock)
     install(fake)
     app = main_module.app
     app.state.njt_static_status = "loading"
@@ -647,14 +777,18 @@ async def drive_warmup(max_attempts: int, mint_response: tuple[int, bytes]) -> d
 
     async def recording_sleep(delay, *args, **kwargs):
         delays.append(float(delay))
+        clock.advance(float(delay))
         await real_sleep(0)
 
-    before = njt_auth.TOKEN_CACHE.mint_requests
+    before = cache.mint_requests
     try:
         with unittest.mock.patch.object(asyncio, "sleep", recording_sleep):
             task = asyncio.create_task(warmups._warm_njt_static(app))
             spins = 0
-            while fake.token_posts < max_attempts and spins < 100_000:
+            # COUNTED IN ATTEMPTS, not in getToken POSTs. Before the fix the two
+            # were the same number; the whole point of the measurement now is that
+            # they are not, so waiting on the POSTs would wait forever.
+            while len(delays) < max_attempts and spins < 100_000:
                 spins += 1
                 await real_sleep(0)
             task.cancel()
@@ -666,9 +800,13 @@ async def drive_warmup(max_attempts: int, mint_response: tuple[int, bytes]) -> d
         uninstall()
     return {
         "getToken_posts": fake.token_posts,
-        "cache_delta": njt_auth.TOKEN_CACHE.mint_requests - before,
+        "cache_delta": cache.mint_requests - before,
         "delays": delays,
         "status": app.state.njt_static_status,
+        "attempts": len(delays),
+        "elapsed_s": clock.now,
+        "gaps": fake.gaps(),
+        "post_times": list(fake.token_post_times),
     }
 
 
@@ -707,6 +845,40 @@ async def drive_warmup_to_ready() -> dict:
     }
 
 
+def _within(times: list[float], horizon: float) -> int:
+    """How many of `times` fall in [0, horizon)."""
+    return sum(1 for t in times if t < horizon)
+
+
+async def simulate(
+    times: list[float], mint_response: tuple[int, bytes], quota_after: int | None = None
+) -> dict:
+    """Replay a schedule of mint ATTEMPTS through the real TokenCache and report
+    which of them reached getToken.
+
+    THE POINT OF REPLAYING RATHER THAN CALCULATING. The cooldown ladder is a piece
+    of production code with a cap, a reset and two policies; writing out what it
+    "would" do is exactly the kind of arithmetic that keeps agreeing with itself
+    while the code drifts. Here the real cache decides, one attempt at a time, and
+    what is reported is what the fake upstream actually received.
+    """
+    clock = Clock()
+    fake = FakeRailData(mint=mint_response, clock=clock, quota_after=quota_after)
+    cache = njt_auth.TokenCache(clock=clock, wall_clock=clock.wall_clock)
+
+    async def failing_mint() -> str:
+        return await njt_auth.mint(transport=fake, env=DIRECT_ENV, url=DIRECT_TOKEN_URL)
+
+    for t in times:
+        clock.now = t
+        clock.wall = Clock.NOON_EDT + t
+        try:
+            await cache.get(failing_mint)
+        except njt_auth.NjtAuthError:
+            pass
+    return {"events": len(times), "post_times": list(fake.token_post_times)}
+
+
 def warmup_event_times(horizon: float) -> list[float]:
     """The warmup's attempt times over `horizon` seconds, from t=0, using the
     production rung function (jitter excluded; it is +-10% and is reported
@@ -739,16 +911,29 @@ async def section_consumers() -> dict:
     warm = await drive_warmup(6, (500, REAL_500))
     print()
     print("  C1  warmups._warm_njt_static, credentials present, every mint failing")
-    print(f"        getToken POSTs over 6 attempts : {warm['getToken_posts']}")
+    print(f"        retry attempts driven          : {warm['attempts']}")
+    print(f"        getToken POSTs they cost       : {warm['getToken_posts']}  "
+          f"(before the fix: {warm['attempts']})")
     print(f"        TOKEN_CACHE.mint_requests delta: {warm['cache_delta']}")
     print(f"        backoff delays it asked for    : "
           f"{[round(d, 2) for d in warm['delays'][:5]]}")
     print(f"        the rungs those jitter around  : {[f'{r:g}' for r in rungs[:5]]}")
+    print(f"        the POSTs landed at t =        : {[round(t, 1) for t in warm['post_times']]}")
+    print(f"        gaps between them              : {warm['gaps']}")
     print(f"        njt_static_status              : {warm['status']}")
     check(
-        "C1 the warmup retries a failed mint, one getToken POST per attempt",
-        warm["getToken_posts"] == 6 and warm["cache_delta"] == 6,
-        f"{warm['getToken_posts']} POSTs over 6 attempts",
+        "C1 the warmup still retries, and its retries no longer all reach getToken",
+        warm["attempts"] == 6 and 0 < warm["getToken_posts"] < warm["attempts"],
+        f"{warm['getToken_posts']} POSTs over {warm['attempts']} attempts",
+    )
+    check(
+        "C1 TOKEN_CACHE.mint_requests agrees with what the upstream received",
+        warm["cache_delta"] == warm["getToken_posts"],
+    )
+    check(
+        "C1 NO TWO getToken POSTs are closer than the cooldown base",
+        all(gap >= njt_auth.MINT_COOLDOWN_BASE_S for gap in warm["gaps"]),
+        f"gaps {warm['gaps']} against a base of {njt_auth.MINT_COOLDOWN_BASE_S:g}s",
     )
     check(
         "C1 each recorded delay is its production rung within the documented +-10% jitter",
@@ -774,8 +959,9 @@ async def section_consumers() -> dict:
     print(f"        {'ready (quota body)':<18}  {quota_polls['getToken_posts']:>13}   "
           f"{(quota_polls['error'] or {}).get('detail', '')[:36]}")
     check(
-        "C2 a READY static group lets every poll re-mint: 3 polls, 3 getToken POSTs",
-        ready["getToken_posts"] == 3 and ready["cache_delta"] == 3,
+        "C2 a READY static group polls three times in a minute and mints ONCE",
+        ready["getToken_posts"] == 1 and ready["cache_delta"] == 1,
+        f"{ready['getToken_posts']} POSTs over {ready['polls']} polls (before the fix: 3)",
     )
     check(
         "C2 the njt_static_status gate blocks the poller entirely when not ready",
@@ -784,9 +970,21 @@ async def section_consumers() -> dict:
         and notconf["getToken_posts"] == 0,
     )
     check(
-        "C2 a KNOWN spent budget does not slow the poller down: still 3 mints in 3 polls",
-        quota_polls["getToken_posts"] == 3
+        "C2 and /api/status says a cooldown rather than a credential problem",
+        "cooldown" in (ready["error"] or {}).get("detail", "")
+        and "rejected our credentials" not in (ready["error"] or {}).get("detail", ""),
+        (ready["error"] or {}).get("detail", "")[:70],
+    )
+    check(
+        "C2 a KNOWN spent budget costs ONE mint in three polls, and still says so",
+        quota_polls["getToken_posts"] == 1
         and njt_auth.MINT_QUOTA_MESSAGE in (quota_polls["error"] or {}).get("detail", ""),
+        f"{quota_polls['getToken_posts']} POSTs (before the fix: 3)",
+    )
+    check(
+        "C2 and that refusal holds to the Eastern reset, not for a backoff window",
+        (quota_polls["cooldown_s"] or 0) > njt_auth.MINT_COOLDOWN_CAP_S * 20,
+        f"{(quota_polls['cooldown_s'] or 0) / 3600:.1f}h",
     )
 
     # C3: the alert poller, both sides of the credentials gate.
@@ -799,8 +997,16 @@ async def section_consumers() -> dict:
     print(f"        credentials absent  : {alerts_off['getToken_posts']} getToken POSTs   "
           f"health keys {alerts_off['health_keys']}")
     check(
-        "C3 the alert poller re-mints on every poll, and is NOT gated by njt_static_status",
-        alerts_on["getToken_posts"] == 2 and alerts_on["cache_delta"] == 2,
+        "C3 the alert poller reaches getToken at most once per cooldown window",
+        alerts_on["getToken_posts"] <= alerts_on["polls"]
+        and alerts_on["cache_delta"] == alerts_on["getToken_posts"],
+        f"{alerts_on['getToken_posts']} POSTs over {alerts_on['polls']} polls at a "
+        f"{alert_s:g}s cadence against a {njt_auth.MINT_COOLDOWN_BASE_S:g}s base: this "
+        "poller's cadence is exactly the base, so its second poll opens the second window",
+    )
+    check(
+        "C3 and it is still NOT gated by njt_static_status (it reaches getToken at all)",
+        alerts_on["getToken_posts"] >= 1,
     )
     check(
         "C3 absent credentials drop NJ Transit from the alert set entirely",
@@ -819,12 +1025,12 @@ async def section_consumers() -> dict:
     )
 
     # C5: the two regimes, and their rates.
-    rule("Section C5: attempts per poll cycle, per minute and per hour")
+    rule("Section C5: attempts per poll cycle, per minute, per hour and per day")
     print()
     print("  Measured cost per call, from C1 to C3 above:")
-    print("    one static warmup attempt  = 1 getToken POST")
-    print("    one feed poll (ready)      = 1 getToken POST")
-    print("    one alert poll (creds)     = 1 getToken POST")
+    print("    one static warmup attempt  = 1 mint ATTEMPT (0 or 1 getToken POSTs)")
+    print("    one feed poll (ready)      = 1 mint attempt")
+    print("    one alert poll (creds)     = 1 mint attempt")
     print()
     print("  Two regimes exist, and they are mutually exclusive by C4:")
     print()
@@ -837,83 +1043,91 @@ async def section_consumers() -> dict:
     print("  token, rotated credentials, or a budget already spent). Contributors:")
     print("  the feed poller (20s) and the alert poller (60s). The warmup task has")
     print("  already returned (C4), so it contributes NOTHING.")
-
-    horizon_min, horizon_hour = 60.0, 3600.0
-    warm_times_min = warmup_event_times(horizon_min)
-    warm_times_hour = warmup_event_times(horizon_hour)
-    alert_times_min = [k * alert_s for k in range(int(horizon_min // alert_s) + 1)
-                       if k * alert_s < horizon_min]
-    alert_times_hour = [k * alert_s for k in range(int(horizon_hour // alert_s) + 1)
-                        if k * alert_s < horizon_hour]
-    poll_times_min = [k * poll_s for k in range(int(horizon_min // poll_s) + 1)
-                      if k * poll_s < horizon_min]
-    poll_times_hour = [k * poll_s for k in range(int(horizon_hour // poll_s) + 1)
-                       if k * poll_s < horizon_hour]
-
-    regime_a_min = len(warm_times_min) + len(alert_times_min)
-    regime_a_hour = len(warm_times_hour) + len(alert_times_hour)
-    regime_b_min = len(poll_times_min) + len(alert_times_min)
-    regime_b_hour = len(poll_times_hour) + len(alert_times_hour)
-
     print()
-    print("    REGIME A, first minute [0, 60):")
-    print(f"      warmup attempts at t = {[f'{t:g}' for t in warm_times_min]}  "
-          f"({len(warm_times_min)} attempts)")
-    print(f"      alert polls  at t = {[f'{t:g}' for t in alert_times_min]}  "
-          f"({len(alert_times_min)} attempts)")
-    print(f"      total in the first minute = {len(warm_times_min)} + "
-          f"{len(alert_times_min)} = {regime_a_min} mint attempts")
-    print(f"      first hour = {len(warm_times_hour)} warmup + {len(alert_times_hour)} alert "
-          f"= {regime_a_hour} mint attempts")
-    print()
-    print("    REGIME B, first minute [0, 60):")
-    print(f"      feed polls  at t = {[f'{t:g}' for t in poll_times_min]}  "
-          f"({len(poll_times_min)} attempts)")
-    print(f"      alert polls at t = {[f'{t:g}' for t in alert_times_min]}  "
-          f"({len(alert_times_min)} attempts)")
-    print(f"      total in the first minute = {len(poll_times_min)} + "
-          f"{len(alert_times_min)} = {regime_b_min} mint attempts")
-    print(f"      first hour = {len(poll_times_hour)} feed + {len(alert_times_hour)} alert "
-          f"= {regime_b_hour} mint attempts")
+    print("  EVERY ATTEMPT BELOW IS REPLAYED THROUGH THE REAL TokenCache on an")
+    print("  injected clock, so the 'after' column is measured rather than derived.")
+    print("  The 'before' column is the ATTEMPT count, which is what the old code")
+    print("  turned into getToken POSTs one for one (C1 to C3 above measured that")
+    print("  relationship directly, and the audit record states it).")
 
-    # Drive one whole simulated cycle for regime B, so the minute above is
-    # measured rather than only added up.
+    day = 86400.0
+    warm_times_day = warmup_event_times(day)
+    alert_times_day = [k * alert_s for k in range(int(day // alert_s) + 1) if k * alert_s < day]
+    poll_times_day = [k * poll_s for k in range(int(day // poll_s) + 1) if k * poll_s < day]
+    regimes = {
+        "regime_a": sorted(warm_times_day + alert_times_day),
+        "regime_b": sorted(poll_times_day + alert_times_day),
+    }
+
+    rates: dict = {}
+    for key, name in (("regime_a", "A (cold start)"), ("regime_b", "B (running process)")):
+        times = regimes[key]
+        sim = await simulate(times, (500, REAL_500))
+        rates[key] = {
+            "events": times,
+            "posts": sim["post_times"],
+            "min": _within(times, 60.0),
+            "hour": _within(times, 3600.0),
+            "day": len(times),
+            "posts_min": _within(sim["post_times"], 60.0),
+            "posts_hour": _within(sim["post_times"], 3600.0),
+            "posts_day": len(sim["post_times"]),
+        }
+        r = rates[key]
+        print()
+        print(f"    REGIME {name}, sustained mint failure from t = 0")
+        print("                        attempts   getToken POSTs")
+        print("                        (before)   (after)")
+        print(f"      first minute        {r['min']:>6}     {r['posts_min']:>6}")
+        print(f"      first hour          {r['hour']:>6}     {r['posts_hour']:>6}")
+        print(f"      first day           {r['day']:>6}     {r['posts_day']:>6}")
+        print(f"      the POSTs land at t = "
+              f"{[round(t) for t in r['posts'][:8]]}{' ...' if len(r['posts']) > 8 else ''}")
+
+    # Driven through the real refreshers, so the replay above is not the only
+    # witness: three real poll cycles of the real _refresh_njt, one real alert poll.
     measured_b_feed = await drive_feed_poller(3, "ready", (500, REAL_500))
     measured_b_alert = await drive_alert_poller(1, (500, REAL_500), creds=True)
-    measured_b = measured_b_feed["getToken_posts"] + measured_b_alert["getToken_posts"]
-    measured_a_warm = await drive_warmup(len(warm_times_min), (500, REAL_500))
-    measured_a_alert = await drive_alert_poller(1, (500, REAL_500), creds=True)
-    measured_a = measured_a_warm["getToken_posts"] + measured_a_alert["getToken_posts"]
+    measured_a_warm = await drive_warmup(3, (500, REAL_500))
     print()
-    print("    One simulated minute, DRIVEN through the real refreshers:")
-    print(f"      regime A: {measured_a_warm['getToken_posts']} warmup + "
-          f"{measured_a_alert['getToken_posts']} alert = {measured_a} getToken POSTs")
-    print(f"      regime B: {measured_b_feed['getToken_posts']} feed + "
-          f"{measured_b_alert['getToken_posts']} alert = {measured_b} getToken POSTs")
+    print("    Driven through the real refreshers rather than replayed:")
+    print(f"      regime A: 3 warmup attempts -> {measured_a_warm['getToken_posts']} POSTs")
+    print(f"      regime B: 3 feed polls      -> {measured_b_feed['getToken_posts']} POSTs")
+    print(f"                1 alert poll      -> {measured_b_alert['getToken_posts']} POSTs")
     check(
-        "C5 the driven minute matches the schedule arithmetic in both regimes",
-        measured_a == regime_a_min and measured_b == regime_b_min,
-        f"A {measured_a} vs {regime_a_min}, B {measured_b} vs {regime_b_min}",
+        "C5 the first minute of a sustained failure costs at most ONE attempt",
+        rates["regime_a"]["posts_min"] <= 1 and rates["regime_b"]["posts_min"] <= 1,
+        f"A {rates['regime_a']['posts_min']}, B {rates['regime_b']['posts_min']} "
+        f"(before: {rates['regime_a']['min']} and {rates['regime_b']['min']})",
     )
     check(
-        "C5 a sustained mint failure costs at least four attempts in its first minute",
-        regime_a_min >= 4 and regime_b_min >= 4,
+        "C5 the first hour costs single digits in both regimes",
+        rates["regime_a"]["posts_hour"] < 10 and rates["regime_b"]["posts_hour"] < 10,
+        f"A {rates['regime_a']['posts_hour']}, B {rates['regime_b']['posts_hour']} "
+        f"(before: {rates['regime_a']['hour']} and {rates['regime_b']['hour']})",
+    )
+    check(
+        "C5 no two POSTs anywhere in a simulated day are closer than the base",
+        all(
+            all(
+                b - a >= njt_auth.MINT_COOLDOWN_BASE_S
+                for a, b in zip(r["posts"], r["posts"][1:], strict=False)
+            )
+            for r in rates.values()
+        ),
+    )
+    check(
+        "C5 and the driven refreshers agree with the replay",
+        measured_b_feed["getToken_posts"] == 1
+        and measured_b_alert["getToken_posts"] == 1
+        and measured_a_warm["getToken_posts"] == 1,
+        f"A warmup {measured_a_warm['getToken_posts']}, B feed "
+        f"{measured_b_feed['getToken_posts']}, B alert {measured_b_alert['getToken_posts']}",
     )
 
-    return {
-        "poll_s": poll_s,
-        "alert_s": alert_s,
-        "regime_a": {
-            "min": regime_a_min,
-            "hour": regime_a_hour,
-            "times": sorted(warm_times_hour + alert_times_hour),
-        },
-        "regime_b": {
-            "min": regime_b_min,
-            "hour": regime_b_hour,
-            "times": sorted(poll_times_hour + alert_times_hour),
-        },
-    }
+    rates["poll_s"] = poll_s
+    rates["alert_s"] = alert_s
+    return rates
 
 
 # ---------------------------------------------------------------------------
@@ -947,7 +1161,18 @@ def time_to_reach(times: list[float], target: int) -> float | None:
     return times[target - 1]
 
 
-def section_arithmetic(rates: dict) -> dict:
+def _clock_str(t: float | None) -> str:
+    """A duration in the unit a reader can hold: seconds, minutes or hours."""
+    if t is None:
+        return "never"
+    if t < 120:
+        return f"{t:g}s"
+    if t < 7200:
+        return f"{t / 60:.1f}min"
+    return f"{t / 3600:.1f}h"
+
+
+async def section_arithmetic(rates: dict) -> dict:
     rule("Section D: the arithmetic against the documented ten-a-day cap")
     readme = readme_numbers()
     print()
@@ -980,87 +1205,153 @@ def section_arithmetic(rates: dict) -> dict:
 
     results = {}
     for name, key in (("A (cold start)", "regime_a"), ("B (running process)", "regime_b")):
-        times = rates[key]["times"]
-        t_spare = time_to_reach(times, spare)
-        t_all = time_to_reach(times, limit)
-        results[key] = (t_spare, t_all)
+        events, posts = rates[key]["events"], rates[key]["posts"]
+        row = {
+            "before_spare": time_to_reach(events, spare),
+            "before_all": time_to_reach(events, limit),
+            "after_spare": time_to_reach(posts, spare),
+            "after_all": time_to_reach(posts, limit),
+        }
+        results[key] = row
         print()
         print(f"    REGIME {name}: sustained mint failure from t = 0")
-        print(f"      the {spare} spare attempts are gone at t = {t_spare:g}s "
-              f"({t_spare / 60:.2f} minutes)")
-        print(f"      the whole budget of {limit} is gone at t = {t_all:g}s "
-              f"({t_all / 60:.2f} minutes)")
-        print(f"      sustained rate: {rates[key]['min']} attempts in the first minute, "
-              f"{rates[key]['hour']} in the first hour")
-        print(f"      which is {rates[key]['hour'] / limit:.1f} times the whole daily "
-              f"budget, every hour")
-    a_spare, a_all = results["regime_a"]
-    b_spare, b_all = results["regime_b"]
+        print("                                     before        after")
+        print(f"      the {spare} spare attempts are gone at   "
+              f"{_clock_str(row['before_spare']):>10}   {_clock_str(row['after_spare']):>10}")
+        print(f"      the whole budget of {limit} is gone at  "
+              f"{_clock_str(row['before_all']):>10}   {_clock_str(row['after_all']):>10}")
+        print(f"      sustained rate, first hour        "
+              f"{rates[key]['hour']:>7}      {rates[key]['posts_hour']:>7}")
+        print(f"      sustained rate, first day         "
+              f"{rates[key]['day']:>7}      {rates[key]['posts_day']:>7}")
     check(
-        "D four spare attempts are consumed inside the first minute in both regimes",
-        a_spare < 60 and b_spare < 60,
-        f"A at {a_spare:g}s, B at {b_spare:g}s",
+        "D the four spare attempts now outlast the first minute in both regimes",
+        all(results[k]["after_spare"] > 60 for k in ("regime_a", "regime_b")),
+        f"A at {_clock_str(results['regime_a']['after_spare'])}, "
+        f"B at {_clock_str(results['regime_b']['after_spare'])} "
+        f"(before: {_clock_str(results['regime_a']['before_spare'])} and "
+        f"{_clock_str(results['regime_b']['before_spare'])})",
     )
     check(
-        "D the whole ten-a-day budget is consumed within five minutes in both regimes",
-        a_all <= 300 and b_all <= 300,
-        f"A at {a_all:g}s, B at {b_all:g}s",
+        "D and the whole ten outlasts the first hour, rather than the first two minutes",
+        all(results[k]["after_all"] > 3600 for k in ("regime_a", "regime_b")),
+        f"A at {_clock_str(results['regime_a']['after_all'])}, "
+        f"B at {_clock_str(results['regime_b']['after_all'])} "
+        f"(before: {_clock_str(results['regime_a']['before_all'])} and "
+        f"{_clock_str(results['regime_b']['before_all'])})",
     )
+
+    # THE END STATE, and it is the honest one. 52 a day is still more than ten, so
+    # the run below lets the budget really be spent: the fake answers ordinary 500s
+    # until the tenth POST and the observed daily-cap refusal after it, which is
+    # what NJ Transit does. The cooldown's quota arm then latches.
     print()
-    print("  STATED HONESTLY: the ten-a-day charging behavior is the README's recorded")
-    print("  observation of 2026-09-02, not something this script can retest without")
-    print("  spending mints. What is measured here is the ATTEMPT RATE. The budget")
-    print("  consequence follows only if the recorded upstream behavior still holds,")
-    print("  which is exactly the conditional the audit itself attached to it.")
-    print("  The gating is real and is stated: in regime A the feed poller makes zero")
-    print("  attempts, and in regime B the warmup makes zero. Neither regime has all")
-    print("  three consumers minting at once, and the rate is still 4 a minute.")
+    print("  WHAT A WHOLE DAY OF UNBROKEN FAILURE ACTUALLY COSTS, with the upstream")
+    print(f"  refusing after the {limit}th POST the way NJ Transit does:")
+    spent = await simulate(rates["regime_b"]["events"], (500, REAL_500), quota_after=limit)
+    posts = spent["post_times"]
+    print(f"    mint attempts made by the app          : {spent['events']}")
+    print(f"    getToken POSTs that reached NJ Transit : {len(posts)}")
+    print(f"    they land at t =                       : "
+          f"{[_clock_str(t) for t in posts]}")
+    print(f"    the {limit}th is the last ordinary failure; the next is the refusal, which")
+    print("    holds to Eastern midnight, and the one after it is the single attempt")
+    print("    the app is entitled to make once the budget has actually reset.")
+    check(
+        "D a day of unbroken failure costs the ten, the refusal, and one attempt after "
+        "the reset",
+        limit < len(posts) <= limit + 2,
+        f"{len(posts)} POSTs across {spent['events']} attempts",
+    )
+    check(
+        "D the ladder cannot outrun its own consequence: the day ends held, not looping",
+        posts[-1] < 86400.0 and len(posts) < spent["events"] / 100,
+        f"{len(posts)} POSTs is {100 * len(posts) / spent['events']:.2f}% of the attempts",
+    )
+
+    print()
+    print("  STATED HONESTLY, as the reproduction stated it: the ten-a-day charging")
+    print("  behavior is the README's recorded observation of 2026-09-02, not something")
+    print("  this script can retest without spending mints. What is measured here is the")
+    print("  ATTEMPT RATE, before and after. The budget consequence follows only if the")
+    print("  recorded upstream behavior still holds, which is the same conditional the")
+    print("  audit attached to it. What the fix changes is not that conditional: it is")
+    print("  the rate the conditional would be applied to, from 240 an hour to 6.")
     return {"limit": limit, "spare": spare, "readme": readme, "results": results}
 
 
 # ---------------------------------------------------------------------------
-# Section E: the README claim the audit asks to be corrected
+# Section E: the README claim the audit asked to be corrected
 # ---------------------------------------------------------------------------
 
 
 def section_readme_claim(arith: dict, rates: dict) -> None:
-    rule("Section E: the README's 'nothing anywhere retries a failed mint'")
-    line_no, line = arith["readme"]["claim"]
+    rule("Section E: the README sentence the audit asked to be corrected")
+    readme = (REPO / "README.md").read_text()
     print()
-    print(f"  README.md L{line_no}, quoted:")
-    print(f"    {line}")
+    print("  THE OLD SENTENCE: 'a single-flight cache turns concurrent callers into")
+    print("  one mint, a rejected token buys exactly one re-mint per attempt, and")
+    print("  nothing anywhere retries a failed mint.'")
     print()
-    print("  Measured against that sentence:")
-    print("    njt_auth ITSELF does not retry. Its module docstring says so in its own")
-    print("    words: 'It never retries on a schedule ... the CALLER's schedule (the")
-    print("    C-era warmup rungs) decides when to try again.' Sections A2 and A3 are")
-    print("    the measurements: one re-mint per attempt, one mint across five")
-    print("    attempts at a genuine 500.")
-    print("    THE CALLERS DO RETRY, and there are three of them:")
-    print(f"      warmups._warm_njt_static : measured 6 attempts on the rung schedule "
-          f"(C1)")
-    print(f"      pollers._refresh_njt     : measured 3 attempts in 3 polls when the "
-          f"static group is ready (C2)")
-    print(f"      pollers._refresh_alerts  : measured 2 attempts in 2 polls whenever "
-          f"credentials exist (C3)")
-    print(f"    So a failed mint is retried indefinitely: {rates['regime_a']['min']} attempts "
-          f"in the first minute and {rates['regime_a']['hour']} in the first hour")
-    print(f"    in regime A, {rates['regime_b']['min']} and {rates['regime_b']['hour']} "
-          f"in regime B.")
+    print("  It was true of njt_auth and false of the repository. The module's own")
+    print("  docstring said so in its own words, and sections A2 and A3 measure it:")
+    print("  one re-mint per attempt, one mint across five attempts at a genuine 500.")
+    print("  But three CALLERS had schedules, and the audit's number was the sum of")
+    print(f"  them: {rates['regime_a']['min']} attempts in the first minute of a cold start and "
+          f"{rates['regime_b']['min']} in a")
+    print("  running process, none of it a retry any single caller could see itself")
+    print("  making. The sentence sat in a list of repository-wide conservation")
+    print("  properties and the word was 'anywhere'.")
     print()
-    print("  The sentence is true of the MODULE and false of the REPOSITORY. It reads")
-    print("  as a repository-wide guarantee, sitting in a list of repository-wide")
-    print("  conservation properties ('a single-flight cache turns concurrent callers")
-    print("  into one mint, a rejected token buys exactly one re-mint per attempt, and")
-    print("  nothing anywhere retries a failed mint'), and the word is 'anywhere'.")
-    print("  The audit's request to correct it is upheld.")
+    print("  WHAT THE README SAYS NOW, and what this section checks: that the claim")
+    print("  is gone as a claim, that the policy is documented in its place, and that")
+    print("  the arithmetic printed there is the arithmetic measured here.")
     check(
-        "E the README still carries the uncorrected 'nothing anywhere retries' claim",
-        "nothing anywhere retries a failed mint" in line,
+        "E the uncorrected 'nothing anywhere retries a failed mint' claim is gone",
+        "nothing anywhere retries a failed mint" not in readme,
+    )
+    for phrase in (
+        "MINT_COOLDOWN_BASE_S",
+        "MINT_COOLDOWN_CAP_S",
+        "next Eastern midnight",
+        "NjtMintCooldownError",
+        "njt_mint_cooldown",
+    ):
+        check(f"E the README names {phrase}", phrase in readme)
+    # The numbers in the README's before/after table are the ones measured above,
+    # not a second set that could drift away from them.
+    for label, value in (
+        ("first minute, before", rates["regime_b"]["min"]),
+        ("first minute, after", rates["regime_b"]["posts_min"]),
+        ("first hour, before", rates["regime_b"]["hour"]),
+        ("first hour, after", rates["regime_b"]["posts_hour"]),
+        ("first day, before", rates["regime_b"]["day"]),
+        ("first day, after", rates["regime_b"]["posts_day"]),
+    ):
+        check(
+            f"E the README's {label} figure ({value}) is the one measured here",
+            f"| **{value}** |" in readme or f"| {value} |" in readme,
+            str(value),
+        )
+    print()
+    print("  AND THE CALLERS STILL RETRY, which is the half that must NOT have")
+    print("  changed: the cooldown is a refusal, not a circuit breaker that gives up.")
+    print(f"    the warmup still walks its rungs      : {rates['regime_a']['day']} attempts a day")
+    print(f"    the pollers still poll                : {rates['regime_b']['day']} attempts a day")
+    shares = {
+        key: rates[key]["posts_day"] / rates[key]["day"] for key in ("regime_a", "regime_b")
+    }
+    print(f"    what reaches NJ Transit               : "
+          f"{rates['regime_a']['posts_day']} ({shares['regime_a'] * 100:.1f}% of A's attempts) "
+          f"and {rates['regime_b']['posts_day']} ({shares['regime_b'] * 100:.1f}% of B's)")
+    check(
+        "E the consumers still retry on their own schedules (nothing was disabled)",
+        rates["regime_a"]["day"] > 1000 and rates["regime_b"]["day"] > 1000,
     )
     check(
-        "E and at least two independent callers measurably do retry a failed mint",
-        rates["regime_a"]["min"] >= 2 and rates["regime_b"]["min"] >= 2,
+        "E and under a twentieth of those retries reaches NJ Transit",
+        all(share < 0.05 for share in shares.values()),
+        f"A {shares['regime_a'] * 100:.1f}%, B {shares['regime_b'] * 100:.1f}%",
     )
 
 
@@ -1072,7 +1363,7 @@ async def run() -> None:
     await section_protections()
     await section_fanout()
     rates = await section_consumers()
-    arith = section_arithmetic(rates)
+    arith = await section_arithmetic(rates)
     section_readme_claim(arith, rates)
     globals()["_RATES"] = rates
     globals()["_ARITH"] = arith
@@ -1097,27 +1388,29 @@ def main() -> int:
               "re-verify F05 and update docs/reviews/audit-2026-09-05.md.")
         return 1
     print("  every check matches the recorded disposition.")
-    a_spare, a_all = arith["results"]["regime_a"]
-    b_spare, b_all = arith["results"]["regime_b"]
+    res = arith["results"]
+    a, b = rates["regime_a"], rates["regime_b"]
     print()
     print(
-        "DISPOSITION: VERIFIED  TokenCache.get shares a successful token (12 concurrent "
-        f"callers, 1 mint) but shares no failure: with the mint failing, N concurrent "
-        f"callers make exactly N getToken POSTs for N in 1, 2, 3, 5 and 12, so the audit's "
-        f"12 callers / 12 attempts / 0 tokens reproduces byte for byte, on both counters. "
-        f"Nothing cools down afterwards: the static warmup retries on its rung schedule, "
-        f"the alert poller re-mints every {rates['alert_s']:g}s whenever credentials exist, "
-        f"and the feed poller re-mints every {rates['poll_s']:g}s once njt_static_status is "
-        f"ready (it is gated off before that, and the warmup stops once it is ready, so the "
-        f"two never overlap). That is {rates['regime_a']['min']} attempts in the first "
-        f"minute of a cold-start failure and {rates['regime_b']['min']} in a running "
-        f"process, {rates['regime_a']['hour']} and {rates['regime_b']['hour']} an hour, "
-        f"which spends the README's four spare mints by t = {b_spare:g}s (regime B; "
-        f"{a_spare:g}s in regime A) and the whole documented ten by t = {b_all:g}s "
-        f"({a_all:g}s in regime A) if the recorded ten-a-day charging still holds; "
-        f"a known quota refusal slows nothing down. The README's "
-        "'nothing anywhere retries a failed mint' is true of njt_auth and false of the "
-        "repository."
+        "DISPOSITION: FIXED  TokenCache.get now shares a FAILED mint the way it always "
+        "shared a successful one. With the mint failing, N concurrent callers make "
+        "exactly ONE getToken POST for N in 1, 2, 3, 5 and 12, and the other N-1 raise "
+        "NjtMintCooldownError without a request: the audit's 12 callers / 12 attempts / "
+        "0 tokens is now 12 callers / 1 attempt / 0 tokens. The three consumers still "
+        f"retry on their own schedules ({a['day']} attempts a day in regime A, "
+        f"{b['day']} in regime B) and the cooldown decides how many of those reach NJ "
+        f"Transit: {b['posts_min']} in the first minute against {b['min']} before, "
+        f"{b['posts_hour']} in the first hour against {b['hour']}, {b['posts_day']} in a "
+        f"day against {b['day']}. The README's four spare mints now last until "
+        f"{_clock_str(res['regime_b']['after_spare'])} instead of "
+        f"{_clock_str(res['regime_b']['before_spare'])} and the documented ten until "
+        f"{_clock_str(res['regime_b']['after_all'])} instead of "
+        f"{_clock_str(res['regime_b']['before_all'])}; a day of unbroken failure ends "
+        "held rather than looping, because once the ten really are spent the quota arm "
+        "latches to the next Eastern midnight. An over-age token keeps serving through a "
+        "cooldown, so a failed proactive re-mint no longer takes the layer dark. The "
+        "README no longer claims that nothing anywhere retries a failed mint; it "
+        "documents the policy and this arithmetic instead."
     )
     return 0
 

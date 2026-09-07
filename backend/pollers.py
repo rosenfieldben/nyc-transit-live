@@ -860,7 +860,17 @@ async def _refresh_njt(app: FastAPI, client: httpx.AsyncClient) -> None:
         # through _sanitize_upstream like every sibling here, which strips URLs and
         # leaves a message carrying none unchanged, so the getToken body still has
         # no path to /api/status.
-        if isinstance(exc, njt_auth.NjtMintQuotaError):
+        #
+        # THE COOLDOWN JOINS THE SAME ARM (Audit 5, F05), and for the same reason
+        # the quota refusal is in it: "rejected our credentials" would be false
+        # twice over. Nothing was rejected because nothing was sent, and the
+        # credentials were never in question. Its message already names the
+        # cooldown, the failure that started it and the seconds left, so this
+        # publishes it whole rather than prefixing a diagnosis of its own. A quota
+        # refusal reaches the app as NjtMintQuotaError once and as a cooldown
+        # carrying MINT_QUOTA_MESSAGE for every poll after it, so the surface reads
+        # the same either way.
+        if isinstance(exc, (njt_auth.NjtMintCooldownError, njt_auth.NjtMintQuotaError)):
             fail(502, _sanitize_upstream(exc))
         else:
             fail(502, f"NJ Transit rejected our credentials: {_sanitize_upstream(exc)}")

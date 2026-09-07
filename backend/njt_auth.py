@@ -37,6 +37,19 @@ to try again. That is what keeps our own error handling from exhausting the mint
 cap: there is no path here that can call getToken twice in a row without a full
 attempt boundary in between.
 
+WHAT IT DOES DO, SINCE AUDIT 5 (F05): IT REFUSES. Not retrying was never the same
+as not being retried, and the difference cost the whole budget. The callers all
+have schedules of their own (the warmup's rungs, a 20s feed poll, a 60s alert
+poll), so a mint that failed at t=0 was attempted again at t=20 by somebody else,
+four times in the first minute and 240 times in the first hour, none of it a
+retry any single caller could see itself making. A failed mint now leaves a
+COOLDOWN on the shared TokenCache, and every get() inside that window raises
+NjtMintCooldownError without calling getToken at all: a quota refusal holds to
+the next Eastern midnight because that is when the answer changes, and every
+other failure takes bounded exponential backoff because its length is unknown.
+The caller's schedule still decides when to ASK. This decides how often asking
+can reach NJ Transit, which is the only one of the two that a rate limit counts.
+
 CONSUMED BY STATIC ONLY IN 15a. njt_static fetches its archive through njt_post,
 so the token path is exercised from birth rather than landing untested alongside
 the realtime work that will need it in 15b.
@@ -61,9 +74,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import time
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timedelta
+from datetime import time as time_of_day
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -198,6 +215,58 @@ REQUEST_TIMEOUT_S = 30.0
 # layer for one extra cycle is the price of four spare mints instead of two.
 MAX_TOKEN_AGE_S = 12 * 3600.0
 
+# THE COOLDOWN AFTER A FAILED MINT (Audit 5, F05). Two numbers, because a failed
+# mint has two causes and only one of them has a known end.
+#
+# WHAT THEY REPLACE. Before these, a failed mint left nothing behind: the cache
+# recorded the quota flag and no more, so N concurrent callers each made their own
+# attempt and every later poll made another. Measured against the running cadences
+# that is four getToken POSTs in the first minute and 240 in the first hour, which
+# is 24 times the whole daily budget every hour. A refusal we had already been
+# given throttled nothing at all.
+#
+# THE BASE, AND WHY IT IS LONGER THAN A POLL. A cooldown shorter than the fastest
+# cadence that can drive a mint changes nothing: the next poll arrives after it has
+# already lapsed and attempts anyway. pollers.POLL_INTERVAL_S is 20s, so 60 is
+# three of them, and it is also exactly pollers.ALERT_POLL_INTERVAL_S, which leaves
+# the alert poller at most one attempt per window rather than three. One minute is
+# also the whole price of a transient blip: a single failed mint costs a minute of
+# waiting before the retry that heals it, during which the feed cache keeps serving
+# what it already has.
+MINT_COOLDOWN_BASE_S = 60.0
+
+# THE CAP, AND WHY IT IS HALF AN HOUR. Doubling with no ceiling would eventually
+# park the retry a day out, so a five-minute NJ Transit outage would leave the
+# layer dark long after the upstream came back. The cap is the longest we will
+# ever wait, so it is also the WORST RESIDUAL DARKNESS after a real outage ends:
+# thirty minutes means the heal lands inside the same hour the outage stopped, and
+# inside the same six-hourly contract-monitor cycle, so an operator reading the
+# next run sees a healthy deployment rather than the tail of a fixed problem.
+#
+# WHAT THE PAIR COSTS IN ATTEMPTS, which is the number this exists to bound. A day
+# of unbroken non-quota failure walks 60, 120, 240, 480, 960, 1800, 1800, ... which
+# is 52 getToken POSTs in 24 hours against 5760 before this. It is still more than
+# DAILY_MINT_LIMIT, and that is honest rather than a gap: the moment those attempts
+# do spend the account's ten, NJ Transit answers with the quota refusal instead,
+# and the arm below latches until Eastern midnight at ONE attempt for the rest of
+# the day. The ladder cannot outrun its own consequence.
+MINT_COOLDOWN_CAP_S = 1800.0
+
+# HOW FAR PAST MIDNIGHT A QUOTA HOLD REACHES. The reset is an Eastern midnight
+# (observed 2026-09-03), and a retry aimed exactly at it is aimed at a boundary we
+# do not own the clock for: a second early, NJ Transit refuses again, and the arm
+# below holds until the NEXT midnight, which is a full day of darkness bought for
+# one second of impatience. A minute of margin makes that trade impossible and
+# costs a minute.
+MINT_QUOTA_RESET_MARGIN_S = 60.0
+
+# The reset's own timezone, named once. zoneinfo rather than a fixed -5/-4 offset
+# because the boundary is a LOCAL midnight and the offset changes twice a year;
+# a hardcoded one would be an hour wrong for a third of the year and would move the
+# hold across the boundary in the wrong direction each March.
+_EASTERN = ZoneInfo("America/New_York")
+
+
 # How much of an upstream body a failure message may quote. Enough to carry
 # {"errorMessage":"..."} whole, short enough that an HTML error page does not
 # become a log entry.
@@ -242,6 +311,38 @@ class NjtMintQuotaError(NjtAuthError):
     as recoverable. It is not, for the rest of the Eastern day, and every attempt
     made while waiting is spent against the very budget it is waiting on.
     """
+
+
+class NjtMintCooldownError(NjtAuthError):
+    """A mint was NOT attempted, because a recent one failed and the cooldown holds.
+
+    THE ONLY ERROR IN THIS MODULE THAT REPORTS SOMETHING WE DID NOT DO. Every other
+    failure here is the upstream's answer to a request we made; this one is raised
+    before any request exists, which is the entire point of it. Audit 5 (F05)
+    measured the alternative: a failed mint left no shared state, so N concurrent
+    callers each made their own attempt and every later poll made another, four in
+    the first minute and 240 in the first hour against a budget of ten a day.
+
+    A SUBCLASS OF NjtAuthError FOR THE REASON NjtMintQuotaError IS ONE. Every
+    caller that already handles a failed mint keeps handling this one unchanged:
+    the warmup rungs, the poller arms, njt_static's lenient empty result. The
+    distinct type buys the ability to SAY SO, and `remaining_s` is what it says
+    with, so /api/status can name a cooldown and its remaining seconds instead of
+    reporting a credential problem nobody has.
+
+    THE MESSAGE CARRIES THE FAILURE THAT STARTED THE COOLDOWN, and carrying it is
+    safe: every message this module raises from a mint is built from a status code,
+    an exception type name or one of its own constants, never from a getToken body
+    (Audit 4, F3). So the reason can be repeated for the whole window without the
+    body it never contained becoming quotable now.
+    """
+
+    def __init__(self, message: str, *, remaining_s: float) -> None:
+        super().__init__(message)
+        # The exact seconds left, unrounded, beside the message's whole-second
+        # rendering: a surface that wants to do arithmetic on it (a status block, a
+        # test asserting the ladder doubled) should not have to parse prose.
+        self.remaining_s = remaining_s
 
 
 class NjtUpstreamError(RuntimeError):
@@ -382,6 +483,32 @@ def is_mint_quota_error(status: int, body: bytes) -> bool:
     if not isinstance(message, str):
         return False
     return message.strip().casefold().startswith(_QUOTA_PREFIX)
+
+
+def seconds_to_next_eastern_midnight(wall_now: float) -> float:
+    """How long from `wall_now` (a Unix timestamp) until the next America/New_York
+    midnight, plus MINT_QUOTA_RESET_MARGIN_S.
+
+    THE ONE PLACE A WALL CLOCK IS READ IN THIS MODULE, and it is read exactly once
+    per quota refusal, to measure a LENGTH. Everything that then asks "is the
+    cooldown over" compares monotonic instants, so a container whose clock steps at
+    boot or under an NTP correction cannot shorten a hold that is already running;
+    the worst it can do is make one hold the wrong length at the moment it starts.
+    Monotonic time cannot do this job on its own: it has no idea what a midnight is.
+
+    THE NEXT MIDNIGHT IS NAMED, NOT MEASURED. The local DATE plus one day, combined
+    with the zone, is the instant we want by construction; adding a fixed 86400 to
+    the timestamp would be the same thing only on days that are 24 hours long. Two
+    a year are not, and both directions are wrong in a way that costs: on the March
+    day the hold would run an hour past the reset (an hour of avoidable darkness),
+    and on the November day it would fall an hour short and spend a mint to be told
+    the same refusal again. A fall-back day is 25 hours and a hold across it is 25
+    hours; the March day is 23, and both directions are pinned by
+    test_a_quota_hold_across_a_dst_boundary_is_the_length_of_that_day.
+    """
+    now = datetime.fromtimestamp(wall_now, tz=_EASTERN)
+    midnight = datetime.combine(now.date() + timedelta(days=1), time_of_day(0, 0), tzinfo=_EASTERN)
+    return max(midnight.timestamp() - wall_now, 0.0) + MINT_QUOTA_RESET_MARGIN_S
 
 
 def _quote(body: bytes) -> str:
@@ -579,6 +706,40 @@ class TokenCache:
     the life of the process while the retry loop re-posted it forever. See the
     constant for why twelve hours and what it does and does not claim.
 
+    A FAILED MINT IS SHARED, EXACTLY AS A SUCCESSFUL ONE IS (Audit 5, F05). The
+    lock always serialized callers; until F05 it shared only a TOKEN, so the second
+    check inside it found nothing after a failure and every waiter minted in turn.
+    N concurrent callers therefore made N attempts, and so did every poll after
+    them. The cache now records the failure and a NOT-BEFORE instant, and until
+    that instant every get() raises NjtMintCooldownError WITHOUT calling the mint
+    callback, so a burst of any size costs one getToken POST and a window of polls
+    costs none. The waiters are covered by the same re-check inside the lock: a
+    caller that queued while the holder's mint was in flight sees the shared
+    failure the holder just recorded, not an empty cache.
+
+    TWO POLICIES, CHOSEN BY THE EXCEPTION TYPE, because a failed mint has two
+    causes and only one of them has a known end. A quota refusal
+    (NjtMintQuotaError) is NJ Transit telling us the answer for the rest of the
+    Eastern day, so the hold runs to the next Eastern midnight and there is nothing
+    to discover before then. Everything else (a transport failure, a non-200, a
+    body carrying no token we recognise) is a fault of unknown length, so it takes
+    bounded exponential backoff from MINT_COOLDOWN_BASE_S to MINT_COOLDOWN_CAP_S
+    and a success resets it. NJ TRANSIT'S ANSWER TO BAD CREDENTIALS IS NOT KNOWN
+    and is not guessed at here: no probe has ever sent a wrong password, so
+    whatever shape it wears falls in the second arm and is retried on the ladder
+    rather than latched on a rule invented for it.
+
+    AN OVER-AGE TOKEN OUTLIVES A FAILED RE-MINT, and this is the half that keeps a
+    cooldown from becoming an outage. MAX_TOKEN_AGE_S is a BUDGET rule (how long we
+    will hold a token without proof it still works), not a validity rule: NJ
+    Transit itself says when a token is dead, through the "Invalid token." shape.
+    So when a proactive re-mint fails, the cached token keeps being served for the
+    length of the cooldown instead of being thrown away for a fresh one that cannot
+    be had. What takes NJ Transit off the map is a REJECTED token (njt_post
+    invalidates it, so there is nothing left to serve) or a cooldown that begins
+    with no token at all, such as a cold start. Both of those raise; a merely
+    over-age one does not.
+
     THE LOCK IS REBOUND WHEN THE RUNNING LOOP CHANGES. asyncio.Lock binds itself to
     the loop that first awaits it and raises if awaited from another, and this
     module holds a process-wide cache. The app has one loop for its whole lifetime,
@@ -593,6 +754,7 @@ class TokenCache:
         self,
         max_age_s: float = MAX_TOKEN_AGE_S,
         clock: Callable[[], float] = time.monotonic,
+        wall_clock: Callable[[], float] = time.time,
     ) -> None:
         self._token: str | None = None
         self._minted_at: float = 0.0
@@ -603,6 +765,36 @@ class TokenCache:
         # boot (or forwards under an NTP correction) must not be able to make a
         # token look arbitrarily fresh or arbitrarily stale.
         self._clock = clock
+        # THE SECOND CLOCK, AND IT IS READ ONCE PER QUOTA REFUSAL AND NEVER AGAIN.
+        # Only one question in this class needs a calendar (how far away is the
+        # next Eastern midnight), and a monotonic clock cannot answer it. So the
+        # wall clock measures that LENGTH and nothing else; every "is the cooldown
+        # over" comparison below is monotonic, so a clock step cannot cut a hold
+        # short. Injected for the same reason `clock` is: a test asserts the
+        # midnight boundary by naming a timestamp, never by waiting for one.
+        self._wall_clock = wall_clock
+        # THE COOLDOWN, on the monotonic timeline. None means no mint has failed
+        # since the last success; a value in the past means the window has lapsed
+        # and the next caller may attempt. Deliberately NOT cleared when it lapses:
+        # clearing is a write, reading is not, and the only writers here are a mint
+        # attempt's two outcomes.
+        self._cooldown_until: float | None = None
+        # WHY the cooldown is running, in the failing mint's own words, so the
+        # window's error can say what started it rather than only that something
+        # did. Safe to repeat: every message this module raises from a mint is
+        # built from a status code, an exception type name or one of its own
+        # constants, never from a getToken body (Audit 4, F3).
+        self._cooldown_reason = ""
+        # THE BACKOFF LADDER, as the last delay rather than a step count, so the
+        # doubling and the cap are one expression and nothing can overflow while a
+        # process sits in a long failure. None means no streak: the next non-quota
+        # failure starts at MINT_COOLDOWN_BASE_S.
+        #
+        # A QUOTA REFUSAL LEAVES IT ALONE, neither advancing nor resetting it. Only
+        # a mint that WORKED proves the ladder's streak is over, and a refusal is
+        # not a fault to back off from; carrying a streak across one is the
+        # conservative direction, which is the right one for a budget.
+        self._backoff_s: float | None = None
         # TWO COUNTERS, AND THE DISTINCTION IS THE WHOLE POINT OF HAVING BOTH.
         # `mints` counts tokens successfully ISSUED; `mint_requests` counts getToken
         # POSTS ACTUALLY SENT. A failed mint raises before the token is stored, so it
@@ -660,11 +852,95 @@ class TokenCache:
         if stale is None or self._token == stale:
             self._token = None
 
+    def cooldown_remaining(self) -> float | None:
+        """Seconds left before a mint may be attempted again, or None if one may be
+        attempted now.
+
+        A PURE READ, which is why it does not clear a lapsed window. /api/status
+        calls this on every snapshot, and a reader that mutated the cache would
+        make the act of looking part of the behaviour being looked at.
+        """
+        if self._cooldown_until is None:
+            return None
+        remaining = self._cooldown_until - self._clock()
+        return remaining if remaining > 0 else None
+
+    def cooldown(self) -> tuple[float, str] | None:
+        """The running cooldown as (seconds remaining, the same thing in words), or
+        None when a mint may be attempted now.
+
+        WHAT /api/status PUBLISHES. Without it the surface has only the poll error
+        of whichever consumer happened to ask last, which says "NJ Transit is
+        failing" for a window in which nothing was asked of NJ Transit at all, and
+        says nothing at all during a cold start where no poller is running yet.
+
+        THE PAIR COMES FROM ONE CLOCK READ on purpose: published separately they
+        could round either side of a second apart and have the snapshot disagree
+        with its own prose.
+        """
+        remaining = self.cooldown_remaining()
+        if remaining is None:
+            return None
+        return remaining, self._cooldown_message(remaining)
+
+    def _cooldown_message(self, remaining: float) -> str:
+        """One sentence: what failed, and how much longer we are not asking again.
+
+        Rounded UP, so a window with four tenths of a second left reads as one
+        second rather than zero, which would say the opposite of what is true.
+        """
+        reason = self._cooldown_reason or "a getToken attempt failed"
+        return f"{reason}; minting is in cooldown for another {math.ceil(remaining)}s"
+
+    def _serve_through_cooldown(self, remaining: float) -> str:
+        """The cached token if there is any, else the cooldown as an error.
+
+        THE OVER-AGE TOKEN IS RETURNED DELIBERATELY, past the ceiling _live_token
+        enforces. See the class docstring: the ceiling is a budget rule, and a
+        budget rule cannot be worth going dark for at the exact moment we have
+        proved we cannot buy a replacement. What is NOT returned is a token NJ
+        Transit rejected, because njt_post invalidated it and there is nothing here
+        to serve.
+        """
+        if self._token is not None:
+            return self._token
+        raise NjtMintCooldownError(self._cooldown_message(remaining), remaining_s=remaining)
+
+    def _start_cooldown(self, exc: BaseException) -> float:
+        """Record a failed mint so nothing attempts another one until it lapses, and
+        return how long that is."""
+        if isinstance(exc, NjtMintQuotaError):
+            # THE ONE FAILURE WITH A KNOWN END. NJ Transit has told us the answer
+            # for the rest of the Eastern day, so the hold runs to the reset rather
+            # than to a guess, and the ladder is left untouched (see __init__).
+            self.mint_quota_refused = True
+            hold_s = seconds_to_next_eastern_midnight(self._wall_clock())
+        else:
+            # EVERYTHING ELSE, INCLUDING WHATEVER BAD CREDENTIALS LOOK LIKE. Nobody
+            # has ever probed that answer, so it is not special-cased on a guess:
+            # an unknown fault of unknown length takes the ladder like any other.
+            self.mint_quota_refused = False
+            base = MINT_COOLDOWN_BASE_S if self._backoff_s is None else self._backoff_s * 2
+            hold_s = min(base, MINT_COOLDOWN_CAP_S)
+            self._backoff_s = hold_s
+        self._cooldown_until = self._clock() + hold_s
+        self._cooldown_reason = str(exc)
+        return hold_s
+
     async def get(self, mint_token: Callable[[], Awaitable[str]]) -> str:
-        """The cached token, minting exactly once if there is none or it is over-age."""
+        """The cached token, minting at most once per cooldown window.
+
+        Raises NjtMintCooldownError, without calling `mint_token`, while a recent
+        failure's window is still open and there is no token left to serve.
+        """
         cached = self._live_token()
         if cached is not None:
             return cached
+        held = self.cooldown_remaining()
+        if held is not None:
+            # BEFORE THE LOCK, so a window of polls does not even queue: the
+            # cooldown is process-wide state and reading it needs no exclusion.
+            return self._serve_through_cooldown(held)
         async with self._get_lock():
             # THE SECOND CHECK. Another caller may have minted while this one waited
             # for the lock; returning its token is the entire point of the lock. It
@@ -673,17 +949,46 @@ class TokenCache:
             live = self._live_token()
             if live is not None:
                 return live
+            # THE OTHER SECOND CHECK, and F05 is the whole reason it exists. The
+            # caller ahead of this one may have FAILED rather than succeeded, and
+            # before this line that left nothing behind: each waiter found an empty
+            # cache in turn and minted its own, which is how twelve concurrent
+            # callers became twelve getToken POSTs against a cap of ten a day.
+            held = self.cooldown_remaining()
+            if held is not None:
+                return self._serve_through_cooldown(held)
             self.mint_requests += 1
             try:
                 token = await mint_token()
             except Exception as exc:
                 # Exception, NOT BaseException, so a CANCELLED mint leaves the flag
-                # exactly as it was. A cancellation is this process giving up, not
-                # NJ Transit answering, and it says nothing either way about the
-                # budget.
-                self.mint_quota_refused = isinstance(exc, NjtMintQuotaError)
-                raise
+                # and the cooldown exactly as they were. A cancellation is this
+                # process giving up, not NJ Transit answering, and it says nothing
+                # either way about the budget or about how long to wait.
+                hold_s = self._start_cooldown(exc)
+                if self._token is None:
+                    raise
+                # THE CALLER WHOSE OWN RE-MINT FAILED FALLS BACK TOO, not just the
+                # ones that arrive later and meet the window. This is the caller
+                # that came here because the token aged out, and the age ceiling is
+                # a budget rule: throwing a working token away for a replacement we
+                # have just proved cannot be had would turn a failed mint into an
+                # outage. The failure is not lost, it is published as the cooldown
+                # (/api/status njt_mint_cooldown) and logged here, which is the
+                # only place it would otherwise be silent.
+                logger.warning(
+                    "NJ Transit mint failed; still serving the token already held. %s",
+                    self._cooldown_message(hold_s),
+                )
+                return self._token
             self.mint_quota_refused = False
+            # A SUCCESS ENDS THE COOLDOWN AND THE STREAK TOGETHER. The ladder
+            # measures consecutive failures, so one working mint puts the next
+            # failure back at MINT_COOLDOWN_BASE_S rather than resuming where a
+            # long-healed outage left off.
+            self._cooldown_until = None
+            self._cooldown_reason = ""
+            self._backoff_s = None
             self.mints += 1
             self._token = token
             self._minted_at = self._clock()

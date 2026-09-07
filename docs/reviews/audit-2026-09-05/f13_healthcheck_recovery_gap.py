@@ -393,6 +393,23 @@ INVENTORY = [
      "frontend degraded-set membership when fetched_at is null"),
     ("frontend/helpers.test.js", "a backend restart while a feed is", CLASS_B,
      "the test pinning that frontend behavior"),
+    # Added by claude/f05-mint-cooldown (F05, the NJT mint cooldown). CLASS B rather
+    # than A, and the reason is the one this table exists to record: all three argue
+    # AGAINST publishing a signal, so none of them decides a status code. They also
+    # run the opposite way from the premise the audit disputes. Class A comments say
+    # "a restart would happen, so do not gate on this"; these say a restart cannot
+    # fix a cooldown at all, which is true whether or not Railway ever restarts the
+    # container after a deployment goes live. Correcting the platform premise leaves
+    # every one of them standing.
+    ("README.md", "code for the backoff arm: a cooldown is not a state a restart could", CLASS_B,
+     "why the backoff cooldown gets no /healthz degraded code (it publishes none, so it "
+     "moves no status code either way)"),
+    ("README.md", "a restart would spend another mint discovering that", CLASS_B,
+     "the second half of that same sentence: the cost of finding out by restarting"),
+    ("backend/tests/test_api.py",
+     "nor something a restart fixes; publishing it as degraded would put a", CLASS_B,
+     "test_status_names_a_running_njt_mint_cooldown_and_its_seconds, which asserts the "
+     "/api/status block and no status code"),
     # ---- class C: configuration and bare mentions --------------------------
     ("railway.json", '"restartPolicyType"', CLASS_C, "the platform restart policy itself"),
     ("railway.json", '"restartPolicyMaxRetries"', CLASS_C, "its retry ceiling"),

@@ -931,6 +931,49 @@ async def test_healthz_publishes_a_spent_njt_mint_budget_without_gating_on_it(
     assert "reasons" not in res.json(), "the non-gating code must not reach reasons"
 
 
+async def test_status_names_a_running_njt_mint_cooldown_and_its_seconds(client, monkeypatch):
+    """WHAT AN OPERATOR READS DURING A COOLDOWN (Audit 5, F05).
+
+    A cooldown is a state the app can sit in for half an hour with no request going
+    out at all, and before this block the only signal was the last poll's error,
+    which says "NJ Transit is failing" about a window in which nothing was asked of
+    NJ Transit. Worse, during a cold start the feed poller is gated off behind a
+    static group that is still loading, so a cooldown holding the warmup back had
+    no surface whatsoever.
+
+    NO HEALTHZ CODE, DELIBERATELY, and the quota case is why the distinction holds:
+    `njt-mint-quota` already says the budget is spent, which is a fact about the
+    whole Eastern day that a fresh process inherits. A backoff cooldown is neither
+    a sickness nor something a restart fixes; publishing it as degraded would put a
+    monitor on a five-minute NJ Transit blip.
+    """
+    cache = njt_auth.TokenCache()
+    monkeypatch.setattr(njt_auth, "TOKEN_CACHE", cache)
+
+    res = await client.get("/api/status")
+    assert res.json()["njt_mint_cooldown"] is None, "null while a mint may be attempted"
+
+    async def failing_mint():
+        raise njt_auth.NjtMintQuotaError(njt_auth.MINT_QUOTA_MESSAGE)
+
+    with pytest.raises(njt_auth.NjtMintQuotaError):
+        await cache.get(failing_mint)
+
+    block = (await client.get("/api/status")).json()["njt_mint_cooldown"]
+    assert block is not None, "and populated the moment one is held off"
+    assert block["seconds_remaining"] > 0
+    assert "cooldown" in block["detail"], block["detail"]
+    assert njt_auth.MINT_QUOTA_MESSAGE in block["detail"], (
+        "the surface still says a spent budget is a budget, not a credential problem"
+    )
+    assert f"{int(block['seconds_remaining'])}s" in block["detail"] or (
+        f"{int(block['seconds_remaining']) + 1}s" in block["detail"]
+    ), block["detail"]
+    # The healthz classification is untouched by the cooldown itself: the quota flag
+    # this refusal also set is what publishes a code, and there is no code for backoff.
+    assert models.HEALTH_NJT_MINT_QUOTA in (await client.get("/healthz")).json()["degraded"]
+
+
 async def test_healthz_is_quiet_about_njt_when_no_mint_has_been_refused(client, healthz_env):
     """The other side, and it is what makes the test above mean anything: the code
     is absent by default, including on a deployment with no NJ Transit credentials

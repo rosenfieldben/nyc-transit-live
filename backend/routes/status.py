@@ -162,6 +162,22 @@ async def get_status(request: Request, response: Response) -> dict:
         # "not-configured" knows the answer is a secret nobody set, and a
         # deployment that MEANT to run NJT can see at a glance that it is not.
         "njt_static": getattr(app.state, "njt_static_status", None),
+        # NJ TRANSIT MINTING, beside the group state rather than inside it (Audit 5,
+        # F05). The group state answers "can I serve NJ Transit"; this answers "why
+        # am I not asking NJ Transit for a token right now", which since F05 is a
+        # state the app can be in for half an hour at a time with no request going
+        # out at all. Null whenever a mint may be attempted, so an operator reads
+        # this key only when there is something to read.
+        #
+        # IT IS THE ONLY SURFACE THAT COVERS A COLD START. In a running process the
+        # cooldown also reaches the njt feed's last_error through the poller's arm,
+        # but during a cold start the feed poller is gated off behind a static group
+        # that is still loading, so a cooldown holding the warmup back would appear
+        # nowhere. Read off the token cache for the reason /healthz reads the quota
+        # flag off it: that cache is what every mint in this process goes through,
+        # so the answer cannot be stale the way a flag somebody remembered to set
+        # could be.
+        "njt_mint_cooldown": _njt_mint_cooldown(),
         # Per-ARCHIVE download honesty (C5), beside the group states above rather
         # than inside them: a group state answers "can I serve this system", these
         # answer "how old is the archive I am serving it from, and why". Read
@@ -177,6 +193,21 @@ async def get_status(request: Request, response: Response) -> dict:
         "ferry_feeds": getattr(app.state, "ferry_feed_health", None),
         "alerts": alerts,
     }
+
+
+def _njt_mint_cooldown() -> dict | None:
+    """The NJ Transit mint cooldown for the snapshot, or None when there is none.
+
+    `seconds_remaining` is the machine half and `detail` the human one, and both
+    come from a single read of the cache so the number and the sentence cannot
+    disagree. The detail names the failure that started the window, which is
+    already free of any getToken body by construction (Audit 4, F3).
+    """
+    running = njt_auth.TOKEN_CACHE.cooldown()
+    if running is None:
+        return None
+    remaining, detail = running
+    return {"seconds_remaining": round(remaining, 1), "detail": detail}
 
 
 # The prose each gating code contributes to `reasons`. Verbatim from before F1:

@@ -114,9 +114,12 @@ async def get_status(request: Request, response: Response) -> dict:
         fetched_at = alerts_entry["fetched_at"]
         # Per-system health (14a-style visibility): `systems` exposes each alert
         # feed's last-decode time, whether its alerts are currently retained from a
-        # down feed, and any current failure; `degraded_systems` is the sorted set
-        # of systems failing right now, so a partial outage the poll-level fields
-        # (which stay green on a partial failure) would hide is still surfaced.
+        # down feed, any current failure AND WHY, and the one success worth a
+        # sentence (`served_empty`, NJ Transit's zero-byte 200 meaning no active
+        # alerts); `degraded_systems` is the sorted set of systems failing right
+        # now, so a partial outage the poll-level fields (which stay green on a
+        # partial failure) would hide is still surfaced. A served-empty system is
+        # NOT degraded: it decoded, so it is absent from that list by construction.
         health = alerts_entry.get("health", {})
         alerts = {
             "fetched_at": fetched_at,

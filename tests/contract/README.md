@@ -31,13 +31,20 @@ the seam BETWEEN layers, or about a poll loop's behavior over time.
   ferry from the committed GTFS fixtures (the ferry's plus a synthesized
   `stop_times.txt`, see below), so entity ids, stop ids and route ids agree across
   the two halves the way they do in production. Feeds carry a MODE
-  (`live` / `frozen` / `empty` / `error`); archives carry a PUBLICATION (`good` /
-  `headers-only-stops` / `missing-member` / `corrupt-zip`). Both are validated on
+  (`live` / `frozen` / `empty` / `error` / `stale` / `zero-bytes` / `one-byte`);
+  archives carry a PUBLICATION (`good` / `headers-only-stops` / `missing-member` /
+  `corrupt-zip` / `no-shapes`). Both are validated on
   the way in: an unknown name is a 400 from the control endpoint, not a mystery
-  failure the app reports as a bad upstream. NJ Transit adds a third axis and two
+  failure the app reports as a bad upstream. The last two modes are a matched pair
+  for NJ Transit's alerts feed, whose 200 with a zero-byte body means "no active
+  rail alerts": `zero-bytes` serves exactly that, and `one-byte` is the control that
+  keeps the rule from widening from "no bytes" to "not enough bytes". Note `empty`
+  means something different on the two NJT POST routes (a 13-byte header-only feed,
+  the shape the overnight probe recorded) than on the GET feeds, which is why
+  `zero-bytes` had to exist as its own name. NJ Transit adds a third axis and two
   POST routes, because it is the one credentialed upstream: `getToken` hands out a
   numbered token, and `getGTFS` serves the archive behind a TOKEN MODE (`ok` /
-  `reject-first` / `server-error` / `redirect`), validated the same way.
+  `reject-first` / `server-error` / `redirect` / `quota`), validated the same way.
   `reject-first` reproduces the probe's most dangerous fact, an expired token
   answered with HTTP 500 and `{"errorMessage":"Invalid token."}`; `server-error` is
   the same-class control, a genuine 500 with a different body that must not

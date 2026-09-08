@@ -369,10 +369,79 @@ async def test_fetch_degrades_on_partial_failure():
         feeds.ALERT_FEED_URLS["MNR"]: b"not-a-protobuf-\xff\xfe",  # DecodeError
         feeds.ALERT_FEED_URLS["ferry"]: _one_active("RS"),  # the fifth feed decodes
     }
-    alerts, suppressed, failed = await feeds.fetch_service_alerts(_FakeClient(by_url))
-    assert {a["system"] for a in alerts} == {"subway", "LIRR", "ferry"}
-    assert suppressed == 0
-    assert failed == ["MNR", "bus"]
+    fetched = await feeds.fetch_service_alerts(_FakeClient(by_url))
+    assert {a["system"] for a in fetched.alerts} == {"subway", "LIRR", "ferry"}
+    assert fetched.suppressed == 0
+    assert list(fetched.failed) == ["MNR", "bus"]
+    assert fetched.served_empty == []
+
+
+@pytest.mark.anyio
+async def test_each_failed_feed_reports_its_own_reason_not_a_shared_marker():
+    """The reasons are what /api/status now records per system, so they have to
+    distinguish the ways a feed fails rather than all read alike. Before this they
+    existed only inside the fetch: the caller got keys, and every failed system's
+    health block said "alert feed unavailable this poll" whatever had happened."""
+    by_url = {url: _one_active("Q") for url in feeds.ALERT_FEED_URLS.values()}
+    by_url[feeds.ALERT_FEED_URLS["bus"]] = httpx.ConnectError("connection refused")
+    by_url[feeds.ALERT_FEED_URLS["MNR"]] = b"not-a-protobuf-\xff\xfe"
+    by_url[feeds.ALERT_FEED_URLS["LIRR"]] = TimeoutError()
+
+    fetched = await feeds.fetch_service_alerts(_FakeClient(by_url))
+    assert list(fetched.failed) == ["LIRR", "MNR", "bus"], "sorted, so the order is stable"
+    assert "connection refused" in fetched.failed["bus"]
+    assert "undecodable protobuf" in fetched.failed["MNR"]
+    # str(TimeoutError()) is the empty string; _describe_feed_error is what stops
+    # that reaching an operator as a blank reason.
+    deadline = feeds.alerts.ALERT_FEED_DEADLINE_S
+    assert fetched.failed["LIRR"] == f"no response within {deadline:.0f}s"
+
+
+@pytest.mark.anyio
+async def test_an_unexpected_exception_publishes_its_TYPE_and_not_its_message(caplog):
+    """THE REASON THIS SURFACE IS CLASSIFIED RATHER THAN COPIED.
+
+    These reasons stopped being log-only when the poller began recording them per
+    system on /api/status, which puts them under the rule _total_refresh states for
+    that surface: an arbitrary exception's str() is arbitrary text, and arbitrary
+    text can be a filesystem path, a config value, or a chunk of a body nobody meant
+    to republish. The five sibling refreshers never face this because their except
+    clauses classify by type; this gather catches everything, so the classification
+    lives in _describe_feed_error instead. The traceback still reaches the log, which
+    is where a fault of OURS is diagnosed.
+    """
+    by_url = {url: _one_active("Q") for url in feeds.ALERT_FEED_URLS.values()}
+    by_url[feeds.ALERT_FEED_URLS["bus"]] = ValueError("/etc/app/secret.env said no")
+
+    with caplog.at_level("WARNING"):
+        fetched = await feeds.fetch_service_alerts(_FakeClient(by_url))
+
+    assert fetched.failed["bus"] == "internal error fetching this feed (ValueError)"
+    assert "/etc/app/secret.env" not in fetched.failed["bus"]
+    assert "/etc/app/secret.env" in caplog.text, "the log still gets the whole thing"
+    assert "Traceback" in caplog.text, "and now gets the traceback it never had"
+
+
+@pytest.mark.anyio
+async def test_a_classified_upstream_failure_still_publishes_its_message():
+    """The other side of the same boundary, and the reason it is a list of types
+    rather than a blanket rule: an operator needs the upstream's own words for a
+    failure the upstream caused, and every family below is already published in
+    exactly this shape by a sibling refresher's classified arm."""
+    by_url = {url: _one_active("Q") for url in feeds.ALERT_FEED_URLS.values()}
+    by_url[feeds.ALERT_FEED_URLS["bus"]] = httpx.ConnectError("connection refused")
+
+    fetched = await feeds.fetch_service_alerts(_FakeClient(by_url))
+    assert fetched.failed["bus"] == "connection refused"
+    assert set(feeds.alerts._PUBLISHABLE_FEED_ERRORS) == {
+        httpx.HTTPError,
+        feeds.alerts.njt_auth.NjtNotConfigured,
+        feeds.alerts.njt_auth.NjtAuthError,
+        feeds.alerts.njt_auth.NjtUpstreamError,
+    }, (
+        "the publishable set is the boundary written down: widening it is a decision "
+        "about what /api/status may say, not a refactor"
+    )
 
 
 @pytest.mark.anyio
@@ -380,6 +449,23 @@ async def test_fetch_raises_when_all_feeds_fail():
     by_url = {url: httpx.ConnectError("down") for url in feeds.ALERT_FEED_URLS.values()}
     with pytest.raises(RuntimeError, match="All alert feeds failed"):
         await feeds.fetch_service_alerts(_FakeClient(by_url))
+
+
+@pytest.mark.anyio
+async def test_the_total_outage_exception_carries_every_feeds_reason():
+    """AllAlertFeedsFailed is a RuntimeError (so every existing caller and every
+    test standing in for a total outage is unaffected) that also carries the
+    per-feed reasons, which is what lets the poller write a real cause into each
+    system's health block instead of one shared marker."""
+    by_url = {url: httpx.ConnectError("down") for url in feeds.ALERT_FEED_URLS.values()}
+    by_url[feeds.ALERT_FEED_URLS["ferry"]] = b"\xff\xfe not a protobuf"
+    with pytest.raises(feeds.AllAlertFeedsFailed) as excinfo:
+        await feeds.fetch_service_alerts(_FakeClient(by_url))
+    assert isinstance(excinfo.value, RuntimeError)
+    errors = excinfo.value.feed_errors
+    assert set(errors) == set(feeds.active_alert_feeds())
+    assert "undecodable protobuf" in errors["ferry"]
+    assert "down" in errors["subway"]
 
 
 # ---- NJ Transit membership (15b): the sixth feed, POSTed and credential-gated ----
@@ -453,10 +539,10 @@ async def test_configured_njt_alerts_go_through_the_token_door_not_the_shared_cl
         "the NJT alerts feed was GETed through the shared client instead of POSTed through njt_auth"
     )
 
-    alerts, _suppressed, failed = await feeds.fetch_service_alerts(_FakeClient(by_url))
-    assert failed == []
+    fetched = await feeds.fetch_service_alerts(_FakeClient(by_url))
+    assert fetched.failed == {}
     assert [url for url, _form in posted] == [feeds.ALERT_FEED_URLS["njt"]]
-    njt_alerts = [a for a in alerts if a["system"] == "njt"]
+    njt_alerts = [a for a in fetched.alerts if a["system"] == "njt"]
     assert len(njt_alerts) == 1, "the POSTed feed's alerts are decoded like any other"
     assert njt_alerts[0]["routes"] == ["NEC"]
 
@@ -569,9 +655,10 @@ async def test_c3_an_empty_200_on_one_alert_feed_fails_that_feed_only():
     # feeds the per-system health map and the retention window.
     by_url = {url: _one_active("X") for url in feeds.ALERT_FEED_URLS.values()}
     by_url[feeds.ALERT_FEED_URLS["MNR"]] = b""
-    alerts, _, failed = await feeds.fetch_service_alerts(_FakeClient(by_url))
-    assert failed == ["MNR"]
-    assert {a["system"] for a in alerts} == {"subway", "bus", "LIRR", "ferry"}
+    fetched = await feeds.fetch_service_alerts(_FakeClient(by_url))
+    assert list(fetched.failed) == ["MNR"]
+    assert {a["system"] for a in fetched.alerts} == {"subway", "bus", "LIRR", "ferry"}
+    assert fetched.served_empty == [], "the served-empty rule is NJ Transit's alone"
 
 
 @pytest.mark.anyio
@@ -584,6 +671,99 @@ async def test_c3_a_VALID_EMPTY_alert_feed_is_a_healthy_system_with_no_alerts():
     header_only.header.gtfs_realtime_version = "2.0"
     by_url = {url: _one_active("X") for url in feeds.ALERT_FEED_URLS.values()}
     by_url[feeds.ALERT_FEED_URLS["MNR"]] = header_only.SerializeToString()
-    alerts, _, failed = await feeds.fetch_service_alerts(_FakeClient(by_url))
-    assert failed == []
-    assert "MNR" not in {a["system"] for a in alerts}  # healthy, and quiet
+    fetched = await feeds.fetch_service_alerts(_FakeClient(by_url))
+    assert fetched.failed == {}
+    assert "MNR" not in {a["system"] for a in fetched.alerts}  # healthy, and quiet
+    assert fetched.served_empty == [], (
+        "a header-only body is an ORDINARY quiet decode, not the served-empty state: "
+        "only a zero-byte body from NJ Transit gets the sentence on /api/status"
+    )
+
+
+# ---- NJ Transit's served-empty alerts body (2026-09-07) ----
+#
+# THE ONE BODY THIS MODULE READS AS A SERVED STATE RATHER THAN A FAILURE, and the
+# tests below are deliberately a matched set of four: the state itself, the one-byte
+# control that stops the rule widening to "not enough bytes", the wrong-system
+# control that stops it widening to another feed, and the poll-level effect. Any one
+# of them alone is satisfied by a rule that is too broad. feeds.njt_alerts_served_empty
+# carries the evidence and the ambiguity being accepted.
+
+
+def _configure_njt(monkeypatch) -> None:
+    """Make njt_auth report NJ Transit configured, so it is in the active feed set.
+    The test environment has no credentials, and without this "njt" is absent from
+    every feed set and a scenario about it would pass vacuously."""
+    monkeypatch.setattr(feeds.alerts.njt_auth, "is_configured", lambda env=None: True)
+
+
+def _njt_body(monkeypatch, body: bytes) -> None:
+    """Answer the NJT alerts POST with `body`, through the same seam the production
+    code uses (njt_auth.njt_post), never through the shared GET client."""
+
+    async def fake_post(url, form):
+        return body
+
+    monkeypatch.setattr(feeds.alerts.njt_auth, "njt_post", fake_post)
+
+
+def test_a_zero_byte_njt_alerts_body_decodes_as_zero_alerts():
+    # THE RULE ITSELF, at the decoder. Before 2026-09-07 this raised FeedDecodeError
+    # ("empty body served as 200 (no protobuf header)") and the alerts poller called
+    # NJ Transit degraded on every quiet night.
+    assert feeds._decode_alerts(b"", "njt", NOW) == ([], 0)
+    assert feeds.njt_alerts_served_empty("njt", b"") is True
+
+
+def test_one_byte_from_njt_is_still_a_failure():
+    # THE CONTROL THAT KEEPS THE RULE NARROW. The rule is "no bytes at all", not
+    # "not enough bytes": a truncated or corrupted body is exactly the silent
+    # upstream failure C3 exists to catch, and widening the arm to any short or
+    # unparseable body would swallow it.
+    assert feeds.njt_alerts_served_empty("njt", b"\x00") is False
+    with pytest.raises(feeds.FeedDecodeError):
+        feeds._decode_alerts(b"\x00", "njt", NOW)
+
+
+def test_a_zero_byte_body_from_any_other_alert_system_is_still_a_failure():
+    # THE OTHER CONTROL. The exemption is NJ Transit's alone, because NJ Transit is
+    # the only publisher observed doing this; the MTA and ferry feeds carry a header
+    # even when they have nothing to report, so zero bytes from them is the C3
+    # signature and nothing else.
+    for system in ("subway", "bus", "LIRR", "MNR", "ferry"):
+        assert feeds.njt_alerts_served_empty(system, b"") is False
+        with pytest.raises(feeds.FeedDecodeError):
+            feeds._decode_alerts(b"", system, NOW)
+
+
+@pytest.mark.anyio
+async def test_a_served_empty_njt_feed_is_a_successful_poll_that_names_itself(monkeypatch):
+    """The poll-level effect, which is what /api/status is built from: njt is NOT in
+    the failed set, contributes no alerts, and IS named in served_empty so the caller
+    can tell "upstream says there are none" from "upstream said nothing"."""
+    _configure_njt(monkeypatch)
+    _njt_body(monkeypatch, b"")
+    by_url = {url: _one_active("Q") for url in feeds.ALERT_FEED_URLS.values()}
+
+    fetched = await feeds.fetch_service_alerts(_FakeClient(by_url))
+    assert fetched.failed == {}, "a served-empty body is a decode, not an outage"
+    assert fetched.served_empty == ["njt"]
+    assert "njt" not in {a["system"] for a in fetched.alerts}
+    assert {a["system"] for a in fetched.alerts} == {"subway", "bus", "LIRR", "MNR", "ferry"}
+
+
+@pytest.mark.anyio
+async def test_a_one_byte_njt_feed_fails_that_feed_alone(monkeypatch):
+    """The control at the poll level, and the reason it is worth having twice: the
+    decoder test proves the rule is narrow, this proves the narrowness survives the
+    gather. njt joins the failed set with a reason, and the five keyless feeds are
+    untouched."""
+    _configure_njt(monkeypatch)
+    _njt_body(monkeypatch, b"\x00")
+    by_url = {url: _one_active("Q") for url in feeds.ALERT_FEED_URLS.values()}
+
+    fetched = await feeds.fetch_service_alerts(_FakeClient(by_url))
+    assert list(fetched.failed) == ["njt"]
+    assert "undecodable protobuf" in fetched.failed["njt"]
+    assert fetched.served_empty == []
+    assert {a["system"] for a in fetched.alerts} == {"subway", "bus", "LIRR", "MNR", "ferry"}

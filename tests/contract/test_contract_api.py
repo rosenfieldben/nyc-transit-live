@@ -988,6 +988,16 @@ def test_njt_a_spent_mint_budget_is_reported_as_a_budget_not_an_outage(harness):
         assert "cooldown" in cooldown["detail"], cooldown
         assert "NJ Transit daily mint limit reached" in cooldown["detail"], cooldown
         assert NJT_QUOTA_CANARY not in cooldown["detail"], "the getToken body reached /api/status"
+        # THE WHOLE SNAPSHOT, not only that one field, and the reason it is the whole
+        # snapshot is that the surface WIDENED: the alerts health block now carries
+        # each failed feed's own reason, so a spent budget reaches it as njt_auth's
+        # message where it used to reach it as a fixed marker. The F3 rule is that
+        # NOTHING njt_auth composes may quote the getToken body, and this is the
+        # cheapest way to keep asserting that against every field at once rather
+        # than against the fields somebody remembered to name.
+        assert NJT_QUOTA_CANARY not in json.dumps(app.status()), (
+            "the getToken body reached /api/status through some field of the snapshot"
+        )
 
         # THE F3 CANARY, at the socket. The app now READS this body, so "reads it"
         # and "quotes it" have to be visibly different: the fixed string is present,
@@ -1335,6 +1345,120 @@ def test_njt_overnight_empty_feed_is_a_served_state_not_a_failure(harness):
         assert app.status()["feeds"]["njt"]["last_error"] is None
         # The board empties with it, from the same generation.
         assert app.get("/api/njt-arrivals/109")["arrivals"] == []
+
+
+def test_njt_a_served_empty_alerts_body_is_no_alerts_not_no_feed(harness):
+    """NJ Transit's ALERTS endpoint answers HTTP 200 with a ZERO-BYTE body when it
+    has no active rail alerts. Observed 2026-09-07: production never decoded this
+    feed from 00:30 Eastern, decoded once around 16:33 and was empty again after,
+    the contract monitor's own fetch at 17:35 saw the same body, and njtransit.com's
+    Travel Alerts page at that hour listed every rail line as "No current alerts or
+    advisories".
+
+    IT IS A SERVED STATE, and it is the ONLY body in this app that is. The pair of
+    modes driven here is the point: `zero-bytes` is what NJ Transit actually sends
+    and must decode as zero alerts, while `one-byte` differs from it by a single
+    byte and must still fail the feed. Either half alone is satisfied by a rule that
+    is too broad, which is why they run against one app in one lifetime rather than
+    as two scenarios.
+
+    NOT THE SAME SHAPE AS `empty`, which is the scenario above: that is the
+    13-byte header-only TripUpdates feed (decoder law 6), a valid message with no
+    entities. This feed's empty form has no header at all, so before this rule it
+    reached /api/status as "undecodable protobuf (empty body served as 200 (no
+    protobuf header))" and NJ Transit was reported degraded for most of every quiet
+    day.
+
+    Hermetic counterparts: backend/tests/test_feeds_alerts.py's served-empty section
+    (the decode and both controls), test_api.py's health-block tests (the wording),
+    and test_contract_monitor.py's njt-realtime pair (the monitor's own reading of
+    the same two bodies). What only this tier can show is a REAL app, polling a real
+    socket, moving between the two states and back.
+    """
+    with harness.launch() as app:
+        _await_njt_trains(app)
+        healthy = app.await_status(
+            lambda s: (s.get("alerts") or {}).get("fetched_at") is not None,
+            "the first alerts poll to land",
+        )
+        assert "njt" in healthy["alerts"]["systems"], (
+            "the contract app runs WITH credentials, so NJ Transit must be in the "
+            "active alert feed set or this scenario proves nothing"
+        )
+        # THE RELEASE CLAIM NEEDS SOMETHING TO RELEASE. The simulator serves the
+        # Metro-North alerts capture as this feed's body, so the app is holding NJT
+        # alerts before the feed goes quiet; without this the disappearance below
+        # would be indistinguishable from never having had any.
+        before = app._await(
+            lambda: app.get("/api/alerts"),
+            lambda body: any(a["system"] == "njt" for a in body["alerts"]),
+            "the app to be serving NJ Transit alerts before the feed goes quiet",
+            60.0,
+            lambda last: f"last /api/alerts systems: {json.dumps(last.get('systems'))}",
+        )
+        assert before["systems"]["njt"]["ok"] is True
+
+        # -- the served-empty body ------------------------------------------
+        harness.sim.set_mode("njt:alerts", "zero-bytes")
+        harness.sim.await_polls("njt:alerts", 2)
+        status = app.await_status(
+            lambda s: s["alerts"]["systems"]["njt"]["served_empty"] is not None,
+            "the zero-byte alerts body to be reported as a served state",
+        )
+        njt = status["alerts"]["systems"]["njt"]
+        assert njt["served_empty"] == "served empty body: no active NJ Transit alerts"
+        assert njt["last_error"] is None, "a served-empty body decoded; it is not an outage"
+        assert status["alerts"]["degraded_systems"] == [], (
+            "a quiet night must not put NJ Transit in the degraded list, or the banner "
+            "is on every night and nobody reads it"
+        )
+        assert njt["retained_since"] is None, "and nothing is being carried forward"
+        # THE ALERTS ARE RELEASED, which is what makes this a decode rather than a
+        # cosmetic label. While the body was being called undecodable, NJ Transit's
+        # last-known alerts were retained for the whole window and then dropped by
+        # the cap; upstream saying it has none must end them on this poll.
+        alerts_body = app.get("/api/alerts")
+        assert [a for a in alerts_body["alerts"] if a["system"] == "njt"] == [], (
+            "a served-empty body is upstream saying its alerts are over, so a "
+            "finished suspension must not stay on riders' screens for another window"
+        )
+        assert alerts_body["systems"]["njt"]["ok"] is True
+
+        # fresh_at ADVANCES across the served-empty polls, which is what keeps the
+        # monitor's production:alerts rule green: every escalation it makes keys on a
+        # frozen fresh_at, a retention clock, or membership of degraded_systems.
+        first_fresh = njt["fresh_at"]
+        harness.sim.await_polls("njt:alerts", 2)
+        later = app.await_status(
+            lambda s: s["alerts"]["systems"]["njt"]["fresh_at"] > first_fresh,
+            "the served-empty state to keep decoding rather than aging out",
+        )
+        assert later["alerts"]["systems"]["njt"]["served_empty"] is not None
+
+        # -- the control: one byte is still an outage -----------------------
+        harness.sim.set_mode("njt:alerts", "one-byte")
+        degraded = app.await_status(
+            lambda s: s["alerts"]["degraded_systems"] == ["njt"],
+            "one byte of garbage to fail the NJ Transit alerts feed",
+        )
+        njt = degraded["alerts"]["systems"]["njt"]
+        assert njt["served_empty"] is None, "the sentence must not outlive the state"
+        assert njt["last_error"] is not None
+        # AND IT SAYS WHY. Every alerts failure used to reach this surface as one
+        # fixed marker; the fetch's own reason is what makes the next diagnosis a
+        # read of /api/status rather than a log search.
+        assert "undecodable protobuf" in njt["last_error"]["detail"], njt["last_error"]
+        assert njt["last_error"]["status"] == 502
+
+        # -- and it heals, so the degradation is a state rather than terminal
+        harness.sim.set_mode("njt:alerts", "zero-bytes")
+        app.await_status(
+            lambda s: (
+                s["alerts"]["systems"]["njt"]["served_empty"] is not None
+                and s["alerts"]["degraded_systems"] == []
+            ),
+            "the served-empty state to return once the garbage stops",
+        )
 
 
 def test_njt_token_expiry_mid_poll_costs_exactly_one_mint_across_three_consumers(

@@ -596,7 +596,20 @@ class AlertSystemHealth(BaseModel):
     # Set while a down system's alerts are being carried forward from its last good
     # poll; null when the system is fresh or once the retention cap has dropped them.
     retained_since: float | None
-    last_error: FeedError | None  # this system's failure this poll, null when fresh
+    # This system's failure this poll, null when fresh. The detail is the FETCH'S OWN
+    # reason (a connect error, an HTTP status, a per-feed deadline, an undecodable
+    # body), sanitized at the recording boundary, rather than one fixed marker for
+    # every way an alert feed can fail.
+    last_error: FeedError | None
+    # THE ONE SUCCESS WORTH A SENTENCE, and the reason it is a string rather than a
+    # bool: an operator looking at zero NJ Transit alerts needs to tell "upstream
+    # says there are none" from "upstream said nothing", and only words do that.
+    # Null on an ordinary decode and null on a failure, so it is never ambiguous
+    # with last_error. Today only NJ Transit's alerts feed can set it: it answers
+    # HTTP 200 with a zero-byte body when it has no active rail alerts (observed
+    # 2026-09-07; feeds.njt_alerts_served_empty carries the rule and its ambiguity).
+    # Defaulted so pre-existing /api/status fixtures validate unchanged.
+    served_empty: str | None = None
 
 
 class AlertStatus(BaseModel):

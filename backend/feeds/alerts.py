@@ -14,6 +14,7 @@ import asyncio
 import time
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
+from typing import NamedTuple
 
 import httpx
 from google.protobuf.message import DecodeError
@@ -75,6 +76,14 @@ FERRY_ALERTS_URL = env_seams.url(
 #   - THE CONTENT CHANGES EVERY POLL. Any hashing for change detection must
 #     exclude the header, which is the C1 banner rule reaffirmed rather than a new
 #     one.
+#
+# AND WHAT PRODUCTION FOUND ON 2026-09-07, which the rush probe could not see
+# because it never ran on a quiet day: THIS FEED ANSWERS HTTP 200 WITH A ZERO-BYTE
+# BODY WHEN THERE ARE NO ACTIVE RAIL ALERTS. It is a served state, not an outage,
+# and njt_alerts_served_empty below carries the rule, the evidence and the
+# ambiguity the rule accepts. Note that it is NOT the same shape as this producer's
+# TripUpdates feed overnight, which is a thirteen-byte header-only message (decoder
+# law 6 in feeds/njt.py); this one has no header at all.
 ALERT_FEED_URLS = {
     "subway": ALERTS_RT_BASE + "/camsys%2Fsubway-alerts",
     "bus": ALERTS_RT_BASE + "/camsys%2Fbus-alerts",
@@ -227,6 +236,49 @@ def _enum_name(enum_wrapper, value: int) -> str:
         return str(value)
 
 
+# What /api/status and the contract monitor say about a served-empty NJ Transit
+# alerts feed, in the words an operator reads. One literal, three readers (the
+# decode below, the poller's health write, the monitor's summary), so the three
+# surfaces cannot describe the same state three ways.
+NJT_ALERTS_SERVED_EMPTY_DETAIL = "served empty body: no active NJ Transit alerts"
+
+
+def njt_alerts_served_empty(feed_key: str, raw: bytes) -> bool:
+    """True for the ONE body this module reads as a served state rather than a
+    failure: NJ Transit's alerts feed answering HTTP 200 with zero bytes.
+
+    THE OBSERVATION, 2026-09-07. From 00:30 Eastern production never decoded this
+    feed; it decoded once at about 16:33 and was empty again after. The contract
+    monitor's own fetch at 17:35 saw the same zero-byte body, and njtransit.com's
+    Travel Alerts page at that hour listed every rail line as "No current alerts or
+    advisories". So the empty body is what NJ Transit publishes when it has no
+    active rail alerts, and it is a different shape from the same producer's
+    overnight TripUpdates feed, which is a thirteen-byte header-only message
+    (decoder law 6) that parse_feed already accepts. The alerts feed's empty form
+    carries no header at all, which is precisely the shape parse_feed rule 1
+    rejects.
+
+    THE AMBIGUITY, STATED RATHER THAN HIDDEN. A DEAD ENDPOINT COULD SEND THESE SAME
+    BYTES. Zero bytes behind a 200 is also what a misconfigured gateway, a truncated
+    response or a retired route would produce, and nothing in the body distinguishes
+    the two: this rule cannot tell "no alerts" from "no feed". The price is accepted
+    deliberately, because the alternative is worse in the case that actually happens
+    every night: treating it as undecodable fails the alerts poller and the
+    contract monitor on every quiet night, which is a permanent red that gets muted,
+    and a muted monitor sees nothing at all. What still catches a dead endpoint is
+    everything AROUND this rule, none of which is relaxed: a non-200 still fails, a
+    transport error still fails, and ONE BYTE OF GARBAGE IS STILL A FAILURE.
+
+    NARROW BY CONSTRUCTION, in both directions:
+      * feed_key, so this can never widen to another system. A zero-byte body from
+        the subway, bus, LIRR, MNR or ferry alert feed stays the C3 failure
+        parse_feed made it, and a test pins that.
+      * `not raw`, so this can never widen to any other body. A one-byte body goes
+        to parse_feed and fails there, and a test pins that too.
+    """
+    return feed_key == NJT_ALERT_SYSTEM and not raw
+
+
 def _decode_alerts(raw: bytes, feed_key: str, now: float) -> tuple[list[dict], int]:
     """Decode one service-alerts feed into (active alerts, suppressed_count).
 
@@ -244,7 +296,16 @@ def _decode_alerts(raw: bytes, feed_key: str, now: float) -> tuple[list[dict], i
     counted into suppressed_count, so /api/status can report how much upcoming work
     is being held back; fully elapsed alerts are dropped and not counted. `now` is
     frozen by the golden test for determinism.
+
+    NJ TRANSIT'S SERVED-EMPTY BODY DECODES AS ZERO ALERTS rather than raising, and
+    njt_alerts_served_empty carries the whole rule and the ambiguity it accepts.
+    This is the only place the rule is applied, so reverting the two lines below is
+    the mutation that must kill a test: a caller that WANTS to report the state
+    separately (the poller, the monitor) asks the predicate, and gets the same
+    answer this does.
     """
+    if njt_alerts_served_empty(feed_key, raw):
+        return [], 0
     # parse_feed rejects an empty or malformed body (C3); fetch_service_alerts
     # catches it per FEED, so one poisoned system joins the failed set and the
     # other four systems' alerts are unaffected.
@@ -305,26 +366,124 @@ def _decode_alerts(raw: bytes, feed_key: str, now: float) -> tuple[list[dict], i
 ALERT_FEED_DEADLINE_S = 20.0
 
 
+# The exception families whose MESSAGE may be published, as opposed to only logged.
+#
+# EACH ONE IS ALREADY PUBLISHED IN THIS EXACT SHAPE BY A SIBLING REFRESHER's
+# classified arm, which is the whole test for membership: _refresh_buses and
+# _refresh_path record httpx's errors through _sanitize_upstream, and _refresh_njt
+# has recorded njt_auth's composed errors the same way since 15b. Carrying the
+# alerts feeds' own reasons to /api/status must REUSE that boundary, never widen
+# it, so this list is the boundary written down rather than a new judgement.
+#
+# NJ TRANSIT'S UPSTREAM ERROR IS IN THE LIST WITH ITS EYES OPEN. njt_auth._quote
+# puts up to 200 characters of a DATA endpoint's body into NjtUpstreamError, which
+# is a decision that module made deliberately (bodies are the upstream's words, and
+# the one body that is a secret, getToken's, is never quoted). _refresh_njt already
+# serves that string on /api/status for the same failure of the same provider, so
+# excluding it here would only make the two NJT blocks disagree about one outage.
+_PUBLISHABLE_FEED_ERRORS: tuple[type[BaseException], ...] = (
+    httpx.HTTPError,
+    njt_auth.NjtNotConfigured,
+    njt_auth.NjtAuthError,
+    njt_auth.NjtUpstreamError,
+)
+
+
 def _describe_feed_error(exc: BaseException) -> str:
-    """A readable reason for a failed feed. Not just str(exc): str(TimeoutError()) is
-    the EMPTY STRING, so a timed-out feed would otherwise be recorded and logged with
-    no cause at all (the same trap R3 hit on the warmup path). Every branch here is
-    guaranteed to produce something an operator can act on."""
+    """A readable reason for a failed feed, SAFE TO SERVE PUBLICLY.
+
+    Not just str(exc), for two separate reasons.
+
+    FIRST, str(TimeoutError()) IS THE EMPTY STRING, so a timed-out feed would
+    otherwise be recorded and logged with no cause at all (the same trap R3 hit on
+    the warmup path).
+
+    SECOND, THE TYPE AND NOT THE MESSAGE FOR AN UNCLASSIFIED EXCEPTION. This string
+    used to be logged and then replaced by a fixed marker on /api/status; it is now
+    recorded against a system's health and served there, which puts it under the
+    rule _total_refresh states in pollers.py for that surface: str(exc) of an
+    arbitrary exception is arbitrary text, and arbitrary text can be a filesystem
+    path, a config value or a chunk of a body nobody meant to republish. The
+    sibling refreshers classify by TYPE in their except clauses and so never face
+    this; the gather this serves catches everything (return_exceptions=True), so
+    the classification has to happen here instead. Anything outside
+    _PUBLISHABLE_FEED_ERRORS is a fault in this process rather than an upstream
+    one, and the caller logs its traceback, which is where a fault of ours belongs.
+
+    Every branch is guaranteed to produce something an operator can act on.
+    """
     if isinstance(exc, TimeoutError):
         return f"no response within {ALERT_FEED_DEADLINE_S:.0f}s"
-    return str(exc) or exc.__class__.__name__
+    if isinstance(exc, _PUBLISHABLE_FEED_ERRORS):
+        return str(exc) or exc.__class__.__name__
+    return f"internal error fetching this feed ({exc.__class__.__name__})"
 
 
-async def fetch_service_alerts(client: httpx.AsyncClient) -> tuple[list[dict], int, list[str]]:
-    """Fetch every configured alert feed concurrently; return
-    (active alerts, suppressed_count, failed_feeds).
+class AlertsFetch(NamedTuple):
+    """What ONE alerts poll produced, per feed rather than in aggregate.
+
+    A NAMED TUPLE RATHER THAN A BARE ONE because the last two fields are the ones a
+    caller is most likely to confuse, and both are keyed by system: `failed` names
+    the feeds that did not decode AND WHY, `served_empty` names the feeds that
+    decoded a served-empty body. They are disjoint by construction.
+
+    `failed` CARRIES REASONS, not just keys, and that is a change from the sorted
+    key list this used to return. The poller recorded a fixed "alert feed
+    unavailable this poll" against every failed system because there was nothing
+    else to record, so the actual cause (a connect error, a 502, a timeout, an
+    undecodable body) reached the log and never /api/status, and diagnosing a
+    partial alerts outage meant a log search. Iterating it still yields the system
+    keys, which is all merge_alert_generations and the health rewrite ever needed.
+    Insertion order is the sorted key order, so a log line built from it is stable.
+    """
+
+    alerts: list[dict]
+    suppressed: int
+    failed: dict[str, str]
+    served_empty: list[str]
+
+
+class AllAlertFeedsFailed(RuntimeError):
+    """Every configured alert feed failed this poll.
+
+    A RuntimeError SUBCLASS so pollers._refresh_alerts' existing `except
+    (RuntimeError, TimeoutError)` catches it unchanged, and so does every test that
+    raises a plain RuntimeError to stand in for a total outage. What it adds is
+    `feed_errors`: the same per-feed reasons AlertsFetch.failed would have carried,
+    so the total-outage path can write a real cause into each system's health block
+    instead of the generic marker it had to use when the reasons died with the
+    exception message.
+    """
+
+    def __init__(self, feed_errors: dict[str, str]) -> None:
+        self.feed_errors = dict(feed_errors)
+        super().__init__("All alert feeds failed: " + _join_feed_errors(self.feed_errors))
+
+
+def _join_feed_errors(feed_errors: Mapping[str, str]) -> str:
+    """One line naming every failed feed and its reason, for a log record and for
+    the total-outage exception message. Written once so the two read alike."""
+    return "; ".join(f"{key}: {reason}" for key, reason in feed_errors.items())
+
+
+async def fetch_service_alerts(client: httpx.AsyncClient) -> AlertsFetch:
+    """Fetch every configured alert feed concurrently; return an AlertsFetch of
+    (active alerts, suppressed_count, failed feeds and why, served-empty feeds).
 
     Mirrors fetch_subway_trains: per-feed failures (a fetch error, a timeout, or an
     undecodable protobuf) are logged and skipped so one bad feed does not drop every
-    alert, and this raises only when EVERY feed fails. failed_feeds is the sorted list
-    of feed keys that dropped this poll, empty on a fully successful poll. The caller
-    owns the client. `now` is captured once so all feeds filter against the
-    same instant.
+    alert, and this raises AllAlertFeedsFailed only when EVERY feed fails. `failed`
+    maps each feed key that dropped this poll to why, in sorted key order, and is
+    empty on a fully successful poll. The caller owns the client. `now` is captured
+    once so all feeds filter against the same instant.
+
+    `served_empty` NAMES A SUCCESS, NOT A FAILURE. It carries the feeds whose 200
+    was NJ Transit's zero-byte served-empty body (njt_alerts_served_empty): those
+    decoded, contributed no alerts, and must be treated exactly like any other
+    decode by everything downstream, so they are absent from `failed`, their
+    previously-retained alerts are released, and their fresh_at advances. The list
+    exists only so the caller can SAY so on /api/status, which is what keeps the
+    state distinguishable from both a quiet decode and a failure.
 
     EACH FEED CARRIES ITS OWN DEADLINE, and that is load-bearing for the "one bad feed
     does not drop every alert" promise. These five run in ONE gather, so a deadline
@@ -367,29 +526,47 @@ async def fetch_service_alerts(client: httpx.AsyncClient) -> tuple[list[dict], i
     alerts: list[dict] = []
     suppressed = 0
     feed_errors: dict[str, str] = {}
+    served_empty: list[str] = []
     for key, result in zip(keys, results):
         if isinstance(result, BaseException):
             feed_errors[key] = _describe_feed_error(result)
+            if not isinstance(result, (TimeoutError, *_PUBLISHABLE_FEED_ERRORS)):
+                # Its MESSAGE is deliberately not published (see
+                # _describe_feed_error), so the traceback has to reach an operator
+                # somewhere: an unexpected exception inside this gather is a fault
+                # in this process, and the log is where a fault of ours is
+                # diagnosed. This is strictly more than the line below carried
+                # before, which had the message and never the traceback.
+                logger.warning(
+                    "alert feed %s failed with an unexpected error", key, exc_info=result
+                )
             continue
         try:
             decoded, feed_suppressed = _decode_alerts(result, key, now)
         except DecodeError as exc:
             feed_errors[key] = f"undecodable protobuf ({exc})"
             continue
+        # AFTER the decode, not instead of it, so the served-empty rule has exactly
+        # one implementation: if _decode_alerts stops honoring it, this feed lands
+        # in feed_errors above and never reaches here at all.
+        if njt_alerts_served_empty(key, result):
+            served_empty.append(key)
         alerts.extend(decoded)
         suppressed += feed_suppressed
 
+    # SORTED, so the reasons an operator reads on /api/status and the one-line log
+    # record below arrive in a stable order rather than in gather order.
+    feed_errors = {key: feed_errors[key] for key in sorted(feed_errors)}
     if feed_errors:
         logger.warning(
             "%d of %d alert feeds failed: %s",
             len(feed_errors),
             len(feed_urls),
-            "; ".join(f"{key}: {reason}" for key, reason in feed_errors.items()),
+            _join_feed_errors(feed_errors),
         )
     if len(feed_errors) == len(feed_urls):
-        joined = "; ".join(f"{key}: {reason}" for key, reason in feed_errors.items())
-        raise RuntimeError(f"All alert feeds failed: {joined}")
-    return alerts, suppressed, sorted(feed_errors)
+        raise AllAlertFeedsFailed(feed_errors)
+    return AlertsFetch(alerts, suppressed, feed_errors, sorted(served_empty))
 
 
 # How long a failed alert system's alerts are carried forward before they drop.

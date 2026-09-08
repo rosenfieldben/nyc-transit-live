@@ -144,8 +144,10 @@ def _fresh_alerts_entry() -> dict:
     # visible instead of silently thinning the index: fresh_at is the last decode,
     # retained_since marks a system whose alerts are being carried forward from a
     # down feed (null when fresh or once the retention cap drops them), last_error
-    # flags a system failing this poll. Keyed by the same alert systems this process
-    # actually polls (feeds.active_alert_feeds).
+    # flags a system failing this poll AND now says why, served_empty carries the one
+    # SUCCESS worth a sentence (NJ Transit's zero-byte 200, which means no active
+    # alerts rather than no feed; see feeds.njt_alerts_served_empty). Keyed by the
+    # same alert systems this process actually polls (feeds.active_alert_feeds).
     # On a TOTAL outage every system is marked, so degraded_systems is truthful then
     # too; it is not a partial-outage-only signal.
     return {
@@ -155,7 +157,12 @@ def _fresh_alerts_entry() -> dict:
         "active": 0,
         "suppressed": 0,
         "health": {
-            system: {"fresh_at": None, "retained_since": None, "last_error": None}
+            system: {
+                "fresh_at": None,
+                "retained_since": None,
+                "last_error": None,
+                "served_empty": None,
+            }
             # THE ACTIVE SET (15b): an unconfigured NJ Transit is not seeded here at
             # all, so it cannot sit in degraded_systems forever on a deployment that
             # does not run it. Same single source the gather and the total-outage
@@ -179,12 +186,24 @@ def _note_failure(entry: dict, status: int, detail: str, log: bool = True) -> No
 _URL_RE = re.compile(r"https?://\S+")
 
 
+def _sanitize_detail(detail: str) -> str:
+    """The same URL scrub as _sanitize_upstream, for a reason that arrives ALREADY
+    as a string rather than as a live exception.
+
+    The alerts fetch is the caller that needs this: it catches each feed's failure
+    at the gather and hands the poller a per-feed reason it has already turned into
+    text, so there is no exception left to sanitize by the time the poller records
+    it against a system's health. One regex, two entry points, so a detail cannot
+    reach /api/status scrubbed by one rule and not the other."""
+    return _URL_RE.sub("<feed url>", detail)
+
+
 def _sanitize_upstream(exc: BaseException) -> str:
     """Strip URLs from upstream error text before recording it: httpx error
     strings embed the full request URL, which for the bus feed includes the
     API key query parameter, and recorded details are served by /api/status
     and the never-filled error paths."""
-    return _URL_RE.sub("<feed url>", str(exc))
+    return _sanitize_detail(str(exc))
 
 
 def _serve_cached(

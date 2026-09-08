@@ -19,7 +19,7 @@ import asyncio
 import copy
 import logging
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 
 import httpx
 from fastapi import FastAPI
@@ -32,12 +32,15 @@ from cache import (
     FEED_RETENTION_ENABLED,
     FEED_RETENTION_MAX_S,
     _note_failure,
+    _sanitize_detail,
     _sanitize_upstream,
 )
 from feeds import (
     ALERT_RETENTION_MAX_S,
+    NJT_ALERTS_SERVED_EMPTY_DETAIL,
     RAILROAD_FEED_URLS,
     SUBWAY_FEED_URLS,
+    AllAlertFeedsFailed,
     active_alert_feeds,
     carry_forward_prev,
     combine_group_arrivals,
@@ -1036,18 +1039,52 @@ async def _poll_feeds(app: FastAPI) -> None:
             await asyncio.sleep(POLL_INTERVAL_S)
 
 
+# The per-system detail for a system that failed while the poll could not say WHY:
+# a tripped refresh deadline cancels the gather before any feed is classified, and
+# so does an unexpected error inside the refresher. Kept as a named fallback rather
+# than deleted, because a health block with no detail at all would be worse than a
+# vague one; every path that HAS a reason now carries it instead.
+ALERT_FEED_UNAVAILABLE_DETAIL = "alert feed unavailable this poll"
+
+
+def _alert_failure_details(entry: dict, detail: str) -> dict[str, str]:
+    """Mark EVERY system this process polls as failed, with one shared reason.
+
+    The system list comes from the health map's own keys for the reason the
+    total-outage path below gives at length: that key set IS what this process
+    polls (cache._fresh_alerts_entry seeds it from feeds.active_alert_feeds), so
+    taking it from the map about to be rewritten keeps the failed set and the health
+    write consistent by construction rather than by a second import agreeing with
+    the first."""
+    return dict.fromkeys(entry["health"], detail)
+
+
 def _apply_alert_generation(
     entry: dict,
     fresh_alerts: list[dict],
-    failed_systems: set[str],
+    failed_systems: Mapping[str, str],
     now: float,
     *,
+    served_empty: Iterable[str] = (),
     write_index: bool = True,
 ) -> None:
     """Merge this poll's fresh alerts into the served index and rewrite per-system
     health. Shared by the partial-failure and the total-outage paths so the expiry
     re-filter, the retention cap and the health surface behave identically in both:
     a total outage is simply the case where nothing is fresh and EVERY system failed.
+
+    failed_systems MAPS EACH FAILED SYSTEM TO WHY IT FAILED, and iterating it still
+    yields exactly the failed system keys, which is all the merge below ever wanted.
+    The reason is recorded verbatim into that system's last_error detail, so
+    /api/status answers "why is this alert feed down" instead of leaving the answer
+    in a log line nobody is reading at 03:00.
+
+    served_empty NAMES THE SYSTEMS THAT DECODED A SERVED-EMPTY BODY (today only
+    NJ Transit's; see feeds.njt_alerts_served_empty). They are NOT failed: their
+    alerts are replaced wholesale like any other decode, their retained alerts are
+    released, fresh_at advances and last_error stays null. The only thing this adds
+    is a sentence on the health block, so an operator reading zero NJ Transit alerts
+    can tell "upstream said there are none" from "upstream said nothing".
 
     Writes only the CONTENT fields (alerts, active) plus health. fetched_at, error
     and suppressed stay with the caller because they differ by path: fetched_at means
@@ -1071,6 +1108,7 @@ def _apply_alert_generation(
     and no retention clock restarts.
     """
     health = entry["health"]
+    served_empty_systems = set(served_empty)
     # Thread the prior retention clock through the pure merge so the cap measures
     # total time down, not time-since-this-poll.
     prev_retained_since = {
@@ -1088,16 +1126,29 @@ def _apply_alert_generation(
     )
     for system, h in health.items():
         if system in failed_systems:
-            # No per-system upstream string exists to sanitize: fetch_service_alerts'
-            # fixed signature returns only the failed feed KEYS, not their errors, so
-            # the marker is generic (and URL-free by construction). fresh_at is kept
-            # so an operator can see how long ago the system last decoded.
-            h["last_error"] = {"status": 502, "detail": "alert feed unavailable this poll"}
+            # THE FETCH'S OWN REASON, sanitized the way every other system's detail
+            # is. It used to be one fixed marker for every alerts failure, because
+            # fetch_service_alerts returned only the failed feed KEYS: a connect
+            # error, a 502, a per-feed deadline and an undecodable body all reached
+            # /api/status as the same sentence, and the difference between them
+            # lived only in the poll log. _sanitize_detail (not _sanitize_upstream)
+            # because the reason arrives as text, the exception having been caught
+            # inside the gather; the scrub is the same regex either way, so an httpx
+            # message carrying a key-bearing URL cannot reach this surface. fresh_at
+            # is kept so an operator can see how long ago the system last decoded.
+            detail = failed_systems.get(system) or ALERT_FEED_UNAVAILABLE_DETAIL
+            h["last_error"] = {"status": 502, "detail": _sanitize_detail(detail)}
             h["retained_since"] = retained_since.get(system)
+            # A system cannot be failed and served-empty in the same poll, and this
+            # is what keeps a stale sentence from outliving the state it described.
+            h["served_empty"] = None
         else:
             h["fresh_at"] = now
             h["retained_since"] = None
             h["last_error"] = None
+            h["served_empty"] = (
+                NJT_ALERTS_SERVED_EMPTY_DETAIL if system in served_empty_systems else None
+            )
     if write_index:
         entry.update(alerts=merged, active=len(merged))
 
@@ -1132,7 +1183,12 @@ def _reconcile_alert_health(entry: dict) -> None:
     active = active_alert_feeds()
     health = entry["health"]
     for system in active:
-        health.setdefault(system, {"fresh_at": None, "retained_since": None, "last_error": None})
+        # The same four keys cache._fresh_alerts_entry seeds, because everything
+        # downstream reads them without a .get().
+        health.setdefault(
+            system,
+            {"fresh_at": None, "retained_since": None, "last_error": None, "served_empty": None},
+        )
     for system in [s for s in health if s not in active]:
         del health[system]
 
@@ -1185,7 +1241,7 @@ async def _refresh_alerts(app: FastAPI, client: httpx.AsyncClient) -> None:
         # Everything after this await is synchronous, so bounding the fetch bounds the
         # whole refresh.
         async with asyncio.timeout(REFRESH_DEADLINE_S):
-            alerts, suppressed, failed = await main.fetch_service_alerts(client)
+            fetched = await main.fetch_service_alerts(client)
     except (RuntimeError, TimeoutError) as exc:
         # Every alert feed failed this poll, or the whole fetch outran the deadline.
         # Either way keep the last-known index. Unlike the single-fetch refreshers
@@ -1203,8 +1259,24 @@ async def _refresh_alerts(app: FastAPI, client: httpx.AsyncClient) -> None:
                 f"Upstream did not complete within the {REFRESH_DEADLINE_S}s refresh "
                 "deadline; keeping last-known data.",
             )
+            # A DEADLINE HAS NO PER-FEED REASONS TO CARRY. It cancels the gather
+            # before any feed is classified, so every system gets this one sentence,
+            # which at least names the deadline rather than leaving the block blank.
+            failed_details = _alert_failure_details(
+                entry, f"no alerts poll completed within {REFRESH_DEADLINE_S}s"
+            )
         else:
             _note_failure(entry, 502, _sanitize_upstream(exc))
+            # AllAlertFeedsFailed carries every feed's own reason; anything else
+            # reaching here is a RuntimeError from somewhere else in the fetch, which
+            # has no per-feed detail to give. Systems missing from feed_errors (the
+            # health map and the gather disagreeing mid-poll) fall back inside
+            # _apply_alert_generation rather than silently losing their entry.
+            failed_details = _alert_failure_details(entry, ALERT_FEED_UNAVAILABLE_DETAIL)
+            if isinstance(exc, AllAlertFeedsFailed):
+                failed_details.update(
+                    {k: v for k, v in exc.feed_errors.items() if k in failed_details}
+                )
         if entry["alerts"] is None:
             # NEVER FILLED: there is no index to re-filter, and writing the merge's
             # empty result would flip /api/alerts from its warming state to a 200
@@ -1212,18 +1284,19 @@ async def _refresh_alerts(app: FastAPI, client: httpx.AsyncClient) -> None:
             # exists to remove. But per-system health is still written, or a process
             # that started while every feed was down would report five perfectly
             # healthy systems for as long as the outage lasted.
-            _apply_alert_generation(entry, [], set(entry["health"]), time.time(), write_index=False)
+            _apply_alert_generation(entry, [], failed_details, time.time(), write_index=False)
             return
         # Run the ordinary machinery with nothing fresh and every system failed.
         # health is seeded from the ACTIVE feed set (cache._fresh_alerts_entry reads
         # feeds.active_alert_feeds), so its key set IS the list of systems this
         # process polls; taking it from the map we are about to rewrite keeps the
         # failed set and the health write consistent by construction rather than by a
-        # second import agreeing with the first. That matters more since 15b, because
-        # the active set is now smaller than the full table on any deployment without
-        # NJ Transit credentials: reading the table here would mark "njt" failed in a
-        # health map that never had the key.
-        _apply_alert_generation(entry, [], set(entry["health"]), time.time())
+        # second import agreeing with the first (_alert_failure_details is where that
+        # happens). That matters more since 15b, because the active set is now smaller
+        # than the full table on any deployment without NJ Transit credentials:
+        # reading the table here would mark "njt" failed in a health map that never
+        # had the key.
+        _apply_alert_generation(entry, [], failed_details, time.time())
         # suppressed is deliberately left alone: like fetched_at it describes the last
         # poll that DECODED, and this poll decoded nothing to recount. NOTE the
         # asymmetry this creates in /api/status, which the review flagged: `active` is
@@ -1237,8 +1310,10 @@ async def _refresh_alerts(app: FastAPI, client: httpx.AsyncClient) -> None:
         return
 
     now = time.time()
-    _apply_alert_generation(entry, alerts, set(failed), now)
-    entry.update(fetched_at=now, error=None, suppressed=suppressed)
+    _apply_alert_generation(
+        entry, fetched.alerts, fetched.failed, now, served_empty=fetched.served_empty
+    )
+    entry.update(fetched_at=now, error=None, suppressed=fetched.suppressed)
 
 
 async def _poll_alerts(app: FastAPI) -> None:
@@ -1283,9 +1358,12 @@ async def _poll_alerts(app: FastAPI) -> None:
                         entry,
                         # Same reasoning as the total-outage path above, and taken
                         # from the same place for the same reason: the health map's
-                        # own keys, never the URL table.
+                        # own keys, never the URL table. No per-feed reason exists on
+                        # this path either, because the refresher died before it
+                        # classified anything; _total_refresh records the real cause
+                        # against the poll-level error.
                         [],
-                        set(entry["health"]),
+                        _alert_failure_details(entry, ALERT_FEED_UNAVAILABLE_DETAIL),
                         time.time(),
                         write_index=entry["alerts"] is not None,
                     ),

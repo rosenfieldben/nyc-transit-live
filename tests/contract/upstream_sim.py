@@ -33,9 +33,12 @@ THE MODES, and what each one models:
            every per-system health signal stays green and nothing is retained. The
            C2 scenarios therefore use `error`; `frozen` is what
            test_a_frozen_upstream_leaves_every_liveness_signal_green pins.
-  empty    a successful 200 carrying b"". The C3 premise: ParseFromString(b"")
-           SUCCEEDS, so this is the silent-failure shape a lenient decoder reports
-           as a healthy feed with zero vehicles.
+  empty    a successful 200 carrying b"" on the GET feeds. The C3 premise:
+           ParseFromString(b"") SUCCEEDS, so this is the silent-failure shape a
+           lenient decoder reports as a healthy feed with zero vehicles. IT MEANS
+           SOMETHING ELSE ON THE TWO NJT ROUTES: a 13-byte header-only feed, which
+           is the overnight shape the probe actually recorded (decoder law 6). See
+           serve_njt_rt.
   error    a 503, for the ordinary transport failure.
   stale    a successful 200 carrying a body whose CONTENT CLOCK is already
            STALE_CONTENT_BY_S behind. Distinct from `frozen`, which starts at age
@@ -43,9 +46,23 @@ THE MODES, and what each one models:
            tier's budget cannot afford: `stale` is the same end state reached
            immediately. The fetch succeeds and the poll advances, so every
            liveness signal stays green and only the content age shows it.
+  zero-bytes  a successful 200 carrying literally nothing, ON ANY ROUTE INCLUDING
+           THE NJT ONES. It exists because `empty` cannot express it there, and
+           because NJ Transit's ALERTS endpoint really does answer this way when it
+           has no active rail alerts (observed 2026-09-07; the app reads it as a
+           served state, see feeds.njt_alerts_served_empty). On a GET feed it is
+           the same bytes `empty` already serves, which is deliberate: the same
+           mode name must mean the same thing everywhere, and a scenario that wants
+           the zero-byte shape can say so without knowing which kind of route it is
+           talking to.
+  one-byte THE CONTROL FOR zero-bytes, and the reason it is a mode rather than a
+           test constant: the served-empty rule must not widen from "no bytes" to
+           "not enough bytes", so the scenario that proves the empty body is served
+           has to be able to prove that ONE byte is still an outage, through the
+           same route, in the same app lifetime.
 Static archives take a publication NAME instead (good, headers-only-stops,
-missing-member, corrupt-zip), because "what did upstream publish" is the question
-there, not "is it up".
+missing-member, corrupt-zip, no-shapes), because "what did upstream publish" is
+the question there, not "is it up".
 
 NJ TRANSIT IS THE ONE UPSTREAM HERE THAT IS NOT A GET (15a). Every RailData
 endpoint is POST multipart/form-data with a token as a form field, and the token
@@ -113,7 +130,13 @@ BUS_BOROUGHS = {
 # an unknown publication used to surface as a KeyError inside a handler thread,
 # which the app sees as a connection reset, i.e. a plausible transport failure
 # rather than the control-plane typo it actually is.
-MODES = ("live", "frozen", "empty", "error", "stale")
+MODES = ("live", "frozen", "empty", "error", "stale", "zero-bytes", "one-byte")
+
+# The one byte `one-byte` serves. 0x00 is not a valid protobuf tag, so this is
+# garbage to any parser rather than a truncated-but-plausible message: what the
+# control has to prove is that the served-empty rule keys on "no bytes at all", and
+# the cheapest counterexample to that is the smallest body that is not empty.
+ONE_BYTE_BODY = b"\x00"
 
 # How far behind `stale` backdates a feed's content clock. Must exceed the app's
 # FEED_STALE_AFTER_S (90, cache.py), and that constant is deliberately NOT
@@ -990,12 +1013,14 @@ class UpstreamSim:
     # -- control -----------------------------------------------------------
 
     def set_mode(self, key: str, mode: str) -> None:
-        """live | frozen | empty | error. Freezing captures the CURRENT body.
+        """One of MODES; see the module docstring for what each one models.
+        Freezing captures the CURRENT body.
 
         Both arguments are validated. An unknown MODE used to fall through
         serve_feed's if-chain to the healthy body, so a typo silently did nothing
         and the scenario failed much later blaming the app for not noticing an
-        outage that never happened."""
+        outage that never happened. The names are NOT re-listed here, because this
+        list fell two modes behind MODES while claiming to be it."""
         if mode not in MODES:
             raise ValueError(f"unknown mode {mode!r}; expected one of {MODES}")
         with self._lock:
@@ -1144,8 +1169,15 @@ class UpstreamSim:
             mode = feed.mode
             if mode == "error":
                 return 503, b""
-            if mode == "empty":
+            if mode in ("empty", "zero-bytes"):
+                # THE SAME BYTES FOR BOTH on a GET feed, and that is the point of
+                # `zero-bytes` existing at all: the two names diverge only on the
+                # NJT POST routes (serve_njt_rt), where `empty` is a valid
+                # header-only feed. A scenario asking for zero bytes gets zero bytes
+                # from any route it names.
                 return 200, b""
+            if mode == "one-byte":
+                return 200, ONE_BYTE_BODY
             if mode == "frozen":
                 assert feed.frozen_body is not None
                 return 200, feed.frozen_body
@@ -1274,10 +1306,28 @@ class UpstreamSim:
             if mode == "empty":
                 # THE OVERNIGHT SHAPE (decoder law 6) is a VALID feed with no
                 # entities, not zero bytes, so "empty" means something different
-                # for NJT than it does for the keyless feeds: an empty body would
-                # be a C3 parse failure and the app would be right to call it one.
-                # A 13-byte valid header is what the probe actually recorded.
+                # for NJT than it does for the keyless feeds: on the TRIP UPDATES
+                # feed a zero-byte body is a C3 parse failure and the app is right
+                # to call it one. A 13-byte valid header is what the probe actually
+                # recorded. The zero-byte shape has its own mode below, because the
+                # ALERTS feed genuinely serves it.
                 return 200, _njt_empty_feed(time.time())
+            if mode == "zero-bytes":
+                # WHAT NJ TRANSIT'S ALERTS ENDPOINT ANSWERS WITH WHEN THERE ARE NO
+                # ACTIVE RAIL ALERTS (observed 2026-09-07: production never decoded
+                # this feed from 00:30 Eastern, decoded once around 16:33, and was
+                # empty again after; the contract monitor's own fetch at 17:35 saw
+                # the same body, and njtransit.com listed every rail line as "No
+                # current alerts or advisories" at that hour). Served BEFORE the
+                # token gate, with the other body modes, because what a scenario
+                # wants here is a healthy 200 that happens to be empty, not an auth
+                # failure wearing one.
+                return 200, b""
+            if mode == "one-byte":
+                # THE CONTROL. One byte is not "nearly empty", it is garbage, and
+                # the app must still fail this feed. Same placement as zero-bytes so
+                # the two differ by exactly one byte and nothing else.
+                return 200, ONE_BYTE_BODY
             token = fields.get("token") or ""
             mode_token = self.njt.token_mode
             if mode_token == "server-error":

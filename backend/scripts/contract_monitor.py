@@ -889,6 +889,12 @@ def check_alerts_realtime(
     _decode_alerts. NO entity floor: zero active alerts is a valid, common, and
     good steady state, so emptiness is never a fault here.
 
+    "EMPTINESS" MEANS A VALID FEED WITH NO ENTITIES, never a zero-byte body. The
+    served-empty exemption 2026-09-07 added is NJ Transit's alerts feed alone
+    (feeds.njt_alerts_served_empty keys on the system for exactly this reason), so a
+    keyless feed answering 200 with nothing in it is still the C3 failure it has
+    always been, and one of the tests below pins that.
+
     NJ TRANSIT'S ALERT FEED IS NOT CHECKED HERE, and its absence is structural
     rather than an oversight. That feed is a POST carrying a token, so a GET at it
     returns nothing decodable and this check would report a permanent FAIL against
@@ -1022,7 +1028,11 @@ def check_njt_realtime(
 
       1. BOTH FEEDS REACHABLE AND STRICTLY PARSEABLE, through feeds.parse_feed and
          the production decoders. A pass means the real code path works against
-         today's bytes, not that a protobuf arrived.
+         today's bytes, not that a protobuf arrived. THE ONE EXEMPTION is the
+         alerts feed's zero-byte 200, which since 2026-09-07 is known to be how
+         this endpoint says "no active rail alerts" (feeds.njt_alerts_served_empty).
+         It passes AND SAYS SO in the summary, so a quiet night and a healthy busy
+         night do not produce the same line. One byte of garbage still fails.
       2. HEADER LAG inside the bands derived at NJT_HEADER_LAG_WARN_S from the
          PEAK probe (never the overnight one).
       3. TRIPS PRESENT during service hours. Empty overnight is the correct
@@ -1059,6 +1069,16 @@ def check_njt_realtime(
     if alerts_res is None:
         statuses.append(FAIL)
         details.append(f"alerts down ({alerts_detail})")
+    elif feeds.njt_alerts_served_empty(feeds.NJT_ALERT_SYSTEM, alerts_res.content):
+        # THE ZERO-BYTE 200 IS A SERVED STATE HERE FOR THE SAME REASON IT IS ONE IN
+        # THE APP (see feeds.njt_alerts_served_empty for the 2026-09-07 evidence and
+        # the ambiguity the rule accepts). It is asked BEFORE the decode rather than
+        # relying on the decode's own arm, because a silent PASS would be the wrong
+        # answer: this check's whole job is to say what today's bytes were, and a
+        # quiet night and an undecodable feed must not produce the same summary
+        # line. NOTED, not WARNed: an empty rail-alerts feed is the ordinary state
+        # most of the time, and a monitor that flags the ordinary state gets muted.
+        details.append(f"alerts {feeds.NJT_ALERTS_SERVED_EMPTY_DETAIL}")
     else:
         try:
             feeds._decode_alerts(alerts_res.content, feeds.NJT_ALERT_SYSTEM, now)

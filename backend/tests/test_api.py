@@ -21,6 +21,7 @@ import feeds
 import main as app_module
 import models
 import njt_auth
+import pollers
 import warmups
 from conftest import configure_njt
 from tests import negatives
@@ -2036,7 +2037,7 @@ async def test_alerts_loop_deadline_bounds_a_wedged_refresh(monkeypatch):
     async def alerts_fetch(client):
         calls["n"] += 1
         if calls["n"] == 1:
-            return [], 0, []  # a successful empty poll fills the index
+            return feeds.AlertsFetch([], 0, {}, [])  # a successful empty poll fills the index
         await hang.wait()  # every later poll wedges past the deadline
 
     monkeypatch.setattr(app_module, "fetch_service_alerts", alerts_fetch)
@@ -2854,7 +2855,8 @@ async def test_alerts_failed_poll_keeps_last_known(client, alerts_cache, monkeyp
 
 async def test_alerts_successful_poll_replaces_index(client, alerts_cache, monkeypatch):
     async def ok(client_arg):
-        return [ALERT], 3, ["bus"]  # decoded alerts, suppressed count, one failed feed
+        # decoded alerts, suppressed count, one failed feed and why, none served empty
+        return feeds.AlertsFetch([ALERT], 3, {"bus": "connect error"}, [])
 
     monkeypatch.setattr(app_module, "fetch_service_alerts", ok)
     await app_module._refresh_alerts(app_module.app, client=None)
@@ -2890,7 +2892,8 @@ async def test_alerts_partial_failure_retains_down_system(client, alerts_cache, 
     fresh_subway = {**SUBWAY_ALERT, "id": "subway:2"}
 
     async def partial(client_arg):
-        return [fresh_subway], 0, ["MNR"]  # subway decoded, MNR down this poll
+        # subway decoded, MNR down this poll
+        return feeds.AlertsFetch([fresh_subway], 0, {"MNR": "HTTP 502"}, [])
 
     monkeypatch.setattr(app_module, "fetch_service_alerts", partial)
     await app_module._refresh_alerts(app_module.app, client=None)
@@ -2929,7 +2932,8 @@ async def test_alerts_ferry_feed_failure_marks_ferry_degraded(client, alerts_cac
     fresh_subway = {**SUBWAY_ALERT, "id": "subway:2"}
 
     async def partial(client_arg):
-        return [fresh_subway], 0, ["ferry"]  # MTA decoded, ferry down this poll
+        # MTA decoded, ferry down this poll
+        return feeds.AlertsFetch([fresh_subway], 0, {"ferry": "connect error"}, [])
 
     monkeypatch.setattr(app_module, "fetch_service_alerts", partial)
     await app_module._refresh_alerts(app_module.app, client=None)
@@ -2957,7 +2961,7 @@ async def test_alerts_recovery_clears_retention(client, alerts_cache, monkeypatc
     fresh_mnr = {**ALERT, "id": "lmm:alert:2"}
 
     async def recovered(client_arg):
-        return [fresh_mnr], 0, []  # every feed decoded this poll
+        return feeds.AlertsFetch([fresh_mnr], 0, {}, [])  # every feed decoded this poll
 
     monkeypatch.setattr(app_module, "fetch_service_alerts", recovered)
     await app_module._refresh_alerts(app_module.app, client=None)
@@ -3150,11 +3154,13 @@ async def test_one_slow_alert_feed_does_not_fail_the_other_four(monkeypatch):
                 await asyncio.sleep(10)  # never lands inside the per-feed deadline
             return _Resp()
 
-    alerts, suppressed, failed = await feeds.fetch_service_alerts(SlowSubwayClient())
-    # The four healthy feeds decoded; ONLY the slow one is reported failed.
-    assert failed == ["subway"]
-    assert suppressed == 0
-    assert alerts == []
+    fetched = await feeds.fetch_service_alerts(SlowSubwayClient())
+    # The four healthy feeds decoded; ONLY the slow one is reported failed, and it
+    # carries the deadline as its reason rather than a shared marker.
+    assert list(fetched.failed) == ["subway"]
+    assert "no response within" in fetched.failed["subway"]
+    assert fetched.suppressed == 0
+    assert fetched.alerts == []
 
 
 async def test_a_timed_out_alert_feed_records_a_readable_reason(monkeypatch):
@@ -3163,9 +3169,20 @@ async def test_a_timed_out_alert_feed_records_a_readable_reason(monkeypatch):
     # R3 hit on the warmup path).
     detail = feeds.alerts._describe_feed_error(TimeoutError())
     assert detail and "no response within" in detail
-    # And any other exception with an empty str() still names its type.
-    assert feeds.alerts._describe_feed_error(RuntimeError()) == "RuntimeError"
-    assert feeds.alerts._describe_feed_error(RuntimeError("boom")) == "boom"
+    # A CLASSIFIED upstream failure publishes its message, and one with an empty
+    # str() still names its type rather than recording nothing at all.
+    assert feeds.alerts._describe_feed_error(httpx.ConnectError("boom")) == "boom"
+    assert feeds.alerts._describe_feed_error(httpx.ConnectError("")) == "ConnectError"
+    # An UNCLASSIFIED one names its type and nothing else. It used to publish
+    # str(exc), which was harmless while this string was only logged and replaced by
+    # a fixed marker on /api/status, and stopped being harmless when the poller
+    # began recording it per system on that public response.
+    assert feeds.alerts._describe_feed_error(RuntimeError()) == (
+        "internal error fetching this feed (RuntimeError)"
+    )
+    assert feeds.alerts._describe_feed_error(RuntimeError("boom")) == (
+        "internal error fetching this feed (RuntimeError)"
+    )
 
 
 async def test_alerts_never_filled_outage_still_reports_every_system_degraded(
@@ -3248,7 +3265,7 @@ async def test_alerts_partial_failure_after_a_total_one_does_not_double_charge_r
     fresh_subway = {**SUBWAY_OPEN_ALERT, "id": "subway:fresh"}
 
     async def only_mnr_down(client_arg):
-        return [fresh_subway], 0, ["MNR"]
+        return feeds.AlertsFetch([fresh_subway], 0, {"MNR": "connect error"}, [])
 
     monkeypatch.setattr(app_module, "fetch_service_alerts", only_mnr_down)
     monkeypatch.setattr(app_module.time, "time", lambda: 1500.0)
@@ -3286,6 +3303,229 @@ async def test_status_reports_alert_system_health(client, status_env, alerts_cac
     assert alerts_status["degraded_systems"] == []
     assert alerts_status["systems"]["subway"]["retained_since"] is None
     assert alerts_status["systems"]["subway"]["last_error"] is None
+    assert alerts_status["systems"]["subway"]["served_empty"] is None
+
+
+# ---------------- the served-empty NJ Transit alerts feed (2026-09-07) ----------------
+#
+# NJ Transit answers its alerts endpoint HTTP 200 with a ZERO-BYTE BODY when it has
+# no active rail alerts. feeds.njt_alerts_served_empty decides that at the decode and
+# test_feeds_alerts pins it there; these are the poller's half, which is where the
+# state becomes visible: it must be a SUCCESS (fresh_at advances, retention releases,
+# nothing degraded) that nevertheless SAYS SO, because "no alerts" and "no feed" are
+# otherwise the same empty list on every surface an operator has.
+
+
+async def _poll_alerts_with(monkeypatch, fetched, now=None):
+    """Run one real _refresh_alerts over a stubbed fetch result."""
+
+    async def stub(client_arg):
+        if isinstance(fetched, BaseException):
+            raise fetched
+        return fetched
+
+    monkeypatch.setattr(app_module, "fetch_service_alerts", stub)
+    if now is not None:
+        monkeypatch.setattr(app_module.time, "time", lambda: now)
+    await app_module._refresh_alerts(app_module.app, client=None)
+
+
+NJT_ALERT = {**ALERT, "id": "njt:alert:1", "system": "njt", "ends_at": None}
+
+
+async def test_a_served_empty_njt_feed_is_named_on_status_and_is_not_degraded(
+    client, status_env, alerts_cache, monkeypatch
+):
+    """THE SURFACE THE WHOLE CHANGE EXISTS FOR. Zero NJ Transit alerts with the feed
+    healthy and zero with the feed dark are the same empty list, so the health block
+    has to carry the difference in words. It is a success, so it must not appear in
+    degraded_systems: doing so would put a permanent warning on every quiet night,
+    and a warning that is always on is one nobody reads."""
+    configure_njt(monkeypatch)
+    await _poll_alerts_with(monkeypatch, feeds.AlertsFetch([], 0, {}, ["njt"]), now=5000.0)
+
+    njt = alerts_cache["health"]["njt"]
+    assert njt["served_empty"] == feeds.NJT_ALERTS_SERVED_EMPTY_DETAIL
+    assert njt["last_error"] is None, "a served-empty body decoded; it is not a failure"
+    assert njt["fresh_at"] == 5000.0, "and fresh_at advances, which is what stops it aging out"
+    assert njt["retained_since"] is None
+
+    res = await client.get("/api/status")
+    alerts_status = res.json()["alerts"]
+    assert alerts_status["degraded_systems"] == []
+    assert alerts_status["systems"]["njt"]["served_empty"] == (
+        "served empty body: no active NJ Transit alerts"
+    ), "the exact sentence, because an operator reads this one rather than parses it"
+    assert alerts_status["systems"]["subway"]["served_empty"] is None, "one system, not all"
+
+
+async def test_a_served_empty_poll_releases_the_retained_njt_alerts(
+    client, alerts_cache, monkeypatch
+):
+    """The consequence that makes this a DECODE rather than a cosmetic label.
+
+    While the feed was being called undecodable, NJ Transit's last-known alerts were
+    carried forward for the whole retention window and then dropped by the cap. A
+    served-empty body is upstream saying those alerts are over, so they must be
+    released on this poll exactly as they would be by any other successful decode.
+    A rule that only wrote a sentence would leave a finished suspension on riders'
+    screens for another half hour.
+    """
+    configure_njt(monkeypatch)
+    alerts_cache["health"]["njt"] = {
+        "fresh_at": 1000.0,
+        "retained_since": 2000.0,
+        "last_error": {"status": 502, "detail": "undecodable protobuf (empty body)"},
+        "served_empty": None,
+    }
+    alerts_cache.update(alerts=[NJT_ALERT, SUBWAY_OPEN_ALERT], fetched_at=2000.0, active=2)
+
+    await _poll_alerts_with(
+        monkeypatch, feeds.AlertsFetch([SUBWAY_OPEN_ALERT], 0, {}, ["njt"]), now=3000.0
+    )
+
+    assert {a["id"] for a in alerts_cache["alerts"]} == {SUBWAY_OPEN_ALERT["id"]}, (
+        "the retained NJ Transit alert is released, not carried for another window"
+    )
+    assert alerts_cache["active"] == 1
+    assert alerts_cache["health"]["njt"]["retained_since"] is None
+    assert alerts_cache["health"]["njt"]["last_error"] is None
+    body = (await client.get("/api/alerts")).json()
+    assert body["systems"]["njt"]["ok"] is True
+    assert "served_empty" not in body["systems"]["njt"], (
+        "the sentence is an OPERATOR surface: /api/status carries it, the rider-facing "
+        "envelope stays the ok/age pair it has always been"
+    )
+
+
+async def test_the_served_empty_sentence_does_not_outlive_the_state(
+    client, status_env, alerts_cache, monkeypatch
+):
+    """A stale sentence would be worse than none: it would report "no active alerts"
+    over a feed that is now down, or over one that is now publishing. Both directions
+    are checked, because the clear lives on two different branches of the health
+    rewrite."""
+    configure_njt(monkeypatch)
+    await _poll_alerts_with(monkeypatch, feeds.AlertsFetch([], 0, {}, ["njt"]), now=5000.0)
+    assert alerts_cache["health"]["njt"]["served_empty"] is not None
+
+    # It publishes an alert again: an ordinary decode, no sentence.
+    await _poll_alerts_with(monkeypatch, feeds.AlertsFetch([NJT_ALERT], 0, {}, []), now=5100.0)
+    assert alerts_cache["health"]["njt"]["served_empty"] is None
+    assert alerts_cache["health"]["njt"]["last_error"] is None
+
+    # Back to served-empty, then the feed actually breaks: a failure clears it too.
+    await _poll_alerts_with(monkeypatch, feeds.AlertsFetch([], 0, {}, ["njt"]), now=5200.0)
+    assert alerts_cache["health"]["njt"]["served_empty"] is not None
+    await _poll_alerts_with(
+        monkeypatch, feeds.AlertsFetch([], 0, {"njt": "connect error"}, []), now=5300.0
+    )
+    assert alerts_cache["health"]["njt"]["served_empty"] is None
+    assert alerts_cache["health"]["njt"]["last_error"]["detail"] == "connect error"
+    assert (await client.get("/api/status")).json()["alerts"]["degraded_systems"] == ["njt"]
+
+
+# ---------------- a failed alert system reports its OWN reason ----------------
+#
+# Every alerts failure used to reach /api/status as one fixed sentence, "alert feed
+# unavailable this poll", because the fetch returned only the failed feed KEYS. The
+# actual cause went to the log and nowhere else, so diagnosing a partial alerts
+# outage started with a log search. These pin the reason reaching the surface an
+# operator is already looking at.
+
+
+async def test_each_failed_alert_system_reports_its_own_reason_on_status(
+    client, status_env, alerts_cache, monkeypatch
+):
+    await _poll_alerts_with(
+        monkeypatch,
+        feeds.AlertsFetch(
+            [],
+            0,
+            {
+                "MNR": "undecodable protobuf (malformed protobuf)",
+                "bus": "Server error '502 Bad Gateway'",
+            },
+            [],
+        ),
+        now=6000.0,
+    )
+    systems = (await client.get("/api/status")).json()["alerts"]["systems"]
+    assert systems["MNR"]["last_error"]["detail"] == "undecodable protobuf (malformed protobuf)"
+    assert systems["bus"]["last_error"]["detail"] == "Server error '502 Bad Gateway'"
+    assert systems["MNR"]["last_error"]["status"] == 502, "the status code is unchanged"
+    assert systems["subway"]["last_error"] is None
+
+
+async def test_a_failed_alert_feeds_reason_is_url_scrubbed_before_it_is_published(
+    client, status_env, alerts_cache, monkeypatch
+):
+    """The reason now comes from an httpx error string, which embeds the request URL,
+    and the alert feeds are one query parameter away from the shape that leaked a key.
+    It is scrubbed at the recording boundary by the same regex every other detail goes
+    through, so nothing changes about what may reach /api/status."""
+    await _poll_alerts_with(
+        monkeypatch,
+        feeds.AlertsFetch(
+            [], 0, {"bus": "Client error for url https://api.example/feed?key=SECRET"}, []
+        ),
+        now=6100.0,
+    )
+    detail = (await client.get("/api/status")).json()["alerts"]["systems"]["bus"]["last_error"][
+        "detail"
+    ]
+    assert "SECRET" not in detail and "https://" not in detail
+    assert "<feed url>" in detail
+
+
+async def test_a_total_alert_outage_reports_each_feeds_own_reason(
+    client, status_env, alerts_cache, monkeypatch
+):
+    """The total-outage path, where the reasons used to die with the exception
+    message. AllAlertFeedsFailed carries them, so an operator can see that four feeds
+    refused the connection and one served garbage rather than five identical lines."""
+    alerts_cache.update(alerts=[ALERT], fetched_at=1000.0, active=1)
+    errors = dict.fromkeys(alerts_cache["health"], "connect error")
+    errors["ferry"] = "undecodable protobuf (malformed protobuf)"
+    await _poll_alerts_with(monkeypatch, feeds.AllAlertFeedsFailed(errors), now=6200.0)
+
+    alerts_status = (await client.get("/api/status")).json()["alerts"]
+    assert sorted(alerts_status["degraded_systems"]) == sorted(errors)
+    assert alerts_status["systems"]["ferry"]["last_error"]["detail"] == (
+        "undecodable protobuf (malformed protobuf)"
+    )
+    assert alerts_status["systems"]["subway"]["last_error"]["detail"] == "connect error"
+    assert alerts_cache["fetched_at"] == 1000.0, "a total outage still does not advance it"
+
+
+async def test_a_plain_runtime_error_still_gets_the_generic_marker(
+    client, status_env, alerts_cache, monkeypatch
+):
+    """The fallback, and why it is kept rather than deleted: a RuntimeError that is
+    not AllAlertFeedsFailed carries no per-feed reasons, and a health block with no
+    detail at all would be worse than a vague one."""
+    alerts_cache.update(alerts=[ALERT], fetched_at=1000.0, active=1)
+    await _poll_alerts_with(monkeypatch, RuntimeError("All alert feeds failed: who knows"), 6300.0)
+    detail = (await client.get("/api/status")).json()["alerts"]["systems"]["MNR"]["last_error"][
+        "detail"
+    ]
+    assert detail == pollers.ALERT_FEED_UNAVAILABLE_DETAIL
+
+
+async def test_a_tripped_refresh_deadline_names_the_deadline_per_system(
+    client, status_env, alerts_cache, monkeypatch
+):
+    """A deadline cancels the gather before any feed is classified, so there is
+    nothing per-feed to report; what it CAN say is that no poll completed, which is a
+    different fact from any feed's own failure and used to be indistinguishable
+    from it."""
+    alerts_cache.update(alerts=[ALERT], fetched_at=1000.0, active=1)
+    await _poll_alerts_with(monkeypatch, TimeoutError(), now=6400.0)
+    systems = (await client.get("/api/status")).json()["alerts"]["systems"]
+    assert systems["MNR"]["last_error"]["detail"] == (
+        f"no alerts poll completed within {pollers.REFRESH_DEADLINE_S}s"
+    )
+    assert (await client.get("/api/status")).json()["alerts"]["last_error"]["status"] == 504
 
 
 # The pure merge's cap is unit-tested in test_feeds_alerts; these prove the
@@ -3308,7 +3548,8 @@ def _seed_retained_mnr(alerts_cache, retained_since):
 
 async def _poll_mnr_still_down(monkeypatch, now):
     async def mnr_down(client_arg):
-        return [], 0, ["MNR"]  # the other three decoded zero, MNR still failing
+        # the other three decoded zero, MNR still failing
+        return feeds.AlertsFetch([], 0, {"MNR": "connect error"}, [])
 
     monkeypatch.setattr(app_module, "fetch_service_alerts", mnr_down)
     monkeypatch.setattr(app_module.time, "time", lambda: now)

@@ -1297,6 +1297,39 @@ def test_production_degraded_alerts_is_warn_while_alerts_are_retained():
     assert alertline.status == cm.WARN and "LIRR" in alertline.detail
 
 
+def test_production_a_served_empty_njt_system_needs_no_rule_of_its_own():
+    """THE CLAIM THAT production:alerts NEEDED NO CHANGE, asserted rather than
+    reasoned about.
+
+    A served-empty NJ Transit feed decoded, so the app leaves it out of
+    degraded_systems, advances its fresh_at and clears its retention clock. Every
+    escalation in this rule keys on one of those three, so the state passes through
+    green by construction. Pinned here because the reasoning is only as durable as a
+    test: a future rule that read `served_empty` as a problem, or one that started
+    treating a system with zero alerts as unhealthy, would break here first.
+    """
+    alerts = {
+        "age_s": 30.0,
+        "degraded_systems": [],
+        "systems": {
+            "njt": {
+                "fresh_at": 990.0,
+                "retained_since": None,
+                "last_error": None,
+                "served_empty": cm.feeds.NJT_ALERTS_SERVED_EMPTY_DETAIL,
+            },
+            "subway": {"fresh_at": 990.0, "retained_since": None, "last_error": None},
+        },
+    }
+    fetch = FakeFetcher(
+        {"https://app.example/api/status": _status_json(alerts=alerts, served_at=1000.0)}
+    )
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
+    alertline = next(r for r in results if r.name == "production:alerts")
+    assert alertline.status == cm.PASS, alertline.detail
+    assert alertline.detail == "no degraded alert systems"
+
+
 def test_production_alerts_retained_past_the_horizon_is_fail():
     # Past PRODUCTION_ALERT_RETENTION_MAX_S the backend has DROPPED the retained
     # alerts, so the coverage the WARN was predicated on is gone: riders now see
@@ -1739,6 +1772,49 @@ def test_njt_realtime_checks_the_alerts_feed_through_the_door():
     assert result.status == cm.FAIL
     assert "alerts undecodable" in result.detail
     assert "njt" not in cm.feeds.KEYLESS_ALERT_FEEDS, "and the GET check still excludes it"
+
+
+def test_njt_realtime_a_served_empty_alerts_body_passes_and_says_so():
+    """NJ Transit answers its ALERTS endpoint HTTP 200 with a zero-byte body when it
+    has no active rail alerts (observed 2026-09-07: production never decoded this
+    feed from 00:30 Eastern, decoded once around 16:33 and was empty again after;
+    this monitor's own fetch at 17:35 saw the same body while njtransit.com listed
+    every rail line as "No current alerts or advisories").
+
+    IT PASSES, because failing every quiet night is how a monitor gets muted, and a
+    muted monitor sees nothing at all. IT SAYS SO, because a check whose whole job is
+    to report what today's bytes were must not answer identically for a healthy busy
+    night and a body it could not read a word of.
+    """
+    result = _check_njt_rt(_njt_rt_fetch(**{NJT_ALERTS: b""}))
+    assert result.status == cm.PASS, result.detail
+    assert cm.feeds.NJT_ALERTS_SERVED_EMPTY_DETAIL in result.detail
+    assert "30 trip updates" in result.detail, "and the rest of the check still ran"
+
+
+def test_njt_realtime_a_one_byte_alerts_body_still_fails():
+    """THE CONTROL, and the reason the served-empty rule keys on "no bytes at all"
+    rather than "not enough bytes": a truncated or corrupted body is the silent
+    upstream failure the strict parse exists to catch, and one byte of it must not
+    ride in on the exemption."""
+    result = _check_njt_rt(_njt_rt_fetch(**{NJT_ALERTS: b"\x00"}))
+    assert result.status == cm.FAIL
+    assert "alerts undecodable" in result.detail
+    assert cm.feeds.NJT_ALERTS_SERVED_EMPTY_DETAIL not in result.detail
+
+
+def test_a_zero_byte_body_on_a_KEYLESS_alert_feed_is_still_a_failure():
+    """The other edge of the same rule, on the other check. The exemption is NJ
+    Transit's alone, so the five keyless feeds must keep failing a zero-byte 200:
+    they carry a header even when they have nothing to report, so an empty body from
+    one of them is the C3 signature and nothing else. Widening the arm to any alerts
+    feed kills this test."""
+    urls = {"subway": "https://mta.example/subway-alerts"}
+    fetch = FakeFetcher({urls["subway"]: b""})
+    result = cm.check_alerts_realtime(fetch, NO_SLEEP, NJT_RT_NOW, feed_urls=urls)
+    assert result.status == cm.FAIL
+    assert "subway undecodable" in result.detail
+    assert "njt" not in cm.feeds.KEYLESS_ALERT_FEEDS, "and njt is still checked elsewhere"
 
 
 def test_njt_realtime_empty_feed_is_a_warn_in_service_and_fine_when_closed():

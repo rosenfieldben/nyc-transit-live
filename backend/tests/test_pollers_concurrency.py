@@ -21,6 +21,7 @@ import httpx
 import pytest
 from google.protobuf.message import DecodeError
 
+import feeds
 import main as app_module
 import pollers
 
@@ -715,11 +716,16 @@ def test_alert_health_seeds_a_system_that_gained_credentials(monkeypatch):
         pollers, "active_alert_feeds", lambda: {"subway": "u", "MNR": "u", "njt": "u"}
     )
     pollers._reconcile_alert_health(entry)
+    # THE SAME KEYS cache._fresh_alerts_entry seeds, all four of them: everything
+    # downstream reads them without a .get(), so a seeded system missing one would
+    # KeyError on the first poll that touched it.
     assert entry["health"]["njt"] == {
         "fresh_at": None,
         "retained_since": None,
         "last_error": None,
+        "served_empty": None,
     }
+    assert set(entry["health"]["njt"]) == set(entry["health"]["subway"])
 
 
 def test_alert_health_reconcile_leaves_a_matching_map_untouched(monkeypatch):
@@ -749,7 +755,7 @@ async def test_the_alert_refresher_actually_reconciles_before_it_polls(monkeypat
     entry["health"]["ghost"] = {"fresh_at": 1.0, "retained_since": None, "last_error": None}
 
     async def no_alerts(_client):
-        return [], 0, []
+        return feeds.AlertsFetch([], 0, {}, [])
 
     monkeypatch.setattr(app_module, "fetch_service_alerts", no_alerts)
     await pollers._refresh_alerts(app, client=None)

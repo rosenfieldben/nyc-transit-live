@@ -698,7 +698,17 @@ currently `retained` from a down feed, and any current error) plus a
 `degraded_systems` list: one of the alert feeds going down is a successful
 poll overall, so its alerts are carried forward (bounded by an activity re-filter
 and a retention cap) rather than silently deleted, and this is where that partial
-outage shows.
+outage shows. A system's error names **what actually failed** (a connect error, an
+HTTP status, a per-feed deadline, an undecodable body), sanitized the same way every
+other recorded detail is, so a partial alerts outage is diagnosed here rather than in
+a log search. It is the upstream's own words only for failures classified as the
+upstream's: anything unexpected inside the alerts gather publishes its exception
+TYPE and sends its traceback to the log, the same split `/healthz`'s unclassified
+refresh failures already make, because an arbitrary exception's text is arbitrary
+and this response is public. One entry can also carry `served_empty`, the single SUCCESS worth a
+sentence: NJ Transit's zero-byte 200 meaning no active rail alerts (see **The strict
+parse boundary**). It is null on an ordinary decode and null on a failure, and a
+served-empty system is never in `degraded_systems`, because it decoded.
 
 `GET /healthz` is the readiness probe (Railway's healthcheck points here). It
 returns 503 when the app can't serve fresh data: no feed is fresh, the bus route
@@ -778,6 +788,23 @@ and what that means stays each decoder's business. The ferry feed genuinely empt
 overnight, and that empty still replaces its boats, while an empty BODY is now a
 failed poll that keeps last-known.
 
+**The one exemption, and it is one feed's alone.** NJ Transit's *alerts* endpoint
+answers HTTP 200 with a zero-byte body when it has no active rail alerts (observed
+2026-09-07 across a full day, corroborated against njtransit.com's own Travel
+Alerts page and against the contract monitor's independent fetch). So for that feed
+only, a zero-byte 200 is classified *before* the parse, as a served state meaning
+zero alerts: it decodes, its retained alerts are released, its `fresh_at` advances,
+and `/api/status` says so in words rather than leaving "no alerts" and "no feed"
+looking alike. A dead endpoint could send those same bytes, and this rule cannot
+tell the two apart; the price is accepted because the alternative fails the alerts
+poller and the six-hourly monitor on every quiet night, and a permanently red
+monitor is a muted one. Nothing else moves: a zero-byte body from any other alert
+feed is still a failure, and **one byte of garbage from NJ Transit is still a
+failure**. `feeds.njt_alerts_served_empty` carries the rule, and it keys on the feed
+and on emptiness precisely so it cannot widen in either direction. Note it is a
+different shape from the same producer's *TripUpdates* feed overnight, which is a
+13-byte header-only message that `parse_feed` accepts unchanged.
+
 Failures route at each source's own granularity: one poisoned subway group, alert
 feed or railroad system degrades only itself (and surfaces through the per-system
 block below), while the single-feed sources record a failed poll and keep last-known.
@@ -789,7 +816,11 @@ that entity as they always have. The parser judges the body.
 KNOWN GAP: the contract monitor has its own parse for the checks that only count
 entities, so the bus and ferry realtime checks (which invoke no production decoder)
 still read an empty 200 as a healthy quiet feed. The subway, railroad, PATH and
-alerts checks run the production decoders and so inherit the strict parse.
+alerts checks run the production decoders and so inherit the strict parse, and the
+`njt-realtime` check (which is where NJ Transit's alerts feed is read, since it
+answers only a POST) inherits the exemption above along with it: a zero-byte alerts
+body passes there and is named in the check's summary, so a quiet night and a busy
+one do not produce the same line.
 
 #### Per-system freshness
 

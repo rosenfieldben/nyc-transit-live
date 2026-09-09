@@ -725,12 +725,20 @@ retried, because a total failure marked ready would never be retried at all.
 
 Beside `status` and `reasons`, the body always carries `degraded`: the
 machine-readable classification the contract monitor reads, and a **superset** of
-what drove the status code, so a degraded state that is deliberately not worth a
-restart is still visible to something that watches. One of its codes is not a
-sickness at all. `njt-mint-quota` says this instance spent NJ Transit's ten mints
-for the Eastern day, so that layer is dark until midnight with nothing broken
-upstream; it never gates the 503, because a restart would mint again and spend one
-more. It clears itself on the next mint that succeeds.
+what drove the status code. **The status code has exactly one platform reader, and
+it stops reading once the deployment is live.** Railway calls `/healthz` while a
+deployment is being promoted and, in its own words, "does not monitor the
+healthcheck endpoint after the deployment has gone live"; it restarts a container
+on a process exit, under the separate restart policy, not on a probe. So a 503
+answered by a running instance blocks nothing and is seen by nothing on the
+platform side, and `degraded` riding a 200 is the only channel that reaches
+anything watching a live deployment. That is what the superset is for. One of its
+codes is not a sickness at all: `njt-mint-quota` says this instance spent NJ
+Transit's ten mints for the Eastern day, so that layer is dark until midnight with
+nothing broken upstream. It never gates the 503, because the only thing a 503 could
+do is fail a promotion, and a promotion that fails is retried into a fresh process
+that mints again and spends one more of the ten it is reporting. It clears itself
+on the next mint that succeeds.
 
 **Deployment invariant: the first retry rungs must fit well inside the healthcheck
 window.** A failed static warmup retries on a backoff schedule

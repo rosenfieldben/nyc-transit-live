@@ -270,9 +270,14 @@ def _health_codes(
         codes.append(HEALTH_SUBWAY_STATIC_FAILED)
 
     # NEW WITH F1, AND NOT A REASON TO 503. One endpoint serving content that is
-    # lagging is a real degradation a human should see, and a terrible trigger for
-    # a container restart: the upstream is what is late, and a fresh process would
-    # be exactly as late. Note the granularity this reports at, because it is not
+    # lagging is a real degradation a human should see, and no reason at all to
+    # refuse a build: the status code is read only while a deployment is being
+    # promoted (see models.HEALTH_GATING_CODES), and the upstream being late is a
+    # property of the world rather than of the code being promoted. Gating on it
+    # would block a good deploy for something no deploy can fix, and would keep
+    # blocking for as long as the upstream lagged. A restart is not the alternative
+    # being weighed here: the platform does not restart a live container on this
+    # probe at all. Note the granularity this reports at, because it is not
     # the obvious one: feed_cache is keyed per ENDPOINT (subways, railroads, path,
     # ferry, buses), so this names an endpoint and never a subway line group. One
     # frozen group still reaches here, because feeds/subway.py folds the eight
@@ -304,7 +309,10 @@ def _health_codes(
     # place the difference is written down.
     #
     # NOT GATING, and see HEALTH_GATING_CODES for the reason, which is stronger
-    # here than for any other non-gating code: a restart would spend another mint.
+    # here than for any other non-gating code because gating has a PRICE rather than
+    # merely no benefit: a 503 refuses the promotion, a refused promotion is retried,
+    # and each fresh process mints on its first NJ Transit request. The probe would
+    # spend the budget it exists to report.
     #
     # Read off the token cache rather than app.state because that cache is what
     # every mint in this process goes through, so the answer cannot be stale in the
@@ -353,10 +361,15 @@ async def healthz(request: Request) -> JSONResponse:
 
     THE STATUS CODE AND THE CLASSIFICATION ARE TWO DIFFERENT ANSWERS since F1.
     `status`/`reasons`/503 mean what they always meant, "should traffic come
-    here", because Railway restarts a container on a failing healthcheck and a
-    lagging upstream is not something a fresh process fixes. `degraded` means "is
-    this instance sick", is a superset of the gating reasons, and is what the
-    contract monitor reads: before F1 the monitor probed only /api/status and
+    here", and that question is asked exactly once: Railway reads this probe while
+    a deployment is being promoted and stops reading it once the deployment is live
+    (models.HEALTH_GATING_CODES carries the citation; a live container is restarted
+    on a process exit under the separate restart policy, never on this probe). So
+    the status code answers "may this build go live", and a lagging upstream is not
+    a reason to refuse one. `degraded` means "is this instance sick", is a superset
+    of the gating reasons, and is what the contract monitor reads: it is the only
+    channel that says anything about a deployment that is ALREADY live, which is
+    why the superset exists. Before F1 the monitor probed only /api/status and
     could tell that production was dead but never that it was ill.
 
     ONE OF THE CODES IS NOT A SICKNESS AT ALL. `njt-mint-quota` says this instance

@@ -3086,10 +3086,13 @@ def test_several_degraded_states_are_all_named():
 
 
 def test_a_degraded_state_fails_the_run_even_while_the_probe_says_pass():
-    """The non-gating codes ride a 200 with status "pass", because a lagging
-    upstream must not make Railway restart the container. The monitor is the
-    stricter reader on purpose: readiness and sickness are different questions and
-    this one is asking the second."""
+    """The non-gating codes ride a 200 with status "pass", because the status code
+    answers whether this build may be promoted and a lagging upstream is not a
+    reason to refuse one. Railway stops reading the probe once the deployment is
+    live, so a 503 there would restart nothing anyway (models.HEALTH_GATING_CODES
+    carries the citation). THE MONITOR IS THEREFORE THE ONLY READER THAT SEES A LIVE
+    DEPLOYMENT'S DEGRADATION, and it is the stricter one on purpose: readiness and
+    sickness are different questions and this one is asking the second."""
     fetch = _healthy_prod(health=_healthz_json(status="pass", degraded=["feed-content-stale"]))
     results = cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
     health = next(r for r in results if r.name == "production:healthz")

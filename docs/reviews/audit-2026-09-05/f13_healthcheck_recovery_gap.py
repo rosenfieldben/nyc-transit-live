@@ -336,48 +336,66 @@ SCAN_PATHSPEC = [f":(exclude){prefix}" for prefix in SCAN_SKIP_PREFIXES]
 CLASS_A = "A"  # reasons FROM the restart mechanism TO a status-code decision
 CLASS_B = "B"  # reasons from a restart, but decides no status code
 CLASS_C = "C"  # configures or mentions only
+# THE CORRECTED FORM, added by claude/release1-small-fixes when N1 was fixed. A class
+# D line still mentions a restart, because saying what the platform does NOT do is
+# part of stating the reason, but it reasons from the DEPLOY-TIME GATE to the status
+# code rather than from a reboot that never happens. Class A is what the audit found;
+# class D is what those same decisions say now.
+CLASS_D = "D"  # reasons from the deploy-time gate to a status-code decision
 
 # The recorded inventory. Keyed by (path, snippet) so it survives line drift; the
 # measured line number is printed. `decision` says what a later fix is re-deciding.
 INVENTORY = [
     # ---- class A: a restart mechanism justifying a status code -------------
-    ("README.md", "restart is still visible to something that watches", CLASS_A,
+    #
+    # EMPTY SINCE N1 WAS FIXED ON claude/release1-small-fixes, and kept as a heading
+    # rather than deleted because the audit recorded a count here. What the audit
+    # found was 18 class A lines across 6 files, every one of them reasoning from
+    # "the platform reboots a container whose healthcheck fails" to a decision about
+    # which codes gate the 503. That mechanism does not run after a deployment is
+    # promoted. The DECISIONS were all correct and none of them changed; each comment
+    # now states the reason that actually holds, and moved to class D below. The
+    # assertion further down is 0 class A and the recorded 18 in its message, so this
+    # emptiness is checked rather than assumed.
+
+    # ---- class D: the deploy-time gate justifying a status code ------------
+    #
+    # THE SAME 18 LINES, REWRITTEN, AND THERE ARE 15 OF THEM. Three of the rewritten
+    # sentences no longer need to mention a restart at all (two assertion messages
+    # that now say "refuse a deploy", and one models.py sentence that folded into
+    # its neighbour), so they leave this scan entirely. The count moving is the fix
+    # working, not a line going unclassified: every one of the 15 below is matched,
+    # and an unmatched candidate still fails the run.
+    ("README.md", 'healthcheck endpoint after the deployment has gone live"; it restarts a container',
+     CLASS_D, "the platform citation itself, which the superset argument now rests on"),
+    ("README.md", "on a process exit, under the separate restart policy, not on a probe", CLASS_D,
      "publishing `degraded` as a superset of `reasons` on a 200"),
-    ("README.md", "it never gates the 503, because a restart would mint again", CLASS_A,
-     "njt-mint-quota stays 200, never 503"),
-    ("backend/models.py", "Railway restarts a", CLASS_A,
-     "HEALTH_GATING_CODES membership: which codes make /healthz answer 503"),
-    ("backend/models.py", "Restarting on it", CLASS_A,
-     "HEALTH_NJT_MINT_QUOTA excluded from HEALTH_GATING_CODES (200)"),
-    ("backend/models.py", "deliberately not worth a restart", CLASS_A,
+    ("backend/models.py", "deployment has gone live\"; a container restart is a separate mechanism on the",
+     CLASS_D, "HEALTH_GATING_CODES membership: which codes make /healthz answer 503"),
+    ("backend/models.py", "restart-policy page and triggers on a process exit, not on a probe", CLASS_D,
+     "the same, second half of the citation"),
+    ("backend/models.py", 'the question a non-gating code has to answer is not "would a restart help"',
+     CLASS_D, "why a lagging upstream, a dark subway group and a spent budget are non-gating"),
+    ("backend/models.py", "instance's 503 restarts nothing and is polled by nothing", CLASS_D,
      "HealthzResponse carries degraded as a superset of the 503 reasons"),
-    ("backend/routes/status.py", "a container restart: the upstream is what is late", CLASS_A,
+    ("backend/routes/status.py", "A restart is not the alternative", CLASS_D,
      "HEALTH_FEED_CONTENT_STALE is non-gating (200)"),
-    ("backend/routes/status.py", "a restart would spend another mint", CLASS_A,
-     "HEALTH_NJT_MINT_QUOTA is non-gating (200)"),
-    ("backend/routes/status.py", "Railway restarts a container on a failing healthcheck", CLASS_A,
+    ("backend/routes/status.py", "being weighed here: the platform does not restart a live container on this",
+     CLASS_D, "the same, second half of the sentence"),
+    ("backend/routes/status.py", "a live container is restarted", CLASS_D,
      "the whole status-code versus classification split in the healthz handler"),
-    ("backend/tests/test_api.py", "a lagging upstream is not fixed by restarting the container",
-     CLASS_A, "test_healthz_lenient_one_fresh_other_stale asserts 200"),
-    ("backend/tests/test_api.py", "restart does not merely fail to help, it mints", CLASS_A,
-     "test_healthz_publishes_a_spent_njt_mint_budget_without_gating_on_it asserts 200"),
-    ("backend/tests/test_api.py", "a spent budget must never restart the container", CLASS_A,
-     "the assertion message on that same 200"),
-    ("backend/tests/test_api.py", "a restart would not fix it", CLASS_A,
-     "test_healthz_subway_groups_down_is_a_strict_majority asserts 200"),
-    ("backend/tests/test_contract_monitor.py", "must not make Railway restart the container",
-     CLASS_A, "the monitor FAILs a run on a degraded code that rode a 200"),
-    ("tests/contract/test_contract_api.py", "Railway restarts a container on a failing healthcheck "
-     "and a fresh process would", CLASS_A,
-     "contract tier: stale upstream content reaches /healthz without moving the status code"),
-    ("tests/contract/test_contract_api.py", "A spent budget is not a reason to restart the",
-     CLASS_A, "contract tier: the probe still answers 200 on a spent NJT mint budget"),
-    ("tests/contract/test_contract_api.py", "status code. Railway restarts a container", CLASS_A,
-     "contract tier: feed-content-stale is published without touching the status code"),
-    ("tests/contract/test_contract_api.py", "a lagging upstream is not a reason to restart",
-     CLASS_A, "the assertion message pinning status == pass"),
-    ("tests/contract/test_contract_api.py", "a restart does not bring them back", CLASS_A,
-     "contract tier: subway-groups-down asserts status == pass"),
+    ("backend/routes/status.py", "on a process exit under the separate restart policy, never on this probe",
+     CLASS_D, "the same, second half of the sentence"),
+    ("backend/tests/test_api.py", "probe only while a deployment is being promoted and never restarts a live",
+     CLASS_D, "test_healthz_lenient_one_fresh_other_stale asserts 200"),
+    ("backend/tests/test_api.py", "is not that a restart fails to help; the probe would consume the budget",
+     CLASS_D, "test_healthz_publishes_a_spent_njt_mint_budget_without_gating_on_it asserts 200"),
+    ("backend/tests/test_api.py", "promoted rather than whether a running container should be restarted",
+     CLASS_D, "test_healthz_subway_groups_down_is_a_strict_majority asserts 200"),
+    ("backend/tests/test_contract_monitor.py", "so a 503 there would restart nothing anyway", CLASS_D,
+     "the monitor FAILs a run on a degraded code that rode a 200"),
+    ("tests/contract/test_contract_api.py", "a live container restarts on a process exit, never on this probe",
+     CLASS_D, "contract tier: stale upstream content reaches /healthz without moving the status code"),
     # ---- class B: restart reasoning, but no status code decided -----------
     ("backend/models.py", 'rather than "restart"', CLASS_B,
      "why njt-mint-quota gets its own code name, not what the code is"),
@@ -473,7 +491,7 @@ def part2_inventory() -> dict:
         else:
             unclassified.append((rel, lineno, text))
 
-    by_class = {CLASS_A: [], CLASS_B: [], CLASS_C: []}
+    by_class = {CLASS_A: [], CLASS_B: [], CLASS_C: [], CLASS_D: []}
     for (path_key, snippet), found in matched.items():
         for lineno, text, cls, decision, window in found:
             by_class[cls].append((path_key, lineno, text, decision, window))
@@ -525,27 +543,49 @@ def part2_inventory() -> dict:
     check(not unclassified,
           "no unclassified restart-and-health comment has appeared since the audit",
           "; ".join(f"{r}:{n}" for r, n, _t in unclassified) if unclassified else "")
-    check(len(by_class[CLASS_A]) == 18,
-          "18 comment lines reason from a restart to a health status code",
-          f"measured {len(by_class[CLASS_A])}")
-    check(named == 6,
-          "6 of them name Railway outright as the actor that restarts",
-          f"measured {named}")
-    files_a = sorted({rel for rel, _l, _t, _d, _w in by_class[CLASS_A]})
-    say(f"  files carrying class A comments         : {len(files_a)}")
-    for f in files_a:
+    say()
+    say("  CLASS D. The corrected form: reasons from the DEPLOY-TIME GATE to a status")
+    say("  code. These are the audit's 18 class A lines, rewritten.")
+    for rel, lineno, text, decision, _w in by_class[CLASS_D]:
+        say(f"    {rel}:{lineno}  \"{text[:88]}\"")
+        say(f"        justifies: {decision}")
+
+    files_d = sorted({rel for rel, _l, _t, _d, _w in by_class[CLASS_D]})
+    say()
+    say(f"  class A lines remaining                 : {len(by_class[CLASS_A])} (the audit recorded 18)")
+    say(f"  class D lines                           : {len(by_class[CLASS_D])} across {len(files_d)} files")
+    for f in files_d:
         say(f"    {f}")
-    check(len(files_a) == 6,
-          "class A spans application code, tests and the contract tier",
-          f"{len(files_a)} files")
+
+    # THE AUDIT'S NUMBERS ARE THE MESSAGE, THE MEASUREMENT IS THE ASSERTION. N1
+    # recorded 18 class A lines across 6 files, 6 of them naming the platform
+    # outright. Those numbers are history and are not edited; what is checked now is
+    # that none of them survives, and that the same 6 files carry the corrected form
+    # instead. A regression that reintroduced the old reasoning would land in class A
+    # (or unclassified) and fail here either way.
+    check(len(by_class[CLASS_A]) == 0,
+          "none of the audit's 18 restart-to-status-code comments survives",
+          f"measured {len(by_class[CLASS_A])}")
+    check(named == 0,
+          "and none of the 6 that named Railway as the restarting actor survives",
+          f"measured {named}")
+    check(len(by_class[CLASS_D]) == 15,
+          "15 rewritten lines reason from the deploy-time gate instead (18 less the "
+          "3 sentences that no longer need to mention a restart at all)",
+          f"measured {len(by_class[CLASS_D])}")
+    check(len(files_d) == 6,
+          "the corrected form spans the same 6 files: application code, tests, contract tier",
+          f"{len(files_d)} files")
 
     return {
         "candidates": len(hits),
         "class_a": len(by_class[CLASS_A]),
         "class_b": len(by_class[CLASS_B]),
         "class_c": len(by_class[CLASS_C]),
+        "class_d": len(by_class[CLASS_D]),
         "named_railway": named,
-        "files_a": files_a,
+        "files_a": sorted({rel for rel, _l, _t, _d, _w in by_class[CLASS_A]}),
+        "files_d": files_d,
     }
 
 
@@ -914,7 +954,9 @@ def main() -> int:
         f"{cadence['interval_s'] // cadence['poll_s']:.0f}")
     say(f"  restart-and-health comment candidates     : {inventory['candidates']}")
     say(f"    class A (restart -> status code)        : {inventory['class_a']} "
-        f"across {len(inventory['files_a'])} files, {inventory['named_railway']} naming Railway")
+        f"(the audit recorded 18 across 6 files, 6 naming Railway; all rewritten)")
+    say(f"    class D (deploy gate -> status code)    : {inventory['class_d']} "
+        f"across {len(inventory['files_d'])} files")
     say(f"    class B (restart, no status code)       : {inventory['class_b']}")
     say(f"    class C (configuration or mention)      : {inventory['class_c']}")
     say(f"  supervisors of the feed poll task         : {supervision['other']}")
@@ -945,10 +987,13 @@ def main() -> int:
     say("  Every recorded expectation held.")
     say()
     say("DISPOSITION: VERIFIED  Railway documents that /healthz is polled only while a "
-        "deployment is promoted, 18 comment lines across 6 files justify a health status "
-        "code by a container restart that mechanism cannot produce, the only repository "
-        "monitor runs every 21600 s, and a real app whose poll loop died kept serving "
-        "frozen data on 200s while /healthz went 503 with nobody polling it.")
+        "deployment is promoted, the only repository monitor runs every 21600 s, and a "
+        "real app whose poll loop died kept serving frozen data on 200s while /healthz "
+        "went 503 with nobody polling it. THE COMMENT HALF (N1) IS FIXED on "
+        "claude/release1-small-fixes: the 18 lines across 6 files that justified a health "
+        "status code by a container restart that mechanism cannot produce are now 0, and "
+        "the same 6 files carry 15 rewritten lines reasoning from the deploy-time gate "
+        "instead. The monitoring gap itself is untouched and still reproduces.")
     return 0
 
 

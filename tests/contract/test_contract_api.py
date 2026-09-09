@@ -203,11 +203,14 @@ def test_a_frozen_upstream_leaves_every_liveness_signal_green(contract_app):
     with min() before the cache sees them.
 
     IT DOES NOT MOVE THE STATUS CODE. feed-content-stale is outside
-    HEALTH_GATING_CODES, so `status` stays "pass" and the probe still answers 200:
-    Railway restarts a container on a failing healthcheck and a fresh process would
-    be exactly as late, so a lagging upstream has to reach a human without reaching
-    the platform. The contract monitor is the stricter reader and fails its run on
-    any degraded code at all.
+    HEALTH_GATING_CODES, so `status` stays "pass" and the probe still answers 200.
+    The status code decides whether a build may be promoted, and Railway stops
+    reading it once the deployment is live (models.HEALTH_GATING_CODES carries the
+    citation; a live container restarts on a process exit, never on this probe). A
+    lagging upstream is a property of the world rather than of the build, so it has
+    to reach a human without refusing the deploy. The contract monitor is the
+    stricter reader, and the only one that sees a live deployment at all: it fails
+    its run on any degraded code.
 
     THIS SCENARIO IS STILL GREEN THROUGHOUT, and that is not an oversight.
     FEED_STALE_AFTER_S is deliberately not overridable (cache.py), so a freeze
@@ -935,9 +938,10 @@ def test_njt_a_spent_mint_budget_is_reported_as_a_budget_not_an_outage(harness):
          njt_auth's fixed string. Without this the operator's only signal is
          njt_static "failed", which is what a real NJ Transit outage looks like.
 
-    THE PROBE MUST STILL ANSWER 200. A spent budget is not a reason to restart the
-    container: Railway would, the fresh process would mint on its first NJ Transit
-    request, and that spends another of the ten that already ran out.
+    THE PROBE MUST STILL ANSWER 200. A spent budget is not a reason to refuse a
+    build, and gating on it would cost: a refused promotion is retried, each fresh
+    process mints on its first NJ Transit request, and that spends another of the
+    ten that already ran out. The probe would consume the budget it is reporting.
 
     Hermetic counterparts:
     backend/tests/test_njt_auth.py::test_a_refused_mint_raises_the_fixed_string_and_nothing_from_the_body,
@@ -1560,9 +1564,10 @@ def test_stale_upstream_content_reaches_healthz_without_taking_the_app_down(harn
     test_a_frozen_upstream_leaves_every_liveness_signal_green pins the decision
     that content sameness is never read as staleness. This is the other half: the
     content CLOCK falling behind is read, and it is reported without touching the
-    status code. Railway restarts a container on a failing healthcheck and a
-    fresh process would be exactly as late, so a lagging upstream must reach a
-    human without reaching the platform.
+    status code. That code answers whether this build may go live, and Railway
+    stops reading it once the deployment is live (see models.HEALTH_GATING_CODES),
+    so a lagging upstream must reach a human through `degraded` rather than by
+    refusing a deploy it has nothing to do with.
 
     PATH alone goes stale, so the app keeps a fresh feed and stays ready; that is
     what makes this a test of the new code rather than of "no feed is fresh".
@@ -1573,7 +1578,7 @@ def test_stale_upstream_content_reaches_healthz_without_taking_the_app_down(harn
             lambda h: "feed-content-stale" in h.get("degraded", []),
             "stale upstream content to reach the readiness probe",
         )
-        assert body["status"] == "pass", "a lagging upstream is not a reason to restart"
+        assert body["status"] == "pass", "a lagging upstream is not a reason to refuse a build"
         assert "reasons" not in body
         status = app.status()
         # THE POINT, stated as the two numbers that disagree: the poll is young and
@@ -1598,8 +1603,9 @@ def test_most_subway_groups_down_reaches_healthz(harness):
             lambda h: "subway-groups-down" in h.get("degraded", []),
             "a mostly dark subway to reach the readiness probe",
         )
-        # Not gating, for the same reason as stale content: the groups are upstream
-        # and a restart does not bring them back. The rider still gets three lines.
+        # Not gating, for the same reason as stale content: the groups are upstream,
+        # so refusing this build would not bring them back and the probe is not read
+        # again once the build is live. The rider still gets three lines.
         assert body["status"] == "pass"
         health = app.status()["subway_feeds"]
         assert health["ok"] == len(SUBWAY_GROUPS) - len(down)

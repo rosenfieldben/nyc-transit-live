@@ -51,6 +51,33 @@ RAILROAD_FEED_URLS = {
 RAILROAD_FRESHNESS_SYSTEMS = frozenset({"LIRR"})
 
 
+def _vehicle_is_canceled(entity, canceled_trips: set[str]) -> bool:
+    """Is this vehicle entity's trip cancelled (or deleted) in this same feed?
+
+    TWO LAYOUTS, TWO ANSWERS, and the reason both arms exist is that neither one
+    covers the other:
+
+      * COMBINED ENTITY (MNR): the trip_update sits on the vehicle's own entity, so
+        it is read directly. The trip_id join CANNOT serve here, because MNR's
+        vehicle.trip.trip_id is the TRAIN NUMBER ("1797") while its trip_update
+        carries the internal id ("3114306"); measured on the committed capture, all
+        119 entities are combined and the two ids never match.
+      * SEPARATE ENTITIES (LIRR): the vehicle has no trip_update of its own, so it is
+        joined by trip_id to the cancellations collected from this feed. Measured on
+        the committed capture: 8 canceled trip_updates, 69 positioned vehicles, and
+        exactly one trip in both sets.
+
+    THE VEHICLE'S OWN schedule_relationship IS DELIBERATELY NOT CONSULTED, because it
+    is not the signal. On that same LIRR capture the canceled train's vehicle entity
+    (6004XX_2026-06-20_V) reports SCHEDULED while its TripUpdate reports CANCELED, so
+    a decoder that trusted the vehicle would emit it exactly as before. The join is
+    the whole check.
+    """
+    if entity.HasField("trip_update"):
+        return entity.trip_update.trip.schedule_relationship in _DROP_TRIP_RELATIONSHIPS
+    return bool(entity.vehicle.trip.trip_id) and entity.vehicle.trip.trip_id in canceled_trips
+
+
 def _decode_railroad_vehicles(
     raw: bytes, system: str, now: float
 ) -> tuple[list[dict], float | None]:
@@ -58,7 +85,8 @@ def _decode_railroad_vehicles(
 
     feed_timestamp is the feed's content time (FeedHeader.timestamp, MTA's
     clock), or None when the feed omits it. Phase 1 keeps only entities whose
-    vehicle carries a position, covering both feed layouts: LIRR puts the vehicle
+    vehicle carries a position AND whose trip is still running, covering both feed
+    layouts: LIRR puts the vehicle
     in its own entity, MNR combines the trip_update and vehicle in one. Each kept
     train carries its real lat/lon (no station projection needed). An empty
     vehicle route_id is filled from the
@@ -72,6 +100,23 @@ def _decode_railroad_vehicles(
     model needs no change then. `now` is unused in phase 1 (no schedule join
     yet); it is kept for parity with the subway decoders and frozen by the golden
     test.
+
+    CANCELLATION IS RESOLVED BEFORE EMISSION, NOT AFTER (Audit 5, F02). A canceled
+    trip stays in these feeds with a live GPS entity that keeps moving, because the
+    train physically exists: it is deadheading to a yard, repositioning, or running
+    empty to its next assignment. WHAT THE MAP DOES WITH IT IS NOTHING. It is not
+    service, so it is not a train a rider can board, and drawing it as one is the
+    falsehood F02 named: the audit found the capture's canceled 5-train (train 508)
+    emitted FIRST of 69 GPS trains and served unmarked, while both of its station
+    boards correctly omitted it. A rider watching it approach their platform would
+    have been watching a train that was never going to stop for them.
+
+    NOT DIMMED, NOT LABELLED, NOT EMITTED. A "canceled" marker was considered and
+    rejected: this decoder has no way to tell a deadhead from a cancellation a rider
+    might care about, the arrivals boards already say nothing about it, and a marker
+    the boards disagree with is worse than no marker. The placement pass has dropped
+    these trips since it was written (_decode_railroad_feed); this makes the GPS pass
+    agree with it rather than contradict it.
     """
     # parse_feed rejects an empty or malformed body (C3); fetch_railroad_trains
     # catches it per SYSTEM, so a poisoned LIRR leaves MNR untouched.
@@ -80,18 +125,27 @@ def _decode_railroad_vehicles(
     # trip_id -> route_id from this feed's trip_updates, to fill an empty vehicle
     # route_id in the separate-entity (LIRR) layout. The combined-entity (MNR)
     # layout is handled inline below via the entity's own trip_update.
+    #
+    # THE CANCELED SET IS BUILT IN THE SAME PASS, and it is the same
+    # _DROP_TRIP_RELATIONSHIPS the placement pass in _decode_railroad_feed uses, so
+    # the two passes cannot disagree about what "running" means.
     route_by_trip: dict[str, str] = {}
+    canceled_trips: set[str] = set()
     for entity in feed.entity:
         if entity.HasField("trip_update"):
             trip = entity.trip_update.trip
             if trip.trip_id and trip.route_id:
                 route_by_trip.setdefault(trip.trip_id, trip.route_id)
+            if trip.trip_id and trip.schedule_relationship in _DROP_TRIP_RELATIONSHIPS:
+                canceled_trips.add(trip.trip_id)
 
     trains: list[dict] = []
     for entity in feed.entity:
         if not entity.HasField("vehicle"):
             continue
         v = entity.vehicle
+        if _vehicle_is_canceled(entity, canceled_trips):
+            continue
         if not v.HasField("position"):
             continue
         pos = v.position

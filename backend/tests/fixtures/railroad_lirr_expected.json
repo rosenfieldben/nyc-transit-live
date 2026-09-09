@@ -4,22 +4,6 @@
 "trains": [
 {
 "system": "LIRR",
-"trip_id": "6004XX_2026-06-20",
-"route_id": "5",
-"latitude": 40.876609802246094,
-"longitude": -72.5239486694336,
-"bearing": null,
-"train_num": "508",
-"stop_id": null,
-"stop_name": null,
-"direction": null,
-"prev_lat": null,
-"prev_lon": null,
-"prev_time": null,
-"next_time": null
-},
-{
-"system": "LIRR",
 "trip_id": "6006_2026-06-20",
 "route_id": "5",
 "latitude": 40.74440383911133,

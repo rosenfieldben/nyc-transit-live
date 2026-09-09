@@ -20,8 +20,21 @@ RUN (from the repository root):
 
     .venv/bin/python docs/reviews/audit-2026-09-05/f02_canceled_railroad_gps.py
 
-Exits 0 while the finding still behaves as recorded, non-zero with a message
-naming the changed measurement when it does not.
+Exits 0 while the record matches the code, non-zero with a message naming the
+changed measurement when it does not.
+
+FIXED ON claude/release1-small-fixes, SO THIS IS NOW A REGRESSION CHECK ON THE FIX.
+Every panel drives the same bytes, the same clocks and the same production functions
+as before; what changed is the value each one is required to measure, and each check
+that moved says the old value in its label so the before and the after read side by
+side. In one line: cancellation is resolved BEFORE GPS emission, so the canceled trip
+is one of 69 positioned vehicles on the wire and one of 68 served.
+
+The panel that gained a row is the control table in Panel C. It now also drives a
+TripUpdate that says SCHEDULED while the VehicleDescriptor says CANCELED, because the
+capture's own canceled vehicle reports SCHEDULED on its own descriptor: a decoder that
+read the vehicle instead of joining to the TripUpdate would pass every other row here
+and still ship the defect.
 
 WHAT IS MEASURED, AND HOW
 
@@ -137,15 +150,18 @@ EXPECT = {
     "lirr_entities": 201,
     "canceled_trip_updates": 8,
     "positioned_trip_ids": 69,
-    "gps_trains": 69,
-    "golden_records": 69,
+    # 68, not the 69 positioned vehicles on the wire: the fix drops the canceled one
+    # before emission. The wire count stays 69 above, which is what makes the
+    # difference measurable rather than merely asserted.
+    "gps_trains": 68,
+    "golden_records": 68,
     "placed_at_header_now": 56,
     "arrival_stations_at_header_now": 117,
     "arrival_rows_at_header_now": 765,
     "control_rows_canceled": 1005,
     "control_rows_scheduled": 1007,
     "control_own_rows_scheduled": 2,
-    "api_railroad_records": 158,
+    "api_railroad_records": 157,
     "api_stop83_rows_captured": 6,
     "api_stop83_rows_control": 7,
     "api_stop198_rows_captured": 6,
@@ -301,9 +317,13 @@ first = gps_trains[0]
 print(f"feeds._decode_railroad_vehicles(capture, 'LIRR', now=header)  -> {len(gps_trains)} GPS trains")
 print(f"feed_timestamp returned                                        {feed_ts}")
 print(f"records for the canceled trip                                  {len(gps_hits)}")
-print(f"index of the canceled trip in the emitted list                 {gps_trains.index(gps_hits[0])}")
+print(f"positioned vehicles on the wire                                {len(positioned_ids)}")
+print(f"dropped before emission                                        "
+      f"{len(positioned_ids) - len(gps_trains)}")
 print()
-print("the emitted record:")
+print("BEFORE THE FIX this trip was emitted, and it was the FIRST of 69 records; the")
+print("committed golden listed it first too, matching byte for byte, which is how it")
+print("survived. The first record now is a running train:")
 for key, value in first.items():
     print(f"    {key:<11} {value!r}")
 print()
@@ -311,18 +331,17 @@ print(f"golden railroad_lirr_expected.json: now={GOLDEN['now']} records={len(GOL
 print(f"golden record [0] trip_id/route_id/train_num  "
       f"{GOLDEN['trains'][0]['trip_id']!r} / {GOLDEN['trains'][0]['route_id']!r}"
       f" / {GOLDEN['trains'][0]['train_num']!r}")
+print(f"canceled trip anywhere in the golden          "
+      f"{any(t['trip_id'] == TRIP_ID for t in GOLDEN['trains'])}")
 print(f"decoder output equals the golden list exactly  {gps_trains == GOLDEN['trains']}")
 
 check("GPS trains decoded", len(gps_trains), EXPECT["gps_trains"])
-check("canceled trip emitted as GPS", len(gps_hits), 1)
-check("canceled trip is the FIRST emitted record", gps_trains.index(gps_hits[0]), 0)
-check("emitted route_id", first["route_id"], "5")
-check("emitted train_num", first["train_num"], "508")
-check("emitted trip_id", first["trip_id"], TRIP_ID)
+check("canceled trip emitted as GPS (was 1)", len(gps_hits), 0)
+check("exactly one positioned vehicle dropped", len(positioned_ids) - len(gps_trains), 1)
+check("first emitted record is not the canceled trip", first["trip_id"] != TRIP_ID, True)
 check("golden record count", len(GOLDEN["trains"]), EXPECT["golden_records"])
-check("golden first record trip_id", GOLDEN["trains"][0]["trip_id"], TRIP_ID)
-check("golden first record route_id", GOLDEN["trains"][0]["route_id"], "5")
-check("golden first record train_num", GOLDEN["trains"][0]["train_num"], "508")
+check("canceled trip absent from the golden (was record 0)",
+      any(t["trip_id"] == TRIP_ID for t in GOLDEN["trains"]), False)
 check("decoder output matches the golden", gps_trains == GOLDEN["trains"], True)
 
 # ------------------------- Panel C: both sides, at the production decoders ----
@@ -334,7 +353,9 @@ rows = arrival_rows(arrivals)
 placed_hits = [t for t in placed if t["trip_id"] == TRIP_ID]
 row_hits = [r for r in rows if r[2]["trip_id"] == TRIP_ID]
 
-print("at now = the capture's own header timestamp:")
+print("at now = the capture's own header timestamp. The two passes AGREE now; before")
+print("the fix the GPS row below read True while both others read False, which is the")
+print("disagreement F02 named:")
 print(f"    GPS pass       _decode_railroad_vehicles  {len(gps_trains)} trains,"
       f" canceled trip present: {bool(gps_hits)}")
 print(f"    placement pass _decode_railroad_feed      {len(placed)} placed trains,"
@@ -347,6 +368,7 @@ check("arrival stations at header now", len(arrivals), EXPECT["arrival_stations_
 check("arrival rows at header now", len(rows), EXPECT["arrival_rows_at_header_now"])
 check("canceled trip placed", len(placed_hits), 0)
 check("canceled trip in arrivals", len(row_hits), 0)
+check("canceled trip in GPS, the pass that used to disagree", len(gps_hits), 0)
 
 print()
 print("CONTROL. Same capture, same stops, decode clock frozen at"
@@ -364,6 +386,13 @@ variants = (
     ("TripUpdate flipped to SCHEDULED", {"trip_sr": SR.SCHEDULED}),
     ("TripUpdate flipped to DELETED", {"trip_sr": SR.DELETED}),
     ("VehicleDescriptor set CANCELED", {"vehicle_sr": SR.CANCELED}),
+    # THE VARIANT THAT SEPARATES THE JOIN FROM THE VEHICLE'S OWN WORD, added with the
+    # fix. The TripUpdate says the trip is running and the vehicle says it is
+    # canceled; the vehicle is not the signal, so the train is emitted. A decoder
+    # that read the vehicle's schedule_relationship instead of joining would drop it
+    # here and would still pass every other row of this table.
+    ("TripUpdate SCHEDULED, VehicleDescriptor CANCELED",
+     {"trip_sr": SR.SCHEDULED, "vehicle_sr": SR.CANCELED}),
 )
 for label, kwargs in variants:
     raw = flipped(LIRR_RAW, **kwargs) if kwargs else LIRR_RAW
@@ -386,12 +415,18 @@ captured_label = variants[0][0]
 scheduled_label = variants[1][0]
 deleted_label = variants[2][0]
 vehicle_label = variants[3][0]
+split_label = variants[4][0]
 
+in_gps_by_label = {
+    label: any(t["trip_id"] == TRIP_ID for t in control_gps[label]) for label, _ in variants
+}
 print()
-print("GPS output identical across all four variants: "
-      f"{all(control_gps[label] == control_gps[captured_label] for label, _ in variants)}")
-print("So the GPS pass reads no schedule_relationship at all: from the map's point")
-print("of view a canceled trip, a deleted trip and a running trip are the same feed.")
+print("BEFORE THE FIX the GPS output was identical across every variant, because the")
+print("pass read no schedule_relationship at all: a canceled trip, a deleted trip and")
+print("a running trip were the same feed from the map's point of view. Now the GPS")
+print("column tracks the TRIP UPDATE and nothing else:")
+for label, _ in variants:
+    print(f"    {label:<48} trip in GPS: {in_gps_by_label[label]}")
 
 check("control: canceled arrival rows", control_rows[captured_label], EXPECT["control_rows_canceled"])
 check("control: canceled trip rows when CANCELED", control_own[captured_label], 0)
@@ -407,8 +442,21 @@ check(
     control_own[vehicle_label],
     0,
 )
-for label, _ in variants:
-    check(f"control: GPS output unchanged by {label}", control_gps[label], control_gps[captured_label])
+# The GPS column, which is what the fix changed. Each row states the trip's presence
+# rather than comparing whole lists, so a failure names the variant that went wrong.
+check("control GPS: absent when the TripUpdate says CANCELED", in_gps_by_label[captured_label], False)
+check("control GPS: present when the TripUpdate says SCHEDULED", in_gps_by_label[scheduled_label], True)
+check("control GPS: absent when the TripUpdate says DELETED", in_gps_by_label[deleted_label], False)
+check(
+    "control GPS: still absent when the VEHICLE also says CANCELED",
+    in_gps_by_label[vehicle_label],
+    False,
+)
+check(
+    "control GPS: PRESENT when only the VEHICLE says CANCELED, because the join is the signal",
+    in_gps_by_label[split_label],
+    True,
+)
 
 # ------------------------------- Panel D: the same disagreement over HTTP ----
 
@@ -499,20 +547,21 @@ def board_total(board: dict) -> int:
     return sum(len(rows) for rows in board["directions"].values())
 
 
-print("The map endpoint serves the canceled train in BOTH runs and its record is")
-print("byte-identical between them: "
-      f"{[t for t in cap_feed['data'] if t['trip_id'] == TRIP_ID] == [t for t in ctl_feed['data'] if t['trip_id'] == TRIP_ID]}")
-print("The station board serves it only in the control. Map and board disagree.")
+print("BEFORE THE FIX the map endpoint served the canceled train in BOTH runs, with a")
+print("byte-identical record, while the station board served it only in the control:")
+print("map and board disagreed about the same trip in the same response cycle. Now")
+print("the map serves it only in the control too, and one marker separates the runs:")
+print(f"    captured (TripUpdate CANCELED)  {len(cap_feed['data'])} markers, train 508 present: "
+      f"{any(t['trip_id'] == TRIP_ID for t in cap_feed['data'])}")
+print(f"    control  (TripUpdate SCHEDULED) {len(ctl_feed['data'])} markers, train 508 present: "
+      f"{any(t['trip_id'] == TRIP_ID for t in ctl_feed['data'])}")
 
 check("api: marker count (captured)", len(cap_feed["data"]), EXPECT["api_railroad_records"])
-check("api: marker count (control)", len(ctl_feed["data"]), EXPECT["api_railroad_records"])
-check("api: canceled trip on the map (captured)",
-      sum(1 for t in cap_feed["data"] if t["trip_id"] == TRIP_ID), 1)
+check("api: marker count (control)", len(ctl_feed["data"]), EXPECT["api_railroad_records"] + 1)
+check("api: canceled trip on the map (captured, was 1)",
+      sum(1 for t in cap_feed["data"] if t["trip_id"] == TRIP_ID), 0)
 check("api: canceled trip on the map (control)",
       sum(1 for t in ctl_feed["data"] if t["trip_id"] == TRIP_ID), 1)
-check("api: map record identical across variants",
-      [t for t in cap_feed["data"] if t["trip_id"] == TRIP_ID],
-      [t for t in ctl_feed["data"] if t["trip_id"] == TRIP_ID])
 check("api: stop 83 rows (captured)", board_total(cap_83), EXPECT["api_stop83_rows_captured"])
 check("api: stop 83 rows (control)", board_total(ctl_83), EXPECT["api_stop83_rows_control"])
 check("api: stop 83 canceled-trip rows (captured)", board_hits(cap_83), 0)
@@ -596,17 +645,15 @@ for name in ("SCHEDULED", "CANCELED", "DELETED"):
         print(f"        board row: stop {stop_id} {MNR_STOPS[stop_id]['name']},"
               f" bucket {bucket}, train {row['train_num']}, arrival {row['arrival']:.0f}")
 print()
-print(f"GPS record identical for SCHEDULED, CANCELED and DELETED: "
-      f"{synth_gps['SCHEDULED'] == synth_gps['CANCELED'] == synth_gps['DELETED']}")
-print(f"the emitted GPS record: {json.dumps(synth_gps['CANCELED'][0], sort_keys=True)}")
+print("BEFORE THE FIX all three rows read 1 in the GPS column and the record was")
+print("identical across them. The combined layout is the arm the trip_id join cannot")
+print("reach, because MNR's vehicle.trip.trip_id is the TRAIN NUMBER rather than the")
+print("trip_update's internal id, so it is read off the entity itself.")
+print(f"the emitted GPS record when SCHEDULED: {json.dumps(synth_gps['SCHEDULED'][0], sort_keys=True)}")
 
 check("synthetic MNR: GPS emitted when SCHEDULED", len(synth_gps["SCHEDULED"]), 1)
-check("synthetic MNR: GPS emitted when CANCELED", len(synth_gps["CANCELED"]), 1)
-check("synthetic MNR: GPS emitted when DELETED", len(synth_gps["DELETED"]), 1)
-check("synthetic MNR: GPS record unchanged by CANCELED",
-      synth_gps["CANCELED"], synth_gps["SCHEDULED"])
-check("synthetic MNR: GPS record unchanged by DELETED",
-      synth_gps["DELETED"], synth_gps["SCHEDULED"])
+check("synthetic MNR: GPS emitted when CANCELED (was 1)", len(synth_gps["CANCELED"]), 0)
+check("synthetic MNR: GPS emitted when DELETED (was 1)", len(synth_gps["DELETED"]), 0)
 check("synthetic MNR: board rows when SCHEDULED",
       synth_rows["SCHEDULED"], EXPECT["mnr_synth_arrival_rows_scheduled"])
 check("synthetic MNR: board rows when CANCELED", synth_rows["CANCELED"], 0)
@@ -640,41 +687,46 @@ print(f"lock                             {lock_line}")
 print(f"TripDescriptor DELETED resolves  {deleted_value}")
 print(f"_DROP_TRIP_RELATIONSHIPS         {sorted(_DROP_TRIP_RELATIONSHIPS)}"
       f"  (CANCELED={SR.Value('CANCELED')}, DELETED={deleted_value})")
-print("placement/arrivals filter at feeds/railroad.py:305 drops both")
+print("placement/arrivals filter drops both, and so does the GPS pass now")
 print(f"_decode_railroad_vehicles mentions schedule_relationship anywhere: {gps_reads_sr}")
 print()
-print("So the pin bought a working DELETED filter for the board only. On the GPS")
-print("path DELETED is treated exactly like CANCELED and exactly like SCHEDULED:")
-print("the marker is emitted either way (measured in Panels C and E).")
+print("BEFORE THE FIX that last line read False: the pin bought a working DELETED")
+print("filter for the board only, and on the GPS path DELETED was treated exactly like")
+print("CANCELED and exactly like SCHEDULED. Both paths now read the same drop set, so")
+print("the enum the pin activated governs the map as well (Panels C and E measure it).")
 
 check("DELETED enum value", deleted_value, EXPECT["deleted_enum"])
 check("DELETED is in the drop set", deleted_value in _DROP_TRIP_RELATIONSHIPS, True)
 check("CANCELED is in the drop set", SR.Value("CANCELED") in _DROP_TRIP_RELATIONSHIPS, True)
-check("GPS decoder never reads schedule_relationship", gps_reads_sr, False)
+check("GPS decoder now reads schedule_relationship (was False)", gps_reads_sr, True)
 
 # ------------------------------------- Panel G: is the marker marked at all --
 
 banner("PANEL G: does the emitted GPS record carry ANY cancellation marking")
 
 model_fields = sorted(models.RailroadTrain.model_fields)
-served = [t for t in cap_feed["data"] if t["trip_id"] == TRIP_ID][0]
+served_records = [t for t in cap_feed["data"] if t["trip_id"] == TRIP_ID]
+control_served = [t for t in ctl_feed["data"] if t["trip_id"] == TRIP_ID][0]
 suspicious = [
     field
     for field in model_fields
     if any(word in field for word in ("cancel", "delete", "status", "state", "relationship", "service"))
 ]
 print(f"models.RailroadTrain fields ({len(model_fields)}): {model_fields}")
-print(f"keys on the served record   ({len(served)}): {sorted(served)}")
+print(f"records served for the canceled trip: {len(served_records)}")
 print(f"fields that could carry a cancellation marking: {suspicious or 'none'}")
-print(f"the served record's non-null fields: "
-      f"{ {k: v for k, v in served.items() if v is not None} }")
+print(f"the CONTROL run's record (same trip, TripUpdate flipped to SCHEDULED): "
+      f"{ {k: v for k, v in control_served.items() if v is not None} }")
 print()
-print("Nothing in the record distinguishes it from a running train. The nulls it")
-print("does carry (stop_id, direction, next_time) mean 'this is a GPS train, not a")
-print("placed one', which is what every healthy GPS marker carries too.")
+print("THE QUESTION THIS PANEL ASKED IS NOW MOOT, AND THAT IS THE ANSWER. There is no")
+print("marking to look for because there is no record: the model still has no field")
+print("that could carry a cancellation, so 'emit it and mark it' was never available")
+print("without a schema change, and not emitting it is what the boards already do.")
+print("The control record above is what a RUNNING train of the same trip serves.")
 
 check("no cancellation-bearing field on the model", suspicious, [])
-check("served record has exactly the model's fields", sorted(served), model_fields)
+check("canceled trip serves no record at all (was 1, unmarked)", len(served_records), 0)
+check("the running control still serves the model's fields", sorted(control_served), model_fields)
 
 # ------------------------------------------------------------- disposition ---
 
@@ -688,32 +740,35 @@ separate GPS entity          {VEHICLE_ENTITY_ID}, position
                             label 508, vehicle.timestamp {veh_entity.vehicle.timestamp}
 it is the ONLY one of the {len(canceled_ids)} canceled LIRR TripUpdates that also has a position
 
-GPS pass    {len(gps_trains)} trains, the canceled trip FIRST, route 5, train 508,
+GPS pass    {len(gps_trains)} trains from {len(positioned_ids)} positioned vehicles: the canceled trip is
+            dropped before emission (it used to be emitted FIRST, route 5, train 508),
             identical to the {len(GOLDEN['trains'])}-record golden railroad_lirr_expected.json
 board pass  {len(placed)} placed trains and {len(rows)} arrival rows over {len(arrivals)} stations,
-            zero of them the canceled trip
+            zero of them the canceled trip. The two passes now agree.
 
 control at now={CONTROL_NOW:.0f} (inside the capture): flipping only that entity's
     schedule_relationship changes the board from {control_own[captured_label]} to
     {control_own[scheduled_label]} rows for the trip
     ({control_rows[captured_label]} -> {control_rows[scheduled_label]} rows overall),
-    and leaves the GPS output bit-for-bit unchanged in all four variants
+    and now moves the GPS output with it: trip in GPS is
+    {in_gps_by_label[captured_label]} as captured, {in_gps_by_label[scheduled_label]} at SCHEDULED,
+    {in_gps_by_label[deleted_label]} at DELETED, and {in_gps_by_label[split_label]} when only the
+    VEHICLE says CANCELED, which is what pins the join as the signal
 
-over HTTP   /api/railroads served {len(cap_feed['data'])} markers including the canceled train,
-            same record in the CANCELED and SCHEDULED runs;
+over HTTP   /api/railroads served {len(cap_feed['data'])} markers, none of them the canceled train,
+            against {len(ctl_feed['data'])} in the SCHEDULED control which does serve it;
             /api/railroad-arrivals/LIRR/83 (Hampton Bays) served
             {board_total(cap_83)} rows without train 508, and {board_total(ctl_83)} rows WITH it in the control;
             /api/railroad-arrivals/LIRR/198 (Speonk) the same, {board_total(cap_198)} versus {board_total(ctl_198)}
 
-combined layout (synthetic MNR entity): GPS 1 record for SCHEDULED, CANCELED and
-    DELETED alike; board {synth_rows['SCHEDULED']} rows SCHEDULED,
+combined layout (synthetic MNR entity): GPS {len(synth_gps['SCHEDULED'])} record SCHEDULED,
+    {len(synth_gps['CANCELED'])} CANCELED, {len(synth_gps['DELETED'])} DELETED; board {synth_rows['SCHEDULED']} rows SCHEDULED,
     {synth_rows['CANCELED']} CANCELED, {synth_rows['DELETED']} DELETED
 
-DELETED     enum {deleted_value} under {lock_line}; in the board's drop set,
-            absent from the GPS path, which reads no schedule_relationship at all
+DELETED     enum {deleted_value} under {lock_line}; in the drop set both passes read
 
-marking     the served record carries {len(served)} fields, none of them a status,
-            cancellation or service-relationship field
+marking     nothing to mark: {len(served_records)} records are served for the canceled trip, and the
+            model still carries no status, cancellation or service-relationship field
 """)
 
 if failures:
@@ -724,10 +779,14 @@ if failures:
     print("DISPOSITION: CHANGED, this script no longer matches the recorded finding.")
     sys.exit(1)
 
-print("DISPOSITION: VERIFIED")
+print("DISPOSITION: FIXED (claude/release1-small-fixes)")
 print(
-    "Canceled LIRR trip 6004XX_2026-06-20 is dropped from placement and arrivals"
-    " but still served as an unmarked route 5 / train 508 GPS marker (first golden"
-    " record, present at /api/railroads while absent from both of its station"
-    " boards); the same holds for the combined MNR entity layout and for DELETED."
+    "Canceled LIRR trip 6004XX_2026-06-20 USED TO BE served as an unmarked route 5 /"
+    " train 508 GPS marker, the first of 69 golden records, present at /api/railroads"
+    " while absent from both of its station boards. Cancellation is now resolved"
+    " BEFORE emission, so it is one of 69 positioned vehicles and one of 68 served:"
+    " absent from the GPS pass, the golden, and /api/railroads, while the SCHEDULED"
+    " control still serves it. The combined MNR layout and DELETED move with it, and"
+    " a vehicle whose own descriptor says CANCELED while its TripUpdate says SCHEDULED"
+    " is still emitted, because the join is the signal and the vehicle's word is not."
 )

@@ -142,6 +142,14 @@ STOPS = {
 LIRR_FEED = parsed(LIRR_RAW)
 HEADER_TS = float(LIRR_FEED.header.timestamp)
 
+# THE ONE TRIP F02's FIX REMOVES FROM THE SERVED OUTPUT, named here because F01's
+# served counts move by exactly it and by nothing else. It is a canceled trip that
+# also carries a positioned vehicle, and its observation is 50517 s old, so it was
+# both one of this capture's 69 positioned vehicles and one of its 42 stale ones. F01
+# is unchanged in substance: 41 stale observations are still published with no
+# per-vehicle age. See f02_canceled_railroad_gps.py.
+CANCELED_BY_F02 = "6004XX_2026-06-20"
+
 
 # ---------------------------------------------------------------------------
 # Section A: does the decoder read the individual observation time, or `now`?
@@ -258,7 +266,18 @@ def section_b() -> dict[str, float]:
         print(f"      {trip_id:<24} {age:>8.0f} s  = {hms(age)}")
 
     check("positioned LIRR vehicles == 69", len(positioned) == 69, str(len(positioned)))
-    check("all 69 are inside the railroad box and decode", len(in_box) == 69 == len(decoded))
+    # 69 IN THE BOX, 68 DECODED, AND THE ONE DIFFERENCE IS NOT F01's. F02 was fixed on
+    # claude/release1-small-fixes: the canceled trip 6004XX_2026-06-20 is dropped
+    # before emission, and it happens to be one of the stale observations (50517 s).
+    # The wire numbers below are untouched, because F01 is a statement about what the
+    # CAPTURE contains and the audit measured it there; only the served counts move,
+    # and they move by exactly that one trip.
+    check("all 69 are inside the railroad box", len(in_box) == 69, str(len(in_box)))
+    check(
+        "68 decode: the 69 in the box less the one F02 now drops as canceled",
+        len(decoded) == 68 and CANCELED_BY_F02 not in {t["trip_id"] for t in decoded},
+        f"decoded={len(decoded)}",
+    )
     check("observations over 90 seconds old == 42", over_90 == 42, str(over_90))
     check("observations over five minutes old == 32", over_300 == 32, str(over_300))
     check("observations over ten minutes old == 25", over_600 == 25, str(over_600))
@@ -323,12 +342,20 @@ async def section_c_and_d(ages: dict[str, float]) -> None:
     survivors = stale_ids & published_gps_ids
     oldest_id = max(ages, key=lambda tid: ages[tid])
     print(f"  of the 42 stale observations, still published as GPS: {len(survivors)}")
+    print(f"  the 42nd is {CANCELED_BY_F02}, dropped as CANCELED by F02's fix rather")
+    print("  than for its age; F01's finding is the other 41, which are published with")
+    print("  no per-vehicle age of any kind.")
     print(f"  the 14h 54m 36s observation ({oldest_id}) is published: {oldest_id in published_gps_ids}")
 
     check("no failed systems", health == {"total": 2, "ok": 2, "failed": []}, str(health))
     check("the cache records no error", entry["error"] is None)
-    check("all 69 LIRR GPS records are emitted", len(lirr_gps) == 69, str(len(lirr_gps)))
-    check("every one of the 42 stale observations is published", len(survivors) == 42)
+    check("68 LIRR GPS records are emitted (69 less F02's canceled trip)",
+          len(lirr_gps) == 68, str(len(lirr_gps)))
+    check(
+        "41 of the 42 stale observations are published; the 42nd is F02's canceled trip",
+        len(survivors) == 41 and (stale_ids - survivors) == {CANCELED_BY_F02},
+        f"survivors={len(survivors)} unpublished={sorted(stale_ids - survivors)}",
+    )
     check("the envelope's feed_timestamp is the LIRR header", entry["feed_timestamp"] == HEADER_TS)
 
     rule("D. What the served JSON exposes per vehicle (real app, real response_model)")
@@ -468,7 +495,11 @@ def section_e(ages: dict[str, float]) -> None:
     moved_placed_ids = {t["trip_id"] for t in moved_placed}
     print()
     print(f"  injected: trip {oldest_id} (the 14h 54m 36s one) moved to lat 0 / lon 0:")
-    print(f"    GPS records                        : {len(moved_gps)} (was {len(ages)}), "
+    # The baseline is what THIS decoder emits from the untouched capture (68 since
+    # F02's fix), not the 69 observations on the wire: the injected fault removes one
+    # more, and comparing against the wire count would silently absorb F02's drop.
+    baseline_gps, _ = feeds._decode_railroad_vehicles(LIRR_RAW, "LIRR", HEADER_TS)
+    print(f"    GPS records                        : {len(moved_gps)} (was {len(baseline_gps)}), "
           f"that trip present: {oldest_id in moved_gps_ids}")
     print(f"    schedule-placed records            : {len(moved_placed)} (was {len(placed)}), "
           f"that trip placed: {oldest_id in moved_placed_ids}")
@@ -476,7 +507,7 @@ def section_e(ages: dict[str, float]) -> None:
     print("    classified it as GPS-equipped and suppressed it. Two independent notions.")
     check(
         "the box-rejected vehicle leaves the GPS output",
-        len(moved_gps) == len(ages) - 1 and oldest_id not in moved_gps_ids,
+        len(moved_gps) == len(baseline_gps) - 1 and oldest_id not in moved_gps_ids,
     )
     check(
         "the placement pass suppresses it anyway (its own 'has GPS' set)",
@@ -513,7 +544,8 @@ def main() -> int:
     print("DISPOSITION: VERIFIED  All four claims hold: the decoder ignores `now` and "
           "discards vehicle.timestamp, the capture's 69 positioned LIRR vehicles include "
           "42 over 90 s, 32 over 5 min and 25 over 10 min with the oldest at 53676 s "
-          "(14h 54m 36s), the full aggregation publishes all 69 with no failed systems and "
+          "(14h 54m 36s), the full aggregation publishes 68 of them (the 69th is the trip "
+          "F02's fix now drops as canceled, not an age filter) with no failed systems and "
           "no per-vehicle age in the served JSON, and the placement pass suppresses the "
           "same trips through its own independent notion of GPS.")
     return 0

@@ -552,3 +552,143 @@ test("A1t. an NJ Transit station whose route has no line still gets a chip, not 
   // because that is what the browser reports back.
   expect(styles).toEqual(["rgb(230, 104, 89)", "rgb(74, 78, 105)"]);
 });
+
+/* ---- F12: a superseded selection's error body may not touch the panel ---------
+   Audit 5's F12, fixed on claude/release1-small-fixes. The panel's sequence guard
+   used to run after the response HEADERS and after the SUCCESS body, and nowhere
+   after the ERROR body, so station A's 503 detail line could land after the rider
+   had already selected station B and overwrite B's panel with A's failure.
+
+   THIS NEEDS THE HEADERS AND THE BODY TO ARRIVE SEPARATELY, which no route.fulfill
+   can express: Playwright delivers a stubbed response whole, and a whole late
+   response is caught by the guard that already existed, so a spec built that way
+   would pass with the fix reverted and prove nothing. A 503's detail line really is
+   a second await over a body the browser reads after the status is known, so the
+   split below is the network fact the defect lives in, not a contrivance: window
+   .fetch is wrapped before any app script runs, and the test decides when each half
+   of a held response resolves. Everything not held is served normally.
+
+   Hermetic counterpart: docs/reviews/audit-2026-09-05/f12_stale_error_body_overwrites.mjs,
+   which drives the same interleaving over the real committed LIRR capture in a vm.
+------------------------------------------------------------------------------- */
+
+// The 503 a warming backend really sends, copied from backend/cache.py _serve_cached.
+const WARMING_DETAIL = "Feed cache is warming up; try again in a few seconds.";
+
+// Wrap window.fetch so ONE arrivals response can be delivered in two halves. Installed
+// as an init script so it is in place before stations.js runs; every request that is
+// not explicitly held falls through to the real fetch, and so still meets mock.js.
+async function installArrivalsDeck(page) {
+  await page.addInitScript(() => {
+    const real = window.fetch.bind(window);
+    const deck = { pattern: "/api/subway-arrivals/", holdNext: false, calls: [] };
+    window.__deck = deck;
+    window.fetch = (input, init) => {
+      const url = String(input && input.url ? input.url : input);
+      if (!deck.holdNext || !url.includes(deck.pattern)) return real(input, init);
+      // Claimed by the test. One call only: selectStation calls fetchPanelArrivals
+      // BEFORE it syncs the map, so the first arrivals request after a selection is
+      // always the panel's and the popup's goes to the real fetch behind it.
+      deck.holdNext = false;
+      let sendHeaders;
+      let sendBody;
+      const headers = new Promise((resolve) => {
+        sendHeaders = resolve;
+      });
+      const body = new Promise((resolve) => {
+        sendBody = resolve;
+      });
+      deck.calls.push({
+        url,
+        headers: (ok, status) => sendHeaders({ ok, status, json: () => body }),
+        body: (payload) => sendBody(payload),
+      });
+      return headers;
+    };
+  });
+}
+
+const deckCallCount = (page) => page.evaluate(() => window.__deck.calls.length);
+const holdNextArrivals = (page) => page.evaluate(() => {
+  window.__deck.holdNext = true;
+});
+const deckHeaders = (page, i, ok, status) =>
+  page.evaluate(([n, o, s]) => window.__deck.calls[n].headers(o, s), [i, ok, status]);
+const deckBody = (page, i, payload) =>
+  page.evaluate(([n, p]) => window.__deck.calls[n].body(p), [i, payload]);
+
+test("A1u. a superseded station's error body never overwrites the station on screen (F12)", async ({
+  page,
+}) => {
+  const ctx = await installMocks(page);
+  await installArrivalsDeck(page);
+  // Canal St's own arrivals, so the rows on screen are provably B's and not the
+  // fixture every subway station would otherwise share.
+  const canalArrivals = {
+    fetched_at: fx.FROZEN_S,
+    station_id: "A31",
+    station_name: "Canal St",
+    directions: { Uptown: [{ route_id: "A", trip_id: "canal-1", arrival: fx.FROZEN_S + 240 }] },
+  };
+  await open(page, { install: false });
+  expect(ctx.leaks, "the deck must not have let anything reach the network").toEqual([]);
+
+  // Station A: the rider selects Times Sq and its panel fetch is held mid-flight.
+  await holdNextArrivals(page);
+  await page.locator("#stations-search").fill("times");
+  await page.locator("#stations-results button.station-row").first().click();
+  await expect.poll(() => deckCallCount(page), { timeout: 10_000 }).toBe(1);
+  expect(await page.evaluate(() => window.__deck.calls[0].url)).toContain("/api/subway-arrivals/127");
+
+  // A answers 503 HEADERS. Its detail line, the second await, stays in the air.
+  await deckHeaders(page, 0, false, 503);
+
+  // Station B, selected while A's error body is still pending. This is the bump that
+  // the error branch used to read and then ignore.
+  await holdNextArrivals(page);
+  await page.locator("#stations-search").fill("canal");
+  await page.locator("#stations-results button.station-row").first().click();
+  await expect.poll(() => deckCallCount(page), { timeout: 10_000 }).toBe(2);
+
+  // B answers in full and the panel renders it.
+  await deckHeaders(page, 1, true, 200);
+  await deckBody(page, 1, canalArrivals);
+  const detail = page.locator("#stations-detail");
+  await expect(detail).toContainText("Canal St");
+  await expect(detail.locator("ul.station-arrivals li")).toHaveCount(1);
+  const rowsBefore = await detail.locator("ul.station-arrivals li").first().innerText();
+  const spokenBefore = await page.locator("#stations-announce").innerText();
+
+  // AND NOW A's DELAYED 503 BODY LANDS, two selections stale.
+  await deckBody(page, 0, { detail: WARMING_DETAIL });
+
+  // SAMPLED, NOT POLLED ONCE. There is no timer between the body resolving and the
+  // render that used to follow it, only a microtask chain, and a single assertion
+  // would pass before the body had been read at all. Each round trip below gives the
+  // page room to run it; under the reverted guard the warming text appears in the
+  // first few. A7g records the same trap in the bus specs.
+  for (let i = 0; i < 10; i++) {
+    expect(
+      await detail.locator("ul.station-arrivals li").count(),
+      `B's arrivals must survive A's stale error body (sample ${i})`,
+    ).toBe(1);
+  }
+  await expect(detail).toContainText("Canal St");
+  await expect(detail).not.toContainText("warming up");
+  expect(await detail.locator("ul.station-arrivals li").first().innerText()).toBe(rowsBefore);
+  expect(await page.evaluate(() => panelError), "no error may be recorded for a station left behind").toBe(
+    null,
+  );
+  expect(
+    await page.locator("#stations-announce").innerText(),
+    "and the live region must not speak A's failure under B's name",
+  ).toBe(spokenBefore);
+
+  // STAYS SHOWING IT. The defect was sticky rather than a one-frame flicker: the
+  // production tick repainted the same overwritten state every second, so the repaint
+  // is part of the claim.
+  await page.evaluate(() => renderStationDetail({ tick: true }));
+  await expect(detail).toContainText("Canal St");
+  await expect(detail.locator("ul.station-arrivals li")).toHaveCount(1);
+  await expect(detail).not.toContainText("warming up");
+});

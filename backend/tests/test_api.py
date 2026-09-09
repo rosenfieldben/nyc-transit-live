@@ -831,9 +831,12 @@ async def test_healthz_lenient_one_fresh_other_stale(client, healthz_env):
     res = await client.get("/healthz")
     assert res.status_code == 200  # >= 1 fresh feed -> healthy
     # LENIENT IS NOT SILENT (F1). The status code is still 200 on purpose, because
-    # a lagging upstream is not fixed by restarting the container. The stale feed
-    # is still a fact something has to be able to watch, and before F1 this
-    # response carried no trace of it at all.
+    # the code answers "may this build go live" and nothing else: Railway reads this
+    # probe only while a deployment is being promoted and never restarts a live
+    # container on it (models.HEALTH_GATING_CODES carries the citation). A lagging
+    # upstream is not a reason to refuse a build. The stale feed is still a fact
+    # something has to be able to watch, and before F1 this response carried no
+    # trace of it at all.
     assert res.json()["degraded"] == [models.HEALTH_FEED_CONTENT_STALE]
 
 
@@ -920,13 +923,16 @@ async def test_healthz_publishes_a_spent_njt_mint_budget_without_gating_on_it(
     is spent the NJ Transit layer goes dark while NJ Transit itself is perfectly
     healthy, and every other signal the app publishes says what a real outage says.
 
-    NEVER 503, and the reason is sharper than for the other non-gating codes: a
-    restart does not merely fail to help, it mints on the fresh process's first NJ
-    Transit request and spends another of the ten that already ran out."""
+    NEVER 503, and the reason is sharper than for the other non-gating codes
+    because gating has a price rather than merely no benefit. A 503 refuses the
+    promotion, a refused promotion is retried, and each fresh process mints on its
+    first NJ Transit request, spending another of the ten that already ran out. It
+    is not that a restart fails to help; the probe would consume the budget it is
+    reporting."""
     _fresh(healthz_env["buses"])
     monkeypatch.setattr(njt_auth.TOKEN_CACHE, "mint_quota_refused", True)
     res = await client.get("/healthz")
-    assert res.status_code == 200, "a spent budget must never restart the container"
+    assert res.status_code == 200, "a spent budget must never refuse a deploy"
     assert res.json()["status"] == "pass"
     assert models.HEALTH_NJT_MINT_QUOTA in res.json()["degraded"]
     assert "reasons" not in res.json(), "the non-gating code must not reach reasons"
@@ -1007,8 +1013,10 @@ async def test_healthz_subway_groups_down_is_a_strict_majority(
         raising=False,
     )
     res = await client.get("/healthz")
-    # Never gating, whichever side of the boundary: the subway being mostly dark
-    # is upstream's problem and a restart would not fix it.
+    # Never gating, whichever side of the boundary: the subway being mostly dark is
+    # upstream's problem, and the status code decides whether this build may be
+    # promoted rather than whether a running container should be restarted (which
+    # this probe never causes; see models.HEALTH_GATING_CODES).
     assert res.status_code == 200
     assert (models.HEALTH_SUBWAY_GROUPS_DOWN in res.json()["degraded"]) is expected
 

@@ -668,6 +668,96 @@ async def test_a_refresh_that_outruns_the_deadline_also_marks_the_system_block(m
     assert entry["data"] == [{"id": "T1"}], "and the last-known data is still kept"
 
 
+async def test_a_tripped_deadline_also_degrades_the_operational_health_dict(monkeypatch, cache):
+    """F10, and it is a CALL SITE rather than new machinery.
+
+    A tripped REFRESH_DEADLINE_S recorded its 504 and flipped every envelope block to
+    ok:false, but never called the degrader, so app.state.subway_feed_health kept its
+    last happy value. The audit measured the consequence on the surfaces that matter:
+    /api/status reported subway_feeds 8 of 8 healthy and /healthz answered 200 with an
+    empty degraded list, which is the only signal anything outside the process reads.
+    Its control arm drove the very same _feed_degrader hook and reported 0 of 8, which
+    is what "the machinery already exists" means.
+
+    Driven through the wrapper with the degrader the cycle builds, because the claim is
+    that this wrapper asks for it.
+    """
+    entry = cache["subways"]
+    app_module.app.state.subway_feed_health = {"total": 8, "ok": 8, "failed": []}
+    entry.update(
+        data=[{"trip_id": "T1"}],
+        fetched_at=1000.0,
+        systems={
+            "ACE": {"fetched_at": 1000.0, "ok": True, "retained_since": None, "routes": ["A"]}
+        },
+    )
+    monkeypatch.setattr(pollers, "REFRESH_DEADLINE_S", 0.01)
+
+    async def wedged():
+        await asyncio.sleep(5)
+
+    await pollers._bounded_refresh(
+        entry, wedged(), pollers._feed_degrader(app_module.app, "subways", entry)
+    )
+
+    assert app_module.app.state.subway_feed_health == {
+        "total": len(feeds.SUBWAY_FEED_URLS),
+        "ok": 0,
+        "failed": sorted(feeds.SUBWAY_FEED_URLS),
+    }, "the operational health dict must report the outage the 504 already records"
+    assert entry["systems"]["ACE"]["ok"] is False, "and the envelope block still flips"
+    assert entry["error"]["status"] == 504
+    assert entry["data"] == [{"trip_id": "T1"}], "last-known data is still kept"
+
+
+async def test_the_poll_cycle_hands_the_same_degrader_to_both_failure_paths(monkeypatch, cache):
+    """THE WIRING, not the wrapper. _bounded_refresh is correct and tested above; a
+    mutation that simply drops the argument at the call site leaves that test green
+    while /api/status goes back to reporting eight healthy groups. This drives the
+    REAL cycle into a deadline and reads the health dict the operator would."""
+    clock = _CycleClock(pollers.POLL_INTERVAL_S)
+    monkeypatch.setattr(pollers.asyncio, "sleep", clock.sleep)
+    monkeypatch.setattr(pollers, "REFRESH_DEADLINE_S", 0.01)
+    app_module.app.state.subway_feed_health = {"total": 8, "ok": 8, "failed": []}
+
+    async def wedged_subways(app, client):
+        await asyncio.sleep(5)
+
+    async def idle(app, client):
+        return None
+
+    monkeypatch.setattr(pollers, "_refresh_subways", wedged_subways)
+    for name in (
+        "_refresh_buses",
+        "_refresh_railroads",
+        "_refresh_path",
+        "_refresh_ferry",
+        "_refresh_njt",
+    ):
+        monkeypatch.setattr(pollers, name, idle)
+
+    loop_task = asyncio.create_task(pollers._poll_feeds(app_module.app))
+    try:
+        # REAL TIME, not event-loop turns. asyncio.timeout fires on the clock, and
+        # _wait_for's bare yields advance it by almost nothing, so a turn-counted wait
+        # would exhaust itself before a 10ms deadline could trip. The patched sleep
+        # passes any delay that is not the poll interval straight through, so these
+        # are genuine waits.
+        for _ in range(200):
+            if cache["subways"]["error"] is not None:
+                break
+            await asyncio.sleep(0.01)
+        assert cache["subways"]["error"]["status"] == 504
+        assert app_module.app.state.subway_feed_health["ok"] == 0, (
+            "the cycle must hand the deadline path a degrader; without it /api/status "
+            "reports every group healthy while the refresh is being killed every cycle"
+        )
+    finally:
+        loop_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await loop_task
+
+
 async def test_the_deadline_path_is_a_no_op_for_a_source_with_no_system_block(monkeypatch, cache):
     """PATH and the ferry publish no per-system block. _mark_all_systems_failed
     walks whatever is there and must not invent one, or a source that never had

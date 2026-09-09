@@ -730,15 +730,37 @@ HEALTH_DEGRADED_CODES = (
 )
 
 # The subset that makes the probe answer 503. READINESS AND SICKNESS ARE TWO
-# DIFFERENT QUESTIONS and this tuple is the seam between them: Railway restarts a
-# container on a failing healthcheck, so "one feed's upstream content is lagging"
-# must not reach the status code, while it must still reach a human. The gating
-# set is therefore exactly the three reasons the probe already had before F1, and
-# the non-gating codes are new information rather than new behavior.
+# DIFFERENT QUESTIONS and this tuple is the seam between them.
 #
-# HEALTH_NJT_MINT_QUOTA IS THE SHARPEST CASE FOR THE SPLIT YET. Restarting on it
-# would not merely fail to help: a fresh process mints on its first NJ Transit
-# request, spending another of the ten the account has already run out of.
+# WHAT THE STATUS CODE ACTUALLY DOES, stated once here because every non-gating
+# decision below and in routes/status.py rests on it. Railway calls /healthz while
+# a deployment is being PROMOTED and, under a heading for exactly this question,
+# its documentation says it "does not monitor the healthcheck endpoint after the
+# deployment has gone live"; a container restart is a separate mechanism on the
+# restart-policy page and triggers on a process exit, not on a probe. So the status
+# code has one consumer and one moment: it decides whether this build is allowed to
+# become the live deployment. Once it is live, nothing on the platform reads it
+# again, and `degraded` riding a 200 is the only thing that reaches a watcher.
+#
+# (This comment used to justify the split by saying the platform reboots a container
+# whose healthcheck fails. It does not do that after promotion, and the audit
+# ledger's N1 records the correction with the citation. The DECISIONS were right and
+# are unchanged; what follows is the reason they are right.)
+#
+# So the question a non-gating code has to answer is not "would a restart help" but
+# "is this a reason to refuse this build". A lagging upstream, a dark subway group
+# and a spent mint budget are all properties of the WORLD rather than of the code
+# being promoted: gating on them would block a good deploy for something no deploy
+# can fix, and would keep blocking for as long as the world stayed that way. They
+# must still reach a human, which is what the non-gating classification is for. The
+# gating set is therefore exactly the three reasons the probe already had before F1,
+# and the non-gating codes are new information rather than new behavior.
+#
+# HEALTH_NJT_MINT_QUOTA IS THE SHARPEST CASE FOR THE SPLIT YET, because gating on it
+# has a price and not merely no benefit. A refused promotion is retried, and each
+# fresh process mints on its first NJ Transit request, spending another of the ten
+# the account has already run out of: the probe would consume the budget it exists
+# to report.
 HEALTH_GATING_CODES = (
     HEALTH_NO_FEED_FRESH,
     HEALTH_BUS_INDEX_FAILED,
@@ -752,8 +774,12 @@ class HealthzResponse(BaseModel):
     `status` and `reasons` are unchanged from before F1: prose for a human
     reading a deploy log, and the thing that decides the status code. `degraded`
     is the machine-readable classification the contract monitor reads, and it is
-    a SUPERSET of what drove the status code, so a degraded state that is
-    deliberately not worth a restart is still visible to something that watches.
+    a SUPERSET of what drove the status code, because the status code is read only
+    while a deployment is being promoted (see HEALTH_GATING_CODES above; a running
+    instance's 503 restarts nothing and is polled by nothing). A state that is
+    deliberately not a reason to refuse the build therefore has nowhere else to be
+    seen, and `degraded` on a 200 is where something watching a LIVE deployment
+    finds it.
 
     ALWAYS PRESENT, EVEN EMPTY, unlike `reasons`. An absent list and an empty one
     have to be distinguishable: empty means this deployment classified itself and

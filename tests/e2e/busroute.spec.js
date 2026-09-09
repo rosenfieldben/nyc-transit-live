@@ -319,3 +319,117 @@ test("A7h. hiding the Buses layer mid-fetch discards the route rather than banne
   expect(await drawnLines(page), "nothing reappears when the layer comes back").toBe(0);
   await expect(page.locator("#route-banner")).toBeHidden();
 });
+
+/* ---- N3: a superseded route fetch's error body may not disown the live one ----
+   The bus half of F12, recorded as N3 in the audit ledger and fixed on
+   claude/release1-small-fixes. showBusRoute's error branch read its detail line, a
+   SECOND await, and cleared pendingBusId with no sequence re-check between them, so
+   a 503 belonging to a route the rider had already left answered busRouteOwnedBy
+   FALSE for a request that was still in flight. That is exactly the ownership
+   question applyBuses asks before clearing a line whose bus was reassigned, and the
+   comment there records the hole as closed.
+
+   Headers and body are delivered separately for the reason A1u states at length: a
+   whole late response is caught by the guard that already existed, so a spec built
+   on route.fulfill would pass with the fix reverted.
+------------------------------------------------------------------------------- */
+
+// The 503 a still-indexing backend really sends, from backend/routes/buses.py.
+const INDEXING_DETAIL = "Bus route shapes are still indexing; try again in a minute.";
+
+async function installRouteDeck(page) {
+  await page.addInitScript(() => {
+    const real = window.fetch.bind(window);
+    const deck = { pattern: "/api/bus-route/", holdNext: false, calls: [] };
+    window.__deck = deck;
+    window.fetch = (input, init) => {
+      const url = String(input && input.url ? input.url : input);
+      if (!deck.holdNext || !url.includes(deck.pattern)) return real(input, init);
+      deck.holdNext = false;
+      let sendHeaders;
+      let sendBody;
+      const headers = new Promise((resolve) => {
+        sendHeaders = resolve;
+      });
+      const body = new Promise((resolve) => {
+        sendBody = resolve;
+      });
+      deck.calls.push({
+        url,
+        headers: (ok, status) => sendHeaders({ ok, status, json: () => body }),
+        body: (payload) => sendBody(payload),
+      });
+      return headers;
+    };
+  });
+}
+
+const deckCalls = (page) => page.evaluate(() => window.__deck.calls.length);
+const holdNextRoute = (page) => page.evaluate(() => {
+  window.__deck.holdNext = true;
+});
+const routeHeaders = (page, i, ok, status) =>
+  page.evaluate(([n, o, s]) => window.__deck.calls[n].headers(o, s), [i, ok, status]);
+const routeBody = (page, i, payload) =>
+  page.evaluate(([n, p]) => window.__deck.calls[n].body(p), [i, payload]);
+
+test("A7i. a superseded route's error body never disowns the fetch still in flight (N3)", async ({
+  page,
+}) => {
+  await installMocks(page);
+  await installRouteDeck(page);
+  await open(page);
+
+  const [busA, busB] = await page.evaluate(() => [...buses.keys()].slice(0, 2));
+  expect(busB, "the fixture must carry a second bus for this to be a race at all").toBeTruthy();
+
+  // Bus A's popup opens and its route fetch is held mid-flight.
+  await holdNextRoute(page);
+  await page.evaluate((id) => buses.get(id).marker.openPopup(), busA);
+  await expect.poll(() => deckCalls(page), { timeout: 10_000 }).toBe(1);
+  // A answers 503 HEADERS. Its detail line stays in the air.
+  await routeHeaders(page, 0, false, 503);
+
+  // The rider moves to bus B. clearBusRoute bumps the sequence past A's request, and
+  // B's own fetch takes the claim.
+  await holdNextRoute(page);
+  await page.evaluate((id) => buses.get(id).marker.openPopup(), busB);
+  await expect.poll(() => deckCalls(page), { timeout: 10_000 }).toBe(2);
+  expect(
+    await page.evaluate((id) => ({ pending: pendingBusId, owned: busRouteOwnedBy(id) }), busB),
+    "B's fetch must be in flight and claimed, or there is no ownership to lose",
+  ).toEqual({ pending: busB, owned: true });
+
+  // AND NOW A's DELAYED 503 BODY LANDS, while B's fetch is still in the air.
+  await routeBody(page, 0, { detail: INDEXING_DETAIL });
+
+  // Sampled rather than asserted once, for the reason A7g records: only a microtask
+  // chain separates the body resolving from the writes that used to follow it.
+  for (let i = 0; i < 10; i++) {
+    expect(
+      await page.evaluate((id) => ({ pending: pendingBusId, owned: busRouteOwnedBy(id) }), busB),
+      `B's in-flight request must keep its claim (sample ${i})`,
+    ).toEqual({ pending: busB, owned: true });
+  }
+  // And A's failure note never reached the shared map either.
+  expect(await page.evaluate(() => busRouteNotes.size), "a stale failure may leave no note").toBe(0);
+
+  // THE CONSEQUENCE, not just the flag: with ownership intact, a reassignment landing
+  // now still clears the line B asked for. That is the check applyBuses makes and the
+  // one the stale body used to defeat.
+  await page.evaluate((id) => {
+    applyBuses([{ ...buses.get(id).latest, route_id: "REASSIGNED" }]);
+  }, busB);
+  expect(
+    await page.evaluate(() => ({ pending: pendingBusId, shown: shownBusRoute })),
+    "the reassignment must supersede B's fetch rather than pass through it",
+  ).toEqual({ pending: null, shown: null });
+
+  // B's geometry lands last of all, and must not draw for a bus that left the route.
+  await routeHeaders(page, 1, true, 200);
+  await routeBody(page, 1, fx.busRoute());
+  for (let i = 0; i < 10; i++) {
+    expect(await drawnLines(page), `the superseded geometry must never draw (sample ${i})`).toBe(0);
+  }
+  await expect(page.locator("#route-banner")).toBeHidden();
+});

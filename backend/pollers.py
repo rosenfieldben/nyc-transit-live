@@ -102,7 +102,7 @@ ALERT_POLL_INTERVAL_S = env_seams.seconds("ALERT_POLL_INTERVAL_S", 60)
 REFRESH_DEADLINE_S = 45
 
 
-async def _bounded_refresh(entry: dict, coro) -> None:
+async def _bounded_refresh(entry: dict, coro, mark_degraded=None) -> None:
     """Run one refresh coroutine under the whole-task REFRESH_DEADLINE_S. A timeout is
     converted here into the same last-known-on-failure record every other failure
     takes, so the cycle sees a NORMAL return for this system and the other systems
@@ -115,9 +115,21 @@ async def _bounded_refresh(entry: dict, coro) -> None:
     can only cancel the fetch, never a half-applied update: last-known state is left
     intact for _note_failure to preserve.
 
-    Only the app.state per-system feed_health DICT is left at its last value, and
-    only because this generic wrapper does not know each system's health shape; the
-    recorded 504 is the authoritative failure indicator either way.
+    THE app.state feed_health DICT IS MARKED TOO, through mark_degraded (Audit 5,
+    F10). It used to be left at its last value, and the reason given was that this
+    generic wrapper does not know each system's health shape. That reason was already
+    obsolete when it was written: _feed_degrader knows every shape, the cycle already
+    builds one per source, and _total_refresh one layer out already calls it for an
+    unclassified failure. The deadline path simply never asked for it. So a tripped
+    deadline recorded its 504 and flipped all eight subway envelope blocks to
+    ok: false while /api/status reported subway_feeds 8 of 8 healthy and /healthz
+    answered 200 with an empty degraded list, which is the one signal a watcher
+    outside the process actually reads. The audit's control arm reported 0 of 8
+    through the very same hook, so this is a call site rather than new machinery.
+
+    mark_degraded stays OPTIONAL because two callers have nothing to mark: the tests
+    that drive this wrapper directly to pin the entry-level contract, and any future
+    source with no health dict. None is a no-op, exactly as it is in _total_refresh.
 
     THE C2 BLOCK IS NOT IN THAT EXEMPTION, and used to be by omission. A timeout
     lands HERE rather than in any refresher's own error handling, so the three
@@ -148,6 +160,12 @@ async def _bounded_refresh(entry: dict, coro) -> None:
             f"Upstream did not complete within the {REFRESH_DEADLINE_S}s refresh "
             "deadline; keeping last-known data.",
         )
+        # F10. The degrader marks the app.state health dict AND the per-system block;
+        # the block is already marked above, and marking it twice is idempotent. The
+        # call is not folded into the degrader because _mark_all_systems_failed must
+        # still run for a caller that passes none.
+        if mark_degraded is not None:
+            mark_degraded()
 
 
 # How many upstream feeds each source fans out over, for the health surface an
@@ -1016,12 +1034,18 @@ async def _poll_feeds(app: FastAPI) -> None:
                         # is the one that runs (see the registry's comment).
                         refresh = globals()[refresher_name]
                         entry = cache[name]
+                        # ONE DEGRADER, BOTH FAILURE PATHS (F10). The deadline is
+                        # caught by _bounded_refresh and an unclassified error by
+                        # _total_refresh one layer out; both are total failures for
+                        # this source, so both mark the same surfaces. Handing the
+                        # same closure to each is what keeps them from drifting.
+                        degrade = _feed_degrader(app, name, entry)
                         group.create_task(
                             _total_refresh(
                                 name,
                                 entry,
-                                _bounded_refresh(entry, refresh(app, client)),
-                                _feed_degrader(app, name, entry),
+                                _bounded_refresh(entry, refresh(app, client), degrade),
+                                degrade,
                             )
                         )
             except Exception:

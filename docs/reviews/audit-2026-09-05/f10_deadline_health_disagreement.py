@@ -23,6 +23,14 @@ WHAT THIS SCRIPT MEASURES
       2. /api/subways envelope `systems[*].ok`                  (audit: false)
       3. /api/status `subway_feeds`                             (audit: still 8/8 healthy)
       4. /healthz `degraded` plus its HTTP status                (audit: empty list, 200)
+
+    FIXED ON claude/release1-small-fixes, so arm A now checks the fix. Same seed, same
+    injected fault, same four surfaces; rows 3 and 4 are required to report 0/8 and
+    ['subway-groups-down'] instead, and each check that moved carries the audit's value
+    in its label. Arm B is untouched: it was always the control that showed the
+    machinery existed, and the fix is the cycle handing that same callback to the
+    deadline path.
+
     Arm A trips backend/pollers.py REFRESH_DEADLINE_S on the subway refresh.
     Arm B is the control: the same composition, same seed, but the subway upstream
     raises an unclassified exception instead of hanging, so _total_refresh's
@@ -507,23 +515,25 @@ async def amain() -> int:
             len(envelope_ok) == GROUP_COUNT and set(envelope_ok.values()) == {False},
             f"envelope ok flags = {envelope_ok}",
         ),
+        # ---- arm A, AFTER THE FIX. Each label carries the value the audit recorded,
+        # so the before and the after read side by side.
         (
-            "arm A: the degradation callback was NOT called",
-            deadline_arm["degrader_calls"] == [],
+            "arm A FIXED: the degradation callback WAS called (was: never called)",
+            deadline_arm["degrader_calls"] == ["subways"],
             f"callback calls = {deadline_arm['degrader_calls']}",
         ),
         (
-            "arm A: /api/status subway_feeds still reports all eight groups healthy",
-            deadline_arm["status"]["subway_feeds"] == healthy_map,
+            "arm A FIXED: /api/status subway_feeds reports 0 of 8 (was: all eight healthy)",
+            deadline_arm["status"]["subway_feeds"] == degraded_map,
             f"subway_feeds = {deadline_arm['status']['subway_feeds']}",
         ),
         (
-            "arm A: /healthz degraded is empty",
-            deadline_arm["healthz"]["degraded"] == [],
+            "arm A FIXED: /healthz degraded names subway-groups-down (was: empty)",
+            deadline_arm["healthz"]["degraded"] == ["subway-groups-down"],
             f"degraded = {deadline_arm['healthz']['degraded']}",
         ),
         (
-            "arm A: /healthz answers 200 pass (the audit's explicit availability note)",
+            "arm A: /healthz still answers 200 pass, because subway-groups-down is non-gating",
             deadline_arm["healthz_code"] == 200 and deadline_arm["healthz"]["status"] == "pass",
             f"HTTP {deadline_arm['healthz_code']}, status {deadline_arm['healthz']['status']}",
         ),
@@ -574,11 +584,16 @@ async def amain() -> int:
         return 1
 
     print(
-        "DISPOSITION: VERIFIED  A tripped subway refresh deadline records 504 and flips all "
-        f"{GROUP_COUNT} envelope blocks to ok:false while /api/status still reports "
-        f"{GROUP_COUNT}/{GROUP_COUNT} subway groups healthy and /healthz answers 200 with "
-        "degraded:[]; the same composition with an unclassified failure reports 0/8 and "
-        "degraded:['subway-groups-down']."
+        "DISPOSITION: FIXED (claude/release1-small-fixes)  A tripped subway refresh deadline "
+        f"records 504 and flips all {GROUP_COUNT} envelope blocks to ok:false. BEFORE: "
+        f"/api/status still reported {GROUP_COUNT}/{GROUP_COUNT} subway groups healthy and "
+        "/healthz answered 200 with degraded:[], so the one signal a watcher outside the "
+        "process reads said nothing at all. AFTER: the cycle hands the SAME _feed_degrader "
+        "to the deadline path that it already handed the unclassified one, so both arms now "
+        "report 0/8 and degraded:['subway-groups-down']. The audit's control arm (arm B) is "
+        "unchanged and is what showed the machinery already existed. /healthz still answers "
+        "200, which the audit named as an explicit availability decision rather than the "
+        "defect: the falsely empty degradation list was the defect, and it is gone."
     )
     return 0
 

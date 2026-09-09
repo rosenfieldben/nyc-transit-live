@@ -461,36 +461,54 @@ function stopPanelArrivals() {
 // and a failed BACKGROUND refresh keeps the last-known rows ticking instead of
 // blanking good data. A first load surfaces its error, because there is nothing
 // to keep.
+//
+// ONE SEQUENCE CHECK, AFTER EVERY AWAIT THIS FUNCTION MAKES, and the shape below is
+// the fix rather than a tidy-up (F12). The check used to sit after the headers and
+// again after the SUCCESS body, and nowhere after the error body: a 503's detail line
+// is a second await, so station A's error body could land after the rider had already
+// selected station B, and the branch below wrote panelError and re-rendered for a
+// request two selections stale. Measured on the real code: B's 12 arrival rows dropped
+// to 0 behind A's warming message, B stayed selected and its payload stayed in
+// panelBody, and the live region spoke A's error under B's name. A production tick
+// repainted the same state a second later, so it was not a flicker.
+//
+// Both awaits now feed ONE variable each and nothing else, so the gap cannot reopen by
+// someone adding a third await to a branch that has its own guard: there is exactly one
+// guard, it sits between the last await and the first write to shared state, and any
+// await added inside the try is covered by it automatically.
 async function fetchPanelArrivals({ refresh = false } = {}) {
   const entry = panelStation;
   if (!entry || !entry.arrivalsUrl) return;
   const seq = ++panelSeq;
   if (!refresh) stopPanelTick();
   let body;
+  let failure = null;
   try {
     const res = await fetch(entry.arrivalsUrl, { signal: AbortSignal.timeout(FETCH_DEADLINE_MS) });
-    if (seq !== panelSeq) return;
     if (!res.ok) {
       // A warming backend answers 503 with a detail line; show it rather than an
       // invented message, the same honesty the popups earned. Recorded in panelError
       // rather than only drawn, so closing and reopening the panel cannot lose it.
-      if (!refresh) {
-        const err = await res.json().catch(() => null);
-        panelError = err && err.detail ? err.detail : `Arrivals unavailable (HTTP ${res.status})`;
-        renderStationDetail();
-      }
-      return;
+      const err = await res.json().catch(() => null);
+      failure = err && err.detail ? err.detail : `Arrivals unavailable (HTTP ${res.status})`;
+    } else {
+      body = await res.json();
     }
-    body = await res.json();
   } catch {
-    if (seq !== panelSeq) return;
+    failure = "Arrivals unavailable (network error)";
+  }
+  // THE GUARD. Superseded by another selection or a close: this response describes a
+  // station the rider is no longer looking at, so it may not touch the panel at all.
+  if (seq !== panelSeq) return;
+  if (failure !== null) {
+    // A failed BACKGROUND refresh keeps the last-known rows ticking instead of blanking
+    // good data; a first load surfaces its error, because there is nothing to keep.
     if (!refresh) {
-      panelError = "Arrivals unavailable (network error)";
+      panelError = failure;
       renderStationDetail();
     }
     return;
   }
-  if (seq !== panelSeq) return;
   panelBody = body;
   panelError = null; // data arrived; whatever went wrong before is over
   renderStationDetail();

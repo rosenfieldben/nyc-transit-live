@@ -111,6 +111,166 @@ def test_every_golden_train_is_well_formed(system):
             assert train[field] is None
 
 
+# ---------------- the cancellation invariant (F02) ----------------
+#
+# THE GOLDEN ABOVE IS A SNAPSHOT AND THIS IS A LAW. Equality against a committed
+# list catches a decode change today, but a future recapture regenerates that list
+# from whatever the decoder then does, so a canceled train creeping back into the
+# GPS output would simply be blessed into the new golden and the equality test would
+# go green over it. That is exactly how F02 survived: the canceled 5-train (508) sat
+# FIRST in the committed golden, matching byte for byte, for as long as the fixture
+# existed. The invariant below is computed from the CAPTURE rather than from the
+# golden, so it cannot be regenerated into agreement.
+
+
+# The audit's own witness: the one LIRR trip that is both canceled by a TripUpdate and
+# carrying a positioned vehicle. Named once so the tests below read as claims about it
+# rather than about a string.
+CANCELED_TRIP = "6004XX_2026-06-20"
+
+
+def _canceled_trip_ids(raw: bytes) -> set[str]:
+    """Trips this feed itself marks canceled or deleted, read straight off the wire.
+
+    NOT THROUGH THE DECODER, deliberately. Computing the denominator with the code
+    whose output is the numerator would make a decoder that emitted nothing look
+    like a feed with nothing canceled in it, which is the failure being watched for.
+    """
+    feed = pb.FeedMessage()
+    feed.ParseFromString(raw)
+    return {
+        entity.trip_update.trip.trip_id
+        for entity in feed.entity
+        if entity.HasField("trip_update")
+        and entity.trip_update.trip.trip_id
+        and entity.trip_update.trip.schedule_relationship in feeds._DROP_TRIP_RELATIONSHIPS
+    }
+
+
+def _positioned_vehicle_trip_ids(raw: bytes) -> set[str]:
+    """Trip ids of every vehicle in this feed that carries a position, off the wire.
+
+    Keyed the way _vehicle_is_canceled joins the SEPARATE-entity layout, which is
+    LIRR's and the one F02 was found in. MNR is combined, so its cancellations are
+    read from the entity itself and never reach this set; that arm is covered by
+    test_a_canceled_combined_entity_is_not_emitted below.
+    """
+    feed = pb.FeedMessage()
+    feed.ParseFromString(raw)
+    return {
+        entity.vehicle.trip.trip_id
+        for entity in feed.entity
+        if entity.HasField("vehicle")
+        and entity.vehicle.HasField("position")
+        and entity.vehicle.trip.trip_id
+    }
+
+
+@pytest.mark.parametrize("system", SYSTEMS)
+def test_no_emitted_train_has_a_canceled_trip_update(system):
+    """F02's law: a trip this feed says is canceled is not on the map as a train.
+
+    A canceled trip keeps a live GPS entity that keeps moving, because the train
+    physically exists and is deadheading, repositioning or running empty. It is not
+    service, both of its station boards already omit it, and drawing it as a
+    boardable train is the falsehood F02 named.
+
+    ASKED OF THE DECODER FIRST, AND OF THE GOLDEN SECOND, and the order is the whole
+    point. The committed golden is regenerated from whatever the decoder does, so a
+    law asked only of the golden would be regenerated into agreement the moment the
+    guard came out: it would go green over the very defect it exists to catch, which
+    is how F02 survived in the first place. Decoding here means removing the guard
+    fails THIS test, not merely the equality snapshot beside it.
+    """
+    raw, expected = _load(system)
+    canceled = _canceled_trip_ids(raw)
+
+    decoded, _ts = feeds._decode_railroad_vehicles(raw, system, expected["now"])
+    live = {train["trip_id"] for train in decoded}
+    assert canceled & live == set(), (
+        f"{system}: the decoder emitted canceled trips: {sorted(canceled & live)}"
+    )
+
+    committed = {train["trip_id"] for train in expected["trains"]}
+    assert canceled & committed == set(), (
+        f"{system}: canceled trips are recorded in the golden: {sorted(canceled & committed)}"
+    )
+
+
+def test_the_lirr_capture_still_witnesses_the_cancellation_it_was_kept_for():
+    """THE WITNESS, ASSERTED SO THE LAW ABOVE CANNOT GO VACUOUS.
+
+    A recapture whose feed happens to carry no canceled-and-positioned trip would
+    satisfy the invariant trivially, and F02's evidence would quietly retire without
+    anyone deciding to retire it. This is the fixture's own statement that it still
+    contains the shape: exactly one trip both canceled by a TripUpdate and carrying a
+    positioned vehicle, which is the audit's 6004XX_2026-06-20, train 508 on route 5,
+    and which the committed golden used to list FIRST of 69.
+
+    If a recapture loses it, replace the capture with one that has it rather than
+    deleting this test: the law above is only worth anything while something in the
+    corpus can break it.
+    """
+    raw, _ = _load("LIRR")
+    both = _canceled_trip_ids(raw) & _positioned_vehicle_trip_ids(raw)
+    assert both == {CANCELED_TRIP}, f"the canceled-and-positioned witness moved: {sorted(both)}"
+
+    # And the decoder drops exactly it: 69 positioned vehicles on the wire, 68 served.
+    trains, _ts = feeds._decode_railroad_vehicles(raw, "LIRR", 0.0)
+    assert len(_positioned_vehicle_trip_ids(raw)) - len({t["trip_id"] for t in trains}) == 1
+
+
+def test_the_vehicles_own_relationship_is_not_the_signal():
+    """WHY THE JOIN IS LOAD-BEARING, pinned rather than only commented.
+
+    On the committed capture the canceled train's VEHICLE entity reports SCHEDULED
+    while its TripUpdate reports CANCELED. A decoder that read the vehicle's own
+    schedule_relationship would therefore emit it exactly as before the fix, and
+    every other test here would still pass.
+    """
+    raw, _ = _load("LIRR")
+    feed = pb.FeedMessage()
+    feed.ParseFromString(raw)
+    vehicle = next(
+        e for e in feed.entity if e.HasField("vehicle") and e.vehicle.trip.trip_id == CANCELED_TRIP
+    )
+    sr = pb.TripDescriptor.ScheduleRelationship
+    assert sr.Name(vehicle.vehicle.trip.schedule_relationship) == "SCHEDULED"
+    assert vehicle.vehicle.trip.schedule_relationship not in feeds._DROP_TRIP_RELATIONSHIPS
+
+
+def test_a_canceled_combined_entity_is_not_emitted():
+    """The MNR arm, which the trip_id join cannot reach.
+
+    MNR combines the trip_update and the vehicle in one entity and its
+    vehicle.trip.trip_id is the TRAIN NUMBER, not the trip_update's internal id, so
+    a cancellation there is only visible on the entity itself. Synthetic because the
+    committed MNR capture carries no canceled trip: 119 combined entities, none
+    dropped, which is why this arm needs a feed of its own rather than a fixture.
+    """
+    feed = pb.FeedMessage()
+    feed.header.gtfs_realtime_version = "2.0"
+    feed.header.timestamp = 1000
+
+    def add(entity_id, *, canceled):
+        entity = feed.entity.add()
+        entity.id = entity_id
+        entity.trip_update.trip.trip_id = f"internal-{entity_id}"
+        entity.trip_update.trip.route_id = "1"
+        if canceled:
+            entity.trip_update.trip.schedule_relationship = pb.TripDescriptor.CANCELED
+        entity.vehicle.trip.trip_id = entity_id  # MNR: the train number, not the id
+        entity.vehicle.position.latitude = 40.9
+        entity.vehicle.position.longitude = -73.8
+        entity.vehicle.vehicle.label = entity_id
+
+    add("1797", canceled=False)
+    add("1799", canceled=True)
+
+    trains, _ts = feeds._decode_railroad_vehicles(feed.SerializeToString(), "MNR", 1000.0)
+    assert [t["trip_id"] for t in trains] == ["1797"]
+
+
 # ---------------- placement golden ----------------
 
 
@@ -371,8 +531,10 @@ async def test_fetch_dedups_duplicate_trip_ids_on_the_live_path():
     mnr = [t for t in trains if t["system"] == "MNR"]
     assert len(mnr) == 33
     assert len({t["trip_id"] for t in mnr}) == 33
-    assert len([t for t in trains if t["system"] == "LIRR"]) == 69
-    assert len(trains) == 69 + 33
+    # 68, not the 69 positioned vehicles on the wire: F02 drops the one whose
+    # TripUpdate marks it canceled, before it is ever emitted.
+    assert len([t for t in trains if t["system"] == "LIRR"]) == 68
+    assert len(trains) == 68 + 33
 
 
 @pytest.mark.anyio

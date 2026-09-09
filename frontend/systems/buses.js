@@ -162,6 +162,7 @@ async function showBusRoute(bus) {
   pendingBusId = bus.id;
 
   let geometry;
+  let failure = null;
   try {
     // AbortSignal.timeout bounds this click-driven fetch too (R2). Like the station
     // popup, the timeout (a fetch that never lands) is orthogonal to the busRouteSeq
@@ -170,24 +171,34 @@ async function showBusRoute(bus) {
     const res = await fetch(`/api/bus-route/${encodeURIComponent(bus.route_id)}`, {
       signal: AbortSignal.timeout(FETCH_DEADLINE_MS),
     });
-    if (requestId !== busRouteSeq) return; // superseded by a newer click/clear
     if (!res.ok) {
       const body = await res.json().catch(() => null);
-      pendingBusId = null;
-      setBusRouteNote(bus.route_id, body?.detail ?? `Route line unavailable (HTTP ${res.status})`);
-      refreshOpenPopup(bus.id);
-      return;
+      failure = body?.detail ?? `Route line unavailable (HTTP ${res.status})`;
+    } else {
+      geometry = await res.json();
     }
-    geometry = await res.json();
   } catch {
-    if (requestId !== busRouteSeq) return;
-    pendingBusId = null;
-    setBusRouteNote(bus.route_id, "Route line unavailable (network error)");
+    failure = "Route line unavailable (network error)";
+  }
+  // ONE SEQUENCE CHECK, AFTER EVERY AWAIT, and it is the fix rather than a tidy-up
+  // (N3, the bus half of F12). The error branch used to read its detail line, a
+  // SECOND await, and then clear pendingBusId with no re-check between them. So a
+  // 503 from a route the rider had already navigated away from answered
+  // busRouteOwnedBy(newBus) FALSE for a request that was genuinely still in flight,
+  // and reopened the exact hole the reassignment comment in applyBuses records
+  // closing. Measured on the real code: pendingBusId "MTA NYCT_0002" -> null while
+  // that bus's own fetch was still in the air, and the stale note went back onto a
+  // route that was drawn.
+  //
+  // Every await feeds one variable and nothing else, so the guard below is the only
+  // one this function needs and an await added inside the try is covered by it.
+  if (requestId !== busRouteSeq) return; // superseded by a newer click/clear
+  pendingBusId = null;
+  if (failure !== null) {
+    setBusRouteNote(bus.route_id, failure);
     refreshOpenPopup(bus.id);
     return;
   }
-  if (requestId !== busRouteSeq) return; // superseded while parsing
-  pendingBusId = null;
   busRouteNotes.delete(bus.route_id);
   refreshOpenPopup(bus.id);
 
@@ -234,6 +245,15 @@ function applyBuses(data) {
       // mid-flight, and the result was {lines: 1, label: "Bus route M15"} with the
       // record on the new route. busRouteOwnedBy covers both halves, and clearBusRoute
       // bumps the sequence so the in-flight response is discarded rather than drawn.
+      //
+      // THE PENDING HALF WAS ONLY TRUE ON PAPER UNTIL N3 WAS FIXED, and this comment
+      // was the thing that recorded a hole it did not actually close. showBusRoute's
+      // error branch cleared pendingBusId with no sequence re-check after the awaited
+      // detail line, so a 503 belonging to an abandoned route fetch answered this
+      // check FALSE for a bus whose own fetch was still in the air: the reassignment
+      // then passed straight through and the superseded geometry drew after all. The
+      // guard now sits after every await in that function, so "covers both halves"
+      // means what it says.
       //
       // Cleared and not redrawn, which is the same choice already made for the drawn
       // case: the rider asked for the line that bus was on, and the honest answer to

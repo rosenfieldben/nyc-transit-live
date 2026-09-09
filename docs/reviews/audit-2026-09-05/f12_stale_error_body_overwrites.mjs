@@ -18,8 +18,15 @@
  * writes anything, so A's body is read and discarded. This arm exits non-zero the moment
  * that guard is removed, which is what makes it a regression check rather than a record.
  *
- * ARMS 2, 3 AND 4 ARE UNCHANGED AND STILL RECORD THE FINDINGS AS FOUND. Arm 4 is N3, a
- * separate item; when it is fixed its checks move the same way arm 1's did here.
+ * ARM 4 IS N3, THE SAME DEFECT IN systems/buses.js showBusRoute, FIXED ON THE SAME
+ * BRANCH IN THE COMMIT AFTER THIS ONE. Its checks moved the same way arm 1's did.
+ * BEFORE: a stale 503 body cleared pendingBusId for a request still in flight, so
+ * busRouteOwnedBy answered false for the live fetch, and it re-noted a route that was
+ * already drawn. AFTER: the claim and the note are both left alone.
+ *
+ * ARMS 2 AND 3 ARE UNCHANGED AND STILL RECORD WHAT THEY FOUND: the success branch
+ * always re-checked its sequence, and the popup branch overwrites only the same marker
+ * reopened, which is addressed to that marker and is not the cross-station defect.
  *
  * THE AUDIT'S CLAIM, quoted from docs/reviews/audit-2026-09-05.md section 1:
  *
@@ -923,16 +930,19 @@ async function main() {
       three.overwritten === true && three.reopenedRows > 0,
       `reopened popup rows=${three.reopenedRows}, then overwritten by the warming text=${three.overwritten}`,
     ],
+    // ---- arm 4, AFTER THE FIX (N3). Same interleaving, same probes; what changed is
+    // what showBusRoute is required to do with a body it no longer owns.
     [
-      "arm 4a: a stale bus-route error clears pendingBusId for a request still in flight",
-      four.pendingBefore !== null && four.pendingAfter === null && four.ownedBefore === true && four.ownedAfter === false,
+      "arm 4a FIXED: a stale bus-route error left an in-flight request's claim alone (was: pendingBusId -> null)",
+      four.pendingBefore !== null && four.pendingAfter === four.pendingBefore &&
+        four.ownedBefore === true && four.ownedAfter === true,
       `pendingBusId ${JSON.stringify(four.pendingBefore)} -> ${JSON.stringify(four.pendingAfter)}, busRouteOwnedBy(B) ${four.ownedBefore} -> ${four.ownedAfter}`,
     ],
     [
-      "arm 4b: a stale bus-route error re-adds a failure note to a route that is drawn",
-      four.noteBefore === false && four.noteAfter === true && four.drawnAfter === four.drawnBefore &&
+      "arm 4b FIXED: a stale bus-route error added no failure note to a route that is drawn (was: note and a poisoned popup)",
+      four.noteBefore === false && four.noteAfter === false && four.drawnAfter === four.drawnBefore &&
         four.drawnAfter > 0 && four.bannerAfter === false &&
-        four.popupPoisonedBefore === false && four.popupPoisonedAfter === true,
+        four.popupPoisonedBefore === false && four.popupPoisonedAfter === false,
       `note ${four.noteBefore} -> ${four.noteAfter}, polylines=${four.drawnAfter}, bannerHidden=${four.bannerAfter}, popup note ${four.popupPoisonedBefore} -> ${four.popupPoisonedAfter}`,
     ],
   ];
@@ -959,8 +969,9 @@ async function main() {
       `production tick repainted all of it. AFTER: all ${fixtureRowCount(B_ID)} rows survive, panelError stays ` +
       `null, the live region is untouched and the tick repaints B, because fetchPanelArrivals now checks its ` +
       `sequence once, after every await and before any write. The SUCCESS branch always re-checked, which is ` +
-      `why arm 2 is unchanged. STILL AS FOUND: the popup branch overwrites only the same marker reopened, and ` +
-      `the bus-route branch (N3) clears an in-flight request's pendingBusId and re-notes a route that is drawn.`,
+      `why arm 2 is unchanged. N3 IS FIXED WITH IT: the bus-route branch used to clear an in-flight request's ` +
+      `pendingBusId and re-note a route that was drawn, and now leaves both alone. STILL AS FOUND: the popup ` +
+      `branch overwrites only the same marker reopened, which is addressed to that marker.`,
   );
   return 0;
 }

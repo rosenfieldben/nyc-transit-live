@@ -723,23 +723,41 @@ async def main_async() -> None:
 
     # ---- F. the source anchors the audit cited ---------------------------
     rule("F. THE SOURCE ANCHORS THE AUDIT CITED (source assertion, not execution)")
+    # THE AUDIT CITED LINE NUMBERS AND THIS RESOLVES THEM BY CONTENT. The numbers
+    # below are the ones section 1 quotes, left exactly as cited because the audit text
+    # is history and is not edited here. What each one anchors is the PRESENCE of a
+    # construct, never its address, and Release 1 edits these files above those lines:
+    # F12's fix to fetchPanelArrivals is 18 lines longer than the code it replaced, so
+    # renderScheduledDetail moved down by exactly that. Searching for the construct
+    # keeps the assertion the audit actually made (this code is here, and the band call
+    # still passes no date) load-bearing, and printing the drift shows how old the
+    # citation is instead of failing the run over an address nobody asserted.
     anchors = [
-        ("data/airtrain_jfk.json", 2, '"_provenance"'),
-        ("backend/airtrain_static.py", 60, "drop _provenance"),
-        ("frontend/stations.js", 529, "function renderScheduledDetail"),
+        ("data/airtrain_jfk.json", 2, '"_provenance"', '"_provenance" is declared'),
+        ("backend/airtrain_static.py", 60, "drop _provenance", "the loader drops _provenance"),
+        (
+            "frontend/stations.js",
+            529,
+            "function renderScheduledDetail",
+            "the scheduled-headway renderer exists",
+        ),
+        (
+            "frontend/stations.js",
+            548,
+            "nyMinutesSinceMidnight()",
+            "the band call passes no date, so it defaults to new Date(), the live clock",
+        ),
     ]
-    for rel, lineno, needle in anchors:
-        line = (REPO_ROOT / rel).read_text(encoding="utf-8").splitlines()[lineno - 1]
-        print(f"  {rel}:{lineno}: {line.strip()}")
-        check(needle in line, f"{rel} line {lineno} still contains {needle!r}")
-    call_line = (REPO_ROOT / "frontend" / "stations.js").read_text(
-        encoding="utf-8"
-    ).splitlines()[547]
-    print(f"  frontend/stations.js:548: {call_line.strip()}")
-    check(
-        "nyMinutesSinceMidnight()" in call_line,
-        "the band call passes no date, so it defaults to new Date(), the live clock",
-    )
+    for rel, cited, needle, claim in anchors:
+        lines = (REPO_ROOT / rel).read_text(encoding="utf-8").splitlines()
+        found = [i + 1 for i, line in enumerate(lines) if needle in line]
+        where = f"audit cited L{cited}"
+        if found != [cited]:
+            where += f", now at {found if found else 'nowhere'}"
+        print(f"  {rel}: {needle!r} ({where})")
+        for lineno in found:
+            print(f"      L{lineno}: {lines[lineno - 1].strip()}")
+        check(len(found) == 1, f"{claim} ({where})")
 
     # ---- G. the other committed stations ---------------------------------
     rule("G. THE OTHER COMMITTED STATIONS")

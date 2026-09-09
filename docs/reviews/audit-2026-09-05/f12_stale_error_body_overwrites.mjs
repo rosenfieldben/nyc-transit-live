@@ -5,8 +5,21 @@
  *
  * RUN IT (from the repository root):
  *     node docs/reviews/audit-2026-09-05/f12_stale_error_body_overwrites.mjs
- * Exits 0 while the finding still behaves as recorded, non-zero when it does not.
+ * Exits 0 while the record matches the code, non-zero when it does not.
  * No network is used, no wall clock is read, and nothing outside this directory is written.
+ *
+ * F12 IS FIXED ON claude/release1-small-fixes, SO ARM 1 NOW CHECKS THE FIX. The
+ * interleaving it drives is unchanged, byte for byte: station A's 503 headers, a switch
+ * to B, B's good rows, then A's delayed error body. What changed is what the panel is
+ * required to do with that last event, and the checks below carry both halves so the
+ * before is not lost. BEFORE: B's 12 arrival rows fell to 0 behind A's warming message,
+ * panelError took A's detail, and the live region spoke it under B's name. AFTER:
+ * fetchPanelArrivals checks its sequence ONCE, after every await it makes and before it
+ * writes anything, so A's body is read and discarded. This arm exits non-zero the moment
+ * that guard is removed, which is what makes it a regression check rather than a record.
+ *
+ * ARMS 2, 3 AND 4 ARE UNCHANGED AND STILL RECORD THE FINDINGS AS FOUND. Arm 4 is N3, a
+ * separate item; when it is fixed its checks move the same way arm 1's did here.
  *
  * THE AUDIT'S CLAIM, quoted from docs/reviews/audit-2026-09-05.md section 1:
  *
@@ -30,11 +43,11 @@
  *    no-em-dash rule. Nothing else in the quotation is altered.)
  *
  * WHAT THIS SCRIPT MEASURES
- *   Arm 1  the finding itself. The real panel controller is driven through the exact
- *          interleaving above, with headers and body delivered as two separately
- *          controlled promises, and the panel's rendered DOM is printed after each step.
- *          Measured: which station is selected, how many arrival rows the panel holds,
- *          and what the shared live region last said.
+ *   Arm 1  the finding, and since the fix the regression check on it. The real panel
+ *          controller is driven through the exact interleaving above, with headers and
+ *          body delivered as two separately controlled promises, and the panel's rendered
+ *          DOM is printed after each step. Measured: which station is selected, how many
+ *          arrival rows the panel holds, and what the shared live region last said.
  *   Arm 2  the success-branch control the acceptance criterion also names. Same
  *          interleaving, except station A answers 200 with a delayed GOOD body. This is
  *          what separates "the error branch is missing one guard" from "the controller is
@@ -861,9 +874,11 @@ async function main() {
       one.s4.selected === `${SYSTEM}|${B_ID}` && one.s4.arrivalRows === fixtureRowCount(B_ID) && one.s4.error === null,
       `selected=${one.s4.selected} rows=${one.s4.arrivalRows} (fixture ${fixtureRowCount(B_ID)}) error=${JSON.stringify(one.s4.error)}`,
     ],
+    // ---- arm 1, AFTER THE FIX. Each row names the value the finding recorded, so the
+    // before and the after are readable side by side rather than only in the prose.
     [
-      "arm 1: A's delayed error body set the shared panel error after B rendered",
-      one.s5.error === WARMING_DETAIL,
+      "arm 1 FIXED: A's delayed error body left the shared panel error alone (was: WARMING_DETAIL)",
+      one.s5.error === null,
       `panelError=${JSON.stringify(one.s5.error)}`,
     ],
     [
@@ -872,23 +887,25 @@ async function main() {
       `selected=${one.s5.selected} heading=${JSON.stringify(one.s5.headings)}`,
     ],
     [
-      "arm 1: B's arrivals were hidden behind A's warming message",
-      one.s4.arrivalRows > 0 && one.s5.arrivalRows === 0 && one.s5.notes.includes(WARMING_DETAIL),
-      `rows ${one.s4.arrivalRows} -> ${one.s5.arrivalRows}, note=${JSON.stringify(one.s5.notes[0] ?? null)}`,
+      `arm 1 FIXED: B's arrivals survived A's stale error body (was: ${fixtureRowCount(B_ID)} rows -> 0 behind the warming message)`,
+      one.s4.arrivalRows === fixtureRowCount(B_ID) &&
+        one.s5.arrivalRows === one.s4.arrivalRows &&
+        !one.s5.notes.includes(WARMING_DETAIL),
+      `rows ${one.s4.arrivalRows} -> ${one.s5.arrivalRows}, notes=${JSON.stringify(one.s5.notes)}`,
     ],
     [
-      "arm 1: B's own payload is still in panelBody, so nothing but the error hides it",
+      "arm 1: B's own payload is still in panelBody, and now nothing hides it",
       one.s5.hasBody && one.s5.bodyStop === B_ID,
       `panelBody.stop_id=${one.s5.bodyStop}`,
     ],
     [
-      "arm 1: the live region spoke A's error under B's name",
-      typeof one.s5.announced === "string" && one.s5.announced.includes(stops[B_ID].name) && one.s5.announced.includes(WARMING_DETAIL),
+      "arm 1 FIXED: the live region did not speak A's error under B's name",
+      typeof one.s5.announced !== "string" || !one.s5.announced.includes(WARMING_DETAIL),
       `announced=${JSON.stringify(one.s5.announced)}`,
     ],
     [
-      "arm 1: the state is sticky, not a one-frame flicker (a production tick repaints it)",
-      one.s6.arrivalRows === 0 && one.s6.error === WARMING_DETAIL,
+      "arm 1 FIXED: and it stays fixed under the production tick, which is what used to repaint the overwrite",
+      one.s6.arrivalRows === one.s4.arrivalRows && one.s6.error === null,
       `after tick: rows=${one.s6.arrivalRows} error=${JSON.stringify(one.s6.error)}`,
     ],
     [
@@ -936,12 +953,14 @@ async function main() {
   }
 
   console.log(
-    `DISPOSITION: VERIFIED  Station A's 503 headers, then a switch to B, then B's ${fixtureRowCount(B_ID)} good ` +
-      `arrival rows, then A's delayed error body: the panel keeps B selected and holds B's payload while ` +
-      `rendering zero rows behind A's warming message, and speaks that message under B's name; the SUCCESS ` +
-      `branch re-checks the sequence and discards A's stale good body, so the gap is the error branch alone; ` +
-      `the popup branch overwrites only the same marker reopened, and the bus-route branch clears an ` +
-      `in-flight request's pendingBusId and re-notes a route that is drawn.`,
+    `DISPOSITION: FIXED (claude/release1-small-fixes)  Station A's 503 headers, then a switch to B, then B's ` +
+      `${fixtureRowCount(B_ID)} good arrival rows, then A's delayed error body. BEFORE: B's rows fell to 0 ` +
+      `behind A's warming message, panelError took A's detail, the live region spoke it under B's name, and a ` +
+      `production tick repainted all of it. AFTER: all ${fixtureRowCount(B_ID)} rows survive, panelError stays ` +
+      `null, the live region is untouched and the tick repaints B, because fetchPanelArrivals now checks its ` +
+      `sequence once, after every await and before any write. The SUCCESS branch always re-checked, which is ` +
+      `why arm 2 is unchanged. STILL AS FOUND: the popup branch overwrites only the same marker reopened, and ` +
+      `the bus-route branch (N3) clears an in-flight request's pendingBusId and re-notes a route that is drawn.`,
   );
   return 0;
 }

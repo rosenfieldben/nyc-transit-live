@@ -84,19 +84,23 @@ async function loadFerryStops() {
       marker: m,
       body: null,
       url: arrivalsUrl,
-      // Prepend a dock's ferry alerts, joined through the shared alertsIndex: the
-      // UNION of STOP-scoped alerts (ferry, stop_id) and ROUTE-scoped alerts for
-      // every route serving this dock. s.routes is the routes-per-station index the
-      // backend now derives from stop_times (H5), so a route-scoped ferry alert
-      // reaches the DOCK, not only the boats on that route. This is the same static
-      // routes-per-station join subway and railroad stations use through
-      // stationAlertsBlock; ferry keeps its own call because its arrivals shape
-      // (route-name buckets) differs from the directions shape that helper reads.
-      // The countdown tick, refresh, and supersession machinery are inherited from
-      // bindStationPopup / openStationArrivals.
+      // Prepend a dock's ferry alerts: the UNION of STOP-scoped alerts (ferry,
+      // stop_id) and ROUTE-scoped alerts for every route serving this dock. s.routes
+      // is the routes-per-station index the backend derives from stop_times (H5), so
+      // a route-scoped ferry alert reaches the DOCK, not only the boats on that
+      // route. The countdown tick, refresh, and supersession machinery are inherited
+      // from bindStationPopup / openStationArrivals.
+      //
+      // THIS USED TO BE A HAND-WRITTEN COPY OF stationAlertsBlock, because that
+      // helper read route ids out of body.directions and a ferry arrivals body
+      // buckets by route NAME instead. The copy paid for the difference by dropping
+      // the arrivals side of the union entirely: a dock whose static routes list was
+      // empty or behind showed no route-scoped alert even for a route with a boat
+      // inbound. F11 taught the helper all three body shapes, so the copy is gone and
+      // this renders the same answer the panel does. The node pins in
+      // frontend/stationalerts.test.js hold the two outputs identical.
       render: (s, b) =>
-        alertsBlockHtml(matchStationAlerts(alertsIndex, "ferry", s.id, s.routes ?? [])) +
-        staleAlertsMarker() + // "alerts may be out of date" when the alerts feed is stale (R1)
+        stationAlertsBlock("ferry", s, b) + // includes the R1 freshness marker
         ferryArrivalsHtml(
           s,
           b,

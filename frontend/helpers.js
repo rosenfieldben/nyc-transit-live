@@ -1801,6 +1801,148 @@ function bannerAlerts(alerts) {
     .sort(compareAlerts);
 }
 
+/* ---------------- The station alert join, once, for every surface ----------------
+
+   F11 is what this section exists for. The map popup consulted the alert store and
+   the station PANEL did not, so a station suspension was on one surface and absent
+   from the other; on a phone the open panel makes the map inert, so the popup is not
+   an equivalent source and the panel is the only text surface a rider has. The fix
+   is not a second matcher for the panel. It is ONE matcher that both call, which is
+   why the join moved here (requireable, node-testable, no DOM) out of the popup
+   helper in systems/shared.js (browser-only, reached only through a rendered popup).
+
+   Nothing about WHICH alerts match changed when it moved. The route-id union below
+   is the same two-source union stationAlertsBlock has performed since H5; what is
+   new is that its arrivals side now reads every body shape this app serves, which is
+   the NJ Transit half of the finding. */
+
+// Every arrivals ROW in a station body, whatever shape the endpoint serves it in.
+//
+// THREE SHAPES EXIST, and they are the endpoints' own rather than anything this
+// function chose:
+//   directions   subway, the railroads, PATH   { "Northbound": [row, ...], ... }
+//   routes       ferry                          { "East River": [row, ...], ... }
+//   arrivals     NJ Transit                     [row, ...], flat, no direction at all
+// Before F11 only `directions` was read here. That is why ferry.js carried a
+// hand-written copy of the join (passing the dock's static routes and skipping the
+// arrivals side entirely) and why NJ Transit had no join at all: 15c's ledger
+// recorded the gap as "teaching that helper the flat shape changes a function four
+// other systems depend on", and deferred it. Reading all three is what lets both of
+// them call the one function instead.
+//
+// DEFENSIVE ABOUT THE KEY IT READS, because `routes` names two different things in
+// this codebase: a STATION's routes is an array of route ids (the H5 index), while a
+// ferry BODY's routes is an object of buckets. An array here is not a bucket map and
+// yields no rows rather than iterating a row object as if it were a list.
+function stationArrivalsRows(body) {
+  const payload = body ?? {};
+  if (Array.isArray(payload.arrivals)) return payload.arrivals;
+  const buckets = payload.directions ?? payload.routes;
+  if (buckets == null || typeof buckets !== "object" || Array.isArray(buckets)) return [];
+  const rows = [];
+  for (const bucket of Object.values(buckets)) {
+    if (Array.isArray(bucket)) rows.push(...bucket);
+  }
+  return rows;
+}
+
+// The routes a station's alerts are matched against: the UNION of the static
+// routes-per-station index (station.routes, which the backend derives from
+// stop_times, H5) and the routes present in the station's CURRENT arrivals.
+//
+// WHY BOTH, carried over verbatim from stationAlertsBlock because the reasoning did
+// not change with the move: the static list is the complete, always-present set, so
+// a route-scoped alert reaches the station even with no imminent train; the arrivals
+// ids are folded in too so a station whose static routes failed to load still shows
+// alerts for routes with a live train, and so a brand-new route running before the
+// next static refresh is covered. Either source alone is a strict subset of the
+// intent.
+function stationAlertRouteIds(station, body) {
+  const routeIds = new Set((station ?? {}).routes ?? []);
+  for (const row of stationArrivalsRows(body)) {
+    if (row && row.route_id) routeIds.add(row.route_id);
+  }
+  return routeIds;
+}
+
+// THE ONE STATION-ALERT MATCHER. The map popup (systems/shared.js stationAlertsBlock,
+// which renders it as HTML) and the station panel (stations.js, which renders it as
+// elements) both call this and neither owns a second copy of the rule. The two
+// surfaces differ in how they PAINT the answer and must never differ in what the
+// answer is, which is precisely the disagreement F11 recorded.
+//
+// A null system yields no alerts rather than matching everything: PATH and AirTrain
+// publish no alerts feed at all, so there is nothing to join for them and an empty
+// list is the honest answer. See stationAlertSystem.
+function stationAlerts(index, system, station, body) {
+  if (!system) return [];
+  return matchStationAlerts(index, system, (station ?? {}).id, stationAlertRouteIds(station, body));
+}
+
+// The alert-feed key a station registry entry joins against, or null when its mode
+// publishes no alerts feed.
+//
+// NOT THE ENTRY'S OWN `kind`, which is why this is a function and not a field read.
+// The registry keys stations by MODE ("railroad"), while the alert index keys by FEED
+// ("LIRR", "MNR"): the two railroads publish separate alert feeds and share one map
+// layer, so the mode is ambiguous exactly where the join has to be exact.
+//
+// PATH AND AIRTRAIN RETURN NULL ON PURPOSE. feeds/alerts.py's ALERT_FEED_URLS has an
+// entry for subway, bus, LIRR, MNR, ferry and njt, and none for either of them. A
+// station surface that rendered an alerts area for a mode with no feed behind it
+// would promise a rider that silence means no alerts, when it means no data.
+const STATION_ALERT_SYSTEMS = { subway: "subway", ferry: "ferry", njt: "njt" };
+
+// OWN KEYS ONLY, on both lookups here and in alertSourceNote. These keys come off a
+// parsed payload (a registry entry's kind and system, and the alert body's per-system
+// block), and a plain bracket read finds inherited properties: a `kind` of
+// "constructor" would answer with Object's constructor rather than null. Nothing in
+// the app produces such a key, and the point of a total function is that it does not
+// depend on that staying true.
+function stationAlertSystem(entry) {
+  if (!entry) return null;
+  if (entry.kind === "railroad") return entry.system ?? null;
+  return Object.hasOwn(STATION_ALERT_SYSTEMS, entry.kind) ? STATION_ALERT_SYSTEMS[entry.kind] : null;
+}
+
+// What a station's alert SOURCE is currently doing, as a line to print, or "" when the
+// set can honestly be shown as current. Two different admissions, because they are two
+// different failures and a rider acts on them differently:
+//
+//   RETAINED  this system's alert feed is down and the backend is serving the alerts
+//             it last decoded (feeds/alerts.py merge_alert_generations). The set is
+//             not wrong, it is OLD, and the age is the part worth printing.
+//   STALE     the feed's last decode is further back than ALERTS_STALE_AFTER_S. Same
+//             wording as the popup marker, so the two surfaces read identically.
+//
+// SCOPED TO ONE SYSTEM, which is the difference from the popup marker and is
+// deliberate. staleAlertsMarker ages against alertsFreshnessBasis, the MINIMUM across
+// every alert system, because the banner it was written for is agency-wide: the set a
+// rider sees there is only as current as its least-current contributor. A station
+// panel shows ONE system, so the honest basis is that system's own last decode, and
+// the envelope minimum would hedge a current NJ Transit board because the ferry feed
+// is frozen. `basis` is that envelope-wide value, used only when this system has no
+// block of its own (an /api/alerts body that predates the per-system block).
+//
+// A SYSTEM THAT HAS NEVER DECODED IS HEDGED HERE, and alertsFreshnessBasis skips it.
+// That difference is also deliberate and it is the same reasoning: skipping is right
+// when four other systems' timestamps are still describing the set, and wrong when
+// the never-decoded system IS the set. A null fetchedAt therefore ages against
+// sinceAt, the client's first attempt, on the same threshold.
+const ALERTS_STALE_NOTE = "alerts may be out of date";
+const ALERTS_RETAINED_NOTE = "alerts held from";
+
+function alertSourceNote(systems, system, basis, now, sinceAt = null) {
+  if (!system) return "";
+  const table = systems ?? {};
+  const block = Object.hasOwn(table, system) ? table[system] : null;
+  if (block && block.retainedSince != null) {
+    return `${ALERTS_RETAINED_NOTE} ${humanizeAge(now - block.retainedSince)} ago`;
+  }
+  const fetchedAt = block ? block.fetchedAt : basis;
+  return alertsStale(fetchedAt, now, sinceAt) ? ALERTS_STALE_NOTE : "";
+}
+
 // A small deterministic string hash (FNV-1a, 32-bit, hex). Used only to keep the
 // banner's dedup key bounded when it folds in alert TEXT; nothing security-relevant
 // rides on it. Written out rather than pulled in so the frontend stays dependency
@@ -1839,11 +1981,23 @@ function bannerRenderKey(shown, stale) {
 // and escaped, so bracketed route tokens like [Q] render as plain text, no
 // substitution. Alerts with no header contribute nothing.
 function alertsBlockHtml(alerts) {
-  const rows = (alerts ?? [])
-    .filter((a) => a.header)
-    .map((a) => `<div class="alert-row">${esc(a.header)}</div>`);
+  const rows = shownAlerts(alerts).map((a) => `<div class="alert-row">${esc(a.header)}</div>`);
   if (!rows.length) return "";
   return `<div class="alert-block">${rows.join("")}</div>`;
+}
+
+// The alerts a surface actually SHOWS: those with a header to show. An alert with no
+// header contributes nothing a rider can read, and the feeds really do publish them
+// (header_text is optional in the GTFS-RT alert message).
+//
+// SHARED SO THE TWO RENDERERS CANNOT DIVERGE (F11). alertsBlockHtml dropped these and
+// the panel's element renderer did not, which would have put a blank bullet on one
+// surface and nothing on the other, for the same alert. Worse, the panel would have
+// ANNOUNCED it: the change guard counts identities, so a headerless alert arriving
+// would have said "new service alert for this station" over an empty list. Both
+// renderers and the announcement now count the same set.
+function shownAlerts(alerts) {
+  return (alerts ?? []).filter((a) => a && a.header);
 }
 
 // ---- Static-loader retry (phase 12d) ----
@@ -2431,6 +2585,42 @@ function bannerAnnouncement(prev, next) {
     : `${appeared.length} new service alerts.`;
 }
 
+// The PANEL's equivalent, for the alert set of the SELECTED station (F11). Same
+// identity keys, same summary-not-body rule, and one deliberate difference: this one
+// also speaks when an alert CLEARS.
+//
+// WHY THE TWO DIFFER, since a reader will otherwise read it as an oversight in one of
+// them. bannerAnnouncement stays silent on a clear because the banner is a persistent
+// strip over the map whose disappearance is itself the signal, and because nobody
+// needs to be interrupted to be told an emergency is over. The panel's block has
+// neither property: it lives INSIDE a detail subtree that renderStationDetail
+// replaces wholesale every second, so there is no element whose removal a rider
+// perceives, and on a phone the open panel makes the map inert, so this is the only
+// surface saying anything at all. A rider who was told this station has a suspension
+// changed their plan on that basis and is owed the retraction.
+//
+// A SUMMARY, NEVER THE BODY, exactly as the banner: the block carries the wording and
+// a live region that read a full service alert aloud would be unusable during the
+// incident it exists for. The FIRST observation seeds silently, so selecting a
+// station that already has alerts renders them without an interruption; the arrivals
+// announcement names the station on selection and this rides alongside it.
+function stationAlertAnnouncement(prev, next) {
+  if (next == null || prev == null) return null;
+  const before = new Set(prev);
+  const appeared = next.filter((key) => !before.has(key));
+  if (appeared.length) {
+    return appeared.length === 1
+      ? "New service alert for this station."
+      : `${appeared.length} new service alerts for this station.`;
+  }
+  const after = new Set(next);
+  const cleared = prev.filter((key) => !after.has(key));
+  if (!cleared.length) return null;
+  return next.length
+    ? "A service alert for this station has cleared."
+    : "Service alerts for this station have cleared.";
+}
+
 /* ---------------- A2: motion ---------------- */
 
 // THE ONE MOTION GATE. Returns false when the rider has asked their system for
@@ -2566,7 +2756,11 @@ if (typeof module !== "undefined" && module.exports) {
     joinName, subwayTrainName, railroadTrainName, pathTrainName, ferryBoatName,
     busName, compassPoint, airtrainStationName, COMPASS_POINTS, railroadSystemLabel,
     degradedIdentities, neverDecoded, describeIdentity, sentenceList, statusAnnouncement,
-    alertIdentities, bannerAnnouncement,
+    alertIdentities, bannerAnnouncement, shownAlerts,
+    // F11: the station alert join, shared by the map popup and the station panel.
+    stationArrivalsRows, stationAlertRouteIds, stationAlerts, stationAlertSystem,
+    alertSourceNote, stationAlertAnnouncement,
+    ALERTS_STALE_NOTE, ALERTS_RETAINED_NOTE, STATION_ALERT_SYSTEMS,
     motionAllowed, watchMotionPreference, REDUCED_MOTION_QUERY,
     // A4: the popup-clearing geometry.
     boxesOverlap, shiftBox, popupClearingShift, POPUP_CLEAR_GAP,

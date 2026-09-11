@@ -36,6 +36,14 @@ const scanPage = (page) => new AxeBuilder({ page }).analyze();
 
 const DESKTOP = { width: 1280, height: 720 };
 const PHONE = { width: 375, height: 667 };
+// The narrowest width this app supports, which layout.spec.js and mobile.spec.js have
+// measured LAYOUT at since A3 and which the accessibility gate had never scanned. F11
+// puts new text in the panel, and the panel at 320 is the surface with the least room
+// for it, so the state that carries that text is scanned here too. It is opt-in per
+// state rather than a third row of the whole cross-product: tripling six states would
+// buy coverage of markup the other two widths already scan unchanged, at the cost of
+// half the gate's runtime.
+const NARROW = { width: 320, height: 640 };
 
 const agencyAlert = (n) => ({
   id: `a11y-${n}`,
@@ -59,10 +67,18 @@ const agencyAlert = (n) => ({
 // analyze() never resolves and the spec dies on the test timeout rather than on a
 // violation. setFixedTime pins Date.now (which keeps the app's skew calibration at zero
 // and its ages deterministic) while leaving timers running.
-async function open(page, { alerts = 0 } = {}) {
+async function open(page, { alerts = 0, stationAlerts = false } = {}) {
   const ctx = await installMocks(page);
+  // Agency-wide alerts go to the banner; station-scoped ones go to the panel and the
+  // popups (F11). A state asks for one kind or the other, never a mix, so that a
+  // contrast finding names one surface rather than two.
   ctx.overrides.alerts = (route, fixtures) =>
-    json(route, { ...fixtures.alerts(), alerts: Array.from({ length: alerts }, (_, i) => agencyAlert(i + 1)) });
+    json(route, {
+      ...fixtures.alerts(),
+      alerts: stationAlerts
+        ? fixtures.stationAlertList()
+        : Array.from({ length: alerts }, (_, i) => agencyAlert(i + 1)),
+    });
   await page.clock.setFixedTime(new Date(fx.FROZEN_MS));
   await page.goto("/");
   await expect
@@ -358,6 +374,43 @@ const STATES = [
     targets: ["#stations-detail", "station-arrivals", "h3"],
   },
   {
+    // F11 put a rider-facing alerts block in the panel, above the arrivals board: a
+    // heading, a bulleted list on a cream ground with an amber rule, and a muted
+    // honesty line when the alert source is stale or held. All of it is new text on a
+    // new background, and new muted text on a new ground is exactly where this project
+    // has found contrast defects before (see the muted-ink note in style.css, where
+    // four greys that all looked fine failed four different surfaces).
+    //
+    // SCANNED AT 320 AS WELL, which nothing here was before. The panel is where the
+    // width bites: at 320 the overlay is full screen, the alert headers wrap hardest,
+    // and the list indent has the least room to stay inside its box.
+    key: "panel detail with a station suspension",
+    alerts: 0,
+    stationAlerts: true,
+    viewports: [DESKTOP, PHONE, NARROW],
+    async reach(page) {
+      if (await page.evaluate(() => document.getElementById("stations-panel").hidden)) {
+        await page.locator("#stations-toggle").click();
+      }
+      await page.locator("#stations-search").fill("times");
+      await page.locator("#stations-results button.station-row").first().click();
+      await expect(page.locator("#stations-detail h3")).toBeVisible();
+      // The alerts arrive on their own fetch, so the block is waited for rather than
+      // assumed: a scan taken before it renders would certify the state without its
+      // subject in it, which is the failure mode assertScanned's targets exist for.
+      await expect(page.locator("#stations-detail ul.station-alerts li")).toHaveCount(2);
+      // Same countdown-tick reasoning as the state above, and the same polled stop.
+      await expect
+        .poll(() => page.evaluate(() => panelTimer !== null), {
+          timeout: 5_000,
+          message: "the panel countdown must be running for stopping it to mean anything",
+        })
+        .toBe(true);
+      await page.evaluate(() => stopPanelArrivals());
+    },
+    targets: ["#stations-detail", "station-alerts", "h4"],
+  },
+  {
     key: "popup open with cross-link",
     alerts: 0,
     async reach(page) {
@@ -470,12 +523,15 @@ async function assertNothingIsMidTransition(page, label) {
     });
 }
 
-for (const viewport of [DESKTOP, PHONE]) {
-  for (const state of STATES) {
+for (const state of STATES) {
+  // Two widths unless a state asks for more. The loop used to be viewport-outer with a
+  // fixed pair; it is state-outer now so one state can opt into a third width without
+  // every other state paying for it.
+  for (const viewport of state.viewports ?? [DESKTOP, PHONE]) {
     if (state.only && state.only !== viewport) continue;
     test(`A1w. page-wide axe at ${viewport.width}: ${state.key}`, async ({ page }) => {
       await page.setViewportSize(viewport);
-      await open(page, { alerts: state.alerts });
+      await open(page, { alerts: state.alerts, stationAlerts: state.stationAlerts });
       await state.reach(page);
       await assertNothingIsMidTransition(page, `${viewport.width} / ${state.key}`);
 

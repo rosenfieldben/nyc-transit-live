@@ -3,6 +3,21 @@
  * F11 (P2): "The station panel hides relevant service alerts."
  * Verification of the 2026-09-05 audit finding recorded in docs/reviews/audit-2026-09-05.md.
  *
+ * FIXED on claude/f11-panel-alerts. This script now measures the FIXED behavior and
+ * fails if the defect returns. The finding's own wording, its evidence and its cited
+ * lines are left exactly as recorded below; what changed is the expectations at the
+ * bottom, each of which carries the value the audit measured alongside the value that
+ * holds now.
+ *
+ * WHAT THE FIX DID. The station-alert join moved out of the popup renderer into
+ * helpers.js as one matcher (stationAlerts), and both surfaces call it: the popup
+ * renders its answer as HTML through stationAlertsBlock, the panel renders the
+ * identical answer as elements through renderStationAlerts. The panel also labels the
+ * alert SOURCE when it is stale or being held from an earlier poll, and announces a
+ * change in the set once through its existing live region. The same change taught the
+ * join to read every arrivals body shape, which is what let NJ Transit's flat board
+ * reach it at all (the second half of the finding, from 15c's ledger).
+ *
  * RUN FROM THE REPO ROOT:
  *   node docs/reviews/audit-2026-09-05/f11_station_panel_hides_alerts.mjs
  *
@@ -687,8 +702,14 @@ const mapCtorLine = { number: mapCtorIndex + 1, text: sharedSrcLines[mapCtorInde
 const stationsSrc = read("frontend/stations.js");
 const stripComments = (src) =>
   src.replace(/\/\*[\s\S]*?\*\//g, "").split("\n").map((line) => line.replace(/\/\/.*$/, "")).join("\n");
+// The audit's list, plus the two names the fix introduced. "stationAlerts" is the
+// shared matcher and is the one that has to be here; "matchStationAlerts" stays on the
+// list as the NEGATIVE case, because a panel that called it directly would be a second
+// copy of the join rather than a caller of the one function.
 const ALERT_SYMBOLS = [
   "alertsIndex",
+  "stationAlerts",
+  "alertSourceNote",
   "matchStationAlerts",
   "matchRouteAlerts",
   "stationAlertsBlock",
@@ -759,7 +780,8 @@ say("");
 
 say(line());
 say("[3] PANEL  production path: openStationsPanel -> selectStation -> fetchPanelArrivals");
-say("           -> renderStationDetail (stations.js L567, arrivals block at L606)");
+say("           -> renderStationDetail (the audit cited stations.js L567, arrivals block at L606)");
+say("           -> renderStationAlerts -> stationAlerts, THE SAME MATCHER [1] CALLED");
 say(line());
 for (const row of panelRows) say(`  ${row}`);
 for (const row of panelListRows) say(`    ${row}`);
@@ -815,9 +837,21 @@ const checks = [
   ["(c,d) banner renders no entry for the station/route alerts", bannerAfterStationAlerts.kids === 0 && bannerAfterStationAlerts.html === "" && bannerAfterStationAlerts.text === ""],
   ["(c) bannerAlerts() excludes both selector-scoped alerts", bannerAlertsDirect === 0 && bannerSetSize === 0],
   ["(c) control: an agency-wide alert DOES reach the banner", bannerShowsAgency && bannerAfterAgencyAlert.html !== ""],
-  ["(a,d) panel detail carries no alert text", !panelHasStop && !panelHasRoute],
-  ["(a,d) panel renders ordinary arrival text instead", /train in \d+ minutes?, \d+:\d\d [AP]M arrival/.test(panelText)],
-  ["(a) stations.js code never names the alert store", alertSymbolHits.length === 0],
+  // FIXED. The audit measured 0 alert characters in the panel for both alerts; the
+  // panel now renders both, from the same matcher the popup above called.
+  ["(a,d) panel detail carries the stop-scoped alert (audit: it did not)", panelHasStop],
+  ["(a,d) panel detail carries the route-scoped alert (audit: it did not)", panelHasRoute],
+  // UNCHANGED, and it is the control: the alerts are ADDED to the board rather than
+  // put in its place. A fix that replaced the arrivals with alerts would satisfy the
+  // two checks above and be a worse panel than the one the audit found.
+  ["(a,d) panel still renders its ordinary arrival text", /train in \d+ minutes?, \d+:\d\d [AP]M arrival/.test(panelText)],
+  // FIXED. The audit measured zero alert-store symbols anywhere in stations.js, which
+  // is what "the panel renders arrivals without consulting the alert store" meant as
+  // code. It now names them; ONE of them is the point, so this asserts the shared
+  // matcher specifically rather than merely that the count went up.
+  ["(a) stations.js reaches the alert store (audit: it named none of it)", alertSymbolHits.length > 0],
+  ["(a) and it reaches it through the SHARED matcher, not a copy", alertSymbolHits.includes("stationAlerts")],
+  ["(a) the panel does not re-implement the match itself", !alertSymbolHits.includes("matchStationAlerts")],
   ["(e) an open panel on a phone makes #map inert", inertPhone.narrow === true && inertPhone.map === true],
   ["(e) the inert sweep spares the panel and the live region", inertPhone.panel === false && inertPhone.announce === false],
   ["(e) focus cannot land on the inert map while the panel is open", focusReachedMapWhilePanelOpen === false],
@@ -845,7 +879,9 @@ if (failed) {
 
 say(`All ${checks.length} checks passed.`);
 say(
-  "DISPOSITION: VERIFIED " +
-    "one station suspension plus one route suspension render 2 alert rows in the production popup, " +
-    "0 rows in the banner, and 0 characters in the panel, whose map is inert at 375px.",
+  "DISPOSITION: FIXED (claude/f11-panel-alerts) " +
+    "one station suspension plus one route suspension render 2 alert rows in the production popup " +
+    "AND both reach the production panel, through one shared matcher rather than two; the banner " +
+    "still carries 0 of them, and the map is still inert at 375px, which is why the panel had to " +
+    "be the surface that says it.",
 );

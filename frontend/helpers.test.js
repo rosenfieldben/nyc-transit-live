@@ -1048,6 +1048,261 @@ test("alertsBlockHtml skips alerts with no header and renders nothing if all are
   assert.equal(alertsBlockHtml([{ id: "x", header: null }]), "");
 });
 
+// ---- The station alert join, shared by the popup and the panel (F11) ----
+
+const {
+  stationArrivalsRows, stationAlertRouteIds, stationAlerts, stationAlertSystem,
+  alertSourceNote, stationAlertAnnouncement, shownAlerts,
+  ALERTS_STALE_NOTE, ALERTS_RETAINED_NOTE,
+} = require("./helpers.js");
+
+// The three body shapes the real endpoints serve, at their smallest.
+const DIRECTIONS_BODY = { directions: { Northbound: [{ route_id: "1" }], Southbound: [{ route_id: "2" }] } };
+const FERRY_BODY = { routes: { "East River": [{ route_id: "ER" }], "South Brooklyn": [{ route_id: "SB" }] } };
+const FLAT_BODY = { arrivals: [{ route_id: "9" }, { route_id: "2" }, { route_id: null }] };
+
+test("stationArrivalsRows reads directions, ferry route buckets, and a flat list", () => {
+  assert.deepEqual(stationArrivalsRows(DIRECTIONS_BODY).map((r) => r.route_id), ["1", "2"]);
+  assert.deepEqual(stationArrivalsRows(FERRY_BODY).map((r) => r.route_id), ["ER", "SB"]);
+  assert.deepEqual(stationArrivalsRows(FLAT_BODY).map((r) => r.route_id), ["9", "2", null]);
+});
+
+test("stationArrivalsRows yields nothing for a body it cannot read", () => {
+  for (const body of [null, undefined, {}, { directions: null }, { directions: "nope" }, { arrivals: null }]) {
+    assert.deepEqual(stationArrivalsRows(body), [], JSON.stringify(body));
+  }
+});
+
+test("stationArrivalsRows does not mistake a station's routes ARRAY for ferry buckets", () => {
+  // `routes` names two different things in this codebase: a station's is an array of
+  // route ids, a ferry body's is an object of buckets. Iterating the array as buckets
+  // would try to spread a string, which is the crash this guard exists for.
+  assert.deepEqual(stationArrivalsRows({ routes: ["ER", "SB"] }), []);
+});
+
+test("stationAlertRouteIds unions the static routes with the routes in the arrivals", () => {
+  const ids = stationAlertRouteIds({ id: "127", routes: ["1", "2", "3"] }, DIRECTIONS_BODY);
+  assert.deepEqual([...ids].sort(), ["1", "2", "3"]);
+});
+
+test("stationAlertRouteIds adds a route that is running but not in the static list", () => {
+  // THE HALF THE FLAT SHAPE USED TO LOSE. Before F11 only `directions` was read, so a
+  // ferry dock or an NJ Transit station whose static routes list was empty or behind
+  // contributed nothing from its board at all.
+  const flat = stationAlertRouteIds({ id: "12", routes: ["2"] }, FLAT_BODY);
+  assert.deepEqual([...flat].sort(), ["2", "9"]);
+  const ferry = stationAlertRouteIds({ id: "2", routes: ["ER"] }, FERRY_BODY);
+  assert.deepEqual([...ferry].sort(), ["ER", "SB"]);
+});
+
+test("stationAlertRouteIds falls back to the static list with no body at all", () => {
+  // The panel renders its alerts before the first arrivals fetch resolves and keeps
+  // rendering them when it fails, which is only correct because this holds.
+  const ids = stationAlertRouteIds({ id: "127", routes: ["1", "2", "3"] }, null);
+  assert.deepEqual([...ids].sort(), ["1", "2", "3"]);
+});
+
+test("stationAlerts is the join both surfaces call, and a flat board reaches it", () => {
+  const store = [
+    { id: "njt-route-9", system: "njt", header: "[9] suspended", routes: ["9"], stops: [], starts_at: 1, ends_at: null },
+    { id: "njt-stop", system: "njt", header: "Hoboken closed", routes: [], stops: ["12"], starts_at: 2, ends_at: null },
+  ];
+  const idx = indexAlerts(store);
+  // Hoboken's static routes are 2 and 17; route 9 reaches it only through the flat
+  // board. Both alerts land, in compareAlerts order (both open-ended, by starts_at).
+  const hoboken = { id: "12", routes: ["2", "17"] };
+  assert.deepEqual(
+    stationAlerts(idx, "njt", hoboken, { arrivals: [{ route_id: "9" }] }).map((a) => a.id),
+    ["njt-route-9", "njt-stop"],
+  );
+  // Without the board, only the stop selector matches: this is the difference the
+  // arrivals side of the union makes, isolated.
+  assert.deepEqual(stationAlerts(idx, "njt", hoboken, null).map((a) => a.id), ["njt-stop"]);
+});
+
+test("stationAlerts with no system matches nothing, however loud the store is", () => {
+  const idx = indexAlerts([
+    { id: "x", system: "subway", header: "everything is suspended", routes: ["1"], stops: ["127"], starts_at: 1, ends_at: null },
+  ]);
+  assert.deepEqual(stationAlerts(idx, null, { id: "127", routes: ["1"] }, null), []);
+  assert.deepEqual(stationAlerts(idx, "", { id: "127", routes: ["1"] }, null), []);
+});
+
+test("stationAlertSystem maps a registry entry to its alert FEED, not its mode", () => {
+  assert.equal(stationAlertSystem({ kind: "subway" }), "subway");
+  assert.equal(stationAlertSystem({ kind: "ferry" }), "ferry");
+  assert.equal(stationAlertSystem({ kind: "njt" }), "njt");
+  // The two railroads share one map layer and one kind, and publish separate alert
+  // feeds: the entry's own system is what the index is keyed by.
+  assert.equal(stationAlertSystem({ kind: "railroad", system: "LIRR" }), "LIRR");
+  assert.equal(stationAlertSystem({ kind: "railroad", system: "MNR" }), "MNR");
+});
+
+test("stationAlertSystem and alertSourceNote read own keys only", () => {
+  // Both keys come off a parsed payload, and a plain bracket read finds INHERITED
+  // properties: a kind of "constructor" would answer with Object's constructor rather
+  // than null, and the panel would then ask the alert index for a function's alerts.
+  // Nothing in the app produces such a key; a total function does not rely on that.
+  assert.equal(stationAlertSystem({ kind: "constructor" }), null);
+  assert.equal(stationAlertSystem({ kind: "__proto__" }), null);
+  assert.equal(stationAlertSystem({ kind: "toString" }), null);
+  assert.equal(alertSourceNote({}, "constructor", 1000, 1000), "");
+  assert.equal(alertSourceNote({}, "__proto__", 1000, 1000), "");
+});
+
+test("stationAlertSystem returns null for the modes with no alerts feed", () => {
+  // ALERT_FEED_URLS has no PATH and no AirTrain entry. Null is what keeps the panel
+  // from rendering an alerts area whose silence would mean no data, not no alerts.
+  assert.equal(stationAlertSystem({ kind: "path" }), null);
+  assert.equal(stationAlertSystem({ kind: "airtrain" }), null);
+  assert.equal(stationAlertSystem({ kind: "railroad" }), null); // no system on the entry
+  assert.equal(stationAlertSystem(null), null);
+});
+
+// ---- The alert SOURCE hedge, per system (F11) ----
+
+const FRESH = { fetchedAt: 1000, ok: true, retainedSince: null };
+
+test("alertSourceNote says nothing while this system's own feed is current", () => {
+  assert.equal(alertSourceNote({ subway: FRESH }, "subway", 1000, 1000), "");
+});
+
+test("alertSourceNote hedges on THIS system's age, not the envelope minimum", () => {
+  // THE DIFFERENCE FROM THE POPUP MARKER, isolated. staleAlertsMarker ages against
+  // alertsFreshnessBasis, the minimum across every system, which is right for the
+  // agency-wide banner and wrong for a board showing one system: a frozen ferry feed
+  // would hedge a perfectly current NJ Transit departure list.
+  const systems = { njt: FRESH, ferry: { fetchedAt: 0, ok: false, retainedSince: null } };
+  // One second inside NJ Transit's own threshold and long past the ferry's. The
+  // envelope basis handed in is the ferry's 0, which is what the popup marker would
+  // age against for both.
+  const now = 1000 + ALERTS_STALE_AFTER_S - 1;
+  assert.equal(alertSourceNote(systems, "njt", 0, now), "");
+  assert.equal(alertSourceNote(systems, "ferry", 0, now), ALERTS_STALE_NOTE);
+  // And NJ Transit does hedge once its OWN feed crosses, so this is a different
+  // basis rather than a hedge that never fires.
+  assert.equal(alertSourceNote(systems, "njt", 0, 1000 + ALERTS_STALE_AFTER_S), ALERTS_STALE_NOTE);
+});
+
+test("alertSourceNote says HELD, with an age, for a retained set", () => {
+  // retained_since means the backend is serving the alerts it last decoded because
+  // this feed is down (feeds/alerts.py merge_alert_generations). The set is not late,
+  // it is held, and the age is what a rider needs.
+  const systems = { LIRR: { fetchedAt: 900, ok: false, retainedSince: 700 } };
+  assert.equal(alertSourceNote(systems, "LIRR", 900, 1000), `${ALERTS_RETAINED_NOTE} 5m ago`);
+});
+
+test("alertSourceNote prefers HELD over stale when a retained feed is also old", () => {
+  const systems = { LIRR: { fetchedAt: 0, ok: false, retainedSince: 700 } };
+  const note = alertSourceNote(systems, "LIRR", 0, 1000);
+  assert.equal(note, `${ALERTS_RETAINED_NOTE} 5m ago`);
+  assert.notEqual(note, ALERTS_STALE_NOTE);
+});
+
+test("alertSourceNote hedges a system that has NEVER decoded, against the first attempt", () => {
+  // alertsFreshnessBasis deliberately SKIPS a never-decoded system, because four other
+  // timestamps are still describing the set it feeds. Here the never-decoded system IS
+  // the set, so the same reasoning points the other way.
+  const systems = { njt: { fetchedAt: null, ok: false, retainedSince: null } };
+  const sinceAt = 1000;
+  assert.equal(alertSourceNote(systems, "njt", 1000, sinceAt + 1, sinceAt), "");
+  assert.equal(
+    alertSourceNote(systems, "njt", 1000, sinceAt + ALERTS_STALE_AFTER_S, sinceAt),
+    ALERTS_STALE_NOTE,
+  );
+});
+
+test("alertSourceNote falls back to the envelope basis when this system has no block", () => {
+  // An /api/alerts body with no per-system block at all, which is the shape that
+  // predates C2 and the shape ingestSystems synthesizes under a source key.
+  assert.equal(alertSourceNote({}, "subway", 1000, 1000 + ALERTS_STALE_AFTER_S), ALERTS_STALE_NOTE);
+  assert.equal(alertSourceNote({ alerts: FRESH }, "subway", 1000, 1000), "");
+});
+
+test("alertSourceNote says nothing when there is no system to be honest about", () => {
+  assert.equal(alertSourceNote({}, null, 0, 1e9, 0), "");
+});
+
+// ---- The panel's alert announcement (F11) ----
+
+const idsOf = (...headers) =>
+  alertIdentities(headers.map((h, i) => ({ system: "subway", id: `a${i}`, header: h })));
+
+test("stationAlertAnnouncement seeds silently on the first observation", () => {
+  assert.equal(stationAlertAnnouncement(null, idsOf("Times Sq closed")), null);
+  assert.equal(stationAlertAnnouncement(idsOf("Times Sq closed"), null), null);
+});
+
+test("stationAlertAnnouncement speaks once when an alert appears", () => {
+  assert.equal(stationAlertAnnouncement(idsOf(), idsOf("Times Sq closed")), "New service alert for this station.");
+  assert.equal(
+    stationAlertAnnouncement(idsOf(), idsOf("a", "b")),
+    "2 new service alerts for this station.",
+  );
+});
+
+test("stationAlertAnnouncement stays silent on an unchanged set", () => {
+  const set = idsOf("Times Sq closed");
+  assert.equal(stationAlertAnnouncement(set, set), null);
+});
+
+test("stationAlertAnnouncement speaks when an alert CLEARS, unlike the banner", () => {
+  // The deliberate divergence from bannerAnnouncement, pinned in both directions so
+  // neither can be "fixed" into the other by someone who finds one of them surprising.
+  assert.equal(
+    stationAlertAnnouncement(idsOf("Times Sq closed"), idsOf()),
+    "Service alerts for this station have cleared.",
+  );
+  assert.equal(bannerAnnouncement(idsOf("Times Sq closed"), idsOf()), null);
+});
+
+test("stationAlertAnnouncement distinguishes one clearing from all clearing", () => {
+  const before = alertIdentities([
+    { system: "subway", id: "a", header: "closed" },
+    { system: "subway", id: "b", header: "delays" },
+  ]);
+  const after = alertIdentities([{ system: "subway", id: "b", header: "delays" }]);
+  assert.equal(
+    stationAlertAnnouncement(before, after),
+    "A service alert for this station has cleared.",
+  );
+});
+
+test("stationAlertAnnouncement treats a REWORDED alert as new, like the banner", () => {
+  // The identity carries a hash of the header, so an incident revised in place under
+  // one id is news rather than an unchanged set. The MTA really does revise wording
+  // under a stable id; C1 recorded it for the banner and the same reasoning holds here.
+  assert.equal(
+    stationAlertAnnouncement(idsOf("Delays on the 4 line"), idsOf("All service suspended")),
+    "New service alert for this station.",
+  );
+});
+
+test("shownAlerts drops a headerless alert, so both renderers draw the same rows", () => {
+  // The GTFS-RT alert message makes header_text optional and the feeds really do omit
+  // it. alertsBlockHtml has always dropped these; the panel's element renderer had to
+  // be taught the same rule or the same alert would be a blank bullet on one surface
+  // and absent from the other. Sharing the filter is what keeps that from drifting.
+  const alerts = [
+    { id: "a", system: "subway", header: "Times Sq closed" },
+    { id: "b", system: "subway", header: null },
+    { id: "c", system: "subway" },
+  ];
+  assert.deepEqual(shownAlerts(alerts).map((a) => a.id), ["a"]);
+  assert.deepEqual(shownAlerts(null), []);
+  // And the popup renderer agrees, because it is the same filter.
+  assert.equal(alertsBlockHtml(alerts), alertsBlockHtml(shownAlerts(alerts)));
+});
+
+test("stationAlertAnnouncement never speaks an alert's body", () => {
+  // A SUMMARY, NEVER THE BODY: a live region reading a full service alert aloud would
+  // be unusable during exactly the incident it exists for.
+  const header = "Uptown 1 2 3 trains are rerouted via the express track after a fire";
+  const spoken = stationAlertAnnouncement(idsOf(), idsOf(header));
+  assert.ok(spoken);
+  assert.ok(!spoken.includes("rerouted"), spoken);
+});
+
 // ---- Service alerts: route surfaces + agency-wide banner (phase 12c) ----
 
 const { matchRouteAlerts, bannerAlerts } = require("./helpers.js");

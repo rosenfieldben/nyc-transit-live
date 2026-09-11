@@ -140,22 +140,25 @@ async function loadNjtStops() {
       marker: m,
       body: null,
       url: arrivalsUrl,
-      // NO ALERTS PREPEND, and the first draft of this comment gave a reason that
-      // was not true. It claimed a bare-id join would attach Metro-North's alerts
-      // to New Jersey platforms; there is no bare-id join available to make, since
-      // indexAlerts keys on `${system}|${id}` and stationAlertsBlock takes the
-      // system as its first argument. NJ Transit's alerts are polled, they are
-      // stamped with their own system, and their selectors are in NJT's own id
-      // space, so the join is straightforward and would be correct.
+      // THE ALERTS PREPEND, deferred through two phases and wired by F11. NJ
+      // Transit's alerts are polled, stamped with their own system ("njt", the
+      // ALERT_FEED_URLS key), and their selectors are in NJT's own id space, so the
+      // join is scoped like every other one and a bare-id collision with Metro-North
+      // is not available to make: indexAlerts keys on `${system}|${id}`.
       //
-      // THE REAL REASON IS THE SHAPE OF THE BODY. stationAlertsBlock unions the
-      // route ids out of `body.directions` to decide which route-scoped alerts also
-      // apply at this station, and an NJT arrivals body has no `directions`: it is
-      // flat, by the endpoint's own design. Wiring the join means teaching that
-      // helper the flat shape, which changes a function four other systems depend
-      // on, and doing it here would be widening this phase into theirs. Deferred
-      // with its reason rather than quietly skipped.
+      // WHAT WAS ACTUALLY IN THE WAY, now that it has been measured rather than
+      // reasoned about. 15c deferred this saying stationAlertsBlock unions route ids
+      // out of `body.directions`, which a flat NJT board has none of. That is true of
+      // the body and false of the consequence: the helper seeds its route set from
+      // station.routes FIRST and only ADDS to it from the body, so calling it here
+      // would have worked on day one and the deferral cost NJ Transit riders an
+      // alerts block for nothing (frontend/stationalerts.test.js pins that answer).
+      // What the flat shape really cost was the union's SECOND source, the routes
+      // with a train inbound right now, which is what covers a station whose static
+      // routes list is empty or behind. F11 taught the helper all three body shapes,
+      // so this station gets the whole union rather than half of it.
       render: (s, b) =>
+        stationAlertsBlock("njt", s, b) + // includes the R1 freshness marker
         njtArrivalsHtml(
           s,
           b,

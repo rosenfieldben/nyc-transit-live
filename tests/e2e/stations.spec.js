@@ -692,3 +692,410 @@ test("A1u. a superseded station's error body never overwrites the station on scr
   await expect(detail.locator("ul.station-arrivals li")).toHaveCount(1);
   await expect(detail).not.toContainText("warming up");
 });
+
+/* ==================================================================
+   A1v-A1z, A1v2-A1z2: the panel says what the popup says (F11)
+
+   THE FINDING. The map popup consulted the alert store and the panel did not, so a
+   station suspension appeared on one surface and not the other. That is not a cosmetic
+   gap: at 375 the open panel makes #map inert, so the popup cannot be opened or read,
+   and the panel is the only text surface a rider has. The acceptance the auditor wrote
+   is that the suspension appears in BOTH, including when no train of the affected
+   route is currently predicted.
+
+   These specs drive the two surfaces in one page, in the order a rider would reach
+   them, and compare what each one says.
+   ================================================================== */
+
+// Boot with a given alerts body and wait for the store to actually hold it, rather
+// than for a timer. The alerts poll is a fetch like any other, so a spec that asserts
+// immediately after navigation races it.
+async function openWithAlerts(page, body) {
+  const ctx = await installMocks(page);
+  ctx.overrides.alerts = (route) => json(route, body);
+  await page.clock.install({ time: new Date(fx.FROZEN_MS) });
+  await page.clock.pauseAt(new Date(fx.FROZEN_MS));
+  await page.goto("/");
+  await awaitRegistry(page);
+  await page.waitForFunction(
+    () => typeof alertsIndex !== "undefined" && alertsIndex.byStop.size + alertsIndex.byRoute.size > 0,
+  );
+  return ctx;
+}
+
+// Select a station through the panel the way a rider does: search, then click the row.
+async function selectStation(page, query) {
+  if (await page.evaluate(() => document.getElementById("stations-panel").hidden)) {
+    await page.locator("#stations-toggle").click();
+  }
+  await page.locator("#stations-search").fill(query);
+  const row = page.locator("#stations-results button.station-row").first();
+  await expect(row).toBeVisible();
+  await row.click();
+  await expect(page.locator("#stations-detail h3")).toBeVisible();
+}
+
+const panelAlerts = (page) => page.locator("#stations-detail ul.station-alerts li");
+
+test("A1v. a station suspension is in the panel AND the popup, with no train of that route (F11)", async ({
+  page,
+}) => {
+  // THE AUDITOR'S ACCEPTANCE, both halves in one page.
+  //
+  // Times Sq (127) serves routes 1, 2 and 3; the committed arrivals fixture carries
+  // only 1s and 2s. So "[3] suspended overnight" reaches this station ONLY through the
+  // static routes-per-station index, which is the case the panel had no way to show at
+  // all and the case a rider most needs, because a suspended route is precisely the
+  // one with no train coming.
+  await openWithAlerts(page, { ...fx.alerts(), alerts: fx.stationAlertList() });
+
+  await selectStation(page, "times");
+  const detail = page.locator("#stations-detail");
+  await expect(detail).toContainText("Northbound"); // the board rendered too
+  await expect(panelAlerts(page)).toHaveCount(2);
+  await expect(detail).toContainText("Times Sq-42 St is closed");
+  await expect(detail).toContainText("[3] suspended overnight");
+  // A route that does not serve this station stays out of the panel exactly as it
+  // stays out of the popup: the panel is not simply printing the whole store.
+  await expect(detail).not.toContainText("[Z] does not serve Times Sq");
+
+  // THE SAME STATION'S POPUP, for the comparison the finding is about. Closing the
+  // panel is what makes the map reachable at all, which is the 375 argument in
+  // miniature.
+  await page.evaluate(() => closeStationsPanel());
+  await page.evaluate(() => stationLayer.getLayers()[0].openPopup());
+  const popup = page.locator(".leaflet-popup-content");
+  await expect(popup).toContainText("Times Sq-42 St is closed");
+  await expect(popup).toContainText("[3] suspended overnight");
+  await expect(popup).not.toContainText("[Z] does not serve Times Sq");
+});
+
+test("A1w. the panel shows the alert when the arrivals FAIL (F11)", async ({
+  page,
+}) => {
+  // THE ORDERING CLAIM, which is the part that would be easy to get wrong by hanging
+  // the alerts off the arrivals body. A rider whose arrivals fetch failed is exactly
+  // the rider who most needs to know the station is closed, and the matcher's route
+  // set falls back to the station's own routes list when there is no body to read.
+  const ctx = await installMocks(page);
+  ctx.overrides.alerts = (route) => json(route, { ...fx.alerts(), alerts: fx.stationAlertList() });
+  ctx.overrides.subwayArrivals = (route) =>
+    json(route, { detail: "Feed cache is warming up; try again in a few seconds." }, 503);
+  await page.clock.install({ time: new Date(fx.FROZEN_MS) });
+  await page.clock.pauseAt(new Date(fx.FROZEN_MS));
+  await page.goto("/");
+  await awaitRegistry(page);
+  await page.waitForFunction(
+    () => typeof alertsIndex !== "undefined" && alertsIndex.byStop.size > 0,
+  );
+
+  await selectStation(page, "times");
+  const detail = page.locator("#stations-detail");
+  await expect(detail).toContainText("warming up"); // the arrivals really did fail
+  await expect(panelAlerts(page)).toHaveCount(2);
+  await expect(detail).toContainText("Times Sq-42 St is closed");
+  await expect(detail).toContainText("[3] suspended overnight");
+});
+
+test("A1z2. the panel shows the alert while the arrivals are still IN FLIGHT (F11)", async ({
+  page,
+}) => {
+  // THE OTHER BRANCH, and a different claim from A1w. There the fetch resolved and
+  // failed; here it has not resolved at all, so the panel is on its "Loading arrivals"
+  // line with no body in hand. The alerts render anyway, which is only true because
+  // the matcher's route set falls back to the station's own routes list.
+  //
+  // The arrivals response is HELD rather than delayed by a timer: the page clock is
+  // paused, so a timer-based delay would never fire and the spec would hang instead of
+  // measuring anything.
+  let release;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  const ctx = await installMocks(page);
+  ctx.overrides.alerts = (route) => json(route, { ...fx.alerts(), alerts: fx.stationAlertList() });
+  ctx.overrides.subwayArrivals = async (route) => {
+    await held;
+    return json(route, fx.subwayArrivals());
+  };
+  await page.clock.install({ time: new Date(fx.FROZEN_MS) });
+  await page.clock.pauseAt(new Date(fx.FROZEN_MS));
+  await page.goto("/");
+  await awaitRegistry(page);
+  await page.waitForFunction(
+    () => typeof alertsIndex !== "undefined" && alertsIndex.byStop.size > 0,
+  );
+
+  await selectStation(page, "times");
+  const detail = page.locator("#stations-detail");
+  await expect(detail).toContainText("Loading arrivals");
+  await expect(panelAlerts(page)).toHaveCount(2);
+  await expect(detail).toContainText("Times Sq-42 St is closed");
+
+  // And the board arriving does not displace them: the alerts are ADDED to the panel,
+  // not an alternative to it.
+  release();
+  await expect(detail).toContainText("Northbound");
+  await expect(panelAlerts(page)).toHaveCount(2);
+});
+
+test("A1x. an NJ Transit station shows its alert in both surfaces, through a FLAT board (F11)", async ({
+  page,
+}) => {
+  // THE SECOND HALF OF THE FINDING, from 15c's ledger. NJ Transit's arrivals board is
+  // flat, with no directions on it at all, and the station alert join could not read
+  // that shape, so systems/njt.js rendered no alerts block.
+  //
+  // HOBOKEN RATHER THAN PENN STATION, because Hoboken isolates the flat-shape arm.
+  // Its static routes are 2 and 17; the board served here carries a route 9 train, and
+  // "[9] Northeast Corridor suspended" is scoped to route 9 and no stop. So this alert
+  // reaches this station only if the join reads route ids out of a flat arrivals list.
+  const ctx = await installMocks(page);
+  ctx.overrides.alerts = (route) => json(route, { ...fx.alerts(), alerts: fx.stationAlertList() });
+  ctx.overrides.njtArrivals = (route) => json(route, fx.njtArrivalsHoboken());
+  await page.clock.install({ time: new Date(fx.FROZEN_MS) });
+  await page.clock.pauseAt(new Date(fx.FROZEN_MS));
+  await page.goto("/");
+  await awaitRegistry(page);
+  await page.waitForFunction(
+    () => typeof alertsIndex !== "undefined" && alertsIndex.byRoute.has("njt|9"),
+  );
+
+  await selectStation(page, "hoboken");
+  const detail = page.locator("#stations-detail");
+  await expect(detail).toContainText("NJ Transit");
+  await expect(detail).toContainText("[9] Northeast Corridor suspended");
+  // Penn Station's stop-scoped alert is for a different station and does not follow.
+  await expect(detail).not.toContainText("New York Penn Station platforms closed");
+
+  // And the popup, which had no alerts block at all before F11.
+  await page.evaluate(() => closeStationsPanel());
+  await page.evaluate(() => {
+    const marker = njtStations.getLayers().find((m) => m.getLatLng().lat.toFixed(4) === "40.7350");
+    marker.openPopup();
+  });
+  await expect(page.locator(".leaflet-popup-content")).toContainText(
+    "[9] Northeast Corridor suspended",
+  );
+});
+
+test("A1y. a RETAINED alert set is labeled as held, never presented as current (F11)", async ({
+  page,
+}) => {
+  // A retained set is not late, it is HELD: the subway alerts feed is down and the
+  // backend is serving the alerts it last decoded. The panel says so, with an age,
+  // because an alert set a rider acts on must never imply it is current when it is a
+  // carried-forward copy.
+  const held = fx.FROZEN_S - 600;
+  await openWithAlerts(
+    page,
+    fx.alertsWithSystems({ alerts: fx.stationAlertList(), frozen: "subway", retainedSince: held }),
+  );
+
+  await selectStation(page, "times");
+  const detail = page.locator("#stations-detail");
+  await expect(panelAlerts(page)).toHaveCount(2); // the held alerts are still shown
+  await expect(detail.locator(".station-alerts-stale")).toHaveText("alerts held from 10m ago");
+  // It is a different line from the ARRIVALS age line, which is about a different
+  // feed; the arrivals here are fresh, so that one is absent.
+  await expect(detail.locator(".station-detail-stale")).toHaveCount(0);
+});
+
+test("A1z. a station with no matched alert still gets the hedge when its source is stale (F11)", async ({
+  page,
+}) => {
+  // AN EMPTY ALERT SET FROM A DEAD FEED LOOKS EXACTLY LIKE AN EMPTY ONE FROM A HEALTHY
+  // FEED, and only this line tells them apart. Canal St matches nothing in the store,
+  // so without the hedge the panel would quietly imply that nothing is wrong there.
+  // Same reasoning as the R1 marker riding on an empty popup block.
+  const ctx = await openWithAlerts(
+    page,
+    fx.alertsWithSystems({ alerts: fx.stationAlertList() }),
+  );
+  await selectStation(page, "canal");
+  const detail = page.locator("#stations-detail");
+  await expect(panelAlerts(page)).toHaveCount(0);
+  await expect(detail.locator(".station-alerts-stale")).toHaveCount(0); // fresh: no hedge
+
+  // The subway alerts feed stops decoding while everything else keeps polling, then
+  // the clock crosses the threshold. The panel repaints on its own tick.
+  ctx.overrides.alerts = (route, fixtures) =>
+    json(route, fixtures.alertsWithSystems({
+      alerts: fixtures.stationAlertList(),
+      fetchedAt: fx.FROZEN_S + 310,
+      servedAt: fx.FROZEN_S + 310,
+      frozen: "subway",
+      frozenAt: fx.FROZEN_S,
+      retainedSince: null,
+    }));
+  await page.clock.fastForward(310_000);
+  await page.evaluate(() => loadAlerts());
+  await page.evaluate(() => renderStationDetail({ tick: true }));
+  await expect(panelAlerts(page)).toHaveCount(0); // still nothing matched here
+  await expect(detail.locator(".station-alerts-stale")).toHaveText("alerts may be out of date");
+});
+
+// Count WRITES to the panel's live region from this point on, not final text:
+// assigning an identical string still mutates the region and a screen reader still
+// speaks, so comparing the text at the end would miss exactly the chattiness these
+// specs exist to prevent. Same lesson as A1r, and the same shape.
+async function watchPanelAnnouncements(page) {
+  await page.evaluate(() => {
+    window.__panelSpeech = [];
+    new MutationObserver(() => {
+      window.__panelSpeech.push(document.getElementById("stations-announce").textContent);
+    }).observe(document.getElementById("stations-announce"), {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
+  });
+}
+
+const panelSpeech = (page) => page.evaluate(() => window.__panelSpeech);
+
+// The alert half of whatever was spoken. Case-insensitive because "Service alerts for
+// this station have cleared." starts the sentence, and a case-sensitive match for
+// "service alert" silently finds nothing there, which reads as a missing announcement
+// rather than as a bad filter.
+const alertSpeechLines = async (page) =>
+  (await panelSpeech(page)).filter((line) => /service alert/i.test(line));
+
+test("A1v2. an alert appearing for the selected station announces ONCE, and ticks stay silent (F11)", async ({
+  page,
+}) => {
+  // BOTH HALVES OF THE RULE IN ONE SPEC, because either alone is easy to satisfy
+  // wrongly. Announcing on every repaint satisfies "it announces"; announcing never
+  // satisfies "ticks are silent".
+  //
+  // THE TICK IS THE HARD CASE, and it is why this announcement does not use the
+  // panel's tick guard. The alerts poll lands between arrivals fetches, so the very
+  // next repaint carrying a new alert is a COUNTDOWN TICK. A tick-suppressed
+  // announcement would therefore never fire at all. What stands in front of this
+  // write instead is a change guard on the alert identities, which is strictly
+  // stronger: it cannot fire twice for one change however many ticks carry it.
+  test.setTimeout(90_000);
+  const ctx = await installMocks(page);
+  let suspended = false;
+  ctx.overrides.alerts = (route, fixtures) =>
+    json(route, { ...fixtures.alerts(), alerts: suspended ? fixtures.stationAlertList() : [] });
+  await open(page, { install: false });
+
+  await selectStation(page, "times");
+  await expect(page.locator("#stations-detail")).toContainText("Northbound");
+  await expect(page.locator("#stations-announce")).toContainText("Times Sq");
+  await expect(panelAlerts(page)).toHaveCount(0);
+
+  await watchPanelAnnouncements(page);
+  // Thirty-one seconds of ticks and two background refreshes with NO alert: the
+  // silence half, on trial first.
+  await page.clock.runFor(31_000);
+  expect(await panelSpeech(page), "quiet while nothing changed").toEqual([]);
+
+  // The suspension appears on the next alerts poll (60s cadence).
+  suspended = true;
+  await page.clock.runFor(60_000 + 2_000);
+
+  await expect(panelAlerts(page)).toHaveCount(2);
+  // TWO alerts land in the same poll (a stop suspension and a route suspension), and
+  // the summary counts them rather than speaking twice.
+  const alertLines = await alertSpeechLines(page);
+  expect(alertLines, "exactly one alert announcement").toEqual([
+    "2 new service alerts for this station.",
+  ]);
+  // A SUMMARY, NEVER THE BODY: the block on screen carries the wording, and a live
+  // region reading a full service alert aloud would be unusable during the incident
+  // it exists for.
+  expect(alertLines[0]).not.toContain("suspended");
+  expect(alertLines[0]).not.toContain("closed");
+
+  // And it does not repeat: another half minute of ticks over the SAME alert set.
+  const before = (await alertSpeechLines(page)).length;
+  await page.clock.runFor(31_000);
+  expect(
+    (await alertSpeechLines(page)).length - before,
+    "an unchanged alert set never speaks again",
+  ).toBe(0);
+});
+
+test("A1w2. an alert CLEARING for the selected station is announced too (F11)", async ({ page }) => {
+  // The panel's deliberate divergence from the banner, in a browser. The banner stays
+  // silent on a clear because a rider sees the strip disappear; this block lives
+  // inside a subtree that is replaced every second, so there is no disappearance to
+  // perceive, and at 375 the inert map makes this the only surface saying anything.
+  // A rider who changed their plan on "this station is closed" is owed the retraction.
+  test.setTimeout(90_000);
+  const ctx = await installMocks(page);
+  let suspended = true;
+  ctx.overrides.alerts = (route, fixtures) =>
+    json(route, { ...fixtures.alerts(), alerts: suspended ? fixtures.stationAlertList() : [] });
+  await open(page, { install: false });
+
+  await selectStation(page, "times");
+  await expect(panelAlerts(page)).toHaveCount(2);
+  await watchPanelAnnouncements(page);
+
+  suspended = false;
+  await page.clock.runFor(60_000 + 2_000);
+
+  await expect(panelAlerts(page)).toHaveCount(0);
+  expect(await alertSpeechLines(page)).toEqual([
+    "Service alerts for this station have cleared.",
+  ]);
+});
+
+test("A1x2. selecting a station that ALREADY has alerts does not interrupt (F11)", async ({
+  page,
+}) => {
+  // The first observation seeds silently. Rendering an alert that was already there
+  // when the rider arrived is not a change, and the arrivals announcement already
+  // names the station on selection; a second interruption riding on it would be the
+  // chattiness these specs exist to prevent.
+  await openWithAlerts(page, { ...fx.alerts(), alerts: fx.stationAlertList() });
+  await watchPanelAnnouncements(page);
+
+  await selectStation(page, "times");
+  await expect(panelAlerts(page)).toHaveCount(2);
+  expect(
+    await alertSpeechLines(page),
+    "selection speaks the board, not an alert change",
+  ).toEqual([]);
+  // The station itself WAS announced, so this is silence about the alert set rather
+  // than a live region that is not working.
+  await expect(page.locator("#stations-announce")).toContainText("Times Sq");
+});
+
+test("A1y2. at 320 the alerts block stays inside the panel and scrolls nothing sideways (F11)", async ({
+  page,
+}) => {
+  // AXE CANNOT SEE THIS ONE. A block that overflows its container is not a contrast
+  // defect, an ARIA defect or a heading defect; it is text a rider cannot read, and
+  // the page-wide scan at 320 passes right over it. 320 is where it would happen:
+  // the alert headers are the longest strings the panel renders and the list carries
+  // its own indent inside a coloured box.
+  await page.setViewportSize({ width: 320, height: 640 });
+  await openWithAlerts(page, { ...fx.alerts(), alerts: fx.stationAlertList() });
+  await selectStation(page, "times");
+  await expect(panelAlerts(page)).toHaveCount(2);
+
+  const geometry = await page.evaluate(() => {
+    const de = document.documentElement;
+    const panel = document.getElementById("stations-panel").getBoundingClientRect();
+    const rows = [...document.querySelectorAll("#stations-detail ul.station-alerts li")];
+    const box = document.querySelector("#stations-detail ul.station-alerts").getBoundingClientRect();
+    return {
+      documentOverflow: de.scrollWidth - de.clientWidth,
+      boxEscapesPanel: box.left < panel.left - 0.5 || box.right > panel.right + 0.5,
+      rowsEscapeTheBox: rows.some(
+        (li) => li.getBoundingClientRect().right > box.right + 0.5,
+      ),
+      // A row that wrapped to nothing would satisfy every bound above while showing
+      // the rider no text at all.
+      shortestRow: Math.min(...rows.map((li) => li.getBoundingClientRect().height)),
+    };
+  });
+  expect(geometry.documentOverflow, "no sideways scroll at 320").toBe(0);
+  expect(geometry.boxEscapesPanel, "the alerts box stays inside the panel").toBe(false);
+  expect(geometry.rowsEscapeTheBox, "the bullets stay inside their box").toBe(false);
+  expect(geometry.shortestRow, "every alert row is actually rendered").toBeGreaterThan(10);
+});

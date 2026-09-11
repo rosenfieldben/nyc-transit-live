@@ -569,14 +569,43 @@ body.stations-docked #alert-banner {
 .station-arrivals li {
   margin: 2px 0;
 }
+/* F11: the selected station's service alerts, above its arrivals board. The amber
+   left rule, cream ground and #5a4a1a ink are the popup's .alert-block treatment at
+   panel scale, deliberately rather than a second look: a rider who has learned what
+   an alert looks like on the map reads the same thing in the panel, and the pair is
+   already the measured one (see the muted-ink note above, where #5a4a1a on #fdf6e3
+   is the combination those popups ship).
+
+   padding-left carries the bullets INSIDE the cream. A ul's default 40px indent would
+   hang them out over the white panel beside the amber rule, which reads as a list
+   that has escaped its box. */
+.station-alerts {
+  margin: 2px 0 4px;
+  padding: 5px 8px 5px 24px;
+  border-left: 3px solid #d9a406;
+  background: #fdf6e3;
+  border-radius: 2px;
+  font-size: 12px;
+  color: #5a4a1a;
+}
+.station-alerts li {
+  margin: 2px 0;
+}
 .station-detail-note {
   margin: 4px 0;
   font-size: 12px;
   color: #64748b;
 }
 /* The same muted honesty treatment .popup-stale gets, so "as of 3m ago" reads the
-   same way on both surfaces. */
-.station-detail-stale {
+   same way on both surfaces.
+
+   TWO CLASSES, ONE TREATMENT, added by F11. .station-detail-stale hedges the ARRIVALS
+   payload on screen; .station-alerts-stale hedges the ALERT SOURCE that produced the
+   block above it. They look identical because to a rider they are the same kind of
+   admission, and they are separate selectors because to anything selecting on them
+   they are not the same line. Both can be on screen at once. */
+.station-detail-stale,
+.station-alerts-stale {
   margin: 2px 0;
   font-size: 12px;
   color: #b45309;

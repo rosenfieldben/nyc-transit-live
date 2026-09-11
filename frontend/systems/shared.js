@@ -1227,6 +1227,25 @@ let alertsIndex = indexAlerts([]);
 let alertsFetchedAt = null;
 let lastBannerAlerts = [];
 
+// The per-system alert health from the last successful /api/alerts body, in
+// ingestSystems' shape: {fetchedAt, ok, retainedSince} per alert feed. C2 already put
+// this block on the wire (it rides on /api/alerts rather than only on /api/status
+// precisely because the client never fetches /api/status), and until F11 the client
+// collapsed it to one number and threw the rest away.
+//
+// WHO NEEDS THE UNCOLLAPSED VERSION: the station panel, which shows ONE system. The
+// envelope minimum is right for the agency-wide banner and wrong for a station board,
+// where it would hedge a current NJ Transit departure list because the ferry alerts
+// feed is frozen; and retained_since is not expressible as a freshness number at all,
+// because a retained set is not late, it is held. alertSourceNote reads both.
+//
+// INGESTED UNDER THE SOURCE KEY "alerts", which is not an alert system name. A body
+// with no systems block at all makes ingestSystems synthesize a single entry under
+// that key, and no lookup by a real system ("subway", "LIRR", "njt", ...) can collide
+// with it, so that shape reads as "this system has no block of its own" and
+// alertSourceNote falls back to the envelope basis.
+let alertsSystems = {};
+
 // When this client first ASKED for alerts. It is the age basis while alertsFetchedAt
 // is still null, so a backend that has never filled its index (every feed down since
 // boot, so /api/alerts errors and loadAlerts swallows it) discloses after the same
@@ -1285,6 +1304,7 @@ async function loadAlerts() {
     // from here would change non-alert surfaces. It stays calibrated by served_at on
     // the feed responses, exactly as R1 arranged; this line only consumes the axis.
     alertsFetchedAt = alertsFreshnessBasis(body);
+    alertsSystems = ingestSystems(body, "alerts");
     lastBannerAlerts = bannerAlerts(list);
     // The banner re-renders every poll (unlike popups, which render on open), so a
     // resolved agency-wide alert disappears on the next poll and a new one appears.
@@ -1303,28 +1323,25 @@ function tickAlertBanner() {
   renderAlertBanner(lastBannerAlerts);
 }
 
-// The alerts block for a station popup: match the current index (read fresh as a
-// global, so a popup re-render picks up whatever the store holds now) against the
-// station, scoped by system, plus every route that serves the station. Returns ""
-// when nothing matches, so no empty container is rendered.
+// The alerts block for a station popup: the shared station-alert matcher, rendered as
+// HTML. Returns "" when nothing matches, so no empty container is rendered.
 //
-// The served-routes set is the UNION of two sources (H5): the static
-// routes-per-station index the backend now derives from stop_times (station.routes),
-// and the route ids present in the station's CURRENT arrivals. The static list is
-// the complete, always-present set, so a route-scoped alert reaches the station even
-// with no imminent train; the arrivals ids are folded in too so a station whose
-// static routes failed to load still shows alerts for routes with a live train (and
-// so a brand-new route running before the next static refresh is covered). Either
-// source alone is a strict subset of the intent, so both feed matchStationAlerts.
+// THE MATCHING ITSELF MOVED TO helpers.js (F11), and this is now the popup's RENDERER
+// rather than the popup's matcher. The station panel renders the same answer as
+// elements, and the two disagreeing about which alerts apply at a station is exactly
+// the defect F11 recorded: a suspension in the popup and nothing in the panel, on a
+// phone where the open panel makes the map inert and the popup is unreachable. One
+// matcher, two renderers, and no way for the two to drift.
+//
+// alertsIndex is read fresh as a global on every call, so a popup re-render picks up
+// whatever the store holds now. The union rule the matcher applies (static
+// routes-per-station plus the routes in the current arrivals, H5) is documented at
+// stationAlertRouteIds, along with the three body shapes it now reads.
 function stationAlertsBlock(system, station, body) {
-  const routeIds = new Set(station.routes ?? []);
-  for (const arrivals of Object.values(body?.directions ?? {})) {
-    for (const arr of arrivals ?? []) if (arr.route_id) routeIds.add(arr.route_id);
-  }
   // Append the alerts-freshness marker (R1): if the alerts feed itself is stale it
   // shows even when this station currently matches no alerts (the block is ""), so a
   // rider is never shown an empty-looking station while the alert feed is down.
-  return alertsBlockHtml(matchStationAlerts(alertsIndex, system, station.id, routeIds)) +
+  return alertsBlockHtml(stationAlerts(alertsIndex, system, station, body)) +
     staleAlertsMarker();
 }
 

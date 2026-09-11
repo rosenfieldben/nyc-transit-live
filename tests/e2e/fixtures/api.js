@@ -82,11 +82,19 @@ const railroadsWithSystems = ({
   },
 });
 
-// The alerts envelope with per-system blocks for the five alert systems. All fresh at
+// The alerts envelope with per-system blocks for every alert system. All fresh at
 // `fetchedAt` except the one named by `frozen`, which is the partial-outage case the
-// C1 marker could not express (a poll where four of five decode is a SUCCESS, so the
-// envelope's own fetched_at keeps advancing).
-const ALERT_SYSTEMS = ["subway", "bus", "LIRR", "MNR", "ferry"];
+// C1 marker could not express (a poll where all but one decode is a SUCCESS, so the
+// envelope's own fetched_at keeps advancing). `frozen` may also be given a
+// retained_since, which is what the backend records for a system whose alerts are
+// being carried forward from an earlier poll while its feed is down.
+//
+// "njt" JOINED THE LIST WITH F11, and it was missing rather than excluded: 15c added
+// the NJ Transit alerts feed to ALERT_FEED_URLS in feeds/alerts.py, and this fixture
+// still described the five that predated it. Nothing downstream moved when it was
+// added, because every system here shares one fetched_at and alertsFreshnessBasis
+// takes the minimum.
+const ALERT_SYSTEMS = ["subway", "bus", "LIRR", "MNR", "ferry", "njt"];
 
 const alertsWithSystems = ({
   alerts: list = [],
@@ -94,6 +102,7 @@ const alertsWithSystems = ({
   servedAt = fetchedAt,
   frozen = null,
   frozenAt = fetchedAt,
+  retainedSince = frozenAt,
 } = {}) => ({
   fetched_at: fetchedAt,
   served_at: servedAt,
@@ -102,7 +111,7 @@ const alertsWithSystems = ({
     ALERT_SYSTEMS.map((system) => [
       system,
       system === frozen
-        ? systemBlock(frozenAt, { ok: false, retainedSince: frozenAt })
+        ? systemBlock(frozenAt, { ok: false, retainedSince })
         : systemBlock(fetchedAt),
     ]),
   ),
@@ -623,6 +632,52 @@ const ferryAlerts = () => ({
   ],
 });
 
+// F11: station-scoped and route-scoped alerts, for the specs that assert the station
+// PANEL and the map POPUP say the same thing about the same station. Selectors are in
+// each system's own id space and line up with the station fixtures above.
+//
+// "sub-route-3" IS THE ACCEPTANCE CASE. Route 3 serves Times Sq (127) in its
+// routes-per-station list and has NO imminent train in subwayArrivals, which only
+// carries 1s and 2s. It can therefore reach the station only through the static side
+// of the union, and F11's acceptance is that BOTH surfaces show it anyway.
+//
+// "njt-route-9" IS THE FLAT-SHAPE CASE. Route 9 does NOT serve Hoboken (id 12) in its
+// static routes list (2 and 17), so it reaches that station only through a route id
+// read out of a FLAT arrivals board, which is the shape the join could not read
+// before F11. njtArrivalsHoboken serves exactly that board.
+const stationAlertList = () => [
+  { id: "sub-stop", system: "subway", header: "Times Sq-42 St is closed", description: null,
+    effect: "NO_SERVICE", cause: "MAINTENANCE", routes: [], stops: ["127"],
+    starts_at: FROZEN_S - 600, ends_at: null },
+  { id: "sub-route-3", system: "subway", header: "[3] suspended overnight", description: null,
+    effect: "NO_SERVICE", cause: "MAINTENANCE", routes: ["3"], stops: [],
+    starts_at: FROZEN_S - 600, ends_at: null },
+  { id: "sub-route-Z", system: "subway", header: "[Z] does not serve Times Sq", description: null,
+    effect: "DETOUR", cause: "CONSTRUCTION", routes: ["Z"], stops: [],
+    starts_at: FROZEN_S - 600, ends_at: null },
+  { id: "njt-stop", system: "njt", header: "New York Penn Station platforms closed", description: null,
+    effect: "NO_SERVICE", cause: "MAINTENANCE", routes: [], stops: ["109"],
+    starts_at: FROZEN_S - 600, ends_at: null },
+  { id: "njt-route-9", system: "njt", header: "[9] Northeast Corridor suspended", description: null,
+    effect: "NO_SERVICE", cause: "MAINTENANCE", routes: ["9"], stops: [],
+    starts_at: FROZEN_S - 600, ends_at: null },
+];
+
+// A flat NJ Transit board for HOBOKEN carrying a route 9 train. Hoboken's static
+// routes are 2 and 17, so route 9 is present here and nowhere else: an alert scoped
+// to it reaches this station only if the join reads the flat arrivals list.
+const njtArrivalsHoboken = () => ({
+  fetched_at: FROZEN_S,
+  stop_id: "12",
+  stop_name: "Hoboken",
+  arrivals: [
+    {
+      train_num: "3901", route_id: "9", headsign: "New York Penn Station",
+      arrival: FROZEN_S + 120, departure: FROZEN_S + 150, delay: null, trip_id: "NJ_3901",
+    },
+  ],
+});
+
 module.exports = {
   FROZEN_MS,
   FROZEN_S,
@@ -662,4 +717,6 @@ module.exports = {
   njtArrivals,
   alerts,
   ferryAlerts,
+  stationAlertList,
+  njtArrivalsHoboken,
 };

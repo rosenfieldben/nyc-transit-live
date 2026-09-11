@@ -42,7 +42,7 @@ let panelSeq = 0;
 let panelTimer = null;
 // The last SHAPED payload announced. The announcement guard compares payloads, never
 // rendered text, and it advances only when the live region was actually written. See
-// announcementWorthy in helpers.js and announceUnlessTick below.
+// announcementWorthy in helpers.js and speakPanel below.
 let panelAnnounced = null;
 // The first-load failure for the SELECTED station, retained rather than left to the
 // rendered DOM. Round 2 of the review caught why it has to be state: reopening the
@@ -52,6 +52,13 @@ let panelAnnounced = null;
 // selection and on any successful load; a failed BACKGROUND refresh deliberately
 // leaves it alone, because that path keeps the last-known rows instead.
 let panelError = null;
+// The alert identities last ANNOUNCED for the selected station (helpers.js
+// alertIdentities), or null before the first observation. F11's live-region rule is a
+// CHANGE guard rather than the tick guard the arrivals announcement uses, and this is
+// what it compares; see stationAlertSpeech for why the two guards differ. Reset on
+// a new selection, so selecting a station that already has alerts renders them without
+// an interruption.
+let panelAlertsAnnounced = null;
 
 /* ---------------- open, close, and where focus goes ---------------- */
 
@@ -429,6 +436,7 @@ function selectStation(key) {
   panelStation = entry;
   panelBody = null;
   panelAnnounced = null;
+  panelAlertsAnnounced = null;
   panelError = null;
   panelSeq++;
   // STOP THE OLD STATION'S TICK HERE, not in the fetch. Round 2 of the review found
@@ -542,8 +550,8 @@ function panelClockNow() {
 // previous shape breaking this phase's one hard rule: this function called the live
 // region directly and ignored `tick`, so a leaked countdown timer wrote the region as
 // the scheduled text crossed a headway band. Announcing is the caller's job now, and
-// every caller reaches the region through announceUnlessTick, the single door where
-// the rule is enforced.
+// every caller reaches the region through speakPanel, the single place where the
+// tick guard is applied.
 function renderScheduledDetail(entry, heading) {
   const note = "Scheduled service. AirTrain JFK publishes no live tracking.";
   const noteEl = document.createElement("p");
@@ -588,6 +596,13 @@ function renderStationDetail({ error = panelError, tick = false } = {}) {
   stationsDetail.replaceChildren();
   if (!entry) return;
 
+  // COMPUTED ONCE, BEFORE THE BRANCHES, because it advances the alert memo and every
+  // branch below owes the rider the same answer about it. A station whose arrivals
+  // failed, or whose board is still loading, has exactly as much of a suspension as
+  // one whose countdowns arrived. It is null for a station whose mode publishes no
+  // alerts feed, and null whenever nothing changed, which is almost every render.
+  const alertSpeech = stationAlertSpeech();
+
   const heading = document.createElement("h3");
   heading.textContent = `${entry.name} (${entry.systemLabel})`;
   if (entry.wheelchair) {
@@ -599,18 +614,32 @@ function renderStationDetail({ error = panelError, tick = false } = {}) {
 
   if (!entry.arrivalsUrl) {
     const spoken = renderScheduledDetail(entry, heading);
-    announceState(spoken, tick);
+    announceState(spoken, tick, alertSpeech);
     return;
   }
 
   stationsDetail.appendChild(heading);
+
+  // THE ALERTS, ABOVE THE BOARD AND BEFORE EVERY OTHER BRANCH (F11). A station
+  // suspension is the single most consequential thing this panel can say, so it is
+  // rendered before the arrivals, before an arrivals error, and before the loading
+  // note: those three are about whether the COUNTDOWNS arrived, and an alert is about
+  // whether the trains are running at all. A rider whose arrivals fetch failed is
+  // exactly the rider who most needs to be told the station is closed.
+  //
+  // IT DOES NOT NEED panelBody, which is what makes that ordering possible. The
+  // matcher's route set falls back to the station's own routes list when there is no
+  // arrivals body to read, and that static list is the complete set; the body only
+  // ever ADDS routes with a train inbound right now. So the block is correct while
+  // the first fetch is still in the air and stays correct when it fails.
+  renderStationAlerts(entry);
 
   if (error) {
     const problem = document.createElement("p");
     problem.className = "station-detail-note";
     problem.textContent = error;
     stationsDetail.appendChild(problem);
-    announceState(`${entry.name}, ${entry.systemLabel}. ${error}`, tick);
+    announceState(`${entry.name}, ${entry.systemLabel}. ${error}`, tick, alertSpeech);
     return;
   }
   if (!panelBody) {
@@ -618,6 +647,10 @@ function renderStationDetail({ error = panelError, tick = false } = {}) {
     loading.className = "station-detail-note";
     loading.textContent = "Loading arrivals…";
     stationsDetail.appendChild(loading);
+    // Still silent about the LOADING itself, which has nothing to say that the rider
+    // did not just ask for. An alert change is a different matter and is spoken here
+    // rather than held until the board arrives.
+    announceState(null, tick, alertSpeech);
     return;
   }
 
@@ -657,7 +690,163 @@ function renderStationDetail({ error = panelError, tick = false } = {}) {
     stationsDetail.appendChild(list);
   }
 
-  announceArrivals(shaped, staleLine, tick);
+  announceArrivals(shaped, staleLine, tick, alertSpeech);
+}
+
+/* ---------------- the station's service alerts (F11) ---------------- */
+
+// The alerts for the selected station, rendered into the detail area as ELEMENTS.
+//
+// THE SAME MATCHER THE POPUP USES, not a second copy: helpers.js stationAlerts is the
+// one place that decides which alerts apply at a station, and systems/shared.js
+// stationAlertsBlock renders the identical list as HTML for the popup. F11 is a
+// finding about two surfaces disagreeing, so a second matcher here would be the
+// defect rather than the fix.
+//
+// ELEMENTS RATHER THAN innerHTML, unlike the popup, and that is not just house style.
+// Alert headers are upstream text that this panel never escapes anywhere else;
+// building nodes and assigning textContent means there is no escaping step to forget.
+// The popup reaches alertsBlockHtml, which escapes, because a Leaflet popup takes a
+// string.
+//
+// Returns nothing. The announcement is a separate decision with a separate guard, and
+// stationAlertSpeech owns it.
+function renderStationAlerts(entry) {
+  const system = stationAlertSystem(entry);
+  // A MODE WITH NO ALERTS FEED DOES NO LOOKUP AT ALL, rather than looking one up and
+  // discarding the empty answer. PATH and AirTrain have no entry in ALERT_FEED_URLS,
+  // so there is nothing for them to find; returning here also means this file touches
+  // the alert store ONLY for a station that has one, which keeps the panel drivable
+  // without systems/shared.js loaded (f04's node:vm harness drives exactly that).
+  if (!system) return;
+  // shownAlerts is what alertsBlockHtml renders for the popup, so both surfaces draw
+  // the same rows: an alert with no header to read is dropped by both rather than
+  // becoming a blank bullet on one of them.
+  const alerts = shownAlerts(stationAlerts(alertsIndex, system, entry, panelBody));
+  const note = alertSourceNote(
+    alertsSystems,
+    system,
+    alertsFetchedAt,
+    alertsClockNow(),
+    alertsFirstAttemptAt,
+  );
+  // Nothing to say and nothing to hedge: render no container at all, the same
+  // contract alertsBlockHtml keeps for the popup. An empty bordered box under every
+  // station would read as a surface that is broken rather than one that is quiet.
+  if (!alerts.length && !note) return;
+
+  // THE HEADING IS THE LIST'S, NOT THE HEDGE'S, which is why it is inside this branch.
+  // Printing "Service alerts" above a lone freshness line would say there are alerts
+  // here and they are old, when what is true is that nothing matched and the source
+  // cannot be trusted to have told us so. The hedge stands on its own below.
+  if (alerts.length) {
+    const label = document.createElement("h4");
+    label.textContent = alerts.length === 1 ? "Service alert" : "Service alerts";
+    stationsDetail.appendChild(label);
+    const list = document.createElement("ul");
+    list.className = "station-alerts";
+    for (const alert of alerts) {
+      const item = document.createElement("li");
+      item.textContent = alert.header;
+      list.appendChild(item);
+    }
+    stationsDetail.appendChild(list);
+  }
+
+  // THE HEDGE SHOWS EVEN WITH NO ALERTS MATCHED, which is why the early return above
+  // tests both. An empty alert set from a feed that has stopped decoding looks exactly
+  // like an empty alert set from a healthy one, and only this line tells them apart.
+  // It is the same reason staleAlertsMarker rides on an empty popup block (R1).
+  if (note) {
+    const age = document.createElement("p");
+    // ITS OWN CLASS, NOT .station-detail-stale, and the reason is that they are two
+    // different claims about two different feeds. "as of 10m ago" is about the
+    // ARRIVALS payload on screen; this is about the ALERT SOURCE that produced (or
+    // failed to produce) the block above. They are styled identically on purpose,
+    // because both are the same kind of hedge to a rider, and a rider who wants to
+    // know which one is speaking has the words. A shared class made the two
+    // indistinguishable to anything selecting on them, which A1m found the moment its
+    // ten-minute clock walk aged the alert source too.
+    age.className = "station-alerts-stale";
+    age.textContent = note;
+    stationsDetail.appendChild(age);
+  }
+}
+
+// What this render owes the rider about the selected station's alert set: a summary
+// sentence, or null when nothing changed. Advances the memo as a side effect and does
+// NOT write the live region, because the write is the caller's to compose.
+//
+// THE MEMO ADVANCES WHETHER OR NOT ANYTHING IS SAID, so the next change is measured
+// against what is on screen now rather than against the last thing spoken.
+//
+// THIS IS THE ONE THING A TICK DOES NOT SUPPRESS, and the reason is worth stating
+// because the tick rule is otherwise absolute in this file. The tick guard exists to
+// stop UNCHANGED text being re-spoken every second, which is what a countdown is. An
+// alert set changing is not that: alertIdentities is a CHANGE guard, which is the
+// strictly stronger condition, and it fires at most once per change no matter how many
+// repaints carry it. Suppressing it on a tick would mean never announcing at all,
+// because the alerts poll lands between arrivals fetches and the very next repaint
+// carrying a new alert is a countdown tick.
+//
+// WHAT IT SAYS CARRIES NO COUNTDOWN. That is the other half of the rule holding: the
+// text is a summary sentence with no arrival time in it, so nothing a tick could
+// re-speak can leak through this door. See stationAlertAnnouncement in helpers.js for
+// why a clear is announced here and not on the banner.
+function stationAlertSpeech() {
+  if (!panelStation) return null;
+  const system = stationAlertSystem(panelStation);
+  if (!system) return null; // see renderStationAlerts: nothing to join, nothing to read
+  // THE SET THAT IS SHOWN, not the set that matched, so the announcement cannot name a
+  // change a rider has no way to see. A headerless alert arriving would otherwise have
+  // said "new service alert for this station" over an unchanged list.
+  const identities = alertIdentities(
+    shownAlerts(stationAlerts(alertsIndex, system, panelStation, panelBody)),
+  );
+  const speech = stationAlertAnnouncement(panelAlertsAnnounced, identities);
+  panelAlertsAnnounced = identities;
+  return speech;
+}
+
+// The arrivals announcement's WORDS, split out from the decision to speak them so one
+// render can compose both halves into a single write. See speakPanel.
+function arrivalsSpeech(shaped, staleLine) {
+  const lines = [`${panelStation.name}, ${panelStation.systemLabel}`];
+  // THE STALENESS TRAVELS WITH THE SPOKEN TEXT, not just the visible text. The
+  // countdowns are read aloud whether or not the feed behind them is current, so a
+  // rider listening to a stale payload would otherwise hear confident times with the
+  // one caveat that qualifies them left on screen where they cannot see it.
+  if (staleLine) lines.push(staleLine);
+  for (const bucket of shaped.buckets) {
+    const sentences = bucket.rows.map((row) => arrivalSentence(row, panelStation.noun));
+    lines.push(`${bucket.name}: ${sentences.join(". ")}`);
+  }
+  if (!shaped.buckets.length) {
+    lines.push(panelStation.noun === "boat" ? "No boats." : "No trains.");
+  }
+  return lines.join(". ");
+}
+
+// ONE RENDER, ONE WRITE, and F11 is what made that a rule rather than an accident.
+//
+// Until the alert announcement existed, every render had at most one thing to say, so
+// each caller could write the region itself. Two writes in one render is not two
+// announcements: a live region is read from its final value, so the second write
+// SILENTLY REPLACES the first and the rider hears only the later half. That is not a
+// hypothetical. It is what the first draft of this did, and the browser spec that
+// counts writes is what caught it: the alert sentence went in and the arrivals
+// sentence landed on top of it in the same task.
+//
+// So the two halves are composed here, each behind its own guard. `alertSpeech` is
+// change-guarded and survives a tick; `arrivals` is tick-guarded, because a countdown
+// re-read every second is the chattiness the whole rule exists to prevent. Returns
+// whether it spoke, so callers keep their bookkeeping in step with what the rider
+// actually heard rather than with what was merely rendered.
+function speakPanel(alertSpeech, tick, arrivals) {
+  const parts = [];
+  if (alertSpeech) parts.push(alertSpeech);
+  if (!tick && arrivals) parts.push(arrivals);
+  return parts.length ? writeLiveRegion(parts.join(" ")) : false;
 }
 
 // THE ONE DOOR TO THE LIVE REGION. Every write in this file goes through here, and
@@ -669,8 +858,13 @@ function renderStationDetail({ error = panelError, tick = false } = {}) {
 //
 // Returns whether it spoke, so callers can keep their bookkeeping in step with what
 // the rider actually heard rather than with what was merely rendered.
-function announceUnlessTick(tick, text) {
-  if (tick || !text || !stationsAnnounce) return false;
+// THE SINGLE ASSIGNMENT, and it is still the only statement in this file that writes
+// the live region. What F11 changed is only WHICH guard stands in front of it: the
+// tick guard used to be baked into this function and did two jobs at once, and it is
+// now one of two guards that speakPanel applies per half. A fifth writer added later
+// still cannot invent a second way to reach the region.
+function writeLiveRegion(text) {
+  if (!text || !stationsAnnounce) return false;
   stationsAnnounce.textContent = text;
   return true;
 }
@@ -692,10 +886,12 @@ function announceUnlessTick(tick, text) {
 // background refresh carrying unchanged data, never reaches this function at all; it
 // goes through announceArrivals, where announcementWorthy is the guard, and A1r pins
 // that it stays silent across two full refresh cycles.
-function announceState(text, tick) {
-  if (!announceUnlessTick(tick, text)) return;
+function announceState(text, tick, alertSpeech = null) {
+  if (!speakPanel(alertSpeech, tick, text)) return;
   // Whatever payload lands next counts as news: recovering from an error, or moving
-  // from a schedule to live times, IS something to say.
+  // from a schedule to live times, IS something to say. It is also what an alert
+  // announcement leaves behind: a rider who just heard that this station is suspended
+  // should hear the board again rather than have it deduped away as unchanged.
   panelAnnounced = null;
 }
 
@@ -704,24 +900,17 @@ function announceState(text, tick) {
 // the guard and helpers.js documents its three clauses. panelAnnounced advances only
 // when the door actually opened, so a tick can neither speak nor quietly consume the
 // change that the next real render owes the rider.
-function announceArrivals(shaped, staleLine, tick) {
+function announceArrivals(shaped, staleLine, tick, alertSpeech = null) {
   if (!panelStation) return;
-  if (!announcementWorthy(panelAnnounced, shaped)) return;
-  const lines = [`${panelStation.name}, ${panelStation.systemLabel}`];
-  // THE STALENESS TRAVELS WITH THE SPOKEN TEXT, not just the visible text. The
-  // countdowns are read aloud whether or not the feed behind them is current, so a
-  // rider listening to a stale payload would otherwise hear confident times with the
-  // one caveat that qualifies them left on screen where they cannot see it.
-  if (staleLine) lines.push(staleLine);
-  for (const bucket of shaped.buckets) {
-    const sentences = bucket.rows.map((row) => arrivalSentence(row, panelStation.noun));
-    lines.push(`${bucket.name}: ${sentences.join(". ")}`);
-  }
-  if (!shaped.buckets.length) {
-    lines.push(panelStation.noun === "boat" ? "No boats." : "No trains.");
-  }
-  if (!announceUnlessTick(tick, lines.join(". "))) return;
-  panelAnnounced = shaped;
+  const worthy = announcementWorthy(panelAnnounced, shaped);
+  const arrivals = worthy ? arrivalsSpeech(shaped, staleLine) : null;
+  if (!speakPanel(alertSpeech, tick, arrivals)) return;
+  // THE TWO HALVES KEEP SEPARATE BOOKKEEPING, because the rider may have heard one
+  // and not the other. panelAnnounced advances only when the ARRIVALS half actually
+  // reached them; when only an alert was spoken it is cleared instead, so the board
+  // is re-announced on the next render that is allowed to speak it.
+  if (!tick && arrivals) panelAnnounced = shaped;
+  else panelAnnounced = null;
 }
 
 /* ---------------- the docked layout ---------------- */

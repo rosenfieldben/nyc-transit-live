@@ -43,18 +43,17 @@ from models import (
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
-# THE CONTRACT PAIR, and the gap it still opens against the committed goldens.
+# THE CONTRACT PAIR, as a row that never went through a decoder reports it.
 #
-# The models gained observed_at and provenance first and the decoders fill them now,
-# so every decode-versus-model assertion below is a strict equality again and
-# _PENDING_IN_DECODE is gone, deleted by the commit that closed it. The goldens are
-# regenerated last, so the name below is the one side that has not caught up yet.
+# Every field-set lock below is a strict equality again. 6.1 landed in three steps
+# and the middle two left the model wider than the thing each assertion compared it
+# against, which two named constants tolerated for exactly as long as it was true;
+# both are gone, deleted by the commits that closed them, and that is the whole of
+# the evidence that the decoders and the goldens caught up.
 #
-# THIS IS NOT A RELAXED ASSERTION. `set(row) | PENDING == fields` still fails on any
-# other difference in either direction: a renamed field, a dropped field, an extra
-# field the model does not declare. It tolerates exactly those two names.
+# The defaults below are what a row seeded straight into a cache entry carries,
+# which is the honest thing for a row no decoder produced to say about itself.
 _CONTRACT_PAIR = {"observed_at": None, "provenance": "unknown"}
-_PENDING_IN_GOLDEN = {"observed_at", "provenance"}  # closed by the goldens commit
 
 # Representative decode outputs, mirrored from feeds.py / the test_api fixtures.
 VEHICLE = {
@@ -79,7 +78,7 @@ def test_train_model_matches_real_decode_output_exactly():
     fields = set(Train.model_fields)
     assert expected["trains"], "golden fixture is empty"
     for train in expected["trains"]:
-        assert set(train) | _PENDING_IN_GOLDEN == fields  # no added / missing keys
+        assert set(train) == fields  # no added / missing keys
         Train.model_validate(train)  # and the types validate
 
 
@@ -122,7 +121,7 @@ def test_railroad_train_model_matches_real_decode_output_exactly():
         expected = json.loads((FIXTURES / f"railroad_{system}_expected.json").read_text())
         assert expected["trains"], "golden fixture is empty"
         for train in expected["trains"]:
-            assert set(train) | _PENDING_IN_GOLDEN == fields  # no added / missing keys
+            assert set(train) == fields  # no added / missing keys
             RailroadTrain.model_validate(train)
 
 
@@ -589,6 +588,12 @@ def test_subway_positions_take_the_vehicle_clock_where_one_joins():
     assert all(t["provenance"] == "placed" for t in trains)  # no subway coordinate ships
     joined = [t for t in trains if t["observed_at"] != header]
     assert len(joined) == 84 and len(trains) == 95
+    # MEASURED WHILE REGENERATING THE GOLDENS, AND WORTH PINNING BECAUSE IT SIZES
+    # F01's subway half. The FEED carries 16 observations older than 90s, but 14 of
+    # them belong to trips the placement pass never draws (not yet started, or no
+    # resolvable upcoming stop), so only TWO stale observations reach a served train.
+    # Anyone sizing the age gate from the feed's 16 would overestimate by eight.
+    assert sum(1 for t in trains if header - t["observed_at"] > 90) == 2
     # Every prediction takes the group header: no subway trip_update dates itself.
     rows = _rows(arrivals)
     assert rows and all(r["observed_at"] == header for r in rows)

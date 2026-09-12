@@ -27,7 +27,6 @@ from pathlib import Path
 
 import httpx
 import pytest
-from contract_pending import without_pending
 from google.transit import gtfs_realtime_pb2 as pb
 
 import feeds
@@ -627,7 +626,7 @@ def test_golden_vehicles_match_expected():
     boats, feed_ts, _dead, _miss = feeds._decode_ferry_vehicles(
         raw, static["trips"], static["routes"], expected["now"]
     )
-    assert without_pending(boats) == expected["boats"]
+    assert boats == expected["boats"]
     assert feed_ts == expected["feed_timestamp"]
 
 
@@ -639,7 +638,7 @@ def test_golden_arrivals_match_expected():
     arrivals, _dead, _miss = feeds._decode_ferry_arrivals(
         raw, static["trips"], static["routes"], expected["now"]
     )
-    assert without_pending(arrivals) == expected["arrivals"]
+    assert arrivals == expected["arrivals"]
 
 
 @golden

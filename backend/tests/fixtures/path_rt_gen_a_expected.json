@@ -4,20 +4,28 @@
 "To New Jersey": [
 {
 "arrival": 1783297654.0,
+"observed_at": 1783297494.0,
+"provenance": "reported",
 "route_id": "861"
 },
 {
 "arrival": 1783297772.0,
+"observed_at": 1783297494.0,
+"provenance": "reported",
 "route_id": "859"
 }
 ],
 "To New York": [
 {
 "arrival": 1783297678.0,
+"observed_at": 1783297504.0,
+"provenance": "reported",
 "route_id": "859"
 },
 {
 "arrival": 1783298055.0,
+"observed_at": 1783297504.0,
+"provenance": "reported",
 "route_id": "861"
 }
 ]
@@ -26,20 +34,28 @@
 "To New Jersey": [
 {
 "arrival": 1783297564.0,
+"observed_at": 1783297479.0,
+"provenance": "reported",
 "route_id": "861"
 },
 {
 "arrival": 1783297682.0,
+"observed_at": 1783297479.0,
+"provenance": "reported",
 "route_id": "859"
 }
 ],
 "To New York": [
 {
 "arrival": 1783297525.0,
+"observed_at": 1783297459.0,
+"provenance": "reported",
 "route_id": "861"
 },
 {
 "arrival": 1783297786.0,
+"observed_at": 1783297459.0,
+"provenance": "reported",
 "route_id": "859"
 }
 ]
@@ -48,18 +64,26 @@
 "To New Jersey": [
 {
 "arrival": 1783297464.0,
+"observed_at": 1783297464.0,
+"provenance": "reported",
 "route_id": "861"
 },
 {
 "arrival": 1783297620.0,
+"observed_at": 1783297464.0,
+"provenance": "reported",
 "route_id": "859"
 },
 {
 "arrival": 1783298040.0,
+"observed_at": 1783297464.0,
+"provenance": "reported",
 "route_id": "861"
 },
 {
 "arrival": 1783298220.0,
+"observed_at": 1783297464.0,
+"provenance": "reported",
 "route_id": "859"
 }
 ]
@@ -68,20 +92,28 @@
 "To New Jersey": [
 {
 "arrival": 1783297744.0,
+"observed_at": 1783297469.0,
+"provenance": "reported",
 "route_id": "861"
 },
 {
 "arrival": 1783297862.0,
+"observed_at": 1783297469.0,
+"provenance": "reported",
 "route_id": "859"
 }
 ],
 "To New York": [
 {
 "arrival": 1783297606.0,
+"observed_at": 1783297474.0,
+"provenance": "reported",
 "route_id": "859"
 },
 {
 "arrival": 1783297965.0,
+"observed_at": 1783297474.0,
+"provenance": "reported",
 "route_id": "861"
 }
 ]
@@ -90,20 +122,28 @@
 "To New Jersey": [
 {
 "arrival": 1783297834.0,
+"observed_at": 1783297474.0,
+"provenance": "reported",
 "route_id": "861"
 },
 {
 "arrival": 1783297952.0,
+"observed_at": 1783297474.0,
+"provenance": "reported",
 "route_id": "859"
 }
 ],
 "To New York": [
 {
 "arrival": 1783297516.0,
+"observed_at": 1783297489.0,
+"provenance": "reported",
 "route_id": "859"
 },
 {
 "arrival": 1783297875.0,
+"observed_at": 1783297489.0,
+"provenance": "reported",
 "route_id": "861"
 }
 ]
@@ -112,20 +152,28 @@
 "To New Jersey": [
 {
 "arrival": 1783297623.0,
+"observed_at": 1783297494.0,
+"provenance": "reported",
 "route_id": "862"
 },
 {
 "arrival": 1783297722.0,
+"observed_at": 1783297494.0,
+"provenance": "reported",
 "route_id": "860"
 }
 ],
 "To New York": [
 {
 "arrival": 1783297667.0,
+"observed_at": 1783297499.0,
+"provenance": "reported",
 "route_id": "862"
 },
 {
 "arrival": 1783297758.0,
+"observed_at": 1783297499.0,
+"provenance": "reported",
 "route_id": "860"
 }
 ]
@@ -134,20 +182,28 @@
 "To New Jersey": [
 {
 "arrival": 1783297803.0,
+"observed_at": 1783297504.0,
+"provenance": "reported",
 "route_id": "862"
 },
 {
 "arrival": 1783297933.0,
+"observed_at": 1783297504.0,
+"provenance": "reported",
 "route_id": "861"
 }
 ],
 "To New York": [
 {
 "arrival": 1783297515.0,
+"observed_at": 1783297504.0,
+"provenance": "reported",
 "route_id": "862"
 },
 {
 "arrival": 1783297812.0,
+"observed_at": 1783297504.0,
+"provenance": "reported",
 "route_id": "861"
 }
 ]
@@ -156,20 +212,28 @@
 "To New Jersey": [
 {
 "arrival": 1783297748.0,
+"observed_at": 1783297489.0,
+"provenance": "reported",
 "route_id": "862"
 },
 {
 "arrival": 1783298327.0,
+"observed_at": 1783297489.0,
+"provenance": "reported",
 "route_id": "862"
 }
 ],
 "To New York": [
 {
 "arrival": 1783297662.0,
+"observed_at": 1783297459.0,
+"provenance": "reported",
 "route_id": "862"
 },
 {
 "arrival": 1783298142.0,
+"observed_at": 1783297459.0,
+"provenance": "reported",
 "route_id": "862"
 }
 ]
@@ -178,18 +242,26 @@
 "To New York": [
 {
 "arrival": 1783297620.0,
+"observed_at": 1783297494.0,
+"provenance": "reported",
 "route_id": "859"
 },
 {
 "arrival": 1783297920.0,
+"observed_at": 1783297494.0,
+"provenance": "reported",
 "route_id": "860"
 },
 {
 "arrival": 1783298220.0,
+"observed_at": 1783297494.0,
+"provenance": "reported",
 "route_id": "859"
 },
 {
 "arrival": 1783298520.0,
+"observed_at": 1783297494.0,
+"provenance": "reported",
 "route_id": "860"
 }
 ]
@@ -198,28 +270,40 @@
 "To New Jersey": [
 {
 "arrival": 1783297667.0,
+"observed_at": 1783297484.0,
+"provenance": "reported",
 "route_id": "862"
 },
 {
 "arrival": 1783298073.0,
+"observed_at": 1783297484.0,
+"provenance": "reported",
 "route_id": "862"
 }
 ],
 "To New York": [
 {
 "arrival": 1783297560.0,
+"observed_at": 1783297489.0,
+"provenance": "reported",
 "route_id": "861"
 },
 {
 "arrival": 1783297768.0,
+"observed_at": 1783297489.0,
+"provenance": "reported",
 "route_id": "862"
 },
 {
 "arrival": 1783298160.0,
+"observed_at": 1783297489.0,
+"provenance": "reported",
 "route_id": "861"
 },
 {
 "arrival": 1783298322.0,
+"observed_at": 1783297489.0,
+"provenance": "reported",
 "route_id": "862"
 }
 ]
@@ -228,20 +312,28 @@
 "To New Jersey": [
 {
 "arrival": 1783297723.0,
+"observed_at": 1783297459.0,
+"provenance": "reported",
 "route_id": "861"
 },
 {
 "arrival": 1783297902.0,
+"observed_at": 1783297459.0,
+"provenance": "reported",
 "route_id": "860"
 }
 ],
 "To New York": [
 {
 "arrival": 1783297578.0,
+"observed_at": 1783297499.0,
+"provenance": "reported",
 "route_id": "860"
 },
 {
 "arrival": 1783298022.0,
+"observed_at": 1783297499.0,
+"provenance": "reported",
 "route_id": "861"
 }
 ]
@@ -250,10 +342,14 @@
 "To New York": [
 {
 "arrival": 1783297560.0,
+"observed_at": 1783297464.0,
+"provenance": "reported",
 "route_id": "862"
 },
 {
 "arrival": 1783298040.0,
+"observed_at": 1783297464.0,
+"provenance": "reported",
 "route_id": "862"
 }
 ]
@@ -262,22 +358,32 @@
 "To New Jersey": [
 {
 "arrival": 1783297500.0,
+"observed_at": 1783297469.0,
+"provenance": "reported",
 "route_id": "860"
 },
 {
 "arrival": 1783297860.0,
+"observed_at": 1783297469.0,
+"provenance": "reported",
 "route_id": "862"
 },
 {
 "arrival": 1783298100.0,
+"observed_at": 1783297469.0,
+"provenance": "reported",
 "route_id": "860"
 },
 {
 "arrival": 1783298340.0,
+"observed_at": 1783297469.0,
+"provenance": "reported",
 "route_id": "862"
 },
 {
 "arrival": 1783298700.0,
+"observed_at": 1783297469.0,
+"provenance": "reported",
 "route_id": "860"
 }
 ]
@@ -290,9 +396,11 @@
 "latitude": 40.73454,
 "longitude": -74.16375,
 "next_time": 1783297560.0,
+"observed_at": 1783297464.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "862",
 "stop_id": "26733",
 "stop_name": "Newark",
@@ -303,9 +411,11 @@
 "latitude": 40.73454,
 "longitude": -74.16375,
 "next_time": 1783298040.0,
+"observed_at": 1783297464.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "862",
 "stop_id": "26733",
 "stop_name": "Newark",
@@ -316,9 +426,11 @@
 "latitude": 40.73942,
 "longitude": -74.15587,
 "next_time": 1783297748.0,
+"observed_at": 1783297489.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "862",
 "stop_id": "26729",
 "stop_name": "Harrison",
@@ -329,9 +441,11 @@
 "latitude": 40.73942,
 "longitude": -74.15587,
 "next_time": 1783298327.0,
+"observed_at": 1783297489.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "862",
 "stop_id": "26729",
 "stop_name": "Harrison",
@@ -342,9 +456,11 @@
 "latitude": 40.73942,
 "longitude": -74.15587,
 "next_time": 1783297662.0,
+"observed_at": 1783297459.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "862",
 "stop_id": "26729",
 "stop_name": "Harrison",
@@ -355,9 +471,11 @@
 "latitude": 40.73942,
 "longitude": -74.15587,
 "next_time": 1783298142.0,
+"observed_at": 1783297459.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "862",
 "stop_id": "26729",
 "stop_name": "Harrison",
@@ -368,9 +486,11 @@
 "latitude": 40.73301,
 "longitude": -74.06289,
 "next_time": 1783297667.0,
+"observed_at": 1783297484.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "862",
 "stop_id": "26731",
 "stop_name": "Journal Square",
@@ -381,9 +501,11 @@
 "latitude": 40.73301,
 "longitude": -74.06289,
 "next_time": 1783298073.0,
+"observed_at": 1783297484.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "862",
 "stop_id": "26731",
 "stop_name": "Journal Square",
@@ -394,9 +516,11 @@
 "latitude": 40.73301,
 "longitude": -74.06289,
 "next_time": 1783297560.0,
+"observed_at": 1783297489.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "861",
 "stop_id": "26731",
 "stop_name": "Journal Square",
@@ -407,9 +531,11 @@
 "latitude": 40.73301,
 "longitude": -74.06289,
 "next_time": 1783297768.0,
+"observed_at": 1783297489.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "862",
 "stop_id": "26731",
 "stop_name": "Journal Square",
@@ -420,9 +546,11 @@
 "latitude": 40.73301,
 "longitude": -74.06289,
 "next_time": 1783298160.0,
+"observed_at": 1783297489.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "861",
 "stop_id": "26731",
 "stop_name": "Journal Square",
@@ -433,9 +561,11 @@
 "latitude": 40.73301,
 "longitude": -74.06289,
 "next_time": 1783298322.0,
+"observed_at": 1783297489.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "862",
 "stop_id": "26731",
 "stop_name": "Journal Square",
@@ -446,9 +576,11 @@
 "latitude": 40.71966,
 "longitude": -74.04245,
 "next_time": 1783297803.0,
+"observed_at": 1783297504.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "862",
 "stop_id": "26728",
 "stop_name": "Grove Street",
@@ -459,9 +591,11 @@
 "latitude": 40.71966,
 "longitude": -74.04245,
 "next_time": 1783297933.0,
+"observed_at": 1783297504.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "861",
 "stop_id": "26728",
 "stop_name": "Grove Street",
@@ -472,9 +606,11 @@
 "latitude": 40.71966,
 "longitude": -74.04245,
 "next_time": 1783297515.0,
+"observed_at": 1783297504.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "862",
 "stop_id": "26728",
 "stop_name": "Grove Street",
@@ -485,9 +621,11 @@
 "latitude": 40.71966,
 "longitude": -74.04245,
 "next_time": 1783297812.0,
+"observed_at": 1783297504.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "861",
 "stop_id": "26728",
 "stop_name": "Grove Street",
@@ -498,9 +636,11 @@
 "latitude": 40.71676,
 "longitude": -74.03238,
 "next_time": 1783297623.0,
+"observed_at": 1783297494.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "862",
 "stop_id": "26727",
 "stop_name": "Exchange Place",
@@ -511,9 +651,11 @@
 "latitude": 40.71676,
 "longitude": -74.03238,
 "next_time": 1783297722.0,
+"observed_at": 1783297494.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "860",
 "stop_id": "26727",
 "stop_name": "Exchange Place",
@@ -524,9 +666,11 @@
 "latitude": 40.71676,
 "longitude": -74.03238,
 "next_time": 1783297667.0,
+"observed_at": 1783297499.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "862",
 "stop_id": "26727",
 "stop_name": "Exchange Place",
@@ -537,9 +681,11 @@
 "latitude": 40.71676,
 "longitude": -74.03238,
 "next_time": 1783297758.0,
+"observed_at": 1783297499.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "860",
 "stop_id": "26727",
 "stop_name": "Exchange Place",
@@ -550,9 +696,11 @@
 "latitude": 40.71271,
 "longitude": -74.01193,
 "next_time": 1783297500.0,
+"observed_at": 1783297469.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "860",
 "stop_id": "26734",
 "stop_name": "World Trade Center",
@@ -563,9 +711,11 @@
 "latitude": 40.71271,
 "longitude": -74.01193,
 "next_time": 1783297860.0,
+"observed_at": 1783297469.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "862",
 "stop_id": "26734",
 "stop_name": "World Trade Center",
@@ -576,9 +726,11 @@
 "latitude": 40.71271,
 "longitude": -74.01193,
 "next_time": 1783298100.0,
+"observed_at": 1783297469.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "860",
 "stop_id": "26734",
 "stop_name": "World Trade Center",
@@ -589,9 +741,11 @@
 "latitude": 40.71271,
 "longitude": -74.01193,
 "next_time": 1783298340.0,
+"observed_at": 1783297469.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "862",
 "stop_id": "26734",
 "stop_name": "World Trade Center",
@@ -602,9 +756,11 @@
 "latitude": 40.71271,
 "longitude": -74.01193,
 "next_time": 1783298700.0,
+"observed_at": 1783297469.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "860",
 "stop_id": "26734",
 "stop_name": "World Trade Center",
@@ -615,9 +771,11 @@
 "latitude": 40.72699,
 "longitude": -74.03383,
 "next_time": 1783297723.0,
+"observed_at": 1783297459.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "861",
 "stop_id": "26732",
 "stop_name": "Newport",
@@ -628,9 +786,11 @@
 "latitude": 40.72699,
 "longitude": -74.03383,
 "next_time": 1783297902.0,
+"observed_at": 1783297459.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "860",
 "stop_id": "26732",
 "stop_name": "Newport",
@@ -641,9 +801,11 @@
 "latitude": 40.72699,
 "longitude": -74.03383,
 "next_time": 1783297578.0,
+"observed_at": 1783297499.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "860",
 "stop_id": "26732",
 "stop_name": "Newport",
@@ -654,9 +816,11 @@
 "latitude": 40.72699,
 "longitude": -74.03383,
 "next_time": 1783298022.0,
+"observed_at": 1783297499.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "861",
 "stop_id": "26732",
 "stop_name": "Newport",
@@ -667,9 +831,11 @@
 "latitude": 40.73586,
 "longitude": -74.02922,
 "next_time": 1783297620.0,
+"observed_at": 1783297494.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "859",
 "stop_id": "26730",
 "stop_name": "Hoboken",
@@ -680,9 +846,11 @@
 "latitude": 40.73586,
 "longitude": -74.02922,
 "next_time": 1783297920.0,
+"observed_at": 1783297494.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "860",
 "stop_id": "26730",
 "stop_name": "Hoboken",
@@ -693,9 +861,11 @@
 "latitude": 40.73586,
 "longitude": -74.02922,
 "next_time": 1783298220.0,
+"observed_at": 1783297494.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "859",
 "stop_id": "26730",
 "stop_name": "Hoboken",
@@ -706,9 +876,11 @@
 "latitude": 40.73586,
 "longitude": -74.02922,
 "next_time": 1783298520.0,
+"observed_at": 1783297494.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "860",
 "stop_id": "26730",
 "stop_name": "Hoboken",
@@ -719,9 +891,11 @@
 "latitude": 40.73295,
 "longitude": -74.00707,
 "next_time": 1783297834.0,
+"observed_at": 1783297474.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "861",
 "stop_id": "26726",
 "stop_name": "Christopher Street",
@@ -732,9 +906,11 @@
 "latitude": 40.73295,
 "longitude": -74.00707,
 "next_time": 1783297952.0,
+"observed_at": 1783297474.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "859",
 "stop_id": "26726",
 "stop_name": "Christopher Street",
@@ -745,9 +921,11 @@
 "latitude": 40.73295,
 "longitude": -74.00707,
 "next_time": 1783297516.0,
+"observed_at": 1783297489.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "859",
 "stop_id": "26726",
 "stop_name": "Christopher Street",
@@ -758,9 +936,11 @@
 "latitude": 40.73295,
 "longitude": -74.00707,
 "next_time": 1783297875.0,
+"observed_at": 1783297489.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "861",
 "stop_id": "26726",
 "stop_name": "Christopher Street",
@@ -771,9 +951,11 @@
 "latitude": 40.73424,
 "longitude": -73.9991,
 "next_time": 1783297744.0,
+"observed_at": 1783297469.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "861",
 "stop_id": "26725",
 "stop_name": "9th Street",
@@ -784,9 +966,11 @@
 "latitude": 40.73424,
 "longitude": -73.9991,
 "next_time": 1783297862.0,
+"observed_at": 1783297469.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "859",
 "stop_id": "26725",
 "stop_name": "9th Street",
@@ -797,9 +981,11 @@
 "latitude": 40.73424,
 "longitude": -73.9991,
 "next_time": 1783297606.0,
+"observed_at": 1783297474.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "859",
 "stop_id": "26725",
 "stop_name": "9th Street",
@@ -810,9 +996,11 @@
 "latitude": 40.73424,
 "longitude": -73.9991,
 "next_time": 1783297965.0,
+"observed_at": 1783297474.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "861",
 "stop_id": "26725",
 "stop_name": "9th Street",
@@ -823,9 +1011,11 @@
 "latitude": 40.73735,
 "longitude": -73.99684,
 "next_time": 1783297654.0,
+"observed_at": 1783297494.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "861",
 "stop_id": "26722",
 "stop_name": "14th Street",
@@ -836,9 +1026,11 @@
 "latitude": 40.73735,
 "longitude": -73.99684,
 "next_time": 1783297772.0,
+"observed_at": 1783297494.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "859",
 "stop_id": "26722",
 "stop_name": "14th Street",
@@ -849,9 +1041,11 @@
 "latitude": 40.73735,
 "longitude": -73.99684,
 "next_time": 1783297678.0,
+"observed_at": 1783297504.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "859",
 "stop_id": "26722",
 "stop_name": "14th Street",
@@ -862,9 +1056,11 @@
 "latitude": 40.73735,
 "longitude": -73.99684,
 "next_time": 1783298055.0,
+"observed_at": 1783297504.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "861",
 "stop_id": "26722",
 "stop_name": "14th Street",
@@ -875,9 +1071,11 @@
 "latitude": 40.7429,
 "longitude": -73.99278,
 "next_time": 1783297564.0,
+"observed_at": 1783297479.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "861",
 "stop_id": "26723",
 "stop_name": "23rd Street",
@@ -888,9 +1086,11 @@
 "latitude": 40.7429,
 "longitude": -73.99278,
 "next_time": 1783297682.0,
+"observed_at": 1783297479.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "859",
 "stop_id": "26723",
 "stop_name": "23rd Street",
@@ -901,9 +1101,11 @@
 "latitude": 40.7429,
 "longitude": -73.99278,
 "next_time": 1783297525.0,
+"observed_at": 1783297459.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "861",
 "stop_id": "26723",
 "stop_name": "23rd Street",
@@ -914,9 +1116,11 @@
 "latitude": 40.7429,
 "longitude": -73.99278,
 "next_time": 1783297786.0,
+"observed_at": 1783297459.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "859",
 "stop_id": "26723",
 "stop_name": "23rd Street",
@@ -927,9 +1131,11 @@
 "latitude": 40.74912,
 "longitude": -73.98827,
 "next_time": 1783297464.0,
+"observed_at": 1783297464.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "861",
 "stop_id": "26724",
 "stop_name": "33rd Street",
@@ -940,9 +1146,11 @@
 "latitude": 40.74912,
 "longitude": -73.98827,
 "next_time": 1783297620.0,
+"observed_at": 1783297464.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "859",
 "stop_id": "26724",
 "stop_name": "33rd Street",
@@ -953,9 +1161,11 @@
 "latitude": 40.74912,
 "longitude": -73.98827,
 "next_time": 1783298040.0,
+"observed_at": 1783297464.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "861",
 "stop_id": "26724",
 "stop_name": "33rd Street",
@@ -966,9 +1176,11 @@
 "latitude": 40.74912,
 "longitude": -73.98827,
 "next_time": 1783298220.0,
+"observed_at": 1783297464.0,
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
+"provenance": "placed",
 "route_id": "859",
 "stop_id": "26724",
 "stop_name": "33rd Street",

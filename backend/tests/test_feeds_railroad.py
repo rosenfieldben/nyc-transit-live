@@ -56,7 +56,6 @@ from pathlib import Path
 
 import httpx
 import pytest
-from contract_pending import without_pending
 from google.transit import gtfs_realtime_pb2 as pb
 
 import feeds
@@ -79,7 +78,7 @@ def _load(system: str):
 def test_real_feed_decodes_to_golden_output(system):
     raw, expected = _load(system)
     trains, feed_ts = feeds._decode_railroad_vehicles(raw, expected["system"], expected["now"])
-    assert without_pending(trains) == expected["trains"]
+    assert trains == expected["trains"]
     # The decoder reads the header timestamp the fixture was frozen to.
     assert feed_ts == expected["now"]
 
@@ -287,7 +286,7 @@ def _load_placed(system: str):
 def test_placed_feed_decodes_to_golden_output(system):
     raw, stops, expected = _load_placed(system)
     placed = feeds._decode_railroad_placements(raw, expected["system"], stops, expected["now"])
-    assert without_pending(placed) == expected["trains"]
+    assert placed == expected["trains"]
 
 
 def test_placed_golden_is_nontrivial():
@@ -352,7 +351,7 @@ def _load_arrivals(system: str):
 def test_arrivals_feed_decodes_to_golden_output(system):
     raw, stops, expected = _load_arrivals(system)
     _placed, arrivals = feeds._decode_railroad_feed(raw, expected["system"], stops, expected["now"])
-    assert without_pending(arrivals) == expected["arrivals"]
+    assert arrivals == expected["arrivals"]
 
 
 def test_arrivals_golden_is_nontrivial():
@@ -379,7 +378,16 @@ def test_every_golden_arrival_is_well_formed(system):
             times = [a["arrival"] for a in arrs]
             assert times == sorted(times)  # soonest first
             for a in arrs:
-                assert set(a) == {"route_id", "trip_id", "arrival", "train_num"}
+                assert set(a) == {
+                    "route_id",
+                    "trip_id",
+                    "arrival",
+                    "train_num",
+                    # Contract 6.1: a prediction is an observation, so every golden
+                    # arrival row carries when its trip update was published.
+                    "observed_at",
+                    "provenance",
+                }
                 assert a["arrival"] >= now - 60  # just-passed grace floor
 
 

@@ -4,6 +4,8 @@
 "Inbound": [
 {
 "arrival": 1782012360.0,
+"observed_at": 1782004284.0,
+"provenance": "reported",
 "route_id": "3",
 "train_num": null,
 "trip_id": "GO201_26_6571"
@@ -14,12 +16,16 @@
 "Inbound": [
 {
 "arrival": 1782007944.0,
+"observed_at": 1782006910.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": "5007",
 "trip_id": "GO201_26_6069"
 },
 {
 "arrival": 1782010560.0,
+"observed_at": 1782004231.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": null,
 "trip_id": "GO201_26_6071"
@@ -30,12 +36,16 @@
 "Inbound": [
 {
 "arrival": 1782007920.0,
+"observed_at": 1782004530.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8775"
 },
 {
 "arrival": 1782011520.0,
+"observed_at": 1782006051.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8777"
@@ -44,24 +54,32 @@
 "Outbound": [
 {
 "arrival": 1782009198.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": "7604",
 "trip_id": "GO201_26_8768"
 },
 {
 "arrival": 1782012720.0,
+"observed_at": 1782006850.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8770"
 },
 {
 "arrival": 1782016140.0,
+"observed_at": 1782001211.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8772"
 },
 {
 "arrival": 1782019740.0,
+"observed_at": 1782003898.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8702"
@@ -72,36 +90,48 @@
 "Inbound": [
 {
 "arrival": 1782006900.0,
+"observed_at": 1782005162.0,
+"provenance": "reported",
 "route_id": "12",
 "train_num": "9163",
 "trip_id": "GO201_26_8961"
 },
 {
 "arrival": 1782007224.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7735",
 "trip_id": "GO201_26_6187_1"
 },
 {
 "arrival": 1782007552.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": "7297",
 "trip_id": "GO201_26_6769"
 },
 {
 "arrival": 1782007800.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7129",
 "trip_id": "GO201_26_7989_4"
 },
 {
 "arrival": 1782008100.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7187",
 "trip_id": "GO201_26_6271"
 },
 {
 "arrival": 1782008100.0,
+"observed_at": 1782006389.0,
+"provenance": "reported",
 "route_id": "12",
 "train_num": "7601",
 "trip_id": "GO201_26_8971"
@@ -110,36 +140,48 @@
 "Outbound": [
 {
 "arrival": 1782007080.0,
+"observed_at": 1782006913.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "7344",
 "trip_id": "GO201_26_7588"
 },
 {
 "arrival": 1782007338.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": "7604",
 "trip_id": "GO201_26_8768"
 },
 {
 "arrival": 1782007539.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7270",
 "trip_id": "GO201_26_6190_1"
 },
 {
 "arrival": 1782007656.0,
+"observed_at": 1782006457.0,
+"provenance": "reported",
 "route_id": "12",
 "train_num": "7634",
 "trip_id": "GO201_26_8960"
 },
 {
 "arrival": 1782008160.0,
+"observed_at": 1782006675.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7252",
 "trip_id": "GO201_26_7990_2"
 },
 {
 "arrival": 1782008340.0,
+"observed_at": 1782005801.0,
+"provenance": "reported",
 "route_id": "8",
 "train_num": "9130",
 "trip_id": "GO201_26_7768"
@@ -150,30 +192,40 @@
 "Inbound": [
 {
 "arrival": 1782008340.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7187",
 "trip_id": "GO201_26_6271"
 },
 {
 "arrival": 1782009840.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "9145",
 "trip_id": "GO201_26_6189"
 },
 {
 "arrival": 1782011940.0,
+"observed_at": 1782004902.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6273"
 },
 {
 "arrival": 1782013500.0,
+"observed_at": 1782005437.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6193"
 },
 {
 "arrival": 1782016860.0,
+"observed_at": 1782006204.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6197"
@@ -182,24 +234,32 @@
 "Outbound": [
 {
 "arrival": 1782008760.0,
+"observed_at": 1782005195.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6272"
 },
 {
 "arrival": 1782010920.0,
+"observed_at": 1782004986.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6194"
 },
 {
 "arrival": 1782012360.0,
+"observed_at": 1781999660.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6274"
 },
 {
 "arrival": 1782016320.0,
+"observed_at": 1782002364.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6202"
@@ -210,18 +270,24 @@
 "Inbound": [
 {
 "arrival": 1782008220.0,
+"observed_at": 1782005213.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6395_2932_METS"
 },
 {
 "arrival": 1782010200.0,
+"observed_at": 1782005736.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6371_2932_METS"
 },
 {
 "arrival": 1782011820.0,
+"observed_at": 1782005444.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6397_2932_METS"
@@ -230,30 +296,40 @@
 "Outbound": [
 {
 "arrival": 1782006967.0,
+"observed_at": 1782006905.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": "7742",
 "trip_id": "GO201_26_6368_2932_METS"
 },
 {
 "arrival": 1782008880.0,
+"observed_at": 1782001267.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6396_2932_METS"
 },
 {
 "arrival": 1782010380.0,
+"observed_at": 1782001315.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6370_2932_METS"
 },
 {
 "arrival": 1782012480.0,
+"observed_at": 1782005013.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6398_2932_METS"
 },
 {
 "arrival": 1782013980.0,
+"observed_at": 1782005141.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6372_2932_METS"
@@ -264,6 +340,8 @@
 "Inbound": [
 {
 "arrival": 1782007800.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "5011",
 "trip_id": "GO201_26_6665"
@@ -274,6 +352,8 @@
 "Inbound": [
 {
 "arrival": 1782009720.0,
+"observed_at": 1782006014.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": null,
 "trip_id": "GO201_26_6881"
@@ -282,18 +362,24 @@
 "Outbound": [
 {
 "arrival": 1782007783.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": "7074",
 "trip_id": "GO201_26_6874"
 },
 {
 "arrival": 1782010920.0,
+"observed_at": 1782001280.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": null,
 "trip_id": "GO201_26_6876_1"
 },
 {
 "arrival": 1782014520.0,
+"observed_at": 1782005060.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": null,
 "trip_id": "GO201_26_6878"
@@ -304,12 +390,16 @@
 "Inbound": [
 {
 "arrival": 1782008040.0,
+"observed_at": 1782004530.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8775"
 },
 {
 "arrival": 1782011640.0,
+"observed_at": 1782006051.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8777"
@@ -318,24 +408,32 @@
 "Outbound": [
 {
 "arrival": 1782009018.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": "7604",
 "trip_id": "GO201_26_8768"
 },
 {
 "arrival": 1782012540.0,
+"observed_at": 1782006850.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8770"
 },
 {
 "arrival": 1782016020.0,
+"observed_at": 1782001211.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8772"
 },
 {
 "arrival": 1782019560.0,
+"observed_at": 1782003898.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8702"
@@ -346,24 +444,32 @@
 "Inbound": [
 {
 "arrival": 1782008400.0,
+"observed_at": 1782003646.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6191_1"
 },
 {
 "arrival": 1782010320.0,
+"observed_at": 1782005437.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6193"
 },
 {
 "arrival": 1782012000.0,
+"observed_at": 1782005491.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6195"
 },
 {
 "arrival": 1782013800.0,
+"observed_at": 1782006204.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6197"
@@ -372,36 +478,48 @@
 "Outbound": [
 {
 "arrival": 1782007179.0,
+"observed_at": 1782006763.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7540",
 "trip_id": "GO201_26_6186_1"
 },
 {
 "arrival": 1782008773.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7024",
 "trip_id": "GO201_26_6188"
 },
 {
 "arrival": 1782010299.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7270",
 "trip_id": "GO201_26_6190_1"
 },
 {
 "arrival": 1782012240.0,
+"observed_at": 1782005465.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6192_1"
 },
 {
 "arrival": 1782014040.0,
+"observed_at": 1782004986.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6194"
 },
 {
 "arrival": 1782015660.0,
+"observed_at": 1781999660.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6274"
@@ -412,24 +530,32 @@
 "Inbound": [
 {
 "arrival": 1782007950.0,
+"observed_at": 1782006893.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": "7719",
 "trip_id": "GO201_26_6879_1"
 },
 {
 "arrival": 1782009360.0,
+"observed_at": 1782004530.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8775"
 },
 {
 "arrival": 1782011400.0,
+"observed_at": 1782006014.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": null,
 "trip_id": "GO201_26_6881"
 },
 {
 "arrival": 1782012960.0,
+"observed_at": 1782006051.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8777"
@@ -438,36 +564,48 @@
 "Outbound": [
 {
 "arrival": 1782007698.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": "7604",
 "trip_id": "GO201_26_8768"
 },
 {
 "arrival": 1782009240.0,
+"observed_at": 1782001280.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": null,
 "trip_id": "GO201_26_6876_1"
 },
 {
 "arrival": 1782011220.0,
+"observed_at": 1782006850.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8770"
 },
 {
 "arrival": 1782012840.0,
+"observed_at": 1782005060.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": null,
 "trip_id": "GO201_26_6878"
 },
 {
 "arrival": 1782014760.0,
+"observed_at": 1782001211.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8772"
 },
 {
 "arrival": 1782018240.0,
+"observed_at": 1782003898.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8702"
@@ -478,18 +616,24 @@
 "Inbound": [
 {
 "arrival": 1782007680.0,
+"observed_at": 1782005213.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6395_2932_METS"
 },
 {
 "arrival": 1782009600.0,
+"observed_at": 1782005736.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6371_2932_METS"
 },
 {
 "arrival": 1782011220.0,
+"observed_at": 1782005444.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6397_2932_METS"
@@ -498,30 +642,40 @@
 "Outbound": [
 {
 "arrival": 1782007507.0,
+"observed_at": 1782006905.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": "7742",
 "trip_id": "GO201_26_6368_2932_METS"
 },
 {
 "arrival": 1782009420.0,
+"observed_at": 1782001267.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6396_2932_METS"
 },
 {
 "arrival": 1782010920.0,
+"observed_at": 1782001315.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6370_2932_METS"
 },
 {
 "arrival": 1782013020.0,
+"observed_at": 1782005013.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6398_2932_METS"
 },
 {
 "arrival": 1782014520.0,
+"observed_at": 1782005141.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6372_2932_METS"
@@ -532,24 +686,32 @@
 "Inbound": [
 {
 "arrival": 1782007830.0,
+"observed_at": 1782006893.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": "7719",
 "trip_id": "GO201_26_6879_1"
 },
 {
 "arrival": 1782009240.0,
+"observed_at": 1782004530.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8775"
 },
 {
 "arrival": 1782011280.0,
+"observed_at": 1782006014.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": null,
 "trip_id": "GO201_26_6881"
 },
 {
 "arrival": 1782012840.0,
+"observed_at": 1782006051.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8777"
@@ -558,36 +720,48 @@
 "Outbound": [
 {
 "arrival": 1782007818.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": "7604",
 "trip_id": "GO201_26_8768"
 },
 {
 "arrival": 1782009360.0,
+"observed_at": 1782001280.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": null,
 "trip_id": "GO201_26_6876_1"
 },
 {
 "arrival": 1782011340.0,
+"observed_at": 1782006850.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8770"
 },
 {
 "arrival": 1782012960.0,
+"observed_at": 1782005060.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": null,
 "trip_id": "GO201_26_6878"
 },
 {
 "arrival": 1782014880.0,
+"observed_at": 1782001211.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8772"
 },
 {
 "arrival": 1782018360.0,
+"observed_at": 1782003898.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8702"
@@ -598,6 +772,8 @@
 "Inbound": [
 {
 "arrival": 1782010980.0,
+"observed_at": 1782004284.0,
+"provenance": "reported",
 "route_id": "3",
 "train_num": null,
 "trip_id": "GO201_26_6571"
@@ -608,12 +784,16 @@
 "Inbound": [
 {
 "arrival": 1782007620.0,
+"observed_at": 1782005261.0,
+"provenance": "reported",
 "route_id": "8",
 "train_num": null,
 "trip_id": "GO201_26_7769"
 },
 {
 "arrival": 1782011220.0,
+"observed_at": 1782006051.0,
+"provenance": "reported",
 "route_id": "8",
 "train_num": null,
 "trip_id": "GO201_26_7771"
@@ -622,12 +802,16 @@
 "Outbound": [
 {
 "arrival": 1782009600.0,
+"observed_at": 1782005801.0,
+"provenance": "reported",
 "route_id": "8",
 "train_num": "9130",
 "trip_id": "GO201_26_7768"
 },
 {
 "arrival": 1782013140.0,
+"observed_at": 1782006658.0,
+"provenance": "reported",
 "route_id": "8",
 "train_num": null,
 "trip_id": "GO201_26_7770"
@@ -638,30 +822,40 @@
 "Inbound": [
 {
 "arrival": 1782007350.0,
+"observed_at": 1782006893.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": "7719",
 "trip_id": "GO201_26_6879_1"
 },
 {
 "arrival": 1782008640.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "9145",
 "trip_id": "GO201_26_6189"
 },
 {
 "arrival": 1782010740.0,
+"observed_at": 1782006014.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": null,
 "trip_id": "GO201_26_6881"
 },
 {
 "arrival": 1782012240.0,
+"observed_at": 1782005437.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6193"
 },
 {
 "arrival": 1782015720.0,
+"observed_at": 1782006204.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6197"
@@ -670,36 +864,48 @@
 "Outbound": [
 {
 "arrival": 1782008319.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7270",
 "trip_id": "GO201_26_6190_1"
 },
 {
 "arrival": 1782009900.0,
+"observed_at": 1782001280.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": null,
 "trip_id": "GO201_26_6876_1"
 },
 {
 "arrival": 1782012060.0,
+"observed_at": 1782004986.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6194"
 },
 {
 "arrival": 1782013500.0,
+"observed_at": 1782005060.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": null,
 "trip_id": "GO201_26_6878"
 },
 {
 "arrival": 1782015600.0,
+"observed_at": 1782005169.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6198"
 },
 {
 "arrival": 1782017520.0,
+"observed_at": 1782002364.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6202"
@@ -710,18 +916,24 @@
 "Inbound": [
 {
 "arrival": 1782009060.0,
+"observed_at": 1782002411.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7591_4"
 },
 {
 "arrival": 1782012540.0,
+"observed_at": 1782005444.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7595"
 },
 {
 "arrival": 1782013620.0,
+"observed_at": 1782006658.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7597"
@@ -730,12 +942,16 @@
 "Outbound": [
 {
 "arrival": 1782008040.0,
+"observed_at": 1782006913.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "7344",
 "trip_id": "GO201_26_7588"
 },
 {
 "arrival": 1782011520.0,
+"observed_at": 1782006908.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7592_5"
@@ -746,6 +962,8 @@
 "Inbound": [
 {
 "arrival": 1782007005.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "13",
 "train_num": "5021",
 "trip_id": "GO201_26_6955"
@@ -756,6 +974,8 @@
 "Outbound": [
 {
 "arrival": 1782014066.0,
+"observed_at": 1782006910.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": "421",
 "trip_id": "GO201_26_6014"
@@ -766,24 +986,32 @@
 "Inbound": [
 {
 "arrival": 1782006922.0,
+"observed_at": 1782006329.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": "7361",
 "trip_id": "GO201_26_6369_2932_METS"
 },
 {
 "arrival": 1782008400.0,
+"observed_at": 1782005213.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6395_2932_METS"
 },
 {
 "arrival": 1782010380.0,
+"observed_at": 1782005736.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6371_2932_METS"
 },
 {
 "arrival": 1782012000.0,
+"observed_at": 1782005444.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6397_2932_METS"
@@ -792,24 +1020,32 @@
 "Outbound": [
 {
 "arrival": 1782008760.0,
+"observed_at": 1782001267.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6396_2932_METS"
 },
 {
 "arrival": 1782010260.0,
+"observed_at": 1782001315.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6370_2932_METS"
 },
 {
 "arrival": 1782012360.0,
+"observed_at": 1782005013.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6398_2932_METS"
 },
 {
 "arrival": 1782013860.0,
+"observed_at": 1782005141.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6372_2932_METS"
@@ -820,18 +1056,24 @@
 "Inbound": [
 {
 "arrival": 1782007320.0,
+"observed_at": 1782005213.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6395_2932_METS"
 },
 {
 "arrival": 1782009240.0,
+"observed_at": 1782005736.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6371_2932_METS"
 },
 {
 "arrival": 1782010860.0,
+"observed_at": 1782005444.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6397_2932_METS"
@@ -840,30 +1082,40 @@
 "Outbound": [
 {
 "arrival": 1782007867.0,
+"observed_at": 1782006905.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": "7742",
 "trip_id": "GO201_26_6368_2932_METS"
 },
 {
 "arrival": 1782009780.0,
+"observed_at": 1782001267.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6396_2932_METS"
 },
 {
 "arrival": 1782011280.0,
+"observed_at": 1782001315.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6370_2932_METS"
 },
 {
 "arrival": 1782013380.0,
+"observed_at": 1782005013.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6398_2932_METS"
 },
 {
 "arrival": 1782014880.0,
+"observed_at": 1782005141.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6372_2932_METS"
@@ -874,36 +1126,48 @@
 "Inbound": [
 {
 "arrival": 1782007560.0,
+"observed_at": 1782006893.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "7291",
 "trip_id": "GO201_26_7589_1"
 },
 {
 "arrival": 1782008940.0,
+"observed_at": 1782002411.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7591_4"
 },
 {
 "arrival": 1782010380.0,
+"observed_at": 1782002411.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7993_4"
 },
 {
 "arrival": 1782011160.0,
+"observed_at": 1782004231.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7593_1"
 },
 {
 "arrival": 1782012420.0,
+"observed_at": 1782005444.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7595"
 },
 {
 "arrival": 1782012960.0,
+"observed_at": 1782004284.0,
+"provenance": "reported",
 "route_id": "3",
 "train_num": null,
 "trip_id": "GO201_26_6571"
@@ -912,36 +1176,48 @@
 "Outbound": [
 {
 "arrival": 1782007026.0,
+"observed_at": 1782006915.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7178",
 "trip_id": "GO201_26_7988"
 },
 {
 "arrival": 1782008220.0,
+"observed_at": 1782006913.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "7344",
 "trip_id": "GO201_26_7588"
 },
 {
 "arrival": 1782009780.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "9038",
 "trip_id": "GO201_26_7590_5"
 },
 {
 "arrival": 1782010500.0,
+"observed_at": 1782001287.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7992_5"
 },
 {
 "arrival": 1782011640.0,
+"observed_at": 1782006908.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7592_5"
 },
 {
 "arrival": 1782013380.0,
+"observed_at": 1782005006.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7594"
@@ -952,30 +1228,40 @@
 "Inbound": [
 {
 "arrival": 1782007140.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "9145",
 "trip_id": "GO201_26_6189"
 },
 {
 "arrival": 1782008820.0,
+"observed_at": 1782003646.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6191_1"
 },
 {
 "arrival": 1782010740.0,
+"observed_at": 1782005437.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6193"
 },
 {
 "arrival": 1782012420.0,
+"observed_at": 1782005491.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6195"
 },
 {
 "arrival": 1782014220.0,
+"observed_at": 1782006204.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6197"
@@ -984,36 +1270,48 @@
 "Outbound": [
 {
 "arrival": 1782008233.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7024",
 "trip_id": "GO201_26_6188"
 },
 {
 "arrival": 1782009759.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7270",
 "trip_id": "GO201_26_6190_1"
 },
 {
 "arrival": 1782011700.0,
+"observed_at": 1782005465.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6192_1"
 },
 {
 "arrival": 1782013500.0,
+"observed_at": 1782004986.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6194"
 },
 {
 "arrival": 1782015120.0,
+"observed_at": 1781999660.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6274"
 },
 {
 "arrival": 1782017040.0,
+"observed_at": 1782005169.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6198"
@@ -1024,36 +1322,48 @@
 "Inbound": [
 {
 "arrival": 1782007260.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "9145",
 "trip_id": "GO201_26_6189"
 },
 {
 "arrival": 1782008940.0,
+"observed_at": 1782003646.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6191_1"
 },
 {
 "arrival": 1782009300.0,
+"observed_at": 1782004902.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6273"
 },
 {
 "arrival": 1782010860.0,
+"observed_at": 1782005437.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6193"
 },
 {
 "arrival": 1782012540.0,
+"observed_at": 1782005491.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6195"
 },
 {
 "arrival": 1782014340.0,
+"observed_at": 1782006204.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6197"
@@ -1062,36 +1372,48 @@
 "Outbound": [
 {
 "arrival": 1782007654.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7566",
 "trip_id": "GO201_26_6270_4"
 },
 {
 "arrival": 1782008113.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7024",
 "trip_id": "GO201_26_6188"
 },
 {
 "arrival": 1782009639.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7270",
 "trip_id": "GO201_26_6190_1"
 },
 {
 "arrival": 1782011220.0,
+"observed_at": 1782005195.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6272"
 },
 {
 "arrival": 1782011580.0,
+"observed_at": 1782005465.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6192_1"
 },
 {
 "arrival": 1782013380.0,
+"observed_at": 1782004986.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6194"
@@ -1102,6 +1424,8 @@
 "Outbound": [
 {
 "arrival": 1782009000.0,
+"observed_at": 1782002589.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "5023",
 "trip_id": "GO201_26_6664"
@@ -1112,6 +1436,8 @@
 "Outbound": [
 {
 "arrival": 1782011126.0,
+"observed_at": 1782006910.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": "421",
 "trip_id": "GO201_26_6014"
@@ -1122,12 +1448,16 @@
 "Outbound": [
 {
 "arrival": 1782007140.0,
+"observed_at": 1781954377.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": "521",
 "trip_id": "6006_2026-06-20"
 },
 {
 "arrival": 1782016166.0,
+"observed_at": 1782006910.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": "421",
 "trip_id": "GO201_26_6014"
@@ -1138,12 +1468,16 @@
 "Inbound": [
 {
 "arrival": 1782007740.0,
+"observed_at": 1782005261.0,
+"provenance": "reported",
 "route_id": "8",
 "train_num": null,
 "trip_id": "GO201_26_7769"
 },
 {
 "arrival": 1782011340.0,
+"observed_at": 1782006051.0,
+"provenance": "reported",
 "route_id": "8",
 "train_num": null,
 "trip_id": "GO201_26_7771"
@@ -1152,12 +1486,16 @@
 "Outbound": [
 {
 "arrival": 1782009480.0,
+"observed_at": 1782005801.0,
+"provenance": "reported",
 "route_id": "8",
 "train_num": "9130",
 "trip_id": "GO201_26_7768"
 },
 {
 "arrival": 1782013020.0,
+"observed_at": 1782006658.0,
+"provenance": "reported",
 "route_id": "8",
 "train_num": null,
 "trip_id": "GO201_26_7770"
@@ -1168,30 +1506,40 @@
 "Inbound": [
 {
 "arrival": 1782007740.0,
+"observed_at": 1782005162.0,
+"provenance": "reported",
 "route_id": "12",
 "train_num": "9163",
 "trip_id": "GO201_26_8961"
 },
 {
 "arrival": 1782008940.0,
+"observed_at": 1782006389.0,
+"provenance": "reported",
 "route_id": "12",
 "train_num": "7601",
 "trip_id": "GO201_26_8971"
 },
 {
 "arrival": 1782010140.0,
+"observed_at": 1782004231.0,
+"provenance": "reported",
 "route_id": "12",
 "train_num": null,
 "trip_id": "GO201_26_8973"
 },
 {
 "arrival": 1782011340.0,
+"observed_at": 1782005444.0,
+"provenance": "reported",
 "route_id": "12",
 "train_num": null,
 "trip_id": "GO201_26_8975"
 },
 {
 "arrival": 1782012540.0,
+"observed_at": 1782006585.0,
+"provenance": "reported",
 "route_id": "12",
 "train_num": null,
 "trip_id": "GO201_26_8977"
@@ -1200,24 +1548,32 @@
 "Outbound": [
 {
 "arrival": 1782007860.0,
+"observed_at": 1782003137.0,
+"provenance": "reported",
 "route_id": "12",
 "train_num": null,
 "trip_id": "GO201_26_8970"
 },
 {
 "arrival": 1782009060.0,
+"observed_at": 1782003947.0,
+"provenance": "reported",
 "route_id": "12",
 "train_num": null,
 "trip_id": "GO201_26_8972"
 },
 {
 "arrival": 1782010260.0,
+"observed_at": 1782004838.0,
+"provenance": "reported",
 "route_id": "12",
 "train_num": null,
 "trip_id": "GO201_26_8974"
 },
 {
 "arrival": 1782011460.0,
+"observed_at": 1782006051.0,
+"provenance": "reported",
 "route_id": "12",
 "train_num": null,
 "trip_id": "GO201_26_8976"
@@ -1228,12 +1584,16 @@
 "Inbound": [
 {
 "arrival": 1782009600.0,
+"observed_at": 1782004231.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6771"
 },
 {
 "arrival": 1782012420.0,
+"observed_at": 1782006658.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6773"
@@ -1242,24 +1602,32 @@
 "Outbound": [
 {
 "arrival": 1782008077.0,
+"observed_at": 1782006878.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": "9188",
 "trip_id": "GO201_26_6770"
 },
 {
 "arrival": 1782012720.0,
+"observed_at": 1782005682.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6772"
 },
 {
 "arrival": 1782016320.0,
+"observed_at": 1782001519.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6774"
 },
 {
 "arrival": 1782020220.0,
+"observed_at": 1782006841.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6702"
@@ -1270,30 +1638,40 @@
 "Inbound": [
 {
 "arrival": 1782007800.0,
+"observed_at": 1782006893.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "7291",
 "trip_id": "GO201_26_7589_1"
 },
 {
 "arrival": 1782009180.0,
+"observed_at": 1782002411.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7591_4"
 },
 {
 "arrival": 1782011400.0,
+"observed_at": 1782004231.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7593_1"
 },
 {
 "arrival": 1782012660.0,
+"observed_at": 1782005444.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7595"
 },
 {
 "arrival": 1782013800.0,
+"observed_at": 1782006658.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7597"
@@ -1302,24 +1680,32 @@
 "Outbound": [
 {
 "arrival": 1782007920.0,
+"observed_at": 1782006913.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "7344",
 "trip_id": "GO201_26_7588"
 },
 {
 "arrival": 1782009540.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "9038",
 "trip_id": "GO201_26_7590_5"
 },
 {
 "arrival": 1782011400.0,
+"observed_at": 1782006908.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7592_5"
 },
 {
 "arrival": 1782013140.0,
+"observed_at": 1782005006.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7594"
@@ -1330,6 +1716,8 @@
 "Inbound": [
 {
 "arrival": 1782008160.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "5011",
 "trip_id": "GO201_26_6665"
@@ -1340,6 +1728,8 @@
 "Inbound": [
 {
 "arrival": 1782010380.0,
+"observed_at": 1782004284.0,
+"provenance": "reported",
 "route_id": "3",
 "train_num": null,
 "trip_id": "GO201_26_6571"
@@ -1350,12 +1740,16 @@
 "Inbound": [
 {
 "arrival": 1782006870.0,
+"observed_at": 1782006893.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": "7719",
 "trip_id": "GO201_26_6879_1"
 },
 {
 "arrival": 1782010320.0,
+"observed_at": 1782006014.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": null,
 "trip_id": "GO201_26_6881"
@@ -1364,18 +1758,24 @@
 "Outbound": [
 {
 "arrival": 1782007123.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": "7074",
 "trip_id": "GO201_26_6874"
 },
 {
 "arrival": 1782010260.0,
+"observed_at": 1782001280.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": null,
 "trip_id": "GO201_26_6876_1"
 },
 {
 "arrival": 1782013860.0,
+"observed_at": 1782005060.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": null,
 "trip_id": "GO201_26_6878"
@@ -1386,12 +1786,16 @@
 "Inbound": [
 {
 "arrival": 1782007524.0,
+"observed_at": 1782006910.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": "5007",
 "trip_id": "GO201_26_6069"
 },
 {
 "arrival": 1782010140.0,
+"observed_at": 1782004231.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": null,
 "trip_id": "GO201_26_6071"
@@ -1400,6 +1804,8 @@
 "Outbound": [
 {
 "arrival": 1782006909.0,
+"observed_at": 1782006910.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": "406",
 "trip_id": "GO201_26_6070"
@@ -1410,24 +1816,32 @@
 "Inbound": [
 {
 "arrival": 1782007800.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "9145",
 "trip_id": "GO201_26_6189"
 },
 {
 "arrival": 1782009900.0,
+"observed_at": 1782004902.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6273"
 },
 {
 "arrival": 1782011400.0,
+"observed_at": 1782005437.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6193"
 },
 {
 "arrival": 1782014880.0,
+"observed_at": 1782006204.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6197"
@@ -1436,36 +1850,48 @@
 "Outbound": [
 {
 "arrival": 1782007174.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7566",
 "trip_id": "GO201_26_6270_4"
 },
 {
 "arrival": 1782009159.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7270",
 "trip_id": "GO201_26_6190_1"
 },
 {
 "arrival": 1782010740.0,
+"observed_at": 1782005195.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6272"
 },
 {
 "arrival": 1782012900.0,
+"observed_at": 1782004986.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6194"
 },
 {
 "arrival": 1782014520.0,
+"observed_at": 1781999660.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6274"
 },
 {
 "arrival": 1782016440.0,
+"observed_at": 1782005169.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6198"
@@ -1476,18 +1902,24 @@
 "Inbound": [
 {
 "arrival": 1782007200.0,
+"observed_at": 1782005213.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6395_2932_METS"
 },
 {
 "arrival": 1782009120.0,
+"observed_at": 1782005736.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6371_2932_METS"
 },
 {
 "arrival": 1782010740.0,
+"observed_at": 1782005444.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6397_2932_METS"
@@ -1496,30 +1928,40 @@
 "Outbound": [
 {
 "arrival": 1782007987.0,
+"observed_at": 1782006905.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": "7742",
 "trip_id": "GO201_26_6368_2932_METS"
 },
 {
 "arrival": 1782009900.0,
+"observed_at": 1782001267.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6396_2932_METS"
 },
 {
 "arrival": 1782011400.0,
+"observed_at": 1782001315.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6370_2932_METS"
 },
 {
 "arrival": 1782013500.0,
+"observed_at": 1782005013.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6398_2932_METS"
 },
 {
 "arrival": 1782015000.0,
+"observed_at": 1782005141.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6372_2932_METS"
@@ -1530,12 +1972,16 @@
 "Inbound": [
 {
 "arrival": 1782008313.0,
+"observed_at": 1782006910.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": "5019",
 "trip_id": "6029_2026-06-20"
 },
 {
 "arrival": 1782009420.0,
+"observed_at": 1782004231.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": null,
 "trip_id": "GO201_26_6071"
@@ -1544,12 +1990,16 @@
 "Outbound": [
 {
 "arrival": 1782007629.0,
+"observed_at": 1782006910.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": "406",
 "trip_id": "GO201_26_6070"
 },
 {
 "arrival": 1782010346.0,
+"observed_at": 1782006910.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": "421",
 "trip_id": "GO201_26_6014"
@@ -1560,6 +2010,8 @@
 "Outbound": [
 {
 "arrival": 1782009720.0,
+"observed_at": 1782002589.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "5023",
 "trip_id": "GO201_26_6664"
@@ -1570,18 +2022,24 @@
 "Inbound": [
 {
 "arrival": 1782006900.0,
+"observed_at": 1782005213.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6395_2932_METS"
 },
 {
 "arrival": 1782008820.0,
+"observed_at": 1782005736.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6371_2932_METS"
 },
 {
 "arrival": 1782010440.0,
+"observed_at": 1782005444.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6397_2932_METS"
@@ -1590,36 +2048,48 @@
 "Outbound": [
 {
 "arrival": 1782006986.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": "7706",
 "trip_id": "GO201_26_6468_2932_METS"
 },
 {
 "arrival": 1782008347.0,
+"observed_at": 1782006905.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": "7742",
 "trip_id": "GO201_26_6368_2932_METS"
 },
 {
 "arrival": 1782010260.0,
+"observed_at": 1782001267.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6396_2932_METS"
 },
 {
 "arrival": 1782011760.0,
+"observed_at": 1782001315.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6370_2932_METS"
 },
 {
 "arrival": 1782013860.0,
+"observed_at": 1782005013.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6398_2932_METS"
 },
 {
 "arrival": 1782015360.0,
+"observed_at": 1782005141.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6372_2932_METS"
@@ -1630,30 +2100,40 @@
 "Inbound": [
 {
 "arrival": 1782008220.0,
+"observed_at": 1782006893.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "7291",
 "trip_id": "GO201_26_7589_1"
 },
 {
 "arrival": 1782010380.0,
+"observed_at": 1782004231.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6771"
 },
 {
 "arrival": 1782011820.0,
+"observed_at": 1782004231.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7593_1"
 },
 {
 "arrival": 1782013200.0,
+"observed_at": 1782006658.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6773"
 },
 {
 "arrival": 1782014160.0,
+"observed_at": 1782006658.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7597"
@@ -1662,36 +2142,48 @@
 "Outbound": [
 {
 "arrival": 1782007357.0,
+"observed_at": 1782006878.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": "9188",
 "trip_id": "GO201_26_6770"
 },
 {
 "arrival": 1782009000.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "9038",
 "trip_id": "GO201_26_7590_5"
 },
 {
 "arrival": 1782012000.0,
+"observed_at": 1782005682.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6772"
 },
 {
 "arrival": 1782012600.0,
+"observed_at": 1782005006.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7594"
 },
 {
 "arrival": 1782015600.0,
+"observed_at": 1782001519.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6774"
 },
 {
 "arrival": 1782019500.0,
+"observed_at": 1782006841.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6702"
@@ -1702,24 +2194,32 @@
 "Inbound": [
 {
 "arrival": 1782007680.0,
+"observed_at": 1782002411.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7993_4"
 },
 {
 "arrival": 1782007725.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "13",
 "train_num": "5021",
 "trip_id": "GO201_26_6955"
 },
 {
 "arrival": 1782009120.0,
+"observed_at": 1782005701.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7995"
 },
 {
 "arrival": 1782011280.0,
+"observed_at": 1782006051.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7997"
@@ -1728,36 +2228,48 @@
 "Outbound": [
 {
 "arrival": 1782008182.0,
+"observed_at": 1782006893.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7366",
 "trip_id": "GO201_26_7986"
 },
 {
 "arrival": 1782009726.0,
+"observed_at": 1782006915.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7178",
 "trip_id": "GO201_26_7988"
 },
 {
 "arrival": 1782011760.0,
+"observed_at": 1782006675.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7252",
 "trip_id": "GO201_26_7990_2"
 },
 {
 "arrival": 1782013200.0,
+"observed_at": 1782001287.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7992_5"
 },
 {
 "arrival": 1782015360.0,
+"observed_at": 1782004996.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7994_2"
 },
 {
 "arrival": 1782016800.0,
+"observed_at": 1782005133.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7996_5"
@@ -1768,24 +2280,32 @@
 "Inbound": [
 {
 "arrival": 1782007650.0,
+"observed_at": 1782006893.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": "7719",
 "trip_id": "GO201_26_6879_1"
 },
 {
 "arrival": 1782009060.0,
+"observed_at": 1782004530.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8775"
 },
 {
 "arrival": 1782011100.0,
+"observed_at": 1782006014.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": null,
 "trip_id": "GO201_26_6881"
 },
 {
 "arrival": 1782012660.0,
+"observed_at": 1782006051.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8777"
@@ -1794,36 +2314,48 @@
 "Outbound": [
 {
 "arrival": 1782007998.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": "7604",
 "trip_id": "GO201_26_8768"
 },
 {
 "arrival": 1782009540.0,
+"observed_at": 1782001280.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": null,
 "trip_id": "GO201_26_6876_1"
 },
 {
 "arrival": 1782011520.0,
+"observed_at": 1782006850.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8770"
 },
 {
 "arrival": 1782013140.0,
+"observed_at": 1782005060.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": null,
 "trip_id": "GO201_26_6878"
 },
 {
 "arrival": 1782015060.0,
+"observed_at": 1782001211.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8772"
 },
 {
 "arrival": 1782018540.0,
+"observed_at": 1782003898.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8702"
@@ -1834,6 +2366,8 @@
 "Inbound": [
 {
 "arrival": 1782012180.0,
+"observed_at": 1782004284.0,
+"provenance": "reported",
 "route_id": "3",
 "train_num": null,
 "trip_id": "GO201_26_6571"
@@ -1844,30 +2378,40 @@
 "Inbound": [
 {
 "arrival": 1782006960.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7187",
 "trip_id": "GO201_26_6271"
 },
 {
 "arrival": 1782008520.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "9145",
 "trip_id": "GO201_26_6189"
 },
 {
 "arrival": 1782010620.0,
+"observed_at": 1782004902.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6273"
 },
 {
 "arrival": 1782012120.0,
+"observed_at": 1782005437.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6193"
 },
 {
 "arrival": 1782015600.0,
+"observed_at": 1782006204.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6197"
@@ -1876,36 +2420,48 @@
 "Outbound": [
 {
 "arrival": 1782008439.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7270",
 "trip_id": "GO201_26_6190_1"
 },
 {
 "arrival": 1782010020.0,
+"observed_at": 1782005195.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6272"
 },
 {
 "arrival": 1782012180.0,
+"observed_at": 1782004986.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6194"
 },
 {
 "arrival": 1782013800.0,
+"observed_at": 1781999660.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6274"
 },
 {
 "arrival": 1782015720.0,
+"observed_at": 1782005169.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6198"
 },
 {
 "arrival": 1782017640.0,
+"observed_at": 1782002364.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6202"
@@ -1916,12 +2472,16 @@
 "Inbound": [
 {
 "arrival": 1782008580.0,
+"observed_at": 1782005261.0,
+"provenance": "reported",
 "route_id": "8",
 "train_num": null,
 "trip_id": "GO201_26_7769"
 },
 {
 "arrival": 1782012180.0,
+"observed_at": 1782006051.0,
+"provenance": "reported",
 "route_id": "8",
 "train_num": null,
 "trip_id": "GO201_26_7771"
@@ -1930,12 +2490,16 @@
 "Outbound": [
 {
 "arrival": 1782008700.0,
+"observed_at": 1782005801.0,
+"provenance": "reported",
 "route_id": "8",
 "train_num": "9130",
 "trip_id": "GO201_26_7768"
 },
 {
 "arrival": 1782012300.0,
+"observed_at": 1782006658.0,
+"provenance": "reported",
 "route_id": "8",
 "train_num": null,
 "trip_id": "GO201_26_7770"
@@ -1946,6 +2510,8 @@
 "Inbound": [
 {
 "arrival": 1782011460.0,
+"observed_at": 1782004284.0,
+"provenance": "reported",
 "route_id": "3",
 "train_num": null,
 "trip_id": "GO201_26_6571"
@@ -1956,24 +2522,32 @@
 "Inbound": [
 {
 "arrival": 1782007440.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "9145",
 "trip_id": "GO201_26_6189"
 },
 {
 "arrival": 1782009540.0,
+"observed_at": 1782004902.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6273"
 },
 {
 "arrival": 1782011040.0,
+"observed_at": 1782005437.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6193"
 },
 {
 "arrival": 1782014520.0,
+"observed_at": 1782006204.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6197"
@@ -1982,36 +2556,48 @@
 "Outbound": [
 {
 "arrival": 1782007534.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7566",
 "trip_id": "GO201_26_6270_4"
 },
 {
 "arrival": 1782009519.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7270",
 "trip_id": "GO201_26_6190_1"
 },
 {
 "arrival": 1782011100.0,
+"observed_at": 1782005195.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6272"
 },
 {
 "arrival": 1782013260.0,
+"observed_at": 1782004986.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6194"
 },
 {
 "arrival": 1782014880.0,
+"observed_at": 1781999660.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6274"
 },
 {
 "arrival": 1782016800.0,
+"observed_at": 1782005169.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6198"
@@ -2022,6 +2608,8 @@
 "Outbound": [
 {
 "arrival": 1782013586.0,
+"observed_at": 1782006910.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": "421",
 "trip_id": "GO201_26_6014"
@@ -2032,6 +2620,8 @@
 "Inbound": [
 {
 "arrival": 1782007020.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "5011",
 "trip_id": "GO201_26_6665"
@@ -2040,6 +2630,8 @@
 "Outbound": [
 {
 "arrival": 1782008640.0,
+"observed_at": 1782002589.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "5023",
 "trip_id": "GO201_26_6664"
@@ -2050,12 +2642,16 @@
 "Inbound": [
 {
 "arrival": 1782009780.0,
+"observed_at": 1782004231.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6771"
 },
 {
 "arrival": 1782012600.0,
+"observed_at": 1782006658.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6773"
@@ -2064,24 +2660,32 @@
 "Outbound": [
 {
 "arrival": 1782007897.0,
+"observed_at": 1782006878.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": "9188",
 "trip_id": "GO201_26_6770"
 },
 {
 "arrival": 1782012540.0,
+"observed_at": 1782005682.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6772"
 },
 {
 "arrival": 1782016140.0,
+"observed_at": 1782001519.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6774"
 },
 {
 "arrival": 1782020040.0,
+"observed_at": 1782006841.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6702"
@@ -2092,6 +2696,8 @@
 "Inbound": [
 {
 "arrival": 1782006993.0,
+"observed_at": 1782006910.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": "5019",
 "trip_id": "6029_2026-06-20"
@@ -2100,6 +2706,8 @@
 "Outbound": [
 {
 "arrival": 1782012086.0,
+"observed_at": 1782006910.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": "421",
 "trip_id": "GO201_26_6014"
@@ -2110,24 +2718,32 @@
 "Inbound": [
 {
 "arrival": 1782007162.0,
+"observed_at": 1782006329.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": "7361",
 "trip_id": "GO201_26_6369_2932_METS"
 },
 {
 "arrival": 1782008640.0,
+"observed_at": 1782005213.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6395_2932_METS"
 },
 {
 "arrival": 1782010620.0,
+"observed_at": 1782005736.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6371_2932_METS"
 },
 {
 "arrival": 1782012240.0,
+"observed_at": 1782005444.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6397_2932_METS"
@@ -2136,24 +2752,32 @@
 "Outbound": [
 {
 "arrival": 1782008520.0,
+"observed_at": 1782001267.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6396_2932_METS"
 },
 {
 "arrival": 1782010020.0,
+"observed_at": 1782001315.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6370_2932_METS"
 },
 {
 "arrival": 1782012120.0,
+"observed_at": 1782005013.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6398_2932_METS"
 },
 {
 "arrival": 1782013620.0,
+"observed_at": 1782005141.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6372_2932_METS"
@@ -2164,18 +2788,24 @@
 "Inbound": [
 {
 "arrival": 1782008100.0,
+"observed_at": 1782005213.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6395_2932_METS"
 },
 {
 "arrival": 1782010020.0,
+"observed_at": 1782005736.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6371_2932_METS"
 },
 {
 "arrival": 1782011640.0,
+"observed_at": 1782005444.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6397_2932_METS"
@@ -2184,30 +2814,40 @@
 "Outbound": [
 {
 "arrival": 1782007087.0,
+"observed_at": 1782006905.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": "7742",
 "trip_id": "GO201_26_6368_2932_METS"
 },
 {
 "arrival": 1782009000.0,
+"observed_at": 1782001267.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6396_2932_METS"
 },
 {
 "arrival": 1782010500.0,
+"observed_at": 1782001315.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6370_2932_METS"
 },
 {
 "arrival": 1782012600.0,
+"observed_at": 1782005013.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6398_2932_METS"
 },
 {
 "arrival": 1782014100.0,
+"observed_at": 1782005141.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6372_2932_METS"
@@ -2218,24 +2858,32 @@
 "Inbound": [
 {
 "arrival": 1782007450.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7159",
 "trip_id": "GO201_26_7991_1"
 },
 {
 "arrival": 1782009540.0,
+"observed_at": 1782002411.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7993_4"
 },
 {
 "arrival": 1782011040.0,
+"observed_at": 1782005701.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7995"
 },
 {
 "arrival": 1782013140.0,
+"observed_at": 1782006051.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7997"
@@ -2244,30 +2892,40 @@
 "Outbound": [
 {
 "arrival": 1782007866.0,
+"observed_at": 1782006915.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7178",
 "trip_id": "GO201_26_7988"
 },
 {
 "arrival": 1782009840.0,
+"observed_at": 1782006675.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7252",
 "trip_id": "GO201_26_7990_2"
 },
 {
 "arrival": 1782011280.0,
+"observed_at": 1782001287.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7992_5"
 },
 {
 "arrival": 1782013440.0,
+"observed_at": 1782004996.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7994_2"
 },
 {
 "arrival": 1782014880.0,
+"observed_at": 1782005133.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7996_5"
@@ -2278,6 +2936,8 @@
 "Inbound": [
 {
 "arrival": 1782007320.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "5011",
 "trip_id": "GO201_26_6665"
@@ -2286,6 +2946,8 @@
 "Outbound": [
 {
 "arrival": 1782008280.0,
+"observed_at": 1782002589.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "5023",
 "trip_id": "GO201_26_6664"
@@ -2296,18 +2958,24 @@
 "Inbound": [
 {
 "arrival": 1782007224.0,
+"observed_at": 1782006910.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": "5007",
 "trip_id": "GO201_26_6069"
 },
 {
 "arrival": 1782008733.0,
+"observed_at": 1782006910.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": "5019",
 "trip_id": "6029_2026-06-20"
 },
 {
 "arrival": 1782009840.0,
+"observed_at": 1782004231.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": null,
 "trip_id": "GO201_26_6071"
@@ -2316,12 +2984,16 @@
 "Outbound": [
 {
 "arrival": 1782007209.0,
+"observed_at": 1782006910.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": "406",
 "trip_id": "GO201_26_6070"
 },
 {
 "arrival": 1782009866.0,
+"observed_at": 1782006910.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": "421",
 "trip_id": "GO201_26_6014"
@@ -2332,24 +3004,32 @@
 "Inbound": [
 {
 "arrival": 1782007920.0,
+"observed_at": 1782002411.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7591_4"
 },
 {
 "arrival": 1782010080.0,
+"observed_at": 1782004231.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7593_1"
 },
 {
 "arrival": 1782011460.0,
+"observed_at": 1782005444.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7595"
 },
 {
 "arrival": 1782012480.0,
+"observed_at": 1782006658.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7597"
@@ -2358,30 +3038,40 @@
 "Outbound": [
 {
 "arrival": 1782007129.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "9142",
 "trip_id": "GO201_26_7586"
 },
 {
 "arrival": 1782009240.0,
+"observed_at": 1782006913.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "7344",
 "trip_id": "GO201_26_7588"
 },
 {
 "arrival": 1782010740.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "9038",
 "trip_id": "GO201_26_7590_5"
 },
 {
 "arrival": 1782012600.0,
+"observed_at": 1782006908.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7592_5"
 },
 {
 "arrival": 1782014340.0,
+"observed_at": 1782005006.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7594"
@@ -2392,24 +3082,32 @@
 "Inbound": [
 {
 "arrival": 1782007470.0,
+"observed_at": 1782006893.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": "7719",
 "trip_id": "GO201_26_6879_1"
 },
 {
 "arrival": 1782008880.0,
+"observed_at": 1782004530.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8775"
 },
 {
 "arrival": 1782010920.0,
+"observed_at": 1782006014.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": null,
 "trip_id": "GO201_26_6881"
 },
 {
 "arrival": 1782012480.0,
+"observed_at": 1782006051.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8777"
@@ -2418,36 +3116,48 @@
 "Outbound": [
 {
 "arrival": 1782008178.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": "7604",
 "trip_id": "GO201_26_8768"
 },
 {
 "arrival": 1782009720.0,
+"observed_at": 1782001280.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": null,
 "trip_id": "GO201_26_6876_1"
 },
 {
 "arrival": 1782011700.0,
+"observed_at": 1782006850.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8770"
 },
 {
 "arrival": 1782013320.0,
+"observed_at": 1782005060.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": null,
 "trip_id": "GO201_26_6878"
 },
 {
 "arrival": 1782015240.0,
+"observed_at": 1782001211.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8772"
 },
 {
 "arrival": 1782018720.0,
+"observed_at": 1782003898.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8702"
@@ -2458,30 +3168,40 @@
 "Inbound": [
 {
 "arrival": 1782007200.0,
+"observed_at": 1782006893.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "7291",
 "trip_id": "GO201_26_7589_1"
 },
 {
 "arrival": 1782008640.0,
+"observed_at": 1782002411.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7591_4"
 },
 {
 "arrival": 1782010800.0,
+"observed_at": 1782004231.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7593_1"
 },
 {
 "arrival": 1782012120.0,
+"observed_at": 1782005444.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7595"
 },
 {
 "arrival": 1782013140.0,
+"observed_at": 1782006658.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7597"
@@ -2490,24 +3210,32 @@
 "Outbound": [
 {
 "arrival": 1782008520.0,
+"observed_at": 1782006913.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "7344",
 "trip_id": "GO201_26_7588"
 },
 {
 "arrival": 1782010020.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "9038",
 "trip_id": "GO201_26_7590_5"
 },
 {
 "arrival": 1782011940.0,
+"observed_at": 1782006908.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7592_5"
 },
 {
 "arrival": 1782013620.0,
+"observed_at": 1782005006.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7594"
@@ -2518,36 +3246,48 @@
 "Inbound": [
 {
 "arrival": 1782007037.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": "7341",
 "trip_id": "GO201_26_8773"
 },
 {
 "arrival": 1782007522.0,
+"observed_at": 1782006329.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": "7361",
 "trip_id": "GO201_26_6369_2932_METS"
 },
 {
 "arrival": 1782007764.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7735",
 "trip_id": "GO201_26_6187_1"
 },
 {
 "arrival": 1782008340.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7129",
 "trip_id": "GO201_26_7989_4"
 },
 {
 "arrival": 1782009000.0,
+"observed_at": 1782005213.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6395_2932_METS"
 },
 {
 "arrival": 1782009850.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7159",
 "trip_id": "GO201_26_7991_1"
@@ -2556,36 +3296,48 @@
 "Outbound": [
 {
 "arrival": 1782007500.0,
+"observed_at": 1782006675.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7252",
 "trip_id": "GO201_26_7990_2"
 },
 {
 "arrival": 1782008100.0,
+"observed_at": 1782001267.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6396_2932_METS"
 },
 {
 "arrival": 1782008880.0,
+"observed_at": 1782001287.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7992_5"
 },
 {
 "arrival": 1782009600.0,
+"observed_at": 1782001315.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6370_2932_METS"
 },
 {
 "arrival": 1782009840.0,
+"observed_at": 1782006908.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7592_5"
 },
 {
 "arrival": 1782010260.0,
+"observed_at": 1782006850.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8770"
@@ -2596,24 +3348,32 @@
 "Inbound": [
 {
 "arrival": 1782007620.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "9145",
 "trip_id": "GO201_26_6189"
 },
 {
 "arrival": 1782009720.0,
+"observed_at": 1782004902.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6273"
 },
 {
 "arrival": 1782011220.0,
+"observed_at": 1782005437.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6193"
 },
 {
 "arrival": 1782014700.0,
+"observed_at": 1782006204.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6197"
@@ -2622,36 +3382,48 @@
 "Outbound": [
 {
 "arrival": 1782007354.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7566",
 "trip_id": "GO201_26_6270_4"
 },
 {
 "arrival": 1782009339.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7270",
 "trip_id": "GO201_26_6190_1"
 },
 {
 "arrival": 1782010920.0,
+"observed_at": 1782005195.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6272"
 },
 {
 "arrival": 1782013080.0,
+"observed_at": 1782004986.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6194"
 },
 {
 "arrival": 1782014700.0,
+"observed_at": 1781999660.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6274"
 },
 {
 "arrival": 1782016620.0,
+"observed_at": 1782005169.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6198"
@@ -2662,12 +3434,16 @@
 "Inbound": [
 {
 "arrival": 1782007380.0,
+"observed_at": 1782005261.0,
+"provenance": "reported",
 "route_id": "8",
 "train_num": null,
 "trip_id": "GO201_26_7769"
 },
 {
 "arrival": 1782010980.0,
+"observed_at": 1782006051.0,
+"provenance": "reported",
 "route_id": "8",
 "train_num": null,
 "trip_id": "GO201_26_7771"
@@ -2676,12 +3452,16 @@
 "Outbound": [
 {
 "arrival": 1782010020.0,
+"observed_at": 1782005801.0,
+"provenance": "reported",
 "route_id": "8",
 "train_num": "9130",
 "trip_id": "GO201_26_7768"
 },
 {
 "arrival": 1782013560.0,
+"observed_at": 1782006658.0,
+"provenance": "reported",
 "route_id": "8",
 "train_num": null,
 "trip_id": "GO201_26_7770"
@@ -2692,12 +3472,16 @@
 "Inbound": [
 {
 "arrival": 1782008340.0,
+"observed_at": 1782004530.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8775"
 },
 {
 "arrival": 1782011940.0,
+"observed_at": 1782006051.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8777"
@@ -2706,24 +3490,32 @@
 "Outbound": [
 {
 "arrival": 1782008718.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": "7604",
 "trip_id": "GO201_26_8768"
 },
 {
 "arrival": 1782012240.0,
+"observed_at": 1782006850.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8770"
 },
 {
 "arrival": 1782015720.0,
+"observed_at": 1782001211.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8772"
 },
 {
 "arrival": 1782019260.0,
+"observed_at": 1782003898.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8702"
@@ -2734,12 +3526,16 @@
 "Inbound": [
 {
 "arrival": 1782007920.0,
+"observed_at": 1782005261.0,
+"provenance": "reported",
 "route_id": "8",
 "train_num": null,
 "trip_id": "GO201_26_7769"
 },
 {
 "arrival": 1782011520.0,
+"observed_at": 1782006051.0,
+"provenance": "reported",
 "route_id": "8",
 "train_num": null,
 "trip_id": "GO201_26_7771"
@@ -2748,12 +3544,16 @@
 "Outbound": [
 {
 "arrival": 1782009360.0,
+"observed_at": 1782005801.0,
+"provenance": "reported",
 "route_id": "8",
 "train_num": "9130",
 "trip_id": "GO201_26_7768"
 },
 {
 "arrival": 1782012900.0,
+"observed_at": 1782006658.0,
+"provenance": "reported",
 "route_id": "8",
 "train_num": null,
 "trip_id": "GO201_26_7770"
@@ -2764,18 +3564,24 @@
 "Inbound": [
 {
 "arrival": 1782008940.0,
+"observed_at": 1782002411.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7993_4"
 },
 {
 "arrival": 1782010380.0,
+"observed_at": 1782005701.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7995"
 },
 {
 "arrival": 1782012540.0,
+"observed_at": 1782006051.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7997"
@@ -2784,36 +3590,48 @@
 "Outbound": [
 {
 "arrival": 1782006862.0,
+"observed_at": 1782006893.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7366",
 "trip_id": "GO201_26_7986"
 },
 {
 "arrival": 1782008466.0,
+"observed_at": 1782006915.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7178",
 "trip_id": "GO201_26_7988"
 },
 {
 "arrival": 1782010440.0,
+"observed_at": 1782006675.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7252",
 "trip_id": "GO201_26_7990_2"
 },
 {
 "arrival": 1782011880.0,
+"observed_at": 1782001287.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7992_5"
 },
 {
 "arrival": 1782014040.0,
+"observed_at": 1782004996.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7994_2"
 },
 {
 "arrival": 1782015480.0,
+"observed_at": 1782005133.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7996_5"
@@ -2824,24 +3642,32 @@
 "Inbound": [
 {
 "arrival": 1782008340.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "9145",
 "trip_id": "GO201_26_6189"
 },
 {
 "arrival": 1782010440.0,
+"observed_at": 1782004902.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6273"
 },
 {
 "arrival": 1782011940.0,
+"observed_at": 1782005437.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6193"
 },
 {
 "arrival": 1782015420.0,
+"observed_at": 1782006204.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6197"
@@ -2850,36 +3676,48 @@
 "Outbound": [
 {
 "arrival": 1782008619.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7270",
 "trip_id": "GO201_26_6190_1"
 },
 {
 "arrival": 1782010200.0,
+"observed_at": 1782005195.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6272"
 },
 {
 "arrival": 1782012360.0,
+"observed_at": 1782004986.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6194"
 },
 {
 "arrival": 1782013980.0,
+"observed_at": 1781999660.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6274"
 },
 {
 "arrival": 1782015900.0,
+"observed_at": 1782005169.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6198"
 },
 {
 "arrival": 1782017820.0,
+"observed_at": 1782002364.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6202"
@@ -2890,24 +3728,32 @@
 "Inbound": [
 {
 "arrival": 1782007980.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "9145",
 "trip_id": "GO201_26_6189"
 },
 {
 "arrival": 1782010080.0,
+"observed_at": 1782004902.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6273"
 },
 {
 "arrival": 1782011580.0,
+"observed_at": 1782005437.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6193"
 },
 {
 "arrival": 1782015060.0,
+"observed_at": 1782006204.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6197"
@@ -2916,36 +3762,48 @@
 "Outbound": [
 {
 "arrival": 1782006994.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7566",
 "trip_id": "GO201_26_6270_4"
 },
 {
 "arrival": 1782008979.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7270",
 "trip_id": "GO201_26_6190_1"
 },
 {
 "arrival": 1782010560.0,
+"observed_at": 1782005195.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6272"
 },
 {
 "arrival": 1782012720.0,
+"observed_at": 1782004986.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6194"
 },
 {
 "arrival": 1782014340.0,
+"observed_at": 1781999660.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6274"
 },
 {
 "arrival": 1782016260.0,
+"observed_at": 1782005169.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6198"
@@ -2956,12 +3814,16 @@
 "Inbound": [
 {
 "arrival": 1782010080.0,
+"observed_at": 1782004231.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6771"
 },
 {
 "arrival": 1782012900.0,
+"observed_at": 1782006658.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6773"
@@ -2970,24 +3832,32 @@
 "Outbound": [
 {
 "arrival": 1782007597.0,
+"observed_at": 1782006878.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": "9188",
 "trip_id": "GO201_26_6770"
 },
 {
 "arrival": 1782012240.0,
+"observed_at": 1782005682.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6772"
 },
 {
 "arrival": 1782015840.0,
+"observed_at": 1782001519.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6774"
 },
 {
 "arrival": 1782019740.0,
+"observed_at": 1782006841.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6702"
@@ -2998,6 +3868,8 @@
 "Outbound": [
 {
 "arrival": 1782012446.0,
+"observed_at": 1782006910.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": "421",
 "trip_id": "GO201_26_6014"
@@ -3008,36 +3880,48 @@
 "Inbound": [
 {
 "arrival": 1782007530.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7095",
 "trip_id": "GO201_26_6185"
 },
 {
 "arrival": 1782007891.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "7373",
 "trip_id": "GO201_26_7587_1"
 },
 {
 "arrival": 1782008182.0,
+"observed_at": 1782006329.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": "7361",
 "trip_id": "GO201_26_6369_2932_METS"
 },
 {
 "arrival": 1782008424.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7735",
 "trip_id": "GO201_26_6187_1"
 },
 {
 "arrival": 1782009000.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7129",
 "trip_id": "GO201_26_7989_4"
 },
 {
 "arrival": 1782009630.0,
+"observed_at": 1782006893.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": "7719",
 "trip_id": "GO201_26_6879_1"
@@ -3046,36 +3930,48 @@
 "Outbound": [
 {
 "arrival": 1782007200.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "9038",
 "trip_id": "GO201_26_7590_5"
 },
 {
 "arrival": 1782007380.0,
+"observed_at": 1782001267.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6396_2932_METS"
 },
 {
 "arrival": 1782007560.0,
+"observed_at": 1782001280.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": null,
 "trip_id": "GO201_26_6876_1"
 },
 {
 "arrival": 1782008220.0,
+"observed_at": 1782001287.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7992_5"
 },
 {
 "arrival": 1782008580.0,
+"observed_at": 1782005465.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6192_1"
 },
 {
 "arrival": 1782008880.0,
+"observed_at": 1782001315.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6370_2932_METS"
@@ -3086,36 +3982,48 @@
 "Inbound": [
 {
 "arrival": 1782006885.0,
+"observed_at": 1782006886.0,
+"provenance": "reported",
 "route_id": "12",
 "train_num": "7289",
 "trip_id": "GO201_26_8959"
 },
 {
 "arrival": 1782008100.0,
+"observed_at": 1782005162.0,
+"provenance": "reported",
 "route_id": "12",
 "train_num": "9163",
 "trip_id": "GO201_26_8961"
 },
 {
 "arrival": 1782009300.0,
+"observed_at": 1782006389.0,
+"provenance": "reported",
 "route_id": "12",
 "train_num": "7601",
 "trip_id": "GO201_26_8971"
 },
 {
 "arrival": 1782010500.0,
+"observed_at": 1782004231.0,
+"provenance": "reported",
 "route_id": "12",
 "train_num": null,
 "trip_id": "GO201_26_8973"
 },
 {
 "arrival": 1782011700.0,
+"observed_at": 1782005444.0,
+"provenance": "reported",
 "route_id": "12",
 "train_num": null,
 "trip_id": "GO201_26_8975"
 },
 {
 "arrival": 1782012900.0,
+"observed_at": 1782006585.0,
+"provenance": "reported",
 "route_id": "12",
 "train_num": null,
 "trip_id": "GO201_26_8977"
@@ -3124,24 +4032,32 @@
 "Outbound": [
 {
 "arrival": 1782007440.0,
+"observed_at": 1782003137.0,
+"provenance": "reported",
 "route_id": "12",
 "train_num": null,
 "trip_id": "GO201_26_8970"
 },
 {
 "arrival": 1782008640.0,
+"observed_at": 1782003947.0,
+"provenance": "reported",
 "route_id": "12",
 "train_num": null,
 "trip_id": "GO201_26_8972"
 },
 {
 "arrival": 1782009840.0,
+"observed_at": 1782004838.0,
+"provenance": "reported",
 "route_id": "12",
 "train_num": null,
 "trip_id": "GO201_26_8974"
 },
 {
 "arrival": 1782011040.0,
+"observed_at": 1782006051.0,
+"provenance": "reported",
 "route_id": "12",
 "train_num": null,
 "trip_id": "GO201_26_8976"
@@ -3152,18 +4068,24 @@
 "Inbound": [
 {
 "arrival": 1782007920.0,
+"observed_at": 1782005213.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6395_2932_METS"
 },
 {
 "arrival": 1782009840.0,
+"observed_at": 1782005736.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6371_2932_METS"
 },
 {
 "arrival": 1782011460.0,
+"observed_at": 1782005444.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6397_2932_METS"
@@ -3172,30 +4094,40 @@
 "Outbound": [
 {
 "arrival": 1782007267.0,
+"observed_at": 1782006905.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": "7742",
 "trip_id": "GO201_26_6368_2932_METS"
 },
 {
 "arrival": 1782009180.0,
+"observed_at": 1782001267.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6396_2932_METS"
 },
 {
 "arrival": 1782010680.0,
+"observed_at": 1782001315.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6370_2932_METS"
 },
 {
 "arrival": 1782012780.0,
+"observed_at": 1782005013.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6398_2932_METS"
 },
 {
 "arrival": 1782014280.0,
+"observed_at": 1782005141.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6372_2932_METS"
@@ -3206,18 +4138,24 @@
 "Inbound": [
 {
 "arrival": 1782008244.0,
+"observed_at": 1782006910.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": "5007",
 "trip_id": "GO201_26_6069"
 },
 {
 "arrival": 1782009393.0,
+"observed_at": 1782006910.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": "5019",
 "trip_id": "6029_2026-06-20"
 },
 {
 "arrival": 1782010860.0,
+"observed_at": 1782004231.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": null,
 "trip_id": "GO201_26_6071"
@@ -3226,6 +4164,8 @@
 "Outbound": [
 {
 "arrival": 1782009266.0,
+"observed_at": 1782006910.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": "421",
 "trip_id": "GO201_26_6014"
@@ -3236,36 +4176,48 @@
 "Inbound": [
 {
 "arrival": 1782007724.0,
+"observed_at": 1782006910.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": "5014",
 "trip_id": "6019_2026-06-20"
 },
 {
 "arrival": 1782008100.0,
+"observed_at": 1782003646.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6191_1"
 },
 {
 "arrival": 1782008604.0,
+"observed_at": 1782006910.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": "5007",
 "trip_id": "GO201_26_6069"
 },
 {
 "arrival": 1782009693.0,
+"observed_at": 1782006910.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": "5019",
 "trip_id": "6029_2026-06-20"
 },
 {
 "arrival": 1782010020.0,
+"observed_at": 1782005437.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6193"
 },
 {
 "arrival": 1782011220.0,
+"observed_at": 1782004231.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": null,
 "trip_id": "GO201_26_6071"
@@ -3274,36 +4226,48 @@
 "Outbound": [
 {
 "arrival": 1782007539.0,
+"observed_at": 1782006763.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7540",
 "trip_id": "GO201_26_6186_1"
 },
 {
 "arrival": 1782008906.0,
+"observed_at": 1782006910.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": "421",
 "trip_id": "GO201_26_6014"
 },
 {
 "arrival": 1782009133.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7024",
 "trip_id": "GO201_26_6188"
 },
 {
 "arrival": 1782010599.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7270",
 "trip_id": "GO201_26_6190_1"
 },
 {
 "arrival": 1782012600.0,
+"observed_at": 1782005465.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6192_1"
 },
 {
 "arrival": 1782014400.0,
+"observed_at": 1782004986.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6194"
@@ -3314,18 +4278,24 @@
 "Inbound": [
 {
 "arrival": 1782008340.0,
+"observed_at": 1782002411.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7993_4"
 },
 {
 "arrival": 1782009780.0,
+"observed_at": 1782005701.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7995"
 },
 {
 "arrival": 1782011940.0,
+"observed_at": 1782006051.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7997"
@@ -3334,36 +4304,48 @@
 "Outbound": [
 {
 "arrival": 1782007462.0,
+"observed_at": 1782006893.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7366",
 "trip_id": "GO201_26_7986"
 },
 {
 "arrival": 1782009066.0,
+"observed_at": 1782006915.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7178",
 "trip_id": "GO201_26_7988"
 },
 {
 "arrival": 1782011040.0,
+"observed_at": 1782006675.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7252",
 "trip_id": "GO201_26_7990_2"
 },
 {
 "arrival": 1782012480.0,
+"observed_at": 1782001287.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7992_5"
 },
 {
 "arrival": 1782014640.0,
+"observed_at": 1782004996.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7994_2"
 },
 {
 "arrival": 1782016080.0,
+"observed_at": 1782005133.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7996_5"
@@ -3374,12 +4356,16 @@
 "Inbound": [
 {
 "arrival": 1782007110.0,
+"observed_at": 1782006893.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": "7719",
 "trip_id": "GO201_26_6879_1"
 },
 {
 "arrival": 1782010560.0,
+"observed_at": 1782006014.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": null,
 "trip_id": "GO201_26_6881"
@@ -3388,18 +4374,24 @@
 "Outbound": [
 {
 "arrival": 1782006883.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": "7074",
 "trip_id": "GO201_26_6874"
 },
 {
 "arrival": 1782010020.0,
+"observed_at": 1782001280.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": null,
 "trip_id": "GO201_26_6876_1"
 },
 {
 "arrival": 1782013620.0,
+"observed_at": 1782005060.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": null,
 "trip_id": "GO201_26_6878"
@@ -3410,12 +4402,16 @@
 "Inbound": [
 {
 "arrival": 1782008160.0,
+"observed_at": 1782004530.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8775"
 },
 {
 "arrival": 1782011760.0,
+"observed_at": 1782006051.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8777"
@@ -3424,24 +4420,32 @@
 "Outbound": [
 {
 "arrival": 1782008898.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": "7604",
 "trip_id": "GO201_26_8768"
 },
 {
 "arrival": 1782012420.0,
+"observed_at": 1782006850.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8770"
 },
 {
 "arrival": 1782015900.0,
+"observed_at": 1782001211.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8772"
 },
 {
 "arrival": 1782019440.0,
+"observed_at": 1782003898.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8702"
@@ -3452,18 +4456,24 @@
 "Inbound": [
 {
 "arrival": 1782008100.0,
+"observed_at": 1782002411.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7993_4"
 },
 {
 "arrival": 1782009540.0,
+"observed_at": 1782005701.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7995"
 },
 {
 "arrival": 1782011700.0,
+"observed_at": 1782006051.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7997"
@@ -3472,36 +4482,48 @@
 "Outbound": [
 {
 "arrival": 1782007702.0,
+"observed_at": 1782006893.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7366",
 "trip_id": "GO201_26_7986"
 },
 {
 "arrival": 1782009306.0,
+"observed_at": 1782006915.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7178",
 "trip_id": "GO201_26_7988"
 },
 {
 "arrival": 1782011280.0,
+"observed_at": 1782006675.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7252",
 "trip_id": "GO201_26_7990_2"
 },
 {
 "arrival": 1782012720.0,
+"observed_at": 1782001287.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7992_5"
 },
 {
 "arrival": 1782014880.0,
+"observed_at": 1782004996.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7994_2"
 },
 {
 "arrival": 1782016320.0,
+"observed_at": 1782005133.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7996_5"
@@ -3512,36 +4534,48 @@
 "Inbound": [
 {
 "arrival": 1782007637.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": "7341",
 "trip_id": "GO201_26_8773"
 },
 {
 "arrival": 1782008752.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": "7297",
 "trip_id": "GO201_26_6769"
 },
 {
 "arrival": 1782009300.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7187",
 "trip_id": "GO201_26_6271"
 },
 {
 "arrival": 1782011040.0,
+"observed_at": 1782004530.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8775"
 },
 {
 "arrival": 1782012300.0,
+"observed_at": 1782004231.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6771"
 },
 {
 "arrival": 1782012900.0,
+"observed_at": 1782004902.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6273"
@@ -3550,36 +4584,48 @@
 "Outbound": [
 {
 "arrival": 1782007740.0,
+"observed_at": 1782005195.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6272"
 },
 {
 "arrival": 1782009540.0,
+"observed_at": 1782006850.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8770"
 },
 {
 "arrival": 1782010080.0,
+"observed_at": 1782005682.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6772"
 },
 {
 "arrival": 1782011340.0,
+"observed_at": 1781999660.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6274"
 },
 {
 "arrival": 1782013140.0,
+"observed_at": 1782001211.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8772"
 },
 {
 "arrival": 1782013680.0,
+"observed_at": 1782001519.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6774"
@@ -3590,36 +4636,48 @@
 "Inbound": [
 {
 "arrival": 1782008100.0,
+"observed_at": 1782006893.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "7291",
 "trip_id": "GO201_26_7589_1"
 },
 {
 "arrival": 1782008530.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7159",
 "trip_id": "GO201_26_7991_1"
 },
 {
 "arrival": 1782009360.0,
+"observed_at": 1782002411.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7591_4"
 },
 {
 "arrival": 1782010200.0,
+"observed_at": 1782004231.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6771"
 },
 {
 "arrival": 1782011700.0,
+"observed_at": 1782004231.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7593_1"
 },
 {
 "arrival": 1782013020.0,
+"observed_at": 1782006658.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6773"
@@ -3628,36 +4686,48 @@
 "Outbound": [
 {
 "arrival": 1782007477.0,
+"observed_at": 1782006878.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": "9188",
 "trip_id": "GO201_26_6770"
 },
 {
 "arrival": 1782007680.0,
+"observed_at": 1782006913.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "7344",
 "trip_id": "GO201_26_7588"
 },
 {
 "arrival": 1782008760.0,
+"observed_at": 1782006675.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7252",
 "trip_id": "GO201_26_7990_2"
 },
 {
 "arrival": 1782009180.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "9038",
 "trip_id": "GO201_26_7590_5"
 },
 {
 "arrival": 1782010140.0,
+"observed_at": 1782001287.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7992_5"
 },
 {
 "arrival": 1782011160.0,
+"observed_at": 1782006908.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7592_5"
@@ -3668,12 +4738,16 @@
 "Inbound": [
 {
 "arrival": 1782009300.0,
+"observed_at": 1782004231.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6771"
 },
 {
 "arrival": 1782012120.0,
+"observed_at": 1782006658.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6773"
@@ -3682,24 +4756,32 @@
 "Outbound": [
 {
 "arrival": 1782008437.0,
+"observed_at": 1782006878.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": "9188",
 "trip_id": "GO201_26_6770"
 },
 {
 "arrival": 1782013080.0,
+"observed_at": 1782005682.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6772"
 },
 {
 "arrival": 1782016680.0,
+"observed_at": 1782001519.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6774"
 },
 {
 "arrival": 1782020580.0,
+"observed_at": 1782006841.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6702"
@@ -3710,30 +4792,40 @@
 "Inbound": [
 {
 "arrival": 1782006900.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "9145",
 "trip_id": "GO201_26_6189"
 },
 {
 "arrival": 1782008580.0,
+"observed_at": 1782003646.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6191_1"
 },
 {
 "arrival": 1782010500.0,
+"observed_at": 1782005437.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6193"
 },
 {
 "arrival": 1782012180.0,
+"observed_at": 1782005491.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6195"
 },
 {
 "arrival": 1782013980.0,
+"observed_at": 1782006204.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6197"
@@ -3742,36 +4834,48 @@
 "Outbound": [
 {
 "arrival": 1782006999.0,
+"observed_at": 1782006763.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7540",
 "trip_id": "GO201_26_6186_1"
 },
 {
 "arrival": 1782008593.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7024",
 "trip_id": "GO201_26_6188"
 },
 {
 "arrival": 1782010119.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7270",
 "trip_id": "GO201_26_6190_1"
 },
 {
 "arrival": 1782012060.0,
+"observed_at": 1782005465.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6192_1"
 },
 {
 "arrival": 1782013860.0,
+"observed_at": 1782004986.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6194"
 },
 {
 "arrival": 1782015480.0,
+"observed_at": 1781999660.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6274"
@@ -3782,18 +4886,24 @@
 "Inbound": [
 {
 "arrival": 1782008820.0,
+"observed_at": 1782002411.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7591_4"
 },
 {
 "arrival": 1782012300.0,
+"observed_at": 1782005444.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7595"
 },
 {
 "arrival": 1782013320.0,
+"observed_at": 1782006658.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7597"
@@ -3802,12 +4912,16 @@
 "Outbound": [
 {
 "arrival": 1782008400.0,
+"observed_at": 1782006913.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "7344",
 "trip_id": "GO201_26_7588"
 },
 {
 "arrival": 1782011820.0,
+"observed_at": 1782006908.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7592_5"
@@ -3818,6 +4932,8 @@
 "Outbound": [
 {
 "arrival": 1782014966.0,
+"observed_at": 1782006910.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": "421",
 "trip_id": "GO201_26_6014"
@@ -3828,24 +4944,32 @@
 "Inbound": [
 {
 "arrival": 1782007560.0,
+"observed_at": 1782002411.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7591_4"
 },
 {
 "arrival": 1782009720.0,
+"observed_at": 1782004231.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7593_1"
 },
 {
 "arrival": 1782011100.0,
+"observed_at": 1782005444.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7595"
 },
 {
 "arrival": 1782012180.0,
+"observed_at": 1782006658.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7597"
@@ -3854,30 +4978,40 @@
 "Outbound": [
 {
 "arrival": 1782007429.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "9142",
 "trip_id": "GO201_26_7586"
 },
 {
 "arrival": 1782009540.0,
+"observed_at": 1782006913.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "7344",
 "trip_id": "GO201_26_7588"
 },
 {
 "arrival": 1782011040.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "9038",
 "trip_id": "GO201_26_7590_5"
 },
 {
 "arrival": 1782012900.0,
+"observed_at": 1782006908.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7592_5"
 },
 {
 "arrival": 1782014640.0,
+"observed_at": 1782005006.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7594"
@@ -3888,18 +5022,24 @@
 "Inbound": [
 {
 "arrival": 1782007800.0,
+"observed_at": 1782005213.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6395_2932_METS"
 },
 {
 "arrival": 1782009720.0,
+"observed_at": 1782005736.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6371_2932_METS"
 },
 {
 "arrival": 1782011340.0,
+"observed_at": 1782005444.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6397_2932_METS"
@@ -3908,30 +5048,40 @@
 "Outbound": [
 {
 "arrival": 1782007387.0,
+"observed_at": 1782006905.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": "7742",
 "trip_id": "GO201_26_6368_2932_METS"
 },
 {
 "arrival": 1782009300.0,
+"observed_at": 1782001267.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6396_2932_METS"
 },
 {
 "arrival": 1782010800.0,
+"observed_at": 1782001315.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6370_2932_METS"
 },
 {
 "arrival": 1782012900.0,
+"observed_at": 1782005013.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6398_2932_METS"
 },
 {
 "arrival": 1782014400.0,
+"observed_at": 1782005141.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6372_2932_METS"
@@ -3942,18 +5092,24 @@
 "Inbound": [
 {
 "arrival": 1782008640.0,
+"observed_at": 1782002411.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7993_4"
 },
 {
 "arrival": 1782010080.0,
+"observed_at": 1782005701.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7995"
 },
 {
 "arrival": 1782012240.0,
+"observed_at": 1782006051.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7997"
@@ -3962,36 +5118,48 @@
 "Outbound": [
 {
 "arrival": 1782007162.0,
+"observed_at": 1782006893.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7366",
 "trip_id": "GO201_26_7986"
 },
 {
 "arrival": 1782008766.0,
+"observed_at": 1782006915.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7178",
 "trip_id": "GO201_26_7988"
 },
 {
 "arrival": 1782010740.0,
+"observed_at": 1782006675.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7252",
 "trip_id": "GO201_26_7990_2"
 },
 {
 "arrival": 1782012180.0,
+"observed_at": 1782001287.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7992_5"
 },
 {
 "arrival": 1782014340.0,
+"observed_at": 1782004996.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7994_2"
 },
 {
 "arrival": 1782015780.0,
+"observed_at": 1782005133.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7996_5"
@@ -4002,6 +5170,8 @@
 "Outbound": [
 {
 "arrival": 1782014666.0,
+"observed_at": 1782006910.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": "421",
 "trip_id": "GO201_26_6014"
@@ -4012,30 +5182,40 @@
 "Inbound": [
 {
 "arrival": 1782007440.0,
+"observed_at": 1782005162.0,
+"provenance": "reported",
 "route_id": "12",
 "train_num": "9163",
 "trip_id": "GO201_26_8961"
 },
 {
 "arrival": 1782008640.0,
+"observed_at": 1782006389.0,
+"provenance": "reported",
 "route_id": "12",
 "train_num": "7601",
 "trip_id": "GO201_26_8971"
 },
 {
 "arrival": 1782009840.0,
+"observed_at": 1782004231.0,
+"provenance": "reported",
 "route_id": "12",
 "train_num": null,
 "trip_id": "GO201_26_8973"
 },
 {
 "arrival": 1782011040.0,
+"observed_at": 1782005444.0,
+"provenance": "reported",
 "route_id": "12",
 "train_num": null,
 "trip_id": "GO201_26_8975"
 },
 {
 "arrival": 1782012240.0,
+"observed_at": 1782006585.0,
+"provenance": "reported",
 "route_id": "12",
 "train_num": null,
 "trip_id": "GO201_26_8977"
@@ -4044,30 +5224,40 @@
 "Outbound": [
 {
 "arrival": 1782007116.0,
+"observed_at": 1782006457.0,
+"provenance": "reported",
 "route_id": "12",
 "train_num": "7634",
 "trip_id": "GO201_26_8960"
 },
 {
 "arrival": 1782008160.0,
+"observed_at": 1782003137.0,
+"provenance": "reported",
 "route_id": "12",
 "train_num": null,
 "trip_id": "GO201_26_8970"
 },
 {
 "arrival": 1782009360.0,
+"observed_at": 1782003947.0,
+"provenance": "reported",
 "route_id": "12",
 "train_num": null,
 "trip_id": "GO201_26_8972"
 },
 {
 "arrival": 1782010560.0,
+"observed_at": 1782004838.0,
+"provenance": "reported",
 "route_id": "12",
 "train_num": null,
 "trip_id": "GO201_26_8974"
 },
 {
 "arrival": 1782011760.0,
+"observed_at": 1782006051.0,
+"provenance": "reported",
 "route_id": "12",
 "train_num": null,
 "trip_id": "GO201_26_8976"
@@ -4078,12 +5268,16 @@
 "Inbound": [
 {
 "arrival": 1782006990.0,
+"observed_at": 1782006893.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": "7719",
 "trip_id": "GO201_26_6879_1"
 },
 {
 "arrival": 1782010440.0,
+"observed_at": 1782006014.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": null,
 "trip_id": "GO201_26_6881"
@@ -4092,18 +5286,24 @@
 "Outbound": [
 {
 "arrival": 1782007003.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": "7074",
 "trip_id": "GO201_26_6874"
 },
 {
 "arrival": 1782010140.0,
+"observed_at": 1782001280.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": null,
 "trip_id": "GO201_26_6876_1"
 },
 {
 "arrival": 1782013740.0,
+"observed_at": 1782005060.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": null,
 "trip_id": "GO201_26_6878"
@@ -4114,6 +5314,8 @@
 "Inbound": [
 {
 "arrival": 1782012600.0,
+"observed_at": 1782004284.0,
+"provenance": "reported",
 "route_id": "3",
 "train_num": null,
 "trip_id": "GO201_26_6571"
@@ -4124,36 +5326,48 @@
 "Inbound": [
 {
 "arrival": 1782007051.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "7373",
 "trip_id": "GO201_26_7587_1"
 },
 {
 "arrival": 1782007464.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7735",
 "trip_id": "GO201_26_6187_1"
 },
 {
 "arrival": 1782008100.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7129",
 "trip_id": "GO201_26_7989_4"
 },
 {
 "arrival": 1782008460.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7187",
 "trip_id": "GO201_26_6271"
 },
 {
 "arrival": 1782008790.0,
+"observed_at": 1782006893.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": "7719",
 "trip_id": "GO201_26_6879_1"
 },
 {
 "arrival": 1782009120.0,
+"observed_at": 1782006893.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "7291",
 "trip_id": "GO201_26_7589_1"
@@ -4162,36 +5376,48 @@
 "Outbound": [
 {
 "arrival": 1782007179.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7270",
 "trip_id": "GO201_26_6190_1"
 },
 {
 "arrival": 1782007740.0,
+"observed_at": 1782006675.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7252",
 "trip_id": "GO201_26_7990_2"
 },
 {
 "arrival": 1782008100.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "9038",
 "trip_id": "GO201_26_7590_5"
 },
 {
 "arrival": 1782008460.0,
+"observed_at": 1782001280.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": null,
 "trip_id": "GO201_26_6876_1"
 },
 {
 "arrival": 1782008640.0,
+"observed_at": 1782005195.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6272"
 },
 {
 "arrival": 1782009180.0,
+"observed_at": 1782001287.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7992_5"
@@ -4202,24 +5428,32 @@
 "Inbound": [
 {
 "arrival": 1782007042.0,
+"observed_at": 1782006329.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": "7361",
 "trip_id": "GO201_26_6369_2932_METS"
 },
 {
 "arrival": 1782008520.0,
+"observed_at": 1782005213.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6395_2932_METS"
 },
 {
 "arrival": 1782010500.0,
+"observed_at": 1782005736.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6371_2932_METS"
 },
 {
 "arrival": 1782012120.0,
+"observed_at": 1782005444.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6397_2932_METS"
@@ -4228,24 +5462,32 @@
 "Outbound": [
 {
 "arrival": 1782008640.0,
+"observed_at": 1782001267.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6396_2932_METS"
 },
 {
 "arrival": 1782010140.0,
+"observed_at": 1782001315.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6370_2932_METS"
 },
 {
 "arrival": 1782012240.0,
+"observed_at": 1782005013.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6398_2932_METS"
 },
 {
 "arrival": 1782013740.0,
+"observed_at": 1782005141.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6372_2932_METS"
@@ -4256,24 +5498,32 @@
 "Inbound": [
 {
 "arrival": 1782007150.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7159",
 "trip_id": "GO201_26_7991_1"
 },
 {
 "arrival": 1782009240.0,
+"observed_at": 1782002411.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7993_4"
 },
 {
 "arrival": 1782010680.0,
+"observed_at": 1782005701.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7995"
 },
 {
 "arrival": 1782012840.0,
+"observed_at": 1782006051.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7997"
@@ -4282,30 +5532,40 @@
 "Outbound": [
 {
 "arrival": 1782008106.0,
+"observed_at": 1782006915.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7178",
 "trip_id": "GO201_26_7988"
 },
 {
 "arrival": 1782010080.0,
+"observed_at": 1782006675.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7252",
 "trip_id": "GO201_26_7990_2"
 },
 {
 "arrival": 1782011520.0,
+"observed_at": 1782001287.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7992_5"
 },
 {
 "arrival": 1782013680.0,
+"observed_at": 1782004996.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7994_2"
 },
 {
 "arrival": 1782015120.0,
+"observed_at": 1782005133.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7996_5"
@@ -4316,30 +5576,40 @@
 "Inbound": [
 {
 "arrival": 1782007980.0,
+"observed_at": 1782006893.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "7291",
 "trip_id": "GO201_26_7589_1"
 },
 {
 "arrival": 1782009960.0,
+"observed_at": 1782004231.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6771"
 },
 {
 "arrival": 1782011580.0,
+"observed_at": 1782004231.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7593_1"
 },
 {
 "arrival": 1782012780.0,
+"observed_at": 1782006658.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6773"
 },
 {
 "arrival": 1782013920.0,
+"observed_at": 1782006658.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7597"
@@ -4348,36 +5618,48 @@
 "Outbound": [
 {
 "arrival": 1782007717.0,
+"observed_at": 1782006878.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": "9188",
 "trip_id": "GO201_26_6770"
 },
 {
 "arrival": 1782009360.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "9038",
 "trip_id": "GO201_26_7590_5"
 },
 {
 "arrival": 1782012360.0,
+"observed_at": 1782005682.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6772"
 },
 {
 "arrival": 1782012960.0,
+"observed_at": 1782005006.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7594"
 },
 {
 "arrival": 1782015960.0,
+"observed_at": 1782001519.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6774"
 },
 {
 "arrival": 1782019860.0,
+"observed_at": 1782006841.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6702"
@@ -4388,36 +5670,48 @@
 "Inbound": [
 {
 "arrival": 1782008160.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "9145",
 "trip_id": "GO201_26_6189"
 },
 {
 "arrival": 1782009540.0,
+"observed_at": 1782003646.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6191_1"
 },
 {
 "arrival": 1782010260.0,
+"observed_at": 1782004902.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6273"
 },
 {
 "arrival": 1782011760.0,
+"observed_at": 1782005437.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6193"
 },
 {
 "arrival": 1782013140.0,
+"observed_at": 1782005491.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6195"
 },
 {
 "arrival": 1782015240.0,
+"observed_at": 1782006204.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6197"
@@ -4426,36 +5720,48 @@
 "Outbound": [
 {
 "arrival": 1782007513.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7024",
 "trip_id": "GO201_26_6188"
 },
 {
 "arrival": 1782008799.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7270",
 "trip_id": "GO201_26_6190_1"
 },
 {
 "arrival": 1782010380.0,
+"observed_at": 1782005195.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6272"
 },
 {
 "arrival": 1782010980.0,
+"observed_at": 1782005465.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6192_1"
 },
 {
 "arrival": 1782012540.0,
+"observed_at": 1782004986.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6194"
 },
 {
 "arrival": 1782014160.0,
+"observed_at": 1781999660.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6274"
@@ -4466,12 +5772,16 @@
 "Inbound": [
 {
 "arrival": 1782007680.0,
+"observed_at": 1782004530.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8775"
 },
 {
 "arrival": 1782011280.0,
+"observed_at": 1782006051.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8777"
@@ -4480,24 +5790,32 @@
 "Outbound": [
 {
 "arrival": 1782009498.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": "7604",
 "trip_id": "GO201_26_8768"
 },
 {
 "arrival": 1782013020.0,
+"observed_at": 1782006850.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8770"
 },
 {
 "arrival": 1782016440.0,
+"observed_at": 1782001211.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8772"
 },
 {
 "arrival": 1782020040.0,
+"observed_at": 1782003898.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8702"
@@ -4508,12 +5826,16 @@
 "Inbound": [
 {
 "arrival": 1782008640.0,
+"observed_at": 1782004530.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8775"
 },
 {
 "arrival": 1782012240.0,
+"observed_at": 1782006051.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8777"
@@ -4522,24 +5844,32 @@
 "Outbound": [
 {
 "arrival": 1782008418.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": "7604",
 "trip_id": "GO201_26_8768"
 },
 {
 "arrival": 1782011940.0,
+"observed_at": 1782006850.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8770"
 },
 {
 "arrival": 1782015480.0,
+"observed_at": 1782001211.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8772"
 },
 {
 "arrival": 1782018960.0,
+"observed_at": 1782003898.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8702"
@@ -4550,6 +5880,8 @@
 "Inbound": [
 {
 "arrival": 1782011220.0,
+"observed_at": 1782004284.0,
+"provenance": "reported",
 "route_id": "3",
 "train_num": null,
 "trip_id": "GO201_26_6571"
@@ -4560,12 +5892,16 @@
 "Inbound": [
 {
 "arrival": 1782009480.0,
+"observed_at": 1782004231.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6771"
 },
 {
 "arrival": 1782012300.0,
+"observed_at": 1782006658.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6773"
@@ -4574,24 +5910,32 @@
 "Outbound": [
 {
 "arrival": 1782008257.0,
+"observed_at": 1782006878.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": "9188",
 "trip_id": "GO201_26_6770"
 },
 {
 "arrival": 1782012900.0,
+"observed_at": 1782005682.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6772"
 },
 {
 "arrival": 1782016500.0,
+"observed_at": 1782001519.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6774"
 },
 {
 "arrival": 1782020400.0,
+"observed_at": 1782006841.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6702"
@@ -4602,6 +5946,8 @@
 "Inbound": [
 {
 "arrival": 1782011700.0,
+"observed_at": 1782004284.0,
+"provenance": "reported",
 "route_id": "3",
 "train_num": null,
 "trip_id": "GO201_26_6571"
@@ -4612,18 +5958,24 @@
 "Inbound": [
 {
 "arrival": 1782007500.0,
+"observed_at": 1782005213.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6395_2932_METS"
 },
 {
 "arrival": 1782009420.0,
+"observed_at": 1782005736.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6371_2932_METS"
 },
 {
 "arrival": 1782011040.0,
+"observed_at": 1782005444.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6397_2932_METS"
@@ -4632,30 +5984,40 @@
 "Outbound": [
 {
 "arrival": 1782007687.0,
+"observed_at": 1782006905.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": "7742",
 "trip_id": "GO201_26_6368_2932_METS"
 },
 {
 "arrival": 1782009600.0,
+"observed_at": 1782001267.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6396_2932_METS"
 },
 {
 "arrival": 1782011100.0,
+"observed_at": 1782001315.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6370_2932_METS"
 },
 {
 "arrival": 1782013200.0,
+"observed_at": 1782005013.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6398_2932_METS"
 },
 {
 "arrival": 1782014700.0,
+"observed_at": 1782005141.0,
+"provenance": "reported",
 "route_id": "9",
 "train_num": null,
 "trip_id": "GO201_26_6372_2932_METS"
@@ -4666,12 +6028,16 @@
 "Inbound": [
 {
 "arrival": 1782007764.0,
+"observed_at": 1782006910.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": "5007",
 "trip_id": "GO201_26_6069"
 },
 {
 "arrival": 1782010380.0,
+"observed_at": 1782004231.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": null,
 "trip_id": "GO201_26_6071"
@@ -4682,6 +6048,8 @@
 "Inbound": [
 {
 "arrival": 1782011340.0,
+"observed_at": 1782004284.0,
+"provenance": "reported",
 "route_id": "3",
 "train_num": null,
 "trip_id": "GO201_26_6571"
@@ -4692,6 +6060,8 @@
 "Inbound": [
 {
 "arrival": 1782011880.0,
+"observed_at": 1782004284.0,
+"provenance": "reported",
 "route_id": "3",
 "train_num": null,
 "trip_id": "GO201_26_6571"
@@ -4702,6 +6072,8 @@
 "Inbound": [
 {
 "arrival": 1782008460.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "5011",
 "trip_id": "GO201_26_6665"
@@ -4712,30 +6084,40 @@
 "Inbound": [
 {
 "arrival": 1782007020.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "9145",
 "trip_id": "GO201_26_6189"
 },
 {
 "arrival": 1782008700.0,
+"observed_at": 1782003646.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6191_1"
 },
 {
 "arrival": 1782010620.0,
+"observed_at": 1782005437.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6193"
 },
 {
 "arrival": 1782012300.0,
+"observed_at": 1782005491.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6195"
 },
 {
 "arrival": 1782014100.0,
+"observed_at": 1782006204.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6197"
@@ -4744,36 +6126,48 @@
 "Outbound": [
 {
 "arrival": 1782008413.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7024",
 "trip_id": "GO201_26_6188"
 },
 {
 "arrival": 1782009939.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": "7270",
 "trip_id": "GO201_26_6190_1"
 },
 {
 "arrival": 1782011880.0,
+"observed_at": 1782005465.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6192_1"
 },
 {
 "arrival": 1782013680.0,
+"observed_at": 1782004986.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6194"
 },
 {
 "arrival": 1782015300.0,
+"observed_at": 1781999660.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6274"
 },
 {
 "arrival": 1782017220.0,
+"observed_at": 1782005169.0,
+"provenance": "reported",
 "route_id": "1",
 "train_num": null,
 "trip_id": "GO201_26_6198"
@@ -4784,6 +6178,8 @@
 "Outbound": [
 {
 "arrival": 1782012986.0,
+"observed_at": 1782006910.0,
+"provenance": "reported",
 "route_id": "5",
 "train_num": "421",
 "trip_id": "GO201_26_6014"
@@ -4794,12 +6190,16 @@
 "Inbound": [
 {
 "arrival": 1782009120.0,
+"observed_at": 1782004231.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6771"
 },
 {
 "arrival": 1782011940.0,
+"observed_at": 1782006658.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6773"
@@ -4808,24 +6208,32 @@
 "Outbound": [
 {
 "arrival": 1782008677.0,
+"observed_at": 1782006878.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": "9188",
 "trip_id": "GO201_26_6770"
 },
 {
 "arrival": 1782013320.0,
+"observed_at": 1782005682.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6772"
 },
 {
 "arrival": 1782016920.0,
+"observed_at": 1782001519.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6774"
 },
 {
 "arrival": 1782020820.0,
+"observed_at": 1782006841.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6702"
@@ -4836,12 +6244,16 @@
 "Inbound": [
 {
 "arrival": 1782007500.0,
+"observed_at": 1782005261.0,
+"provenance": "reported",
 "route_id": "8",
 "train_num": null,
 "trip_id": "GO201_26_7769"
 },
 {
 "arrival": 1782011100.0,
+"observed_at": 1782006051.0,
+"provenance": "reported",
 "route_id": "8",
 "train_num": null,
 "trip_id": "GO201_26_7771"
@@ -4850,12 +6262,16 @@
 "Outbound": [
 {
 "arrival": 1782009720.0,
+"observed_at": 1782005801.0,
+"provenance": "reported",
 "route_id": "8",
 "train_num": "9130",
 "trip_id": "GO201_26_7768"
 },
 {
 "arrival": 1782013260.0,
+"observed_at": 1782006658.0,
+"provenance": "reported",
 "route_id": "8",
 "train_num": null,
 "trip_id": "GO201_26_7770"
@@ -4866,36 +6282,48 @@
 "Inbound": [
 {
 "arrival": 1782007132.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": "7297",
 "trip_id": "GO201_26_6769"
 },
 {
 "arrival": 1782008890.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7159",
 "trip_id": "GO201_26_7991_1"
 },
 {
 "arrival": 1782010680.0,
+"observed_at": 1782004231.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6771"
 },
 {
 "arrival": 1782012420.0,
+"observed_at": 1782005701.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7995"
 },
 {
 "arrival": 1782013500.0,
+"observed_at": 1782006658.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6773"
 },
 {
 "arrival": 1782014400.0,
+"observed_at": 1782006658.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7597"
@@ -4904,36 +6332,48 @@
 "Outbound": [
 {
 "arrival": 1782007057.0,
+"observed_at": 1782006878.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": "9188",
 "trip_id": "GO201_26_6770"
 },
 {
 "arrival": 1782008400.0,
+"observed_at": 1782006675.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7252",
 "trip_id": "GO201_26_7990_2"
 },
 {
 "arrival": 1782011700.0,
+"observed_at": 1782005682.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6772"
 },
 {
 "arrival": 1782012000.0,
+"observed_at": 1782004996.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7994_2"
 },
 {
 "arrival": 1782015300.0,
+"observed_at": 1782001519.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6774"
 },
 {
 "arrival": 1782019200.0,
+"observed_at": 1782006841.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6702"
@@ -4944,36 +6384,48 @@
 "Inbound": [
 {
 "arrival": 1782007012.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": "7297",
 "trip_id": "GO201_26_6769"
 },
 {
 "arrival": 1782008340.0,
+"observed_at": 1782006893.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "7291",
 "trip_id": "GO201_26_7589_1"
 },
 {
 "arrival": 1782010560.0,
+"observed_at": 1782004231.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6771"
 },
 {
 "arrival": 1782011940.0,
+"observed_at": 1782004231.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7593_1"
 },
 {
 "arrival": 1782013380.0,
+"observed_at": 1782006658.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6773"
 },
 {
 "arrival": 1782014280.0,
+"observed_at": 1782006658.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7597"
@@ -4982,36 +6434,48 @@
 "Outbound": [
 {
 "arrival": 1782007177.0,
+"observed_at": 1782006878.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": "9188",
 "trip_id": "GO201_26_6770"
 },
 {
 "arrival": 1782008820.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "9038",
 "trip_id": "GO201_26_7590_5"
 },
 {
 "arrival": 1782011820.0,
+"observed_at": 1782005682.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6772"
 },
 {
 "arrival": 1782012420.0,
+"observed_at": 1782005006.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7594"
 },
 {
 "arrival": 1782015420.0,
+"observed_at": 1782001519.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6774"
 },
 {
 "arrival": 1782019320.0,
+"observed_at": 1782006841.0,
+"provenance": "reported",
 "route_id": "2",
 "train_num": null,
 "trip_id": "GO201_26_6702"
@@ -5022,30 +6486,40 @@
 "Inbound": [
 {
 "arrival": 1782007260.0,
+"observed_at": 1782002411.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7591_4"
 },
 {
 "arrival": 1782008820.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "5011",
 "trip_id": "GO201_26_6665"
 },
 {
 "arrival": 1782009420.0,
+"observed_at": 1782004231.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7593_1"
 },
 {
 "arrival": 1782010800.0,
+"observed_at": 1782005444.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7595"
 },
 {
 "arrival": 1782011820.0,
+"observed_at": 1782006658.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7597"
@@ -5054,36 +6528,48 @@
 "Outbound": [
 {
 "arrival": 1782006902.0,
+"observed_at": 1782006903.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "7558",
 "trip_id": "GO201_26_7584_5"
 },
 {
 "arrival": 1782007909.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "9142",
 "trip_id": "GO201_26_7586"
 },
 {
 "arrival": 1782010020.0,
+"observed_at": 1782006913.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "7344",
 "trip_id": "GO201_26_7588"
 },
 {
 "arrival": 1782011520.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "9038",
 "trip_id": "GO201_26_7590_5"
 },
 {
 "arrival": 1782013380.0,
+"observed_at": 1782006908.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7592_5"
 },
 {
 "arrival": 1782015120.0,
+"observed_at": 1782005006.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7594"
@@ -5094,36 +6580,48 @@
 "Inbound": [
 {
 "arrival": 1782006900.0,
+"observed_at": 1782006893.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "7291",
 "trip_id": "GO201_26_7589_1"
 },
 {
 "arrival": 1782007810.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7159",
 "trip_id": "GO201_26_7991_1"
 },
 {
 "arrival": 1782008340.0,
+"observed_at": 1782002411.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7591_4"
 },
 {
 "arrival": 1782009900.0,
+"observed_at": 1782002411.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7993_4"
 },
 {
 "arrival": 1782010500.0,
+"observed_at": 1782004231.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7593_1"
 },
 {
 "arrival": 1782011400.0,
+"observed_at": 1782005701.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7995"
@@ -5132,36 +6630,48 @@
 "Outbound": [
 {
 "arrival": 1782007506.0,
+"observed_at": 1782006915.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7178",
 "trip_id": "GO201_26_7988"
 },
 {
 "arrival": 1782008820.0,
+"observed_at": 1782006913.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "7344",
 "trip_id": "GO201_26_7588"
 },
 {
 "arrival": 1782009540.0,
+"observed_at": 1782006675.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": "7252",
 "trip_id": "GO201_26_7990_2"
 },
 {
 "arrival": 1782010320.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": "9038",
 "trip_id": "GO201_26_7590_5"
 },
 {
 "arrival": 1782010980.0,
+"observed_at": 1782001287.0,
+"provenance": "reported",
 "route_id": "4",
 "train_num": null,
 "trip_id": "GO201_26_7992_5"
 },
 {
 "arrival": 1782012240.0,
+"observed_at": 1782006908.0,
+"provenance": "reported",
 "route_id": "10",
 "train_num": null,
 "trip_id": "GO201_26_7592_5"
@@ -5172,12 +6682,16 @@
 "Inbound": [
 {
 "arrival": 1782008460.0,
+"observed_at": 1782004530.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8775"
 },
 {
 "arrival": 1782012060.0,
+"observed_at": 1782006051.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8777"
@@ -5186,24 +6700,32 @@
 "Outbound": [
 {
 "arrival": 1782008598.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": "7604",
 "trip_id": "GO201_26_8768"
 },
 {
 "arrival": 1782012120.0,
+"observed_at": 1782006850.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8770"
 },
 {
 "arrival": 1782015600.0,
+"observed_at": 1782001211.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8772"
 },
 {
 "arrival": 1782019140.0,
+"observed_at": 1782003898.0,
+"provenance": "reported",
 "route_id": "7",
 "train_num": null,
 "trip_id": "GO201_26_8702"
@@ -5214,6 +6736,8 @@
 "Inbound": [
 {
 "arrival": 1782010080.0,
+"observed_at": 1782006014.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": null,
 "trip_id": "GO201_26_6881"
@@ -5222,18 +6746,24 @@
 "Outbound": [
 {
 "arrival": 1782007363.0,
+"observed_at": 1782006911.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": "7074",
 "trip_id": "GO201_26_6874"
 },
 {
 "arrival": 1782010500.0,
+"observed_at": 1782001280.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": null,
 "trip_id": "GO201_26_6876_1"
 },
 {
 "arrival": 1782014100.0,
+"observed_at": 1782005060.0,
+"provenance": "reported",
 "route_id": "6",
 "train_num": null,
 "trip_id": "GO201_26_6878"

@@ -35,8 +35,6 @@ static GTFS present:
 import json
 from pathlib import Path
 
-from contract_pending import without_pending
-
 import feeds
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -52,7 +50,7 @@ def _load():
 def test_real_feed_decodes_to_golden_output():
     raw, stops, expected = _load()
     trains = feeds._decode_trains(raw, stops, expected["feed_key"], expected["now"])
-    assert without_pending(trains) == expected["trains"]
+    assert trains == expected["trains"]
 
 
 def test_golden_output_is_nontrivial():

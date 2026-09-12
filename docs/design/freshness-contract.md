@@ -968,6 +968,20 @@ new fields per record rewrites all eleven:
 | `ferry_rt_expected.json` | 28 boats + 50 arrivals | Both keys on every boat for one release (Q1); the 50 dock rows gain the TripUpdates clock. |
 | `alerts_mnr_expected.json` | 4 | Feed clock and provenance. |
 
+**ERRATUM, 2026-09-12, on the subway row above.** Its "16 of the 98 joined observations
+are over 90s" is true of the FEED and is the wrong number to build from. Measured while
+regenerating this golden: **only 2 of the 95 SERVED trains carry an observation older than
+90 seconds.** The other 14 belong to trips the placement pass never draws, having not
+started yet or having no resolvable upcoming stop, so they are stale observations of trains
+that are on no map. The feed number is still correct about the feed, and the row keeps it
+because it is what the vehicle join actually sees.
+
+**6.3's gate is sized from the served number.** A gate acts on trains that reach a rider,
+so the subway half of F01 is two markers on this capture rather than sixteen, and reading
+the feed figure as the workload would overestimate it by eight. The measurement is pinned
+at `test_subway_positions_take_the_vehicle_clock_where_one_joins` rather than left in prose
+here, so the 2 and the 84 move together or fail.
+
 The two count changes in the LIRR goldens are arithmetic from section 3.4's policy, stated
 here so a regeneration that produces different numbers is a signal rather than a surprise.
 They transfer cleanly because `railroad_lirr_expected.json` records `now: 1782006915.0`,

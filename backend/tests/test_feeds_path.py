@@ -23,7 +23,6 @@ from pathlib import Path
 
 import httpx
 import pytest
-from contract_pending import without_pending
 from google.protobuf.message import DecodeError
 from google.transit import gtfs_realtime_pb2 as pb
 
@@ -426,8 +425,8 @@ def test_golden_gen_a_decodes_to_expected_output():
     trains, arrivals, feed_ts, unresolved = feeds._decode_path_feed(
         raw, _golden_stops(), expected["now"]
     )
-    assert without_pending(trains) == expected["trains"]
-    assert without_pending(arrivals) == expected["arrivals"]
+    assert trains == expected["trains"]
+    assert arrivals == expected["arrivals"]
     assert feed_ts == expected["now"]  # the capture froze `now` to the header
     # The stops snapshot is captured in the same session as the feed, so every
     # bridge station must resolve; the capture script refuses to write a

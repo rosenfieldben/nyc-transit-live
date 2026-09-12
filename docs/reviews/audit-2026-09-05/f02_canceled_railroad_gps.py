@@ -342,12 +342,7 @@ check("first emitted record is not the canceled trip", first["trip_id"] != TRIP_
 check("golden record count", len(GOLDEN["trains"]), EXPECT["golden_records"])
 check("canceled trip absent from the golden (was record 0)",
       any(t["trip_id"] == TRIP_ID for t in GOLDEN["trains"]), False)
-# CONTRACT 6.1 PUT TWO FIELDS ON EVERY ROW AND THE GOLDENS CATCH UP IN A LATER
-# COMMIT, so this comparison drops exactly those two names and nothing else. F02's
-# claim is about WHICH TRIPS are emitted, not about how wide a row is.
-_PENDING_IN_GOLDEN = ("observed_at", "provenance")
-_stripped = [{k: v for k, v in t.items() if k not in _PENDING_IN_GOLDEN} for t in gps_trains]
-check("decoder output matches the golden", _stripped == GOLDEN["trains"], True)
+check("decoder output matches the golden", gps_trains == GOLDEN["trains"], True)
 
 # ------------------------- Panel C: both sides, at the production decoders ----
 

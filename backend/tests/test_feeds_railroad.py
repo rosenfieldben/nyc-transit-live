@@ -501,7 +501,7 @@ def _raw(system):
 @pytest.mark.anyio
 async def test_fetch_timestamp_uses_lirr_header_only():
     client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": _raw("MNR")})
-    _, _, feed_ts, _ = await feeds.fetch_railroad_trains(client, {})
+    _, _, feed_ts, _, _ = await feeds.fetch_railroad_trains(client, {})
     lirr_ts = _load("LIRR")[1]["now"]
     mnr_ts = _load("MNR")[1]["now"]
     # Only LIRR (freshness-authoritative) drives feed_timestamp; MNR's header is
@@ -515,7 +515,7 @@ async def test_fetch_timestamp_none_when_only_untrusted_feed_succeeds():
     # LIRR (the only trusted system) fails; MNR succeeds but contributes no
     # timestamp, so feed_timestamp falls back to None / the poll-age signal.
     client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": _raw("MNR")}, down=["LIRR"])
-    trains, _, feed_ts, failed = await feeds.fetch_railroad_trains(client, {})
+    trains, _, feed_ts, failed, _ = await feeds.fetch_railroad_trains(client, {})
     assert failed == ["LIRR"]
     assert trains and all(t["system"] == "MNR" for t in trains)
     assert feed_ts is None
@@ -524,7 +524,7 @@ async def test_fetch_timestamp_none_when_only_untrusted_feed_succeeds():
 @pytest.mark.anyio
 async def test_fetch_dedups_duplicate_trip_ids_on_the_live_path():
     client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": _raw("MNR")})
-    trains, _, _, failed = await feeds.fetch_railroad_trains(client, {})
+    trains, _, _, failed, _ = await feeds.fetch_railroad_trains(client, {})
     assert failed == []
     # The MNR feed repeats trains across separate vehicle entities; the live path
     # collapses them to one marker per trip_id (49 decoded -> 33 unique), which
@@ -541,7 +541,7 @@ async def test_fetch_dedups_duplicate_trip_ids_on_the_live_path():
 @pytest.mark.anyio
 async def test_fetch_skips_a_failed_feed_and_reports_it():
     client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": _raw("MNR")}, down=["MNR"])
-    trains, _, _, failed = await feeds.fetch_railroad_trains(client, {})
+    trains, _, _, failed, _ = await feeds.fetch_railroad_trains(client, {})
     assert failed == ["MNR"]
     assert trains and all(t["system"] == "LIRR" for t in trains)
 
@@ -550,7 +550,7 @@ async def test_fetch_skips_a_failed_feed_and_reports_it():
 async def test_fetch_skips_an_undecodable_feed():
     # MNR returns a truncated length-delimited field -> DecodeError, skipped.
     client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": b"\x0a\xff"})
-    trains, _, _, failed = await feeds.fetch_railroad_trains(client, {})
+    trains, _, _, failed, _ = await feeds.fetch_railroad_trains(client, {})
     assert failed == ["MNR"]
     assert trains and all(t["system"] == "LIRR" for t in trains)
 
@@ -990,7 +990,7 @@ async def test_fetch_merges_gps_and_placed_trains():
     _tu_entity(f, "PLACED1", route_id="6", stops=[("A", time.time() + 600)])
     client = _FakeRailClient({"LIRR": f.SerializeToString(), "MNR": _raw("MNR")}, down=["MNR"])
     stops = {"LIRR": {"A": {"name": "A", "lat": 40.81, "lon": -73.51}}, "MNR": None}
-    trains, _, _, failed = await feeds.fetch_railroad_trains(client, stops)
+    trains, _, _, failed, _ = await feeds.fetch_railroad_trains(client, stops)
     assert failed == ["MNR"]
     by_id = {t["trip_id"]: t for t in trains}
     # GPS coords come through the protobuf float32 position, so compare approx.
@@ -1011,7 +1011,7 @@ async def test_fetch_dedups_by_system_trip_id_composite_key():
             "MNR": _gps_feed("SHARED").SerializeToString(),
         }
     )
-    trains, _, _, failed = await feeds.fetch_railroad_trains(client, {})
+    trains, _, _, failed, _ = await feeds.fetch_railroad_trains(client, {})
     assert failed == []
     assert {(t["system"], t["trip_id"]) for t in trains} == {("LIRR", "SHARED"), ("MNR", "SHARED")}
 
@@ -1153,7 +1153,7 @@ async def test_c3_an_empty_200_on_one_railroad_system_fails_that_system_only():
     # placement decoder's own strict parse unexercised. REVIEW FIX.
     stops = {"LIRR": json.loads((FIXTURES / "railroad_lirr_stops.json").read_text())}
     client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": b""})
-    trains, arrivals, _, failed = await feeds.fetch_railroad_trains(client, stops)
+    trains, arrivals, _, failed, _ = await feeds.fetch_railroad_trains(client, stops)
     assert failed == ["MNR"]
     assert trains  # not vacuous: there ARE trains, and every one of them is LIRR
     assert all(t["system"] == "LIRR" for t in trains)
@@ -1173,7 +1173,7 @@ async def test_c3_a_VALID_EMPTY_railroad_system_is_healthy_with_no_trains():
     header_only.header.gtfs_realtime_version = "2.0"
     stops = {"LIRR": json.loads((FIXTURES / "railroad_lirr_stops.json").read_text())}
     client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": header_only.SerializeToString()})
-    trains, arrivals, _, failed = await feeds.fetch_railroad_trains(client, stops)
+    trains, arrivals, _, failed, _ = await feeds.fetch_railroad_trains(client, stops)
     assert failed == []
     assert trains  # not vacuous: an all() over an empty list would pass either way
     assert all(t["system"] == "LIRR" for t in trains)

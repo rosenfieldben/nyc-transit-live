@@ -344,9 +344,7 @@ check("canceled trip absent from the golden (was record 0)",
       any(t["trip_id"] == TRIP_ID for t in GOLDEN["trains"]), False)
 # CONTRACT 6.1 PUT TWO FIELDS ON EVERY ROW AND THE GOLDENS CATCH UP IN A LATER
 # COMMIT, so this comparison drops exactly those two names and nothing else. F02's
-# claim is about WHICH TRIPS are emitted, not about how wide a row is, and stripping
-# the pair keeps it answering its own question: the trip list, the order and every
-# other value still have to match byte for byte.
+# claim is about WHICH TRIPS are emitted, not about how wide a row is.
 _PENDING_IN_GOLDEN = ("observed_at", "provenance")
 _stripped = [{k: v for k, v in t.items() if k not in _PENDING_IN_GOLDEN} for t in gps_trains]
 check("decoder output matches the golden", _stripped == GOLDEN["trains"], True)

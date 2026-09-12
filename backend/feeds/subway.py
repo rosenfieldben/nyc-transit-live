@@ -298,15 +298,18 @@ def _aggregate_feeds(
     dict[str, str],
     dict[str, list[dict]],
     dict[str, dict[str, dict[str, list[dict]]]],
+    dict[str, float | None],
 ]:
     """Decode every feed result, dedup trips across feeds, and merge arrivals.
 
     `results` is aligned with SUBWAY_FEED_URLS; each item is decoded protobuf
     bytes or an exception from the fetch. Returns
     (trains, arrivals, feed_timestamp, feed_errors, trains_by_group,
-    arrivals_by_group), where feed_timestamp is the OLDEST content time across
-    successfully decoded feeds and feed_errors maps each failed feed-group key to
-    its raw failure reason (empty when every feed decoded).
+    arrivals_by_group, feed_ts_by_group), where feed_timestamp is the OLDEST content
+    time across successfully decoded feeds, feed_ts_by_group is that same content time
+    kept PER GROUP (contract 6.1, so a per-system block can say which contributor is
+    behind rather than only that one is), and feed_errors maps each failed feed-group
+    key to its raw failure reason (empty when every feed decoded).
 
     THE BY-GROUP VIEWS ARE THE SOURCE OF TRUTH and the flat ones are derived from
     them (C2). The group dimension used to be discarded here, which is why a
@@ -320,6 +323,13 @@ def _aggregate_feeds(
     feed_errors: dict[str, str] = {}
     trains_by_group: dict[str, list[dict]] = {}
     arrivals_by_group: dict[str, dict[str, dict[str, list[dict]]]] = {}
+    # THE GROUP DIMENSION THE min() BELOW THROWS AWAY, kept this time. The fold is
+    # right as an ENVELOPE answer (the honest single number for a union is its worst
+    # part) and useless for the question the acceptance case asks, which is WHICH
+    # contributor is behind. Same convention as the two maps above: a key is present
+    # exactly when that group decoded, so absence means "did not decode this poll"
+    # and a None value means "decoded, and sent no header".
+    feed_ts_by_group: dict[str, float | None] = {}
     for feed_key, result in zip(SUBWAY_FEED_URLS, results):
         if isinstance(result, BaseException):
             feed_errors[feed_key] = str(result)
@@ -331,6 +341,7 @@ def _aggregate_feeds(
             continue
         if feed_ts is not None:
             timestamps.append(feed_ts)
+        feed_ts_by_group[feed_key] = feed_ts
         trains_by_group[feed_key] = feed_trains
         arrivals_by_group[feed_key] = feed_arrivals
 
@@ -342,6 +353,7 @@ def _aggregate_feeds(
         feed_errors,
         trains_by_group,
         arrivals_by_group,
+        feed_ts_by_group,
     )
 
 
@@ -354,10 +366,11 @@ async def fetch_subway_trains(
     list[str],
     dict[str, list[dict]],
     dict[str, dict[str, dict[str, list[dict]]]],
+    dict[str, float | None],
 ]:
     """Fetch all subway feeds concurrently; return (train placements,
     per-station arrivals index, feed_timestamp, failed_feeds, trains_by_group,
-    arrivals_by_group).
+    arrivals_by_group, feed_ts_by_group).
 
     failed_feeds is the sorted list of feed-group keys that failed this poll (a
     fetch error or an undecodable protobuf), empty on a fully successful poll.
@@ -382,9 +395,15 @@ async def fetch_subway_trains(
         return_exceptions=True,
     )
 
-    trains, arrivals, feed_timestamp, feed_errors, trains_by_group, arrivals_by_group = (
-        _aggregate_feeds(results, stops, now)
-    )
+    (
+        trains,
+        arrivals,
+        feed_timestamp,
+        feed_errors,
+        trains_by_group,
+        arrivals_by_group,
+        feed_ts_by_group,
+    ) = _aggregate_feeds(results, stops, now)
     if feed_errors:
         logger.warning(
             "%d of %d subway feeds failed: %s",
@@ -402,4 +421,5 @@ async def fetch_subway_trains(
         sorted(feed_errors),
         trains_by_group,
         arrivals_by_group,
+        feed_ts_by_group,
     )

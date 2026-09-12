@@ -482,28 +482,40 @@ async def main_async() -> None:
     # did not, and the F03 defect is unchanged until something fills it. When the
     # endpoints step lands these become non-None and this script goes red, which is
     # the signal that F03's disposition has to be re-verified rather than assumed.
+    # CONTRACT 6.1 IS COMPLETE ON THE BACKEND AND F03 IS STILL OPEN, which is the
+    # split this section now pins. Every number the audit said the arrivals payload
+    # could not express is in it: the envelope carries the contributing group's own
+    # content time, the rows carry theirs, and the systems block names the
+    # contributor. What has not changed is the only thing a rider experiences, which
+    # is measured in the frontend section below: the popup renders no qualifier and
+    # the panel still ages on `now - fetched_at`.
     check(
         set(arrivals) == {
             "fetched_at",
+            "feed_timestamp",
             "station_id",
             "station_name",
             "directions",
             "served_at",
             "systems",
         },
-        "the arrivals envelope serves the 4 original keys plus 6.1's two",
+        "the arrivals envelope serves the 4 original keys plus 6.1's three",
         ", ".join(arrivals_keys),
     )
     check(
-        arrivals["served_at"] is None and arrivals["systems"] is None,
-        "and both of 6.1's envelope keys are EMPTY (the handlers do not fill them yet)",
-        f"served_at={arrivals['served_at']!r} systems={arrivals['systems']!r}",
+        abs(arrivals["feed_timestamp"] - vehicles["feed_timestamp"]) < 0.001,
+        "the arrivals envelope now carries the CONTENT clock the audit found missing",
+        f"{arrivals['feed_timestamp']:.3f}",
     )
-    envelope_clocks = (set(arrivals) & CONTENT_CLOCK_NAMES) - {"served_at"}
     check(
-        not envelope_clocks,
-        "still no CONTENT clock in the arrivals envelope",
-        "checked against " + ", ".join(sorted(CONTENT_CLOCK_NAMES)),
+        abs((arrivals["fetched_at"] - arrivals["feed_timestamp"]) - INJECTED_LAG_S) < 1.0,
+        "and the 600 s is expressible on the arrivals payload at last",
+        f"{arrivals['fetched_at'] - arrivals['feed_timestamp']:.1f} s",
+    )
+    check(
+        arrivals["served_at"] is not None and arrivals["systems"] is not None,
+        "the envelope names its contributors and stamps its own serve time",
+        f"systems={sorted(arrivals['systems'])}",
     )
     # THE ROWS ARE DATED NOW, AND WITH THE RIGHT NUMBER. 6.1's decoders half stamps
     # every subway prediction with its feed group's header, which under this
@@ -536,8 +548,8 @@ async def main_async() -> None:
         f"{soonest - arrivals['fetched_at']:.1f} s ahead",
     )
     check(
-        "feed_timestamp" in vehicles and "feed_timestamp" not in arrivals,
-        "the content clock is on the vehicles envelope and absent from the arrivals one",
+        "feed_timestamp" in vehicles and "feed_timestamp" in arrivals,
+        "the content clock is on the vehicles envelope AND on the arrivals one (6.1)",
     )
 
     rule("(d) THE PER-GROUP HEALTH BLOCK during that same poll")
@@ -567,12 +579,12 @@ async def main_async() -> None:
     )
     check(
         "feed_timestamp" in models.SystemFreshness.model_fields,
-        "SystemFreshness now declares a per-group content clock (6.1)",
+        "SystemFreshness declares a per-group content clock (6.1)",
     )
     check(
-        vehicles["systems"][FEED_GROUP]["feed_timestamp"] is None,
-        "and the poller does not fill it yet, so the group still cannot be dated",
-        f"{vehicles['systems'][FEED_GROUP]['feed_timestamp']!r}",
+        abs(vehicles["systems"][FEED_GROUP]["feed_timestamp"] - vehicles["feed_timestamp"]) < 0.001,
+        "and the poller fills it, so the group can be dated on its own",
+        f"{vehicles['systems'][FEED_GROUP]['feed_timestamp']:.3f}",
     )
 
     # ---- poll 2: the SAME old bytes retrieved successfully again ----------
@@ -656,7 +668,7 @@ async def main_async() -> None:
 
     rule("(c) CITED LINES, confirmed against the audited files")
     cites = [
-        ("backend/routes/subway.py", 85, "THE OLDEST CONTRIBUTING GROUP'S poll time"),
+        ("backend/routes/subway.py", 89, "THE OLDEST CONTRIBUTING GROUP'S poll time"),
         # Moved by contract 6.1, which widened the models above it. The line number
         # is re-pinned rather than loosened to a search: a citation that drifts
         # silently is the thing this block exists to catch.
@@ -707,9 +719,9 @@ async def main_async() -> None:
     # checks above are the ones that keep this finding open: the popup renders no
     # qualifier and the panel's age is still now - fetched_at.
     check(
-        arrivals["systems"] is None and arrivals["served_at"] is None,
-        "the arrivals envelope still cannot name its contributors (endpoints commit)",
-        f"systems={arrivals['systems']!r} served_at={arrivals['served_at']!r}",
+        FEED_GROUP in (arrivals["systems"] or {}),
+        "the board names the contributor behind it, so a healthy one stays distinct",
+        f"systems={sorted(arrivals['systems'] or {})}",
     )
     check(
         all(row["content_clock"] for row in feed_model_table()),
@@ -739,15 +751,17 @@ async def main_async() -> None:
         "DISPOSITION: VERIFIED, a valid subway feed "
         f"{lag_1:.0f}s behind its own header serves /api/subways a "
         f"{lag_1:.0f}s content lag while /api/subway-arrivals/{STATION_ID} serves only a "
-        "freshly stamped fetched_at and 8/8 groups ok. Contract 6.1 has since given all "
-        "5 arrivals models of all 5 modes an observed_at and taught the decoders to fill "
-        "it, so every row now carries its contributing group's content time and the 600 s "
-        "is visible in the payload at last. THE FINDING IS UNCHANGED, and what carries it "
-        "is measured above rather than assumed: the envelope still cannot name WHICH "
-        "contributor is behind (its systems block is unfilled until the endpoints commit), "
-        "the popup renders no qualifier, and the panel's age is still now - fetched_at, "
-        "so a rider still reads a two minute countdown built from a ten minute old "
-        "prediction."
+        "freshly stamped fetched_at and 8/8 groups ok. CONTRACT 6.1 HAS CLOSED THE "
+        "BACKEND HALF ENTIRELY: all 5 arrivals models of all 5 modes carry an "
+        "observed_at, the decoders fill it, the envelope carries the contributing "
+        "group's own content time, and its systems block names that contributor, so "
+        "every number the audit found inexpressible is now in the payload and the "
+        "600 s is visible on the arrivals response itself. THE FINDING IS UNCHANGED "
+        "ANYWAY, and what carries it is measured above rather than assumed: no rider "
+        "surface reads any of it. The popup renders no qualifier and the panel's age "
+        "is still now - fetched_at, so a rider still reads a two minute countdown "
+        "built from a ten minute old prediction. That is 6.2's work, and this script "
+        "goes red the day it lands."
     )
 
 

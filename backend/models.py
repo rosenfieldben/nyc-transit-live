@@ -297,16 +297,26 @@ class StationArrivals(BaseModel):
     station_name: str | None
     # Keyed by "Northbound" / "Southbound"; both keys always present.
     directions: dict[str, list[Arrival]]
-    # THE TWO CLOCKS THE FIVE ARRIVALS ENVELOPES NEVER HAD (contract 4.1). Every
-    # vehicle envelope in this module carries the full feed_timestamp / fetched_at
-    # / served_at triple and a systems map; all five of these carried fetched_at
-    # alone, which is one design error committed five times rather than one
-    # system's bug. served_at exists so a stuck poller is visible (it keeps moving
-    # while fetched_at holds; THE THREE TIMESTAMPS in cache.py is the canonical
-    # description), and the systems map is what lets a board say WHICH contributor
-    # is behind rather than only that one is. Optional-with-a-default for the wire
-    # reason, and the handler always sets both: a test pins that a served response
-    # never carries None for served_at.
+    # THE CLOCKS THE FIVE ARRIVALS ENVELOPES NEVER HAD (contract 4.1). Every vehicle
+    # envelope in this module carries the full feed_timestamp / fetched_at /
+    # served_at triple and a systems map; all five of these carried fetched_at
+    # alone, which is one design error committed five times rather than one system's
+    # bug.
+    #
+    # feed_timestamp is THE CONTENT CLOCK F03 NAMED, selected by the same contributor
+    # rule its poll-time sibling has always used: the worst contributor answers, a
+    # group contributing nothing at this station does not participate, and one
+    # contributor that cannot be dated makes the answer None rather than letting the
+    # others speak for it. PATH and the ferry have no per-system block to read, so
+    # theirs is taken from the rows, which is the only honest source on those two
+    # (see _oldest_row_observed_at).
+    #
+    # served_at exists so a stuck poller is visible (it keeps moving while fetched_at
+    # holds; THE THREE TIMESTAMPS in cache.py), and the systems map is what lets a
+    # board say WHICH contributor is behind rather than only that one is. All three
+    # are optional-with-a-default for the wire reason, and the handlers always set
+    # served_at: a test pins that a served response never carries None for it.
+    feed_timestamp: float | None = None
     served_at: float | None = None
     systems: dict[str, SystemFreshness] | None = None
 
@@ -320,16 +330,26 @@ class RailroadStationArrivals(BaseModel):
     # "Outbound"/"Inbound" (from direction_id), MNR and direction-less LIRR trips
     # use "Trains". An empty dict means nothing upcoming.
     directions: dict[str, list[RailroadArrival]]
-    # THE TWO CLOCKS THE FIVE ARRIVALS ENVELOPES NEVER HAD (contract 4.1). Every
-    # vehicle envelope in this module carries the full feed_timestamp / fetched_at
-    # / served_at triple and a systems map; all five of these carried fetched_at
-    # alone, which is one design error committed five times rather than one
-    # system's bug. served_at exists so a stuck poller is visible (it keeps moving
-    # while fetched_at holds; THE THREE TIMESTAMPS in cache.py is the canonical
-    # description), and the systems map is what lets a board say WHICH contributor
-    # is behind rather than only that one is. Optional-with-a-default for the wire
-    # reason, and the handler always sets both: a test pins that a served response
-    # never carries None for served_at.
+    # THE CLOCKS THE FIVE ARRIVALS ENVELOPES NEVER HAD (contract 4.1). Every vehicle
+    # envelope in this module carries the full feed_timestamp / fetched_at /
+    # served_at triple and a systems map; all five of these carried fetched_at
+    # alone, which is one design error committed five times rather than one system's
+    # bug.
+    #
+    # feed_timestamp is THE CONTENT CLOCK F03 NAMED, selected by the same contributor
+    # rule its poll-time sibling has always used: the worst contributor answers, a
+    # group contributing nothing at this station does not participate, and one
+    # contributor that cannot be dated makes the answer None rather than letting the
+    # others speak for it. PATH and the ferry have no per-system block to read, so
+    # theirs is taken from the rows, which is the only honest source on those two
+    # (see _oldest_row_observed_at).
+    #
+    # served_at exists so a stuck poller is visible (it keeps moving while fetched_at
+    # holds; THE THREE TIMESTAMPS in cache.py), and the systems map is what lets a
+    # board say WHICH contributor is behind rather than only that one is. All three
+    # are optional-with-a-default for the wire reason, and the handlers always set
+    # served_at: a test pins that a served response never carries None for it.
+    feed_timestamp: float | None = None
     served_at: float | None = None
     systems: dict[str, SystemFreshness] | None = None
 
@@ -396,16 +416,26 @@ class PathStationArrivals(BaseModel):
     # "Trains" as the direction-less residual, present only when populated
     # (the railroad bucket discipline); {} means nothing upcoming.
     directions: dict[str, list[PathArrival]]
-    # THE TWO CLOCKS THE FIVE ARRIVALS ENVELOPES NEVER HAD (contract 4.1). Every
-    # vehicle envelope in this module carries the full feed_timestamp / fetched_at
-    # / served_at triple and a systems map; all five of these carried fetched_at
-    # alone, which is one design error committed five times rather than one
-    # system's bug. served_at exists so a stuck poller is visible (it keeps moving
-    # while fetched_at holds; THE THREE TIMESTAMPS in cache.py is the canonical
-    # description), and the systems map is what lets a board say WHICH contributor
-    # is behind rather than only that one is. Optional-with-a-default for the wire
-    # reason, and the handler always sets both: a test pins that a served response
-    # never carries None for served_at.
+    # THE CLOCKS THE FIVE ARRIVALS ENVELOPES NEVER HAD (contract 4.1). Every vehicle
+    # envelope in this module carries the full feed_timestamp / fetched_at /
+    # served_at triple and a systems map; all five of these carried fetched_at
+    # alone, which is one design error committed five times rather than one system's
+    # bug.
+    #
+    # feed_timestamp is THE CONTENT CLOCK F03 NAMED, selected by the same contributor
+    # rule its poll-time sibling has always used: the worst contributor answers, a
+    # group contributing nothing at this station does not participate, and one
+    # contributor that cannot be dated makes the answer None rather than letting the
+    # others speak for it. PATH and the ferry have no per-system block to read, so
+    # theirs is taken from the rows, which is the only honest source on those two
+    # (see _oldest_row_observed_at).
+    #
+    # served_at exists so a stuck poller is visible (it keeps moving while fetched_at
+    # holds; THE THREE TIMESTAMPS in cache.py), and the systems map is what lets a
+    # board say WHICH contributor is behind rather than only that one is. All three
+    # are optional-with-a-default for the wire reason, and the handlers always set
+    # served_at: a test pins that a served response never carries None for it.
+    feed_timestamp: float | None = None
     served_at: float | None = None
     systems: dict[str, SystemFreshness] | None = None
 
@@ -587,16 +617,26 @@ class NjtStationArrivals(BaseModel):
     # trips and SKIPPED stops are already excluded upstream in the decoder, so no
     # consumer can reconstruct a phantom from this list.
     arrivals: list[NjtArrival]
-    # THE TWO CLOCKS THE FIVE ARRIVALS ENVELOPES NEVER HAD (contract 4.1). Every
-    # vehicle envelope in this module carries the full feed_timestamp / fetched_at
-    # / served_at triple and a systems map; all five of these carried fetched_at
-    # alone, which is one design error committed five times rather than one
-    # system's bug. served_at exists so a stuck poller is visible (it keeps moving
-    # while fetched_at holds; THE THREE TIMESTAMPS in cache.py is the canonical
-    # description), and the systems map is what lets a board say WHICH contributor
-    # is behind rather than only that one is. Optional-with-a-default for the wire
-    # reason, and the handler always sets both: a test pins that a served response
-    # never carries None for served_at.
+    # THE CLOCKS THE FIVE ARRIVALS ENVELOPES NEVER HAD (contract 4.1). Every vehicle
+    # envelope in this module carries the full feed_timestamp / fetched_at /
+    # served_at triple and a systems map; all five of these carried fetched_at
+    # alone, which is one design error committed five times rather than one system's
+    # bug.
+    #
+    # feed_timestamp is THE CONTENT CLOCK F03 NAMED, selected by the same contributor
+    # rule its poll-time sibling has always used: the worst contributor answers, a
+    # group contributing nothing at this station does not participate, and one
+    # contributor that cannot be dated makes the answer None rather than letting the
+    # others speak for it. PATH and the ferry have no per-system block to read, so
+    # theirs is taken from the rows, which is the only honest source on those two
+    # (see _oldest_row_observed_at).
+    #
+    # served_at exists so a stuck poller is visible (it keeps moving while fetched_at
+    # holds; THE THREE TIMESTAMPS in cache.py), and the systems map is what lets a
+    # board say WHICH contributor is behind rather than only that one is. All three
+    # are optional-with-a-default for the wire reason, and the handlers always set
+    # served_at: a test pins that a served response never carries None for it.
+    feed_timestamp: float | None = None
     served_at: float | None = None
     systems: dict[str, SystemFreshness] | None = None
 
@@ -667,16 +707,26 @@ class FerryStationArrivals(BaseModel):
     # better at a multi-route dock), present only when populated; an empty dict
     # means nothing upcoming. A join-missed trip lands in a "Ferry" residual bucket.
     routes: dict[str, list[FerryArrival]]
-    # THE TWO CLOCKS THE FIVE ARRIVALS ENVELOPES NEVER HAD (contract 4.1). Every
-    # vehicle envelope in this module carries the full feed_timestamp / fetched_at
-    # / served_at triple and a systems map; all five of these carried fetched_at
-    # alone, which is one design error committed five times rather than one
-    # system's bug. served_at exists so a stuck poller is visible (it keeps moving
-    # while fetched_at holds; THE THREE TIMESTAMPS in cache.py is the canonical
-    # description), and the systems map is what lets a board say WHICH contributor
-    # is behind rather than only that one is. Optional-with-a-default for the wire
-    # reason, and the handler always sets both: a test pins that a served response
-    # never carries None for served_at.
+    # THE CLOCKS THE FIVE ARRIVALS ENVELOPES NEVER HAD (contract 4.1). Every vehicle
+    # envelope in this module carries the full feed_timestamp / fetched_at /
+    # served_at triple and a systems map; all five of these carried fetched_at
+    # alone, which is one design error committed five times rather than one system's
+    # bug.
+    #
+    # feed_timestamp is THE CONTENT CLOCK F03 NAMED, selected by the same contributor
+    # rule its poll-time sibling has always used: the worst contributor answers, a
+    # group contributing nothing at this station does not participate, and one
+    # contributor that cannot be dated makes the answer None rather than letting the
+    # others speak for it. PATH and the ferry have no per-system block to read, so
+    # theirs is taken from the rows, which is the only honest source on those two
+    # (see _oldest_row_observed_at).
+    #
+    # served_at exists so a stuck poller is visible (it keeps moving while fetched_at
+    # holds; THE THREE TIMESTAMPS in cache.py), and the systems map is what lets a
+    # board say WHICH contributor is behind rather than only that one is. All three
+    # are optional-with-a-default for the wire reason, and the handlers always set
+    # served_at: a test pins that a served response never carries None for it.
+    feed_timestamp: float | None = None
     served_at: float | None = None
     systems: dict[str, SystemFreshness] | None = None
 

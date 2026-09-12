@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import re
+import time
 
 from fastapi import APIRouter, HTTPException, Request, Response
 
 from cache import (
+    _contributing_freshness,
+    _oldest_contributing_content_at,
     _oldest_contributing_fetched_at,
     _require_filled_cache,
     _serve_cached,
@@ -81,6 +84,7 @@ async def get_subway_arrivals(request: Request, station_id: str) -> dict:
     if not _STATION_ID_RE.match(station_id) or station_id not in stations:
         raise HTTPException(status_code=404, detail=f"Unknown station {station_id}.")
     station_arrivals = (getattr(app.state, "subway_arrivals", None) or {}).get(station_id, {})
+    by_system = getattr(app.state, "subway_arrivals_by_system", None) or {}
     return {
         # THE OLDEST CONTRIBUTING GROUP'S poll time, not the aggregate's (C2). A
         # railroad station belongs to exactly one system, but a subway station is
@@ -89,15 +93,28 @@ async def get_subway_arrivals(request: Request, station_id: str) -> dict:
         # the ACE feed is down and its retained arrivals are still being shown here
         # alongside fresh NQRW ones, this reports the ACE age, so the popup cannot
         # claim to be fresher than the stalest thing in it.
-        "fetched_at": _oldest_contributing_fetched_at(
-            entry,
-            getattr(app.state, "subway_arrivals_by_system", None) or {},
-            station_id,
-        ),
+        #
+        # THE REASONING SURVIVED 6.1 AND THE SENTENCE STOPPED BEING THE WHOLE ANSWER.
+        # Everything above is still true of POLL time, and poll time was never the
+        # clock F03 was about: a feed that keeps returning the same old bytes
+        # successfully keeps this number one second old forever. The contributor rule
+        # is right; what was missing was a second selector applying it to CONTENT
+        # time, which is the line below.
+        "fetched_at": _oldest_contributing_fetched_at(entry, by_system, station_id),
+        # The same three rules over the same contributors, asked of what the
+        # providers SENT rather than of when we fetched it.
+        "feed_timestamp": _oldest_contributing_content_at(entry, by_system, station_id),
         "station_id": station_id,
         "station_name": stations[station_id]["name"],
         "directions": {
             "Northbound": station_arrivals.get("Northbound", []),
             "Southbound": station_arrivals.get("Southbound", []),
         },
+        # Stamped per response so a stuck poller is visible here as it already is on
+        # the vehicle envelopes (THE THREE TIMESTAMPS in cache.py).
+        "served_at": time.time(),
+        # WHICH CONTRIBUTORS, not every system: the acceptance clause is that other
+        # healthy contributors stay distinguishable, and that is a fact about a field
+        # only if the board can name them.
+        "systems": _contributing_freshness(entry, by_system, station_id),
     }

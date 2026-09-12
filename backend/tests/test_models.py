@@ -43,19 +43,16 @@ from models import (
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
-# THE CONTRACT PAIR, and the gap it opens while 6.1 lands in three steps.
+# THE CONTRACT PAIR, and the gap it still opens against the committed goldens.
 #
-# The models gain observed_at and provenance first, the decoders fill them second,
-# the goldens are regenerated last. Between those commits the MODEL is wider than
-# the thing each assertion below compares it against, and the name below says
-# exactly which side has not caught up yet. It is deleted by the commit that closes
-# it, and that deletion is the evidence the side caught up: _PENDING_IN_DECODE stood
-# here until the decoders commit and is gone because the decoders fill both fields.
+# The models gained observed_at and provenance first and the decoders fill them now,
+# so every decode-versus-model assertion below is a strict equality again and
+# _PENDING_IN_DECODE is gone, deleted by the commit that closed it. The goldens are
+# regenerated last, so the name below is the one side that has not caught up yet.
 #
 # THIS IS NOT A RELAXED ASSERTION. `set(row) | PENDING == fields` still fails on any
 # other difference in either direction: a renamed field, a dropped field, an extra
-# field the model does not declare. It tolerates exactly the two names below and
-# nothing else.
+# field the model does not declare. It tolerates exactly those two names.
 _CONTRACT_PAIR = {"observed_at": None, "provenance": "unknown"}
 _PENDING_IN_GOLDEN = {"observed_at", "provenance"}  # closed by the goldens commit
 
@@ -251,34 +248,13 @@ def test_railroad_arrival_field_set_is_locked():
 # The literals are the SERVED shape, not the handler's dict: the response model fills
 # the contract defaults on the way out, and what a client receives is what a lock
 # should describe.
+_ARRIVALS_CLOCKS = {"fetched_at", "feed_timestamp", "served_at", "systems"}
 ARRIVALS_ENVELOPES = {
-    StationArrivals: {
-        "fetched_at",
-        "station_id",
-        "station_name",
-        "directions",
-        "served_at",
-        "systems",
-    },
-    RailroadStationArrivals: {
-        "fetched_at",
-        "system",
-        "stop_id",
-        "stop_name",
-        "directions",
-        "served_at",
-        "systems",
-    },
-    PathStationArrivals: {
-        "fetched_at",
-        "stop_id",
-        "stop_name",
-        "directions",
-        "served_at",
-        "systems",
-    },
-    NjtStationArrivals: {"fetched_at", "stop_id", "stop_name", "arrivals", "served_at", "systems"},
-    FerryStationArrivals: {"fetched_at", "stop_id", "stop_name", "routes", "served_at", "systems"},
+    StationArrivals: {"station_id", "station_name", "directions"} | _ARRIVALS_CLOCKS,
+    RailroadStationArrivals: {"system", "stop_id", "stop_name", "directions"} | _ARRIVALS_CLOCKS,
+    PathStationArrivals: {"stop_id", "stop_name", "directions"} | _ARRIVALS_CLOCKS,
+    NjtStationArrivals: {"stop_id", "stop_name", "arrivals"} | _ARRIVALS_CLOCKS,
+    FerryStationArrivals: {"stop_id", "stop_name", "routes"} | _ARRIVALS_CLOCKS,
 }
 
 

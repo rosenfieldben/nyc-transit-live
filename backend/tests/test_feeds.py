@@ -342,7 +342,7 @@ def test_arrivals_dedup_same_trip_across_feeds():
     )
     # Same trip present in two feed results -> deduped to one placement and one
     # arrival (covers both the train seen_trips and the arrival_trips guards).
-    trains, arrivals, _, feed_errors, _, _ = _aggregate_feeds(_pad(feed, feed), STOPS, NOW)
+    trains, arrivals, _, feed_errors, _, _, _ = _aggregate_feeds(_pad(feed, feed), STOPS, NOW)
     assert not feed_errors
     assert len(trains) == 1
     assert len(arrivals["A01"]["Northbound"]) == 1
@@ -357,7 +357,7 @@ def test_arrivals_sorted_and_capped_per_direction():
         }
         for i in range(ARRIVALS_PER_DIRECTION + 2)
     ]
-    _, arrivals, _, _, _, _ = _aggregate_feeds(_pad(make_feed(*trips)), STOPS, NOW)
+    _, arrivals, _, _, _, _, _ = _aggregate_feeds(_pad(make_feed(*trips)), STOPS, NOW)
     northbound = arrivals["A01"]["Northbound"]
     assert len(northbound) == ARRIVALS_PER_DIRECTION  # capped to the soonest
     times = [a["arrival"] for a in northbound]
@@ -565,7 +565,7 @@ def test_aggregate_uses_oldest_feed_timestamp():
     newer = _feed_with_ts(
         NOW, {"trip_id": "70001_1..N01R", "route_id": "1", "stus": [("A02N", NOW + 60, None)]}
     )
-    _, _, ts, _, _, _ = _aggregate_feeds(_pad(newer, older), STOPS, NOW)
+    _, _, ts, _, _, _, _ = _aggregate_feeds(_pad(newer, older), STOPS, NOW)
     assert ts == NOW - 100  # min across decoded feeds (padding feeds carry NOW)
 
 
@@ -577,7 +577,7 @@ def test_aggregate_skips_a_feed_whose_fetch_raised():
         {"trip_id": "70000_1..N01R", "route_id": "1", "stus": [("A01N", NOW + 60, None)]}
     )
     results = _pad(RuntimeError("ACE down"), good)
-    trains, arrivals, _, feed_errors, _, _ = _aggregate_feeds(results, STOPS, NOW)
+    trains, arrivals, _, feed_errors, _, _, _ = _aggregate_feeds(results, STOPS, NOW)
     assert len(feed_errors) == 1
     assert "ACE down" in next(iter(feed_errors.values()))
     assert len(trains) == 1  # the good feed still decoded
@@ -589,7 +589,7 @@ def test_aggregate_skips_a_corrupt_protobuf_feed():
         {"trip_id": "70000_1..N01R", "route_id": "1", "stus": [("A01N", NOW + 60, None)]}
     )
     results = _pad(b"\x0a\xff", good)  # truncated length-delimited field -> DecodeError
-    trains, arrivals, _, feed_errors, _, _ = _aggregate_feeds(results, STOPS, NOW)
+    trains, arrivals, _, feed_errors, _, _, _ = _aggregate_feeds(results, STOPS, NOW)
     assert len(feed_errors) == 1
     assert "undecodable protobuf" in next(iter(feed_errors.values()))
     assert len(trains) == 1
@@ -598,7 +598,7 @@ def test_aggregate_skips_a_corrupt_protobuf_feed():
 
 def test_aggregate_all_feeds_failed_records_every_error():
     results = [RuntimeError("down")] * len(SUBWAY_FEED_URLS)
-    trains, arrivals, _, feed_errors, _, _ = _aggregate_feeds(results, STOPS, NOW)
+    trains, arrivals, _, feed_errors, _, _, _ = _aggregate_feeds(results, STOPS, NOW)
     assert len(feed_errors) == len(SUBWAY_FEED_URLS)
     assert trains == [] and arrivals == {}
 
@@ -649,7 +649,7 @@ def _live_feed(trip_id, stop_id, arrival_offset):
 @pytest.mark.anyio
 async def test_fetch_subway_trains_returns_on_partial_success():
     raw = _live_feed("100_1..N01R", "A01N", 60)
-    trains, arrivals, _, failed, _, _ = await fetch_subway_trains(STOPS, _FakeClient(raw))
+    trains, arrivals, _, failed, _, _, _ = await fetch_subway_trains(STOPS, _FakeClient(raw))
     assert len(trains) == 1  # same feed for all URLs -> deduped to one
     assert arrivals["A01"]["Northbound"]
     assert failed == []  # every feed returned the same valid bytes
@@ -947,7 +947,7 @@ async def test_c3_an_empty_200_on_one_subway_group_fails_that_group_only():
     raw = _live_feed("100_1..N01R", "A01N", 60)
     poisoned = SUBWAY_FEED_URLS["ACE"]
     client = _PerUrlClient({poisoned: negatives.EMPTY_BODY}, raw)
-    trains, arrivals, _, failed, by_group, _ = await fetch_subway_trains(STOPS, client)
+    trains, arrivals, _, failed, by_group, _, _ = await fetch_subway_trains(STOPS, client)
 
     assert failed == ["ACE"]  # exactly one group, named
     assert "ACE" not in by_group  # it did not decode, so it publishes nothing
@@ -965,7 +965,7 @@ async def test_c3_a_truncated_body_on_one_subway_group_fails_that_group_only():
     raw = _live_feed("100_1..N01R", "A01N", 60)
     poisoned = SUBWAY_FEED_URLS["JZ"]
     client = _PerUrlClient({poisoned: negatives.truncated("subway_1_7_s.pb")}, raw)
-    _, _, _, failed, by_group, _ = await fetch_subway_trains(STOPS, client)
+    _, _, _, failed, by_group, _, _ = await fetch_subway_trains(STOPS, client)
     assert failed == ["JZ"]
     assert "JZ" not in by_group
 
@@ -980,7 +980,7 @@ async def test_c3_a_VALID_EMPTY_subway_group_still_decodes_as_present_and_empty(
     raw = _live_feed("100_1..N01R", "A01N", 60)
     quiet = SUBWAY_FEED_URLS["G"]
     client = _PerUrlClient({quiet: negatives.header_only(timestamp=int(time.time()))}, raw)
-    _, _, _, failed, by_group, arrivals_by_group = await fetch_subway_trains(STOPS, client)
+    _, _, _, failed, by_group, arrivals_by_group, _ = await fetch_subway_trains(STOPS, client)
     assert failed == []  # nothing failed
     assert by_group["G"] == []  # decoded, nothing running
     assert arrivals_by_group["G"] == {}

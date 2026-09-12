@@ -296,6 +296,65 @@ def _static_endpoint_ready(status: str, response: Response, warming_detail: str)
     return False
 
 
+def _oldest_row_observed_at(rows) -> float | None:
+    """The oldest observation time among the arrival rows actually served.
+
+    THE THIRD SELECTOR, for the two endpoints whose envelope has no per-system block
+    to read: PATH and the ferry are single-feed sources and no poller ever writes
+    them a `systems` map. Reading the cache entry's own feed_timestamp instead would
+    be wrong on both, and differently wrong on each: PATH's is the bridge's WRITE
+    time, which advances on every regeneration whether or not anything upstream
+    moved, and the ferry's is the VehiclePositions header, which dates the BOATS and
+    not the dock predictions these rows came from.
+
+    So the answer is taken from the rows themselves, which the decoders now date.
+    Same rule as the other two, applied one level down: the worst of the parts, and
+    None if any part cannot be dated, because a row with no clock must not be spoken
+    for by its neighbours.
+
+    `rows` is any nesting of dicts and lists the arrivals indexes use ({bucket: [row]}
+    for PATH, {route: [row]} for the ferry, a flat list for NJ Transit).
+    """
+    found: list[float | None] = []
+
+    def walk(value):
+        if isinstance(value, list):
+            for item in value:
+                walk(item)
+        elif isinstance(value, dict):
+            if "observed_at" in value:
+                found.append(value["observed_at"])
+            else:
+                for item in value.values():
+                    walk(item)
+
+    walk(rows)
+    if not found or any(value is None for value in found):
+        return None
+    return min(value for value in found if value is not None)
+
+
+def _system_content_at(entry: dict, system: str) -> float | None:
+    """One system's own CONTENT time out of an aggregate cache entry (contract 6.1).
+
+    The single-system counterpart of _oldest_contributing_content_at, for the four
+    arrivals endpoints that serve exactly one system and therefore need no union
+    rule. No fallback to the aggregate, unlike _system_fetched_at below: that
+    fallback exists so an endpoint never returns null where it used to return a
+    number, and this field never returned a number before. A system with no block
+    yet, or one whose header is not a usable freshness signal at all (Metro-North),
+    reports None, which is the honest answer and the one the model declares.
+    """
+    return ((entry.get("systems") or {}).get(system) or {}).get("feed_timestamp")
+
+
+def _system_freshness_block(entry: dict, system: str) -> dict | None:
+    """One system's per-system block, keyed by its own name, or None before the
+    first poll wrote one. The single-system form of _contributing_freshness."""
+    block = (entry.get("systems") or {}).get(system)
+    return {system: block} if block is not None else None
+
+
 def _system_fetched_at(entry: dict, system: str) -> float | None:
     """One system's own poll time out of an aggregate cache entry, falling back to
     the aggregate's when no per-system block has been written yet (C2).
@@ -312,6 +371,75 @@ def _system_fetched_at(entry: dict, system: str) -> float | None:
     if block is None:
         return entry["fetched_at"]
     return block["fetched_at"]
+
+
+def _contributing_systems(entry: dict, arrivals_by_system: dict, station_id: str) -> list[str]:
+    """The systems actually contributing arrivals at one station, in sorted order.
+
+    Shared by the two selectors below so they can never disagree about WHO is being
+    asked. A group with no arrivals at this station does not participate: a down SIR
+    feed must not age a Manhattan station's popup it was never going to appear in.
+    """
+    systems = entry.get("systems") or {}
+    return sorted(
+        system
+        for system, station_map in arrivals_by_system.items()
+        if station_id in (station_map or {}) and system in systems
+    )
+
+
+def _oldest_contributing_content_at(
+    entry: dict, arrivals_by_system: dict, station_id: str
+) -> float | None:
+    """The oldest CONTENT time among the systems contributing arrivals at a station.
+
+    THE SIBLING OF _oldest_contributing_fetched_at, and the reason F03 needed one.
+    That function answers "how long ago did we last POLL the feeds behind this
+    board", which a repeatedly successful fetch of stale bytes keeps answering
+    "one second ago" forever. This one answers "how old is what they SENT", which is
+    the question a countdown depends on and the one no arrivals payload could
+    express.
+
+    THE SAME THREE RULES, deliberately, because two selectors over one contributor
+    set that disagreed about which one wins would be worse than either alone:
+
+      1. THE WORST CONTRIBUTOR ANSWERS. For a union there is no single clock, and
+         reporting the newest would let a fresh group vouch for a stale one sharing
+         the platform.
+      2. A GROUP CONTRIBUTING NOTHING HERE DOES NOT PARTICIPATE.
+      3. ONE CONTRIBUTOR THAT CANNOT BE DATED MAKES THE ANSWER None, rather than
+         letting the others speak for it. The difference from its sibling is what
+         that means: there, never having decoded; here, either that or a system
+         whose header is not a usable freshness signal at all (Metro-North). Both
+         are "this cannot be dated", and both must refuse to be averaged away.
+
+    There is no aggregate fallback. The envelope's feed_timestamp is a min() over
+    every system that decoded, including ones with no arrivals at this station, so
+    using it here would reintroduce exactly the overstatement rule 2 exists to
+    prevent.
+    """
+    systems = entry.get("systems") or {}
+    contributing = [
+        systems[system].get("feed_timestamp")
+        for system in _contributing_systems(entry, arrivals_by_system, station_id)
+    ]
+    if not contributing or any(value is None for value in contributing):
+        return None
+    return min(value for value in contributing if value is not None)
+
+
+def _contributing_freshness(entry: dict, arrivals_by_system: dict, station_id: str) -> dict | None:
+    """The per-system blocks of just the systems feeding this station.
+
+    "Other healthy contributors remain distinguishable" is the audit's acceptance
+    clause, and it is a fact about a FIELD only if the board can name which
+    contributor is behind. Publishing every system's block would answer a question
+    the rider did not ask (a down SIR group means nothing at a Manhattan station);
+    publishing only the contributors answers theirs.
+    """
+    systems = entry.get("systems") or {}
+    names = _contributing_systems(entry, arrivals_by_system, station_id)
+    return {name: systems[name] for name in names} or None
 
 
 def _oldest_contributing_fetched_at(
@@ -331,8 +459,7 @@ def _oldest_contributing_fetched_at(
     systems = entry.get("systems") or {}
     contributing = [
         systems[system]["fetched_at"]
-        for system, station_map in arrivals_by_system.items()
-        if station_id in (station_map or {}) and system in systems
+        for system in _contributing_systems(entry, arrivals_by_system, station_id)
     ]
     usable = [ts for ts in contributing if ts is not None]
     if not usable:

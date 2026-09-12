@@ -397,6 +397,7 @@ def _system_freshness(
     retained_since: dict[str, float],
     now: float,
     routes: dict[str, list[str]] | None = None,
+    feed_timestamps: dict[str, float | None] | None = None,
 ) -> dict[str, dict]:
     """Build the per-system freshness block published in the aggregate envelope.
 
@@ -407,6 +408,21 @@ def _system_freshness(
     plus the age are the whole public signal, and sanitized detail stays on
     /api/status.
 
+    feed_timestamp is THIS SYSTEM'S OWN CONTENT TIME (contract 6.1), and it is the
+    field without which the audit's acceptance case cannot be written: every other
+    key here describes OUR relationship with the provider, so a system can report
+    ok=True with a fetched_at one second old while serving ten minute old content,
+    which is exactly what F03 measures. It follows the same last-known rule as
+    fetched_at above, and for the same reason: a failed system's frozen content time
+    is informative, and blanking it would turn a real outage into an unknown, which
+    /api/status reads as healthy (see the comment at _refresh_railroads).
+
+    NULL IS A REAL ANSWER HERE. A system whose header is not a usable freshness
+    signal reports None rather than a number that would mislead. Metro-North is the
+    standing case and the exclusion is NOT restated here: _refresh_railroads passes
+    only the systems feeds.RAILROAD_FRESHNESS_SYSTEMS admits, so this function never
+    learns MNR has a header at all.
+
     `routes` is the optional per-system route coverage (see _routes_by_system);
     only the subway passes it, because only its entities lack a system name of
     their own. A system missing from the mapping publishes an EMPTY list rather
@@ -416,12 +432,19 @@ def _system_freshness(
     """
     failed = set(failed_systems)
     previous = prev or {}
+    fresh_timestamps = feed_timestamps or {}
     blocks: dict[str, dict] = {}
     for system in all_systems:
         was = previous.get(system) or {}
+        # The same last-known rule as fetched_at: a system that did not decode this
+        # poll keeps the content time it last reported rather than blanking it.
+        content_at = fresh_timestamps.get(system)
+        if content_at is None:
+            content_at = was.get("feed_timestamp")
         blocks[system] = {
             # A failed system keeps its last decode time; a healthy one stamps now.
             "fetched_at": was.get("fetched_at") if system in failed else now,
+            "feed_timestamp": content_at,
             "ok": system not in failed,
             "retained_since": retained_since.get(system),
             "routes": None if routes is None else routes.get(system, []),
@@ -453,6 +476,7 @@ async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
             failed_feeds,
             trains_by_group,
             arrivals_by_group,
+            feed_ts_by_group,
         ) = await main.fetch_subway_trains(stops, client)
     except RuntimeError as exc:
         # Every subway feed failed this poll.
@@ -522,6 +546,10 @@ async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
         # the trains actually on the map, retained ones included, and dimming has to
         # reach exactly them.
         _routes_by_system(merged_trains_by_group),
+        # THE FRESH headers, not the merged ones: a retained group's content time is
+        # the one it last reported, which the helper's last-known rule restores from
+        # the previous block. A group that decoded this poll overwrites it.
+        feed_ts_by_group,
     )
     # Carry each trip's previous-poll stop forward as its prev interpolation anchor
     # when the feed pruned the departed stop (mutates trains in place), then remember
@@ -539,9 +567,13 @@ async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
     entry = app.state.feed_cache["railroads"]
     total_feeds = len(RAILROAD_FEED_URLS)
     try:
-        trains, arrivals_by_system, feed_timestamp, failed_feeds = await main.fetch_railroad_trains(
-            client, getattr(app.state, "railroad_stops", {})
-        )
+        (
+            trains,
+            arrivals_by_system,
+            feed_timestamp,
+            failed_feeds,
+            feed_ts_by_system,
+        ) = await main.fetch_railroad_trains(client, getattr(app.state, "railroad_stops", {}))
     except RuntimeError as exc:
         # Every railroad feed failed this poll.
         app.state.railroad_feed_health = {
@@ -610,7 +642,18 @@ async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
     )
     app.state.railroad_arrivals = drop_expired_arrivals(merged_arrivals, now, failed_feeds)
     entry["systems"] = _system_freshness(
-        entry.get("systems"), RAILROAD_FEED_URLS, failed_feeds, retained_since, now
+        entry.get("systems"),
+        RAILROAD_FEED_URLS,
+        failed_feeds,
+        retained_since,
+        now,
+        # No route coverage on the railroad blocks: its trains name their own system.
+        None,
+        # METRO-NORTH IS ABSENT FROM THIS MAP AND THAT IS THE WHOLE EXCLUSION. It
+        # carries only the systems feeds.RAILROAD_FRESHNESS_SYSTEMS admits, so MNR's
+        # block reports None without this function, this call site, or the model ever
+        # naming it. The reason lives once, above that frozenset.
+        feed_ts_by_system,
     )
     # Carry each placed train's prev station forward across polls (the feeds prune
     # the just-departed stop, so the decode leaves prev_* null), giving the gliding
@@ -923,7 +966,16 @@ async def _refresh_njt(app: FastAPI, client: httpx.AsyncClient) -> None:
         # the envelope's block and its top-level fetched_at agree while healthy;
         # a failed poll leaves this untouched, which is exactly the divergence the
         # client dims on.
-        systems=_system_freshness(entry.get("systems"), [njt_feed.SYSTEM], [], {}, now),
+        systems=_system_freshness(
+            entry.get("systems"),
+            [njt_feed.SYSTEM],
+            [],
+            {},
+            now,
+            None,
+            # One system, one header, and a good one: 9s to 23s of lag at peak.
+            {njt_feed.SYSTEM: feed_timestamp},
+        ),
     )
     # Replace the arrivals index only on success, so a failed poll keeps the
     # last-known arrivals on the same fetched_at, consistent with the cache.

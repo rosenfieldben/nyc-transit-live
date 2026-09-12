@@ -684,9 +684,18 @@ def _decode_railroad_placements(
 async def fetch_railroad_trains(
     client: httpx.AsyncClient,
     railroad_stops: dict[str, dict | None],
-) -> tuple[list[dict], dict[str, dict[str, dict[str, list[dict]]]], float | None, list[str]]:
+) -> tuple[
+    list[dict],
+    dict[str, dict[str, dict[str, list[dict]]]],
+    float | None,
+    list[str],
+    dict[str, float | None],
+]:
     """Fetch the LIRR and MNR feeds concurrently; return
-    (trains, arrivals_by_system, feed_timestamp, failed_feeds).
+    (trains, arrivals_by_system, feed_timestamp, failed_feeds, feed_ts_by_system),
+    where feed_ts_by_system carries each freshness-authoritative system's OWN header
+    (contract 6.1) so a per-system block can name which contributor is behind. A
+    system RAILROAD_FRESHNESS_SYSTEMS does not admit is simply absent from it.
 
     Each feed contributes the GPS-positioned trains (_decode_railroad_vehicles)
     plus the position-less trains placed at their next station and a per-station
@@ -728,6 +737,7 @@ async def fetch_railroad_trains(
     trains: list[dict] = []
     seen: set[tuple[str, str]] = set()  # (system, trip_id)
     timestamps: list[float] = []
+    feed_ts_by_system: dict[str, float | None] = {}
     feed_errors: dict[str, str] = {}
     raw_by_system: dict[str, bytes] = {}  # successfully decoded, kept for placement
     # GPS pass first, so a positioned train wins its (system, trip_id) key.
@@ -742,9 +752,13 @@ async def fetch_railroad_trains(
             continue
         raw_by_system[system] = result
         # Only trust a freshness-authoritative system's header (see
-        # RAILROAD_FRESHNESS_SYSTEMS); MNR's lagging shared clock is ignored.
+        # RAILROAD_FRESHNESS_SYSTEMS); MNR's lagging shared clock is ignored. The
+        # per-system map keeps the SAME exclusion rather than restating it: a system
+        # that is not admitted here is simply absent from the map, so its block
+        # reports None without anything downstream knowing why.
         if feed_ts is not None and system in RAILROAD_FRESHNESS_SYSTEMS:
             timestamps.append(feed_ts)
+            feed_ts_by_system[system] = feed_ts
         for train in gps:
             key = (system, train["trip_id"])
             if key in seen:
@@ -792,4 +806,4 @@ async def fetch_railroad_trains(
         joined = "; ".join(f"{key}: {reason}" for key, reason in feed_errors.items())
         raise RuntimeError(f"All railroad feeds failed: {joined}")
     feed_timestamp = min(timestamps) if timestamps else None
-    return trains, arrivals_by_system, feed_timestamp, sorted(feed_errors)
+    return trains, arrivals_by_system, feed_timestamp, sorted(feed_errors), feed_ts_by_system

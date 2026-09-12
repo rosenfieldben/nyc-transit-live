@@ -474,9 +474,13 @@ def section_e(ages: dict[str, float]) -> None:
         str(len(recovered_ids & stale_ids)),
     )
 
-    # The decisive disagreement: the GPS decoder applies the railroad bounding box,
-    # the placement pass does not. Move one vehicle outside the box and both passes
-    # drop it, from opposite sides.
+    # WHAT USED TO BE THE DECISIVE DISAGREEMENT, AND IS NOW THE FIX (N2). The GPS
+    # decoder applied the railroad bounding box and the placement pass did not, so a
+    # vehicle moved outside the box was dropped by both passes from opposite sides and
+    # reached no surface at all. Both passes now read one acceptance rule
+    # (feeds.railroad._accepted_as_gps), so the same injection routes the trip to
+    # placement instead of off the map. The injection is kept exactly as the audit ran
+    # it; only the expectations below moved, and each carries what the audit measured.
     oldest_id = max(ages, key=lambda tid: ages[tid])
     moved = pb.FeedMessage()
     moved.CopyFrom(LIRR_FEED)
@@ -503,19 +507,23 @@ def section_e(ages: dict[str, float]) -> None:
           f"that trip present: {oldest_id in moved_gps_ids}")
     print(f"    schedule-placed records            : {len(moved_placed)} (was {len(placed)}), "
           f"that trip placed: {oldest_id in moved_placed_ids}")
-    print("    the GPS decoder rejected it on the bounding box; the placement pass still")
-    print("    classified it as GPS-equipped and suppressed it. Two independent notions.")
+    print("    the GPS decoder rejects it on the bounding box, and the placement pass now")
+    print("    reads that same rejection and places it at its next station. One notion.")
     check(
         "the box-rejected vehicle leaves the GPS output",
         len(moved_gps) == len(baseline_gps) - 1 and oldest_id not in moved_gps_ids,
     )
     check(
-        "the placement pass suppresses it anyway (its own 'has GPS' set)",
-        len(moved_placed) == len(placed) and oldest_id not in moved_placed_ids,
+        "the placement pass picks it up (audit: it suppressed it, its own 'has GPS' set)",
+        len(moved_placed) == len(placed) + 1 and oldest_id in moved_placed_ids,
     )
     check(
-        "so a box-rejected positioned vehicle appears on no surface at all",
-        oldest_id not in (moved_gps_ids | moved_placed_ids),
+        "so it reaches exactly one surface (audit: it appeared on no surface at all)",
+        (oldest_id in moved_gps_ids) + (oldest_id in moved_placed_ids) == 1,
+    )
+    check(
+        "and nothing is drawn on both",
+        not (moved_gps_ids & moved_placed_ids),
     )
 
 
@@ -546,8 +554,11 @@ def main() -> int:
           "42 over 90 s, 32 over 5 min and 25 over 10 min with the oldest at 53676 s "
           "(14h 54m 36s), the full aggregation publishes 68 of them (the 69th is the trip "
           "F02's fix now drops as canceled, not an age filter) with no failed systems and "
-          "no per-vehicle age in the served JSON, and the placement pass suppresses the "
-          "same trips through its own independent notion of GPS.")
+          "no per-vehicle age in the served JSON, and the placement pass still does not "
+          "rescue an age-stale train: it reads the FEED, so the 42 keep their positions "
+          "and only 15 have a prediction to fall back to. Its notion of GPS is no longer "
+          "independent, though: N2's fix gave both passes one acceptance rule, so a "
+          "box-rejected vehicle now falls through to placement instead of vanishing.")
     return 0
 
 

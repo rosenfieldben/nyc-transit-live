@@ -1180,3 +1180,220 @@ async def test_c3_a_VALID_EMPTY_railroad_system_is_healthy_with_no_trains():
     # it; LIRR has stops, so its key IS present. Either way MNR is not in the
     # failed list, which is the distinction under test.
     assert "LIRR" in arrivals
+
+
+# ---------------- N2: one acceptance rule, two complementary surfaces ----------------
+#
+# THE FINDING. The GPS pass and the placement pass each decided, separately, whether a
+# vehicle entity "has GPS". The placement pass's version omitted the geographic bounding
+# box, so a positioned vehicle reporting an out-of-range coordinate was rejected by the
+# GPS pass for being out of range AND suppressed by the placement pass for being
+# GPS-equipped. It reached no surface at all.
+#
+# WHY THESE TESTS HAD TO BE WRITTEN AT ALL. Every positioned vehicle in both committed
+# captures is inside the box, so the fix is byte-identical on all six railroad goldens
+# and the whole backend suite passes unchanged either way. The defect is latent in the
+# fixtures and only a capture carrying the fault can tell the fixed code from the broken
+# code. Without these, the three call sites could silently drift apart again, which is
+# how N2 arose in the first place.
+
+
+def _capture(system: str):
+    """The committed capture for one system, with its stops and its two frozen clocks."""
+    key = system.lower()
+    raw = (FIXTURES / f"railroad_{key}.pb").read_bytes()
+    stops = json.loads((FIXTURES / f"railroad_{key}_stops.json").read_text())
+    gps_now = json.loads((FIXTURES / f"railroad_{key}_expected.json").read_text())["now"]
+    placed_now = json.loads((FIXTURES / f"railroad_{key}_placed_expected.json").read_text())["now"]
+    return raw, stops, gps_now, placed_now
+
+
+def _surfaces(raw: bytes, system: str, stops: dict, gps_now: float, placed_now: float):
+    """The two surfaces a railroad train can reach, as trip_id sets plus their records."""
+    gps, _ts = feeds._decode_railroad_vehicles(raw, system, gps_now)
+    placed = feeds._decode_railroad_placements(raw, system, stops, placed_now)
+    return gps, placed, {t["trip_id"] for t in gps}, {t["trip_id"] for t in placed}
+
+
+@pytest.mark.parametrize("system", SYSTEMS)
+def test_no_railroad_train_is_drawn_on_both_surfaces(system):
+    # The half of the invariant that the old code did get right, pinned so the fix
+    # cannot buy its other half by double-drawing. A trip on both surfaces would be one
+    # train painted twice: a live marker at its reported position and a hollow estimate
+    # at a station, with no way for a rider to tell which is the real one.
+    raw, stops, gps_now, placed_now = _capture(system)
+    gps, placed, gps_ids, placed_ids = _surfaces(raw, system, stops, gps_now, placed_now)
+    assert gps and placed, "not vacuous: both surfaces carry records on this capture"
+    assert gps_ids & placed_ids == set(), f"{system}: trips drawn twice"
+
+
+@pytest.mark.parametrize("system", SYSTEMS)
+def test_every_accepted_vehicle_reaches_the_gps_surface(system):
+    # The other half, on the unmodified capture: a vehicle the acceptance rule accepts is
+    # emitted, exactly once. This is what makes the GPS pass "emits exactly the accepted
+    # set" rather than "emits a subset of it".
+    raw, stops, gps_now, placed_now = _capture(system)
+    feed = pb.FeedMessage()
+    feed.ParseFromString(raw)
+    canceled = feeds.railroad._canceled_trip_ids(feed)
+    accepted = [e for e in feed.entity if feeds.railroad._accepted_as_gps(e, canceled)]
+    assert accepted, "not vacuous"
+    gps, _placed, gps_ids, _placed_ids = _surfaces(raw, system, stops, gps_now, placed_now)
+    assert len(gps) == len(accepted), f"{system}: GPS output must be exactly the accepted set"
+    for entity in accepted:
+        wanted = entity.vehicle.trip.trip_id or entity.id
+        assert wanted in gps_ids, f"{system}: accepted vehicle {wanted} is not on the GPS surface"
+
+
+def _oldest_positioned(feed):
+    """The vehicle entity whose position was observed longest ago: the one the audit
+    displaced, picked by the same rule so this and f01 talk about the same train."""
+    positioned = [
+        e for e in feed.entity if e.HasField("vehicle") and e.vehicle.HasField("position")
+    ]
+    return min(positioned, key=lambda e: e.vehicle.timestamp)
+
+
+def _displace(raw: bytes, pick):
+    """A copy of a capture with one chosen vehicle entity moved to lat 0 lon 0.
+
+    THE AUDIT'S OWN EXPERIMENT, as a fixture. (0, 0) is in the Gulf of Guinea: it is the
+    canonical "this coordinate is garbage" value and it is what the audit injected.
+    """
+    feed = pb.FeedMessage()
+    feed.ParseFromString(raw)
+    entity = pick(feed)
+    entity.vehicle.position.latitude = 0.0
+    entity.vehicle.position.longitude = 0.0
+    return feed.SerializeToString(), entity
+
+
+def test_an_out_of_range_lirr_vehicle_falls_back_to_placement():
+    # THE AUDIT'S REPRODUCTION, run against the fixed code. The oldest positioned LIRR
+    # vehicle is moved out of range; its trip_update is untouched and still carries 16
+    # upcoming stops, so a usable estimate exists.
+    #
+    # THE COUNTS ARE ASSERTED RELATIVE TO THIS CAPTURE'S OWN BASELINE, not as bare
+    # literals, so a recapture cannot make this test quietly describe a different feed.
+    # The absolute numbers today are GPS 68 -> 67 and placements 56 -> 57. (The audit
+    # note says 69 -> 68: it was written before F02 dropped the capture's canceled trip
+    # from the GPS output, so every GPS count in that note is one higher than today's.)
+    raw, stops, gps_now, placed_now = _capture("LIRR")
+    _g, _p, base_gps_ids, base_placed_ids = _surfaces(raw, "LIRR", stops, gps_now, placed_now)
+
+    moved_raw, entity = _displace(raw, _oldest_positioned)
+    trip_id = entity.vehicle.trip.trip_id
+    assert trip_id in base_gps_ids, "the chosen train is on the GPS surface before the move"
+
+    _g, _p, gps_ids, placed_ids = _surfaces(moved_raw, "LIRR", stops, gps_now, placed_now)
+    assert len(gps_ids) == len(base_gps_ids) - 1, "it leaves the GPS surface"
+    assert trip_id not in gps_ids
+    assert len(placed_ids) == len(base_placed_ids) + 1, "and arrives on the placement surface"
+    assert trip_id in placed_ids
+    # THE POINT OF THE FINDING, stated as the invariant rather than as two counts: the
+    # train is on exactly one surface. Before the fix it was on neither.
+    assert (trip_id in gps_ids) + (trip_id in placed_ids) == 1
+    assert gps_ids & placed_ids == set(), "and nothing else started being drawn twice"
+
+
+def test_an_out_of_range_mnr_combined_entity_falls_back_to_placement():
+    # THE SAME DEFECT THROUGH THE OTHER LAYOUT, and it is a genuinely separate call site.
+    # MNR's vehicle.trip.trip_id is the TRAIN NUMBER, which never matches a trip_update
+    # id, so positioned_ids is inert for Metro-North: the per-entity acceptance test is
+    # the only thing that decides. A fix that narrowed positioned_ids alone would leave
+    # every MNR train exactly as lost as before, and this is the test that says so.
+    raw, stops, gps_now, placed_now = _capture("MNR")
+    _g, _p, base_gps_ids, base_placed_ids = _surfaces(raw, "MNR", stops, gps_now, placed_now)
+
+    # A combined entity whose trip_update still has an upcoming stop, so placement has
+    # something to place. Most of this capture's trip_updates are fully in the past.
+    def placeable(feed):
+        for e in feed.entity:
+            if not (e.HasField("vehicle") and e.vehicle.HasField("position")):
+                continue
+            if not e.HasField("trip_update"):
+                continue
+            for stu in e.trip_update.stop_time_update:
+                t = feeds.shared._stop_time(stu)
+                if stu.stop_id in stops and t is not None and t >= placed_now - 60:
+                    return e
+        raise AssertionError("no MNR combined entity with an upcoming stop in the capture")
+
+    moved_raw, entity = _displace(raw, placeable)
+    trip_id = entity.trip_update.trip.trip_id
+    assert entity.vehicle.trip.trip_id in base_gps_ids, "on the GPS surface before the move"
+
+    _g, _p, gps_ids, placed_ids = _surfaces(moved_raw, "MNR", stops, gps_now, placed_now)
+    assert len(gps_ids) == len(base_gps_ids) - 1, "it leaves the GPS surface"
+    assert len(placed_ids) == len(base_placed_ids) + 1, "and arrives on the placement surface"
+    assert trip_id in placed_ids
+    assert gps_ids & placed_ids == set()
+
+
+def test_a_canceled_trip_is_not_placed_when_a_second_trip_update_contradicts_it():
+    # THE REGRESSION THIS FIX WOULD OTHERWISE HAVE INTRODUCED, and no committed capture
+    # carries the shape, so nothing else would catch it.
+    #
+    # Narrowing positioned_ids by acceptance takes a CANCELED trip's id out of the set
+    # that used to block its placement. If a feed carries two trip_updates for one
+    # trip_id with different schedule_relationship, the non-canceled copy then reaches
+    # the placement pass and F02's canceled train is back on the map, drawn as a
+    # schedule estimate instead of a GPS marker. Measured before the cancellation drop
+    # was widened to the feed's whole canceled set: placements 56 -> 57 with the
+    # canceled trip among them.
+    raw, stops, _gps_now, placed_now = _capture("LIRR")
+    canceled_trip = "6004XX_2026-06-20"
+    feed = pb.FeedMessage()
+    feed.ParseFromString(raw)
+    source = next(
+        e
+        for e in feed.entity
+        if e.HasField("trip_update") and e.trip_update.trip.trip_id == canceled_trip
+    )
+    assert source.trip_update.trip.schedule_relationship in feeds.shared._DROP_TRIP_RELATIONSHIPS
+    duplicate = feed.entity.add()
+    duplicate.CopyFrom(source)
+    duplicate.id = source.id + "_CONTRADICTION"
+    duplicate.trip_update.trip.schedule_relationship = 0  # SCHEDULED
+    # AND IT HAS TO BE PLACEABLE, which the first draft of this test forgot. The canceled
+    # trip's own stop_time_updates are both in the past at this capture's clock, so the
+    # placement pass drops it for having no upcoming stop long before the cancellation
+    # gate is consulted, and the test passed against every mutation: it proved nothing.
+    # Giving the duplicate a future arrival at a known station is what makes the gate
+    # observable. Measured with the gate narrowed back to this entity's own
+    # schedule_relationship: placements 56 to 57 with the canceled trip among them.
+    upcoming = duplicate.trip_update.stop_time_update[0]
+    upcoming.stop_id = "83"  # Hampton Bays, in the committed static stops
+    upcoming.arrival.time = int(placed_now) + 600
+
+    placed = feeds._decode_railroad_placements(feed.SerializeToString(), "LIRR", stops, placed_now)
+    assert canceled_trip not in {t["trip_id"] for t in placed}, (
+        "a trip this feed cancels anywhere must not be placed from a contradicting copy"
+    )
+    baseline = feeds._decode_railroad_placements(raw, "LIRR", stops, placed_now)
+    assert len(placed) == len(baseline), "and the contradiction adds no placement at all"
+
+
+def test_the_train_number_survives_a_rejected_coordinate():
+    # A LABEL IS NOT A POSITION CLAIM. positioned_ids and label_by_trip are built in one
+    # loop, so narrowing both together reads natural; it would strip the rider-facing
+    # train number off the arrivals board for exactly the train this fix recovers.
+    # Measured: station 141's arrival for trip 6006_2026-06-20 keeps train_num "521"
+    # after that vehicle's coordinate is rejected.
+    raw, stops, _gps_now, placed_now = _capture("LIRR")
+
+    moved_raw, entity = _displace(raw, _oldest_positioned)
+    trip_id = entity.vehicle.trip.trip_id
+    label = entity.vehicle.vehicle.label or entity.vehicle.vehicle.id
+    assert label, "the chosen vehicle carries a train number"
+
+    _placed, arrivals = feeds._decode_railroad_feed(moved_raw, "LIRR", stops, placed_now)
+    rows = [
+        row
+        for buckets in arrivals.values()
+        for rows_ in buckets.values()
+        for row in rows_
+        if row["trip_id"] == trip_id
+    ]
+    assert rows, "the recovered trip still publishes arrivals"
+    assert all(row["train_num"] == label for row in rows), "with its train number intact"

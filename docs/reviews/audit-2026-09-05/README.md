@@ -13,8 +13,9 @@ Fourteen scripts, about sixteen seconds. Each one exits 0 while the finding stil
 behaves the way the table records it, and non-zero the moment the code stops
 matching. So these are regression checks on the audit record, not one-off prints: a
 red run means the table is stale, which is the only failure mode that matters once
-the fixes start landing. Run one on its own with `.venv/bin/python <script>` or
-`node <script>`.
+the fixes start landing. A script therefore measures what the code DOES and never
+where it lives, so a behavior-preserving refactor cannot turn a row red. Run one on
+its own with `.venv/bin/python <script>` or `node <script>`.
 
 None of them is wired into CI. They pin the state of a set of open defects, so they
 are expected to start failing as those defects are fixed, and a check that is

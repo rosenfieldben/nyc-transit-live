@@ -78,6 +78,64 @@ def _vehicle_is_canceled(entity, canceled_trips: set[str]) -> bool:
     return bool(entity.vehicle.trip.trip_id) and entity.vehicle.trip.trip_id in canceled_trips
 
 
+def _canceled_trip_ids(feed) -> set[str]:
+    """Trip ids this feed cancels or deletes, collected from its own trip_updates.
+
+    Both railroad passes need this set, and they must not build it differently: it is
+    half of what "accepted as GPS" means (see _accepted_as_gps) and, in the placement
+    pass, it is also what keeps a canceled trip off the schedule-estimate surface.
+    """
+    canceled: set[str] = set()
+    for entity in feed.entity:
+        if not entity.HasField("trip_update"):
+            continue
+        trip = entity.trip_update.trip
+        if trip.trip_id and trip.schedule_relationship in _DROP_TRIP_RELATIONSHIPS:
+            canceled.add(trip.trip_id)
+    return canceled
+
+
+def _accepted_as_gps(entity, canceled_trips: set[str]) -> bool:
+    """Is this feed entity a vehicle the map will draw at its OWN reported position?
+
+    THE ONE ACCEPTANCE RULE, AND THE WHOLE POINT IS THAT IT HAS ONE HOME (Audit 5, N2).
+    Two passes ask this question about the same feed: _decode_railroad_vehicles emits
+    exactly the entities it accepts, and _decode_railroad_feed places, at its next
+    scheduled station, every running trip it does NOT accept. Those are complements of
+    one predicate, so a train reaches exactly one surface. When they were two
+    predicates they were not complements, and a train could fall through the gap.
+
+    THAT GAP WAS REAL AND MEASURED. The placement pass built its positioned set without
+    the bounding box, so a positioned vehicle reporting an out-of-range coordinate was
+    dropped from the GPS output for being out of range AND suppressed from placement for
+    being GPS-equipped: it appeared on no surface at all, rather than falling back to the
+    estimate its trip_update could support. Reproduced on the committed LIRR capture by
+    moving one vehicle to lat 0 lon 0: GPS 68 to 67, placements unchanged at 56, and the
+    train on neither list.
+
+    WHY IT HAS TO STAY ONE FUNCTION, not two that agree today. F01's remedy widens this
+    rule by OBSERVATION AGE: a position old enough to be untrustworthy stops being
+    accepted and its trip falls back to placement. Widening one pass and not the other
+    recreates N2 exactly, one condition later. Widening this function widens both at
+    once, which is the property worth keeping. (That change also needs the system and
+    the current time, which this signature does not carry yet; adding them is F01's
+    first line, not a parameter to leave unused here.)
+
+    NO AGE RULE IS APPLIED HERE. F01 is a separate finding with a contract of its own,
+    and this one is deliberately behaviour-preserving on every committed capture.
+    """
+    if not entity.HasField("vehicle"):
+        return False
+    if _vehicle_is_canceled(entity, canceled_trips):
+        return False
+    vehicle = entity.vehicle
+    if not vehicle.HasField("position"):
+        return False
+    # A stray out-of-range coordinate is not a real train. Rejecting it here is what
+    # routes the trip to the placement pass instead of off the map entirely.
+    return _in_railroad_box(vehicle.position.latitude, vehicle.position.longitude)
+
+
 def _decode_railroad_vehicles(
     raw: bytes, system: str, now: float
 ) -> tuple[list[dict], float | None]:
@@ -93,8 +151,10 @@ def _decode_railroad_vehicles(
     trip_update: MNR's combined entity carries the route on its own trip_update
     (MNR's vehicle.trip holds the train number, not the trip_update's internal
     trip id, so the same-entity read is what fills MNR), while LIRR's separate
-    vehicle entity is joined by trip_id to this feed's trip_updates. Coordinates
-    are filtered to the railroad box as a sanity guard. The direction and
+    vehicle entity is joined by trip_id to this feed's trip_updates. WHICH ENTITIES
+    ARE EMITTED IS NOT DECIDED HERE: _accepted_as_gps decides, and the placement
+    pass reads the same function, so the two are complements rather than two
+    rules that happen to agree (N2). The direction and
     interpolation-anchor fields are emitted as None: phase 2 (placing
     position-less trains at their next station) fills them, so the RailroadTrain
     model needs no change then. `now` is unused in phase 1 (no schedule join
@@ -125,32 +185,26 @@ def _decode_railroad_vehicles(
     # trip_id -> route_id from this feed's trip_updates, to fill an empty vehicle
     # route_id in the separate-entity (LIRR) layout. The combined-entity (MNR)
     # layout is handled inline below via the entity's own trip_update.
-    #
-    # THE CANCELED SET IS BUILT IN THE SAME PASS, and it is the same
-    # _DROP_TRIP_RELATIONSHIPS the placement pass in _decode_railroad_feed uses, so
-    # the two passes cannot disagree about what "running" means.
     route_by_trip: dict[str, str] = {}
-    canceled_trips: set[str] = set()
     for entity in feed.entity:
         if entity.HasField("trip_update"):
             trip = entity.trip_update.trip
             if trip.trip_id and trip.route_id:
                 route_by_trip.setdefault(trip.trip_id, trip.route_id)
-            if trip.trip_id and trip.schedule_relationship in _DROP_TRIP_RELATIONSHIPS:
-                canceled_trips.add(trip.trip_id)
+
+    # THE CANCELED SET AND THE ACCEPTANCE RULE BOTH COME FROM SHARED FUNCTIONS, so this
+    # pass and the placement pass in _decode_railroad_feed cannot disagree about which
+    # vehicles are GPS-positioned or about what "running" means (N2). This loop emits
+    # exactly the accepted entities; that pass places exactly the running trips among
+    # the rest.
+    canceled_trips = _canceled_trip_ids(feed)
 
     trains: list[dict] = []
     for entity in feed.entity:
-        if not entity.HasField("vehicle"):
+        if not _accepted_as_gps(entity, canceled_trips):
             continue
         v = entity.vehicle
-        if _vehicle_is_canceled(entity, canceled_trips):
-            continue
-        if not v.HasField("position"):
-            continue
         pos = v.position
-        if not _in_railroad_box(pos.latitude, pos.longitude):
-            continue  # stray out-of-range coordinate; not a real train
         route_id = v.trip.route_id
         if not route_id and entity.HasField("trip_update"):
             route_id = entity.trip_update.trip.route_id  # combined entity (MNR)
@@ -300,9 +354,13 @@ def _decode_railroad_feed(
     path: railroad stop_ids have no N/S suffix, so direction comes from the
     realtime trip.direction_id (null when the feed omits it, e.g. MNR), and the
     start time is derived from start_date+start_time only (see
-    _railroad_trip_start_ts). A GPS train is never also placed: a trip_update is
-    skipped when its OWN entity carries a position (MNR's combined entity) or when
-    its trip_id is one a positioned vehicle entity carries (LIRR's split layout).
+    _railroad_trip_start_ts). A GPS train is never also placed, and a train the GPS
+    pass REJECTED is never lost: both halves read _accepted_as_gps (N2), so a
+    trip_update is skipped when its own entity is accepted (MNR's combined entity) or
+    when its trip_id belongs to an accepted vehicle entity (LIRR's split layout), and
+    every other running trip is placed. Before that, the placement pass decided
+    "has GPS" for itself, without the bounding box, and a positioned vehicle with an
+    out-of-range coordinate reached neither surface.
 
     ARRIVALS deliberately do the OPPOSITE of placement on two points, matching
     the subway scan: (1) NO not-yet-started filter, because a train departing its
@@ -339,16 +397,30 @@ def _decode_railroad_feed(
     # in _decode_railroad_vehicles. MNR's combined entity carries the label on the
     # same entity and is read inline below, so its differing vehicle trip_id here
     # simply never matches a trip_update and is harmless.
+    canceled_trips = _canceled_trip_ids(feed)
     positioned_ids: set[str] = set()
     label_by_trip: dict[str, str] = {}
     for entity in feed.entity:
         if entity.HasField("vehicle") and entity.vehicle.HasField("position"):
             v = entity.vehicle
+            # The trip_id truthiness test is a KEY-VALIDITY guard, not part of the
+            # acceptance rule: an empty trip_id cannot key either map, and the GPS pass
+            # has no such test because it falls back to entity.id for its own output.
             if v.trip.trip_id:
-                positioned_ids.add(v.trip.trip_id)
+                # THE TRAIN NUMBER IS NOT A POSITION CLAIM, so it is joined from any
+                # positioned vehicle, accepted as GPS or not. Narrowing it to the
+                # accepted set alongside positioned_ids reads natural and is wrong:
+                # measured, it strips train_num "521" off trip 6006_2026-06-20's
+                # arrivals row at station 141 the moment that vehicle's COORDINATE goes
+                # out of range. A label stays valid when a coordinate does not.
                 label = (v.vehicle.label or v.vehicle.id) or None
                 if label:
                     label_by_trip.setdefault(v.trip.trip_id, label)
+                # POSITIONED_IDS IS THE ONE THAT NARROWS (N2). It answers "is this trip
+                # already drawn at its own position", which is exactly _accepted_as_gps,
+                # and before this it answered a broader question of its own.
+                if _accepted_as_gps(entity, canceled_trips):
+                    positioned_ids.add(v.trip.trip_id)
 
     trains: list[dict] = []
     arrivals: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
@@ -356,7 +428,19 @@ def _decode_railroad_feed(
         if not entity.HasField("trip_update"):
             continue
         tu = entity.trip_update
-        if tu.trip.schedule_relationship in _DROP_TRIP_RELATIONSHIPS:
+        # CANCELED BY ANY trip_update IN THIS FEED, not only by this one, and that
+        # widening is load-bearing rather than tidy. Narrowing positioned_ids above
+        # removes a canceled trip's id from the set that used to block its placement,
+        # so a feed carrying two trip_updates for one trip_id with DIFFERENT
+        # schedule_relationship would place the non-canceled copy: F02's canceled train
+        # back on the map through the placement door. Measured on a capture built to
+        # carry that contradiction: placements 56 to 57 with the canceled trip among
+        # them, and 56 again with this test widened. No committed capture contains the
+        # shape, so no golden would have caught it.
+        if (
+            tu.trip.schedule_relationship in _DROP_TRIP_RELATIONSHIPS
+            or tu.trip.trip_id in canceled_trips
+        ):
             continue  # canceled/deleted trip: drop from both placement and arrivals
 
         arr_trip_id = tu.trip.trip_id or f"{system}:{entity.id}"
@@ -404,11 +488,19 @@ def _decode_railroad_feed(
                 }
             )
 
-        # Placement: skip a GPS train (never place it twice). MNR combines
-        # trip_update + vehicle in one entity, so a position here means it is
-        # GPS-placed; LIRR splits them, so a separate vehicle entity holds this
-        # train's position under the same trip_id.
-        if entity.HasField("vehicle") and entity.vehicle.HasField("position"):
+        # Placement: skip a train the GPS pass ACCEPTED (never place it twice), and
+        # place every other running trip. MNR combines trip_update + vehicle in one
+        # entity, so acceptance is read off this entity directly; LIRR splits them, so a
+        # separate vehicle entity holds this train's position under the same trip_id and
+        # positioned_ids carries the answer across.
+        #
+        # BOTH TESTS HAD TO MOVE, and the MNR one is the one that does the work there:
+        # MNR's vehicle.trip.trip_id is the TRAIN NUMBER, which never matches a
+        # trip_update id, so positioned_ids is empty of anything MNR consults and this
+        # per-entity test is the only thing preventing a double draw. Narrowing
+        # positioned_ids alone would have shipped as a fix with Metro-North exactly as
+        # broken as before.
+        if _accepted_as_gps(entity, canceled_trips):
             continue
         if tu.trip.trip_id and tu.trip.trip_id in positioned_ids:
             continue

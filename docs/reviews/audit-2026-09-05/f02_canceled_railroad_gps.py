@@ -675,10 +675,18 @@ lock_line = next(
     if line.startswith("gtfs-realtime-bindings")
 )
 gps_source = railroad_mod._decode_railroad_vehicles.__doc__ or ""
+# THE SLICE IS THE WHOLE GPS PATH, not just the emitting loop, and it widened when N2
+# moved the acceptance rule into shared helpers. The functions between
+# _vehicle_is_canceled and _infer_railroad_direction are exactly what the GPS pass runs
+# (_vehicle_is_canceled, _canceled_trip_ids, _accepted_as_gps, _decode_railroad_vehicles);
+# the placement pass begins after that at _decode_railroad_feed, so widening this slice
+# cannot make the check pass on the board's filter instead of the map's. Reading only
+# _decode_railroad_vehicles reported False after N2 while the behaviour below was
+# unchanged, which is a probe measuring where code lives rather than what it does.
 gps_reads_sr = "schedule_relationship" in (
     (ROOT / "backend" / "feeds" / "railroad.py")
     .read_text()
-    .split("def _decode_railroad_vehicles")[1]
+    .split("def _vehicle_is_canceled")[1]
     .split("def _infer_railroad_direction")[0]
 )
 
@@ -688,7 +696,7 @@ print(f"TripDescriptor DELETED resolves  {deleted_value}")
 print(f"_DROP_TRIP_RELATIONSHIPS         {sorted(_DROP_TRIP_RELATIONSHIPS)}"
       f"  (CANCELED={SR.Value('CANCELED')}, DELETED={deleted_value})")
 print("placement/arrivals filter drops both, and so does the GPS pass now")
-print(f"_decode_railroad_vehicles mentions schedule_relationship anywhere: {gps_reads_sr}")
+print(f"the GPS path mentions schedule_relationship anywhere: {gps_reads_sr}")
 print()
 print("BEFORE THE FIX that last line read False: the pin bought a working DELETED")
 print("filter for the board only, and on the GPS path DELETED was treated exactly like")

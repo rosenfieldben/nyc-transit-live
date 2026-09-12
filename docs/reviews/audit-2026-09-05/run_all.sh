@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
-# Re-derive every number in section 2 of docs/reviews/audit-2026-09-05.md.
+# Re-derive every number in section 2 of docs/reviews/audit-2026-09-05.md, and the
+# buses row of the age policy in section 3.3 of docs/design/freshness-contract.md.
 #
 # Run from the repository root:
 #     bash docs/reviews/audit-2026-09-05/run_all.sh
 #
-# Each script is a regression check on the audit record, not a one-off print: it
-# exits 0 while the finding still behaves the way the table records, and non-zero
-# the moment the code stops matching. So a red run here means the table is out of
+# Each script is a regression check on a record, not a one-off print: it exits 0
+# while the finding still behaves the way the table records, and non-zero the
+# moment the code stops matching. The one PROBE here (6.0) has no before and no
+# after and is not expected to start failing when a fix lands; it fails only if
+# its committed capture stops supporting the row it was taken for. So a red run here means the table is out of
 # date, which is the only way a verification record stays worth anything.
 #
 # Requirements: a Python environment with backend/requirements-dev.txt installed
@@ -63,10 +66,11 @@ run "$NODE" f11_station_panel_hides_alerts.mjs   F11
 run "$NODE" f12_stale_error_body_overwrites.mjs  F12
 run "$PY"   f13_healthcheck_recovery_gap.py      F13
 run "$PY"   f14_accessibility_gaps.py            F14
+run "$PY"   probe_bus_observation_clock.py       6.0
 
 echo
 echo "$pass passed, $fail failed"
 if [ "$fail" -ne 0 ]; then
-  echo "still-matching findings: $pass; findings whose record no longer matches the code: ${failed_names[*]}"
+  echo "still-matching records: $pass; records that no longer match: ${failed_names[*]}"
   exit 1
 fi

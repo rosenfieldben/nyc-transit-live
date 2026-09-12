@@ -213,13 +213,12 @@ def section_a() -> None:
 
     model_fields = sorted(models.RailroadTrain.model_fields)
     print(f"  models.RailroadTrain fields       : {model_fields}")
-    # CONTRACT 6.1 MOVED THIS HALF AND NOT THE OTHER. The audit recorded that the
-    # model carried no observation age at all; 6.1 gave it observed_at and
-    # provenance and filled neither, which is the step's whole point (it produces
-    # the values and nothing consumes them yet). So the model half of the finding
-    # is closed and the DECODER half is not, and this script now pins that split
-    # rather than the original conjunction: an assertion that quietly kept passing
-    # across a change this size would be worth nothing.
+    # CONTRACT 6.1 CLOSED BOTH HALVES OF THE AUDIT'S MECHANISM AND NEITHER HALF OF
+    # THE FINDING. The audit recorded that the model carried no observation age and
+    # that the decoder discarded the one the feed sends; the model declares both
+    # fields now and the decoder fills them, which the checks above measure directly.
+    # What is left is that nothing GATES on the value and no surface renders it, so
+    # all 41 stale observations still reach a rider drawn exactly like a fresh one.
     check(
         "models.RailroadTrain now carries the contract pair (6.1)",
         {"observed_at", "provenance"} <= set(model_fields),

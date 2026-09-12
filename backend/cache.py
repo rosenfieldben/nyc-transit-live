@@ -312,8 +312,24 @@ def _oldest_row_observed_at(rows) -> float | None:
     None if any part cannot be dated, because a row with no clock must not be spoken
     for by its neighbours.
 
-    `rows` is any nesting of dicts and lists the arrivals indexes use ({bucket: [row]}
-    for PATH, {route: [row]} for the ferry, a flat list for NJ Transit).
+    A ROW IS TOLD FROM A CONTAINER STRUCTURALLY, not by looking for the key. The
+    first version asked "does this dict carry observed_at", which quietly made the
+    one case the rule exists for impossible: a row that LACKS the key was treated as
+    a container, walked into, and contributed nothing, so its neighbours dated the
+    board on its behalf. A container's values are lists or dicts; a row's are not.
+    So a dict with no list or dict value is a row, and an undated row forces None.
+
+    `rows` is any nesting of dicts and lists the two callers use: {bucket: [row]} for
+    PATH and {route: [row]} for the ferry. It is deliberately not used by NJ Transit
+    or the railroads, whose envelopes carry a per-system block to read instead.
+
+    An EMPTY board returns None, and that is "nothing here to date" rather than
+    "cannot be dated". The two are distinguishable in the payload a client actually
+    holds: an empty directions/routes map beside a null clock is the first, a
+    populated one beside a null clock is the second. That is why this differs from
+    _oldest_contributing_fetched_at, which falls back to the aggregate: a poll time
+    is a fact about US and exists whether or not any row does, while a content time
+    is a fact about rows that are not there.
     """
     found: list[float | None] = []
 
@@ -322,11 +338,11 @@ def _oldest_row_observed_at(rows) -> float | None:
             for item in value:
                 walk(item)
         elif isinstance(value, dict):
-            if "observed_at" in value:
-                found.append(value["observed_at"])
-            else:
+            if any(isinstance(item, (list, dict)) for item in value.values()):
                 for item in value.values():
                     walk(item)
+            else:
+                found.append(value.get("observed_at"))
 
     walk(rows)
     if not found or any(value is None for value in found):
@@ -379,6 +395,15 @@ def _contributing_systems(entry: dict, arrivals_by_system: dict, station_id: str
     Shared by the two selectors below so they can never disagree about WHO is being
     asked. A group with no arrivals at this station does not participate: a down SIR
     feed must not age a Manhattan station's popup it was never going to appear in.
+
+    MEMBERSHIP IS THE PER-GROUP INDEX, NOT THE SERVED PAYLOAD, and the difference is
+    deliberate. combine_group_arrivals dedups trips across groups and _trim_arrivals
+    caps each bucket, so a group can have rows at this station and still have none of
+    them survive into the response. It keeps its vote anyway: the alternative is
+    letting the survivors vouch for a group whose data is still behind them, and the
+    only safe direction for a union clock is the one that cannot overstate freshness.
+    The visible consequence is that an envelope may report a time OLDER than every row
+    it carries, which the acceptance test asserts rather than tolerates.
     """
     systems = entry.get("systems") or {}
     return sorted(

@@ -255,6 +255,12 @@ over 90 seconds, 12 over 300 seconds, 11 over ten minutes, oldest 20912s (5h 48m
 tail is the subway's own small F01, present in the same capture the goldens are built
 from, and currently invisible for the same reason.
 
+**THE TAIL IS A FACT ABOUT THE FEED AND NOT ABOUT THE MAP**, which is the correction the
+erratum under section 4.6 records in full. Only 2 of the 95 SERVED trains carry one of
+those 16 observations: the other 14 belong to trips the placement pass never draws,
+having not started or having no resolvable upcoming stop. Every figure in this paragraph
+is about the feed, and 6.3's gate is sized from the served number instead.
+
 **Two facts make the subway case more work than the table suggests.** `_decode_feed`
 (`backend/feeds/subway.py:85-87`) walks `trip_update` entities and nothing else, so the 98
 VehiclePosition entities are not merely unread, they are never visited: joining a vehicle
@@ -661,7 +667,7 @@ decoder, not branched on in it:
 | System | Observation | Clock the rule reads | Age-gated | Rationale |
 | --- | --- | --- | --- | --- |
 | LIRR | GPS position | `vehicle.timestamp` | **Yes** | 69 of 69 independent. This is F01. |
-| LIRR | Prediction | `trip_update.timestamp` | **Yes** | 127 of 132 independent, 88 of them already over 90s. |
+| LIRR | Prediction | `trip_update.timestamp`, else the feed header | **Yes** | 127 of 132 independent, 88 of them already over 90s. The other 5 are the capture's canceled trips, which this pass drops anyway; the header is named here because the decoder reads it and this table is the place a reader looks. It is a real number the provider sent, not one computed by us, and it is the same fallback every header-dated row in this table already uses. |
 | Metro-North | GPS position | none | **No** | The stamp is a copy of a header that lags 2 to 4 minutes. Gating on it would mark a live fleet stale. `observed_at` is null. |
 | Metro-North | Prediction | none | **No** | 0 of 119 carry a timestamp. `observed_at` is null. |
 | Subway | Position, joined to a VehiclePosition | `vehicle.timestamp` | **Yes** | 98 of 160 trips join one; 16 of those are already over 90s. |
@@ -962,7 +968,7 @@ new fields per record rewrites all eleven:
 | `railroad_mnr_placed_expected.json` | 1 | Count unchanged. |
 | `railroad_lirr_arrivals_expected.json` | 765 | Rows gain the prediction's own clock; the LIRR prediction gate may drop rows. |
 | `railroad_mnr_arrivals_expected.json` | 926 | Rows gain `observed_at: null`. |
-| `njt_tu_expected.json` | 68 trains + 648 arrivals | The largest golden in the repository. Every row `placed` or `estimated`, `observed_at` the header. |
+| `njt_tu_expected.json` | 68 trains + 648 arrivals | The largest golden in the repository. `observed_at` the header on all 716. The 68 TRAINS are `placed` or `estimated` (60 estimated, 8 placed, following the motion state exactly); the 648 ARRIVALS are `reported`, because a prediction is sent rather than derived. An earlier draft of this row said every row was placed or estimated, which was wrong about 648 of the 716. |
 | `subway_1_7_s_expected.json` | 95 | Rows gain the vehicle clock where a VehiclePosition joins and the group header where none does; 16 of the 98 joined observations are over 90s. |
 | `path_rt_gen_a_expected.json` | 53 trains + 53 arrivals | Every row gains its own per-trip clock, which is new information the golden has never held. |
 | `ferry_rt_expected.json` | 28 boats + 50 arrivals | Both keys on every boat for one release (Q1); the 50 dock rows gain the TripUpdates clock. |
@@ -977,8 +983,9 @@ that are on no map. The feed number is still correct about the feed, and the row
 because it is what the vehicle join actually sees.
 
 **6.3's gate is sized from the served number.** A gate acts on trains that reach a rider,
-so the subway half of F01 is two markers on this capture rather than sixteen, and reading
-the feed figure as the workload would overestimate it by eight. The measurement is pinned
+so the subway half of F01 is two markers on this capture rather than sixteen: reading the
+feed figure as the workload overestimates it by a FACTOR of eight, not by eight markers.
+The measurement is pinned
 at `test_subway_positions_take_the_vehicle_clock_where_one_joins` rather than left in prose
 here, so the 2 and the 84 move together or fail.
 

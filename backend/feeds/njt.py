@@ -497,6 +497,12 @@ def _place(calls: list[dict], stops: dict[str, dict], now: float) -> dict | None
             "latitude": stop["lat"],
             "longitude": stop["lon"],
             "status": "at-station",
+            # THE FOURTH RETURN SITE, and the one 6.1 missed. A placement that omits
+            # provenance does not fail: the model default fills `unknown`, so a train
+            # in the terminal grace window would have claimed its own derivation was
+            # undetermined. Nothing caught it because the committed capture has no
+            # train in this window, which is exactly why the guard is now synthetic.
+            "provenance": "placed",
             "stop_id": last["stop_id"],
             "stop_name": stop["name"],
             "delay": last["delay"],

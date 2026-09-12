@@ -523,6 +523,13 @@ def test_a_finished_trip_is_dropped_after_its_terminal_grace():
     raw = _feed(_trip("3800", "T-3800", [("109", NOW - 40, NOW - 20, None, None)]))
     trains = _decode(raw)[0]
     assert len(trains) == 1 and trains[0]["status"] == "at-station"
+    # THE GUARD THIS BRANCH LACKED. _place has FOUR return sites and contract 6.1 gave
+    # provenance to three: a train in the terminal grace window came back without the
+    # key and took the model default, so it claimed its own derivation was undetermined.
+    # The committed capture holds no train in this window, so only a synthetic feed can
+    # reach it, which is why the omission survived the capture-driven tests entirely.
+    assert trains[0]["provenance"] == "placed", "the terminal-grace placement is a placement"
+    assert trains[0]["observed_at"] is not None
 
 
 def test_a_stop_the_static_does_not_carry_is_skipped_without_dropping_the_trip():

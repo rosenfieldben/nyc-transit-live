@@ -648,14 +648,62 @@ def test_ferry_boat_serves_both_clock_keys_with_one_value():
 def test_ferry_dock_rows_take_the_tripupdates_clock_not_the_boat_clock():
     # 3.3, ferry dock arrival: the TripUpdates header. The audit's F03 remedy names
     # this one: the boats and the docks are two feeds with two clocks.
+    #
+    # THE COMMITTED CAPTURES CANNOT TELL THE TWO APART, which is why this test builds
+    # a feed. On ferry_tu_a.pb the TripUpdates header, the VehiclePositions header and
+    # the `now` argument are all 1783812024, so an implementation reading any of the
+    # three satisfies an assertion against that number and the test's own name goes
+    # unchecked. Moving the TripUpdates header alone is the only way to ask the
+    # question the name asks.
+    from google.transit import gtfs_realtime_pb2 as pb
+
     static = json.loads((FIXTURES / "ferry_rt_static.json").read_text())
+    boat_clock = 1783812024.0
+    dock_clock = boat_clock - 137.0  # a number no other source in this test carries
+
+    feed = pb.FeedMessage()
+    feed.ParseFromString((FIXTURES / "ferry_tu_a.pb").read_bytes())
+    feed.header.timestamp = int(dock_clock)
     arrivals, _d, _m = feeds._decode_ferry_arrivals(
-        (FIXTURES / "ferry_tu_a.pb").read_bytes(), static["trips"], static["routes"], 1783812024.0
+        feed.SerializeToString(), static["trips"], static["routes"], boat_clock
     )
     rows = _rows(arrivals)
     assert rows
-    assert all(r["observed_at"] == 1783812024.0 for r in rows)
+    assert all(r["observed_at"] == dock_clock for r in rows), "dock rows took the wrong clock"
+    assert not any(r["observed_at"] == boat_clock for r in rows)
     assert all(r["provenance"] == "reported" for r in rows)
+
+
+def test_path_rows_disagree_and_the_oldest_wins():
+    # The "worst of the parts" rule in cache._oldest_row_observed_at, pinned where it
+    # can actually fail: PATH rows at one station really do carry different clocks, so
+    # min and max are different answers and a swap is catchable.
+    import cache
+
+    stops = json.loads((FIXTURES / "path_stops.json").read_text())
+    _t, arrivals, _fts, _u = feeds._decode_path_feed(
+        (FIXTURES / "path_rt_gen_a.pb").read_bytes(), stops, 1783297522.0
+    )
+    clocks = sorted({r["observed_at"] for r in _rows(arrivals)})
+    assert len(clocks) > 1, "the capture must carry disagreeing clocks for this to mean anything"
+    assert cache._oldest_row_observed_at(arrivals) == clocks[0]
+    assert cache._oldest_row_observed_at(arrivals) != clocks[-1]
+
+
+def test_an_undated_row_forces_a_null_board_clock():
+    # The rule the docstring states and the first implementation could not reach: a row
+    # that LACKS observed_at must make the whole board undatable rather than letting its
+    # neighbours date it. A row is told from a container structurally, not by the key.
+    import cache
+
+    dated = {"route_id": "862", "arrival": 1500.0, "observed_at": 1000.0}
+    undated = {"route_id": "862", "arrival": 1500.0}
+    assert cache._oldest_row_observed_at({"To New Jersey": [dated]}) == 1000.0
+    assert cache._oldest_row_observed_at({"To New Jersey": [dated, undated]}) is None
+    assert cache._oldest_row_observed_at({"To New Jersey": [undated]}) is None
+    # An empty board is "nothing here to date", which the payload distinguishes from
+    # "cannot be dated" by the rows beside it.
+    assert cache._oldest_row_observed_at({}) is None
 
 
 def test_no_decoder_emits_a_provenance_outside_the_closed_set(monkeypatch):

@@ -475,13 +475,6 @@ async def main_async() -> None:
           f"the arrivals fetched_at  ({(soonest - arrivals['fetched_at']) / 60:.2f} min ahead)")
     print(f"  arrival row keys           : {sorted(rows[0])}")
 
-    # CONTRACT 6.1 WIDENED THE SHAPE AND FILLED NOTHING, which is exactly what that
-    # step set out to do, so this script stops asserting the keys are ABSENT and
-    # starts asserting they are EMPTY. That is the stronger statement of the same
-    # finding: a key whose value is None tells a rider nothing that a missing key
-    # did not, and the F03 defect is unchanged until something fills it. When the
-    # endpoints step lands these become non-None and this script goes red, which is
-    # the signal that F03's disposition has to be re-verified rather than assumed.
     # CONTRACT 6.1 IS COMPLETE ON THE BACKEND AND F03 IS STILL OPEN, which is the
     # split this section now pins. Every number the audit said the arrivals payload
     # could not express is in it: the envelope carries the contributing group's own
@@ -704,20 +697,19 @@ async def main_async() -> None:
     )
     without = [r["mode"] for r in table if not r["content_clock"]]
     with_clock = [r["mode"] for r in table if r["content_clock"]]
-    # 6.1 GAVE ALL FIVE THE FIELD AND FILLED NONE OF THEM, so the audit's "no
-    # arrivals model of ANY mode carries a content-age field" is now false of the
-    # DECLARATION and still true of the DATA. Both halves are asserted, because the
-    # first is the progress and the second is the finding.
+    # 6.1 GAVE ALL FIVE THE FIELD AND FILLED IT, so the audit's "no arrivals model of
+    # ANY mode carries a content-age field" is false of both the declaration and the
+    # data. What keeps F03 open is measured in the frontend section above, not here.
     check(
         not without,
         "all five arrivals models now DECLARE a content-age field (6.1)",
         f"declaring={with_clock}; not declaring={without or 'none'}",
     )
-    # WHAT IS LEFT OF F03 AFTER 6.1's DECODERS. The rows are dated; the ENVELOPE
-    # still cannot say WHICH contributor is behind (its systems block is unfilled
-    # until the endpoints commit), and no rider surface reads any of it. The frontend
-    # checks above are the ones that keep this finding open: the popup renders no
-    # qualifier and the panel's age is still now - fetched_at.
+    # WHAT IS LEFT OF F03 AFTER ALL OF 6.1. The rows are dated, the envelope carries
+    # its contributing group's content time, and its systems block names that
+    # contributor. NO RIDER SURFACE READS ANY OF IT, which is the whole of what keeps
+    # this finding open: the frontend checks above measure a popup that renders no
+    # qualifier and a panel whose age is still now - fetched_at.
     check(
         FEED_GROUP in (arrivals["systems"] or {}),
         "the board names the contributor behind it, so a healthy one stays distinct",

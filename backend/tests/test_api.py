@@ -4836,15 +4836,36 @@ async def test_acceptance_other_healthy_contributors_remain_distinguishable(
     stale_bytes = _shift_capture(raw, now, _STALE_LAG_S)
     fresh_bytes = _shift_capture(raw, now, 5.0)
 
+    # EACH GROUP GETS ITS OWN STATIONS, and that is what makes the contributor rule
+    # DISTINGUISHABLE FROM THE ENVELOPE AGGREGATE. The first version of this test fed
+    # identical bytes to all eight, so every group contributed at every station, the
+    # contributing minimum equalled the aggregate everywhere, and a handler that
+    # ignored the contributor rule entirely and served entry["feed_timestamp"] passed
+    # it. That was measured: replacing _oldest_contributing_content_at with
+    # `entry.get("feed_timestamp")` left the whole suite green. Splitting the stations
+    # between the stale group and the fresh ones is the smallest world in which the
+    # two answers differ, so the rule is now pinned rather than assumed.
+    # Split on the ARRIVALS station ids, which are parent-station ids derived from the
+    # platform suffix and are not the static stops table's keys.
+    _probe_arrivals = feeds._decode_feed(fresh_bytes, stops, "ACE", now)[1]
+    _served_stations = sorted(_probe_arrivals)
+    assert len(_served_stations) > 3, "the capture must serve several stations"
+    ace_only = set(_served_stations[: len(_served_stations) // 2])
+
+    def _restrict(arrivals, keep):
+        return {sid: buckets for sid, buckets in arrivals.items() if (sid in ace_only) == keep}
+
     async def fetch(stops_arg, client_arg):
-        # ACE is the stale contributor; the other seven decoded seconds ago. Same
-        # bytes, same station, same rows: only the clock differs.
         by_group, arrivals_by_group, ts_by_group = {}, {}, {}
         for group in feeds.SUBWAY_FEED_URLS:
-            body = stale_bytes if group == "ACE" else fresh_bytes
+            stale = group == "ACE"
+            body = stale_bytes if stale else fresh_bytes
             trains, arrivals, feed_ts = feeds._decode_feed(body, stops_arg, group, now)
             by_group[group] = trains
-            arrivals_by_group[group] = arrivals
+            # ACE serves only the first half of the stations; the seven healthy groups
+            # serve only the second. No station has both, so a board is dated by the
+            # group that actually feeds it or the rule is broken.
+            arrivals_by_group[group] = _restrict(arrivals, keep=stale)
             ts_by_group[group] = feed_ts
         flat = [t for g in by_group.values() for t in g]
         return (
@@ -4884,29 +4905,111 @@ async def test_acceptance_other_healthy_contributors_remain_distinguishable(
     assert status["feeds"]["subways"]["feed_age_s"] == pytest.approx(_STALE_LAG_S, abs=1.0)
     assert body["feed_timestamp"] == systems["ACE"]["feed_timestamp"]
 
-    # (d) AND A BOARD FED BY THAT CONTRIBUTOR CARRIES IT TOO, which is what makes
-    # this reach a rider rather than only an operator. The station is one the ACE
-    # group actually serves, so it participates by the contributor rule.
-    ace_rows = app_module.app.state.subway_arrivals_by_system.get("ACE") or {}
-    assert ace_rows, "ACE contributed no arrivals at all"
+    # (d) TWO BOARDS, AND THEY DISAGREE. This is the clause that reaches a rider, and
+    # the only one that can tell the contributor rule from the envelope aggregate: one
+    # station is fed by ACE alone and the other by the seven healthy groups, so a
+    # handler serving entry["feed_timestamp"] would give both the same number and a
+    # handler applying the rule gives them numbers ten minutes apart.
+    by_system = app_module.app.state.subway_arrivals_by_system
+    ace_rows = by_system.get("ACE") or {}
+    healthy_rows = by_system.get("NQRW") or {}
+    assert ace_rows and healthy_rows, "the split produced no contributors"
     ace_station = sorted(ace_rows)[0]
-    # The endpoint gates on the static station list, which the warmup would have
-    # filled; name just the station under test.
+    healthy_station = sorted(healthy_rows)[0]
+    assert ace_station not in healthy_rows, "the split leaked: no station may have both"
     app_module.app.state.subway_stations = {
-        ace_station: {"name": "Under test", "lat": 40.7, "lon": -74.0}
+        sid: {"name": "Under test", "lat": 40.7, "lon": -74.0}
+        for sid in (ace_station, healthy_station)
     }
-    arrivals = (await client.get(f"/api/subway-arrivals/{ace_station}")).json()
-    assert arrivals["systems"] is not None
-    assert "ACE" in arrivals["systems"]
-    assert arrivals["feed_timestamp"] == now - _STALE_LAG_S
-    assert arrivals["served_at"] == now
-    # Every row it serves is dated, and the envelope NEVER CLAIMS TO BE FRESHER than
-    # the rows it carries. It may be older than all of them, and that is deliberate
-    # rather than sloppy: a contributor with rows at this station participates in the
-    # clock even when its own rows lost the per-station trim, because the alternative
-    # is letting the survivors vouch for a group whose data is still behind them. The
-    # union rule cannot overstate freshness, which is the only direction that is safe.
-    rows = [r for bucket in arrivals["directions"].values() for r in bucket]
-    assert rows, "the chosen station served no arrivals"
-    assert all(r["observed_at"] is not None for r in rows)
-    assert arrivals["feed_timestamp"] <= min(r["observed_at"] for r in rows)
+
+    stale_board = (await client.get(f"/api/subway-arrivals/{ace_station}")).json()
+    fresh_board = (await client.get(f"/api/subway-arrivals/{healthy_station}")).json()
+
+    assert sorted(stale_board["systems"]) == ["ACE"]
+    assert "ACE" not in fresh_board["systems"]
+    assert stale_board["feed_timestamp"] == now - _STALE_LAG_S
+    assert fresh_board["feed_timestamp"] == now - 5.0
+    # THE WHOLE CLAUSE IN ONE LINE: the two boards differ by the injected lag, and the
+    # envelope's own number is the stale one, so a handler that reached for it would
+    # have made the healthy board lie.
+    assert fresh_board["feed_timestamp"] - stale_board["feed_timestamp"] == _STALE_LAG_S - 5.0
+    assert body["feed_timestamp"] != fresh_board["feed_timestamp"]
+    assert stale_board["served_at"] == now and fresh_board["served_at"] == now
+
+    # Every row each board serves is dated, and neither envelope claims to be fresher
+    # than the rows it carries. An envelope may be OLDER than all of them, which is
+    # deliberate: a contributor with rows at a station participates in the clock even
+    # when its own rows lose the per-station trim, because the alternative is letting
+    # the survivors vouch for a group still behind them. The union rule cannot
+    # overstate freshness, which is the only direction that is safe.
+    for board in (stale_board, fresh_board):
+        rows = [r for bucket in board["directions"].values() for r in bucket]
+        assert rows, "a board under test served no arrivals"
+        assert all(r["observed_at"] is not None for r in rows)
+        assert board["feed_timestamp"] <= min(r["observed_at"] for r in rows)
+
+
+async def test_railroad_arrivals_take_their_own_system_content_clock(
+    client, railroad_state, cache, monkeypatch
+):
+    """THE SINGLE-SYSTEM HALF OF THE SAME CLAUSE, which nothing pinned.
+
+    routes/railroad.py says the aggregate's clock "would let a healthy LIRR speak for a
+    frozen MNR", and until this test nothing checked it: the four single-system arrivals
+    endpoints could have served the envelope's number and the suite would have stayed
+    green. A frozen Metro-North beside a current LIRR is the world where the two answers
+    differ, and Metro-North is also where the answer must be NULL rather than a number,
+    because its header is not a usable freshness signal at all.
+    """
+    entry = cache["railroads"]
+    entry.update(data=[], fetched_at=2000.0, feed_timestamp=1995.0, error=None)
+    entry["systems"] = {
+        "LIRR": {
+            "fetched_at": 2000.0,
+            "feed_timestamp": 1995.0,
+            "ok": True,
+            "retained_since": None,
+            "routes": None,
+        },
+        "MNR": {
+            "fetched_at": 1400.0,
+            "feed_timestamp": None,  # excluded from the freshness systems by measurement
+            "ok": False,
+            "retained_since": 1400.0,
+            "routes": None,
+        },
+    }
+
+    lirr = (await client.get("/api/railroad-arrivals/LIRR/12")).json()
+    mnr = (await client.get("/api/railroad-arrivals/MNR/1")).json()
+
+    assert lirr["feed_timestamp"] == 1995.0
+    # NOT the aggregate's 1995.0, which is exactly the substitution the comment warns
+    # about: a healthy LIRR vouching for a system that cannot be dated at all.
+    assert mnr["feed_timestamp"] is None
+    assert lirr["fetched_at"] == 2000.0 and mnr["fetched_at"] == 1400.0
+    assert sorted(lirr["systems"]) == ["LIRR"] and sorted(mnr["systems"]) == ["MNR"]
+    assert mnr["systems"]["MNR"]["retained_since"] == 1400.0
+    # served_at is stamped on every arrivals response, which three of the five
+    # endpoints had no test for.
+    for board in (lirr, mnr):
+        assert board["served_at"] is not None and board["served_at"] > 0
+
+
+async def test_every_arrivals_endpoint_stamps_served_at(
+    client, subway_state, railroad_state, path_rt_state, cache
+):
+    """models.py claims "a test pins that a served response never carries None for it".
+    It was true of two of the five endpoints. This makes it true of all five."""
+    cache["subways"].update(data=[], fetched_at=1234.0, error=None)
+    cache["railroads"].update(data=[], fetched_at=1234.0, error=None)
+    cache["path"].update(data=[], fetched_at=1234.0, error=None)
+    paths = (
+        "/api/subway-arrivals/A01",
+        "/api/railroad-arrivals/LIRR/12",
+        "/api/path-arrivals/26733",
+    )
+    for path in paths:
+        body = (await client.get(path)).json()
+        assert body["served_at"] is not None, path
+        assert body["served_at"] > 0, path

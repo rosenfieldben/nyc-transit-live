@@ -436,10 +436,18 @@ def _system_freshness(
     blocks: dict[str, dict] = {}
     for system in all_systems:
         was = previous.get(system) or {}
-        # The same last-known rule as fetched_at: a system that did not decode this
-        # poll keeps the content time it last reported rather than blanking it.
-        content_at = fresh_timestamps.get(system)
-        if content_at is None:
+        # THE SAME LAST-KNOWN RULE AS fetched_at, AND THE TWO REASONS A VALUE CAN BE
+        # MISSING ARE NOT THE SAME ONE. A system ABSENT from the map did not decode
+        # this poll, so it keeps the content time it last reported rather than
+        # blanking it. A system PRESENT with a None value decoded and sent no header,
+        # which is a fact about this poll and must be published as None: carrying the
+        # previous poll's number forward there would age it by one interval every
+        # interval, without bound, while the feed looked healthy. The producers
+        # encode the difference deliberately (feeds/subway.py records a key for every
+        # group that decoded), and reading it with .get() would throw it away.
+        if system in fresh_timestamps:
+            content_at = fresh_timestamps[system]
+        else:
             content_at = was.get("feed_timestamp")
         blocks[system] = {
             # A failed system keeps its last decode time; a healthy one stamps now.

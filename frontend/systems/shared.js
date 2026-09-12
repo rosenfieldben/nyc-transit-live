@@ -1171,15 +1171,19 @@ async function openStationArrivals({ refresh = false } = {}) {
     return;
   }
   if (seq !== stationSeq) return;
-  // NOTE: the skew baseline is NOT calibrated here. The arrivals endpoints carry
-  // no served_at (only the five vehicle feeds do, R1), and calibrating off their
-  // fetched_at was the audit poison this PR removes. The 15s vehicle-feed poll keeps
-  // minClockOffset fresh. BOUNDED BOOT RACE: a client whose wall clock is materially
-  // wrong that opens a station popup in the sub-second window before the first
-  // vehicle poll resolves sees an uncalibrated countdown (and possibly a false age
-  // line); it self-corrects on the very next 1s tick once a poll lands. The complete
-  // fix (served_at on the arrivals endpoints, or gating the countdown on a settled
-  // baseline) is deferred to R3's cold-start work.
+  // NOTE: the skew baseline is NOT calibrated here, and the reason has CHANGED under
+  // it. It used to be that the arrivals endpoints carried no served_at (only the five
+  // vehicle feeds did, R1), so there was nothing to calibrate from and calibrating off
+  // their fetched_at was the audit poison that PR removed. The freshness contract's
+  // 6.1 gave all five arrivals envelopes a served_at, so the material is now here;
+  // nothing reads it yet because that step is deliberately inert. The 15s vehicle-feed
+  // poll keeps minClockOffset fresh meanwhile. BOUNDED BOOT RACE: a client whose wall
+  // clock is materially wrong that opens a station popup in the sub-second window
+  // before the first vehicle poll resolves sees an uncalibrated countdown (and
+  // possibly a false age line); it self-corrects on the very next 1s tick once a poll
+  // lands. The complete fix is no longer blocked on a missing field: it is calibrating
+  // off the arrivals served_at, or gating the countdown on a settled baseline, and it
+  // stays deferred to R3's cold-start work rather than riding an inert step.
   if (openStation === open) openStation.body = body;
   renderStation();
   if (!marker.isPopupOpen()) return;

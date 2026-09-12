@@ -191,7 +191,7 @@ independently.** That is stated in the code (`backend/feeds/railroad.py:43-50`) 
 holds on the capture: the header is `1782006915` and not one of the 69 positioned vehicles
 carries that value. The ages run from 4s to 53676s with a median of 203s, so the
 distribution is not a couple of outliers behind a healthy fleet: half the fleet is over
-three minutes old and a quarter is over ten minutes old.
+three minutes old and more than a THIRD is over ten minutes old (25 of 69).
 
 The layout is SEPARATE ENTITIES: 69 vehicle-only, 132 trip-update-only, none combined. The
 join is by `trip_id`, and it is total on this capture: all 69 positioned vehicles join a
@@ -260,9 +260,10 @@ from, and currently invisible for the same reason.
 VehiclePosition entities are not merely unread, they are never visited: joining a vehicle
 clock to a train is a new join, not a new field read. And the join does not cover the
 fleet. All 98 VehiclePositions join a trip update by `trip_id`, but **62 of the 160 trip
-updates have no VehiclePosition at all**, so 62 subway trains would carry `observed_at`
-null while 98 carry a real one. The subway is the one system where BOTH answers in section
-3.3 are correct, per train.
+updates have no VehiclePosition at all**, so 62 subway trains fall back to their group's
+header while 98 carry a real per-observation time. Both are age-gated and neither is null:
+the subway is the one system where two different clocks answer the same question for
+different trains.
 
 **The predictions do not date themselves:** 0 of 160 trip updates carry
 `trip_update.timestamp`. So a subway arrival's only honest content clock is the header of
@@ -407,22 +408,25 @@ thing in the codebase to a rider-facing provenance word.
 from that endpoint is now a served state meaning zero alerts, and `/api/status` says so at
 `feeds.njt_alerts_served_empty`. The ambiguity is recorded rather than hidden: a dead
 endpoint sends the same bytes. That is a served observation of "nothing", with a real
-`observed_at` and a provenance that is neither live data nor retained data, and section
-3.1 has to be able to express it.
+`observed_at` and a provenance of `reported` rather than `retained`, which is one of the
+things the enumeration in 3.1 has to be able to say.
 
 ### 2.9 Reading the table sideways
 
-Four things fall out, and they set the shape of the contract:
+Five things fall out, and they set the shape of the contract:
 
 1. **No single rule can cover these providers, or even one provider's whole fleet.** LIRR
    dates everything, Metro-North dates nothing, subway dates 98 of its 160 trips and not
    the other 62, PATH dates the prediction and has no vehicle, NJ Transit dates neither and
    has a very good header, ferry dates the boat and not the dock. A per-provider policy TABLE is not a convenience here, it is the
    only correct form.
-2. **Absence of a clock has to be a first-class state.** It is the answer for Metro-North,
-   for every subway prediction, for every NJ Transit observation, for ferry docks and
-   (pending the probe) for buses. If `observed_at` cannot be null, the contract will invent
-   values for more than half the fleet.
+2. **Absence of a PER-OBSERVATION clock has to be a first-class state, and it is not the
+   same as having no clock at all.** `observed_at` is null for Metro-North and (pending the
+   probe) for buses. Subway predictions, the subway trains with no VehiclePosition, NJ
+   Transit and ferry docks have no per-observation time either, but they do have a HEADER
+   their provider actually sent, and 3.3 ages them against that rather than against
+   nothing. The distinction decides which rows are age-gated, and therefore, through
+   clause (c) of the rule in 3.2, what a rider is told.
 3. **A per-observation time is not automatically better than a header.** Metro-North's
    per-vehicle value is a copy, and using it would be strictly worse than using nothing.
    The policy has to name which clock each provider's rule reads.
@@ -452,21 +456,26 @@ provenance: str             # one of the five values below, never empty
 
 **`observed_at` is nullable, and that is the load-bearing part of the design.** Section 2
 found that more than half of what we serve has no per-observation clock behind it, and a
-non-nullable field would force a value for all of it: the header, the poll time, or
-something computed. Each of those would be a qualifier rendered from a number the provider
-never supplied. `None` means "this provider does not date this observation", it is a state
-the rider vocabulary in 3.2 covers, and it is the only correct answer for Metro-North
-positions, subway predictions, NJ Transit anything, ferry dock arrivals and (pending a
-probe) buses.
+non-nullable field would force a value on all of it, computed by us rather than sent by the
+provider, and a rider-facing qualifier rendered from a number we made up is the precise
+failure this contract exists to prevent. `None` means "this provider does not date this
+observation".
+
+**Null is narrower than "has no per-observation clock", and 3.3 is where the difference is
+decided.** `observed_at` is null for Metro-North positions and predictions, and (pending a
+probe) for buses. Subway predictions, the 62 subway trains with no VehiclePosition, NJ
+Transit and ferry dock arrivals have no per-observation clock either, but their providers DO
+send a header, so 3.3 ages them against that and their `observed_at` is the header rather
+than null. Only the first group is null, and only the first group is non-gated.
 
 **`observed_at` is not a new name.** The audit's own reproduction already uses it:
 `f01_lirr_gps_observation_age.py:412` asserts that `models.RailroadFeed` STRIPS an
 `observed_at` added to a cached train, so the field name is already written down and the
 model already has a documented behavior toward it.
 
-**`provenance` is a closed enumeration of five values.** The names are kebab-case to match
-the health codes and `NjtTrain.status`, and a value outside the set is a decoder bug rather
-than a client's problem. It would be the first closed set in the file: `backend/models.py`
+**`provenance` is a closed enumeration of five values.** The names are lowercase single
+words, needing none of the hyphens the health codes and `NjtTrain.status` carry, and a value
+outside the set is a decoder bug rather than a client's problem. It would be the first closed set in the file: `backend/models.py`
 contains no `Enum` and no `Literal` anywhere, and `NjtTrain.status`, `FerryBoat.status`,
 `Alert.effect` and `Alert.cause` all ship as bare `str`. Two of those are GTFS-RT
 pass-throughs that are deliberately open, so whether provenance is typed or merely
@@ -475,7 +484,7 @@ those two nothing upstream can widen it.
 
 | Value | Means | Today's implicit equivalent |
 | --- | --- | --- |
-| `live-gps` | The provider reported a coordinate for this vehicle. | `isPlacedRailroad(t) === false` |
+| `reported` | The provider sent this as observed: a GPS coordinate, a prediction, an alert. | `isPlacedRailroad(t) === false`, and nothing at all for a prediction or an alert |
 | `estimated` | Computed by interpolating a prediction between two known points. | the `prev_*`/`next_time` anchors being populated |
 | `placed` | A stop's own coordinates, from a prediction or the timetable. | `isPlacedRailroad(t) === true`, `NjtTrain` always, `PathTrain` always |
 | `retained` | Carried forward from an earlier poll; not in the latest decode. | `SystemFreshness.retained_since`, per system only |
@@ -497,8 +506,8 @@ risk.
 
 **Two notes on the enumeration itself.**
 
-`retained` is the odd member, and deliberately so: the other four say how a position was
-DERIVED, and `retained` says when it was SERVED. A retained GPS position is both. The
+`retained` is the odd member, and deliberately so: the other four say how an OBSERVATION
+was derived, and `retained` says when it was SERVED. A retained GPS position is both. The
 recommendation here is that `retained` wins the field, because "this is not in the current
 decode" is the fact that changes what a rider should believe, and `SystemFreshness`
 already carries `retained_since` for anyone who needs the timing. **This is question Q3 in
@@ -511,18 +520,27 @@ happens during the rollout and in a browser holding a new frontend against an ol
 The client's fail-safe for `unknown` is defined in 3.2 and it is the pessimistic one, the
 same direction `systemFreshnessOf` already takes when it falls back to a source's worst.
 
-**The enumeration is position-shaped, and predictions and alerts do not fit it cleanly.**
-An alert is never derived, so `estimated` and `placed` are both wrong for one, and the only
-values it can take are "as the provider sent it" and `retained`. The first of those is
-spelled `live-gps` above, which is a position word doing a job it was not named for. The
-same strain shows on a prediction: an LIRR arrival time is reported, not GPS. This is
-question Q8 in section 5, and it is a naming decision rather than a modelling one, since
-the set of states is right either way.
+**The first value is `reported` and not `live-gps`, and the reason is that the enumeration
+is read by code over three kinds of observation.** An alert is never derived, so `estimated`
+and `placed` are both wrong for one and the only values it can take are as-sent and
+`retained`. The same strain shows on a prediction: an LIRR arrival time is reported, not
+GPS. `reported` is true of a coordinate, a prediction and an alert alike, which no position
+word is. **The rider string is unaffected**: a fresh reported POSITION still reads "live
+GPS" on the surfaces that already say it, because the code value and the rider word answer
+different questions and this codebase already lets them differ freely (`at-station` renders
+as nothing a rider ever sees). Settled as Q8; see Decisions.
+
+**`reported` and the shipped string "not reporting" are unrelated, and the collision is
+close enough to be worth one sentence.** "{system} not reporting" (`helpers.js:703`) means
+a system that has NEVER DECODED anything, which is a statement about a feed. `reported` is
+a statement about one observation: the provider sent it as observed rather than us deriving
+it. A system can be reporting fine while every observation in it is `placed`, and a system
+that is "not reporting" has no observations to carry any provenance at all. Nothing in the
+rendering puts the two on the same surface, and nothing should start.
 
 **NJ Transit's served-empty alerts state (N4) needs saying out loud**: zero alerts observed
 at a real time is an observation of nothing, not an absence of observation, and the two
-must not render the same way. It takes a real `observed_at` and the as-sent provenance
-value, whatever Q8 names it.
+must not render the same way. It takes a real `observed_at` and `reported`.
 
 ### 3.2 The words a rider sees, defined once for every surface
 
@@ -541,26 +559,64 @@ today:
 | `feed empty, showing last known` | `helpers.js:751`, `:757` | a bounded empty run |
 | `scheduled service (no live tracking)` | `helpers.js:1030` | AirTrain, which has no feed |
 
-**The contract adds exactly two words and fixes one omission.**
+**The contract adds three words and fixes one omission.**
 
 | Provenance / state | The rider word | Note |
 | --- | --- | --- |
-| `live-gps`, fresh | *(nothing)* | Silence means current. That is the grammar every surface already uses and the reason the F03 defect is invisible. |
-| `live-gps`, aged | `live GPS, as of {age} ago` | Reuses both halves, verbatim. |
+| `reported`, fresh | *(nothing)* | Silence means current. That is the grammar every surface already uses and the reason the F03 defect is invisible. |
+| `reported`, aged, a position | `live GPS, as of {age} ago` | Reuses both shipped halves, verbatim. |
+| `reported`, aged, a prediction | `as of {age} ago` | The same age line without the position clause, which would be false of a prediction. An alert is never aged: its row in 3.3 is retention-only. |
 | `estimated` | **`estimated from a prediction`** | NEW. The one case the codebase has no word for. |
 | `placed` | `scheduled position (no GPS)` | Unchanged, and already correct on NJT and PATH. |
 | `retained` | `showing last known, as of {age} ago` | Joins a shipped clause to a shipped clause. |
 | `unknown` | **`age unknown`** | NEW. The positive statement that silence cannot make. |
-| observed_at is null | `age unknown` | Same words: from a rider's side these are one state. |
+| `observed_at` null, on an age-gated row | `age unknown` | The provider normally dates this and did not. An anomaly, so it is said at the observation. |
+| `observed_at` null, on a non-gated row | *(nothing at the observation)* | The provider does not date this at all. Said ONCE on that system's line instead; see the rule below. Metro-North is the only system in this state today. |
+| A whole system with no observation clock | **`{system} position age unavailable`** | NEW, and per-system rather than per-observation. A clause on the source's line, so the railroad source reads "railroad: MNR position age unavailable". |
 
 **The rule, stated once for all surfaces:** a marker, a popup, a panel row or a board row
-whose provenance is not `live-gps`, OR whose `observed_at` is older than its system's fresh
-threshold, OR whose `observed_at` is null, MUST carry its word. There is no surface
-exempted for being small, and no surface that gets its own phrasing. `humanizeAge` stays
-the single age formatter (seconds under two minutes, whole minutes above) so the map, the
-popup, the panel and the live region cannot word the same age differently, which is the
-discipline `stalePopupLine` was written to enforce and which this extends rather than
-replaces.
+MUST carry its word when any of the following holds. (a) Its provenance is not `reported`.
+(b) Its `observed_at` is older than `OBS_FRESH_S`, read against the clock its row in the
+section 3.3 policy table names. (c) Its `observed_at` is null AND that row is age-gated. There is no surface exempted
+for being small, and no surface that gets its own phrasing. `humanizeAge` stays the single
+age formatter so the map, the popup, the panel and the live region cannot word the same age
+differently, which is the discipline `stalePopupLine` was written to enforce and which this
+extends rather than replaces.
+
+**Clause (c) is narrow on purpose, and this is the amendment Q5 settled.** A provider that
+never dates its observations is not an anomaly, it is a property of the provider, and
+stamping "age unknown" on all 33 Metro-North markers and on its 926 arrival rows would put
+a permanent qualifier on an entire commuter railroad. A qualifier a rider sees everywhere, always, is one a rider stops
+reading, and it would devalue the same words on the LIRR train where they mean something
+real. **So a non-gated row is silent at the observation and states the fact once, on that
+system's line**, in the same place and the same grammar `staleness()` already uses for "as
+of {age} ago" and "not reporting". It is the one qualifier in this vocabulary that
+describes the provider rather than the observation, which is exactly why it belongs there
+and not on the markers.
+
+**The rule's two halves cover every row of 3.3 once each, and that is worth checking rather
+than assuming.** Eleven rows are age-gated, so clause (b) speaks for them and clause (c)
+catches a null that should not have been there. Metro-North's two rows are the only ones a
+whole system's line has to speak for. Buses are undecided until 6.0 and alerts are carried
+by retention. Nothing falls between, which was not true of the first draft of this rule: it
+left the 62 subway trains with no VehiclePosition qualified nowhere, until measuring
+`feeds/subway.py:155-175` showed they are placed from their trip update like every other
+subway train and are therefore dated by the group header rather than undated.
+
+**One implementation hazard, measured, that does not change the decision but decides how it
+lands.** `staleness()` returns `null` when nothing is stale and nothing is blind
+(`frontend/helpers.js:684`), and its own header states the rule it was written under: "THE
+COMMON CASE MUST NOT GET NOISIER". A population that is PERMANENT rather than transient
+breaks that: Metro-North never has an observation age, so a fourth clause added the same way
+as the first three would make the railroad line non-null forever, and a status line that
+always says something is a status line nobody reads. **The clause should therefore ride the
+line without being able to raise it**: it appears when that source's line is already
+rendering, and a source whose only condition is "this provider does not date its
+observations" stays silent. The cost is that a rider on a wholly healthy day never learns
+it, which is the right trade for a fact that is true of every Metro-North marker on every
+day and is therefore not news. Whoever builds 6.3 should treat this as part of the rule
+rather than as a detail, because implementing it the obvious way produces permanent
+chatter.
 
 **One piece of the shipped vocabulary does not survive contact with these ages.**
 `humanizeAge` has two tiers, seconds under two minutes and whole minutes above, which is
@@ -598,7 +654,7 @@ decoder, not branched on in it:
 | Metro-North | GPS position | none | **No** | The stamp is a copy of a header that lags 2 to 4 minutes. Gating on it would mark a live fleet stale. `observed_at` is null. |
 | Metro-North | Prediction | none | **No** | 0 of 119 carry a timestamp. `observed_at` is null. |
 | Subway | Position, joined to a VehiclePosition | `vehicle.timestamp` | **Yes** | 98 of 160 trips join one; 16 of those are already over 90s. |
-| Subway | Position, no VehiclePosition | none | **No** | 62 of 160 trips. `observed_at` is null. |
+| Subway | Position, no VehiclePosition | contributing group header | **Yes** | 62 of 160 trips. Every subway position is placed from its trip update whether or not a VehiclePosition exists (`feeds/subway.py:155-175`), so a missing vehicle entity leaves the train dated by the same header as a prediction, not undated. |
 | Subway | Prediction | contributing group header | **Yes** | 0 of 160 self-dated; the group header is the only honest clock and is already selected per contributor. |
 | NJ Transit | Placed position | feed header | **Yes** | The header is a good clock (lag 9s to 23s at peak, measured). |
 | NJ Transit | Prediction | feed header | **Yes** | Same clock, same derivation. |
@@ -607,11 +663,17 @@ decoder, not branched on in it:
 | NYC Ferry | GPS position | `vehicle.timestamp` (served today as `updated_at`) | **Yes** | 28 of 28 independent. The field already exists; only the rule and the rendering are new. |
 | NYC Ferry | Dock arrival | TripUpdates header | **Yes** | 0 of 50 self-dated, and the audit's remedy names this explicitly: age against the TripUpdates clock, not the boat clock. |
 | Buses | GPS position | **undetermined** | **Pending a probe** | No committed capture. The row is written after one probe of the live endpoint, not before. |
-| Alerts | Alert | alert feed header | Retention only | GTFS-RT alerts carry no time. `active_period` is about the world, not the observation. |
+| Alerts | Alert | alert feed header, carried but not gated | **No**, retention only | GTFS-RT alerts carry no time. `active_period` is about the world, not the observation. `observed_at` is served so a consumer has it; no age rule fires, and what a rider is shown about an old alert is the retained SOURCE label F11 already ships. |
 
-**Six of the fourteen rows are "no per-observation clock", and none of them is a gap to be
-filled later.** They are measurements. Writing a rule for Metro-North positions would
-require a clock Metro-North does not send.
+**Eleven of the fifteen rows are age-gated and four are not**, and the split is the input to
+clause (c) of the rule in 3.2, so it is worth reading off precisely. THREE rows have no
+clock of any kind behind them: both Metro-North rows and buses pending its probe. A fourth,
+alerts, is governed by retention rather than by age because a GTFS-RT alert carries no time
+to gate on. **Metro-North is therefore the only SYSTEM that is wholly undated**, which is
+what makes the per-system clause in 3.2 apply to exactly one source today.
+
+**None of those four is a gap to be filled later.** They are measurements. Writing a rule
+for Metro-North positions would require a clock Metro-North does not send.
 
 **This collides with a decision the repository has already made, deliberately, twice.**
 `/api/status` treats an absent upstream timestamp as HEALTHY on purpose ("unknown is
@@ -629,10 +691,10 @@ copies the operator rule into the rendering will reproduce F01 with a new field.
 
 **The order**, applied per vehicle, taking the first step that succeeds:
 
-1. **`live-gps`, unqualified.** A GPS position whose `observed_at` is within `OBS_FRESH_S`.
+1. **`reported`, unqualified.** A GPS position whose `observed_at` is within `OBS_FRESH_S`.
 2. **`estimated`.** Interpolated from a prediction whose own `observed_at` is within
    `OBS_FRESH_S`, when the position is not.
-3. **`live-gps`, qualified.** The GPS position itself, when its `observed_at` is within
+3. **`reported`, qualified.** The GPS position itself, when its `observed_at` is within
    `OBS_MAX_S`, rendered with the age line and the dimmed marker.
 4. **`placed`.** At the stop a prediction within `OBS_MAX_S` names, when nothing above
    holds.
@@ -648,9 +710,9 @@ placement derived from a nine-minute-old prediction.
 
 | Step | Vehicles | What the rider sees |
 | --- | --- | --- |
-| 1. `live-gps` unqualified | **27** | unchanged from today |
+| 1. `reported` unqualified | **27** | unchanged from today |
 | 2. `estimated` | **6** | a marker labeled "estimated from a prediction" |
-| 3. `live-gps` qualified | **11** | a dimmed marker reading "as of {age} ago" |
+| 3. `reported` qualified | **11** | a dimmed marker reading "as of {age} ago" |
 | 4. `placed` | **0** | (see below) |
 | 5. nothing | **24** | **the marker is gone** |
 
@@ -660,11 +722,14 @@ this policy 27 stay as they are, 17 become honest, and 24 stop being drawn, beca
 is nothing honest left to draw: their GPS is over ten minutes old and so is every
 prediction behind them.
 
-**Step 4 never fires on this capture, and the reason is worth recording.** Not one of the
-24 vehicles whose GPS exceeds ten minutes has a prediction younger than ten minutes: only
-4 of the 24 have a future stop time at all, and all 4 of those predictions are themselves
-over ten minutes old. **A train whose GPS has gone quiet has a trip update that has gone
-quiet too.** The step stays in the order because that is one capture on one evening, and
+**Step 4 never fires on this capture, and the exact reason is sharper than "the predictions
+are old too".** Of the 24 vehicles whose GPS exceeds ten minutes, only 4 have a future stop
+time at all, and all 4 of those trip updates are themselves over ten minutes old (1114s,
+1753s, 4326s and 52538s). A DIFFERENT four carry a trip update well inside the window (27s,
+62s, 82s and 529s) and are still no use, because every stop time in them is already in the
+past. So the two ways a fallback could work fail separately: **a fresh prediction about a
+finished trip is as useless as a stale prediction about a live one**, and no vehicle on this
+capture has both halves at once. The step stays in the order because that is one capture on one evening, and
 a provider whose two feeds fail independently is entirely plausible; but nobody should
 expect it to rescue anything, and an acceptance test that requires it to fire would be
 testing a synthetic feed rather than this one.
@@ -733,9 +798,9 @@ answers "nothing", which is itself worth knowing.
 
 | Model | Change |
 | --- | --- |
-| `Vehicle`, `Train`, `RailroadTrain`, `PathTrain`, `NjtTrain`, `FerryBoat` | `+ observed_at`, `+ provenance`. `FerryBoat` already has the value under the name `updated_at` (Q1). |
+| `Vehicle`, `Train`, `RailroadTrain`, `PathTrain`, `NjtTrain`, `FerryBoat` | `+ observed_at`, `+ provenance`. `FerryBoat` already has the value under the name `updated_at`, which Q1 renames to `observed_at` with the old key served alongside for one release. |
 | `Arrival`, `RailroadArrival`, `PathArrival`, `NjtArrival`, `FerryArrival` | `+ observed_at`, `+ provenance`. A prediction is an observation. |
-| `Alert` | `+ observed_at`, `+ provenance`, the latter only ever as-sent or `retained`. |
+| `Alert` | `+ observed_at`, `+ provenance`, the latter only ever `reported` or `retained`. |
 | `AlertFeed` | `+ feed_timestamp`. It is the SIXTH clockless envelope, not a seventh arrivals one: the six vehicle envelopes all carry a content clock and the five arrivals envelopes plus this one carry none. |
 | `SystemFreshness` | `+ feed_timestamp`, per 3.5. The one field the acceptance case cannot be written without. |
 | `StationArrivals`, `RailroadStationArrivals`, `PathStationArrivals`, `NjtStationArrivals`, `FerryStationArrivals` | `+ served_at`, `+ systems`. Five envelopes, one omission committed five times. |
@@ -769,10 +834,10 @@ came to be missing `served_at` in the first place.
 | `feeds/railroad.py` `_decode_railroad_vehicles` | Read `v.timestamp`, emit `observed_at` for LIRR and `None` for MNR, apply the LIRR age gate, and stop returning a bare list of trains that the placement pass has to second-guess. |
 | `feeds/railroad.py` `_decode_railroad_feed` | Build `positioned_ids` from the SAME accepted set the GPS pass emitted, which closes N2, and read `tu.timestamp` for the prediction gate and for a placed train's `observed_at`. |
 | `feeds/__init__.py` `RAILROAD_FRESHNESS_SYSTEMS` | Unchanged in value, but it now has a THIRD reader. It has two today: `railroad.py:580` (may this header drive `feed_timestamp`) and `contract_monitor.py:678` (may this header raise a staleness WARN). The per-provider policy table must not become a fourth place where Metro-North's exclusion is restated. |
-| `feeds/subway.py` | A NEW join: `_decode_feed` visits only `trip_update` entities today, so the 98 VehiclePositions have to be indexed by `trip_id` first. Then `v.timestamp` onto each joined train, null onto the other 62, and the group header onto each arrival. |
+| `feeds/subway.py` | A NEW join: `_decode_feed` visits only `trip_update` entities today, so the 98 VehiclePositions have to be indexed by `trip_id` first. Then `v.timestamp` onto each joined train, the group header onto the other 62 and onto each arrival. |
 | `feeds/njt.py` | Emit `provenance: "placed"` (or `"estimated"` on the interpolated segment) and the header as `observed_at`. No new clock: the header is the only one. |
 | `feeds/path.py` | Read `tu.timestamp` per entity. This is the one decoder where the new clock is strictly better than the envelope clock it has. |
-| `feeds/ferry.py` | Rename or alias `updated_at`, and carry the TripUpdates header onto dock arrivals rather than letting them inherit the boat clock. |
+| `feeds/ferry.py` | Rename `updated_at` to `observed_at` (Q1), serving the old key alongside it for one release, and carry the TripUpdates header onto dock arrivals rather than letting them inherit the boat clock. |
 | `feeds/buses.py` | Blocked on the probe in 6.0. |
 | `feeds/alerts.py` | Emit the feed clock as `observed_at`; mark retained alerts `retained`. |
 
@@ -822,7 +887,8 @@ about.
 | Live region | One write per render, not two. N6 is open on `#page-announce` and a per-observation qualifier is exactly the kind of second writer that trips it. |
 | `ingestSystems` | The single door every freshness value enters through (`helpers.js:489-516`), and it reads exactly four names. Any field the contract adds to an envelope reaches no surface at all until this function changes, and nothing currently tests that it drops the rest. This is the first frontend edit, not the last. |
 | The shared lag term | `systemAges` computes `ages[name] = Math.max(lag, poll, 0)` with `lag` taken from the ENVELOPE (`helpers.js:552-563`), so every system of a source shares one content-lag number. A per-system content clock replaces that term, and this is the line that makes it possible. |
-| Status line | Unchanged in wording. `staleness()` already produces "railroad: MNR as of 6m ago" and the two-clause stale/blind split; it gains a third population (systems whose CONTENT is old while their poll is current) and must not merge it into either existing clause, for the same reason the two clauses were split in the first place. |
+| Suppression count | NEW, and Q7's answer: when the ladder's step 5 drops observations for age, the count reaches the status line and nothing else. A rider can otherwise not tell "no trains on this branch" from "we dropped 24 of them". No per-marker ghost, which is the thing being fixed. |
+| Status line | Gaining two clauses, one of them in new wording. `staleness()` already produces "railroad: MNR as of 6m ago" and the two-clause stale/blind split; it gains a THIRD population (systems whose CONTENT is old while their poll is current), which reuses "as of {age} ago" verbatim, and a FOURTH (systems with no observation clock, per Q5's amendment to 3.2), which is the one new string. Neither may be merged into an existing clause, for the same reason the first two were split: a system in one state announced with another state's age is the exact defect that split them. |
 
 **Asserted today that this makes false:** `helpers.js:2193` computes the panel's age from
 `fetched_at` and the comment above `feedAgeLine` says the line exists so a popup "must say
@@ -880,9 +946,9 @@ new fields per record rewrites all eleven:
 | `railroad_lirr_arrivals_expected.json` | 765 | Rows gain the prediction's own clock; the LIRR prediction gate may drop rows. |
 | `railroad_mnr_arrivals_expected.json` | 926 | Rows gain `observed_at: null`. |
 | `njt_tu_expected.json` | 68 trains + 648 arrivals | The largest golden in the repository. Every row `placed` or `estimated`, `observed_at` the header. |
-| `subway_1_7_s_expected.json` | 95 | Rows gain the vehicle clock where a VehiclePosition joins and null where none does; 16 of the 98 joined observations are over 90s. |
+| `subway_1_7_s_expected.json` | 95 | Rows gain the vehicle clock where a VehiclePosition joins and the group header where none does; 16 of the 98 joined observations are over 90s. |
 | `path_rt_gen_a_expected.json` | 53 trains + 53 arrivals | Every row gains its own per-trip clock, which is new information the golden has never held. |
-| `ferry_rt_expected.json` | 28 boats + 50 arrivals | `updated_at` resolves to whatever Q1 decides; the 50 dock rows gain the TripUpdates clock. |
+| `ferry_rt_expected.json` | 28 boats + 50 arrivals | Both keys on every boat for one release (Q1); the 50 dock rows gain the TripUpdates clock. |
 | `alerts_mnr_expected.json` | 4 | Feed clock and provenance. |
 
 The two count changes in the LIRR goldens are arithmetic from section 3.4's policy, stated
@@ -890,6 +956,17 @@ here so a regeneration that produces different numbers is a signal rather than a
 They transfer cleanly because `railroad_lirr_expected.json` records `now: 1782006915.0`,
 which is the capture's own header: the clock the golden test runs the decoder against is
 the same clock every age in this document was measured against.
+
+**A CHANGE IN A GOLDEN'S RECORD COUNT IS EXPLAINED IN THE COMMIT THAT REGENERATES IT, NEVER
+ABSORBED.** Adding two fields to every row is a diff nobody reads line by line, and a count
+that moves inside it is the one thing in that diff that carries meaning: it says an
+observation stopped being served, or started. The regenerating commit states the before, the
+after, and which rule accounts for the difference, in the same voice F02's did ("69
+positioned vehicles yield 68 served trains"). A count this document predicted and the
+regeneration contradicts is a finding about the policy or about the capture, and either way
+it is worth more than the commit that would have swallowed it. The counterpart rule already
+exists on the other side: the invariant belongs in a test asked of the decoder, so a
+recapture cannot move a count silently either.
 
 **One model-level fact belongs here rather than in 4.1, because a reproduction already pins
 it:** `models.RailroadFeed` does not merely lack an observation time, it STRIPS one. Adding
@@ -953,7 +1030,12 @@ one new numeric field does not reopen that.
 
 ### The open questions
 
-Each is phrased so a yes or a no settles it.
+Each is phrased so a yes or a no settles it. **All eight were answered on 2026-09-12 and
+the answers are recorded below in Decisions.** The questions are kept here exactly as they
+were posed, including the recommendations, because a question rewritten after it is answered
+stops being evidence of what was actually asked. Where a decision changed the design,
+sections 3 and 4 were amended in place on the same date, so the body is the thing to build
+from and it cannot disagree with this section.
 
 **Q1. Should `FerryBoat.updated_at` be renamed to `observed_at`, so one name covers every
 system?** It is a served field, so renaming it is a wire change on an endpoint that already
@@ -1091,8 +1173,68 @@ collecting current official data. F06 to F09 and F13 stay in Release 2. N6's
 
 ---
 
-**Nothing above is built.** This document is the design for review that the Release 1 order
-put at item 7, and the two items it blocks are items 8 and 9. Read it before anything is
-built from it, and settle the eight questions in section 5 first: three of them change the
-data model, four change what a rider sees, and one decides whether a probe blocks the
-build.
+## Decisions, 2026-09-12
+
+All eight questions in section 5 are settled, and **every answer matched the recommendation
+this document gave**. That is worth stating rather than leaving implicit, because it is the
+kind of agreement that looks like a rubber stamp and was not: Q5 and Q8 were both answered
+against what the BODY of the document said at the time, since sections 3.1 and 3.2 were
+written before those questions were formed and proposed the opposite of what section 5 went
+on to recommend. The amendment below is the body catching up with its own recommendation,
+not the design changing direction.
+
+| Q | Answer | Consequence |
+| --- | --- | --- |
+| Q1 | **Yes** | `FerryBoat.updated_at` becomes `observed_at`. The old key is served alongside it for one release, then dropped. One name for one concept across every system. |
+| Q2 | **Yes, 600** | `OBS_MAX_S` adopts the retention cap's horizon and its argument. On the committed LIRR capture this is what removes 24 of 68 trains from the map. |
+| Q3 | **Yes** | `retained` wins the provenance field. A retained GPS position reports `retained`, not `reported`; `SystemFreshness.retained_since` carries the timing for anyone who needs it. |
+| Q4 | **Yes, 90** | The estimate step uses `OBS_FRESH_S`, so there is one freshness number rather than two. 6 estimated markers on the committed capture, not 8 or 11. |
+| Q5 | **No** | A non-gated provider is SILENT at the marker and the fact is carried once on its per-system line. 3.2 had proposed the opposite and is amended accordingly. |
+| Q6 | **Yes** | The bus probe in 6.0 blocks the build. Buses get a measured policy row or the work does not start. |
+| Q7 | **Yes** for the status line, **no** for the map | A suppression count reaches the status line so a rider can tell an empty branch from a filtered one. Nothing reaches the map, which would reintroduce the ghost. |
+| Q8 | **No** | The first provenance value is **`reported`**, not `live-gps`. 3.1 had proposed `live-gps` and is amended accordingly. The rider string "live GPS" is unchanged on the surfaces that already say it. |
+
+**What changed in the body, and where.** Q2, Q3, Q4 and Q6 confirmed what sections 3.3,
+3.1, 3.4 and 6.0 already proposed, so nothing moved for them. The other four did move
+something:
+
+- **Q8** renamed the first enumeration value everywhere it is used as a VALUE: the
+  enumeration table in 3.1, the vocabulary table in 3.2, the fallback ladder and cost table
+  in 3.4. It did not touch the shipped rider strings in 3.2's first table, which are
+  quotations of code, and it did not touch the auditor's wording in 6.3, which says
+  "unqualified live-GPS marker" and is quoted verbatim.
+- **Q5** rewrote the rule in 3.2 into three lettered clauses and added a fourth row to the
+  vocabulary table, splitting a null `observed_at` by whether its policy row is age-gated.
+  It also added a per-system clause, `{system} position age unavailable`, which is the one
+  qualifier in this vocabulary that describes a provider rather than an observation, plus
+  the measured note that it must not be able to raise the status line on its own.
+- **Q1** made the ferry rows in 4.1, 4.2 and 4.6 definite instead of conditional.
+- **Q7** added a row to 4.4 for the suppression count.
+
+**One correction that is not a decision, made while amending and recorded so it is not
+mistaken for one.** Applying clause (c) to 3.3's table exposed a row that was wrong before
+any question was answered: "Subway, position, no VehiclePosition" was marked as having no
+clock and therefore non-gated. It is not. `feeds/subway.py:155-175` places EVERY subway
+train from its trip update, so a train with no vehicle entity is dated by its group's header
+exactly like a prediction, not left undated. That row is now age-gated, which moves the
+tally to eleven gated and four not, removes the 62 trains from every list of undated
+observations, and leaves **Metro-North as the only wholly undated system**, so the
+per-system clause Q5 introduced applies to exactly one source today. The first draft of the
+amended rule left those 62 trains qualified nowhere; this closes that hole rather than
+documenting it.
+
+**One consequence of Q5 worth stating on its own, because it is the largest rider-visible
+effect of any answer here.** Had Q5 been answered yes, which is what section 3.2 originally
+proposed, Metro-North's 33 markers and its 926 arrival rows would each have carried a
+permanent "age unknown". Under the answer none of them does, and Metro-North states it once
+on its system line instead. That trades per-observation precision for a qualifier
+vocabulary a rider still reads when it appears, and the bet is that a word seen rarely is
+believed and a word seen everywhere is not. If that bet is wrong it will show up as riders
+trusting an undated Metro-North marker exactly as much as a dated LIRR one, which is
+measurable and worth revisiting rather than arguing about in advance.
+
+---
+
+**Nothing here is built yet.** This is the design the Release 1 order put at item 7, and
+the two items it blocks are items 8 and 9. With the eight questions settled the build can
+start at 6.0, the bus probe, which Q6 made a gate rather than a note.

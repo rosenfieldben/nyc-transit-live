@@ -9,7 +9,7 @@ shelf life.
 bash docs/reviews/audit-2026-09-05/run_all.sh      # from the repository root
 ```
 
-Fourteen scripts, about sixteen seconds. Each one exits 0 while the finding still
+Fifteen scripts, about sixteen seconds. Each one exits 0 while the finding still
 behaves the way the table records it, and non-zero the moment the code stops
 matching. So these are regression checks on the audit record, not one-off prints: a
 red run means the table is stale, which is the only failure mode that matters once
@@ -20,6 +20,16 @@ its own with `.venv/bin/python <script>` or `node <script>`.
 None of them is wired into CI. They pin the state of a set of open defects, so they
 are expected to start failing as those defects are fixed, and a check that is
 supposed to go red is a bad gate.
+
+**Fourteen of the fifteen are reproductions; the fifteenth is a PROBE and the
+difference is worth keeping straight.** `probe_bus_observation_clock.py` re-derives
+the buses row of the age policy in section 3.3 of
+[../../design/freshness-contract.md](../../design/freshness-contract.md), which that
+design could not write because no bus feed had ever been captured here. It has no
+before and no after, it pins no defect, and nothing is expected to make it go red
+when a fix lands. It goes red only if its committed capture stops supporting the row
+that cites it, which is the same contract every other script here has and the reason
+it lives beside them rather than in a directory of its own.
 
 **If you add a script here, scope every tree scan away from this directory.** These
 files are tracked, they quote the symbols and the comment text they are scanning
@@ -37,7 +47,10 @@ that the scan cannot see itself. Every other script scans only `backend/` or
   defaults to `.venv/bin/python`; override with `PY=/path/to/python`.
 - Node 20 or newer for the two `.mjs` scripts (F11 and F12).
 - No network, no credential, no live upstream, no running server. Every reproduction
-  drives production code over committed fixtures or an explicitly injected fault.
+  drives production code over committed fixtures or an explicitly injected fault, and
+  the one probe measures a committed capture with `gtfs_realtime_pb2` alone. The
+  capture behind the probe was fetched once, by hand, and its request and response
+  instants are recorded in that script's header so nothing has to fetch it again.
 - **No NJ Transit mint can be spent here.** The account is capped at ten mints a day
   and six are already committed (see the NJ Transit section of the README), so the
   NJT reproductions use fake transports and fake mint callbacks, point every NJT
@@ -112,9 +125,13 @@ NJT_SOCKET_TRACE=/tmp/sockets.log \
   PY=backend/.venv/bin/python bash docs/reviews/audit-2026-09-05/run_all.sh
 ```
 
-Measured on a checkout whose `.env` holds real RailData credentials, with nothing
-blanked in the shell: fourteen passed, twelve interpreters instrumented, **zero**
-hostname resolutions and **zero** socket connections of any kind.
+Measured on 2026-09-12, on a checkout whose `.env` holds real RailData credentials
+and a real Bus Time key, with nothing blanked in the shell: fifteen passed, thirteen
+interpreters instrumented, **zero** hostname resolutions and **zero** socket
+connections of any kind. The thirteen are the Python scripts; the two `.mjs` ones run
+under node, which this hook does not instrument. The count moved from twelve because
+the bus probe is the thirteenth Python script, and it is the one script here whose
+FIXTURE came off the network, which is exactly why it was worth re-running this.
 
 ## The scripts
 
@@ -134,6 +151,7 @@ hostname resolutions and **zero** socket connections of any kind.
 | `f12_stale_error_body_overwrites.mjs` | F12 | The production `fetchPanelArrivals` in a `node:vm`, with response headers and body delivered separately. |
 | `f13_healthcheck_recovery_gap.py` | F13 | A mechanical comment inventory over tracked files, and the real app lifespan with the poll task killed underneath it. |
 | `f14_accessibility_gaps.py` | F14 | The real frontend in a `node:vm`, driven through twenty-eight rider actions via the page's own handlers. |
+| `probe_bus_observation_clock.py` | 6.0 | The committed OneBusAway capture, measured with `gtfs_realtime_pb2` alone, against the Metro-North capture as the copied-header control. |
 
 The Railway healthcheck citation behind F13 is recorded in that script's header
 comment rather than fetched at runtime, so the script stays offline. Re-read the

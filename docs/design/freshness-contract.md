@@ -163,10 +163,10 @@ This is the section the contract has to be built on rather than around. Every ro
 was measured from a capture committed to this repository, parsed directly from the
 protobuf, or read out of the decoder that consumes it. GTFS-Realtime makes both
 `VehiclePosition.timestamp` and `TripUpdate.timestamp` optional, and our providers
-disagree about them completely: one supplies both, two supply a vehicle clock and no
+disagree about them completely: one supplies both, THREE supply a vehicle clock and no
 prediction clock, one supplies a prediction clock and has no vehicles at all, one supplies
-neither while having the best header in the set, one supplies a value that carries no
-information, and one we have not measured.
+neither while having the best header in the set, and one supplies a value that carries no
+information at all.
 
 | System | Observation | Per-observation time in the feed | Measured on the committed capture | Read by the decoder today |
 | --- | --- | --- | --- | --- |
@@ -181,7 +181,7 @@ information, and one we have not measured.
 | PATH | Placed position | `trip_update.timestamp` | **53 of 53 and 55 of 55 set** | **No** |
 | NYC Ferry | GPS position | `vehicle.timestamp` | 28 of 28 set, 1s to 15s old | **Yes**, as `updated_at` |
 | NYC Ferry | Prediction | `trip_update.timestamp` | **0 of 50 set** | No |
-| Buses | GPS position | `VehiclePosition.timestamp` | **no committed capture: unmeasured** | No |
+| Buses | GPS position | `VehiclePosition.timestamp` | **2136 of 2136 set**, 47 distinct values over 104s | **No** |
 | Alerts | Alert | none in the GTFS-RT alert message | 9 and 37 alerts, no per-alert time | n/a |
 
 ### 2.1 Long Island Rail Road
@@ -381,14 +381,25 @@ OneBusAway's GTFS-Realtime endpoint (`backend/feeds/buses.py:11-15`,
 `VehiclePosition.timestamp`. `fetch_vehicle_positions` reads `position`, the NYC box, the
 route and the bearing, and does not read `timestamp`.
 
-**There is no committed bus capture, so whether OneBusAway populates that field is
-unmeasured here.** Every other row in the table above was measured; this one cannot be,
-and the honest consequence is that **the buses row of the age policy in section 3.3 cannot
-be written yet.** It is a capture, not a decision: one probe of the live endpoint, counting
-how many vehicles carry a timestamp and how far each sits from the header, settles it the
-way the 2026-08-05 NJT probe settled the freshness budget. Until then buses take the
-"no observation clock" row, which is the safe direction, and the probe is listed in section
-6 as a prerequisite rather than assumed away.
+**It populates it on every vehicle, and the clock is a good one.** The probe section 6.0
+called for was taken on 2026-09-12 and committed as
+`backend/tests/fixtures/bus_vehicle_positions.pb` (280965 bytes, 2136 entities, header
+`1789230515`). Measured from those bytes: **2136 of 2136 entities carry a position and all
+2136 carry `VehiclePosition.timestamp`**, across 47 distinct values spanning 104 seconds.
+The ages against the header run 0s to 104s with a median of 15s and a p95 of 29s; **one**
+observation of 2136 exceeds 90 seconds and **none** exceeds 600.
+
+**It is not the Metro-North pattern, and the probe says so against the Metro-North capture
+rather than by assertion.** None of the 2136 is ahead of the header and exactly 20 tie it,
+which is not a copy but an artifact of how the header is built: **the header equals the
+newest observation exactly**, so it is a generation time computed from the content rather
+than a write time advancing on its own, which is the PATH failure mode this contract has to
+tell apart. By the origin's own clock the feed it served was 5 seconds old (its `Date`
+header minus the feed header); our own read instant sits 15.7s behind it, but 0.247s of
+that was round trip and the rest is skew between two machines, so the same-clock number is
+the one the policy uses. `docs/reviews/audit-2026-09-05/probe_bus_observation_clock.py`
+re-derives all of it from the committed bytes and exits non-zero if any of it stops
+holding.
 
 ### 2.8 Service alerts
 
@@ -418,21 +429,21 @@ Five things fall out, and they set the shape of the contract:
 1. **No single rule can cover these providers, or even one provider's whole fleet.** LIRR
    dates everything, Metro-North dates nothing, subway dates 98 of its 160 trips and not
    the other 62, PATH dates the prediction and has no vehicle, NJ Transit dates neither and
-   has a very good header, ferry dates the boat and not the dock. A per-provider policy TABLE is not a convenience here, it is the
-   only correct form.
+   has a very good header, ferry dates the boat and not the dock, and buses date every one
+   of 2136. A per-provider policy TABLE is not a convenience here, it is the only correct
+   form.
 2. **Absence of a PER-OBSERVATION clock has to be a first-class state, and it is not the
-   same as having no clock at all.** `observed_at` is null for Metro-North and (pending the
-   probe) for buses. Subway predictions, the subway trains with no VehiclePosition, NJ
-   Transit and ferry docks have no per-observation time either, but they do have a HEADER
-   their provider actually sent, and 3.3 ages them against that rather than against
-   nothing. The distinction decides which rows are age-gated, and therefore, through
+   same as having no clock at all.** `observed_at` is null for Metro-North and for nothing
+   else. Subway predictions, the subway trains with no VehiclePosition, NJ Transit and ferry
+   docks have no per-observation time either, but they do have a HEADER their provider
+   actually sent, and 3.3 ages them against that rather than against nothing. The distinction decides which rows are age-gated, and therefore, through
    clause (c) of the rule in 3.2, what a rider is told.
 3. **A per-observation time is not automatically better than a header.** Metro-North's
    per-vehicle value is a copy, and using it would be strictly worse than using nothing.
    The policy has to name which clock each provider's rule reads.
-4. **Four clocks already exist and three of them are read by nothing.** LIRR's, the
-   subway's and PATH's are decoded past and discarded; ferry's is carried all the way to
-   the wire as `updated_at` and read by no surface. Part of this contract is already
+4. **Five clocks already exist and four of them are read by nothing.** LIRR's, the
+   subway's, PATH's and the buses' are decoded past and discarded; ferry's is carried all
+   the way to the wire as `updated_at` and read by no surface. Part of this contract is already
    sitting in the payload.
 5. **There is no uncertainty channel to lean on.** GTFS-Realtime offers
    `StopTimeEvent.uncertainty`, and no provider here populates it: 0 of 1501 LIRR
@@ -462,8 +473,8 @@ failure this contract exists to prevent. `None` means "this provider does not da
 observation".
 
 **Null is narrower than "has no per-observation clock", and 3.3 is where the difference is
-decided.** `observed_at` is null for Metro-North positions and predictions, and (pending a
-probe) for buses. Subway predictions, the 62 subway trains with no VehiclePosition, NJ
+decided.** `observed_at` is null for Metro-North positions and predictions, and for nothing
+else. Subway predictions, the 62 subway trains with no VehiclePosition, NJ
 Transit and ferry dock arrivals have no per-observation clock either, but their providers DO
 send a header, so 3.3 ages them against that and their `observed_at` is the header rather
 than null. Only the first group is null, and only the first group is non-gated.
@@ -662,17 +673,23 @@ decoder, not branched on in it:
 | PATH | Prediction | `trip_update.timestamp` | **Yes** | Same field, same reason. 12 of 55 on the rush capture already exceed 90s. |
 | NYC Ferry | GPS position | `vehicle.timestamp` (served today as `updated_at`) | **Yes** | 28 of 28 independent. The field already exists; only the rule and the rendering are new. |
 | NYC Ferry | Dock arrival | TripUpdates header | **Yes** | 0 of 50 self-dated, and the audit's remedy names this explicitly: age against the TripUpdates clock, not the boat clock. |
-| Buses | GPS position | **undetermined** | **Pending a probe** | No committed capture. The row is written after one probe of the live endpoint, not before. |
+| Buses | GPS position | `vehicle.timestamp` | **Yes** | Measured 2026-09-12: 2136 of 2136 self-dated, 47 distinct values over 104s, median 15s, p95 29s, 1 over 90s and 0 over 600s. The capture is `backend/tests/fixtures/bus_vehicle_positions.pb`; `probe_bus_observation_clock.py` re-derives it. |
 | Alerts | Alert | alert feed header, carried but not gated | **No**, retention only | GTFS-RT alerts carry no time. `active_period` is about the world, not the observation. `observed_at` is served so a consumer has it; no age rule fires, and what a rider is shown about an old alert is the retained SOURCE label F11 already ships. |
 
-**Eleven of the fifteen rows are age-gated and four are not**, and the split is the input to
-clause (c) of the rule in 3.2, so it is worth reading off precisely. THREE rows have no
-clock of any kind behind them: both Metro-North rows and buses pending its probe. A fourth,
-alerts, is governed by retention rather than by age because a GTFS-RT alert carries no time
-to gate on. **Metro-North is therefore the only SYSTEM that is wholly undated**, which is
-what makes the per-system clause in 3.2 apply to exactly one source today.
+**Twelve of the fifteen rows are age-gated and three are not**, and the split is the input
+to clause (c) of the rule in 3.2, so it is worth reading off precisely. TWO rows have no
+clock of any kind behind them, and both are Metro-North's. A third, alerts, is governed by
+retention rather than by age because a GTFS-RT alert carries no time to gate on.
+**Metro-North is therefore the only SYSTEM that is wholly undated**, which is what makes the
+per-system clause in 3.2 apply to exactly one source today.
 
-**None of those four is a gap to be filled later.** They are measurements. Writing a rule
+**The buses row was the last one written and it is the reason that sentence is short.** It
+said "pending a probe" until 2026-09-12; the probe ran, OneBusAway dates every observation
+it sends, and the row is now the same shape as LIRR's. Had it come back the other way,
+Metro-North would not have been alone and the per-system clause would have had to carry the
+largest fleet in the application.
+
+**Neither of the remaining two is a gap to be filled later.** They are measurements. Writing a rule
 for Metro-North positions would require a clock Metro-North does not send.
 
 **This collides with a decision the repository has already made, deliberately, twice.**
@@ -838,7 +855,7 @@ came to be missing `served_at` in the first place.
 | `feeds/njt.py` | Emit `provenance: "placed"` (or `"estimated"` on the interpolated segment) and the header as `observed_at`. No new clock: the header is the only one. |
 | `feeds/path.py` | Read `tu.timestamp` per entity. This is the one decoder where the new clock is strictly better than the envelope clock it has. |
 | `feeds/ferry.py` | Rename `updated_at` to `observed_at` (Q1), serving the old key alongside it for one release, and carry the TripUpdates header onto dock arrivals rather than letting them inherit the boat clock. |
-| `feeds/buses.py` | Blocked on the probe in 6.0. |
+| `feeds/buses.py` | Unblocked by the 6.0 probe. Read `v.timestamp` in `fetch_vehicle_positions` beside the `position`, the NYC box and the bearing it already reads, and emit it as `observed_at` with provenance `reported`. The smallest decoder change in this table: one field, on the largest fleet. Note that buses now have a committed capture but still no GOLDEN, so unlike every other system there is no expected-output file to move and nothing that would catch a silent shape change. |
 | `feeds/alerts.py` | Emit the feed clock as `observed_at`; mark retained alerts `retained`. |
 
 **The two railroad passes must share one set, and that is the whole of N2's fix.** Today
@@ -1112,6 +1129,25 @@ than a decision nobody has made.
 **Acceptance:** the buses row of the age policy table is written from a measurement and
 cites the capture, like every other row.
 
+**DONE, 2026-09-12.** `backend/tests/fixtures/bus_vehicle_positions.pb`, 280965 bytes,
+fetched once. All 2136 entities carry a position and a `VehiclePosition.timestamp`, 47
+distinct values across 104 seconds, median age 15s, p95 29s, 1 of 2136 over 90s and 0 over
+600s; the header equals the newest observation, so it is a generation time. The row is in
+3.3 and 2.7 carries the reading.
+`docs/reviews/audit-2026-09-05/probe_bus_observation_clock.py` re-derives every number from
+the committed bytes and exits non-zero if one stops holding. **The gate is cleared: 6.1 can
+start.**
+
+**What the answer bought, since a gate that changes nothing is not worth being a gate.**
+Buses are the largest fleet in the application, 2136 vehicles against 68 LIRR trains on
+their capture, and they are the fleet a rider is most likely to be looking at. Had the
+field been absent, every one of those markers would have been undated and the per-system
+clause from Q5 would have had to speak for the whole bus layer. Instead the row costs
+riders almost nothing today: at `OBS_FRESH_S` 90 exactly one observation of 2136 would be
+qualified, and at `OBS_MAX_S` 600 none would be dropped. **The gate was worth running
+precisely because that outcome was not knowable in advance**, and the cheap answer, assuming
+buses were undated and rendering them so, would have been wrong about 2135 markers.
+
 ### 6.1 `SystemFreshness` and the models
 
 `observed_at`, `provenance` and `SystemFreshness.feed_timestamp` on the models; the
@@ -1190,7 +1226,7 @@ not the design changing direction.
 | Q3 | **Yes** | `retained` wins the provenance field. A retained GPS position reports `retained`, not `reported`; `SystemFreshness.retained_since` carries the timing for anyone who needs it. |
 | Q4 | **Yes, 90** | The estimate step uses `OBS_FRESH_S`, so there is one freshness number rather than two. 6 estimated markers on the committed capture, not 8 or 11. |
 | Q5 | **No** | A non-gated provider is SILENT at the marker and the fact is carried once on its per-system line. 3.2 had proposed the opposite and is amended accordingly. |
-| Q6 | **Yes** | The bus probe in 6.0 blocks the build. Buses get a measured policy row or the work does not start. |
+| Q6 | **Yes**, and the probe has since run | The bus probe in 6.0 blocked the build. It was taken on 2026-09-12 and OneBusAway dates every observation it sends: 2136 of 2136 positioned vehicles carry `VehiclePosition.timestamp`, median age 15s, 1 over 90s, 0 over 600s, and its header is a generation time rather than a write time. The buses row of 3.3 is written and age-gated, so the gate is cleared and 6.1 can start. |
 | Q7 | **Yes** for the status line, **no** for the map | A suppression count reaches the status line so a rider can tell an empty branch from a filtered one. Nothing reaches the map, which would reintroduce the ghost. |
 | Q8 | **No** | The first provenance value is **`reported`**, not `live-gps`. 3.1 had proposed `live-gps` and is amended accordingly. The rider string "live GPS" is unchanged on the surfaces that already say it. |
 

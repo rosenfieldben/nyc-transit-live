@@ -45,13 +45,22 @@ _NO_DATA = pb.TripUpdate.StopTimeUpdate.ScheduleRelationship.NO_DATA
 _CANCELED = pb.TripDescriptor.ScheduleRelationship.CANCELED
 
 
-def _path_entity(feed, trip_id, route_id="862", direction_id=None, stops=(), canceled=False):
+def _path_entity(
+    feed, trip_id, route_id="862", direction_id=None, stops=(), canceled=False, observed_at=NOW
+):
     """Add a bridge-style trip_update entity. stops = [(stop_id, time | None
     [, schedule_rel]), ...]; the real bridge carries exactly one stop per
-    entity, so most tests pass a single-item list."""
+    entity, so most tests pass a single-item list.
+
+    `observed_at` stamps TripUpdate.timestamp, which the real bridge sets on every
+    entity of every committed capture (53 of 53 and 55 of 55) and which contract 6.1
+    reads as the row's observation time. Pass 0 to build the undated entity the
+    fallback exists for."""
     ent = feed.entity.add()
     ent.id = trip_id
     tu = ent.trip_update
+    if observed_at:
+        tu.timestamp = int(observed_at)
     tu.trip.trip_id = trip_id
     tu.trip.route_id = route_id
     if direction_id is not None:
@@ -253,7 +262,15 @@ def test_arrival_rows_carry_route_and_absolute_time_and_never_the_bridge_hash():
     # and since the 13d cleanup it appears in no served payload at all (the
     # trains side carries the matcher's synthetic id instead). The exact-dict
     # equality is the pin: a reintroduced hash fails here.
-    assert row == {"route_id": "859", "arrival": NOW + 90}
+    assert row == {
+        "route_id": "859",
+        "arrival": NOW + 90,
+        # The producing entity's own TripUpdate.timestamp (contract 3.3), not the
+        # bridge's write time: the envelope clock advances every regeneration whether
+        # or not anything upstream moved, so it can never age a row.
+        "observed_at": NOW,
+        "provenance": "reported",
+    }
 
 
 def test_arrivals_sorted_and_capped_per_bucket():
@@ -524,6 +541,12 @@ def _mtrain(stop, at, route="862", direction="To New Jersey", trip="raw"):
         "prev_lon": None,
         "prev_time": None,
         "next_time": at,
+        # This fixture stands in for DECODER output, which carries the contract pair
+        # since 6.1, and match_path_identities reads both across to the served row.
+        # `at` is None on the untimed placements these tests also build, so the clock
+        # follows it rather than being derived from it.
+        "observed_at": None if at is None else at - 60.0,
+        "provenance": "placed",
     }
 
 
@@ -550,6 +573,8 @@ def test_matcher_serves_stable_id_and_never_the_bridge_hash():
             "prev_lon",
             "prev_time",
             "next_time",
+            "observed_at",
+            "provenance",
         }
     ]
     assert served[0]["id"] == "t-1"  # epoch-prefixed mint, not derived from the hash

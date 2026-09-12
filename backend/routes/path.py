@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import re
+import time
 
 from fastapi import APIRouter, HTTPException, Request, Response
 
-from cache import _require_filled_cache, _serve_cached, _static_endpoint_ready
+from cache import (
+    _oldest_row_observed_at,
+    _require_filled_cache,
+    _serve_cached,
+    _static_endpoint_ready,
+)
 from models import PathFeed, PathRoute, PathStationArrivals, PathStop
 
 router = APIRouter()
@@ -106,9 +112,19 @@ async def get_path_arrivals(request: Request, stop_id: str) -> dict:
     stops = getattr(app.state, "path_stops", None) or {}
     if not _PATH_STATION_ID_RE.match(stop_id) or stop_id not in stops:
         raise HTTPException(status_code=404, detail=f"Unknown PATH station {stop_id}.")
+    rows = (getattr(app.state, "path_arrivals", None) or {}).get(stop_id, {})
     return {
         "fetched_at": entry["fetched_at"],
+        # FROM THE ROWS, NOT THE ENVELOPE. This source has no per-system block, and
+        # its envelope clock is the bridge's WRITE time, which advances every
+        # regeneration whether or not anything upstream moved. The rows carry the
+        # producing entity's own TripUpdate.timestamp, which is the only PATH clock
+        # an age can honestly be computed from.
+        "feed_timestamp": _oldest_row_observed_at(rows),
         "stop_id": stop_id,
         "stop_name": stops[stop_id]["name"],
-        "directions": (getattr(app.state, "path_arrivals", None) or {}).get(stop_id, {}),
+        "directions": rows,
+        "served_at": time.time(),
+        # No systems block exists for PATH: it is one feed, and no poller writes one.
+        "systems": None,
     }

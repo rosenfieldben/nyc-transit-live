@@ -106,6 +106,7 @@ from feeds.shared import (
     _trip_start_ts,
     carry_forward_prev,
     drop_expired_arrivals,
+    iter_rows,
     logger,
     merge_system_generations,
     parse_feed,
@@ -151,6 +152,7 @@ __all__ = [
     "carry_forward_prev",
     "combine_group_arrivals",
     "combine_group_trains",
+    "iter_rows",
     "merge_system_generations",
     "drop_expired_arrivals",
     # The strict parse boundary every decoder goes through (C3).

@@ -16,7 +16,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782006780.0
+"next_time": 1782006780.0,
+"observed_at": null,
+"provenance": "placed"
 }
 ]
 }

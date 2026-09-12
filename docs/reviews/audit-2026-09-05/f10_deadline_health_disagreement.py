@@ -259,6 +259,10 @@ def make_healthy_subway_fetch(now_fn):
             [],  # failed_feeds: a fully healthy poll
             trains_by_group,
             arrivals_by_group,
+            # Contract 6.1 widened this tuple with the per-group content clock the
+            # aggregator used to fold away. Every group decoded here, so every group
+            # reports the same header.
+            dict.fromkeys(trains_by_group, now - SUBWAY_CONTENT_LAG_S),
         )
 
     return fetch_subway_trains
@@ -355,6 +359,8 @@ def age_subway_entry() -> None:
     for block in (entry.get("systems") or {}).values():
         if block["fetched_at"] is not None:
             block["fetched_at"] -= SUBWAY_POLL_AGE_S
+        if block.get("feed_timestamp") is not None:
+            block["feed_timestamp"] -= SUBWAY_POLL_AGE_S
 
 
 async def serve(path: str) -> httpx.Response:

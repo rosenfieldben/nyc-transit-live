@@ -4,10 +4,16 @@ plus live boats and per-dock arrivals (14b realtime)."""
 from __future__ import annotations
 
 import re
+import time
 
 from fastapi import APIRouter, HTTPException, Request, Response
 
-from cache import _require_filled_cache, _serve_cached, _static_endpoint_ready
+from cache import (
+    _oldest_row_observed_at,
+    _require_filled_cache,
+    _serve_cached,
+    _static_endpoint_ready,
+)
 from models import FerryFeed, FerryRoute, FerryStationArrivals, FerryStop
 
 router = APIRouter()
@@ -101,9 +107,18 @@ async def get_ferry_arrivals(request: Request, stop_id: str) -> dict:
     stops = getattr(app.state, "ferry_stops", None) or {}
     if not _FERRY_STOP_ID_RE.match(stop_id) or stop_id not in stops:
         raise HTTPException(status_code=404, detail=f"Unknown NYC Ferry stop {stop_id}.")
+    rows = (getattr(app.state, "ferry_arrivals", None) or {}).get(stop_id, {})
     return {
         "fetched_at": entry["fetched_at"],
+        # FROM THE ROWS, AND THE ROWS CARRY THE TRIPUPDATES HEADER. The envelope's
+        # feed_timestamp is the VehiclePositions header: it dates the BOATS, and a
+        # dock prediction aged against it would be aged against a feed it did not
+        # come from. That is the audit's F03 remedy for the ferry, in one line.
+        "feed_timestamp": _oldest_row_observed_at(rows),
         "stop_id": stop_id,
         "stop_name": stops[stop_id]["name"],
-        "routes": (getattr(app.state, "ferry_arrivals", None) or {}).get(stop_id, {}),
+        "routes": rows,
+        "served_at": time.time(),
+        # No systems block exists for the ferry: it is one all-or-nothing feed pair.
+        "systems": None,
     }

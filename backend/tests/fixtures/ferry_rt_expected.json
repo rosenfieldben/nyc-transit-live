@@ -5,6 +5,8 @@
 {
 "arrival": 1783811971.0,
 "departure": 1783812026.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "SB",
 "trip_id": "1209"
 }
@@ -13,6 +15,8 @@
 {
 "arrival": 1783812003.0,
 "departure": 1783812026.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "SG",
 "trip_id": "983"
 }
@@ -23,6 +27,8 @@
 {
 "arrival": 1783811745.0,
 "departure": 1783812026.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "RS",
 "trip_id": "700"
 }
@@ -33,12 +39,16 @@
 {
 "arrival": 1783812462.0,
 "departure": 1783812720.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "AS",
 "trip_id": "1152"
 },
 {
 "arrival": 1783814786.0,
 "departure": 1783815180.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "AS",
 "trip_id": "1153"
 }
@@ -49,6 +59,8 @@
 {
 "arrival": 1783811906.0,
 "departure": 1783812026.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "RS",
 "trip_id": "704"
 }
@@ -59,18 +71,24 @@
 {
 "arrival": 1783812287.0,
 "departure": null,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "RS",
 "trip_id": "705"
 },
 {
 "arrival": 1783812341.0,
 "departure": null,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "RS",
 "trip_id": "744"
 },
 {
 "arrival": 1783814340.0,
 "departure": null,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "RS",
 "trip_id": "1802"
 }
@@ -81,12 +99,16 @@
 {
 "arrival": 1783811922.0,
 "departure": 1783812026.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "AS",
 "trip_id": "1138"
 },
 {
 "arrival": 1783812651.0,
 "departure": null,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "AS",
 "trip_id": "1151"
 }
@@ -97,12 +119,16 @@
 {
 "arrival": 1783812297.0,
 "departure": null,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "SG",
 "trip_id": "961"
 },
 {
 "arrival": 1783812442.0,
 "departure": null,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "SG",
 "trip_id": "982"
 }
@@ -113,6 +139,8 @@
 {
 "arrival": 1783813464.0,
 "departure": 1783813740.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "SG",
 "trip_id": "962"
 }
@@ -123,6 +151,8 @@
 {
 "arrival": 1783812188.0,
 "departure": 1783812720.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "RS",
 "trip_id": "746"
 }
@@ -133,6 +163,8 @@
 {
 "arrival": 1783812292.0,
 "departure": null,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "RES",
 "trip_id": "1455"
 }
@@ -143,6 +175,8 @@
 {
 "arrival": 1783815315.0,
 "departure": 1783815480.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "RES",
 "trip_id": "1457"
 }
@@ -153,36 +187,48 @@
 {
 "arrival": 1783812166.0,
 "departure": null,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "ER",
 "trip_id": "487"
 },
 {
 "arrival": 1783812180.0,
 "departure": 1783812480.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "ER",
 "trip_id": "548"
 },
 {
 "arrival": 1783813144.0,
 "departure": 1783813200.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "ER",
 "trip_id": "549"
 },
 {
 "arrival": 1783813740.0,
 "departure": 1783814040.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "ER",
 "trip_id": "550"
 },
 {
 "arrival": 1783814344.0,
 "departure": 1783814760.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "ER",
 "trip_id": "551"
 },
 {
 "arrival": 1783815177.0,
 "departure": 1783815600.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "ER",
 "trip_id": "552"
 }
@@ -191,6 +237,8 @@
 {
 "arrival": 1783812386.0,
 "departure": null,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "RS",
 "trip_id": "745"
 }
@@ -199,18 +247,24 @@
 {
 "arrival": 1783812032.0,
 "departure": null,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "SB",
 "trip_id": "1229"
 },
 {
 "arrival": 1783812041.0,
 "departure": 1783812360.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "SB",
 "trip_id": "1210"
 },
 {
 "arrival": 1783814208.0,
 "departure": 1783814400.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "SB",
 "trip_id": "1211"
 }
@@ -221,6 +275,8 @@
 {
 "arrival": 1783812023.0,
 "departure": 1783812026.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "ER",
 "trip_id": "547"
 }
@@ -231,12 +287,16 @@
 {
 "arrival": 1783811883.0,
 "departure": 1783812026.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "ER",
 "trip_id": "546"
 },
 {
 "arrival": 1783811963.0,
 "departure": 1783812026.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "ER",
 "trip_id": "488"
 }
@@ -247,12 +307,16 @@
 {
 "arrival": 1783811651.0,
 "departure": 1783812026.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "ER",
 "trip_id": "545"
 },
 {
 "arrival": 1783811689.0,
 "departure": 1783812026.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "ER",
 "trip_id": "489"
 }
@@ -263,12 +327,16 @@
 {
 "arrival": 1783812024.0,
 "departure": 1783812026.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "SB",
 "trip_id": "1231"
 },
 {
 "arrival": 1783813972.0,
 "departure": 1783814340.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "SB",
 "trip_id": "1232"
 }
@@ -277,6 +345,8 @@
 {
 "arrival": 1783812023.0,
 "departure": 1783812026.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "SG",
 "trip_id": "960"
 }
@@ -287,6 +357,8 @@
 {
 "arrival": 1783811743.0,
 "departure": 1783812026.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "SB",
 "trip_id": "1230"
 }
@@ -297,6 +369,8 @@
 {
 "arrival": 1783813370.0,
 "departure": 1783813680.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "RES",
 "trip_id": "1405"
 }
@@ -307,6 +381,8 @@
 {
 "arrival": 1783813370.0,
 "departure": 1783813920.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "AS",
 "trip_id": "1139"
 }
@@ -315,30 +391,40 @@
 {
 "arrival": 1783812024.0,
 "departure": 1783812180.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "ER",
 "trip_id": "490"
 },
 {
 "arrival": 1783812264.0,
 "departure": 1783812960.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "ER",
 "trip_id": "491"
 },
 {
 "arrival": 1783813267.0,
 "departure": 1783813740.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "ER",
 "trip_id": "492"
 },
 {
 "arrival": 1783813953.0,
 "departure": 1783814520.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "ER",
 "trip_id": "493"
 },
 {
 "arrival": 1783814645.0,
 "departure": 1783815300.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "ER",
 "trip_id": "494"
 }
@@ -347,6 +433,8 @@
 {
 "arrival": 1783812281.0,
 "departure": null,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "RS",
 "trip_id": "694"
 }
@@ -355,6 +443,8 @@
 {
 "arrival": 1783813534.0,
 "departure": 1783813740.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "SG",
 "trip_id": "984"
 }
@@ -365,24 +455,32 @@
 {
 "arrival": 1783812057.0,
 "departure": null,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "RS",
 "trip_id": "742"
 },
 {
 "arrival": 1783812061.0,
 "departure": 1783813020.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "RS",
 "trip_id": "707"
 },
 {
 "arrival": 1783813777.0,
 "departure": null,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "RS",
 "trip_id": "1805"
 },
 {
 "arrival": 1783813781.0,
 "departure": 1783814640.0,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "RS",
 "trip_id": "1803"
 }
@@ -393,6 +491,8 @@
 {
 "arrival": 1783812027.0,
 "departure": null,
+"observed_at": 1783812024.0,
+"provenance": "reported",
 "route_id": "AS",
 "trip_id": "1137"
 }
@@ -405,6 +505,8 @@
 "label": "H200",
 "latitude": 40.692291259765625,
 "longitude": -74.00226593017578,
+"observed_at": 1783812022.0,
+"provenance": "reported",
 "route_id": "SB",
 "speed": 0.0,
 "status": "STOPPED_AT",
@@ -416,6 +518,8 @@
 "label": "H201",
 "latitude": 40.74579620361328,
 "longitude": -73.96804809570312,
+"observed_at": 1783812019.0,
+"provenance": "reported",
 "route_id": "SB",
 "speed": 6.0,
 "status": "IN_TRANSIT_TO",
@@ -427,6 +531,8 @@
 "label": "H101",
 "latitude": 40.72090148925781,
 "longitude": -73.96514129638672,
+"observed_at": 1783812023.0,
+"provenance": "reported",
 "route_id": "ER",
 "speed": 0.0,
 "status": "STOPPED_AT",
@@ -438,6 +544,8 @@
 "label": "H104",
 "latitude": 40.70305252075195,
 "longitude": -74.0065689086914,
+"observed_at": 1783812009.0,
+"provenance": "reported",
 "route_id": "ER",
 "speed": 0.0,
 "status": "STOPPED_AT",
@@ -449,6 +557,8 @@
 "label": "H105",
 "latitude": 40.692466735839844,
 "longitude": -74.00227355957031,
+"observed_at": 1783812013.0,
+"provenance": "reported",
 "route_id": "SG",
 "speed": 1.0,
 "status": "STOPPED_AT",
@@ -460,6 +570,8 @@
 "label": "H106",
 "latitude": 40.681121826171875,
 "longitude": -74.01332092285156,
+"observed_at": 1783812012.0,
+"provenance": "reported",
 "route_id": "SB",
 "speed": 0.0,
 "status": "STOPPED_AT",
@@ -471,6 +583,8 @@
 "label": "H107",
 "latitude": 40.70370101928711,
 "longitude": -73.9955062866211,
+"observed_at": 1783812012.0,
+"provenance": "reported",
 "route_id": "ER",
 "speed": 0.0,
 "status": "STOPPED_AT",
@@ -482,6 +596,8 @@
 "label": "H109",
 "latitude": 40.68404006958008,
 "longitude": -74.01571655273438,
+"observed_at": 1783812021.0,
+"provenance": "reported",
 "route_id": "RS",
 "speed": 12.0,
 "status": "IN_TRANSIT_TO",
@@ -493,6 +609,8 @@
 "label": "H203",
 "latitude": 40.77130126953125,
 "longitude": -73.93629455566406,
+"observed_at": 1783812023.0,
+"provenance": "reported",
 "route_id": "AS",
 "speed": 4.0,
 "status": "IN_TRANSIT_TO",
@@ -504,6 +622,8 @@
 "label": "H206",
 "latitude": 40.640037536621094,
 "longitude": -74.03817749023438,
+"observed_at": 1783812015.0,
+"provenance": "reported",
 "route_id": "SB",
 "speed": 0.0,
 "status": "STOPPED_AT",
@@ -515,6 +635,8 @@
 "label": "H208",
 "latitude": 40.73412322998047,
 "longitude": -74.01661682128906,
+"observed_at": 1783812020.0,
+"provenance": "reported",
 "route_id": "SG",
 "speed": 9.0,
 "status": "IN_TRANSIT_TO",
@@ -526,6 +648,8 @@
 "label": "H209",
 "latitude": 40.73182678222656,
 "longitude": -73.96406555175781,
+"observed_at": 1783812023.0,
+"provenance": "reported",
 "route_id": "ER",
 "speed": 3.0,
 "status": "STOPPED_AT",
@@ -537,6 +661,8 @@
 "label": "SB406",
 "latitude": 40.582401275634766,
 "longitude": -73.83074951171875,
+"observed_at": 1783812019.0,
+"provenance": "reported",
 "route_id": "RES",
 "speed": 1.0,
 "status": "IN_TRANSIT_TO",
@@ -548,6 +674,8 @@
 "label": "H114",
 "latitude": 40.7018928527832,
 "longitude": -73.97361755371094,
+"observed_at": 1783812022.0,
+"provenance": "reported",
 "route_id": "AS",
 "speed": 0.0,
 "status": "STOPPED_AT",
@@ -559,6 +687,8 @@
 "label": "H111",
 "latitude": 40.76445770263672,
 "longitude": -73.95211029052734,
+"observed_at": 1783812019.0,
+"provenance": "reported",
 "route_id": "RS",
 "speed": 6.0,
 "status": "IN_TRANSIT_TO",
@@ -570,6 +700,8 @@
 "label": "H115",
 "latitude": 40.731773376464844,
 "longitude": -73.97289276123047,
+"observed_at": 1783812022.0,
+"provenance": "reported",
 "route_id": "RS",
 "speed": 0.0,
 "status": "STOPPED_AT",
@@ -581,6 +713,8 @@
 "label": "H113",
 "latitude": 40.743064880371094,
 "longitude": -73.96955871582031,
+"observed_at": 1783812019.0,
+"provenance": "reported",
 "route_id": "AS",
 "speed": 11.0,
 "status": "IN_TRANSIT_TO",
@@ -592,6 +726,8 @@
 "label": "H090",
 "latitude": 40.80411148071289,
 "longitude": -73.84896850585938,
+"observed_at": 1783812018.0,
+"provenance": "reported",
 "route_id": "RS",
 "speed": 0.0,
 "status": "STOPPED_AT",
@@ -603,6 +739,8 @@
 "label": "H214",
 "latitude": 40.63249588012695,
 "longitude": -74.04246520996094,
+"observed_at": 1783812023.0,
+"provenance": "reported",
 "route_id": "RS",
 "speed": 12.0,
 "status": "IN_TRANSIT_TO",
@@ -614,6 +752,8 @@
 "label": "H215",
 "latitude": 40.581756591796875,
 "longitude": -74.02680206298828,
+"observed_at": 1783812021.0,
+"provenance": "reported",
 "route_id": "RS",
 "speed": 11.0,
 "status": "IN_TRANSIT_TO",
@@ -625,6 +765,8 @@
 "label": "H119",
 "latitude": 40.72097396850586,
 "longitude": -73.96497344970703,
+"observed_at": 1783812018.0,
+"provenance": "reported",
 "route_id": "ER",
 "speed": 0.0,
 "status": "STOPPED_AT",
@@ -636,6 +778,8 @@
 "label": "H401",
 "latitude": 40.58198928833008,
 "longitude": -73.85749053955078,
+"observed_at": 1783812019.0,
+"provenance": "reported",
 "route_id": "RS",
 "speed": 12.0,
 "status": "IN_TRANSIT_TO",
@@ -647,6 +791,8 @@
 "label": "H301",
 "latitude": 40.66585159301758,
 "longitude": -74.02117156982422,
+"observed_at": 1783812019.0,
+"provenance": "reported",
 "route_id": "RS",
 "speed": 5.0,
 "status": "IN_TRANSIT_TO",
@@ -658,6 +804,8 @@
 "label": "H092",
 "latitude": 40.58377456665039,
 "longitude": -73.83489990234375,
+"observed_at": 1783812020.0,
+"provenance": "reported",
 "route_id": "RS",
 "speed": 4.0,
 "status": "IN_TRANSIT_TO",
@@ -669,6 +817,8 @@
 "label": "H501",
 "latitude": 40.703826904296875,
 "longitude": -73.99566650390625,
+"observed_at": 1783812015.0,
+"provenance": "reported",
 "route_id": "ER",
 "speed": 0.0,
 "status": "STOPPED_AT",
@@ -680,6 +830,8 @@
 "label": "H121",
 "latitude": 40.7371940612793,
 "longitude": -73.96531677246094,
+"observed_at": 1783812023.0,
+"provenance": "reported",
 "route_id": "ER",
 "speed": 10.0,
 "status": "IN_TRANSIT_TO",
@@ -691,6 +843,8 @@
 "label": "H122",
 "latitude": 40.68588638305664,
 "longitude": -74.041748046875,
+"observed_at": 1783812021.0,
+"provenance": "reported",
 "route_id": "SG",
 "speed": 11.0,
 "status": "IN_TRANSIT_TO",
@@ -702,6 +856,8 @@
 "label": "H123",
 "latitude": 40.64011764526367,
 "longitude": -74.0378646850586,
+"observed_at": 1783812023.0,
+"provenance": "reported",
 "route_id": "SG",
 "speed": 2.0,
 "status": "STOPPED_AT",

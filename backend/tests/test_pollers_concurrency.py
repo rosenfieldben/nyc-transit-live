@@ -809,13 +809,12 @@ def test_alert_health_seeds_a_system_that_gained_credentials(monkeypatch):
     # THE SAME KEYS cache._fresh_alerts_entry seeds, all four of them: everything
     # downstream reads them without a .get(), so a seeded system missing one would
     # KeyError on the first poll that touched it.
-    assert entry["health"]["njt"] == {
-        "fresh_at": None,
-        "retained_since": None,
-        "last_error": None,
-        "served_empty": None,
-    }
+    # Compared against the ONE seed shape rather than a second copy of it: the
+    # literal here and the cache's builder drifted the moment 6.1 added a key, which
+    # is the drift cache.fresh_alert_health now makes impossible.
+    assert entry["health"]["njt"] == app_module.fresh_alert_health()
     assert set(entry["health"]["njt"]) == set(entry["health"]["subway"])
+    assert "content_at" in entry["health"]["njt"], "the content clock is part of the shape"
 
 
 def test_alert_health_reconcile_leaves_a_matching_map_untouched(monkeypatch):

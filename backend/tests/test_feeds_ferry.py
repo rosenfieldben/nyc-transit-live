@@ -150,7 +150,11 @@ def test_vehicle_basic_join_populates_all_fields():
             "longitude": pytest.approx(-74.011),
             "speed": pytest.approx(6.5),
             "status": "IN_TRANSIT_TO",
+            # TWO KEYS, ONE VALUE, FOR ONE RELEASE (Q1): observed_at is the contract's
+            # name for what this decoder has served as updated_at since 14b.
             "updated_at": NOW,
+            "observed_at": NOW,
+            "provenance": "reported",
         }
     ]
 
@@ -247,6 +251,11 @@ def test_arrivals_dwell_keeps_both_times():
         "trip_id": "T-ER-1",
         "arrival": NOW + 120,
         "departure": NOW + 180,
+        # THE TRIPUPDATES HEADER, not the boat clock: the two ferry feeds are separate
+        # and separately dated, and a dock row aged against the VehiclePositions header
+        # would be aged against a feed it did not come from (the audit's F03 remedy).
+        "observed_at": NOW,
+        "provenance": "reported",
     }
 
 

@@ -80,6 +80,41 @@ def _decode_feed(
     # advance. A valid feed with zero entities still decodes normally.
     feed = parse_feed(raw)
 
+    # THE GROUP HEADER, HOISTED. It was computed only inside the return expression,
+    # which is fine while it is an envelope-level answer and useless the moment rows
+    # need it: no subway trip_update carries a timestamp of its own (0 of 160 on the
+    # committed capture), so this header is the ONLY honest clock behind every
+    # prediction below and behind every train the vehicle join does not reach.
+    feed_header = _header_timestamp(feed)
+
+    # THE VEHICLE JOIN, AND WHAT IT DOES AND DOES NOT GIVE US (contract 3.3).
+    #
+    # This feed carries VehiclePosition entities that the loop below has always
+    # skipped, because they hold no position: measured on the committed capture, all
+    # 98 of them carry `timestamp` and NONE carries a `position` field. What they do
+    # carry is the moment the MTA last observed that train at a stop, which is a real
+    # per-observation clock and strictly better than the header for the trips it
+    # covers.
+    #
+    # SO THE JOIN YIELDS A CLOCK, NEVER A POSITION. Every subway train stays placed
+    # at its trip_update's chosen stop exactly as before; this changes what a train
+    # can say about its own age, not where it is drawn.
+    #
+    # AND IT DOES NOT COVER THE FLEET. All 98 VehiclePositions join a trip_update by
+    # trip_id, but 62 of the 160 trip_updates have no VehiclePosition at all. Those 62
+    # fall back to the group header, which is the same clock their predictions use and
+    # is honest for the same reason: the position was derived from those predictions.
+    # Both halves are age-gated; neither is null. The 62 are the reason 3.3 has two
+    # subway position rows rather than one.
+    observed_by_trip: dict[str, float] = {}
+    for entity in feed.entity:
+        if not entity.HasField("vehicle"):
+            continue
+        vehicle = entity.vehicle
+        stamp = float(vehicle.timestamp) or None  # protobuf 0 is unset, not an instant
+        if stamp is not None and vehicle.trip.trip_id:
+            observed_by_trip[vehicle.trip.trip_id] = stamp
+
     trains: list[dict] = []
     arrivals: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
     for entity in feed.entity:
@@ -104,7 +139,15 @@ def _decode_feed(
             if direction is None:
                 continue  # no clean platform direction; not a station arrival
             arrivals[station_id][direction].append(
-                {"route_id": route_id, "trip_id": trip_id, "arrival": float(t)}
+                {
+                    "route_id": route_id,
+                    "trip_id": trip_id,
+                    "arrival": float(t),
+                    # The group header: this feed's predictions date nothing of their
+                    # own, so the message that carried them is the only clock there is.
+                    "observed_at": feed_header,
+                    "provenance": "reported",
+                }
             )
 
         # Placement: skip not-yet-started trips, then pick the first stop that
@@ -180,9 +223,16 @@ def _decode_feed(
                 "prev_lon": prev_lon,
                 "prev_time": prev_time,
                 "next_time": float(chosen_time) if chosen_time is not None else None,
+                # The vehicle's own stop observation where one joined, the group
+                # header where none did.
+                "observed_at": observed_by_trip.get(trip_id, feed_header),
+                # `placed` on every subway train: the position emitted two lines up is
+                # a station's own coordinates. The feed publishes no subway coordinate
+                # to be `reported`, whatever the vehicle clock says.
+                "provenance": "placed",
             }
         )
-    return trains, arrivals, _header_timestamp(feed)
+    return trains, arrivals, feed_header
 
 
 def _decode_trains(raw: bytes, stops: dict[str, dict], feed_key: str, now: float) -> list[dict]:
@@ -248,15 +298,18 @@ def _aggregate_feeds(
     dict[str, str],
     dict[str, list[dict]],
     dict[str, dict[str, dict[str, list[dict]]]],
+    dict[str, float | None],
 ]:
     """Decode every feed result, dedup trips across feeds, and merge arrivals.
 
     `results` is aligned with SUBWAY_FEED_URLS; each item is decoded protobuf
     bytes or an exception from the fetch. Returns
     (trains, arrivals, feed_timestamp, feed_errors, trains_by_group,
-    arrivals_by_group), where feed_timestamp is the OLDEST content time across
-    successfully decoded feeds and feed_errors maps each failed feed-group key to
-    its raw failure reason (empty when every feed decoded).
+    arrivals_by_group, feed_ts_by_group), where feed_timestamp is the OLDEST content
+    time across successfully decoded feeds, feed_ts_by_group is that same content time
+    kept PER GROUP (contract 6.1, so a per-system block can say which contributor is
+    behind rather than only that one is), and feed_errors maps each failed feed-group
+    key to its raw failure reason (empty when every feed decoded).
 
     THE BY-GROUP VIEWS ARE THE SOURCE OF TRUTH and the flat ones are derived from
     them (C2). The group dimension used to be discarded here, which is why a
@@ -270,6 +323,13 @@ def _aggregate_feeds(
     feed_errors: dict[str, str] = {}
     trains_by_group: dict[str, list[dict]] = {}
     arrivals_by_group: dict[str, dict[str, dict[str, list[dict]]]] = {}
+    # THE GROUP DIMENSION THE min() BELOW THROWS AWAY, kept this time. The fold is
+    # right as an ENVELOPE answer (the honest single number for a union is its worst
+    # part) and useless for the question the acceptance case asks, which is WHICH
+    # contributor is behind. Same convention as the two maps above: a key is present
+    # exactly when that group decoded, so absence means "did not decode this poll"
+    # and a None value means "decoded, and sent no header".
+    feed_ts_by_group: dict[str, float | None] = {}
     for feed_key, result in zip(SUBWAY_FEED_URLS, results):
         if isinstance(result, BaseException):
             feed_errors[feed_key] = str(result)
@@ -281,6 +341,7 @@ def _aggregate_feeds(
             continue
         if feed_ts is not None:
             timestamps.append(feed_ts)
+        feed_ts_by_group[feed_key] = feed_ts
         trains_by_group[feed_key] = feed_trains
         arrivals_by_group[feed_key] = feed_arrivals
 
@@ -292,6 +353,7 @@ def _aggregate_feeds(
         feed_errors,
         trains_by_group,
         arrivals_by_group,
+        feed_ts_by_group,
     )
 
 
@@ -304,10 +366,11 @@ async def fetch_subway_trains(
     list[str],
     dict[str, list[dict]],
     dict[str, dict[str, dict[str, list[dict]]]],
+    dict[str, float | None],
 ]:
     """Fetch all subway feeds concurrently; return (train placements,
     per-station arrivals index, feed_timestamp, failed_feeds, trains_by_group,
-    arrivals_by_group).
+    arrivals_by_group, feed_ts_by_group).
 
     failed_feeds is the sorted list of feed-group keys that failed this poll (a
     fetch error or an undecodable protobuf), empty on a fully successful poll.
@@ -332,9 +395,15 @@ async def fetch_subway_trains(
         return_exceptions=True,
     )
 
-    trains, arrivals, feed_timestamp, feed_errors, trains_by_group, arrivals_by_group = (
-        _aggregate_feeds(results, stops, now)
-    )
+    (
+        trains,
+        arrivals,
+        feed_timestamp,
+        feed_errors,
+        trains_by_group,
+        arrivals_by_group,
+        feed_ts_by_group,
+    ) = _aggregate_feeds(results, stops, now)
     if feed_errors:
         logger.warning(
             "%d of %d subway feeds failed: %s",
@@ -352,4 +421,5 @@ async def fetch_subway_trains(
         sorted(feed_errors),
         trains_by_group,
         arrivals_by_group,
+        feed_ts_by_group,
     )

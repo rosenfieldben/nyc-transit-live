@@ -49,6 +49,7 @@ from cache import (
     _sanitize_upstream,
     _serve_cached,
     _static_endpoint_ready,
+    fresh_alert_health,
 )
 from feeds import (
     ALERT_RETENTION_MAX_S,
@@ -486,6 +487,7 @@ __all__ = [
     "load_subway_station_routes",
     "_fresh_entry",
     "_fresh_alerts_entry",
+    "fresh_alert_health",
     "_feed_age",
     "_note_failure",
     "_sanitize_upstream",

@@ -4,10 +4,18 @@ per-station arrivals."""
 from __future__ import annotations
 
 import re
+import time
 
 from fastapi import APIRouter, HTTPException, Request, Response
 
-from cache import _require_filled_cache, _serve_cached, _static_endpoint_ready, _system_fetched_at
+from cache import (
+    _require_filled_cache,
+    _serve_cached,
+    _static_endpoint_ready,
+    _system_content_at,
+    _system_fetched_at,
+    _system_freshness_block,
+)
 from models import RailroadFeed, RailroadRoute, RailroadStationArrivals, RailroadStop
 
 router = APIRouter()
@@ -135,8 +143,14 @@ async def get_railroad_arrivals(request: Request, system: str, stop_id: str) -> 
         # data behind them was frozen. Falls back to the aggregate only before the
         # first poll has written a per-system block.
         "fetched_at": _system_fetched_at(entry, system),
+        # THIS SYSTEM'S OWN CONTENT TIME (6.1), by the same argument one line up:
+        # the aggregate's would let a healthy LIRR speak for a frozen MNR. Null on
+        # Metro-North, whose header is not a usable freshness signal at all.
+        "feed_timestamp": _system_content_at(entry, system),
         "system": system,
         "stop_id": stop_id,
         "stop_name": stops[stop_id]["name"],
         "directions": station_arrivals,
+        "served_at": time.time(),
+        "systems": _system_freshness_block(entry, system),
     }

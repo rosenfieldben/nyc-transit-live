@@ -16,7 +16,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782007740.0
+"next_time": 1782007740.0,
+"observed_at": 1782005195.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -32,7 +34,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782010080.0
+"next_time": 1782010080.0,
+"observed_at": 1782005682.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -48,7 +52,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782009540.0
+"next_time": 1782009540.0,
+"observed_at": 1782006850.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -64,7 +70,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782017520.0
+"next_time": 1782017520.0,
+"observed_at": 1782006841.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -80,7 +88,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782011340.0
+"next_time": 1782011340.0,
+"observed_at": 1781999660.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -96,7 +106,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782006900.0
+"next_time": 1782006900.0,
+"observed_at": 1782005213.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -112,7 +124,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782013140.0
+"next_time": 1782013140.0,
+"observed_at": 1782001211.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -128,7 +142,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782007380.0
+"next_time": 1782007380.0,
+"observed_at": 1782001267.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -144,7 +160,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782007560.0
+"next_time": 1782007560.0,
+"observed_at": 1782001280.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -160,7 +178,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782008220.0
+"next_time": 1782008220.0,
+"observed_at": 1782001287.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -176,7 +196,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782008580.0
+"next_time": 1782008580.0,
+"observed_at": 1782005465.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -192,7 +214,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782008880.0
+"next_time": 1782008880.0,
+"observed_at": 1782001315.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -208,7 +232,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782009120.0
+"next_time": 1782009120.0,
+"observed_at": 1782006908.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -224,7 +250,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782013680.0
+"next_time": 1782013680.0,
+"observed_at": 1782001519.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -240,7 +268,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782015300.0
+"next_time": 1782015300.0,
+"observed_at": 1782002364.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -256,7 +286,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782007260.0
+"next_time": 1782007260.0,
+"observed_at": 1782002411.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -272,7 +304,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782007680.0
+"next_time": 1782007680.0,
+"observed_at": 1782002411.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -288,7 +322,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782007440.0
+"next_time": 1782007440.0,
+"observed_at": 1782003137.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -304,7 +340,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782007380.0
+"next_time": 1782007380.0,
+"observed_at": 1782005261.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -320,7 +358,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782007680.0
+"next_time": 1782007680.0,
+"observed_at": 1782004530.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -336,7 +376,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782008100.0
+"next_time": 1782008100.0,
+"observed_at": 1782003646.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -352,7 +394,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782008820.0
+"next_time": 1782008820.0,
+"observed_at": 1782005736.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -368,7 +412,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782008640.0
+"next_time": 1782008640.0,
+"observed_at": 1782003947.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -384,7 +430,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782016620.0
+"next_time": 1782016620.0,
+"observed_at": 1782003898.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -400,7 +448,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782009120.0
+"next_time": 1782009120.0,
+"observed_at": 1782004231.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -416,7 +466,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782009120.0
+"next_time": 1782009120.0,
+"observed_at": 1782005701.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -432,7 +484,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782009300.0
+"next_time": 1782009300.0,
+"observed_at": 1782004231.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -448,7 +502,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782009300.0
+"next_time": 1782009300.0,
+"observed_at": 1782004902.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -464,7 +520,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782009420.0
+"next_time": 1782009420.0,
+"observed_at": 1782004231.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -480,7 +538,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782009420.0
+"next_time": 1782009420.0,
+"observed_at": 1782004231.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -496,7 +556,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782010380.0
+"next_time": 1782010380.0,
+"observed_at": 1782004284.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -512,7 +574,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782009840.0
+"next_time": 1782009840.0,
+"observed_at": 1782004838.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -528,7 +592,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782009900.0
+"next_time": 1782009900.0,
+"observed_at": 1782004986.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -544,7 +610,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782009720.0
+"next_time": 1782009720.0,
+"observed_at": 1782006014.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -560,7 +628,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782010020.0
+"next_time": 1782010020.0,
+"observed_at": 1782005437.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -576,7 +646,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782010440.0
+"next_time": 1782010440.0,
+"observed_at": 1782004996.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -592,7 +664,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782010740.0
+"next_time": 1782010740.0,
+"observed_at": 1782005006.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -608,7 +682,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782010980.0
+"next_time": 1782010980.0,
+"observed_at": 1782005013.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -624,7 +700,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782011160.0
+"next_time": 1782011160.0,
+"observed_at": 1782005060.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -640,7 +718,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782011820.0
+"next_time": 1782011820.0,
+"observed_at": 1782005133.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -656,7 +736,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782012480.0
+"next_time": 1782012480.0,
+"observed_at": 1782005141.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -672,7 +754,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782012960.0
+"next_time": 1782012960.0,
+"observed_at": 1782005150.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -688,7 +772,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782013380.0
+"next_time": 1782013380.0,
+"observed_at": 1782005169.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -704,7 +790,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782010440.0
+"next_time": 1782010440.0,
+"observed_at": 1782005444.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -720,7 +808,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782010500.0
+"next_time": 1782010500.0,
+"observed_at": 1782005444.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -736,7 +826,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782010800.0
+"next_time": 1782010800.0,
+"observed_at": 1782005444.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -752,7 +844,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782011700.0
+"next_time": 1782011700.0,
+"observed_at": 1782005491.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -768,7 +862,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782011040.0
+"next_time": 1782011040.0,
+"observed_at": 1782006051.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -784,7 +880,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782011280.0
+"next_time": 1782011280.0,
+"observed_at": 1782006051.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -800,7 +898,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782011280.0
+"next_time": 1782011280.0,
+"observed_at": 1782006051.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -816,7 +916,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782010980.0
+"next_time": 1782010980.0,
+"observed_at": 1782006051.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -832,7 +934,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782013500.0
+"next_time": 1782013500.0,
+"observed_at": 1782006204.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -848,7 +952,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782011700.0
+"next_time": 1782011700.0,
+"observed_at": 1782006585.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -864,7 +970,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782011820.0
+"next_time": 1782011820.0,
+"observed_at": 1782006658.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -880,7 +988,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782011940.0
+"next_time": 1782011940.0,
+"observed_at": 1782006658.0,
+"provenance": "placed"
 },
 {
 "system": "LIRR",
@@ -896,7 +1006,9 @@
 "prev_lat": null,
 "prev_lon": null,
 "prev_time": null,
-"next_time": 1782011940.0
+"next_time": 1782011940.0,
+"observed_at": 1782006658.0,
+"provenance": "placed"
 }
 ]
 }

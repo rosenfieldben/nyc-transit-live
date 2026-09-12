@@ -34,6 +34,7 @@ from cache import (
     _note_failure,
     _sanitize_detail,
     _sanitize_upstream,
+    fresh_alert_health,
 )
 from feeds import (
     ALERT_RETENTION_MAX_S,
@@ -397,6 +398,7 @@ def _system_freshness(
     retained_since: dict[str, float],
     now: float,
     routes: dict[str, list[str]] | None = None,
+    feed_timestamps: dict[str, float | None] | None = None,
 ) -> dict[str, dict]:
     """Build the per-system freshness block published in the aggregate envelope.
 
@@ -407,6 +409,21 @@ def _system_freshness(
     plus the age are the whole public signal, and sanitized detail stays on
     /api/status.
 
+    feed_timestamp is THIS SYSTEM'S OWN CONTENT TIME (contract 6.1), and it is the
+    field without which the audit's acceptance case cannot be written: every other
+    key here describes OUR relationship with the provider, so a system can report
+    ok=True with a fetched_at one second old while serving ten minute old content,
+    which is exactly what F03 measures. It follows the same last-known rule as
+    fetched_at above, and for the same reason: a failed system's frozen content time
+    is informative, and blanking it would turn a real outage into an unknown, which
+    /api/status reads as healthy (see the comment at _refresh_railroads).
+
+    NULL IS A REAL ANSWER HERE. A system whose header is not a usable freshness
+    signal reports None rather than a number that would mislead. Metro-North is the
+    standing case and the exclusion is NOT restated here: _refresh_railroads passes
+    only the systems feeds.RAILROAD_FRESHNESS_SYSTEMS admits, so this function never
+    learns MNR has a header at all.
+
     `routes` is the optional per-system route coverage (see _routes_by_system);
     only the subway passes it, because only its entities lack a system name of
     their own. A system missing from the mapping publishes an EMPTY list rather
@@ -416,12 +433,27 @@ def _system_freshness(
     """
     failed = set(failed_systems)
     previous = prev or {}
+    fresh_timestamps = feed_timestamps or {}
     blocks: dict[str, dict] = {}
     for system in all_systems:
         was = previous.get(system) or {}
+        # THE SAME LAST-KNOWN RULE AS fetched_at, AND THE TWO REASONS A VALUE CAN BE
+        # MISSING ARE NOT THE SAME ONE. A system ABSENT from the map did not decode
+        # this poll, so it keeps the content time it last reported rather than
+        # blanking it. A system PRESENT with a None value decoded and sent no header,
+        # which is a fact about this poll and must be published as None: carrying the
+        # previous poll's number forward there would age it by one interval every
+        # interval, without bound, while the feed looked healthy. The producers
+        # encode the difference deliberately (feeds/subway.py records a key for every
+        # group that decoded), and reading it with .get() would throw it away.
+        if system in fresh_timestamps:
+            content_at = fresh_timestamps[system]
+        else:
+            content_at = was.get("feed_timestamp")
         blocks[system] = {
             # A failed system keeps its last decode time; a healthy one stamps now.
             "fetched_at": was.get("fetched_at") if system in failed else now,
+            "feed_timestamp": content_at,
             "ok": system not in failed,
             "retained_since": retained_since.get(system),
             "routes": None if routes is None else routes.get(system, []),
@@ -453,6 +485,7 @@ async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
             failed_feeds,
             trains_by_group,
             arrivals_by_group,
+            feed_ts_by_group,
         ) = await main.fetch_subway_trains(stops, client)
     except RuntimeError as exc:
         # Every subway feed failed this poll.
@@ -522,6 +555,10 @@ async def _refresh_subways(app: FastAPI, client: httpx.AsyncClient) -> None:
         # the trains actually on the map, retained ones included, and dimming has to
         # reach exactly them.
         _routes_by_system(merged_trains_by_group),
+        # THE FRESH headers, not the merged ones: a retained group's content time is
+        # the one it last reported, which the helper's last-known rule restores from
+        # the previous block. A group that decoded this poll overwrites it.
+        feed_ts_by_group,
     )
     # Carry each trip's previous-poll stop forward as its prev interpolation anchor
     # when the feed pruned the departed stop (mutates trains in place), then remember
@@ -539,9 +576,13 @@ async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
     entry = app.state.feed_cache["railroads"]
     total_feeds = len(RAILROAD_FEED_URLS)
     try:
-        trains, arrivals_by_system, feed_timestamp, failed_feeds = await main.fetch_railroad_trains(
-            client, getattr(app.state, "railroad_stops", {})
-        )
+        (
+            trains,
+            arrivals_by_system,
+            feed_timestamp,
+            failed_feeds,
+            feed_ts_by_system,
+        ) = await main.fetch_railroad_trains(client, getattr(app.state, "railroad_stops", {}))
     except RuntimeError as exc:
         # Every railroad feed failed this poll.
         app.state.railroad_feed_health = {
@@ -610,7 +651,18 @@ async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
     )
     app.state.railroad_arrivals = drop_expired_arrivals(merged_arrivals, now, failed_feeds)
     entry["systems"] = _system_freshness(
-        entry.get("systems"), RAILROAD_FEED_URLS, failed_feeds, retained_since, now
+        entry.get("systems"),
+        RAILROAD_FEED_URLS,
+        failed_feeds,
+        retained_since,
+        now,
+        # No route coverage on the railroad blocks: its trains name their own system.
+        None,
+        # METRO-NORTH IS ABSENT FROM THIS MAP AND THAT IS THE WHOLE EXCLUSION. It
+        # carries only the systems feeds.RAILROAD_FRESHNESS_SYSTEMS admits, so MNR's
+        # block reports None without this function, this call site, or the model ever
+        # naming it. The reason lives once, above that frozenset.
+        feed_ts_by_system,
     )
     # Carry each placed train's prev station forward across polls (the feeds prune
     # the just-departed stop, so the decode leaves prev_* null), giving the gliding
@@ -923,7 +975,16 @@ async def _refresh_njt(app: FastAPI, client: httpx.AsyncClient) -> None:
         # the envelope's block and its top-level fetched_at agree while healthy;
         # a failed poll leaves this untouched, which is exactly the divergence the
         # client dims on.
-        systems=_system_freshness(entry.get("systems"), [njt_feed.SYSTEM], [], {}, now),
+        systems=_system_freshness(
+            entry.get("systems"),
+            [njt_feed.SYSTEM],
+            [],
+            {},
+            now,
+            None,
+            # One system, one header, and a good one: 9s to 23s of lag at peak.
+            {njt_feed.SYSTEM: feed_timestamp},
+        ),
     )
     # Replace the arrivals index only on success, so a failed poll keeps the
     # last-known arrivals on the same fetched_at, consistent with the cache.
@@ -1091,6 +1152,7 @@ def _apply_alert_generation(
     *,
     served_empty: Iterable[str] = (),
     write_index: bool = True,
+    headers: Mapping[str, float | None] | None = None,
 ) -> None:
     """Merge this poll's fresh alerts into the served index and rewrite per-system
     health. Shared by the partial-failure and the total-outage paths so the expiry
@@ -1133,6 +1195,7 @@ def _apply_alert_generation(
     """
     health = entry["health"]
     served_empty_systems = set(served_empty)
+    feed_headers = headers
     # Thread the prior retention clock through the pure merge so the cap measures
     # total time down, not time-since-this-poll.
     prev_retained_since = {
@@ -1163,6 +1226,10 @@ def _apply_alert_generation(
             detail = failed_systems.get(system) or ALERT_FEED_UNAVAILABLE_DETAIL
             h["last_error"] = {"status": 502, "detail": _sanitize_detail(detail)}
             h["retained_since"] = retained_since.get(system)
+            # content_at is NOT touched on a failed poll, for the same reason fresh_at
+            # is kept: the last content time this system reported is what its retained
+            # alerts are actually as of, and blanking it would turn an outage into an
+            # unknown.
             # A system cannot be failed and served-empty in the same poll, and this
             # is what keeps a stale sentence from outliving the state it described.
             h["served_empty"] = None
@@ -1170,6 +1237,12 @@ def _apply_alert_generation(
             h["fresh_at"] = now
             h["retained_since"] = None
             h["last_error"] = None
+            # THE FEED CLOCK THE DECODER ALREADY READ (contract 6.1). Absent from the
+            # map means this system did not decode; present with None means it decoded
+            # and its body carried no header, which is NJ Transit's served-empty state
+            # and is a real answer rather than a gap.
+            if feed_headers is not None and system in feed_headers:
+                h["content_at"] = feed_headers[system]
             h["served_empty"] = (
                 NJT_ALERTS_SERVED_EMPTY_DETAIL if system in served_empty_systems else None
             )
@@ -1211,7 +1284,7 @@ def _reconcile_alert_health(entry: dict) -> None:
         # downstream reads them without a .get().
         health.setdefault(
             system,
-            {"fresh_at": None, "retained_since": None, "last_error": None, "served_empty": None},
+            fresh_alert_health(),
         )
     for system in [s for s in health if s not in active]:
         del health[system]
@@ -1335,7 +1408,12 @@ async def _refresh_alerts(app: FastAPI, client: httpx.AsyncClient) -> None:
 
     now = time.time()
     _apply_alert_generation(
-        entry, fetched.alerts, fetched.failed, now, served_empty=fetched.served_empty
+        entry,
+        fetched.alerts,
+        fetched.failed,
+        now,
+        served_empty=fetched.served_empty,
+        headers=fetched.headers,
     )
     entry.update(fetched_at=now, error=None, suppressed=fetched.suppressed)
 

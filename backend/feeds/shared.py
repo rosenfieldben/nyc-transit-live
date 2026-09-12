@@ -356,6 +356,36 @@ def carry_forward_prev(
     return new_positions
 
 
+def iter_rows(value):
+    """Yield every served ROW inside a decoder's output, whatever its nesting.
+
+    ONE DEFINITION OF "WHAT IS A ROW", because two places need it and a second copy
+    would drift: the retention stamp in pollers._merge_feed_systems and the board
+    clock in cache._oldest_row_observed_at. Both walk the same structures, and the
+    structures differ per system: a flat list of trains, {stop: {bucket: [row]}} for
+    the railroads and the subway, {stop: {route: [row]}} for the ferry.
+
+    A ROW IS TOLD FROM A CONTAINER STRUCTURALLY, never by looking for a key. Asking
+    "does this dict carry observed_at" is the version that fails exactly where it
+    matters: a row MISSING the key would be mistaken for a container, walked into,
+    and silently excused from whatever rule the caller was applying. A container's
+    values are lists or dicts; a row's are scalars and None. So a dict with no list
+    or dict value is a row.
+
+    An empty dict is a container with nothing in it, which yields nothing, which is
+    the right answer for both callers: nothing to stamp and nothing to date.
+    """
+    if isinstance(value, list):
+        for item in value:
+            yield from iter_rows(item)
+    elif isinstance(value, dict):
+        if any(isinstance(item, (list, dict)) for item in value.values()):
+            for item in value.values():
+                yield from iter_rows(item)
+        elif value:
+            yield value
+
+
 def merge_system_generations(
     fresh_by_system: dict[str, list[dict]],
     prev_by_system: dict[str, list[dict]] | None,
@@ -394,9 +424,17 @@ def merge_system_generations(
         items are dropped and only the caller's per-system freshness block still
         reports the outage.
 
-    The items are NOT copied here: this returns the same dicts it was handed. A
-    caller that mutates merged items in place (the anchor carry does) must copy
-    them first, or it will edit objects a previous response already exposed.
+    A CARRIED ROW IS STAMPED `provenance: "retained"` (Q3 of the freshness contract:
+    "not in the current decode" is the fact that changes what a rider should believe,
+    so it wins the field over whatever the row was when it was decoded). The stamp is
+    applied to a COPY of each row, never in place: these are the previous poll's dicts
+    and a previous response has already serialized them, so relabelling them would
+    retroactively change what an earlier caller is holding. Rows that come through
+    unretained are returned as handed, so this is paid only on a failed poll.
+
+    Only the ROWS are copied, not the containers around them. A caller that mutates
+    merged items in place (the anchor carry does) still copies first, for the same
+    reason it always did.
     """
     failed = set(failed_systems)
     merged: dict[str, list[dict]] = {
@@ -429,8 +467,24 @@ def merge_system_generations(
         retained_since[system] = started
         carried = (prev_by_system or {}).get(system) or []
         if carried:
-            merged[system] = carried
+            merged[system] = _stamp_retained(carried)
     return merged, retained_since
+
+
+def _stamp_retained(carried):
+    """`carried` with every ROW copied and marked retained, containers rebuilt.
+
+    Rebuilt rather than mutated: see the paragraph in merge_system_generations. The
+    shape is whatever the caller merges (a flat train list, or the nested arrivals
+    index), so the walk is the structural one iter_rows defines.
+    """
+    if isinstance(carried, list):
+        return [_stamp_retained(item) for item in carried]
+    if isinstance(carried, dict):
+        if any(isinstance(item, (list, dict)) for item in carried.values()):
+            return {key: _stamp_retained(item) for key, item in carried.items()}
+        return {**carried, "provenance": "retained"}
+    return carried
 
 
 def drop_expired_arrivals(

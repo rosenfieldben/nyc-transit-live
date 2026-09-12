@@ -28,8 +28,36 @@ from tests import negatives
 
 pytestmark = pytest.mark.anyio
 
+# CONTRACT 6.1 added observed_at + provenance to every row model, so every literal
+# here that is compared against a SERVED body carries them. They read `None` and
+# `"unknown"` because these entries are seeded into the cache directly rather than
+# produced by a decoder: the defaults are exactly what a row that never went through
+# a decoder should say about itself.
+_PAIR = {"observed_at": None, "provenance": "unknown"}
+# The five arrivals envelopes gained served_at, systems and a content clock. The
+# ferry and PATH endpoints serve a single feed with no per-system block anywhere, so
+# their `systems` is null by construction and their content clock is read off the
+# ROWS (the envelope's own is the VehiclePositions header, which dates boats and not
+# dock predictions).
+_ARRIVALS_ENVELOPE = {"systems": None}
+
+
+def _served(rows):
+    """The served form of a list of decoder-shaped arrival rows: the response model
+    fills the contract defaults on the way out, so a fixture that stands for app
+    STATE and the body that carries it differ by exactly the pair."""
+    return [{**row, **_PAIR} for row in rows]
+
+
 BUSES = [
-    {"id": "MTA NYCT_1", "route_id": "M15", "latitude": 40.7, "longitude": -74.0, "bearing": 90.0}
+    {
+        "id": "MTA NYCT_1",
+        "route_id": "M15",
+        "latitude": 40.7,
+        "longitude": -74.0,
+        "bearing": 90.0,
+        **_PAIR,
+    }
 ]
 TRAINS = [
     {
@@ -44,6 +72,7 @@ TRAINS = [
         "prev_lon": -74.01,
         "prev_time": 999.0,
         "next_time": 1002.0,
+        **_PAIR,
     }
 ]
 RAILROADS = [
@@ -62,6 +91,7 @@ RAILROADS = [
         "prev_lon": None,
         "prev_time": None,
         "next_time": None,
+        **_PAIR,
     }
 ]
 
@@ -228,7 +258,7 @@ async def test_railroad_refresh_records_partial_feed_health(client, cache, monke
     lirr_train = {**RAILROADS[0], "system": "LIRR", "trip_id": "lirr-1"}
 
     async def partial(client_arg, stops_arg):
-        return [lirr_train], {}, 996.0, ["MNR"]
+        return [lirr_train], {}, 996.0, ["MNR"], {"LIRR": 996.0}
 
     monkeypatch.setattr(app_module, "fetch_railroad_trains", partial)
     await app_module._refresh_railroads(app_module.app, client=None)
@@ -276,7 +306,7 @@ async def test_railroad_refresh_replaces_only_decoded_systems_arrivals(client, c
     new_lirr = {"12": {"Inbound": [{"route_id": "5", "trip_id": "new", "arrival": 1e12}]}}
 
     async def only_lirr(client_arg, stops_arg):
-        return RAILROADS, {"LIRR": new_lirr}, 996.0, ["MNR"]
+        return RAILROADS, {"LIRR": new_lirr}, 996.0, ["MNR"], {"LIRR": 996.0}
 
     monkeypatch.setattr(app_module, "fetch_railroad_trains", only_lirr)
     await app_module._refresh_railroads(app_module.app, client=None)
@@ -530,7 +560,7 @@ async def test_subway_refresh_records_partial_feed_health(client, cache, monkeyp
     # A poll where some feed groups failed still returns data; the entry error
     # stays clear, but the partial outage must be recorded for /api/status.
     async def partial(stops, client_arg):
-        return TRAINS, {}, 996.0, ["BDFM"], {"ACE": TRAINS}, {"ACE": {}}
+        return TRAINS, {}, 996.0, ["BDFM"], {"ACE": TRAINS}, {"ACE": {}}, {"ACE": 996.0}
 
     monkeypatch.setattr(app_module, "fetch_subway_trains", partial)
     app_module.app.state.subway_stops = {"101N": {}}
@@ -548,7 +578,7 @@ async def test_subway_refresh_records_partial_feed_health(client, cache, monkeyp
 
 async def test_subway_refresh_records_full_feed_health(client, cache, monkeypatch):
     async def full(stops, client_arg):
-        return TRAINS, {}, 996.0, [], {"ACE": TRAINS}, {"ACE": {}}
+        return TRAINS, {}, 996.0, [], {"ACE": TRAINS}, {"ACE": {}}, {"ACE": 996.0}
 
     monkeypatch.setattr(app_module, "fetch_subway_trains", full)
     app_module.app.state.subway_stops = {"101N": {}}
@@ -632,6 +662,7 @@ async def test_subway_arrivals_known_station(client, subway_state, cache):
         "route_id": "1",
         "trip_id": "t1",
         "arrival": 1000.0,
+        **_PAIR,
     }
     assert body["directions"]["Southbound"] == []  # both keys always present
 
@@ -763,7 +794,9 @@ async def test_railroad_arrivals_lirr_known_station(client, railroad_state, cach
     assert body["stop_name"] == "Jamaica"
     assert body["fetched_at"] == 1234.0
     assert body["directions"] == {
-        "Outbound": [{"route_id": "5", "trip_id": "t1", "arrival": 1000.0, "train_num": "704"}]
+        "Outbound": [
+            {"route_id": "5", "trip_id": "t1", "arrival": 1000.0, "train_num": "704", **_PAIR}
+        ]
     }
 
 
@@ -1358,12 +1391,19 @@ FERRY_BOATS = [
         "speed": 6.5,
         "status": "IN_TRANSIT_TO",
         "updated_at": 1000.0,
+        **_PAIR,
     }
 ]
 FERRY_ARRIVALS_INDEX = {
     "18": {
         "East River": [
-            {"route_id": "ER", "trip_id": "T-ER-1", "arrival": 1500.0, "departure": 1560.0}
+            {
+                "route_id": "ER",
+                "trip_id": "T-ER-1",
+                "arrival": 1500.0,
+                "departure": 1560.0,
+                **_PAIR,
+            }
         ]
     }
 }
@@ -1425,7 +1465,12 @@ async def test_ferry_arrivals_served_for_known_stop(client, cache):
         "fetched_at": 1001.0,
         "stop_id": "18",
         "stop_name": "Wall St/Pier 11",
-        "routes": FERRY_ARRIVALS_INDEX["18"],
+        "routes": {k: _served(v) for k, v in FERRY_ARRIVALS_INDEX["18"].items()},
+        # From the rows, which stand for decoder output and carry no clock in this
+        # fixture, so the honest answer is null rather than a borrowed number.
+        "feed_timestamp": None,
+        "served_at": pytest.approx(time.time(), abs=5),
+        **_ARRIVALS_ENVELOPE,
     }
 
 
@@ -1532,9 +1577,17 @@ PATH_TRAINS = [
         "prev_lon": None,
         "prev_time": None,
         "next_time": 1500.0,
+        "observed_at": 996.0,  # the entity's own TripUpdate.timestamp
+        "provenance": "placed",
     }
 ]
-PATH_ARRIVALS = {"26733": {"To New Jersey": [{"route_id": "862", "arrival": 1500.0}]}}
+PATH_ARRIVALS = {
+    "26733": {
+        "To New Jersey": [
+            {"route_id": "862", "arrival": 1500.0, "observed_at": 996.0, "provenance": "reported"}
+        ]
+    }
+}
 # The SERVED shape (13d): what _refresh_path stores after the identity
 # matcher, i.e. what /api/path actually returns. A stable minted `id`, no
 # bridge trip hash.
@@ -1612,7 +1665,7 @@ async def test_path_arrivals_known_station(client, path_rt_state, cache):
     assert body["stop_name"] == "Newark"
     assert body["fetched_at"] == 1234.0
     # Rows are {route_id, arrival} only: the bridge hash reaches no payload.
-    assert body["directions"] == {"To New Jersey": [{"route_id": "862", "arrival": 1500.0}]}
+    assert body["directions"] == PATH_ARRIVALS["26733"]
 
 
 async def test_path_arrivals_empty_when_nothing_upcoming(client, path_rt_state, cache):
@@ -1779,10 +1832,10 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
         return BUSES, 1000.0
 
     async def fake_fetch_subways(stops, client):
-        return TRAINS, {}, 1001.0, [], {"ACE": TRAINS}, {"ACE": {}}
+        return TRAINS, {}, 1001.0, [], {"ACE": TRAINS}, {"ACE": {}}, {"ACE": 1001.0}
 
     async def fake_fetch_railroads(client, stops):
-        return RAILROADS, {}, 1002.0, []
+        return RAILROADS, {}, 1002.0, [], {"LIRR": 1002.0}
 
     async def fake_fetch_path(client, stops):
         return PATH_TRAINS, PATH_ARRIVALS, 1003.0, 0
@@ -1986,10 +2039,10 @@ async def test_poll_cycle_deadline_bounds_a_wedged_refresh(monkeypatch, cache):
         await hang.wait()  # every later cycle wedges past the deadline
 
     async def sub_fetch(stops, client):
-        return TRAINS, {}, 1001.0, [], {"ACE": TRAINS}, {"ACE": {}}
+        return TRAINS, {}, 1001.0, [], {"ACE": TRAINS}, {"ACE": {}}, {"ACE": 1001.0}
 
     async def rr_fetch(client, stops):
-        return RAILROADS, {}, 1002.0, []
+        return RAILROADS, {}, 1002.0, [], {"LIRR": 1002.0}
 
     monkeypatch.setattr(app_module, "fetch_vehicle_positions", bus_fetch)
     monkeypatch.setattr(app_module, "fetch_subway_trains", sub_fetch)
@@ -2765,7 +2818,13 @@ ALERT = {
     "stops": ["16"],
     "starts_at": 1000.0,
     "ends_at": None,
+    **_PAIR,
 }
+# THE SAME ALERT AFTER A FAILED POLL CARRIED IT FORWARD. An alert is never derived, so
+# `retained` is the only provenance it can take other than `reported`. The retention
+# merge stamps it on a COPY, so the cached row a previous response already serialized
+# is never relabelled underneath whoever is holding it.
+RETAINED_ALERT = {**ALERT, "provenance": "retained"}
 
 
 @pytest.fixture
@@ -2799,11 +2858,20 @@ async def test_alerts_served_from_seeded_index(client, alerts_cache):
     # Every alert system is present from the seeded health map, even before a poll.
     assert body == {
         "fetched_at": 1000.0,
+        "feed_timestamp": None,
         "alerts": [ALERT],
         "systems": {
             # routes is null on the alerts blocks: route coverage is the SUBWAY's
             # join key (its trains name no system), and an alert already names its own.
-            s: {"fetched_at": None, "ok": True, "retained_since": None, "routes": None}
+            s: {
+                "fetched_at": None,
+                # 6.1: the per-system content clock, null here for the same reason
+                # fetched_at is, because nothing has polled.
+                "feed_timestamp": None,
+                "ok": True,
+                "retained_since": None,
+                "routes": None,
+            }
             # THE ACTIVE SET, not the full table: this test environment has no NJ
             # Transit credentials, so "njt" is never seeded and never appears here.
             # test_unconfigured_njt_is_absent_from_the_alert_health_map is the
@@ -2823,11 +2891,20 @@ async def test_alerts_empty_index_is_empty_list_not_error(client, alerts_cache):
     assert body.pop("served_at") >= 1000.0
     assert body == {
         "fetched_at": 1000.0,
+        "feed_timestamp": None,
         "alerts": [],
         "systems": {
             # routes is null on the alerts blocks: route coverage is the SUBWAY's
             # join key (its trains name no system), and an alert already names its own.
-            s: {"fetched_at": None, "ok": True, "retained_since": None, "routes": None}
+            s: {
+                "fetched_at": None,
+                # 6.1: the per-system content clock, null here for the same reason
+                # fetched_at is, because nothing has polled.
+                "feed_timestamp": None,
+                "ok": True,
+                "retained_since": None,
+                "routes": None,
+            }
             # THE ACTIVE SET, not the full table: this test environment has no NJ
             # Transit credentials, so "njt" is never seeded and never appears here.
             # test_unconfigured_njt_is_absent_from_the_alert_health_map is the
@@ -2853,12 +2930,12 @@ async def test_alerts_failed_poll_keeps_last_known(client, alerts_cache, monkeyp
     await app_module._refresh_alerts(app_module.app, client=None)
     # Last-known index and fetched_at kept; the error is recorded but not served
     # while the index is filled.
-    assert alerts_cache["alerts"] == [ALERT]
+    assert alerts_cache["alerts"] == [RETAINED_ALERT]
     assert alerts_cache["fetched_at"] == 1000.0
     assert alerts_cache["error"]["status"] == 502
     res = await client.get("/api/alerts")
     assert res.status_code == 200
-    assert res.json()["alerts"] == [ALERT]
+    assert res.json()["alerts"] == [RETAINED_ALERT]
 
 
 async def test_alerts_successful_poll_replaces_index(client, alerts_cache, monkeypatch):
@@ -2998,7 +3075,7 @@ async def test_alerts_all_failed_keeps_a_live_alert_and_its_last_decode_time(
 
     monkeypatch.setattr(app_module, "fetch_service_alerts", boom)
     await app_module._refresh_alerts(app_module.app, client=None)
-    assert alerts_cache["alerts"] == [ALERT]  # open-ended: nothing to expire
+    assert alerts_cache["alerts"] == [RETAINED_ALERT]  # open-ended: nothing to expire
     assert alerts_cache["error"]["status"] == 502
     assert alerts_cache["health"]["subway"]["fresh_at"] == 500.0  # NOT advanced
     assert alerts_cache["fetched_at"] == 1000.0  # last poll that decoded
@@ -3687,7 +3764,10 @@ def _subway_fetch(trains_by_group, failed, feed_ts=996.0):
             if g_trains
         }
         flat = [t for g in trains_by_group.values() for t in g]
-        return flat, {}, feed_ts, failed, trains_by_group, arrivals_by_group
+        # Contract 6.1: the per-group content clock the real aggregator now keeps.
+        # Only decoding groups appear, exactly as with the two maps above.
+        feed_ts_by_group = dict.fromkeys(trains_by_group, feed_ts)
+        return flat, {}, feed_ts, failed, trains_by_group, arrivals_by_group, feed_ts_by_group
 
     return fetch
 
@@ -3712,6 +3792,7 @@ async def test_c2_partial_subway_outage_retains_the_failed_group_with_a_frozen_s
     assert {t["trip_id"] for t in cache["subways"]["data"]} == {"ace-1", "nqrw-1"}
     assert cache["subways"]["systems"]["ACE"] == {
         "fetched_at": 1000.0,
+        "feed_timestamp": 996.0,  # ACE's OWN content time (6.1)
         "ok": True,
         "retained_since": None,
         "routes": ["A"],  # the coverage the client inverts into route -> group
@@ -3734,12 +3815,14 @@ async def test_c2_partial_subway_outage_retains_the_failed_group_with_a_frozen_s
     # while its train is retained; NQRW lists its own.
     assert systems["ACE"] == {
         "fetched_at": 1000.0,
+        "feed_timestamp": 996.0,  # frozen with its fetched_at, not blanked
         "ok": False,
         "retained_since": 1060.0,
         "routes": ["A"],
     }
     assert systems["NQRW"] == {
         "fetched_at": 1060.0,
+        "feed_timestamp": 996.0,
         "ok": True,
         "retained_since": None,
         "routes": ["N"],
@@ -3816,6 +3899,7 @@ async def test_c2_a_healthy_but_EMPTY_group_replaces_rather_than_retains(
     assert cache["subways"]["data"] == []  # replaced, NOT retained
     assert cache["subways"]["systems"]["ACE"] == {
         "fetched_at": 1060.0,  # it decoded, so it is fresh
+        "feed_timestamp": 996.0,  # the content time it just decoded (6.1)
         "ok": True,
         "retained_since": None,
         # It covers no routes because it is genuinely running nothing, which is how a
@@ -3850,6 +3934,7 @@ async def test_c2_recovery_replaces_retained_data_and_clears_retained_since(
     assert {t["trip_id"] for t in cache["subways"]["data"]} == {"ace-9"}
     assert cache["subways"]["systems"]["ACE"] == {
         "fetched_at": 1120.0,
+        "feed_timestamp": 996.0,  # the group's own content time (6.1)
         "ok": True,
         "retained_since": None,
         "routes": ["A"],
@@ -3901,7 +3986,7 @@ async def test_c2_total_railroad_failure_also_reports_every_system_down(client, 
     mnr = {**RAILROADS[0], "system": "MNR", "trip_id": "m1"}
 
     async def healthy(client_arg, stops_arg):
-        return [mnr], {"MNR": {"1": {"Trains": []}}}, 990.0, []
+        return [mnr], {"MNR": {"1": {"Trains": []}}}, 990.0, [], {"LIRR": 990.0}
 
     monkeypatch.setattr(app_module, "fetch_railroad_trains", healthy)
     monkeypatch.setattr(app_module.time, "time", lambda: 1000.0)
@@ -3933,14 +4018,20 @@ async def test_c2_railroad_arrivals_carry_their_own_systems_frozen_timestamp(
     lirr = {**RAILROADS[0], "system": "LIRR", "trip_id": "lirr-1"}
 
     async def both(client_arg, stops_arg):
-        return [mnr, lirr], {"MNR": {"1": {"Trains": []}}, "LIRR": {"2": {"Trains": []}}}, 990.0, []
+        return (
+            [mnr, lirr],
+            {"MNR": {"1": {"Trains": []}}, "LIRR": {"2": {"Trains": []}}},
+            990.0,
+            [],
+            {"LIRR": 990.0},
+        )
 
     monkeypatch.setattr(app_module, "fetch_railroad_trains", both)
     monkeypatch.setattr(app_module.time, "time", lambda: 1000.0)
     await app_module._refresh_railroads(app_module.app, client=None)
 
     async def lirr_only(client_arg, stops_arg):
-        return [lirr], {"LIRR": {"2": {"Trains": []}}}, 990.0, ["MNR"]
+        return [lirr], {"LIRR": {"2": {"Trains": []}}}, 990.0, ["MNR"], {"LIRR": 990.0}
 
     monkeypatch.setattr(app_module, "fetch_railroad_trains", lirr_only)
     monkeypatch.setattr(app_module.time, "time", lambda: 1300.0)
@@ -3968,12 +4059,14 @@ async def test_c2_alerts_envelope_mirrors_the_health_map(client, alerts_cache):
     body = (await client.get("/api/alerts")).json()
     assert body["systems"]["subway"] == {
         "fetched_at": 1000.0,
+        "feed_timestamp": None,  # 6.1: not filled until the endpoints commit
         "ok": True,
         "retained_since": None,
         "routes": None,  # alerts name their own system; no route join needed
     }
     assert body["systems"]["MNR"] == {
         "fetched_at": 900.0,  # fresh_at maps to fetched_at
+        "feed_timestamp": None,
         "ok": False,  # derived from last_error
         "retained_since": 950.0,
         "routes": None,
@@ -4037,7 +4130,7 @@ async def test_c2_retained_arrivals_never_evict_fresh_ones(client, cache, monkey
                 "127": {"Northbound": [{"route_id": "N", "trip_id": "nq-0", "arrival": 1080.0}]}
             },
         }
-        return [], {}, 990.0, [], {"ACE": [], "NQRW": []}, by_group
+        return [], {}, 990.0, [], {"ACE": [], "NQRW": []}, by_group, {"ACE": 990.0, "NQRW": 990.0}
 
     monkeypatch.setattr(app_module, "fetch_subway_trains", poll1)
     monkeypatch.setattr(app_module.time, "time", lambda: now1)
@@ -4050,7 +4143,7 @@ async def test_c2_retained_arrivals_never_evict_fresh_ones(client, cache, monkey
                 "127": {"Northbound": [{"route_id": "N", "trip_id": "nq-1", "arrival": 1460.0}]}
             }
         }
-        return [], {}, 1390.0, ["ACE"], {"NQRW": []}, by_group
+        return [], {}, 1390.0, ["ACE"], {"NQRW": []}, by_group, {"NQRW": 1390.0}
 
     monkeypatch.setattr(app_module, "fetch_subway_trains", poll2)
     monkeypatch.setattr(app_module.time, "time", lambda: now2)
@@ -4076,14 +4169,20 @@ async def test_c2_retention_clock_is_not_reset_by_the_systems_write(client, cach
     mnr = {**RAILROADS[0], "system": "MNR", "trip_id": "m1"}
 
     async def healthy(client_arg, stops_arg):
-        return [mnr], {"MNR": {"1": {"Trains": [{"trip_id": "m1", "arrival": 1e12}]}}}, 990.0, []
+        return (
+            [mnr],
+            {"MNR": {"1": {"Trains": [{"trip_id": "m1", "arrival": 1e12}]}}},
+            990.0,
+            [],
+            {"LIRR": 990.0},
+        )
 
     monkeypatch.setattr(app_module, "fetch_railroad_trains", healthy)
     monkeypatch.setattr(app_module.time, "time", lambda: 1000.0)
     await app_module._refresh_railroads(app_module.app, client=None)
 
     async def mnr_down(client_arg, stops_arg):
-        return [], {}, 990.0, ["MNR"]
+        return [], {}, 990.0, ["MNR"], {"LIRR": 990.0}
 
     monkeypatch.setattr(app_module, "fetch_railroad_trains", mnr_down)
     for t in (1020.0, 1600.0):
@@ -4120,6 +4219,7 @@ async def test_c2_retention_clock_survives_an_empty_carried_list(client, cache, 
             [],
             {"ACE": []},
             {"ACE": {"127": {"Northbound": [{"trip_id": "a", "arrival": 1e12}]}}},
+            {"ACE": 990.0},
         )
 
     monkeypatch.setattr(app_module, "fetch_subway_trains", poll1)
@@ -4127,7 +4227,7 @@ async def test_c2_retention_clock_survives_an_empty_carried_list(client, cache, 
     await app_module._refresh_subways(app_module.app, client=None)
 
     async def ace_down(stops_arg, client_arg):
-        return [], {}, 990.0, ["ACE"], {}, {}
+        return [], {}, 990.0, ["ACE"], {}, {}, {}
 
     monkeypatch.setattr(app_module, "fetch_subway_trains", ace_down)
     monkeypatch.setattr(app_module.time, "time", lambda: 1020.0)
@@ -4181,6 +4281,9 @@ async def test_c2_route_coverage_is_derived_from_the_served_by_group_data(
     body = (await client.get("/api/subways")).json()
     assert body["systems"]["ACE"] == {
         "fetched_at": 1000.0,
+        # A failed group keeps the content time it last reported, the same
+        # last-known rule fetched_at follows above it.
+        "feed_timestamp": 996.0,
         "ok": False,
         "retained_since": 1060.0,
         "routes": ["A", "E"],  # still named, because those trains are still served
@@ -4190,7 +4293,7 @@ async def test_c2_route_coverage_is_derived_from_the_served_by_group_data(
     app_module.app.state.railroad_stops = {"MNR": {"1": {"name": "G", "lat": 40.7, "lon": -73.9}}}
 
     async def railroads(client_arg, stops_arg):
-        return [{**RAILROADS[0], "system": "MNR", "trip_id": "m1"}], {}, 990.0, []
+        return [{**RAILROADS[0], "system": "MNR", "trip_id": "m1"}], {}, 990.0, [], {}
 
     monkeypatch.setattr(app_module, "fetch_railroad_trains", railroads)
     await app_module._refresh_railroads(app_module.app, client=None)
@@ -4666,3 +4769,361 @@ async def test_njt_static_warmup_empty_result_is_failed_then_recovers(monkeypatc
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+# ---------------------------------------------------------------------------
+# THE ACCEPTANCE CASE, IN THE AUDITOR'S TERMS (contract 6.1)
+#
+#   "other healthy contributors remain distinguishable"
+#
+# The clause is the reason SystemFreshness needed a content clock at all, and the
+# point of asserting it here is that it must be A FACT ABOUT A FIELD rather than an
+# inference a reader draws. The world is built the way F03's reproduction builds
+# its own: the committed subway capture, shifted whole so its header sits exactly
+# ten minutes behind the poll clock, driven through the real refresh path and served
+# through the real ASGI app. Nothing is stubbed but the socket.
+# ---------------------------------------------------------------------------
+
+_STALE_LAG_S = 600.0
+_FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def _shift_capture(raw: bytes, base_now: float, lag_s: float) -> bytes:
+    """The committed capture with every timestamp moved so its header sits exactly
+    `lag_s` before `base_now`. One constant delta, so the feed stays internally
+    consistent and only its AGE changes: this is a feed that is old, not a feed that
+    is wrong."""
+    from google.transit import gtfs_realtime_pb2 as pb
+
+    feed = pb.FeedMessage()
+    feed.ParseFromString(raw)
+    delta = int(round(base_now - lag_s)) - int(feed.header.timestamp)
+    feed.header.timestamp = int(feed.header.timestamp) + delta
+    for entity in feed.entity:
+        if entity.HasField("trip_update"):
+            tu = entity.trip_update
+            if tu.timestamp:
+                tu.timestamp += delta
+            for stu in tu.stop_time_update:
+                for field in ("arrival", "departure"):
+                    if stu.HasField(field):
+                        event = getattr(stu, field)
+                        if event.HasField("time") and event.time:
+                            event.time += delta
+        if entity.HasField("vehicle") and entity.vehicle.timestamp:
+            entity.vehicle.timestamp += delta
+    return feed.SerializeToString()
+
+
+async def test_acceptance_other_healthy_contributors_remain_distinguishable(
+    client, cache, monkeypatch
+):
+    """One contributor serving ten-minute-old content while the others are current.
+
+    THE OLD FEED IS VALID AND ITS FETCH SUCCEEDS, which is the whole difficulty: the
+    per-system machinery before 6.1 could only express a FAILED poll, so a feed that
+    kept returning the same old bytes successfully was indistinguishable from a fresh
+    one. `ok` is true for every group here and every fetched_at is stamped now; the
+    only thing that separates the stale contributor from the healthy ones is the
+    field this contract added.
+    """
+    now = 5_000_000.0
+    monkeypatch.setattr(app_module.time, "time", lambda: now)
+    stops = json.loads((_FIXTURES / "subway_1_7_s_stops.json").read_text())
+    app_module.app.state.subway_stops = stops
+    app_module.app.state.subway_static_status = "ready"
+    raw = (_FIXTURES / "subway_1_7_s.pb").read_bytes()
+    stale_bytes = _shift_capture(raw, now, _STALE_LAG_S)
+    fresh_bytes = _shift_capture(raw, now, 5.0)
+
+    # EACH GROUP GETS ITS OWN STATIONS, and that is what makes the contributor rule
+    # DISTINGUISHABLE FROM THE ENVELOPE AGGREGATE. The first version of this test fed
+    # identical bytes to all eight, so every group contributed at every station, the
+    # contributing minimum equalled the aggregate everywhere, and a handler that
+    # ignored the contributor rule entirely and served entry["feed_timestamp"] passed
+    # it. That was measured: replacing _oldest_contributing_content_at with
+    # `entry.get("feed_timestamp")` left the whole suite green. Splitting the stations
+    # between the stale group and the fresh ones is the smallest world in which the
+    # two answers differ, so the rule is now pinned rather than assumed.
+    # Split on the ARRIVALS station ids, which are parent-station ids derived from the
+    # platform suffix and are not the static stops table's keys.
+    _probe_arrivals = feeds._decode_feed(fresh_bytes, stops, "ACE", now)[1]
+    _served_stations = sorted(_probe_arrivals)
+    assert len(_served_stations) > 3, "the capture must serve several stations"
+    ace_only = set(_served_stations[: len(_served_stations) // 2])
+
+    def _restrict(arrivals, keep):
+        return {sid: buckets for sid, buckets in arrivals.items() if (sid in ace_only) == keep}
+
+    async def fetch(stops_arg, client_arg):
+        by_group, arrivals_by_group, ts_by_group = {}, {}, {}
+        for group in feeds.SUBWAY_FEED_URLS:
+            stale = group == "ACE"
+            body = stale_bytes if stale else fresh_bytes
+            trains, arrivals, feed_ts = feeds._decode_feed(body, stops_arg, group, now)
+            by_group[group] = trains
+            # ACE serves only the first half of the stations; the seven healthy groups
+            # serve only the second. No station has both, so a board is dated by the
+            # group that actually feeds it or the rule is broken.
+            arrivals_by_group[group] = _restrict(arrivals, keep=stale)
+            ts_by_group[group] = feed_ts
+        flat = [t for g in by_group.values() for t in g]
+        return (
+            flat,
+            feeds.combine_group_arrivals(arrivals_by_group),
+            min(ts_by_group.values()),
+            [],
+            by_group,
+            arrivals_by_group,
+            ts_by_group,
+        )
+
+    monkeypatch.setattr(app_module, "fetch_subway_trains", fetch)
+    await app_module._refresh_subways(app_module.app, client=None)
+
+    body = (await client.get("/api/subways")).json()
+    systems = body["systems"]
+
+    # (a) EVERY CONTRIBUTOR LOOKS HEALTHY BY EVERY PRE-6.1 MEASURE. This is the trap
+    # the acceptance clause is about, so it is asserted rather than assumed.
+    assert all(block["ok"] for block in systems.values())
+    assert all(block["fetched_at"] == now for block in systems.values())
+    assert all(block["retained_since"] is None for block in systems.values())
+
+    # (b) AND THE STALE ONE IS DISTINGUISHABLE, in a field, by name.
+    assert systems["ACE"]["feed_timestamp"] == now - _STALE_LAG_S
+    healthy = {g: b["feed_timestamp"] for g, b in systems.items() if g != "ACE"}
+    assert set(healthy.values()) == {now - 5.0}, healthy
+    assert systems["ACE"]["feed_timestamp"] < min(healthy.values())
+    # Ten minutes apart, which no other field on this block can express.
+    assert min(healthy.values()) - systems["ACE"]["feed_timestamp"] == _STALE_LAG_S - 5.0
+
+    # (c) /api/status AND THE ENVELOPE AGREE ABOUT WHICH ONE IT IS. The operator
+    # surface and the rider-facing envelope disagreeing about a lagging feed is the
+    # shape of F10, and this is the same claim made one level down.
+    status = (await client.get("/api/status")).json()
+    assert status["feeds"]["subways"]["feed_age_s"] == pytest.approx(_STALE_LAG_S, abs=1.0)
+    assert body["feed_timestamp"] == systems["ACE"]["feed_timestamp"]
+
+    # (d) TWO BOARDS, AND THEY DISAGREE. This is the clause that reaches a rider, and
+    # the only one that can tell the contributor rule from the envelope aggregate: one
+    # station is fed by ACE alone and the other by the seven healthy groups, so a
+    # handler serving entry["feed_timestamp"] would give both the same number and a
+    # handler applying the rule gives them numbers ten minutes apart.
+    by_system = app_module.app.state.subway_arrivals_by_system
+    ace_rows = by_system.get("ACE") or {}
+    healthy_rows = by_system.get("NQRW") or {}
+    assert ace_rows and healthy_rows, "the split produced no contributors"
+    ace_station = sorted(ace_rows)[0]
+    healthy_station = sorted(healthy_rows)[0]
+    assert ace_station not in healthy_rows, "the split leaked: no station may have both"
+    app_module.app.state.subway_stations = {
+        sid: {"name": "Under test", "lat": 40.7, "lon": -74.0}
+        for sid in (ace_station, healthy_station)
+    }
+
+    stale_board = (await client.get(f"/api/subway-arrivals/{ace_station}")).json()
+    fresh_board = (await client.get(f"/api/subway-arrivals/{healthy_station}")).json()
+
+    assert sorted(stale_board["systems"]) == ["ACE"]
+    assert "ACE" not in fresh_board["systems"]
+    assert stale_board["feed_timestamp"] == now - _STALE_LAG_S
+    assert fresh_board["feed_timestamp"] == now - 5.0
+    # THE WHOLE CLAUSE IN ONE LINE: the two boards differ by the injected lag, and the
+    # envelope's own number is the stale one, so a handler that reached for it would
+    # have made the healthy board lie.
+    assert fresh_board["feed_timestamp"] - stale_board["feed_timestamp"] == _STALE_LAG_S - 5.0
+    assert body["feed_timestamp"] != fresh_board["feed_timestamp"]
+    assert stale_board["served_at"] == now and fresh_board["served_at"] == now
+
+    # Every row each board serves is dated, and neither envelope claims to be fresher
+    # than the rows it carries. An envelope may be OLDER than all of them, which is
+    # deliberate: a contributor with rows at a station participates in the clock even
+    # when its own rows lose the per-station trim, because the alternative is letting
+    # the survivors vouch for a group still behind them. The union rule cannot
+    # overstate freshness, which is the only direction that is safe.
+    for board in (stale_board, fresh_board):
+        rows = [r for bucket in board["directions"].values() for r in bucket]
+        assert rows, "a board under test served no arrivals"
+        assert all(r["observed_at"] is not None for r in rows)
+        assert board["feed_timestamp"] <= min(r["observed_at"] for r in rows)
+
+
+async def test_railroad_arrivals_take_their_own_system_content_clock(
+    client, railroad_state, cache, monkeypatch
+):
+    """THE SINGLE-SYSTEM HALF OF THE SAME CLAUSE, which nothing pinned.
+
+    routes/railroad.py says the aggregate's clock "would let a healthy LIRR speak for a
+    frozen MNR", and until this test nothing checked it: the four single-system arrivals
+    endpoints could have served the envelope's number and the suite would have stayed
+    green. A frozen Metro-North beside a current LIRR is the world where the two answers
+    differ, and Metro-North is also where the answer must be NULL rather than a number,
+    because its header is not a usable freshness signal at all.
+    """
+    entry = cache["railroads"]
+    entry.update(data=[], fetched_at=2000.0, feed_timestamp=1995.0, error=None)
+    entry["systems"] = {
+        "LIRR": {
+            "fetched_at": 2000.0,
+            "feed_timestamp": 1995.0,
+            "ok": True,
+            "retained_since": None,
+            "routes": None,
+        },
+        "MNR": {
+            "fetched_at": 1400.0,
+            "feed_timestamp": None,  # excluded from the freshness systems by measurement
+            "ok": False,
+            "retained_since": 1400.0,
+            "routes": None,
+        },
+    }
+
+    lirr = (await client.get("/api/railroad-arrivals/LIRR/12")).json()
+    mnr = (await client.get("/api/railroad-arrivals/MNR/1")).json()
+
+    assert lirr["feed_timestamp"] == 1995.0
+    # NOT the aggregate's 1995.0, which is exactly the substitution the comment warns
+    # about: a healthy LIRR vouching for a system that cannot be dated at all.
+    assert mnr["feed_timestamp"] is None
+    assert lirr["fetched_at"] == 2000.0 and mnr["fetched_at"] == 1400.0
+    assert sorted(lirr["systems"]) == ["LIRR"] and sorted(mnr["systems"]) == ["MNR"]
+    assert mnr["systems"]["MNR"]["retained_since"] == 1400.0
+    # served_at is stamped on every arrivals response, which three of the five
+    # endpoints had no test for.
+    for board in (lirr, mnr):
+        assert board["served_at"] is not None and board["served_at"] > 0
+
+
+async def test_every_arrivals_endpoint_stamps_served_at(
+    client, subway_state, railroad_state, path_rt_state, cache
+):
+    """models.py claims "a test pins that a served response never carries None for it".
+    It was true of two of the five endpoints. This makes it true of all five."""
+    cache["subways"].update(data=[], fetched_at=1234.0, error=None)
+    cache["railroads"].update(data=[], fetched_at=1234.0, error=None)
+    cache["path"].update(data=[], fetched_at=1234.0, error=None)
+    paths = (
+        "/api/subway-arrivals/A01",
+        "/api/railroad-arrivals/LIRR/12",
+        "/api/path-arrivals/26733",
+    )
+    for path in paths:
+        body = (await client.get(path)).json()
+        assert body["served_at"] is not None, path
+        assert body["served_at"] > 0, path
+
+
+async def test_retained_rows_are_stamped_retained_and_flip_back_on_the_next_decode(
+    client, cache, monkeypatch
+):
+    """Q3, end to end: `retained` wins the provenance field, and only while it is true.
+
+    The audit's retention contract says a carried-forward row must be drawn AS stale,
+    and the freshness contract says the same thing in the payload: "not in the current
+    decode" is the fact that changes what a rider should believe, so it overrides
+    whatever the row was when it was decoded. Before this, only alerts were stamped and
+    a carried GPS train still claimed `reported` a poll after its feed went down.
+
+    THE FLIP BACK IS THE HALF WORTH TESTING. A stamp that never clears would be a
+    different bug wearing the same label: a system that recovers must stop calling its
+    fresh rows retained on the very next poll that decodes.
+    """
+    monkeypatch.setattr(app_module.time, "time", lambda: 1000.0)
+    app_module.app.state.subway_stops = {"127": {"name": "Times Sq", "lat": 40.7, "lon": -74.0}}
+    app_module.app.state.subway_static_status = "ready"
+    healthy = _subway_fetch({"ACE": [_train("ACE", "ace-1")], "NQRW": [_train("NQRW", "n-1")]}, [])
+    monkeypatch.setattr(app_module, "fetch_subway_trains", healthy)
+    await app_module._refresh_subways(app_module.app, client=None)
+
+    body = (await client.get("/api/subways")).json()
+    # These rows are SEEDED rather than decoded, so their provenance is the model
+    # default; what matters is that it is not `retained` and that it comes back.
+    decoded_provenance = {t["provenance"] for t in body["data"]}
+    assert decoded_provenance == {"unknown"}
+    assert "retained" not in decoded_provenance, "a fresh poll is not retained"
+
+    # ACE goes down. Its trains are carried forward, and they must now say so.
+    monkeypatch.setattr(app_module.time, "time", lambda: 1060.0)
+    monkeypatch.setattr(
+        app_module, "fetch_subway_trains", _subway_fetch({"NQRW": [_train("NQRW", "n-2")]}, ["ACE"])
+    )
+    await app_module._refresh_subways(app_module.app, client=None)
+
+    body = (await client.get("/api/subways")).json()
+    by_trip = {t["trip_id"]: t for t in body["data"]}
+    assert by_trip["ace-1"]["provenance"] == "retained", "a carried row still claimed its decode"
+    assert by_trip["n-2"]["provenance"] != "retained", "a healthy group is untouched by the stamp"
+    assert cache["subways"]["systems"]["ACE"]["retained_since"] == 1060.0
+    # The arrivals index is carried by the same merge and takes the same stamp.
+    ace_arrivals = app_module.app.state.subway_arrivals_by_system.get("ACE") or {}
+    rows = [r for station in ace_arrivals.values() for b in station.values() for r in b]
+    assert rows and all(r["provenance"] == "retained" for r in rows)
+
+    # ACE recovers. The stamp clears on the poll that decodes, not a poll later.
+    monkeypatch.setattr(app_module.time, "time", lambda: 1120.0)
+    monkeypatch.setattr(
+        app_module,
+        "fetch_subway_trains",
+        _subway_fetch({"ACE": [_train("ACE", "ace-2")], "NQRW": [_train("NQRW", "n-3")]}, []),
+    )
+    await app_module._refresh_subways(app_module.app, client=None)
+
+    body = (await client.get("/api/subways")).json()
+    assert {t["provenance"] for t in body["data"]} == decoded_provenance, (
+        "the stamp outlived the outage it describes"
+    )
+    assert cache["subways"]["systems"]["ACE"]["retained_since"] is None
+
+
+async def test_alerts_envelope_content_clock_equals_the_alerts_observed_at(
+    client, alerts_cache, monkeypatch
+):
+    """AlertFeed.feed_timestamp is the clock the alerts decoder already reads.
+
+    6.1 declared this field and left it with no writer, so /api/alerts served null
+    forever while its own comment called it "the alert feeds' content time". That was
+    not merely an unfilled field: feeds/alerts.py justifies returning no clock for NJ
+    Transit's served-empty body by saying the fact "belongs to the envelope's
+    feed_timestamp", and an envelope field nothing fills satisfies nothing.
+
+    THE CLOCK AND THE ROWS MUST AGREE, which is what makes this checkable rather than
+    decorative: every alert carries observed_at from its feed's header, so the
+    envelope's content time is the oldest of exactly those numbers.
+    """
+    header = 1000.0
+    alert = {**ALERT, "observed_at": header, "provenance": "reported"}
+    alerts_cache.update(alerts=[alert], fetched_at=1200.0, active=1, suppressed=0)
+    alerts_cache["health"]["MNR"]["content_at"] = header
+    alerts_cache["health"]["MNR"]["fresh_at"] = 1200.0
+
+    body = (await client.get("/api/alerts")).json()
+    served = body["alerts"]
+    assert served, "the envelope served no alerts"
+    assert body["feed_timestamp"] == min(a["observed_at"] for a in served)
+    assert body["feed_timestamp"] == header
+    # And the per-system block carries the same number for the system that produced it.
+    assert body["systems"]["MNR"]["feed_timestamp"] == header
+    # The content clock is NOT the poll clock: 200 seconds of lag are expressible on
+    # this envelope now, which is the whole point of the field.
+    assert body["fetched_at"] - body["feed_timestamp"] == 200.0
+
+
+async def test_a_served_empty_alerts_feed_reports_no_content_clock(
+    client, alerts_cache, monkeypatch
+):
+    """N4's state, and the one case where None is the answer rather than a gap.
+
+    A zero-byte 200 from NJ Transit's alerts endpoint means zero alerts, and it
+    carries no header to read, so the decoder returns None for the clock. The entry
+    still dates the SERVE through fetched_at; what it cannot report is a generation
+    time nobody sent. Asserting that keeps the honest null distinguishable from the
+    unfilled null 6.1 shipped.
+    """
+    assert feeds._decode_alerts(b"", "njt", 1000.0) == ([], 0, None)
+    alerts_cache.update(alerts=[], fetched_at=1200.0, active=0, suppressed=0)
+    body = (await client.get("/api/alerts")).json()
+    assert body["alerts"] == []
+    assert body["feed_timestamp"] is None, "no alert, no row, nothing to date"
+    assert body["fetched_at"] == 1200.0, "but the serve is still dated"

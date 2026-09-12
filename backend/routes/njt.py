@@ -16,13 +16,26 @@ rather than a new surface, and it is what 15c's panel will read.
 from __future__ import annotations
 
 import re
+import time
 
 from fastapi import APIRouter, HTTPException, Request, Response
 
-from cache import _require_filled_cache, _serve_cached, _static_endpoint_ready
+from cache import (
+    _require_filled_cache,
+    _serve_cached,
+    _static_endpoint_ready,
+    _system_content_at,
+    _system_freshness_block,
+)
 from models import NjtFeed, NjtRoute, NjtStationArrivals, NjtStop
 
 router = APIRouter()
+
+# The one system key the NJ Transit envelope's blocks are filed under, matching
+# feeds.njt.SYSTEM. A literal rather than an import so this module keeps importing
+# nothing from feeds, which is what keeps the NJ Transit credential path out of the
+# route layer entirely.
+_NJT_SYSTEM = "njt"
 
 # NJT stop ids are small integers (1..176 as of the 2026-08-05 probe); allow up to
 # six digits for headroom. Like the other station-id regexes this is only a cheap
@@ -156,7 +169,12 @@ async def get_njt_arrivals(request: Request, stop_id: str) -> dict:
         raise HTTPException(status_code=404, detail=f"Unknown NJ Transit stop {stop_id}.")
     return {
         "fetched_at": entry["fetched_at"],
+        # NJ Transit's one system, whose header is the clock behind every row here
+        # and a good one (9s to 23s of lag at peak, measured).
+        "feed_timestamp": _system_content_at(entry, _NJT_SYSTEM),
         "stop_id": stop_id,
         "stop_name": stops[stop_id]["name"],
         "arrivals": (getattr(app.state, "njt_arrivals", None) or {}).get(stop_id, []),
+        "served_at": time.time(),
+        "systems": _system_freshness_block(entry, _NJT_SYSTEM),
     }

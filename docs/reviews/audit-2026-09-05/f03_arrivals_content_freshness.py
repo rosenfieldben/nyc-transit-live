@@ -475,20 +475,60 @@ async def main_async() -> None:
           f"the arrivals fetched_at  ({(soonest - arrivals['fetched_at']) / 60:.2f} min ahead)")
     print(f"  arrival row keys           : {sorted(rows[0])}")
 
+    # CONTRACT 6.1 IS COMPLETE ON THE BACKEND AND F03 IS STILL OPEN, which is the
+    # split this section now pins. Every number the audit said the arrivals payload
+    # could not express is in it: the envelope carries the contributing group's own
+    # content time, the rows carry theirs, and the systems block names the
+    # contributor. What has not changed is the only thing a rider experiences, which
+    # is measured in the frontend section below: the popup renders no qualifier and
+    # the panel still ages on `now - fetched_at`.
     check(
-        set(arrivals) == {"fetched_at", "station_id", "station_name", "directions"},
-        "the arrivals envelope serves exactly 4 keys",
+        set(arrivals) == {
+            "fetched_at",
+            "feed_timestamp",
+            "station_id",
+            "station_name",
+            "directions",
+            "served_at",
+            "systems",
+        },
+        "the arrivals envelope serves the 4 original keys plus 6.1's three",
         ", ".join(arrivals_keys),
     )
     check(
-        not (set(arrivals) & CONTENT_CLOCK_NAMES),
-        "no content-age / source-content-time key in the arrivals envelope",
-        "checked against " + ", ".join(sorted(CONTENT_CLOCK_NAMES)),
+        abs(arrivals["feed_timestamp"] - vehicles["feed_timestamp"]) < 0.001,
+        "the arrivals envelope now carries the CONTENT clock the audit found missing",
+        f"{arrivals['feed_timestamp']:.3f}",
     )
     check(
-        not (set(rows[0]) & CONTENT_CLOCK_NAMES),
-        "no content clock on the individual arrival rows either",
+        abs((arrivals["fetched_at"] - arrivals["feed_timestamp"]) - INJECTED_LAG_S) < 1.0,
+        "and the 600 s is expressible on the arrivals payload at last",
+        f"{arrivals['fetched_at'] - arrivals['feed_timestamp']:.1f} s",
+    )
+    check(
+        arrivals["served_at"] is not None and arrivals["systems"] is not None,
+        "the envelope names its contributors and stamps its own serve time",
+        f"systems={sorted(arrivals['systems'])}",
+    )
+    # THE ROWS ARE DATED NOW, AND WITH THE RIGHT NUMBER. 6.1's decoders half stamps
+    # every subway prediction with its feed group's header, which under this
+    # reproduction is the INJECTED 600-seconds-behind header. So the payload finally
+    # carries the lag it had no field for: the row says when the prediction was made,
+    # and the row's own countdown can be checked against it.
+    check(
+        set(rows[0]) & CONTENT_CLOCK_NAMES == {"observed_at"},
+        "the arrival rows carry observed_at (6.1)",
         ", ".join(sorted(rows[0])),
+    )
+    check(
+        all(r["observed_at"] == vehicles["feed_timestamp"] for r in rows),
+        f"all {len(rows)} rows report the contributing group's content time",
+        f"{rows[0]['observed_at']:.3f} == {vehicles['feed_timestamp']:.3f}",
+    )
+    check(
+        abs((arrivals["fetched_at"] - rows[0]["observed_at"]) - INJECTED_LAG_S) < 1.0,
+        "and the row's own lag is the injected 600 s, visible in the payload at last",
+        f"{arrivals['fetched_at'] - rows[0]['observed_at']:.1f} s",
     )
     check(
         abs(arrivals["fetched_at"] - fetched_at_1) < 0.001,
@@ -501,8 +541,8 @@ async def main_async() -> None:
         f"{soonest - arrivals['fetched_at']:.1f} s ahead",
     )
     check(
-        "feed_timestamp" in vehicles and "feed_timestamp" not in arrivals,
-        "the content clock is on the vehicles envelope and absent from the arrivals one",
+        "feed_timestamp" in vehicles and "feed_timestamp" in arrivals,
+        "the content clock is on the vehicles envelope AND on the arrivals one (6.1)",
     )
 
     rule("(d) THE PER-GROUP HEALTH BLOCK during that same poll")
@@ -531,8 +571,13 @@ async def main_async() -> None:
         f"{vehicles['systems'][FEED_GROUP]['fetched_at']:.3f}",
     )
     check(
-        not (set(models.SystemFreshness.model_fields) & CONTENT_CLOCK_NAMES),
-        "SystemFreshness carries no per-group content clock either",
+        "feed_timestamp" in models.SystemFreshness.model_fields,
+        "SystemFreshness declares a per-group content clock (6.1)",
+    )
+    check(
+        abs(vehicles["systems"][FEED_GROUP]["feed_timestamp"] - vehicles["feed_timestamp"]) < 0.001,
+        "and the poller fills it, so the group can be dated on its own",
+        f"{vehicles['systems'][FEED_GROUP]['feed_timestamp']:.3f}",
     )
 
     # ---- poll 2: the SAME old bytes retrieved successfully again ----------
@@ -616,8 +661,11 @@ async def main_async() -> None:
 
     rule("(c) CITED LINES, confirmed against the audited files")
     cites = [
-        ("backend/routes/subway.py", 85, "THE OLDEST CONTRIBUTING GROUP'S poll time"),
-        ("backend/models.py", 191, "class StationArrivals(BaseModel):"),
+        ("backend/routes/subway.py", 89, "THE OLDEST CONTRIBUTING GROUP'S poll time"),
+        # Moved by contract 6.1, which widened the models above it. The line number
+        # is re-pinned rather than loosened to a search: a citation that drifts
+        # silently is the thing this block exists to catch.
+        ("backend/models.py", 294, "class StationArrivals(BaseModel):"),
         ("frontend/helpers.js", 713, 'The "as of Xm ago" age line'),
     ]
     for rel, line_no, needle in cites:
@@ -649,10 +697,23 @@ async def main_async() -> None:
     )
     without = [r["mode"] for r in table if not r["content_clock"]]
     with_clock = [r["mode"] for r in table if r["content_clock"]]
+    # 6.1 GAVE ALL FIVE THE FIELD AND FILLED IT, so the audit's "no arrivals model of
+    # ANY mode carries a content-age field" is false of both the declaration and the
+    # data. What keeps F03 open is measured in the frontend section above, not here.
     check(
-        not with_clock,
-        "NO arrivals model of ANY mode carries a content-age field",
-        f"without={without}; with={with_clock or 'none'}",
+        not without,
+        "all five arrivals models now DECLARE a content-age field (6.1)",
+        f"declaring={with_clock}; not declaring={without or 'none'}",
+    )
+    # WHAT IS LEFT OF F03 AFTER ALL OF 6.1. The rows are dated, the envelope carries
+    # its contributing group's content time, and its systems block names that
+    # contributor. NO RIDER SURFACE READS ANY OF IT, which is the whole of what keeps
+    # this finding open: the frontend checks above measure a popup that renders no
+    # qualifier and a panel whose age is still now - fetched_at.
+    check(
+        FEED_GROUP in (arrivals["systems"] or {}),
+        "the board names the contributor behind it, so a healthy one stays distinct",
+        f"systems={sorted(arrivals['systems'] or {})}",
     )
     check(
         all(row["content_clock"] for row in feed_model_table()),
@@ -682,8 +743,17 @@ async def main_async() -> None:
         "DISPOSITION: VERIFIED, a valid subway feed "
         f"{lag_1:.0f}s behind its own header serves /api/subways a "
         f"{lag_1:.0f}s content lag while /api/subway-arrivals/{STATION_ID} serves only a "
-        "freshly stamped fetched_at, no content clock, 8/8 groups ok, and all 5 arrivals "
-        "models of all 5 modes omit the field."
+        "freshly stamped fetched_at and 8/8 groups ok. CONTRACT 6.1 HAS CLOSED THE "
+        "BACKEND HALF ENTIRELY: all 5 arrivals models of all 5 modes carry an "
+        "observed_at, the decoders fill it, the envelope carries the contributing "
+        "group's own content time, and its systems block names that contributor, so "
+        "every number the audit found inexpressible is now in the payload and the "
+        "600 s is visible on the arrivals response itself. THE FINDING IS UNCHANGED "
+        "ANYWAY, and what carries it is measured above rather than assumed: no rider "
+        "surface reads any of it. The popup renders no qualifier and the panel's age "
+        "is still now - fetched_at, so a rider still reads a two minute countdown "
+        "built from a ten minute old prediction. That is 6.2's work, and this script "
+        "goes red the day it lands."
     )
 
 

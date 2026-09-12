@@ -95,6 +95,34 @@ def _canceled_trip_ids(feed) -> set[str]:
     return canceled
 
 
+def _railroad_observed_at(system: str, stamp: int | float) -> float | None:
+    """The observation time a railroad row may report, or None where the provider
+    sends none worth reporting.
+
+    THE POLICY IS DATA AND IT ALREADY HAS A HOME, so this function reads
+    RAILROAD_FRESHNESS_SYSTEMS rather than naming Metro-North a fourth time. That set
+    answers "does this system's clock track reality", and the comment above it records
+    the probe that settled it for both halves at once: MNR stamps a bursty clock that
+    lags two to four minutes onto its header AND COPIES IT onto every
+    vehicle.timestamp, while LIRR's header is the true generation time and its vehicles
+    date themselves independently. One cause, one exclusion, one place to change it.
+
+    MNR'S STAMP EXISTS AND IS WORTHLESS, which is the trap this function closes. All 49
+    positioned vehicles on the committed Metro-North capture carry a timestamp and all
+    49 of them are the header, one distinct value. A decoder that simply read the field
+    would hand Metro-North a non-null observed_at that looks like an observation clock
+    and is a restatement of a lagging header, which is worse than null: null says "this
+    provider does not date its observations" and a copied header says something false.
+
+    PROTOBUF ZERO IS NOT ABSENCE. uint64 fields default to 0 rather than going missing,
+    and 0.0 survives every `is not None` check while meaning "unset", so the falsy
+    guard here is the same idiom _header_timestamp uses on the header itself.
+    """
+    if system not in RAILROAD_FRESHNESS_SYSTEMS:
+        return None
+    return float(stamp) or None
+
+
 def _accepted_as_gps(entity, canceled_trips: set[str]) -> bool:
     """Is this feed entity a vehicle the map will draw at its OWN reported position?
 
@@ -157,9 +185,22 @@ def _decode_railroad_vehicles(
     rules that happen to agree (N2). The direction and
     interpolation-anchor fields are emitted as None: phase 2 (placing
     position-less trains at their next station) fills them, so the RailroadTrain
-    model needs no change then. `now` is unused in phase 1 (no schedule join
-    yet); it is kept for parity with the subway decoders and frozen by the golden
-    test.
+    model needs no change then.
+
+    EACH TRAIN NOW CARRIES ITS OWN OBSERVATION TIME, or null where the provider
+    sends none: _railroad_observed_at applies the per-system policy and this pass
+    does not restate it. provenance is `reported` on every row here, because every
+    row here is a coordinate the vehicle itself published.
+
+    `now` IS STILL UNUSED, AND THAT IS NOT AN OVERSIGHT. Reading vehicle.timestamp
+    needs no clock of ours: the age of an observation is a fact about the feed,
+    computed later by whoever compares it to something. What WOULD need `now` is an
+    age GATE, deciding that an old position stops being drawn, and that is F01's
+    change rather than this one. The contract's models step is deliberately inert:
+    it produces the values and nothing consumes them yet. So the parameter is still
+    kept for parity with the subway decoders and still frozen by the golden test,
+    and the line in section 4.2 of docs/design/freshness-contract.md that says this
+    sentence stops being true is describing F01's commit, not this one.
 
     CANCELLATION IS RESOLVED BEFORE EMISSION, NOT AFTER (Audit 5, F02). A canceled
     trip stays in these feeds with a live GPS entity that keeps moving, because the
@@ -227,6 +268,11 @@ def _decode_railroad_vehicles(
                 "prev_lon": None,
                 "prev_time": None,
                 "next_time": None,
+                # The vehicle's OWN clock where the provider keeps one, null where it
+                # does not (_railroad_observed_at). LIRR dates all 69 of its positioned
+                # vehicles independently of the header; Metro-North dates none of them.
+                "observed_at": _railroad_observed_at(system, v.timestamp),
+                "provenance": "reported",
             }
         )
     return trains, _header_timestamp(feed)
@@ -422,6 +468,20 @@ def _decode_railroad_feed(
                 if _accepted_as_gps(entity, canceled_trips):
                     positioned_ids.add(v.trip.trip_id)
 
+    # THE PREDICTION CLOCK, per trip, with the feed header as its only fallback.
+    # LIRR dates 127 of the 132 trip_updates on the committed capture and the other 5
+    # are its canceled trips, which this pass drops anyway; the header is what any
+    # future gap falls back to, and it is a real number this provider sent rather than
+    # one computed here. Metro-North dates none of its 119 and is excluded by
+    # _railroad_observed_at, so every MNR row below reports null whichever branch it
+    # takes. See section 3.3 of docs/design/freshness-contract.md for the table.
+    feed_header = _header_timestamp(feed)
+
+    def prediction_observed_at(trip_update) -> float | None:
+        return _railroad_observed_at(system, trip_update.timestamp) or _railroad_observed_at(
+            system, feed_header or 0
+        )
+
     trains: list[dict] = []
     arrivals: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
     for entity in feed.entity:
@@ -485,6 +545,11 @@ def _decode_railroad_feed(
                     "trip_id": arr_trip_id,
                     "arrival": float(t),
                     "train_num": train_num,
+                    # A PREDICTION IS AN OBSERVATION: this row's countdown is only as
+                    # current as the trip_update that produced it, which is the whole
+                    # of F03 on the railroad side.
+                    "observed_at": prediction_observed_at(tu),
+                    "provenance": "reported",
                 }
             )
 
@@ -592,6 +657,15 @@ def _decode_railroad_feed(
                 "prev_lon": prev_lon,
                 "prev_time": prev_time,
                 "next_time": float(chosen_time) if chosen_time is not None else None,
+                # A PLACED TRAIN IS AS CURRENT AS THE PREDICTION THAT PLACED IT, which
+                # is `tu` in scope here: the same trip_update whose `chosen` stop set
+                # the latitude and longitude two lines up. Not the header, not the poll
+                # clock, and not the GPS reading it does not have.
+                "observed_at": prediction_observed_at(tu),
+                # `placed` and not `estimated`: this row sits AT a station's own
+                # coordinates. The anchors beside it let a client glide between two
+                # stations, but the position this decoder emits is the stop's.
+                "provenance": "placed",
             }
         )
 

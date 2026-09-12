@@ -192,7 +192,18 @@ def _decode_ferry_vehicles(
                 "status": _status_name(vehicle),
                 # Per-vehicle content time (advances each poll); the boat's own
                 # freshness, distinct from the feed header timestamp.
+                #
+                # TWO KEYS, ONE VALUE, FOR ONE RELEASE (Q1). This decoder has read
+                # vehicle.timestamp and served it as `updated_at` since 14b, which made
+                # the ferry the one system where the freshness contract was already
+                # half built, and no frontend surface ever read it. 6.1 gives the value
+                # the contract's name and keeps the old one beside it so a client
+                # holding the previous payload shape is not broken by the rename.
+                # `updated_at` is dropped a release from now; a test pins them equal
+                # until then.
                 "updated_at": float(vehicle.timestamp) or None,
+                "observed_at": float(vehicle.timestamp) or None,
+                "provenance": "reported",
             }
         )
     return boats, _header_timestamp(feed), deadheads, join_misses
@@ -220,6 +231,18 @@ def _decode_ferry_arrivals(
     # decode above; an undecodable body fails the whole ferry poll (all-or-nothing
     # by contract), which _refresh_ferry records while keeping last-known.
     feed = parse_feed(raw)
+    # THE TRIPUPDATES CLOCK, NOT THE BOAT CLOCK, which is what the audit's F03 remedy
+    # asked for by name. The two ferry feeds are separate and separately dated: the
+    # VehiclePositions header (and every boat's own timestamp) says when a BOAT was
+    # seen, while this one says when the DOCK PREDICTIONS were generated. The envelope
+    # reports the VehiclePositions header as feed_timestamp, so a dock row aged against
+    # that would be aged against a feed it did not come from. None of the 50 trip
+    # updates on the committed capture dates itself, so this header is the only clock
+    # these rows can honestly carry.
+    #
+    # IT STAYS INSIDE THIS FUNCTION. Widening the return tuple to hand it out would
+    # touch eight call sites for a value only these rows need.
+    feed_header = _header_timestamp(feed)
 
     arrivals: dict[str, dict[str, list[dict]]] = {}
     deadheads = 0
@@ -256,6 +279,8 @@ def _decode_ferry_arrivals(
                     "trip_id": trip_id,
                     "arrival": float(arrival) if arrival is not None else None,
                     "departure": float(departure) if departure is not None else None,
+                    "observed_at": feed_header,
+                    "provenance": "reported",
                 }
             )
     return _trim_ferry_arrivals(arrivals), deadheads, join_misses

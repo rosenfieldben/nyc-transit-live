@@ -8,10 +8,12 @@ renames a field is caught here rather than silently dropped by serialization.
 
 import json
 from pathlib import Path
+from typing import get_args
 
 import pytest
 
 import feeds
+import models as models_module
 import railroad_static
 from models import (
     Arrival,
@@ -45,16 +47,16 @@ FIXTURES = Path(__file__).parent / "fixtures"
 #
 # The models gain observed_at and provenance first, the decoders fill them second,
 # the goldens are regenerated last. Between those commits the MODEL is wider than
-# the thing each assertion below compares it against, and these two names say
-# exactly which side has not caught up yet. Each is deleted by the commit that
-# closes it, and that deletion is the evidence the side caught up.
+# the thing each assertion below compares it against, and the name below says
+# exactly which side has not caught up yet. It is deleted by the commit that closes
+# it, and that deletion is the evidence the side caught up: _PENDING_IN_DECODE stood
+# here until the decoders commit and is gone because the decoders fill both fields.
 #
 # THIS IS NOT A RELAXED ASSERTION. `set(row) | PENDING == fields` still fails on any
 # other difference in either direction: a renamed field, a dropped field, an extra
 # field the model does not declare. It tolerates exactly the two names below and
 # nothing else.
 _CONTRACT_PAIR = {"observed_at": None, "provenance": "unknown"}
-_PENDING_IN_DECODE = {"observed_at", "provenance"}  # closed by the decoders commit
 _PENDING_IN_GOLDEN = {"observed_at", "provenance"}  # closed by the goldens commit
 
 # Representative decode outputs, mirrored from feeds.py / the test_api fixtures.
@@ -132,7 +134,7 @@ def test_decoded_railroad_train_keys_cover_model():
     raw = (FIXTURES / "railroad_mnr.pb").read_bytes()
     trains, _ = feeds._decode_railroad_vehicles(raw, "MNR", 0.0)
     assert trains, "decode produced no trains"
-    assert all(set(t) | _PENDING_IN_DECODE == set(RailroadTrain.model_fields) for t in trains)
+    assert all(set(t) == set(RailroadTrain.model_fields) for t in trains)
 
 
 def test_placed_railroad_train_keys_cover_model():
@@ -142,7 +144,7 @@ def test_placed_railroad_train_keys_cover_model():
     stops = json.loads((FIXTURES / "railroad_lirr_stops.json").read_text())
     placed = feeds._decode_railroad_placements(raw, "LIRR", stops, 0.0)
     assert placed, "placement produced no trains"
-    assert all(set(t) | _PENDING_IN_DECODE == set(RailroadTrain.model_fields) for t in placed)
+    assert all(set(t) == set(RailroadTrain.model_fields) for t in placed)
 
 
 def test_railroad_feed_envelope_validates():
@@ -359,14 +361,14 @@ def test_matched_path_train_keys_cover_model():
     trains, arrivals, _, _ = feeds._decode_path_feed(feed.SerializeToString(), stops, 1000.0)
     assert trains, "decode produced no trains"
     served, _state = feeds.match_path_identities(feeds.new_path_identity_state("t"), trains, {})
-    assert all(set(t) | _PENDING_IN_DECODE == set(PathTrain.model_fields) for t in served)
+    assert all(set(t) == set(PathTrain.model_fields) for t in served)
     for t in served:
         PathTrain.model_validate(t)
         assert "uuid-1" not in str(t)  # the bridge hash never reaches the payload
     for buckets in arrivals.values():
         for rows in buckets.values():
             for row in rows:
-                assert set(row) | _PENDING_IN_DECODE == set(PathArrival.model_fields)
+                assert set(row) == set(PathArrival.model_fields)
                 PathArrival.model_validate(row)
 
 
@@ -449,4 +451,283 @@ def test_decoded_train_keys_cover_model():
     expected = json.loads((FIXTURES / "subway_1_7_s_expected.json").read_text())
     trains = feeds._decode_trains(raw, stops, expected["feed_key"], expected["now"])
     assert trains, "decode produced no trains"
-    assert all(set(t) | _PENDING_IN_DECODE == set(Train.model_fields) for t in trains)
+    assert all(set(t) == set(Train.model_fields) for t in trains)
+
+
+# ---------------------------------------------------------------------------
+# THE OBSERVATION CLOCKS, PER DECODER (contract 6.1, section 3.3)
+#
+# The per-provider age policy in the design is DATA: one row per system and
+# observation kind, saying which clock that row's rule reads and whether it is
+# age-gated. These tests are that table, asserted against the real decoders over the
+# committed captures. A policy that lives only in a document drifts from the code it
+# describes; a policy asserted here cannot.
+# ---------------------------------------------------------------------------
+
+# Every value models.Provenance admits. Derived from the type rather than retyped, so
+# adding a sixth value to the enumeration cannot leave this list behind.
+PROVENANCE_VALUES = set(get_args(models_module.Provenance))
+
+
+def _rows(value):
+    """Every dict at the leaves of a decoder's output, whatever its nesting."""
+    if isinstance(value, list):
+        return [row for item in value for row in _rows(item)]
+    if isinstance(value, dict):
+        if "provenance" in value:
+            return [value]
+        return [row for item in value.values() for row in _rows(item)]
+    return []
+
+
+def _bus_rows(monkeypatch):
+    """The bus decode over the committed OneBusAway capture (section 6.0's probe).
+
+    fetch_vehicle_positions is an async fetch rather than a pure decode, so the client
+    is stubbed exactly as backend/tests/test_feeds.py stubs it. No network: the bytes
+    are the committed fixture, and the key is a fake so this can never reach the real
+    endpoint even if the stub were removed.
+    """
+    import asyncio
+
+    monkeypatch.setenv("BUS_TIME_API_KEY", "test-key")
+
+    class _Resp:
+        def __init__(self, content):
+            self.content = content
+
+        def raise_for_status(self):
+            return None
+
+    class _Client:
+        def __init__(self, content):
+            self._content = content
+
+        async def get(self, url, params=None):
+            return _Resp(self._content)
+
+    raw = (FIXTURES / "bus_vehicle_positions.pb").read_bytes()
+    vehicles, _ts = asyncio.run(feeds.fetch_vehicle_positions(_Client(raw)))
+    assert vehicles, "the committed bus capture decoded to nothing"
+    return vehicles
+
+
+def test_bus_rows_carry_the_vehicles_own_clock(monkeypatch):
+    # 3.3, buses: vehicle.timestamp, age-gated, written from section 6.0's probe.
+    # 2136 of 2136 vehicles on the committed capture date themselves.
+    rows = _bus_rows(monkeypatch)
+    assert len(rows) == 2136
+    assert all(r["observed_at"] is not None for r in rows)
+    assert all(r["provenance"] == "reported" for r in rows)
+    assert len({r["observed_at"] for r in rows}) == 47  # per observation, not per message
+
+
+def _njt_decode(now):
+    """The NJT decode the golden test drives, built from the committed GTFS members."""
+    import io
+    import zipfile
+
+    import njt_static
+    from feeds import njt as njt_feed
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zf:
+        for path in sorted((FIXTURES / "njt_gtfs").iterdir()):
+            if path.suffix == ".txt":
+                zf.writestr(path.name, path.read_text(encoding="utf-8"))
+    parsed = njt_static._parse_zip(buffer)
+    return njt_feed.decode_njt_trip_updates(
+        (FIXTURES / "njt_tu.pb").read_bytes(),
+        parsed["stops"],
+        njt_static.build_njt_trip_index(parsed["trips"]),
+        now,
+    )
+
+
+def _lirr():
+    raw = (FIXTURES / "railroad_lirr.pb").read_bytes()
+    stops = json.loads((FIXTURES / "railroad_lirr_stops.json").read_text())
+    header = 1782006915.0
+    gps, _ = feeds._decode_railroad_vehicles(raw, "LIRR", header)
+    placed, arrivals = feeds._decode_railroad_feed(raw, "LIRR", stops, header)
+    return header, gps, placed, arrivals
+
+
+def _mnr():
+    raw = (FIXTURES / "railroad_mnr.pb").read_bytes()
+    stops = json.loads((FIXTURES / "railroad_mnr_stops.json").read_text())
+    header = 1782006692.0
+    gps, _ = feeds._decode_railroad_vehicles(raw, "MNR", header)
+    placed, arrivals = feeds._decode_railroad_feed(raw, "MNR", stops, header)
+    return header, gps, placed, arrivals
+
+
+def test_lirr_positions_carry_the_vehicles_own_clock():
+    # 3.3, LIRR GPS position: vehicle.timestamp, age-gated. None of the 69 positioned
+    # vehicles on this capture stamps the header, which is what makes it an
+    # INDEPENDENT clock rather than a restatement of one.
+    header, gps, _placed, _arrivals = _lirr()
+    assert gps, "decode produced no GPS trains"
+    assert all(t["observed_at"] is not None for t in gps)
+    assert all(t["provenance"] == "reported" for t in gps)
+    ages = sorted(header - t["observed_at"] for t in gps)
+    assert ages[0] == 4.0 and ages[-1] == 53676.0  # the design's freshest and oldest
+    assert sum(1 for a in ages if a > 90) == 41  # 42 less F02's canceled trip
+    assert not any(t["observed_at"] == header for t in gps)
+
+
+def test_metro_north_positions_report_no_observation_clock():
+    # 3.3, Metro-North: no clock, NOT age-gated. Its stamp exists on all 49 positioned
+    # vehicles and is the header on all 49, so reading it would hand the fleet a
+    # number that looks like an observation time and restates a lagging header.
+    _header, gps, placed, arrivals = _mnr()
+    assert gps, "decode produced no GPS trains"
+    assert all(t["observed_at"] is None for t in gps)
+    assert all(r["observed_at"] is None for r in _rows(placed) + _rows(arrivals))
+
+
+def test_lirr_predictions_and_placements_carry_the_prediction_clock():
+    # 3.3, LIRR prediction: trip_update.timestamp, age-gated. A placed train is as
+    # current as the prediction that placed it, not as the header.
+    header, _gps, placed, arrivals = _lirr()
+    assert placed and _rows(arrivals)
+    assert all(t["observed_at"] is not None for t in placed)
+    assert all(t["provenance"] == "placed" for t in placed)
+    assert all(r["observed_at"] is not None for r in _rows(arrivals))
+    # Not one flat value: these rows are dated per trip, not per message.
+    assert len({t["observed_at"] for t in placed}) > 1
+    assert any(t["observed_at"] != header for t in placed)
+
+
+def test_subway_positions_take_the_vehicle_clock_where_one_joins():
+    # 3.3, subway: two rows, both age-gated. 98 VehiclePositions join by trip_id and
+    # carry a real per-observation clock; the trips with none fall back to the group
+    # header, which is the same clock their predictions use.
+    header = 1781380197.0
+    stops = json.loads((FIXTURES / "subway_1_7_s_stops.json").read_text())
+    trains, arrivals, feed_ts = feeds._decode_feed(
+        (FIXTURES / "subway_1_7_s.pb").read_bytes(), stops, "1-7+S", header
+    )
+    assert feed_ts == header
+    assert all(t["observed_at"] is not None for t in trains)
+    assert all(t["provenance"] == "placed" for t in trains)  # no subway coordinate ships
+    joined = [t for t in trains if t["observed_at"] != header]
+    assert len(joined) == 84 and len(trains) == 95
+    # Every prediction takes the group header: no subway trip_update dates itself.
+    rows = _rows(arrivals)
+    assert rows and all(r["observed_at"] == header for r in rows)
+
+
+def test_njt_positions_are_placed_or_estimated_on_the_header():
+    # 3.3, NJ Transit: the header for both rows, age-gated. provenance splits on how
+    # the position was derived, which is a different question from `status`.
+    expected = json.loads((FIXTURES / "njt_tu_expected.json").read_text())
+    trains, arrivals, feed_ts, _w = _njt_decode(expected["now"])
+    assert trains and feed_ts == expected["feed_timestamp"]
+    assert all(t["observed_at"] == feed_ts for t in trains)
+    assert {t["provenance"] for t in trains} <= {"placed", "estimated"}
+    # The split follows the motion state, and both halves are present on this capture.
+    for train in trains:
+        expect = "estimated" if train["status"] == "in-transit" else "placed"
+        assert train["provenance"] == expect, train["status"]
+    assert {t["provenance"] for t in trains} == {"placed", "estimated"}
+    assert all(r["observed_at"] == feed_ts for r in _rows(arrivals))
+
+
+def test_path_rows_take_the_entity_clock_not_the_bridge_write_time():
+    # 3.3, PATH: trip_update.timestamp per entity, age-gated. The envelope's clock is
+    # the bridge's WRITE time and advances on every regeneration, so a row aged
+    # against it could never be stale; these are aged against the entity.
+    stops = json.loads((FIXTURES / "path_stops.json").read_text())
+    trains, arrivals, feed_ts, _u = feeds._decode_path_feed(
+        (FIXTURES / "path_rt_gen_a.pb").read_bytes(), stops, 1783297522.0
+    )
+    assert trains
+    assert all(t["observed_at"] is not None for t in trains)
+    assert all(t["provenance"] == "placed" for t in trains)  # the bridge sends no position
+    assert len({t["observed_at"] for t in trains}) > 1  # per entity, not per message
+    assert all(t["observed_at"] < feed_ts for t in trains)
+    assert all(r["observed_at"] is not None for r in _rows(arrivals))
+
+
+def test_ferry_boat_serves_both_clock_keys_with_one_value():
+    # Q1: observed_at is the contract's name for what has shipped as updated_at since
+    # 14b. Both keys ride for one release and must never diverge.
+    static = json.loads((FIXTURES / "ferry_rt_static.json").read_text())
+    boats, feed_ts, _d, _m = feeds._decode_ferry_vehicles(
+        (FIXTURES / "ferry_vp_a.pb").read_bytes(), static["trips"], static["routes"], 1783812024.0
+    )
+    assert boats
+    assert all(b["updated_at"] == b["observed_at"] for b in boats)
+    assert all(b["observed_at"] is not None for b in boats)
+    assert all(b["provenance"] == "reported" for b in boats)
+    assert all(b["observed_at"] <= feed_ts for b in boats)
+
+
+def test_ferry_dock_rows_take_the_tripupdates_clock_not_the_boat_clock():
+    # 3.3, ferry dock arrival: the TripUpdates header. The audit's F03 remedy names
+    # this one: the boats and the docks are two feeds with two clocks.
+    static = json.loads((FIXTURES / "ferry_rt_static.json").read_text())
+    arrivals, _d, _m = feeds._decode_ferry_arrivals(
+        (FIXTURES / "ferry_tu_a.pb").read_bytes(), static["trips"], static["routes"], 1783812024.0
+    )
+    rows = _rows(arrivals)
+    assert rows
+    assert all(r["observed_at"] == 1783812024.0 for r in rows)
+    assert all(r["provenance"] == "reported" for r in rows)
+
+
+def test_no_decoder_emits_a_provenance_outside_the_closed_set(monkeypatch):
+    """THE GUARD MYPY CANNOT GIVE US.
+
+    Every decoder returns list[dict] with untyped values, so `"provenance": "palced"`
+    type-checks cleanly and surfaces only as a pydantic ValidationError at the
+    response boundary, which is a 500 in front of a rider rather than a red test. This
+    walks every row every decoder produces over the committed captures and asserts the
+    value is one the enumeration admits.
+    """
+    seen: set[str] = set()
+    for _header, gps, placed, arrivals in (_lirr(), _mnr()):
+        seen |= {r["provenance"] for r in _rows(gps) + _rows(placed) + _rows(arrivals)}
+
+    stops = json.loads((FIXTURES / "subway_1_7_s_stops.json").read_text())
+    trains, sub_arrivals, _ts = feeds._decode_feed(
+        (FIXTURES / "subway_1_7_s.pb").read_bytes(), stops, "1-7+S", 1781380197.0
+    )
+    seen |= {r["provenance"] for r in _rows(trains) + _rows(sub_arrivals)}
+
+    path_stops = json.loads((FIXTURES / "path_stops.json").read_text())
+    p_trains, p_arrivals, _fts, _u = feeds._decode_path_feed(
+        (FIXTURES / "path_rt_gen_a.pb").read_bytes(), path_stops, 1783297522.0
+    )
+    seen |= {r["provenance"] for r in _rows(p_trains) + _rows(p_arrivals)}
+
+    static = json.loads((FIXTURES / "ferry_rt_static.json").read_text())
+    boats, _fts2, _d, _m = feeds._decode_ferry_vehicles(
+        (FIXTURES / "ferry_vp_a.pb").read_bytes(), static["trips"], static["routes"], 1783812024.0
+    )
+    f_arrivals, _d2, _m2 = feeds._decode_ferry_arrivals(
+        (FIXTURES / "ferry_tu_a.pb").read_bytes(), static["trips"], static["routes"], 1783812024.0
+    )
+    seen |= {r["provenance"] for r in _rows(boats) + _rows(f_arrivals)}
+
+    n_trains, n_arrivals, _nts, _nw = _njt_decode(
+        json.loads((FIXTURES / "njt_tu_expected.json").read_text())["now"]
+    )
+    seen |= {r["provenance"] for r in _rows(n_trains) + _rows(n_arrivals)}
+
+    alerts, _sup = feeds._decode_alerts((FIXTURES / "alerts_mnr.pb").read_bytes(), "MNR", 0.0)
+    seen |= {r["provenance"] for r in _rows(alerts)}
+
+    # BUSES ARE HERE BECAUSE A MUTATION SURVIVED WITHOUT THEM. The first version of
+    # this test walked six decoders and not the seventh, so changing the bus decoder's
+    # provenance to "live-gps" (the exact value Q8 rejected) left it green. The bus
+    # decode is reached through an async fetch rather than a pure function, which is
+    # why it was the one left out and is no reason to leave it out.
+    seen |= {r["provenance"] for r in _rows(_bus_rows(monkeypatch))}
+
+    assert seen, "no decoder produced a row"
+    assert seen <= PROVENANCE_VALUES, sorted(seen - PROVENANCE_VALUES)
+    # And the values actually in use are the four a decoder can emit: `retained` is
+    # stamped by the retention merge, `unknown` only by the model default.
+    assert seen == {"reported", "placed", "estimated"}

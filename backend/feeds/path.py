@@ -117,6 +117,9 @@ def _decode_path_feed(
             continue  # canceled/deleted trip: drop from both placement and arrivals
         trip_id = tu.trip.trip_id or f"PATH:{entity.id}"
         route_id = tu.trip.route_id or None
+        # Protobuf 0 is unset, not an instant; the bridge has carried this on every
+        # entity of every committed capture, so the fallback has never been exercised.
+        observed_at = float(tu.timestamp) or None
         direction = (
             _PATH_DIRECTION.get(tu.trip.direction_id) if tu.trip.HasField("direction_id") else None
         )
@@ -163,7 +166,12 @@ def _decode_path_feed(
         if chosen_time is not None:
             bucket = direction or "Trains"
             arrivals[chosen.stop_id][bucket].append(
-                {"route_id": route_id, "arrival": float(chosen_time)}
+                {
+                    "route_id": route_id,
+                    "arrival": float(chosen_time),
+                    "observed_at": observed_at,
+                    "provenance": "reported",
+                }
             )
         trains.append(
             {
@@ -178,6 +186,18 @@ def _decode_path_feed(
                 "prev_lon": None,
                 "prev_time": None,
                 "next_time": float(chosen_time) if chosen_time is not None else None,
+                # THE ENTITY'S OWN CLOCK, NOT THE ENVELOPE'S, and PATH is the system
+                # where that distinction decides whether an age rule can fire at all.
+                # The envelope's feed_timestamp is the bridge's WRITE time: it advances
+                # every regeneration (~15s) whether or not anything upstream moved, so
+                # an age computed from it is always small and always meaningless.
+                # TripUpdate.timestamp is per entity and real: 53 of 53 on the general
+                # capture and 55 of 55 on the rush one carry it, and 12 of the rush 55
+                # are already more than 90 seconds old.
+                "observed_at": observed_at,
+                # `placed` because the bridge publishes no coordinates at all: every
+                # PATH position is its next station's, from the static index.
+                "provenance": "placed",
             }
         )
 
@@ -405,6 +425,10 @@ def match_path_identities(
             prev = (old["prev_lat"], old["prev_lon"], old["prev_time"])
         served.append(
             {
+                # THIS FUNCTION REBUILDS THE FIELD SET BY HAND ON PURPOSE (13d), so a
+                # decode field that is not named here reaches no payload. The contract
+                # pair has to be carried across explicitly for the same reason every
+                # other field is.
                 "id": train_id,
                 "route_id": train["route_id"],
                 "latitude": train["latitude"],
@@ -416,6 +440,8 @@ def match_path_identities(
                 "prev_lon": prev[1],
                 "prev_time": prev[2],
                 "next_time": train["next_time"],
+                "observed_at": train["observed_at"],
+                "provenance": train["provenance"],
             }
         )
         next_identities[train_id] = {

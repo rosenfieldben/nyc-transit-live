@@ -18,9 +18,9 @@ VEHICLE_POSITIONS_URL = env_seams.url(
 async def fetch_vehicle_positions(client: httpx.AsyncClient) -> tuple[list[dict], float | None]:
     """Fetch the feed, decode the protobuf, and return (vehicles, feed_timestamp).
 
-    Each vehicle dict has: id, route_id, latitude, longitude, bearing. Entities
-    without a position are skipped; bearing is None when the feed doesn't report
-    it. feed_timestamp is the feed's content time (MTA's clock). The caller owns
+    Each vehicle dict has: id, route_id, latitude, longitude, bearing, observed_at
+    and provenance. Entities without a position are skipped; bearing is None when the
+    feed doesn't report it. feed_timestamp is the feed's content time (MTA's clock). The caller owns
     the client (the polling task holds one for its lifetime).
     """
     resp = await client.get(VEHICLE_POSITIONS_URL, params={"key": _api_key()})
@@ -50,6 +50,14 @@ async def fetch_vehicle_positions(client: httpx.AsyncClient) -> tuple[list[dict]
                 "latitude": pos.latitude,
                 "longitude": pos.longitude,
                 "bearing": pos.bearing if pos.HasField("bearing") else None,
+                # MEASURED BEFORE IT WAS RELIED ON (section 6.0 of the freshness
+                # contract). This is OneBusAway's GTFS-Realtime feed, not SIRI, so
+                # there is no RecordedAtTime; the analogous field is this one, and the
+                # probe that made the policy row writable found all 2136 vehicles
+                # carrying it, 47 distinct values across 104 seconds, median age 15s.
+                # Protobuf 0 is unset rather than an instant, hence the falsy guard.
+                "observed_at": float(v.timestamp) or None,
+                "provenance": "reported",
             }
         )
     return vehicles, _header_timestamp(feed)

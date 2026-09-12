@@ -281,6 +281,11 @@ def test_arrivals_include_every_upcoming_stop():
         "route_id": "1",
         "trip_id": STARTED,
         "arrival": NOW + 60,
+        # The feed group's header: no subway trip_update dates itself (0 of 160 on the
+        # committed capture), so the message that carried the prediction is the only
+        # clock it has. decode_feed's synthetic feed stamps its header at NOW.
+        "observed_at": NOW,
+        "provenance": "reported",
     }
     assert arrivals["A02"]["Northbound"][0]["arrival"] == NOW + 300
 

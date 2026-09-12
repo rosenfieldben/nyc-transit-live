@@ -1572,15 +1572,21 @@ PATH_TRAINS = [
         "prev_lon": None,
         "prev_time": None,
         "next_time": 1500.0,
+        "observed_at": 996.0,  # the entity's own TripUpdate.timestamp
+        "provenance": "placed",
     }
 ]
-PATH_ARRIVALS = {"26733": {"To New Jersey": [{"route_id": "862", "arrival": 1500.0}]}}
+PATH_ARRIVALS = {
+    "26733": {
+        "To New Jersey": [
+            {"route_id": "862", "arrival": 1500.0, "observed_at": 996.0, "provenance": "reported"}
+        ]
+    }
+}
 # The SERVED shape (13d): what _refresh_path stores after the identity
 # matcher, i.e. what /api/path actually returns. A stable minted `id`, no
 # bridge trip hash.
-PATH_SERVED_TRAINS = [
-    {**{k: v for k, v in PATH_TRAINS[0].items() if k != "trip_id"}, "id": "t-1", **_PAIR}
-]
+PATH_SERVED_TRAINS = [{**{k: v for k, v in PATH_TRAINS[0].items() if k != "trip_id"}, "id": "t-1"}]
 
 
 async def test_path_feed_warming_up_503(client):
@@ -1654,9 +1660,7 @@ async def test_path_arrivals_known_station(client, path_rt_state, cache):
     assert body["stop_name"] == "Newark"
     assert body["fetched_at"] == 1234.0
     # Rows are {route_id, arrival} only: the bridge hash reaches no payload.
-    assert body["directions"] == {
-        "To New Jersey": _served([{"route_id": "862", "arrival": 1500.0}])
-    }
+    assert body["directions"] == PATH_ARRIVALS["26733"]
 
 
 async def test_path_arrivals_empty_when_nothing_upcoming(client, path_rt_state, cache):
@@ -2811,6 +2815,11 @@ ALERT = {
     "ends_at": None,
     **_PAIR,
 }
+# THE SAME ALERT AFTER A FAILED POLL CARRIED IT FORWARD. An alert is never derived, so
+# `retained` is the only provenance it can take other than `reported`. The retention
+# merge stamps it on a COPY, so the cached row a previous response already serialized
+# is never relabelled underneath whoever is holding it.
+RETAINED_ALERT = {**ALERT, "provenance": "retained"}
 
 
 @pytest.fixture
@@ -2916,12 +2925,12 @@ async def test_alerts_failed_poll_keeps_last_known(client, alerts_cache, monkeyp
     await app_module._refresh_alerts(app_module.app, client=None)
     # Last-known index and fetched_at kept; the error is recorded but not served
     # while the index is filled.
-    assert alerts_cache["alerts"] == [ALERT]
+    assert alerts_cache["alerts"] == [RETAINED_ALERT]
     assert alerts_cache["fetched_at"] == 1000.0
     assert alerts_cache["error"]["status"] == 502
     res = await client.get("/api/alerts")
     assert res.status_code == 200
-    assert res.json()["alerts"] == [ALERT]
+    assert res.json()["alerts"] == [RETAINED_ALERT]
 
 
 async def test_alerts_successful_poll_replaces_index(client, alerts_cache, monkeypatch):
@@ -3061,7 +3070,7 @@ async def test_alerts_all_failed_keeps_a_live_alert_and_its_last_decode_time(
 
     monkeypatch.setattr(app_module, "fetch_service_alerts", boom)
     await app_module._refresh_alerts(app_module.app, client=None)
-    assert alerts_cache["alerts"] == [ALERT]  # open-ended: nothing to expire
+    assert alerts_cache["alerts"] == [RETAINED_ALERT]  # open-ended: nothing to expire
     assert alerts_cache["error"]["status"] == 502
     assert alerts_cache["health"]["subway"]["fresh_at"] == 500.0  # NOT advanced
     assert alerts_cache["fetched_at"] == 1000.0  # last poll that decoded

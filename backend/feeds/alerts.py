@@ -23,7 +23,7 @@ from google.transit import gtfs_realtime_pb2
 import env_seams
 import njt_auth
 from feeds import njt as njt_feed
-from feeds.shared import _RAILROAD_BASE, logger, parse_feed
+from feeds.shared import _RAILROAD_BASE, _header_timestamp, logger, parse_feed
 
 # Keyless GTFS-RT Service Alerts feeds. The four MTA feeds are camsys-published on
 # the same %2F-encoded base as the railroad feeds. Keyed by the system this app
@@ -305,11 +305,21 @@ def _decode_alerts(raw: bytes, feed_key: str, now: float) -> tuple[list[dict], i
     answer this does.
     """
     if njt_alerts_served_empty(feed_key, raw):
+        # AN OBSERVATION OF NOTHING IS NOT AN ABSENCE OF OBSERVATION (N4), and there
+        # are no rows here to carry a clock: zero alerts observed at a real time is a
+        # fact about the FEED, so it belongs to the envelope's feed_timestamp rather
+        # than to a row that does not exist. This arm returns before parse_feed
+        # because the body it is answering for has no header to parse.
         return [], 0
     # parse_feed rejects an empty or malformed body (C3); fetch_service_alerts
     # catches it per FEED, so one poisoned system joins the failed set and the
     # other four systems' alerts are unaffected.
     feed = parse_feed(raw)
+    # A GTFS-RT ALERT CARRIES NO TIME OF ITS OWN, so the feed's own generation time is
+    # the only clock an alert row can honestly report. starts_at / ends_at below are
+    # NOT it: those are facts about the world (when the disruption applies), not about
+    # when we were told, and using them would answer a different question.
+    feed_header = _header_timestamp(feed)
 
     alerts: list[dict] = []
     suppressed = 0
@@ -353,6 +363,12 @@ def _decode_alerts(raw: bytes, feed_key: str, now: float) -> tuple[list[dict], i
                 "stops": stops,
                 "starts_at": starts_at,
                 "ends_at": ends_at,
+                "observed_at": feed_header,
+                # `reported` on every row a decode produces. The only other value an
+                # alert can take is `retained`, and that is stamped by the retention
+                # merge rather than here, because it is a fact about the SERVE and not
+                # about the decode.
+                "provenance": "reported",
             }
         )
     return alerts, suppressed
@@ -653,6 +669,11 @@ def merge_alert_generations(
             if alert.get("ends_at") is None or now < alert["ends_at"]
         ]
         if carried:
-            merged.extend(carried)
+            # COPY, NEVER MUTATE. These are the PREVIOUS poll's dict objects, still
+            # referenced by the cached index a response has already serialized, so
+            # stamping provenance onto them in place would retroactively relabel rows
+            # another caller is holding. A shallow copy per carried row is the whole
+            # cost, and it is paid only on a failed poll.
+            merged.extend({**alert, "provenance": "retained"} for alert in carried)
             retained_since[system] = started
     return merged, retained_since

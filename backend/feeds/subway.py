@@ -80,6 +80,41 @@ def _decode_feed(
     # advance. A valid feed with zero entities still decodes normally.
     feed = parse_feed(raw)
 
+    # THE GROUP HEADER, HOISTED. It was computed only inside the return expression,
+    # which is fine while it is an envelope-level answer and useless the moment rows
+    # need it: no subway trip_update carries a timestamp of its own (0 of 160 on the
+    # committed capture), so this header is the ONLY honest clock behind every
+    # prediction below and behind every train the vehicle join does not reach.
+    feed_header = _header_timestamp(feed)
+
+    # THE VEHICLE JOIN, AND WHAT IT DOES AND DOES NOT GIVE US (contract 3.3).
+    #
+    # This feed carries VehiclePosition entities that the loop below has always
+    # skipped, because they hold no position: measured on the committed capture, all
+    # 98 of them carry `timestamp` and NONE carries a `position` field. What they do
+    # carry is the moment the MTA last observed that train at a stop, which is a real
+    # per-observation clock and strictly better than the header for the trips it
+    # covers.
+    #
+    # SO THE JOIN YIELDS A CLOCK, NEVER A POSITION. Every subway train stays placed
+    # at its trip_update's chosen stop exactly as before; this changes what a train
+    # can say about its own age, not where it is drawn.
+    #
+    # AND IT DOES NOT COVER THE FLEET. All 98 VehiclePositions join a trip_update by
+    # trip_id, but 62 of the 160 trip_updates have no VehiclePosition at all. Those 62
+    # fall back to the group header, which is the same clock their predictions use and
+    # is honest for the same reason: the position was derived from those predictions.
+    # Both halves are age-gated; neither is null. The 62 are the reason 3.3 has two
+    # subway position rows rather than one.
+    observed_by_trip: dict[str, float] = {}
+    for entity in feed.entity:
+        if not entity.HasField("vehicle"):
+            continue
+        vehicle = entity.vehicle
+        stamp = float(vehicle.timestamp) or None  # protobuf 0 is unset, not an instant
+        if stamp is not None and vehicle.trip.trip_id:
+            observed_by_trip[vehicle.trip.trip_id] = stamp
+
     trains: list[dict] = []
     arrivals: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
     for entity in feed.entity:
@@ -104,7 +139,15 @@ def _decode_feed(
             if direction is None:
                 continue  # no clean platform direction; not a station arrival
             arrivals[station_id][direction].append(
-                {"route_id": route_id, "trip_id": trip_id, "arrival": float(t)}
+                {
+                    "route_id": route_id,
+                    "trip_id": trip_id,
+                    "arrival": float(t),
+                    # The group header: this feed's predictions date nothing of their
+                    # own, so the message that carried them is the only clock there is.
+                    "observed_at": feed_header,
+                    "provenance": "reported",
+                }
             )
 
         # Placement: skip not-yet-started trips, then pick the first stop that
@@ -180,9 +223,16 @@ def _decode_feed(
                 "prev_lon": prev_lon,
                 "prev_time": prev_time,
                 "next_time": float(chosen_time) if chosen_time is not None else None,
+                # The vehicle's own stop observation where one joined, the group
+                # header where none did.
+                "observed_at": observed_by_trip.get(trip_id, feed_header),
+                # `placed` on every subway train: the position emitted two lines up is
+                # a station's own coordinates. The feed publishes no subway coordinate
+                # to be `reported`, whatever the vehicle clock says.
+                "provenance": "placed",
             }
         )
-    return trains, arrivals, _header_timestamp(feed)
+    return trains, arrivals, feed_header
 
 
 def _decode_trains(raw: bytes, stops: dict[str, dict], feed_key: str, now: float) -> list[dict]:

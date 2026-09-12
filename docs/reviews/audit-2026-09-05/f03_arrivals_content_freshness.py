@@ -505,15 +505,25 @@ async def main_async() -> None:
         "still no CONTENT clock in the arrivals envelope",
         "checked against " + ", ".join(sorted(CONTENT_CLOCK_NAMES)),
     )
+    # THE ROWS ARE DATED NOW, AND WITH THE RIGHT NUMBER. 6.1's decoders half stamps
+    # every subway prediction with its feed group's header, which under this
+    # reproduction is the INJECTED 600-seconds-behind header. So the payload finally
+    # carries the lag it had no field for: the row says when the prediction was made,
+    # and the row's own countdown can be checked against it.
     check(
-        set(rows[0]) & CONTENT_CLOCK_NAMES == {"observed_at"}
-        and rows[0]["observed_at"] is None,
-        "the arrival rows carry observed_at (6.1) and it is None on every row",
+        set(rows[0]) & CONTENT_CLOCK_NAMES == {"observed_at"},
+        "the arrival rows carry observed_at (6.1)",
         ", ".join(sorted(rows[0])),
     )
     check(
-        all(r["observed_at"] is None for r in rows),
-        f"all {len(rows)} served rows report a null observation time",
+        all(r["observed_at"] == vehicles["feed_timestamp"] for r in rows),
+        f"all {len(rows)} rows report the contributing group's content time",
+        f"{rows[0]['observed_at']:.3f} == {vehicles['feed_timestamp']:.3f}",
+    )
+    check(
+        abs((arrivals["fetched_at"] - rows[0]["observed_at"]) - INJECTED_LAG_S) < 1.0,
+        "and the row's own lag is the injected 600 s, visible in the payload at last",
+        f"{arrivals['fetched_at'] - rows[0]['observed_at']:.1f} s",
     )
     check(
         abs(arrivals["fetched_at"] - fetched_at_1) < 0.001,
@@ -650,7 +660,7 @@ async def main_async() -> None:
         # Moved by contract 6.1, which widened the models above it. The line number
         # is re-pinned rather than loosened to a search: a citation that drifts
         # silently is the thing this block exists to catch.
-        ("backend/models.py", 292, "class StationArrivals(BaseModel):"),
+        ("backend/models.py", 294, "class StationArrivals(BaseModel):"),
         ("frontend/helpers.js", 713, 'The "as of Xm ago" age line'),
     ]
     for rel, line_no, needle in cites:
@@ -691,9 +701,15 @@ async def main_async() -> None:
         "all five arrivals models now DECLARE a content-age field (6.1)",
         f"declaring={with_clock}; not declaring={without or 'none'}",
     )
+    # WHAT IS LEFT OF F03 AFTER 6.1's DECODERS. The rows are dated; the ENVELOPE
+    # still cannot say WHICH contributor is behind (its systems block is unfilled
+    # until the endpoints commit), and no rider surface reads any of it. The frontend
+    # checks above are the ones that keep this finding open: the popup renders no
+    # qualifier and the panel's age is still now - fetched_at.
     check(
-        all(r["observed_at"] is None for r in rows),
-        "and every served arrival row still reports it as None, so F03 stands",
+        arrivals["systems"] is None and arrivals["served_at"] is None,
+        "the arrivals envelope still cannot name its contributors (endpoints commit)",
+        f"systems={arrivals['systems']!r} served_at={arrivals['served_at']!r}",
     )
     check(
         all(row["content_clock"] for row in feed_model_table()),
@@ -723,11 +739,15 @@ async def main_async() -> None:
         "DISPOSITION: VERIFIED, a valid subway feed "
         f"{lag_1:.0f}s behind its own header serves /api/subways a "
         f"{lag_1:.0f}s content lag while /api/subway-arrivals/{STATION_ID} serves only a "
-        "freshly stamped fetched_at, no content clock, 8/8 groups ok, and every served "
-        "arrival row reporting observed_at as None. Contract 6.1 has since given all 5 "
-        "arrivals models of all 5 modes the field and filled none of them, which is what "
-        "that step set out to do: the shape moved, the information did not, and the "
-        "rider-facing finding is unchanged."
+        "freshly stamped fetched_at and 8/8 groups ok. Contract 6.1 has since given all "
+        "5 arrivals models of all 5 modes an observed_at and taught the decoders to fill "
+        "it, so every row now carries its contributing group's content time and the 600 s "
+        "is visible in the payload at last. THE FINDING IS UNCHANGED, and what carries it "
+        "is measured above rather than assumed: the envelope still cannot name WHICH "
+        "contributor is behind (its systems block is unfilled until the endpoints commit), "
+        "the popup renders no qualifier, and the panel's age is still now - fetched_at, "
+        "so a rider still reads a two minute countdown built from a ten minute old "
+        "prediction."
     )
 
 

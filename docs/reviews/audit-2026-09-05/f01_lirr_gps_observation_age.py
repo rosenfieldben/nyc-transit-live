@@ -175,8 +175,13 @@ def section_a() -> None:
         f"feed_timestamp={feed_ts:.0f}",
     )
 
-    # Rewrite every vehicle.timestamp in memory. If the decode is unchanged, the
-    # individual observation time provably reaches nothing in the output.
+    # THE AUDIT'S CENTRAL MECHANISM IS FIXED AND THE FINDING IS NOT, which is the
+    # distinction this section now keeps. The audit proved the timestamp was DISCARDED
+    # by rewriting every one and watching the output not move; the decoders half of
+    # contract 6.1 made that false, and the same rewrite now moves every row, which is
+    # the sharpest available proof that the clock is read. So the check inverts. What
+    # remains of F01 is measured below: all 41 stale observations are still served,
+    # because reading a clock is not gating on one.
     for label, replacement in (("zeroed", 0), ("set to the header", int(HEADER_TS))):
         mutated = parsed(LIRR_RAW)
         touched = 0
@@ -185,17 +190,25 @@ def section_a() -> None:
                 entity.vehicle.timestamp = replacement
                 touched += 1
         rewritten, _ = feeds._decode_railroad_vehicles(mutated.SerializeToString(), "LIRR", HEADER_TS)
+        moved = sum(
+            1 for a, b in zip(baseline, rewritten) if a["observed_at"] != b["observed_at"]
+        )
         check(
-            f"vehicle.timestamp is discarded: {touched} timestamps {label}, output identical",
-            rewritten == baseline,
+            f"vehicle.timestamp is READ (6.1): {touched} timestamps {label}, "
+            f"{moved} rows move",
+            rewritten != baseline and moved == len(baseline),
         )
 
     emitted_fields = sorted(baseline[0])
     print(f"  fields the decoder emits per train: {emitted_fields}")
-    age_words = ("timestamp", "observed", "age", "seen", "measured")
     check(
-        "no emitted per-train field names an observation time",
-        not [f for f in emitted_fields if any(word in f for word in age_words)],
+        "the decoder emits an observation time per train (6.1)",
+        {"observed_at", "provenance"} <= set(emitted_fields),
+    )
+    check(
+        "and every one is the vehicle's own, never the header",
+        all(t["observed_at"] is not None for t in baseline)
+        and not any(t["observed_at"] == HEADER_TS for t in baseline),
     )
 
     model_fields = sorted(models.RailroadTrain.model_fields)
@@ -211,10 +224,7 @@ def section_a() -> None:
         "models.RailroadTrain now carries the contract pair (6.1)",
         {"observed_at", "provenance"} <= set(model_fields),
     )
-    check(
-        "and the decoder still fills neither, so F01 stands",
-        not [f for f in emitted_fields if any(word in f for word in age_words)],
-    )
+
 
 
 # ---------------------------------------------------------------------------
@@ -396,24 +406,23 @@ async def section_c_and_d(ages: dict[str, float]) -> None:
     print(f"             true observation age in the capture: {hms(ages[freshest_id])}")
     print("    difference in the JSON that distinguishes them by age: none of the 14 keys.")
 
-    # 6.1 again: the KEY is on the served record now, and it is empty on every row.
-    # An empty field is not a freshness signal, so the rider-facing defect is
-    # unchanged and the two vehicles below still differ in nothing.
+    # The age now REACHES the browser, and the two vehicles below are finally
+    # distinguishable in the JSON. What no surface does yet is READ it, which is what
+    # leaves F01 open: 41 stale observations are still drawn as live.
     check(
         "the served vehicle record carries observed_at (6.1)",
         "observed_at" in per_vehicle_keys,
         str(per_vehicle_keys),
     )
     check(
-        "and it is None on every served vehicle, so it distinguishes nothing",
-        all(rec.get("observed_at") is None for rec in body["data"]),
+        "and the browser can now tell the 14h 54m fix from the 4s one",
+        oldest_record["observed_at"] != freshest_record["observed_at"],
+        f"{oldest_record['observed_at']} vs {freshest_record['observed_at']}",
     )
     check(
-        "the oldest and the freshest vehicle differ in no freshness key",
-        {k: v for k, v in oldest_record.items() if k not in ("trip_id", "route_id", "train_num",
-                                                             "latitude", "longitude", "bearing")}
-        == {k: v for k, v in freshest_record.items() if k not in ("trip_id", "route_id", "train_num",
-                                                                  "latitude", "longitude", "bearing")},
+        "the oldest served record carries the capture's oldest fix",
+        HEADER_TS - oldest_record["observed_at"] == ages[oldest_id],
+        hms(HEADER_TS - oldest_record["observed_at"]),
     )
     check(
         "the only freshness on the response is feed level",
@@ -575,16 +584,23 @@ def main() -> int:
         return 1
     print("  every check matches the recorded disposition.")
     print()
-    print("DISPOSITION: VERIFIED  All four claims hold: the decoder ignores `now` and "
-          "discards vehicle.timestamp, the capture's 69 positioned LIRR vehicles include "
-          "42 over 90 s, 32 over 5 min and 25 over 10 min with the oldest at 53676 s "
-          "(14h 54m 36s), the full aggregation publishes 68 of them (the 69th is the trip "
-          "F02's fix now drops as canceled, not an age filter) with no failed systems and "
-          "no per-vehicle age in the served JSON, and the placement pass still does not "
-          "rescue an age-stale train: it reads the FEED, so the 42 keep their positions "
-          "and only 15 have a prediction to fall back to. Its notion of GPS is no longer "
-          "independent, though: N2's fix gave both passes one acceptance rule, so a "
-          "box-rejected vehicle now falls through to placement instead of vanishing.")
+    print("DISPOSITION: VERIFIED, and the mechanism has moved twice since the audit "
+          "wrote it. The capture's 69 positioned LIRR vehicles still include 42 over 90 s, "
+          "32 over 5 min and 25 over 10 min with the oldest at 53676 s (14h 54m 36s), and "
+          "the full aggregation still publishes 68 of them with no failed systems (the "
+          "69th is the trip F02's fix drops as canceled, not an age filter), so 41 stale "
+          "observations still reach a rider drawn exactly like a fresh one. What is no "
+          "longer true is the audit's account of WHY. Contract 6.1 made the decoder READ "
+          "vehicle.timestamp rather than discard it, and the age now reaches the browser "
+          "on every row: rewriting all 69 timestamps moves all 69 records, and the served "
+          "JSON distinguishes the 14h 54m fix from the 4 s one. The finding survives "
+          "because nothing GATES on the value and no surface renders it, which is F01's "
+          "own work and not 6.1's. Two earlier notes still hold: `now` remains unused in "
+          "the GPS pass, since reading a clock needs no clock of ours, and the placement "
+          "pass still rescues no age-stale train, because it reads the FEED, so the 42 "
+          "keep their positions and only 15 have a prediction to fall back to. N2's fix "
+          "gave both passes one acceptance rule, so a box-rejected vehicle now falls "
+          "through to placement instead of vanishing.")
     return 0
 
 

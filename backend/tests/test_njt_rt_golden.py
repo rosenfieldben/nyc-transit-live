@@ -37,6 +37,8 @@ import io
 import json
 from pathlib import Path
 
+from contract_pending import without_pending
+
 from conftest import golden_fixture_guard
 from feeds import njt
 
@@ -218,8 +220,8 @@ def test_golden_the_decode_is_stable():
     )
     assert warnings == expected["warnings"]
     assert feed_ts == expected["feed_timestamp"]
-    assert trains == expected["trains"]
-    assert arrivals == expected["arrivals"]
+    assert without_pending(trains) == expected["trains"]
+    assert without_pending(arrivals) == expected["arrivals"]
 
 
 @golden

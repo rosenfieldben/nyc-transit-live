@@ -29,6 +29,8 @@ To regenerate after an INTENTIONAL decode change, from backend/:
 import json
 from pathlib import Path
 
+from contract_pending import without_pending
+
 import feeds
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -43,7 +45,7 @@ def _load():
 def test_real_alert_feed_decodes_to_golden_output():
     raw, expected = _load()
     alerts, suppressed = feeds._decode_alerts(raw, expected["feed_key"], expected["now"])
-    assert alerts == expected["alerts"]
+    assert without_pending(alerts) == expected["alerts"]
     assert suppressed == expected["suppressed"]
 
 

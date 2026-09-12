@@ -27,6 +27,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from contract_pending import without_pending
 from google.transit import gtfs_realtime_pb2 as pb
 
 import feeds
@@ -150,7 +151,11 @@ def test_vehicle_basic_join_populates_all_fields():
             "longitude": pytest.approx(-74.011),
             "speed": pytest.approx(6.5),
             "status": "IN_TRANSIT_TO",
+            # TWO KEYS, ONE VALUE, FOR ONE RELEASE (Q1): observed_at is the contract's
+            # name for what this decoder has served as updated_at since 14b.
             "updated_at": NOW,
+            "observed_at": NOW,
+            "provenance": "reported",
         }
     ]
 
@@ -247,6 +252,11 @@ def test_arrivals_dwell_keeps_both_times():
         "trip_id": "T-ER-1",
         "arrival": NOW + 120,
         "departure": NOW + 180,
+        # THE TRIPUPDATES HEADER, not the boat clock: the two ferry feeds are separate
+        # and separately dated, and a dock row aged against the VehiclePositions header
+        # would be aged against a feed it did not come from (the audit's F03 remedy).
+        "observed_at": NOW,
+        "provenance": "reported",
     }
 
 
@@ -617,7 +627,7 @@ def test_golden_vehicles_match_expected():
     boats, feed_ts, _dead, _miss = feeds._decode_ferry_vehicles(
         raw, static["trips"], static["routes"], expected["now"]
     )
-    assert boats == expected["boats"]
+    assert without_pending(boats) == expected["boats"]
     assert feed_ts == expected["feed_timestamp"]
 
 
@@ -629,7 +639,7 @@ def test_golden_arrivals_match_expected():
     arrivals, _dead, _miss = feeds._decode_ferry_arrivals(
         raw, static["trips"], static["routes"], expected["now"]
     )
-    assert arrivals == expected["arrivals"]
+    assert without_pending(arrivals) == expected["arrivals"]
 
 
 @golden

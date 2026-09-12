@@ -390,6 +390,10 @@ def _place(calls: list[dict], stops: dict[str, dict], now: float) -> dict | None
                 "latitude": stop["lat"],
                 "longitude": stop["lon"],
                 "status": "at-station",
+                # PROVENANCE IS NOT `status`. That one is a MOTION phase and all three
+                # of its values sit on a position we derived; this says HOW. Dwelling
+                # puts the train at a stop's own coordinates, so: placed.
+                "provenance": "placed",
                 "stop_id": call["stop_id"],
                 "stop_name": stop["name"],
                 "delay": call["delay"],
@@ -422,6 +426,7 @@ def _place(calls: list[dict], stops: dict[str, dict], now: float) -> dict | None
             "latitude": stop["lat"],
             "longitude": stop["lon"],
             "status": "approaching",
+            "provenance": "placed",  # drawn at the first listed stop's coordinates
             "stop_id": first["stop_id"],
             "stop_name": stop["name"],
             "delay": first["delay"],
@@ -445,6 +450,10 @@ def _place(calls: list[dict], stops: dict[str, dict], now: float) -> dict | None
                 "latitude": lat,
                 "longitude": lon,
                 "status": "in-transit",
+                # The one NJ Transit branch that is not `placed`: _interpolate put this
+                # train BETWEEN two stops, so the coordinates are computed rather than
+                # read off the static index.
+                "provenance": "estimated",
                 "stop_id": nxt["stop_id"],  # the stop it is heading for
                 "stop_name": next_stop["name"],
                 "delay": nxt["delay"],
@@ -640,6 +649,8 @@ def decode_njt_trip_updates(
     # entities decodes normally and yields zero trains, which is the overnight
     # state the probe recorded as a 13-byte body (decoder law 6).
     feed = parse_feed(raw)
+    # Hoisted from the return: every row below is dated by it (see the train emit).
+    feed_header = _header_timestamp(feed)
 
     trains: list[dict] = []
     arrivals: dict[str, list[dict]] = defaultdict(list)
@@ -681,6 +692,8 @@ def decode_njt_trip_updates(
                     "departure": call["departure"],
                     "delay": call["delay"],
                     "trip_id": identity["trip_id"],
+                    "observed_at": feed_header,
+                    "provenance": "reported",
                 }
             )
 
@@ -695,11 +708,20 @@ def decode_njt_trip_updates(
                 "route_id": identity["route_id"],
                 "headsign": identity["headsign"],
                 "train_num": identity["train_num"],
+                # THE HEADER, BECAUSE NOTHING ELSE HERE IS DATED. NJ Transit publishes
+                # no vehicle feed at all (the reasoning is at the poller registry) and
+                # none of its 112 trip_updates on the committed capture carries a
+                # timestamp, so the message's own generation time is the only clock
+                # behind every position and every departure below. Unlike Metro-North's
+                # it is a good one: generation every ~11.8s and 9s to 23s of lag at
+                # peak, measured, which is why this row is age-gated and MNR's is not.
+                # THE FRESHNESS BUDGET, DERIVED at the top of this file is the working.
+                "observed_at": feed_header,
                 **placement,
             }
         )
 
-    return trains, _trim_njt_arrivals(arrivals), _header_timestamp(feed), warnings
+    return trains, _trim_njt_arrivals(arrivals), feed_header, warnings
 
 
 def _trim_njt_arrivals(arrivals: dict[str, list[dict]]) -> dict[str, list[dict]]:

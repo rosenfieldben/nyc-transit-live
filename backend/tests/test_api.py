@@ -5013,3 +5013,117 @@ async def test_every_arrivals_endpoint_stamps_served_at(
         body = (await client.get(path)).json()
         assert body["served_at"] is not None, path
         assert body["served_at"] > 0, path
+
+
+async def test_retained_rows_are_stamped_retained_and_flip_back_on_the_next_decode(
+    client, cache, monkeypatch
+):
+    """Q3, end to end: `retained` wins the provenance field, and only while it is true.
+
+    The audit's retention contract says a carried-forward row must be drawn AS stale,
+    and the freshness contract says the same thing in the payload: "not in the current
+    decode" is the fact that changes what a rider should believe, so it overrides
+    whatever the row was when it was decoded. Before this, only alerts were stamped and
+    a carried GPS train still claimed `reported` a poll after its feed went down.
+
+    THE FLIP BACK IS THE HALF WORTH TESTING. A stamp that never clears would be a
+    different bug wearing the same label: a system that recovers must stop calling its
+    fresh rows retained on the very next poll that decodes.
+    """
+    monkeypatch.setattr(app_module.time, "time", lambda: 1000.0)
+    app_module.app.state.subway_stops = {"127": {"name": "Times Sq", "lat": 40.7, "lon": -74.0}}
+    app_module.app.state.subway_static_status = "ready"
+    healthy = _subway_fetch({"ACE": [_train("ACE", "ace-1")], "NQRW": [_train("NQRW", "n-1")]}, [])
+    monkeypatch.setattr(app_module, "fetch_subway_trains", healthy)
+    await app_module._refresh_subways(app_module.app, client=None)
+
+    body = (await client.get("/api/subways")).json()
+    # These rows are SEEDED rather than decoded, so their provenance is the model
+    # default; what matters is that it is not `retained` and that it comes back.
+    decoded_provenance = {t["provenance"] for t in body["data"]}
+    assert decoded_provenance == {"unknown"}
+    assert "retained" not in decoded_provenance, "a fresh poll is not retained"
+
+    # ACE goes down. Its trains are carried forward, and they must now say so.
+    monkeypatch.setattr(app_module.time, "time", lambda: 1060.0)
+    monkeypatch.setattr(
+        app_module, "fetch_subway_trains", _subway_fetch({"NQRW": [_train("NQRW", "n-2")]}, ["ACE"])
+    )
+    await app_module._refresh_subways(app_module.app, client=None)
+
+    body = (await client.get("/api/subways")).json()
+    by_trip = {t["trip_id"]: t for t in body["data"]}
+    assert by_trip["ace-1"]["provenance"] == "retained", "a carried row still claimed its decode"
+    assert by_trip["n-2"]["provenance"] != "retained", "a healthy group is untouched by the stamp"
+    assert cache["subways"]["systems"]["ACE"]["retained_since"] == 1060.0
+    # The arrivals index is carried by the same merge and takes the same stamp.
+    ace_arrivals = app_module.app.state.subway_arrivals_by_system.get("ACE") or {}
+    rows = [r for station in ace_arrivals.values() for b in station.values() for r in b]
+    assert rows and all(r["provenance"] == "retained" for r in rows)
+
+    # ACE recovers. The stamp clears on the poll that decodes, not a poll later.
+    monkeypatch.setattr(app_module.time, "time", lambda: 1120.0)
+    monkeypatch.setattr(
+        app_module,
+        "fetch_subway_trains",
+        _subway_fetch({"ACE": [_train("ACE", "ace-2")], "NQRW": [_train("NQRW", "n-3")]}, []),
+    )
+    await app_module._refresh_subways(app_module.app, client=None)
+
+    body = (await client.get("/api/subways")).json()
+    assert {t["provenance"] for t in body["data"]} == decoded_provenance, (
+        "the stamp outlived the outage it describes"
+    )
+    assert cache["subways"]["systems"]["ACE"]["retained_since"] is None
+
+
+async def test_alerts_envelope_content_clock_equals_the_alerts_observed_at(
+    client, alerts_cache, monkeypatch
+):
+    """AlertFeed.feed_timestamp is the clock the alerts decoder already reads.
+
+    6.1 declared this field and left it with no writer, so /api/alerts served null
+    forever while its own comment called it "the alert feeds' content time". That was
+    not merely an unfilled field: feeds/alerts.py justifies returning no clock for NJ
+    Transit's served-empty body by saying the fact "belongs to the envelope's
+    feed_timestamp", and an envelope field nothing fills satisfies nothing.
+
+    THE CLOCK AND THE ROWS MUST AGREE, which is what makes this checkable rather than
+    decorative: every alert carries observed_at from its feed's header, so the
+    envelope's content time is the oldest of exactly those numbers.
+    """
+    header = 1000.0
+    alert = {**ALERT, "observed_at": header, "provenance": "reported"}
+    alerts_cache.update(alerts=[alert], fetched_at=1200.0, active=1, suppressed=0)
+    alerts_cache["health"]["MNR"]["content_at"] = header
+    alerts_cache["health"]["MNR"]["fresh_at"] = 1200.0
+
+    body = (await client.get("/api/alerts")).json()
+    served = body["alerts"]
+    assert served, "the envelope served no alerts"
+    assert body["feed_timestamp"] == min(a["observed_at"] for a in served)
+    assert body["feed_timestamp"] == header
+    # And the per-system block carries the same number for the system that produced it.
+    assert body["systems"]["MNR"]["feed_timestamp"] == header
+    # The content clock is NOT the poll clock: 200 seconds of lag are expressible on
+    # this envelope now, which is the whole point of the field.
+    assert body["fetched_at"] - body["feed_timestamp"] == 200.0
+
+
+async def test_a_served_empty_alerts_feed_reports_no_content_clock(
+    client, alerts_cache, monkeypatch
+):
+    """N4's state, and the one case where None is the answer rather than a gap.
+
+    A zero-byte 200 from NJ Transit's alerts endpoint means zero alerts, and it
+    carries no header to read, so the decoder returns None for the clock. The entry
+    still dates the SERVE through fetched_at; what it cannot report is a generation
+    time nobody sent. Asserting that keeps the honest null distinguishable from the
+    unfilled null 6.1 shipped.
+    """
+    assert feeds._decode_alerts(b"", "njt", 1000.0) == ([], 0, None)
+    alerts_cache.update(alerts=[], fetched_at=1200.0, active=0, suppressed=0)
+    body = (await client.get("/api/alerts")).json()
+    assert body["alerts"] == []
+    assert body["feed_timestamp"] is None, "no alert, no row, nothing to date"
+    assert body["fetched_at"] == 1200.0, "but the serve is still dated"

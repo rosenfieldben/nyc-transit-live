@@ -279,7 +279,7 @@ def njt_alerts_served_empty(feed_key: str, raw: bytes) -> bool:
     return feed_key == NJT_ALERT_SYSTEM and not raw
 
 
-def _decode_alerts(raw: bytes, feed_key: str, now: float) -> tuple[list[dict], int]:
+def _decode_alerts(raw: bytes, feed_key: str, now: float) -> tuple[list[dict], int, float | None]:
     """Decode one service-alerts feed into (active alerts, suppressed_count).
 
     Returns one plain dict per alert that is ACTIVE at `now`:
@@ -309,8 +309,10 @@ def _decode_alerts(raw: bytes, feed_key: str, now: float) -> tuple[list[dict], i
         # are no rows here to carry a clock: zero alerts observed at a real time is a
         # fact about the FEED, so it belongs to the envelope's feed_timestamp rather
         # than to a row that does not exist. This arm returns before parse_feed
-        # because the body it is answering for has no header to parse.
-        return [], 0
+        # because the body it is answering for has no header to parse, so the clock it
+        # reports is None: a zero-byte 200 carries no generation time, and the fact
+        # that it was SERVED at a real instant is the entry's fetched_at, not this.
+        return [], 0, None
     # parse_feed rejects an empty or malformed body (C3); fetch_service_alerts
     # catches it per FEED, so one poisoned system joins the failed set and the
     # other four systems' alerts are unaffected.
@@ -371,7 +373,7 @@ def _decode_alerts(raw: bytes, feed_key: str, now: float) -> tuple[list[dict], i
                 "provenance": "reported",
             }
         )
-    return alerts, suppressed
+    return alerts, suppressed, feed_header
 
 
 # Whole-request deadline for ONE alert feed. Deliberately under the caller's
@@ -457,6 +459,13 @@ class AlertsFetch(NamedTuple):
     suppressed: int
     failed: dict[str, str]
     served_empty: list[str]
+    # EACH DECODING FEED'S OWN CONTENT TIME, keyed by system (contract 6.1). Defaulted
+    # so a four-argument construction still builds, which keeps the fixtures that
+    # predate it valid. A feed that did not decode is absent; a feed that decoded and
+    # carried no header is present with None, which is the same absent-versus-None
+    # discipline the vehicle aggregators use and for the same reason: the two mean
+    # different things and only one of them may inherit the last known value.
+    headers: dict[str, float | None] = {}
 
 
 class AllAlertFeedsFailed(RuntimeError):
@@ -542,6 +551,7 @@ async def fetch_service_alerts(client: httpx.AsyncClient) -> AlertsFetch:
     alerts: list[dict] = []
     suppressed = 0
     feed_errors: dict[str, str] = {}
+    headers: dict[str, float | None] = {}
     served_empty: list[str] = []
     for key, result in zip(keys, results):
         if isinstance(result, BaseException):
@@ -558,7 +568,7 @@ async def fetch_service_alerts(client: httpx.AsyncClient) -> AlertsFetch:
                 )
             continue
         try:
-            decoded, feed_suppressed = _decode_alerts(result, key, now)
+            decoded, feed_suppressed, feed_header = _decode_alerts(result, key, now)
         except DecodeError as exc:
             feed_errors[key] = f"undecodable protobuf ({exc})"
             continue
@@ -569,6 +579,7 @@ async def fetch_service_alerts(client: httpx.AsyncClient) -> AlertsFetch:
             served_empty.append(key)
         alerts.extend(decoded)
         suppressed += feed_suppressed
+        headers[key] = feed_header
 
     # SORTED, so the reasons an operator reads on /api/status and the one-line log
     # record below arrive in a stable order rather than in gather order.
@@ -582,7 +593,7 @@ async def fetch_service_alerts(client: httpx.AsyncClient) -> AlertsFetch:
         )
     if len(feed_errors) == len(feed_urls):
         raise AllAlertFeedsFailed(feed_errors)
-    return AlertsFetch(alerts, suppressed, feed_errors, sorted(served_empty))
+    return AlertsFetch(alerts, suppressed, feed_errors, sorted(served_empty), headers)
 
 
 # How long a failed alert system's alerts are carried forward before they drop.

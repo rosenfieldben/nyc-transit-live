@@ -16,7 +16,7 @@ import time
 from fastapi import HTTPException, Response
 
 import env_seams
-from feeds import active_alert_feeds
+from feeds import active_alert_feeds, iter_rows
 
 # Log through the "main" logger (not __name__) so records and main.py's logging
 # config are unchanged by the split, the same discipline the feeds package uses.
@@ -130,6 +130,27 @@ def _fresh_entry() -> dict:
     return {"data": None, "fetched_at": None, "feed_timestamp": None, "error": None}
 
 
+def fresh_alert_health() -> dict:
+    """One alert system's health block, at its pre-poll zero.
+
+    TWO SITES SEED THIS and they drifted the moment a field was added: the cache
+    builds the map once, and pollers._reconcile_alert_health seeds a system that
+    gains credentials in-process. Both call this now, so a key added here reaches
+    both or neither.
+
+    content_at is this system's own CONTENT time, the clock the alerts decoder reads
+    off each feed's header (contract 6.1). Seeded null like fresh_at, because nothing
+    has decoded yet.
+    """
+    return {
+        "fresh_at": None,
+        "content_at": None,
+        "retained_since": None,
+        "last_error": None,
+        "served_empty": None,
+    }
+
+
 def _fresh_alerts_entry() -> dict:
     # alerts = the active-alert index (None until the first successful poll, [] once
     # a poll decoded zero active alerts); active/suppressed are the counts /api/status
@@ -157,12 +178,7 @@ def _fresh_alerts_entry() -> dict:
         "active": 0,
         "suppressed": 0,
         "health": {
-            system: {
-                "fresh_at": None,
-                "retained_since": None,
-                "last_error": None,
-                "served_empty": None,
-            }
+            system: fresh_alert_health()
             # THE ACTIVE SET (15b): an unconfigured NJ Transit is not seeded here at
             # all, so it cannot sit in degraded_systems forever on a deployment that
             # does not run it. Same single source the gather and the total-outage
@@ -312,12 +328,12 @@ def _oldest_row_observed_at(rows) -> float | None:
     None if any part cannot be dated, because a row with no clock must not be spoken
     for by its neighbours.
 
-    A ROW IS TOLD FROM A CONTAINER STRUCTURALLY, not by looking for the key. The
-    first version asked "does this dict carry observed_at", which quietly made the
-    one case the rule exists for impossible: a row that LACKS the key was treated as
-    a container, walked into, and contributed nothing, so its neighbours dated the
-    board on its behalf. A container's values are lists or dicts; a row's are not.
-    So a dict with no list or dict value is a row, and an undated row forces None.
+    A ROW IS TOLD FROM A CONTAINER STRUCTURALLY, not by looking for the key, and the
+    walk that does it lives in feeds.iter_rows so the retention stamp cannot drift
+    from this. The first version asked "does this dict carry observed_at", which
+    quietly made the one case the rule exists for impossible: a row that LACKS the
+    key was treated as a container, walked into, and contributed nothing, so its
+    neighbours dated the board on its behalf. An undated row now forces None.
 
     `rows` is any nesting of dicts and lists the two callers use: {bucket: [row]} for
     PATH and {route: [row]} for the ferry. It is deliberately not used by NJ Transit
@@ -331,20 +347,7 @@ def _oldest_row_observed_at(rows) -> float | None:
     is a fact about US and exists whether or not any row does, while a content time
     is a fact about rows that are not there.
     """
-    found: list[float | None] = []
-
-    def walk(value):
-        if isinstance(value, list):
-            for item in value:
-                walk(item)
-        elif isinstance(value, dict):
-            if any(isinstance(item, (list, dict)) for item in value.values()):
-                for item in value.values():
-                    walk(item)
-            else:
-                found.append(value.get("observed_at"))
-
-    walk(rows)
+    found = [row.get("observed_at") for row in iter_rows(rows)]
     if not found or any(value is None for value in found):
         return None
     return min(value for value in found if value is not None)

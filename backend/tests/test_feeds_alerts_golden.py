@@ -19,7 +19,7 @@ To regenerate after an INTENTIONAL decode change, from backend/:
     raw = httpx.get(feeds.ALERT_FEED_URLS["MNR"], timeout=30, follow_redirects=True).content
     feed = pb.FeedMessage(); feed.ParseFromString(raw)
     now = float(feed.header.timestamp)
-    alerts, suppressed = feeds._decode_alerts(raw, "MNR", now)
+    alerts, suppressed, _ = feeds._decode_alerts(raw, "MNR", now)
     FIX.joinpath("alerts_mnr.pb").write_bytes(raw)
     out = {"now": now, "feed_key": "MNR", "alerts": alerts, "suppressed": suppressed}
     FIX.joinpath("alerts_mnr_expected.json").write_text(json.dumps(out, indent=0) + "\n")
@@ -42,7 +42,7 @@ def _load():
 
 def test_real_alert_feed_decodes_to_golden_output():
     raw, expected = _load()
-    alerts, suppressed = feeds._decode_alerts(raw, expected["feed_key"], expected["now"])
+    alerts, suppressed, _ = feeds._decode_alerts(raw, expected["feed_key"], expected["now"])
     assert alerts == expected["alerts"]
     assert suppressed == expected["suppressed"]
 

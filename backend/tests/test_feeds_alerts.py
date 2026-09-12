@@ -163,7 +163,7 @@ def test_decode_route_only_and_stop_only_and_both_selectors():
             {"id": "c", "routes": ["4"], "stops": ["245"], "periods": [(900, None)]},  # both
         ]
     )
-    alerts, suppressed = feeds._decode_alerts(raw, "subway", NOW)
+    alerts, suppressed, _ = feeds._decode_alerts(raw, "subway", NOW)
     assert suppressed == 0
     by_id = {a["id"]: a for a in alerts}
     assert by_id["a"]["routes"] == ["Q"] and by_id["a"]["stops"] == []
@@ -183,7 +183,7 @@ def test_decode_dedups_selectors_in_first_seen_order():
             }
         ]
     )
-    (alert,), _ = feeds._decode_alerts(raw, "subway", NOW)
+    (alert,), _, _ = feeds._decode_alerts(raw, "subway", NOW)
     assert alert["routes"] == ["Q", "N"]
     assert alert["stops"] == ["R20", "R21"]
 
@@ -196,7 +196,7 @@ def test_decode_future_excluded_and_counted_ended_dropped():
             {"id": "ended", "routes": ["R"], "periods": [(800, 900)]},
         ]
     )
-    alerts, suppressed = feeds._decode_alerts(raw, "subway", NOW)
+    alerts, suppressed, _ = feeds._decode_alerts(raw, "subway", NOW)
     assert [a["id"] for a in alerts] == ["active"]  # only the covering one
     assert suppressed == 1  # future counted; ended not counted
 
@@ -204,7 +204,7 @@ def test_decode_future_excluded_and_counted_ended_dropped():
 def test_decode_end_zero_is_open_ended():
     # An explicit end of 0 means open-ended (feed fact), so ends_at is null.
     raw = _alert_feed([{"id": "a", "routes": ["Q"], "periods": [(900, 0)]}])
-    (alert,), _ = feeds._decode_alerts(raw, "subway", NOW)
+    (alert,), _, _ = feeds._decode_alerts(raw, "subway", NOW)
     assert alert["starts_at"] == 900
     assert alert["ends_at"] is None
 
@@ -221,14 +221,14 @@ def test_decode_prefers_english_translation():
             }
         ]
     )
-    (alert,), _ = feeds._decode_alerts(raw, "subway", NOW)
+    (alert,), _, _ = feeds._decode_alerts(raw, "subway", NOW)
     assert alert["header"] == "Delays"
     assert alert["description"] == "solo espanol"
 
 
 def test_decode_missing_text_is_none():
     raw = _alert_feed([{"id": "a", "routes": ["Q"], "periods": [(900, None)]}])
-    (alert,), _ = feeds._decode_alerts(raw, "subway", NOW)
+    (alert,), _, _ = feeds._decode_alerts(raw, "subway", NOW)
     assert alert["header"] is None
     assert alert["description"] is None
 
@@ -245,7 +245,7 @@ def test_decode_effect_and_cause_enum_names():
             }
         ]
     )
-    (alert,), _ = feeds._decode_alerts(raw, "subway", NOW)
+    (alert,), _, _ = feeds._decode_alerts(raw, "subway", NOW)
     assert alert["effect"] == "DETOUR"
     assert alert["cause"] == "MAINTENANCE"
 
@@ -279,7 +279,7 @@ def test_decode_ferry_plain_alert_is_systemwide():
             }
         ]
     )
-    (alert,), suppressed = feeds._decode_alerts(raw, "ferry", NOW)
+    (alert,), suppressed, _ = feeds._decode_alerts(raw, "ferry", NOW)
     assert suppressed == 0
     assert alert["system"] == "ferry"
     assert alert["header"] == "Ferry Point Park landing closed"
@@ -297,7 +297,7 @@ def test_decode_ferry_route_and_stop_selectors_land_under_ferry():
             {"id": "stop", "stops": ["18"], "periods": [(0, None)]},
         ]
     )
-    alerts, _ = feeds._decode_alerts(raw, "ferry", NOW)
+    alerts, _, _ = feeds._decode_alerts(raw, "ferry", NOW)
     by_id = {a["id"]: a for a in alerts}
     assert by_id["route"]["system"] == "ferry"
     assert by_id["route"]["routes"] == ["ER"] and by_id["route"]["stops"] == []
@@ -321,7 +321,7 @@ def test_decode_ferry_real_world_shape_route_scoped():
             }
         ]
     )
-    (alert,), suppressed = feeds._decode_alerts(raw, "ferry", NOW)
+    (alert,), suppressed, _ = feeds._decode_alerts(raw, "ferry", NOW)
     assert suppressed == 0
     assert alert["system"] == "ferry"
     assert alert["routes"] == ["RS"] and alert["stops"] == []
@@ -711,7 +711,10 @@ def test_a_zero_byte_njt_alerts_body_decodes_as_zero_alerts():
     # THE RULE ITSELF, at the decoder. Before 2026-09-07 this raised FeedDecodeError
     # ("empty body served as 200 (no protobuf header)") and the alerts poller called
     # NJ Transit degraded on every quiet night.
-    assert feeds._decode_alerts(b"", "njt", NOW) == ([], 0)
+    # The third element is the feed's content clock (6.1). It is None here and that is
+    # the honest answer: a zero-byte 200 carries no header to read, so what the entry
+    # can date is when we were SERVED it, not when it was generated.
+    assert feeds._decode_alerts(b"", "njt", NOW) == ([], 0, None)
     assert feeds.njt_alerts_served_empty("njt", b"") is True
 
 

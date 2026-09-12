@@ -745,7 +745,7 @@ def test_no_decoder_emits_a_provenance_outside_the_closed_set(monkeypatch):
     )
     seen |= {r["provenance"] for r in _rows(n_trains) + _rows(n_arrivals)}
 
-    alerts, _sup = feeds._decode_alerts((FIXTURES / "alerts_mnr.pb").read_bytes(), "MNR", 0.0)
+    alerts, _sup, _ = feeds._decode_alerts((FIXTURES / "alerts_mnr.pb").read_bytes(), "MNR", 0.0)
     seen |= {r["provenance"] for r in _rows(alerts)}
 
     # BUSES ARE HERE BECAUSE A MUTATION SURVIVED WITHOUT THEM. The first version of

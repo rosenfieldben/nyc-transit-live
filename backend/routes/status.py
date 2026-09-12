@@ -49,8 +49,20 @@ async def get_alerts(request: Request, response: Response) -> dict:
     entry = request.app.state.alerts_cache
     if entry["alerts"] is not None:
         response.headers["Cache-Control"] = "no-store"
+        health_map = entry.get("health") or {}
+        # THE ENVELOPE'S CONTENT CLOCK, by the same union discipline the arrivals
+        # boards use: the oldest content time among the systems actually contributing,
+        # and None if any of them cannot be dated rather than letting the others speak
+        # for it. Equal to the oldest served alert's own observed_at, which is what
+        # test_alerts_envelope_content_clock_equals_the_alerts_observed_at pins.
+        contributing = {(alert.get("system") or "") for alert in (entry["alerts"] or [])} & set(
+            health_map
+        )
+        clocks = [health_map[system].get("content_at") for system in sorted(contributing)]
+        envelope_content_at = None if not clocks or any(c is None for c in clocks) else min(clocks)
         return {
             "fetched_at": entry["fetched_at"],
+            "feed_timestamp": envelope_content_at,
             "served_at": time.time(),
             "alerts": entry["alerts"],
             # C2: the per-system block, projected from the health map C1 made
@@ -63,10 +75,11 @@ async def get_alerts(request: Request, response: Response) -> dict:
             "systems": {
                 system: {
                     "fetched_at": health["fresh_at"],
+                    "feed_timestamp": health.get("content_at"),
                     "ok": health["last_error"] is None,
                     "retained_since": health["retained_since"],
                 }
-                for system, health in (entry.get("health") or {}).items()
+                for system, health in health_map.items()
             },
         }
     if entry["error"]:

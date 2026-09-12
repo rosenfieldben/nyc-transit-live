@@ -34,6 +34,7 @@ from cache import (
     _note_failure,
     _sanitize_detail,
     _sanitize_upstream,
+    fresh_alert_health,
 )
 from feeds import (
     ALERT_RETENTION_MAX_S,
@@ -1151,6 +1152,7 @@ def _apply_alert_generation(
     *,
     served_empty: Iterable[str] = (),
     write_index: bool = True,
+    headers: Mapping[str, float | None] | None = None,
 ) -> None:
     """Merge this poll's fresh alerts into the served index and rewrite per-system
     health. Shared by the partial-failure and the total-outage paths so the expiry
@@ -1193,6 +1195,7 @@ def _apply_alert_generation(
     """
     health = entry["health"]
     served_empty_systems = set(served_empty)
+    feed_headers = headers
     # Thread the prior retention clock through the pure merge so the cap measures
     # total time down, not time-since-this-poll.
     prev_retained_since = {
@@ -1223,6 +1226,10 @@ def _apply_alert_generation(
             detail = failed_systems.get(system) or ALERT_FEED_UNAVAILABLE_DETAIL
             h["last_error"] = {"status": 502, "detail": _sanitize_detail(detail)}
             h["retained_since"] = retained_since.get(system)
+            # content_at is NOT touched on a failed poll, for the same reason fresh_at
+            # is kept: the last content time this system reported is what its retained
+            # alerts are actually as of, and blanking it would turn an outage into an
+            # unknown.
             # A system cannot be failed and served-empty in the same poll, and this
             # is what keeps a stale sentence from outliving the state it described.
             h["served_empty"] = None
@@ -1230,6 +1237,12 @@ def _apply_alert_generation(
             h["fresh_at"] = now
             h["retained_since"] = None
             h["last_error"] = None
+            # THE FEED CLOCK THE DECODER ALREADY READ (contract 6.1). Absent from the
+            # map means this system did not decode; present with None means it decoded
+            # and its body carried no header, which is NJ Transit's served-empty state
+            # and is a real answer rather than a gap.
+            if feed_headers is not None and system in feed_headers:
+                h["content_at"] = feed_headers[system]
             h["served_empty"] = (
                 NJT_ALERTS_SERVED_EMPTY_DETAIL if system in served_empty_systems else None
             )
@@ -1271,7 +1284,7 @@ def _reconcile_alert_health(entry: dict) -> None:
         # downstream reads them without a .get().
         health.setdefault(
             system,
-            {"fresh_at": None, "retained_since": None, "last_error": None, "served_empty": None},
+            fresh_alert_health(),
         )
     for system in [s for s in health if s not in active]:
         del health[system]
@@ -1395,7 +1408,12 @@ async def _refresh_alerts(app: FastAPI, client: httpx.AsyncClient) -> None:
 
     now = time.time()
     _apply_alert_generation(
-        entry, fetched.alerts, fetched.failed, now, served_empty=fetched.served_empty
+        entry,
+        fetched.alerts,
+        fetched.failed,
+        now,
+        served_empty=fetched.served_empty,
+        headers=fetched.headers,
     )
     entry.update(fetched_at=now, error=None, suppressed=fetched.suppressed)
 

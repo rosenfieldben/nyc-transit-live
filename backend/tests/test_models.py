@@ -9,12 +9,16 @@ renames a field is caught here rather than silently dropped by serialization.
 import json
 from pathlib import Path
 
+import pytest
+
 import feeds
 import railroad_static
 from models import (
     Arrival,
     BusFeed,
     BusIndexStatus,
+    FerryStationArrivals,
+    NjtStationArrivals,
     PathArrival,
     PathFeed,
     PathStationArrivals,
@@ -37,6 +41,22 @@ from models import (
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
+# THE CONTRACT PAIR, and the gap it opens while 6.1 lands in three steps.
+#
+# The models gain observed_at and provenance first, the decoders fill them second,
+# the goldens are regenerated last. Between those commits the MODEL is wider than
+# the thing each assertion below compares it against, and these two names say
+# exactly which side has not caught up yet. Each is deleted by the commit that
+# closes it, and that deletion is the evidence the side caught up.
+#
+# THIS IS NOT A RELAXED ASSERTION. `set(row) | PENDING == fields` still fails on any
+# other difference in either direction: a renamed field, a dropped field, an extra
+# field the model does not declare. It tolerates exactly the two names below and
+# nothing else.
+_CONTRACT_PAIR = {"observed_at": None, "provenance": "unknown"}
+_PENDING_IN_DECODE = {"observed_at", "provenance"}  # closed by the decoders commit
+_PENDING_IN_GOLDEN = {"observed_at", "provenance"}  # closed by the goldens commit
+
 # Representative decode outputs, mirrored from feeds.py / the test_api fixtures.
 VEHICLE = {
     "id": "MTA NYCT_1",
@@ -44,6 +64,7 @@ VEHICLE = {
     "latitude": 40.7,
     "longitude": -74.0,
     "bearing": 90.0,
+    **_CONTRACT_PAIR,
 }
 
 
@@ -59,7 +80,7 @@ def test_train_model_matches_real_decode_output_exactly():
     fields = set(Train.model_fields)
     assert expected["trains"], "golden fixture is empty"
     for train in expected["trains"]:
-        assert set(train) == fields  # no added / missing keys vs the model
+        assert set(train) | _PENDING_IN_GOLDEN == fields  # no added / missing keys
         Train.model_validate(train)  # and the types validate
 
 
@@ -102,7 +123,7 @@ def test_railroad_train_model_matches_real_decode_output_exactly():
         expected = json.loads((FIXTURES / f"railroad_{system}_expected.json").read_text())
         assert expected["trains"], "golden fixture is empty"
         for train in expected["trains"]:
-            assert set(train) == fields  # no added / missing keys vs the model
+            assert set(train) | _PENDING_IN_GOLDEN == fields  # no added / missing keys
             RailroadTrain.model_validate(train)
 
 
@@ -111,7 +132,7 @@ def test_decoded_railroad_train_keys_cover_model():
     raw = (FIXTURES / "railroad_mnr.pb").read_bytes()
     trains, _ = feeds._decode_railroad_vehicles(raw, "MNR", 0.0)
     assert trains, "decode produced no trains"
-    assert all(set(t) == set(RailroadTrain.model_fields) for t in trains)
+    assert all(set(t) | _PENDING_IN_DECODE == set(RailroadTrain.model_fields) for t in trains)
 
 
 def test_placed_railroad_train_keys_cover_model():
@@ -121,7 +142,7 @@ def test_placed_railroad_train_keys_cover_model():
     stops = json.loads((FIXTURES / "railroad_lirr_stops.json").read_text())
     placed = feeds._decode_railroad_placements(raw, "LIRR", stops, 0.0)
     assert placed, "placement produced no trains"
-    assert all(set(t) == set(RailroadTrain.model_fields) for t in placed)
+    assert all(set(t) | _PENDING_IN_DECODE == set(RailroadTrain.model_fields) for t in placed)
 
 
 def test_railroad_feed_envelope_validates():
@@ -177,7 +198,7 @@ def test_railroad_route_builder_output_covers_model():
 
 
 SUBWAY_STOP = {"id": "A01", "name": "Alpha", "lat": 40.7, "lon": -74.0, "routes": ["1", "2"]}
-ARRIVAL = {"route_id": "1", "trip_id": "t1", "arrival": 1000.0}
+ARRIVAL = {"route_id": "1", "trip_id": "t1", "arrival": 1000.0, **_CONTRACT_PAIR}
 RAILROAD_STOP = {
     "system": "LIRR",
     "id": "12",
@@ -186,7 +207,13 @@ RAILROAD_STOP = {
     "lon": -73.8,
     "routes": ["5"],
 }
-RAILROAD_ARRIVAL = {"route_id": "5", "trip_id": "t1", "arrival": 1000.0, "train_num": "704"}
+RAILROAD_ARRIVAL = {
+    "route_id": "5",
+    "trip_id": "t1",
+    "arrival": 1000.0,
+    "train_num": "704",
+    **_CONTRACT_PAIR,
+}
 
 
 def test_subway_stop_field_set_is_locked():
@@ -210,6 +237,70 @@ def test_railroad_arrival_field_set_is_locked():
     assert set(RailroadArrival.model_fields) == set(RAILROAD_ARRIVAL)
     RailroadArrival.model_validate(RAILROAD_ARRIVAL)
     RailroadArrival.model_validate({**RAILROAD_ARRIVAL, "route_id": None, "train_num": None})
+
+
+# THE FIVE ARRIVALS ENVELOPES HAD NO FIELD-SET LOCK, WHICH IS PROBABLY HOW THEY CAME
+# TO BE MISSING served_at. Every vehicle envelope in this module is pinned by one of
+# the locks above; these five were only ever `model_validate`d against a handler-shaped
+# payload, and pydantic ignores fields it is not given, so an added optional field
+# passed silently and a MISSING one was invisible until a rider saw it. 6.1 gives each
+# of them the same guard the row models have had since the beginning.
+#
+# The literals are the SERVED shape, not the handler's dict: the response model fills
+# the contract defaults on the way out, and what a client receives is what a lock
+# should describe.
+ARRIVALS_ENVELOPES = {
+    StationArrivals: {
+        "fetched_at",
+        "station_id",
+        "station_name",
+        "directions",
+        "served_at",
+        "systems",
+    },
+    RailroadStationArrivals: {
+        "fetched_at",
+        "system",
+        "stop_id",
+        "stop_name",
+        "directions",
+        "served_at",
+        "systems",
+    },
+    PathStationArrivals: {
+        "fetched_at",
+        "stop_id",
+        "stop_name",
+        "directions",
+        "served_at",
+        "systems",
+    },
+    NjtStationArrivals: {"fetched_at", "stop_id", "stop_name", "arrivals", "served_at", "systems"},
+    FerryStationArrivals: {"fetched_at", "stop_id", "stop_name", "routes", "served_at", "systems"},
+}
+
+
+@pytest.mark.parametrize(
+    "model,expected",
+    list(ARRIVALS_ENVELOPES.items()),
+    ids=lambda v: getattr(v, "__name__", ""),
+)
+def test_arrivals_envelope_field_set_is_locked(model, expected):
+    assert set(model.model_fields) == expected
+
+
+def test_every_arrivals_envelope_is_locked():
+    """The lock above is per-model, so a SIXTH arrivals envelope added later would
+    simply not be covered by it. This asserts the roster itself: every model in this
+    module whose name ends in StationArrivals is in the table above."""
+    import models as models_module
+
+    declared = {
+        getattr(models_module, name)
+        for name in dir(models_module)
+        if name.endswith("StationArrivals")
+    }
+    assert declared == set(ARRIVALS_ENVELOPES), "an arrivals envelope is missing its lock"
 
 
 def test_station_arrivals_validates_handler_shape():
@@ -268,14 +359,14 @@ def test_matched_path_train_keys_cover_model():
     trains, arrivals, _, _ = feeds._decode_path_feed(feed.SerializeToString(), stops, 1000.0)
     assert trains, "decode produced no trains"
     served, _state = feeds.match_path_identities(feeds.new_path_identity_state("t"), trains, {})
-    assert all(set(t) == set(PathTrain.model_fields) for t in served)
+    assert all(set(t) | _PENDING_IN_DECODE == set(PathTrain.model_fields) for t in served)
     for t in served:
         PathTrain.model_validate(t)
         assert "uuid-1" not in str(t)  # the bridge hash never reaches the payload
     for buckets in arrivals.values():
         for rows in buckets.values():
             for row in rows:
-                assert set(row) == set(PathArrival.model_fields)
+                assert set(row) | _PENDING_IN_DECODE == set(PathArrival.model_fields)
                 PathArrival.model_validate(row)
 
 
@@ -358,4 +449,4 @@ def test_decoded_train_keys_cover_model():
     expected = json.loads((FIXTURES / "subway_1_7_s_expected.json").read_text())
     trains = feeds._decode_trains(raw, stops, expected["feed_key"], expected["now"])
     assert trains, "decode produced no trains"
-    assert all(set(t) == set(Train.model_fields) for t in trains)
+    assert all(set(t) | _PENDING_IN_DECODE == set(Train.model_fields) for t in trains)

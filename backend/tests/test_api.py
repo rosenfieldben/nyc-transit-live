@@ -28,8 +28,35 @@ from tests import negatives
 
 pytestmark = pytest.mark.anyio
 
+# CONTRACT 6.1 added observed_at + provenance to every row model, so every literal
+# here that is compared against a SERVED body carries them. They read `None` and
+# `"unknown"` because these entries are seeded into the cache directly rather than
+# produced by a decoder: the defaults are exactly what a row that never went through
+# a decoder should say about itself.
+_PAIR = {"observed_at": None, "provenance": "unknown"}
+# The five arrivals envelopes gained served_at and systems in the same commit. The
+# HANDLERS do not fill them yet (that is the endpoints commit), so a served arrivals
+# envelope carries the model defaults, and asserting that here is what makes this
+# step's inertness checkable rather than claimed.
+_ARRIVALS_ENVELOPE = {"served_at": None, "systems": None}
+
+
+def _served(rows):
+    """The served form of a list of decoder-shaped arrival rows: the response model
+    fills the contract defaults on the way out, so a fixture that stands for app
+    STATE and the body that carries it differ by exactly the pair."""
+    return [{**row, **_PAIR} for row in rows]
+
+
 BUSES = [
-    {"id": "MTA NYCT_1", "route_id": "M15", "latitude": 40.7, "longitude": -74.0, "bearing": 90.0}
+    {
+        "id": "MTA NYCT_1",
+        "route_id": "M15",
+        "latitude": 40.7,
+        "longitude": -74.0,
+        "bearing": 90.0,
+        **_PAIR,
+    }
 ]
 TRAINS = [
     {
@@ -44,6 +71,7 @@ TRAINS = [
         "prev_lon": -74.01,
         "prev_time": 999.0,
         "next_time": 1002.0,
+        **_PAIR,
     }
 ]
 RAILROADS = [
@@ -62,6 +90,7 @@ RAILROADS = [
         "prev_lon": None,
         "prev_time": None,
         "next_time": None,
+        **_PAIR,
     }
 ]
 
@@ -632,6 +661,7 @@ async def test_subway_arrivals_known_station(client, subway_state, cache):
         "route_id": "1",
         "trip_id": "t1",
         "arrival": 1000.0,
+        **_PAIR,
     }
     assert body["directions"]["Southbound"] == []  # both keys always present
 
@@ -763,7 +793,9 @@ async def test_railroad_arrivals_lirr_known_station(client, railroad_state, cach
     assert body["stop_name"] == "Jamaica"
     assert body["fetched_at"] == 1234.0
     assert body["directions"] == {
-        "Outbound": [{"route_id": "5", "trip_id": "t1", "arrival": 1000.0, "train_num": "704"}]
+        "Outbound": [
+            {"route_id": "5", "trip_id": "t1", "arrival": 1000.0, "train_num": "704", **_PAIR}
+        ]
     }
 
 
@@ -1358,12 +1390,19 @@ FERRY_BOATS = [
         "speed": 6.5,
         "status": "IN_TRANSIT_TO",
         "updated_at": 1000.0,
+        **_PAIR,
     }
 ]
 FERRY_ARRIVALS_INDEX = {
     "18": {
         "East River": [
-            {"route_id": "ER", "trip_id": "T-ER-1", "arrival": 1500.0, "departure": 1560.0}
+            {
+                "route_id": "ER",
+                "trip_id": "T-ER-1",
+                "arrival": 1500.0,
+                "departure": 1560.0,
+                **_PAIR,
+            }
         ]
     }
 }
@@ -1425,7 +1464,8 @@ async def test_ferry_arrivals_served_for_known_stop(client, cache):
         "fetched_at": 1001.0,
         "stop_id": "18",
         "stop_name": "Wall St/Pier 11",
-        "routes": FERRY_ARRIVALS_INDEX["18"],
+        "routes": {k: _served(v) for k, v in FERRY_ARRIVALS_INDEX["18"].items()},
+        **_ARRIVALS_ENVELOPE,
     }
 
 
@@ -1538,7 +1578,9 @@ PATH_ARRIVALS = {"26733": {"To New Jersey": [{"route_id": "862", "arrival": 1500
 # The SERVED shape (13d): what _refresh_path stores after the identity
 # matcher, i.e. what /api/path actually returns. A stable minted `id`, no
 # bridge trip hash.
-PATH_SERVED_TRAINS = [{**{k: v for k, v in PATH_TRAINS[0].items() if k != "trip_id"}, "id": "t-1"}]
+PATH_SERVED_TRAINS = [
+    {**{k: v for k, v in PATH_TRAINS[0].items() if k != "trip_id"}, "id": "t-1", **_PAIR}
+]
 
 
 async def test_path_feed_warming_up_503(client):
@@ -1612,7 +1654,9 @@ async def test_path_arrivals_known_station(client, path_rt_state, cache):
     assert body["stop_name"] == "Newark"
     assert body["fetched_at"] == 1234.0
     # Rows are {route_id, arrival} only: the bridge hash reaches no payload.
-    assert body["directions"] == {"To New Jersey": [{"route_id": "862", "arrival": 1500.0}]}
+    assert body["directions"] == {
+        "To New Jersey": _served([{"route_id": "862", "arrival": 1500.0}])
+    }
 
 
 async def test_path_arrivals_empty_when_nothing_upcoming(client, path_rt_state, cache):
@@ -2765,6 +2809,7 @@ ALERT = {
     "stops": ["16"],
     "starts_at": 1000.0,
     "ends_at": None,
+    **_PAIR,
 }
 
 
@@ -2799,11 +2844,20 @@ async def test_alerts_served_from_seeded_index(client, alerts_cache):
     # Every alert system is present from the seeded health map, even before a poll.
     assert body == {
         "fetched_at": 1000.0,
+        "feed_timestamp": None,
         "alerts": [ALERT],
         "systems": {
             # routes is null on the alerts blocks: route coverage is the SUBWAY's
             # join key (its trains name no system), and an alert already names its own.
-            s: {"fetched_at": None, "ok": True, "retained_since": None, "routes": None}
+            s: {
+                "fetched_at": None,
+                # 6.1: the per-system content clock, null here for the same reason
+                # fetched_at is, because nothing has polled.
+                "feed_timestamp": None,
+                "ok": True,
+                "retained_since": None,
+                "routes": None,
+            }
             # THE ACTIVE SET, not the full table: this test environment has no NJ
             # Transit credentials, so "njt" is never seeded and never appears here.
             # test_unconfigured_njt_is_absent_from_the_alert_health_map is the
@@ -2823,11 +2877,20 @@ async def test_alerts_empty_index_is_empty_list_not_error(client, alerts_cache):
     assert body.pop("served_at") >= 1000.0
     assert body == {
         "fetched_at": 1000.0,
+        "feed_timestamp": None,
         "alerts": [],
         "systems": {
             # routes is null on the alerts blocks: route coverage is the SUBWAY's
             # join key (its trains name no system), and an alert already names its own.
-            s: {"fetched_at": None, "ok": True, "retained_since": None, "routes": None}
+            s: {
+                "fetched_at": None,
+                # 6.1: the per-system content clock, null here for the same reason
+                # fetched_at is, because nothing has polled.
+                "feed_timestamp": None,
+                "ok": True,
+                "retained_since": None,
+                "routes": None,
+            }
             # THE ACTIVE SET, not the full table: this test environment has no NJ
             # Transit credentials, so "njt" is never seeded and never appears here.
             # test_unconfigured_njt_is_absent_from_the_alert_health_map is the
@@ -3968,12 +4031,14 @@ async def test_c2_alerts_envelope_mirrors_the_health_map(client, alerts_cache):
     body = (await client.get("/api/alerts")).json()
     assert body["systems"]["subway"] == {
         "fetched_at": 1000.0,
+        "feed_timestamp": None,  # 6.1: not filled until the endpoints commit
         "ok": True,
         "retained_since": None,
         "routes": None,  # alerts name their own system; no route join needed
     }
     assert body["systems"]["MNR"] == {
         "fetched_at": 900.0,  # fresh_at maps to fetched_at
+        "feed_timestamp": None,
         "ok": False,  # derived from last_error
         "retained_since": 950.0,
         "routes": None,
@@ -4181,6 +4246,7 @@ async def test_c2_route_coverage_is_derived_from_the_served_by_group_data(
     body = (await client.get("/api/subways")).json()
     assert body["systems"]["ACE"] == {
         "fetched_at": 1000.0,
+        "feed_timestamp": None,  # 6.1: not filled until the endpoints commit
         "ok": False,
         "retained_since": 1060.0,
         "routes": ["A", "E"],  # still named, because those trains are still served

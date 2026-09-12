@@ -10,7 +10,50 @@ sets match the decode output exactly, catching additions in CI instead.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel
+
+# THE PROVENANCE ENUMERATION (the freshness and provenance contract, section 3.1 of
+# docs/design/freshness-contract.md). How a served observation came to exist, for
+# every kind of observation this application serves: a GPS position, a placed
+# position, an arrival prediction, an alert.
+#
+#   reported   the provider sent this as observed. A coordinate it reported, a
+#              prediction it published, an alert it raised. NOT "live-gps": the
+#              value is read by code over all three kinds and a position word
+#              would be false of two of them (Q8). The rider-facing string on a
+#              fresh reported POSITION is still "live GPS", unchanged; the code
+#              value and the rider word answer different questions.
+#   estimated  computed by interpolating a prediction between two known points.
+#   placed     a stop's own coordinates, from a prediction or the timetable.
+#   retained   carried forward from an earlier poll, not in the latest decode.
+#              THE ODD MEMBER, deliberately: the other four say how an observation
+#              was DERIVED and this says when it was SERVED. It wins the field when
+#              both apply, because "not in the current decode" is the fact that
+#              changes what a rider should believe (Q3), and SystemFreshness
+#              .retained_since carries the timing for anyone who needs it.
+#   unknown    provenance could not be determined. The DEFAULT, and the reason the
+#              default is not `reported`: an observation reaching a surface through
+#              a path that predates this contract must not claim to be reported. It
+#              is not a value a decoder should ever reach for on purpose.
+#
+# THE FIRST CLOSED SET IN THIS FILE EXPRESSED AS A TYPE, AND THE ONLY ONE THAT CAN
+# BE. HEALTH_DEGRADED_CODES below is closed too, but as a tuple of str constants a
+# reader has to obey rather than a type a checker enforces.
+# NjtTrain.status, FerryBoat.status, Alert.effect and Alert.cause all ship as bare
+# `str` and that is not an oversight: they are GTFS-RT pass-throughs, so a new enum
+# member added upstream would turn a typed field into a 500 on a feed we do not
+# control. Provenance is OURS. Every value is written by a decoder in this
+# repository, nothing upstream can widen it, and a value outside the set is a bug
+# here rather than a surprise from a provider. So it is typed rather than merely
+# documented, and mypy catches the typo the comment could not.
+#
+# NOT TO BE CONFUSED WITH NjtTrain.status, which is a MOTION phase (at-station /
+# approaching / in-transit) and says nothing about derivation: all three of those
+# are placed positions. A new field named `status` on these models would collide
+# with it, which is why this one is named for what it answers.
+Provenance = Literal["reported", "estimated", "placed", "retained", "unknown"]
 
 
 class Vehicle(BaseModel):
@@ -19,6 +62,25 @@ class Vehicle(BaseModel):
     latitude: float
     longitude: float
     bearing: float | None
+    # THE CONTRACT PAIR, added to every observation-carrying model by 6.1 and
+    # explained once here because the shape is identical on all twelve.
+    #
+    # OPTIONAL-WITH-A-DEFAULT ON THE WIRE, the same convention SubwayFeed.systems
+    # states and for the same reason: a client that predates these fields is not
+    # broken by them, and a payload built before they existed still validates. The
+    # optionality is a COMPAT affordance and not a licence for a decoder to skip
+    # them; every decoder fills both, and the field-set locks in test_models.py
+    # fail if one stops.
+    #
+    # observed_at is NULLABLE and that is load-bearing. Metro-North sends no
+    # per-observation clock at all (its vehicle.timestamp is a copy of a header
+    # that lags two to four minutes), so null is the only honest answer there.
+    # Filling it with something computed here would be a rider-facing qualifier
+    # rendered from a number no provider sent, which is the failure the whole
+    # contract exists to prevent. Which systems get null is DATA, not code: the
+    # per-provider policy table is section 3.3 of the design.
+    observed_at: float | None = None  # contract 6.1: when the PROVIDER observed this
+    provenance: Provenance = "unknown"
 
 
 class Train(BaseModel):
@@ -34,13 +96,15 @@ class Train(BaseModel):
     prev_lon: float | None
     prev_time: float | None  # _stop_time at the previous station (epoch)
     next_time: float | None  # expected time at the next station (epoch)
+    observed_at: float | None = None  # contract 6.1: when the PROVIDER observed this
+    provenance: Provenance = "unknown"
 
 
 class RailroadTrain(BaseModel):
     system: str  # "LIRR" or "MNR"
     trip_id: str
     route_id: str | None
-    latitude: float  # real GPS position reported by the vehicle feed
+    latitude: float  # a GPS fix or a station placement; `provenance` says which
     longitude: float
     bearing: float | None
     train_num: str | None  # vehicle label/id, the rider-facing train number
@@ -54,6 +118,14 @@ class RailroadTrain(BaseModel):
     prev_lon: float | None
     prev_time: float | None
     next_time: float | None
+    # BOTH RAILROAD ANSWERS LIVE ON THIS ONE MODEL, which is why the policy is a
+    # table rather than a branch. An LIRR row carries a real observed_at: its feed
+    # dates every vehicle independently and dates its predictions too. A
+    # Metro-North row carries null, because MNR copies its header onto every
+    # vehicle.timestamp and sends no trip-update timestamp at all, so there is
+    # nothing to report and inventing one would mark a live fleet stale.
+    observed_at: float | None = None  # contract 6.1: when the PROVIDER observed this
+    provenance: Provenance = "unknown"
 
 
 class BusFeed(BaseModel):
@@ -88,6 +160,24 @@ class SystemFreshness(BaseModel):
     # which is the entire point: compare it with the envelope's fetched_at to see
     # how far behind this system has fallen.
     fetched_at: float | None
+    # THIS SYSTEM'S OWN CONTENT TIME, mirroring the envelope field it is the
+    # per-system version of, exactly as fetched_at above mirrors the envelope's.
+    #
+    # WITHOUT IT THE OTHER FOUR FIELDS CANNOT EXPRESS AN OLD-BUT-SUCCESSFUL FEED,
+    # which is the defect F03 named. Every one of them describes OUR RELATIONSHIP
+    # WITH THE PROVIDER: when we last decoded it, whether it is failing, whether we
+    # are carrying it forward, which routes it covers. None is about the age of
+    # what the provider SENT, so a system can report ok=True, fetched_at one second
+    # ago and retained_since None while serving ten-minute-old content, and the
+    # reproduction measures exactly that. fetched_at minus this is _feed_age
+    # applied per system instead of per envelope.
+    #
+    # NULL IS A REAL ANSWER AND NOT A HOLE. A system whose header is not a usable
+    # freshness signal reports None here rather than a number that would mislead:
+    # Metro-North is the standing case (feeds.RAILROAD_FRESHNESS_SYSTEMS states the
+    # exclusion once and this block inherits it rather than restating it), and so is
+    # any system that has not yet decoded anything.
+    feed_timestamp: float | None = None
     # False while the system failed its most recent poll. NOTE the deliberate
     # difference from *FeedHealth.ok in this module, which is an integer COUNT of
     # healthy feeds; this is a per-system boolean. They are different models with
@@ -179,6 +269,14 @@ class Arrival(BaseModel):
     route_id: str | None
     trip_id: str
     arrival: float  # absolute epoch seconds
+    # A PREDICTION IS AN OBSERVATION, which is the whole reason these rows carry
+    # the pair: the countdown a rider reads is arithmetic on `arrival`, so it is
+    # only as current as the prediction behind it, and nothing in this payload used
+    # to say when that was. No subway trip update carries a timestamp of its own
+    # (0 of 160 on the committed capture), so observed_at here is the header of the
+    # FEED GROUP that produced the row.
+    observed_at: float | None = None  # contract 6.1: when the PROVIDER observed this
+    provenance: Provenance = "unknown"
 
 
 class RailroadArrival(BaseModel):
@@ -186,6 +284,11 @@ class RailroadArrival(BaseModel):
     trip_id: str
     arrival: float  # absolute epoch seconds
     train_num: str | None  # rider-facing train number, null when no vehicle joins
+    # LIRR rows carry the trip update's own timestamp (127 of 132 on the committed
+    # capture carry one); Metro-North rows carry null, for the same reason its
+    # trains do.
+    observed_at: float | None = None  # contract 6.1: when the PROVIDER observed this
+    provenance: Provenance = "unknown"
 
 
 class StationArrivals(BaseModel):
@@ -194,6 +297,18 @@ class StationArrivals(BaseModel):
     station_name: str | None
     # Keyed by "Northbound" / "Southbound"; both keys always present.
     directions: dict[str, list[Arrival]]
+    # THE TWO CLOCKS THE FIVE ARRIVALS ENVELOPES NEVER HAD (contract 4.1). Every
+    # vehicle envelope in this module carries the full feed_timestamp / fetched_at
+    # / served_at triple and a systems map; all five of these carried fetched_at
+    # alone, which is one design error committed five times rather than one
+    # system's bug. served_at exists so a stuck poller is visible (it keeps moving
+    # while fetched_at holds; THE THREE TIMESTAMPS in cache.py is the canonical
+    # description), and the systems map is what lets a board say WHICH contributor
+    # is behind rather than only that one is. Optional-with-a-default for the wire
+    # reason, and the handler always sets both: a test pins that a served response
+    # never carries None for served_at.
+    served_at: float | None = None
+    systems: dict[str, SystemFreshness] | None = None
 
 
 class RailroadStationArrivals(BaseModel):
@@ -205,6 +320,18 @@ class RailroadStationArrivals(BaseModel):
     # "Outbound"/"Inbound" (from direction_id), MNR and direction-less LIRR trips
     # use "Trains". An empty dict means nothing upcoming.
     directions: dict[str, list[RailroadArrival]]
+    # THE TWO CLOCKS THE FIVE ARRIVALS ENVELOPES NEVER HAD (contract 4.1). Every
+    # vehicle envelope in this module carries the full feed_timestamp / fetched_at
+    # / served_at triple and a systems map; all five of these carried fetched_at
+    # alone, which is one design error committed five times rather than one
+    # system's bug. served_at exists so a stuck poller is visible (it keeps moving
+    # while fetched_at holds; THE THREE TIMESTAMPS in cache.py is the canonical
+    # description), and the systems map is what lets a board say WHICH contributor
+    # is behind rather than only that one is. Optional-with-a-default for the wire
+    # reason, and the handler always sets both: a test pins that a served response
+    # never carries None for served_at.
+    served_at: float | None = None
+    systems: dict[str, SystemFreshness] | None = None
 
 
 # PATH realtime (13b placement + 13d identity): trains placed at their next
@@ -230,6 +357,14 @@ class PathTrain(BaseModel):
     prev_lon: float | None
     prev_time: float | None
     next_time: float | None
+    # observed_at is the bridge entity's OWN TripUpdate.timestamp, not the
+    # envelope's feed_timestamp. The envelope carries the bridge's write time,
+    # which advances every regeneration whether or not anything upstream moved
+    # (see PathFeed below), so an age computed from it can never fire. The
+    # per-entity stamp can, and does: 12 of 55 entities on the committed rush
+    # capture are already more than 90 seconds old.
+    observed_at: float | None = None  # contract 6.1: when the PROVIDER observed this
+    provenance: Provenance = "unknown"
 
 
 class PathFeed(BaseModel):
@@ -248,6 +383,9 @@ class PathArrival(BaseModel):
     # cleanup they appear in no served payload anywhere.
     route_id: str | None
     arrival: float  # absolute epoch seconds
+    # The producing entity's own TripUpdate.timestamp, as for PathTrain.
+    observed_at: float | None = None  # contract 6.1: when the PROVIDER observed this
+    provenance: Provenance = "unknown"
 
 
 class PathStationArrivals(BaseModel):
@@ -258,6 +396,18 @@ class PathStationArrivals(BaseModel):
     # "Trains" as the direction-less residual, present only when populated
     # (the railroad bucket discipline); {} means nothing upcoming.
     directions: dict[str, list[PathArrival]]
+    # THE TWO CLOCKS THE FIVE ARRIVALS ENVELOPES NEVER HAD (contract 4.1). Every
+    # vehicle envelope in this module carries the full feed_timestamp / fetched_at
+    # / served_at triple and a systems map; all five of these carried fetched_at
+    # alone, which is one design error committed five times rather than one
+    # system's bug. served_at exists so a stuck poller is visible (it keeps moving
+    # while fetched_at holds; THE THREE TIMESTAMPS in cache.py is the canonical
+    # description), and the systems map is what lets a board say WHICH contributor
+    # is behind rather than only that one is. Optional-with-a-default for the wire
+    # reason, and the handler always sets both: a test pins that a served response
+    # never carries None for served_at.
+    served_at: float | None = None
+    systems: dict[str, SystemFreshness] | None = None
 
 
 class PathFeedHealth(BaseModel):
@@ -387,6 +537,17 @@ class NjtTrain(BaseModel):
     prev_lon: float | None
     prev_time: float | None
     next_time: float | None
+    # observed_at is the TripUpdates HEADER, because NJ Transit dates nothing else:
+    # it sends no vehicle feed at all and none of its trip updates carries a
+    # timestamp. The header is a good clock (generation every ~11.8s, lag 9s to 23s
+    # at peak; THE FRESHNESS BUDGET, DERIVED in feeds/njt.py is the working), which
+    # is why this row is age-gated on it while Metro-North's is not gated at all.
+    # provenance is `placed` while dwelling and `estimated` on the interpolated
+    # segment, which is a DIFFERENT question from `status` above: that is motion,
+    # this is derivation, and all three motion states are one or the other of
+    # these two.
+    observed_at: float | None = None  # contract 6.1: when the PROVIDER observed this
+    provenance: Provenance = "unknown"
 
 
 class NjtFeed(BaseModel):
@@ -412,6 +573,9 @@ class NjtArrival(BaseModel):
     departure: float | None
     delay: int | None
     trip_id: str
+    # The TripUpdates header, as for NjtTrain: nothing else in this feed is dated.
+    observed_at: float | None = None  # contract 6.1: when the PROVIDER observed this
+    provenance: Provenance = "unknown"
 
 
 class NjtStationArrivals(BaseModel):
@@ -423,6 +587,18 @@ class NjtStationArrivals(BaseModel):
     # trips and SKIPPED stops are already excluded upstream in the decoder, so no
     # consumer can reconstruct a phantom from this list.
     arrivals: list[NjtArrival]
+    # THE TWO CLOCKS THE FIVE ARRIVALS ENVELOPES NEVER HAD (contract 4.1). Every
+    # vehicle envelope in this module carries the full feed_timestamp / fetched_at
+    # / served_at triple and a systems map; all five of these carried fetched_at
+    # alone, which is one design error committed five times rather than one
+    # system's bug. served_at exists so a stuck poller is visible (it keeps moving
+    # while fetched_at holds; THE THREE TIMESTAMPS in cache.py is the canonical
+    # description), and the systems map is what lets a board say WHICH contributor
+    # is behind rather than only that one is. Optional-with-a-default for the wire
+    # reason, and the handler always sets both: a test pins that a served response
+    # never carries None for served_at.
+    served_at: float | None = None
+    systems: dict[str, SystemFreshness] | None = None
 
 
 # NYC Ferry realtime (14b): live GPS boats from the VehiclePositions feed and a
@@ -446,7 +622,16 @@ class FerryBoat(BaseModel):
     # INCOMING_AT under way), null when the feed omits it. bearing is deliberately
     # absent: the feed always reports 0.0, so serving it would be a lie.
     status: str | None
-    updated_at: float | None  # per-vehicle content time, advances each poll
+    # Q1'S RENAME, AND BOTH KEYS SHIP FOR ONE RELEASE. `updated_at` is the field
+    # this contract turned out to have already built, correctly, on exactly one
+    # system: the ferry decoder has read vehicle.timestamp and served it under this
+    # name since 14b, and no frontend surface has ever read it. 6.1 gives it the
+    # contract's name and keeps the old one beside it so a client holding the
+    # previous payload shape is not broken by the rename. They carry the SAME
+    # VALUE, pinned by a test, and `updated_at` is dropped a release from now.
+    updated_at: float | None  # per-vehicle content time; == observed_at (Q1)
+    observed_at: float | None = None  # contract 6.1: when the PROVIDER observed this
+    provenance: Provenance = "unknown"
 
 
 class FerryFeed(BaseModel):
@@ -464,6 +649,14 @@ class FerryArrival(BaseModel):
     # arrival, a terminal no departure), but never both on a kept row.
     arrival: float | None
     departure: float | None
+    # THE TRIPUPDATES HEADER, NOT THE BOAT CLOCK, and the distinction is the one the
+    # audit's F03 remedy named. The two ferry feeds are separate with separate
+    # clocks: VehiclePositions dates every boat, TripUpdates dates nothing (0 of 50
+    # on the committed capture), and the envelope's feed_timestamp is the
+    # VehiclePositions header. A dock row aged against the boat clock would be aged
+    # against a feed it did not come from.
+    observed_at: float | None = None  # contract 6.1: when the PROVIDER observed this
+    provenance: Provenance = "unknown"
 
 
 class FerryStationArrivals(BaseModel):
@@ -474,6 +667,18 @@ class FerryStationArrivals(BaseModel):
     # better at a multi-route dock), present only when populated; an empty dict
     # means nothing upcoming. A join-missed trip lands in a "Ferry" residual bucket.
     routes: dict[str, list[FerryArrival]]
+    # THE TWO CLOCKS THE FIVE ARRIVALS ENVELOPES NEVER HAD (contract 4.1). Every
+    # vehicle envelope in this module carries the full feed_timestamp / fetched_at
+    # / served_at triple and a systems map; all five of these carried fetched_at
+    # alone, which is one design error committed five times rather than one
+    # system's bug. served_at exists so a stuck poller is visible (it keeps moving
+    # while fetched_at holds; THE THREE TIMESTAMPS in cache.py is the canonical
+    # description), and the systems map is what lets a board say WHICH contributor
+    # is behind rather than only that one is. Optional-with-a-default for the wire
+    # reason, and the handler always sets both: a test pins that a served response
+    # never carries None for served_at.
+    served_at: float | None = None
+    systems: dict[str, SystemFreshness] | None = None
 
 
 class FerryFeedHealth(BaseModel):
@@ -525,10 +730,20 @@ class Alert(BaseModel):
     stops: list[str]  # deduped stop selectors (subway: parent-station ids)
     starts_at: float | None  # covering period start, null when open on the left
     ends_at: float | None  # covering period end, null when open-ended
+    # A GTFS-RT alert carries no time of its own, so observed_at is the alert feed's
+    # clock. starts_at / ends_at are NOT it: those are facts about the world (when
+    # the disruption applies), not about when we were told. provenance is only ever
+    # `reported` or `retained` here, because an alert is never derived.
+    observed_at: float | None = None  # contract 6.1: when the PROVIDER observed this
+    provenance: Provenance = "unknown"
 
 
 class AlertFeed(BaseModel):
     fetched_at: float | None
+    # The alert feeds' content time, which this envelope had never carried: before
+    # 6.1 it was the ONLY vehicle-shaped envelope without one, and the six arrivals
+    # envelopes below had none either.
+    feed_timestamp: float | None = None
     served_at: float  # this response's build time (see cache.py)
     alerts: list[Alert]
     # Keyed by alert system ("subway", "bus", "LIRR", "MNR", "ferry"), projected

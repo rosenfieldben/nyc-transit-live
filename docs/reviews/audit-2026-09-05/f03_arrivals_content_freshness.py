@@ -475,20 +475,45 @@ async def main_async() -> None:
           f"the arrivals fetched_at  ({(soonest - arrivals['fetched_at']) / 60:.2f} min ahead)")
     print(f"  arrival row keys           : {sorted(rows[0])}")
 
+    # CONTRACT 6.1 WIDENED THE SHAPE AND FILLED NOTHING, which is exactly what that
+    # step set out to do, so this script stops asserting the keys are ABSENT and
+    # starts asserting they are EMPTY. That is the stronger statement of the same
+    # finding: a key whose value is None tells a rider nothing that a missing key
+    # did not, and the F03 defect is unchanged until something fills it. When the
+    # endpoints step lands these become non-None and this script goes red, which is
+    # the signal that F03's disposition has to be re-verified rather than assumed.
     check(
-        set(arrivals) == {"fetched_at", "station_id", "station_name", "directions"},
-        "the arrivals envelope serves exactly 4 keys",
+        set(arrivals) == {
+            "fetched_at",
+            "station_id",
+            "station_name",
+            "directions",
+            "served_at",
+            "systems",
+        },
+        "the arrivals envelope serves the 4 original keys plus 6.1's two",
         ", ".join(arrivals_keys),
     )
     check(
-        not (set(arrivals) & CONTENT_CLOCK_NAMES),
-        "no content-age / source-content-time key in the arrivals envelope",
+        arrivals["served_at"] is None and arrivals["systems"] is None,
+        "and both of 6.1's envelope keys are EMPTY (the handlers do not fill them yet)",
+        f"served_at={arrivals['served_at']!r} systems={arrivals['systems']!r}",
+    )
+    envelope_clocks = (set(arrivals) & CONTENT_CLOCK_NAMES) - {"served_at"}
+    check(
+        not envelope_clocks,
+        "still no CONTENT clock in the arrivals envelope",
         "checked against " + ", ".join(sorted(CONTENT_CLOCK_NAMES)),
     )
     check(
-        not (set(rows[0]) & CONTENT_CLOCK_NAMES),
-        "no content clock on the individual arrival rows either",
+        set(rows[0]) & CONTENT_CLOCK_NAMES == {"observed_at"}
+        and rows[0]["observed_at"] is None,
+        "the arrival rows carry observed_at (6.1) and it is None on every row",
         ", ".join(sorted(rows[0])),
+    )
+    check(
+        all(r["observed_at"] is None for r in rows),
+        f"all {len(rows)} served rows report a null observation time",
     )
     check(
         abs(arrivals["fetched_at"] - fetched_at_1) < 0.001,
@@ -531,8 +556,13 @@ async def main_async() -> None:
         f"{vehicles['systems'][FEED_GROUP]['fetched_at']:.3f}",
     )
     check(
-        not (set(models.SystemFreshness.model_fields) & CONTENT_CLOCK_NAMES),
-        "SystemFreshness carries no per-group content clock either",
+        "feed_timestamp" in models.SystemFreshness.model_fields,
+        "SystemFreshness now declares a per-group content clock (6.1)",
+    )
+    check(
+        vehicles["systems"][FEED_GROUP]["feed_timestamp"] is None,
+        "and the poller does not fill it yet, so the group still cannot be dated",
+        f"{vehicles['systems'][FEED_GROUP]['feed_timestamp']!r}",
     )
 
     # ---- poll 2: the SAME old bytes retrieved successfully again ----------
@@ -617,7 +647,10 @@ async def main_async() -> None:
     rule("(c) CITED LINES, confirmed against the audited files")
     cites = [
         ("backend/routes/subway.py", 85, "THE OLDEST CONTRIBUTING GROUP'S poll time"),
-        ("backend/models.py", 191, "class StationArrivals(BaseModel):"),
+        # Moved by contract 6.1, which widened the models above it. The line number
+        # is re-pinned rather than loosened to a search: a citation that drifts
+        # silently is the thing this block exists to catch.
+        ("backend/models.py", 292, "class StationArrivals(BaseModel):"),
         ("frontend/helpers.js", 713, 'The "as of Xm ago" age line'),
     ]
     for rel, line_no, needle in cites:
@@ -649,10 +682,18 @@ async def main_async() -> None:
     )
     without = [r["mode"] for r in table if not r["content_clock"]]
     with_clock = [r["mode"] for r in table if r["content_clock"]]
+    # 6.1 GAVE ALL FIVE THE FIELD AND FILLED NONE OF THEM, so the audit's "no
+    # arrivals model of ANY mode carries a content-age field" is now false of the
+    # DECLARATION and still true of the DATA. Both halves are asserted, because the
+    # first is the progress and the second is the finding.
     check(
-        not with_clock,
-        "NO arrivals model of ANY mode carries a content-age field",
-        f"without={without}; with={with_clock or 'none'}",
+        not without,
+        "all five arrivals models now DECLARE a content-age field (6.1)",
+        f"declaring={with_clock}; not declaring={without or 'none'}",
+    )
+    check(
+        all(r["observed_at"] is None for r in rows),
+        "and every served arrival row still reports it as None, so F03 stands",
     )
     check(
         all(row["content_clock"] for row in feed_model_table()),
@@ -682,8 +723,11 @@ async def main_async() -> None:
         "DISPOSITION: VERIFIED, a valid subway feed "
         f"{lag_1:.0f}s behind its own header serves /api/subways a "
         f"{lag_1:.0f}s content lag while /api/subway-arrivals/{STATION_ID} serves only a "
-        "freshly stamped fetched_at, no content clock, 8/8 groups ok, and all 5 arrivals "
-        "models of all 5 modes omit the field."
+        "freshly stamped fetched_at, no content clock, 8/8 groups ok, and every served "
+        "arrival row reporting observed_at as None. Contract 6.1 has since given all 5 "
+        "arrivals models of all 5 modes the field and filled none of them, which is what "
+        "that step set out to do: the shape moved, the information did not, and the "
+        "rider-facing finding is unchanged."
     )
 
 

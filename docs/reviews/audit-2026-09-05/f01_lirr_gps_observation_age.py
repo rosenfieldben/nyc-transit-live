@@ -200,9 +200,20 @@ def section_a() -> None:
 
     model_fields = sorted(models.RailroadTrain.model_fields)
     print(f"  models.RailroadTrain fields       : {model_fields}")
+    # CONTRACT 6.1 MOVED THIS HALF AND NOT THE OTHER. The audit recorded that the
+    # model carried no observation age at all; 6.1 gave it observed_at and
+    # provenance and filled neither, which is the step's whole point (it produces
+    # the values and nothing consumes them yet). So the model half of the finding
+    # is closed and the DECODER half is not, and this script now pins that split
+    # rather than the original conjunction: an assertion that quietly kept passing
+    # across a change this size would be worth nothing.
     check(
-        "models.RailroadTrain carries no observation age",
-        not [f for f in model_fields if any(word in f for word in age_words)],
+        "models.RailroadTrain now carries the contract pair (6.1)",
+        {"observed_at", "provenance"} <= set(model_fields),
+    )
+    check(
+        "and the decoder still fills neither, so F01 stands",
+        not [f for f in emitted_fields if any(word in f for word in age_words)],
     )
 
 
@@ -385,11 +396,17 @@ async def section_c_and_d(ages: dict[str, float]) -> None:
     print(f"             true observation age in the capture: {hms(ages[freshest_id])}")
     print("    difference in the JSON that distinguishes them by age: none of the 14 keys.")
 
-    age_words = ("timestamp", "observed", "age", "seen", "measured")
+    # 6.1 again: the KEY is on the served record now, and it is empty on every row.
+    # An empty field is not a freshness signal, so the rider-facing defect is
+    # unchanged and the two vehicles below still differ in nothing.
     check(
-        "the served vehicle record has no age field",
-        not [k for k in per_vehicle_keys if any(word in k for word in age_words)],
+        "the served vehicle record carries observed_at (6.1)",
+        "observed_at" in per_vehicle_keys,
         str(per_vehicle_keys),
+    )
+    check(
+        "and it is None on every served vehicle, so it distinguishes nothing",
+        all(rec.get("observed_at") is None for rec in body["data"]),
     )
     check(
         "the oldest and the freshest vehicle differ in no freshness key",
@@ -403,13 +420,22 @@ async def section_c_and_d(ages: dict[str, float]) -> None:
         sorted(body) == ["data", "feed_timestamp", "fetched_at", "served_at", "systems"],
     )
 
-    # The response model does not merely lack the field, it strips one that is added.
-    entry["data"] = [{**lirr_gps[0], "observed_at": HEADER_TS - ages[oldest_id]}]
+    # THE INVERSE OF THE ORIGINAL CHECK, and the clearest single statement of what
+    # 6.1 changed. The audit found that the response model did not merely lack the
+    # field, it STRIPPED one that was added: a value put on a cached train never
+    # reached the wire. It does now. That is the whole of the models step, measured
+    # end to end, and it is why the decoder step can fill the field and expect it to
+    # arrive.
+    injected = HEADER_TS - ages[oldest_id]
+    entry["data"] = [{**lirr_gps[0], "observed_at": injected}]
     async with httpx.AsyncClient(transport=transport, base_url="http://f01.local") as client:
-        stripped = (await client.get("/api/railroads")).json()["data"][0]
+        carried = (await client.get("/api/railroads")).json()["data"][0]
     print(f"  an observed_at added to a cached train survives the response model: "
-          f"{'observed_at' in stripped}")
-    check("models.RailroadFeed strips an added observed_at", "observed_at" not in stripped)
+          f"{'observed_at' in carried}")
+    check(
+        "models.RailroadFeed now CARRIES an added observed_at (6.1; it stripped it before)",
+        carried.get("observed_at") == injected,
+    )
 
 
 # ---------------------------------------------------------------------------

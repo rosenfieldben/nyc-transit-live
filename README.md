@@ -855,9 +855,25 @@ stays explained. Retention and that rendering are deliberately coupled: see
 without them.
 
 The single-feed sources (buses, PATH, ferry) carry no `systems` block. The client
-synthesizes a one-system block from their envelope `fetched_at`, so they go
-through the same staleness, dimming and freeze rules rather than being exempt for
-having one feed.
+synthesizes a one-system block from their envelope `fetched_at` and
+`feed_timestamp`, so they go through the same staleness, dimming and freeze rules
+rather than being exempt for having one feed. Every block also carries its own
+content clock (`feed_timestamp`, contract 6.1), and the client ages each system by
+its own: one subway group whose provider is ten minutes behind dims and is named
+alone, rather than handing its lag to the seven current groups through the
+envelope's one number.
+
+The station boards (the arrivals popups and the station panel) qualify each ROW by
+its own age rather than the board by the age of our poll. Every served prediction
+carries `observed_at`, the provider's clock for it, and the board ages it as
+`served_at - observed_at` plus the time since: past 90 seconds the row reads "as of
+{age} ago" beside its countdown, a carried-forward row reads "showing last known",
+and a row whose provider normally dates it but did not reads "age unknown".
+Metro-North dates no prediction at all, so its rows say nothing about age and its
+board says "MNR prediction age unavailable" only on the line that already reports
+a stale poll. On a board served by several subway groups, a lagging group's rows
+are qualified and a current group's are not. The rules and their vocabulary are
+section 3.2 of `docs/design/freshness-contract.md`.
 
 ### Live upstream contract monitor
 

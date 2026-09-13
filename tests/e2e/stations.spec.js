@@ -235,19 +235,33 @@ test("A1f. stale and warming arrivals render the honest text the popups earned",
   await page.locator("#stations-results button.station-row").first().click();
   await expect(page.locator("#stations-detail")).toContainText("warming up");
 
-  // STALE: a payload whose fetched_at is well past the staleness threshold gets the
-  // same "as of Xm ago" line the popups show, from the same helper and threshold.
+  // STALE, the way F03 is stale: the poll succeeded a moment ago, and what it fetched
+  // is ten minutes old. Every row says so beside its countdown, in the words and from
+  // the one helper the popup uses (6.2). This used to override fetched_at, because
+  // the panel aged the board as now - fetched_at, which is the age of the POLL and
+  // could never see a provider that stopped while polls kept succeeding.
   // IN FIXTURE TIME, not wall-clock time: the page's clock is frozen at FROZEN, so
   // a real Date.now() here would be weeks in the future and the age would come out
   // negative rather than stale.
-  ctx.overrides.subwayArrivals = (route, fixtures) => {
-    const body = fixtures.subwayArrivals();
-    return json(route, { ...body, fetched_at: fx.FROZEN_S - 600 });
-  };
+  ctx.overrides.subwayArrivals = (route, fixtures) => json(route, agedArrivals(fixtures));
   await page.locator("#stations-search").fill("canal");
   await page.locator("#stations-results button.station-row").first().click();
-  await expect(page.locator(".station-detail-stale")).toContainText(/as of \d+m ago/);
+  await expect(page.locator("#stations-detail ul.station-arrivals li").first()).toContainText(
+    /, as of 10m ago$/,
+  );
+  // A dated row speaks for itself, so the board's own line has nothing to add.
+  await expect(page.locator(".station-detail-stale")).toHaveCount(0);
 });
+
+// The stock subway board with every row's prediction made ten minutes before it was
+// served, and the poll itself fresh: the F03 world, in fixture time.
+function agedArrivals(fixtures, ageS = 600) {
+  const body = fixtures.subwayArrivals();
+  for (const rows of Object.values(body.directions)) {
+    for (const row of rows) row.observed_at = body.served_at - ageS;
+  }
+  return body;
+}
 
 test("A1g. a ferry dock announces its accessibility in words, not as a glyph alone", async ({
   page,
@@ -329,8 +343,9 @@ test("A1m. reopening the panel never presents the old arrivals as current", asyn
   await expect(page.locator("#stations-panel")).toBeVisible();
 
   // The reopened panel is honest about age, and the departed train is no longer
-  // counting down to a time that has passed.
-  await expect(detail.locator(".station-detail-stale")).toContainText(/as of \d+m ago/);
+  // counting down to a time that has passed. Per ROW since 6.2: each prediction was
+  // served ten minutes ago and has been ticking on the client since, so each says so.
+  await expect(detail.locator("ul.station-arrivals li").first()).toContainText(/as of \d+m ago/);
   const after = await detail.innerText();
   expect(after, "the detail must not be the pre-close text verbatim").not.toBe(before);
   expect(after).not.toContain("in 2 minutes");
@@ -476,13 +491,16 @@ test("A1o. a stale payload's age is spoken, not left on screen alone", async ({ 
   // is current, so the caveat has to travel with them rather than living only in the
   // visible text a listening rider cannot see.
   const ctx = await installMocks(page);
-  ctx.overrides.subwayArrivals = (route, fixtures) =>
-    json(route, { ...fixtures.subwayArrivals(), fetched_at: fx.FROZEN_S - 600 });
+  ctx.overrides.subwayArrivals = (route, fixtures) => json(route, agedArrivals(fixtures));
   await open(page, { install: false });
   await page.locator("#stations-search").fill("times");
   await page.locator("#stations-results button.station-row").first().click();
-  await expect(page.locator(".station-detail-stale")).toContainText(/as of \d+m ago/);
-  await expect(page.locator("#stations-announce")).toContainText(/as of \d+m ago/);
+  await expect(page.locator("#stations-detail ul.station-arrivals li").first()).toContainText(
+    "as of 10m ago",
+  );
+  await expect(page.locator("#stations-announce")).toContainText(
+    "1 train in 2 minutes, 8:01 AM arrival, as of 10m ago",
+  );
 });
 
 test("A1s. an NJ Transit station reaches the panel and reads its flat departure board", async ({
@@ -1016,6 +1034,78 @@ test("A1v2. an alert appearing for the selected station announces ONCE, and tick
     (await alertSpeechLines(page)).length - before,
     "an unchanged alert set never speaks again",
   ).toBe(0);
+});
+
+test("A1v3. a lagging contributor's qualifier is announced ONCE, and ticks never speak it (6.2)", async ({
+  page,
+}) => {
+  // N6'S RULE HELD FOR THE NEW WORDS. A row's qualifier changes on every tick while it
+  // shows seconds, and on every refresh while it shows minutes, so a live region that
+  // compared words would narrate the age counting up. It compares KINDS instead:
+  // "aged" appearing is news, spoken once in the one write the render makes, and
+  // everything after it is repaint. Counted as writes, the A1r way, because an
+  // identical string written twice is still two announcements.
+  const ctx = await installMocks(page);
+  let lagging = false;
+  ctx.overrides.subwayArrivals = (route, fixtures) => {
+    const body = fixtures.subwayArrivals();
+    // ONE contributor falls behind: the 2 train's group serves a ten minute old
+    // prediction while the 1 train's stays current. The poll succeeds throughout.
+    if (lagging) body.directions.Northbound[1].observed_at = body.served_at - 600;
+    return json(route, body);
+  };
+  await open(page, { install: false });
+  await selectStation(page, "times");
+  await expect(page.locator("#stations-announce")).toContainText("Times Sq");
+
+  await watchPanelAnnouncements(page);
+  await page.clock.runFor(31_000);
+  expect(await panelSpeech(page), "quiet while nothing changed").toEqual([]);
+
+  // The next background refresh brings the lagging row.
+  lagging = true;
+  await page.clock.runFor(16_000);
+  const rows = page.locator("#stations-detail ul.station-arrivals li");
+  await expect(rows.nth(1)).toContainText(/2 train .*, as of \d+m ago$/);
+  await expect(rows.nth(0)).not.toContainText("as of");
+  const speech = await panelSpeech(page);
+  expect(speech, "exactly one write").toHaveLength(1);
+  expect(speech[0]).toMatch(/2 train in \d+ minutes, 8:05 AM arrival, as of \d+m ago/);
+  // Only the lagging row carries the words when they are spoken, too.
+  expect(speech[0]).not.toMatch(/1 train [^.]*as of/);
+
+  // Thirty more seconds: thirty ticks and two refreshes over the same lagging row, its
+  // age counting on. Not one more write.
+  await page.clock.runFor(31_000);
+  expect(await panelSpeech(page), "its age counting up is not news").toHaveLength(1);
+});
+
+test("A1v4. a qualifier that appears because time passed is spoken once, at the next refresh, never by a tick (6.2)", async ({
+  page,
+}) => {
+  // The other road to a qualifier: nothing about the payload changes, the rows simply
+  // cross the threshold while the board is open. The stock rows were observed 5s
+  // before they were served, so they cross 90s at 85s in. The TICK that first draws
+  // "as of 90s ago" must not speak (the tick guard is absolute), and the refresh after
+  // it must, once; everything after that is the age counting up.
+  test.setTimeout(90_000);
+  await open(page);
+  await selectStation(page, "times");
+  await expect(page.locator("#stations-announce")).toContainText("Times Sq");
+  await watchPanelAnnouncements(page);
+
+  await page.clock.runFor(86_000);
+  const first = page.locator("#stations-detail ul.station-arrivals li").first();
+  await expect(first).toContainText("as of 91s ago");
+  expect(await panelSpeech(page), "the tick that drew it said nothing").toEqual([]);
+
+  await page.clock.runFor(5_000); // the 90s refresh
+  const speech = await panelSpeech(page);
+  expect(speech, "spoken once, by the refresh").toHaveLength(1);
+  expect(speech[0]).toContain("as of 95s ago");
+
+  await page.clock.runFor(31_000);
+  expect(await panelSpeech(page), "and never again while it only counts up").toHaveLength(1);
 });
 
 test("A1w2. an alert CLEARING for the selected station is announced too (F11)", async ({ page }) => {

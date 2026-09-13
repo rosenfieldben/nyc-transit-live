@@ -142,6 +142,12 @@ Three things stop that gate from being decoration:
 - Two refreshes of unchanged data announce **nothing**, and a countdown tick
   never speaks. `announce.spec.js A2g`, `stations.spec.js A1r`, `A1p`.
 - A new agency-wide alert announces once, as a summary. `announce.spec.js A2h`.
+- A station board's age travels with the countdowns it qualifies: a row whose
+  prediction is old says "as of 10m ago" in its spoken sentence as well as on
+  screen, and that qualifier appearing announces **once**, whether a refresh
+  brings it or time passing does, while the tick that first draws it stays
+  silent and its age counting up never speaks. `stations.spec.js A1o`, `A1v3`,
+  `A1v4`.
 
 ### Colour, size and layout
 

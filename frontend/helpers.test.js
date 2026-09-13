@@ -24,7 +24,14 @@ const {
   routeColor,
   lineColor,
   staleness,
-  feedAgeLine,
+  humanizeAge,
+  servedAge,
+  boardFreshness,
+  arrivalQualifier,
+  boardSystemLine,
+  boardLineHtml,
+  qualifierHtml,
+  UNDATED_SYSTEMS,
   alertsStale,
   alertsFreshnessBasis,
   ALERTS_STALE_AFTER_S,
@@ -490,132 +497,37 @@ test("staleness uses the server cache-age term, not now - fetchedAt, when client
   );
 })
 
-test("feedAgeLine is empty while fresh and shows 'as of Xm ago' once stale", () => {
-  const now = 10_000;
-  // Fresh (under the threshold) and a null fetched_at both render nothing, so a live
-  // popup is unchanged.
-  assert.equal(feedAgeLine(now - 30, now), "");
-  assert.equal(feedAgeLine(null, now), "");
-  // Past FEED_STALE_AFTER_S (a failed refresh keeping last-known rows), the age line
-  // appears: seconds under two minutes, whole minutes above.
-  assert.match(feedAgeLine(now - 100, now), /popup-stale/);
-  assert.match(feedAgeLine(now - 100, now), /as of 100s ago/);
-  assert.match(feedAgeLine(now - 200, now), /as of 3m ago/);
-})
+test("6.2 humanizeAge gains an hours tier and is unchanged below a hundred minutes", () => {
+  // Below the tier, exactly the two-tier strings every surface already shipped.
+  assert.equal(humanizeAge(100), "100s");
+  assert.equal(humanizeAge(119), "119s");
+  assert.equal(humanizeAge(120), "2m");
+  assert.equal(humanizeAge(200), "3m");
+  assert.equal(humanizeAge(99 * 60), "99m");
+  // From a hundred minutes on, hours: section 3.2's fix for an LIRR prediction 52538s
+  // old, which the two tiers printed as "876m", and the capture's oldest GPS fix, 53676s.
+  assert.equal(humanizeAge(100 * 60), "1h 40m");
+  assert.equal(humanizeAge(2 * 3600), "2h");
+  assert.equal(humanizeAge(52538), "14h 36m");
+  assert.equal(humanizeAge(53676), "14h 55m");
+  // ONE ROUNDING with the countdowns: the minute an age reports is the minute
+  // countdownParts would report for the same number of seconds.
+  assert.equal(humanizeAge(100 * 60 + 29), "1h 40m");
+  assert.equal(humanizeAge(100 * 60 + 31), "1h 41m");
+});
 
-test("alertsStale gates on the backend's last successful poll (fetched_at) and the threshold", () => {
-  const now = 10_000;
-  // No successful poll yet (null fetchedAt): never stale, so boot shows no false marker.
-  assert.equal(alertsStale(null, now), false);
-  // Just polled: fresh.
-  assert.equal(alertsStale(now - 10, now), false);
-  // Exactly at and past the threshold: stale.
-  assert.equal(alertsStale(now - ALERTS_STALE_AFTER_S, now), true);
-  assert.equal(alertsStale(now - (ALERTS_STALE_AFTER_S + 60), now), true);
-  // Higher bar than the feed threshold (alerts change slowly): a gap the feeds would
-  // already flag is still fresh for alerts.
-  assert.equal(alertsStale(now - (FEED_STALE_AFTER_S + 1), now), false);
-})
-
-test("C1 audit scenario: 200s with a FROZEN fetched_at and an advancing served_at go stale", () => {
-  // THE FINDING, reproduced as the sequence the client actually sees. The alert feeds
-  // are down but the backend keeps answering 200 from its last-known index, so every
-  // response carries a NEW served_at (stamped at response build) and the SAME
-  // fetched_at (the last poll that decoded). Under R1 the marker keyed on served_at,
-  // which advanced on every poll, so the gate reset forever and the honesty hedge
-  // could not fire during the exact outage it exists for.
-  //
-  // REVIEW FIX: this used to hand alertsStale each field ITSELF and compare, which
-  // proved only arithmetic. The test picked the field, so a revert of the production
-  // choice would sail straight past it. It now runs the bodies through
-  // alertsFreshnessBasis, the function the production path uses to pick the field, so
-  // reverting that to served_at fails here.
-  const polledAt = 1000; // the last poll that decoded; never advances again
-  const responses = [0, 60, 120, 180, 240, 300, 360].map((elapsed) => ({
-    body: { fetched_at: polledAt, served_at: polledAt + elapsed }, // served_at always fresh
-    clientNow: polledAt + elapsed,
-  }));
-  const live = responses.map((r) => alertsStale(alertsFreshnessBasis(r.body), r.clientNow));
-  // Trips exactly at ALERTS_STALE_AFTER_S (300) and stays tripped.
-  assert.deepEqual(live, [false, false, false, false, false, true, true]);
-  // The counterfactual, to show the sequence really is one served_at cannot catch.
-  const byServedAt = responses.map((r) => alertsStale(r.body.served_at, r.clientNow));
-  assert.deepEqual(byServedAt, [false, false, false, false, false, false, false]);
-})
-
-test("alertsFreshnessBasis reads fetched_at and nothing else", () => {
-  // The production field CHOICE, pinned where it actually lives.
-  assert.equal(alertsFreshnessBasis({ fetched_at: 1000, served_at: 9999 }), 1000);
-  assert.equal(alertsFreshnessBasis({ served_at: 9999 }), null); // no silent fallback
-  assert.equal(alertsFreshnessBasis({ fetched_at: null, served_at: 9999 }), null);
-  assert.equal(alertsFreshnessBasis({}), null);
-  assert.equal(alertsFreshnessBasis(null), null);
-  assert.equal(alertsFreshnessBasis(undefined), null);
-  assert.equal(alertsFreshnessBasis({ fetched_at: "1000" }), null); // wrong type, not NaN math
-  assert.equal(alertsFreshnessBasis({ fetched_at: 0 }), 0); // epoch is a real timestamp
-})
-
-test("alertsStale ages a never-filled index against the client's first attempt", () => {
-  // REVIEW FIX. A null fetchedAt used to return the healthy answer with NO upper
-  // bound, so a backend whose index never filled (every feed down since boot, so
-  // /api/alerts errors and loadAlerts swallows it) left riders a confident,
-  // alert-free map with no hedge, indefinitely.
-  const firstTry = 1000;
-  assert.equal(alertsStale(null, firstTry + 10, firstTry), false); // boot grace holds
-  assert.equal(alertsStale(null, firstTry + ALERTS_STALE_AFTER_S - 1, firstTry), false);
-  assert.equal(alertsStale(null, firstTry + ALERTS_STALE_AFTER_S, firstTry), true); // discloses
-  assert.equal(alertsStale(null, 1e9, firstTry), true); // and stays disclosed
-  // Omitting the basis keeps the old unbounded grace, so a caller with no first
-  // attempt to point at is unaffected.
-  assert.equal(alertsStale(null, 1e9), false);
-  assert.equal(alertsStale(null, 1e9, null), false);
-  // A real fetched_at always wins over the fallback basis.
-  assert.equal(alertsStale(firstTry + 1e6, firstTry + 1e6, firstTry), false);
-})
-
-test("bannerRenderKey re-renders on a wording change under the same id", () => {
-  const alert = { system: "subway", id: "wide-1", header: "Systemwide: reduced service" };
-  const revised = { ...alert, header: "Systemwide: reduced service on 4 lines" };
-  // Same id, revised wording: the keys must DIFFER, or the banner keeps the old text.
-  assert.notEqual(bannerRenderKey([alert], false), bannerRenderKey([revised], false));
-  // Identical content: same key, so an unchanged banner is not needlessly rebuilt
-  // (reassigning innerHTML would drop any text the rider has selected).
-  assert.equal(bannerRenderKey([alert], false), bannerRenderKey([{ ...alert }], false));
-  // The stale flag still participates, so the marker paints and clears on its own.
-  assert.notEqual(bannerRenderKey([alert], true), bannerRenderKey([alert], false));
-  // A null header is handled rather than throwing. REVIEW FIX: the comment here used
-  // to claim null differs from empty-string text, which is FALSE (String(null ?? "")
-  // and String("") are the same input), and the assertion only checked the type, so it
-  // could not have caught the discrepancy either way. State what actually holds.
-  assert.equal(
-    bannerRenderKey([{ ...alert, header: null }], false),
-    bannerRenderKey([{ ...alert, header: "" }], false),
-  );
-  assert.notEqual(bannerRenderKey([{ ...alert, header: null }], false), bannerRenderKey([alert], false));
-  // Order and identity still matter: two alerts vs one, and a different id.
-  assert.notEqual(bannerRenderKey([alert, revised], false), bannerRenderKey([alert], false));
-  assert.notEqual(bannerRenderKey([{ ...alert, id: "wide-2" }], false), bannerRenderKey([alert], false));
-  // Scoped by system like every other alert join: the same id under two feeds differs.
-  assert.notEqual(bannerRenderKey([{ ...alert, system: "bus" }], false), bannerRenderKey([alert], false));
-  assert.equal(bannerRenderKey([], false), "F|"); // empty, fresh
-})
-
-test("hashString is deterministic, unsigned, and separates similar text", () => {
-  assert.equal(hashString("abc"), hashString("abc"));
-  assert.notEqual(hashString("abc"), hashString("abd"));
-  assert.notEqual(hashString(""), hashString("a"));
-  // Hex of an UNSIGNED 32-bit value: JS bitwise ops are signed, so without the >>> 0
-  // the hash would sometimes render with a leading "-".
-  for (const text of ["Systemwide: reduced service", "[Q] delays", "éè", "x".repeat(500)]) {
-    assert.match(hashString(text), /^[0-9a-f]{1,8}$/);
-  }
-})
-
-test("emptyFeedDecision keeps last-known on the first empty poll and records the run start", () => {
-  const d = emptyFeedDecision(null, 1000);
-  assert.equal(d.applyEmpty, false);
-  assert.equal(d.error, "feed empty, showing last known");
-  assert.equal(d.emptyRunStart, 1000); // this poll's fetched_at starts the run
+test("6.2 servedAge ages a stamp on the server's clock, anchored at served_at", () => {
+  // served_at minus the stamp is skew-free (both from the payload); the time since is
+  // the corrected client clock's, and never negative.
+  assert.equal(servedAge(1000, 1600, 1600), 600);
+  assert.equal(servedAge(1000, 1600, 1630), 630);
+  assert.equal(servedAge(1000, 1600, 1590), 600, "a clock behind served_at adds nothing");
+  // No served_at (a response from before 6.1): the corrected clock alone.
+  assert.equal(servedAge(1000, null, 1100), 100);
+  // Nothing to age.
+  assert.equal(servedAge(null, 1600, 1600), null);
+  assert.equal(servedAge("1000", 1600, 1600), null);
+  assert.equal(servedAge(Number.NaN, 1600, 1600), null);
 });
 
 test("emptyFeedDecision keeps last-known for empties within the window", () => {
@@ -2129,9 +2041,10 @@ test("C2 stalePopupLine renders the shared age line only once stale", () => {
   assert.equal(stalePopupLine(null), "");
   assert.equal(stalePopupLine(10), "");
   assert.equal(stalePopupLine(240), '<div class="popup-stale">as of 4m ago</div>');
-  // Same markup and wording as the arrivals-body line, which is the point of sharing
-  // the renderer.
-  assert.equal(stalePopupLine(240), feedAgeLine(10_000 - 240, 10_000));
+  // The same markup a stale board's system line renders into (6.2), so a stale board
+  // and a stale train cannot be worded or styled apart.
+  assert.equal(stalePopupLine(240), boardLineHtml("as of 4m ago"));
+  assert.equal(boardLineHtml(null), "");
 });
 
 test("C2 alertsFreshnessBasis is the WORST system's fetched_at (the F1 partial case)", () => {
@@ -2259,7 +2172,8 @@ test("shapeStationArrivals buckets each system the way its popup already does", 
     now,
   );
   assert.deepEqual(subway.buckets.map((b) => b.name), ["Southbound"]);
-  assert.equal(subway.ageSeconds, 3);
+  // No system line on a board with rows: rows speak for their own age (6.2).
+  assert.equal(subway.systemLine, null);
   // Railroad: Inbound first, train_num carried, route name resolved by the caller.
   const rail = shapeStationArrivals(
     "railroad",
@@ -2281,21 +2195,169 @@ test("shapeStationArrivals buckets each system the way its popup already does", 
   // Ferry: buckets are route names, and a dwelling boat counts to its DEPARTURE.
   const ferry = shapeStationArrivals(
     "ferry",
-    { fetched_at: now, routes: { Astoria: [{ route_id: "AS", arrival: now - 30, departure: now + 360 }] } },
+    { fetched_at: now, served_at: now, routes: { Astoria: [dated({ route_id: "AS", arrival: now - 30, departure: now + 360 }, now - 5)] } },
     now,
   );
   assert.deepEqual(ferry.buckets.map((b) => b.name), ["Astoria"]);
   assert.equal(ferry.buckets[0].rows[0].mode, "departing");
   assert.equal(ferry.buckets[0].rows[0].seconds, 360);
-  // No fetched_at is "unknown", not "fresh": null, so the caller can tell them apart.
-  assert.equal(shapeStationArrivals("subway", { directions: {} }, now).ageSeconds, null);
+  // An empty board with no poll time has no age to state, so it states none rather
+  // than inventing one; with a poll time past the threshold it says how old (6.2).
+  assert.equal(shapeStationArrivals("subway", { directions: {} }, now).systemLine, null);
+  assert.equal(
+    shapeStationArrivals("subway", { fetched_at: now - 200, served_at: now - 200, directions: {} }, now).systemLine,
+    "as of 3m ago",
+  );
+});
+
+/* ---------------- 6.2: each board row qualified by its own age ---------------- */
+
+// A board as the backend serves it since 6.1: served_at on the envelope, the contract
+// pair on the row. `at` is the row's observed_at.
+const dated = (row, at, provenance = "reported") => ({ ...row, observed_at: at, provenance });
+
+test("6.2 arrivalQualifier speaks section 3.2's vocabulary, exactly, row by row", () => {
+  const now = 50_000;
+  const gated = { now, servedAt: now, pollAge: 5, gated: true, system: "subway" };
+  const undated = { now, servedAt: now, pollAge: 400, gated: false, system: "MNR" };
+  const q = (row, board = gated) => arrivalQualifier(row, board);
+  // reported and fresh: nothing, which is what silence means.
+  assert.deepEqual(q(dated({}, now - 5)), { kind: "", words: "" });
+  assert.deepEqual(q(dated({}, now - 89.9)), { kind: "", words: "" });
+  // reported and past OBS_FRESH_S (FEED_STALE_AFTER_S, >= as everywhere): its age.
+  assert.deepEqual(q(dated({}, now - FEED_STALE_AFTER_S)), { kind: "aged", words: "as of 90s ago" });
+  assert.deepEqual(q(dated({}, now - 600)), { kind: "aged", words: "as of 10m ago" });
+  assert.deepEqual(q(dated({}, now - 52538)), { kind: "aged", words: "as of 14h 36m ago" });
+  // retained: always said, fresh or not, because it is not in the current decode.
+  assert.deepEqual(q(dated({}, now - 30, "retained")), { kind: "retained", words: "showing last known, as of 30s ago" });
+  assert.deepEqual(q(dated({}, now - 240, "retained")), { kind: "retained", words: "showing last known, as of 4m ago" });
+  // A retained row with no clock of its own is as old as its system's last poll.
+  assert.deepEqual(q(dated({}, null, "retained"), undated), { kind: "retained", words: "showing last known, as of 7m ago" });
+  // null on an AGE-GATED row: an anomaly, said at the row.
+  assert.deepEqual(q(dated({}, null)), { kind: "unknown", words: "age unknown" });
+  // null on a row whose provider dates nothing (Metro-North): silent at the row.
+  assert.deepEqual(q(dated({}, null), undated), { kind: "", words: "" });
+  // Everything a prediction cannot honestly carry reads as unknown: the enumeration's
+  // own `unknown`, no provenance at all (a backend from before 6.1), and the two
+  // position values, which would be false of a prediction.
+  for (const provenance of ["unknown", undefined, "placed", "estimated", "live-gps"]) {
+    assert.deepEqual(q({ observed_at: now - 5, provenance }), { kind: "unknown", words: "age unknown" }, String(provenance));
+  }
+  // The age counts on between refreshes: a row served fresh, 100s later.
+  assert.deepEqual(q(dated({}, now - 5), { ...gated, now: now + 100 }), { kind: "aged", words: "as of 105s ago" });
+});
+
+test("6.2 per ROW, not per envelope: two contributors on one board, only the lagging one's rows speak", () => {
+  // F03's second clause on a board. 1-7+S has served content ten minutes behind while
+  // its poll succeeds; ACE is current. Both contribute to this station. A rule applied
+  // per ENVELOPE would qualify every row (the envelope's content clock is the worst
+  // contributor's) or none (its fetched_at is fresh); only a per-row rule tells them apart.
+  const now = 50_000;
+  const body = {
+    fetched_at: now,
+    feed_timestamp: now - 600,
+    served_at: now,
+    directions: {
+      Northbound: [
+        dated({ route_id: "A", arrival: now + 60 }, now - 5),
+        dated({ route_id: "2", arrival: now + 120 }, now - 600),
+        dated({ route_id: "C", arrival: now + 180 }, now - 5),
+      ],
+    },
+    systems: {
+      "1-7+S": { fetched_at: now, feed_timestamp: now - 600, ok: true },
+      ACE: { fetched_at: now, feed_timestamp: now - 5, ok: true },
+    },
+  };
+  const shaped = shapeStationArrivals("subway", body, now);
+  assert.deepEqual(
+    shaped.buckets[0].rows.map((r) => [r.routeId, r.qualifier]),
+    [["A", ""], ["2", "as of 10m ago"], ["C", ""]],
+  );
+  assert.equal(shaped.systemLine, null, "rows carry it; the board line does not repeat it");
+  // New York time at this epoch is 8:53 AM (EST), so the labels are 8:54 and 8:55.
+  assert.equal(
+    arrivalSentence(shaped.buckets[0].rows[1]),
+    "2 train in 2 minutes, 8:55 AM arrival, as of 10m ago",
+  );
+  assert.equal(arrivalSentence(shaped.buckets[0].rows[0]), "A train in 1 minute, 8:54 AM arrival");
+});
+
+test("6.2 the board's system line speaks only for what rows cannot, and never raises itself", () => {
+  const now = 50_000;
+  const mnr = (fetchedAt) => ({
+    fetched_at: fetchedAt,
+    feed_timestamp: null,
+    served_at: now,
+    system: "MNR",
+    directions: { Inbound: [dated({ route_id: "1", arrival: now + 240, train_num: "795" }, null)] },
+    systems: { MNR: { fetched_at: fetchedAt, feed_timestamp: null, ok: true } },
+  });
+  // A HEALTHY Metro-North board: its rows are undated by policy, and the clause that
+  // says so cannot raise the line on its own. Nothing at all.
+  assert.equal(shapeStationArrivals("railroad", mnr(now), now).systemLine, null);
+  // Its poll gone stale: the poll's age is the only age these rows have, and the
+  // per-system clause rides that line.
+  assert.equal(
+    shapeStationArrivals("railroad", mnr(now - 400), now).systemLine,
+    "as of 7m ago; MNR prediction age unavailable",
+  );
+  // Its rows stay silent at the row either way.
+  assert.equal(shapeStationArrivals("railroad", mnr(now - 400), now).buckets[0].rows[0].qualifier, "");
+  // An LIRR board with the same stale poll: its rows are dated and each carries its own
+  // age, so the line has nothing to add and says nothing.
+  const lirr = {
+    ...mnr(now - 400),
+    system: "LIRR",
+    feed_timestamp: now - 405,
+    directions: { Inbound: [dated({ route_id: "1", arrival: now + 240, train_num: "8412" }, now - 420)] },
+    systems: { LIRR: { fetched_at: now - 400, feed_timestamp: now - 405, ok: true } },
+  };
+  const lirrShaped = shapeStationArrivals("railroad", lirr, now);
+  assert.equal(lirrShaped.systemLine, null);
+  assert.equal(lirrShaped.buckets[0].rows[0].qualifier, "as of 7m ago");
+  // The railroad popup renders the same line and the same row words, from the same helpers.
+  const html = railroadArrivalsHtml({ id: "1", name: "Grand Central", system: "MNR" }, mnr(now - 400), now);
+  assert.match(html, /<div class="popup-stale">as of 7m ago; MNR prediction age unavailable<\/div>/);
+  assert.doesNotMatch(html, /arr-qualifier/);
+  assert.deepEqual([...UNDATED_SYSTEMS], ["MNR"]);
+});
+
+test("6.2 a qualifier appearing is news once; its age counting up is not", () => {
+  const now = 50_000;
+  const board = (observedAt, at = now) =>
+    shapeStationArrivals(
+      "subway",
+      { fetched_at: at, served_at: at, directions: { Northbound: [dated({ route_id: "1", arrival: now + 900 }, observedAt)] } },
+      at,
+    );
+  const fresh = board(now - 5);
+  const aged = board(now - 600);
+  assert.equal(announcementWorthy(fresh, aged), true, "a qualifier appeared");
+  // The same aged row a refresh later: the WORDS moved ("10m" to "11m"), the kind did not.
+  const later = board(now - 600, now + 60);
+  assert.notEqual(later.buckets[0].rows[0].qualifier, aged.buckets[0].rows[0].qualifier);
+  assert.equal(announcementWorthy(aged, later), false, "its age counting up is not news");
+  assert.equal(announcementWorthy(aged, board(now - 5)), true, "and clearing is");
+  // Unknown and retained are kinds of their own.
+  const unknown = board(null);
+  assert.equal(announcementWorthy(aged, unknown), true);
+  // A board system line appearing is news too, once.
+  const empty = (at) =>
+    shapeStationArrivals("subway", { fetched_at: at, served_at: now, directions: {} }, now);
+  assert.equal(announcementWorthy(empty(now), empty(now - 400)), true);
+  assert.equal(announcementWorthy(empty(now - 400), empty(now - 460)), false);
 });
 
 test("arrivalSentence reads as a sentence, and names the instant honestly", () => {
   const now = 1_700_000_000; // 2023-11-14T22:13:20Z, 5:13 PM in New York
   const rail = shapeStationArrivals(
     "railroad",
-    { fetched_at: now, directions: { Inbound: [{ route_id: "5", train_num: "8412", arrival: now + 240 }] } },
+    {
+      fetched_at: now,
+      served_at: now,
+      directions: { Inbound: [dated({ route_id: "5", train_num: "8412", arrival: now + 240 }, now - 5)] },
+    },
     now,
     { nameFor: () => "Babylon" },
   );
@@ -2306,14 +2368,14 @@ test("arrivalSentence reads as a sentence, and names the instant honestly", () =
   // Route id is the fallback when the name is unknown, and the noun is the caller's.
   const subway = shapeStationArrivals(
     "subway",
-    { fetched_at: now, directions: { Northbound: [{ route_id: "1", arrival: now + 10 }] } },
+    { fetched_at: now, served_at: now, directions: { Northbound: [dated({ route_id: "1", arrival: now + 10 }, now - 5)] } },
     now,
   );
   assert.equal(arrivalSentence(subway.buckets[0].rows[0]), "1 train now, 5:13 PM arrival");
   // Ferry: "departs" and a DEPARTURE label, because that is the field being counted.
   const ferry = shapeStationArrivals(
     "ferry",
-    { fetched_at: now, routes: { Astoria: [{ route_id: "AS", arrival: now - 30, departure: now + 360 }] } },
+    { fetched_at: now, served_at: now, routes: { Astoria: [dated({ route_id: "AS", arrival: now - 30, departure: now + 360 }, now - 5)] } },
     now,
   );
   assert.equal(
@@ -3295,17 +3357,22 @@ test("njtArrivalsHtml renders a flat chronological board with badges and countdo
   assert.ok(html.indexOf("Trenton") < html.indexOf("Dover"), "chronological, not re-sorted");
 });
 
-test("an NJT board past the staleness threshold says how old it is", () => {
-  // The R1 line, which the header appends and nothing exercised: every other node
-  // test here passes a fresh payload, and no browser spec opened an NJT station
-  // popup at all until spec 33 did. A departure board that keeps ticking on a feed
-  // that stopped updating is the exact failure feedAgeLine exists to prevent.
-  const body = { fetched_at: 100, arrivals: [{ route_id: "9", headsign: "Trenton", arrival: 400 }] };
+test("an NJT board past the staleness threshold says how old its rows are", () => {
+  // The R1 honesty, per ROW since 6.2. A departure board that keeps ticking on a feed
+  // that stopped updating is the exact failure this exists to prevent: the rows carry
+  // the TripUpdates header as their clock, and once that is past the threshold each
+  // row says so beside its countdown. The board's own line stays out of it, because a
+  // dated row speaks for itself.
+  const body = {
+    fetched_at: 100,
+    served_at: 100,
+    arrivals: [{ route_id: "9", headsign: "Trenton", arrival: 400, observed_at: 95, provenance: "reported" }],
+  };
   const fresh = njtArrivalsHtml({ id: "109", name: "Penn" }, body, 100);
-  assert.doesNotMatch(fresh, /as of/, "a fresh board says nothing about its age");
+  assert.doesNotMatch(fresh, /as of|age unknown/, "a fresh board says nothing about its age");
   const stale = njtArrivalsHtml({ id: "109", name: "Penn" }, body, 100 + 200);
-  assert.match(stale, /popup-stale/);
-  assert.match(stale, /as of 3m ago/);
+  assert.match(stale, /<span class="arr-qualifier">as of 3m ago<\/span>/);
+  assert.doesNotMatch(stale, /popup-stale/, "the row speaks, not the board");
 });
 
 test("njtArrivalsHtml counts down to the DEPARTURE once the train has arrived", () => {
@@ -3345,7 +3412,13 @@ test("njtRowLabel prefers the destination, falls back to the route name, else no
 test("shapeStationArrivals gives the NJT board one bucket, with the destination on the row", () => {
   const body = {
     fetched_at: 100,
-    arrivals: [{ route_id: "9", headsign: "Trenton", train_num: "3800", arrival: 190, departure: 200 }],
+    served_at: 100,
+    arrivals: [
+      {
+        route_id: "9", headsign: "Trenton", train_num: "3800", arrival: 190, departure: 200,
+        observed_at: 95, provenance: "reported",
+      },
+    ],
   };
   const shaped = shapeStationArrivals("njt", body, 100, { nameFor: () => "Northeast Corridor" });
   assert.equal(shaped.buckets.length, 1);
@@ -3354,6 +3427,7 @@ test("shapeStationArrivals gives the NJT board one bucket, with the destination 
     {
       routeId: "9", routeName: "Northeast Corridor", trainNum: "3800",
       headsign: "Trenton", mode: "arriving", seconds: 90, at: 190,
+      qualifier: "", qualifierKind: "",
     },
   ]);
   // An empty board yields NO bucket, which is how the panel reaches its "No trains."
@@ -3477,8 +3551,11 @@ test("the NJT panel gets the dwell rule too, not only the popup", () => {
      now = 100, where the dwell rule and the plain `arrival - now` fallback agree.
      The row that separates them is the one the backend deliberately keeps on the
      board: a train standing at the platform, arrival already past, departure ahead. */
-  const dwelling = { route_id: "9", headsign: "Trenton", train_num: "3800", arrival: 70, departure: 340 };
-  const shaped = shapeStationArrivals("njt", { fetched_at: 100, arrivals: [dwelling] }, 100, {
+  const dwelling = {
+    route_id: "9", headsign: "Trenton", train_num: "3800", arrival: 70, departure: 340,
+    observed_at: 95, provenance: "reported",
+  };
+  const shaped = shapeStationArrivals("njt", { fetched_at: 100, served_at: 100, arrivals: [dwelling] }, 100, {
     nameFor: () => "Northeast Corridor",
   });
   const row = shaped.buckets[0].rows[0];
@@ -3493,7 +3570,7 @@ test("the NJT panel gets the dwell rule too, not only the popup", () => {
   );
   // The popup renders the same train the same way, from the same rule.
   assert.match(
-    njtArrivalsHtml({ id: "109", name: "Penn" }, { fetched_at: 100, arrivals: [dwelling] }, 100),
+    njtArrivalsHtml({ id: "109", name: "Penn" }, { fetched_at: 100, served_at: 100, arrivals: [dwelling] }, 100),
     /departs 4 min/,
   );
 });

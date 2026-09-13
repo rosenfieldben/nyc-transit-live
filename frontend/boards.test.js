@@ -37,6 +37,7 @@ const { join } = require("node:path");
 const vm = require("node:vm");
 
 const fx = require("../tests/e2e/fixtures/api.js");
+const H = require("./helpers.js");
 
 // ---- the browser stand-in -------------------------------------------------------
 
@@ -424,4 +425,140 @@ test("PIN the fixtures ARE fresh, so the six pins above are pins of fresh boards
     }
     assert.equal(board.body.served_at, fx.FROZEN_S, `${name} served at the frozen instant`);
   }
+});
+
+/* ---------------- 6.2: the boards when their content is old ---------------- */
+
+// A copy of one fixture board whose every DATED row was observed `ageS` before the board
+// was served, the poll itself still fresh: exactly the F03 world, a provider serving old
+// content to polls that keep succeeding. Undated rows (Metro-North's) stay undated.
+function agedBody(body, ageS) {
+  const copy = JSON.parse(JSON.stringify(body));
+  for (const row of H.stationArrivalsRows(copy)) {
+    if (row.observed_at != null) row.observed_at = copy.served_at - ageS;
+  }
+  return copy;
+}
+
+// The qualifier words each surface put on each row, in board order: the popup's spans and
+// the panel's sentences (arrivalSentence appends ", <qualifier>" after the clock label).
+const popupQualifiers = (html) => [...html.matchAll(/<span class="arr-qualifier">([^<]*)<\/span>/g)].map((m) => m[1]);
+const panelQualifiers = (lines) =>
+  lines
+    .filter((line) => line.startsWith("  li "))
+    .map((line) => (line.match(/ (?:AM|PM) (?:arrival|departure), ((?:as of|showing last known|age unknown)[^,]*(?:, as of [^,]*)?)/) || [])[1] || "");
+
+function renderBody(name, body) {
+  const h = loadFrontend();
+  const board = boards(h.sandbox)[name];
+  const popup = board.popup(body);
+  h.sandbox.__entry = board.entry;
+  h.sandbox.__body = body;
+  h.run(
+    "panelStation = __entry; panelBody = __body; panelError = null;" +
+      " panelAnnounced = null; panelAlertsAnnounced = null; renderStationDetail();",
+  );
+  return { popup, panel: panelLines(h.byId("stations-detail")), spoken: h.byId("stations-announce").textContent };
+}
+
+test("6.2 the subway board, ten minutes behind: every row says so, in the popup and in the panel", () => {
+  const S = loadFrontend().sandbox;
+  const out = renderBody("subway", agedBody(boards(S).subway.body, 600));
+  const q = ' <span class="arr-qualifier">as of 10m ago</span>';
+  assert.equal(
+    out.popup,
+    "<b>Times Sq-42 St</b>" +
+      '<div class="arr-dir">Northbound</div>' +
+      `<span class="arr-badge" ${RED}>1</span> 2 min${q}<br>` +
+      `<span class="arr-badge" ${RED}>2</span> 5 min${q}` +
+      '<div class="arr-dir">Southbound</div>' +
+      `<span class="arr-badge" ${RED}>1</span> 3 min${q}`,
+  );
+  assert.deepEqual(out.panel, [
+    "h3 Times Sq-42 St (Subway)",
+    "h4 Northbound",
+    "ul.station-arrivals",
+    "  li 1 train in 2 minutes, 8:01 AM arrival, as of 10m ago",
+    "  li 2 train in 5 minutes, 8:05 AM arrival, as of 10m ago",
+    "h4 Southbound",
+    "ul.station-arrivals",
+    "  li 1 train in 3 minutes, 8:03 AM arrival, as of 10m ago",
+  ]);
+  // THE COUNTDOWN STILL COUNTS TO THE PREDICTION; the words sit beside it. And the
+  // caveat is spoken with the times it qualifies, not left on screen alone.
+  assert.equal(
+    out.spoken,
+    "Times Sq-42 St, Subway. Northbound: 1 train in 2 minutes, 8:01 AM arrival, as of 10m ago. " +
+      "2 train in 5 minutes, 8:05 AM arrival, as of 10m ago. " +
+      "Southbound: 1 train in 3 minutes, 8:03 AM arrival, as of 10m ago",
+  );
+});
+
+test("6.2 ONE HELPER, TWO SURFACES: every dated board words its aged rows identically in both", () => {
+  const S = loadFrontend().sandbox;
+  for (const name of ["subway", "lirr", "path", "njt", "ferry"]) {
+    const body = agedBody(boards(S)[name].body, 600);
+    const out = renderBody(name, body);
+    const rows = H.stationArrivalsRows(body).length;
+    assert.deepEqual(popupQualifiers(out.popup), Array(rows).fill("as of 10m ago"), `${name} popup`);
+    assert.deepEqual(panelQualifiers(out.panel), Array(rows).fill("as of 10m ago"), `${name} panel`);
+    // A dated row speaks for itself, so the board's own line has nothing to add.
+    assert.doesNotMatch(out.popup, /popup-stale/, `${name} popup line`);
+    assert.ok(!out.panel.some((l) => l.includes("station-detail-stale")), `${name} panel line`);
+  }
+  // THE PANEL DERIVES NO AGE OF ITS OWN, which is what "one helper, not two" means in
+  // source: stations.js renders what helpers.js hands it and names none of the clocks.
+  // Comments are stripped first, because the history of the old rule is written there.
+  const code = readFileSync(join(__dirname, "stations.js"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/.*$/gm, "");
+  for (const name of ["fetched_at", "served_at", "observed_at", "humanizeAge", "staleAge", "servedAge", "ageSeconds"]) {
+    assert.ok(!code.includes(name), `stations.js must not name ${name}`);
+  }
+  assert.ok(code.includes("shapeStationArrivals("), "the panel shapes through the shared helper");
+});
+
+test("6.2 per ROW, on both surfaces: a board with a lagging contributor and a current one", () => {
+  // The auditor's second clause. Times Sq with a second contributor: the 2 train's group
+  // is ten minutes behind, the 1 train's is current. A per-envelope rule could only mark
+  // all three rows or none of them.
+  const S = loadFrontend().sandbox;
+  const body = boards(S).subway.body;
+  body.directions.Northbound[1].observed_at = fx.FROZEN_S - 600;
+  body.feed_timestamp = fx.FROZEN_S - 600;
+  body.systems = {
+    "1-7+S": fx.systemBlock(fx.FROZEN_S, { routes: ["1"] }),
+    LAGGING: fx.systemBlock(fx.FROZEN_S, { routes: ["2"], feedTimestamp: fx.FROZEN_S - 600 }),
+  };
+  const out = renderBody("subway", body);
+  assert.deepEqual(popupQualifiers(out.popup), ["as of 10m ago"]);
+  assert.match(out.popup, /5 min <span class="arr-qualifier">as of 10m ago<\/span>/);
+  assert.deepEqual(panelQualifiers(out.panel), ["", "as of 10m ago", ""]);
+});
+
+test("6.2 Metro-North's stale poll: the line speaks once, the clause rides it, the rows stay silent", () => {
+  const S = loadFrontend().sandbox;
+  const body = boards(S).mnr.body;
+  body.fetched_at = fx.FROZEN_S - 400;
+  body.systems.MNR.fetched_at = fx.FROZEN_S - 400;
+  const out = renderBody("mnr", body);
+  const line = "as of 7m ago; MNR prediction age unavailable";
+  assert.match(out.popup, new RegExp(`^<b>Grand Central</b> <span class="popup-sub">MNR</span><div class="popup-stale">${line}</div>`));
+  assert.deepEqual(popupQualifiers(out.popup), []);
+  assert.deepEqual(out.panel.slice(0, 2), ["h3 Grand Central (Metro-North)", `p.station-detail-stale ${line}`]);
+  assert.deepEqual(panelQualifiers(out.panel), ["", ""]);
+  assert.ok(out.spoken.startsWith(`Grand Central, Metro-North. ${line}. Inbound:`), out.spoken);
+});
+
+test("6.2 UNDATED_SYSTEMS is exactly the railroad systems the backend never dates", () => {
+  // The frontend's one statement of the policy's non-gated rows, held against the
+  // backend's one statement of it rather than restating Metro-North a second time.
+  const src = readFileSync(join(__dirname, "..", "backend", "feeds", "railroad.py"), "utf8");
+  const feeds = src.match(/^RAILROAD_FEED_URLS = \{([\s\S]*?)^\}/m);
+  const admitted = src.match(/^RAILROAD_FRESHNESS_SYSTEMS = frozenset\(\{([^}]*)\}\)/m);
+  assert.ok(feeds && admitted, "both statements are where this test reads them");
+  const systems = [...feeds[1].matchAll(/^\s*"([A-Za-z]+)":/gm)].map((m) => m[1]).sort();
+  const dated = [...admitted[1].matchAll(/"([A-Za-z]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(systems, ["LIRR", "MNR"]);
+  assert.deepEqual([...H.UNDATED_SYSTEMS].sort(), systems.filter((x) => !dated.includes(x)));
 });

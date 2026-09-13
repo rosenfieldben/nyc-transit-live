@@ -306,6 +306,16 @@ main {
   font-style: italic;
 }
 
+/* A board row's own qualifier (6.2): "as of 10m ago", "showing last known, as of 4m
+   ago" or "age unknown", beside the countdown it qualifies. The same honesty treatment
+   as .popup-stale, inline rather than a block, because it belongs to one row and the
+   countdown beside it still counts to the prediction. */
+.arr-qualifier {
+  color: #666;
+  font-size: 11px;
+  font-style: italic;
+}
+
 .alert-stale {
   color: #666;
   font-size: 11px;

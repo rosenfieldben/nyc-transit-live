@@ -659,11 +659,16 @@ function renderStationDetail({ error = panelError, tick = false } = {}) {
     nameFor: entry.nameFor || (() => null),
   });
 
-  // The same "as of Xm ago" honesty the popups render, from the same threshold and
-  // the same wording, so a stale feed reads identically on both surfaces.
+  // THE BOARD'S SYSTEM LINE, the one line a board says about its system rather than a
+  // row, computed by the same helper the popup uses (boardSystemLine), so a board reads
+  // identically on both surfaces. It used to be now - fetched_at, the age of our POLL,
+  // which stayed silent while a provider served old content to polls that kept
+  // succeeding (F03). Each row now carries its own qualifier in its sentence
+  // (arrivalQualifier, through arrivalSentence), and this line speaks only for what
+  // rows cannot: an empty board, and rows whose provider dates nothing (6.2).
   let staleLine = null;
-  if (staleAge(shaped.ageSeconds)) {
-    staleLine = `as of ${humanizeAge(shaped.ageSeconds)} ago`;
+  if (shaped.systemLine) {
+    staleLine = shaped.systemLine;
     const stale = document.createElement("p");
     stale.className = "station-detail-stale";
     stale.textContent = staleLine;

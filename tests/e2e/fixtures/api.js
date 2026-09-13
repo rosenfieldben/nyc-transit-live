@@ -75,14 +75,24 @@ const subwaysWithSystems = ({
   aceOk = true,
   aceRetainedSince = null,
   aceRoutes = ["A"],
+  // ACE's own content time (6.1). Pass an old one with a CURRENT aceAt to model F03's
+  // state: a poll that keeps succeeding over content that stopped moving.
+  aceContentAt = aceAt - 5,
 } = {}) => ({
   fetched_at: fetchedAt,
-  feed_timestamp: fetchedAt - 5,
+  // The envelope's content clock is the oldest header among the groups that decoded,
+  // which is how feeds/subway.py folds them; a failed ACE did not decode this poll.
+  feed_timestamp: aceOk ? Math.min(fetchedAt - 5, aceContentAt) : fetchedAt - 5,
   served_at: servedAt,
   data: data ?? subways().data,
   systems: {
     "1-7+S": systemBlock(fetchedAt, { routes: ["1"] }),
-    ACE: systemBlock(aceAt, { ok: aceOk, retainedSince: aceRetainedSince, routes: aceRoutes }),
+    ACE: systemBlock(aceAt, {
+      ok: aceOk,
+      retainedSince: aceRetainedSince,
+      routes: aceRoutes,
+      feedTimestamp: aceContentAt,
+    }),
   },
 });
 

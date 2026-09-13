@@ -732,43 +732,81 @@ function glideClock(now, staleAt) {
 //
 // THE COMMON CASE MUST NOT GET NOISIER, so the wording is graded:
 //   - every system fresh: null, exactly as before.
-//   - the WHOLE source stale (one synthesized system, or every system of an
-//     aggregate): "railroad: as of 6m ago", the pre-C2 wording untouched.
-//   - a strict SUBSET stale: the degraded systems are named, worst age reported,
-//     e.g. "railroad: MNR as of 6m ago" or "trains: ACE group as of 4m ago"
+//   - the WHOLE source degraded in ONE way (one synthesized system, or every system
+//     of an aggregate in the same population): "railroad: as of 6m ago", the pre-C2
+//     wording untouched.
+//   - otherwise the degraded systems are named, each population reporting its own
+//     worst age, e.g. "railroad: MNR as of 6m ago" or "trains: ACE group as of 4m ago"
 //     (source.systemNoun supplies the "group", which reads wrong for a system).
 //   - a system that has NEVER decoded cannot be aged, so it is reported by name
 //     with no age rather than silently dropped.
 // A system that merely failed its last poll is NOT named until its age crosses the
 // threshold: single failed polls are routine, and naming them would make the status
 // line chatter during normal operation.
+//
+// THREE POPULATIONS, EACH ITS OWN CLAUSE, and 6.2 added the middle one. A system is in
+// at most one of them:
+//   1. STALE: its poll age has crossed the threshold, whatever its content was.
+//   2. CONTENT OLD: its poll is fresh and what that poll fetched is not, because its
+//      own content lag (systemLag) has crossed the threshold. This is F03's state, a
+//      provider serving old content to polls that keep succeeding. Before 6.2 the line
+//      could say it only through the envelope's one lag, which spoke for every system
+//      of the source at once; with the lag per system it names the one that is behind.
+//   3. BLIND: never decoded, and reported down.
+// The first two share the words "as of {age} ago" (design 4.4 reuses them verbatim)
+// and never share a clause, for the reason stale and blind were split: a system in one
+// state announced with another state's age is exactly the defect that split them. A
+// feed whose poll stopped five minutes ago and a feed serving ten minute old content
+// are two facts with two ages, and one clause would hand one of them the other's.
+//
+// A system with NO content clock (Metro-North's null) is never CONTENT OLD: it has no
+// content age to be old, and its line stays exactly as quiet as it always was. Saying
+// that Metro-North dates nothing is 6.3's clause, and even that may only ride a line
+// that is already rendering, never raise one (design 3.2).
 // `now` is injected for testability (defaults to the wall clock).
 function staleness(source, now = Date.now() / 1000) {
   const systems = sourceSystems(source);
-  const ages = systemAges(source, now);
-  const names = Object.keys(ages).sort();
-  const stale = names.filter((name) => staleAge(ages[name]));
-  // Never decoded (null age) AND reported down: no age to print, but real.
-  const blind = names.filter((name) => ages[name] == null && !systems[name].ok);
-  if (!stale.length && !blind.length) return null;
+  const names = Object.keys(systems).sort();
+  const stale = [];
+  const content = [];
+  const blind = [];
+  const ages = {};
+  for (const name of names) {
+    const system = systems[name];
+    const poll = pollAge(system.fetchedAt, source.servedAt, now);
+    if (poll == null) {
+      // Never decoded (null age) AND reported down: no age to print, but real.
+      if (!system.ok) blind.push(name);
+      continue;
+    }
+    const lag = systemLag(source, system);
+    if (staleAge(poll)) {
+      stale.push(name);
+      ages[name] = Math.max(lag, poll);
+    } else if (staleAge(lag)) {
+      content.push(name);
+      ages[name] = lag;
+    }
+  }
+  const populated = [stale, content, blind].filter((group) => group.length).length;
+  if (!populated) return null;
   const noun = source.systemNoun ? ` ${source.systemNoun}` : "";
   // Naming every system of a source is just naming the source, so fall back to the
   // pre-C2 wording; that is also what keeps a single-feed source reading unchanged.
-  const whole = stale.length + blind.length === names.length;
-  const subject = (group) =>
-    whole && !(stale.length && blind.length)
-      ? ""
-      : `${group.map((n) => `${n}${noun}`).join(", ")} `;
-  // TWO CLAUSES, NEVER ONE. REVIEW FIX: the stale and blind sets used to be merged
-  // into a single subject that then took its age from the stale set alone, so a
-  // system which had never reported anything was announced with another system's
-  // age ("ACE group, SIR group as of 4m ago" when SIR had no data at all). They
+  // Only when ONE population covers the source, though: two populations have to be
+  // told apart, and naming them is how.
+  //
+  // REVIEW FIX, kept from when there were two populations: the stale and blind sets
+  // used to be merged into a single subject that then took its age from the stale set
+  // alone, so a system which had never reported anything was announced with another
+  // system's age ("ACE group, SIR group as of 4m ago" when SIR had no data at all). They
   // collide exactly during a broad incident, which is when the line gets read.
+  const whole = stale.length + content.length + blind.length === names.length && populated === 1;
+  const subject = (group) => (whole ? "" : `${group.map((n) => `${n}${noun}`).join(", ")} `);
+  const worst = (group) => humanizeAge(Math.max(...group.map((name) => ages[name])));
   const clauses = [];
-  if (stale.length) {
-    const worst = Math.max(...stale.map((name) => ages[name]));
-    clauses.push(`${subject(stale)}as of ${humanizeAge(worst)} ago`);
-  }
+  if (stale.length) clauses.push(`${subject(stale)}as of ${worst(stale)} ago`);
+  if (content.length) clauses.push(`${subject(content)}as of ${worst(content)} ago`);
   if (blind.length) clauses.push(`${subject(blind)}not reporting`);
   return `${source.label}: ${clauses.join("; ")}`;
 }

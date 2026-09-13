@@ -2280,3 +2280,56 @@ test("36. an NJT marker born from retained data is dim on its first frame, and a
   await expect(popup(page)).toContainText("3 min early");
   expect(await popup(page).textContent()).not.toContain("late");
 });
+
+test("C2h. subway content ten minutes old behind a fresh poll: ACE alone dims and is named (6.2)", async ({
+  page,
+}) => {
+  // F03'S STATE ON THE MAP. Every group's poll succeeds, so every fetched_at is current,
+  // and ACE's provider has been serving the same ten minute old content all along.
+  // Before 6.2 the only content clock the client aged by was the ENVELOPE's, which is
+  // the oldest header among the groups that decoded: ACE's lag was handed to every
+  // group, so both trains dimmed and the line said "trains: as of 10m ago" while the
+  // 1-7+S feed was current. Now each group answers for its own clock.
+  const ctx = await boot(page);
+  await waitForReady(page);
+  const status = page.locator("#status");
+  await expect(status).not.toHaveClass(/error/);
+  // Each body is stamped for the poll that lands it (every 15s), so every POLL age stays
+  // near zero and only the content can be what is old.
+  let pollAt = fx.FROZEN_S;
+  const polled = (over = {}) => fx.subwaysWithSystems({ fetchedAt: pollAt, ...over });
+  ctx.overrides.subways = (route) => {
+    pollAt += 15;
+    return json(route, polled({ aceContentAt: pollAt - 600 }));
+  };
+  await page.clock.runFor(15_000);
+
+  await expect
+    .poll(async () =>
+      page.evaluate(() =>
+        Object.fromEntries([...trains.entries()].map(([id, r]) => [id, r.marker.options.opacity ?? 1])),
+      ),
+    )
+    .toEqual({ "sub-1": 1, "sub-2": 0.45 });
+  // THE THIRD POPULATION, named alone, with its content age, and the current group left
+  // out of it.
+  await expect(status).toContainText("trains: ACE group as of 10m ago");
+  await expect(status).toHaveClass(/error/);
+  expect(await status.textContent()).not.toContain("1-7+S");
+
+  // A SECOND GROUP STALE THE OTHER WAY: BDFM's poll stopped five minutes ago. Two
+  // populations, two clauses, each carrying its own age. One merged clause would have
+  // announced BDFM's five minutes as ACE's ten, or the reverse.
+  ctx.overrides.subways = (route) => {
+    pollAt += 15;
+    const body = polled({ aceContentAt: pollAt - 600 });
+    body.systems.BDFM = fx.systemBlock(pollAt - 300, {
+      ok: false,
+      retainedSince: pollAt - 285,
+      routes: ["B"],
+    });
+    return json(route, body);
+  };
+  await page.clock.runFor(15_000);
+  await expect(status).toContainText("trains: BDFM group as of 5m ago; ACE group as of 10m ago");
+});

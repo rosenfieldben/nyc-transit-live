@@ -1792,6 +1792,70 @@ test("6.2 a system with NO content clock borrows nobody's: Metro-North beside a 
   assert.equal(staleness(older, now), "railroad: as of 5m ago");
 });
 
+test("6.2 staleness' THIRD population: content old while the poll is fresh, in a clause of its own", () => {
+  const now = 20_000;
+  const subways = (systems) => ({
+    label: "trains",
+    systemNoun: "group",
+    fetchedAt: now,
+    servedAt: now,
+    feedTimestamp: now - 600,
+    systems: ingestSystems({ fetched_at: now, feed_timestamp: now - 600, systems }, "subways"),
+  });
+  const fresh = { fetched_at: now, feed_timestamp: now - 5, ok: true };
+  // All three populations at once, three clauses, each with ITS OWN age: BDFM's poll
+  // stopped five minutes ago; ACE's poll is current and its content ten minutes old;
+  // SIR has never decoded. Merged, ACE's ten minutes would be announced as BDFM's, or
+  // BDFM's five as ACE's, which is the defect that split stale from blind.
+  assert.equal(
+    staleness(
+      subways({
+        "1-7+S": fresh,
+        ACE: { fetched_at: now, feed_timestamp: now - 600, ok: true },
+        BDFM: { fetched_at: now - 300, feed_timestamp: now - 305, ok: false, retained_since: now - 300 },
+        SIR: { fetched_at: null, ok: false },
+      }),
+      now,
+    ),
+    "trains: BDFM group as of 5m ago; ACE group as of 10m ago; SIR group not reporting",
+  );
+  // The third alone, over a subset of the source: named, with its content age.
+  assert.equal(
+    staleness(subways({ "1-7+S": fresh, ACE: { fetched_at: now, feed_timestamp: now - 600, ok: true } }), now),
+    "trains: ACE group as of 10m ago",
+  );
+  // The third alone over the WHOLE source reads as a single-feed source always has.
+  assert.equal(
+    staleness({ label: "PATH", fetchedAt: now, servedAt: now, feedTimestamp: now - 300 }, now),
+    "PATH: as of 5m ago",
+  );
+  // THE COMMON CASE DID NOT GET NOISIER: a healthy day is null, and a system with no
+  // content clock (Metro-North) is never content-old, however old LIRR's is not.
+  assert.equal(staleness(subways({ "1-7+S": fresh, ACE: fresh }), now), null);
+  assert.equal(
+    staleness(
+      {
+        label: "railroad",
+        fetchedAt: now,
+        servedAt: now,
+        feedTimestamp: now - 5,
+        systems: ingestSystems(
+          {
+            fetched_at: now,
+            systems: {
+              LIRR: { fetched_at: now, feed_timestamp: now - 5, ok: true },
+              MNR: { fetched_at: now, feed_timestamp: null, ok: true },
+            },
+          },
+          "railroads",
+        ),
+      },
+      now,
+    ),
+    null,
+  );
+});
+
 test("C2 the healthy aggregate case reads EXACTLY as the pre-C2 whole-source case", () => {
   // On a healthy poll every system's fetched_at equals the envelope's, so the worst
   // per-system age is the age R1 computed. This is the assertion that pins "the

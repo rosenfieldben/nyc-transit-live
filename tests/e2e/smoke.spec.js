@@ -2333,3 +2333,87 @@ test("C2h. subway content ten minutes old behind a fresh poll: ACE alone dims an
   await page.clock.runFor(15_000);
   await expect(status).toContainText("trains: BDFM group as of 5m ago; ACE group as of 10m ago");
 });
+
+test("C2i. F03's acceptance, board half: at Prospect Av a lagging group's rows say how old they are, a current group's say nothing (6.2)", async ({
+  page,
+}) => {
+  // THE AUDITOR'S SENTENCE, in a browser: "repeatedly returning an old, valid HTTP-200
+  // feed makes its countdowns visibly qualified as stale; other healthy contributors
+  // remain distinguishable."
+  //
+  // THE BOARD IS NOT HAND-WRITTEN. It is the body the real backend served for
+  // /api/subway-arrivals/219 in backend/tests/test_f03_boards.py's world: the committed
+  // subway capture re-stamped 600 s behind the poll clock on the 1-7+S feed, a copy
+  // stamped current on ACE (its trips renamed "h-" so the cross-group dedup keeps
+  // both), through the real fetch path, refresh path and ASGI app, at FROZEN_S. It is
+  // committed as fixtures/f03_board_219.json and that test fails the moment the backend
+  // stops serving it, so the two halves of the acceptance cannot drift apart. Each
+  // direction's six rows are three from each group, interleaved.
+  const board = require("./fixtures/f03_board_219.json");
+  const prospect = { id: "219", name: "Prospect Av", lat: 40.8196, lon: -73.9015, routes: ["2", "5"] };
+  await boot(page, (c) => {
+    c.overrides.subwayStops = (route, fixtures) => json(route, [...fixtures.subwayStops(), prospect]);
+    c.overrides.subwayArrivals = (route, fixtures) =>
+      json(route, route.request().url().endsWith("/219") ? board : fixtures.subwayArrivals());
+  });
+  await page.waitForFunction(
+    () => typeof stationRegistry !== "undefined" && stationRegistry.some((row) => row.key === "subway|219"),
+  );
+
+  // Selected through the panel, which is docked open at this width; the panel's map
+  // sync opens the same station's popup, so one selection puts both surfaces up.
+  await page.locator("#stations-search").fill("prospect");
+  await page.locator("#stations-results button.station-row").first().click();
+
+  // THE PANEL. Every row from the lagging group carries its age beside its countdown,
+  // and every row from the current group carries nothing. A board qualified per
+  // ENVELOPE could only mark all twelve or none.
+  const rows = page.locator("#stations-detail ul.station-arrivals li");
+  const expected = [
+    "5 train in 2 minutes, 8:02 AM arrival, as of 10m ago",
+    "2 train in 3 minutes, 8:02 AM arrival, as of 10m ago",
+    "5 train in 3 minutes, 8:02 AM arrival",
+    "2 train in 5 minutes, 8:05 AM arrival",
+    "5 train in 10 minutes, 8:09 AM arrival, as of 10m ago",
+    "5 train in 12 minutes, 8:11 AM arrival",
+    "2 train now, 7:59 AM arrival, as of 10m ago",
+    "5 train in 3 minutes, 8:02 AM arrival, as of 10m ago",
+    "5 train in 3 minutes, 8:03 AM arrival",
+    "2 train in 9 minutes, 8:09 AM arrival",
+    "2 train in 9 minutes, 8:09 AM arrival, as of 10m ago",
+    "5 train in 12 minutes, 8:12 AM arrival",
+  ];
+  await expect(rows).toHaveText(expected);
+  // The first row is the audit's own "prediction two minutes ahead" from a header ten
+  // minutes old: the countdown still counts to it, and the words sit beside it.
+  // Each row speaks for itself, so the board's own line has nothing to add.
+  await expect(page.locator(".station-detail-stale")).toHaveCount(0);
+  // And the spoken board carries the same words on the same rows.
+  await expect(page.locator("#stations-announce")).toContainText(
+    "Northbound: 5 train in 2 minutes, 8:02 AM arrival, as of 10m ago. " +
+      "2 train in 3 minutes, 8:02 AM arrival, as of 10m ago. 5 train in 3 minutes, 8:02 AM arrival.",
+  );
+
+  // THE POPUP, the same board through the same helper, rendered as spans beside the
+  // countdowns. Asserted as the popup's actual markup, not as a call to the renderer.
+  const q = ' <span class="arr-qualifier">as of 10m ago</span>';
+  const five = (text) => `<span class="arr-badge" style="background:#1e8449;color:#ffffff">5</span> ${text}`;
+  const two = (text) => `<span class="arr-badge" style="background:#c0392b;color:#ffffff">2</span> ${text}`;
+  await expect(popup(page)).toContainText("Prospect Av");
+  await expect(page.locator(".leaflet-popup-content .arr-qualifier")).toHaveCount(6);
+  expect(await popup(page).innerHTML()).toBe(
+    "<b>Prospect Av</b>" +
+      '<div class="arr-dir">Northbound</div>' +
+      [five(`2 min${q}`), two(`3 min${q}`), five("3 min"), two("5 min"), five(`10 min${q}`), five("12 min")].join("<br>") +
+      '<div class="arr-dir">Southbound</div>' +
+      [two(`now${q}`), five(`3 min${q}`), five("3 min"), two("9 min"), two(`9 min${q}`), five("12 min")].join("<br>"),
+  );
+
+  // REPEATEDLY: the next background refresh returns the same old, valid 200. The lagging
+  // group's rows stay qualified, their age counting on (615 s still rounds to 10m), and
+  // the current group's rows stay silent on both surfaces.
+  await page.clock.runFor(16_000);
+  await expect(rows.nth(0)).toHaveText(/, as of 10m ago$/);
+  await expect(rows.nth(2)).not.toContainText("as of");
+  await expect(page.locator(".leaflet-popup-content .arr-qualifier")).toHaveCount(6);
+});

@@ -1,0 +1,129 @@
+{
+  "fetched_at": 1782993600.0,
+  "station_id": "219",
+  "station_name": "Prospect Av",
+  "directions": {
+    "Northbound": [
+      {
+        "route_id": "5",
+        "trip_id": "091500_5..N75X013",
+        "arrival": 1782993720.0,
+        "observed_at": 1782993000.0,
+        "provenance": "reported"
+      },
+      {
+        "route_id": "2",
+        "trip_id": "089600_2..N01X039",
+        "arrival": 1782993774.0,
+        "observed_at": 1782993000.0,
+        "provenance": "reported"
+      },
+      {
+        "route_id": "5",
+        "trip_id": "h-090800_5..N75X013",
+        "arrival": 1782993777.0,
+        "observed_at": 1782993595.0,
+        "provenance": "reported"
+      },
+      {
+        "route_id": "2",
+        "trip_id": "h-088400_2..N01X039",
+        "arrival": 1782993905.0,
+        "observed_at": 1782993595.0,
+        "provenance": "reported"
+      },
+      {
+        "route_id": "5",
+        "trip_id": "092700_5..N75X013",
+        "arrival": 1782994198.0,
+        "observed_at": 1782993000.0,
+        "provenance": "reported"
+      },
+      {
+        "route_id": "5",
+        "trip_id": "h-091500_5..N75X013",
+        "arrival": 1782994315.0,
+        "observed_at": 1782993595.0,
+        "provenance": "reported"
+      }
+    ],
+    "Southbound": [
+      {
+        "route_id": "2",
+        "trip_id": "093150_2..S01R",
+        "arrival": 1782993563.0,
+        "observed_at": 1782993000.0,
+        "provenance": "reported"
+      },
+      {
+        "route_id": "5",
+        "trip_id": "093850_5..S08X010",
+        "arrival": 1782993752.0,
+        "observed_at": 1782993000.0,
+        "provenance": "reported"
+      },
+      {
+        "route_id": "5",
+        "trip_id": "h-092950_5..S08X010",
+        "arrival": 1782993794.0,
+        "observed_at": 1782993595.0,
+        "provenance": "reported"
+      },
+      {
+        "route_id": "2",
+        "trip_id": "h-093150_2..S01R",
+        "arrival": 1782994158.0,
+        "observed_at": 1782993595.0,
+        "provenance": "reported"
+      },
+      {
+        "route_id": "2",
+        "trip_id": "094350_2..S01R",
+        "arrival": 1782994167.0,
+        "observed_at": 1782993000.0,
+        "provenance": "reported"
+      },
+      {
+        "route_id": "5",
+        "trip_id": "h-093850_5..S08X010",
+        "arrival": 1782994347.0,
+        "observed_at": 1782993595.0,
+        "provenance": "reported"
+      }
+    ]
+  },
+  "feed_timestamp": 1782993000.0,
+  "served_at": 1782993600.0,
+  "systems": {
+    "1-7+S": {
+      "fetched_at": 1782993600.0,
+      "feed_timestamp": 1782993000.0,
+      "ok": true,
+      "retained_since": null,
+      "routes": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "GS"
+      ]
+    },
+    "ACE": {
+      "fetched_at": 1782993600.0,
+      "feed_timestamp": 1782993595.0,
+      "ok": true,
+      "retained_since": null,
+      "routes": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "GS"
+      ]
+    }
+  }
+}

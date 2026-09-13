@@ -145,9 +145,9 @@ Three things stop that gate from being decoration:
 - A station board's age travels with the countdowns it qualifies: a row whose
   prediction is old says "as of 10m ago" in its spoken sentence as well as on
   screen, and that qualifier appearing announces **once**, whether a refresh
-  brings it or time passing does, while the tick that first draws it stays
-  silent and its age counting up never speaks. `stations.spec.js A1o`, `A1v3`,
-  `A1v4`.
+  brings it, time passing does, or time passing while every background refresh
+  fails, while the tick that first draws it stays silent and its age counting
+  up never speaks. `stations.spec.js A1o`, `A1v3`, `A1v4`, `A1v5`.
 
 ### Colour, size and layout
 

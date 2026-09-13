@@ -1,7 +1,8 @@
 // Network interception for the hermetic smoke suite. The app's own static files
 // (including the self-hosted Leaflet under frontend/vendor/leaflet, H2) are served
 // same-origin by the webServer and pass straight through the guard below; every
-// /api/* endpoint is fulfilled from the handcrafted fixtures, and the basemap tiles
+// /api/* endpoint is fulfilled from the fixtures (handcrafted, except the one board
+// backend/tests/test_f03_boards.py writes, f03_board_219.json), and the basemap tiles
 // are stubbed. Nothing leaves the machine, so CI needs no network at test time.
 // (Before H2, Leaflet loaded from unpkg and was intercepted here from a vendored
 // copy; self-hosting removed both the CDN dependency and that interception.)

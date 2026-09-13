@@ -576,7 +576,9 @@ today:
 | `feed empty, showing last known` | `helpers.js:751`, `:757` | a bounded empty run |
 | `scheduled service (no live tracking)` | `helpers.js:1030` | AirTrain, which has no feed |
 
-**The contract adds three words and fixes one omission.**
+**The contract adds three words and fixes one omission.** Building 6.2 added a fourth, the
+board's form of the per-system clause (the last row), recorded under 6.2 as an amendment
+rather than a decision.
 
 | Provenance / state | The rider word | Note |
 | --- | --- | --- |
@@ -590,6 +592,7 @@ today:
 | `observed_at` null, on an age-gated row | `age unknown` | The provider normally dates this and did not. An anomaly, so it is said at the observation. |
 | `observed_at` null, on a non-gated row | *(nothing at the observation)* | The provider does not date this at all. Said ONCE on that system's line instead; see the rule below. Metro-North is the only system in this state today. |
 | A whole system with no observation clock | **`{system} position age unavailable`** | NEW, and per-system rather than per-observation. A clause on the source's line, so the railroad source reads "railroad: MNR position age unavailable". |
+| A whole system with no observation clock, on its arrival board | **`{system} prediction age unavailable`** | NEW in 6.2: the row above in its prediction form, since a board carries predictions and "position" would be false of them, naming the system in the rider's word ("Metro-North prediction age unavailable") because the panel speaks it. It rides the board's own stale-poll line and never raises it, so a board whose poll is current says nothing. |
 
 **The rule, stated once for all surfaces:** a marker, a popup, a panel row or a board row
 MUST carry its word when any of the following holds. (a) Its provenance is not `reported`.
@@ -1198,6 +1201,16 @@ real refresh path and the real ASGI app. It currently measures that
 `/api/subway-arrivals/219` reports eight of eight groups `ok` and no content clock; after
 this step it measures the qualifier, and the second clause needs one healthy group beside
 the aged one so "visibly qualified" is a statement about some rows rather than all of them.
+
+**Amended while building it, and recorded here so it is not mistaken for a decision.** 3.2's
+per-system clause was written for the status line, and its wording, "{system} position age
+unavailable", would be false on a board, which carries predictions. The board's system line
+says `{system} prediction age unavailable` instead: the same clause in its prediction form,
+under the rule the status line's clause follows, riding the board's line that reports a
+stale poll and never raising it, so a healthy Metro-North board says nothing (Q5). It names
+the system in the rider's word, "Metro-North" rather than the feed code, because the panel
+speaks the line and an initialism is read letter by letter. 3.2's vocabulary table carries
+it as its own row.
 
 ### 6.3 F01, the old GPS observations, with N2
 

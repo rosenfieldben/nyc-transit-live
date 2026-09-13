@@ -295,6 +295,21 @@ process.stdout.write(JSON.stringify(results));
 """
 
 
+def spoken_sentences(spoken: str, station: str) -> list[str]:
+    """The row sentences of one spoken board, in order. The panel speaks "{station},
+    Subway. Northbound: s1. s2. Southbound: s3. s4", so this takes the station off the
+    front and each direction label off its first sentence. A row sentence holds no ". "
+    of its own (its clock label reads "8:02 AM"), so splitting there is exact, and a
+    board-wide line spoken ahead of the rows would come back as a sentence of its own."""
+    prefix = f"{station}, Subway. "
+    if not spoken.startswith(prefix):
+        return []
+    return [
+        re.sub(r"^(?:Northbound|Southbound): ", "", part).rstrip(".")
+        for part in spoken[len(prefix) :].split(". ")
+    ]
+
+
 def run_frontend(boards: list[dict]) -> list[dict]:
     with tempfile.TemporaryDirectory() as tmp:
         tmpdir = Path(tmp)
@@ -476,10 +491,13 @@ def main_script() -> None:
         "FIXED: the healthy contributor's six rows stay silent on both surfaces, so it remains "
         "distinguishable (was: nothing distinguished anything)",
     )
+    spoken_rows = spoken_sentences(fe_1["spoken"], board_1["station_name"])
     check(
-        fe_1["spoken"].count(QUALIFIER) == 6,
-        "FIXED: the spoken board carries the caveat on the same six rows (was: none)",
-        f"{fe_1['spoken'].count(QUALIFIER)} spoken",
+        spoken_rows == fe_1["panelRows"],
+        "FIXED: the spoken board is the panel's sentences, row for row, so the caveat is "
+        "spoken on the same six rows and on no other (was: none)",
+        f"{sum(1 for s in spoken_rows if s.endswith(f', {QUALIFIER}'))} of {len(spoken_rows)} "
+        "spoken sentences qualified",
     )
     check(
         "popup-stale" not in fe_1["popupHtml"] and fe_1["panelLines"] == [],

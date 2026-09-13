@@ -226,7 +226,7 @@ nyc-transit-live/
 │   ├── mock.js              # /api/* fixtures + basemap-tile stub
 │   ├── serve.js             # tiny static server for frontend/ (no backend)
 │   ├── playwright.config.js # chromium only, starts the static server
-│   └── fixtures/            # handcrafted JSON payloads
+│   └── fixtures/            # handcrafted payloads, plus one board the backend served
 ├── tests/statement.test.js  # ACCESSIBILITY.md cites real tests, checked
 ├── docs/reviews/            # adversarial-review adjudication records, one per phase
 ├── data/
@@ -356,8 +356,11 @@ npx playwright test --config tests/e2e/playwright.config.js
 
 It is **hermetic by design**: the config starts a tiny static server for
 `frontend/` (the Python backend is never launched), and every request is
-intercepted in the browser. All `/api/*` calls are answered from the handcrafted
-fixtures in `tests/e2e/fixtures/`; Leaflet is self-hosted under
+intercepted in the browser. All `/api/*` calls are answered from the fixtures in
+`tests/e2e/fixtures/`, which are handcrafted except `f03_board_219.json`: that one is
+the body the real backend served for F03's world, written by
+`backend/tests/test_f03_boards.py` and held equal to it there, so regenerate it
+through that test (`F03_BOARD_REGENERATE=1`) rather than by hand; Leaflet is self-hosted under
 `frontend/vendor/leaflet/` and served by that static server exactly as production
 serves it (there is no CDN URL left to intercept), and the basemap tiles are
 stubbed. Nothing leaves the machine, so CI needs no network at test time. Time is frozen with Playwright's clock control, so the
@@ -877,9 +880,10 @@ carries `observed_at`, the provider's clock for it, and the board ages it as
 `served_at - observed_at` plus the time since: past 90 seconds the row reads "as of
 {age} ago" beside its countdown, a carried-forward row reads "showing last known",
 and a row whose provider normally dates it but did not reads "age unknown".
-Metro-North dates no prediction at all, so its rows say nothing about age and its
-board says "MNR prediction age unavailable" only on the line that already reports
-a stale poll. On a board served by several subway groups, a lagging group's rows
+Metro-North dates no prediction at all, so its current rows say nothing about age
+(a carried-forward row still reads "showing last known", aged by its system's last
+poll) and its board says "Metro-North prediction age unavailable" only on the line
+that already reports a stale poll. On a board served by several subway groups, a lagging group's rows
 are qualified and a current group's are not. The rules and their vocabulary are
 section 3.2 of `docs/design/freshness-contract.md`.
 

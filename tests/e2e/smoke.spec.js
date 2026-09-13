@@ -1,6 +1,7 @@
 // Hermetic frontend smoke suite. One chromium browser; the webServer serves the
 // static frontend (including the self-hosted Leaflet under vendor/leaflet) and
-// mock.js fulfills every /api/* from the handcrafted fixtures and stubs the basemap
+// mock.js fulfills every /api/* from the fixtures (handcrafted, except C2i's board,
+// which the real backend served) and stubs the basemap
 // tiles, so nothing leaves the machine. A frozen clock (page.clock) makes the
 // arrival countdowns and the empty-feed staleness window deterministic; no sleeps.
 const { test, expect } = require("@playwright/test");
@@ -2351,10 +2352,15 @@ test("C2i. F03's acceptance, board half: at Prospect Av a lagging group's rows s
   // direction's six rows are three from each group, interleaved.
   const board = require("./fixtures/f03_board_219.json");
   const prospect = { id: "219", name: "Prospect Av", lat: 40.8196, lon: -73.9015, routes: ["2", "5"] };
-  await boot(page, (c) => {
+  // REPEATEDLY is the sentence's other half: from the moment this flips, /219 answers with
+  // the backend's NEXT successful poll of the same old bytes, 15 s on (nextF03Poll).
+  let repolled = false;
+  const ctx = await boot(page, (c) => {
     c.overrides.subwayStops = (route, fixtures) => json(route, [...fixtures.subwayStops(), prospect]);
-    c.overrides.subwayArrivals = (route, fixtures) =>
-      json(route, route.request().url().endsWith("/219") ? board : fixtures.subwayArrivals());
+    c.overrides.subwayArrivals = (route, fixtures) => {
+      if (!route.request().url().endsWith("/219")) return json(route, fixtures.subwayArrivals());
+      return json(route, repolled ? nextF03Poll(board, 15) : board);
+    };
   });
   await page.waitForFunction(
     () => typeof stationRegistry !== "undefined" && stationRegistry.some((row) => row.key === "subway|219"),
@@ -2409,11 +2415,39 @@ test("C2i. F03's acceptance, board half: at Prospect Av a lagging group's rows s
       [two(`now${q}`), five(`3 min${q}`), five("3 min"), two("9 min"), two(`9 min${q}`), five("12 min")].join("<br>"),
   );
 
-  // REPEATEDLY: the next background refresh returns the same old, valid 200. The lagging
-  // group's rows stay qualified, their age counting on (615 s still rounds to 10m), and
-  // the current group's rows stay silent on both surfaces.
+  // REPEATEDLY: the next background refresh is a second successful poll returning the
+  // same old, valid 200. The lagging group's rows stay qualified, now from the payload's
+  // own clocks (615 s between served_at and observed_at still rounds to 10m), and the
+  // current group's rows stay silent, row for row, on both surfaces.
+  repolled = true;
+  const polled = ctx.counts.subwayArrivals;
   await page.clock.runFor(16_000);
-  await expect(rows.nth(0)).toHaveText(/, as of 10m ago$/);
-  await expect(rows.nth(2)).not.toContainText("as of");
+  await expect
+    .poll(() => ctx.counts.subwayArrivals, { message: "the board was polled again" })
+    .toBeGreaterThan(polled);
+  await expect(rows).toHaveText(
+    expected.map((line) => (line.endsWith(", as of 10m ago") ? /, as of 10m ago$/ : /arrival$/)),
+  );
   await expect(page.locator(".leaflet-popup-content .arr-qualifier")).toHaveCount(6);
 });
+
+// The backend's next successful poll of F03's world, `dt` seconds on, as
+// test_f03_boards.py's second poll serves it: every poll clock advances, and so does
+// every clock the current group dates, while the aged group's header, and so its rows,
+// keep the stamp they had. Which clocks are current is read off the served bytes (inside
+// 90 s of served_at), so this knows nothing about the groups the board does not say.
+function nextF03Poll(board, dt) {
+  const next = JSON.parse(JSON.stringify(board));
+  const current = (t) => typeof t === "number" && board.served_at - t < 90;
+  next.served_at += dt;
+  next.fetched_at += dt;
+  if (current(next.feed_timestamp)) next.feed_timestamp += dt;
+  for (const block of Object.values(next.systems)) {
+    if (typeof block.fetched_at === "number") block.fetched_at += dt;
+    if (current(block.feed_timestamp)) block.feed_timestamp += dt;
+  }
+  for (const rows of Object.values(next.directions)) {
+    for (const row of rows) if (current(row.observed_at)) row.observed_at += dt;
+  }
+  return next;
+}

@@ -432,10 +432,25 @@ test("PIN the fixtures ARE fresh, so the six pins above are pins of fresh boards
 // A copy of one fixture board whose every DATED row was observed `ageS` before the board
 // was served, the poll itself still fresh: exactly the F03 world, a provider serving old
 // content to polls that keep succeeding. Undated rows (Metro-North's) stay undated.
+//
+// THE CONTENT CLOCKS AGE WITH THE ROWS, the way the backend serves them. A subway row is
+// dated by its group's header and NJ Transit's and the ferry's by their TripUpdates
+// header, so the block's and the envelope's feed_timestamp are that same old stamp, and
+// PATH's envelope clock is its oldest row's. LIRR alone dates each trip itself, so its
+// header stays current over old trips. Old rows under a current header everywhere is a
+// world the backend never serves, and a panel line raised from the envelope's content
+// clock would pass every test run in it.
 function agedBody(body, ageS) {
   const copy = JSON.parse(JSON.stringify(body));
+  const stamp = copy.served_at - ageS;
   for (const row of H.stationArrivalsRows(copy)) {
-    if (row.observed_at != null) row.observed_at = copy.served_at - ageS;
+    if (row.observed_at != null) row.observed_at = stamp;
+  }
+  if (copy.system !== "LIRR") {
+    if (copy.feed_timestamp != null) copy.feed_timestamp = stamp;
+    for (const block of Object.values(copy.systems || {})) {
+      if (block.feed_timestamp != null) block.feed_timestamp = stamp;
+    }
   }
   return copy;
 }
@@ -512,8 +527,13 @@ test("6.2 ONE HELPER, TWO SURFACES: every dated board words its aged rows identi
   const code = readFileSync(join(__dirname, "stations.js"), "utf8")
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/\/\/.*$/gm, "");
-  for (const name of ["fetched_at", "served_at", "observed_at", "humanizeAge", "staleAge", "servedAge", "ageSeconds"]) {
-    assert.ok(!code.includes(name), `stations.js must not name ${name}`);
+  // feed_timestamp among them: it is the served CONTENT clock, and a panel line raised
+  // from it is the per-envelope judgement that per-row qualification replaces. And the
+  // names ingestEnvelope hands the clocks over under, so going through the door is no way
+  // around this either.
+  const clocks = ["fetched_at", "served_at", "observed_at", "feed_timestamp", "fetchedAt", "servedAt", "feedTimestamp", "observedAt"];
+  for (const name of [...clocks, "ingestEnvelope", "humanizeAge", "staleAge", "servedAge", "ageSeconds"]) {
+    assert.ok(!new RegExp(`\\b${name}\\b`).test(code), `stations.js must not name ${name}`);
   }
   assert.ok(code.includes("shapeStationArrivals("), "the panel shapes through the shared helper");
 });
@@ -534,6 +554,36 @@ test("6.2 per ROW, on both surfaces: a board with a lagging contributor and a cu
   assert.deepEqual(popupQualifiers(out.popup), ["as of 10m ago"]);
   assert.match(out.popup, /5 min <span class="arr-qualifier">as of 10m ago<\/span>/);
   assert.deepEqual(panelQualifiers(out.panel), ["", "as of 10m ago", ""]);
+  // And no board-wide line on either surface, though this envelope's content clock IS ten
+  // minutes old: the rows carry the age, so a line would say it twice, and say it of the
+  // current rows too.
+  assert.doesNotMatch(out.popup, /popup-stale/);
+  assert.ok(!out.panel.some((l) => l.includes("station-detail-stale")), out.panel.join("\n"));
+  assert.ok(!out.spoken.includes("Subway. as of"), out.spoken);
+});
+
+test("6.2 a row's age is anchored at served_at, on both surfaces, whichever side of it the client clock is", () => {
+  // Every other render here runs at now == served_at, where the anchored age and the
+  // client clock's own subtraction agree. They part when the two clocks do.
+  const S = loadFrontend().sandbox;
+  const servedAt = (at, ageS) => {
+    const body = boards(S).subway.body;
+    body.fetched_at = body.served_at = at;
+    for (const block of Object.values(body.systems)) block.fetched_at = at;
+    return agedBody(body, ageS);
+  };
+  // Served 30 s AHEAD of the corrected client clock (the global offset over-corrects, or
+  // this response's server leads the vehicle feeds'), its rows 100 s old when served. A
+  // clock behind served_at adds nothing: 100 s, qualified. Read off the client clock alone
+  // they would be 70 s and silent, a stale countdown presented as current.
+  const ahead = renderBody("subway", servedAt(fx.FROZEN_S + 30, 100));
+  assert.deepEqual(popupQualifiers(ahead.popup), Array(3).fill("as of 100s ago"));
+  assert.deepEqual(panelQualifiers(ahead.panel), Array(3).fill("as of 100s ago"));
+  // Served 30 s BEHIND it, its rows 60 s old when served: the 30 s since count, so 90 s,
+  // qualified. Measured from served_at alone they would be 60 s and silent.
+  const behind = renderBody("subway", servedAt(fx.FROZEN_S - 30, 60));
+  assert.deepEqual(popupQualifiers(behind.popup), Array(3).fill("as of 90s ago"));
+  assert.deepEqual(panelQualifiers(behind.panel), Array(3).fill("as of 90s ago"));
 });
 
 test("6.2 Metro-North's stale poll: the line speaks once, the clause rides it, the rows stay silent", () => {
@@ -542,7 +592,9 @@ test("6.2 Metro-North's stale poll: the line speaks once, the clause rides it, t
   body.fetched_at = fx.FROZEN_S - 400;
   body.systems.MNR.fetched_at = fx.FROZEN_S - 400;
   const out = renderBody("mnr", body);
-  const line = "as of 7m ago; MNR prediction age unavailable";
+  // The rider's word for the system, never the feed code: the panel SPEAKS this line,
+  // and "MNR" would be read letter by letter.
+  const line = "as of 7m ago; Metro-North prediction age unavailable";
   assert.match(out.popup, new RegExp(`^<b>Grand Central</b> <span class="popup-sub">MNR</span><div class="popup-stale">${line}</div>`));
   assert.deepEqual(popupQualifiers(out.popup), []);
   assert.deepEqual(out.panel.slice(0, 2), ["h3 Grand Central (Metro-North)", `p.station-detail-stale ${line}`]);

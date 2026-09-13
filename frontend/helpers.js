@@ -919,7 +919,8 @@ const NO_QUALIFIER = Object.freeze({ kind: "", words: "" });
 // had it.
 //
 // Returns {kind, words}. `words` is what a rider reads, and changes as the age grows;
-// `kind` ("", "aged", "retained" or "unknown") is what it IS, and does not. The live
+// `kind` ("", "aged", "retained" or "unknown") is what it IS, and changes only when
+// the row crosses the threshold, never while its age counts on past it. The live
 // region compares kinds and never words, which is what makes a qualifier that appears
 // an announcement and a qualifier that counts up a non-event.
 function arrivalQualifier(row, board) {
@@ -948,8 +949,10 @@ function arrivalQualifier(row, board) {
 // served values (servedAge over each system's fetched_at, the worst answering). That is
 // the R1 honesty line these boards always had, now fed by the door rather than by
 // subtracting fetched_at on the spot. For undated rows it adds "{system} prediction age
-// unavailable", the prediction form of 3.2's per-system clause, RIDING the line and
-// never raising it: on a healthy day a Metro-North board says nothing at all, because a
+// unavailable", the prediction form of 3.2's per-system clause (3.2's table carries it
+// since 6.2), naming the system in the RIDER'S word ("Metro-North", never the feed code
+// "MNR", because the panel speaks this line and an initialism is read letter by
+// letter), RIDING the line and never raising it: on a healthy day a Metro-North board says nothing at all, because a
 // qualifier present on every board of a railroad is one a rider stops reading (Q5).
 function boardSystemLine(board, rows) {
   const all = rows || [];
@@ -959,7 +962,7 @@ function boardSystemLine(board, rows) {
   if (all.length && !undated) return null;
   if (!staleAge(board.pollAge)) return null;
   const line = `as of ${humanizeAge(board.pollAge)} ago`;
-  return undated ? `${line}; ${board.system} prediction age unavailable` : line;
+  return undated ? `${line}; ${railroadSystemLabel(board.system)} prediction age unavailable` : line;
 }
 
 // The popup's markup for the two: the system line in the slot the R1 age line used, in
@@ -2389,9 +2392,9 @@ function stationOverflowLine(hidden) {
 // Each row carries what a rider needs and nothing derived from the clock except
 // `seconds` and `qualifier`: routeId, routeName (resolved by the caller), trainNum,
 // mode ("arriving" or "departing", ferry and NJT only), seconds-until, and since 6.2
-// the row's qualifier words and their clock-free kind (arrivalQualifier). Keeping the
-// clock out of the identity fields is what lets announcementWorthy below tell a real
-// change from a tick.
+// the row's qualifier words and their kind (arrivalQualifier), which changes only at
+// the threshold, never as the age counts on. Keeping the clock out of the identity
+// fields is what lets announcementWorthy below tell a real change from a tick.
 const SUBWAY_BUCKET_ORDER = ["Northbound", "Southbound"];
 
 function shapeStationArrivals(kind, body, now, opts = {}) {
@@ -2549,12 +2552,17 @@ function arrivalsSignature(shaped) {
     // down by one each time.
     const leads = bucket.rows.map((r) => r.at).filter((t) => t != null);
     // WHICH QUALIFIERS THE BUCKET CARRIES, as a sorted set of kinds, never their words
-    // (6.2). A kind is clock-free: "aged" stays "aged" while its age counts up, so the
-    // tick and the refresh cannot re-announce it. A SET rather than one kind per row,
-    // because on a board whose provider dates each trip (LIRR, PATH) rows cross the
-    // threshold one at a time all day, and announcing each crossing would be the
-    // chatter this function exists to prevent; what a rider needs to hear is that
-    // qualifiers appeared, or cleared.
+    // (6.2). "aged" stays "aged" while its age counts up, so neither the tick nor the
+    // refresh re-announces it. A SET rather than one kind per row, because on a board
+    // whose provider dates each trip (LIRR, PATH) rows cross the threshold one at a
+    // time all day, and announcing each crossing would be the chatter this function
+    // exists to prevent. THE FRESH KIND ("") IS A MEMBER, on purpose: it is what tells
+    // "some countdown here is still current" from "none is", so the bucket is spoken
+    // when its LAST current row goes old, which is the moment a rider who heard a
+    // current countdown needs to hear otherwise (a stalling provider shows up exactly
+    // there, because the current row is usually the lead train). The cost, measured in
+    // review: a bucket whose only current row flips back and forth on its provider's
+    // own refresh cadence is spoken on each flip.
     const kinds = [...new Set(bucket.rows.map((r) => r.qualifierKind || ""))].sort();
     buckets[bucket.name] = { routes, lead: leads.length ? Math.min(...leads) : null, kinds };
   }
@@ -2575,10 +2583,16 @@ function arrivalsSignature(shaped) {
 //      its age counts up.
 //
 // Stay silent on everything else, and the case that matters most is the
-// countdown tick: none of the three clauses reads the clock, so a second passing
-// can never trip them. Without that, a screen reader narrates "4 minutes...
-// 3 minutes..." forever, which is hostile enough that the rider disables the
-// feature and loses the arrivals with it.
+// countdown tick: none of clauses 1 to 3 reads the clock, so a second passing can
+// never trip them. Without that, a screen reader narrates "4 minutes... 3
+// minutes..." forever, which is hostile enough that the rider disables the feature
+// and loses the arrivals with it. CLAUSE 4 IS THE EXCEPTION, and deliberately: a
+// row's kind flips from "" to "aged" once, when its age crosses the threshold, and an
+// empty board's system line appears the same way, on time alone. What keeps a TICK
+// from speaking that flip is stations.js (speakPanel drops the arrivals half on a
+// tick, and announceArrivals advances nothing on one), so the next non-tick render
+// speaks it once (A1v4). A caller outside that tick-guarded path must not assume a
+// second passing cannot trip this function.
 //
 // `prev` and `next` are shaped payloads. A first render (no prev) announces once,
 // because the arrivals appearing IS the news.

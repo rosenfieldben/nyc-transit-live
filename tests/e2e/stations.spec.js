@@ -254,12 +254,18 @@ test("A1f. stale and warming arrivals render the honest text the popups earned",
 });
 
 // The stock subway board with every row's prediction made ten minutes before it was
-// served, and the poll itself fresh: the F03 world, in fixture time.
+// served, and the poll itself fresh: the F03 world, in fixture time. The clocks that date
+// those rows age with them, as the backend serves it: a subway row is dated by its feed
+// group's header, so the group's block and the envelope (the oldest contributor's) carry
+// the same old stamp. Old rows under a current header would be a board no backend sends.
 function agedArrivals(fixtures, ageS = 600) {
   const body = fixtures.subwayArrivals();
+  const stamp = body.served_at - ageS;
   for (const rows of Object.values(body.directions)) {
-    for (const row of rows) row.observed_at = body.served_at - ageS;
+    for (const row of rows) row.observed_at = stamp;
   }
+  body.feed_timestamp = stamp;
+  for (const block of Object.values(body.systems)) block.feed_timestamp = stamp;
   return body;
 }
 
@@ -1036,76 +1042,164 @@ test("A1v2. an alert appearing for the selected station announces ONCE, and tick
   ).toBe(0);
 });
 
-test("A1v3. a lagging contributor's qualifier is announced ONCE, and ticks never speak it (6.2)", async ({
+test("A1v3. a lagging contributor's qualifier is announced ONCE, and its words moving never are (6.2)", async ({
   page,
 }) => {
   // N6'S RULE HELD FOR THE NEW WORDS. A row's qualifier changes on every tick while it
-  // shows seconds, and on every refresh while it shows minutes, so a live region that
-  // compared words would narrate the age counting up. It compares KINDS instead:
-  // "aged" appearing is news, spoken once in the one write the render makes, and
-  // everything after it is repaint. Counted as writes, the A1r way, because an
-  // identical string written twice is still two announcements.
+  // shows seconds and once a minute while it shows minutes, so a live region that
+  // compared words would narrate the age counting up. It compares KINDS instead: "aged"
+  // appearing is news, spoken once in the one write the render makes, and everything
+  // after it is repaint. Counted as writes, the A1r way, because an identical string
+  // written twice is still two announcements.
+  //
+  // THE LAGGING ROW IS ITS OWN GROUP'S, as the backend serves it. A subway row is dated by
+  // its feed group's header, so one row cannot fall behind while its group's other rows
+  // stay current. Times Sq gets an N train from the NQRW group beside the 1-7+S group's 1
+  // and 2, from the start; when NQRW falls behind, its row, its block and the envelope's
+  // content clock (the oldest contributor's) all carry the same old stamp.
+  //
+  // 570 S BEHIND, NOT 600, SO THE WORDS MOVE INSIDE THE WINDOW. The row is first spoken
+  // at the 45 s refresh reading "as of 10m ago" (615 s) and reads "as of 11m ago" from
+  // 630 s, the 60 s refresh, so the final window holds a change of words with no change of
+  // kind. It ends before 85 s, where the stock rows cross 90 s and change the kinds.
   const ctx = await installMocks(page);
   let lagging = false;
   ctx.overrides.subwayArrivals = (route, fixtures) => {
     const body = fixtures.subwayArrivals();
-    // ONE contributor falls behind: the 2 train's group serves a ten minute old
-    // prediction while the 1 train's stays current. The poll succeeds throughout.
-    if (lagging) body.directions.Northbound[1].observed_at = body.served_at - 600;
+    const nqrwAt = body.served_at - (lagging ? 570 : 5);
+    body.directions.Northbound.push({
+      route_id: "N",
+      trip_id: "sub-n1",
+      arrival: body.served_at + 240,
+      observed_at: nqrwAt,
+      provenance: "reported",
+    });
+    body.systems.NQRW = { ...body.systems["1-7+S"], routes: ["N"], feed_timestamp: nqrwAt };
+    body.feed_timestamp = Math.min(body.feed_timestamp, nqrwAt);
     return json(route, body);
   };
   await open(page, { install: false });
   await selectStation(page, "times");
   await expect(page.locator("#stations-announce")).toContainText("Times Sq");
+  const rows = page.locator("#stations-detail ul.station-arrivals li");
+  const nTrain = rows.filter({ hasText: /^N train/ });
+  await expect(nTrain).toHaveCount(1);
 
   await watchPanelAnnouncements(page);
   await page.clock.runFor(31_000);
   expect(await panelSpeech(page), "quiet while nothing changed").toEqual([]);
 
-  // The next background refresh brings the lagging row.
+  // The next background refresh brings the lagging group.
   lagging = true;
   await page.clock.runFor(16_000);
-  const rows = page.locator("#stations-detail ul.station-arrivals li");
-  await expect(rows.nth(1)).toContainText(/2 train .*, as of \d+m ago$/);
-  await expect(rows.nth(0)).not.toContainText("as of");
+  await expect(nTrain).toContainText(/, as of 10m ago$/);
+  for (const route of ["1", "2"]) {
+    await expect(rows.filter({ hasText: new RegExp(`^${route} train`) }).first()).not.toContainText("as of");
+  }
+  await expect
+    .poll(() => panelSpeech(page), { message: "the qualifier appearing is spoken" })
+    .toHaveLength(1);
   const speech = await panelSpeech(page);
-  expect(speech, "exactly one write").toHaveLength(1);
-  expect(speech[0]).toMatch(/2 train in \d+ minutes, 8:05 AM arrival, as of \d+m ago/);
+  expect(speech[0]).toMatch(/N train in \d+ minutes?, 8:04 AM arrival, as of 10m ago/);
   // Only the lagging row carries the words when they are spoken, too.
-  expect(speech[0]).not.toMatch(/1 train [^.]*as of/);
+  expect(speech[0]).not.toMatch(/[12] train [^.]*as of/);
 
   // Thirty more seconds: thirty ticks and two refreshes over the same lagging row, its
-  // age counting on. Not one more write.
+  // words moving from 10m to 11m. Not one more write.
   await page.clock.runFor(31_000);
+  await expect(nTrain).toContainText(/, as of 11m ago$/);
   expect(await panelSpeech(page), "its age counting up is not news").toHaveLength(1);
 });
 
-test("A1v4. a qualifier that appears because time passed is spoken once, at the next refresh, never by a tick (6.2)", async ({
+test("A1v4. a qualifier that appears because time passed is spoken exactly once, and no tick speaks it (6.2)", async ({
   page,
 }) => {
   // The other road to a qualifier: nothing about the payload changes, the rows simply
-  // cross the threshold while the board is open. The stock rows were observed 5s
-  // before they were served, so they cross 90s at 85s in. The TICK that first draws
-  // "as of 90s ago" must not speak (the tick guard is absolute), and the refresh after
-  // it must, once; everything after that is the age counting up.
+  // cross the threshold while the board is open. The stock rows were observed 5 s before
+  // they were served, so they cross 90 s about 85 s in, on a TICK, and the tick guard is
+  // absolute: only a refresh after it may speak.
+  //
+  // ASSERTED AS A COUNT OVER THE WHOLE WALK, not as which render spoke, and that is a
+  // correction. An earlier version pinned the tick that first drew "as of 91s ago" and
+  // the refresh that spoke "as of 95s ago", and it flaked under a loaded parallel run:
+  // background refresh responses land at whatever fake instant the page clock has
+  // reached by then, so the exact second and the exact render are the harness's timing
+  // rather than the rule. The rule is the count. Two minutes cover the crossing, several
+  // refreshes and a hundred-odd ticks while the words move from seconds ("as of 95s
+  // ago") to minutes ("as of 2m ago"): a guard that compared words would speak again, a
+  // tick allowed to speak would speak dozens of times, and either fails this.
   test.setTimeout(90_000);
   await open(page);
   await selectStation(page, "times");
   await expect(page.locator("#stations-announce")).toContainText("Times Sq");
   await watchPanelAnnouncements(page);
 
-  await page.clock.runFor(86_000);
+  await page.clock.runFor(60_000);
+  expect(await panelSpeech(page), "quiet while every row is current").toEqual([]);
+
+  await page.clock.runFor(62_000);
   const first = page.locator("#stations-detail ul.station-arrivals li").first();
-  await expect(first).toContainText("as of 91s ago");
-  expect(await panelSpeech(page), "the tick that drew it said nothing").toEqual([]);
-
-  await page.clock.runFor(5_000); // the 90s refresh
+  await expect(first).toContainText(/, as of 2m ago$/);
+  await expect
+    .poll(() => panelSpeech(page), { message: "the qualifier appearing is spoken" })
+    .toHaveLength(1);
   const speech = await panelSpeech(page);
-  expect(speech, "spoken once, by the refresh").toHaveLength(1);
-  expect(speech[0]).toContain("as of 95s ago");
+  expect(speech[0]).toContain("Times Sq-42 St, Subway");
+  // Spoken when it appeared, so in the seconds tier or at the minute it rolled into.
+  expect(speech[0]).toMatch(/as of \d+(s|m) ago/);
 
-  await page.clock.runFor(31_000);
-  expect(await panelSpeech(page), "and never again while it only counts up").toHaveLength(1);
+  // And a further refresh and fifteen ticks over the same qualifier say nothing more.
+  await page.clock.runFor(16_000);
+  expect(await panelSpeech(page), "its age counting up is not news").toHaveLength(1);
+});
+
+test("A1v5. a qualifier that appears while every refresh FAILS is spoken once, and the failure is not (6.2)", async ({
+  page,
+}) => {
+  // A board's rows keep aging on the client clock between refreshes, which is what keeps
+  // it honest when its background refresh fails: the qualifier appears on screen once the
+  // last-known rows cross 90 s. But a failed refresh used to render nothing, only ticks
+  // repainted, and a tick may not speak, so a listening rider never heard that the times
+  // they were hearing had gone stale, and never heard the board clear either. A failed
+  // background refresh now repaints once, as a non-tick render, and the announcement
+  // guard decides: the crossing is spoken once, and the failure itself never.
+  test.setTimeout(90_000);
+  const ctx = await installMocks(page);
+  let failing = false;
+  ctx.overrides.subwayArrivals = (route, fixtures) =>
+    failing
+      ? json(route, { detail: "Arrivals cache is warming up; try again in a few seconds." }, 503)
+      : json(route, fixtures.subwayArrivals());
+  await open(page, { install: false });
+  await selectStation(page, "times");
+  await expect(page.locator("#stations-announce")).toContainText("Times Sq");
+  await watchPanelAnnouncements(page);
+
+  // Every refresh from here on fails. A minute of it over rows that are still current:
+  // each failure repaints, the guard finds nothing new, and nothing is said.
+  failing = true;
+  await page.clock.runFor(60_000);
+  expect(await panelSpeech(page), "a failed refresh over current rows says nothing").toEqual([]);
+
+  // The rows cross 90 s about 85 s in, on a tick; the next failed refresh speaks it.
+  await page.clock.runFor(32_000);
+  const rows = page.locator("#stations-detail ul.station-arrivals li");
+  await expect(rows.first()).toContainText(/, as of \d+(s|m) ago$/);
+  await expect
+    .poll(() => panelSpeech(page), { message: "the qualifier appearing is spoken" })
+    .toHaveLength(1);
+  const speech = await panelSpeech(page);
+  expect(speech[0]).toContain("Times Sq-42 St, Subway");
+  expect(speech[0]).toMatch(/as of \d+(s|m) ago/);
+  // Said as the board's age, never as the failure: the warming line is not the news.
+  expect(speech[0]).not.toContain("warming");
+
+  // The failures go on and the words move from seconds to minutes; nothing more is said,
+  // and the last-known rows are still there, never blanked.
+  await page.clock.runFor(46_000);
+  expect(await panelSpeech(page), "its age counting up is not news").toHaveLength(1);
+  await expect(rows).toHaveCount(3);
+  await expect(page.locator("#stations-detail")).not.toContainText("warming");
 });
 
 test("A1w2. an alert CLEARING for the selected station is announced too (F11)", async ({ page }) => {

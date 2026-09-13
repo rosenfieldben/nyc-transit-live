@@ -1175,15 +1175,18 @@ async function openStationArrivals({ refresh = false } = {}) {
   // it. It used to be that the arrivals endpoints carried no served_at (only the five
   // vehicle feeds did, R1), so there was nothing to calibrate from and calibrating off
   // their fetched_at was the audit poison that PR removed. The freshness contract's
-  // 6.1 gave all five arrivals envelopes a served_at, so the material is now here;
-  // nothing reads it yet because that step is deliberately inert. The 15s vehicle-feed
-  // poll keeps minClockOffset fresh meanwhile. BOUNDED BOOT RACE: a client whose wall
-  // clock is materially wrong that opens a station popup in the sub-second window
-  // before the first vehicle poll resolves sees an uncalibrated countdown (and
-  // possibly a false age line); it self-corrects on the very next 1s tick once a poll
-  // lands. The complete fix is no longer blocked on a missing field: it is calibrating
-  // off the arrivals served_at, or gating the countdown on a settled baseline, and it
-  // stays deferred to R3's cold-start work rather than riding an inert step.
+  // 6.1 gave all five arrivals envelopes a served_at, and since 6.2 every board READS
+  // it, as the anchor each row's age is measured from (boardFreshness, servedAge). It
+  // still does not calibrate minClockOffset: the 15s vehicle-feed poll keeps that fresh.
+  // BOUNDED BOOT RACE: a client whose wall clock is materially wrong that opens a
+  // station popup in the sub-second window before the first vehicle poll resolves
+  // sees an uncalibrated countdown, and since 6.2 an uncalibrated "as of" on every row
+  // (spoken on the panel, and spoken again when calibration lands and the qualifiers
+  // clear); it self-corrects on the very next 1s tick once a poll lands. The complete
+  // fix is calibrating off the arrivals served_at, or gating the countdown on a
+  // settled baseline, and it stays deferred to R3's cold-start work: minClockOffset is
+  // a global the countdowns and the status line share, and changing what feeds it is
+  // no part of the boards' age rule.
   if (openStation === open) openStation.body = body;
   renderStation();
   if (!marker.isPopupOpen()) return;

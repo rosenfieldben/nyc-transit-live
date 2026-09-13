@@ -1633,3 +1633,85 @@ def test_exactly_half_the_subway_groups_down_is_not_a_majority(harness):
         body = app.healthz()
         assert body["status"] == "pass"
         assert "subway-groups-down" not in body["degraded"]
+
+
+def test_one_subway_group_down_reaches_healthz_as_qualified_observations(contract_app):
+    """ONE line group erroring, which no other code has anything to say about.
+
+    One of eight is far below subway-groups-down's majority, and the subway endpoint's
+    content header is a min() over the groups that DECODED, so feed-content-stale stays
+    quiet too. Before contract 6.2 this state reached no code at all: the failed group's
+    rows were carried forward as retained and then dropped past the cap while /healthz
+    reported nothing. The rule and its measured threshold are at
+    models.HEALTH_OBSERVATIONS_QUALIFIED. Hermetic counterparts:
+    backend/tests/test_health_observations.py (every clause) and test_api.py's
+    test_healthz_qualified_observations_are_not_stale_content (a retained group through
+    the real refresh path).
+
+    BOTH HALVES OF THE CODE ARE WITNESSED, in the order a real outage walks them: the
+    group's rows retained (every one stamped `retained`, so every one qualified), then
+    dropped once the harness's compressed FEED_RETENTION_MAX_S has passed, which is the
+    fallback ladder's last rung. Each phase is observed on /api/subways in the same
+    predicate that judges the probe body, so neither can be satisfied by the other.
+
+    WHAT THIS TIER CANNOT SHOW is a rider's board changing. Every simulated group serves
+    the same capture and combine_group_arrivals dedups trips across groups, so the
+    survivors carry the failed group's trips (UpstreamSim._build_state says so). The
+    rule reads the PER-GROUP index, which still attributes each row to its group, and
+    that index is what this scenario witnesses.
+    """
+    qualified = "observations-qualified"
+    app = contract_app
+    app.await_status(
+        lambda s: (s.get("subway_feeds") or {}).get("ok") == len(SUBWAY_GROUPS),
+        "every subway group to decode once",
+    )
+    # The healthy baseline, and it is what gives the rest meaning: a probe that always
+    # reported this code would satisfy every assertion below.
+    baseline = app.await_healthz(lambda h: h.get("status") == "pass", "a healthy readiness probe")
+    assert baseline["degraded"] == [], baseline
+
+    app.sim.set_mode("subway:ACE", "error")
+
+    def ace() -> dict:
+        return app.get("/api/subways")["systems"]["ACE"]
+
+    def retained_and_reported(h: dict) -> bool:
+        return qualified in h.get("degraded", []) and ace()["retained_since"] is not None
+
+    retained = app.await_healthz(
+        retained_and_reported, "ACE's carried-forward rows to reach the readiness probe"
+    )
+    # Read again at once: the window is FEED_RETENTION_MAX_S long, so the group is
+    # still inside it, and its start is what the closing check measures from.
+    retained_at = ace()["retained_since"]
+    assert retained_at is not None
+    assert retained["status"] == "pass", "qualified observations must never refuse a build"
+    assert "reasons" not in retained
+    assert retained["degraded"] == [qualified], (
+        f"one retained group must reach this code and no other (not feed-content-stale, "
+        f"not subway-groups-down), got {retained}"
+    )
+
+    def dropped_and_reported(h: dict) -> bool:
+        block = ace()
+        return (
+            qualified in h.get("degraded", [])
+            and block["ok"] is False
+            and block["retained_since"] is None
+        )
+
+    dropped = app.await_healthz(
+        dropped_and_reported,
+        "ACE's retention cap to fire, dropping its rows while the probe keeps reporting them",
+        deadline_s=90,
+    )
+    held_for = time.time() - retained_at
+    assert held_for >= float(CONTRACT_TIMING["FEED_RETENTION_MAX_S"]) * 0.5, (
+        f"the retention window collapsed: rows were carried for only {held_for:.1f}s "
+        f"against a {CONTRACT_TIMING['FEED_RETENTION_MAX_S']}s cap"
+    )
+    assert dropped["status"] == "pass"
+    assert "reasons" not in dropped
+    assert dropped["degraded"] == [qualified], dropped
+    assert ace()["routes"] == [], "the cap emptied the group, so it covers no markers now"

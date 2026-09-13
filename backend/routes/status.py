@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
+from typing import NamedTuple
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
@@ -12,12 +14,14 @@ import njt_auth
 import static_data
 import static_shared
 from cache import FEED_STALE_AFTER_S, _feed_age
+from feeds import RAILROAD_FRESHNESS_SYSTEMS, iter_rows
 from models import (
     HEALTH_BUS_INDEX_FAILED,
     HEALTH_FEED_CONTENT_STALE,
     HEALTH_GATING_CODES,
     HEALTH_NJT_MINT_QUOTA,
     HEALTH_NO_FEED_FRESH,
+    HEALTH_OBSERVATIONS_QUALIFIED,
     HEALTH_SUBWAY_GROUPS_DOWN,
     HEALTH_SUBWAY_STATIC_FAILED,
     AlertFeed,
@@ -244,6 +248,7 @@ def _health_codes(
     subway_feed_health: dict | None,
     njt_mint_quota: bool,
     now: float,
+    observations_qualified: bool = False,
 ) -> list[str]:
     """Every degraded classification true of this instance right now, as codes.
 
@@ -334,7 +339,167 @@ def _health_codes(
     # one the warmup's retry schedule makes.
     if njt_mint_quota:
         codes.append(HEALTH_NJT_MINT_QUOTA)
+
+    # CONTRACT 6.2, AND ALSO NOT A REASON TO 503. The only code read off what riders
+    # are SERVED rather than off a feed, a warmup or a budget: some system is serving
+    # nothing current. The rule and its measured threshold live at
+    # models.HEALTH_OBSERVATIONS_QUALIFIED; the handler computes it off the arrivals
+    # indexes with _systems_serving_nothing_current below and hands in the answer, so
+    # this function stays pure over its inputs like every code above.
+    #
+    # LAST, so every ordered list this probe published before it keeps its order. And
+    # DEFAULTED, so a caller that predates it keeps working: the F10 reproduction
+    # (docs/reviews/audit-2026-09-05/f10_deadline_health_disagreement.py) calls this
+    # with exactly the six keywords above. The handler always passes it.
+    if observations_qualified:
+        codes.append(HEALTH_OBSERVATIONS_QUALIFIED)
     return codes
+
+
+class _ServedSystem(NamedTuple):
+    """One system's served arrival rows, as _systems_serving_nothing_current reads them.
+
+    `rows` is whatever nesting that system's index uses (a flat list per stop for NJ
+    Transit, {stop: {bucket: [row]}} for the rest), walked with feeds.iter_rows so this
+    rule and the retention stamp cannot disagree about what a row is. None, as opposed
+    to an empty container, means the system has NO ENTRY in its index at all, which is
+    the fact _was_dropped turns on. `block` is the system's per-system freshness block,
+    and only the systems whose data is RETAINED pass one: the subway groups and the
+    railroads (see _served_arrival_systems).
+    """
+
+    rows: object
+    age_gated: bool
+    block: Mapping | None = None
+
+
+def _row_is_qualified(row: Mapping, age_gated: bool, now: float) -> bool:
+    """Whether a rider has to be told something about this row before trusting it.
+
+    The design's 3.2 rule applied to one served row, in three clauses: its provenance
+    is not "reported" (retained, unknown, absent, anything else); or its system dates
+    its rows and this one is undated; or it is FEED_STALE_AFTER_S or more old. The `>=`
+    matches the frontend, which flags at age >= FEED_STALE_AFTER_S, and the mirror of
+    the `<` that makes a feed fresh in _health_codes.
+    """
+    if row.get("provenance") != "reported":
+        return True
+    observed_at = row.get("observed_at")
+    if observed_at is None:
+        return age_gated
+    return now - observed_at >= FEED_STALE_AFTER_S
+
+
+def _was_dropped(system: _ServedSystem) -> bool:
+    """The retention cap fired on this system: failing, decoded once, and gone.
+
+    THE INDEX SAYS THE CAP FIRED, NOT THE BLOCK. A block reading ok False with
+    retained_since None is also what a TOTAL outage leaves behind: that path returns
+    before any merge runs, _mark_all_systems_failed flips every ok and leaves
+    retained_since as it was, and the index keeps every system's last entry, an empty
+    one included. Only feeds.merge_system_generations takes a system out of its index
+    altogether, and it does so in two cases: past the cap, which leaves retained_since
+    None, and inside the window with nothing to carry, which leaves the retention clock
+    running and is ruled out by it. fetched_at then separates a system the cap emptied
+    from one that has never decoded, which dropped nothing because it had nothing.
+
+    Measured, because the first version read the block alone: the F10 reproduction
+    (docs/reviews/audit-2026-09-05/f10_deadline_health_disagreement.py) drives a total
+    subway outage over eight groups holding empty arrival entries, and that version
+    reported all eight as dropped when nothing had been taken from any rider.
+    test_a_total_outage_leaves_an_empty_entry_undropped pins both sides.
+    """
+    block = system.block
+    if block is None or system.rows is not None:
+        return False
+    return (
+        block.get("ok") is False
+        and block.get("fetched_at") is not None
+        and block.get("retained_since") is None
+    )
+
+
+def _systems_serving_nothing_current(systems: Mapping[str, _ServedSystem], now: float) -> list[str]:
+    """The systems serving riders nothing current, sorted: the observations-qualified rule.
+
+    A system counts when it serves at least one row and EVERY one of them is qualified
+    (_row_is_qualified), or when it serves none because the retention cap dropped them
+    (_was_dropped). One current row keeps a whole system quiet, and that threshold is
+    measured rather than chosen: models.HEALTH_OBSERVATIONS_QUALIFIED has the LIRR
+    numbers that rule out a version where any one row would do.
+
+    A system serving no rows that was NOT dropped is quiet: a group with nothing running
+    right now, one that has never decoded, one failing inside its retention window with
+    nothing to carry, and one a total outage caught holding an empty entry all serve
+    nothing without anything having been taken away. The window case becomes the
+    dropped rung once the cap passes.
+
+    Pure and clock-injected, like _health_codes; the healthz handler builds `systems`
+    off app.state with _served_arrival_systems.
+    """
+    serving_nothing = []
+    for name in sorted(systems):
+        system = systems[name]
+        rows = list(iter_rows(system.rows))
+        if rows:
+            if all(_row_is_qualified(row, system.age_gated, now) for row in rows):
+                serving_nothing.append(name)
+        elif _was_dropped(system):
+            serving_nothing.append(name)
+    return serving_nothing
+
+
+def _served_arrival_systems(state: object) -> dict[str, _ServedSystem]:
+    """Every arrivals index this instance serves, one entry per system, off app.state.
+
+    Named by kind so a subway group and a railroad can never collide: "subway:ACE",
+    "railroad:LIRR", "path", "ferry", "njt". ARRIVAL ROWS ONLY: vehicle positions get
+    their own age gate in contract 6.3, and alerts are governed by retention rather than
+    by age (design 3.3), so neither is read here.
+
+    THE SUBWAY IS READ PER GROUP, from subway_arrivals_by_system, and not from the
+    combined index a board is built from, because the combined index no longer says
+    which group a row came from: a subway row names a route, not a feed group, and
+    combine_group_arrivals has already deduplicated and trimmed across groups.
+
+    EVERY SYSTEM IS AGE-GATED BUT A RAILROAD OUTSIDE feeds.RAILROAD_FRESHNESS_SYSTEMS,
+    and the set is read rather than restated. It is the one place the railroad whose
+    header is not a usable clock is named (design 4.2), and that railroad's rows carry
+    no observed_at at all, so gating them would qualify a whole railroad forever.
+
+    ONLY THE SUBWAY GROUPS AND THE RAILROADS PASS A BLOCK, because only they retain,
+    and only their indexes are keyed by system, which is what lets an ABSENT entry mean
+    the merge removed it (_was_dropped). NJ Transit's envelope carries a block too, but
+    a failed NJ Transit poll keeps its last-known rows and never retains, so ok False
+    with retained_since None there is one failed poll rather than a cap that fired, and
+    its index is one flat map with no per-system entry that could go missing.
+
+    Typed defensively, because this reads app.state, whose indexes are None or absent
+    before the first poll.
+    """
+    cache = getattr(state, "feed_cache", None) or {}
+    systems: dict[str, _ServedSystem] = {}
+    subway_rows = getattr(state, "subway_arrivals_by_system", None) or {}
+    subway_blocks = (cache.get("subways") or {}).get("systems") or {}
+    for group in set(subway_rows) | set(subway_blocks):
+        systems[f"subway:{group}"] = _ServedSystem(
+            subway_rows.get(group), True, subway_blocks.get(group)
+        )
+    railroad_rows = getattr(state, "railroad_arrivals", None) or {}
+    railroad_blocks = (cache.get("railroads") or {}).get("systems") or {}
+    for system in set(railroad_rows) | set(railroad_blocks):
+        systems[f"railroad:{system}"] = _ServedSystem(
+            railroad_rows.get(system),
+            system in RAILROAD_FRESHNESS_SYSTEMS,
+            railroad_blocks.get(system),
+        )
+    for name, index in (
+        ("path", "path_arrivals"),
+        ("ferry", "ferry_arrivals"),
+        ("njt", "njt_arrivals"),
+    ):
+        systems[name] = _ServedSystem(getattr(state, index, None), True)
+    return systems
 
 
 def _most_subway_groups_down(health: dict | None) -> bool:
@@ -389,7 +554,14 @@ async def healthz(request: Request) -> JSONResponse:
     spent the NJ Transit account's ten mints for the Eastern day, so that layer is
     dark until midnight without anything being broken. It is published here because
     every other surface reports it exactly as it reports a real NJ Transit outage,
-    and telling the two apart is otherwise a matter of finding the right log line."""
+    and telling the two apart is otherwise a matter of finding the right log line.
+
+    ONE OF THE CODES IS READ OFF WHAT RIDERS ARE SERVED. `observations-qualified` is
+    computed from the arrivals indexes themselves (_served_arrival_systems), not from a
+    feed header or a warmup state, and says some system is serving riders nothing
+    current. models.HEALTH_OBSERVATIONS_QUALIFIED carries the rule, why
+    feed-content-stale is not the same code, and why the threshold is a whole system
+    rather than a single row."""
     app = request.app
     now = time.time()
     codes = _health_codes(
@@ -399,6 +571,9 @@ async def healthz(request: Request) -> JSONResponse:
         subway_feed_health=getattr(app.state, "subway_feed_health", None),
         njt_mint_quota=njt_auth.TOKEN_CACHE.mint_quota_refused,
         now=now,
+        observations_qualified=bool(
+            _systems_serving_nothing_current(_served_arrival_systems(app.state), now)
+        ),
     )
     reasons = [_HEALTH_REASONS[code] for code in codes if code in HEALTH_GATING_CODES]
     # The service-alerts feed is deliberately NOT a health input. Alerts are a

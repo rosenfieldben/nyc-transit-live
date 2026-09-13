@@ -966,6 +966,49 @@ HEALTH_BUS_INDEX_FAILED = "bus-route-index-failed"
 HEALTH_SUBWAY_STATIC_FAILED = "subway-static-failed"
 HEALTH_FEED_CONTENT_STALE = "feed-content-stale"
 HEALTH_SUBWAY_GROUPS_DOWN = "subway-groups-down"
+# WHAT RIDERS ARE SERVED, NOT WHAT A FEED SENT (contract 6.2; section 4.5 of
+# docs/design/freshness-contract.md). Fires when some system is serving riders nothing
+# current: every arrival row it serves is QUALIFIED, meaning a rider has to be told
+# something about it before trusting its countdown, or the retention cap has DROPPED
+# its rows and it serves nothing at all. A row is qualified when its provenance is not
+# "reported", when its observed_at is null on a system whose rows are age-gated, or
+# when it is FEED_STALE_AFTER_S (90, the design's OBS_FRESH_S) or more old. The rule
+# is routes/status.py's _systems_serving_nothing_current; this is why it has its shape.
+#
+# FEED-CONTENT-STALE IS NOT THIS, and the two are not one condition seen twice. That
+# code is about a FEED HEADER lagging, per ENDPOINT, measured at the poll; this one is
+# about the ROWS a rider is shown, per system, measured now. They occur independently,
+# which is the design's test of whether a code deserves to exist: a subway group that
+# fails and is carried forward serves only retained rows while the endpoint's header,
+# a min() over the groups that decoded, stays fresh, and the bus feed can lag with no
+# arrival row anywhere to qualify. Both directions are pinned through the probe by
+# test_healthz_qualified_observations_are_not_stale_content and its sibling in
+# backend/tests/test_api.py.
+#
+# NEVER GATING, for the reason set out at HEALTH_GATING_CODES: old upstream data is a
+# property of the world rather than of the build, so refusing a promotion over it would
+# block a good deploy for something no deploy can fix.
+#
+# THE WHOLE SYSTEM, NOT ANY ROW, and that threshold was measured rather than chosen. On
+# the committed healthy LIRR capture (backend/tests/fixtures/
+# railroad_lirr_arrivals_expected.json, aged against its own `now`), 526 of the 765
+# served arrival rows are older than 90 seconds, because LIRR dates each prediction by
+# its trip_update.timestamp and most of those are old on an ordinary evening. An
+# any-row rule would therefore be on permanently, and the contract monitor fails its
+# run on ANY recognized code, so a code that is always on is a monitor nobody reads.
+# The whole-system rule is quiet on that capture (36 of its 97 trips carry a
+# prediction under 90 seconds old) and fires in every case the code exists for: a
+# subway group serving old content while polled fresh (the F03 world), a
+# carried-forward (retained) system, a total outage whose rows age past 90 seconds,
+# PATH's bridge serving fresh write times over old trip clocks, and a dropped system.
+# The last is the fallback ladder's final rung (design 3.4, step 5: nothing is left to
+# show), which is why one code covers both halves.
+# tests/test_health_observations.py re-derives all three numbers from the capture.
+#
+# THE KNOWN FALSE POSITIVE, stated so nobody meets it as a surprise: a sparsely served
+# LIRR (a late night with few trips running) can have every trip's prediction older
+# than 90 seconds, and then this fires on a railroad behaving normally for that hour.
+HEALTH_OBSERVATIONS_QUALIFIED = "observations-qualified"
 # THE ONE CODE THAT IS NOT ABOUT AN UPSTREAM BEING UNWELL. NJ Transit allows ten
 # getToken calls per account per Eastern day (observed 2026-09-02; the budget and
 # what spends it are set out at njt_auth.DAILY_MINT_LIMIT) and refuses the
@@ -983,6 +1026,7 @@ HEALTH_DEGRADED_CODES = (
     HEALTH_FEED_CONTENT_STALE,
     HEALTH_SUBWAY_GROUPS_DOWN,
     HEALTH_NJT_MINT_QUOTA,
+    HEALTH_OBSERVATIONS_QUALIFIED,
 )
 
 # The subset that makes the probe answer 503. READINESS AND SICKNESS ARE TWO

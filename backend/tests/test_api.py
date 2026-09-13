@@ -24,6 +24,7 @@ import njt_auth
 import pollers
 import warmups
 from conftest import configure_njt
+from routes import status as status_routes
 from tests import negatives
 
 pytestmark = pytest.mark.anyio
@@ -823,11 +824,31 @@ async def test_railroad_arrivals_empty_when_nothing_upcoming(client, railroad_st
 # ---------------- /healthz readiness probe ----------------
 
 
+# THE ARRIVALS INDEXES EVERY /healthz TEST STARTS FROM, which is always empty. The
+# observations-qualified rule reads all five, and the `cache` fixture resets the feed
+# cache but not these, so fixtures earlier in the run (railroad_state, path_rt_state,
+# the C2 refreshes) leave rows behind, some of them without the contract pair, which
+# the rule counts as qualified. Reset HERE rather than in `cache`, because a test that
+# lists its own seeding fixture ahead of `client` sets that fixture up first and a
+# reset in `cache` would then wipe what it seeded; healthz_env is requested only by
+# probe tests, and none of them seeds an index through another fixture. monkeypatch
+# restores the previous values afterwards, so no other test sees a difference.
+_ARRIVALS_INDEXES = (
+    "subway_arrivals_by_system",
+    "railroad_arrivals",
+    "path_arrivals",
+    "ferry_arrivals",
+    "njt_arrivals",
+)
+
+
 @pytest.fixture
 def healthz_env(cache, monkeypatch):
     # Bus index "ready" by default so it doesn't add a degraded reason; tests
     # that care about the index override it.
     monkeypatch.setattr(bus_static, "_status", "ready")
+    for index in _ARRIVALS_INDEXES:
+        monkeypatch.setattr(app_module.app.state, index, {}, raising=False)
     return cache
 
 
@@ -1069,6 +1090,152 @@ async def test_healthz_unreadable_subway_health_is_not_an_outage(
     res = await client.get("/healthz")
     assert res.status_code == 200
     assert models.HEALTH_SUBWAY_GROUPS_DOWN not in res.json()["degraded"]
+
+
+# ---- contract 6.2: what riders are served, as a code of its own ----
+
+
+def _arrival(now, *, age=5.0, provenance="reported", route="A", trip="a-1"):
+    """One served subway arrival row carrying the contract pair, `age` seconds old."""
+    return {
+        "route_id": route,
+        "trip_id": trip,
+        "arrival": now + 300.0,
+        "observed_at": now - age,
+        "provenance": provenance,
+    }
+
+
+async def test_healthz_publishes_qualified_observations_without_gating_on_them(client, healthz_env):
+    """NEVER 503. A group serving riders only carried-forward rows is a fact about an
+    upstream, and the status code decides only whether this build may be promoted
+    (models.HEALTH_GATING_CODES), so the code reaches `degraded` on a 200 and never
+    `reasons`. The bus feed is fresh so no-feed-fresh cannot fire and blur the answer.
+    Moving the code into HEALTH_GATING_CODES fails this test, which is its job."""
+    _fresh(healthz_env["buses"])
+    now = time.time()
+    app_module.app.state.subway_arrivals_by_system = {
+        "ACE": {"A27": {"Northbound": [_arrival(now, provenance="retained")]}}
+    }
+    res = await client.get("/healthz")
+    assert res.status_code == 200, "qualified observations must never refuse a deploy"
+    assert res.json()["status"] == "pass"
+    assert res.json()["degraded"] == [models.HEALTH_OBSERVATIONS_QUALIFIED]
+    assert "reasons" not in res.json(), "the non-gating code must not reach reasons"
+
+
+async def test_healthz_qualified_observations_are_not_stale_content(
+    client, healthz_env, monkeypatch
+):
+    """INDEPENDENCE, ONE WAY: the new code without feed-content-stale, through the real
+    refresh path.
+
+    ACE decodes once and then fails, so the production merge carries its rows forward
+    stamped `retained` while NQRW keeps decoding. The endpoint's content header is a
+    min() over the groups that DECODED, so it stays four seconds old and
+    feed-content-stale has nothing to say, and one group of eight is far below
+    subway-groups-down's majority. The only statement about ACE's riders is the new
+    code, which is the case for it being a code of its own."""
+    clock = {"now": 1_000_000.0}
+    monkeypatch.setattr(app_module.time, "time", lambda: clock["now"])
+    monkeypatch.setattr(
+        app_module.app.state,
+        "subway_stops",
+        {"127N": {"name": "Times Sq", "lat": 40.75, "lon": -73.98}},
+        raising=False,
+    )
+
+    def decoding(groups, failed):
+        async def fetch(stops_arg, client_arg):
+            now = clock["now"]
+            trains = {group: [_train(group, f"{group}-1")] for group in groups}
+            arrivals = {
+                group: {
+                    "127": {
+                        "Northbound": [_arrival(now, age=4.0, route=group[0], trip=f"{group}-1")]
+                    }
+                }
+                for group in groups
+            }
+            flat = [train for group_trains in trains.values() for train in group_trains]
+            headers = dict.fromkeys(groups, now - 4.0)
+            combined = feeds.combine_group_arrivals(arrivals)
+            return flat, combined, now - 4.0, failed, trains, arrivals, headers
+
+        return fetch
+
+    monkeypatch.setattr(app_module, "fetch_subway_trains", decoding(["ACE", "NQRW"], []))
+    await app_module._refresh_subways(app_module.app, client=None)
+    # Non-vacuity: the rows this fetch builds are current on their own, so whatever
+    # fires below is the retention and not the fixture.
+    assert (await client.get("/healthz")).json()["degraded"] == []
+
+    clock["now"] += 20.0
+    monkeypatch.setattr(app_module, "fetch_subway_trains", decoding(["NQRW"], ["ACE"]))
+    await app_module._refresh_subways(app_module.app, client=None)
+    assert healthz_env["subways"]["systems"]["ACE"]["retained_since"] == clock["now"]
+    assert clock["now"] - healthz_env["subways"]["feed_timestamp"] == 4.0
+
+    res = await client.get("/healthz")
+    assert res.status_code == 200 and res.json()["status"] == "pass"
+    assert res.json()["degraded"] == [models.HEALTH_OBSERVATIONS_QUALIFIED]
+
+
+async def test_healthz_stale_content_is_not_qualified_observations(client, healthz_env):
+    """INDEPENDENCE, THE OTHER WAY: feed-content-stale without the new code. The bus
+    header lags, and buses serve no arrival row at all, so nothing a rider is shown can
+    be qualified; a fresh subway feed keeps the probe ready."""
+    _fresh(healthz_env["subways"])
+    _stale(healthz_env["buses"])
+    res = await client.get("/healthz")
+    assert res.status_code == 200
+    assert res.json()["degraded"] == [models.HEALTH_FEED_CONTENT_STALE]
+
+
+async def test_healthz_reports_the_f03_world_as_qualified_observations(
+    client, healthz_env, monkeypatch
+):
+    """The acceptance world, read by the probe instead of by a board.
+
+    ACE serves the committed capture ten minutes behind the poll clock through the real
+    decoder and refresh path, and the other seven serve it five seconds behind. Every
+    row ACE's riders are shown is dated by its group header, so every one is qualified
+    and the rule names ACE alone. feed-content-stale fires TOO, and that does not
+    contradict the independence the two tests above pin: here the lagging header and
+    the qualified rows are one fact, seen once from the feed and once from the rider."""
+    now = 5_000_000.0
+    monkeypatch.setattr(app_module.time, "time", lambda: now)
+    stops = json.loads((_FIXTURES / "subway_1_7_s_stops.json").read_text())
+    monkeypatch.setattr(app_module.app.state, "subway_stops", stops, raising=False)
+    raw = (_FIXTURES / "subway_1_7_s.pb").read_bytes()
+    stale_bytes = _shift_capture(raw, now, _STALE_LAG_S)
+    fresh_bytes = _shift_capture(raw, now, 5.0)
+
+    async def fetch(stops_arg, client_arg):
+        trains, arrivals, headers = {}, {}, {}
+        for group in feeds.SUBWAY_FEED_URLS:
+            body = stale_bytes if group == "ACE" else fresh_bytes
+            trains[group], arrivals[group], headers[group] = feeds._decode_feed(
+                body, stops_arg, group, now
+            )
+        flat = [train for group_trains in trains.values() for train in group_trains]
+        combined = feeds.combine_group_arrivals(arrivals)
+        return flat, combined, min(headers.values()), [], trains, arrivals, headers
+
+    monkeypatch.setattr(app_module, "fetch_subway_trains", fetch)
+    await app_module._refresh_subways(app_module.app, client=None)
+    # The subway endpoint is content-stale now, so something else has to be fresh or
+    # no-feed-fresh would turn this into a question about readiness.
+    _fresh(healthz_env["buses"])
+
+    res = await client.get("/healthz")
+    assert res.status_code == 200 and res.json()["status"] == "pass"
+    assert res.json()["degraded"] == [
+        models.HEALTH_FEED_CONTENT_STALE,
+        models.HEALTH_OBSERVATIONS_QUALIFIED,
+    ]
+    systems = status_routes._served_arrival_systems(app_module.app.state)
+    assert status_routes._systems_serving_nothing_current(systems, now) == ["subway:ACE"]
 
 
 async def test_healthz_never_leaks_error_details(client, healthz_env):

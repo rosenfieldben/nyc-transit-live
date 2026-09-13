@@ -740,6 +740,14 @@ do is fail a promotion, and a promotion that fails is retried into a fresh proce
 that mints again and spends one more of the ten it is reporting. It clears itself
 on the next mint that succeeds.
 
+Another code reads what riders are shown rather than what a feed did.
+`observations-qualified` says some system is serving riders nothing current (every
+arrival row it serves carried forward, undated where its provider dates rows, or 90
+seconds old or more) or has had its rows dropped past the retention cap. It is not
+`feed-content-stale`, which is about one endpoint's feed header lagging, and the two
+occur independently. It never gates either: old upstream data is a property of the
+world, not of the build.
+
 **Deployment invariant: the first retry rungs must fit well inside the healthcheck
 window.** A failed static warmup retries on a backoff schedule
 (`STATIC_RETRY_SCHEDULE_S` in `backend/main.py`, currently 15s, 30s, 60s, then 300s
@@ -885,8 +893,9 @@ would all pass CI and only surface as a broken map in production.
 
 `backend/scripts/contract_monitor.py` closes that gap. On a schedule
 (`.github/workflows/contract-monitor.yml`, every 6 hours plus manual dispatch) it
-fetches every upstream source and the production `/api/status`, and decodes each
-with the **same** production functions the app runs (`feeds._decode_feed`,
+fetches every upstream source and the production deployment (`/api/status`,
+`/healthz`, `/api/njt-routes`, and one subway arrivals board), and decodes each
+upstream with the **same** production functions the app runs (`feeds._decode_feed`,
 `_decode_railroad_feed`, `_decode_path_feed`, `_decode_alerts`, the
 `path_static` / `ferry_static` / `railroad_static` / `static_data` parsers), so a
 pass means the real code paths still work against today's data. Each check reports
@@ -956,6 +965,21 @@ deployment with no bus API key serves `buses.age_s = null` forever by design, an
 failing on it would paint a healthy map red on every run. When **every** feed is
 null, though, nothing has ever polled, the cache never populated, and that is the
 broken startup, so it fails.
+
+The production section also reads one surface a rider sees: the subway arrivals
+board at Forest Hills-71 Av (`G08`, served by the ACE, BDFM and NQRW groups, with the
+E and F stopping there around the clock). `production:board-clock` requires the
+board's content clock and ages each contributing group as `served_at` minus that
+group's own `feed_timestamp`, on the same 10-minute edge as the upstream header
+check: every contributor past it is a `FAIL`, some is a `WARN`.
+`production:board-contributors` holds the board against the monitor's own upstream
+read of the eight subway headers: when one contributing group is really aged and
+another is current, the board must give them different clocks, and reporting the
+current one as aged (one clock folded across contributors) is a `FAIL`. A board that
+serves rows with no content clock is a `FAIL` on both lines, because every rider
+qualifier built on that clock would be unwatched. An empty board, or one that could
+not be fetched, is a `WARN`, since `production:status` already fails a deployment
+that is down.
 
 A degraded alert system stays a `WARN` while the backend is still carrying its
 alerts forward, and becomes a `FAIL` once that retention horizon has passed and

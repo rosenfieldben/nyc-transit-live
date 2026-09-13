@@ -976,6 +976,116 @@ function qualifierHtml(qualifier) {
   return qualifier.words ? ` <span class="arr-qualifier">${esc(qualifier.words)}</span>` : "";
 }
 
+// ---- 6.3: a vehicle's position, qualified by its own observation ----
+//
+// F01, the audit's finding: an LIRR vehicle's GPS fix is served with its own clock and
+// drawn as "live GPS" at full opacity however old that clock is, so a coordinate nearly
+// fifteen hours old reads as a live train. Section 3.4 of the contract orders what the
+// backend draws instead (reported, estimated, reported but qualified, placed, or
+// nothing), and the helpers below are what every vehicle surface reads to say which one
+// a rider is looking at. INERT AS COMMITTED: no surface calls them yet, because the
+// words, the per-observation dimming and the glide freeze land in the same commit as the
+// gate that makes them true (design 6.3), the pairing retention and its stale rendering
+// keep (backend/cache.py, FEED_RETENTION_ENABLED).
+
+// The backend's OBS_MAX_S (backend/cache.py): past it the ladder draws a vehicle only if
+// a prediction still places the train, and otherwise counts it. MIRRORED RATHER THAN
+// SERVED because the client's one use is stating it, in the suppression clause's "last
+// seen over 10m ago", and frontend/positions.test.js reads it out of cache.py so the two
+// cannot drift. Not overridable, like the constant it mirrors.
+const OBS_MAX_S = 600;
+
+// How old a vehicle's own observation is NOW, on the server's clock: servedAge over its
+// observed_at, so a marker is aged by the rule that ages a board row (anchored at
+// served_at, plus the client's elapsed time since, never negative). Null for a row with
+// no clock, which dims nothing on its own; positionQualifier says it in words instead.
+function observationAge(row, servedAt, now) {
+  return servedAge(row ? row.observed_at : null, servedAt, now);
+}
+
+// THE INSTANT A VEHICLE'S OWN OBSERVATION STOPS BEING PREDICTABLE FROM, or null for a row
+// with no clock: observed_at + FEED_STALE_AFTER_S (the design's OBS_FRESH_S), on the axis
+// systemStaleAts uses. It is the per-observation form of that function's deadline: a
+// marker may glide until the earlier of the two and no further, so a healthy system
+// cannot dead-reckon a train from a fix that is itself old.
+function observationStaleAt(row) {
+  const stamp = row ? row.observed_at : null;
+  if (typeof stamp !== "number" || !Number.isFinite(stamp)) return null;
+  return stamp + FEED_STALE_AFTER_S;
+}
+
+// THE WORDS ONE VEHICLE CARRIES ABOUT ITS POSITION, and the one helper every vehicle
+// surface renders them through, as arrivalQualifier is for a board row. Section 3.2's
+// vocabulary for a position, read from the SERVED provenance and clock, never from the
+// shape of the fields (isPlacedRailroad's stop_id test is what this replaces):
+//
+//   reported, fresh                    "live GPS", kind "": a surface that never said it
+//                                      adds nothing
+//   reported, older than OBS_FRESH_S   "live GPS, as of {age} ago" (OBS_FRESH_S is
+//                                      FEED_STALE_AFTER_S, one number, via staleAge)
+//   reported, no clock, age-gated      "live GPS, age unknown": this provider dates its
+//                                      positions and did not date this one
+//   reported, no clock, not gated      "live GPS" and nothing more: its system's status
+//                                      line says the rest (Metro-North)
+//   estimated                          "estimated from a prediction"
+//   placed                             "scheduled position (no GPS)"; compact form
+//                                      "scheduled (no GPS)"
+//   retained                           "showing last known, as of {age} ago"
+//   anything else                      "age unknown": the `unknown` provenance, a row with
+//                                      none (an older backend), or a value no position
+//                                      carries
+//
+// An estimated or placed row adds ", as of {age} ago" once its clock is aged, and ", age
+// unknown" when it has none on a gated system: clause (c) of 3.2's rule holds for every
+// provenance, and the reported row's form is the pattern. A retained row with no clock of
+// its own is as old as its system's last poll (board.pollAge), which is when we last had
+// it: the rule arrivalQualifier applies to a retained board row, so a retained
+// Metro-North marker, which never has a clock, reads the age its board reads. Only with
+// neither age does it say "showing last known" alone.
+//
+// board is { now, servedAt, system, gated, pollAge }: the skew-corrected clock, the
+// envelope's served_at, the row's system, whether that system's position row is
+// age-gated, and the age of that system's last poll (optional, and read only for a
+// retained row; boardFreshness computes the same number for a board). A board without
+// `gated` reads it off UNDATED_SYSTEMS by `system`, and an unknown system is gated, the
+// pessimistic default boardFreshness takes.
+//
+// Returns {kind, words, compact}, the kind one of "", "aged", "unknown", "estimated",
+// "placed" and "retained". As with arrivalQualifier, the kind is what the row IS and
+// holds still while its age counts on, so a live region that compares kinds hears a
+// train change state and never its clock tick. `compact` is the same answer in the
+// railroad popup's shorter form, and differs from `words` only for a placed row: that
+// popup has always said "scheduled (no GPS)", and the memo's word table (D9) keeps it.
+// Both forms are built here from the same pieces, so no surface composes its own
+// phrasing and the two cannot disagree about an age.
+function positionQualifier(row, board) {
+  const r = row || {};
+  const b = board || {};
+  const gated = typeof b.gated === "boolean" ? b.gated : !UNDATED_SYSTEMS.has(b.system);
+  const age = observationAge(r, b.servedAt, b.now);
+  const aged = staleAge(age) ? `, as of ${humanizeAge(age)} ago` : "";
+  const undated = age == null && gated ? ", age unknown" : "";
+  const answer = (kind, words, compact = words) => ({ kind, words, compact });
+  if (r.provenance === "reported") {
+    if (age == null && gated) return answer("unknown", "live GPS, age unknown");
+    return aged ? answer("aged", `live GPS${aged}`) : answer("", "live GPS");
+  }
+  if (r.provenance === "estimated") {
+    return answer("estimated", `estimated from a prediction${aged}${undated}`);
+  }
+  if (r.provenance === "placed") {
+    return answer("placed", `scheduled position (no GPS)${aged}${undated}`, `scheduled (no GPS)${aged}${undated}`);
+  }
+  if (r.provenance === "retained") {
+    const held = age ?? b.pollAge;
+    return answer(
+      "retained",
+      held == null ? "showing last known" : `showing last known, as of ${humanizeAge(Math.max(held, 0))} ago`,
+    );
+  }
+  return answer("unknown", "age unknown");
+}
+
 // Decide what a successful-but-EMPTY poll should do. Keeping the last-known
 // markers protects against a TRANSIENT empty feed (a blip that would otherwise
 // flicker every marker off and back on), but it must be bounded or a real lull
@@ -3040,6 +3150,8 @@ if (typeof module !== "undefined" && module.exports) {
     // 6.2: the boards, each row qualified by its own age.
     UNDATED_SYSTEMS, boardSystem, servedAge, boardFreshness, arrivalQualifier,
     boardSystemLine, boardLineHtml, qualifierHtml,
+    // 6.3: a vehicle's position, qualified by its own observation (inert until the gate).
+    OBS_MAX_S, observationAge, observationStaleAt, positionQualifier,
     thresholdOverrides, CONTRACT_FLAG_PARAM,
     stalePopupLine, STALE_MARKER_OPACITY, FERRY_DOCKED_OPACITY,
     selectHeadwayBand, airtrainStationPopupHtml, retryUntil,

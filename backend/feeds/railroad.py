@@ -123,6 +123,19 @@ def _railroad_observed_at(system: str, stamp: int | float) -> float | None:
     return float(stamp) or None
 
 
+def _position_age_gated(system: str) -> bool:
+    """Is this railroad system's GPS POSITION row age-gated (section 3.3's table)?
+
+    THE SAME SET _railroad_observed_at READS, AND FOR THE SAME REASON. The table's two
+    railroad position rows are LIRR's (gated: its vehicles date themselves) and
+    Metro-North's (not gated: its stamp is a copy of a lagging header), and both follow
+    from the one probe recorded above RAILROAD_FRESHNESS_SYSTEMS. So a system that set
+    admits is dated and gated in the same edit, and design 4.2's rule holds: the policy
+    table does not become a fourth place where Metro-North's exclusion is restated.
+    """
+    return system in RAILROAD_FRESHNESS_SYSTEMS
+
+
 def _accepted_as_gps(entity, canceled_trips: set[str]) -> bool:
     """Is this feed entity a vehicle the map will draw at its OWN reported position?
 
@@ -162,6 +175,144 @@ def _accepted_as_gps(entity, canceled_trips: set[str]) -> bool:
     # A stray out-of-range coordinate is not a real train. Rejecting it here is what
     # routes the trip to the placement pass instead of off the map entirely.
     return _in_railroad_box(vehicle.position.latitude, vehicle.position.longitude)
+
+
+def _observation_limits() -> tuple[float, float]:
+    """(OBS_FRESH_S, OBS_MAX_S) out of cache, read when a decode runs.
+
+    A FUNCTION-LEVEL IMPORT, AND THE IMPORT CYCLE IS THE REASON. cache imports feeds
+    (active_alert_feeds, iter_rows) before it defines a single constant, and
+    feeds/__init__ imports this module before it binds iter_rows, so a module-level
+    `from cache import` here fails whichever of the two is imported first. Measured with
+    one such line added: importing feeds or main first fails on iter_rows, and importing
+    cache first fails on the constant. (Importing pollers first proves nothing either
+    way: it already fails without that line, on the older cycle between pollers and
+    main.) By the time anything decodes both are loaded, so this is an attribute
+    lookup, and neither number is written twice.
+    """
+    import cache
+
+    return float(cache.OBS_FRESH_S), float(cache.OBS_MAX_S)
+
+
+def _position_ladder(
+    feed, system: str, stops: dict[str, dict] | None, now: float, canceled_trips: set[str]
+) -> dict[str, int]:
+    """Section 3.4's order for every vehicle the base rule accepts, as {trip id: step}.
+
+    THE STEPS, the first that holds, each age read against `clock`, the feed header
+    (else `now`):
+
+      1. reported, unqualified: its own observation is within OBS_FRESH_S.
+      2. estimated: its trip's prediction is placeable and within OBS_FRESH_S.
+      3. reported, qualified: its own observation is within OBS_MAX_S, or it has none on
+         an age-gated row (drawn, and said "age unknown": design 3.2 clause (c)).
+      4. placed: its trip's prediction is placeable and within OBS_MAX_S.
+      5. nothing: no marker, and the vehicle is counted instead (design Q7).
+
+    "Within" is `<=`, the design's word; no age on either committed capture sits on 90
+    or 600. A null prediction clock is within nothing. A system whose position row is
+    not age-gated (_position_age_gated) is step 1 throughout, because there is no age to
+    order it by.
+
+    WHO IS COVERED: every vehicle _accepted_as_gps accepts today (a vehicle, not
+    canceled, positioned, inside the box), keyed by the trip id the GPS pass emits for
+    it. A trip with no vehicle is not a vehicle and stays out, placed as it always was
+    whatever its prediction's age: 49 of the 56 LIRR placements on the capture ride a
+    prediction over 600 s, and gating them would take that surface to 13. A vehicle the
+    box rejects stays out too, and falls to placement as N2 left it.
+
+    A REPEATED TRIP ID TAKES THE BEST STEP ANY OF ITS VEHICLES EARNS, whatever their
+    order in the feed. Taking the first entity's step, as fetch_railroad_trains keeps
+    the first row, made the step a fact about feed order: a trip whose first copy is
+    700 s old and whose second is 1 s old was step 5, withheld and counted while the
+    same feed carried a fix one second old, and step 1 with the copies swapped. Neither
+    committed capture shows it (no LIRR trip id repeats, and Metro-North's 49
+    positioned entities are 33 trips on a row that is not gated), so a built world pins
+    it in both orders. WHAT THIS ASKS OF THE GATE: of a repeated trip's entities it may
+    accept only one whose own observation earns the trip's step, or the live path's
+    first-wins dedupe could draw the 700 s copy under the 1 s copy's step 1.
+
+    THE CLOCK IS THE HEADER, NOT THE POLL. The design measured its counts there and they
+    hold only there: read against a clock 5 s later they are already 26/7/11/0/24. And a
+    poll clock ages every vehicle by however far the poll trails the capture, which on
+    the live path under test is months, so all 68 LIRR vehicles would be step 5.
+
+    "PLACEABLE" IS THE PLACEMENT PASS'S OWN ANSWER, asked at its own `now`: the trip is
+    not canceled (_trip_update_is_canceled) and _place_trip returns a row, whose
+    observed_at is the prediction's clock (_prediction_observed_at). Where a trip has
+    several trip_updates, the first placeable one in feed order answers, which is the
+    row the live path's dedupe keeps. The cancellation check can only bite on the
+    combined layout: a split-layout vehicle whose trip is canceled never passes the base
+    rule, but a combined entity whose trip ANOTHER trip_update cancels does
+    (_vehicle_is_canceled reads only the entity's own), and the placement pass drops
+    that trip. So the ladder can never withhold a vehicle for an estimate the placement
+    pass would not draw, which is how an age gate reopens N2 one condition later. With
+    no stops nothing is placeable, and steps 2 and 4 cannot fire.
+
+    INERT AS COMMITTED. Neither pass reads this yet: contract 6.3 wires it into
+    _accepted_as_gps, for both passes at once, in the commit that also teaches every
+    surface what each step means. On the committed LIRR capture at its header it
+    answers 27, 6, 11, 0 and 24 (tests/test_position_ladder.py).
+    """
+    accepted = [entity for entity in feed.entity if _accepted_as_gps(entity, canceled_trips)]
+    steps: dict[str, int] = {}
+    if not _position_age_gated(system):
+        for entity in accepted:
+            steps.setdefault(entity.vehicle.trip.trip_id or entity.id, 1)
+        return steps
+
+    fresh_s, max_s = _observation_limits()
+    header = _header_timestamp(feed)
+    clock = header if header is not None else now
+    # The split layout's (LIRR's) trip_updates, joined to a vehicle by trip id the way
+    # the placement pass joins them; a combined entity (MNR's layout) carries its own.
+    updates_by_trip: dict[str, list] = defaultdict(list)
+    for entity in feed.entity:
+        if entity.HasField("trip_update") and entity.trip_update.trip.trip_id:
+            updates_by_trip[entity.trip_update.trip.trip_id].append(entity)
+
+    for entity in accepted:
+        vehicle = entity.vehicle
+        key = vehicle.trip.trip_id or entity.id
+        observed = _railroad_observed_at(system, vehicle.timestamp)
+        age = None if observed is None else clock - observed
+
+        prediction_age = None
+        if stops:
+            if entity.HasField("trip_update"):
+                candidates = [entity]
+            elif vehicle.trip.trip_id:
+                candidates = updates_by_trip.get(vehicle.trip.trip_id, [])
+            else:
+                candidates = []
+            for candidate in candidates:
+                tu = candidate.trip_update
+                if _trip_update_is_canceled(tu, canceled_trips):
+                    continue
+                placed = _place_trip(
+                    candidate, system, stops, now, None, _prediction_observed_at(system, tu, header)
+                )
+                if placed is None:
+                    continue
+                if placed["observed_at"] is not None:
+                    prediction_age = clock - placed["observed_at"]
+                break
+
+        if age is not None and age <= fresh_s:
+            step = 1
+        elif prediction_age is not None and prediction_age <= fresh_s:
+            step = 2
+        elif age is None or age <= max_s:
+            step = 3
+        elif prediction_age is not None and prediction_age <= max_s:
+            step = 4
+        else:
+            step = 5
+        # A repeated trip id keeps the best step any of its vehicles earns, never the
+        # first or the last in feed order (the docstring says why).
+        steps[key] = min(step, steps.get(key, step))
+    return steps
 
 
 def _decode_railroad_vehicles(
@@ -383,6 +534,160 @@ def _railroad_trip_start_ts(trip) -> float | None:
         return None
 
 
+def _prediction_observed_at(system: str, trip_update, feed_header: float | None) -> float | None:
+    """THE PREDICTION CLOCK, per trip, with the feed header as its only fallback.
+
+    LIRR dates 127 of the 132 trip_updates on the committed capture and the other 5 are
+    its canceled trips, which the placement pass drops anyway; the header is what any
+    future gap falls back to, and it is a real number this provider sent rather than one
+    computed here. Metro-North dates none of its 119 and is excluded by
+    _railroad_observed_at, so every MNR row reports null whichever branch it takes. See
+    section 3.3 of docs/design/freshness-contract.md for the table.
+
+    A FUNCTION OF ITS OWN SINCE CONTRACT 6.3, because the position ladder reads the same
+    clock when it asks how old the prediction behind a vehicle is. It was a closure
+    inside _decode_railroad_feed, and a second copy for the ladder would be a second
+    clock.
+    """
+    return _railroad_observed_at(system, trip_update.timestamp) or _railroad_observed_at(
+        system, feed_header or 0
+    )
+
+
+def _trip_update_is_canceled(tu, canceled_trips: set[str]) -> bool:
+    """Is this trip_update's trip canceled or deleted, by itself or by ANY trip_update in
+    this feed? The placement pass drops such a trip from placement and arrivals alike
+    (the comment where it asks says why the feed-wide half is load-bearing), and the
+    position ladder asks the same question through this function before it counts a
+    trip as placeable, so the two cannot disagree about a feed that contradicts itself.
+    """
+    return (
+        tu.trip.schedule_relationship in _DROP_TRIP_RELATIONSHIPS
+        or tu.trip.trip_id in canceled_trips
+    )
+
+
+def _place_trip(
+    entity,
+    system: str,
+    stops: dict[str, dict],
+    now: float,
+    direction: str | None,
+    observed_at: float | None,
+) -> dict | None:
+    """The row the placement pass draws for this trip_update entity at `now`, or None when
+    the trip cannot be placed: not yet started, finished, or with no stop these static
+    stops resolve.
+
+    ONE ANSWER TO "CAN THIS TRIP BE PLACED", which is why it is a function (contract 6.3).
+    The placement pass draws what this returns, and the position ladder asks it before
+    counting an estimate: two versions of the answer would let the ladder withhold a
+    vehicle for a row the pass never draws, which is N2 one condition later. Moved here
+    unchanged from _decode_railroad_feed; the placement and arrivals goldens are
+    byte-identical across the move. `direction` and `observed_at` are carried into the
+    row as given and play no part in whether there is one: the caller computes the
+    direction once per trip because the arrivals bucket reads it too, and passes
+    _prediction_observed_at of this trip_update as the clock.
+    """
+    tu = entity.trip_update
+    # Not-yet-started filter (MNR carries the start; LIRR has no start_time so
+    # start_ts is None and the far-future-first-stop cap applies below).
+    start_ts = _railroad_trip_start_ts(tu.trip)
+    if start_ts is not None and start_ts > now + TRIP_START_GRACE_S:
+        return None
+
+    # Pick the first resolvable, still-upcoming stop. Mirror _decode_feed:
+    # track the first resolvable stop (no-times fallback) and the stop just
+    # behind the chosen one (the prev anchor).
+    chosen = None
+    chosen_time = None
+    first_resolvable = None
+    prev_resolvable = None
+    last_resolvable = None
+    saw_timed = False
+    for stu in tu.stop_time_update:
+        if not stu.stop_id or stu.stop_id not in stops:
+            continue  # unknown station; try the next one
+        if stu.schedule_relationship in _DROP_STOP_RELATIONSHIPS:
+            continue  # skipped / no-data stop
+        if first_resolvable is None:
+            first_resolvable = stu
+        t = _stop_time(stu)
+        if t is None:
+            last_resolvable = stu
+            continue
+        saw_timed = True
+        if t >= now - 60:  # small grace for clock skew / just-passed stops
+            chosen = stu
+            chosen_time = t
+            prev_resolvable = last_resolvable
+            break
+        last_resolvable = stu
+    if chosen is None and not saw_timed:
+        chosen = first_resolvable  # no-times fallback: prev_resolvable stays None
+    if chosen is None:
+        return None  # trip finished, or nothing resolvable
+    # NOTE: the subway far-future-first-stop cap (MAX_FUTURE_FIRST_STOP_S) is
+    # deliberately NOT applied here. It treats "chosen is the first resolvable
+    # stop and far in the future" as a not-yet-departed phantom, which holds
+    # for subway feeds that list a trip from its origin. The railroad feeds
+    # PRUNE already-passed stops, so a running train's first listed stop is
+    # simply its next station (often many minutes out), and the cap would drop
+    # most running trains. MNR's not-yet-started filter (start_time, above)
+    # screens its future-scheduled trips; LIRR carries no start_time, so a
+    # not-yet-departed LIRR train cannot be told from a running one and is
+    # placed at its next/origin station, which is acceptable for static
+    # placement (gliding comes in the next increment).
+
+    stop = stops[chosen.stop_id]
+    # `direction` is the caller's, computed once per trip: direction_id (LIRR) or the
+    # stop-progression inference (a heuristic, not feed data), null when
+    # neither. For MNR the popup line this feeds is therefore inferred, not
+    # reported. (Unlike the "Trains" arrivals residual, a null direction stays
+    # null here rather than becoming a bucket label.)
+    # The chosen station is the static-fallback position; prev_* describe the
+    # most-recently-passed station (null when none precedes it or its time is
+    # unknown); next_time is the predicted time at the chosen station.
+    prev_lat = prev_lon = prev_time = None
+    if prev_resolvable is not None:
+        prev_stop = stops[prev_resolvable.stop_id]
+        prev_lat, prev_lon = prev_stop["lat"], prev_stop["lon"]
+        pt = _stop_time(prev_resolvable)
+        prev_time = float(pt) if pt is not None else None
+    # MNR's combined entity keeps a vehicle (just no position) carrying the
+    # train number; LIRR's trip_update-only entity has none. (This is the same
+    # inline read arrivals uses in _decode_railroad_feed, kept separate so placement
+    # output stays byte-identical to the pre-arrivals decoder.)
+    placed_train_num = None
+    if entity.HasField("vehicle"):
+        placed_train_num = (entity.vehicle.vehicle.label or entity.vehicle.vehicle.id) or None
+    return {
+        "system": system,
+        "trip_id": tu.trip.trip_id or f"{system}:{entity.id}",
+        "route_id": tu.trip.route_id or None,
+        "latitude": stop["lat"],
+        "longitude": stop["lon"],
+        "bearing": None,  # placed from schedule, no GPS heading
+        "train_num": placed_train_num,
+        "stop_id": chosen.stop_id,  # the next/current station the carry-forward keys on
+        "stop_name": stop["name"],
+        "direction": direction,
+        "prev_lat": prev_lat,
+        "prev_lon": prev_lon,
+        "prev_time": prev_time,
+        "next_time": float(chosen_time) if chosen_time is not None else None,
+        # A PLACED TRAIN IS AS CURRENT AS THE PREDICTION THAT PLACED IT: the caller
+        # passes _prediction_observed_at of this `tu`, the same trip_update whose
+        # `chosen` stop set the latitude and longitude above. Not the header, not the
+        # poll clock, and not the GPS reading it does not have.
+        "observed_at": observed_at,
+        # `placed` and not `estimated`: this row sits AT a station's own
+        # coordinates. The anchors beside it let a client glide between two
+        # stations, but the position this decoder emits is the stop's.
+        "provenance": "placed",
+    }
+
+
 def _decode_railroad_feed(
     raw: bytes, system: str, stops: dict[str, dict], now: float
 ) -> tuple[list[dict], dict[str, dict[str, list[dict]]]]:
@@ -468,19 +773,8 @@ def _decode_railroad_feed(
                 if _accepted_as_gps(entity, canceled_trips):
                     positioned_ids.add(v.trip.trip_id)
 
-    # THE PREDICTION CLOCK, per trip, with the feed header as its only fallback.
-    # LIRR dates 127 of the 132 trip_updates on the committed capture and the other 5
-    # are its canceled trips, which this pass drops anyway; the header is what any
-    # future gap falls back to, and it is a real number this provider sent rather than
-    # one computed here. Metro-North dates none of its 119 and is excluded by
-    # _railroad_observed_at, so every MNR row below reports null whichever branch it
-    # takes. See section 3.3 of docs/design/freshness-contract.md for the table.
+    # The prediction clock's only fallback (_prediction_observed_at, which says why).
     feed_header = _header_timestamp(feed)
-
-    def prediction_observed_at(trip_update) -> float | None:
-        return _railroad_observed_at(system, trip_update.timestamp) or _railroad_observed_at(
-            system, feed_header or 0
-        )
 
     trains: list[dict] = []
     arrivals: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
@@ -496,11 +790,9 @@ def _decode_railroad_feed(
         # back on the map through the placement door. Measured on a capture built to
         # carry that contradiction: placements 56 to 57 with the canceled trip among
         # them, and 56 again with this test widened. No committed capture contains the
-        # shape, so no golden would have caught it.
-        if (
-            tu.trip.schedule_relationship in _DROP_TRIP_RELATIONSHIPS
-            or tu.trip.trip_id in canceled_trips
-        ):
+        # shape, so no golden would have caught it. (_trip_update_is_canceled is the one
+        # statement of it, which the position ladder asks too.)
+        if _trip_update_is_canceled(tu, canceled_trips):
             continue  # canceled/deleted trip: drop from both placement and arrivals
 
         arr_trip_id = tu.trip.trip_id or f"{system}:{entity.id}"
@@ -548,7 +840,7 @@ def _decode_railroad_feed(
                     # A PREDICTION IS AN OBSERVATION: this row's countdown is only as
                     # current as the trip_update that produced it, which is the whole
                     # of F03 on the railroad side.
-                    "observed_at": prediction_observed_at(tu),
+                    "observed_at": _prediction_observed_at(system, tu, feed_header),
                     "provenance": "reported",
                 }
             )
@@ -570,104 +862,14 @@ def _decode_railroad_feed(
         if tu.trip.trip_id and tu.trip.trip_id in positioned_ids:
             continue
 
-        # Not-yet-started filter (MNR carries the start; LIRR has no start_time so
-        # start_ts is None and the far-future-first-stop cap applies below).
-        start_ts = _railroad_trip_start_ts(tu.trip)
-        if start_ts is not None and start_ts > now + TRIP_START_GRACE_S:
-            continue
-
-        # Pick the first resolvable, still-upcoming stop. Mirror _decode_feed:
-        # track the first resolvable stop (no-times fallback) and the stop just
-        # behind the chosen one (the prev anchor).
-        chosen = None
-        chosen_time = None
-        first_resolvable = None
-        prev_resolvable = None
-        last_resolvable = None
-        saw_timed = False
-        for stu in tu.stop_time_update:
-            if not stu.stop_id or stu.stop_id not in stops:
-                continue  # unknown station; try the next one
-            if stu.schedule_relationship in _DROP_STOP_RELATIONSHIPS:
-                continue  # skipped / no-data stop
-            if first_resolvable is None:
-                first_resolvable = stu
-            t = _stop_time(stu)
-            if t is None:
-                last_resolvable = stu
-                continue
-            saw_timed = True
-            if t >= now - 60:  # small grace for clock skew / just-passed stops
-                chosen = stu
-                chosen_time = t
-                prev_resolvable = last_resolvable
-                break
-            last_resolvable = stu
-        if chosen is None and not saw_timed:
-            chosen = first_resolvable  # no-times fallback: prev_resolvable stays None
-        if chosen is None:
-            continue  # trip finished, or nothing resolvable
-        # NOTE: the subway far-future-first-stop cap (MAX_FUTURE_FIRST_STOP_S) is
-        # deliberately NOT applied here. It treats "chosen is the first resolvable
-        # stop and far in the future" as a not-yet-departed phantom, which holds
-        # for subway feeds that list a trip from its origin. The railroad feeds
-        # PRUNE already-passed stops, so a running train's first listed stop is
-        # simply its next station (often many minutes out), and the cap would drop
-        # most running trains. MNR's not-yet-started filter (start_time, above)
-        # screens its future-scheduled trips; LIRR carries no start_time, so a
-        # not-yet-departed LIRR train cannot be told from a running one and is
-        # placed at its next/origin station, which is acceptable for static
-        # placement (gliding comes in the next increment).
-
-        stop = stops[chosen.stop_id]
-        # `direction` was computed once above: direction_id (LIRR) or the
-        # stop-progression inference (a heuristic, not feed data), null when
-        # neither. For MNR the popup line this feeds is therefore inferred, not
-        # reported. (Unlike the "Trains" arrivals residual, a null direction stays
-        # null here rather than becoming a bucket label.)
-        # The chosen station is the static-fallback position; prev_* describe the
-        # most-recently-passed station (null when none precedes it or its time is
-        # unknown); next_time is the predicted time at the chosen station.
-        prev_lat = prev_lon = prev_time = None
-        if prev_resolvable is not None:
-            prev_stop = stops[prev_resolvable.stop_id]
-            prev_lat, prev_lon = prev_stop["lat"], prev_stop["lon"]
-            pt = _stop_time(prev_resolvable)
-            prev_time = float(pt) if pt is not None else None
-        # MNR's combined entity keeps a vehicle (just no position) carrying the
-        # train number; LIRR's trip_update-only entity has none. (This is the same
-        # inline read arrivals uses above, kept separate so placement output stays
-        # byte-identical to the pre-arrivals decoder.)
-        placed_train_num = None
-        if entity.HasField("vehicle"):
-            placed_train_num = (entity.vehicle.vehicle.label or entity.vehicle.vehicle.id) or None
-        trains.append(
-            {
-                "system": system,
-                "trip_id": tu.trip.trip_id or f"{system}:{entity.id}",
-                "route_id": tu.trip.route_id or None,
-                "latitude": stop["lat"],
-                "longitude": stop["lon"],
-                "bearing": None,  # placed from schedule, no GPS heading
-                "train_num": placed_train_num,
-                "stop_id": chosen.stop_id,  # the next/current station the carry-forward keys on
-                "stop_name": stop["name"],
-                "direction": direction,
-                "prev_lat": prev_lat,
-                "prev_lon": prev_lon,
-                "prev_time": prev_time,
-                "next_time": float(chosen_time) if chosen_time is not None else None,
-                # A PLACED TRAIN IS AS CURRENT AS THE PREDICTION THAT PLACED IT, which
-                # is `tu` in scope here: the same trip_update whose `chosen` stop set
-                # the latitude and longitude two lines up. Not the header, not the poll
-                # clock, and not the GPS reading it does not have.
-                "observed_at": prediction_observed_at(tu),
-                # `placed` and not `estimated`: this row sits AT a station's own
-                # coordinates. The anchors beside it let a client glide between two
-                # stations, but the position this decoder emits is the stop's.
-                "provenance": "placed",
-            }
+        # Everything else about placing a trip (the not-yet-started filter, the stop, the
+        # anchors and the row) is _place_trip, the one answer the position ladder asks
+        # too. `direction` is the one computed above for the arrivals bucket.
+        placed = _place_trip(
+            entity, system, stops, now, direction, _prediction_observed_at(system, tu, feed_header)
         )
+        if placed is not None:
+            trains.append(placed)
 
     return trains, _trim_arrivals(arrivals)
 

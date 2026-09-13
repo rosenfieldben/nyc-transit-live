@@ -1,6 +1,7 @@
 // Hermetic frontend smoke suite. One chromium browser; the webServer serves the
 // static frontend (including the self-hosted Leaflet under vendor/leaflet) and
-// mock.js fulfills every /api/* from the handcrafted fixtures and stubs the basemap
+// mock.js fulfills every /api/* from the fixtures (handcrafted, except C2i's board,
+// which the real backend served) and stubs the basemap
 // tiles, so nothing leaves the machine. A frozen clock (page.clock) makes the
 // arrival countdowns and the empty-feed staleness window deterministic; no sleeps.
 const { test, expect } = require("@playwright/test");
@@ -2280,3 +2281,173 @@ test("36. an NJT marker born from retained data is dim on its first frame, and a
   await expect(popup(page)).toContainText("3 min early");
   expect(await popup(page).textContent()).not.toContain("late");
 });
+
+test("C2h. subway content ten minutes old behind a fresh poll: ACE alone dims and is named (6.2)", async ({
+  page,
+}) => {
+  // F03'S STATE ON THE MAP. Every group's poll succeeds, so every fetched_at is current,
+  // and ACE's provider has been serving the same ten minute old content all along.
+  // Before 6.2 the only content clock the client aged by was the ENVELOPE's, which is
+  // the oldest header among the groups that decoded: ACE's lag was handed to every
+  // group, so both trains dimmed and the line said "trains: as of 10m ago" while the
+  // 1-7+S feed was current. Now each group answers for its own clock.
+  const ctx = await boot(page);
+  await waitForReady(page);
+  const status = page.locator("#status");
+  await expect(status).not.toHaveClass(/error/);
+  // Each body is stamped for the poll that lands it (every 15s), so every POLL age stays
+  // near zero and only the content can be what is old.
+  let pollAt = fx.FROZEN_S;
+  const polled = (over = {}) => fx.subwaysWithSystems({ fetchedAt: pollAt, ...over });
+  ctx.overrides.subways = (route) => {
+    pollAt += 15;
+    return json(route, polled({ aceContentAt: pollAt - 600 }));
+  };
+  await page.clock.runFor(15_000);
+
+  await expect
+    .poll(async () =>
+      page.evaluate(() =>
+        Object.fromEntries([...trains.entries()].map(([id, r]) => [id, r.marker.options.opacity ?? 1])),
+      ),
+    )
+    .toEqual({ "sub-1": 1, "sub-2": 0.45 });
+  // THE THIRD POPULATION, named alone, with its content age, and the current group left
+  // out of it.
+  await expect(status).toContainText("trains: ACE group as of 10m ago");
+  await expect(status).toHaveClass(/error/);
+  expect(await status.textContent()).not.toContain("1-7+S");
+
+  // A SECOND GROUP STALE THE OTHER WAY: BDFM's poll stopped five minutes ago. Two
+  // populations, two clauses, each carrying its own age. One merged clause would have
+  // announced BDFM's five minutes as ACE's ten, or the reverse.
+  ctx.overrides.subways = (route) => {
+    pollAt += 15;
+    const body = polled({ aceContentAt: pollAt - 600 });
+    body.systems.BDFM = fx.systemBlock(pollAt - 300, {
+      ok: false,
+      retainedSince: pollAt - 285,
+      routes: ["B"],
+    });
+    return json(route, body);
+  };
+  await page.clock.runFor(15_000);
+  await expect(status).toContainText("trains: BDFM group as of 5m ago; ACE group as of 10m ago");
+});
+
+test("C2i. F03's acceptance, board half: at Prospect Av a lagging group's rows say how old they are, a current group's say nothing (6.2)", async ({
+  page,
+}) => {
+  // THE AUDITOR'S SENTENCE, in a browser: "repeatedly returning an old, valid HTTP-200
+  // feed makes its countdowns visibly qualified as stale; other healthy contributors
+  // remain distinguishable."
+  //
+  // THE BOARD IS NOT HAND-WRITTEN. It is the body the real backend served for
+  // /api/subway-arrivals/219 in backend/tests/test_f03_boards.py's world: the committed
+  // subway capture re-stamped 600 s behind the poll clock on the 1-7+S feed, a copy
+  // stamped current on ACE (its trips renamed "h-" so the cross-group dedup keeps
+  // both), through the real fetch path, refresh path and ASGI app, at FROZEN_S. It is
+  // committed as fixtures/f03_board_219.json and that test fails the moment the backend
+  // stops serving it, so the two halves of the acceptance cannot drift apart. Each
+  // direction's six rows are three from each group, interleaved.
+  const board = require("./fixtures/f03_board_219.json");
+  const prospect = { id: "219", name: "Prospect Av", lat: 40.8196, lon: -73.9015, routes: ["2", "5"] };
+  // REPEATEDLY is the sentence's other half: from the moment this flips, /219 answers with
+  // the backend's NEXT successful poll of the same old bytes, 15 s on (nextF03Poll).
+  let repolled = false;
+  const ctx = await boot(page, (c) => {
+    c.overrides.subwayStops = (route, fixtures) => json(route, [...fixtures.subwayStops(), prospect]);
+    c.overrides.subwayArrivals = (route, fixtures) => {
+      if (!route.request().url().endsWith("/219")) return json(route, fixtures.subwayArrivals());
+      return json(route, repolled ? nextF03Poll(board, 15) : board);
+    };
+  });
+  await page.waitForFunction(
+    () => typeof stationRegistry !== "undefined" && stationRegistry.some((row) => row.key === "subway|219"),
+  );
+
+  // Selected through the panel, which is docked open at this width; the panel's map
+  // sync opens the same station's popup, so one selection puts both surfaces up.
+  await page.locator("#stations-search").fill("prospect");
+  await page.locator("#stations-results button.station-row").first().click();
+
+  // THE PANEL. Every row from the lagging group carries its age beside its countdown,
+  // and every row from the current group carries nothing. A board qualified per
+  // ENVELOPE could only mark all twelve or none.
+  const rows = page.locator("#stations-detail ul.station-arrivals li");
+  const expected = [
+    "5 train in 2 minutes, 8:02 AM arrival, as of 10m ago",
+    "2 train in 3 minutes, 8:02 AM arrival, as of 10m ago",
+    "5 train in 3 minutes, 8:02 AM arrival",
+    "2 train in 5 minutes, 8:05 AM arrival",
+    "5 train in 10 minutes, 8:09 AM arrival, as of 10m ago",
+    "5 train in 12 minutes, 8:11 AM arrival",
+    "2 train now, 7:59 AM arrival, as of 10m ago",
+    "5 train in 3 minutes, 8:02 AM arrival, as of 10m ago",
+    "5 train in 3 minutes, 8:03 AM arrival",
+    "2 train in 9 minutes, 8:09 AM arrival",
+    "2 train in 9 minutes, 8:09 AM arrival, as of 10m ago",
+    "5 train in 12 minutes, 8:12 AM arrival",
+  ];
+  await expect(rows).toHaveText(expected);
+  // The first row is the audit's own "prediction two minutes ahead" from a header ten
+  // minutes old: the countdown still counts to it, and the words sit beside it.
+  // Each row speaks for itself, so the board's own line has nothing to add.
+  await expect(page.locator(".station-detail-stale")).toHaveCount(0);
+  // And the spoken board carries the same words on the same rows.
+  await expect(page.locator("#stations-announce")).toContainText(
+    "Northbound: 5 train in 2 minutes, 8:02 AM arrival, as of 10m ago. " +
+      "2 train in 3 minutes, 8:02 AM arrival, as of 10m ago. 5 train in 3 minutes, 8:02 AM arrival.",
+  );
+
+  // THE POPUP, the same board through the same helper, rendered as spans beside the
+  // countdowns. Asserted as the popup's actual markup, not as a call to the renderer.
+  const q = ' <span class="arr-qualifier">as of 10m ago</span>';
+  const five = (text) => `<span class="arr-badge" style="background:#1e8449;color:#ffffff">5</span> ${text}`;
+  const two = (text) => `<span class="arr-badge" style="background:#c0392b;color:#ffffff">2</span> ${text}`;
+  await expect(popup(page)).toContainText("Prospect Av");
+  await expect(page.locator(".leaflet-popup-content .arr-qualifier")).toHaveCount(6);
+  expect(await popup(page).innerHTML()).toBe(
+    "<b>Prospect Av</b>" +
+      '<div class="arr-dir">Northbound</div>' +
+      [five(`2 min${q}`), two(`3 min${q}`), five("3 min"), two("5 min"), five(`10 min${q}`), five("12 min")].join("<br>") +
+      '<div class="arr-dir">Southbound</div>' +
+      [two(`now${q}`), five(`3 min${q}`), five("3 min"), two("9 min"), two(`9 min${q}`), five("12 min")].join("<br>"),
+  );
+
+  // REPEATEDLY: the next background refresh is a second successful poll returning the
+  // same old, valid 200. The lagging group's rows stay qualified, now from the payload's
+  // own clocks (615 s between served_at and observed_at still rounds to 10m), and the
+  // current group's rows stay silent, row for row, on both surfaces.
+  repolled = true;
+  const polled = ctx.counts.subwayArrivals;
+  await page.clock.runFor(16_000);
+  await expect
+    .poll(() => ctx.counts.subwayArrivals, { message: "the board was polled again" })
+    .toBeGreaterThan(polled);
+  await expect(rows).toHaveText(
+    expected.map((line) => (line.endsWith(", as of 10m ago") ? /, as of 10m ago$/ : /arrival$/)),
+  );
+  await expect(page.locator(".leaflet-popup-content .arr-qualifier")).toHaveCount(6);
+});
+
+// The backend's next successful poll of F03's world, `dt` seconds on, as
+// test_f03_boards.py's second poll serves it: every poll clock advances, and so does
+// every clock the current group dates, while the aged group's header, and so its rows,
+// keep the stamp they had. Which clocks are current is read off the served bytes (inside
+// 90 s of served_at), so this knows nothing about the groups the board does not say.
+function nextF03Poll(board, dt) {
+  const next = JSON.parse(JSON.stringify(board));
+  const current = (t) => typeof t === "number" && board.served_at - t < 90;
+  next.served_at += dt;
+  next.fetched_at += dt;
+  if (current(next.feed_timestamp)) next.feed_timestamp += dt;
+  for (const block of Object.values(next.systems)) {
+    if (typeof block.fetched_at === "number") block.fetched_at += dt;
+    if (current(block.feed_timestamp)) block.feed_timestamp += dt;
+  }
+  for (const rows of Object.values(next.directions)) {
+    for (const row of rows) if (current(row.observed_at)) row.observed_at += dt;
+  }
+  return next;
+}

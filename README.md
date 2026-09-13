@@ -226,7 +226,7 @@ nyc-transit-live/
 │   ├── mock.js              # /api/* fixtures + basemap-tile stub
 │   ├── serve.js             # tiny static server for frontend/ (no backend)
 │   ├── playwright.config.js # chromium only, starts the static server
-│   └── fixtures/            # handcrafted JSON payloads
+│   └── fixtures/            # handcrafted payloads, plus one board the backend served
 ├── tests/statement.test.js  # ACCESSIBILITY.md cites real tests, checked
 ├── docs/reviews/            # adversarial-review adjudication records, one per phase
 ├── data/
@@ -356,8 +356,11 @@ npx playwright test --config tests/e2e/playwright.config.js
 
 It is **hermetic by design**: the config starts a tiny static server for
 `frontend/` (the Python backend is never launched), and every request is
-intercepted in the browser. All `/api/*` calls are answered from the handcrafted
-fixtures in `tests/e2e/fixtures/`; Leaflet is self-hosted under
+intercepted in the browser. All `/api/*` calls are answered from the fixtures in
+`tests/e2e/fixtures/`, which are handcrafted except `f03_board_219.json`: that one is
+the body the real backend served for F03's world, written by
+`backend/tests/test_f03_boards.py` and held equal to it there, so regenerate it
+through that test (`F03_BOARD_REGENERATE=1`) rather than by hand; Leaflet is self-hosted under
 `frontend/vendor/leaflet/` and served by that static server exactly as production
 serves it (there is no CDN URL left to intercept), and the basemap tiles are
 stubbed. Nothing leaves the machine, so CI needs no network at test time. Time is frozen with Playwright's clock control, so the
@@ -740,6 +743,23 @@ do is fail a promotion, and a promotion that fails is retried into a fresh proce
 that mints again and spends one more of the ten it is reporting. It clears itself
 on the next mint that succeeds.
 
+Another code reads what riders are shown rather than what a feed did, and tells an
+operator at an operator's threshold rather than a rider's. `observations-qualified`
+says some system has served riders nothing current for ten minutes: every arrival row
+it serves is more than 600 seconds old (the contract monitor's own header band, where a
+rider's board has said "as of" since 90 seconds), undated where its provider dates
+rows, or of no known provenance; or it has been failing for longer than the retention
+cap, which has dropped its rows. That second half is aged from the system's last
+successful decode, so it holds on every poll of the outage, not only the one the cap
+fires on. It is not
+`feed-content-stale`, which is about one endpoint's feed header lagging, and the two
+occur independently. It never gates either: old upstream data is a property of the
+world, not of the build. Two limits are known. A new process cannot see a group that
+has not decoded since it came up, so a quiet probe after a redeploy is not proof of
+recovery (`/api/status`'s `subway_feeds.failed` and `railroad_feeds.failed` still name
+the group), and a sparsely served LIRR late at night can trip the code with nothing
+wrong.
+
 **Deployment invariant: the first retry rungs must fit well inside the healthcheck
 window.** A failed static warmup retries on a backoff schedule
 (`STATIC_RETRY_SCHEDULE_S` in `backend/main.py`, currently 15s, 30s, 60s, then 300s
@@ -855,9 +875,26 @@ stays explained. Retention and that rendering are deliberately coupled: see
 without them.
 
 The single-feed sources (buses, PATH, ferry) carry no `systems` block. The client
-synthesizes a one-system block from their envelope `fetched_at`, so they go
-through the same staleness, dimming and freeze rules rather than being exempt for
-having one feed.
+synthesizes a one-system block from their envelope `fetched_at` and
+`feed_timestamp`, so they go through the same staleness, dimming and freeze rules
+rather than being exempt for having one feed. Every block also carries its own
+content clock (`feed_timestamp`, contract 6.1), and the client ages each system by
+its own: one subway group whose provider is ten minutes behind dims and is named
+alone, rather than handing its lag to the seven current groups through the
+envelope's one number.
+
+The station boards (the arrivals popups and the station panel) qualify each ROW by
+its own age rather than the board by the age of our poll. Every served prediction
+carries `observed_at`, the provider's clock for it, and the board ages it as
+`served_at - observed_at` plus the time since: past 90 seconds the row reads "as of
+{age} ago" beside its countdown, a carried-forward row reads "showing last known",
+and a row whose provider normally dates it but did not reads "age unknown".
+Metro-North dates no prediction at all, so its current rows say nothing about age
+(a carried-forward row still reads "showing last known", aged by its system's last
+poll) and its board says "Metro-North prediction age unavailable" only on the line
+that already reports a stale poll. On a board served by several subway groups, a lagging group's rows
+are qualified and a current group's are not. The rules and their vocabulary are
+section 3.2 of `docs/design/freshness-contract.md`.
 
 ### Live upstream contract monitor
 
@@ -869,8 +906,9 @@ would all pass CI and only surface as a broken map in production.
 
 `backend/scripts/contract_monitor.py` closes that gap. On a schedule
 (`.github/workflows/contract-monitor.yml`, every 6 hours plus manual dispatch) it
-fetches every upstream source and the production `/api/status`, and decodes each
-with the **same** production functions the app runs (`feeds._decode_feed`,
+fetches every upstream source and the production deployment (`/api/status`,
+`/healthz`, `/api/njt-routes`, and one subway arrivals board), and decodes each
+upstream with the **same** production functions the app runs (`feeds._decode_feed`,
 `_decode_railroad_feed`, `_decode_path_feed`, `_decode_alerts`, the
 `path_static` / `ferry_static` / `railroad_static` / `static_data` parsers), so a
 pass means the real code paths still work against today's data. Each check reports
@@ -940,6 +978,25 @@ deployment with no bus API key serves `buses.age_s = null` forever by design, an
 failing on it would paint a healthy map red on every run. When **every** feed is
 null, though, nothing has ever polled, the cache never populated, and that is the
 broken startup, so it fails.
+
+The production section also reads one surface a rider sees: the subway arrivals
+board at Forest Hills-71 Av (`G08`, served by the ACE, BDFM and NQRW groups, with the
+E and F stopping there around the clock). `production:board-clock` requires the
+board's content clock and ages each contributing group as `served_at` minus that
+group's own `feed_timestamp`, on the same 10-minute edge as the upstream header
+check: every contributor past it is a `FAIL`, some is a `WARN`.
+`production:board-contributors` holds the board against the monitor's own upstream
+read of the eight subway headers, each aged at the board's own `served_at` so both
+sides of the comparison share one instant: when one contributing group is really aged
+and another is current, the board must give them different clocks, and an aged and a
+current contributor carrying the same `feed_timestamp`, in either direction, is the
+fold and a `FAIL`. Distinct clocks pass whatever their ages (a group that recovered
+between the two reads carries its own new clock), and a contributor the board itself
+reports failed or retained is named as not judged, since it carries its last-known
+clock by design. A board that serves rows with no content clock is a `FAIL` on both
+lines, because every rider qualifier built on that clock would be unwatched. An empty
+board, or one that could not be fetched, is a `WARN`, since `production:status`
+already fails a deployment that is down.
 
 A degraded alert system stays a `WARN` while the backend is still carrying its
 alerts forward, and becomes a `FAIL` once that retention horizon has passed and

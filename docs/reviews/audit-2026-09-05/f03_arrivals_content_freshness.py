@@ -16,68 +16,79 @@ THE AUDIT'S CLAIM (section 1 of docs/reviews/audit-2026-09-05.md, finding F03):
     Cited: backend/routes/subway.py L85 (arrivals response), backend/models.py
     L191 (arrival model), frontend/helpers.js L713 (popup age calculation).
 
+    Acceptance: "repeatedly returning an old, valid HTTP-200 feed makes its
+    countdowns visibly qualified as stale; other healthy contributors remain
+    distinguishable."
+
+FIXED ON claude/freshness-6-2-boards, so this script now checks the FIX. Every check
+that moved carries the audit's value in its label ("was: ..."), in the F02/F05/F10/F12
+shape: it exits 0 while the repaired behaviour holds and non-zero the moment it comes
+back. The before-values are the audit's own measurement of this world: 599.7 s of
+content lag on /api/subways; /api/subway-arrivals/219 serving a freshly stamped
+fetched_at and no content clock, with 8 of 8 groups ok; a popup that rendered no
+qualifier and a panel whose age was now - fetched_at, so both read a ten minute old
+prediction as a live two minute countdown. Contract 6.1 put every missing number in
+the payload and this script recorded, until 6.2, that no rider surface read any of it.
+
 RUN IT (from the repository root):
 
-    .venv/bin/python docs/reviews/audit-2026-09-05/f03_arrivals_content_freshness.py
+    backend/.venv/bin/python docs/reviews/audit-2026-09-05/f03_arrivals_content_freshness.py
 
-WHAT IS PRODUCTION CODE HERE (nothing below is re-implemented):
-
-  * feeds.subway._decode_feed / _aggregate_feeds / fetch_subway_trains: the real
-    GTFS-RT decoder and fan-out, reached through main.fetch_subway_trains.
-  * pollers._refresh_subways: the real refresh path, including the C2 per-group
-    merge, drop_expired_arrivals, combine_group_arrivals and _system_freshness.
-  * main.app driven over httpx.ASGITransport: GET /api/subways and
-    GET /api/subway-arrivals/219 are the real routed handlers
-    (routes/subway.py) and the real response models (models.py), so every
-    number below is read out of SERVED JSON, not out of a Python call.
-  * frontend/helpers.js required into node: the real feedAgeLine, staleAge and
-    shapeStationArrivals (the popup and the station panel respectively), plus
-    frontend/systems/subway.js loaded into a node:vm to call the real
-    subwayArrivalsHtml.
-  * backend/models.py imported for the arrivals-model enumeration; the model
-    -> endpoint map is read out of backend/routes/*.py source.
+THE WORLD IS THE ACCEPTANCE TEST'S, IMPORTED RATHER THAN COPIED. The acceptance has
+two clauses, and the second ("other healthy contributors remain distinguishable")
+needs a healthy contributor on the same board, which the original reproduction did
+not have: its seven other groups served header-only feeds that contribute nothing at
+219. So the world comes from backend/tests/test_f03_boards.py (its _restamp,
+_upstream, _poll_and_serve and constants), the module that asserts the backend half,
+and the served board is compared to tests/e2e/fixtures/f03_board_219.json, the body
+the browser half renders. One world, three readers, and each fails if it drifts.
 
 WHAT IS INJECTED (the fault, stated plainly):
 
-  * The feed bytes are the COMMITTED capture backend/tests/fixtures/subway_1_7_s.pb
-    (259 entities, real MTA content) with ONE constant integer delta added to
-    every timestamp it carries: the feed header, each trip_update.timestamp, each
-    stop_time_update arrival/departure time and any vehicle timestamp. The delta
-    is chosen so the capture's header lands exactly 600 s before this run's poll
-    clock. No other field is touched, so the capture's internal structure (which
-    prediction is how far ahead of its own header) is preserved exactly: the
-    "prediction two minutes ahead" is the capture's own stop at header + 720 s,
-    not a hand-written number. trip.start_date is deliberately left as captured;
-    it is read only by the placement pass's not-yet-started filter, and a past
-    start date never trips it.
-  * 600 s is therefore the INJECTED CONDITION, not a measurement. What is
-    measured is which served responses expose it and which do not.
-  * The seven other subway feed groups are served a valid header-only feed
-    stamped with the current clock, so the poll is a fully successful, fully
-    healthy eight-group poll: no failure anywhere.
-  * The static station index is derived from the committed platform-stops
-    fixture subway_1_7_s_stops.json using the production
-    feeds.subway._platform_direction (the real GTFS zip is not committed). The
-    arrivals index itself is built entirely by the production decoder.
+  * 1-7+S is served the COMMITTED capture backend/tests/fixtures/subway_1_7_s.pb
+    (real MTA content) with ONE constant integer delta added to every timestamp it
+    carries, so its header sits exactly 600 s before the poll clock: the audit's
+    "header ten minutes old". The capture's internal structure is preserved, so the
+    "prediction two minutes ahead" is the capture's own stop at header + 720 s. The
+    SAME BYTES are served on both polls: repeatedly returning an old, valid 200.
+  * ACE is served a copy of the same capture stamped 5 s behind each poll, with every
+    trip_id renamed "h-" so the cross-group trip dedup keeps it as a distinct
+    contributor. Station 219 (Prospect Av) then carries three rows from each group
+    in each direction, interleaved under the cap of six.
+  * The six other groups get a valid, fresh, header-only feed, so every poll is a
+    fully successful eight-group poll: no failure anywhere.
+  * The clock is pinned at FROZEN_S of tests/e2e/fixtures/api.js (2026-07-02T12:00Z)
+    so the served body can be compared to the golden to the bit. 600 s is therefore
+    the INJECTED condition, not a measurement; what is measured is which surfaces
+    expose it and on which rows.
+
+WHAT IS PRODUCTION CODE HERE (nothing below is re-implemented):
+
+  * main.fetch_subway_trains (the real decoder and fan-out) through a stub
+    AsyncClient returning real httpx.Response objects; pollers._refresh_subways, the
+    real refresh path; main.app over httpx.ASGITransport for GET /api/subways and
+    GET /api/subway-arrivals/219, so every number is read out of SERVED JSON.
+  * frontend/helpers.js, frontend/systems/subway.js and frontend/stations.js loaded
+    whole into one node:vm in index.html order over a minimal DOM: the popup is the
+    real subwayArrivalsHtml and the panel is the real renderStationDetail, writing the
+    real #stations-detail and #stations-announce.
+  * backend/models.py for the arrivals-model table; the model -> endpoint map is read
+    out of backend/routes/*.py source.
 
   No network is used. No NJ Transit host is contacted and no token is minted.
-  Ages are measured against the capture's OWN header, never against today's date.
 
 WHAT IT MEASURES
 
-  a) content lag on /api/subways: fetched_at - feed_timestamp.
-  b) the served key sets of /api/subways and /api/subway-arrivals/219, side by
-     side, and whether any arrivals key can carry a content clock.
-  c) what the real frontend does with the arrivals body: feedAgeLine,
-     subwayArrivalsHtml and shapeStationArrivals against the served JSON.
-  d) the per-group health block during that same poll (ok / fetched_at), and a
-     SECOND successful poll of the same old bytes, to show the arrivals clock
-     advancing while the content clock stands still.
-  e) every arrivals response model in backend/models.py, per mode, and whether it
-     carries any content-age or source-content-time field.
+  a) content lag on /api/subways: fetched_at - feed_timestamp. The fix leaves it be.
+  b) the served board at 219: which contributor each row came from, which clock it
+     carries, the systems block naming both, and equality with the golden.
+  c) the real frontend on that body, ROW BY ROW, popup and panel: FIXED here.
+  d) a second successful poll of the same old bytes, 15 s later: the aged rows' age
+     grows and they stay qualified; the healthy rows stay fresh and silent.
+  e) every arrivals response model, per mode (contract 6.1).
 
-EXIT STATUS: 0 while the finding still behaves as recorded (DISPOSITION:
-VERIFIED); non-zero with a named failure when reality has changed.
+EXIT STATUS: 0 while the fix holds (DISPOSITION: FIXED); non-zero with a named
+failure when reality has changed.
 """
 
 from __future__ import annotations
@@ -88,13 +99,11 @@ import re
 import subprocess
 import sys
 import tempfile
-import time
-from datetime import datetime, timezone
 from pathlib import Path
+from unittest import mock
 
 REPO = Path(__file__).resolve().parents[3]
 BACKEND = REPO / "backend"
-FIXTURES = BACKEND / "tests" / "fixtures"
 FRONTEND = REPO / "frontend"
 # CONTAINMENT, INSTALLED BEFORE THE FIRST BACKEND IMPORT. env_seams calls load_dotenv
 # when it is imported, so a credential scrub that runs before that import is undone by
@@ -106,13 +115,11 @@ import _hermetic  # noqa: E402
 _hermetic.contain()
 
 sys.path.insert(0, str(BACKEND))
-
-import httpx  # noqa: E402
-from google.transit import gtfs_realtime_pb2 as pb  # noqa: E402
+sys.path.insert(0, str(BACKEND / "tests"))
 
 import main  # noqa: E402
 import models  # noqa: E402
-import pollers  # noqa: E402
+import test_f03_boards as world  # noqa: E402  (the acceptance test's world, not a copy)
 from feeds.subway import SUBWAY_FEED_URLS, _platform_direction  # noqa: E402
 
 # CONTAINMENT, ASSERTED NOW THAT THE BACKEND HAS BEEN IMPORTED. env_seams ran
@@ -122,14 +129,8 @@ from feeds.subway import SUBWAY_FEED_URLS, _platform_direction  # noqa: E402
 # contained must not run at all.
 _hermetic.verify()
 
-
-CAPTURE = FIXTURES / "subway_1_7_s.pb"
-STOPS_FIXTURE = FIXTURES / "subway_1_7_s_stops.json"
-
-INJECTED_LAG_S = 600.0  # "a header ten minutes old"
-STATION_ID = "219"  # Prospect Av (2/5), reached by the 1-7+S capture
-DIRECTION = "Northbound"
-FEED_GROUP = "1-7+S"  # the group whose URL is served the old capture
+STATION_ID = world.STATION_ID  # 219, Prospect Av (2/5), reached by the 1-7+S capture
+QUALIFIER = "as of 10m ago"  # what a 600 s old prediction reads at the frozen instant
 
 failures: list[str] = []
 
@@ -146,90 +147,50 @@ def rule(title: str) -> None:
     print(f"\n{'=' * 78}\n{title}\n{'=' * 78}")
 
 
-def stamp(epoch: float | None) -> str:
-    if epoch is None:
-        return "None"
-    return datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
-
-
-# ---------------------------------------------------------------------------
-# The injected feed bytes: the committed capture, time-shifted by one constant.
-# ---------------------------------------------------------------------------
-
-
-def shift_capture(base_now: float) -> tuple[bytes, int, int, int]:
-    """Committed capture with every timestamp shifted so its header sits exactly
-    INJECTED_LAG_S before base_now. Returns (bytes, original header, new header,
-    delta)."""
-    feed = pb.FeedMessage()
-    feed.ParseFromString(CAPTURE.read_bytes())
-    original_header = int(feed.header.timestamp)
-    delta = int(round(base_now - INJECTED_LAG_S)) - original_header
-    feed.header.timestamp = original_header + delta
-    for entity in feed.entity:
-        if entity.HasField("trip_update"):
-            tu = entity.trip_update
-            if tu.timestamp:
-                tu.timestamp += delta
-            for stu in tu.stop_time_update:
-                for field in ("arrival", "departure"):
-                    if stu.HasField(field):
-                        event = getattr(stu, field)
-                        if event.HasField("time") and event.time:
-                            event.time += delta
-        if entity.HasField("vehicle") and entity.vehicle.timestamp:
-            entity.vehicle.timestamp += delta
-    return feed.SerializeToString(), original_header, int(feed.header.timestamp), delta
-
-
-def quiet_feed(timestamp: int) -> bytes:
-    """A valid, fresh, EMPTY feed for the other seven groups: a real header (the
-    version field parse_feed requires) and no entities. Decodes as healthy."""
-    feed = pb.FeedMessage()
-    feed.header.gtfs_realtime_version = "1.0"
-    feed.header.timestamp = timestamp
-    return feed.SerializeToString()
-
-
-class OneOldGroupClient:
-    """Stands in for httpx.AsyncClient inside the real fetch_subway_trains: the
-    old capture on the 1-7+S URL, a fresh empty feed on the other seven. Returns
-    real httpx.Response objects so raise_for_status/.content behave as in prod."""
-
-    def __init__(self, old_bytes: bytes, fresh_bytes: bytes) -> None:
-        self.old_url = SUBWAY_FEED_URLS[FEED_GROUP]
-        self.old_bytes = old_bytes
-        self.fresh_bytes = fresh_bytes
-        self.calls: list[str] = []
-
-    async def get(self, url: str) -> httpx.Response:
-        self.calls.append(url)
-        body = self.old_bytes if url == self.old_url else self.fresh_bytes
-        return httpx.Response(200, content=body, request=httpx.Request("GET", url))
-
-
 def prime_app() -> None:
-    """The app.state a lifespan would have built, minus anything that needs the
-    network: the committed platform stops, and the parent-station index derived
-    from them with the production _platform_direction."""
-    app = main.app
-    app.state.feed_cache = {name: main._fresh_entry() for name in ("subways",)}
-    app.state.subway_feed_health = None
-    app.state.subway_static_status = "ready"
-    stops = json.loads(STOPS_FIXTURE.read_text())
-    app.state.subway_stops = stops
+    """The app.state a lifespan would have built, minus anything needing the network:
+    the committed platform stops and the parent-station index derived from them with the
+    production _platform_direction. The same state test_f03_boards' fixture primes."""
+    stops = json.loads(world._STOPS.read_text())
     stations: dict[str, dict] = {}
     for stop_id, stop in stops.items():
         _, station_id = _platform_direction(stop_id)
         stations.setdefault(
             station_id, {"name": stop["name"], "lat": stop["lat"], "lon": stop["lon"]}
         )
-    app.state.subway_stations = stations
-    app.state.subway_station_routes = {}
-    app.state.subway_arrivals = {}
-    app.state.subway_arrivals_by_system = {}
-    app.state.subway_positions = {}
-    return stations
+    state = main.app.state
+    state.feed_cache = {"subways": main._fresh_entry()}
+    state.subway_feed_health = None
+    state.subway_static_status = "ready"
+    state.subway_stops = stops
+    state.subway_stations = stations
+    state.subway_station_routes = {}
+    state.subway_arrivals = {}
+    state.subway_arrivals_by_system = {}
+    state.subway_positions = {}
+
+
+def run_world() -> tuple[dict, dict, dict, dict]:
+    """Two real polls of the world, 15 s apart, the aged group serving identical bytes."""
+    clock = [world.NOW]
+
+    async def polls() -> tuple[dict, dict, dict, dict]:
+        raw = world._CAPTURE.read_bytes()
+        aged = world._restamp(raw, world.NOW, world.AGED_LAG_S)
+        board_1, vehicles_1 = await world._poll_and_serve(world._upstream(aged, raw, world.NOW))
+        clock[0] = world.NOW + world.REPOLL_S
+        board_2, vehicles_2 = await world._poll_and_serve(world._upstream(aged, raw, clock[0]))
+        return board_1, vehicles_1, board_2, vehicles_2
+
+    with mock.patch.object(main.time, "time", lambda: clock[0]):
+        return asyncio.run(polls())
+
+
+def contributor(row: dict) -> str:
+    """Which group a served row came from. The "h-" prefix is this world's label for
+    the healthy copy; test_f03_boards also proves each labelled row really came out of
+    its own group's per-group index."""
+    return world.HEALTHY_GROUP if row["trip_id"].startswith(world.HEALTHY_PREFIX) else world.AGED_GROUP
 
 
 # ---------------------------------------------------------------------------
@@ -239,71 +200,125 @@ def prime_app() -> None:
 NODE_DRIVER = r"""
 const fs = require("fs");
 const vm = require("vm");
-const helpers = require(process.argv[2]);
-const systemsSubwaySrc = fs.readFileSync(process.argv[3], "utf8");
-const input = JSON.parse(fs.readFileSync(process.argv[4], "utf8"));
+const path = require("path");
+const frontend = process.argv[2];
+const input = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
 
-// systems/subway.js is a plain browser script: at load it calls L.canvas() and
-// pushes onto systems/shared.js's staleTreatments array, so the vm context gets a
-// Leaflet stub and that array alongside the real helpers as globals. Nothing
-// about feedAgeLine or subwayArrivalsHtml is re-implemented here.
-const stub = () => ({ addTo: () => ({}), bindPopup: () => ({ addTo: () => ({}) }) });
-const ctx = Object.assign({}, helpers, {
-  console,
-  L: { canvas: stub, divIcon: stub, polyline: stub, marker: stub, layerGroup: stub },
+// Just enough of an element for stations.js, which builds with createElement, sets
+// textContent and className, and appends. The panel is read back as the code built it.
+function makeEl(tag) {
+  return {
+    tagName: tag, className: "", textContent: "", hidden: false, children: [], style: {},
+    classList: { contains: () => false, toggle: () => {}, add: () => {}, remove: () => {} },
+    append(...n) { this.children.push(...n); },
+    appendChild(n) { this.children.push(n); return n; },
+    replaceChildren(...n) { this.children = n.slice(); },
+    contains: () => false, addEventListener() {}, removeEventListener() {},
+    setAttribute() {}, removeAttribute() {}, focus() {},
+  };
+}
+const elements = Object.create(null);
+const byId = (id) => (elements[id] ??= Object.assign(makeEl("div"), { id }));
+const sandbox = {
+  console, URLSearchParams,
+  document: { getElementById: byId, createElement: makeEl, body: makeEl("body"), activeElement: null },
+  L: { canvas: () => ({}) },
   staleTreatments: [],
-  minClockOffset: 0,
-});
-vm.createContext(ctx);
-vm.runInContext(systemsSubwaySrc, ctx, { filename: "systems/subway.js" });
-
-const now = input.now;
-// subwayArrivalsHtml reads its clock as Date.now()/1000 - minClockOffset, so the
-// offset is what pins it to the instant the response was served.
-ctx.minClockOffset = Date.now() / 1000 - now;
-const popupHtml = ctx.subwayArrivalsHtml(
-  { id: input.arrivals.station_id, name: input.arrivals.station_name },
-  input.arrivals,
-);
-ctx.minClockOffset = 0;
-
-const shaped = helpers.shapeStationArrivals("subway", input.arrivals, now, {});
-out = {
-  feedStaleAfterS: helpers.FEED_STALE_AFTER_S,
-  now,
-  popupLineFromFetchedAt: helpers.feedAgeLine(input.arrivals.fetched_at, now),
-  popupLineFromContentClock: helpers.feedAgeLine(input.feed_timestamp, now),
-  popupAgeFromFetchedAt: now - input.arrivals.fetched_at,
-  popupAgeFromContentClock: now - input.feed_timestamp,
-  popupSaysStale: /popup-stale/.test(popupHtml),
-  popupHtmlHead: popupHtml.slice(0, 160),
-  panelAgeSeconds: shaped.ageSeconds,
-  panelStaleLine: helpers.staleAge(shaped.ageSeconds)
-    ? `as of ${helpers.humanizeAge(shaped.ageSeconds)} ago`
-    : null,
-  panelFirstRow: shaped.buckets.length ? shaped.buckets[0].rows[0] : null,
+  // An empty, current alert store: this measures the board, not the alert join.
+  alertsSystems: {}, alertsFetchedAt: null, alertsFirstAttemptAt: null,
+  alertsClockNow: () => sandbox.__nowMs / 1000,
+  __nowMs: 0,
 };
-process.stdout.write(JSON.stringify(out));
+sandbox.globalThis = sandbox;
+vm.createContext(sandbox);
+// The browser's clock, set per board to the instant it was served, so the countdowns
+// and ages are exactly what a rider sees on receiving it.
+vm.runInContext(
+  `(() => { const Real = Date; class Frozen extends Real {
+     constructor(...a) { if (a.length === 0) super(globalThis.__nowMs); else super(...a); }
+     static now() { return globalThis.__nowMs; } } globalThis.Date = Frozen; })();`,
+  sandbox,
+);
+for (const rel of ["helpers.js", "systems/subway.js", "stations.js"]) {
+  vm.runInContext(fs.readFileSync(path.join(frontend, rel), "utf8"), sandbox, { filename: rel });
+}
+vm.runInContext("var alertsIndex = indexAlerts([]);", sandbox);
+
+// The popup's rows, per direction, as {text, qualifier}: subwayArrivalsHtml writes a
+// direction heading and then its rows joined by <br>.
+function popupRows(html) {
+  const out = {};
+  for (const section of html.split('<div class="arr-dir">').slice(1)) {
+    const [name, rest] = section.split("</div>");
+    out[name] = rest.split("<br>").map((row) => {
+      const m = row.match(/<span class="arr-qualifier">([^<]*)<\/span>/);
+      return { html: row, qualifier: m ? m[1] : "" };
+    });
+  }
+  return out;
+}
+
+const results = [];
+for (const board of input.boards) {
+  sandbox.__nowMs = board.served_at * 1000;
+  sandbox.alertsFetchedAt = board.served_at;
+  sandbox.alertsFirstAttemptAt = board.served_at;
+  const station = { id: board.station_id, name: board.station_name, routes: [] };
+  const popupHtml = sandbox.subwayArrivalsHtml(station, board);
+  sandbox.__entry = {
+    key: `subway|${board.station_id}`, kind: "subway", systemLabel: "Subway", noun: "train",
+    id: board.station_id, name: board.station_name, routes: [], wheelchair: false,
+    arrivalsUrl: `/api/subway-arrivals/${board.station_id}`,
+  };
+  sandbox.__body = board;
+  vm.runInContext(
+    "panelStation = __entry; panelBody = __body; panelError = null;" +
+      " panelAnnounced = null; panelAlertsAnnounced = null; renderStationDetail();",
+    sandbox,
+  );
+  const detail = byId("stations-detail");
+  const panelRows = [];
+  const panelLines = [];
+  for (const kid of detail.children) {
+    if (kid.tagName === "ul") for (const li of kid.children) panelRows.push(li.textContent);
+    else if (kid.className === "station-detail-stale") panelLines.push(kid.textContent);
+  }
+  results.push({
+    popupHtml,
+    popupRows: popupRows(popupHtml),
+    panelRows,
+    panelLines,
+    spoken: byId("stations-announce").textContent,
+  });
+}
+process.stdout.write(JSON.stringify(results));
 """
 
 
-def run_frontend(arrivals_body: dict, feed_timestamp: float, now: float) -> dict:
+def spoken_sentences(spoken: str, station: str) -> list[str]:
+    """The row sentences of one spoken board, in order. The panel speaks "{station},
+    Subway. Northbound: s1. s2. Southbound: s3. s4", so this takes the station off the
+    front and each direction label off its first sentence. A row sentence holds no ". "
+    of its own (its clock label reads "8:02 AM"), so splitting there is exact, and a
+    board-wide line spoken ahead of the rows would come back as a sentence of its own."""
+    prefix = f"{station}, Subway. "
+    if not spoken.startswith(prefix):
+        return []
+    return [
+        re.sub(r"^(?:Northbound|Southbound): ", "", part).rstrip(".")
+        for part in spoken[len(prefix) :].split(". ")
+    ]
+
+
+def run_frontend(boards: list[dict]) -> list[dict]:
     with tempfile.TemporaryDirectory() as tmp:
         tmpdir = Path(tmp)
         driver = tmpdir / "f03_frontend.js"
         driver.write_text(NODE_DRIVER)
         payload = tmpdir / "payload.json"
-        payload.write_text(
-            json.dumps({"arrivals": arrivals_body, "feed_timestamp": feed_timestamp, "now": now})
-        )
+        payload.write_text(json.dumps({"boards": boards}))
         proc = subprocess.run(
-            [
-                "node",
-                str(driver),
-                str(FRONTEND / "helpers.js"),
-                str(FRONTEND / "systems" / "subway.js"),
-                str(payload),
-            ],
+            ["node", str(driver), str(FRONTEND), str(payload)],
             capture_output=True,
             text=True,
         )
@@ -365,373 +380,186 @@ def arrivals_model_table() -> list[dict]:
     return rows
 
 
-def feed_model_table() -> list[dict]:
-    rows = []
-    for name in ("SubwayFeed", "RailroadFeed", "PathFeed", "NjtFeed", "FerryFeed", "BusFeed"):
-        fields = list(getattr(models, name).model_fields)
-        rows.append(
-            {
-                "model": name,
-                "fields": fields,
-                "content_clock": sorted(set(fields) & CONTENT_CLOCK_NAMES),
-            }
-        )
-    return rows
-
-
 # ---------------------------------------------------------------------------
 
 
-async def poll_and_serve(client: OneOldGroupClient) -> tuple[dict, dict, float]:
-    """One real refresh, then the two real endpoints. Returns
-    (vehicles JSON, arrivals JSON, the poll's fetched_at)."""
-    await pollers._refresh_subways(main.app, client)
-    transport = httpx.ASGITransport(app=main.app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://f03") as http:
-        vehicles = await http.get("/api/subways")
-        arrivals = await http.get("/api/subway-arrivals/" + STATION_ID)
-    if vehicles.status_code != 200 or arrivals.status_code != 200:
-        raise SystemExit(
-            f"endpoints did not serve 200: /api/subways={vehicles.status_code} "
-            f"/api/subway-arrivals/{STATION_ID}={arrivals.status_code}"
+def main_script() -> None:
+    prime_app()
+    board_1, vehicles_1, board_2, vehicles_2 = run_world()
+    now = world.NOW
+
+    rule("SETUP: the acceptance world (backend/tests/test_f03_boards.py)")
+    print(f"  capture                       : {world._CAPTURE.relative_to(REPO)}")
+    print(f"  aged group                    : {world.AGED_GROUP}, header {world.AGED_LAG_S:.0f} s "
+          "before the poll clock, identical bytes on both polls")
+    print(f"  healthy group                 : {world.HEALTHY_GROUP}, the same capture "
+          f"{world.HEALTHY_LAG_S:.0f} s behind each poll, trips renamed '{world.HEALTHY_PREFIX}'")
+    print("  other 6 groups                : valid header-only feeds, fresh")
+    print(f"  clock                         : {now:.0f} (FROZEN_S of tests/e2e/fixtures/api.js)")
+    print(f"  station under test            : {STATION_ID} ({board_1['station_name']})")
+
+    # ---- (a) ---------------------------------------------------------------
+    rule("(a) SERVED /api/subways : the content lag, which the fix leaves alone")
+    lag = vehicles_1["fetched_at"] - vehicles_1["feed_timestamp"]
+    print(f"  fetched_at - feed_timestamp   : {lag:.1f} s")
+    check(
+        lag == world.AGED_LAG_S,
+        "the vehicles envelope exposes the injected 600 s of content lag (the audit measured "
+        "599.7 s on a live clock)",
+        f"{lag:.1f} s",
+    )
+    check(
+        all(block["ok"] for block in vehicles_1["systems"].values())
+        and len(vehicles_1["systems"]) == len(SUBWAY_FEED_URLS),
+        "every one of the 8 groups reports ok while one serves 600 s old content (the trap)",
+        f"{sum(1 for b in vehicles_1['systems'].values() if b['ok'])}/8 ok",
+    )
+
+    # ---- (b) ---------------------------------------------------------------
+    rule(f"(b) SERVED /api/subway-arrivals/{STATION_ID} : two contributors, each dated")
+    golden = json.loads(world.GOLDEN.read_text())
+    check(
+        board_1 == golden,
+        "the served board is tests/e2e/fixtures/f03_board_219.json, the body the browser "
+        "half renders",
+    )
+    print(f"  {'direction':<11} {'contributor':<8} {'route':<6} {'arrives in':>10} "
+          f"{'observed':>10}  trip")
+    for direction, rows in board_1["directions"].items():
+        for row in rows:
+            print(f"  {direction:<11} {contributor(row):<8} {row['route_id']:<6} "
+                  f"{row['arrival'] - now:>9.0f}s {row['observed_at'] - now:>9.0f}s  "
+                  f"{row['trip_id']}")
+    for direction, rows in board_1["directions"].items():
+        aged = [r for r in rows if contributor(r) == world.AGED_GROUP]
+        healthy = [r for r in rows if contributor(r) == world.HEALTHY_GROUP]
+        check(
+            len(aged) == 3 and len(healthy) == 3,
+            f"{direction}: three rows from each contributor share the board",
+            f"{len(aged)} aged, {len(healthy)} healthy",
         )
-    body = vehicles.json()
-    return body, arrivals.json(), body["fetched_at"]
-
-
-async def main_async() -> None:
-    stations = prime_app()
-
-    base_now = time.time()
-    old_bytes, original_header, new_header, delta = shift_capture(base_now)
-    fresh_bytes = quiet_feed(int(base_now))
-    client = OneOldGroupClient(old_bytes, fresh_bytes)
-
-    rule("SETUP: the injected feed (committed capture, one constant time shift)")
-    print(f"  capture                : {CAPTURE.relative_to(REPO)} ({CAPTURE.stat().st_size} bytes)")
-    print(f"  capture header (as committed) : {original_header}  {stamp(original_header)}")
-    print(f"  constant delta applied        : {delta:+d} s (added to every timestamp in the feed)")
-    print(f"  shifted header                : {new_header}  {stamp(new_header)}")
-    print(f"  injected content lag          : {INJECTED_LAG_S:.0f} s before this run's poll clock")
-    print(f"  station under test            : {STATION_ID} "
-          f"({stations[STATION_ID]['name']}), {DIRECTION}")
-    print(f"  other 7 feed groups           : valid header-only feed stamped {int(base_now)} "
-          f"(fresh, healthy, empty)")
-
-    # ---- poll 1 -----------------------------------------------------------
-    vehicles, arrivals, fetched_at_1 = await poll_and_serve(client)
-    lag_1 = vehicles["fetched_at"] - vehicles["feed_timestamp"]
-
-    rule("(a) SERVED /api/subways : the content lag IS exposed there")
-    print(f"  feed_timestamp (upstream content clock) : {vehicles['feed_timestamp']:.3f}"
-          f"  {stamp(vehicles['feed_timestamp'])}")
-    print(f"  fetched_at     (our poll clock)         : {vehicles['fetched_at']:.3f}"
-          f"  {stamp(vehicles['fetched_at'])}")
-    print(f"  served_at      (this response)          : {vehicles['served_at']:.3f}")
-    print(f"  CONTENT LAG    = fetched_at - feed_timestamp = "
-          f"{lag_1:.3f} s  ({lag_1 / 60:.2f} min)")
-    print(f"  backend FEED_STALE_AFTER_S              : {main.FEED_STALE_AFTER_S} s"
-          f"  -> lag exceeds it by {lag_1 - main.FEED_STALE_AFTER_S:.1f} s")
-    print(f"  trains served                           : {len(vehicles['data'])}")
+        check(
+            {r["observed_at"] for r in aged} == {now - world.AGED_LAG_S}
+            and {r["observed_at"] for r in healthy} == {now - world.HEALTHY_LAG_S},
+            f"{direction}: each row carries its own contributor's content clock",
+        )
+    systems = board_1["systems"]
     check(
-        abs(lag_1 - INJECTED_LAG_S) < 3.0,
-        "the vehicles envelope exposes ~600 s of content lag",
-        f"{lag_1:.3f} s",
+        sorted(systems) == sorted([world.AGED_GROUP, world.HEALTHY_GROUP])
+        and systems[world.HEALTHY_GROUP]["feed_timestamp"]
+        - systems[world.AGED_GROUP]["feed_timestamp"]
+        == world.AGED_LAG_S - world.HEALTHY_LAG_S,
+        "systems names both contributors, each with its own clock, 595 s apart (6.1)",
+        json.dumps({k: v["feed_timestamp"] - now for k, v in systems.items()}),
+    )
+    (prediction,) = [r for r in board_1["directions"]["Northbound"] if r["arrival"] == now + 120]
+    check(
+        contributor(prediction) == world.AGED_GROUP
+        and prediction["arrival"] - prediction["observed_at"] == 720.0,
+        "the audit's two-minute countdown is on the board, from a ten-minute-old header",
+        f"arrives +120 s, observed {prediction['observed_at'] - now:.0f} s",
     )
     check(
-        lag_1 > main.FEED_STALE_AFTER_S,
-        "that lag is past the backend staleness threshold",
-        f"{lag_1:.1f} s > {main.FEED_STALE_AFTER_S} s",
+        board_1["fetched_at"] == now and board_1["served_at"] == now,
+        "the board's poll clock is fresh, which is why it could never be the rider's age",
+        f"fetched_at {board_1['fetched_at'] - now:+.0f} s",
     )
 
-    rule("(b) SERVED /api/subway-arrivals/%s : the same poll, no content clock" % STATION_ID)
-    vehicle_keys = sorted(vehicles)
-    arrivals_keys = sorted(arrivals)
-    width = max(len(k) for k in vehicle_keys + arrivals_keys) + 2
-    print(f"  {'GET /api/subways'.ljust(width + 26)}GET /api/subway-arrivals/{STATION_ID}")
-    print(f"  {'-' * (width + 24)}  {'-' * 34}")
-    for left, right in zip(
-        vehicle_keys + [""] * len(arrivals_keys), arrivals_keys + [""] * len(vehicle_keys)
-    ):
-        if not left and not right:
-            continue
-        left_note = ""
-        if left in ("feed_timestamp", "served_at"):
-            left_note = "  <- content / serve clock"
-        right_note = "  <- the ONLY clock" if right == "fetched_at" else ""
-        print(f"  {(left + left_note).ljust(width + 24)}  {right + right_note}")
-    print()
-    print(f"  arrivals.fetched_at        : {arrivals['fetched_at']:.3f}  {stamp(arrivals['fetched_at'])}")
-    print(f"  the content it describes   : {vehicles['feed_timestamp']:.3f}"
-          f"  {stamp(vehicles['feed_timestamp'])}")
-    print(f"  arrivals clock is NEWER than its own content by "
-          f"{arrivals['fetched_at'] - vehicles['feed_timestamp']:.3f} s")
-
-    rows = arrivals["directions"][DIRECTION]
-    soonest = rows[0]["arrival"]
-    print(f"  {DIRECTION} rows served     : {len(rows)}; soonest trip "
-          f"{soonest:.0f} ({stamp(soonest)}) route {rows[0]['route_id']}")
-    print(f"  soonest arrival is         : {soonest - arrivals['fetched_at']:+.1f} s from "
-          f"the arrivals fetched_at  ({(soonest - arrivals['fetched_at']) / 60:.2f} min ahead)")
-    print(f"  arrival row keys           : {sorted(rows[0])}")
-
-    # CONTRACT 6.1 IS COMPLETE ON THE BACKEND AND F03 IS STILL OPEN, which is the
-    # split this section now pins. Every number the audit said the arrivals payload
-    # could not express is in it: the envelope carries the contributing group's own
-    # content time, the rows carry theirs, and the systems block names the
-    # contributor. What has not changed is the only thing a rider experiences, which
-    # is measured in the frontend section below: the popup renders no qualifier and
-    # the panel still ages on `now - fetched_at`.
+    # ---- (c) ---------------------------------------------------------------
+    fe_1, fe_2 = run_frontend([board_1, board_2])
+    rule("(c) THE REAL FRONTEND on the served board, row by row : FIXED")
+    rows_1 = [row for rows in board_1["directions"].values() for row in rows]
+    expected = [QUALIFIER if contributor(r) == world.AGED_GROUP else "" for r in rows_1]
+    popup = [row["qualifier"] for d in ("Northbound", "Southbound") for row in fe_1["popupRows"][d]]
+    for served, shown, sentence in zip(rows_1, popup, fe_1["panelRows"]):
+        print(f"  {contributor(served):<6} popup {shown or '(nothing)':<14}  panel {sentence}")
     check(
-        set(arrivals) == {
-            "fetched_at",
-            "feed_timestamp",
-            "station_id",
-            "station_name",
-            "directions",
-            "served_at",
-            "systems",
-        },
-        "the arrivals envelope serves the 4 original keys plus 6.1's three",
-        ", ".join(arrivals_keys),
+        popup == expected,
+        "FIXED: the popup qualifies exactly the aged group's rows, 'as of 10m ago' beside each "
+        "countdown (was: no qualifier on any row, feedAgeLine(body.fetched_at) returned '')",
+        f"{sum(1 for q in popup if q)} of {len(popup)} rows qualified",
+    )
+    panel = [QUALIFIER if s.endswith(f", {QUALIFIER}") else "" for s in fe_1["panelRows"]]
+    check(
+        panel == expected and not any("as of" in s for s, e in zip(fe_1["panelRows"], expected) if not e),
+        "FIXED: the panel qualifies the same rows in their sentences (was: ageSeconds 0.5 s, "
+        "read as fresh, no line at all)",
+        f"{sum(1 for q in panel if q)} of {len(panel)} rows qualified",
     )
     check(
-        abs(arrivals["feed_timestamp"] - vehicles["feed_timestamp"]) < 0.001,
-        "the arrivals envelope now carries the CONTENT clock the audit found missing",
-        f"{arrivals['feed_timestamp']:.3f}",
+        popup.count("") == 6 and panel.count("") == 6,
+        "FIXED: the healthy contributor's six rows stay silent on both surfaces, so it remains "
+        "distinguishable (was: nothing distinguished anything)",
+    )
+    spoken_rows = spoken_sentences(fe_1["spoken"], board_1["station_name"])
+    check(
+        spoken_rows == fe_1["panelRows"],
+        "FIXED: the spoken board is the panel's sentences, row for row, so the caveat is "
+        "spoken on the same six rows and on no other (was: none)",
+        f"{sum(1 for s in spoken_rows if s.endswith(f', {QUALIFIER}'))} of {len(spoken_rows)} "
+        "spoken sentences qualified",
     )
     check(
-        abs((arrivals["fetched_at"] - arrivals["feed_timestamp"]) - INJECTED_LAG_S) < 1.0,
-        "and the 600 s is expressible on the arrivals payload at last",
-        f"{arrivals['fetched_at'] - arrivals['feed_timestamp']:.1f} s",
+        "popup-stale" not in fe_1["popupHtml"] and fe_1["panelLines"] == [],
+        "no board-wide line: each row speaks for its own age, so none repeats it",
+    )
+    helpers_src = (FRONTEND / "helpers.js").read_text()
+    subway_src = (FRONTEND / "systems" / "subway.js").read_text()
+    check(
+        "payload.fetched_at == null ? null : now - payload.fetched_at" not in helpers_src,
+        "FIXED: the panel no longer ages a board as now - fetched_at (was: helpers.js "
+        "shapeStationArrivals' ageSeconds)",
     )
     check(
-        arrivals["served_at"] is not None and arrivals["systems"] is not None,
-        "the envelope names its contributors and stamps its own serve time",
-        f"systems={sorted(arrivals['systems'])}",
-    )
-    # THE ROWS ARE DATED NOW, AND WITH THE RIGHT NUMBER. 6.1's decoders half stamps
-    # every subway prediction with its feed group's header, which under this
-    # reproduction is the INJECTED 600-seconds-behind header. So the payload finally
-    # carries the lag it had no field for: the row says when the prediction was made,
-    # and the row's own countdown can be checked against it.
-    check(
-        set(rows[0]) & CONTENT_CLOCK_NAMES == {"observed_at"},
-        "the arrival rows carry observed_at (6.1)",
-        ", ".join(sorted(rows[0])),
-    )
-    check(
-        all(r["observed_at"] == vehicles["feed_timestamp"] for r in rows),
-        f"all {len(rows)} rows report the contributing group's content time",
-        f"{rows[0]['observed_at']:.3f} == {vehicles['feed_timestamp']:.3f}",
-    )
-    check(
-        abs((arrivals["fetched_at"] - rows[0]["observed_at"]) - INJECTED_LAG_S) < 1.0,
-        "and the row's own lag is the injected 600 s, visible in the payload at last",
-        f"{arrivals['fetched_at'] - rows[0]['observed_at']:.1f} s",
-    )
-    check(
-        abs(arrivals["fetched_at"] - fetched_at_1) < 0.001,
-        "the arrivals fetched_at is this poll's freshly stamped clock",
-        f"{arrivals['fetched_at']:.3f} == poll {fetched_at_1:.3f}",
-    )
-    check(
-        115.0 <= soonest - arrivals["fetched_at"] <= 122.0,
-        "the served prediction is ~2 minutes ahead (the capture's own header+720 s stop)",
-        f"{soonest - arrivals['fetched_at']:.1f} s ahead",
-    )
-    check(
-        "feed_timestamp" in vehicles and "feed_timestamp" in arrivals,
-        "the content clock is on the vehicles envelope AND on the arrivals one (6.1)",
+        "feedAgeLine(body.fetched_at, now)" not in subway_src
+        and "function feedAgeLine" not in helpers_src,
+        "FIXED: the popup no longer derives an age from fetched_at (was: subway.js calling "
+        "feedAgeLine(body.fetched_at, now), the audit's cited helpers.js:713)",
     )
 
-    rule("(d) THE PER-GROUP HEALTH BLOCK during that same poll")
-    health = main.app.state.subway_feed_health
-    print(f"  subway_feed_health : total={health['total']} ok={health['ok']} "
-          f"failed={health['failed']}")
-    print(f"  {'group':<8} {'ok':<6} {'fetched_at':<16} {'retained_since':<15} routes")
-    for group, block in sorted(vehicles["systems"].items()):
-        marker = "  <- serving the 600 s old capture" if group == FEED_GROUP else ""
-        print(f"  {group:<8} {str(block['ok']):<6} {block['fetched_at']:<16.3f} "
-              f"{str(block['retained_since']):<15} {block['routes']}{marker}")
-    print(f"  SystemFreshness fields : {list(models.SystemFreshness.model_fields)}")
+    # ---- (d) ---------------------------------------------------------------
+    rule("(d) A SECOND SUCCESSFUL POLL OF THE SAME OLD BYTES, 15 s later")
+    rows_2 = [row for rows in board_2["directions"].values() for row in rows]
+    aged_ages = {board_2["served_at"] - r["observed_at"] for r in rows_2 if contributor(r) == world.AGED_GROUP}
+    healthy_ages = {board_2["served_at"] - r["observed_at"] for r in rows_2 if contributor(r) == world.HEALTHY_GROUP}
+    print(f"  aged rows' content age        : {sorted(aged_ages)} s")
+    print(f"  healthy rows' content age     : {sorted(healthy_ages)} s")
     check(
-        all(block["ok"] for block in vehicles["systems"].values()),
-        "every one of the 8 groups reports ok=True while one serves 600 s old content",
-        f"{sum(1 for b in vehicles['systems'].values() if b['ok'])}/8 ok",
+        aged_ages == {world.AGED_LAG_S + world.REPOLL_S} and healthy_ages == {world.HEALTHY_LAG_S},
+        "the aged rows' age grows with the clock while the healthy rows stay fresh",
     )
     check(
-        health["failed"] == [] and health["ok"] == health["total"],
-        "operational feed health is fully green during the same poll",
-        f"ok={health['ok']}/{health['total']}",
+        all(block["ok"] for block in vehicles_2["systems"].values()),
+        "every group still reports ok on the second poll",
     )
+    expected_2 = [QUALIFIER if contributor(r) == world.AGED_GROUP else "" for r in rows_2]
+    popup_2 = [row["qualifier"] for d in ("Northbound", "Southbound") for row in fe_2["popupRows"][d]]
+    panel_2 = [QUALIFIER if s.endswith(f", {QUALIFIER}") else "" for s in fe_2["panelRows"]]
     check(
-        abs(vehicles["systems"][FEED_GROUP]["fetched_at"] - fetched_at_1) < 0.001,
-        f"the {FEED_GROUP} group's own fetched_at is stamped now, not its content time",
-        f"{vehicles['systems'][FEED_GROUP]['fetched_at']:.3f}",
-    )
-    check(
-        "feed_timestamp" in models.SystemFreshness.model_fields,
-        "SystemFreshness declares a per-group content clock (6.1)",
-    )
-    check(
-        abs(vehicles["systems"][FEED_GROUP]["feed_timestamp"] - vehicles["feed_timestamp"]) < 0.001,
-        "and the poller fills it, so the group can be dated on its own",
-        f"{vehicles['systems'][FEED_GROUP]['feed_timestamp']:.3f}",
+        popup_2 == expected_2 and panel_2 == expected_2,
+        "FIXED, REPEATEDLY: the same old bytes returned again leave the same rows qualified "
+        "on both surfaces (was: the arrivals clock advanced and nothing said so)",
+        f"{sum(1 for q in popup_2 if q)} of {len(popup_2)}",
     )
 
-    # ---- poll 2: the SAME old bytes retrieved successfully again ----------
-    await asyncio.sleep(1.0)
-    vehicles_2, arrivals_2, fetched_at_2 = await poll_and_serve(client)
-    lag_2 = vehicles_2["fetched_at"] - vehicles_2["feed_timestamp"]
-
-    rule("(d) A SECOND SUCCESSFUL POLL OF THE SAME OLD BYTES")
-    print(f"  upstream fetches issued        : {len(client.calls)} (2 polls x 8 groups)")
-    print(f"  feed_timestamp poll 1 -> 2     : {vehicles['feed_timestamp']:.3f} -> "
-          f"{vehicles_2['feed_timestamp']:.3f}   (delta "
-          f"{vehicles_2['feed_timestamp'] - vehicles['feed_timestamp']:+.3f} s: frozen)")
-    print(f"  arrivals fetched_at poll 1 -> 2: {arrivals['fetched_at']:.3f} -> "
-          f"{arrivals_2['fetched_at']:.3f}   (delta "
-          f"{arrivals_2['fetched_at'] - arrivals['fetched_at']:+.3f} s: advancing)")
-    print(f"  content lag poll 1 -> 2        : {lag_1:.3f} s -> {lag_2:.3f} s  "
-          f"(grew {lag_2 - lag_1:+.3f} s)")
-    print(f"  arrivals rows still served     : "
-          f"{len(arrivals_2['directions'][DIRECTION])} {DIRECTION}")
-    check(
-        vehicles_2["feed_timestamp"] == vehicles["feed_timestamp"],
-        "the content clock did not move between the two successful polls",
-    )
-    check(
-        fetched_at_2 - fetched_at_1 >= 0.9,
-        "the arrivals clock advanced anyway on the second successful poll",
-        f"+{fetched_at_2 - fetched_at_1:.3f} s",
-    )
-    check(
-        lag_2 > lag_1 and all(b["ok"] for b in vehicles_2["systems"].values()),
-        "lag grows while every group still reports ok",
-        f"{lag_1:.1f} -> {lag_2:.1f} s, 8/8 ok",
-    )
-
-    # ---- (c) the frontend -------------------------------------------------
-    now_client = fetched_at_2 + 0.5  # a browser reading the response it just got
-    fe = run_frontend(arrivals_2, vehicles_2["feed_timestamp"], now_client)
-
-    rule("(c) THE REAL FRONTEND, executed against the served arrivals JSON")
-    print(f"  helpers.js FEED_STALE_AFTER_S            : {fe['feedStaleAfterS']} s")
-    print(f"  age from body.fetched_at (what it uses)  : {fe['popupAgeFromFetchedAt']:.3f} s")
-    print(f"  age from the content clock (unavailable) : {fe['popupAgeFromContentClock']:.3f} s")
-    print(f"  feedAgeLine(body.fetched_at, now)        : "
-          f"{fe['popupLineFromFetchedAt']!r}   <- what riders get")
-    print(f"  feedAgeLine(feed_timestamp, now)         : "
-          f"{fe['popupLineFromContentClock']!r}   <- what the content clock would say")
-    print(f"  subwayArrivalsHtml contains popup-stale  : {fe['popupSaysStale']}")
-    print(f"  popup head                               : {fe['popupHtmlHead']!r}")
-    print(f"  shapeStationArrivals().ageSeconds (panel): {fe['panelAgeSeconds']:.3f} s")
-    print(f"  station panel stale line                 : {fe['panelStaleLine']!r}")
-    print(f"  station panel first row                  : {fe['panelFirstRow']}")
-    check(
-        fe["popupLineFromFetchedAt"] == "",
-        "helpers.feedAgeLine returns NO stale line for the 600 s old content",
-    )
-    check(
-        "popup-stale" in fe["popupLineFromContentClock"]
-        and "10m" in fe["popupLineFromContentClock"],
-        "the same helper WOULD say 'as of 10m ago' if handed the content clock",
-        fe["popupLineFromContentClock"],
-    )
-    check(
-        fe["popupSaysStale"] is False,
-        "the real subwayArrivalsHtml popup renders with no staleness qualifier",
-    )
-    check(
-        fe["panelAgeSeconds"] < fe["feedStaleAfterS"] and fe["panelStaleLine"] is None,
-        "the station panel (shapeStationArrivals) also reads fresh",
-        f"ageSeconds={fe['panelAgeSeconds']:.1f} < {fe['feedStaleAfterS']}",
-    )
-    call_site = (FRONTEND / "systems" / "subway.js").read_text()
-    check(
-        "feedAgeLine(body.fetched_at, now)" in call_site,
-        "the popup call site passes body.fetched_at, not a content clock",
-    )
-    check(
-        "payload.fetched_at == null ? null : now - payload.fetched_at"
-        in (FRONTEND / "helpers.js").read_text(),
-        "the panel's ageSeconds is defined as now - fetched_at",
-    )
-
-    rule("(c) CITED LINES, confirmed against the audited files")
-    cites = [
-        ("backend/routes/subway.py", 89, "THE OLDEST CONTRIBUTING GROUP'S poll time"),
-        # Moved by contract 6.1, which widened the models above it. The line number
-        # is re-pinned rather than loosened to a search: a citation that drifts
-        # silently is the thing this block exists to catch.
-        ("backend/models.py", 294, "class StationArrivals(BaseModel):"),
-        ("frontend/helpers.js", 713, 'The "as of Xm ago" age line'),
-    ]
-    for rel, line_no, needle in cites:
-        text = (REPO / rel).read_text().splitlines()[line_no - 1]
-        print(f"  {rel}:{line_no}  {text.strip()[:70]}")
-        check(needle in text, f"{rel}:{line_no} is the cited construct")
-
-    # ---- (e) every arrivals model ----------------------------------------
+    # ---- (e) ---------------------------------------------------------------
     rule("(e) EVERY ARRIVALS RESPONSE MODEL IN backend/models.py, PER MODE")
     table = arrivals_model_table()
-    print(f"  {'mode':<20} {'model':<26} {'endpoint':<40} content clock?")
-    print(f"  {'-' * 20} {'-' * 26} {'-' * 40} {'-' * 14}")
     for row in table:
-        verdict = ", ".join(row["content_clock"]) if row["content_clock"] else "NONE"
+        verdict = ", ".join(row["content_clock"]) or "NONE"
         print(f"  {row['mode']:<20} {row['model']:<26} {row['endpoint']:<40} {verdict}")
-    print()
-    for row in table:
-        print(f"  {row['model']:<26} fields: {row['fields']}")
-    print()
-    print("  For contrast, the VEHICLE/BOAT envelopes of the same modes:")
-    for row in feed_model_table():
-        print(f"  {row['model']:<26} content clock: {', '.join(row['content_clock']) or 'NONE'}")
-    print("  (AirTrain JFK has no arrivals endpoint: it is static-only reference data.)")
-
     check(len(table) == 5, "five arrivals response models found", f"{len(table)}")
     check(
-        all(row["endpoint"] != "(none)" for row in table),
-        "every arrivals model is served by a real endpoint",
-    )
-    without = [r["mode"] for r in table if not r["content_clock"]]
-    with_clock = [r["mode"] for r in table if r["content_clock"]]
-    # 6.1 GAVE ALL FIVE THE FIELD AND FILLED IT, so the audit's "no arrivals model of
-    # ANY mode carries a content-age field" is false of both the declaration and the
-    # data. What keeps F03 open is measured in the frontend section above, not here.
-    check(
-        not without,
-        "all five arrivals models now DECLARE a content-age field (6.1)",
-        f"declaring={with_clock}; not declaring={without or 'none'}",
-    )
-    # WHAT IS LEFT OF F03 AFTER ALL OF 6.1. The rows are dated, the envelope carries
-    # its contributing group's content time, and its systems block names that
-    # contributor. NO RIDER SURFACE READS ANY OF IT, which is the whole of what keeps
-    # this finding open: the frontend checks above measure a popup that renders no
-    # qualifier and a panel whose age is still now - fetched_at.
-    check(
-        FEED_GROUP in (arrivals["systems"] or {}),
-        "the board names the contributor behind it, so a healthy one stays distinct",
-        f"systems={sorted(arrivals['systems'] or {})}",
-    )
-    check(
-        all(row["content_clock"] for row in feed_model_table()),
-        "while every vehicle/boat envelope does carry one",
+        all(row["content_clock"] for row in table),
+        "all five arrivals models declare a content-age field (6.1; was: none of the five)",
     )
 
-    # ---- verdict ----------------------------------------------------------
     rule("MEASURED SUMMARY")
-    print(f"  injected header age                     : {INJECTED_LAG_S:.0f} s")
-    print(f"  measured lag on /api/subways (poll 1)   : {lag_1:.3f} s")
-    print(f"  measured lag on /api/subways (poll 2)   : {lag_2:.3f} s")
-    print(f"  lag visible on /api/subway-arrivals     : 0 s (no field can express it)")
-    print(f"  arrivals age the frontend computes      : {fe['popupAgeFromFetchedAt']:.3f} s "
-          f"(threshold {fe['feedStaleAfterS']} s, so: silent)")
-    print(f"  groups reporting ok during all of this  : "
-          f"{sum(1 for b in vehicles_2['systems'].values() if b['ok'])}/8")
-    print(f"  arrivals models lacking a content clock : {len(without)}/{len(table)}")
-
+    print(f"  injected header age                  : {world.AGED_LAG_S:.0f} s on {world.AGED_GROUP}")
+    print(f"  lag on /api/subways                  : {lag:.0f} s")
+    print(f"  rows at {STATION_ID}, qualified / served : popup {sum(1 for q in popup if q)}/"
+          f"{len(popup)}, panel {sum(1 for q in panel if q)}/{len(panel)}")
+    print(f"  healthy contributor's rows qualified : {sum(1 for q, e in zip(popup, expected) if q and not e)}")
     print()
     if failures:
         print("REALITY HAS CHANGED. Failed assertions:")
@@ -740,22 +568,16 @@ async def main_async() -> None:
         print("DISPOSITION: NOT AS RECORDED, see the failed assertions above")
         raise SystemExit(1)
     print(
-        "DISPOSITION: VERIFIED, a valid subway feed "
-        f"{lag_1:.0f}s behind its own header serves /api/subways a "
-        f"{lag_1:.0f}s content lag while /api/subway-arrivals/{STATION_ID} serves only a "
-        "freshly stamped fetched_at and 8/8 groups ok. CONTRACT 6.1 HAS CLOSED THE "
-        "BACKEND HALF ENTIRELY: all 5 arrivals models of all 5 modes carry an "
-        "observed_at, the decoders fill it, the envelope carries the contributing "
-        "group's own content time, and its systems block names that contributor, so "
-        "every number the audit found inexpressible is now in the payload and the "
-        "600 s is visible on the arrivals response itself. THE FINDING IS UNCHANGED "
-        "ANYWAY, and what carries it is measured above rather than assumed: no rider "
-        "surface reads any of it. The popup renders no qualifier and the panel's age "
-        "is still now - fetched_at, so a rider still reads a two minute countdown "
-        "built from a ten minute old prediction. That is 6.2's work, and this script "
-        "goes red the day it lands."
+        "DISPOSITION: FIXED (claude/freshness-6-2-boards)  "
+        "BEFORE: a valid subway feed 600 s behind its own header left /api/subway-arrivals/219 "
+        "with a fresh fetched_at, 8/8 groups ok, a popup with no qualifier and a panel aged "
+        "now - fetched_at, so a ten minute old prediction read as a live two minute countdown. "
+        f"AFTER: the same world with a healthy group beside the aged one: {sum(1 for q in popup if q)} "
+        f"of {len(popup)} rows at Prospect Av say '{QUALIFIER}' on the popup and the panel, "
+        "exactly the aged group's, the healthy group's rows say nothing, and a second poll of "
+        "the same old bytes keeps it so."
     )
 
 
 if __name__ == "__main__":
-    asyncio.run(main_async())
+    main_script()

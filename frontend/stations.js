@@ -514,6 +514,16 @@ async function fetchPanelArrivals({ refresh = false } = {}) {
     if (!refresh) {
       panelError = failure;
       renderStationDetail();
+    } else if (panelBody && !panelError) {
+      // AND IT REPAINTS ONCE, NOT AS A TICK (6.2). While no refresh lands, the rows'
+      // ages keep counting on the client clock (servedAge), so their qualifiers appear
+      // on screen exactly when the board has gone stale for the reason riders cannot
+      // see. Only a non-tick render may speak (speakPanel), and before this a failed
+      // refresh rendered nothing, so a listening rider never heard it. The announcement
+      // guard still decides: an unchanged board says nothing, and the failure itself is
+      // not announced. Not on a board that never loaded, whose error would be re-spoken
+      // on every refresh.
+      renderStationDetail();
     }
     return;
   }
@@ -659,11 +669,16 @@ function renderStationDetail({ error = panelError, tick = false } = {}) {
     nameFor: entry.nameFor || (() => null),
   });
 
-  // The same "as of Xm ago" honesty the popups render, from the same threshold and
-  // the same wording, so a stale feed reads identically on both surfaces.
+  // THE BOARD'S SYSTEM LINE, the one line a board says about its system rather than a
+  // row, computed by the same helper the popup uses (boardSystemLine), so a board reads
+  // identically on both surfaces. It used to be now - fetched_at, the age of our POLL,
+  // which stayed silent while a provider served old content to polls that kept
+  // succeeding (F03). Each row now carries its own qualifier in its sentence
+  // (arrivalQualifier, through arrivalSentence), and this line speaks only for what
+  // rows cannot: an empty board, and rows whose provider dates nothing (6.2).
   let staleLine = null;
-  if (staleAge(shaped.ageSeconds)) {
-    staleLine = `as of ${humanizeAge(shaped.ageSeconds)} ago`;
+  if (shaped.systemLine) {
+    staleLine = shaped.systemLine;
     const stale = document.createElement("p");
     stale.className = "station-detail-stale";
     stale.textContent = staleLine;
@@ -897,7 +912,7 @@ function announceState(text, tick, alertSpeech = null) {
 
 // The arrivals announcement. The detail area repaints every second; this fires only
 // when the ARRIVALS changed in a way a rider would care about. announcementWorthy is
-// the guard and helpers.js documents its three clauses. panelAnnounced advances only
+// the guard and helpers.js documents its four clauses. panelAnnounced advances only
 // when the door actually opened, so a tick can neither speak nor quietly consume the
 // change that the next real render owes the rider.
 function announceArrivals(shaped, staleLine, tick, alertSpeech = null) {

@@ -43,6 +43,18 @@ FEED_STALE_AFTER_S = 90
 # at THE FRESHNESS BUDGET, DERIVED in feeds/njt.py. It is not repeated here so the
 # two cannot drift into disagreeing versions.
 
+# THE OPERATOR'S THRESHOLD FOR WHAT RIDERS ARE SERVED, and deliberately not the one
+# above. FEED_STALE_AFTER_S is the rider's (the design's OBS_FRESH_S): past it a board
+# row reads "as of 2m ago", which a rider uses beside the countdown and which is not an
+# incident. This is when /healthz tells an operator, through observations-qualified:
+# the contract monitor's own upstream header band (scripts/contract_monitor.py
+# REALTIME_STALE_S), with its strict `>`, so the probe and production:board-clock call
+# one served board old at one age. models.HEALTH_OBSERVATIONS_QUALIFIED says why the
+# two audiences get two numbers. Not overridable, like FEED_STALE_AFTER_S: the contract
+# tier compresses the retention cap below, never this. The monitor imports nothing
+# from the app, so tests/test_contract_monitor.py holds the two copies equal.
+OPERATOR_STALE_AFTER_S = 600.0
+
 # How long ONE failed subsystem's data is carried forward inside an aggregate
 # envelope before it is dropped (C2). Ten minutes, and the reasoning is the same
 # shape as the alerts retention cap but at a much shorter horizon because vehicle

@@ -486,6 +486,19 @@ const STALE_MARKER_OPACITY = 0.45;
 // through `ok` instead; a missing `ok` reads as healthy, so a malformed field cannot
 // dim the whole map; an EMPTY systems object falls back to the synthesized single
 // system rather than yielding a source with no freshness at all.
+//
+// 6.2 WIDENED THIS DOOR BY ONE NAME, and it is the door in the literal sense: it read
+// exactly four names (fetched_at, ok, retained_since, routes), and nothing else in a
+// block reaches any surface. So the per-system content clock contract 6.1 put on every
+// block reached none, and a system whose provider was ten minutes behind looked exactly
+// like its current siblings, which is F03. It now reads feed_timestamp as well. A
+// synthesized single system carries the ENVELOPE's feed_timestamp, because for a
+// single-feed source (buses, PATH, ferry, and every arrivals board without a systems
+// block) the envelope's content clock is that one system's.
+//
+// feedTimestamp HAS THREE STATES, and the two that are not numbers mean different
+// things (see contentClock and systemLag): null is the backend saying this system has
+// no content clock at all, undefined is a payload that predates the per-system clock.
 function ingestSystems(body, sourceKey) {
   const raw = body == null ? null : body.systems;
   const names = raw != null && typeof raw === "object" ? Object.keys(raw) : [];
@@ -497,6 +510,7 @@ function ingestSystems(body, sourceKey) {
         ok: true,
         retainedSince: null,
         routes: null,
+        feedTimestamp: contentClock(body == null ? undefined : body.feed_timestamp),
       },
     };
   }
@@ -511,9 +525,42 @@ function ingestSystems(body, sourceKey) {
       // alerts blocks, whose entities name their own system); an array, possibly
       // empty, means it does.
       routes: Array.isArray(block.routes) ? block.routes : null,
+      feedTimestamp: contentClock(block.feed_timestamp),
     };
   }
   return systems;
+}
+
+// A block's content clock, read into its three states. A finite number is the content
+// time. NULL IS A REAL ANSWER and is kept as one: the backend publishes null for a
+// system whose header is not a usable freshness signal (Metro-North, whose header is a
+// lagging copy; feeds.RAILROAD_FRESHNESS_SYSTEMS decides it, and this file must not
+// restate it). Anything else, including a key that is simply absent, is UNDEFINED: a
+// payload from before the per-system clock existed, or a malformed value, which
+// systemLag answers with the envelope's one number exactly as the code did before 6.2.
+function contentClock(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  return value === null ? null : undefined;
+}
+
+// THE ENVELOPE'S OWN CLOCKS, through the same door as its per-system blocks. Every
+// vehicle feed and, since 6.1, every arrivals board carries fetched_at, feed_timestamp
+// and served_at beside its systems map, and before 6.2 only the vehicle feeds' reached
+// a surface: refreshSource read them inline and the boards read fetched_at alone. One
+// function now reads all four for both kinds of envelope, so a board ages its rows from
+// the same served_at, read the same way, that the status line ages the map from. Each
+// clock is a finite number or null; a payload's other fields are none of its business.
+function ingestEnvelope(body, sourceKey) {
+  const clock = (key) => {
+    const value = body == null ? null : body[key];
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+  };
+  return {
+    fetchedAt: clock("fetched_at"),
+    feedTimestamp: clock("feed_timestamp"),
+    servedAt: clock("served_at"),
+    systems: ingestSystems(body, sourceKey),
+  };
 }
 
 // A source's systems, falling back to the synthesized single system when a caller
@@ -540,24 +587,47 @@ function pollAge(fetchedAt, servedAt, now) {
   return servedAt - fetchedAt + Math.max(now - servedAt - (minClockOffset ?? 0), 0);
 }
 
-// Age of EACH of a source's systems, keyed by system name; null for a system that
-// has never decoded (no fetched_at to age against).
+// ONE SYSTEM'S CONTENT LAG at its own last decode: its fetched_at minus its own
+// feed_timestamp, both from the same block, which is the backend's _feed_age asked of
+// one system rather than of one envelope.
 //
-// The upstream-lag term stays a SOURCE-level floor rather than a per-system one:
-// feed_timestamp is the oldest content time across the feeds that decoded, so it
-// cannot be attributed to one system, and if the content behind this response is
-// old then everything drawn from it is old. On a fully healthy source every
-// system's fetched_at equals the envelope's, so the worst of these ages is exactly
-// the age R1 computed, which is what keeps the healthy case rendering unchanged.
-function systemAges(source, now = Date.now() / 1000) {
-  const lag =
-    source.feedTimestamp == null || source.fetchedAt == null
+// THIS WAS THE SHARED LAG TERM, and 6.2 is what made it per system. It used to be the
+// ENVELOPE's one number, fetched_at minus feed_timestamp for the whole response, on the
+// reasoning that the envelope's feed_timestamp "cannot be attributed to one system".
+// That was true until 6.1, and it had a cost the reasoning did not state: for the
+// subway the envelope's feed_timestamp is the MINIMUM header across every group that
+// decoded, so one group ten minutes behind aged all eight. Every marker on the map
+// dimmed and the status line spoke for the whole source while seven feeds were
+// current, which is F03's second clause one surface over. Each block now carries its
+// own content clock, so each system answers for its own.
+//
+// The three states of feedTimestamp (contentClock): a number is aged here; NULL means
+// this system has no content clock, so it contributes no lag and its age is its poll
+// age alone (Metro-North, which must not borrow LIRR's clock through the envelope);
+// UNDEFINED means the payload predates the per-system clock, so the envelope's number
+// stands in, exactly as it did before, and an older backend reads as it always did.
+function systemLag(source, system) {
+  if (system.feedTimestamp === undefined) {
+    return source.feedTimestamp == null || source.fetchedAt == null
       ? 0
       : source.fetchedAt - source.feedTimestamp;
+  }
+  if (system.feedTimestamp === null || system.fetchedAt == null) return 0;
+  return system.fetchedAt - system.feedTimestamp;
+}
+
+// Age of EACH of a source's systems, keyed by system name; null for a system that
+// has never decoded (no fetched_at to age against). The larger of its own content lag
+// (systemLag) and its poll age: either alone makes what a system drew old.
+//
+// On a fully healthy source every system's fetched_at equals the envelope's and every
+// lag is a few seconds, so the worst of these ages is exactly the age R1 computed,
+// which is what keeps the healthy case rendering unchanged.
+function systemAges(source, now = Date.now() / 1000) {
   const ages = {};
   for (const [name, system] of Object.entries(sourceSystems(source))) {
     const poll = pollAge(system.fetchedAt, source.servedAt, now);
-    ages[name] = poll == null ? null : Math.max(lag, poll, 0);
+    ages[name] = poll == null ? null : Math.max(systemLag(source, system), poll, 0);
   }
   return ages;
 }
@@ -596,9 +666,11 @@ function markerOpacity(age, base = 1) {
 //      moved here: dimming states how OLD the data is, and the app's definition of
 //      old is FEED_STALE_AFTER_S for every source alike.)
 //   2. Its own poll age reaches the threshold, at fetchedAt + FEED_STALE_AFTER_S.
-//   3. The source's upstream content was ALREADY past the threshold when it was
-//      polled (the lag term). Nothing may advance past the observation itself, so
-//      the deadline is fetchedAt.
+//   3. Its upstream content was ALREADY past the threshold when it was polled (its
+//      own lag term, systemLag). Nothing may advance past the observation itself, so
+//      the deadline is fetchedAt. Per system since 6.2, for the reason systemLag
+//      gives: this deadline and the age above must agree about which system is old,
+//      or a lagging group would freeze its healthy siblings while leaving them bright.
 //
 // REVIEW FIX. This used to be glideClock(now, age) subtracting (age - threshold),
 // which only froze while the POLL term dominated: with the upstream-lag term
@@ -607,16 +679,13 @@ function markerOpacity(age, base = 1) {
 // Expressing the freeze as an absolute instant cannot drift that way, and it needs no
 // clock, so it is a pure function of the payload.
 function systemStaleAts(source) {
-  const lag =
-    source.feedTimestamp == null || source.fetchedAt == null
-      ? 0
-      : source.fetchedAt - source.feedTimestamp;
   const deadlines = {};
   for (const [name, system] of Object.entries(sourceSystems(source))) {
     if (system.fetchedAt == null) {
       deadlines[name] = null; // never decoded: no anchor, so nothing to freeze
       continue;
     }
+    const lag = systemLag(source, system);
     const aged = system.fetchedAt + (lag >= FEED_STALE_AFTER_S ? 0 : FEED_STALE_AFTER_S);
     deadlines[name] =
       system.retainedSince == null ? aged : Math.min(aged, system.retainedSince);
@@ -663,71 +732,248 @@ function glideClock(now, staleAt) {
 //
 // THE COMMON CASE MUST NOT GET NOISIER, so the wording is graded:
 //   - every system fresh: null, exactly as before.
-//   - the WHOLE source stale (one synthesized system, or every system of an
-//     aggregate): "railroad: as of 6m ago", the pre-C2 wording untouched.
-//   - a strict SUBSET stale: the degraded systems are named, worst age reported,
-//     e.g. "railroad: MNR as of 6m ago" or "trains: ACE group as of 4m ago"
+//   - the WHOLE source degraded in ONE way (one synthesized system, or every system
+//     of an aggregate in the same population): "railroad: as of 6m ago", the pre-C2
+//     wording untouched.
+//   - otherwise the degraded systems are named, each population reporting its own
+//     worst age, e.g. "railroad: MNR as of 6m ago" or "trains: ACE group as of 4m ago"
 //     (source.systemNoun supplies the "group", which reads wrong for a system).
 //   - a system that has NEVER decoded cannot be aged, so it is reported by name
 //     with no age rather than silently dropped.
 // A system that merely failed its last poll is NOT named until its age crosses the
 // threshold: single failed polls are routine, and naming them would make the status
 // line chatter during normal operation.
+//
+// THREE POPULATIONS, EACH ITS OWN CLAUSE, and 6.2 added the middle one. A system is in
+// at most one of them:
+//   1. STALE: its poll age has crossed the threshold, whatever its content was.
+//   2. CONTENT OLD: its poll is fresh and what that poll fetched is not, because its
+//      own content lag (systemLag) has crossed the threshold. This is F03's state, a
+//      provider serving old content to polls that keep succeeding. Before 6.2 the line
+//      could say it only through the envelope's one lag, which spoke for every system
+//      of the source at once; with the lag per system it names the one that is behind.
+//   3. BLIND: never decoded, and reported down.
+// The first two share the words "as of {age} ago" (design 4.4 reuses them verbatim)
+// and never share a clause, for the reason stale and blind were split: a system in one
+// state announced with another state's age is exactly the defect that split them. A
+// feed whose poll stopped five minutes ago and a feed serving ten minute old content
+// are two facts with two ages, and one clause would hand one of them the other's.
+//
+// A system with NO content clock (Metro-North's null) is never CONTENT OLD: it has no
+// content age to be old, and its line stays exactly as quiet as it always was. Saying
+// that Metro-North dates nothing is 6.3's clause, and even that may only ride a line
+// that is already rendering, never raise one (design 3.2).
 // `now` is injected for testability (defaults to the wall clock).
 function staleness(source, now = Date.now() / 1000) {
   const systems = sourceSystems(source);
-  const ages = systemAges(source, now);
-  const names = Object.keys(ages).sort();
-  const stale = names.filter((name) => staleAge(ages[name]));
-  // Never decoded (null age) AND reported down: no age to print, but real.
-  const blind = names.filter((name) => ages[name] == null && !systems[name].ok);
-  if (!stale.length && !blind.length) return null;
+  const names = Object.keys(systems).sort();
+  const stale = [];
+  const content = [];
+  const blind = [];
+  const ages = {};
+  for (const name of names) {
+    const system = systems[name];
+    const poll = pollAge(system.fetchedAt, source.servedAt, now);
+    if (poll == null) {
+      // Never decoded (null age) AND reported down: no age to print, but real.
+      if (!system.ok) blind.push(name);
+      continue;
+    }
+    const lag = systemLag(source, system);
+    if (staleAge(poll)) {
+      stale.push(name);
+      ages[name] = Math.max(lag, poll);
+    } else if (staleAge(lag)) {
+      content.push(name);
+      ages[name] = lag;
+    }
+  }
+  const populated = [stale, content, blind].filter((group) => group.length).length;
+  if (!populated) return null;
   const noun = source.systemNoun ? ` ${source.systemNoun}` : "";
   // Naming every system of a source is just naming the source, so fall back to the
   // pre-C2 wording; that is also what keeps a single-feed source reading unchanged.
-  const whole = stale.length + blind.length === names.length;
-  const subject = (group) =>
-    whole && !(stale.length && blind.length)
-      ? ""
-      : `${group.map((n) => `${n}${noun}`).join(", ")} `;
-  // TWO CLAUSES, NEVER ONE. REVIEW FIX: the stale and blind sets used to be merged
-  // into a single subject that then took its age from the stale set alone, so a
-  // system which had never reported anything was announced with another system's
-  // age ("ACE group, SIR group as of 4m ago" when SIR had no data at all). They
+  // Only when ONE population covers the source, though: two populations have to be
+  // told apart, and naming them is how.
+  //
+  // REVIEW FIX, kept from when there were two populations: the stale and blind sets
+  // used to be merged into a single subject that then took its age from the stale set
+  // alone, so a system which had never reported anything was announced with another
+  // system's age ("ACE group, SIR group as of 4m ago" when SIR had no data at all). They
   // collide exactly during a broad incident, which is when the line gets read.
+  const whole = stale.length + content.length + blind.length === names.length && populated === 1;
+  const subject = (group) => (whole ? "" : `${group.map((n) => `${n}${noun}`).join(", ")} `);
+  const worst = (group) => humanizeAge(Math.max(...group.map((name) => ages[name])));
   const clauses = [];
-  if (stale.length) {
-    const worst = Math.max(...stale.map((name) => ages[name]));
-    clauses.push(`${subject(stale)}as of ${humanizeAge(worst)} ago`);
-  }
+  if (stale.length) clauses.push(`${subject(stale)}as of ${worst(stale)} ago`);
+  if (content.length) clauses.push(`${subject(content)}as of ${worst(content)} ago`);
   if (blind.length) clauses.push(`${subject(blind)}not reporting`);
   return `${source.label}: ${clauses.join("; ")}`;
 }
 
-// A compact age string: seconds under two minutes, whole minutes above. Shared by
-// the status-line staleness and the popup age line so the two read the same.
+// A compact age string: seconds under two minutes, whole minutes above, and hours with
+// minutes from a hundred minutes on. The one age formatter, shared by the status line,
+// the vehicle popups and (6.2) every board row, so no two surfaces word one age
+// differently.
+//
+// THE HOURS TIER IS 6.2's, because 6.2 is the first step that shows ages this large:
+// LIRR dates each prediction by its own trip update, and on the committed capture the
+// oldest served prediction is 52538 seconds old, which the two-tier form rendered as
+// "as of 876m ago". Section 3.2 of the freshness contract names the fix, a third tier
+// borrowed from countdownParts, and borrowing its ROUNDING too is what keeps a board's
+// "1 h 40 min" countdown and its "1h 40m" age from ever disagreeing about the minute.
+// Below a hundred minutes the output is exactly what it always was.
 function humanizeAge(age) {
-  return age < 120 ? `${Math.round(age)}s` : `${Math.round(age / 60)}m`;
+  if (age < 120) return `${Math.round(age)}s`;
+  const p = countdownParts(age);
+  if (p.kind === "hm") return p.rem ? `${p.hours}h ${p.rem}m` : `${p.hours}h`;
+  return `${p.mins}m`;
 }
 
-// The "as of Xm ago" age line for a station/dock popup whose arrivals data has
-// gone stale: when a background refresh fails the last-known rows keep ticking
-// (see openStationArrivals), so past FEED_STALE_AFTER_S the popup must say how old
-// they are rather than imply liveness. Empty while fresh, so a live popup shows
-// nothing. `now` is the skew-corrected clock the caller already computes for its
-// countdowns; fetchedAt is the arrivals body's poll time. Pure and node-testable.
-function feedAgeLine(fetchedAt, now) {
-  if (fetchedAt == null) return "";
-  return stalePopupLine(now - fetchedAt);
-}
-
-// The same line from an AGE rather than a timestamp, for the C2 train/boat/bus
-// popups: their staleness comes from a system block's age (already carrying the
-// server cache-age and skew terms), not from subtracting a fetched_at on the spot.
-// One renderer for both surfaces so they cannot word it or threshold it differently.
+// The "as of Xm ago" line from an AGE, for the C2 train/boat/bus popups: their
+// staleness comes from a system block's age (already carrying the server cache-age and
+// skew terms). The station boards render their system line into the same markup
+// (boardLineHtml), so a stale board and a stale train cannot be styled or worded apart.
 function stalePopupLine(age) {
   if (!staleAge(age)) return "";
   return `<div class="popup-stale">as of ${humanizeAge(age)} ago</div>`;
+}
+
+// ---- 6.2: a board's rows, each qualified by its own age ----
+//
+// F03, the audit's finding: a board counted down to a prediction and never said how
+// old the prediction was. Its only age line was now - fetched_at, the age of OUR POLL,
+// so it spoke when our poller stopped and stayed silent when the provider did, and a
+// ten minute old prediction read as a live two minute countdown. Contract 6.1 put the
+// provider's own clock on every row (observed_at) and the served instant on every
+// envelope (served_at). What follows reads them, per ROW, so that on a board served by
+// several contributors a stale one's rows are marked and a current one's are not: the
+// auditor's second clause, "other healthy contributors remain distinguishable".
+
+// THE SYSTEMS WHOSE PROVIDER DATES NOTHING: section 3.3's two non-gated rows, both
+// Metro-North's. A null observed_at on any other system's prediction is an anomaly,
+// said at the row ("age unknown"); on these it is the provider's standing answer, so it
+// is silent at the row and stated once on the board's system line (3.2 clause (c), as
+// Q5 amended it). MIRRORED RATHER THAN DERIVED, because one payload cannot tell "this
+// provider never dates" from "this provider dated nothing this time", and
+// frontend/boards.test.js holds this set to exactly the railroad systems that
+// backend/feeds/railroad.py's RAILROAD_FRESHNESS_SYSTEMS leaves out, so the two cannot
+// drift. 6.3 reads the same set for positions.
+const UNDATED_SYSTEMS = new Set(["MNR"]);
+
+// The system a board's rows come from, for the age policy: a railroad board's own
+// (its envelope names it), and otherwise the board's kind, since every other board
+// draws from one provider.
+function boardSystem(kind, body) {
+  if (kind === "railroad") return (body && body.system) || null;
+  return kind;
+}
+
+// How old a server- or provider-stamped instant is NOW, on the server's clock: its age
+// when this response was built (served_at minus the stamp, both from the payload, so
+// skew-free, the pairing the backend uses for feed_age), plus the time since, which is
+// the client's elapsed on the skew-corrected clock and never negative. That second term
+// is what keeps a board honest when its background refresh fails and the last-known
+// rows keep ticking. Without a served_at (a response from before 6.1), the corrected
+// clock alone. `now` is the skew-corrected clock every board computes for its
+// countdowns. Null when there is no stamp to age.
+function servedAge(stamp, servedAt, now) {
+  if (typeof stamp !== "number" || !Number.isFinite(stamp)) return null;
+  if (servedAt == null) return now - stamp;
+  return servedAt - stamp + Math.max(now - servedAt, 0);
+}
+
+// A board's freshness, read through the door once per render: the served instant, the
+// age of its worst system's last poll (what a row with no clock of its own is as old
+// as), and whether its predictions are age-gated at all. An unknown system is gated,
+// the pessimistic default: its null rows say "age unknown" rather than nothing.
+function boardFreshness(kind, body, now) {
+  const system = boardSystem(kind, body);
+  const envelope = ingestEnvelope(body, system ?? kind);
+  let pollAge = null;
+  for (const block of Object.values(envelope.systems)) {
+    const age = servedAge(block.fetchedAt, envelope.servedAt, now);
+    if (age != null && (pollAge == null || age > pollAge)) pollAge = age;
+  }
+  return { now, system, servedAt: envelope.servedAt, pollAge, gated: !UNDATED_SYSTEMS.has(system) };
+}
+
+const NO_QUALIFIER = Object.freeze({ kind: "", words: "" });
+
+// THE WORDS ONE BOARD ROW CARRIES BESIDE ITS COUNTDOWN, and the one helper the station
+// popup and the station panel both render them through. Section 3.2's vocabulary for a
+// prediction, exactly:
+//
+//   reported, fresh                    nothing: silence means current
+//   reported, older than OBS_FRESH_S   "as of {age} ago"  (OBS_FRESH_S is
+//                                      FEED_STALE_AFTER_S, one number, via staleAge)
+//   retained                           "showing last known, as of {age} ago"
+//   observed_at null, age-gated        "age unknown": this provider normally dates it
+//   observed_at null, not gated        nothing at the row; see boardSystemLine
+//   anything else                      "age unknown": the `unknown` provenance, a row
+//                                      with none at all (an older backend), or a value
+//                                      no prediction can carry
+//
+// The countdown still counts to the prediction; this sits beside it. A retained row
+// with no clock of its own is as old as its system's last poll, which is when we last
+// had it.
+//
+// Returns {kind, words}. `words` is what a rider reads, and changes as the age grows;
+// `kind` ("", "aged", "retained" or "unknown") is what it IS, and changes only when
+// the row crosses the threshold, never while its age counts on past it. The live
+// region compares kinds and never words, which is what makes a qualifier that appears
+// an announcement and a qualifier that counts up a non-event.
+function arrivalQualifier(row, board) {
+  const r = row || {};
+  const age = servedAge(r.observed_at, board.servedAt, board.now);
+  if (r.provenance === "retained") {
+    const held = age ?? board.pollAge;
+    return {
+      kind: "retained",
+      words: held == null ? "showing last known" : `showing last known, as of ${humanizeAge(Math.max(held, 0))} ago`,
+    };
+  }
+  if (r.provenance !== "reported") return { kind: "unknown", words: "age unknown" };
+  if (age == null) return board.gated ? { kind: "unknown", words: "age unknown" } : NO_QUALIFIER;
+  return staleAge(age) ? { kind: "aged", words: `as of ${humanizeAge(age)} ago` } : NO_QUALIFIER;
+}
+
+// THE BOARD'S SYSTEM LINE: what a board says about its SYSTEM rather than about a row,
+// or null. It speaks only for what the rows cannot, because a dated row carries its own
+// age and a line repeating it would say everything twice:
+//
+//   * an EMPTY board, whose "No trains" is only as current as the poll behind it;
+//   * rows whose provider does not date them (Metro-North's), which have no age at all.
+//
+// For those it gives the age of the board's last poll, once that age is stale, from the
+// served values (servedAge over each system's fetched_at, the worst answering). That is
+// the R1 honesty line these boards always had, now fed by the door rather than by
+// subtracting fetched_at on the spot. For undated rows it adds "{system} prediction age
+// unavailable", the prediction form of 3.2's per-system clause (3.2's table carries it
+// since 6.2), naming the system in the RIDER'S word ("Metro-North", never the feed code
+// "MNR", because the panel speaks this line and an initialism is read letter by
+// letter), RIDING the line and never raising it: on a healthy day a Metro-North board says nothing at all, because a
+// qualifier present on every board of a railroad is one a rider stops reading (Q5).
+function boardSystemLine(board, rows) {
+  const all = rows || [];
+  const undated =
+    !board.gated &&
+    all.some((r) => r && r.provenance === "reported" && servedAge(r.observed_at, null, 0) == null);
+  if (all.length && !undated) return null;
+  if (!staleAge(board.pollAge)) return null;
+  const line = `as of ${humanizeAge(board.pollAge)} ago`;
+  return undated ? `${line}; ${railroadSystemLabel(board.system)} prediction age unavailable` : line;
+}
+
+// The popup's markup for the two: the system line in the slot the R1 age line used, in
+// the same element stalePopupLine writes, and a row's qualifier beside its countdown.
+// Escaped like every other string these renderers emit, though both are our own words.
+function boardLineHtml(line) {
+  return line ? `<div class="popup-stale">${esc(line)}</div>` : "";
+}
+
+function qualifierHtml(qualifier) {
+  return qualifier.words ? ` <span class="arr-qualifier">${esc(qualifier.words)}</span>` : "";
 }
 
 // Decide what a successful-but-EMPTY poll should do. Keeping the last-known
@@ -965,10 +1211,13 @@ function formatRailroadHead(system, routeId, name) {
 // dark palette), the route name where known, the train number when the feed
 // carries one, and the countdown. Every feed-derived string is escaped.
 function railroadArrivalsHtml(station, body, now, nameFor = () => null) {
+  // Every row qualified by its own served age, and the system line where the R1 age
+  // line was (6.2; see arrivalQualifier and boardSystemLine).
+  const board = boardFreshness("railroad", body, now);
   const header =
     `<b>${esc(station.name ?? station.id)}</b> ` +
     `<span class="popup-sub">${esc(station.system ?? "")}</span>` +
-    feedAgeLine(body.fetched_at, now); // "as of Xm ago" when the rows are stale (R1)
+    boardLineHtml(boardSystemLine(board, stationArrivalsRows(body)));
   const buckets = orderedRailroadBuckets(body.directions);
   if (!buckets.length) return `${header}<div class="arr-none">No trains</div>`;
   let html = header;
@@ -983,7 +1232,10 @@ function railroadArrivalsHtml(station, body, now, nameFor = () => null) {
         const routeName = a.route_id ? nameFor(a.route_id) : null;
         const label = routeName ? ` ${esc(routeName)}` : "";
         const num = a.train_num ? ` <span class="popup-sub">#${esc(a.train_num)}</span>` : "";
-        return `${badge}${label}${num} ${esc(formatCountdown(a.arrival - now))}`;
+        return (
+          `${badge}${label}${num} ${esc(formatCountdown(a.arrival - now))}` +
+          qualifierHtml(arrivalQualifier(a, board))
+        );
       })
       .join("<br>");
   }
@@ -1100,10 +1352,13 @@ function pathTrainPopupHtml(train, name, color) {
 // node-testable. An empty directions dict renders the shared "No trains"
 // treatment. Every feed-derived string is escaped.
 function pathArrivalsHtml(station, body, now, colorFor = () => PATH_FALLBACK_COLOR, nameFor = () => null) {
+  // PATH dates every trip itself, so two rows on one board can carry two different
+  // ages, and only the old one is qualified (6.2).
+  const board = boardFreshness("path", body, now);
   const header =
     `<b>${esc(station.name ?? station.id)}</b> ` +
     `<span class="popup-sub">PATH</span>` +
-    feedAgeLine(body.fetched_at, now); // "as of Xm ago" when the rows are stale (R1)
+    boardLineHtml(boardSystemLine(board, stationArrivalsRows(body)));
   const buckets = orderedPathBuckets(body.directions);
   if (!buckets.length) return `${header}<div class="arr-none">No trains</div>`;
   let html = header;
@@ -1117,7 +1372,7 @@ function pathArrivalsHtml(station, body, now, colorFor = () => PATH_FALLBACK_COL
           `${esc(route || "?")}</span>`;
         const routeName = a.route_id ? nameFor(a.route_id) : null;
         const label = routeName ? ` ${esc(routeName)}` : "";
-        return `${badge}${label} ${esc(formatCountdown(a.arrival - now))}`;
+        return `${badge}${label} ${esc(formatCountdown(a.arrival - now))}${qualifierHtml(arrivalQualifier(a, board))}`;
       })
       .join("<br>");
   }
@@ -1255,10 +1510,13 @@ function ferryArrivalsHtml(station, body, now, colorFor = () => FERRY_FALLBACK_C
   const access = station.wheelchair
     ? ' <span class="popup-access" title="Wheelchair accessible">&#9855;</span>'
     : "";
+  // Dock rows are dated by the TripUpdates clock, never the boat's (6.1), and each is
+  // qualified by it here (6.2).
+  const board = boardFreshness("ferry", body, now);
   const header =
     `<b>${esc(station.name ?? station.id)}</b> ` +
     `<span class="popup-sub">NYC Ferry</span>${access}` +
-    feedAgeLine(body.fetched_at, now); // "as of Xm ago" when the rows are stale (R1)
+    boardLineHtml(boardSystemLine(board, stationArrivalsRows(body)));
   const buckets = orderedFerryBuckets(body.routes);
   if (!buckets.length) return `${header}<div class="arr-none">No boats</div>`;
   let html = header;
@@ -1269,7 +1527,7 @@ function ferryArrivalsHtml(station, body, now, colorFor = () => FERRY_FALLBACK_C
       .map((row) => {
         const d = ferryArrivalDisplay(row, now);
         const prefix = d.mode === "departing" ? "departs " : "";
-        return `${prefix}${esc(formatCountdown(d.seconds))}`;
+        return `${prefix}${esc(formatCountdown(d.seconds))}${qualifierHtml(arrivalQualifier(row, board))}`;
       })
       .join("<br>");
   }
@@ -1555,10 +1813,12 @@ const njtArrivalDisplay = ferryArrivalDisplay;
 // neither still renders its countdown rather than being dropped: the train is real
 // and the time is the thing the rider came for.
 function njtArrivalsHtml(station, body, now, colorFor = () => NJT_FALLBACK_COLOR, nameFor = () => null) {
+  // Every row dated by the TripUpdates header and qualified by it (6.2).
+  const board = boardFreshness("njt", body, now);
   const header =
     `<b>${esc(station.name ?? station.id)}</b> ` +
     `<span class="popup-sub">NJ Transit</span>` +
-    feedAgeLine(body.fetched_at, now); // "as of Xm ago" when the rows are stale (R1)
+    boardLineHtml(boardSystemLine(board, stationArrivalsRows(body)));
   const rows = njtOrderedArrivals(body.arrivals, now);
   if (!rows.length) return `${header}<div class="arr-none">No trains</div>`;
   return (
@@ -1573,7 +1833,10 @@ function njtArrivalsHtml(station, body, now, colorFor = () => NJT_FALLBACK_COLOR
         const display = njtArrivalDisplay(row, now);
         const prefix = display.mode === "departing" ? "departs " : "";
         const num = row.train_num ? ` <span class="popup-sub">${esc(row.train_num)}</span>` : "";
-        return `${badge}${label}${num} ${esc(prefix + formatCountdown(display.seconds))}`;
+        return (
+          `${badge}${label}${num} ${esc(prefix + formatCountdown(display.seconds))}` +
+          qualifierHtml(arrivalQualifier(row, board))
+        );
       })
       .join("<br>")
   );
@@ -2118,7 +2381,7 @@ function stationOverflowLine(hidden) {
 // ---- Arrivals, shaped once and rendered twice ----
 
 // Turn one arrivals payload into the structure both the popup markup and the
-// panel text are built from: {ageSeconds, buckets: [{name, rows: [...]}]}.
+// panel text are built from: {systemLine, buckets: [{name, rows: [...]}]}.
 //
 // `kind` selects the bucket source and ordering, and the four cases are exactly
 // the four the popups already implement: subway and railroad and PATH bucket
@@ -2127,10 +2390,11 @@ function stationOverflowLine(hidden) {
 // popups call, so a change to either is a change to both.
 //
 // Each row carries what a rider needs and nothing derived from the clock except
-// `seconds`: routeId, routeName (resolved by the caller), trainNum, mode
-// ("arriving" or "departing", ferry only), and seconds-until. Keeping the clock
-// out of the identity fields is what lets announcementWorthy below tell a real
-// change from a tick.
+// `seconds` and `qualifier`: routeId, routeName (resolved by the caller), trainNum,
+// mode ("arriving" or "departing", ferry and NJT only), seconds-until, and since 6.2
+// the row's qualifier words and their kind (arrivalQualifier), which changes only at
+// the threshold, never as the age counts on. Keeping the clock out of the identity
+// fields is what lets announcementWorthy below tell a real change from a tick.
 const SUBWAY_BUCKET_ORDER = ["Northbound", "Southbound"];
 
 function shapeStationArrivals(kind, body, now, opts = {}) {
@@ -2158,6 +2422,9 @@ function shapeStationArrivals(kind, body, now, opts = {}) {
   } else {
     raw = orderedBuckets(SUBWAY_BUCKET_ORDER, payload.directions);
   }
+  // THE SAME BOARD FRESHNESS THE POPUP READS, so the two surfaces qualify a row from
+  // one computation and cannot word or threshold it differently (6.2).
+  const board = boardFreshness(kind, payload, now);
   const buckets = raw.map(([name, rows]) => ({
     name,
     rows: (rows || []).map((row) => {
@@ -2166,6 +2433,7 @@ function shapeStationArrivals(kind, body, now, opts = {}) {
       const display =
         kind === "ferry" || kind === "njt" ? ferryArrivalDisplay(row, now) : null;
       const seconds = display ? display.seconds : row.arrival - now;
+      const qualifier = arrivalQualifier(row, board);
       return {
         routeId: row.route_id ?? null,
         routeName: row.route_id ? nameFor(row.route_id) : null,
@@ -2184,13 +2452,18 @@ function shapeStationArrivals(kind, body, now, opts = {}) {
         // sentence, and announcementWorthy, which can only tell a real change
         // from a tick by comparing absolute times.
         at: seconds == null || Number.isNaN(seconds) ? null : now + seconds,
+        qualifier: qualifier.words,
+        qualifierKind: qualifier.kind,
       };
     }),
   }));
   return {
-    // null rather than 0 when the payload carries no fetched_at, so the caller
-    // can tell "fresh" from "unknown" the way feedAgeLine already does.
-    ageSeconds: payload.fetched_at == null ? null : now - payload.fetched_at,
+    // THE BOARD'S SYSTEM LINE, which replaced ageSeconds (6.2). ageSeconds was
+    // now - fetched_at, the age of our POLL, and it was the whole of the panel's age
+    // judgement: silent while a provider served old content to a poll that kept
+    // succeeding, which is F03. Rows now carry their own qualifiers, and this line
+    // speaks only for what they cannot (boardSystemLine). Null when it has nothing.
+    systemLine: boardSystemLine(board, stationArrivalsRows(payload)),
     buckets,
   };
 }
@@ -2239,6 +2512,10 @@ function arrivalSentence(row, noun = "train", timeZone = "America/New_York") {
   let sentence = parts.join(" ");
   const clock = clockTimeLabel(row.at, timeZone);
   if (clock) sentence += `, ${clock} ${departing ? "departure" : "arrival"}`;
+  // THE QUALIFIER BESIDE THE TIME IT QUALIFIES (6.2), before the train number's aside,
+  // so "as of 10m ago" is heard about the prediction rather than about the train's
+  // identity. Absent on a fresh row, so every fresh sentence is exactly what it was.
+  if (row.qualifier) sentence += `, ${row.qualifier}`;
   return row.trainNum ? `${sentence}, train ${row.trainNum}` : sentence;
 }
 
@@ -2274,7 +2551,20 @@ function arrivalsSignature(shaped) {
     // an hour from now is the same instant on every tick, while `seconds` counts
     // down by one each time.
     const leads = bucket.rows.map((r) => r.at).filter((t) => t != null);
-    buckets[bucket.name] = { routes, lead: leads.length ? Math.min(...leads) : null };
+    // WHICH QUALIFIERS THE BUCKET CARRIES, as a sorted set of kinds, never their words
+    // (6.2). "aged" stays "aged" while its age counts up, so neither the tick nor the
+    // refresh re-announces it. A SET rather than one kind per row, because on a board
+    // whose provider dates each trip (LIRR, PATH) rows cross the threshold one at a
+    // time all day, and announcing each crossing would be the chatter this function
+    // exists to prevent. THE FRESH KIND ("") IS A MEMBER, on purpose: it is what tells
+    // "some countdown here is still current" from "none is", so the bucket is spoken
+    // when its LAST current row goes old, which is the moment a rider who heard a
+    // current countdown needs to hear otherwise (a stalling provider shows up exactly
+    // there, because the current row is usually the lead train). The cost, measured in
+    // review: a bucket whose only current row flips back and forth on its provider's
+    // own refresh cadence is spoken on each flip.
+    const kinds = [...new Set(bucket.rows.map((r) => r.qualifierKind || ""))].sort();
+    buckets[bucket.name] = { routes, lead: leads.length ? Math.min(...leads) : null, kinds };
   }
   return buckets;
 }
@@ -2286,19 +2576,30 @@ function arrivalsSignature(shaped) {
 //   2. a bucket's set of routes changed (a train appeared, vanished, or the next
 //      one is on a different line),
 //   3. a bucket's next arrival moved by more than ANNOUNCE_LEAD_SHIFT_S (the
-//      wait got materially longer or shorter).
+//      wait got materially longer or shorter),
+//   4. (6.2) a bucket's set of qualifier KINDS changed, or the board's system line
+//      appeared or went: a countdown the rider heard as current is now known to be
+//      old, or is current again. Announced once, because a kind does not change as
+//      its age counts up.
 //
 // Stay silent on everything else, and the case that matters most is the
-// countdown tick: none of the three clauses reads the clock, so a second passing
-// can never trip them. Without that, a screen reader narrates "4 minutes...
-// 3 minutes..." forever, which is hostile enough that the rider disables the
-// feature and loses the arrivals with it.
+// countdown tick: none of clauses 1 to 3 reads the clock, so a second passing can
+// never trip them. Without that, a screen reader narrates "4 minutes... 3
+// minutes..." forever, which is hostile enough that the rider disables the feature
+// and loses the arrivals with it. CLAUSE 4 IS THE EXCEPTION, and deliberately: a
+// row's kind flips from "" to "aged" once, when its age crosses the threshold, and an
+// empty board's system line appears the same way, on time alone. What keeps a TICK
+// from speaking that flip is stations.js (speakPanel drops the arrivals half on a
+// tick, and announceArrivals advances nothing on one), so the next non-tick render
+// speaks it once (A1v4). A caller outside that tick-guarded path must not assume a
+// second passing cannot trip this function.
 //
 // `prev` and `next` are shaped payloads. A first render (no prev) announces once,
 // because the arrivals appearing IS the news.
 function announcementWorthy(prev, next) {
   if (!next) return false;
   if (!prev) return true;
+  if ((prev.systemLine == null) !== (next.systemLine == null)) return true; // clause 4
   const before = arrivalsSignature(prev);
   const after = arrivalsSignature(next);
   const names = new Set([...Object.keys(before), ...Object.keys(after)]);
@@ -2310,6 +2611,7 @@ function announcementWorthy(prev, next) {
     for (let i = 0; i < a.routes.length; i++) {
       if (a.routes[i] !== b.routes[i]) return true; // clause 2
     }
+    if ((a.kinds || []).join("|") !== (b.kinds || []).join("|")) return true; // clause 4
     if (a.lead == null !== (b.lead == null)) return true;
     if (a.lead != null && b.lead != null && Math.abs(b.lead - a.lead) > ANNOUNCE_LEAD_SHIFT_S) {
       return true; // clause 3
@@ -2731,8 +3033,13 @@ if (typeof module !== "undefined" && module.exports) {
     parseColor, relativeLuminance, contrastRatio, readableTextOn, readableInk, statusLineText,
     MOBILE_MAX_WIDTH_PX, MOBILE_QUERY, narrowViewport,
     INK_LIGHT, INK_DARK,
-    feedAgeLine, humanizeAge, alertsStale, alertsFreshnessBasis, ALERTS_STALE_AFTER_S,
+    humanizeAge, alertsStale, alertsFreshnessBasis, ALERTS_STALE_AFTER_S,
     ingestSystems, systemAges, systemStaleAts, staleAge, markerOpacity, glideClock,
+    // 6.2: the door reads the content clock, and the envelope's clocks enter with it.
+    ingestEnvelope, contentClock, systemLag,
+    // 6.2: the boards, each row qualified by its own age.
+    UNDATED_SYSTEMS, boardSystem, servedAge, boardFreshness, arrivalQualifier,
+    boardSystemLine, boardLineHtml, qualifierHtml,
     thresholdOverrides, CONTRACT_FLAG_PARAM,
     stalePopupLine, STALE_MARKER_OPACITY, FERRY_DOCKED_OPACITY,
     selectHeadwayBand, airtrainStationPopupHtml, retryUntil,

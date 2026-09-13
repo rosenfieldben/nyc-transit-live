@@ -170,9 +170,15 @@ async function loadRouteLines() {
 function subwayArrivalsHtml(station, body) {
   // Skew-corrected now, reusing the staleness baseline from helpers.js.
   const now = Date.now() / 1000 - (minClockOffset ?? 0);
-  // "as of Xm ago" when a failed refresh has left these rows stale (R1); empty
-  // while fresh, so a live popup is unchanged.
-  let html = `<b>${esc(station.name ?? station.id)}</b>` + feedAgeLine(body.fetched_at, now);
+  // THE BOARD F03 WAS FOUND ON. Each row is qualified by its own feed group's content
+  // time, so on a station several groups serve, a lagging group's rows say how old
+  // they are and a current group's say nothing (6.2). The system line sits where the
+  // R1 age line did and speaks only for an empty board; empty while fresh, so a live
+  // popup is unchanged.
+  const board = boardFreshness("subway", body, now);
+  let html =
+    `<b>${esc(station.name ?? station.id)}</b>` +
+    boardLineHtml(boardSystemLine(board, stationArrivalsRows(body)));
   for (const dir of ["Northbound", "Southbound"]) {
     const arrivals = body.directions?.[dir] ?? [];
     html += `<div class="arr-dir">${dir}</div>`;
@@ -187,7 +193,7 @@ function subwayArrivalsHtml(station, body) {
         const badge =
           `<span class="arr-badge" style="background:${lineColor(route)};color:${textColor}">` +
           `${esc(route || "?")}</span>`;
-        return `${badge} ${esc(formatCountdown(a.arrival - now))}`;
+        return `${badge} ${esc(formatCountdown(a.arrival - now))}${qualifierHtml(arrivalQualifier(a, board))}`;
       })
       .join("<br>");
   }

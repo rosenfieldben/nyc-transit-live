@@ -1,7 +1,8 @@
 // Network interception for the hermetic smoke suite. The app's own static files
 // (including the self-hosted Leaflet under frontend/vendor/leaflet, H2) are served
 // same-origin by the webServer and pass straight through the guard below; every
-// /api/* endpoint is fulfilled from the handcrafted fixtures, and the basemap tiles
+// /api/* endpoint is fulfilled from the fixtures (handcrafted, except the one board
+// backend/tests/test_f03_boards.py writes, f03_board_219.json), and the basemap tiles
 // are stubbed. Nothing leaves the machine, so CI needs no network at test time.
 // (Before H2, Leaflet loaded from unpkg and was intercepted here from a vendored
 // copy; self-hosting removed both the CDN dependency and that interception.)
@@ -95,7 +96,15 @@ async function installMocks(page) {
   await endpoint("**/api/njt-arrivals/**", "njtArrivals", () => fx.njtArrivals());
   await endpoint("**/api/alerts", "alerts", () => fx.alerts());
   await endpoint("**/api/subway-arrivals/**", "subwayArrivals", () => fx.subwayArrivals());
-  await endpoint("**/api/railroad-arrivals/**", "railroadArrivals", () => fx.railroadArrivals());
+  // BY SYSTEM, because the URL names it (/api/railroad-arrivals/{system}/{stop}) and
+  // the two railroads' boards now differ in more than their rows: LIRR dates every
+  // prediction and Metro-North dates none, so an LIRR board handed the MNR body would
+  // be an age-gated board full of undated rows, a world the backend never serves.
+  await endpoint("**/api/railroad-arrivals/**", "railroadArrivals", (route) =>
+    new URL(route.request().url()).pathname.split("/")[3] === "LIRR"
+      ? fx.railroadArrivalsLirr()
+      : fx.railroadArrivals(),
+  );
   await endpoint("**/api/bus-route/**", "busRoute", (route) => {
     // Echo the requested route id so the banner label and the drawn line agree
     // with whichever bus was clicked (the geometry itself is the same stub).

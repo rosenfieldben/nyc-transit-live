@@ -304,21 +304,51 @@ PRODUCTION_HEALTH_CODES = (
     "feed-content-stale",
     "subway-groups-down",
     "njt-mint-quota",
+    "observations-qualified",
 )
 
-# Prose for the codes whose NAME does not say what the operator should do. Only one
-# needs it: every other code reports something broken, and "njt-mint-quota" reports
-# a budget that is spent, which is a different instruction entirely. OURS, not the
-# deployment's: this is a literal in this file keyed by a code from this file's own
+# Prose for the codes whose NAME does not say what the operator should do. Two need
+# it. "njt-mint-quota" reports a budget that is spent, which is a different
+# instruction from "something broke". "observations-qualified" reports what riders are
+# SHOWN rather than what a feed or the build did, and its name says none of what was
+# qualified, from what age (REALTIME_STALE_S, the header band, never a rider's 90s),
+# that nothing on the deployment's side can clear it, that a fresh process cannot see a
+# group that has not decoded in it (models.HEALTH_OBSERVATIONS_QUALIFIED records that
+# blind spot), or that one railroad can trip it on a quiet night. Every
+# other code names something broken, and its name is the whole instruction. OURS, not the
+# deployment's: these are literals in this file keyed by codes from this file's own
 # tuple, so the "only recognized codes are printed" rule in _check_production_health
-# is not widened by it. Nothing from the wire is echoed.
+# is not widened by them. Nothing from the wire is echoed.
 _HEALTH_CODE_NOTES = {
     "njt-mint-quota": (
         "production has spent NJ Transit's ten mints for the Eastern day, so its NJ "
         "Transit layer is dark until midnight; this is the budget, not an NJ Transit "
         "outage, and a redeploy would spend another mint rather than fix it"
     ),
+    "observations-qualified": (
+        "a system has served riders nothing current for the operator band (every row "
+        f"more than {int(REALTIME_STALE_S)}s old, undated where its provider dates rows, "
+        "or of no known provenance), or has been failing past the retention cap with its "
+        "rows dropped; the cause is upstream or the failing feed, so a redeploy fixes "
+        "nothing about it, and a new process cannot see a group that has not decoded "
+        "since it came up, so a clean run after a redeploy is not proof of recovery (read "
+        "/api/status: subway_feeds.failed and railroad_feeds.failed name every group "
+        "failing now); known false positive: a sparsely served LIRR (a late night with few "
+        f"trips) can have every prediction older than {int(REALTIME_STALE_S)}s with "
+        "nothing wrong"
+    ),
 }
+
+# THE ONE RIDER-FACING BOARD THE PRODUCTION SECTION READS (contract 6.2): the subway
+# station whose /api/subway-arrivals board production:board-clock and
+# production:board-contributors judge. MIRRORED, a literal of this file's own, for the
+# reason PRODUCTION_HEALTH_CODES is. G08 is Forest Hills-71 Av, served by the ACE, BDFM
+# and NQRW feed groups, and the E and F stop there around the clock, so the board
+# always has at least two contributors to tell apart, which is what the second check
+# needs. The id is taken from MTA's published station ids and CANNOT be verified from
+# committed data: the repository's subway captures carry only the 1-7+S platforms. A
+# 404 from the deployment on this board means the id has gone and must be re-picked.
+PRODUCTION_BOARD_STATION = "G08"
 
 # How far apart the two /api/status probes sit when witnessing a replayed
 # served_at. Two seconds, and both ends of that are chosen: long enough that a
@@ -609,6 +639,29 @@ def check_subway_realtime(
     entities (banded by _evaluate_subway). Runs the production _decode_feed on
     each payload so schema drift the bare protobuf parse tolerates (a renamed
     field the decoder reads, a shape the walk assumes) still surfaces here."""
+    return _subway_realtime(fetch, sleep, now, stops, feed_urls=feed_urls, stale_s=stale_s)[0]
+
+
+def _subway_realtime(
+    fetch: Fetcher,
+    sleep: Callable[[float], None],
+    now: float,
+    stops: dict[str, dict],
+    *,
+    feed_urls: dict[str, str] | None = None,
+    stale_s: float = REALTIME_STALE_S,
+) -> tuple[Result, dict[str, float | None]]:
+    """check_subway_realtime's Result, plus the header each group that decoded carried.
+
+    THE SECOND HALF IS FOR production:board-contributors (contract 6.2), which needs
+    ground truth for "this contributor really is aged", and the only honest ground
+    truth is the header the upstream itself published. ONE READ SERVES BOTH: fetching
+    the eight groups a second time would double this monitor's load on MTA and, worse,
+    let two reads taken seconds apart disagree about which group was aged. So the
+    reading is kept here and run_all carries it across, which is the only place that
+    hand-off is expressed. A group that failed to fetch or decode is absent, having no
+    header to be dated by; one that decoded without a header timestamp maps to None.
+    """
     feed_urls = feed_urls if feed_urls is not None else feeds.SUBWAY_FEED_URLS
     obs: list[_FeedObs] = []
     for key, url in feed_urls.items():
@@ -630,7 +683,8 @@ def check_subway_realtime(
             obs.append(_FeedObs(key, False, f"decoder raised ({_sanitize(exc)})", None, 0))
             continue
         obs.append(_FeedObs(key, True, "", feeds._header_timestamp(feed), len(feed.entity)))
-    return _evaluate_subway(obs, now, stale_s)
+    headers = {o.key: o.header_ts for o in obs if o.ok}
+    return _evaluate_subway(obs, now, stale_s), headers
 
 
 def check_railroad_realtime(
@@ -1921,6 +1975,12 @@ def _resolve_njt_routes_url(configured: str) -> str:
     return _deployment_base(configured) + "/api/njt-routes"
 
 
+def _resolve_board_url(configured: str) -> str:
+    """The subway arrivals board to read (contract 6.2), from that same one variable.
+    Fourth path on it, for the same reason as the other three."""
+    return f"{_deployment_base(configured)}/api/subway-arrivals/{PRODUCTION_BOARD_STATION}"
+
+
 def _resolve_status_url(configured: str) -> str:
     """Accept either operator form of MONITOR_STATUS_URL and return the /api/status
     URL to fetch.
@@ -2118,22 +2178,33 @@ def check_production(
     skip: bool = False,
     stale_s: float = PRODUCTION_FEED_STALE_S,
     fail_s: float = PRODUCTION_FEED_FAIL_S,
+    upstream_subway_headers: dict[str, float | None] | None = None,
 ) -> list[Result]:
     """The live deployment via MONITOR_STATUS_URL (either form, see
     _resolve_status_url). Returns a line each for: reachability (FAIL on
     non-200/non-JSON/non-object), each static group's state (FAIL unless ready),
     per-feed poll freshness (PASS/WARN/FAIL on the bands above), alert-system
     degradation (WARN, escalating to FAIL past the retention horizon), the
-    /healthz degraded classification, and whether served_at is being built rather
-    than replayed.
+    /healthz degraded classification, whether served_at is being built rather
+    than replayed, whether NJ Transit route geometry is served, and two lines about
+    one subway arrivals board (PRODUCTION_BOARD_STATION): whether its served content
+    clock is present and within the header check's bands, and whether its
+    contributors stay distinguishable when one of them is aged.
 
-    THE LAST TWO ARE F1. Before them this section read one endpoint once, which
-    let it tell that production was DEAD but never that it was ILL: a failed bus
-    route index, upstream content frozen behind successful polls, most of the
-    subway dark, and a cached response replaying a served_at were all invisible
-    here while /api/status answered 200 with a well-formed body. The classification
-    for the first three lives in /healthz beside the state it judges; the fourth
-    cannot be classified from one read at all and is witnessed by comparison.
+    THE LAST TWO ARE CONTRACT 6.2, and the first lines here that read what a RIDER is
+    shown: every other line reads an operator surface. The second needs to know which
+    feed groups are really aged, which only the upstream can say, so run_all hands in
+    the per-group headers check_subway_realtime read this run as
+    `upstream_subway_headers`. Without them that line cannot judge and says so.
+
+    THE /healthz AND served_at LINES ARE F1. Before them this section read one
+    endpoint once, which let it tell that production was DEAD but never that it was
+    ILL: a failed bus route index, upstream content frozen behind successful polls,
+    most of the subway dark, and a cached response replaying a served_at were all
+    invisible here while /api/status answered 200 with a well-formed body. The
+    classification for the first three lives in /healthz beside the state it judges;
+    the fourth cannot be classified from one read at all and is witnessed by
+    comparison.
 
     SILENCE MUST BE CHOSEN, NEVER DEFAULTED. An unset MONITOR_STATUS_URL used to
     WARN-skip this entire section, which meant a completely unmonitored production
@@ -2316,6 +2387,17 @@ def check_production(
         _check_production_njt_routes(
             fetch, sleep, _resolve_njt_routes_url(status_url), data.get("njt_static")
         )
+    )
+    # CONTRACT 6.2, after njt-routes for the same reason: one more READ of the
+    # deployment rather than a field of the payload above. The first rider-facing data
+    # this monitor has ever fetched (design 4.5 records that it read /api/status,
+    # /healthz and /api/njt-routes and no board or vehicle payload at all). Fetched ONCE
+    # and handed to both lines, so the two judge the same body and cannot disagree
+    # because the board moved between two reads.
+    board, board_problem = _fetch_production_board(fetch, sleep, _resolve_board_url(status_url))
+    results.append(_check_production_board_clock(board, board_problem))
+    results.append(
+        _check_production_board_contributors(board, board_problem, upstream_subway_headers)
     )
     return results
 
@@ -2551,6 +2633,357 @@ def _check_production_njt_routes(
 
 
 # ---------------------------------------------------------------------------
+# Production: one rider-facing board (contract 6.2)
+# ---------------------------------------------------------------------------
+
+# Contributor names safe to print, for the reason _SAFE_ROUTE_ID_RE gives: the board's
+# `systems` keys come from the same operator-pasted URL, and this detail is rendered as
+# markdown in the job summary. What looks like a feed-group key ("ACE", "1-7+S") is
+# named and anything else is counted. The plus sign is the one character the 1-7+S
+# group adds to that rule.
+_SAFE_GROUP_RE = re.compile(r"^[A-Za-z0-9+_-]{1,16}$")
+
+# What a non-200 from the board means, where it means something in particular. Keyed
+# by the status line _fetch_retrying writes and worded here, so nothing from the wire
+# is echoed into the summary.
+_BOARD_STATUS_NOTES = {
+    "HTTP 404": "the deployment does not know this station, so re-pick PRODUCTION_BOARD_STATION",
+    "HTTP 503": "the subway arrivals cache is still warming",
+}
+
+
+def _fetch_production_board(
+    fetch: Fetcher, sleep: Callable[[float], None], board_url: str
+) -> tuple[dict | None, str]:
+    """The board both contract 6.2 lines judge, parsed once, or None and why not.
+
+    EVERY FAILURE HERE ENDS AS A WARN, NEVER A FAIL, on the njt-routes precedent: this
+    is another read of the deployment rather than a field of a payload already parsed,
+    and a deployment that is actually down is already red on production:status, which
+    probes the same host. The reason says WHICH failure it was, because an unreachable
+    board, an unknown station and a warming cache each ask for something different.
+    """
+    where = f"/api/subway-arrivals/{PRODUCTION_BOARD_STATION}"
+    res, detail = _fetch_retrying(fetch, board_url, sleep)
+    if res is None:
+        if detail.startswith("HTTP "):
+            note = _BOARD_STATUS_NOTES.get(detail)
+            return None, f"{where} answered {detail}" + (f": {note}" if note else "")
+        return None, f"{where} unreachable ({detail})"
+    try:
+        body = json.loads(res.content)
+    except (ValueError, UnicodeDecodeError) as exc:
+        return None, f"{where} non-JSON ({_sanitize(exc)})"
+    if not isinstance(body, dict):
+        return None, f"{where} returned non-object JSON"
+    return body, ""
+
+
+def _number(value: object) -> float | None:
+    """A JSON number as a float, or None for anything else, a bool included."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    return None
+
+
+def _group_list(names: list[str], ages: dict[str, float] | None = None) -> str:
+    """Contributor names for a detail line: the printable ones by name, with their age
+    when `ages` is given, and the rest counted, never quoted (see _SAFE_GROUP_RE)."""
+    shown = sorted(name for name in names if _SAFE_GROUP_RE.match(name))
+    parts = [f"{name} {ages[name]:.0f}s" if ages is not None else name for name in shown]
+    hidden = len(names) - len(shown)
+    if hidden:
+        parts.append(f"{hidden} with an unprintable name")
+    return ", ".join(parts)
+
+
+def _board_row_count(board: dict) -> int:
+    """How many arrival rows the board serves, across all of its directions."""
+    directions = board.get("directions")
+    if not isinstance(directions, dict):
+        return 0
+    return sum(len(rows) for rows in directions.values() if isinstance(rows, list))
+
+
+class _BoardClocks(NamedTuple):
+    """A populated board's clocks: the instant it was served, and each contributor's own."""
+
+    served_at: float
+    clocks: dict[str, float]
+
+
+def _board_contributor_clocks(board: dict) -> tuple[_BoardClocks | None, str]:
+    """Each contributor's content clock off a populated board, beside the board's
+    served_at, or None and what the board lacks.
+
+    Every piece is required, because each is a clock a rider qualifier is built on:
+    served_at, the envelope's own feed_timestamp, a systems map, and a feed_timestamp on
+    every contributor in it. Absent and null are judged alike: either way the deployment
+    is serving a row it cannot date. The clocks come back AS SERVED, never rebuilt from
+    an age, because production:board-contributors compares them for identity and a
+    subtraction round trip is not exact.
+    """
+    missing: list[str] = []
+    served_at = _number(board.get("served_at"))
+    if served_at is None:
+        missing.append("served_at")
+    if _number(board.get("feed_timestamp")) is None:
+        missing.append("the envelope feed_timestamp")
+    systems = board.get("systems")
+    if not isinstance(systems, dict) or not systems:
+        missing.append("the systems map")
+        systems = {}
+    clocks = {
+        name: _number(block.get("feed_timestamp")) if isinstance(block, dict) else None
+        for name, block in systems.items()
+    }
+    undated = [name for name, clock in clocks.items() if clock is None]
+    if undated:
+        missing.append("a feed_timestamp on " + _group_list(undated))
+    if missing or served_at is None:
+        return None, "lacks " + ", ".join(missing)
+    dated = {name: clock for name, clock in clocks.items() if clock is not None}
+    return _BoardClocks(served_at, dated), ""
+
+
+def _board_contributor_ages(board: dict) -> tuple[dict[str, float] | None, str]:
+    """Each contributor's content age off a populated board, or None and what it lacks.
+
+    AGED AS served_at MINUS THAT CONTRIBUTOR'S OWN feed_timestamp, both read off the
+    payload, so no skew between this runner and the deployment can enter; the alerts
+    line keeps the same discipline. What must be present, and why, is at
+    _board_contributor_clocks.
+    """
+    board_clocks, lacks = _board_contributor_clocks(board)
+    if board_clocks is None:
+        return None, lacks
+    served_at = board_clocks.served_at
+    return {name: served_at - clock for name, clock in board_clocks.clocks.items()}, ""
+
+
+def _undated_board(rows: int, lacks: str) -> str:
+    """The FAIL detail both board lines give a populated board with no content clock."""
+    return (
+        f"board serves {rows} arrival rows but {lacks}. Silence must be chosen, never "
+        "defaulted: a deployment serving rows it cannot date predates contract 6.1 or "
+        "cannot date a contributor, and every rider qualifier built on that clock is "
+        "unwatched"
+    )
+
+
+def _check_production_board_clock(
+    board: dict | None, problem: str, *, stale_s: float = REALTIME_STALE_S
+) -> Result:
+    """The served-observation age check: the board's content clock, present and in band.
+
+    THE FINDING THIS CLOSES (design 4.5). check_subway_realtime reads the eight feed
+    headers straight from MTA, and until contract 6.1 no arrivals payload carried a
+    content clock, so nothing here could compare what a rider is SHOWN against what
+    the feed said. Now the board carries one per contributor, and this bands it exactly
+    as _evaluate_subway bands the headers: every contributor older than
+    REALTIME_STALE_S is a FAIL (the board serves nothing but old predictions), some is
+    a WARN naming them, none is a PASS. Strict `>`, the header check's edge, so the two
+    cannot disagree about a group sitting on it. It is the OPERATOR'S band, and
+    /healthz's observations-qualified applies the same one to served rows
+    (cache.OPERATOR_STALE_AFTER_S, held equal to REALTIME_STALE_S by a test), never the
+    rider's 90 s: a board whose riders read "as of 91s ago" is no operator's business.
+
+    A POPULATED BOARD WITH NO CONTENT CLOCK IS A FAIL, by the rule the healthz line
+    holds: SILENCE MUST BE CHOSEN, NEVER DEFAULTED. Passing it would make a deployment
+    whose rider qualifiers are all unwatched look like a healthy one. An EMPTY board is
+    only a WARN, because a board with nothing on it has nothing to date, and a fetch
+    that failed is a WARN for the reason _fetch_production_board gives.
+    """
+    name = "production:board-clock"
+    if board is None:
+        return Result(name, WARN, problem)
+    rows = _board_row_count(board)
+    if not rows:
+        return Result(
+            name,
+            WARN,
+            f"board {PRODUCTION_BOARD_STATION} serves no arrival rows, so it has no clock to judge",
+        )
+    ages, lacks = _board_contributor_ages(board)
+    if ages is None:
+        return Result(name, FAIL, _undated_board(rows, lacks))
+    stale = [group for group, age in ages.items() if age > stale_s]
+    if len(stale) == len(ages):
+        return Result(
+            name,
+            FAIL,
+            f"every contributor's content is older than {int(stale_s)}s: "
+            + _group_list(stale, ages),
+        )
+    if stale:
+        return Result(
+            name, WARN, f"content older than {int(stale_s)}s: " + _group_list(stale, ages)
+        )
+    return Result(
+        name,
+        PASS,
+        f"{rows} rows from {len(ages)} contributors, every content clock inside {int(stale_s)}s",
+    )
+
+
+def _carried_on_the_board(block: object) -> bool:
+    """Whether the board itself says this contributor is not being decoded right now:
+    failed on its last poll (ok False) or served from carried-forward rows
+    (retained_since set). Its clock is then last-known BY DESIGN, not a fresh claim."""
+    return isinstance(block, dict) and (
+        block.get("ok") is False or block.get("retained_since") is not None
+    )
+
+
+def _check_production_board_contributors(
+    board: dict | None,
+    problem: str,
+    upstream_headers: dict[str, float | None] | None,
+    *,
+    stale_s: float = REALTIME_STALE_S,
+) -> Result:
+    """The contributor distinguishability probe: the acceptance case's second clause.
+
+    "Other healthy contributors remain distinguishable" (design 1.3), and design 4.5's
+    second addition states the probe: "With one group's content aged and the rest
+    current, assert that the envelope reports different feed_timestamp values per
+    system." What it watches for is THE FOLD, one clock carried across contributors the
+    upstream dates apart, and the fold has two directions. A current contributor on the
+    aged one's clock is what the envelope did before the per-system clock existed. An
+    aged contributor on the current one's clock is F03's own shape, the one per-system
+    clocks fall back into if they are ever rebuilt from a single poll time. Both are a
+    FAIL, and both are the same test: CLOCK IDENTITY, an aged contributor and a current
+    one carrying the SAME feed_timestamp on the board.
+
+    IDENTITY, NOT AN AGE CLASS, because the board and the upstream read are two reads of
+    a world that moves between them. The first version classed each contributor's BOARD
+    age against the band and failed a current one reported aged, and that failed correct
+    boards: a group whose header sits just inside the band when this runner reads it is
+    past the band by the time the board, the run's last fetch, is served, and the
+    deployment reporting that group's own true clock read as the fold. It also let F03's
+    own shape through as a WARN. A board that gives each contributor a clock of its own
+    is doing what the design asks whatever those clocks say about age, and banding the
+    ages is production:board-clock's line. So a group that recovered between the two
+    reads, carrying its own new clock, is no fold either. A correct deployment can put
+    an aged and a current group on one clock only by coincidence (one group recovering
+    in the seconds between the deployment's last poll and this runner's read, having
+    last published the other's exact header), and that is accepted rather than softened.
+
+    GROUND TRUTH IS THE MONITOR'S OWN UPSTREAM READ, never the board, since the board is
+    what is under test. Which group is really aged is decided by the headers
+    check_subway_realtime took from MTA this run (run_all hands them over), each aged AT
+    THE BOARD'S INSTANT, served_at minus the header, so both sides of the comparison
+    share one clock and this runner's never enters. Only the contributors the upstream
+    read also dated are compared. A contributor the board reports failed or retained
+    (_carried_on_the_board) is NOT JUDGED and is named as such: its clock is last-known
+    by design, and MTA serving that group fine to this runner says nothing about the
+    deployment's last read of it.
+
+    The verdicts:
+      - no judged contributor aged upstream, or every one aged, or none judged at all:
+        PASS, nothing to distinguish (the age itself is production:board-clock's line);
+      - aged and current both present: an aged and a current contributor sharing a
+        feed_timestamp is the fold, a FAIL; distinct clocks are a PASS;
+      - no upstream readings, or none for the judged contributors: WARN, nothing to
+        judge by;
+      - a populated board with no per-system clocks: FAIL, as production:board-clock.
+    """
+    name = "production:board-contributors"
+    if board is None:
+        return Result(name, WARN, problem)
+    rows = _board_row_count(board)
+    if not rows:
+        return Result(
+            name,
+            WARN,
+            f"board {PRODUCTION_BOARD_STATION} serves no arrival rows, so it has no "
+            "contributors to tell apart",
+        )
+    board_clocks, lacks = _board_contributor_clocks(board)
+    if board_clocks is None:
+        return Result(name, FAIL, _undated_board(rows, lacks))
+    if upstream_headers is None:
+        return Result(
+            name,
+            WARN,
+            "no upstream subway headers were read this run, so which contributor is really "
+            "aged cannot be known",
+        )
+    served_at, clocks = board_clocks
+    systems = board["systems"]
+    carried = [group for group in clocks if _carried_on_the_board(systems[group])]
+    not_judged = (
+        f"; not judged: {_group_list(carried)}, failed or retained on the board and so "
+        "on a last-known clock by design"
+        if carried
+        else ""
+    )
+    judged = [group for group in clocks if group not in carried]
+    if not judged:
+        return Result(
+            name,
+            PASS,
+            "every contributor is failed or retained on the board, so there was nothing "
+            "to distinguish" + not_judged,
+        )
+    upstream_ages = {
+        group: served_at - header
+        for group, header in upstream_headers.items()
+        if header is not None
+    }
+    compared = [group for group in judged if group in upstream_ages]
+    if not compared:
+        return Result(
+            name,
+            WARN,
+            "the upstream read dated none of the board's contributors ("
+            + _group_list(judged)
+            + "), so there is no ground truth to compare against"
+            + not_judged,
+        )
+    aged = [group for group in compared if upstream_ages[group] > stale_s]
+    current = [group for group in compared if group not in aged]
+    if not aged:
+        return Result(
+            name,
+            PASS,
+            f"no contributor is aged upstream at the board's served_at "
+            f"({_group_list(current)} current), so there was nothing to distinguish" + not_judged,
+        )
+    if not current:
+        return Result(
+            name,
+            PASS,
+            f"every dated contributor is aged upstream at the board's served_at "
+            f"({_group_list(aged)}), so there is nothing to distinguish; "
+            "production:board-clock judges the age" + not_judged,
+        )
+    folds = []
+    for clock in sorted({clocks[group] for group in aged}):
+        sharing_current = [group for group in current if clocks[group] == clock]
+        if sharing_current:
+            sharing_aged = [group for group in aged if clocks[group] == clock]
+            folds.append(
+                f"aged {_group_list(sharing_aged)} and current {_group_list(sharing_current)} "
+                f"share one feed_timestamp, {served_at - clock:.0f}s old on the board"
+            )
+    if folds:
+        return Result(
+            name,
+            FAIL,
+            "; ".join(folds) + ": one clock across contributors that upstream dates apart, "
+            "the fold the per-system clock exists to prevent" + not_judged,
+        )
+    return Result(
+        name,
+        PASS,
+        f"the board dates its contributors apart as upstream does: aged "
+        f"{_group_list(aged)}, current {_group_list(current)}, each on a clock of its own"
+        + not_judged,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Runner and output
 # ---------------------------------------------------------------------------
 
@@ -2595,7 +3028,15 @@ def run_all(
     )
     results += [subway_res, railroad_res, path_res, ferry_res, njt_res]
 
-    results.append(check_subway_realtime(fetch, sleep, now, (subway or {}).get("stops", {})))
+    # THE SUBWAY UPSTREAM READ IS KEPT, not only judged (contract 6.2). The eight headers
+    # it took are the ground truth production:board-contributors compares the board
+    # against, so they are carried to check_production below instead of being fetched a
+    # second time. This hand-off is expressed nowhere else, which is why
+    # test_run_all_hands_the_subway_upstream_read_to_the_board_check pins it here.
+    subway_realtime, subway_headers = _subway_realtime(
+        fetch, sleep, now, (subway or {}).get("stops", {})
+    )
+    results.append(subway_realtime)
     results.append(check_railroad_realtime(fetch, sleep, now, railroad))
     results.append(check_path_realtime(fetch, sleep, now, (path or {}).get("stops", {})))
     results.append(check_ferry_realtime(fetch, sleep, now, (ferry or {}).get("trips", {})))
@@ -2622,6 +3063,7 @@ def run_all(
         now,
         env.get("MONITOR_STATUS_URL"),
         skip=bool(env.get("MONITOR_SKIP_PRODUCTION")),
+        upstream_subway_headers=subway_headers,
     )
     return results
 

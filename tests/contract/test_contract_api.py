@@ -1633,3 +1633,120 @@ def test_exactly_half_the_subway_groups_down_is_not_a_majority(harness):
         body = app.healthz()
         assert body["status"] == "pass"
         assert "subway-groups-down" not in body["degraded"]
+
+
+def test_one_subway_group_down_reaches_healthz_as_qualified_observations(contract_app):
+    """ONE line group erroring, which no other code has anything to say about.
+
+    One of eight is far below subway-groups-down's majority, and the subway endpoint's
+    content header is a min() over the groups that DECODED, so feed-content-stale stays
+    quiet too. Before contract 6.2 this state reached no code at all: the failed group's
+    rows were carried forward as retained and then dropped past the cap while /healthz
+    reported nothing. The rule and its measured threshold are at
+    models.HEALTH_OBSERVATIONS_QUALIFIED. Hermetic counterparts:
+    backend/tests/test_health_observations.py (every clause) and test_api.py's
+    test_healthz_qualified_observations_are_not_stale_content (a carried-forward group
+    aging past the band through the real refresh path).
+
+    THE OPERATOR BAND FROM BELOW, THEN THE DROPPED HALF, in the order a real outage walks
+    them. While the group's rows are carried forward (every one stamped `retained`, and
+    every one seconds old) its riders read "showing last known" and the probe says
+    NOTHING: the code tells an operator at the header band's 600 s, never on a failed
+    poll. Then the rows are dropped once the harness's compressed FEED_RETENTION_MAX_S
+    has passed, the fallback ladder's last rung, and the code fires. In production the
+    cap is 600 s too, so both roads reach the operator at about ten minutes; the harness
+    compresses the cap and never the band, which is why this scenario can show only the
+    second road. The quiet body is read between two /api/subways reads showing one and
+    the same retention window, so it cannot be one computed before ACE failed; the
+    dropped phase is observed on /api/subways in the same predicate that judges the
+    probe body, so neither can be satisfied by the other.
+
+    THE DROPPED HALF IS READ AGAIN at least one whole ACE poll after the cap poll. By
+    then the merge has opened a new retention window for ACE with nothing left to carry,
+    and the code must still be there, because the rule ages the outage from ACE's last
+    decode rather than reading its retention clock (routes/status.py's _was_dropped). A
+    first version published the code on the cap poll alone, once per window.
+
+    WHAT THIS TIER CANNOT SHOW is a rider's board changing. Every simulated group serves
+    the same capture and combine_group_arrivals dedups trips across groups, so the
+    survivors carry the failed group's trips (UpstreamSim._build_state says so). The
+    rule reads the PER-GROUP index, which still attributes each row to its group, and
+    that index is what this scenario witnesses.
+    """
+    qualified = "observations-qualified"
+    app = contract_app
+    app.await_status(
+        lambda s: (s.get("subway_feeds") or {}).get("ok") == len(SUBWAY_GROUPS),
+        "every subway group to decode once",
+    )
+    # The healthy baseline, and it is what gives the rest meaning: a probe that always
+    # reported this code would satisfy every assertion below.
+    baseline = app.await_healthz(lambda h: h.get("status") == "pass", "a healthy readiness probe")
+    assert baseline["degraded"] == [], baseline
+
+    app.sim.set_mode("subway:ACE", "error")
+
+    def ace() -> dict:
+        return app.get("/api/subways")["systems"]["ACE"]
+
+    def carried_forward(h: dict) -> bool:
+        block = ace()
+        return block["ok"] is False and block["retained_since"] is not None
+
+    app.await_healthz(carried_forward, "ACE's rows to be carried forward")
+    # Read again at once: the window is FEED_RETENTION_MAX_S long, so the group is
+    # still inside it, and its start is what the closing check measures from.
+    retained_at = ace()["retained_since"]
+    assert retained_at is not None
+    # THE PROBE, READ INSIDE THAT WINDOW. The await's own body is read BEFORE its
+    # predicate looks at ACE, so it can predate the failure, and a body from then says
+    # nothing whatever the rule does with carried-forward rows. This one is read after
+    # the failure was seen, between two reads of one and the same retention window.
+    retained = app.healthz()
+    after = ace()
+    assert after["ok"] is False and after["retained_since"] == retained_at, after
+    assert after["routes"], f"ACE's trains must really be carried forward: {after}"
+    assert retained["status"] == "pass"
+    assert "reasons" not in retained
+    # THE OPERATOR IS NOT TOLD YET. ACE's riders are shown carried-forward rows seconds
+    # old, which their boards say in words; nothing about that is past the operator
+    # band, and no other code has anything to say about one group of eight.
+    assert retained["degraded"] == [], (
+        f"a group carried forward for seconds must reach no code (not this one, not "
+        f"feed-content-stale, not subway-groups-down), got {retained}"
+    )
+
+    def dropped_and_reported(h: dict) -> bool:
+        block = ace()
+        return (
+            qualified in h.get("degraded", [])
+            and block["ok"] is False
+            and block["retained_since"] is None
+        )
+
+    dropped = app.await_healthz(
+        dropped_and_reported,
+        "ACE's retention cap to fire, dropping its rows while the probe keeps reporting them",
+        deadline_s=90,
+    )
+    held_for = time.time() - retained_at
+    assert held_for >= float(CONTRACT_TIMING["FEED_RETENTION_MAX_S"]) * 0.5, (
+        f"the retention window collapsed: rows were carried for only {held_for:.1f}s "
+        f"against a {CONTRACT_TIMING['FEED_RETENTION_MAX_S']}s cap"
+    )
+    assert dropped["status"] == "pass"
+    assert "reasons" not in dropped
+    assert dropped["degraded"] == [qualified], dropped
+    assert ace()["routes"] == [], "the cap emptied the group, so it covers no markers now"
+
+    # PAST THE CAP POLL, NOT ONLY ON IT. Two more ACE fetches mean at least one whole poll
+    # has landed since the one the predicate caught, and on that poll the merge opened a
+    # new window for ACE with nothing to carry, the state a first version read as quiet.
+    app.sim.await_polls("subway:ACE", 2)
+    later = app.healthz()
+    block = ace()
+    assert block["ok"] is False and block["routes"] == [], block
+    assert later["status"] == "pass" and later["degraded"] == [qualified], (
+        f"the code must hold on every poll of the outage, not only the cap poll: got "
+        f"{later} with ACE's block {block}"
+    )

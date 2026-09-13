@@ -139,7 +139,7 @@ FIXTURE came off the network, which is exactly why it was worth re-running this.
 | --- | --- | --- |
 | `f01_lirr_gps_observation_age.py` | F01 | The real `_decode_railroad_vehicles`, `_refresh_railroads` and `GET /api/railroads` over the committed LIRR and MNR captures. |
 | `f02_canceled_railroad_gps.py` | F02 | The real railroad decoders and routes over the committed capture, plus a synthetic combined-entity feed in the Metro-North layout. |
-| `f03_arrivals_content_freshness.py` | F03 | The real `_refresh_subways` and the ASGI app over the committed subway capture, re-stamped behind the poll clock. |
+| `f03_arrivals_content_freshness.py` | F03 | The acceptance world of `backend/tests/test_f03_boards.py` (the committed subway capture re-stamped 600s behind the poll clock on one feed group, a current copy on another) through the real fetch path, `_refresh_subways` and the ASGI app, then the real popup and panel in a `node:vm` over the served board. |
 | `f04_airtrain_historical_reference.py` | F04 | The real `load_airtrain` and `/api/airtrain`, then the shipped `stations.js` and `helpers.js` renderers in a `node:vm` against six injected New York instants. |
 | `f05_njt_failed_mint_storm.py` | F05 | The real `TokenCache`, `njt_auth.mint`, `_refresh_njt`, `_refresh_alerts` and `_warm_njt_static` against an in-process fake RailData. |
 | `f06_partial_startup_no_recovery.py` | F06 | The real `_warm_railroad_static`, `bus_static.ensure_index` and `main.lifespan` with one injected download failure. |

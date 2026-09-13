@@ -1044,14 +1044,64 @@ def _healthz_json(**overrides):
     return json.dumps(body).encode()
 
 
-def _healthy_prod(*, health=None, advance=None, njt_routes=None, **status_overrides):
-    """Both URLs check_production probes, wired for the full happy path.
+# The one subway board the production section reads (contract 6.2). Spelled out
+# rather than built from cm.PRODUCTION_BOARD_STATION, so re-picking the station is a
+# decision a test has to be told about.
+_PROD_BOARD = f"{_PROD_BASE}/api/subway-arrivals/G08"
+
+# The upstream subway headers run_all hands check_production, with every contributor
+# on the healthy board current. That is what lets the healthy board's
+# distinguishability line PASS on "nothing to distinguish" instead of WARNing on
+# "nothing to judge by", which is what it says when no reading is handed over at all.
+_HEALTHY_UPSTREAM = {"ACE": _PROD_SERVED_AT - 5.0, "BDFM": _PROD_SERVED_AT - 10.0}
+
+
+def _board_json(clocks=None, *, rows=2, served_at=_PROD_SERVED_AT, **overrides):
+    """A /api/subway-arrivals board in the contract 6.1 shape. `clocks` maps each
+    contributor to its own content clock; the default is the healthy two-contributor
+    board Forest Hills serves, ACE five seconds behind and BDFM ten. The envelope's
+    feed_timestamp follows the production union rule: the oldest contributor, or null
+    when any contributor cannot be dated."""
+    if clocks is None:
+        clocks = {"ACE": served_at - 5.0, "BDFM": served_at - 10.0}
+    values = list(clocks.values())
+    body = {
+        "fetched_at": served_at - 1.0,
+        "feed_timestamp": None if not values or None in values else min(values),
+        "station_id": "G08",
+        "station_name": "Forest Hills-71 Av",
+        "directions": {
+            "Northbound": [
+                {"route_id": "E", "trip_id": f"e-{n}", "arrival": served_at + 60.0 * (n + 1)}
+                for n in range(rows)
+            ],
+            "Southbound": [],
+        },
+        "served_at": served_at,
+        "systems": {
+            group: {
+                "fetched_at": served_at - 1.0,
+                "feed_timestamp": clock,
+                "ok": True,
+                "retained_since": None,
+                "routes": ["E"],
+            }
+            for group, clock in clocks.items()
+        },
+    }
+    body.update(overrides)
+    return json.dumps(body).encode()
+
+
+def _healthy_prod(*, health=None, advance=None, njt_routes=None, board=None, **status_overrides):
+    """Every URL check_production probes, wired for the full happy path.
 
     /api/status is a LIST, which FakeFetcher consumes one entry per call, so the
     two replay probes see served_at advance the way a live deployment's does. A
     single body would replay itself and fail the served_at witness, which is the
     point of that witness and would otherwise make every production test here
-    look like a caching proxy.
+    look like a caching proxy. The board is the healthy two-contributor one unless
+    `board` says otherwise, in any form FakeFetcher accepts.
     """
     gap = cm.PRODUCTION_REPLAY_PROBE_GAP_S if advance is None else advance
     return FakeFetcher(
@@ -1062,6 +1112,7 @@ def _healthy_prod(*, health=None, advance=None, njt_routes=None, **status_overri
             ],
             _PROD_HEALTH: _healthz_json() if health is None else health,
             _PROD_NJT_ROUTES: _njt_routes_json(njt_routes),
+            _PROD_BOARD: _board_json() if board is None else board,
         }
     )
 
@@ -1118,28 +1169,41 @@ def test_production_accepts_both_url_forms(configured):
     # looking at, which produced /api/status/api/status and a baffling 404 FAIL.
     # Every form must resolve to the same single request.
     fetch = _healthy_prod()
-    results = cm.check_production(fetch, NO_SLEEP, 1000.0, configured)
-    # ALL THREE paths resolve off the one variable, in every form. F1 added
-    # /healthz without adding a second environment variable and 15c added
-    # /api/njt-routes the same way, so the form that used to be only about
-    # /api/status is now also what proves both extra probes are pointed at the same
-    # deployment.
+    results = cm.check_production(
+        fetch, NO_SLEEP, 1000.0, configured, upstream_subway_headers=_HEALTHY_UPSTREAM
+    )
+    # ALL FOUR paths resolve off the one variable, in every form. F1 added /healthz
+    # without adding a second environment variable, 15c added /api/njt-routes the
+    # same way and contract 6.2 the subway board, so the form that used to be only
+    # about /api/status is now also what proves every extra probe is pointed at the
+    # same deployment. The board is read EXACTLY ONCE: both of its lines judge the
+    # one body.
     assert [call[0] for call in fetch.calls] == [
         _PROD_STATUS,
         _PROD_STATUS,
         _PROD_HEALTH,
         _PROD_NJT_ROUTES,
+        _PROD_BOARD,
     ]
     assert all(r.status == cm.PASS for r in results)
 
 
 def test_production_healthy_is_all_pass():
     """THE GREEN PATH. A monitor that cries wolf gets muted, so a deployment with
-    nothing wrong with it has to come back clean across every line F1 added."""
+    nothing wrong with it has to come back clean across every line F1 and contract 6.2
+    added. The upstream readings are the ones run_all hands over on a healthy day:
+    with none at all, the distinguishability line cannot judge and says so."""
     fetch = _healthy_prod()
-    results = cm.check_production(fetch, NO_SLEEP, 1000.0, "https://app.example")
+    results = cm.check_production(
+        fetch, NO_SLEEP, 1000.0, "https://app.example", upstream_subway_headers=_HEALTHY_UPSTREAM
+    )
     assert all(r.status == cm.PASS for r in results), [r for r in results if r.status != cm.PASS]
-    assert {r.name for r in results} >= {"production:healthz", "production:served_at"}
+    assert {r.name for r in results} >= {
+        "production:healthz",
+        "production:served_at",
+        "production:board-clock",
+        "production:board-contributors",
+    }
 
 
 def test_production_failed_static_is_fail():
@@ -3003,6 +3067,19 @@ def test_the_monitor_watches_exactly_the_codes_the_probe_publishes():
     assert cm.PRODUCTION_HEALTH_CODES == models.HEALTH_DEGRADED_CODES
 
 
+def test_the_probe_and_the_monitor_call_a_served_board_old_at_one_age():
+    """THE SAME COUPLING, FOR A NUMBER. /healthz's observations-qualified and
+    production:board-clock judge what riders are served at one band, the header check's
+    REALTIME_STALE_S, and never at a rider's FEED_STALE_AFTER_S: a rider's "as of 2m
+    ago" is information, and an operator is told at ten minutes. The monitor imports
+    nothing from the app, so the app's copy is held to the monitor's here, and the
+    rider's threshold is held below both."""
+    import cache
+
+    assert cache.OPERATOR_STALE_AFTER_S == cm.REALTIME_STALE_S
+    assert cache.FEED_STALE_AFTER_S < cache.OPERATOR_STALE_AFTER_S
+
+
 @pytest.mark.parametrize(
     "configured",
     ["https://app.example", "https://app.example/", "https://app.example/api/status"],
@@ -3273,16 +3350,542 @@ def test_production_njt_routes_sums_across_polylines_of_one_route():
     assert "route 2" in line.detail
 
 
+# ---------------------------------------------------------------------------
+# Contract 6.2: the served-observation code, and the board the monitor never read
+# ---------------------------------------------------------------------------
+
+
+def test_the_qualified_observations_code_is_explained_in_words():
+    """The second code whose name does not say what to do. observations-qualified
+    reports what riders are SHOWN, so the summary says that, out of the monitor's own
+    literal, and says the two things an operator would otherwise get wrong. A redeploy
+    fixes nothing about the cause; and because a new process cannot see a group that has
+    not decoded in it, a clean run after a redeploy proves nothing, so the note points at
+    the surface that still names such a group. It also owns up to the known false
+    positive models.HEALTH_OBSERVATIONS_QUALIFIED records, a quiet night on LIRR."""
+    fetch = _healthy_prod(health=_healthz_json(status="pass", degraded=["observations-qualified"]))
+    health = next(
+        r
+        for r in cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
+        if r.name == "production:healthz"
+    )
+    assert health.status == cm.FAIL
+    assert health.detail.startswith("degraded: observations-qualified; ")
+    # THE OPERATOR'S BAND, spelled out, and never a rider's threshold.
+    assert f"more than {int(cm.REALTIME_STALE_S)}s old" in health.detail
+    assert "90s" not in health.detail
+    assert "a redeploy fixes nothing about it" in health.detail
+    assert "not proof of recovery" in health.detail
+    assert "subway_feeds.failed" in health.detail
+    assert "sparsely served LIRR" in health.detail
+    # The first version's sentence, which a redeploy makes untrue: the code does clear
+    # after one, for any group still failing that has not decoded in the new process.
+    assert "clears nothing" not in health.detail
+
+
+@pytest.mark.parametrize(
+    "configured",
+    [
+        "https://app.example",
+        "https://app.example/",
+        "https://app.example/api/status",
+        "https://app.example/api/status/",
+    ],
+)
+def test_the_board_url_comes_off_the_same_variable_in_every_form(configured):
+    assert cm._resolve_board_url(configured) == _PROD_BOARD
+
+
+def _board(clocks=None, **kwargs):
+    """A parsed board, for the two pure evaluators."""
+    return json.loads(_board_json(clocks, **kwargs))
+
+
+def _clock_line(board, problem=""):
+    return cm._check_production_board_clock(board, problem)
+
+
+def _contributors_line(board, upstream, problem=""):
+    return cm._check_production_board_contributors(board, problem, upstream)
+
+
+def _contributors_in_production(board_body, upstream, now):
+    """production:board-contributors as check_production runs it: this runner's `now`
+    handed in, and the board fetched as the run's last read. The skew cases go through
+    here rather than the pure evaluator, because the runner's clock is exactly what must
+    not enter the line, and only this path offers it one."""
+    fetch = _healthy_prod(board=board_body)
+    results = cm.check_production(
+        fetch, NO_SLEEP, now, _PROD_BASE, upstream_subway_headers=upstream
+    )
+    return next(r for r in results if r.name == "production:board-contributors")
+
+
+# A contributor clock exactly REALTIME_STALE_S old against the board's own served_at,
+# and one comfortably past it or comfortably current.
+_EDGE = _PROD_SERVED_AT - cm.REALTIME_STALE_S
+_AGED = _EDGE - 100.0
+_CURRENT = _PROD_SERVED_AT - 5.0
+
+
+# ---- production:board-clock ----
+
+
+@pytest.mark.parametrize(
+    ("clocks", "expected", "named"),
+    [
+        pytest.param({"ACE": _CURRENT, "BDFM": _CURRENT - 5.0}, "PASS", [], id="both-current"),
+        pytest.param({"ACE": _EDGE, "BDFM": _CURRENT}, "PASS", [], id="one-exactly-on-the-edge"),
+        pytest.param({"ACE": _EDGE - 0.5, "BDFM": _CURRENT}, "WARN", ["ACE"], id="one-just-past"),
+        pytest.param(
+            {"ACE": _EDGE - 0.5, "BDFM": _AGED},
+            "FAIL",
+            ["ACE", "BDFM"],
+            id="every-contributor-past",
+        ),
+        pytest.param({"ACE": _EDGE}, "PASS", [], id="a-lone-contributor-on-the-edge"),
+        pytest.param({"ACE": _EDGE - 0.5}, "FAIL", ["ACE"], id="a-lone-contributor-past"),
+    ],
+)
+def test_board_clock_bands_like_the_header_check(clocks, expected, named):
+    """The header check's bands, applied to what a rider is shown: strict `>`
+    REALTIME_STALE_S, every contributor past it a FAIL, some a WARN naming them."""
+    line = _clock_line(_board(clocks))
+    assert line.status == getattr(cm, expected), line
+    for group in named:
+        assert group in line.detail
+    if expected == "PASS":
+        assert f"2 rows from {len(clocks)} contributor" in line.detail
+
+
+@pytest.mark.parametrize(
+    ("age", "expected"),
+    [
+        pytest.param(91.0, "PASS", id="every-contributor-91s"),
+        pytest.param(cm.REALTIME_STALE_S, "PASS", id="every-contributor-on-the-band"),
+        pytest.param(601.0, "FAIL", id="every-contributor-601s"),
+    ],
+)
+def test_board_clock_tells_the_operator_at_the_band_never_at_the_riders_threshold(age, expected):
+    """A board whose every contributor is 91 s old reads "as of 91s ago" on every row a
+    rider sees, and is no operator's business: PASS. At 601 s it is: FAIL. Exactly on
+    the band passes, the header check's strict `>`."""
+    line = _clock_line(_board({"ACE": _PROD_SERVED_AT - age, "BDFM": _PROD_SERVED_AT - age}))
+    assert line.status == getattr(cm, expected), line
+
+
+_UNDATED_BOARDS = [
+    pytest.param(
+        lambda b: b.pop("feed_timestamp"), "envelope feed_timestamp", id="envelope-absent"
+    ),
+    pytest.param(
+        lambda b: b.update(feed_timestamp=None), "envelope feed_timestamp", id="envelope-null"
+    ),
+    pytest.param(lambda b: b.pop("systems"), "systems map", id="systems-absent"),
+    pytest.param(lambda b: b.update(systems={}), "systems map", id="systems-empty"),
+    pytest.param(
+        lambda b: b["systems"]["BDFM"].pop("feed_timestamp"),
+        "feed_timestamp on BDFM",
+        id="contributor-clock-absent",
+    ),
+    pytest.param(
+        lambda b: b["systems"]["BDFM"].update(feed_timestamp=None),
+        "feed_timestamp on BDFM",
+        id="contributor-clock-null",
+    ),
+    pytest.param(
+        lambda b: b["systems"].update(BDFM="ok"),
+        "feed_timestamp on BDFM",
+        id="contributor-block-not-an-object",
+    ),
+    pytest.param(lambda b: b.pop("served_at"), "served_at", id="served-at-absent"),
+    pytest.param(lambda b: b.update(served_at=True), "served_at", id="served-at-a-bool"),
+]
+
+
+@pytest.mark.parametrize(("mutate", "lacks"), _UNDATED_BOARDS)
+def test_a_populated_board_without_a_content_clock_fails_both_lines(mutate, lacks):
+    """SILENCE MUST BE CHOSEN, NEVER DEFAULTED. A board serving rows it cannot date
+    leaves every rider qualifier built on its clock unwatched, whether the clock is
+    absent (a deployment older than contract 6.1) or null (one that cannot date a
+    contributor), so both lines FAIL rather than reading the silence as health."""
+    board = _board()
+    mutate(board)
+    for line in (_clock_line(board), _contributors_line(board, _HEALTHY_UPSTREAM)):
+        assert line.status == cm.FAIL, line
+        assert lacks in line.detail and "unwatched" in line.detail
+
+
+@pytest.mark.parametrize(
+    "board",
+    [
+        pytest.param(
+            json.loads(_board_json(rows=0, systems=None, feed_timestamp=None)), id="no-rows"
+        ),
+        pytest.param({**json.loads(_board_json()), "directions": None}, id="no-directions-map"),
+    ],
+)
+def test_an_empty_board_is_warn_on_both_lines(board):
+    """Nothing on the board is nothing to date and nothing to tell apart. A WARN and
+    not a FAIL: a board with no trains on it is a board, not a regression, and the
+    production envelope carries no clock for it by design (cache._oldest_row_observed_at
+    explains why an empty board's clock is null)."""
+    for line in (_clock_line(board), _contributors_line(board, _HEALTHY_UPSTREAM)):
+        assert line.status == cm.WARN, line
+        assert "no arrival rows" in line.detail
+
+
+@pytest.mark.parametrize(
+    ("response", "says"),
+    [
+        pytest.param(
+            404,
+            "answered HTTP 404: the deployment does not know this station, so re-pick",
+            id="unknown-station",
+        ),
+        pytest.param(
+            503, "answered HTTP 503: the subway arrivals cache is still warming", id="warming"
+        ),
+        pytest.param(500, "answered HTTP 500", id="another-status"),
+        pytest.param(
+            httpx.ConnectError("refused"), "unreachable (transport error", id="unreachable"
+        ),
+        pytest.param(b"<html>", "non-JSON", id="non-json"),
+        pytest.param(b"[1, 2]", "returned non-object JSON", id="non-object"),
+    ],
+)
+def test_a_board_that_cannot_be_read_warns_on_both_lines_and_says_which(response, says):
+    """Another READ of the deployment rather than a field of a payload already parsed,
+    so on the njt-routes precedent it WARNs and never fails the run: a deployment that
+    is actually down is already red on production:status. Which failure it was is in
+    the detail, because each asks for something different."""
+    fetch = _healthy_prod(board=response)
+    results = cm.check_production(
+        fetch, NO_SLEEP, 1000.0, _PROD_BASE, upstream_subway_headers=_HEALTHY_UPSTREAM
+    )
+    lines = [r for r in results if r.name.startswith("production:board-")]
+    assert [r.name for r in lines] == ["production:board-clock", "production:board-contributors"]
+    for line in lines:
+        assert line.status == cm.WARN, line
+        assert says in line.detail
+    assert all(r.status == cm.PASS for r in results if r not in lines)
+
+
+def test_board_contributor_names_are_counted_never_quoted():
+    """The systems keys come from an operator-pasted URL and land in a markdown job
+    summary, so a name that is not a feed-group key is counted rather than printed, the
+    rule the healthz and njt-routes lines already keep. The 1-7+S group's plus sign is
+    the one character that rule had to admit."""
+    hostile = "[x](https://evil.example)"
+    line = _clock_line(_board({"1-7+S": _AGED, hostile: _AGED}))
+    assert line.status == cm.FAIL
+    assert "1-7+S" in line.detail and "1 with an unprintable name" in line.detail
+    assert "evil" not in line.detail
+
+
+# ---- production:board-contributors ----
+
+
+@pytest.mark.parametrize(
+    ("upstream", "clocks", "expected", "says"),
+    [
+        pytest.param(
+            {"ACE": _CURRENT, "BDFM": _CURRENT},
+            {"ACE": _CURRENT, "BDFM": _CURRENT},
+            "PASS",
+            "nothing to distinguish",
+            id="nothing-aged-upstream",
+        ),
+        pytest.param(
+            {"ACE": _AGED, "BDFM": _CURRENT},
+            {"ACE": _AGED, "BDFM": _CURRENT},
+            "PASS",
+            "aged ACE, current BDFM, each on a clock of its own",
+            id="one-aged-and-the-board-splits-it",
+        ),
+        pytest.param(
+            {"ACE": _AGED, "BDFM": _CURRENT},
+            {"ACE": _AGED, "BDFM": _AGED},
+            "FAIL",
+            "the fold",
+            id="one-aged-and-the-board-folds-it",
+        ),
+        # F03's OWN SHAPE, the aged group reported on the current group's clock. The
+        # first version only WARNed here, reading it as a recovery between two reads.
+        pytest.param(
+            {"ACE": _AGED, "BDFM": _CURRENT},
+            {"ACE": _CURRENT, "BDFM": _CURRENT},
+            "FAIL",
+            "the fold",
+            id="one-aged-and-the-board-dates-it-current",
+        ),
+        pytest.param(
+            {"ACE": _AGED, "BDFM": _AGED},
+            {"ACE": _AGED, "BDFM": _AGED},
+            "PASS",
+            "every dated contributor is aged upstream",
+            id="every-contributor-aged",
+        ),
+        # Only contributors the upstream read ALSO dated are compared: NQRW is current
+        # upstream but feeds nothing here, and BDFM is on the board but undated.
+        pytest.param(
+            {"ACE": _AGED, "NQRW": _CURRENT},
+            {"ACE": _AGED, "BDFM": _AGED},
+            "PASS",
+            "every dated contributor is aged upstream",
+            id="only-dated-contributors-are-compared",
+        ),
+        pytest.param(
+            {"ACE": _AGED, "BDFM": None},
+            {"ACE": _AGED, "BDFM": _AGED},
+            "PASS",
+            "every dated contributor is aged upstream",
+            id="a-headerless-group-is-not-dated",
+        ),
+        pytest.param(
+            {"NQRW": _CURRENT},
+            {"ACE": _CURRENT, "BDFM": _CURRENT},
+            "WARN",
+            "dated none of the board's contributors",
+            id="upstream-dated-none-of-them",
+        ),
+        pytest.param(
+            {},
+            {"ACE": _CURRENT, "BDFM": _CURRENT},
+            "WARN",
+            "dated none of the board's contributors",
+            id="every-upstream-read-failed",
+        ),
+        pytest.param(
+            None,
+            {"ACE": _CURRENT, "BDFM": _CURRENT},
+            "WARN",
+            "no upstream subway headers were read",
+            id="no-readings-handed-over",
+        ),
+    ],
+)
+def test_board_contributors_against_the_upstream_read(upstream, clocks, expected, says):
+    line = _contributors_line(_board(clocks), upstream)
+    assert line.status == getattr(cm, expected), line
+    assert says in line.detail
+
+
+def test_board_contributors_class_the_upstream_on_the_header_checks_edge():
+    """The upstream is classed with strict `>` REALTIME_STALE_S, the header check's edge,
+    at the board's served_at. A header exactly on it is CURRENT, so a board putting that
+    group on the really aged one's clock is the fold; half a second older and it is aged
+    too, leaving nothing to tell apart. The BOARD's ages never enter this line: a current
+    group on an aged clock OF ITS OWN is no fold, and banding it is
+    production:board-clock's job."""
+    folded = _board({"ACE": _AGED, "BDFM": _AGED})
+    on_the_edge = {"ACE": _AGED, "BDFM": _EDGE}
+    assert _contributors_line(folded, on_the_edge).status == cm.FAIL
+    assert _contributors_line(folded, {**on_the_edge, "BDFM": _EDGE - 0.5}).status == cm.PASS
+    own_aged_clock = _board({"ACE": _AGED, "BDFM": _AGED + 1.0})
+    upstream = {"ACE": _AGED, "BDFM": _CURRENT}
+    assert _contributors_line(own_aged_clock, upstream).status == cm.PASS
+
+
+@pytest.mark.parametrize("served_after_s", [11.0, 30.0, 60.0, 90.0])
+def test_a_group_crossing_the_band_during_the_run_is_no_fold(served_after_s):
+    """THE SKEW THE FIRST VERSION FAILED ON, reproduced as the review found it. The
+    runner reads ACE's header 590 s old and NQRW's 700 s old, then fetches the board
+    11 to 90 s later, its last fetch. The deployment is correct: each group on the
+    board carries the very header upstream published. ACE has crossed the band in
+    between. Classed at this runner's clock, ACE was "current" and its board age "aged",
+    which the first version called the fold and FAILED. At the board's own instant both
+    are aged, on two distinct clocks, and there is nothing wrong to report."""
+    now = _PROD_SERVED_AT
+    headers = {"ACE": now - 590.0, "NQRW": now - 700.0}
+    board = _board_json(dict(headers), served_at=now + served_after_s)
+    line = _contributors_in_production(board, headers, now)
+    assert line.status == cm.PASS, line
+    assert "every dated contributor is aged upstream at the board's served_at" in line.detail
+
+
+def test_the_upstream_is_aged_at_the_boards_instant_not_the_runners():
+    """THE SAME CROSSING, WITH A FOLD IN IT, which is what makes the instant load-bearing
+    under the identity rule too. ACE's header is 590 s old when the runner reads it and
+    620 s old when the board is served 30 s later, and the board reports ACE on BDFM's
+    current clock (F03's shape). At the board's instant ACE is aged and BDFM current on
+    one clock: the fold. Classed at this runner's clock both would be current, and the
+    fold would pass as "nothing to distinguish"."""
+    now = _PROD_SERVED_AT
+    headers = {"ACE": now - 590.0, "BDFM": now - 5.0}
+    board = _board_json({"ACE": now - 5.0, "BDFM": now - 5.0}, served_at=now + 30.0)
+    line = _contributors_in_production(board, headers, now)
+    assert line.status == cm.FAIL, line
+    assert "aged ACE and current BDFM share one feed_timestamp" in line.detail
+
+
+@pytest.mark.parametrize(
+    "carried",
+    [
+        pytest.param({"ok": False, "retained_since": _PROD_SERVED_AT - 60.0}, id="retained"),
+        pytest.param({"ok": False, "retained_since": None}, id="failed"),
+    ],
+)
+def test_a_contributor_the_board_carries_is_not_judged(carried):
+    """A GROUP THE DEPLOYMENT IS LEGITIMATELY CARRYING, while MTA serves it fine to this
+    runner. The board reports ACE failed or retained on its last-known clock, 700 s old,
+    and upstream dates ACE current. The first version classed that as a current group
+    reported aged, the fold, and FAILED a deployment doing exactly what C2 asks of it.
+    The board has said ACE is not being decoded, so its clock is not a claim about now:
+    ACE is named as not judged, and the rest of the board is judged without it. When
+    every contributor is carried, nothing is left to judge."""
+    board = _board({"ACE": _AGED, "BDFM": _CURRENT})
+    board["systems"]["ACE"].update(carried)
+    upstream = {"ACE": _CURRENT, "BDFM": _CURRENT - 3.0}
+    line = _contributors_line(board, upstream)
+    assert line.status == cm.PASS, line
+    assert "not judged: ACE" in line.detail
+
+    board["systems"]["BDFM"].update(carried)
+    line = _contributors_line(board, upstream)
+    assert line.status == cm.PASS, line
+    assert "every contributor is failed or retained on the board" in line.detail
+    assert "not judged: ACE, BDFM" in line.detail
+
+
+@pytest.mark.parametrize(
+    ("shared", "direction"),
+    [
+        pytest.param(_AGED, "on the aged clock", id="current-reported-on-the-aged-clock"),
+        pytest.param(_CURRENT, "on the current clock", id="aged-reported-on-the-current-clock"),
+    ],
+)
+def test_an_aged_and_a_current_contributor_on_one_clock_is_the_fold(shared, direction):
+    """CLOCK IDENTITY, IN EITHER DIRECTION, is the fold, and only the contributors
+    sharing the clock are named. ACE is aged upstream and BDFM and NQRW current; the
+    board puts ACE and BDFM on one clock and gives NQRW its own. On the aged clock, a
+    current group reported aged; on the current clock, F03's own shape, which the first
+    version only WARNed about."""
+    board = _board({"ACE": shared, "BDFM": shared, "NQRW": _CURRENT - 7.0})
+    upstream = {"ACE": _AGED, "BDFM": _CURRENT, "NQRW": _CURRENT - 7.0}
+    line = _contributors_line(board, upstream)
+    assert line.status == cm.FAIL, (direction, line)
+    assert "aged ACE and current BDFM share one feed_timestamp" in line.detail
+    assert "the fold" in line.detail
+    assert "NQRW" not in line.detail
+
+
+def test_a_recovered_group_on_a_clock_of_its_own_is_no_fold():
+    """Upstream read ACE aged, and by the time the board was built the deployment had
+    decoded a new ACE header, fresh and matching no other contributor's. That is
+    recovery, and a clock of its own is exactly what this line asks for. The first
+    version WARNed here; it passes."""
+    board = _board({"ACE": _PROD_SERVED_AT - 3.0, "BDFM": _CURRENT})
+    line = _contributors_line(board, {"ACE": _AGED, "BDFM": _CURRENT})
+    assert line.status == cm.PASS, line
+    assert "aged ACE, current BDFM, each on a clock of its own" in line.detail
+
+
+# The board is this run's LAST fetch, so a real one is served after the runner's `now`.
+# Forty-five seconds, well inside a run's length, so the end-to-end cases below never
+# let the two instants coincide the way the first version's tests did.
+_BOARD_SERVED_LATE_S = 45.0
+
+
+@pytest.mark.parametrize(
+    ("board_clocks", "clock", "contributors"),
+    [
+        pytest.param({"ACE": _AGED, "BDFM": _CURRENT}, "WARN", "PASS", id="split"),
+        pytest.param({"ACE": _AGED, "BDFM": _AGED}, "FAIL", "FAIL", id="folded-on-the-aged-clock"),
+        pytest.param(
+            {"ACE": _CURRENT, "BDFM": _CURRENT}, "PASS", "FAIL", id="folded-on-the-current-clock"
+        ),
+    ],
+)
+def test_production_the_aged_contributor_case_end_to_end(board_clocks, clock, contributors):
+    """THE HERMETIC AGED CASE through check_production, with the board served 45 s after
+    the runner's clock: ACE aged upstream and BDFM current. Split correctly, the clock
+    line WARNs about ACE and the distinguishability line passes. Folded on the aged
+    clock, both lines fail, the clock line because every contributor now reads aged.
+    Folded on the current clock, F03's own shape, the clock line PASSES, every clock on
+    the board looking fresh, and only the distinguishability line can see it."""
+    served_at = _PROD_SERVED_AT + _BOARD_SERVED_LATE_S
+    fetch = _healthy_prod(board=_board_json(board_clocks, served_at=served_at))
+    results = {
+        r.name: r
+        for r in cm.check_production(
+            fetch,
+            NO_SLEEP,
+            _PROD_SERVED_AT,
+            _PROD_BASE,
+            upstream_subway_headers={"ACE": _AGED, "BDFM": _CURRENT},
+        )
+    }
+    assert results["production:board-clock"].status == getattr(cm, clock)
+    assert results["production:board-contributors"].status == getattr(cm, contributors)
+
+
+@pytest.mark.parametrize(
+    ("fold", "expected"),
+    [
+        pytest.param(None, "PASS", id="split"),
+        pytest.param("aged", "FAIL", id="folded-on-the-aged-clock"),
+        pytest.param("current", "FAIL", id="folded-on-the-current-clock"),
+    ],
+)
+def test_run_all_hands_the_subway_upstream_read_to_the_board_check(fold, expected):
+    """THE PLUMBING, which is the only place the fact is expressed. The subway check
+    reads the eight headers from MTA and run_all carries them to check_production, so
+    the distinguishability line judges the board against the upstream rather than
+    against the board itself. ACE's header is aged upstream and every other group's is
+    current; the board, served 45 s after the runner's clock, splits them (PASS) or puts
+    ACE and BDFM on one clock, the aged one or the current one (the fold, FAIL). A
+    run_all that dropped the hand-off would WARN on every row instead. And each subway
+    group is fetched exactly once: the board check costs MTA nothing."""
+    now = 10_000.0
+    aged, current = now - cm.REALTIME_STALE_S - 100.0, now - 5.0
+    subway = {
+        url: _rt_feed(header_ts=aged if group == "ACE" else current)
+        for group, url in feeds.SUBWAY_FEED_URLS.items()
+    }
+    board_clocks = {
+        None: {"ACE": aged, "BDFM": current},
+        "aged": {"ACE": aged, "BDFM": aged},
+        "current": {"ACE": current, "BDFM": current},
+    }[fold]
+    production = {
+        _PROD_STATUS: [
+            _status_json(served_at=now),
+            _status_json(served_at=now + cm.PRODUCTION_REPLAY_PROBE_GAP_S),
+        ],
+        _PROD_HEALTH: _healthz_json(),
+        _PROD_NJT_ROUTES: _njt_routes_json(),
+        _PROD_BOARD: _board_json(board_clocks, served_at=now + _BOARD_SERVED_LATE_S),
+    }
+    calls = []
+
+    def fetch(url, headers=None, params=None, files=None):
+        calls.append(url)
+        if url in subway:
+            return cm.FetchResult(200, subway[url])
+        if url in production:
+            return FakeFetcher(production)(url, headers, params, files)
+        # Every other upstream is out of scope here; a 500 fails their lines uniformly.
+        return cm.FetchResult(500, b"")
+
+    results = cm.run_all(fetch, NO_SLEEP, now, env={"MONITOR_STATUS_URL": _PROD_BASE})
+    line = next(r for r in results if r.name == "production:board-contributors")
+    assert line.status == getattr(cm, expected), line
+    assert [url for url in calls if url in subway] == list(subway), "each group read once"
+
+
 # ---- the replayed served_at ----
 
 
 def _replay_prod(first, second, *, health=None):
-    """Two /api/status probes with served_at set explicitly on each."""
+    """Two /api/status probes with served_at set explicitly on each, and every other
+    URL check_production probes answered the healthy way."""
     return FakeFetcher(
         {
             _PROD_STATUS: [_status_json(served_at=first), _status_json(served_at=second)],
             _PROD_HEALTH: _healthz_json() if health is None else health,
             _PROD_NJT_ROUTES: _njt_routes_json(),
+            _PROD_BOARD: _board_json(),
         }
     )
 

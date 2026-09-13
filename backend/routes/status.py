@@ -13,7 +13,7 @@ import bus_static
 import njt_auth
 import static_data
 import static_shared
-from cache import FEED_STALE_AFTER_S, _feed_age
+from cache import FEED_RETENTION_MAX_S, FEED_STALE_AFTER_S, _feed_age
 from feeds import RAILROAD_FRESHNESS_SYSTEMS, iter_rows
 from models import (
     HEALTH_BUS_INDEX_FAILED,
@@ -363,9 +363,9 @@ class _ServedSystem(NamedTuple):
     Transit, {stop: {bucket: [row]}} for the rest), walked with feeds.iter_rows so this
     rule and the retention stamp cannot disagree about what a row is. None, as opposed
     to an empty container, means the system has NO ENTRY in its index at all, which is
-    the fact _was_dropped turns on. `block` is the system's per-system freshness block,
-    and only the systems whose data is RETAINED pass one: the subway groups and the
-    railroads (see _served_arrival_systems).
+    one of the facts _was_dropped turns on. `block` is the system's per-system
+    freshness block, and only the systems whose data is RETAINED pass one: the subway
+    groups and the railroads (see _served_arrival_systems).
     """
 
     rows: object
@@ -390,32 +390,55 @@ def _row_is_qualified(row: Mapping, age_gated: bool, now: float) -> bool:
     return now - observed_at >= FEED_STALE_AFTER_S
 
 
-def _was_dropped(system: _ServedSystem) -> bool:
-    """The retention cap fired on this system: failing, decoded once, and gone.
+def _was_dropped(system: _ServedSystem, now: float) -> bool:
+    """The ladder's last rung: failing past the retention cap, with nothing left to serve.
 
-    THE INDEX SAYS THE CAP FIRED, NOT THE BLOCK. A block reading ok False with
-    retained_since None is also what a TOTAL outage leaves behind: that path returns
-    before any merge runs, _mark_all_systems_failed flips every ok and leaves
-    retained_since as it was, and the index keeps every system's last entry, an empty
-    one included. Only feeds.merge_system_generations takes a system out of its index
-    altogether, and it does so in two cases: past the cap, which leaves retained_since
-    None, and inside the window with nothing to carry, which leaves the retention clock
-    running and is ruled out by it. fetched_at then separates a system the cap emptied
-    from one that has never decoded, which dropped nothing because it had nothing.
+    DECIDED BY HOW LONG THE SYSTEM HAS BEEN FAILING, NEVER BY WHETHER ITS RETENTION
+    CLOCK IS SET, because that clock does not stay stopped once the cap fires. The poll
+    that passes the cap drops the rows and writes retained_since None. On the next
+    failed poll pollers._merge_feed_systems rebuilds the previous clocks only from
+    blocks whose retained_since is set, so feeds.merge_system_generations opens a NEW
+    window at `now`, with nothing left to carry. A rule that read "retained_since None"
+    as "the cap fired" was therefore true on the cap poll alone, then quiet until the
+    new window capped in turn. Measured on that first version: ACE failing for 45
+    minutes at a 22 s poll under the 600 s cap published the code on 3 of the 94 polls
+    after the first cap poll. fetched_at is the clock that holds still for the whole
+    outage (a failing system keeps its last decode time), so the rule ages that.
 
-    Measured, because the first version read the block alone: the F10 reproduction
-    (docs/reviews/audit-2026-09-05/f10_deadline_health_disagreement.py) drives a total
-    subway outage over eight groups holding empty arrival entries, and that version
-    reported all eight as dropped when nothing had been taken from any rider.
-    test_a_total_outage_leaves_an_empty_entry_undropped pins both sides.
+    FOUR FACTS, ALL REQUIRED:
+      - ok is False: failing now. A healthy system serving nothing has nothing running.
+      - fetched_at is set: it has decoded in this process. One that never has took
+        nothing from anyone. That includes a group already failing when this process
+        started, which the contract monitor's note for this code says out loud.
+      - NO ENTRY in its index (rows None, not an empty container). A TOTAL outage
+        returns before any merge runs: _mark_all_systems_failed flips every ok and the
+        index keeps every entry, an empty one included, so an empty entry means nothing
+        was taken away. The F10 reproduction
+        (docs/reviews/audit-2026-09-05/f10_deadline_health_disagreement.py) drives
+        exactly that over eight groups, and a version that read the block alone reported
+        all eight as dropped. test_a_total_outage_leaves_an_empty_entry_undropped pins
+        both sides.
+      - now - fetched_at >= FEED_RETENTION_MAX_S: failing at least as long as the cap,
+        the same env-seam value the merge reads and the same `>=`. A system failing
+        inside its window with nothing to carry (it went down holding no rows) also has
+        no entry, and this clause is what keeps it quiet.
+
+    MEASURED FROM THE LAST DECODE, while the merge's window counts from the first failed
+    poll, so the two edges sit one poll interval apart: a system that went down holding
+    nothing can be named up to one interval before its window closes. A system still
+    carrying rows never reaches this function, because its rows decide it.
+    test_healthz_names_a_dropped_group_on_every_poll_of_its_outage in
+    backend/tests/test_api.py drives the real refresher through the cap and 94 polls
+    past it.
     """
     block = system.block
     if block is None or system.rows is not None:
         return False
+    fetched_at = block.get("fetched_at")
     return (
         block.get("ok") is False
-        and block.get("fetched_at") is not None
-        and block.get("retained_since") is None
+        and fetched_at is not None
+        and now - fetched_at >= FEED_RETENTION_MAX_S
     )
 
 
@@ -432,7 +455,9 @@ def _systems_serving_nothing_current(systems: Mapping[str, _ServedSystem], now: 
     right now, one that has never decoded, one failing inside its retention window with
     nothing to carry, and one a total outage caught holding an empty entry all serve
     nothing without anything having been taken away. The window case becomes the
-    dropped rung once the cap passes.
+    dropped rung once the system has been failing for FEED_RETENTION_MAX_S, and it
+    stays there on every poll until the system decodes again (_was_dropped says why that
+    needed saying).
 
     Pure and clock-injected, like _health_codes; the healthz handler builds `systems`
     off app.state with _served_arrival_systems.
@@ -444,7 +469,7 @@ def _systems_serving_nothing_current(systems: Mapping[str, _ServedSystem], now: 
         if rows:
             if all(_row_is_qualified(row, system.age_gated, now) for row in rows):
                 serving_nothing.append(name)
-        elif _was_dropped(system):
+        elif _was_dropped(system, now):
             serving_nothing.append(name)
     return serving_nothing
 

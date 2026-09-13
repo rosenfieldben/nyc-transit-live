@@ -969,11 +969,15 @@ HEALTH_SUBWAY_GROUPS_DOWN = "subway-groups-down"
 # WHAT RIDERS ARE SERVED, NOT WHAT A FEED SENT (contract 6.2; section 4.5 of
 # docs/design/freshness-contract.md). Fires when some system is serving riders nothing
 # current: every arrival row it serves is QUALIFIED, meaning a rider has to be told
-# something about it before trusting its countdown, or the retention cap has DROPPED
-# its rows and it serves nothing at all. A row is qualified when its provenance is not
-# "reported", when its observed_at is null on a system whose rows are age-gated, or
-# when it is FEED_STALE_AFTER_S (90, the design's OBS_FRESH_S) or more old. The rule
-# is routes/status.py's _systems_serving_nothing_current; this is why it has its shape.
+# something about it before trusting its countdown, or it has been failing for longer
+# than the retention cap, which has DROPPED its rows, so it serves nothing at all. That
+# second half is judged by the age of the system's last decode, so it holds on every
+# poll of the outage rather than only on the one the cap fires on (routes/status.py's
+# _was_dropped says why the system's retention clock cannot answer it). A row is
+# qualified when its provenance is not "reported", when its observed_at is null on a
+# system whose rows are age-gated, or when it is FEED_STALE_AFTER_S (90, the design's
+# OBS_FRESH_S) or more old. The rule is routes/status.py's
+# _systems_serving_nothing_current; this is why it has its shape.
 #
 # FEED-CONTENT-STALE IS NOT THIS, and the two are not one condition seen twice. That
 # code is about a FEED HEADER lagging, per ENDPOINT, measured at the poll; this one is
@@ -1008,6 +1012,14 @@ HEALTH_SUBWAY_GROUPS_DOWN = "subway-groups-down"
 # THE KNOWN FALSE POSITIVE, stated so nobody meets it as a surprise: a sparsely served
 # LIRR (a late night with few trips running) can have every trip's prediction older
 # than 90 seconds, and then this fires on a railroad behaving normally for that hour.
+#
+# THE KNOWN BLIND SPOT, stated for the same reason: the dropped half names only a
+# system that has decoded in THIS process, because one that never has took nothing
+# from riders here. A group already failing when a new deploy comes up is therefore
+# invisible to this code for as long as it keeps failing, and a quiet probe right after
+# a deploy is not proof of recovery; /api/status's subway_feeds.failed and
+# railroad_feeds.failed still name it. The contract monitor's note for this code says
+# the same, and test_a_system_that_never_decoded_has_dropped_nothing pins the rule.
 HEALTH_OBSERVATIONS_QUALIFIED = "observations-qualified"
 # THE ONE CODE THAT IS NOT ABOUT AN UPSTREAM BEING UNWELL. NJ Transit allows ten
 # getToken calls per account per Eastern day (observed 2026-09-02; the budget and

@@ -190,6 +190,13 @@ def f03_world(monkeypatch):
     exactly what it was, or deletes it if it did not exist, and no later test inherits a
     219 board.
 
+    THE OTHER FOUR ARRIVALS INDEXES ARE PRIMED EMPTY, the same five test_api.py's
+    healthz_env resets (_ARRIVALS_INDEXES there), because the /healthz probe this world
+    reads counts every one of them. Left alone, they hold whatever earlier tests left:
+    run after test_api.py, the probe named observations-qualified off those leftover
+    rows even with the handler blinded to the subway, so its assertion here did not
+    depend on this world at all.
+
     Returns the clock as a one-element list, so the test can advance it between polls.
     """
     stops = json.loads(_STOPS.read_text())
@@ -209,6 +216,10 @@ def f03_world(monkeypatch):
         "subway_arrivals": {},
         "subway_arrivals_by_system": {},
         "subway_positions": {},
+        "railroad_arrivals": {},
+        "path_arrivals": {},
+        "ferry_arrivals": {},
+        "njt_arrivals": {},
     }
     for name, value in primed.items():
         monkeypatch.setattr(app_module.app.state, name, value, raising=False)
@@ -318,15 +329,12 @@ async def test_acceptance_old_valid_feed_rows_are_dated_stale_and_healthy_rows_s
     assert all(block["retained_since"] is None for block in vehicles["systems"].values())
 
     # THE OPERATOR HALF, read in this same world: /healthz names the state riders are
-    # in, which no pre-6.2 code could. Of the eight groups exactly one is serving
-    # nothing current, the aged one; ACE's current rows and the six quiet groups keep
-    # the rule quiet for theirs. Filtered to the subway because the other arrivals
-    # indexes are not this world's and may hold another test's rows.
+    # in, which no pre-6.2 code could. Of every system the probe reads, exactly one is
+    # serving nothing current, the aged group; ACE's current rows and the six quiet
+    # groups keep the rule quiet for theirs. f03_world primes every other arrivals index
+    # empty, so the code asserted below can only have come from this world's subway.
     served = status_routes._served_arrival_systems(app_module.app.state)
-    serving_nothing = status_routes._systems_serving_nothing_current(served, NOW)
-    assert [name for name in serving_nothing if name.startswith("subway:")] == [
-        f"subway:{AGED_GROUP}"
-    ]
+    assert status_routes._systems_serving_nothing_current(served, NOW) == [f"subway:{AGED_GROUP}"]
     transport = httpx.ASGITransport(app=app_module.app)
     async with httpx.AsyncClient(transport=transport, base_url="http://f03") as http:
         health = (await http.get("/healthz")).json()
@@ -439,8 +447,9 @@ def test_the_f03_board_is_served_in_the_browser_suites_frozen_time():
     suite's frozen time. There, fetched_at == FROZEN_S zeroes the frontend's clock-skew
     offset, so the +120 s row reads as a two-minute countdown. If FROZEN_MS moved and
     this module did not, every countdown on the rendered board would be off by the
-    difference, and nothing else in either suite would notice. JavaScript's Date.UTC
-    counts months from 0, hence the + 1.
+    difference. C2i in tests/e2e/smoke.spec.js would fail then too, but only on the
+    symptom, as a wall of countdown literals that no longer match; this test names the
+    cause directly. JavaScript's Date.UTC counts months from 0, hence the + 1.
     """
     match = re.search(r"const FROZEN_MS = Date\.UTC\(([^)]*)\);", _API_JS.read_text())
     assert match, f"{_API_JS} no longer declares FROZEN_MS as a Date.UTC literal"

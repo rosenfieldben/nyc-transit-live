@@ -746,10 +746,16 @@ on the next mint that succeeds.
 Another code reads what riders are shown rather than what a feed did.
 `observations-qualified` says some system is serving riders nothing current (every
 arrival row it serves carried forward, undated where its provider dates rows, or 90
-seconds old or more) or has had its rows dropped past the retention cap. It is not
+seconds old or more) or has been failing for longer than the retention cap, which has
+dropped its rows. That second half is aged from the system's last successful decode,
+so it holds on every poll of the outage, not only the one the cap fires on. It is not
 `feed-content-stale`, which is about one endpoint's feed header lagging, and the two
 occur independently. It never gates either: old upstream data is a property of the
-world, not of the build.
+world, not of the build. Two limits are known. A new process cannot see a group that
+has not decoded since it came up, so a quiet probe after a redeploy is not proof of
+recovery (`/api/status`'s `subway_feeds.failed` and `railroad_feeds.failed` still name
+the group), and a sparsely served LIRR late at night can trip the code with nothing
+wrong.
 
 **Deployment invariant: the first retry rungs must fit well inside the healthcheck
 window.** A failed static warmup retries on a backoff schedule
@@ -977,13 +983,17 @@ board's content clock and ages each contributing group as `served_at` minus that
 group's own `feed_timestamp`, on the same 10-minute edge as the upstream header
 check: every contributor past it is a `FAIL`, some is a `WARN`.
 `production:board-contributors` holds the board against the monitor's own upstream
-read of the eight subway headers: when one contributing group is really aged and
-another is current, the board must give them different clocks, and reporting the
-current one as aged (one clock folded across contributors) is a `FAIL`. A board that
-serves rows with no content clock is a `FAIL` on both lines, because every rider
-qualifier built on that clock would be unwatched. An empty board, or one that could
-not be fetched, is a `WARN`, since `production:status` already fails a deployment
-that is down.
+read of the eight subway headers, each aged at the board's own `served_at` so both
+sides of the comparison share one instant: when one contributing group is really aged
+and another is current, the board must give them different clocks, and an aged and a
+current contributor carrying the same `feed_timestamp`, in either direction, is the
+fold and a `FAIL`. Distinct clocks pass whatever their ages (a group that recovered
+between the two reads carries its own new clock), and a contributor the board itself
+reports failed or retained is named as not judged, since it carries its last-known
+clock by design. A board that serves rows with no content clock is a `FAIL` on both
+lines, because every rider qualifier built on that clock would be unwatched. An empty
+board, or one that could not be fetched, is a `WARN`, since `production:status`
+already fails a deployment that is down.
 
 A degraded alert system stays a `WARN` while the backend is still carrying its
 alerts forward, and becomes a `FAIL` once that retention horizon has passed and

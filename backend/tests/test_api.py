@@ -1095,15 +1095,45 @@ async def test_healthz_unreadable_subway_health_is_not_an_outage(
 # ---- contract 6.2: what riders are served, as a code of its own ----
 
 
-def _arrival(now, *, age=5.0, provenance="reported", route="A", trip="a-1"):
-    """One served subway arrival row carrying the contract pair, `age` seconds old."""
+def _arrival(now, *, age=5.0, provenance="reported", route="A", trip="a-1", ahead=300.0):
+    """One served subway arrival row carrying the contract pair, `age` seconds old and
+    due `ahead` seconds after `now`."""
     return {
         "route_id": route,
         "trip_id": trip,
-        "arrival": now + 300.0,
+        "arrival": now + ahead,
         "observed_at": now - age,
         "provenance": provenance,
     }
+
+
+def _decoding_subways(clock, groups, failed, *, ahead=300.0):
+    """A stand-in for main.fetch_subway_trains in its real seven-part shape.
+
+    Every group in `groups` decodes one train and one Times Sq arrival, four seconds old
+    and due `ahead` seconds out, stamped off `clock` when the poll runs; `failed` is
+    reported failed, as the real fetch reports a group whose fetch or decode raised.
+    """
+
+    async def fetch(stops_arg, client_arg):
+        now = clock["now"]
+        trains = {group: [_train(group, f"{group}-1")] for group in groups}
+        arrivals = {
+            group: {
+                "127": {
+                    "Northbound": [
+                        _arrival(now, age=4.0, route=group[0], trip=f"{group}-1", ahead=ahead)
+                    ]
+                }
+            }
+            for group in groups
+        }
+        flat = [train for group_trains in trains.values() for train in group_trains]
+        headers = dict.fromkeys(groups, now - 4.0)
+        combined = feeds.combine_group_arrivals(arrivals)
+        return flat, combined, now - 4.0, failed, trains, arrivals, headers
+
+    return fetch
 
 
 async def test_healthz_publishes_qualified_observations_without_gating_on_them(client, healthz_env):
@@ -1145,33 +1175,18 @@ async def test_healthz_qualified_observations_are_not_stale_content(
         raising=False,
     )
 
-    def decoding(groups, failed):
-        async def fetch(stops_arg, client_arg):
-            now = clock["now"]
-            trains = {group: [_train(group, f"{group}-1")] for group in groups}
-            arrivals = {
-                group: {
-                    "127": {
-                        "Northbound": [_arrival(now, age=4.0, route=group[0], trip=f"{group}-1")]
-                    }
-                }
-                for group in groups
-            }
-            flat = [train for group_trains in trains.values() for train in group_trains]
-            headers = dict.fromkeys(groups, now - 4.0)
-            combined = feeds.combine_group_arrivals(arrivals)
-            return flat, combined, now - 4.0, failed, trains, arrivals, headers
-
-        return fetch
-
-    monkeypatch.setattr(app_module, "fetch_subway_trains", decoding(["ACE", "NQRW"], []))
+    monkeypatch.setattr(
+        app_module, "fetch_subway_trains", _decoding_subways(clock, ["ACE", "NQRW"], [])
+    )
     await app_module._refresh_subways(app_module.app, client=None)
     # Non-vacuity: the rows this fetch builds are current on their own, so whatever
     # fires below is the retention and not the fixture.
     assert (await client.get("/healthz")).json()["degraded"] == []
 
     clock["now"] += 20.0
-    monkeypatch.setattr(app_module, "fetch_subway_trains", decoding(["NQRW"], ["ACE"]))
+    monkeypatch.setattr(
+        app_module, "fetch_subway_trains", _decoding_subways(clock, ["NQRW"], ["ACE"])
+    )
     await app_module._refresh_subways(app_module.app, client=None)
     assert healthz_env["subways"]["systems"]["ACE"]["retained_since"] == clock["now"]
     assert clock["now"] - healthz_env["subways"]["feed_timestamp"] == 4.0
@@ -1179,6 +1194,88 @@ async def test_healthz_qualified_observations_are_not_stale_content(
     res = await client.get("/healthz")
     assert res.status_code == 200 and res.json()["status"] == "pass"
     assert res.json()["degraded"] == [models.HEALTH_OBSERVATIONS_QUALIFIED]
+
+
+async def test_healthz_names_a_dropped_group_on_every_poll_of_its_outage(
+    client, healthz_env, monkeypatch
+):
+    """THE DROPPED RUNG HOLDS FOR THE WHOLE OUTAGE, through the real refresher.
+
+    ACE fails on every poll for 45 minutes at a 22 s cadence while NQRW decodes, the
+    world the review measured. For the first FEED_RETENTION_MAX_S the merge carries
+    ACE's rows forward stamped `retained`, and those rows qualify it. The poll that
+    passes the cap drops them. On the next one pollers._merge_feed_systems carries no
+    clock forward for ACE (it carries only a SET retained_since), so the merge opens a
+    new window with nothing left to carry. The first version of _was_dropped read that
+    window as quiet and published the code on 3 of the 94 polls after the first cap
+    poll. Here it must be on every poll of the outage and on neither healthy poll before
+    it, and the retained, dropped and reopened states are each seen to occur, so no
+    phase of the walk is assumed.
+
+    ACE's rows are due long after the outage ends, so none expires inside a window:
+    feeds.drop_expired_arrivals would otherwise empty the group's entry early, which is
+    a different state and not this test's.
+    """
+    cap = float(status_routes.FEED_RETENTION_MAX_S)
+    # ONE VALUE: the rule ages the outage against the very cap the merge enforces.
+    assert cap == pollers.FEED_RETENTION_MAX_S
+    poll_s = 22.0
+    outage_s = 45 * 60.0
+    # Every poll whose clock falls inside the 45 minutes, the first at the failure itself.
+    outage_polls = int(outage_s // poll_s) + 1
+    clock = {"now": 3_000_000.0}
+    monkeypatch.setattr(app_module.time, "time", lambda: clock["now"])
+    monkeypatch.setattr(
+        app_module.app.state,
+        "subway_stops",
+        {"127N": {"name": "Times Sq", "lat": 40.75, "lon": -73.98}},
+        raising=False,
+    )
+
+    async def poll(groups, failed):
+        fetch = _decoding_subways(clock, groups, failed, ahead=outage_s + 3_600.0)
+        monkeypatch.setattr(app_module, "fetch_subway_trains", fetch)
+        await pollers._refresh_subways(app_module.app, client=None)
+        res = await client.get("/healthz")
+        assert res.status_code == 200 and res.json()["status"] == "pass", res.json()
+        clock["now"] += poll_s
+        return res.json()["degraded"]
+
+    for _ in range(2):
+        assert await poll(["ACE", "NQRW"], []) == [], "the code must be quiet before the failure"
+
+    walk = []
+    for _ in range(outage_polls):
+        degraded = await poll(["NQRW"], ["ACE"])
+        carried = app_module.app.state.subway_arrivals_by_system.get("ACE")
+        retention_clock = healthz_env["subways"]["systems"]["ACE"]["retained_since"]
+        if carried:
+            state = "retained"
+        elif retention_clock is None:
+            state = "dropped"
+        else:
+            state = "reopened"
+        walk.append((state, degraded))
+
+    states = [state for state, _ in walk]
+    first_cap = states.index("dropped")
+    # The walk re-derived from the two constants and the merge's own `>=`: under the
+    # default 600 s cap, 28 retained polls, the cap on the 29th, and 94 polls after it.
+    assert first_cap == next(k for k in range(outage_polls) if k * poll_s >= cap)
+    assert set(states[:first_cap]) == {"retained"}
+    assert len(states) - first_cap - 1 >= 3, "the outage must run three polls past the cap"
+    # THE STATE THE FIRST VERSION READ AS QUIET does occur: failing, emptied, and a
+    # retention clock set on the block again.
+    assert "reopened" in states[first_cap + 1 :]
+    quiet = [
+        (k, states[k])
+        for k, (_, degraded) in enumerate(walk)
+        if degraded != [models.HEALTH_OBSERVATIONS_QUALIFIED]
+    ]
+    assert quiet == [], (
+        f"observations-qualified was missing on {len(quiet)} of {len(walk)} outage polls "
+        f"(the cap fired on poll {first_cap}): {quiet}"
+    )
 
 
 async def test_healthz_stale_content_is_not_qualified_observations(client, healthz_env):

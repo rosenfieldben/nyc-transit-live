@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 import feeds
-from cache import FEED_STALE_AFTER_S
+from cache import FEED_RETENTION_MAX_S, FEED_STALE_AFTER_S
 from routes import status as status_routes
 from routes.status import (
     _served_arrival_systems,
@@ -268,28 +268,56 @@ def test_a_total_outage_fires_once_its_rows_age_past_the_threshold():
     assert _serving_nothing(state, now=NOW + 55.0) == ["subway:ACE"]
 
 
-def test_a_dropped_system_fires():
-    """The ladder's last rung (design 3.4, step 5): the retention cap fired, the
-    production merge dropped the group's rows, and its block still reports the outage
-    with a real decode behind it."""
+def test_a_dropped_system_fires_on_the_cap_poll_and_on_the_poll_after():
+    """The ladder's last rung (design 3.4, step 5), through the production merge on two
+    consecutive failed polls, each block written as pollers._system_freshness writes it.
+
+    On the first the cap fires: the rows go and the block reads retained_since None. On
+    the second, pollers._merge_feed_systems hands the merge no previous clock for the
+    group (it carries only a SET retained_since forward), so the merge opens a NEW
+    window with nothing to carry and the block reads retained_since set again. The
+    first version of _was_dropped read that second block as "inside the window" and went
+    quiet. The group has been failing past the cap on both polls, and its last decode,
+    which does not move while it fails, says so on both.
+    test_healthz_names_a_dropped_group_on_every_poll_of_its_outage in test_api.py walks
+    the same thing through the real refresher for 45 minutes.
+    """
+    poll_s = 22.0
+    last_decode = NOW - FEED_RETENTION_MAX_S - poll_s
     merged, retained_since = feeds.merge_system_generations(
         {"NQRW": _index(_row())},
         {"ACE": _index(_row(provenance="retained")), "NQRW": _index(_row())},
         ["ACE"],
-        {"ACE": NOW - 600.0},
+        {"ACE": NOW - FEED_RETENTION_MAX_S},
         NOW,
-        600.0,
+        FEED_RETENTION_MAX_S,
     )
     assert "ACE" not in merged and retained_since == {}
     state = _state(
         feed_cache={
             "subways": {
-                "systems": {"ACE": _block(ok=False, fetched_at=NOW - 620.0), "NQRW": _block()}
+                "systems": {"ACE": _block(ok=False, fetched_at=last_decode), "NQRW": _block()}
             }
         },
         subway_arrivals_by_system=merged,
     )
     assert _serving_nothing(state) == ["subway:ACE"]
+
+    later = NOW + poll_s
+    merged, retained_since = feeds.merge_system_generations(
+        {"NQRW": _index(_row(observed_at=later - 5.0))},
+        merged,
+        ["ACE"],
+        {},
+        later,
+        FEED_RETENTION_MAX_S,
+    )
+    assert "ACE" not in merged and retained_since == {"ACE": later}
+    state.subway_arrivals_by_system = merged
+    state.feed_cache["subways"]["systems"]["ACE"] = _block(
+        ok=False, fetched_at=last_decode, retained_since=later
+    )
+    assert _serving_nothing(state, now=later) == ["subway:ACE"]
 
 
 # ---------------------------------------------------------------------------
@@ -298,14 +326,17 @@ def test_a_dropped_system_fires():
 
 
 def test_a_system_that_never_decoded_has_dropped_nothing():
-    """ok False and retained_since None on a block with no decode behind it: a group
-    down since this process started. It serves nothing, but nothing was taken away, and
-    fetched_at is what keeps it out of the dropped rung."""
+    """ok False on a block with no decode behind it: a group down since this process
+    started. It serves nothing, but nothing was taken away, and fetched_at is what keeps
+    it out of the dropped rung, HOWEVER LONG it fails. That is the blind spot the
+    contract monitor's note for this code names: after a deploy, a group that was
+    already failing is invisible here until it decodes."""
     state = _state(
         feed_cache={"subways": {"systems": {"SIR": _block(ok=False, fetched_at=None)}}},
         subway_arrivals_by_system={},
     )
     assert _serving_nothing(state) == []
+    assert _serving_nothing(state, now=NOW + 10 * FEED_RETENTION_MAX_S) == []
 
 
 def test_a_healthy_group_with_nothing_running_is_quiet():
@@ -319,13 +350,26 @@ def test_a_healthy_group_with_nothing_running_is_quiet():
 def test_a_failing_group_inside_its_window_with_nothing_to_carry_is_quiet():
     """Retention starts whether or not anything was carried (merge_system_generations
     records the clock for a group that went down holding an empty list), so a group can
-    be failing, inside its window, and serving nothing. Nothing has been dropped YET;
-    the cap turns this into the dropped rung once it passes."""
+    be failing, inside its window, and serving nothing. Nothing has been dropped YET.
+
+    It becomes the dropped rung the moment its last decode is FEED_RETENTION_MAX_S old,
+    the merge's own `>=` on the merge's own value, and the retention clock still set on
+    its block has no say: the same block, clock and all, is quiet half a second before
+    that edge and fires on it."""
+    last_decode = NOW - 52.0
     state = _state(
-        feed_cache={"subways": {"systems": {"SIR": _block(ok=False, retained_since=NOW - 30.0)}}},
+        feed_cache={
+            "subways": {
+                "systems": {
+                    "SIR": _block(ok=False, fetched_at=last_decode, retained_since=NOW - 30.0)
+                }
+            }
+        },
         subway_arrivals_by_system={},
     )
     assert _serving_nothing(state) == []
+    assert _serving_nothing(state, now=last_decode + FEED_RETENTION_MAX_S - 0.5) == []
+    assert _serving_nothing(state, now=last_decode + FEED_RETENTION_MAX_S) == ["subway:SIR"]
 
 
 def test_a_total_outage_leaves_an_empty_entry_undropped():
@@ -335,9 +379,11 @@ def test_a_total_outage_leaves_an_empty_entry_undropped():
     entry was already empty has had nothing taken from anyone. This is the F10
     reproduction's world (eight groups, empty arrival entries, all failed), and a rule
     that read the block alone reported all eight as dropped. The second half is the
-    same block over NO entry, which is the cap having fired, and does count."""
+    same block over NO entry, a group failing past the cap that the merge has emptied,
+    and does count."""
+    last_decode = NOW - FEED_RETENTION_MAX_S - 120.0
     state = _state(
-        feed_cache={"subways": {"systems": {"SIR": _block(ok=False, fetched_at=NOW - 120.0)}}},
+        feed_cache={"subways": {"systems": {"SIR": _block(ok=False, fetched_at=last_decode)}}},
         subway_arrivals_by_system={"SIR": {}},
     )
     assert _serving_nothing(state) == []

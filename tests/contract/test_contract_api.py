@@ -1654,6 +1654,12 @@ def test_one_subway_group_down_reaches_healthz_as_qualified_observations(contrac
     fallback ladder's last rung. Each phase is observed on /api/subways in the same
     predicate that judges the probe body, so neither can be satisfied by the other.
 
+    THE DROPPED HALF IS READ AGAIN at least one whole ACE poll after the cap poll. By
+    then the merge has opened a new retention window for ACE with nothing left to carry,
+    and the code must still be there, because the rule ages the outage from ACE's last
+    decode rather than reading its retention clock (routes/status.py's _was_dropped). A
+    first version published the code on the cap poll alone, once per window.
+
     WHAT THIS TIER CANNOT SHOW is a rider's board changing. Every simulated group serves
     the same capture and combine_group_arrivals dedups trips across groups, so the
     survivors carry the failed group's trips (UpstreamSim._build_state says so). The
@@ -1715,3 +1721,15 @@ def test_one_subway_group_down_reaches_healthz_as_qualified_observations(contrac
     assert "reasons" not in dropped
     assert dropped["degraded"] == [qualified], dropped
     assert ace()["routes"] == [], "the cap emptied the group, so it covers no markers now"
+
+    # PAST THE CAP POLL, NOT ONLY ON IT. Two more ACE fetches mean at least one whole poll
+    # has landed since the one the predicate caught, and on that poll the merge opened a
+    # new window for ACE with nothing to carry, the state a first version read as quiet.
+    app.sim.await_polls("subway:ACE", 2)
+    later = app.healthz()
+    block = ace()
+    assert block["ok"] is False and block["routes"] == [], block
+    assert later["status"] == "pass" and later["degraded"] == [qualified], (
+        f"the code must hold on every poll of the outage, not only the cap poll: got "
+        f"{later} with ACE's block {block}"
+    )

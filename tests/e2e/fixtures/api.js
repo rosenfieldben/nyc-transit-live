@@ -8,6 +8,15 @@
 // install via page.clock. With fetched_at == FROZEN_S the frontend's clock-skew
 // offset is 0, so a countdown reads exactly (arrival - FROZEN_S): +90s renders
 // "2 min" and, one second later, "1 min" (the boundary the tick test relies on).
+//
+// THE CONTRACT 6.1 FIELDS, which the backend has served since that step and which these
+// fixtures did not describe until the boards started reading them. Every arrivals row
+// carries observed_at, the provider's own clock for that prediction (whichever clock
+// section 3.3 of docs/design/freshness-contract.md names for its system), and a
+// provenance; every arrivals envelope carries feed_timestamp, served_at and systems,
+// each the way its own endpoint serves them; every per-system block carries its own
+// feed_timestamp. The stock values are FRESH, a few seconds behind FROZEN_S, so a board
+// rendered at FROZEN has nothing to qualify. frontend/boards.test.js pins exactly that.
 
 const FROZEN_MS = Date.UTC(2026, 6, 2, 12, 0, 0); // 2026-07-02T12:00:00Z
 const FROZEN_S = FROZEN_MS / 1000;
@@ -26,12 +35,27 @@ const envelope = (data, fetchedAt = FROZEN_S, servedAt = fetchedAt) => ({
 // ---- Per-system freshness blocks (C2) ----
 //
 // One entry of an aggregate envelope's `systems` map, matching models.SystemFreshness:
-// this system's own last decode, whether its last poll succeeded, since when its data
-// has been carried forward, and (subway only) which routes its served data covers.
-// Defaults describe a HEALTHY system, so a partial-outage fixture states only the
-// system that is down.
-const systemBlock = (fetchedAt, { ok = true, retainedSince = null, routes = null } = {}) => ({
+// this system's own last decode, its own content time (6.1), whether its last poll
+// succeeded, since when its data has been carried forward, and (subway only) which
+// routes its served data covers. Defaults describe a HEALTHY system, so a partial-outage
+// fixture states only the system that is down.
+//
+// feed_timestamp defaults to 5s behind this system's own fetched_at, the envelope's
+// convention, and it FREEZES with fetched_at for a system whose fetched_at is frozen,
+// which is what pollers._system_freshness does: a failed system keeps the content time
+// it last reported. Pass `feedTimestamp: null` for a system with no content clock at
+// all, which is Metro-North's standing answer.
+const systemBlock = (
+  fetchedAt,
+  {
+    ok = true,
+    retainedSince = null,
+    routes = null,
+    feedTimestamp = fetchedAt == null ? null : fetchedAt - 5,
+  } = {},
+) => ({
   fetched_at: fetchedAt,
+  feed_timestamp: feedTimestamp,
   ok,
   retained_since: retainedSince,
   routes,
@@ -78,7 +102,9 @@ const railroadsWithSystems = ({
   data: data ?? railroads().data,
   systems: {
     LIRR: systemBlock(fetchedAt),
-    MNR: systemBlock(mnrAt, { ok: mnrOk, retainedSince: mnrRetainedSince }),
+    // NULL, NOT MISSING: Metro-North's header is a lagging copy, so the backend never
+    // publishes it as MNR's content time (feeds.RAILROAD_FRESHNESS_SYSTEMS).
+    MNR: systemBlock(mnrAt, { ok: mnrOk, retainedSince: mnrRetainedSince, feedTimestamp: null }),
   },
 });
 
@@ -215,33 +241,76 @@ const railroadRoutes = () => [
   { system: "MNR", route: "1", name: "Hudson", polylines: [[[40.9, -73.78], [41.0, -73.86]]] },
 ];
 
+// A served prediction's contract pair (6.1): the provider's clock for it, and how it
+// was derived. Every arrivals row the backend emits is `reported`.
+const reported = (observedAt) => ({ observed_at: observedAt, provenance: "reported" });
+
 // Subway station arrivals. The first Northbound arrival is at +90s so the popup
 // reads "2 min" on open and "1 min" one second later (the countdown-tick test).
+// Every row is dated by its feed GROUP's header, since no subway trip update dates
+// itself; one group (1-7+S) contributes here, and its block is the board's `systems`.
 const subwayArrivals = () => ({
   fetched_at: FROZEN_S,
+  feed_timestamp: FROZEN_S - 5,
   station_id: "127",
   station_name: "Times Sq-42 St",
   directions: {
     Northbound: [
-      { route_id: "1", trip_id: "sub-1", arrival: FROZEN_S + 90 },
-      { route_id: "2", trip_id: "sub-3", arrival: FROZEN_S + 300 },
+      { route_id: "1", trip_id: "sub-1", arrival: FROZEN_S + 90, ...reported(FROZEN_S - 5) },
+      { route_id: "2", trip_id: "sub-3", arrival: FROZEN_S + 300, ...reported(FROZEN_S - 5) },
     ],
-    Southbound: [{ route_id: "1", trip_id: "sub-2", arrival: FROZEN_S + 180 }],
+    Southbound: [
+      { route_id: "1", trip_id: "sub-2", arrival: FROZEN_S + 180, ...reported(FROZEN_S - 5) },
+    ],
   },
+  served_at: FROZEN_S,
+  systems: { "1-7+S": systemBlock(FROZEN_S, { routes: ["1", "2"] }) },
 });
 
 // Railroad (MNR) station arrivals. MNR omits direction_id, so the backend INFERS
 // Inbound/Outbound from the stop progression; both are directional buckets here
 // (RailroadArrival carries train_num, which subway arrivals do not).
+//
+// UNDATED, AND THAT IS THE POLICY RATHER THAN A GAP: Metro-North dates none of its
+// predictions, so every row's observed_at is null and so is the envelope's content
+// clock, while its system block still carries the poll time.
 const railroadArrivals = () => ({
   fetched_at: FROZEN_S,
+  feed_timestamp: null,
   system: "MNR",
   stop_id: "1",
   stop_name: "Grand Central",
   directions: {
-    Inbound: [{ route_id: "1", trip_id: "mnr-3117769", arrival: FROZEN_S + 240, train_num: "795" }],
-    Outbound: [{ route_id: "1", trip_id: "mnr-3117770", arrival: FROZEN_S + 360, train_num: "812" }],
+    Inbound: [
+      { route_id: "1", trip_id: "mnr-3117769", arrival: FROZEN_S + 240, train_num: "795", ...reported(null) },
+    ],
+    Outbound: [
+      { route_id: "1", trip_id: "mnr-3117770", arrival: FROZEN_S + 360, train_num: "812", ...reported(null) },
+    ],
   },
+  served_at: FROZEN_S,
+  systems: { MNR: systemBlock(FROZEN_S, { feedTimestamp: null }) },
+});
+
+// Railroad (LIRR) station arrivals for Jamaica. LIRR is the one provider that dates
+// each prediction itself (trip_update.timestamp), so the two rows carry two different
+// clocks, both fresh, while the envelope's content clock is the LIRR feed header.
+const railroadArrivalsLirr = () => ({
+  fetched_at: FROZEN_S,
+  feed_timestamp: FROZEN_S - 5,
+  system: "LIRR",
+  stop_id: "12",
+  stop_name: "Jamaica",
+  directions: {
+    Inbound: [
+      { route_id: "1", trip_id: "lirr-8412", arrival: FROZEN_S + 240, train_num: "8412", ...reported(FROZEN_S - 20) },
+    ],
+    Outbound: [
+      { route_id: "1", trip_id: "lirr-8413", arrival: FROZEN_S + 420, train_num: "8413", ...reported(FROZEN_S - 40) },
+    ],
+  },
+  served_at: FROZEN_S,
+  systems: { LIRR: systemBlock(FROZEN_S) },
 });
 
 // ---- NJ Transit Rail (15c) ----
@@ -365,18 +434,22 @@ const njt = () => ({
 // NJT station departures for New York Penn Station: FLAT and chronological, with no
 // direction buckets, which is what /api/njt-arrivals serves. The first row is at
 // +90s, the same countdown boundary the subway and PATH fixtures use.
+// Every row is dated by the TripUpdates header, the only clock NJ Transit sends.
 const njtArrivals = () => ({
   fetched_at: FROZEN_S,
+  feed_timestamp: FROZEN_S - 5,
   stop_id: "109",
   stop_name: "New York Penn Station",
   arrivals: [
     {
       train_num: "3800", route_id: "9", headsign: "Trenton",
       arrival: FROZEN_S + 90, departure: FROZEN_S + 120, delay: 250, trip_id: "NJ_3800",
+      ...reported(FROZEN_S - 5),
     },
     {
       train_num: "6634", route_id: "2", headsign: "Dover",
       arrival: FROZEN_S + 300, departure: FROZEN_S + 330, delay: null, trip_id: "NJ_6634",
+      ...reported(FROZEN_S - 5),
     },
     // A ROUTE-LESS ROW, which models.NjtArrival declares (route_id: str | None) and
     // feeds/njt.py really produces: an ADDED trip whose TripDescriptor omits
@@ -387,8 +460,11 @@ const njtArrivals = () => ({
     {
       train_num: null, route_id: null, headsign: "Bay Head",
       arrival: FROZEN_S + 480, departure: FROZEN_S + 500, delay: null, trip_id: "",
+      ...reported(FROZEN_S - 5),
     },
   ],
+  served_at: FROZEN_S,
+  systems: { njt: systemBlock(FROZEN_S) },
 });
 
 const busRoute = () => ({
@@ -502,16 +578,22 @@ const pathAdvanced = () => ({
 // PATH station arrivals for WTC: both directional buckets present. The first
 // To New York arrival is at +90s, the same countdown-tick boundary the subway
 // fixture uses ("2 min" on open, "1 min" one second later).
+//
+// Each row carries its OWN trip's clock (PATH dates every trip update), so the two
+// differ; the envelope's content clock is the oldest of them, and PATH has no systems.
 const pathArrivals = () => ({
   fetched_at: FROZEN_S,
+  feed_timestamp: FROZEN_S - 38,
   stop_id: "26734",
   stop_name: "World Trade Center",
   directions: {
-    // Rows are {route_id, arrival} only: the bridge hash reaches no payload
-    // (PathArrival dropped trip_id in the 13d cleanup).
-    "To New Jersey": [{ route_id: "862", arrival: FROZEN_S + 300 }],
-    "To New York": [{ route_id: "859", arrival: FROZEN_S + 90 }],
+    // Rows are {route_id, arrival} plus the contract pair: the bridge hash reaches no
+    // payload (PathArrival dropped trip_id in the 13d cleanup).
+    "To New Jersey": [{ route_id: "862", arrival: FROZEN_S + 300, ...reported(FROZEN_S - 38) }],
+    "To New York": [{ route_id: "859", arrival: FROZEN_S + 90, ...reported(FROZEN_S - 18) }],
   },
+  served_at: FROZEN_S,
+  systems: null,
 });
 
 // NYC Ferry static layer (14a). Two docks: Wall St/Pier 11 (accessible, first so
@@ -594,14 +676,22 @@ const ferryDocked = () =>
 // Ferry dock arrivals for Wall St/Pier 11: two route-name buckets. East River is a
 // normal arriving boat (+90s -> "2 min"); South Brooklyn is a DWELLING boat
 // (arrival 30s past, departure +90s ahead), so its row renders "departs 2 min".
+// Dock rows are dated by the TripUpdates header, never by the boat clock.
 const ferryArrivals = () => ({
   fetched_at: FROZEN_S,
+  feed_timestamp: FROZEN_S - 5,
   stop_id: "18",
   stop_name: "Wall St/Pier 11",
   routes: {
-    "East River": [{ route_id: "ER", trip_id: "t-er-1", arrival: FROZEN_S + 90, departure: FROZEN_S + 120 }],
-    "South Brooklyn": [{ route_id: "SB", trip_id: "t-sb-1", arrival: FROZEN_S - 30, departure: FROZEN_S + 90 }],
+    "East River": [
+      { route_id: "ER", trip_id: "t-er-1", arrival: FROZEN_S + 90, departure: FROZEN_S + 120, ...reported(FROZEN_S - 5) },
+    ],
+    "South Brooklyn": [
+      { route_id: "SB", trip_id: "t-sb-1", arrival: FROZEN_S - 30, departure: FROZEN_S + 90, ...reported(FROZEN_S - 5) },
+    ],
   },
+  served_at: FROZEN_S,
+  systems: null,
 });
 
 // Service alerts default to an EMPTY list so every existing scenario's popup
@@ -668,14 +758,18 @@ const stationAlertList = () => [
 // to it reaches this station only if the join reads the flat arrivals list.
 const njtArrivalsHoboken = () => ({
   fetched_at: FROZEN_S,
+  feed_timestamp: FROZEN_S - 5,
   stop_id: "12",
   stop_name: "Hoboken",
   arrivals: [
     {
       train_num: "3901", route_id: "9", headsign: "New York Penn Station",
       arrival: FROZEN_S + 120, departure: FROZEN_S + 150, delay: null, trip_id: "NJ_3901",
+      ...reported(FROZEN_S - 5),
     },
   ],
+  served_at: FROZEN_S,
+  systems: { njt: systemBlock(FROZEN_S) },
 });
 
 module.exports = {
@@ -696,6 +790,8 @@ module.exports = {
   railroadRoutes,
   subwayArrivals,
   railroadArrivals,
+  railroadArrivalsLirr,
+  reported,
   busRoute,
   airtrain,
   pathStops,

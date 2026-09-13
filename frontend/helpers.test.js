@@ -96,6 +96,9 @@ const {
   RAILROAD_ROUTE_MAX_SLICE,
   FEED_STALE_AFTER_S,
   ingestSystems,
+  ingestEnvelope,
+  contentClock,
+  systemLag,
   systemAges,
   systemStaleAts,
   staleAge,
@@ -1700,7 +1703,7 @@ test("C2 ingestSystems tolerates malformed blocks without dimming the whole map"
   );
 });
 
-test("C2 systemAges ages each system separately and keeps the upstream lag a source floor", () => {
+test("C2 systemAges ages each system separately; a block with no clock of its own takes the envelope's lag", () => {
   const now = 20_000;
   const source = {
     label: "railroad",
@@ -1721,9 +1724,160 @@ test("C2 systemAges ages each system separately and keeps the upstream lag a sou
     ),
   };
   const ages = systemAges(source, now);
-  assert.equal(ages.LIRR, 5); // upstream lag is the floor, so a fresh system reads 5
+  // These blocks predate the per-system content clock (6.1), so each system falls back
+  // to the envelope's lag, which is how every pre-6.2 payload read and still reads.
+  assert.equal(ages.LIRR, 5);
   assert.equal(ages.MNR, 400); // its own poll age, which the envelope's hides
   assert.equal(ages.FUTURE, null);
+});
+
+/* ---------------- 6.2: the door, and the lag term per system ---------------- */
+
+test("6.2 the door reads each block's content clock, and nothing it was not asked for", () => {
+  // THE DOOR IN THE LITERAL SENSE: a field the contract adds to a block reaches no
+  // surface until this function reads it, which is how 6.1's per-system content clock
+  // reached none. Pinned as an exact key set, so a sixth name cannot slip in unread and
+  // the fifth cannot slip out.
+  const systems = ingestSystems(
+    {
+      fetched_at: 1000,
+      feed_timestamp: 400,
+      systems: {
+        ACE: { fetched_at: 1000, feed_timestamp: 400, ok: true, retained_since: null, routes: ["A"], detail: "x" },
+        G: { fetched_at: 1000, feed_timestamp: 995, ok: true, retained_since: null, routes: ["G"] },
+        MNR: { fetched_at: 1000, feed_timestamp: null, ok: true, retained_since: null },
+        OLD: { fetched_at: 1000, ok: true },
+        BAD: { fetched_at: 1000, feed_timestamp: "995" },
+      },
+    },
+    "subways",
+  );
+  for (const [name, system] of Object.entries(systems)) {
+    assert.deepEqual(
+      Object.keys(system).sort(),
+      ["feedTimestamp", "fetchedAt", "ok", "retainedSince", "routes"],
+      name,
+    );
+  }
+  // The three states: a number, NULL as the backend's real answer (no content clock),
+  // and UNDEFINED for a block that predates the clock or carries garbage in it.
+  assert.equal(systems.ACE.feedTimestamp, 400);
+  assert.equal(systems.G.feedTimestamp, 995);
+  assert.equal(systems.MNR.feedTimestamp, null);
+  assert.equal(systems.OLD.feedTimestamp, undefined);
+  assert.equal(systems.BAD.feedTimestamp, undefined);
+  assert.equal(contentClock(Number.NaN), undefined);
+  // A synthesized single system carries the ENVELOPE's content clock, in all three states.
+  assert.equal(ingestSystems({ fetched_at: 1000, feed_timestamp: 700 }, "path").path.feedTimestamp, 700);
+  assert.equal(ingestSystems({ fetched_at: 1000, feed_timestamp: null }, "path").path.feedTimestamp, null);
+  assert.equal(ingestSystems({ fetched_at: 1000 }, "path").path.feedTimestamp, undefined);
+});
+
+test("6.2 ingestEnvelope reads the envelope's three clocks through the same door", () => {
+  const feed = ingestEnvelope(
+    {
+      fetched_at: 1000,
+      feed_timestamp: 990,
+      served_at: 1003,
+      systems: { njt: { fetched_at: 1000, feed_timestamp: 990, ok: true } },
+      trains: [{ id: "x" }],
+    },
+    "njt",
+  );
+  assert.deepEqual(Object.keys(feed).sort(), ["feedTimestamp", "fetchedAt", "servedAt", "systems"]);
+  assert.equal(feed.fetchedAt, 1000);
+  assert.equal(feed.feedTimestamp, 990);
+  assert.equal(feed.servedAt, 1003);
+  assert.equal(feed.systems.njt.feedTimestamp, 990);
+  // An ARRIVALS envelope enters the same way. PATH's board has no systems block, so its
+  // one system is synthesized under the key it is ingested with, carrying the board's
+  // content clock (the oldest served row's, per cache._oldest_row_observed_at).
+  const board = ingestEnvelope(
+    { fetched_at: 1000, feed_timestamp: 962, served_at: 1001, systems: null, directions: {} },
+    "path",
+  );
+  assert.deepEqual(Object.keys(board.systems), ["path"]);
+  assert.equal(board.systems.path.feedTimestamp, 962);
+  assert.equal(board.servedAt, 1001);
+  // A clock that is not a finite number is no clock at all, and a missing body is empty.
+  const junk = ingestEnvelope({ fetched_at: "1000", feed_timestamp: Number.NaN, served_at: null }, "x");
+  assert.equal(junk.fetchedAt, null);
+  assert.equal(junk.feedTimestamp, null);
+  assert.equal(junk.servedAt, null);
+  assert.equal(ingestEnvelope(null, "x").servedAt, null);
+});
+
+test("6.2 one lagging group ages alone, because the lag term is each system's own", () => {
+  // F03's second clause at the door. The envelope's feed_timestamp is the minimum
+  // header over the groups that decoded, so the old SHARED lag term handed the lagging
+  // group's 600 seconds to every group: all eight dimmed, all eight froze, and the
+  // status line spoke for the whole source while seven feeds were current.
+  const now = 20_000;
+  const source = {
+    label: "trains",
+    systemNoun: "group",
+    fetchedAt: now,
+    servedAt: now,
+    feedTimestamp: now - 600,
+    systems: ingestSystems(
+      {
+        fetched_at: now,
+        feed_timestamp: now - 600,
+        systems: {
+          "1-7+S": { fetched_at: now, feed_timestamp: now - 600, ok: true },
+          ACE: { fetched_at: now, feed_timestamp: now - 5, ok: true },
+        },
+      },
+      "subways",
+    ),
+  };
+  assert.equal(systemLag(source, source.systems["1-7+S"]), 600);
+  assert.equal(systemLag(source, source.systems.ACE), 5);
+  assert.deepEqual(systemAges(source, now), { "1-7+S": 600, ACE: 5 });
+  // The glide deadline agrees about which one is old: frozen at the observation, while
+  // the current group keeps gliding until its own poll ages.
+  const at = systemStaleAts(source);
+  assert.equal(at["1-7+S"], now);
+  assert.equal(at.ACE, now + FEED_STALE_AFTER_S);
+  assert.equal(staleness(source, now), "trains: 1-7+S group as of 10m ago");
+});
+
+test("6.2 a system with NO content clock borrows nobody's: Metro-North beside a lagging LIRR", () => {
+  // The railroad envelope's feed_timestamp is LIRR's header alone (Metro-North's is a
+  // lagging copy and never published), so under the shared term a lagging LIRR aged
+  // Metro-North too. Metro-North's block says null, which means no content clock: its
+  // age is its poll age, and it stays out of a sentence about LIRR's content.
+  const now = 20_000;
+  const source = {
+    label: "railroad",
+    fetchedAt: now,
+    servedAt: now,
+    feedTimestamp: now - 300,
+    systems: ingestSystems(
+      {
+        fetched_at: now,
+        feed_timestamp: now - 300,
+        systems: {
+          LIRR: { fetched_at: now, feed_timestamp: now - 300, ok: true },
+          MNR: { fetched_at: now, feed_timestamp: null, ok: true },
+        },
+      },
+      "railroads",
+    ),
+  };
+  assert.deepEqual(systemAges(source, now), { LIRR: 300, MNR: 0 });
+  assert.equal(staleness(source, now), "railroad: LIRR as of 5m ago");
+  // The same payload from a backend that predates the per-system clock reads exactly as
+  // it did before 6.2: the envelope's lag, for both.
+  const older = {
+    ...source,
+    systems: ingestSystems(
+      { fetched_at: now, systems: { LIRR: { fetched_at: now, ok: true }, MNR: { fetched_at: now, ok: true } } },
+      "railroads",
+    ),
+  };
+  assert.deepEqual(systemAges(older, now), { LIRR: 300, MNR: 300 });
+  assert.equal(staleness(older, now), "railroad: as of 5m ago");
 });
 
 test("C2 the healthy aggregate case reads EXACTLY as the pre-C2 whole-source case", () => {

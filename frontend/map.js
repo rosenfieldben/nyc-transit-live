@@ -94,14 +94,14 @@ async function refreshSource(source) {
       throw new Error(body?.detail ?? `HTTP ${res.status}`);
     }
     const body = await res.json();
-    source.fetchedAt = body.fetched_at ?? null;
-    source.feedTimestamp = body.feed_timestamp ?? null; // server-side staleness signal
-    source.servedAt = body.served_at ?? null; // this response's build time (R1)
-    // The per-system freshness blocks (C2), or one synthesized system for a
-    // single-feed source, so everything downstream reads one shape. Ingested BEFORE
+    // fetchedAt, feedTimestamp (the server-side staleness signal), servedAt (this
+    // response's build time, R1) and the per-system freshness blocks (C2), or one
+    // synthesized system for a single-feed source, so everything downstream reads one
+    // shape. Through ingestEnvelope, THE SAME DOOR the arrivals boards enter by (6.2),
+    // so a board and the map cannot read one envelope's clocks two ways. Ingested BEFORE
     // apply() below, because the apply paths dim and freeze from these ages and a
     // marker created this poll has to be dim on its first frame.
-    source.systems = ingestSystems(body, sourceKeys.get(source));
+    Object.assign(source, ingestEnvelope(body, sourceKeys.get(source)));
     if (source.onSystems) source.onSystems(source.systems);
     // Rebuild the age index NOW, before apply() runs: the apply paths read it to dim
     // and to freeze the glide, and a marker created from retained data has to be dim

@@ -486,6 +486,19 @@ const STALE_MARKER_OPACITY = 0.45;
 // through `ok` instead; a missing `ok` reads as healthy, so a malformed field cannot
 // dim the whole map; an EMPTY systems object falls back to the synthesized single
 // system rather than yielding a source with no freshness at all.
+//
+// 6.2 WIDENED THIS DOOR BY ONE NAME, and it is the door in the literal sense: it read
+// exactly four names (fetched_at, ok, retained_since, routes), and nothing else in a
+// block reaches any surface. So the per-system content clock contract 6.1 put on every
+// block reached none, and a system whose provider was ten minutes behind looked exactly
+// like its current siblings, which is F03. It now reads feed_timestamp as well. A
+// synthesized single system carries the ENVELOPE's feed_timestamp, because for a
+// single-feed source (buses, PATH, ferry, and every arrivals board without a systems
+// block) the envelope's content clock is that one system's.
+//
+// feedTimestamp HAS THREE STATES, and the two that are not numbers mean different
+// things (see contentClock and systemLag): null is the backend saying this system has
+// no content clock at all, undefined is a payload that predates the per-system clock.
 function ingestSystems(body, sourceKey) {
   const raw = body == null ? null : body.systems;
   const names = raw != null && typeof raw === "object" ? Object.keys(raw) : [];
@@ -497,6 +510,7 @@ function ingestSystems(body, sourceKey) {
         ok: true,
         retainedSince: null,
         routes: null,
+        feedTimestamp: contentClock(body == null ? undefined : body.feed_timestamp),
       },
     };
   }
@@ -511,9 +525,42 @@ function ingestSystems(body, sourceKey) {
       // alerts blocks, whose entities name their own system); an array, possibly
       // empty, means it does.
       routes: Array.isArray(block.routes) ? block.routes : null,
+      feedTimestamp: contentClock(block.feed_timestamp),
     };
   }
   return systems;
+}
+
+// A block's content clock, read into its three states. A finite number is the content
+// time. NULL IS A REAL ANSWER and is kept as one: the backend publishes null for a
+// system whose header is not a usable freshness signal (Metro-North, whose header is a
+// lagging copy; feeds.RAILROAD_FRESHNESS_SYSTEMS decides it, and this file must not
+// restate it). Anything else, including a key that is simply absent, is UNDEFINED: a
+// payload from before the per-system clock existed, or a malformed value, which
+// systemLag answers with the envelope's one number exactly as the code did before 6.2.
+function contentClock(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  return value === null ? null : undefined;
+}
+
+// THE ENVELOPE'S OWN CLOCKS, through the same door as its per-system blocks. Every
+// vehicle feed and, since 6.1, every arrivals board carries fetched_at, feed_timestamp
+// and served_at beside its systems map, and before 6.2 only the vehicle feeds' reached
+// a surface: refreshSource read them inline and the boards read fetched_at alone. One
+// function now reads all four for both kinds of envelope, so a board ages its rows from
+// the same served_at, read the same way, that the status line ages the map from. Each
+// clock is a finite number or null; a payload's other fields are none of its business.
+function ingestEnvelope(body, sourceKey) {
+  const clock = (key) => {
+    const value = body == null ? null : body[key];
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+  };
+  return {
+    fetchedAt: clock("fetched_at"),
+    feedTimestamp: clock("feed_timestamp"),
+    servedAt: clock("served_at"),
+    systems: ingestSystems(body, sourceKey),
+  };
 }
 
 // A source's systems, falling back to the synthesized single system when a caller
@@ -540,24 +587,47 @@ function pollAge(fetchedAt, servedAt, now) {
   return servedAt - fetchedAt + Math.max(now - servedAt - (minClockOffset ?? 0), 0);
 }
 
-// Age of EACH of a source's systems, keyed by system name; null for a system that
-// has never decoded (no fetched_at to age against).
+// ONE SYSTEM'S CONTENT LAG at its own last decode: its fetched_at minus its own
+// feed_timestamp, both from the same block, which is the backend's _feed_age asked of
+// one system rather than of one envelope.
 //
-// The upstream-lag term stays a SOURCE-level floor rather than a per-system one:
-// feed_timestamp is the oldest content time across the feeds that decoded, so it
-// cannot be attributed to one system, and if the content behind this response is
-// old then everything drawn from it is old. On a fully healthy source every
-// system's fetched_at equals the envelope's, so the worst of these ages is exactly
-// the age R1 computed, which is what keeps the healthy case rendering unchanged.
-function systemAges(source, now = Date.now() / 1000) {
-  const lag =
-    source.feedTimestamp == null || source.fetchedAt == null
+// THIS WAS THE SHARED LAG TERM, and 6.2 is what made it per system. It used to be the
+// ENVELOPE's one number, fetched_at minus feed_timestamp for the whole response, on the
+// reasoning that the envelope's feed_timestamp "cannot be attributed to one system".
+// That was true until 6.1, and it had a cost the reasoning did not state: for the
+// subway the envelope's feed_timestamp is the MINIMUM header across every group that
+// decoded, so one group ten minutes behind aged all eight. Every marker on the map
+// dimmed and the status line spoke for the whole source while seven feeds were
+// current, which is F03's second clause one surface over. Each block now carries its
+// own content clock, so each system answers for its own.
+//
+// The three states of feedTimestamp (contentClock): a number is aged here; NULL means
+// this system has no content clock, so it contributes no lag and its age is its poll
+// age alone (Metro-North, which must not borrow LIRR's clock through the envelope);
+// UNDEFINED means the payload predates the per-system clock, so the envelope's number
+// stands in, exactly as it did before, and an older backend reads as it always did.
+function systemLag(source, system) {
+  if (system.feedTimestamp === undefined) {
+    return source.feedTimestamp == null || source.fetchedAt == null
       ? 0
       : source.fetchedAt - source.feedTimestamp;
+  }
+  if (system.feedTimestamp === null || system.fetchedAt == null) return 0;
+  return system.fetchedAt - system.feedTimestamp;
+}
+
+// Age of EACH of a source's systems, keyed by system name; null for a system that
+// has never decoded (no fetched_at to age against). The larger of its own content lag
+// (systemLag) and its poll age: either alone makes what a system drew old.
+//
+// On a fully healthy source every system's fetched_at equals the envelope's and every
+// lag is a few seconds, so the worst of these ages is exactly the age R1 computed,
+// which is what keeps the healthy case rendering unchanged.
+function systemAges(source, now = Date.now() / 1000) {
   const ages = {};
   for (const [name, system] of Object.entries(sourceSystems(source))) {
     const poll = pollAge(system.fetchedAt, source.servedAt, now);
-    ages[name] = poll == null ? null : Math.max(lag, poll, 0);
+    ages[name] = poll == null ? null : Math.max(systemLag(source, system), poll, 0);
   }
   return ages;
 }
@@ -596,9 +666,11 @@ function markerOpacity(age, base = 1) {
 //      moved here: dimming states how OLD the data is, and the app's definition of
 //      old is FEED_STALE_AFTER_S for every source alike.)
 //   2. Its own poll age reaches the threshold, at fetchedAt + FEED_STALE_AFTER_S.
-//   3. The source's upstream content was ALREADY past the threshold when it was
-//      polled (the lag term). Nothing may advance past the observation itself, so
-//      the deadline is fetchedAt.
+//   3. Its upstream content was ALREADY past the threshold when it was polled (its
+//      own lag term, systemLag). Nothing may advance past the observation itself, so
+//      the deadline is fetchedAt. Per system since 6.2, for the reason systemLag
+//      gives: this deadline and the age above must agree about which system is old,
+//      or a lagging group would freeze its healthy siblings while leaving them bright.
 //
 // REVIEW FIX. This used to be glideClock(now, age) subtracting (age - threshold),
 // which only froze while the POLL term dominated: with the upstream-lag term
@@ -607,16 +679,13 @@ function markerOpacity(age, base = 1) {
 // Expressing the freeze as an absolute instant cannot drift that way, and it needs no
 // clock, so it is a pure function of the payload.
 function systemStaleAts(source) {
-  const lag =
-    source.feedTimestamp == null || source.fetchedAt == null
-      ? 0
-      : source.fetchedAt - source.feedTimestamp;
   const deadlines = {};
   for (const [name, system] of Object.entries(sourceSystems(source))) {
     if (system.fetchedAt == null) {
       deadlines[name] = null; // never decoded: no anchor, so nothing to freeze
       continue;
     }
+    const lag = systemLag(source, system);
     const aged = system.fetchedAt + (lag >= FEED_STALE_AFTER_S ? 0 : FEED_STALE_AFTER_S);
     deadlines[name] =
       system.retainedSince == null ? aged : Math.min(aged, system.retainedSince);
@@ -2733,6 +2802,8 @@ if (typeof module !== "undefined" && module.exports) {
     INK_LIGHT, INK_DARK,
     feedAgeLine, humanizeAge, alertsStale, alertsFreshnessBasis, ALERTS_STALE_AFTER_S,
     ingestSystems, systemAges, systemStaleAts, staleAge, markerOpacity, glideClock,
+    // 6.2: the door reads the content clock, and the envelope's clocks enter with it.
+    ingestEnvelope, contentClock, systemLag,
     thresholdOverrides, CONTRACT_FLAG_PARAM,
     stalePopupLine, STALE_MARKER_OPACITY, FERRY_DOCKED_OPACITY,
     selectHeadwayBand, airtrainStationPopupHtml, retryUntil,

@@ -13,7 +13,7 @@ import bus_static
 import njt_auth
 import static_data
 import static_shared
-from cache import FEED_RETENTION_MAX_S, FEED_STALE_AFTER_S, _feed_age
+from cache import FEED_RETENTION_MAX_S, FEED_STALE_AFTER_S, OPERATOR_STALE_AFTER_S, _feed_age
 from feeds import RAILROAD_FRESHNESS_SYSTEMS, iter_rows
 from models import (
     HEALTH_BUS_INDEX_FAILED,
@@ -341,8 +341,9 @@ def _health_codes(
         codes.append(HEALTH_NJT_MINT_QUOTA)
 
     # CONTRACT 6.2, AND ALSO NOT A REASON TO 503. The only code read off what riders
-    # are SERVED rather than off a feed, a warmup or a budget: some system is serving
-    # nothing current. The rule and its measured threshold live at
+    # are SERVED rather than off a feed, a warmup or a budget: some system has served
+    # riders nothing current for as long as an operator tolerates. The rule, why its
+    # threshold is the operator's and not the rider's, and its measured shape live at
     # models.HEALTH_OBSERVATIONS_QUALIFIED; the handler computes it off the arrivals
     # indexes with _systems_serving_nothing_current below and hands in the answer, so
     # this function stays pure over its inputs like every code above.
@@ -373,21 +374,39 @@ class _ServedSystem(NamedTuple):
     block: Mapping | None = None
 
 
-def _row_is_qualified(row: Mapping, age_gated: bool, now: float) -> bool:
-    """Whether a rider has to be told something about this row before trusting it.
+def _row_is_past_the_operator_band(row: Mapping, age_gated: bool, now: float) -> bool:
+    """Whether this row, by itself, is nothing an operator counts as current.
 
-    The design's 3.2 rule applied to one served row, in three clauses: its provenance
-    is not "reported" (retained, unknown, absent, anything else); or its system dates
-    its rows and this one is undated; or it is FEED_STALE_AFTER_S or more old. The `>=`
-    matches the frontend, which flags at age >= FEED_STALE_AFTER_S, and the mirror of
-    the `<` that makes a feed fresh in _health_codes.
+    THE OPERATOR'S RULE, AND DELIBERATELY NOT THE RIDER'S. A board qualifies a row for a
+    rider at FEED_STALE_AFTER_S (90 s, the design's OBS_FRESH_S) and every carried-forward
+    row at once (design 3.2). An operator is told at OPERATOR_STALE_AFTER_S (600 s, the
+    contract monitor's header band, with its strict `>`), and
+    models.HEALTH_OBSERVATIONS_QUALIFIED says why the two audiences get two numbers.
+    Three clauses:
+
+      - A row with a clock is aged by it, reported and carried forward alike, and counts
+        only once it is MORE than OPERATOR_STALE_AFTER_S old. A group down for one poll
+        serves carried-forward rows seconds old: its riders read "showing last known",
+        and nothing about it is an operator's business yet. Kept failing, its rows pass
+        the band, or the cap takes them and _was_dropped answers.
+      - A row with no clock counts at once when its system dates rows: it cannot be
+        aged, and a provider that dates rows leaving one undated is an anomaly at any
+        age (design 3.2, clause c). One whose provider never dates (Metro-North) does
+        not: its age is unknowable by design. A Metro-North failure reaches the operator
+        through _was_dropped once the cap takes its carried rows; in a total railroad
+        outage no merge runs, so its rows are neither carried nor dropped, and the code
+        names LIRR instead, once LIRR's rows have aged past the band.
+      - A row whose provenance is neither "reported" nor "retained" (unknown, absent, or
+        a position value no prediction can carry) counts at once, read the pessimistic
+        way the client's fail-safe reads it (design 3.1).
     """
-    if row.get("provenance") != "reported":
+    provenance = row.get("provenance")
+    if provenance not in ("reported", "retained"):
         return True
     observed_at = row.get("observed_at")
     if observed_at is None:
         return age_gated
-    return now - observed_at >= FEED_STALE_AFTER_S
+    return now - observed_at > OPERATOR_STALE_AFTER_S
 
 
 def _was_dropped(system: _ServedSystem, now: float) -> bool:
@@ -423,6 +442,17 @@ def _was_dropped(system: _ServedSystem, now: float) -> bool:
         inside its window with nothing to carry (it went down holding no rows) also has
         no entry, and this clause is what keeps it quiet.
 
+    THE CAP, NOT THE OPERATOR BAND, and in production the two are one number, 600 s
+    (cache.FEED_RETENTION_MAX_S and cache.OPERATOR_STALE_AFTER_S). A failing subway
+    group or railroad, the systems that retain, therefore reaches the operator at about
+    ten minutes by either road: its carried rows aging past the band, or the cap taking
+    them. A system that does not retain (NJ Transit, the ferry, PATH) and fails while
+    serving nothing has no row to age and none to drop, so it reaches no operator here:
+    models.HEALTH_OBSERVATIONS_QUALIFIED names that blind spot. This road reads the cap because
+    once the rows are gone riders are served nothing at all, whatever any band says.
+    The contract tier compresses the cap and never the band, which is why its outage
+    scenario reaches the code by this road alone.
+
     MEASURED FROM THE LAST DECODE, while the merge's window counts from the first failed
     poll, so the two edges sit one poll interval apart: a system that went down holding
     nothing can be named up to one interval before its window closes. A system still
@@ -445,11 +475,15 @@ def _was_dropped(system: _ServedSystem, now: float) -> bool:
 def _systems_serving_nothing_current(systems: Mapping[str, _ServedSystem], now: float) -> list[str]:
     """The systems serving riders nothing current, sorted: the observations-qualified rule.
 
-    A system counts when it serves at least one row and EVERY one of them is qualified
-    (_row_is_qualified), or when it serves none because the retention cap dropped them
-    (_was_dropped). One current row keeps a whole system quiet, and that threshold is
-    measured rather than chosen: models.HEALTH_OBSERVATIONS_QUALIFIED has the LIRR
-    numbers that rule out a version where any one row would do.
+    CURRENT IN THE OPERATOR'S SENSE. A system counts when it serves at least one row and
+    EVERY one of them is past the operator band (_row_is_past_the_operator_band), or when
+    it serves none because the retention cap dropped them (_was_dropped). A rider is told
+    far sooner and one row at a time, at FEED_STALE_AFTER_S; this code tells the
+    operator, at OPERATOR_STALE_AFTER_S, and never at the rider's threshold
+    (models.HEALTH_OBSERVATIONS_QUALIFIED says why). One row inside the band keeps a
+    whole system quiet, and that threshold is measured rather than chosen:
+    models.HEALTH_OBSERVATIONS_QUALIFIED has the LIRR numbers that rule out a version
+    where any one row would do.
 
     A system serving no rows that was NOT dropped is quiet: a group with nothing running
     right now, one that has never decoded, one failing inside its retention window with
@@ -467,7 +501,7 @@ def _systems_serving_nothing_current(systems: Mapping[str, _ServedSystem], now: 
         system = systems[name]
         rows = list(iter_rows(system.rows))
         if rows:
-            if all(_row_is_qualified(row, system.age_gated, now) for row in rows):
+            if all(_row_is_past_the_operator_band(row, system.age_gated, now) for row in rows):
                 serving_nothing.append(name)
         elif _was_dropped(system, now):
             serving_nothing.append(name)

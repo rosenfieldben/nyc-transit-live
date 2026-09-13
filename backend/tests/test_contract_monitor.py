@@ -3067,6 +3067,19 @@ def test_the_monitor_watches_exactly_the_codes_the_probe_publishes():
     assert cm.PRODUCTION_HEALTH_CODES == models.HEALTH_DEGRADED_CODES
 
 
+def test_the_probe_and_the_monitor_call_a_served_board_old_at_one_age():
+    """THE SAME COUPLING, FOR A NUMBER. /healthz's observations-qualified and
+    production:board-clock judge what riders are served at one band, the header check's
+    REALTIME_STALE_S, and never at a rider's FEED_STALE_AFTER_S: a rider's "as of 2m
+    ago" is information, and an operator is told at ten minutes. The monitor imports
+    nothing from the app, so the app's copy is held to the monitor's here, and the
+    rider's threshold is held below both."""
+    import cache
+
+    assert cache.OPERATOR_STALE_AFTER_S == cm.REALTIME_STALE_S
+    assert cache.FEED_STALE_AFTER_S < cache.OPERATOR_STALE_AFTER_S
+
+
 @pytest.mark.parametrize(
     "configured",
     ["https://app.example", "https://app.example/", "https://app.example/api/status"],
@@ -3358,7 +3371,9 @@ def test_the_qualified_observations_code_is_explained_in_words():
     )
     assert health.status == cm.FAIL
     assert health.detail.startswith("degraded: observations-qualified; ")
-    assert "qualified observations" in health.detail
+    # THE OPERATOR'S BAND, spelled out, and never a rider's threshold.
+    assert f"more than {int(cm.REALTIME_STALE_S)}s old" in health.detail
+    assert "90s" not in health.detail
     assert "a redeploy fixes nothing about it" in health.detail
     assert "not proof of recovery" in health.detail
     assert "subway_feeds.failed" in health.detail
@@ -3441,6 +3456,22 @@ def test_board_clock_bands_like_the_header_check(clocks, expected, named):
         assert group in line.detail
     if expected == "PASS":
         assert f"2 rows from {len(clocks)} contributor" in line.detail
+
+
+@pytest.mark.parametrize(
+    ("age", "expected"),
+    [
+        pytest.param(91.0, "PASS", id="every-contributor-91s"),
+        pytest.param(cm.REALTIME_STALE_S, "PASS", id="every-contributor-on-the-band"),
+        pytest.param(601.0, "FAIL", id="every-contributor-601s"),
+    ],
+)
+def test_board_clock_tells_the_operator_at_the_band_never_at_the_riders_threshold(age, expected):
+    """A board whose every contributor is 91 s old reads "as of 91s ago" on every row a
+    rider sees, and is no operator's business: PASS. At 601 s it is: FAIL. Exactly on
+    the band passes, the header check's strict `>`."""
+    line = _clock_line(_board({"ACE": _PROD_SERVED_AT - age, "BDFM": _PROD_SERVED_AT - age}))
+    assert line.status == getattr(cm, expected), line
 
 
 _UNDATED_BOARDS = [

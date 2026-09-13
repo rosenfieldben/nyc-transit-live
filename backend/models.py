@@ -967,26 +967,40 @@ HEALTH_SUBWAY_STATIC_FAILED = "subway-static-failed"
 HEALTH_FEED_CONTENT_STALE = "feed-content-stale"
 HEALTH_SUBWAY_GROUPS_DOWN = "subway-groups-down"
 # WHAT RIDERS ARE SERVED, NOT WHAT A FEED SENT (contract 6.2; section 4.5 of
-# docs/design/freshness-contract.md). Fires when some system is serving riders nothing
-# current: every arrival row it serves is QUALIFIED, meaning a rider has to be told
-# something about it before trusting its countdown, or it has been failing for longer
-# than the retention cap, which has DROPPED its rows, so it serves nothing at all. That
-# second half is judged by the age of the system's last decode, so it holds on every
-# poll of the outage rather than only on the one the cap fires on (routes/status.py's
-# _was_dropped says why the system's retention clock cannot answer it). A row is
-# qualified when its provenance is not "reported", when its observed_at is null on a
-# system whose rows are age-gated, or when it is FEED_STALE_AFTER_S (90, the design's
-# OBS_FRESH_S) or more old. The rule is routes/status.py's
-# _systems_serving_nothing_current; this is why it has its shape.
+# docs/design/freshness-contract.md). Fires when some system has served riders nothing
+# current for as long as an operator tolerates, in the ways this rule can see (two it
+# cannot are at THE KNOWN BLIND SPOTS below): every arrival row it serves is more than
+# cache.OPERATOR_STALE_AFTER_S (600 s) old, or carries no clock where its provider dates
+# rows, or carries no provenance a prediction can have; or it has been failing for
+# longer than the retention cap, which has DROPPED its rows, so it serves nothing at
+# all. That second half is judged by the age of the system's last decode, so it holds
+# on every poll of the outage rather than only on the one the cap fires on
+# (routes/status.py's _was_dropped says why the system's retention clock cannot answer
+# it). The rule is routes/status.py's _systems_serving_nothing_current; this is why it
+# has its shape.
+#
+# TWO THRESHOLDS, BECAUSE TWO AUDIENCES. A rider's board qualifies a row at
+# cache.FEED_STALE_AFTER_S (90 s, the design's OBS_FRESH_S), and every carried-forward
+# row at once: "as of 2m ago" beside a countdown is information a rider can use, and
+# not an incident. An operator is told at the contract monitor's own header band
+# (scripts/contract_monitor.py REALTIME_STALE_S, 600 s, strict `>`), the band
+# production:board-clock applies to the same served board, so the probe and the monitor
+# call one board old at one age. The design draws the line between the two surfaces in
+# section 3.3, facing the other way: an unknown upstream age is tolerated by /healthz
+# and SAYABLE to a rider, and "anyone implementing this who copies the operator rule
+# into the rendering will reproduce F01 with a new field". The converse holds. This
+# code's first version copied the rider's rule, and so fired on the first failed poll
+# of any group and on every system whose rows were all a minute and a half old: a code
+# an operator learns to ignore, which then says nothing on the day it matters.
 #
 # FEED-CONTENT-STALE IS NOT THIS, and the two are not one condition seen twice. That
 # code is about a FEED HEADER lagging, per ENDPOINT, measured at the poll; this one is
 # about the ROWS a rider is shown, per system, measured now. They occur independently,
 # which is the design's test of whether a code deserves to exist: a subway group that
-# fails and is carried forward serves only retained rows while the endpoint's header,
-# a min() over the groups that decoded, stays fresh, and the bus feed can lag with no
-# arrival row anywhere to qualify. Both directions are pinned through the probe by
-# test_healthz_qualified_observations_are_not_stale_content and its sibling in
+# keeps failing serves carried-forward rows and then nothing while the endpoint's
+# header, a min() over the groups that decoded, stays fresh; and the bus feed can lag
+# with no arrival row anywhere to qualify. Both directions are pinned through the probe
+# by test_healthz_qualified_observations_are_not_stale_content and its sibling in
 # backend/tests/test_api.py.
 #
 # NEVER GATING, for the reason set out at HEALTH_GATING_CODES: old upstream data is a
@@ -995,31 +1009,43 @@ HEALTH_SUBWAY_GROUPS_DOWN = "subway-groups-down"
 #
 # THE WHOLE SYSTEM, NOT ANY ROW, and that threshold was measured rather than chosen. On
 # the committed healthy LIRR capture (backend/tests/fixtures/
-# railroad_lirr_arrivals_expected.json, aged against its own `now`), 526 of the 765
-# served arrival rows are older than 90 seconds, because LIRR dates each prediction by
-# its trip_update.timestamp and most of those are old on an ordinary evening. An
-# any-row rule would therefore be on permanently, and the contract monitor fails its
-# run on ANY recognized code, so a code that is always on is a monitor nobody reads.
-# The whole-system rule is quiet on that capture (36 of its 97 trips carry a
-# prediction under 90 seconds old) and fires in every case the code exists for: a
-# subway group serving old content while polled fresh (the F03 world), a
-# carried-forward (retained) system, a total outage whose rows age past 90 seconds,
-# PATH's bridge serving fresh write times over old trip clocks, and a dropped system.
-# The last is the fallback ladder's final rung (design 3.4, step 5: nothing is left to
-# show), which is why one code covers both halves.
-# tests/test_health_observations.py re-derives all three numbers from the capture.
+# railroad_lirr_arrivals_expected.json, aged against its own `now`), 468 of the 765
+# served arrival rows are more than 600 seconds old (526 are past a rider's 90), because
+# LIRR dates each prediction by its trip_update.timestamp and most of those are old on
+# an ordinary evening. An any-row rule would therefore be on permanently, and the
+# contract monitor fails its run on ANY recognized code, so a code that is always on is
+# a monitor nobody reads. The whole-system rule is quiet on that capture (45 of its 97
+# trips carry a prediction inside the band) and fires in every case the code exists
+# for: a subway group serving content older than the band while polled fresh (the F03
+# world, once past its ten minutes), a carried-forward system whose rows have aged past
+# the band, a total outage whose rows age past it, PATH's bridge serving fresh write
+# times over trip clocks older than it, and a dropped system. The last is the fallback
+# ladder's final rung (design 3.4, step 5: nothing is left to show), which is why one
+# code covers both halves. tests/test_health_observations.py re-derives these numbers
+# from the capture.
 #
 # THE KNOWN FALSE POSITIVE, stated so nobody meets it as a surprise: a sparsely served
-# LIRR (a late night with few trips running) can have every trip's prediction older
-# than 90 seconds, and then this fires on a railroad behaving normally for that hour.
+# LIRR (a late night with few trips running) can have every trip's prediction more than
+# 600 seconds old, and then this fires on a railroad behaving normally for that hour.
+# On the capture 45 of 97 trips carry a prediction inside the band, so five trips all
+# past it come about one time in twenty-three and ten about one in five hundred, if
+# trips were independent, which they are not quite. Whether LIRR's predictions need a
+# threshold of their own is open question 1 in docs/reviews/audit-2026-09-05.md.
 #
-# THE KNOWN BLIND SPOT, stated for the same reason: the dropped half names only a
-# system that has decoded in THIS process, because one that never has took nothing
+# THE KNOWN BLIND SPOTS, stated for the same reason. First, the dropped half names only
+# a system that has decoded in THIS process, because one that never has took nothing
 # from riders here. A group already failing when a new deploy comes up is therefore
 # invisible to this code for as long as it keeps failing, and a quiet probe right after
 # a deploy is not proof of recovery; /api/status's subway_feeds.failed and
 # railroad_feeds.failed still name it. The contract monitor's note for this code says
 # the same, and test_a_system_that_never_decoded_has_dropped_nothing pins the rule.
+# Second, the dropped half names only systems that RETAIN, the subway groups and the
+# railroads. NJ Transit, the ferry and PATH keep their last rows on a failed poll
+# instead, and those rows age past the band like any other; but one of them that fails
+# while serving nothing (an empty feed is an ordinary overnight state for NJ Transit and
+# the ferry) has no row to age and none to drop, so this code says nothing for as long
+# as the outage lasts, while /api/status still shows the feed's error. Closing that
+# needs a decision about the overnight empty state first, so it is not closed here.
 HEALTH_OBSERVATIONS_QUALIFIED = "observations-qualified"
 # THE ONE CODE THAT IS NOT ABOUT AN UPSTREAM BEING UNWELL. NJ Transit allows ten
 # getToken calls per account per Eastern day (observed 2026-09-02; the budget and

@@ -311,9 +311,10 @@ PRODUCTION_HEALTH_CODES = (
 # it. "njt-mint-quota" reports a budget that is spent, which is a different
 # instruction from "something broke". "observations-qualified" reports what riders are
 # SHOWN rather than what a feed or the build did, and its name says none of what was
-# qualified, that nothing on the deployment's side can clear it, that a fresh process
-# cannot see a group that has not decoded in it (models.HEALTH_OBSERVATIONS_QUALIFIED
-# records that blind spot), or that one railroad can trip it on a quiet night. Every
+# qualified, from what age (REALTIME_STALE_S, the header band, never a rider's 90s),
+# that nothing on the deployment's side can clear it, that a fresh process cannot see a
+# group that has not decoded in it (models.HEALTH_OBSERVATIONS_QUALIFIED records that
+# blind spot), or that one railroad can trip it on a quiet night. Every
 # other code names something broken, and its name is the whole instruction. OURS, not the
 # deployment's: these are literals in this file keyed by codes from this file's own
 # tuple, so the "only recognized codes are printed" rule in _check_production_health
@@ -325,14 +326,16 @@ _HEALTH_CODE_NOTES = {
         "outage, and a redeploy would spend another mint rather than fix it"
     ),
     "observations-qualified": (
-        "a system is serving riders only qualified observations (carried forward, "
-        "undated, or 90s old or more), or has been failing past the retention cap with "
-        "its rows dropped; the cause is upstream or the failing feed, so a redeploy "
-        "fixes nothing about it, and a new process cannot see a group that has not "
-        "decoded since it came up, so a clean run after a redeploy is not proof of "
-        "recovery (read /api/status: subway_feeds.failed and railroad_feeds.failed name "
-        "every group failing now); known false positive: a sparsely served LIRR (a late "
-        "night with few trips) can have every prediction older than 90s with nothing wrong"
+        "a system has served riders nothing current for the operator band (every row "
+        f"more than {int(REALTIME_STALE_S)}s old, undated where its provider dates rows, "
+        "or of no known provenance), or has been failing past the retention cap with its "
+        "rows dropped; the cause is upstream or the failing feed, so a redeploy fixes "
+        "nothing about it, and a new process cannot see a group that has not decoded "
+        "since it came up, so a clean run after a redeploy is not proof of recovery (read "
+        "/api/status: subway_feeds.failed and railroad_feeds.failed name every group "
+        "failing now); known false positive: a sparsely served LIRR (a late night with few "
+        f"trips) can have every prediction older than {int(REALTIME_STALE_S)}s with "
+        "nothing wrong"
     ),
 }
 
@@ -2780,7 +2783,10 @@ def _check_production_board_clock(
     as _evaluate_subway bands the headers: every contributor older than
     REALTIME_STALE_S is a FAIL (the board serves nothing but old predictions), some is
     a WARN naming them, none is a PASS. Strict `>`, the header check's edge, so the two
-    cannot disagree about a group sitting on it.
+    cannot disagree about a group sitting on it. It is the OPERATOR'S band, and
+    /healthz's observations-qualified applies the same one to served rows
+    (cache.OPERATOR_STALE_AFTER_S, held equal to REALTIME_STALE_S by a test), never the
+    rider's 90 s: a board whose riders read "as of 91s ago" is no operator's business.
 
     A POPULATED BOARD WITH NO CONTENT CLOCK IS A FAIL, by the rule the healthz line
     holds: SILENCE MUST BE CHOSEN, NEVER DEFAULTED. Passing it would make a deployment

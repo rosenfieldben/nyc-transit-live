@@ -1137,35 +1137,55 @@ def _decoding_subways(clock, groups, failed, *, ahead=300.0):
 
 
 async def test_healthz_publishes_qualified_observations_without_gating_on_them(client, healthz_env):
-    """NEVER 503. A group serving riders only carried-forward rows is a fact about an
-    upstream, and the status code decides only whether this build may be promoted
-    (models.HEALTH_GATING_CODES), so the code reaches `degraded` on a 200 and never
-    `reasons`. The bus feed is fresh so no-feed-fresh cannot fire and blur the answer.
-    Moving the code into HEALTH_GATING_CODES fails this test, which is its job."""
+    """NEVER 503. A group whose carried-forward rows are all past the operator band is a
+    fact about an upstream, and the status code decides only whether this build may be
+    promoted (models.HEALTH_GATING_CODES), so the code reaches `degraded` on a 200 and
+    never `reasons`. The bus feed is fresh so no-feed-fresh cannot fire and blur the
+    answer. Moving the code into HEALTH_GATING_CODES fails this test, which is its job."""
     _fresh(healthz_env["buses"])
     now = time.time()
+    past_the_band = status_routes.OPERATOR_STALE_AFTER_S + 60.0
     app_module.app.state.subway_arrivals_by_system = {
-        "ACE": {"A27": {"Northbound": [_arrival(now, provenance="retained")]}}
+        "ACE": {"A27": {"Northbound": [_arrival(now, age=past_the_band, provenance="retained")]}}
     }
     res = await client.get("/healthz")
-    assert res.status_code == 200, "qualified observations must never refuse a deploy"
+    assert res.status_code == 200, "rows past the operator band must never refuse a deploy"
     assert res.json()["status"] == "pass"
     assert res.json()["degraded"] == [models.HEALTH_OBSERVATIONS_QUALIFIED]
     assert "reasons" not in res.json(), "the non-gating code must not reach reasons"
+
+
+async def test_healthz_tells_the_operator_at_the_band_never_at_the_riders_threshold(
+    client, healthz_env
+):
+    """TWO AUDIENCES, through the probe. ACE's riders are shown rows 91 s old, each
+    reading "as of 91s ago" on their boards, and the operator is told nothing; at 601 s
+    the operator is told. models.HEALTH_OBSERVATIONS_QUALIFIED says why the two
+    thresholds differ. The bus feed is fresh, so no other code can answer instead."""
+    _fresh(healthz_env["buses"])
+    now = time.time()
+    for age, degraded in ((91.0, []), (601.0, [models.HEALTH_OBSERVATIONS_QUALIFIED])):
+        rows = [_arrival(now, age=age), _arrival(now, age=age, trip="a-2")]
+        app_module.app.state.subway_arrivals_by_system = {"ACE": {"A27": {"Northbound": rows}}}
+        res = await client.get("/healthz")
+        assert res.status_code == 200, (age, res.json())
+        assert res.json()["degraded"] == degraded, (age, res.json())
 
 
 async def test_healthz_qualified_observations_are_not_stale_content(
     client, healthz_env, monkeypatch
 ):
     """INDEPENDENCE, ONE WAY: the new code without feed-content-stale, through the real
-    refresh path.
+    refresh path, and the operator band from below on the way.
 
     ACE decodes once and then fails, so the production merge carries its rows forward
-    stamped `retained` while NQRW keeps decoding. The endpoint's content header is a
-    min() over the groups that DECODED, so it stays four seconds old and
-    feed-content-stale has nothing to say, and one group of eight is far below
-    subway-groups-down's majority. The only statement about ACE's riders is the new
-    code, which is the case for it being a code of its own."""
+    stamped `retained` while NQRW keeps decoding. Seconds in, ACE's riders are told
+    "showing last known" and the operator nothing. Kept failing, its carried rows pass
+    the band while still inside the cap. The endpoint's content header is a min() over
+    the groups that DECODED, so it stays four seconds old and feed-content-stale has
+    nothing to say, and one group of eight is far below subway-groups-down's majority.
+    The only statement about ACE's riders is the new code, which is the case for it
+    being a code of its own."""
     clock = {"now": 1_000_000.0}
     monkeypatch.setattr(app_module.time, "time", lambda: clock["now"])
     monkeypatch.setattr(
@@ -1175,8 +1195,12 @@ async def test_healthz_qualified_observations_are_not_stale_content(
         raising=False,
     )
 
+    # Every row is due long after the walk, so none expires inside it.
+    ahead = 3_600.0
     monkeypatch.setattr(
-        app_module, "fetch_subway_trains", _decoding_subways(clock, ["ACE", "NQRW"], [])
+        app_module,
+        "fetch_subway_trains",
+        _decoding_subways(clock, ["ACE", "NQRW"], [], ahead=ahead),
     )
     await app_module._refresh_subways(app_module.app, client=None)
     # Non-vacuity: the rows this fetch builds are current on their own, so whatever
@@ -1185,10 +1209,24 @@ async def test_healthz_qualified_observations_are_not_stale_content(
 
     clock["now"] += 20.0
     monkeypatch.setattr(
-        app_module, "fetch_subway_trains", _decoding_subways(clock, ["NQRW"], ["ACE"])
+        app_module,
+        "fetch_subway_trains",
+        _decoding_subways(clock, ["NQRW"], ["ACE"], ahead=ahead),
     )
     await app_module._refresh_subways(app_module.app, client=None)
-    assert healthz_env["subways"]["systems"]["ACE"]["retained_since"] == clock["now"]
+    retained_at = clock["now"]
+    assert healthz_env["subways"]["systems"]["ACE"]["retained_since"] == retained_at
+    assert clock["now"] - healthz_env["subways"]["feed_timestamp"] == 4.0
+    # ACE's riders read "showing last known" now; its carried rows are 24 s old, and
+    # that is no operator's business.
+    assert (await client.get("/healthz")).json()["degraded"] == []
+
+    # Still failing 590 s later, inside the cap, so the rows are still carried, and now
+    # 614 s old: past the band. NQRW keeps decoding, so the header stays four seconds old.
+    clock["now"] = retained_at + 590.0
+    await app_module._refresh_subways(app_module.app, client=None)
+    assert healthz_env["subways"]["systems"]["ACE"]["retained_since"] == retained_at
+    assert app_module.app.state.subway_arrivals_by_system.get("ACE")
     assert clock["now"] - healthz_env["subways"]["feed_timestamp"] == 4.0
 
     res = await client.get("/healthz")
@@ -1203,14 +1241,16 @@ async def test_healthz_names_a_dropped_group_on_every_poll_of_its_outage(
 
     ACE fails on every poll for 45 minutes at a 22 s cadence while NQRW decodes, the
     world the review measured. For the first FEED_RETENTION_MAX_S the merge carries
-    ACE's rows forward stamped `retained`, and those rows qualify it. The poll that
-    passes the cap drops them. On the next one pollers._merge_feed_systems carries no
-    clock forward for ACE (it carries only a SET retained_since), so the merge opens a
-    new window with nothing left to carry. The first version of _was_dropped read that
-    window as quiet and published the code on 3 of the 94 polls after the first cap
-    poll. Here it must be on every poll of the outage and on neither healthy poll before
-    it, and the retained, dropped and reopened states are each seen to occur, so no
-    phase of the walk is assumed.
+    ACE's rows forward stamped `retained`, and those rows reach the operator once they
+    are past the band, not before. The poll that passes the cap drops them. On the next
+    one pollers._merge_feed_systems carries no clock forward for ACE (it carries only a
+    SET retained_since), so the merge opens a new window with nothing left to carry. The
+    first version of _was_dropped read that window as quiet and published the code on 3
+    of the 94 polls after the first cap poll. Here the code must be off on both healthy
+    polls and on every outage poll whose carried rows are still inside the band, then on
+    from the first poll past it to the end of the outage, through the cap and every
+    reopened window; the retained, dropped and reopened states are each seen to occur,
+    so no phase of the walk is assumed.
 
     ACE's rows are due long after the outage ends, so none expires inside a window:
     feeds.drop_expired_arrivals would otherwise empty the group's entry early, which is
@@ -1267,14 +1307,25 @@ async def test_healthz_names_a_dropped_group_on_every_poll_of_its_outage(
     # THE STATE THE FIRST VERSION READ AS QUIET does occur: failing, emptied, and a
     # retention clock set on the block again.
     assert "reopened" in states[first_cap + 1 :]
-    quiet = [
-        (k, states[k])
-        for k, (_, degraded) in enumerate(walk)
-        if degraded != [models.HEALTH_OBSERVATIONS_QUALIFIED]
+    # THE OPERATOR BAND, from below. ACE's carried rows were observed 4 s before its last
+    # decode, the healthy poll just before the outage, so on outage poll k they are
+    # 4 + poll_s * (k + 1) s old. The code waits for them to pass the band, which they do
+    # one poll before the cap would take them.
+    band = status_routes.OPERATOR_STALE_AFTER_S
+    first_past = next(k for k in range(outage_polls) if 4.0 + poll_s * (k + 1) > band)
+    assert first_past < first_cap, "the carried rows must pass the band before the cap"
+    expected = [
+        [] if k < first_past else [models.HEALTH_OBSERVATIONS_QUALIFIED] for k in range(len(walk))
     ]
-    assert quiet == [], (
-        f"observations-qualified was missing on {len(quiet)} of {len(walk)} outage polls "
-        f"(the cap fired on poll {first_cap}): {quiet}"
+    wrong = [
+        (k, states[k], degraded)
+        for k, ((_, degraded), want) in enumerate(zip(walk, expected))
+        if degraded != want
+    ]
+    assert wrong == [], (
+        f"observations-qualified disagreed with the band on {len(wrong)} of {len(walk)} "
+        f"outage polls (past the band from poll {first_past}, the cap on {first_cap}): "
+        f"{wrong}"
     )
 
 
@@ -1292,16 +1343,20 @@ async def test_healthz_stale_content_is_not_qualified_observations(client, healt
 async def test_healthz_reports_the_f03_world_as_qualified_observations(
     client, healthz_env, monkeypatch
 ):
-    """The acceptance world, read by the probe instead of by a board.
+    """The acceptance world, read by the probe instead of by a board, on both sides of
+    the operator band.
 
     ACE serves the committed capture ten minutes behind the poll clock through the real
     decoder and refresh path, and the other seven serve it five seconds behind. Every
-    row ACE's riders are shown is dated by its group header, so every one is qualified
-    and the rule names ACE alone. feed-content-stale fires TOO, and that does not
-    contradict the independence the two tests above pin: here the lagging header and
-    the qualified rows are one fact, seen once from the feed and once from the rider."""
+    row ACE's riders are shown is dated by its group header, so every one reads "as of
+    10m ago" to a rider. At the poll the rows sit exactly on the band and the operator
+    is not told; one second later they are past it and the rule names ACE alone.
+    feed-content-stale fires throughout, and that does not contradict the independence
+    the two tests above pin: here the lagging header and the old rows are one fact, seen
+    once from the feed and once from the rider."""
     now = 5_000_000.0
-    monkeypatch.setattr(app_module.time, "time", lambda: now)
+    clock = {"now": now}
+    monkeypatch.setattr(app_module.time, "time", lambda: clock["now"])
     stops = json.loads((_FIXTURES / "subway_1_7_s_stops.json").read_text())
     monkeypatch.setattr(app_module.app.state, "subway_stops", stops, raising=False)
     raw = (_FIXTURES / "subway_1_7_s.pb").read_bytes()
@@ -1325,6 +1380,15 @@ async def test_healthz_reports_the_f03_world_as_qualified_observations(
     # no-feed-fresh would turn this into a question about readiness.
     _fresh(healthz_env["buses"])
 
+    # AT THE POLL, ACE's rows are exactly _STALE_LAG_S old: the endpoint's lagging header
+    # is feed-content-stale, and the rows sit ON the operator band, which is strict `>`.
+    assert status_routes.OPERATOR_STALE_AFTER_S == _STALE_LAG_S
+    res = await client.get("/healthz")
+    assert res.status_code == 200 and res.json()["status"] == "pass"
+    assert res.json()["degraded"] == [models.HEALTH_FEED_CONTENT_STALE]
+
+    # ONE SECOND LATER, with no poll between: the rows are past the band.
+    clock["now"] = now + 1.0
     res = await client.get("/healthz")
     assert res.status_code == 200 and res.json()["status"] == "pass"
     assert res.json()["degraded"] == [
@@ -1332,7 +1396,7 @@ async def test_healthz_reports_the_f03_world_as_qualified_observations(
         models.HEALTH_OBSERVATIONS_QUALIFIED,
     ]
     systems = status_routes._served_arrival_systems(app_module.app.state)
-    assert status_routes._systems_serving_nothing_current(systems, now) == ["subway:ACE"]
+    assert status_routes._systems_serving_nothing_current(systems, clock["now"]) == ["subway:ACE"]
 
 
 async def test_healthz_never_leaks_error_details(client, healthz_env):

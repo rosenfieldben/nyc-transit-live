@@ -953,6 +953,11 @@ exist. It belongs in `HEALTH_DEGRADED_CODES` and not in `HEALTH_GATING_CODES`, f
 reason N1 established: the status code answers "may this build go live", and old upstream
 data is a property of the world rather than of the build.
 
+**Amended at 6.2:** the code, `observations-qualified`, fires when every row a system serves
+is past the operator band (the header check's `REALTIME_STALE_S`, 600 s) or carries no clock
+where its provider dates rows, or when the retention cap has dropped a system's rows; not
+when rows are merely qualified for a rider at `OBS_FRESH_S`. 6.2 records why.
+
 **Asserted today that this makes false:** nothing. This is the one section that is purely
 additive, which is itself informative: the operator surfaces were built with the right
 shape and were never given the value.
@@ -1211,6 +1216,17 @@ stale poll and never raising it, so a healthy Metro-North board says nothing (Q5
 the system in the rider's word, "Metro-North" rather than the feed code, because the panel
 speaks the line and an initialism is read letter by letter. 3.2's vocabulary table carries
 it as its own row.
+
+**And one change made at review, recorded for the same reason.** The served-observation
+code (4.5) first fired at the rider's `OBS_FRESH_S`, the threshold 3.2 gives a board row,
+so it named every system whose rows were all 90 seconds old and every group failing for a
+single poll. It now fires at the operator's band, the header check's 600 seconds
+(`REALTIME_STALE_S`), which is the band 4.5 already gives the monitor's served-observation
+check, and it ages a carried-forward row by its clock like any other. A rider's "as of 2m
+ago" is information beside a countdown; an operator is told at ten minutes. This is 3.3's
+line between the operator surface and the rider surface, read facing the other way: an
+operator rule copied into the rendering reproduces F01, and a rider rule copied into an
+operator code is one an operator learns to ignore.
 
 ### 6.3 F01, the old GPS observations, with N2
 

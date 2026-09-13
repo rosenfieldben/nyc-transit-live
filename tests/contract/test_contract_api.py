@@ -1645,14 +1645,21 @@ def test_one_subway_group_down_reaches_healthz_as_qualified_observations(contrac
     reported nothing. The rule and its measured threshold are at
     models.HEALTH_OBSERVATIONS_QUALIFIED. Hermetic counterparts:
     backend/tests/test_health_observations.py (every clause) and test_api.py's
-    test_healthz_qualified_observations_are_not_stale_content (a retained group through
-    the real refresh path).
+    test_healthz_qualified_observations_are_not_stale_content (a carried-forward group
+    aging past the band through the real refresh path).
 
-    BOTH HALVES OF THE CODE ARE WITNESSED, in the order a real outage walks them: the
-    group's rows retained (every one stamped `retained`, so every one qualified), then
-    dropped once the harness's compressed FEED_RETENTION_MAX_S has passed, which is the
-    fallback ladder's last rung. Each phase is observed on /api/subways in the same
-    predicate that judges the probe body, so neither can be satisfied by the other.
+    THE OPERATOR BAND FROM BELOW, THEN THE DROPPED HALF, in the order a real outage walks
+    them. While the group's rows are carried forward (every one stamped `retained`, and
+    every one seconds old) its riders read "showing last known" and the probe says
+    NOTHING: the code tells an operator at the header band's 600 s, never on a failed
+    poll. Then the rows are dropped once the harness's compressed FEED_RETENTION_MAX_S
+    has passed, the fallback ladder's last rung, and the code fires. In production the
+    cap is 600 s too, so both roads reach the operator at about ten minutes; the harness
+    compresses the cap and never the band, which is why this scenario can show only the
+    second road. The quiet body is read between two /api/subways reads showing one and
+    the same retention window, so it cannot be one computed before ACE failed; the
+    dropped phase is observed on /api/subways in the same predicate that judges the
+    probe body, so neither can be satisfied by the other.
 
     THE DROPPED HALF IS READ AGAIN at least one whole ACE poll after the cap poll. By
     then the merge has opened a new retention window for ACE with nothing left to carry,
@@ -1682,21 +1689,31 @@ def test_one_subway_group_down_reaches_healthz_as_qualified_observations(contrac
     def ace() -> dict:
         return app.get("/api/subways")["systems"]["ACE"]
 
-    def retained_and_reported(h: dict) -> bool:
-        return qualified in h.get("degraded", []) and ace()["retained_since"] is not None
+    def carried_forward(h: dict) -> bool:
+        block = ace()
+        return block["ok"] is False and block["retained_since"] is not None
 
-    retained = app.await_healthz(
-        retained_and_reported, "ACE's carried-forward rows to reach the readiness probe"
-    )
+    app.await_healthz(carried_forward, "ACE's rows to be carried forward")
     # Read again at once: the window is FEED_RETENTION_MAX_S long, so the group is
     # still inside it, and its start is what the closing check measures from.
     retained_at = ace()["retained_since"]
     assert retained_at is not None
-    assert retained["status"] == "pass", "qualified observations must never refuse a build"
+    # THE PROBE, READ INSIDE THAT WINDOW. The await's own body is read BEFORE its
+    # predicate looks at ACE, so it can predate the failure, and a body from then says
+    # nothing whatever the rule does with carried-forward rows. This one is read after
+    # the failure was seen, between two reads of one and the same retention window.
+    retained = app.healthz()
+    after = ace()
+    assert after["ok"] is False and after["retained_since"] == retained_at, after
+    assert after["routes"], f"ACE's trains must really be carried forward: {after}"
+    assert retained["status"] == "pass"
     assert "reasons" not in retained
-    assert retained["degraded"] == [qualified], (
-        f"one retained group must reach this code and no other (not feed-content-stale, "
-        f"not subway-groups-down), got {retained}"
+    # THE OPERATOR IS NOT TOLD YET. ACE's riders are shown carried-forward rows seconds
+    # old, which their boards say in words; nothing about that is past the operator
+    # band, and no other code has anything to say about one group of eight.
+    assert retained["degraded"] == [], (
+        f"a group carried forward for seconds must reach no code (not this one, not "
+        f"feed-content-stale, not subway-groups-down), got {retained}"
     )
 
     def dropped_and_reported(h: dict) -> bool:

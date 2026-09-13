@@ -743,12 +743,15 @@ do is fail a promotion, and a promotion that fails is retried into a fresh proce
 that mints again and spends one more of the ten it is reporting. It clears itself
 on the next mint that succeeds.
 
-Another code reads what riders are shown rather than what a feed did.
-`observations-qualified` says some system is serving riders nothing current (every
-arrival row it serves carried forward, undated where its provider dates rows, or 90
-seconds old or more) or has been failing for longer than the retention cap, which has
-dropped its rows. That second half is aged from the system's last successful decode,
-so it holds on every poll of the outage, not only the one the cap fires on. It is not
+Another code reads what riders are shown rather than what a feed did, and tells an
+operator at an operator's threshold rather than a rider's. `observations-qualified`
+says some system has served riders nothing current for ten minutes: every arrival row
+it serves is more than 600 seconds old (the contract monitor's own header band, where a
+rider's board has said "as of" since 90 seconds), undated where its provider dates
+rows, or of no known provenance; or it has been failing for longer than the retention
+cap, which has dropped its rows. That second half is aged from the system's last
+successful decode, so it holds on every poll of the outage, not only the one the cap
+fires on. It is not
 `feed-content-stale`, which is about one endpoint's feed header lagging, and the two
 occur independently. It never gates either: old upstream data is a property of the
 world, not of the build. Two limits are known. A new process cannot see a group that

@@ -240,6 +240,13 @@ async def _poll_and_serve(upstream: _Upstream) -> tuple[dict, dict]:
     return board.json(), vehicles.json()
 
 
+async def _healthz() -> dict:
+    """The readiness probe's body, off the same app at the patched clock."""
+    transport = httpx.ASGITransport(app=app_module.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://f03") as http:
+        return (await http.get("/healthz")).json()
+
+
 def _split(board: dict) -> dict[str, tuple[list[dict], list[dict]]]:
     """Each direction's served rows as (aged, healthy), told apart by the trip-id prefix
     the healthy copy was given. The prefix is this world's label, not a field the system
@@ -306,8 +313,10 @@ async def test_acceptance_old_valid_feed_rows_are_dated_stale_and_healthy_rows_s
     each with its own content clock, and the envelope's clock is the worst contributor's.
     (c) The poll clocks are this poll's. (d) REPEATEDLY: a second successful poll 15 s
     later, of the identical old bytes, ages the aged rows from 600 s to 615 s while the
-    healthy rows stay fresh and every group still reports ok. "Visibly" is the browser
-    half's word. It is rendered from tests/e2e/fixtures/f03_board_219.json, which the
+    healthy rows stay fresh and every group still reports ok. (e) THE OPERATOR, told by
+    /healthz past the contract monitor's header band: quiet at 600 s, which is on the
+    band, and naming exactly the aged group at 615 s. "Visibly" is the browser half's
+    word. It is rendered from tests/e2e/fixtures/f03_board_219.json, which the
     last assertion pins to the poll-1 body asserted here.
 
     To regenerate that file after an INTENTIONAL change, from backend/:
@@ -328,17 +337,17 @@ async def test_acceptance_old_valid_feed_rows_are_dated_stale_and_healthy_rows_s
     assert all(block["ok"] for block in vehicles["systems"].values())
     assert all(block["retained_since"] is None for block in vehicles["systems"].values())
 
-    # THE OPERATOR HALF, read in this same world: /healthz names the state riders are
-    # in, which no pre-6.2 code could. Of every system the probe reads, exactly one is
-    # serving nothing current, the aged group; ACE's current rows and the six quiet
-    # groups keep the rule quiet for theirs. f03_world primes every other arrivals index
-    # empty, so the code asserted below can only have come from this world's subway.
+    # THE TWO AUDIENCES, in this same world. The aged rows are exactly AGED_LAG_S old at
+    # this first poll: each reads "as of 10m ago" to a rider (the browser half renders
+    # this very body; its rider has been told something since the row was 90 s old), and
+    # the operator is told only past the contract monitor's header band, strict `>`, so
+    # /healthz says nothing yet. The world sits on that edge by construction; the second
+    # poll below is past it.
+    assert status_routes.OPERATOR_STALE_AFTER_S == AGED_LAG_S
     served = status_routes._served_arrival_systems(app_module.app.state)
-    assert status_routes._systems_serving_nothing_current(served, NOW) == [f"subway:{AGED_GROUP}"]
-    transport = httpx.ASGITransport(app=app_module.app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://f03") as http:
-        health = (await http.get("/healthz")).json()
-    assert models.HEALTH_OBSERVATIONS_QUALIFIED in health["degraded"], health
+    assert status_routes._systems_serving_nothing_current(served, NOW) == []
+    health = await _healthz()
+    assert models.HEALTH_OBSERVATIONS_QUALIFIED not in health["degraded"], health
 
     # (a) BOTH KINDS OF ROW, EACH DATED BY ITS OWN CONTRIBUTOR.
     _assert_rows_dated_by_contributor(board, NOW - AGED_LAG_S, NOW - HEALTHY_LAG_S)
@@ -426,6 +435,19 @@ async def test_acceptance_old_valid_feed_rows_are_dated_stale_and_healthy_rows_s
     assert systems_2[AGED_GROUP]["feed_timestamp"] == NOW - AGED_LAG_S
     assert systems_2[HEALTHY_GROUP]["feed_timestamp"] == NOW + REPOLL_S - HEALTHY_LAG_S
     assert board_2["feed_timestamp"] == NOW - AGED_LAG_S
+
+    # THE OPERATOR HALF, fifteen seconds past the band: /healthz names the state riders
+    # are in, which no pre-6.2 code could. Of every system the probe reads, exactly one
+    # has served riders nothing current for the band, the aged group; ACE's current rows
+    # and the six quiet groups keep the rule quiet for theirs. f03_world primes every
+    # other arrivals index empty, so the code can only have come from this world's
+    # subway.
+    served_2 = status_routes._served_arrival_systems(app_module.app.state)
+    assert status_routes._systems_serving_nothing_current(served_2, clock[0]) == [
+        f"subway:{AGED_GROUP}"
+    ]
+    health_2 = await _healthz()
+    assert models.HEALTH_OBSERVATIONS_QUALIFIED in health_2["degraded"], health_2
 
     # THE HANDOFF. Last, so a regeneration can only ever write a board that passed every
     # assertion above. Compared as parsed JSON: the browser half reads values, not

@@ -8,7 +8,11 @@ Synthetic feeds cover the route_id-join layouts, the position filter, and the
 placement edges. The placement golden also uses the committed per-system stops
 (railroad_{lirr,mnr}_stops.json), so no test touches the network.
 
-To regenerate the GPS golden after an INTENTIONAL decode change, from backend/:
+To regenerate the GPS golden after an INTENTIONAL decode change, from backend/. It
+passes the committed stops since contract 6.3: the position ladder asks the placement
+pass whether a stale vehicle's trip can be estimated instead, so the GPS pass decodes
+with the stops the placement golden uses, as fetch_railroad_trains hands both passes
+the same ones.
 
     python - <<'PY'
     import json
@@ -19,9 +23,10 @@ To regenerate the GPS golden after an INTENTIONAL decode change, from backend/:
     for system in ("LIRR", "MNR"):
         key = system.lower()
         raw = (FIX / f"railroad_{key}.pb").read_bytes()
+        stops = json.loads((FIX / f"railroad_{key}_stops.json").read_text())
         feed = pb.FeedMessage(); feed.ParseFromString(raw)
         now = float(feed.header.timestamp)
-        trains, _ = feeds._decode_railroad_vehicles(raw, system, now)
+        trains, _ = feeds._decode_railroad_vehicles(raw, system, now, stops)
         (FIX / f"railroad_{key}_expected.json").write_text(
             json.dumps({"now": now, "system": system, "trains": trains}, indent=0))
     PY
@@ -53,11 +58,13 @@ import json
 import time
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
 from google.transit import gtfs_realtime_pb2 as pb
 
+import cache
 import feeds
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -77,7 +84,11 @@ def _load(system: str):
 @pytest.mark.parametrize("system", SYSTEMS)
 def test_real_feed_decodes_to_golden_output(system):
     raw, expected = _load(system)
-    trains, feed_ts = feeds._decode_railroad_vehicles(raw, expected["system"], expected["now"])
+    # With the committed stops, as the recipe above decodes it (contract 6.3).
+    stops = json.loads((FIXTURES / f"railroad_{system.lower()}_stops.json").read_text())
+    trains, feed_ts = feeds._decode_railroad_vehicles(
+        raw, expected["system"], expected["now"], stops
+    )
     assert trains == expected["trains"]
     # The decoder reads the header timestamp the fixture was frozen to.
     assert feed_ts == expected["now"]
@@ -166,6 +177,55 @@ def _positioned_vehicle_trip_ids(raw: bytes) -> set[str]:
     }
 
 
+def _aged_past_obs_max(raw: bytes) -> set[str]:
+    """Trip ids of the positioned vehicles whose own fix is older than OBS_MAX_S against the
+    header, off the wire. With no stops passed nothing is placeable, so these are exactly
+    the vehicles F01's age gate withholds from the GPS pass (contract 6.3, step 5)."""
+    feed = pb.FeedMessage()
+    feed.ParseFromString(raw)
+    header = float(feed.header.timestamp)
+    return {
+        entity.vehicle.trip.trip_id
+        for entity in feed.entity
+        if entity.HasField("vehicle")
+        and entity.vehicle.HasField("position")
+        and entity.vehicle.trip.trip_id
+        and header - entity.vehicle.timestamp > cache.OBS_MAX_S
+    }
+
+
+def _with_the_witness_made_fresh(raw: bytes, running: bool = False) -> bytes:
+    """The capture with every canceled trip's positioned vehicle stamped 10 s behind the
+    header and, with `running`, its canceled TripUpdates flipped to SCHEDULED.
+
+    WHY F02'S LAW NEEDS THIS REWRITE SINCE CONTRACT 6.3. The capture's canceled-and-
+    positioned vehicle (train 508) is 50517 s old against its header, so F01's age gate
+    withholds it from the GPS pass whatever its TripUpdate says, and a decoder with the
+    cancellation guard removed would still emit nothing canceled from the capture as
+    committed: the law would pass over the very defect it exists to catch. At 10 s the
+    same vehicle earns step 1, which is drawn, so cancellation is the only rule left that
+    can drop it. `running` is the control that proves the rewrite leaves it drawable.
+    """
+    feed = pb.FeedMessage()
+    feed.ParseFromString(raw)
+    canceled = _canceled_trip_ids(raw)
+    header = int(feed.header.timestamp)
+    for entity in feed.entity:
+        if (
+            entity.HasField("vehicle")
+            and entity.vehicle.HasField("position")
+            and entity.vehicle.trip.trip_id in canceled
+        ):
+            entity.vehicle.timestamp = header - 10
+        if (
+            running
+            and entity.HasField("trip_update")
+            and entity.trip_update.trip.trip_id in canceled
+        ):
+            entity.trip_update.trip.schedule_relationship = pb.TripDescriptor.SCHEDULED
+    return feed.SerializeToString()
+
+
 @pytest.mark.parametrize("system", SYSTEMS)
 def test_no_emitted_train_has_a_canceled_trip_update(system):
     """F02's law: a trip this feed says is canceled is not on the map as a train.
@@ -180,12 +240,17 @@ def test_no_emitted_train_has_a_canceled_trip_update(system):
     law asked only of the golden would be regenerated into agreement the moment the
     guard came out: it would go green over the very defect it exists to catch, which
     is how F02 survived in the first place. Decoding here means removing the guard
-    fails THIS test, not merely the equality snapshot beside it.
+    fails THIS test, not merely the equality snapshot beside it. The decode reads the
+    capture with its witness's fix made fresh, because since contract 6.3 the witness as
+    committed is past OBS_MAX_S and the age gate alone would keep it off the map
+    (_with_the_witness_made_fresh says why that would make this law vacuous).
     """
     raw, expected = _load(system)
     canceled = _canceled_trip_ids(raw)
 
-    decoded, _ts = feeds._decode_railroad_vehicles(raw, system, expected["now"])
+    decoded, _ts = feeds._decode_railroad_vehicles(
+        _with_the_witness_made_fresh(raw), system, expected["now"]
+    )
     live = {train["trip_id"] for train in decoded}
     assert canceled & live == set(), (
         f"{system}: the decoder emitted canceled trips: {sorted(canceled & live)}"
@@ -215,9 +280,29 @@ def test_the_lirr_capture_still_witnesses_the_cancellation_it_was_kept_for():
     both = _canceled_trip_ids(raw) & _positioned_vehicle_trip_ids(raw)
     assert both == {CANCELED_TRIP}, f"the canceled-and-positioned witness moved: {sorted(both)}"
 
-    # And the decoder drops exactly it: 69 positioned vehicles on the wire, 68 served.
-    trains, _ts = feeds._decode_railroad_vehicles(raw, "LIRR", 0.0)
-    assert len(_positioned_vehicle_trip_ids(raw)) - len({t["trip_id"] for t in trains}) == 1
+    # AND THE DECODER DROPS IT, THOUGH SINCE CONTRACT 6.3 NOT IT ALONE. The difference was
+    # 1 (69 positioned on the wire, 68 served) and is now 25: F01's age gate also
+    # withholds every vehicle whose own fix is past OBS_MAX_S against the header. No stops
+    # are passed, so nothing is placeable and the six the ladder would estimate stay here,
+    # qualified; `now` 0.0 moves nothing, because the gate reads the header. The witness
+    # is past OBS_MAX_S itself (50517 s), so it is one of those 25 for two reasons, and
+    # the count alone cannot say which rule dropped it.
+    positioned = _positioned_vehicle_trip_ids(raw)
+    aged = _aged_past_obs_max(raw)
+    assert CANCELED_TRIP in aged and len(aged) == 25
+    served = {t["trip_id"] for t in feeds._decode_railroad_vehicles(raw, "LIRR", 0.0)[0]}
+    assert len(positioned) - len(served) == 25
+    assert positioned - served == aged
+
+    # SO THE WITNESS IS MADE FRESH, and cancellation is the only rule left that can drop
+    # it: the same 25 are dropped, the witness now for its cancellation alone. Its
+    # TripUpdate flipped to SCHEDULED puts it back on the map, drawn at step 1.
+    fresh = _with_the_witness_made_fresh(raw)
+    served = {t["trip_id"] for t in feeds._decode_railroad_vehicles(fresh, "LIRR", 0.0)[0]}
+    assert CANCELED_TRIP not in served and positioned - served == aged
+    running = _with_the_witness_made_fresh(raw, running=True)
+    served = {t["trip_id"] for t in feeds._decode_railroad_vehicles(running, "LIRR", 0.0)[0]}
+    assert positioned - served == aged - {CANCELED_TRIP}
 
 
 def test_the_vehicles_own_relationship_is_not_the_signal():
@@ -269,6 +354,239 @@ def test_a_canceled_combined_entity_is_not_emitted():
 
     trains, _ts = feeds._decode_railroad_vehicles(feed.SerializeToString(), "MNR", 1000.0)
     assert [t["trip_id"] for t in trains] == ["1797"]
+
+
+# ---------------- the age gate (F01, contract 6.3) ----------------
+#
+# THE GOLDENS ARE SNAPSHOTS AND THESE ARE LAWS, for the reason F02's are: a golden is
+# regenerated from whatever the decoder does, so the numbers design 3.4 measured are asked
+# here of what the two passes EMIT, off the committed capture at its header with its
+# stops, and never of a golden. tests/test_position_ladder.py asks them of the ladder
+# itself.
+
+# The design's six (3.4, step 2): a fix 91 to 203 s old, and a prediction 4 or 5 s old
+# that the placement pass places. tests/test_position_ladder.py names the same six.
+ESTIMATED = {
+    "GO201_26_6187_1",
+    "GO201_26_6468_2932_METS",
+    "GO201_26_6188",
+    "GO201_26_8768",
+    "6029_2026-06-20",
+    "GO201_26_6665",
+}
+
+
+def _stops(system: str) -> dict:
+    return json.loads((FIXTURES / f"railroad_{system.lower()}_stops.json").read_text())
+
+
+def _both_passes(system: str, raw: bytes):
+    """Both surfaces at the capture's own header, with its stops, as the live path
+    decodes them: (header, GPS rows, placement rows)."""
+    header = float(pb.FeedMessage.FromString(raw).header.timestamp)
+    stops = _stops(system)
+    gps, _ts = feeds._decode_railroad_vehicles(raw, system, header, stops)
+    placed = feeds._decode_railroad_placements(raw, system, stops, header)
+    return header, gps, placed
+
+
+def _own_fix_ages(raw: bytes) -> dict[str, float]:
+    """Each positioned vehicle's own fix age against the header, by trip id, off the
+    wire. No LIRR trip id repeats on the capture, so the mapping loses nothing."""
+    feed = pb.FeedMessage.FromString(raw)
+    header = float(feed.header.timestamp)
+    return {
+        e.vehicle.trip.trip_id: header - e.vehicle.timestamp
+        for e in feed.entity
+        if e.HasField("vehicle") and e.vehicle.HasField("position")
+    }
+
+
+def test_the_lirr_capture_splits_27_6_11_0_24_on_the_served_surfaces():
+    """Design 3.4's table, asked of what the two passes emit. Of the 68 vehicles the base
+    rule accepts (69 on the wire less F02's canceled one; none is outside the box): 27 are
+    GPS rows whose own fix is within OBS_FRESH_S, 11 GPS rows past it and within
+    OBS_MAX_S, 6 placement rows labeled `estimated`, 0 placement rows of a vehicle's trip
+    labeled `placed`, and 24 on no surface, every one past OBS_MAX_S. Nothing is drawn
+    twice, and _position_steps, which the systems blocks serve, counts the same split."""
+    raw = _raw("LIRR")
+    header, gps, placed = _both_passes("LIRR", raw)
+    ages = _own_fix_ages(raw)
+    vehicles = set(ages) - _canceled_trip_ids(raw)
+    assert len(vehicles) == 68
+    served = {t["trip_id"] for t in gps}
+    reported = {t for t in served if ages[t] <= cache.OBS_FRESH_S}
+    qualified = {t for t in served if ages[t] > cache.OBS_FRESH_S}
+    estimated = {t["trip_id"] for t in placed if t["provenance"] == "estimated"}
+    placed_vehicles = {t["trip_id"] for t in placed if t["provenance"] == "placed"} & vehicles
+    nowhere = vehicles - served - estimated - placed_vehicles
+    split = (len(reported), len(estimated), len(qualified), len(placed_vehicles), len(nowhere))
+    assert split == (27, 6, 11, 0, 24)
+    assert served & {t["trip_id"] for t in placed} == set(), "no train drawn twice"
+    assert all(ages[t] > cache.OBS_MAX_S for t in nowhere)
+    assert feeds.railroad._position_steps(raw, "LIRR", _stops("LIRR"), header) == {
+        "reported": 27,
+        "estimated": 6,
+        "qualified": 11,
+        "placed": 0,
+        "suppressed": 24,
+    }
+
+
+def test_no_served_lirr_gps_row_is_older_than_obs_max_s():
+    """F01's acceptance, the half the GPS pass owns: a fresh header carrying an old vehicle
+    observation never produces a GPS row older than OBS_MAX_S, with the stops or without
+    them. The oldest served fix was 53676 s (14h 54m 36s, train 521) before the gate and
+    is 593 s now; every row past OBS_FRESH_S is one the rider's client qualifies."""
+    raw = _raw("LIRR")
+    header, gps, _placed = _both_passes("LIRR", raw)
+    oldest = max(header - t["observed_at"] for t in gps)
+    assert oldest == 593.0 and oldest <= cache.OBS_MAX_S
+    bare, _ts = feeds._decode_railroad_vehicles(raw, "LIRR", header)
+    assert max(header - t["observed_at"] for t in bare) <= cache.OBS_MAX_S
+
+
+def test_the_six_estimated_trains_are_placement_rows_labeled_estimated():
+    """The design's six, by trip id: each vehicle's own fix is stale (91 to 203 s), its
+    trip's prediction is fresh (4 or 5 s), and it is drawn once, by the placement pass,
+    as a placement row with provenance `estimated` (memo D5): station coordinates, a
+    timed next stop and a previous-stop anchor to glide from."""
+    raw = _raw("LIRR")
+    header, gps, placed = _both_passes("LIRR", raw)
+    ages = _own_fix_ages(raw)
+    coords = {(s["lat"], s["lon"]) for s in _stops("LIRR").values()}
+    rows = {t["trip_id"]: t for t in placed if t["provenance"] == "estimated"}
+    assert set(rows) == ESTIMATED
+    assert not ESTIMATED & {t["trip_id"] for t in gps}
+    for trip, row in rows.items():
+        assert cache.OBS_FRESH_S < ages[trip] <= 203.0, trip
+        assert header - row["observed_at"] <= cache.OBS_FRESH_S, trip
+        assert (row["latitude"], row["longitude"]) in coords, trip
+        assert row["next_time"] is not None and row["prev_time"] is not None, trip
+
+
+def test_metro_north_is_exempt_at_the_decoder(monkeypatch):
+    """Metro-North's position row is not age-gated (design 3.3): its stamps copy a header
+    that lags two to four minutes. The capture cannot show the exemption doing anything,
+    since every stamp IS the header, so the world moves every stamp 700 s behind it, past
+    OBS_MAX_S. The GPS pass still emits all 49 rows exactly as the golden holds them, and
+    the counts are 33 reported. Admit Metro-North to the policy set and the same world
+    emits none, so the exemption is the set's and not a branch on the name."""
+    _raw, expected = _load("MNR")
+    aged = _mnr_aged(700)
+    stops = _stops("MNR")
+    gps, _ts = feeds._decode_railroad_vehicles(aged, "MNR", expected["now"], stops)
+    assert gps == expected["trains"]
+    assert feeds.railroad._position_steps(aged, "MNR", stops, expected["now"]) == {
+        "reported": 33,
+        "estimated": 0,
+        "qualified": 0,
+        "placed": 0,
+        "suppressed": 0,
+    }
+    monkeypatch.setattr(feeds.railroad, "RAILROAD_FRESHNESS_SYSTEMS", frozenset({"LIRR", "MNR"}))
+    gated, _ts = feeds._decode_railroad_vehicles(aged, "MNR", expected["now"], stops)
+    assert gated == []
+
+
+def _mnr_aged(seconds: int) -> bytes:
+    """The committed Metro-North capture with every positioned vehicle's stamp moved
+    `seconds` behind its header: the world the capture cannot show, since all 49 of its
+    stamps ARE the header, so a gate on them would pass everything and prove nothing."""
+    raw, _expected = _load("MNR")
+    feed = pb.FeedMessage.FromString(raw)
+    header = int(feed.header.timestamp)
+    for entity in feed.entity:
+        if entity.HasField("vehicle") and entity.vehicle.HasField("position"):
+            entity.vehicle.timestamp = header - seconds
+    return feed.SerializeToString()
+
+
+def test_a_gated_combined_layout_places_exactly_what_its_ladder_estimates(monkeypatch):
+    """N2 under the gate, on the combined layout (memo D13, mutation 7). No committed world
+    gates a combined entity, because Metro-North is exempt; the aged world above admitted
+    to the policy set is the one that does. There the ladder estimates 23 trains (their
+    undated predictions fall back to the header, 0 s old) and withholds 10, the GPS pass
+    emits nothing, and the placement pass must draw exactly the 23 as `estimated`. Its
+    per-entity skip asks the same _accepted_as_gps the GPS pass emits by; one that asked
+    the base rule instead skips every one of them, and the block would serve 23 estimates
+    drawn nowhere. So the rows are asked for by trip, and the count the block serves is
+    asked to be the rows drawn."""
+    _raw, expected = _load("MNR")
+    aged = _mnr_aged(700)
+    stops = _stops("MNR")
+    now = expected["now"]
+    monkeypatch.setattr(feeds.railroad, "RAILROAD_FRESHNESS_SYSTEMS", frozenset({"LIRR", "MNR"}))
+    feed = pb.FeedMessage.FromString(aged)
+    ladder = feeds.railroad._position_ladder(
+        feed, "MNR", stops, now, feeds.railroad._canceled_trip_ids(feed)
+    )
+    estimated_trains = sorted(train for train, step in ladder.items() if step == 2)
+    assert len(estimated_trains) == 23
+    # A combined entity is judged under its vehicle's trip id (the train number) and placed
+    # under its trip_update's, so each row is joined back to the ladder through its entity.
+    train_of = {
+        e.trip_update.trip.trip_id: e.vehicle.trip.trip_id
+        for e in feed.entity
+        if e.HasField("vehicle") and e.vehicle.HasField("position") and e.HasField("trip_update")
+    }
+    placed = feeds._decode_railroad_placements(aged, "MNR", stops, now)
+    estimated = [t for t in placed if t["provenance"] == "estimated"]
+    assert sorted(train_of[t["trip_id"]] for t in estimated) == estimated_trains
+    steps = feeds.railroad._position_steps(aged, "MNR", stops, now)
+    assert steps["estimated"] == len(estimated)
+    assert steps == {
+        "reported": 0,
+        "estimated": 23,
+        "qualified": 0,
+        "placed": 0,
+        "suppressed": 10,
+    }
+    gps, _ts = feeds._decode_railroad_vehicles(aged, "MNR", now, stops)
+    assert gps == []
+
+
+def _repeated_vehicle(raw: bytes, trip_id: str, ages: tuple[int, ...]) -> bytes:
+    """The capture with `trip_id`'s vehicle entity replaced, where it stood, by one copy per
+    age in the order given, each under an entity id of its own and `age` seconds behind the
+    header. tests/test_position_ladder.py builds the same world for the ladder."""
+    feed = pb.FeedMessage.FromString(raw)
+    header = int(feed.header.timestamp)
+    world = pb.FeedMessage()
+    world.header.CopyFrom(feed.header)
+    for entity in feed.entity:
+        if not (entity.HasField("vehicle") and entity.vehicle.trip.trip_id == trip_id):
+            world.entity.add().CopyFrom(entity)
+            continue
+        for n, age in enumerate(ages):
+            copy = world.entity.add()
+            copy.CopyFrom(entity)
+            copy.id = f"{entity.id}~{n}"
+            copy.vehicle.timestamp = header - age
+    return world.SerializeToString()
+
+
+# The capture's own fresh prediction about a finished trip: no stop is left to place it
+# at, so a copy of its vehicle is judged by its own fix alone. One of the 24 as captured.
+REPEATED = "GO201_26_8945"
+
+
+@pytest.mark.parametrize(
+    ("ages", "served_age"), [((1, 700), 1), ((700, 1), 1), ((300, 700), 300), ((700, 300), 300)]
+)
+def test_a_repeated_vehicle_is_emitted_only_as_the_copy_that_earns_its_step(ages, served_age):
+    """A trip the feed reports through two vehicle entities, at two ages. The trip takes
+    the best step either copy earns (step 1 with a 1 s copy, step 3 with a 300 s one), and
+    the GPS pass emits only the copy whose own fix earns it. Accepting both would leave the
+    live path's first-wins dedupe to choose, and with the 700 s copy first it would serve a
+    fix past OBS_MAX_S under the fresh copy's step. Both orders, because feed order is
+    exactly what must not decide it; everything else decodes as the golden does."""
+    raw, expected = _load("LIRR")
+    world = _repeated_vehicle(raw, REPEATED, ages)
+    gps, _ts = feeds._decode_railroad_vehicles(world, "LIRR", expected["now"], _stops("LIRR"))
+    rows = [t for t in gps if t["trip_id"] == REPEATED]
+    assert [expected["now"] - t["observed_at"] for t in rows] == [served_age]
+    assert [t for t in gps if t["trip_id"] != REPEATED] == expected["trains"]
 
 
 # ---------------- placement golden ----------------
@@ -509,7 +827,7 @@ def _raw(system):
 @pytest.mark.anyio
 async def test_fetch_timestamp_uses_lirr_header_only():
     client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": _raw("MNR")})
-    _, _, feed_ts, _, _ = await feeds.fetch_railroad_trains(client, {})
+    _, _, feed_ts, _, _, _ = await feeds.fetch_railroad_trains(client, {})
     lirr_ts = _load("LIRR")[1]["now"]
     mnr_ts = _load("MNR")[1]["now"]
     # Only LIRR (freshness-authoritative) drives feed_timestamp; MNR's header is
@@ -523,7 +841,7 @@ async def test_fetch_timestamp_none_when_only_untrusted_feed_succeeds():
     # LIRR (the only trusted system) fails; MNR succeeds but contributes no
     # timestamp, so feed_timestamp falls back to None / the poll-age signal.
     client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": _raw("MNR")}, down=["LIRR"])
-    trains, _, feed_ts, failed, _ = await feeds.fetch_railroad_trains(client, {})
+    trains, _, feed_ts, failed, _, _ = await feeds.fetch_railroad_trains(client, {})
     assert failed == ["LIRR"]
     assert trains and all(t["system"] == "MNR" for t in trains)
     assert feed_ts is None
@@ -532,7 +850,7 @@ async def test_fetch_timestamp_none_when_only_untrusted_feed_succeeds():
 @pytest.mark.anyio
 async def test_fetch_dedups_duplicate_trip_ids_on_the_live_path():
     client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": _raw("MNR")})
-    trains, _, _, failed, _ = await feeds.fetch_railroad_trains(client, {})
+    trains, _, _, failed, _, steps = await feeds.fetch_railroad_trains(client, {})
     assert failed == []
     # The MNR feed repeats trains across separate vehicle entities; the live path
     # collapses them to one marker per trip_id (49 decoded -> 33 unique), which
@@ -540,16 +858,87 @@ async def test_fetch_dedups_duplicate_trip_ids_on_the_live_path():
     mnr = [t for t in trains if t["system"] == "MNR"]
     assert len(mnr) == 33
     assert len({t["trip_id"] for t in mnr}) == 33
-    # 68, not the 69 positioned vehicles on the wire: F02 drops the one whose
-    # TripUpdate marks it canceled, before it is ever emitted.
-    assert len([t for t in trains if t["system"] == "LIRR"]) == 68
-    assert len(trains) == 68 + 33
+    # 44, not the 69 positioned vehicles on the wire. F02 drops the one whose TripUpdate
+    # marks it canceled, before it is ever emitted (this was 68 until contract 6.3), and
+    # F01's age gate withholds the 24 whose own fix is past OBS_MAX_S against the header.
+    # No stops are loaded here, so nothing is placeable: the six the ladder would
+    # estimate stay GPS, qualified, rather than withheld for an estimate nobody draws.
+    assert len([t for t in trains if t["system"] == "LIRR"]) == 44
+    assert len(trains) == 44 + 33
+    # The counts each system's block serves, one per trip after this same dedupe:
+    # Metro-North's 49 entities are its 33 markers, all step 1 on a row not age-gated.
+    assert steps == {
+        "LIRR": {"reported": 27, "estimated": 0, "qualified": 17, "placed": 0, "suppressed": 24},
+        "MNR": {"reported": 33, "estimated": 0, "qualified": 0, "placed": 0, "suppressed": 0},
+    }
+
+
+@pytest.mark.anyio
+async def test_fetch_serves_the_ladder_at_the_header_with_both_systems_stops(monkeypatch):
+    """The live path at the LIRR capture's own header with the committed stops, the world
+    design 3.4 measured: the counts, and the markers they describe. One count per trip
+    after the (system, trip_id) dedupe, so every count but `suppressed` is a marker a
+    vehicle entity produced, and the five sum to the 68 vehicles the base rule accepts."""
+    header = _load("LIRR")[1]["now"]
+    monkeypatch.setattr(feeds.railroad, "time", SimpleNamespace(time=lambda: header))
+    client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": _raw("MNR")})
+    stops = {system: _stops(system) for system in SYSTEMS}
+    trains, _, _, failed, _, steps = await feeds.fetch_railroad_trains(client, stops)
+    assert failed == []
+    assert steps["LIRR"] == {
+        "reported": 27,
+        "estimated": 6,
+        "qualified": 11,
+        "placed": 0,
+        "suppressed": 24,
+    }
+    assert steps["MNR"] == {
+        "reported": 33,
+        "estimated": 0,
+        "qualified": 0,
+        "placed": 0,
+        "suppressed": 0,
+    }
+    lirr = [t for t in trains if t["system"] == "LIRR"]
+    gps = [t for t in lirr if t["provenance"] == "reported"]
+    estimated = {t["trip_id"] for t in lirr if t["provenance"] == "estimated"}
+    placed = {t["trip_id"] for t in lirr if t["provenance"] == "placed"}
+    assert len(gps) == 27 + 11 and estimated == ESTIMATED
+    # The 56 placements of trips with no vehicle, untouched by the gate (memo D1), and not
+    # one of a vehicle's trip: step 4 never fires on the capture.
+    assert len(placed) == 56 and not placed & _positioned_vehicle_trip_ids(_raw("LIRR"))
+    assert sum(steps["LIRR"].values()) - steps["LIRR"]["suppressed"] == len(gps) + len(estimated)
+    assert sum(steps["LIRR"].values()) == 68
+    mnr_gps = [t for t in trains if t["system"] == "MNR" and t["provenance"] == "reported"]
+    assert len(mnr_gps) == sum(steps["MNR"].values()) == 33
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("ages", [(1, 700), (700, 1)])
+async def test_the_live_path_serves_the_fresh_copy_of_a_repeated_vehicle(ages):
+    """The repeated-vehicle world through fetch_railroad_trains, whose first-wins (system,
+    trip_id) dedupe is the reason the gate judges each copy by its own fix: the served row
+    is the 1 s fix in either order, and the trip is counted once, as reported (it was
+    one of the capture's 24, so 27/0/17/0/24 becomes 28/0/17/0/23 here, with no stops)."""
+    world = _repeated_vehicle(_raw("LIRR"), REPEATED, ages)
+    client = _FakeRailClient({"LIRR": world, "MNR": _raw("MNR")})
+    trains, _, _, failed, _, steps = await feeds.fetch_railroad_trains(client, {})
+    assert failed == []
+    (row,) = [t for t in trains if t["trip_id"] == REPEATED]
+    assert _load("LIRR")[1]["now"] - row["observed_at"] == 1
+    assert steps["LIRR"] == {
+        "reported": 28,
+        "estimated": 0,
+        "qualified": 17,
+        "placed": 0,
+        "suppressed": 23,
+    }
 
 
 @pytest.mark.anyio
 async def test_fetch_skips_a_failed_feed_and_reports_it():
     client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": _raw("MNR")}, down=["MNR"])
-    trains, _, _, failed, _ = await feeds.fetch_railroad_trains(client, {})
+    trains, _, _, failed, _, _ = await feeds.fetch_railroad_trains(client, {})
     assert failed == ["MNR"]
     assert trains and all(t["system"] == "LIRR" for t in trains)
 
@@ -558,7 +947,7 @@ async def test_fetch_skips_a_failed_feed_and_reports_it():
 async def test_fetch_skips_an_undecodable_feed():
     # MNR returns a truncated length-delimited field -> DecodeError, skipped.
     client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": b"\x0a\xff"})
-    trains, _, _, failed, _ = await feeds.fetch_railroad_trains(client, {})
+    trains, _, _, failed, _, _ = await feeds.fetch_railroad_trains(client, {})
     assert failed == ["MNR"]
     assert trains and all(t["system"] == "LIRR" for t in trains)
 
@@ -998,7 +1387,7 @@ async def test_fetch_merges_gps_and_placed_trains():
     _tu_entity(f, "PLACED1", route_id="6", stops=[("A", time.time() + 600)])
     client = _FakeRailClient({"LIRR": f.SerializeToString(), "MNR": _raw("MNR")}, down=["MNR"])
     stops = {"LIRR": {"A": {"name": "A", "lat": 40.81, "lon": -73.51}}, "MNR": None}
-    trains, _, _, failed, _ = await feeds.fetch_railroad_trains(client, stops)
+    trains, _, _, failed, _, _ = await feeds.fetch_railroad_trains(client, stops)
     assert failed == ["MNR"]
     by_id = {t["trip_id"]: t for t in trains}
     # GPS coords come through the protobuf float32 position, so compare approx.
@@ -1019,7 +1408,7 @@ async def test_fetch_dedups_by_system_trip_id_composite_key():
             "MNR": _gps_feed("SHARED").SerializeToString(),
         }
     )
-    trains, _, _, failed, _ = await feeds.fetch_railroad_trains(client, {})
+    trains, _, _, failed, _, _ = await feeds.fetch_railroad_trains(client, {})
     assert failed == []
     assert {(t["system"], t["trip_id"]) for t in trains} == {("LIRR", "SHARED"), ("MNR", "SHARED")}
 
@@ -1161,7 +1550,7 @@ async def test_c3_an_empty_200_on_one_railroad_system_fails_that_system_only():
     # placement decoder's own strict parse unexercised. REVIEW FIX.
     stops = {"LIRR": json.loads((FIXTURES / "railroad_lirr_stops.json").read_text())}
     client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": b""})
-    trains, arrivals, _, failed, _ = await feeds.fetch_railroad_trains(client, stops)
+    trains, arrivals, _, failed, _, _ = await feeds.fetch_railroad_trains(client, stops)
     assert failed == ["MNR"]
     assert trains  # not vacuous: there ARE trains, and every one of them is LIRR
     assert all(t["system"] == "LIRR" for t in trains)
@@ -1181,7 +1570,7 @@ async def test_c3_a_VALID_EMPTY_railroad_system_is_healthy_with_no_trains():
     header_only.header.gtfs_realtime_version = "2.0"
     stops = {"LIRR": json.loads((FIXTURES / "railroad_lirr_stops.json").read_text())}
     client = _FakeRailClient({"LIRR": _raw("LIRR"), "MNR": header_only.SerializeToString()})
-    trains, arrivals, _, failed, _ = await feeds.fetch_railroad_trains(client, stops)
+    trains, arrivals, _, failed, _, _ = await feeds.fetch_railroad_trains(client, stops)
     assert failed == []
     assert trains  # not vacuous: an all() over an empty list would pass either way
     assert all(t["system"] == "LIRR" for t in trains)
@@ -1218,8 +1607,11 @@ def _capture(system: str):
 
 
 def _surfaces(raw: bytes, system: str, stops: dict, gps_now: float, placed_now: float):
-    """The two surfaces a railroad train can reach, as trip_id sets plus their records."""
-    gps, _ts = feeds._decode_railroad_vehicles(raw, system, gps_now)
+    """The two surfaces a railroad train can reach, as trip_id sets plus their records.
+    Both passes get the stops, as the live path gives them since contract 6.3: the GPS
+    pass asks the position ladder, which asks the placement pass's own answer, and a GPS
+    pass decoded without them would draw the six estimated trains on both surfaces."""
+    gps, _ts = feeds._decode_railroad_vehicles(raw, system, gps_now, stops)
     placed = feeds._decode_railroad_placements(raw, system, stops, placed_now)
     return gps, placed, {t["trip_id"] for t in gps}, {t["trip_id"] for t in placed}
 
@@ -1245,7 +1637,9 @@ def test_every_accepted_vehicle_reaches_the_gps_surface(system):
     feed = pb.FeedMessage()
     feed.ParseFromString(raw)
     canceled = feeds.railroad._canceled_trip_ids(feed)
-    accepted = [e for e in feed.entity if feeds.railroad._accepted_as_gps(e, canceled)]
+    # The rule's third input since contract 6.3: the ladder, built as both passes build it.
+    ladder = feeds.railroad._position_ladder(feed, system, stops, gps_now, canceled)
+    accepted = [e for e in feed.entity if feeds.railroad._accepted_as_gps(e, canceled, ladder)]
     assert accepted, "not vacuous"
     gps, _placed, gps_ids, _placed_ids = _surfaces(raw, system, stops, gps_now, placed_now)
     assert len(gps) == len(accepted), f"{system}: GPS output must be exactly the accepted set"
@@ -1254,13 +1648,16 @@ def test_every_accepted_vehicle_reaches_the_gps_surface(system):
         assert wanted in gps_ids, f"{system}: accepted vehicle {wanted} is not on the GPS surface"
 
 
-def _oldest_positioned(feed):
-    """The vehicle entity whose position was observed longest ago: the one the audit
-    displaced, picked by the same rule so this and f01 talk about the same train."""
+def _freshest_positioned(feed):
+    """The vehicle entity whose position was observed most recently: a step-1 vehicle, drawn
+    at its own position, whose trip is placeable. Until contract 6.3 these tests displaced
+    the OLDEST (6006_2026-06-20, 53676 s), the one the audit displaced; the age gate now
+    withholds that vehicle before the box is ever asked, so displacing it would test the
+    gate rather than N2."""
     positioned = [
         e for e in feed.entity if e.HasField("vehicle") and e.vehicle.HasField("position")
     ]
-    return min(positioned, key=lambda e: e.vehicle.timestamp)
+    return max(positioned, key=lambda e: e.vehicle.timestamp)
 
 
 def _displace(raw: bytes, pick):
@@ -1278,31 +1675,126 @@ def _displace(raw: bytes, pick):
 
 
 def test_an_out_of_range_lirr_vehicle_falls_back_to_placement():
-    # THE AUDIT'S REPRODUCTION, run against the fixed code. The oldest positioned LIRR
-    # vehicle is moved out of range; its trip_update is untouched and still carries 16
-    # upcoming stops, so a usable estimate exists.
+    # THE AUDIT'S REPRODUCTION, run against the fixed code, on a step-1 vehicle: the
+    # freshest positioned LIRR vehicle (GO201_26_7588, train 7344, its fix 4 s old) is
+    # moved out of range. Its trip_update is untouched and still carries 11 upcoming
+    # stops at known stations, so a usable estimate exists.
     #
     # THE COUNTS ARE ASSERTED RELATIVE TO THIS CAPTURE'S OWN BASELINE, not as bare
     # literals, so a recapture cannot make this test quietly describe a different feed.
-    # The absolute numbers today are GPS 68 -> 67 and placements 56 -> 57. (The audit
+    # The absolute numbers today are GPS 38 -> 37 and placements 62 -> 63. (The audit
     # note says 69 -> 68: it was written before F02 dropped the capture's canceled trip
-    # from the GPS output, so every GPS count in that note is one higher than today's.)
+    # from the GPS output and before F01's age gate took that output from 68 to 38.)
     raw, stops, gps_now, placed_now = _capture("LIRR")
     _g, _p, base_gps_ids, base_placed_ids = _surfaces(raw, "LIRR", stops, gps_now, placed_now)
+    feed = pb.FeedMessage.FromString(raw)
+    ladder = feeds.railroad._position_ladder(
+        feed, "LIRR", stops, gps_now, feeds.railroad._canceled_trip_ids(feed)
+    )
 
-    moved_raw, entity = _displace(raw, _oldest_positioned)
+    moved_raw, entity = _displace(raw, _freshest_positioned)
     trip_id = entity.vehicle.trip.trip_id
+    assert ladder[trip_id] == 1, "the chosen train is drawn at its own, fresh position"
     assert trip_id in base_gps_ids, "the chosen train is on the GPS surface before the move"
 
-    _g, _p, gps_ids, placed_ids = _surfaces(moved_raw, "LIRR", stops, gps_now, placed_now)
+    _g, placed, gps_ids, placed_ids = _surfaces(moved_raw, "LIRR", stops, gps_now, placed_now)
     assert len(gps_ids) == len(base_gps_ids) - 1, "it leaves the GPS surface"
     assert trip_id not in gps_ids
     assert len(placed_ids) == len(base_placed_ids) + 1, "and arrives on the placement surface"
     assert trip_id in placed_ids
+    # N2'S FALLBACK, UNCHANGED BY THE GATE (memo D1): a vehicle the box rejects never
+    # reaches the ladder, so its trip is placed as it always was, labeled `placed`.
+    (row,) = [t for t in placed if t["trip_id"] == trip_id]
+    assert row["provenance"] == "placed"
+    # And it is counted where it is drawn: one fewer reported, one more placed (a marker
+    # a vehicle produced), nothing more suppressed.
+    assert feeds.railroad._position_steps(moved_raw, "LIRR", stops, gps_now) == {
+        "reported": 26,
+        "estimated": 6,
+        "qualified": 11,
+        "placed": 1,
+        "suppressed": 24,
+    }
     # THE POINT OF THE FINDING, stated as the invariant rather than as two counts: the
     # train is on exactly one surface. Before the fix it was on neither.
     assert (trip_id in gps_ids) + (trip_id in placed_ids) == 1
     assert gps_ids & placed_ids == set(), "and nothing else started being drawn twice"
+
+
+def _vehicle_on(trip_id: str):
+    """A _displace picker: the one positioned vehicle entity carrying `trip_id`."""
+
+    def pick(feed):
+        (entity,) = [
+            e
+            for e in feed.entity
+            if e.HasField("vehicle")
+            and e.vehicle.HasField("position")
+            and e.vehicle.trip.trip_id == trip_id
+        ]
+        return entity
+
+    return pick
+
+
+def test_an_out_of_range_vehicle_withheld_for_age_stays_counted_withheld():
+    # Q7'S COUNT IS ABOUT AGE, AND MOVING A COORDINATE OUT OF THE BOX DOES NOT MAKE A FIX
+    # YOUNGER. GO201_26_8945 is one of the capture's 24: its own fix is 8370 s old and its
+    # trip update, though 27 s old, names no stop still ahead, so nothing can place it.
+    # Moved to lat 0 lon 0 it is judged by N2's fallback instead of the ladder, and the
+    # fallback places nothing either; inside the box the ladder withholds it at step 5, and
+    # "last seen over 10m ago" is exactly as true of it out of the box. So it stays in the
+    # count, on neither surface. Before this rule the count read 23 while 24 were withheld.
+    raw, stops, gps_now, placed_now = _capture("LIRR")
+    trip_id = "GO201_26_8945"
+    feed = pb.FeedMessage.FromString(raw)
+    ladder = feeds.railroad._position_ladder(
+        feed, "LIRR", stops, gps_now, feeds.railroad._canceled_trip_ids(feed)
+    )
+    assert ladder[trip_id] == 5, "withheld at the header, as captured"
+
+    moved_raw, entity = _displace(raw, _vehicle_on(trip_id))
+    assert gps_now - entity.vehicle.timestamp > cache.OBS_MAX_S
+    _g, _p, gps_ids, placed_ids = _surfaces(moved_raw, "LIRR", stops, gps_now, placed_now)
+    assert trip_id not in gps_ids | placed_ids, "drawn nowhere, in or out of the box"
+    assert feeds.railroad._position_steps(moved_raw, "LIRR", stops, gps_now) == {
+        "reported": 27,
+        "estimated": 6,
+        "qualified": 11,
+        "placed": 0,
+        "suppressed": 24,
+    }
+
+
+def test_an_out_of_range_vehicle_with_a_recent_fix_and_no_placeable_trip_is_counted_nowhere():
+    # THE ONE POSITIONED, NON-CANCELED VEHICLE THE COUNTS LEAVE OUT, pinned so that it is a
+    # decision rather than a gap. GO201_26_7987 is drawn qualified at the header: its own
+    # fix is 139 s old and no prediction can place its trip. Moved out of the box it is on
+    # neither surface, and no count is true of it: it is no marker, and it was not withheld
+    # for age (inside the box the ladder draws it at its own position, step 3), so
+    # `suppressed`'s "last seen over 10m ago" would be false. `qualified` goes 11 to 10 and
+    # nothing else moves, so the five counts sum to 67 of the 68 vehicles.
+    raw, stops, gps_now, placed_now = _capture("LIRR")
+    trip_id = "GO201_26_7987"
+    feed = pb.FeedMessage.FromString(raw)
+    ladder = feeds.railroad._position_ladder(
+        feed, "LIRR", stops, gps_now, feeds.railroad._canceled_trip_ids(feed)
+    )
+    assert ladder[trip_id] == 3, "drawn qualified at the header, as captured"
+
+    moved_raw, entity = _displace(raw, _vehicle_on(trip_id))
+    assert cache.OBS_FRESH_S < gps_now - entity.vehicle.timestamp <= cache.OBS_MAX_S
+    _g, _p, gps_ids, placed_ids = _surfaces(moved_raw, "LIRR", stops, gps_now, placed_now)
+    assert trip_id not in gps_ids | placed_ids, "its trip has nothing to place it with"
+    steps = feeds.railroad._position_steps(moved_raw, "LIRR", stops, gps_now)
+    assert steps == {
+        "reported": 27,
+        "estimated": 6,
+        "qualified": 10,
+        "placed": 0,
+        "suppressed": 24,
+    }
+    assert sum(steps.values()) == 67
 
 
 def test_an_out_of_range_mnr_combined_entity_falls_back_to_placement():
@@ -1387,11 +1879,14 @@ def test_the_train_number_survives_a_rejected_coordinate():
     # A LABEL IS NOT A POSITION CLAIM. positioned_ids and label_by_trip are built in one
     # loop, so narrowing both together reads natural; it would strip the rider-facing
     # train number off the arrivals board for exactly the train this fix recovers.
-    # Measured: station 141's arrival for trip 6006_2026-06-20 keeps train_num "521"
-    # after that vehicle's coordinate is rejected.
+    # Measured on the step-1 vehicle the fallback test above displaces: all 11 of trip
+    # GO201_26_7588's arrival rows (station 359 first) keep train_num "7344" after that
+    # vehicle's coordinate is rejected. (Until contract 6.3 this displaced the oldest,
+    # 6006_2026-06-20, whose station-141 row kept "521"; the age gate now withholds that
+    # vehicle before the box is asked.)
     raw, stops, _gps_now, placed_now = _capture("LIRR")
 
-    moved_raw, entity = _displace(raw, _oldest_positioned)
+    moved_raw, entity = _displace(raw, _freshest_positioned)
     trip_id = entity.vehicle.trip.trip_id
     label = entity.vehicle.vehicle.label or entity.vehicle.vehicle.id
     assert label, "the chosen vehicle carries a train number"
@@ -1404,5 +1899,5 @@ def test_the_train_number_survives_a_rejected_coordinate():
         for row in rows_
         if row["trip_id"] == trip_id
     ]
-    assert rows, "the recovered trip still publishes arrivals"
+    assert len(rows) == 11, "the recovered trip still publishes its arrivals"
     assert all(row["train_num"] == label for row in rows), "with its train number intact"

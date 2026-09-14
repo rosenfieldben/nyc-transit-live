@@ -28,13 +28,32 @@ Every panel drives the same bytes, the same clocks and the same production funct
 as before; what changed is the value each one is required to measure, and each check
 that moved says the old value in its label so the before and the after read side by
 side. In one line: cancellation is resolved BEFORE GPS emission, so the canceled trip
-is one of 69 positioned vehicles on the wire and one of 68 served.
+is one of 69 positioned vehicles on the wire and not one of the 68 the shared rule's
+base accepts.
 
 The panel that gained a row is the control table in Panel C. It now also drives a
 TripUpdate that says SCHEDULED while the VehicleDescriptor says CANCELED, because the
 capture's own canceled vehicle reports SCHEDULED on its own descriptor: a decoder that
 read the vehicle instead of joining to the TripUpdate would pass every other row here
 and still ship the defect.
+
+F01'S AGE GATE (contract 6.3, claude/freshness-6-3-positions) MOVED FOUR COUNTS AND ONE
+CONTROL, AND LEFT THIS FINDING'S FIX AS IT WAS. The GPS pass now serves only the vehicles
+section 3.4's position ladder draws at their own position: 38 of the 68 the base rule
+accepts on this capture, with 6 estimated by the placement pass and 24 withheld and
+counted. So the GPS decode and its golden go 68 to 38, the placement pass 56 to 62, and
+/api/railroads, at Panel D's clock, 157 to 137 (EXPECT["api_railroad_records"] says
+how). Panel B's check of the positioned vehicles the GPS pass leaves out moves with the
+first, from exactly the canceled one to 31: that one, plus the 30 the gate moves off
+that surface. The capture's canceled vehicle is 50517 s old against its header, past
+OBS_MAX_S, so on these bytes the gate would drop it too and its absence is
+over-determined: removing the cancellation guard would change nothing Panel B can see.
+So every control row in Panel C, and BOTH runs in Panel D, the CANCELED run as much as
+the SCHEDULED control, stamp that one vehicle's fix 10 s behind the header, a fix the
+gate draws (step 1), and cancellation is the only rule left that can drop it. Panel D
+therefore labels neither of its runs "as captured": they are the capture with that one
+fix rewritten. Without the rewrite the SCHEDULED control's GPS column read False, and
+the table proved nothing about cancellation.
 
 WHAT IS MEASURED, AND HOW
 
@@ -57,12 +76,14 @@ WHAT IS MEASURED, AND HOW
            placement plus arrivals pass) is run over the same bytes and the same
            committed stops, and every emitted arrival row and placed train is
            searched for the trip. A CONTROL then isolates the cause: the same
-           capture is re-serialized with ONLY that one entity's
+           capture is re-serialized with that one entity's
            trip.schedule_relationship changed (to SCHEDULED, to DELETED, and a
            variant where the VEHICLE descriptor rather than the TripUpdate is
            marked CANCELED), and the decode clock is frozen inside the capture's
            own world, just before the trip's two stop times, so the arrivals side
-           is not vacuous. Injected: only the schedule_relationship value.
+           is not vacuous. Injected: the schedule_relationship value, and in every
+           row the witness vehicle's timestamp, 10 s behind the header, so that
+           F01's age gate keeps it and cancellation alone decides (see above).
 
   Panel D  Claim (c) on the rider surfaces. The real FastAPI app is driven: the
            production poller main._refresh_railroads runs against an
@@ -71,7 +92,8 @@ WHAT IS MEASURED, AND HOW
            and GET /api/railroad-arrivals/LIRR/{83,198} are served through
            httpx.ASGITransport. The map endpoint and the station board are read
            from the same poll. The same two runs are made with the captured
-           CANCELED bytes and with the SCHEDULED control bytes.
+           CANCELED bytes and with the SCHEDULED control bytes, the witness's fix
+           made fresh in both, for Panel C's reason.
 
   Panel E  Claim (d). A synthetic feed in Metro-North's COMBINED
            TripUpdate + VehiclePosition entity layout, shaped after the real
@@ -121,6 +143,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 import httpx  # noqa: E402
 from google.transit import gtfs_realtime_pb2 as pb  # noqa: E402
 
+import cache  # noqa: E402
 import feeds  # noqa: E402
 import feeds.railroad as railroad_mod  # noqa: E402
 import main  # noqa: E402
@@ -150,18 +173,33 @@ EXPECT = {
     "lirr_entities": 201,
     "canceled_trip_updates": 8,
     "positioned_trip_ids": 69,
-    # 68, not the 69 positioned vehicles on the wire: the fix drops the canceled one
-    # before emission. The wire count stays 69 above, which is what makes the
-    # difference measurable rather than merely asserted.
-    "gps_trains": 68,
-    "golden_records": 68,
-    "placed_at_header_now": 56,
+    # 38, not the 69 positioned vehicles on the wire. The fix drops the canceled one
+    # before emission, which left 68 until contract 6.3; F01's age gate then serves only
+    # the 38 of those 68 that section 3.4's ladder draws at their own position (6 more
+    # are estimated by the placement pass and 24 withheld and counted). The wire count
+    # stays 69 above, which is what makes the difference measurable.
+    "gps_trains": 38,
+    "golden_records": 38,
+    # The 56 trips with no vehicle, placed as they always were, plus the gate's 6.
+    "placed_at_header_now": 62,
+    # The positioned vehicles, other than the canceled one, that the gate moves off the
+    # GPS surface: the 6 estimated and the 24 withheld.
+    "gated_off_the_gps_surface": 30,
+    # The witness's own fix against the header: past OBS_MAX_S, so on the captured bytes
+    # the age gate would drop it as well (see the docstring).
+    "witness_fix_age_s": 50517,
     "arrival_stations_at_header_now": 117,
     "arrival_rows_at_header_now": 765,
     "control_rows_canceled": 1005,
     "control_rows_scheduled": 1007,
     "control_own_rows_scheduled": 2,
-    "api_railroad_records": 157,
+    # 137, and 157 before F01's age gate, at CONTROL_NOW (51915 s before the header, the
+    # clock Panel D freezes). The gate reads every age against the header and asks
+    # placeability at that clock: LIRR serves 38 of its 68 as GPS where it served all 68,
+    # and places 66 where it placed 56, the 6 estimates plus 4 of the 24 whose fresh
+    # predictions (27 to 529 s old) still have stops at CONTROL_NOW, 3 of them estimated
+    # and 1 placed; the other 20 are withheld. Metro-North's 33 markers are unchanged.
+    "api_railroad_records": 137,
     "api_stop83_rows_captured": 6,
     "api_stop83_rows_control": 7,
     "api_stop198_rows_captured": 6,
@@ -213,19 +251,32 @@ MNR_STOPS = json.loads((FIX / "railroad_mnr_stops.json").read_text())
 GOLDEN = json.loads((FIX / "railroad_lirr_expected.json").read_text())
 
 
+# The witness vehicle's fix in every control: this many seconds behind the header.
+FRESH_WITNESS_S = 10
+
+
 def flipped(raw: bytes, *, trip_sr=None, vehicle_sr=None) -> bytes:
-    """The captured LIRR feed with ONLY the schedule_relationship of the trip
-    under test changed. Every other byte of the capture is left alone: this is
-    the single injected fault in Panel C."""
+    """The captured LIRR feed with the schedule_relationship of the trip under test
+    changed as asked, and the witness vehicle's fix stamped FRESH_WITNESS_S behind the
+    header. Every other byte of the capture is left alone.
+
+    WHY THE FIX IS MADE FRESH IN EVERY CONTROL (F01's age gate, contract 6.3). As
+    captured, the witness's fix is 50517 s old, past OBS_MAX_S, so the gate withholds it
+    whatever its TripUpdate says, and a SCHEDULED control would read absent exactly like
+    the CANCELED original: the table would stop being about cancellation. At 10 s the
+    gate draws it at its own position (step 1), so the schedule_relationship is the only
+    thing left that decides."""
     feed = pb.FeedMessage()
     feed.ParseFromString(raw)
+    header = int(feed.header.timestamp)
     for entity in feed.entity:
         if trip_sr is not None and entity.HasField("trip_update"):
             if entity.trip_update.trip.trip_id == TRIP_ID:
                 entity.trip_update.trip.schedule_relationship = trip_sr
-        if vehicle_sr is not None and entity.HasField("vehicle"):
-            if entity.vehicle.trip.trip_id == TRIP_ID:
+        if entity.HasField("vehicle") and entity.vehicle.trip.trip_id == TRIP_ID:
+            if vehicle_sr is not None:
                 entity.vehicle.trip.schedule_relationship = vehicle_sr
+            entity.vehicle.timestamp = header - FRESH_WITNESS_S
     return feed.SerializeToString()
 
 
@@ -310,16 +361,26 @@ check("vehicle label", veh_entity.vehicle.vehicle.label, "508")
 
 banner("PANEL B: the production GPS decode and the committed golden (claim b)")
 
-gps_trains, feed_ts = feeds._decode_railroad_vehicles(LIRR_RAW, "LIRR", HEADER_NOW)
+# With the committed stops, as the live path and the golden's recipe decode it: since
+# contract 6.3 the GPS pass asks the placement pass whether a stale vehicle's trip can be
+# estimated instead (backend/tests/test_feeds_railroad.py carries the recipe).
+gps_trains, feed_ts = feeds._decode_railroad_vehicles(LIRR_RAW, "LIRR", HEADER_NOW, LIRR_STOPS)
 gps_hits = [t for t in gps_trains if t["trip_id"] == TRIP_ID]
 first = gps_trains[0]
+witness_age = int(HEADER_NOW) - veh_entity.vehicle.timestamp
+gated_off = len(positioned_ids) - 1 - len(gps_trains)
 
-print(f"feeds._decode_railroad_vehicles(capture, 'LIRR', now=header)  -> {len(gps_trains)} GPS trains")
+print(f"feeds._decode_railroad_vehicles(capture, 'LIRR', now=header, stops) -> {len(gps_trains)} GPS trains")
 print(f"feed_timestamp returned                                        {feed_ts}")
 print(f"records for the canceled trip                                  {len(gps_hits)}")
 print(f"positioned vehicles on the wire                                {len(positioned_ids)}")
-print(f"dropped before emission                                        "
-      f"{len(positioned_ids) - len(gps_trains)}")
+print(f"not on the GPS surface                                         "
+      f"{len(positioned_ids) - len(gps_trains)}: the canceled one (F02) and {gated_off}")
+print("    moved off it by F01's age gate (6 estimated by the placement pass, 24 withheld)")
+print(f"the canceled vehicle's own fix, against the header             {witness_age} s,"
+      f" past OBS_MAX_S ({cache.OBS_MAX_S:.0f} s):")
+print("    the gate would drop it too, so on these bytes its absence is over-determined,")
+print("    and Panel C's control is where cancellation is shown alone")
 print()
 print("BEFORE THE FIX this trip was emitted, and it was the FIRST of 69 records; the")
 print("committed golden listed it first too, matching byte for byte, which is how it")
@@ -335,11 +396,20 @@ print(f"canceled trip anywhere in the golden          "
       f"{any(t['trip_id'] == TRIP_ID for t in GOLDEN['trains'])}")
 print(f"decoder output equals the golden list exactly  {gps_trains == GOLDEN['trains']}")
 
-check("GPS trains decoded", len(gps_trains), EXPECT["gps_trains"])
+check("GPS trains decoded (68 before F01's age gate)", len(gps_trains), EXPECT["gps_trains"])
 check("canceled trip emitted as GPS (was 1)", len(gps_hits), 0)
-check("exactly one positioned vehicle dropped", len(positioned_ids) - len(gps_trains), 1)
+check(
+    "positioned vehicles off the GPS surface: the canceled one, plus F01's gate (was 1)",
+    len(positioned_ids) - len(gps_trains),
+    1 + EXPECT["gated_off_the_gps_surface"],
+)
+check(
+    "the canceled vehicle's fix is past OBS_MAX_S, so the age gate alone would drop it",
+    (witness_age, witness_age > cache.OBS_MAX_S),
+    (EXPECT["witness_fix_age_s"], True),
+)
 check("first emitted record is not the canceled trip", first["trip_id"] != TRIP_ID, True)
-check("golden record count", len(GOLDEN["trains"]), EXPECT["golden_records"])
+check("golden record count (68 before F01's age gate)", len(GOLDEN["trains"]), EXPECT["golden_records"])
 check("canceled trip absent from the golden (was record 0)",
       any(t["trip_id"] == TRIP_ID for t in GOLDEN["trains"]), False)
 check("decoder output matches the golden", gps_trains == GOLDEN["trains"], True)
@@ -363,7 +433,8 @@ print(f"    placement pass _decode_railroad_feed      {len(placed)} placed train
 print(f"    arrivals pass  _decode_railroad_feed      {len(arrivals)} stations,"
       f" {len(rows)} rows, canceled trip rows: {len(row_hits)}")
 
-check("placed trains at header now", len(placed), EXPECT["placed_at_header_now"])
+check("placed trains at header now (56 before F01's gate added its 6 estimates)",
+      len(placed), EXPECT["placed_at_header_now"])
 check("arrival stations at header now", len(arrivals), EXPECT["arrival_stations_at_header_now"])
 check("arrival rows at header now", len(rows), EXPECT["arrival_rows_at_header_now"])
 check("canceled trip placed", len(placed_hits), 0)
@@ -373,7 +444,9 @@ check("canceled trip in GPS, the pass that used to disagree", len(gps_hits), 0)
 print()
 print("CONTROL. Same capture, same stops, decode clock frozen at"
       f" {CONTROL_NOW:.0f} (inside the capture, 622 s before the trip's first stop")
-print("time), with ONLY that one entity's schedule_relationship changed:")
+print("time), with that one entity's schedule_relationship changed, and in EVERY row")
+print(f"the witness's fix stamped {FRESH_WITNESS_S} s behind the header, so F01's age gate")
+print("keeps it and cancellation alone decides (flipped() says why):")
 print()
 print(f"    {'variant':<34}{'GPS':>5}{'trip in GPS':>13}{'placed':>8}"
       f"{'rows':>7}{'trip rows':>11}")
@@ -395,8 +468,8 @@ variants = (
      {"trip_sr": SR.SCHEDULED, "vehicle_sr": SR.CANCELED}),
 )
 for label, kwargs in variants:
-    raw = flipped(LIRR_RAW, **kwargs) if kwargs else LIRR_RAW
-    v_gps, _ = feeds._decode_railroad_vehicles(raw, "LIRR", CONTROL_NOW)
+    raw = flipped(LIRR_RAW, **kwargs)
+    v_gps, _ = feeds._decode_railroad_vehicles(raw, "LIRR", CONTROL_NOW, LIRR_STOPS)
     v_placed, v_arrivals = feeds._decode_railroad_feed(raw, "LIRR", LIRR_STOPS, CONTROL_NOW)
     v_rows = arrival_rows(v_arrivals)
     v_own = [r for r in v_rows if r[2]["trip_id"] == TRIP_ID]
@@ -502,9 +575,12 @@ async def poll_and_serve(lirr_bytes: bytes) -> tuple[dict, dict, dict]:
 
 async def run_panel_d() -> dict:
     out = {}
+    # The witness's fix is made fresh in BOTH runs (flipped always does), so the runs
+    # differ in the one schedule_relationship, and F01's age gate would keep the witness
+    # in either: as captured it is 50517 s old, and the gate alone would drop it.
     for label, lirr_bytes in (
-        ("as captured (CANCELED)", LIRR_RAW),
-        ("control (SCHEDULED)", flipped(LIRR_RAW, trip_sr=SR.SCHEDULED)),
+        ("CANCELED, witness fix made fresh", flipped(LIRR_RAW)),
+        ("SCHEDULED control, witness fix made fresh", flipped(LIRR_RAW, trip_sr=SR.SCHEDULED)),
     ):
         out[label] = await poll_and_serve(lirr_bytes)
     return out
@@ -535,8 +611,8 @@ for label, (feed, board83, board198) in panel_d.items():
               f" train 508 present: {bool(hits)}")
     print()
 
-cap_feed, cap_83, cap_198 = panel_d["as captured (CANCELED)"]
-ctl_feed, ctl_83, ctl_198 = panel_d["control (SCHEDULED)"]
+cap_feed, cap_83, cap_198 = panel_d["CANCELED, witness fix made fresh"]
+ctl_feed, ctl_83, ctl_198 = panel_d["SCHEDULED control, witness fix made fresh"]
 
 
 def board_hits(board: dict) -> int:
@@ -550,25 +626,27 @@ def board_total(board: dict) -> int:
 print("BEFORE THE FIX the map endpoint served the canceled train in BOTH runs, with a")
 print("byte-identical record, while the station board served it only in the control:")
 print("map and board disagreed about the same trip in the same response cycle. Now")
-print("the map serves it only in the control too, and one marker separates the runs:")
-print(f"    captured (TripUpdate CANCELED)  {len(cap_feed['data'])} markers, train 508 present: "
-      f"{any(t['trip_id'] == TRIP_ID for t in cap_feed['data'])}")
-print(f"    control  (TripUpdate SCHEDULED) {len(ctl_feed['data'])} markers, train 508 present: "
+print("the map serves it only in the control too, and one marker separates the runs")
+print(f"(both runs stamp the witness's fix {FRESH_WITNESS_S} s behind the header; as captured it"
+      f" is {witness_age} s old and F01's age gate alone would drop it):")
+print(f"    TripUpdate CANCELED,  witness fix made fresh  {len(cap_feed['data'])} markers,"
+      f" train 508 present: {any(t['trip_id'] == TRIP_ID for t in cap_feed['data'])}")
+print(f"    TripUpdate SCHEDULED, witness fix made fresh  {len(ctl_feed['data'])} markers, train 508 present: "
       f"{any(t['trip_id'] == TRIP_ID for t in ctl_feed['data'])}")
 
-check("api: marker count (captured)", len(cap_feed["data"]), EXPECT["api_railroad_records"])
+check("api: marker count (CANCELED, witness fix made fresh)", len(cap_feed["data"]), EXPECT["api_railroad_records"])
 check("api: marker count (control)", len(ctl_feed["data"]), EXPECT["api_railroad_records"] + 1)
-check("api: canceled trip on the map (captured, was 1)",
+check("api: canceled trip on the map (CANCELED, witness fix made fresh; was 1)",
       sum(1 for t in cap_feed["data"] if t["trip_id"] == TRIP_ID), 0)
 check("api: canceled trip on the map (control)",
       sum(1 for t in ctl_feed["data"] if t["trip_id"] == TRIP_ID), 1)
-check("api: stop 83 rows (captured)", board_total(cap_83), EXPECT["api_stop83_rows_captured"])
+check("api: stop 83 rows (CANCELED, witness fix made fresh)", board_total(cap_83), EXPECT["api_stop83_rows_captured"])
 check("api: stop 83 rows (control)", board_total(ctl_83), EXPECT["api_stop83_rows_control"])
-check("api: stop 83 canceled-trip rows (captured)", board_hits(cap_83), 0)
+check("api: stop 83 canceled-trip rows (CANCELED, witness fix made fresh)", board_hits(cap_83), 0)
 check("api: stop 83 canceled-trip rows (control)", board_hits(ctl_83), 1)
-check("api: stop 198 rows (captured)", board_total(cap_198), EXPECT["api_stop198_rows_captured"])
+check("api: stop 198 rows (CANCELED, witness fix made fresh)", board_total(cap_198), EXPECT["api_stop198_rows_captured"])
 check("api: stop 198 rows (control)", board_total(ctl_198), EXPECT["api_stop198_rows_control"])
-check("api: stop 198 canceled-trip rows (captured)", board_hits(cap_198), 0)
+check("api: stop 198 canceled-trip rows (CANCELED, witness fix made fresh)", board_hits(cap_198), 0)
 check("api: stop 198 canceled-trip rows (control)", board_hits(ctl_198), 1)
 
 # ------------------------------ Panel E: the combined entity layout (MNR) ----
@@ -750,12 +828,15 @@ it is the ONLY one of the {len(canceled_ids)} canceled LIRR TripUpdates that als
 
 GPS pass    {len(gps_trains)} trains from {len(positioned_ids)} positioned vehicles: the canceled trip is
             dropped before emission (it used to be emitted FIRST, route 5, train 508),
-            identical to the {len(GOLDEN['trains'])}-record golden railroad_lirr_expected.json
+            and F01's age gate moves {gated_off} of the other 68 off this surface; the canceled
+            vehicle's own fix is {witness_age} s old, so the gate would drop it too.
+            Identical to the {len(GOLDEN['trains'])}-record golden railroad_lirr_expected.json
 board pass  {len(placed)} placed trains and {len(rows)} arrival rows over {len(arrivals)} stations,
             zero of them the canceled trip. The two passes now agree.
 
-control at now={CONTROL_NOW:.0f} (inside the capture): flipping only that entity's
-    schedule_relationship changes the board from {control_own[captured_label]} to
+control at now={CONTROL_NOW:.0f} (inside the capture), the witness's fix made fresh so the
+    age gate keeps it: flipping that entity's schedule_relationship changes the board from
+    {control_own[captured_label]} to
     {control_own[scheduled_label]} rows for the trip
     ({control_rows[captured_label]} -> {control_rows[scheduled_label]} rows overall),
     and now moves the GPS output with it: trip in GPS is
@@ -763,7 +844,9 @@ control at now={CONTROL_NOW:.0f} (inside the capture): flipping only that entity
     {in_gps_by_label[deleted_label]} at DELETED, and {in_gps_by_label[split_label]} when only the
     VEHICLE says CANCELED, which is what pins the join as the signal
 
-over HTTP   /api/railroads served {len(cap_feed['data'])} markers, none of them the canceled train,
+over HTTP   both runs with the witness's fix made fresh (as captured it is {witness_age} s old,
+            and F01's age gate alone would drop it): with its TripUpdate CANCELED,
+            /api/railroads served {len(cap_feed['data'])} markers, none of them the canceled train,
             against {len(ctl_feed['data'])} in the SCHEDULED control which does serve it;
             /api/railroad-arrivals/LIRR/83 (Hampton Bays) served
             {board_total(cap_83)} rows without train 508, and {board_total(ctl_83)} rows WITH it in the control;
@@ -792,9 +875,12 @@ print(
     "Canceled LIRR trip 6004XX_2026-06-20 USED TO BE served as an unmarked route 5 /"
     " train 508 GPS marker, the first of 69 golden records, present at /api/railroads"
     " while absent from both of its station boards. Cancellation is now resolved"
-    " BEFORE emission, so it is one of 69 positioned vehicles and one of 68 served:"
-    " absent from the GPS pass, the golden, and /api/railroads, while the SCHEDULED"
-    " control still serves it. The combined MNR layout and DELETED move with it, and"
+    " BEFORE emission, so it is one of 69 positioned vehicles and not one of the 68 the"
+    " shared rule's base accepts: absent from the GPS pass, the golden, and"
+    " /api/railroads, the last in a run whose witness fix is made fresh so that F01's age"
+    " gate (contract 6.3) cannot be what drops it, while the SCHEDULED control, its fix"
+    " made fresh the same way, still serves it. The combined MNR layout and DELETED"
+    " move with it, and"
     " a vehicle whose own descriptor says CANCELED while its TripUpdate says SCHEDULED"
     " is still emitted, because the join is the signal and the vehicle's word is not."
 )

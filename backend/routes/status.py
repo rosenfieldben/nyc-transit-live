@@ -209,9 +209,30 @@ async def get_status(request: Request, response: Response) -> dict:
         "static_archives": static_shared.archive_status(),
         "subway_feeds": getattr(app.state, "subway_feed_health", None),
         "railroad_feeds": getattr(app.state, "railroad_feed_health", None),
+        # The position ladder's counts per railroad system (contract 6.3), beside
+        # railroad_feeds rather than inside it: see models.StatusResponse.
+        "railroad_positions": _railroad_positions(app),
         "path_feeds": getattr(app.state, "path_feed_health", None),
         "ferry_feeds": getattr(app.state, "ferry_feed_health", None),
         "alerts": alerts,
+    }
+
+
+def _railroad_positions(app) -> dict[str, dict]:
+    """Each railroad system's position-ladder counts, read off the per-system blocks
+    /api/railroads serves (pollers._system_freshness writes them), or {} before the
+    first railroad decode.
+
+    A PROJECTION, NOT A SECOND RECORD, so the operator's snapshot and the rider's
+    envelope cannot disagree about a count, and the last-known rule a failing system's
+    block follows reaches this key without being restated here. A system whose block
+    carries no counts yet is absent rather than null.
+    """
+    entry = getattr(app.state, "feed_cache", {}).get("railroads") or {}
+    return {
+        system: block["positions"]
+        for system, block in sorted((entry.get("systems") or {}).items())
+        if block.get("positions") is not None
     }
 
 

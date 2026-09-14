@@ -104,7 +104,7 @@ const WITNESSES = {
     ask: () => !!document.querySelector(".leaflet-popup-content .popup-crosslink"),
     absent:
       "the open popup carries no cross-link button, so this is not the popup the spec names. " +
-      "Only a PLACED railroad train gets one (see isPlacedRailroad)",
+      "Only a railroad train drawn ON its station gets one (see railroadAtItsStation)",
   },
   "popup under the legend": {
     ask: () => {

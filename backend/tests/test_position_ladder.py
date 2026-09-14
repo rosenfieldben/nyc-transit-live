@@ -5,9 +5,10 @@ vehicle whose own observation has aged: its reported position while that is fres
 estimate from a fresh prediction, its reported position qualified while it is under ten
 minutes old, a placement from a prediction under ten minutes old, and otherwise nothing.
 The design measured that order on the committed LIRR capture at 27, 6, 11, 0 and 24.
-feeds.railroad._position_ladder computes it, and in this commit NOTHING READS IT: both
-passes and every golden in test_feeds_railroad.py are unchanged, and these tests pin
-what the gate commit will wire in.
+feeds.railroad._position_ladder computes it, and since the gate commit both passes read
+it through _accepted_as_gps and feeds.railroad._position_steps counts it for the
+systems blocks. These tests ask the numbers of the ladder itself; test_feeds_railroad.py
+asks the same numbers of what the two passes emit.
 
 THE NUMBERS ARE ASKED OF THE DECODER, never of a golden, for the reason
 test_feeds_railroad.py gives for F02's law: a golden is regenerated from whatever the
@@ -111,11 +112,17 @@ def _trip_update(feed, trip_id: str):
 
 
 def _placements(monkeypatch, feed, stops, now: float, system: str = "LIRR") -> list[dict]:
-    """What the REAL placement pass places when no vehicle is accepted as GPS, in feed
+    """What the REAL placement pass places when the ladder judges no vehicle, in feed
     order: the row each trip's own prediction would produce at `now`, computed without
-    the ladder."""
+    the ladder. An empty ladder accepts nothing as GPS and withholds nothing, so the pass
+    places every running trip, as it did for every trip with no accepted vehicle before
+    the gate."""
+
+    def judges_nothing(*_args) -> railroad.PositionLadder:
+        return railroad.PositionLadder(system, False, now, 0.0, 0.0)
+
     with monkeypatch.context() as patched:
-        patched.setattr(railroad, "_accepted_as_gps", lambda entity, canceled: False)
+        patched.setattr(railroad, "_position_ladder", judges_nothing)
         return feeds._decode_railroad_placements(feed.SerializeToString(), system, stops, now)
 
 
@@ -187,25 +194,40 @@ def test_the_lirr_capture_orders_27_6_11_0_24():
     assert ladder[OLDEST] == 5
 
 
-def test_the_ladder_covers_exactly_the_vehicles_the_gps_pass_serves():
-    """Every served vehicle has a step and nothing else does: the base rule's set, keyed
-    as the GPS pass keys it. 68, the 69 positioned vehicles less F02's canceled one."""
+def test_the_ladder_covers_exactly_the_vehicles_the_base_rule_accepts():
+    """Every vehicle the base rule accepts has a step and nothing else does, keyed as the
+    GPS pass keys it: 68, the 69 positioned vehicles less F02's canceled one, all of which
+    the GPS pass served before the gate. It now serves exactly their steps 1 and 3."""
     feed, stops = _capture("LIRR")
     header = float(feed.header.timestamp)
-    gps, _ = feeds._decode_railroad_vehicles(feed.SerializeToString(), "LIRR", header)
-    assert len(gps) == 68
-    assert set(_ladder(feed, "LIRR", stops)) == {t["trip_id"] for t in gps}
+    canceled = railroad._canceled_trip_ids(feed)
+    base = {
+        e.vehicle.trip.trip_id or e.id
+        for e in feed.entity
+        if railroad._passes_base_rule(e, canceled)
+    }
+    assert len(base) == 68
+    ladder = _ladder(feed, "LIRR", stops)
+    assert set(ladder) == base
+    gps, _ = feeds._decode_railroad_vehicles(feed.SerializeToString(), "LIRR", header, stops)
+    assert {t["trip_id"] for t in gps} == _at(ladder, 1) | _at(ladder, 3)
 
 
 def test_the_six_estimates_are_the_placement_passs_own_answer(monkeypatch):
-    """Memo D4, computed the long way round and WITHOUT the ladder: of the 41 served
-    vehicles over 90 s old, the six are exactly those whose trip the real placement pass
-    places from a prediction within 90 s. So "placeable" means one thing."""
+    """Memo D4, computed the long way round and WITHOUT the ladder: of the 41 vehicles the
+    base rule accepts whose own fix is over 90 s old (all 41 were served before the gate),
+    the six are exactly those whose trip the real placement pass places from a prediction
+    within 90 s. So "placeable" means one thing."""
     feed, stops = _capture("LIRR")
     header = float(feed.header.timestamp)
     placeable = _placeable(monkeypatch, feed, stops, header)
-    served, _ = feeds._decode_railroad_vehicles(feed.SerializeToString(), "LIRR", header)
-    stale = {t["trip_id"] for t in served if header - t["observed_at"] > cache.OBS_FRESH_S}
+    canceled = railroad._canceled_trip_ids(feed)
+    stale = {
+        e.vehicle.trip.trip_id
+        for e in feed.entity
+        if railroad._passes_base_rule(e, canceled)
+        and header - e.vehicle.timestamp > cache.OBS_FRESH_S
+    }
     assert len(stale) == 41
     estimable = {
         trip
@@ -452,7 +474,7 @@ def test_a_combined_entity_canceled_by_another_trip_update_is_not_placeable(monk
     cancel.id = "cancels-6361"
     cancel.trip_update.trip.trip_id = trip
     cancel.trip_update.trip.schedule_relationship = pb.TripDescriptor.CANCELED
-    assert railroad._accepted_as_gps(own, railroad._canceled_trip_ids(feed)), "still accepted"
+    assert railroad._passes_base_rule(own, railroad._canceled_trip_ids(feed)), "still accepted"
     assert trip not in {t["trip_id"] for t in _placements(monkeypatch, feed, stops, header, "MNR")}
     assert _ladder(feed, "MNR", stops)["6361"] == 5
 

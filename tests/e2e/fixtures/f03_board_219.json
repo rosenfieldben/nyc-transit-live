@@ -108,7 +108,8 @@
         "5",
         "6",
         "GS"
-      ]
+      ],
+      "positions": null
     },
     "ACE": {
       "fetched_at": 1782993600.0,
@@ -123,7 +124,8 @@
         "5",
         "6",
         "GS"
-      ]
+      ],
+      "positions": null
     }
   }
 }

@@ -425,14 +425,14 @@ const STATES = [
       // and the page-wide gate had never examined a cross-link in any state. The reviewer
       // who found it proved the cost by emptying the cross-link's accessible name: the
       // exact button-name defect A1l injects as its canary, and all fifteen tests passed.
-      // The registry already carries the app's own derived answer: `placed`, set from
-      // isPlacedRailroad when the record is built. Reading the app's flag rather than
-      // re-deriving it means the state cannot drift from what the app calls placed. The
+      // The app's own predicate answers it: railroadAtItsStation, the cross-link's gate
+      // since 6.3, which reads the served provenance and anchors. Asking the app rather
+      // than re-deriving it means the state cannot drift from what the app links. The
       // throw below fails loudly if the fixture ever stops carrying one, rather than
       // silently scanning a different popup, which is how this got past review the once.
       await page.evaluate(() => {
-        const placed = [...railroads.values()].find((r) => r.placed);
-        if (!placed) throw new Error("the fixture no longer has a placed railroad train to cross-link");
+        const placed = [...railroads.values()].find((r) => railroadAtItsStation(r.latest));
+        if (!placed) throw new Error("the fixture no longer has a railroad train drawn on its station to cross-link");
         placed.marker.openPopup();
       });
       /* AND WAIT FOR IT TO FINISH OPENING, which round 4 found by watching CI fail on a
@@ -586,8 +586,8 @@ test("A1z. the deciders: every named undecidable is answered by measurement", as
      Degrading the OTHER glyph the same sentence names was caught, which is what made this a
      half-covered exception rather than an uncovered one. */
   await page.evaluate(() => {
-    const placed = [...railroads.values()].find((r) => r.placed);
-    if (!placed) throw new Error("the fixture no longer has a placed railroad train to open");
+    const placed = [...railroads.values()].find((r) => railroadAtItsStation(r.latest));
+    if (!placed) throw new Error("the fixture no longer has a railroad train drawn on its station to open");
     placed.marker.openPopup();
   });
   await expectState(page, ["one popup open", "popup finished opening"], "A1z measures the popup close glyph");

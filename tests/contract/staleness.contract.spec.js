@@ -118,6 +118,35 @@ function railroadOpacities(page, system) {
   );
 }
 
+/** Every railroad marker belonging to `system`, as its opacity and the age of its OWN
+ * observation on the page's clock, read in one evaluation so the two cannot straddle a
+ * tick. The age is computed here from the served values (served_at, the row's
+ * observed_at, the page's own skew offset), not by the helper under test. Null for a row
+ * with no clock of its own, which is every Metro-North row. */
+function railroadMarkers(page, system) {
+  return page.evaluate(
+    (name) => {
+      const now = Date.now() / 1000 - (minClockOffset ?? 0);
+      const servedAt = sources.railroads.servedAt;
+      return [...railroads.entries()]
+        .filter(([key]) => key.startsWith(`${name}|`))
+        .map(([, record]) => {
+          const at = record.latest.observed_at;
+          return {
+            opacity: record.marker.options.opacity ?? 1,
+            age: typeof at === "number" ? servedAt - at + Math.max(now - servedAt, 0) : null,
+          };
+        });
+    },
+    system,
+  );
+}
+
+// The margin either side of the threshold a per-marker claim leaves: the page re-dims on
+// a 100 ms animation tick and the age is read a moment after, so a marker within two
+// seconds of FEED_STALE_AFTER_S is in neither set.
+const TICK_MARGIN_S = 2;
+
 /** Opacities of every NJ Transit marker, read from the marker exactly as
  * railroadOpacities does. No system filter: NJ Transit is one system, so every
  * marker on the layer shares its freshness and a filter would suggest otherwise. */
@@ -192,9 +221,31 @@ test("C6e1. one railroad system down: its markers dim, its sibling's do not", as
       { timeout: DIM_TIMEOUT_MS },
     )
     .toBe(true);
-  const lirr = await railroadOpacities(page, "LIRR");
-  expect(lirr.length).toBeGreaterThan(0);
-  expect(lirr.every((o) => o === 1)).toBe(true);
+  //
+  // 6.3 MOVED LIRR'S HALF OF THE CONTRAST, and the reason is F01. Until the age gate a
+  // railroad marker dimmed only when its SYSTEM was stale, so "every LIRR marker is
+  // bright" was the whole contrast. Since then each marker is also dimmed by its OWN
+  // observation's age, and the LIRR this tier serves is the committed capture re-stamped
+  // by one delta per poll, so its relative ages survive: fixes from 4 s to 593 s old and
+  // placements riding predictions up to hours old, most of them past this tier's 25 s
+  // threshold on a perfectly healthy LIRR, by design. "Every LIRR marker is bright" is
+  // therefore false with MNR up or down, and the claim becomes one per marker: every LIRR
+  // marker whose own observation is fresh stays bright while MNR is down, and there are
+  // some; and, F01 against a real backend, every one whose own observation is past the
+  // threshold is dimmed although LIRR itself is current.
+  const lirr = await railroadMarkers(page, "LIRR");
+  const fresh = lirr.filter((m) => m.age != null && m.age < FEED_STALE_AFTER_S - TICK_MARGIN_S);
+  expect(fresh.length, "LIRR must still have markers whose own observation is fresh").toBeGreaterThan(0);
+  expect(
+    fresh.every((m) => m.opacity === 1),
+    "an LIRR marker whose own observation is fresh must stay live while MNR is down",
+  ).toBe(true);
+  const aged = lirr.filter((m) => m.age != null && m.age > FEED_STALE_AFTER_S + TICK_MARGIN_S);
+  expect(aged.length, "the capture's LIRR carries observations past the threshold").toBeGreaterThan(0);
+  expect(
+    aged.every((m) => m.opacity < 1),
+    "an LIRR marker whose own observation is old is dimmed inside a current LIRR",
+  ).toBe(true);
 
   // And the status line names the degraded system rather than going generically
   // red, which is the other half of the C2 granularity claim.
@@ -239,8 +290,39 @@ test("C6e3. PATH, a single-feed source, dims like any other and recovers", async
     page.evaluate(() =>
       [...pathTrainRecords.values()].map((record) => record.marker.options.opacity ?? 1),
     );
+  // 6.3 MOVED THE TWO "BRIGHT" HALVES OF THIS SPEC, for C6e1's reason in PATH's numbers.
+  // Each PATH train is dated by its own trip update (section 3.3), and the capture this
+  // tier serves (path_rt_gen_a.pb) carries trip updates 18 s to 63 s behind its header,
+  // median 38 s, which the simulator's one-delta re-stamp preserves on every poll. So at
+  // this tier's 25 s threshold most PATH markers are dimmed by their own observation on a
+  // perfectly healthy PATH, and "every PATH marker is bright" is false before anything
+  // breaks. The bright claim becomes one per marker: every PATH marker whose own
+  // observation is fresh is at full opacity, and there is at least one. Those are the
+  // trains whose trip update trails its header by about 20 s, which are fresh only in the
+  // first seconds after each page poll, so the check POLLS for such a moment rather than
+  // reading once. The DIM half is untouched: a dead PATH dims every marker, fresh or not,
+  // which is the single-feed system claim this spec exists for. The ages are computed
+  // here from the served values, not by the helper under test.
+  const pathMarkers = () =>
+    page.evaluate(() => {
+      const now = Date.now() / 1000 - (minClockOffset ?? 0);
+      const servedAt = sources.path.servedAt;
+      return [...pathTrainRecords.values()].map((record) => {
+        const at = record.latest.observed_at;
+        return {
+          opacity: record.marker.options.opacity ?? 1,
+          age: typeof at === "number" ? servedAt - at + Math.max(now - servedAt, 0) : null,
+        };
+      });
+    });
+  const freshAllBright = async () => {
+    const fresh = (await pathMarkers()).filter(
+      (m) => m.age != null && m.age < FEED_STALE_AFTER_S - TICK_MARGIN_S,
+    );
+    return fresh.length > 0 && fresh.every((m) => m.opacity === 1);
+  };
   await expect.poll(async () => (await opacities()).length, { timeout: 60_000 }).toBeGreaterThan(0);
-  expect((await opacities()).every((o) => o === 1)).toBe(true);
+  await expect.poll(freshAllBright, { timeout: DIM_TIMEOUT_MS }).toBe(true);
 
   await control(request, { key: "PATH", mode: "error" });
   // Same `[].every(...)` guard as C6e1: an empty marker set must not read as dim.
@@ -258,19 +340,12 @@ test("C6e3. PATH, a single-feed source, dims like any other and recovers", async
   // single successful fetch has to undo it. Without this half the spec would pass
   // against a frontend that dims permanently on the first failure.
   await control(request, { key: "PATH", mode: "live" });
-  // The SAME non-empty guard as the dim check above. Without it this is the one
-  // assertion in the file `[].every(...)` satisfies: a recovery that repopulates
-  // nothing -- markers swept off the map and never re-added -- would read as green,
-  // and "PATH recovers" would be reported against a page showing no PATH trains.
-  await expect
-    .poll(
-      async () => {
-        const seen = await opacities();
-        return seen.length > 0 && seen.every((o) => o === 1);
-      },
-      { timeout: DIM_TIMEOUT_MS },
-    )
-    .toBe(true);
+  // The SAME non-empty guard as the dim check above, now inside freshAllBright: a
+  // recovery that repopulates nothing -- markers swept off the map and never re-added --
+  // has no fresh marker and cannot read as green. And a frontend that dimmed permanently
+  // on the first failure leaves a fresh marker dim, which is the regression this half
+  // exists to catch.
+  await expect.poll(freshAllBright, { timeout: DIM_TIMEOUT_MS }).toBe(true);
 });
 
 test("C6e4. NJT down: its markers dim, the railroads' do not", async ({ page, request }) => {
@@ -309,11 +384,19 @@ test("C6e4. NJT down: its markers dim, the railroads' do not", async ({ page, re
       { timeout: DIM_TIMEOUT_MS },
     )
     .toBe(true);
-  for (const system of ["LIRR", "MNR"]) {
-    const railroad = await railroadOpacities(page, system);
-    expect(railroad.length, `${system} must still have markers to be bright`).toBeGreaterThan(0);
-    expect(railroad.every((o) => o === 1), `${system} must stay live while NJT is down`).toBe(true);
-  }
+  // 6.3 MOVED THE RAILROADS' HALF, for the reason C6e1 gives. Metro-North dates none of
+  // its positions, so its markers dim only with its system and every one must stay
+  // bright. LIRR's markers are dimmed by their own observations as well, many of them on
+  // a perfectly current LIRR, so LIRR's claim is per marker: every one whose own
+  // observation is fresh stays bright while NJ Transit is down, and there are some.
+  const mnr = await railroadOpacities(page, "MNR");
+  expect(mnr.length, "MNR must still have markers to be bright").toBeGreaterThan(0);
+  expect(mnr.every((o) => o === 1), "MNR must stay live while NJT is down").toBe(true);
+  const lirr = (await railroadMarkers(page, "LIRR")).filter(
+    (m) => m.age != null && m.age < FEED_STALE_AFTER_S - TICK_MARGIN_S,
+  );
+  expect(lirr.length, "LIRR must still have markers whose own observation is fresh").toBeGreaterThan(0);
+  expect(lirr.every((m) => m.opacity === 1), "LIRR must stay live while NJT is down").toBe(true);
 
   // And the status line names NJ Transit rather than going generically red, which is
   // the other half of the C2 granularity claim. MATCHED ON THE PROBLEMS CLAUSE, not

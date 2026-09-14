@@ -677,7 +677,10 @@ async def part3_dead_task(cadence: dict) -> dict:
         return TRAINS, {}, time.time() - 5.0, [], {"ACE": TRAINS}, {"ACE": {}}
 
     async def fake_fetch_railroads(client, stops):
-        return [], {}, time.time() - 5.0, []
+        # The six fetch_railroad_trains returns since contract 6.3: trains, arrivals,
+        # feed_timestamp, failed feeds, each system's header, each system's position
+        # counts. This fake returned four, which the poller's unpack refuses.
+        return [], {}, time.time() - 5.0, [], {}, {}
 
     async def fake_fetch_path(client, stops):
         return [], {}, time.time() - 5.0, 0

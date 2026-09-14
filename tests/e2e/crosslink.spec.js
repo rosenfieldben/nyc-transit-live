@@ -46,10 +46,12 @@ const popupText = (page) => page.evaluate(() => {
 });
 
 test("A3a. a railroad train parked on its station links to that station's arrivals", async ({ page }) => {
-  // The LIRR fixture train is PLACED: it carries a stop_id, which is what puts it at
-  // the station's own coordinates and therefore on top of the station dot. That
-  // stop_id is also the only station identity in the payload, and it is what the link
-  // resolves through: no distance math, no nearest-station guess.
+  // The LIRR fixture train is served `placed` with no anchors to glide from, which is
+  // what the placement decode emits on a train's first poll: it is drawn at the station
+  // its stop_id names, on top of the station dot. That stop_id is also the only station
+  // identity in the payload, and it is what the link resolves through: no distance
+  // math, no nearest-station guess. Selected by the app's own predicate
+  // (railroadAtItsStation, 6.3), so this spec cannot drift from what the app links.
   await installMocks(page);
   await open(page);
 
@@ -57,7 +59,7 @@ test("A3a. a railroad train parked on its station links to that station's arriva
   // rider does when the train is covering the station.
   const placed = await page.evaluate(() => {
     for (const [key, record] of railroads) {
-      if (record.latest.stop_id != null) return { key, stop: record.latest.stop_id, system: record.latest.system };
+      if (railroadAtItsStation(record.latest)) return { key, stop: record.latest.stop_id, system: record.latest.system };
     }
     return null;
   });
@@ -84,7 +86,7 @@ test("A3b. the cross-link works from the keyboard, and lands focus in the statio
   await open(page);
 
   const placed = await page.evaluate(() => {
-    for (const [key, record] of railroads) if (record.latest.stop_id != null) return key;
+    for (const [key, record] of railroads) if (railroadAtItsStation(record.latest)) return key;
     return null;
   });
   await page.evaluate((key) => railroads.get(key).marker.openPopup(), placed);
@@ -122,7 +124,7 @@ test("A3c. a vehicle that names no station gets no link at all", async ({ page }
   await open(page);
 
   const gps = await page.evaluate(() => {
-    for (const [key, record] of railroads) if (record.latest.stop_id == null) return key;
+    for (const [key, record] of railroads) if (record.latest.provenance === "reported") return key;
     return null;
   });
   expect(gps, "the fixture must contain a GPS railroad train").not.toBeNull();
@@ -175,7 +177,7 @@ test("A3e. focus parked on the cross-link survives a background refresh", async 
   await open(page);
 
   const placed = await page.evaluate(() => {
-    for (const [key, record] of railroads) if (record.latest.stop_id != null) return key;
+    for (const [key, record] of railroads) if (railroadAtItsStation(record.latest)) return key;
     return null;
   });
   await page.evaluate((key) => railroads.get(key).marker.openPopup(), placed);
@@ -231,7 +233,7 @@ test("A3g. the restored cross-link is the live one, even when the train has move
   await open(page);
 
   const placed = await page.evaluate(() => {
-    for (const [key, record] of railroads) if (record.latest.stop_id != null) return key;
+    for (const [key, record] of railroads) if (railroadAtItsStation(record.latest)) return key;
     return null;
   });
   await page.evaluate((key) => railroads.get(key).marker.openPopup(), placed);
@@ -272,7 +274,7 @@ test("A3f. a refresh leaves alone the controls it did not destroy", async ({ pag
   await open(page);
 
   const gps = await page.evaluate(() => {
-    for (const [key, record] of railroads) if (record.latest.stop_id == null) return key;
+    for (const [key, record] of railroads) if (record.latest.provenance === "reported") return key;
     return null;
   });
   await page.evaluate((key) => railroads.get(key).marker.openPopup(), gps);
@@ -300,4 +302,51 @@ test("A3f. a refresh leaves alone the controls it did not destroy", async ({ pag
   // ".leaflet-popup" node is still in the document, because the clock is paused and the
   // corpse never finishes fading. Two of the three obvious ways to ask report it open.
   await expectPopupState(page, { registry: "railroads", key: gps }, false);
+});
+
+test("A3h. a train drawn between stations gets no link, and gets one once it has glided onto its stop (6.3)", async ({
+  page,
+}) => {
+  // NJ TRANSIT'S LESSON, ON THE RAILROAD. Since the age gate a railroad train whose own
+  // fix is old and whose prediction is fresh is served `estimated`: placed from that
+  // prediction and glided between its previous stop and the stop it names. Its stop_id
+  // is where it is HEADING, so a link keyed on stop_id alone (isPlacedRailroad's rule,
+  // deleted) would put "Also here: Jamaica" on a train drawn between two stations, the
+  // link naming a station the vehicle is not at, which the principle at crossLinkHtml
+  // forbids. railroadAtItsStation asks whether it is DRAWN there instead.
+  const ctx = await installMocks(page);
+  ctx.overrides.railroads = (route, fixtures) => {
+    const body = fixtures.railroads();
+    body.data = body.data.map((t) =>
+      t.system === "LIRR"
+        ? {
+            ...t,
+            provenance: "estimated",
+            prev_lat: 40.69,
+            prev_lon: -73.79,
+            prev_time: fx.FROZEN_S - 60,
+            next_time: fx.FROZEN_S + 20,
+          }
+        : t,
+    );
+    return json(route, body);
+  };
+  await open(page);
+  const key = "LIRR|lirr-placed-1";
+  await page.evaluate((k) => railroads.get(k).marker.openPopup(), key);
+  await expect.poll(() => popupText(page)).toContain("estimated from a prediction");
+  // Three quarters of the way from its previous stop: not on the station its stop_id
+  // names, and so no link to it.
+  const between = await page.evaluate((k) => railroads.get(k).marker.getLatLng(), key);
+  expect(between.lat).toBeLessThan(40.7005);
+  await expect(page.locator(".popup-crosslink"), "between stations, so no link").toHaveCount(0);
+
+  // Thirty seconds on it has glided onto its stop, and the poll that re-renders the
+  // popup gives it the link, naming the station it is now drawn on.
+  await page.clock.runFor(30_000 + 1000);
+  await expect(page.locator(".popup-crosslink")).toHaveCount(1);
+  await expect(page.locator(".popup-crosslink")).toHaveAttribute("data-station-key", "LIRR|12");
+  const there = await page.evaluate((k) => railroads.get(k).marker.getLatLng(), key);
+  expect(there.lat).toBeCloseTo(40.7005, 6);
+  expect(there.lng).toBeCloseTo(-73.8095, 6);
 });

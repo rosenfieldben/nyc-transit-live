@@ -201,17 +201,6 @@ function readableInk(color, background = "#ffffff", target = 4.5) {
   return "#000000"; // black fails nothing on a light surface
 }
 
-// A railroad train placed at its next station (vs one drawn at a live GPS
-// position). stop_id is the authoritative discriminator: the placement decode
-// always emits a resolved stop_id (and stop_name), while the GPS decode
-// contractually emits null for both. Keying off stop_id (rather than the
-// time/direction anchors) keeps a no-times placement, e.g. an MNR train whose
-// stops carry no times and no direction_id, correctly classified, so the marker
-// fill, the GPS/scheduled label, and the next-stop popup line all stay consistent.
-function isPlacedRailroad(t) {
-  return t.stop_id != null;
-}
-
 /* A4 ROUND 1: WHERE A POPUP SHOULD MOVE TO GET OUT FROM UNDER THE PAGE'S CHROME.
    Pure geometry, here rather than in systems/shared.js so it can be reasoned about and
    tested without a browser, which is the same split the rest of this file exists for. The
@@ -499,6 +488,13 @@ const STALE_MARKER_OPACITY = 0.45;
 // feedTimestamp HAS THREE STATES, and the two that are not numbers mean different
 // things (see contentClock and systemLag): null is the backend saying this system has
 // no content clock at all, undefined is a payload that predates the per-system clock.
+//
+// 6.3 WIDENED IT BY ONE MORE NAME: positions, the position ladder's counts a railroad
+// block carries (models.PositionSteps). The one the rider's surfaces need is
+// `suppressed`, the trains the gate stopped drawing, and it has no other way in: the
+// client never fetches /api/status, so the status line can only say how many trains the
+// map is not showing if the envelope it already reads says so. Null on every block
+// without a ladder, on a synthesized system, and on a malformed one (positionSteps).
 function ingestSystems(body, sourceKey) {
   const raw = body == null ? null : body.systems;
   const names = raw != null && typeof raw === "object" ? Object.keys(raw) : [];
@@ -511,6 +507,7 @@ function ingestSystems(body, sourceKey) {
         retainedSince: null,
         routes: null,
         feedTimestamp: contentClock(body == null ? undefined : body.feed_timestamp),
+        positions: null,
       },
     };
   }
@@ -526,9 +523,29 @@ function ingestSystems(body, sourceKey) {
       // empty, means it does.
       routes: Array.isArray(block.routes) ? block.routes : null,
       feedTimestamp: contentClock(block.feed_timestamp),
+      positions: positionSteps(block.positions),
     };
   }
   return systems;
+}
+
+// The five counts of models.PositionSteps, in the backend's order: reported, estimated,
+// qualified, placed and suppressed (section 3.4's steps 1 to 5).
+const POSITION_STEP_KEYS = ["reported", "estimated", "qualified", "placed", "suppressed"];
+
+// A block's position counts, or null. ALL FIVE OR NONE, because this parses a payload
+// and the one count that reaches a surface raises the status line: a malformed field
+// must not put a sentence about missing trains in front of a rider, which is the same
+// direction the defensive reads above take for `ok` and fetched_at.
+function positionSteps(value) {
+  if (value == null || typeof value !== "object") return null;
+  const steps = {};
+  for (const key of POSITION_STEP_KEYS) {
+    const count = value[key];
+    if (!Number.isInteger(count) || count < 0) return null;
+    steps[key] = count;
+  }
+  return steps;
 }
 
 // A block's content clock, read into its three states. A finite number is the content
@@ -760,9 +777,35 @@ function glideClock(now, staleAt) {
 // are two facts with two ages, and one clause would hand one of them the other's.
 //
 // A system with NO content clock (Metro-North's null) is never CONTENT OLD: it has no
-// content age to be old, and its line stays exactly as quiet as it always was. Saying
-// that Metro-North dates nothing is 6.3's clause, and even that may only ride a line
-// that is already rendering, never raise one (design 3.2).
+// content age to be old, and its line stays exactly as quiet as it always was.
+//
+// 6.3 ADDS TWO MORE CLAUSES, and they are built the two opposite ways on purpose.
+//   4. WITHHELD (design Q7): "LIRR 24 trains not shown, last seen over 10m ago", for a
+//      system whose position ladder drew nothing for some of its vehicles (section 3.4's
+//      step 5): each one's own fix is older than OBS_MAX_S, and its trip has no
+//      prediction within OBS_MAX_S that can still place it. On the committed LIRR capture
+//      that is 24 trains: 20 whose trip has no prediction that recent, and 4 whose trip
+//      update is recent (27 s to 529 s old) but names no stop still ahead. So "last
+//      seen" is about the train's own position, the one observation all 24 share. It
+//      RAISES the line on its own, because a train that has left the map is the one
+//      thing no marker, popup or name can say: design 4.4 puts the count on the status
+//      line and nowhere else, and a per-marker ghost would reintroduce the falsehood
+//      the gate removed. Its own clause, never merged into another, in the grammar of
+//      "not reporting" (a count beside the system's name), and "10m" is OBS_MAX_S
+//      through humanizeAge. It speaks only while that system's last decode is what the
+//      map draws (its poll decoded, or its rows are retained): once the retention cap
+//      has taken every train the counts describe, "24 not shown" would undercount a
+//      system the STALE clause already names.
+//   5. UNDATED: "MNR position age unavailable", for a system in UNDATED_SYSTEMS, the set
+//      frontend/boards.test.js holds to the backend's RAILROAD_FRESHNESS_SYSTEMS. This one
+//      may only RIDE a line that is already rendering and never raise one (design 3.2 and
+//      Q5): Metro-North dates none of its positions on any day, so a clause that could
+//      raise the line would raise it forever, and a status line that always says
+//      something is one nobody reads. So it is appended last, after every other clause,
+//      and only when there is one. It names the system the way the line already does
+//      ("MNR", the feed code the other clauses use), which is what 3.2 writes.
+// Neither enters `populated` or `whole`: they are about the ladder and the provider, not
+// about a poll's age, so the whole-source wording above is decided exactly as before.
 // `now` is injected for testability (defaults to the wall clock).
 function staleness(source, now = Date.now() / 1000) {
   const systems = sourceSystems(source);
@@ -770,9 +813,11 @@ function staleness(source, now = Date.now() / 1000) {
   const stale = [];
   const content = [];
   const blind = [];
+  const withheld = [];
   const ages = {};
   for (const name of names) {
     const system = systems[name];
+    if (withheldTrains(system) > 0) withheld.push(name);
     const poll = pollAge(system.fetchedAt, source.servedAt, now);
     if (poll == null) {
       // Never decoded (null age) AND reported down: no age to print, but real.
@@ -789,7 +834,7 @@ function staleness(source, now = Date.now() / 1000) {
     }
   }
   const populated = [stale, content, blind].filter((group) => group.length).length;
-  if (!populated) return null;
+  if (!populated && !withheld.length) return null;
   const noun = source.systemNoun ? ` ${source.systemNoun}` : "";
   // Naming every system of a source is just naming the source, so fall back to the
   // pre-C2 wording; that is also what keeps a single-feed source reading unchanged.
@@ -808,7 +853,26 @@ function staleness(source, now = Date.now() / 1000) {
   if (stale.length) clauses.push(`${subject(stale)}as of ${worst(stale)} ago`);
   if (content.length) clauses.push(`${subject(content)}as of ${worst(content)} ago`);
   if (blind.length) clauses.push(`${subject(blind)}not reporting`);
+  for (const name of withheld) clauses.push(withheldClause(name, withheldTrains(systems[name])));
+  // Riding, never raising: every clause above has already decided that this line renders.
+  for (const name of names) if (UNDATED_SYSTEMS.has(name)) clauses.push(`${name} position age unavailable`);
   return `${source.label}: ${clauses.join("; ")}`;
+}
+
+// How many of a system's trains the position ladder drew nothing for, as far as the map
+// can still be told: the served `suppressed` count while the decode it describes is the
+// one on the map (the system decoded, or its rows are being retained), and 0 otherwise.
+function withheldTrains(system) {
+  const steps = system ? system.positions : null;
+  if (!steps || !(steps.suppressed > 0)) return 0;
+  return system.ok || system.retainedSince != null ? steps.suppressed : 0;
+}
+
+// "LIRR 24 trains not shown, last seen over 10m ago": the one sentence that says a train
+// has left the map. OBS_MAX_S is the backend's, mirrored, and humanizeAge words it.
+function withheldClause(system, count) {
+  const trains = count === 1 ? "train" : "trains";
+  return `${system} ${count} ${trains} not shown, last seen over ${humanizeAge(OBS_MAX_S)} ago`;
 }
 
 // A compact age string: seconds under two minutes, whole minutes above, and hours with
@@ -983,10 +1047,10 @@ function qualifierHtml(qualifier) {
 // fifteen hours old reads as a live train. Section 3.4 of the contract orders what the
 // backend draws instead (reported, estimated, reported but qualified, placed, or
 // nothing), and the helpers below are what every vehicle surface reads to say which one
-// a rider is looking at. INERT AS COMMITTED: no surface calls them yet, because the
-// words, the per-observation dimming and the glide freeze land in the same commit as the
-// gate that makes them true (design 6.3), the pairing retention and its stale rendering
-// keep (backend/cache.py, FEED_RETENTION_ENABLED).
+// a rider is looking at. They landed inert one commit before the gate and are wired in
+// the gate's own commit, because the words, the per-observation dimming and the glide
+// freeze have to arrive with the gate that makes them true (design 6.3), the pairing
+// retention and its stale rendering keep (backend/cache.py, FEED_RETENTION_ENABLED).
 
 // The backend's OBS_MAX_S (backend/cache.py): past it the ladder draws a vehicle only if
 // a prediction still places the train, and otherwise counts it. MIRRORED RATHER THAN
@@ -1050,40 +1114,233 @@ function observationStaleAt(row) {
 // `gated` reads it off UNDATED_SYSTEMS by `system`, and an unknown system is gated, the
 // pessimistic default boardFreshness takes.
 //
-// Returns {kind, words, compact}, the kind one of "", "aged", "unknown", "estimated",
-// "placed" and "retained". As with arrivalQualifier, the kind is what the row IS and
-// holds still while its age counts on, so a live region that compares kinds hears a
-// train change state and never its clock tick. `compact` is the same answer in the
-// railroad popup's shorter form, and differs from `words` only for a placed row: that
-// popup has always said "scheduled (no GPS)", and the memo's word table (D9) keeps it.
-// Both forms are built here from the same pieces, so no surface composes its own
-// phrasing and the two cannot disagree about an age.
+// Returns {kind, words, compact, spoken, age}, the kind one of "", "aged", "unknown",
+// "estimated", "placed" and "retained". As with arrivalQualifier, the kind is what the
+// row IS and holds still while its age counts on, so a live region that compares kinds
+// hears a train change state and never its clock tick. The three strings are ONE answer
+// in the three shapes a surface prints, all built here from the same pieces, so no
+// surface composes its own phrasing and none can disagree about an age:
+//   words    every popup's line (design 3.2's vocabulary)
+//   compact  the railroad popup's shorter form: "scheduled (no GPS)" for a placed row,
+//            which that popup has always said and memo D9 keeps; otherwise the words
+//   spoken   an accessible name's clause: "scheduled position, no GPS" for a placed row,
+//            the form every marker name has shipped with (a comma, no parentheses,
+//            because a screen reader reads a parenthesis as punctuation or as nothing);
+//            otherwise the words
+// `age` is the age those words STATE, or null when they state none (a fresh position,
+// an undated one, a row with no provenance): what a popup reads to decide whether its
+// system's age line would only say the same thing twice (vehicleStaleLine).
 function positionQualifier(row, board) {
   const r = row || {};
   const b = board || {};
   const gated = typeof b.gated === "boolean" ? b.gated : !UNDATED_SYSTEMS.has(b.system);
   const age = observationAge(r, b.servedAt, b.now);
-  const aged = staleAge(age) ? `, as of ${humanizeAge(age)} ago` : "";
+  const stale = staleAge(age);
+  const aged = stale ? `, as of ${humanizeAge(age)} ago` : "";
   const undated = age == null && gated ? ", age unknown" : "";
-  const answer = (kind, words, compact = words) => ({ kind, words, compact });
+  const answer = (kind, words, { compact = words, spoken = words, stated = stale ? age : null } = {}) => ({
+    kind,
+    words,
+    compact,
+    spoken,
+    age: stated,
+  });
   if (r.provenance === "reported") {
     if (age == null && gated) return answer("unknown", "live GPS, age unknown");
-    return aged ? answer("aged", `live GPS${aged}`) : answer("", "live GPS");
+    return stale ? answer("aged", `live GPS${aged}`) : answer("", "live GPS");
   }
   if (r.provenance === "estimated") {
     return answer("estimated", `estimated from a prediction${aged}${undated}`);
   }
   if (r.provenance === "placed") {
-    return answer("placed", `scheduled position (no GPS)${aged}${undated}`, `scheduled (no GPS)${aged}${undated}`);
+    return answer("placed", `scheduled position (no GPS)${aged}${undated}`, {
+      compact: `scheduled (no GPS)${aged}${undated}`,
+      spoken: `scheduled position, no GPS${aged}${undated}`,
+    });
   }
   if (r.provenance === "retained") {
     const held = age ?? b.pollAge;
-    return answer(
-      "retained",
-      held == null ? "showing last known" : `showing last known, as of ${humanizeAge(Math.max(held, 0))} ago`,
-    );
+    const shown = held == null ? null : Math.max(held, 0);
+    return answer("retained", shown == null ? "showing last known" : `showing last known, as of ${humanizeAge(shown)} ago`, {
+      stated: shown,
+    });
   }
   return answer("unknown", "age unknown");
+}
+
+// ---- 6.3: every vehicle surface, rendered from the served position ----
+//
+// WIRED, where commit 1 left the helpers above inert: from here on every vehicle marker,
+// popup and name on the map reads what the backend SERVED about its position (provenance
+// and observed_at) through positionQualifier, and nothing reads the shape of the fields.
+// The helpers below are the pure half, node-testable; systems/shared.js holds the half
+// that needs the page (the envelope descriptors and the corrected clock).
+
+// THE BOARD A VEHICLE'S WORDS ARE READ AGAINST, the position form of boardFreshness: the
+// corrected clock, the envelope's served_at, whether the row's system dates its positions
+// (UNDATED_SYSTEMS, never a system's name), and the served age of the poll behind it,
+// which positionQualifier reads only for a retained row with no clock of its own (so a
+// retained Metro-North marker states its age exactly as its board row does). `names` are
+// the systems the row belongs to: a railroad train's own system, a subway train's feed
+// groups, the one synthesized system of a single-feed source. The worst of their poll
+// ages answers; a row whose systems the envelope does not name takes the worst of the
+// whole source, the pessimistic direction systemFreshnessOf takes for the same miss.
+function positionBoard(source, names, now) {
+  const src = source || {};
+  const systems = sourceSystems(src);
+  const wanted = (names || []).filter((name) => name != null);
+  const own = wanted.filter((name) => systems[name]);
+  const blocks = own.length ? own.map((name) => systems[name]) : Object.values(systems);
+  let pollAge = null;
+  for (const block of blocks) {
+    const age = servedAge(block.fetchedAt, src.servedAt, now);
+    if (age != null && (pollAge == null || age > pollAge)) pollAge = age;
+  }
+  return {
+    now,
+    servedAt: src.servedAt ?? null,
+    system: wanted[0] ?? null,
+    gated: !wanted.some((name) => UNDATED_SYSTEMS.has(name)),
+    pollAge,
+  };
+}
+
+// THE AGE A VEHICLE MARKER IS DIMMED BY: the larger of its system's age and its own
+// observation's (memo D9), so a marker dims when EITHER is stale. Section 3.2's negative
+// half is the reason: "a surface that cannot show the word must not show the
+// observation", and a dot with no popup open cannot say "as of 6m ago", so before 6.3 an
+// eight minute old LIRR fix inside a healthy feed sat at full opacity beside the live
+// ones, which is F01 on the map itself. An unknown observation age dims nothing on its
+// own, because positionQualifier says it in words instead; with neither age a marker has
+// nothing to be dimmed by, exactly as before.
+function markerAge(systemAge, observationAge) {
+  if (observationAge == null) return systemAge ?? null;
+  if (systemAge == null) return observationAge;
+  return Math.max(systemAge, observationAge);
+}
+
+// THE INSTANT A MARKER'S GLIDE MUST STOP: the earlier of its system's deadline
+// (systemStaleAts) and its own observation's (observationStaleAt), so no marker
+// dead-reckons from an old fix or an old prediction however healthy its system is. A
+// row with no clock keeps its system's deadline alone. glideClock pins the marker there.
+function glideDeadline(systemStaleAt, row) {
+  const own = observationStaleAt(row);
+  if (own == null) return systemStaleAt ?? null;
+  if (systemStaleAt == null) return own;
+  return Math.min(systemStaleAt, own);
+}
+
+// A POSITION DRAWN FROM A PREDICTION: `placed` at the stop a trip update names, or
+// `estimated` between two of them (section 3.4's steps 4 and 2). These are the rows a
+// client glides along their anchors; a `reported` position is drawn where it was served
+// and snaps there, because gliding a real fix would move a measurement.
+//
+// A `retained` ROW IS DRAWN AS IT WAS DRAWN BEFORE RETENTION, which `before` carries: the
+// provenance the page last saw this train served with, remembered by its caller. Retention
+// stamps `retained` over every row's provenance (design Q3) and freezes the train where it
+// was (C2), so the provenance it wore until then is the only record of how it was drawn.
+// Reading `retained` as a fix instead, as the first cut of 6.3 did (memo D9's "retained
+// filled and snap", which holds only for a row that was reported), sent every placed or
+// estimated railroad train in an outage to its NEXT stop, the coordinates its row carries,
+// for the whole retention window: the dead reckoning C2 exists to prevent. A retained row
+// the page never saw otherwise (loaded mid-outage) is read as a prediction, which is
+// right about where to draw it whichever it was: a reported row carries no anchors and no
+// stop (the poller's carry_forward_prev never gives one either), so trainLatLng draws it
+// at its served position exactly as a snap would, while a placed one holds still at its
+// frozen glide.
+function drawnFromPrediction(row, before = null) {
+  const provenance = row ? row.provenance : null;
+  if (provenance === "retained") return before !== "reported";
+  return provenance === "placed" || provenance === "estimated";
+}
+
+// THE RAILROAD GLYPH, from the served provenance. Filled is "a position this train
+// reported": `reported`, and a `retained` row whose earlier provenance (`before`, as
+// drawnFromPrediction reads it) was `reported`. Hollow is everything else: placed and
+// estimated, which are schedule-derived; a retained row that was one of those, which
+// keeps the glyph it was drawn with; a retained row whose history the page never saw,
+// which is read pessimistically (design 3.1), because the filled square is the one glyph
+// that claims GPS; and a row whose provenance is missing or unknown, which claims nothing.
+// isPlacedRailroad answered this from stop_id, the shape of the fields, and is deleted
+// rather than fixed (design 4.3): an estimated row carries a stop_id exactly as a placed
+// one does, and a future GPS row that named its stop would have been drawn as a schedule.
+function railroadHollow(row, before = null) {
+  const provenance = row ? row.provenance : null;
+  if (provenance === "retained") return before !== "reported";
+  return provenance !== "reported";
+}
+
+// IS THIS RAILROAD TRAIN DRAWN ON ITS OWN STATION, where the station's dot is under it?
+// The cross-link's gate (the principle is at crossLinkHtml in systems/shared.js), asked
+// the way njtAtItsStation asks it for NJ Transit, because the same thing is true here
+// now: a `placed` or `estimated` train names the stop it is HEADING for and glides
+// toward it, so a stop_id alone put "Also here: Jamaica" on a train drawn between
+// stations. That is the link naming a station the vehicle is not at, which the principle
+// forbids; NJ Transit's 15c review measured one 8.7 km away. So a train is at its station
+// when it names one AND is drawn at its own coordinates, which for a placement are that
+// station's: it snaps (reported, unknown, and a retained fix), or it has no anchors to
+// glide from (trainLatLng's own fallback, glideAnchored), or its glide has already
+// reached the stop (`at`, the clock it is glided by, is at or past next_time, where
+// trainLatLng's fraction is 1). Without `at` the last case is not assumed. `before` is
+// drawnFromPrediction's: a retained placement is still gliding, frozen, and is at its
+// station only where that frozen glide put it.
+function railroadAtItsStation(row, at = null, before = null) {
+  const t = row || {};
+  if (t.stop_id == null) return false;
+  if (!drawnFromPrediction(t, before) || !glideAnchored(t)) return true;
+  return typeof at === "number" && at >= t.next_time;
+}
+
+// WHY A RAILROAD TRAIN LEFT THE MAP, when the served data can say: "withheld" for a fix
+// the position ladder stopped drawing for its age (section 3.4's step 5), else null. The
+// vanishing-focus rescue speaks it (vanishingFocusMessage), because "left the feed" is
+// false of a train the feed still carries and the status line is at that moment counting
+// as "not shown, last seen over 10m ago": the page must not say one thing and speak
+// another. The client cannot see which trips the count holds, so this asks of the
+// departing row only what makes the rescue's words TRUE: it was the train's own fix
+// (`reported`), on an age-gated system, now older than OBS_MAX_S at the envelope that
+// dropped it (servedAge from that envelope's served_at), in a system whose block counts
+// trains withheld (withheldTrains). A placed or estimated row is dated by its prediction,
+// not its fix, so it keeps the general sentence.
+function withheldFix(row, block, servedAt, now) {
+  if (!row || row.provenance !== "reported" || UNDATED_SYSTEMS.has(row.system)) return null;
+  if (!(withheldTrains(block) > 0)) return null;
+  const age = observationAge(row, servedAt, now);
+  return age != null && age > OBS_MAX_S ? "withheld" : null;
+}
+
+// The popup line a position's words go on, or nothing for a fresh reported position:
+// silence means current on every surface that has never said "live GPS" (memo D9), and
+// the railroad popup, which always has, prints its compact form itself.
+function positionLineHtml(position) {
+  return position && position.kind ? `<br><span class="popup-sub">${esc(position.words)}</span>` : "";
+}
+
+// A position's clause in a marker's accessible name, under the same rule: its spoken
+// form, or nothing where the popup says nothing. The A2 rule is that a name says what its
+// popup renders, and this is the same answer the popup's line prints, said aloud.
+function positionClause(position) {
+  return position && position.kind ? position.spoken : null;
+}
+
+// A VEHICLE POPUP'S SYSTEM AGE LINE, which speaks only for what the position's words
+// cannot: the rule boardSystemLine keeps for a station board, one row at a time. A row
+// whose words already state an age at least as old as its system's has said it, and a
+// second line would say it twice, or, since an observation's age and a system's differ
+// by the provider's lag, say two ages about one train. A row whose words state no age
+// (Metro-North's undated positions, a fresh one) keeps the line exactly as C2 drew it.
+function vehicleStaleLine(systemAge, position) {
+  const said = position ? position.age : null;
+  if (said != null && (systemAge == null || said >= systemAge)) return "";
+  return stalePopupLine(systemAge);
+}
+
+// ONE WRITE PER RENDER, AS ONE STRING (memo D11). The page's live region is atomic and
+// polite, so two writes before a screen reader reads it are one sentence lost: the second
+// replaces the first. systems/shared.js holds a poll's announcements until its render
+// ends and speaks them through this, in the order they happened.
+function composeAnnouncements(texts) {
+  return (texts || []).filter((text) => typeof text === "string" && text.trim()).join(" ");
 }
 
 // Decide what a successful-but-EMPTY poll should do. Keeping the last-known
@@ -1214,12 +1471,19 @@ function computeRouteSlice(train, geom, { maxSlice = ROUTE_MAX_SLICE, acceptDist
 // line. `now` is skew-corrected epoch seconds. `state` carries the monotonic-f
 // clamp across calls: f may not decrease within a segment (so a growing next_time
 // on a dwelling train can't drag the marker backward); it resets per segment.
+// CAN THIS TRAIN BE INTERPOLATED AT ALL: a previous anchor, both times, and a segment
+// that runs forward in time. trainLatLng's own guard, named so railroadAtItsStation asks
+// exactly the question the glide answers: a train that cannot be interpolated is drawn
+// at its own coordinates, which for a placement are its station's.
+function glideAnchored(train) {
+  const t = train || {};
+  return t.prev_lat != null && t.prev_time != null && t.next_time != null && t.next_time > t.prev_time;
+}
+
 function trainLatLng(train, now, state = {}) {
   const { prev_lat, prev_lon, prev_time, next_time, latitude, longitude } = train;
   // Unusable timing: sit at the static next-station position (v1 behavior).
-  if (prev_lat == null || prev_time == null || next_time == null || next_time <= prev_time) {
-    return [latitude, longitude];
-  }
+  if (!glideAnchored(train)) return [latitude, longitude];
   const segKey = `${prev_time}|${train.stop_id}`;
   if (state.segKey !== segKey) {
     state.segKey = segKey;
@@ -1444,14 +1708,17 @@ function formatPathHead(routeId, name) {
 // the subway train popup: no trip id line, because PATH bridge trip ids are
 // unstable across upstream refreshes and display-poor (the API contract says
 // clients never show or key on them), and no alerts block, because PATH
-// publishes no alerts feed. Every feed-derived string is escaped.
-function pathTrainPopupHtml(train, name, color) {
+// publishes no alerts feed. Every feed-derived string is escaped. `position` is the
+// train's positionQualifier answer (6.3): PATH serves every train `placed`, so the line
+// reads "scheduled position (no GPS)", and its age once its own trip update is past
+// OBS_FRESH_S; before 6.3 the line was a constant that could not say either.
+function pathTrainPopupHtml(train, name, color, position = null) {
   return (
     `<b style="color:${readableInk(color)}">${esc(formatPathHead(train.route_id, name))}</b>` +
     ` <span class="popup-sub">PATH</span>` +
     (train.stop_name ? `<br>Next stop: ${esc(train.stop_name)}` : "") +
     (train.direction ? `<br>${esc(train.direction)}` : "") +
-    `<br><span class="popup-sub">scheduled position (no GPS)</span>`
+    positionLineHtml(position)
   );
 }
 
@@ -1594,8 +1861,10 @@ function ferrySpeedKnots(status, speedMs) {
 // FUNCTION: route-scoped ferry alerts are shown, but the caller (ferryBoatPopup)
 // prepends them via routeAlertsBlock so this stays a pure HTML builder, exactly as
 // the subway/bus popup HTML helpers keep their route-alert prepend in the caller.
-// Every feed-derived string is escaped.
-function ferryBoatPopupHtml(boat, name, color) {
+// Every feed-derived string is escaped. `position` is the boat's positionQualifier
+// answer (6.3): a fresh fix adds nothing, since the legend already says a boat is GPS,
+// and one past OBS_FRESH_S adds "live GPS, as of 2m ago" (positionLineHtml).
+function ferryBoatPopupHtml(boat, name, color, position = null) {
   const routeText = name || "Unassigned";
   const status = ferryStatusText(boat.status);
   const speed = ferrySpeedKnots(boat.status, boat.speed);
@@ -1604,7 +1873,8 @@ function ferryBoatPopupHtml(boat, name, color) {
     ` <span class="popup-sub">NYC Ferry</span>` +
     (boat.label ? `<br>Boat ${esc(boat.label)}` : "") +
     (status ? `<br>${esc(status)}` : "") +
-    (speed ? `<br>${esc(speed)}` : "")
+    (speed ? `<br>${esc(speed)}` : "") +
+    positionLineHtml(position)
   );
 }
 
@@ -1709,10 +1979,11 @@ function njtRouteName(routeId, table) {
 // (a link naming a station the train is NOT at is the failure shared.js's own
 // principle comment forbids) and the negation of what the glide needs.
 //
-// Read off prev_lat rather than off `status`, for the reason isPlacedRailroad reads
-// stop_id rather than the time anchors: the coordinates and the anchors are emitted
-// by the same branch, while `status` is a label beside them that a later decoder
-// change could reword.
+// Read off prev_lat rather than off `status`: the coordinates and the anchors are
+// emitted by the same branch, while `status` is a label beside them that a later
+// decoder change could reword. railroadAtItsStation asks the railroad the same
+// question and adds the one case this decoder never produces, a glide that has
+// already reached its stop.
 function njtAtItsStation(train) {
   const t = train || {};
   return t.prev_lat == null && t.stop_id != null;
@@ -1809,18 +2080,21 @@ function njtRouteTables(routes, cumLengths = polylineCumLengths) {
 // route table has none) and `color` a css colour, both resolved by the caller
 // through the two fallbacks above so this stays pure.
 //
-// EVERY NJT TRAIN SAYS "scheduled position, no GPS", unconditionally, where the
-// railroad popup says it only for its placed trains. That is not a copy of the
-// railroad line with the branch left in: NJ Transit's vehicle positions feed is
-// deliberately never fetched (the numbers are at the poller registry in
-// pollers.py), so every position on this layer is computed from the TripUpdates
-// times against 15a's stop coordinates. There is no GPS variant to switch on.
+// EVERY NJT TRAIN SAYS HOW ITS POSITION WAS DERIVED, and none of them says GPS: NJ
+// Transit's vehicle positions feed is deliberately never fetched (the numbers are at
+// the poller registry in pollers.py), so every position on this layer is computed
+// from the TripUpdates times against 15a's stop coordinates. What 6.3 adds is WHICH
+// computation, read from the served provenance through `position` (positionQualifier):
+// a train at or approaching a stop is `placed` there, "scheduled position (no GPS)",
+// and one feeds/njt.py case 3 interpolated between two stops is `estimated`, "estimated
+// from a prediction". Before 6.3 this line was a constant and called all 60 in-transit
+// trains of the committed capture scheduled positions.
 //
 // The delay line is printed only when the feed carries one AND it is not zero: a
 // train running to schedule is the unremarkable case and "0 min late" is noise.
 // Sign is respected, because NJ Transit does publish negative delays (running
 // early) and rendering one as "late" would be a lie about the direction.
-function njtTrainPopupHtml(train, name, color) {
+function njtTrainPopupHtml(train, name, color, position = null) {
   const t = train || {};
   return (
     `<b style="color:${readableInk(color)}">${esc(formatNjtHead(t.route_id, name))}</b>` +
@@ -1829,7 +2103,7 @@ function njtTrainPopupHtml(train, name, color) {
     (t.headsign ? `<br>To ${esc(t.headsign)}` : "") +
     (t.stop_name ? `<br>Next stop: ${esc(t.stop_name)}` : "") +
     njtDelayLine(t.delay) +
-    `<br><span class="popup-sub">scheduled position (no GPS)</span>`
+    positionLineHtml(position)
   );
 }
 
@@ -1867,8 +2141,9 @@ function njtStationName(station) {
 
 // "Morris & Essex Line, NJ Transit, train 6633, to Dover, next stop Summit, 4 min
 // late, scheduled position, no GPS". The A2 accessible name, built from the same
-// fallbacks and the same delay wording the popup uses.
-function njtTrainName(train, routeName = null) {
+// fallbacks, the same delay wording and (6.3) the same position answer the popup uses,
+// so an in-transit train is "estimated from a prediction" in both.
+function njtTrainName(train, routeName = null, position = null) {
   const t = train || {};
   return joinName([
     formatNjtHead(t.route_id, routeName),
@@ -1877,7 +2152,7 @@ function njtTrainName(train, routeName = null) {
     t.headsign ? `to ${t.headsign}` : null,
     t.stop_name ? `next stop ${t.stop_name}` : null,
     njtDelayText(t.delay) || null,
-    "scheduled position, no GPS",
+    positionClause(position),
   ]);
 }
 
@@ -2743,10 +3018,17 @@ function announcementWorthy(prev, next) {
 // person would say. The rule for every builder below: name the vehicle, say where it
 // is going or what it is doing, and stop. No trip ids, no coordinates, no counts.
 //
-// NOTHING HERE READS THE CLOCK OR THE FRESHNESS INDEX. A stale marker is already
-// dimmed and its popup already carries the age line; folding "as of 4m ago" into the
-// name would make every label change on a timer, which is the announcement problem
-// A1 solved and has no business coming back through the marker layer.
+// NOTHING HERE READS THE CLOCK OR THE FRESHNESS INDEX. A stale SYSTEM's marker is
+// already dimmed and its popup already carries the age line, and folding a system's
+// "as of 4m ago" into the name would make every label change on a timer, which is the
+// announcement problem A1 solved and has no business coming back through the marker
+// layer. 6.3 ADDS ONE CLAUSE THAT IS HANDED IN, NOT READ: `position`, the answer
+// positionQualifier gave for the row's OWN observation, whose spoken form says how the
+// position was obtained and, once that observation is past OBS_FRESH_S, how old it is
+// ("live GPS, as of 5m ago"). Section 3.2 says a marker must carry that word, and the
+// name is the marker a screen reader reaches. It is written only when a poll re-applies
+// the name, never by a timer, and a marker is not a live region, so it announces
+// nothing; and its words are the popup's own, said aloud, which is the A2 rule.
 
 // Join the parts of a name, dropping the empty ones, so a missing field leaves no
 // double comma and no dangling "to".
@@ -2754,13 +3036,15 @@ function joinName(parts) {
   return parts.filter((part) => part != null && part !== "").join(", ");
 }
 
-// "1 train, next stop Times Sq-42 St, Northbound". route_id is the same bullet the
-// icon shows; an unknown route says so rather than reading the literal "?" glyph.
-function subwayTrainName(train) {
+// "1 train, next stop Times Sq-42 St, Northbound, scheduled position, no GPS". route_id
+// is the same bullet the icon shows; an unknown route says so rather than reading the
+// literal "?" glyph. Every subway train is placed from its trip update, and since 6.3 the
+// name says so, as the popup does.
+function subwayTrainName(train, position = null) {
   const t = train || {};
   const route = t.route_id ? `${t.route_id} train` : "Subway train";
   const stop = t.stop_name || t.stop_id;
-  return joinName([route, stop ? `next stop ${stop}` : null, t.direction || null]);
+  return joinName([route, stop ? `next stop ${stop}` : null, t.direction || null, positionClause(position)]);
 }
 
 // "MNR" is what the feed calls it and what the popup prints; "Metro-North" is what a
@@ -2774,39 +3058,46 @@ function railroadSystemLabel(system) {
 // GPS". Built from the same FIELDS as the popup head, but NOT from formatRailroadHead
 // itself: that helper joins with a middot, which is a visual separator doing a job
 // that punctuation cannot do in speech (a screen reader reads it as noise, or as the
-// words "middle dot"). Same facts, spoken shape. The GPS-versus-scheduled clause is
-// here for the same reason it is in the popup: it tells a rider how much to trust the
-// position they are being told about.
-function railroadTrainName(train, routeName = null) {
+// words "middle dot"). Same facts, spoken shape. The position clause is here for the
+// same reason it is in the popup: it tells a rider how much to trust the position they
+// are being told about. It is `position.spoken`, the popup's compact line said aloud,
+// and unlike every other system's name it is said for EVERY position, "live GPS"
+// included, because the railroad popup has always said it. The next stop is said when
+// the row names one, exactly when the popup prints it: a train drawn from a prediction
+// names the stop it is at or heading for, and a GPS fix names none.
+function railroadTrainName(train, routeName = null, position = null) {
   const t = train || {};
   const system = railroadSystemLabel(t.system);
   const head = routeName ? `${system} ${routeName}` : t.route_id ? `${system} route ${t.route_id}` : system;
-  const placed = isPlacedRailroad(t);
   return joinName([
     head,
     t.train_num ? `train ${t.train_num}` : null,
-    placed && t.stop_name ? `next stop ${t.stop_name}` : null,
+    t.stop_name ? `next stop ${t.stop_name}` : null,
     t.direction || null,
-    placed ? "scheduled position, no GPS" : "live GPS",
+    position ? position.spoken : null,
   ]);
 }
 
-// "Newark - World Trade Center, PATH, next stop Grove St, to Newark". PATH trains are
-// always scheduled positions, which the popup states and the name repeats.
-function pathTrainName(train, routeName = null) {
+// "Newark - World Trade Center, PATH, next stop Grove St, to Newark, scheduled position,
+// no GPS". PATH serves every train `placed`, which the popup states and the name
+// repeats, from the served provenance rather than as a constant, so a train whose own
+// trip update is old says so in both.
+function pathTrainName(train, routeName = null, position = null) {
   const t = train || {};
   return joinName([
     formatPathHead(t.route_id, routeName),
     "PATH",
     t.stop_name ? `next stop ${t.stop_name}` : null,
     t.direction || null,
-    "scheduled position, no GPS",
+    positionClause(position),
   ]);
 }
 
 // "East River, NYC Ferry, boat H201, at dock". ferryStatusText is the popup's own
-// wording. The boat label is the rider-visible hull name, not the feed's vehicle id.
-function ferryBoatName(boat, routeName = null) {
+// wording. The boat label is the rider-visible hull name, not the feed's vehicle id. A
+// fresh fix adds nothing, and one past OBS_FRESH_S adds "live GPS, as of 2m ago", as the
+// popup does.
+function ferryBoatName(boat, routeName = null, position = null) {
   const b = boat || {};
   // ferryStatusText returns null for a status the feed did not give or we do not
   // recognise, and the popup omits its line entirely in that case. The name does the
@@ -2818,16 +3109,18 @@ function ferryBoatName(boat, routeName = null) {
     "NYC Ferry",
     b.label ? `boat ${b.label}` : null,
     status ? status.toLowerCase() : null,
+    positionClause(position),
   ]);
 }
 
 // "M15 bus, heading east" or "M15 bus, heading unknown". The bearing is spoken as a
 // COMPASS POINT, not as degrees: the marker's whole visual job is the arrow, and "142
-// degrees" is a number a rider has to convert while standing at a stop.
-function busName(bus) {
+// degrees" is a number a rider has to convert while standing at a stop. A bus's own old
+// fix adds its age, as the popup does.
+function busName(bus, position = null) {
   const b = bus || {};
   const route = b.route_id ? `${b.route_id} bus` : "Bus";
-  return joinName([route, `heading ${compassPoint(b.bearing)}`]);
+  return joinName([route, `heading ${compassPoint(b.bearing)}`, positionClause(position)]);
 }
 
 const COMPASS_POINTS = ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"];
@@ -3102,11 +3395,11 @@ function watchMotionPreference(onChange, mql = null) {
 
    Kept pure and here so node can test it without a DOM: the caller passes the subtree and
    the currently focused element, and gets back the decision plus the wording. */
-function vanishingFocusPlan(subtree, active, { label = null, kind = "vehicle" } = {}) {
+function vanishingFocusPlan(subtree, active, { label = null, kind = "vehicle", reason = null } = {}) {
   if (!subtree || !active) return { rescue: false, message: null };
   const inside = subtree === active || (typeof subtree.contains === "function" && subtree.contains(active));
   if (!inside) return { rescue: false, message: null };
-  return { rescue: true, message: vanishingFocusMessage(kind, label) };
+  return { rescue: true, message: vanishingFocusMessage(kind, label, reason) };
 }
 
 /* The wording. The decisions block gave "The train you were following left the feed" and
@@ -3118,13 +3411,21 @@ function vanishingFocusPlan(subtree, active, { label = null, kind = "vehicle" } 
 
    Both sentences name where focus went. That is not decoration: a rider who was reading a
    popup and is silently moved somewhere else has lost their place, and "focus moved to
-   the map" is the one piece of orientation that makes the move recoverable. */
-function vanishingFocusMessage(kind, label) {
+   the map" is the one piece of orientation that makes the move recoverable.
+
+   6.3 ADDS ONE REASON, "withheld" (withheldFix): a railroad fix the position ladder
+   stopped drawing for its age is still in the feed, so "left the feed" would be false of
+   it while the status line counts it as not shown. The sentence borrows the status line's
+   account of the same train ("shown", and "last seen over 10m ago" with OBS_MAX_S through
+   humanizeAge), so the two surfaces cannot word one fact two ways. */
+function vanishingFocusMessage(kind, label, reason = null) {
   if (kind === "alerts") return "Alerts cleared. Focus moved to the map.";
   const lead = typeof label === "string" && label.trim() ? label.split(",")[0].trim() : null;
-  return lead
-    ? `The ${lead} you were following left the feed. Focus moved to the map.`
-    : "The vehicle you were following left the feed. Focus moved to the map.";
+  const subject = lead ? `The ${lead} you were following` : "The vehicle you were following";
+  if (reason === "withheld") {
+    return `${subject} is no longer shown, last seen over ${humanizeAge(OBS_MAX_S)} ago. Focus moved to the map.`;
+  }
+  return `${subject} left the feed. Focus moved to the map.`;
 }
 
 if (typeof module !== "undefined" && module.exports) {
@@ -3133,7 +3434,7 @@ if (typeof module !== "undefined" && module.exports) {
     vanishingFocusMessage,
     esc, routeColor, lineColor, staleness, emptyFeedDecision, noteClockOffset,
     formatCountdown, trainLatLng, polylineCumLengths, pointAtArcLength, projectOntoRoute,
-    computeRouteSlice, railroadColor, isPlacedRailroad, orderedRailroadBuckets,
+    computeRouteSlice, railroadColor, orderedRailroadBuckets,
     railroadArrivalsHtml, formatRailroadHead, ROUTE_ACCEPT_DIST, ROUTE_MAX_SLICE,
     indexAlerts, matchStationAlerts, matchRouteAlerts, bannerAlerts, alertsBlockHtml,
     hashString, bannerRenderKey,
@@ -3150,8 +3451,11 @@ if (typeof module !== "undefined" && module.exports) {
     // 6.2: the boards, each row qualified by its own age.
     UNDATED_SYSTEMS, boardSystem, servedAge, boardFreshness, arrivalQualifier,
     boardSystemLine, boardLineHtml, qualifierHtml,
-    // 6.3: a vehicle's position, qualified by its own observation (inert until the gate).
+    // 6.3: a vehicle's position, qualified by its own observation, and its rendering.
     OBS_MAX_S, observationAge, observationStaleAt, positionQualifier,
+    POSITION_STEP_KEYS, positionSteps, positionBoard, markerAge, glideDeadline, glideAnchored,
+    drawnFromPrediction, railroadHollow, railroadAtItsStation, withheldFix, positionLineHtml, positionClause,
+    vehicleStaleLine, composeAnnouncements, withheldTrains, withheldClause,
     thresholdOverrides, CONTRACT_FLAG_PARAM,
     stalePopupLine, STALE_MARKER_OPACITY, FERRY_DOCKED_OPACITY,
     selectHeadwayBand, airtrainStationPopupHtml, retryUntil,

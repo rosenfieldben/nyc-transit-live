@@ -163,6 +163,174 @@ test("A2h. a new agency-wide alert announces once, as a summary", async ({ page 
   expect(alertLines, "an unchanged alert set is silent").toHaveLength(1);
 });
 
+// Every MutationObserver BATCH the page region receives: how many records it carried,
+// and what the region said after it. A2f to A2i count callbacks, which cannot see the
+// shape N6 names (two writes landing as one batch) or its 6.3 variant (two writes in two
+// batches that no task boundary, and so no rendering opportunity, separates); a render
+// whose writes are composed arrives as exactly one batch of exactly one record.
+async function watchBatches(page) {
+  await page.evaluate(() => {
+    window.__pageBatches = [];
+    new MutationObserver((records) => {
+      window.__pageBatches.push({
+        records: records.length,
+        text: document.getElementById("page-announce").textContent,
+      });
+    }).observe(document.getElementById("page-announce"), {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
+  });
+}
+
+const batches = (page) => page.evaluate(() => window.__pageBatches);
+
+// THE WORLD A2j AND A2l SHARE, and the one the age gate makes: an LIRR fix drawn
+// qualified, its own observation 590 s old, while Metro-North's poll is 200 s old. On the
+// next poll, served 15 s later, the fix is 605 s old, past OBS_MAX_S, and the gate
+// withholds it (gone from the payload, counted in LIRR's block), while Metro-North
+// recovers. A rider holding that train's popup is rescued, in the status line's words
+// (the feed still carries the train, so "left the feed" would be false of it), and the
+// same poll announces the recovery.
+const WITHHELD_KEY = "LIRR|lirr-gps-1";
+const WITHHELD_FIX = {
+  system: "LIRR", trip_id: "lirr-gps-1", route_id: "1", latitude: 40.76, longitude: -73.6,
+  bearing: 90, train_num: "2751", stop_id: null, stop_name: null, direction: "Eastbound",
+  prev_lat: null, prev_lon: null, prev_time: null, next_time: null,
+  observed_at: null, provenance: "reported",
+};
+const WITHHELD_SPOKEN =
+  "The LIRR Babylon Branch you were following is no longer shown, last seen over 10m ago. " +
+  "Focus moved to the map. Live data current again for Metro-North.";
+
+function withheldWorld(fixtures, withheld) {
+  const at = withheld ? fx.FROZEN_S + 15 : fx.FROZEN_S;
+  const body = fixtures.railroadsWithSystems({
+    data: [...fixtures.railroads().data, ...(withheld ? [] : [WITHHELD_FIX])],
+    fetchedAt: at,
+    mnrAt: withheld ? at : fx.FROZEN_S - 200,
+    lirrPositions: fixtures.positionSteps(withheld ? { suppressed: 1 } : { qualified: 1 }),
+  });
+  // The fix's own clock, set after the build, where stampObserved cannot move it to the
+  // poll's: this is an OLD observation in a healthy LIRR, which is F01's whole subject.
+  for (const row of body.data) if (row.trip_id === WITHHELD_FIX.trip_id) row.observed_at = fx.FROZEN_S - 590;
+  return body;
+}
+
+// Load the page on that world's first poll, with the rider holding the fix's popup.
+async function holdingTheWithheldFix(page, ctx, world) {
+  ctx.overrides.railroads = (route, fixtures) => json(route, withheldWorld(fixtures, world.withheld));
+  await open(page);
+  await expect.poll(() => page.evaluate((key) => railroads.has(key), WITHHELD_KEY)).toBe(true);
+  // The page loaded with Metro-North degraded, which a load does not say aloud.
+  await expect(page.locator("#status")).toContainText("railroad: MNR as of 3m ago");
+  await page.evaluate((key) => railroads.get(key).marker.openPopup(), WITHHELD_KEY);
+  await page.locator(".leaflet-popup-close-button").focus();
+}
+
+test("A2j. a vanish rescue and a status transition in one poll are one write, not two (6.3)", async ({ page }) => {
+  // THE COLLISION THE AGE GATE MADE REACHABLE (memo D11). The gate takes a train off the
+  // map in a feed that is decoding normally: an LIRR fix aging past OBS_MAX_S with no
+  // fresh prediction leaves the payload and is counted instead. If the rider's focus is in
+  // that train's popup, the vanishing-focus door speaks from inside applyRailroads; if the
+  // same poll changes a system's degraded membership, the status transition speaks from
+  // refreshAll's tail. On the code before this, those were two writes in two batches,
+  // and when the railroad response settled last nothing but microtasks lay between them,
+  // so an atomic polite region read after that task said only the second sentence.
+  const ctx = await installMocks(page);
+  const world = { withheld: false };
+  await holdingTheWithheldFix(page, ctx, world);
+  await watchBatches(page);
+
+  world.withheld = true;
+  await page.evaluate(() => refreshAll());
+  await expect.poll(() => batches(page)).not.toEqual([]);
+  expect(await batches(page), "one render, one batch, one record, both sentences").toEqual([
+    { records: 1, text: WITHHELD_SPOKEN },
+  ]);
+  // The rescue itself still happened at once, and the count the gate added is on the
+  // status line, where it belongs, and in no announcement: the rescue speaks the line's
+  // words ("no longer shown, last seen over 10m ago"), and never its number.
+  expect(await page.evaluate(() => document.activeElement.id)).toBe("map");
+  await expect(page.locator("#status")).toContainText("railroad: LIRR 1 train not shown, last seen over 10m ago");
+});
+
+test("A2l. a status change the animation tick finds mid-poll joins that poll's one write, after the rescue (6.3)", async ({ page }) => {
+  // THE CASE A2j CANNOT SEE. Its page clock is paused, and Playwright's fake clock runs
+  // requestAnimationFrame too, so no animation tick lands inside its poll. In a browser one
+  // can: refreshSource rebuilds the freshness index as each response lands, so a tick after
+  // the railroad's response and before the poll's last sees Metro-North recover, and the
+  // tick announces status changes itself (A2f). Here the subway's response is held back
+  // while the clock runs, so a tick lands exactly there. Measured on the first cut, which
+  // held only what the poll itself said: the tick spoke the recovery at once, and the
+  // rescue came out alone at the poll's end, second. Both orders of the two sentences are
+  // plausible readings of one poll, so the spec pins the one a rider experienced: the
+  // train they were holding went first.
+  const ctx = await installMocks(page);
+  let subwayGate = null;
+  ctx.overrides.subways = async (route, fixtures) => {
+    if (subwayGate) await subwayGate;
+    return json(route, fixtures.subways());
+  };
+  const world = { withheld: false };
+  await holdingTheWithheldFix(page, ctx, world);
+  // The clock was paused at load, so no tick has run yet: run a few, so the animation loop
+  // has recorded Metro-North in its stale set and can notice it leave. Saying nothing,
+  // since the load already knew it.
+  await page.clock.runFor(200);
+  await watchBatches(page);
+
+  let releaseSubway = null;
+  subwayGate = new Promise((resolve) => {
+    releaseSubway = resolve;
+  });
+  world.withheld = true;
+  await page.evaluate(() => {
+    window.__poll = refreshAll();
+  });
+  // The railroad's response has landed and its apply has taken the fix off the map...
+  await expect.poll(() => page.evaluate((key) => railroads.has(key), WITHHELD_KEY)).toBe(false);
+  expect(await page.evaluate(() => document.activeElement.id), "the focus move is not held").toBe("map");
+  // ...and the animation tick runs while the subway's is still out.
+  await page.clock.runFor(300);
+  expect(await batches(page), "nothing is spoken while the poll is rendering").toEqual([]);
+  releaseSubway();
+  subwayGate = null;
+  await page.evaluate(() => window.__poll);
+  await expect.poll(() => batches(page)).not.toEqual([]);
+  expect(await batches(page), "the poll's one write: the rescue, then the recovery the tick found").toEqual([
+    { records: 1, text: WITHHELD_SPOKEN },
+  ]);
+});
+
+test("A2k. the count of trains not shown changing, appearing or clearing says nothing (6.3)", async ({ page }) => {
+  // "A suppression count moving from 23 to 24 is not a membership change and must say
+  // nothing" (memo D11). The status line changes with the count; the live region does
+  // not, because what it speaks is a system's degraded membership and the count is none.
+  const ctx = await installMocks(page);
+  let suppressed = 23;
+  ctx.overrides.railroads = (route, fixtures) =>
+    json(route, fixtures.railroadsWithSystems({ lirrPositions: fixtures.positionSteps({ suppressed }) }));
+  await open(page);
+  const status = page.locator("#status");
+  await expect(status).toContainText(
+    "railroad: LIRR 23 trains not shown, last seen over 10m ago; MNR position age unavailable",
+  );
+  await watchBatches(page);
+  for (const [next, line] of [
+    [24, "railroad: LIRR 24 trains not shown"],
+    [0, null],
+    [1, "railroad: LIRR 1 train not shown"],
+  ]) {
+    suppressed = next;
+    await page.evaluate(() => refreshAll());
+    if (line) await expect(status).toContainText(line);
+    else await expect(status).not.toContainText("railroad:");
+  }
+  expect(await batches(page), "a count is not news").toEqual([]);
+});
+
 test("A2i. the page region is one door, and nothing else writes it", async ({ page }) => {
   // The structural claim, checked against the running page rather than the source: the
   // region exists, is polite, is out of the visual layout, and is not the panel's

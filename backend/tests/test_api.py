@@ -258,8 +258,11 @@ async def test_railroad_refresh_records_partial_feed_health(client, cache, monke
     # LIRR decodes, MNR does not.
     lirr_train = {**RAILROADS[0], "system": "LIRR", "trip_id": "lirr-1"}
 
+    # The sixth element is the position ladder's counts per decoded system (contract
+    # 6.3). Empty in the fakes that are not about them, so each block's `positions`
+    # stays last-known (null); tests/test_f01_positions.py serves the real ones.
     async def partial(client_arg, stops_arg):
-        return [lirr_train], {}, 996.0, ["MNR"], {"LIRR": 996.0}
+        return [lirr_train], {}, 996.0, ["MNR"], {"LIRR": 996.0}, {}
 
     monkeypatch.setattr(app_module, "fetch_railroad_trains", partial)
     await app_module._refresh_railroads(app_module.app, client=None)
@@ -307,7 +310,7 @@ async def test_railroad_refresh_replaces_only_decoded_systems_arrivals(client, c
     new_lirr = {"12": {"Inbound": [{"route_id": "5", "trip_id": "new", "arrival": 1e12}]}}
 
     async def only_lirr(client_arg, stops_arg):
-        return RAILROADS, {"LIRR": new_lirr}, 996.0, ["MNR"], {"LIRR": 996.0}
+        return RAILROADS, {"LIRR": new_lirr}, 996.0, ["MNR"], {"LIRR": 996.0}, {}
 
     monkeypatch.setattr(app_module, "fetch_railroad_trains", only_lirr)
     await app_module._refresh_railroads(app_module.app, client=None)
@@ -2163,7 +2166,7 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
         return TRAINS, {}, 1001.0, [], {"ACE": TRAINS}, {"ACE": {}}, {"ACE": 1001.0}
 
     async def fake_fetch_railroads(client, stops):
-        return RAILROADS, {}, 1002.0, [], {"LIRR": 1002.0}
+        return RAILROADS, {}, 1002.0, [], {"LIRR": 1002.0}, {}
 
     async def fake_fetch_path(client, stops):
         return PATH_TRAINS, PATH_ARRIVALS, 1003.0, 0
@@ -2370,7 +2373,7 @@ async def test_poll_cycle_deadline_bounds_a_wedged_refresh(monkeypatch, cache):
         return TRAINS, {}, 1001.0, [], {"ACE": TRAINS}, {"ACE": {}}, {"ACE": 1001.0}
 
     async def rr_fetch(client, stops):
-        return RAILROADS, {}, 1002.0, [], {"LIRR": 1002.0}
+        return RAILROADS, {}, 1002.0, [], {"LIRR": 1002.0}, {}
 
     monkeypatch.setattr(app_module, "fetch_vehicle_positions", bus_fetch)
     monkeypatch.setattr(app_module, "fetch_subway_trains", sub_fetch)
@@ -3199,6 +3202,8 @@ async def test_alerts_served_from_seeded_index(client, alerts_cache):
                 "ok": True,
                 "retained_since": None,
                 "routes": None,
+                # 6.3: no position ladder on an alert feed, so no counts.
+                "positions": None,
             }
             # THE ACTIVE SET, not the full table: this test environment has no NJ
             # Transit credentials, so "njt" is never seeded and never appears here.
@@ -3232,6 +3237,8 @@ async def test_alerts_empty_index_is_empty_list_not_error(client, alerts_cache):
                 "ok": True,
                 "retained_since": None,
                 "routes": None,
+                # 6.3: no position ladder on an alert feed, so no counts.
+                "positions": None,
             }
             # THE ACTIVE SET, not the full table: this test environment has no NJ
             # Transit credentials, so "njt" is never seeded and never appears here.
@@ -4314,7 +4321,7 @@ async def test_c2_total_railroad_failure_also_reports_every_system_down(client, 
     mnr = {**RAILROADS[0], "system": "MNR", "trip_id": "m1"}
 
     async def healthy(client_arg, stops_arg):
-        return [mnr], {"MNR": {"1": {"Trains": []}}}, 990.0, [], {"LIRR": 990.0}
+        return [mnr], {"MNR": {"1": {"Trains": []}}}, 990.0, [], {"LIRR": 990.0}, {}
 
     monkeypatch.setattr(app_module, "fetch_railroad_trains", healthy)
     monkeypatch.setattr(app_module.time, "time", lambda: 1000.0)
@@ -4352,6 +4359,7 @@ async def test_c2_railroad_arrivals_carry_their_own_systems_frozen_timestamp(
             990.0,
             [],
             {"LIRR": 990.0},
+            {},
         )
 
     monkeypatch.setattr(app_module, "fetch_railroad_trains", both)
@@ -4359,7 +4367,7 @@ async def test_c2_railroad_arrivals_carry_their_own_systems_frozen_timestamp(
     await app_module._refresh_railroads(app_module.app, client=None)
 
     async def lirr_only(client_arg, stops_arg):
-        return [lirr], {"LIRR": {"2": {"Trains": []}}}, 990.0, ["MNR"], {"LIRR": 990.0}
+        return [lirr], {"LIRR": {"2": {"Trains": []}}}, 990.0, ["MNR"], {"LIRR": 990.0}, {}
 
     monkeypatch.setattr(app_module, "fetch_railroad_trains", lirr_only)
     monkeypatch.setattr(app_module.time, "time", lambda: 1300.0)
@@ -4391,6 +4399,7 @@ async def test_c2_alerts_envelope_mirrors_the_health_map(client, alerts_cache):
         "ok": True,
         "retained_since": None,
         "routes": None,  # alerts name their own system; no route join needed
+        "positions": None,  # 6.3: no position ladder on an alert feed
     }
     assert body["systems"]["MNR"] == {
         "fetched_at": 900.0,  # fresh_at maps to fetched_at
@@ -4398,6 +4407,7 @@ async def test_c2_alerts_envelope_mirrors_the_health_map(client, alerts_cache):
         "ok": False,  # derived from last_error
         "retained_since": 950.0,
         "routes": None,
+        "positions": None,
     }
     # No error TEXT leaks into the public envelope; detail stays on /api/status.
     assert "detail" not in str(body["systems"]["MNR"])
@@ -4503,6 +4513,7 @@ async def test_c2_retention_clock_is_not_reset_by_the_systems_write(client, cach
             990.0,
             [],
             {"LIRR": 990.0},
+            {},
         )
 
     monkeypatch.setattr(app_module, "fetch_railroad_trains", healthy)
@@ -4510,7 +4521,7 @@ async def test_c2_retention_clock_is_not_reset_by_the_systems_write(client, cach
     await app_module._refresh_railroads(app_module.app, client=None)
 
     async def mnr_down(client_arg, stops_arg):
-        return [], {}, 990.0, ["MNR"], {"LIRR": 990.0}
+        return [], {}, 990.0, ["MNR"], {"LIRR": 990.0}, {}
 
     monkeypatch.setattr(app_module, "fetch_railroad_trains", mnr_down)
     for t in (1020.0, 1600.0):
@@ -4615,13 +4626,14 @@ async def test_c2_route_coverage_is_derived_from_the_served_by_group_data(
         "ok": False,
         "retained_since": 1060.0,
         "routes": ["A", "E"],  # still named, because those trains are still served
+        "positions": None,  # 6.3: the position ladder's counts are the railroad's alone
     }
     # And the railroad envelope publishes null coverage: its trains carry `system`,
     # so there is nothing for the client to join on.
     app_module.app.state.railroad_stops = {"MNR": {"1": {"name": "G", "lat": 40.7, "lon": -73.9}}}
 
     async def railroads(client_arg, stops_arg):
-        return [{**RAILROADS[0], "system": "MNR", "trip_id": "m1"}], {}, 990.0, [], {}
+        return [{**RAILROADS[0], "system": "MNR", "trip_id": "m1"}], {}, 990.0, [], {}, {}
 
     monkeypatch.setattr(app_module, "fetch_railroad_trains", railroads)
     await app_module._refresh_railroads(app_module.app, client=None)

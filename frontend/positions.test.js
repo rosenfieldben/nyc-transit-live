@@ -567,7 +567,7 @@ test("6.3 ingestSystems reads a block's position counts, all five or none", () =
   assert.equal(ingestSystems({ fetched_at: 1 }, "path").path.positions, null);
 });
 
-test("6.3 the status line: the withheld count raises it in its own clause, and Metro-North's clause only rides", () => {
+test("6.3 the status line: the withheld count rides a line, and never raises one", () => {
   const now = 20_000;
   const steps = (suppressed) => ({ reported: 27, estimated: 6, qualified: 11, placed: 0, suppressed });
   const block = (over) => ({ fetched_at: now, ok: true, retained_since: null, ...over });
@@ -581,33 +581,33 @@ test("6.3 the status line: the withheld count raises it in its own clause, and M
     feedTimestamp: now - 5,
     systems: ingestSystems({ fetched_at: now, systems: blocks }, "railroads"),
   });
-  // THE F01 WORLD'S LINE: a healthy railroad, 24 LIRR trains the ladder drew nothing for.
-  assert.equal(
-    staleness(rail({ LIRR: lirr(), MNR: mnrBlock() }), now),
-    "railroad: LIRR 24 trains not shown, last seen over 10m ago; MNR position age unavailable",
-  );
-  assert.equal(
-    staleness(rail({ LIRR: lirr({ positions: steps(1) }), MNR: mnrBlock() }), now),
-    "railroad: LIRR 1 train not shown, last seen over 10m ago; MNR position age unavailable",
-  );
-  // THE COMMON CASE DOES NOT GET NOISIER: nothing withheld and nothing stale says nothing,
-  // Metro-North's clause included, because it may only ride a line already rendering.
+  // THE COMMON CASE DOES NOT GET NOISIER, and on LIRR the common case is 24 withheld.
+  // The committed capture withholds 24 of 68 with nothing wrong at all, so a clause that
+  // could raise the line would raise it every poll and map.js would paint it red every
+  // poll. REVIEW FIX: it raised until the whole-branch review measured what that meant.
+  assert.equal(staleness(rail({ LIRR: lirr(), MNR: mnrBlock() }), now), null);
+  assert.equal(staleness(rail({ LIRR: lirr({ positions: steps(1) }), MNR: mnrBlock() }), now), null);
   assert.equal(staleness(rail({ LIRR: lirr({ positions: steps(0) }), MNR: mnrBlock() }), now), null);
   assert.equal(staleness(rail({ LIRR: lirr({ positions: null }), MNR: mnrBlock({ positions: null }) }), now), null);
-  // It rides every other population, and never merges with one.
+  // It rides every other population, in its own clause, never merged into one.
+  assert.equal(
+    staleness(rail({ LIRR: lirr({ fetched_at: now - 300 }), MNR: mnrBlock() }), now),
+    "railroad: LIRR as of 5m ago; LIRR 24 trains not shown, last seen over 10m ago; MNR position age unavailable",
+  );
   assert.equal(
     staleness(rail({ LIRR: lirr({ fetched_at: now - 300, positions: steps(0) }), MNR: mnrBlock() }), now),
     "railroad: LIRR as of 5m ago; MNR position age unavailable",
   );
+  // Another system's population raises the line, and LIRR's count rides that one too.
   assert.equal(
     staleness(rail({ LIRR: lirr(), MNR: mnrBlock({ fetched_at: now - 360, ok: false, retained_since: now - 345 }) }), now),
     "railroad: MNR as of 6m ago; LIRR 24 trains not shown, last seen over 10m ago; MNR position age unavailable",
   );
-  // The count speaks while the decode it describes is the one on the map: a failed LIRR
-  // whose rows are retained still is...
+  // The count speaks while the decode it describes is the one on the map. A failed LIRR
+  // whose rows are retained still is, so its count rides the clause that names it...
   assert.equal(
-    staleness(rail({ LIRR: lirr({ ok: false, retained_since: now - 10 }), MNR: mnrBlock() }), now),
-    "railroad: LIRR 24 trains not shown, last seen over 10m ago; MNR position age unavailable",
+    staleness(rail({ LIRR: lirr({ fetched_at: now - 300, ok: false, retained_since: now - 10 }), MNR: mnrBlock() }), now),
+    "railroad: LIRR as of 5m ago; LIRR 24 trains not shown, last seen over 10m ago; MNR position age unavailable",
   );
   // ...and once the retention cap has taken every LIRR train, the stale clause speaks for
   // the system and a count of 24 would be a count of what is no longer drawn at all.
@@ -615,14 +615,17 @@ test("6.3 the status line: the withheld count raises it in its own clause, and M
     staleness(rail({ LIRR: lirr({ fetched_at: now - 700, ok: false, retained_since: null }), MNR: mnrBlock() }), now),
     "railroad: LIRR as of 12m ago; MNR position age unavailable",
   );
-  // A malformed count raises nothing.
-  assert.equal(staleness(rail({ LIRR: lirr({ positions: { suppressed: 24 } }), MNR: mnrBlock() }), now), null);
+  // A malformed count says nothing, on a raised line as well as an unraised one.
+  assert.equal(
+    staleness(rail({ LIRR: lirr({ fetched_at: now - 300, positions: { suppressed: 24 } }), MNR: mnrBlock() }), now),
+    "railroad: LIRR as of 5m ago; MNR position age unavailable",
+  );
   // UNDATED_SYSTEMS decides which system gets the clause, never the name.
   UNDATED_SYSTEMS.delete("MNR");
   try {
     assert.equal(
-      staleness(rail({ LIRR: lirr(), MNR: mnrBlock() }), now),
-      "railroad: LIRR 24 trains not shown, last seen over 10m ago",
+      staleness(rail({ LIRR: lirr({ fetched_at: now - 300 }), MNR: mnrBlock() }), now),
+      "railroad: LIRR as of 5m ago; LIRR 24 trains not shown, last seen over 10m ago",
     );
   } finally {
     UNDATED_SYSTEMS.add("MNR");
@@ -698,7 +701,19 @@ test("6.3 isPlacedRailroad is gone, every sweep dims by the observation too, and
   const systems = join(__dirname, "systems");
   const files = readdirSync(systems).filter((name) => name.endsWith(".js"));
   const src = (name) => readFileSync(join(systems, name), "utf8");
-  for (const name of files) assert.doesNotMatch(src(name), /isPlacedRailroad\s*\(/, name);
+  // EVERY FRONTEND FILE, not only systems/. The export check above catches a re-added
+  // helper only if it is exported, and the helper lived in helpers.js before this branch
+  // deleted it, so scanning systems/ alone left its own birthplace unscanned: a private
+  // copy in helpers.js called from helpers.js or stations.js would have satisfied both
+  // halves. REVIEW FIX, and the design's sentence about this test ("gone from every
+  // frontend file rather than merely unused") is what it now checks.
+  // A CALL OR A DEFINITION, not a mention: the comments that say what was deleted and why
+  // are the record of the decision and must keep naming it.
+  const called = /isPlacedRailroad\s*\(/;
+  for (const name of readdirSync(__dirname).filter((n) => n.endsWith(".js") && !n.endsWith(".test.js"))) {
+    assert.doesNotMatch(readFileSync(join(__dirname, name), "utf8"), called, name);
+  }
+  for (const name of files) assert.doesNotMatch(src(name), called, name);
   // The railroad's glyph, glide, words and cross-link come from the served provenance.
   const railroad = src("railroad.js");
   for (const call of ["railroadHollow(", "drawnFromPrediction(", "railroadAtItsStation(", "railroadPosition("]) {

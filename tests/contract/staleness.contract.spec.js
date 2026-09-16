@@ -145,7 +145,39 @@ function railroadMarkers(page, system) {
 // The margin either side of the threshold a per-marker claim leaves: the page re-dims on
 // a 100 ms animation tick and the age is read a moment after, so a marker within two
 // seconds of FEED_STALE_AFTER_S is in neither set.
+//
+// IT COVERS THE TICK AND NOTHING ELSE, which is why every per-marker claim below is
+// POLLED rather than read once. A marker's age on the page also carries the phase of the
+// page's own 15s poll, and the arithmetic is thin: the freshest observation in the
+// committed LIRR capture sits 4s behind its header (design 1.2), the simulator re-stamps
+// that header by ONE delta per upstream fetch so the 4s survives every poll
+// (upstream_sim.py:_restamp), the backend serves a cache up to its compressed 2s poll old
+// (conftest.py CONTRACT_TIMING), and the page holds that response until its next poll. So
+// the freshest marker reads about 4s to 6s just after a page poll and about 21s just
+// before the next one, against a 23s cut, and at the end of a cycle only the two rows 4s
+// and 5s behind the header are still inside it: the capture's positioned observations run
+// 4, 5, 6, 8, 9, 10, 13, 18, 20, 28s and older. Two seconds of slop anywhere, a late
+// setInterval, the fetch's round trip, a slow evaluate, empties the fresh set, and a
+// one-shot read then fails a page that is behaving perfectly.
+//
+// WIDENING THIS MARGIN IS THE WRONG FIX. It shrinks the fresh set from the same end the
+// poll phase does: at a margin of 4s the freshest marker has left the set before the next
+// poll arrives, so the one-shot read fails MORE often rather than less. Polling waits for
+// the moment the claim is about, which is what C6e3 has done since 6.3.
 const TICK_MARGIN_S = 2;
+
+/** The two populations a per-marker freshness claim is made of, split off ONE snapshot so
+ * an opacity and the age it is judged against can never come from different reads: the
+ * markers comfortably inside the threshold, and those comfortably past it. A marker within
+ * TICK_MARGIN_S of FEED_STALE_AFTER_S is in neither, and neither is one with no clock of
+ * its own (every Metro-North row). Shared by the three specs that make the claim, so the
+ * margin arithmetic above is stated once rather than copied per spec. */
+function agePopulations(markers) {
+  return {
+    fresh: markers.filter((m) => m.age != null && m.age < FEED_STALE_AFTER_S - TICK_MARGIN_S),
+    aged: markers.filter((m) => m.age != null && m.age > FEED_STALE_AFTER_S + TICK_MARGIN_S),
+  };
+}
 
 /** Opacities of every NJ Transit marker, read from the marker exactly as
  * railroadOpacities does. No system filter: NJ Transit is one system, so every
@@ -195,6 +227,26 @@ test("C6e1. one railroad system down: its markers dim, its sibling's do not", as
   // rendering from a stubbed /api/railroads. What only this tier shows is that a
   // REAL backend, polling a REAL socket that stopped answering, produces the
   // envelope that makes the page dim.
+  //
+  // WHAT A DEGRADED METRO-NORTH SAYS, and the reason this spec matches on a whole clause
+  // rather than on the letters MNR. The stale clause is "{system} as of {age} ago"
+  // (helpers.js:868), and only a system whose poll age has crossed the threshold earns
+  // one: that is the same judgment which dims the markers below, so the two halves of the
+  // granularity claim rest on the same fact. A bare /MNR/i is no longer that claim,
+  // because 6.3 gave the railroad line two clauses that name MNR with nothing wrong. The
+  // UNDATED clause appends "MNR position age unavailable" to any railroad line that
+  // renders at all (helpers.js:873), and the WITHHELD clause counts the LIRR rows the
+  // position ladder stopped drawing ("LIRR 24 trains not shown, last seen over 10m ago",
+  // helpers.js:872): this tier serves the committed capture and does NOT compress
+  // OBS_MAX_S, which is a literal rather than a seam for exactly that reason
+  // (cache.py:90), so the count is 24 on a perfectly healthy LIRR.
+  //
+  // The match is deliberately independent of whether those two can raise a line by
+  // themselves, which is being settled as this is written: under the riding rule a
+  // healthy railroad renders no line at all, under the raising rule it renders one that
+  // says MNR twice, and NEITHER ever says "MNR as of". The negative assertion on the
+  // bright baseline is the other half, in C6e2's shape.
+  const MNR_STALE = /MNR as of \d+[smh]/;
   await openMap(page);
   await expect
     .poll(async () => (await railroadOpacities(page, "MNR")).length, {
@@ -202,6 +254,7 @@ test("C6e1. one railroad system down: its markers dim, its sibling's do not", as
     })
     .toBeGreaterThan(0);
   expect((await railroadOpacities(page, "MNR")).every((o) => o === 1)).toBe(true);
+  await expect(page.locator("#status")).not.toContainText(MNR_STALE);
 
   await control(request, { key: "MNR", mode: "error" });
   await awaitPolls(request, "MNR", 2);
@@ -233,23 +286,39 @@ test("C6e1. one railroad system down: its markers dim, its sibling's do not", as
   // marker whose own observation is fresh stays bright while MNR is down, and there are
   // some; and, F01 against a real backend, every one whose own observation is past the
   // threshold is dimmed although LIRR itself is current.
-  const lirr = await railroadMarkers(page, "LIRR");
-  const fresh = lirr.filter((m) => m.age != null && m.age < FEED_STALE_AFTER_S - TICK_MARGIN_S);
-  expect(fresh.length, "LIRR must still have markers whose own observation is fresh").toBeGreaterThan(0);
-  expect(
-    fresh.every((m) => m.opacity === 1),
-    "an LIRR marker whose own observation is fresh must stay live while MNR is down",
-  ).toBe(true);
-  const aged = lirr.filter((m) => m.age != null && m.age > FEED_STALE_AFTER_S + TICK_MARGIN_S);
-  expect(aged.length, "the capture's LIRR carries observations past the threshold").toBeGreaterThan(0);
-  expect(
-    aged.every((m) => m.opacity < 1),
-    "an LIRR marker whose own observation is old is dimmed inside a current LIRR",
-  ).toBe(true);
+  //
+  // POLLED RATHER THAN READ ONCE, for the arithmetic at TICK_MARGIN_S: the fresh set is
+  // two markers wide at the end of a page-poll cycle, so a single read that lands there
+  // finds it empty and fails a healthy page. Both halves come off ONE snapshot, so an
+  // opacity and the age it is judged against cannot straddle a tick, and each is its own
+  // named key: the object diff on a failure says which of the four claims broke, which is
+  // what the four separate messages here used to do. someFresh and someAged ARE the
+  // `[].every(...)` guard the dim checks state above, since an empty set satisfies every
+  // predicate.
+  await expect
+    .poll(
+      async () => {
+        const { fresh, aged } = agePopulations(await railroadMarkers(page, "LIRR"));
+        return {
+          someFresh: fresh.length > 0,
+          freshAreLive: fresh.every((m) => m.opacity === 1),
+          someAged: aged.length > 0,
+          agedAreDim: aged.every((m) => m.opacity < 1),
+        };
+      },
+      {
+        message: "LIRR is judged per marker, both ways at once, while MNR is down",
+        timeout: DIM_TIMEOUT_MS,
+      },
+    )
+    .toEqual({ someFresh: true, freshAreLive: true, someAged: true, agedAreDim: true });
 
-  // And the status line names the degraded system rather than going generically
-  // red, which is the other half of the C2 granularity claim.
-  await expect(page.locator("#status")).toContainText(/MNR/i, {
+  // And the status line names the degraded system rather than going generically red,
+  // which is the other half of the C2 granularity claim. Matched on the stale clause
+  // declared at the top of this spec, so only a DEGRADED Metro-North satisfies it: the
+  // bright baseline asserted the same pattern ABSENT, which is what makes this a
+  // transition rather than a reading of the standing line.
+  await expect(page.locator("#status")).toContainText(MNR_STALE, {
     timeout: DIM_TIMEOUT_MS,
   });
 });
@@ -316,9 +385,7 @@ test("C6e3. PATH, a single-feed source, dims like any other and recovers", async
       });
     });
   const freshAllBright = async () => {
-    const fresh = (await pathMarkers()).filter(
-      (m) => m.age != null && m.age < FEED_STALE_AFTER_S - TICK_MARGIN_S,
-    );
+    const { fresh } = agePopulations(await pathMarkers());
     return fresh.length > 0 && fresh.every((m) => m.opacity === 1);
   };
   await expect.poll(async () => (await opacities()).length, { timeout: 60_000 }).toBeGreaterThan(0);
@@ -392,11 +459,22 @@ test("C6e4. NJT down: its markers dim, the railroads' do not", async ({ page, re
   const mnr = await railroadOpacities(page, "MNR");
   expect(mnr.length, "MNR must still have markers to be bright").toBeGreaterThan(0);
   expect(mnr.every((o) => o === 1), "MNR must stay live while NJT is down").toBe(true);
-  const lirr = (await railroadMarkers(page, "LIRR")).filter(
-    (m) => m.age != null && m.age < FEED_STALE_AFTER_S - TICK_MARGIN_S,
-  );
-  expect(lirr.length, "LIRR must still have markers whose own observation is fresh").toBeGreaterThan(0);
-  expect(lirr.every((m) => m.opacity === 1), "LIRR must stay live while NJT is down").toBe(true);
+  // POLLED, for the arithmetic at TICK_MARGIN_S and the reason C6e1 gives: the fresh set
+  // is two markers wide at the end of a page-poll cycle, so a one-shot read is a coin
+  // flip on a healthy page. The non-empty guard rides inside the predicate rather than
+  // beside it, because `[].every(...)` is true.
+  await expect
+    .poll(
+      async () => {
+        const { fresh } = agePopulations(await railroadMarkers(page, "LIRR"));
+        return fresh.length > 0 && fresh.every((m) => m.opacity === 1);
+      },
+      {
+        message: "an LIRR marker whose own observation is fresh must stay live while NJT is down",
+        timeout: DIM_TIMEOUT_MS,
+      },
+    )
+    .toBe(true);
 
   // And the status line names NJ Transit rather than going generically red, which is
   // the other half of the C2 granularity claim. MATCHED ON THE PROBLEMS CLAUSE, not

@@ -2612,14 +2612,18 @@ test("C2j. F01's acceptance, map half: no old fix reads as live, a fresh predict
     expect(m.opacity, m.key).toBe(1);
   }
 
-  // (c) THE 24 ARE A COUNT ON THE STATUS LINE, in their own clause, with Metro-North's
-  // clause riding the line they raised. The rest of the page is healthy, so this is the
-  // whole of what the line has to say.
+  // (c) AND THE STATUS LINE SAYS NOTHING, because nothing is wrong. Withholding is
+  // LIRR's steady state, not a fault: this world is the committed capture, healthy, with
+  // 24 of 68 withheld, so a clause that could RAISE the line would raise it on every poll
+  // and map.js would paint the page's status bar in the error class every poll. Design
+  // 3.2's rule ("a status line that always says something is a status line nobody
+  // reads") is what the withheld clause now obeys, and it rides a raised line instead.
+  // REVIEW FIX: this asserted the raised line and its red until the whole-branch review
+  // measured what that meant on an ordinary day. frontend/positions.test.js pins the
+  // riding, clause by clause; here the acceptance world pins the quiet.
   const status = page.locator("#status");
-  await expect(status).toContainText(
-    "railroad: LIRR 24 trains not shown, last seen over 10m ago; MNR position age unavailable",
-  );
-  await expect(status).toHaveClass(/error/);
+  await expect(status).not.toHaveClass(/error/);
+  await expect(status).not.toContainText("railroad:");
 
   // (d) AND NOWHERE ELSE (design 4.4 and Q7): the count reaches no marker, no popup and
   // no name, and none of the 24 has a marker, ghost or otherwise.
@@ -2668,10 +2672,10 @@ test("C2k. an estimate stops gliding when its own prediction passes 90 s, in a r
     return trainLatLng(t, glideClock(now, systemStaleAtOf("railroads", t.system)), {})[0];
   }, TRIP);
   expect(reckoned).not.toBe(frozen);
-  // The railroad really is healthy: its line names no age, only the count.
+  // The railroad really is healthy, and says so by saying nothing: no age, and no
+  // withheld clause either, since that one rides a raised line and never raises one.
   const line = await page.locator("#status").textContent();
-  expect(line).toContain("railroad: LIRR 24 trains not shown");
-  expect(line).not.toMatch(/railroad: as of|LIRR as of|MNR as of/);
+  expect(line).not.toMatch(/railroad:/);
   // And the estimate says how old its prediction is now, dimmed like any old observation.
   await page.evaluate((key) => railroads.get(key).marker.openPopup(), TRIP);
   await expect(popup(page)).toContainText(/estimated from a prediction, as of \d+s ago/);

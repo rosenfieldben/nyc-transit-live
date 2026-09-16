@@ -3350,6 +3350,82 @@ def test_production_railroad_positions_counts_an_unprintable_system_name():
     assert "evil.example" not in cm.format_summary_table([line])
 
 
+def test_production_railroad_positions_counts_a_system_name_ending_in_a_newline():
+    """THE ANCHOR, and why $ was not one. Python's $ also matches just BEFORE a final
+    newline, so a key of "LEAK\\n" passed a pattern written to mean "safe characters and
+    nothing else" and was interpolated verbatim. The test above misses it because a
+    markdown link is unsafe in EVERY position; this payload is unsafe only in the last
+    one. What a raw newline costs is asserted on the rendered table rather than argued:
+    format_summary_table escapes the pipe and nothing else, so one newline ends the row
+    mid-cell and every row after it is read by GitHub as something other than a table
+    row, and format_lines' one-line-per-check promise breaks the same way."""
+    line = _positions_line(
+        _healthy_prod(railroad_positions={"LEAK\n": _MNR_STEPS, "MNR": _MNR_STEPS})
+    )
+    assert line.status == cm.WARN
+    assert "1 with an unprintable system name" in line.detail
+    assert "LEAK" not in line.detail and "\n" not in line.detail
+    assert "MNR 33/0/0/0 drawn, 0 not shown" in line.detail, "a bad key hides no good one"
+    # Two header rows and exactly one check row, not four lines with two of them adrift.
+    assert len(cm.format_summary_table([line]).splitlines()) == 3
+    assert len(cm.format_lines([line]).splitlines()) == 1
+
+
+def test_production_railroad_positions_caps_how_many_systems_it_names():
+    """THE DETAIL IS BOUNDED, because an unbounded one can silence the whole summary.
+    The safe pattern bounds each name at 16 characters and not the NUMBER of them, and a
+    system's phrase runs about 35 bytes, so 20,000 well-formed blocks wrote a ~700 KB
+    PASS detail as one table row. GitHub caps a job summary at 1 MiB per step and drops
+    everything past it, so that one row would take the FAIL rows about the same
+    deployment down with it. Named up to the cap, the rest counted the way an
+    unprintable name already is."""
+    many = {f"SYS{n:05d}": _MNR_STEPS for n in range(20000)}
+    line = _positions_line(_healthy_prod(railroad_positions=many))
+    assert line.status == cm.PASS, "the cap is about printing, and changes no judgement"
+    assert line.detail.count(" drawn, ") == cm._MAX_NAMED_SYSTEMS
+    assert f"{20000 - cm._MAX_NAMED_SYSTEMS} more not named" in line.detail
+    assert line.detail.startswith("SYS00000 33/0/0/0 drawn"), "sorted, so the cap is stable"
+    assert len(line.detail) < 1000, f"{len(line.detail)} bytes in one summary row"
+
+
+def test_production_railroad_positions_cap_spends_one_budget_and_changes_no_status():
+    """THE UNUSABLE NAMES ARE WIRE-SUPPLIED TOO, so they share the one budget rather
+    than getting a second uncapped list beside it. And the cap is applied AFTER every
+    block is classified: a bad block past the cap is still counted, so it still WARNs,
+    and truncating the print can never turn a WARN into a PASS."""
+    blocks = {f"SYS{n:05d}": _MNR_STEPS for n in range(8)}
+    blocks |= {f"BAD{n:05d}": {"reported": "27"} for n in range(100)}
+    line = _positions_line(_healthy_prod(railroad_positions=blocks))
+    assert line.status == cm.WARN
+    assert line.detail.count(" drawn, ") == 8
+    assert line.detail.count("BAD") == cm._MAX_NAMED_SYSTEMS - 8
+    assert f"{100 - (cm._MAX_NAMED_SYSTEMS - 8)} more not named" in line.detail
+
+
+def test_production_railroad_positions_docstring_enumerates_every_non_pass_arm():
+    """THE DOCSTRING IS THE CONTRACT an operator reads before trusting the line, and it
+    said the only non-PASS arm was the payload not being there to read, then named two.
+    There are four, and the fourth is the one the sentence made invisible: a payload that
+    IS there and mostly readable still WARNs on a good block under a 20-character system
+    key, or on one count served as the string "27". The four arms are exercised here so
+    the count in the prose cannot drift from the count in the code."""
+    arms = {
+        _positions_line(_healthy_prod(railroad_positions=shape)).status
+        for shape in (
+            None,
+            [27, 6, 11, 0, 24],
+            {},
+            {"A" * 20: _MNR_STEPS},
+            {"LIRR": {"reported": "27"}},
+        )
+    }
+    assert arms == {cm.WARN}, "every arm below WARNs, and none of them fails the run"
+    doc = cm._check_production_railroad_positions.__doc__
+    assert "four non-PASS arms" in doc
+    assert "The only non-PASS arm" not in doc, "the sentence that hid the fourth"
+    assert 'the string "27"' in doc, "the fourth arm named concretely, not by category"
+
+
 def test_production_railroad_positions_costs_no_fetch():
     """IT IS A FIELD OF THE PAYLOAD ALREADY PARSED, not another read of the deployment.
     test_production_accepts_both_url_forms pins the exact request sequence, and the
@@ -3416,6 +3492,19 @@ def test_production_njt_routes_counts_an_unprintable_route_id():
     assert "1 with an unprintable route id" in line.detail
     assert "evil.example" not in line.detail and "[click]" not in line.detail
     assert "evil.example" not in cm.format_summary_table([line])
+
+
+def test_production_njt_routes_counts_a_route_id_ending_in_a_newline():
+    """THE SAME ANCHOR HOLE, in a pattern that PREDATES contract 6.3, so this one was
+    live in production:njt-routes rather than new. $ matches before a final newline, so
+    "LEAK\\n" passed _SAFE_ROUTE_ID_RE and printed; \\Z does not. The rendered table is
+    what the assertion reads, because one raw newline is what breaks it."""
+    line = _njt_routes_line(_healthy_prod(njt_routes=[("1", 40), ("LEAK\n", 0)]))
+    assert line.status == cm.WARN
+    assert "1 with an unprintable route id" in line.detail
+    assert "LEAK" not in line.detail and "\n" not in line.detail
+    assert len(cm.format_summary_table([line]).splitlines()) == 3
+    assert len(cm.format_lines([line]).splitlines()) == 1
 
 
 def test_production_njt_routes_not_configured_is_not_an_empty_map():
@@ -3706,6 +3795,20 @@ def test_board_contributor_names_are_counted_never_quoted():
     assert line.status == cm.FAIL
     assert "1-7+S" in line.detail and "1 with an unprintable name" in line.detail
     assert "evil" not in line.detail
+
+
+def test_board_contributor_names_ending_in_a_newline_are_counted():
+    """THE SAME ANCHOR HOLE AGAIN, in the third pattern that carried it and the second
+    that PREDATES contract 6.3, so this one was live on the board lines. "LEAK\\n" is a
+    feed-group key in every character but the last, which is exactly what $ waves
+    through and \\Z does not. The rendered table is the assertion, because a raw newline
+    in a cell is what ends the row early."""
+    line = _clock_line(_board({"1-7+S": _AGED, "LEAK\n": _AGED}))
+    assert line.status == cm.FAIL
+    assert "1-7+S" in line.detail and "1 with an unprintable name" in line.detail
+    assert "LEAK" not in line.detail and "\n" not in line.detail
+    assert len(cm.format_summary_table([line]).splitlines()) == 3
+    assert len(cm.format_lines([line]).splitlines()) == 1
 
 
 # ---- production:board-contributors ----

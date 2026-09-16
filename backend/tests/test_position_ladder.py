@@ -16,12 +16,14 @@ decoder does, so a count asked only of it would be regenerated into agreement.
 
 BUILT WORLDS WHERE THE CAPTURE CANNOT REACH. Step 4 never fires on the capture, and the
 design forbids an acceptance test that needs it to; Metro-North stamps every vehicle
-with its own header, so the capture cannot show its exemption doing anything; and no
+with its own header, so the capture cannot show its exemption doing anything; no
 LIRR trip carries two vehicles or two trip_updates, so the capture cannot show whether
-feed order decides a step. Each is shown on an in-memory copy of a committed capture
-with one rewrite (a field changed, an entity repeated, or one entity added), named
-where it is made. The rest of the capture rides along untouched, so every world still
-carries vehicles at many different ages.
+feed order decides a step; the only undated LIRR trip_updates belong to canceled trips,
+which are not placeable at all, so no vehicle on it rides a prediction with no clock; and
+every positioned vehicle names its trip, so none is keyed by its entity id. Each is shown
+on an in-memory copy of a committed capture with one rewrite (a field changed, cleared or
+blanked, an entity repeated, or one entity added), named where it is made. The rest of the
+capture rides along untouched, so every world still carries vehicles at many different ages.
 """
 
 from __future__ import annotations
@@ -79,7 +81,7 @@ def _capture(system: str):
     return feed, stops
 
 
-def _ladder(feed, system: str, stops, now: float | None = None) -> dict[str, int]:
+def _ladder(feed, system: str, stops, now: float | None = None) -> railroad.PositionLadder:
     """The ladder at `now`, which is the capture's own header unless a test moves it."""
     at = float(feed.header.timestamp) if now is None else now
     return railroad._position_ladder(feed, system, stops, at, railroad._canceled_trip_ids(feed))
@@ -342,6 +344,76 @@ def test_a_fresh_estimate_outranks_an_undated_position():
     assert _ladder(feed, "LIRR", None)["GO201_26_6187_1"] == 3
 
 
+@pytest.mark.parametrize(
+    ("trip", "step"),
+    [(OLDEST, 5), ("GO201_26_7768", 5), ("GO201_26_6187_1", 3)],
+    ids=["the-f01-witness", "a-prediction-past-600", "one-of-the-six"],
+)
+def test_an_undated_prediction_promotes_nobody(trip, step):
+    """The undated rule's OTHER half, and the mirror of the test above. A trip_update with
+    no clock of its own has an age nobody knows, and unknown is within neither limit, so it
+    can carry no vehicle to step 2 or step 4: the witness stays at step 5, so does the one
+    of the 24 whose prediction is 1114 s old, and one of the six falls back to its own
+    position at step 3, qualified on a fix 91 s old.
+
+    WHAT A ROW IS SERVED AND WHAT THE LADDER GATES ON DIFFER HERE, on purpose. The served
+    clock keeps the feed header as its fallback, which design 3.3 blesses
+    (_prediction_observed_at); gating on that value scored an undated prediction 0 s old
+    whenever the ladder's clock IS the header, the freshest number on the feed, off a stamp
+    the provider never sent. Clearing one trip_update's clock then moved 9 of the 68
+    vehicles up to step 2, four of them from step 5, and the witness among them: train 521,
+    its own fix 53676 s old, drawn as an estimate dated now. The ladder reads the
+    prediction's own clock instead (_first_placeable_row's second element)."""
+    feed, stops = _capture("LIRR")
+    baseline = _ladder(feed, "LIRR", stops)
+    _trip_update(feed, trip).trip_update.timestamp = 0
+    ladder = _ladder(feed, "LIRR", stops)
+    assert ladder[trip] == step
+    # The cleared clock is the only difference between the two worlds.
+    del ladder[trip], baseline[trip]
+    assert ladder == baseline
+
+
+def test_the_captures_undated_trip_updates_are_all_canceled_trips():
+    """Why the committed counts do not move when the ladder stops reading the header as a
+    prediction's clock, stated as a fact about the capture rather than left to the
+    goldens: its 5 undated trip_updates are its canceled trips, which are not placeable at
+    all (_trip_update_is_canceled), so no vehicle was ever promoted by one. That is what
+    makes the worlds above built ones."""
+    feed, stops = _capture("LIRR")
+    canceled = railroad._canceled_trip_ids(feed)
+    undated = [
+        e.trip_update
+        for e in feed.entity
+        if e.HasField("trip_update") and not e.trip_update.timestamp
+    ]
+    assert len(undated) == 5
+    assert all(railroad._trip_update_is_canceled(tu, canceled) for tu in undated)
+    assert _counts(_ladder(feed, "LIRR", stops)) == (27, 6, 11, 0, 24)
+
+
+def test_a_vehicle_with_no_trip_id_is_keyed_where_no_trip_update_can_reach_it():
+    """The key such a vehicle takes, and the set that records it. Blank GO201_26_7768's
+    vehicle trip id and leave its trip_update alone: the ladder judges the same vehicle
+    under its ENTITY id, at the step its own fix earns (5, its fix past OBS_MAX_S, and
+    nothing placeable behind it, because a vehicle with no trip id has no trip_update to be
+    placed from). The key goes into `unjoinable`, because the placement pass reads a
+    verdict back by trip id alone (_ladder_step_behind, positioned_ids) and will place that
+    trip as though it had no vehicle at all. _position_steps reads the set before it calls
+    such a vehicle suppressed; test_feeds_railroad.py asks what it counts instead."""
+    feed, stops = _capture("LIRR")
+    baseline = _ladder(feed, "LIRR", stops)
+    assert baseline.unjoinable == set(), "every vehicle on the capture names its trip"
+    entity = _vehicle(feed, "GO201_26_7768")
+    entity.vehicle.trip.trip_id = ""
+    ladder = _ladder(feed, "LIRR", stops)
+    assert "GO201_26_7768" not in ladder
+    assert ladder[entity.id] == 5 == baseline["GO201_26_7768"]
+    assert ladder.unjoinable == {entity.id}
+    # One key renamed, nothing else moved: the counts are the capture's own.
+    assert _counts(ladder) == _counts(baseline) == (27, 6, 11, 0, 24)
+
+
 # ---------------- built worlds: a trip the feed reports twice ----------------
 
 # GO201_26_8945 has no placeable prediction (see the boundary test above), so a copy of
@@ -405,11 +477,22 @@ def test_the_first_placeable_trip_update_answers(monkeypatch, updates, step, kep
 
 def _mnr_aged(seconds: int):
     """The committed Metro-North capture with every positioned vehicle's stamp moved
-    `seconds` behind its header. The capture itself cannot show the exemption: all 49
-    stamps ARE the header, so a gate on them would pass everything and prove nothing."""
+    `seconds` behind its header, and every trip_update stamped AT the header. The capture
+    itself cannot show the exemption: all 49 stamps ARE the header, so a gate on them
+    would pass everything and prove nothing.
+
+    THE PREDICTION CLOCKS ARE SUPPLIED FOR THE SAME REASON. Metro-North dates none of its
+    119 trip_updates, and the ladder gates on a prediction's OWN clock, never on the
+    header standing in for it (_first_placeable_row), so a gated world that left them
+    undated could not reach step 2 or step 4 at all and would be a world about a provider
+    nobody ships: a system whose positions are worth gating dates its predictions, as
+    LIRR dates 127 of its 132. Stamping them at the header makes each prediction 0 s old
+    against the ladder's clock, which is what the 23 estimates below are."""
     feed, stops = _capture("MNR")
     header = int(feed.header.timestamp)
     for entity in feed.entity:
+        if entity.HasField("trip_update"):
+            entity.trip_update.timestamp = header
         if entity.HasField("vehicle") and entity.vehicle.HasField("position"):
             entity.vehicle.timestamp = header - seconds
     return feed, stops
@@ -428,11 +511,10 @@ def test_metro_north_is_exempt_by_policy(monkeypatch):
     header that lags two to four minutes. In a world where every one of its vehicles is
     700 s behind the header, past OBS_MAX_S, every one is still step 1. Admit it to the
     policy set and the SAME world is gated, through the combined layout's own
-    trip_updates: Metro-North dates none of them, so each prediction's clock is the
-    header (_prediction_observed_at) and 0 s old, the 23 trains whose own entity places
-    them are estimated, and the 10 it cannot place are not drawn at all. So the
-    exemption is the set's, where design 4.2 says it lives, and not a branch on the
-    name."""
+    trip_updates, which the world stamps at the header (_mnr_aged says why): each
+    prediction is 0 s old, the 23 trains whose own entity places them are estimated, and
+    the 10 it cannot place are not drawn at all. So the exemption is the set's, where
+    design 4.2 says it lives, and not a branch on the name."""
     committed, stops = _capture("MNR")
     assert set(_ladder(committed, "MNR", stops).values()) == {1}
 

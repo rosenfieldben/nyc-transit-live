@@ -918,11 +918,18 @@ railroad, "estimated from a prediction" for a train placed between two stops fro
 fresh prediction (LIRR's estimates, and NJ Transit's in-transit trains), and
 "scheduled position (no GPS)" for one placed at a stop (subway, PATH, NJ Transit and
 the railroad's placements, "scheduled (no GPS)" in the railroad popup). A railroad
-train the position ladder drew nothing for is counted on the status line instead
-("railroad: LIRR 24 trains not shown, last seen over 10m ago") and appears nowhere
-on the map; whenever the railroad line renders it also says "MNR position age
-unavailable", because Metro-North dates none of its positions, and that clause never
-raises the line on its own. While a failed railroad's rows are retained, each train
+train the position ladder drew nothing for appears nowhere on the map and is counted
+instead. That count rides the status line rather than raising it: whenever the railroad
+line is already rendering for some other reason it gains a clause of its own
+("LIRR 24 trains not shown, last seen over 10m ago"), and on a healthy railroad it says
+nothing. Withholding is LIRR's steady state rather than a fault, since the committed
+evening withholds 24 of 68 with nothing wrong, so a clause that could raise the line
+would raise it on every poll and paint the status bar in the error class every day, which
+is the devaluation section 3.2 of the contract exists to prevent. The count is still
+published on every railroad block, on `/api/status` and in the contract monitor's summary,
+which is where a count nobody has a threshold for belongs. The same rule and the same
+reason keep "MNR position age unavailable" riding the line and never raising it, because
+Metro-North dates none of its positions on any day. While a failed railroad's rows are retained, each train
 keeps the glyph and the glide it had before: a placement stays hollow and holds still
 where its glide stopped, rather than wearing the GPS glyph at its next stop.
 

@@ -173,11 +173,19 @@ def _passes_base_rule(entity, canceled_trips: set[str]) -> bool:
 class PositionLadder(dict[str, int]):
     """_position_ladder's answer, {trip id: step}, with the terms it was judged on.
 
-    A MAPPING FIRST, so whatever reads steps reads a plain dict. The attributes are what
-    _accepted_as_gps needs for the one question the mapping cannot answer, whether a single
-    vehicle entity's own observation earns its trip's step: the system (for its policy row
-    and its observation clock), whether that row is age-gated, the clock every age is read
-    against, and the two limits as this decode read them.
+    A MAPPING FIRST, so whatever reads steps reads a plain dict. Most of the attributes are
+    what _accepted_as_gps needs for the one question the mapping cannot answer, whether a
+    single vehicle entity's own observation earns its trip's step: the system (for its
+    policy row and its observation clock), whether that row is age-gated, the clock every
+    age is read against, and the two limits as this decode read them.
+
+    AND `unjoinable`, WHICH IS _position_steps' QUESTION. A vehicle the feed gives no
+    trip id is keyed by its entity id, because that is what the GPS pass emits it under,
+    and nothing joins a trip_update to a key of that shape (_ladder_step_behind). So a
+    verdict under one withholds nothing from the placement pass, which the counter has to
+    know before it says a train is nowhere on the map. Recorded where the keys are made
+    rather than re-derived from the feed, so the set and the mapping cannot disagree
+    about which key is which.
     """
 
     def __init__(
@@ -189,6 +197,7 @@ class PositionLadder(dict[str, int]):
         self.clock = clock
         self.fresh_s = fresh_s
         self.max_s = max_s
+        self.unjoinable: set[str] = set()
 
 
 def _accepted_as_gps(entity, canceled_trips: set[str], ladder: PositionLadder) -> bool:
@@ -275,8 +284,9 @@ def _first_placeable_row(
     header: float | None,
     canceled_trips: set[str],
     updates_by_trip: dict[str, list],
-) -> dict | None:
-    """The first row the placement pass would draw for this vehicle's trip at `now`, or None.
+) -> tuple[dict, float | None] | None:
+    """The first row the placement pass would draw for this vehicle's trip at `now`, paired
+    with that prediction's own clock, or None when nothing of its trip is placeable.
 
     "PLACEABLE" IS THE PLACEMENT PASS'S OWN ANSWER: the trip_update is not canceled
     (_trip_update_is_canceled) and _place_trip returns a row, whose observed_at is the
@@ -285,6 +295,16 @@ def _first_placeable_row(
     trip_updates sharing its trip id, and where there are several the first placeable one
     in feed order answers, which is the row the live path's dedupe keeps. With no stops
     nothing is placeable, as fetch_railroad_trains skips the placement pass then.
+
+    TWO CLOCKS, AND THE PAIR IS THE WHOLE REASON THIS DOES NOT JUST RETURN A ROW. The
+    row's observed_at is the clock the RIDER is served: the trip_update's own timestamp
+    with the feed header as its fallback, which design 3.3 blesses for a served value and
+    _prediction_observed_at implements. The second element is that trip_update's OWN
+    timestamp and nothing else, None where it carries none, and it is what the ladder
+    GATES on. Serving the header for a prediction that omits its clock reports a number
+    the provider really sent; GATING on it would rule an undated prediction 0 s old at
+    the header, the freshest value on the feed, which is the reading _position_ladder's
+    undated-prediction paragraph refuses.
     """
     if not stops:
         return None
@@ -302,7 +322,7 @@ def _first_placeable_row(
             candidate, system, stops, now, None, _prediction_observed_at(system, tu, header)
         )
         if row is not None:
-            return row
+            return row, _railroad_observed_at(system, tu.timestamp)
     return None
 
 
@@ -338,6 +358,23 @@ def _position_ladder(
     with no time on it (models.PositionSteps, and _position_steps holds the same rule for
     a box-rejected copy). Both worlds are pinned at the ladder in
     tests/test_position_ladder.py and at both passes in tests/test_feeds_railroad.py.
+
+    AN UNDATED PREDICTION IS RULED THE SAME WAY, WHICH IS THE OTHER HALF OF THAT ONE
+    DECISION. Steps 2 and 4 read the prediction's OWN clock (_first_placeable_row's
+    second element), so a trip_update with no timestamp is within neither limit and can
+    promote nobody. It cannot be otherwise: the clock a row is SERVED is that stamp with
+    the feed header behind it (design 3.3), and this ladder reads its ages against the
+    header, so gating on the served value would score every undated prediction 0 s old,
+    the freshest number on the feed, off a stamp the provider never sent. Measured while
+    it did, by clearing one trip_update's timestamp at a time on the committed LIRR
+    capture: 9 of the 68 vehicles rose to step 2 that way and 4 of those came from step 5,
+    and clearing 6006_2026-06-20's (its own fix 53676 s old, its prediction 52538 s) read
+    27/7/11/0/23 and drew the audit's own F01 witness `estimated`, a train last seen
+    14h 54m ago carrying the header as its observation clock. Reading the own clock, the
+    same clearing leaves each of the six at step 3, drawn at its own position and
+    qualified. The capture as committed does not move either way (27/6/11/0/24): all 5 of
+    its undated trip_updates are its canceled trips, which are not placeable at all, so
+    the world that shows this is built (tests/test_position_ladder.py).
 
     WHO IS COVERED: every vehicle _passes_base_rule accepts (a vehicle, not canceled,
     positioned, inside the box), keyed by the trip id the GPS pass emits for it. A trip
@@ -399,6 +436,8 @@ def _position_ladder(
     accepted = [entity for entity in feed.entity if _passes_base_rule(entity, canceled_trips)]
     if not gated:
         for entity in accepted:
+            if not entity.vehicle.trip.trip_id:
+                ladder.unjoinable.add(entity.id)
             ladder.setdefault(entity.vehicle.trip.trip_id or entity.id, 1)
         return ladder
 
@@ -406,15 +445,26 @@ def _position_ladder(
     for entity in accepted:
         vehicle = entity.vehicle
         key = vehicle.trip.trip_id or entity.id
+        if not vehicle.trip.trip_id:
+            # Keyed by entity id, so no trip_update can be joined to this verdict: what
+            # _position_steps reads before it calls such a vehicle suppressed.
+            ladder.unjoinable.add(key)
         observed = _railroad_observed_at(system, vehicle.timestamp)
         age = None if observed is None else clock - observed
 
-        row = _first_placeable_row(
+        placeable = _first_placeable_row(
             entity, system, stops, now, header, canceled_trips, updates_by_trip
         )
+        # THE PREDICTION'S OWN CLOCK, NOT THE ROW'S: the row carries the served value,
+        # whose fallback is the header, and the second element is the trip_update's own
+        # stamp (_first_placeable_row says which is which). Reading the row here made an
+        # undated prediction 0 s old whenever the ladder clock IS the header, so the
+        # freshest possible age was the one nobody sent, and it promoted a 53676 s fix to
+        # an estimated marker. Unknown is within neither limit, the same ruling the
+        # undated FIX gets one paragraph up in the docstring.
         prediction_age = None
-        if row is not None and row["observed_at"] is not None:
-            prediction_age = clock - row["observed_at"]
+        if placeable is not None and placeable[1] is not None:
+            prediction_age = clock - placeable[1]
 
         if age is not None and age <= fresh_s:
             step = 1
@@ -434,8 +484,10 @@ def _position_ladder(
 
 def _ladder_step_behind(entity, canceled_trips: set[str], ladder: PositionLadder) -> int | None:
     """The ladder step of the vehicle behind this trip_update entity, or None when no vehicle
-    the ladder judged is behind it: a trip with no vehicle, or one whose vehicle the box
-    rejected, both placed exactly as before contract 6.3 (memo D1).
+    the ladder judged is behind it: a trip with no vehicle, one whose vehicle the box
+    rejected, or one whose vehicle the feed gives no trip id, which to a join by trip id is
+    the same thing as having no vehicle. All three are placed exactly as before contract
+    6.3 (memo D1); _position_steps says what the third is counted as.
 
     THE LADDER'S OWN JOIN, READ BACKWARDS. A combined entity (Metro-North's layout) is
     behind itself, keyed by its own vehicle's trip id. A trip_update entity of the split
@@ -494,6 +546,23 @@ def _position_steps(
     Neither committed capture carries either kind as captured; tests/test_feeds_railroad.py
     builds both.
 
+    A VEHICLE WITH NO TRIP ID IS COUNTED BY THAT SAME RULE, AND IT IS THE COUNT THAT
+    GIVES WAY, NOT THE MAP. The ladder keys such a vehicle by its entity id, the id the
+    GPS pass emits it under, and nothing joins a trip_update back to a key of that shape:
+    the placement pass reads a verdict by trip id (_ladder_step_behind, positioned_ids),
+    so the trip the feed names for that train is placed exactly as a trip with no vehicle
+    is placed, whatever its prediction's age (memo D1). That placement is deliberate and
+    stays. Calling the vehicle `suppressed` is what cannot stand, for the reason D6 gives
+    above: the words are "last seen over 10m ago" AND nowhere on the map, the first half
+    is true of it and the second is false, so it goes in NO count. Steps 1 and 3 under
+    such a key are markers the GPS pass really emits and are counted as ever, and steps 2
+    and 4 cannot reach it at all, since a vehicle with no trip id has no trip_update to be
+    placed from (_first_placeable_row). Measured by blanking only vehicle.trip.trip_id on
+    GO201_26_7768, one of the 24, whose trip_update is 1114 s old: `suppressed` reads 23
+    where it read 24, the placement pass draws that trip `placed` as it always did, and
+    the counts sum to 67 of the 68. The capture carries no such vehicle;
+    tests/test_position_ladder.py and tests/test_feeds_railroad.py build one.
+
     Parsed from the same bytes, stops and `now` both passes decode, so it describes what
     they drew rather than offering a second opinion. fetch_railroad_trains asks it inside
     the GPS pass's DecodeError guard, right after the same bytes decoded there, so it
@@ -503,7 +572,11 @@ def _position_steps(
     canceled_trips = _canceled_trip_ids(feed)
     ladder = _position_ladder(feed, system, stops, now, canceled_trips)
     steps = dict.fromkeys(_STEP_FIELDS.values(), 0)
-    for step in ladder.values():
+    for key, step in ladder.items():
+        if step == 5 and key in ladder.unjoinable:
+            # Withheld from the GPS pass and from nothing else, so the words `suppressed`
+            # prints are not true of it: the no-trip-id paragraph above says why.
+            continue
         steps[_STEP_FIELDS[step]] += 1
 
     header = _header_timestamp(feed)

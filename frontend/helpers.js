@@ -787,15 +787,29 @@ function glideClock(now, staleAt) {
 //      that is 24 trains: 20 whose trip has no prediction that recent, and 4 whose trip
 //      update is recent (27 s to 529 s old) but names no stop still ahead. So "last
 //      seen" is about the train's own position, the one observation all 24 share. It
-//      RAISES the line on its own, because a train that has left the map is the one
-//      thing no marker, popup or name can say: design 4.4 puts the count on the status
-//      line and nowhere else, and a per-marker ghost would reintroduce the falsehood
-//      the gate removed. Its own clause, never merged into another, in the grammar of
-//      "not reporting" (a count beside the system's name), and "10m" is OBS_MAX_S
-//      through humanizeAge. It speaks only while that system's last decode is what the
-//      map draws (its poll decoded, or its rows are retained): once the retention cap
-//      has taken every train the counts describe, "24 not shown" would undercount a
-//      system the STALE clause already names.
+//      RIDES a line that is already rendering and never raises one, for the reason the
+//      UNDATED clause below rides: WITHHOLDING IS LIRR'S STEADY STATE, NOT A FAULT. The
+//      committed capture has 24 of 68 withheld on a wholly healthy railroad
+//      (backend/tests/test_f01_positions.py), and design 2.1 measures the distribution
+//      behind that as structural rather than incidental. A clause that could raise the
+//      line would therefore raise it on every poll of a healthy feed, and map.js paints
+//      any rendered line with the error class, so a rider would see a red status bar
+//      every day and the red would stop telling them anything. That is the hazard
+//      design 3.2 names ("a status line that always says something is a status line
+//      nobody reads"), and it is the same argument this branch makes on the operator's
+//      side, where the monitor's railroad-positions line refuses to WARN on any count
+//      for exactly this reason (README, and _check_production_railroad_positions).
+//      REVIEW FIX: it raised the line until the whole-branch review measured what that
+//      meant, which was a permanently red status bar and, worse, a permanently raised
+//      line for the UNDATED clause to ride, defeating the trade that clause was built
+//      for. The count itself is not lost when nothing else renders: it is served on
+//      every railroad block and on /api/status, and the monitor prints it every run.
+//      Its own clause, never merged into another, in the grammar of "not reporting" (a
+//      count beside the system's name), and "10m" is OBS_MAX_S through humanizeAge. It
+//      speaks only while that system's last decode is what the map draws (its poll
+//      decoded, or its rows are retained): once the retention cap has taken every train
+//      the counts describe, "24 not shown" would undercount a system the STALE clause
+//      already names.
 //   5. UNDATED: "MNR position age unavailable", for a system in UNDATED_SYSTEMS, the set
 //      frontend/boards.test.js holds to the backend's RAILROAD_FRESHNESS_SYSTEMS. This one
 //      may only RIDE a line that is already rendering and never raise one (design 3.2 and
@@ -834,7 +848,8 @@ function staleness(source, now = Date.now() / 1000) {
     }
   }
   const populated = [stale, content, blind].filter((group) => group.length).length;
-  if (!populated && !withheld.length) return null;
+  // The withheld and undated clauses ride; only a poll-age population raises the line.
+  if (!populated) return null;
   const noun = source.systemNoun ? ` ${source.systemNoun}` : "";
   // Naming every system of a source is just naming the source, so fall back to the
   // pre-C2 wording; that is also what keeps a single-feed source reading unchanged.
@@ -853,8 +868,8 @@ function staleness(source, now = Date.now() / 1000) {
   if (stale.length) clauses.push(`${subject(stale)}as of ${worst(stale)} ago`);
   if (content.length) clauses.push(`${subject(content)}as of ${worst(content)} ago`);
   if (blind.length) clauses.push(`${subject(blind)}not reporting`);
+  // Riding, never raising: a population above has already decided that this line renders.
   for (const name of withheld) clauses.push(withheldClause(name, withheldTrains(systems[name])));
-  // Riding, never raising: every clause above has already decided that this line renders.
   for (const name of names) if (UNDATED_SYSTEMS.has(name)) clauses.push(`${name} position age unavailable`);
   return `${source.label}: ${clauses.join("; ")}`;
 }
@@ -1165,7 +1180,15 @@ function positionQualifier(row, board) {
       stated: shown,
     });
   }
-  return answer("unknown", "age unknown");
+  // THE FAIL-SAFE BRANCH STATES NO AGE, so it must report none. `answer`'s default is
+  // `stated = stale ? age : null`, which on a row with a stale clock and no usable
+  // provenance would hand back age 400 beside the words "age unknown": the contract
+  // above says `age` is the age the WORDS state, and vehicleStaleLine reads it to decide
+  // whether the system's own age line would repeat the position's. A non-null age there
+  // deleted the one age the popup actually knew, so the pessimistic branch lost
+  // information instead of adding it. REVIEW FIX; positions.test.js covers it with a
+  // stale clock now, where it only ever passed a fresh one.
+  return answer("unknown", "age unknown", { stated: null });
 }
 
 // ---- 6.3: every vehicle surface, rendered from the served position ----
@@ -3026,9 +3049,15 @@ function announcementWorthy(prev, next) {
 // positionQualifier gave for the row's OWN observation, whose spoken form says how the
 // position was obtained and, once that observation is past OBS_FRESH_S, how old it is
 // ("live GPS, as of 5m ago"). Section 3.2 says a marker must carry that word, and the
-// name is the marker a screen reader reaches. It is written only when a poll re-applies
-// the name, never by a timer, and a marker is not a live region, so it announces
-// nothing; and its words are the popup's own, said aloud, which is the A2 rule.
+// name is the marker a screen reader reaches. It is written when a poll re-applies the
+// name AND by the animation tick's stale sweep, which is the site that wakes when one
+// observation crosses OBS_FRESH_S between polls (systems/shared.js calls
+// applyStaleTreatment on observationCrossed, and every sweep re-names): a marker that
+// dims for its own age has to say why at the same moment, or the name and the pixels
+// disagree until the next poll. A marker is not a live region, so neither write
+// announces anything, which is what makes the tick-driven one safe. REVIEW FIX: this
+// paragraph said "never by a timer", which was false of the very commit that added the
+// clause. Its words are the popup's own, said aloud, which is the A2 rule.
 
 // Join the parts of a name, dropping the empty ones, so a missing field leaves no
 // double comma and no dangling "to".

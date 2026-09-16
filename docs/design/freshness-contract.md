@@ -827,6 +827,21 @@ row says "the marker is gone"; the count is what a rider is given instead, which
 answer, rendered as "LIRR 24 trains not shown, last seen over 10m ago" (`withheldClause`,
 `frontend/helpers.js:873`).
 
+**Amended while building it, and recorded here so it is not mistaken for a decision this
+section made: the clause RIDES the status line and never raises it.** As built it raised
+the line, on the argument that a train which has left the map is the one thing no marker
+can say. The whole-branch review measured what raising meant: the committed capture
+withholds 24 of 68 on a wholly healthy railroad, so the line was non-null on every poll,
+and `frontend/map.js` paints any rendered line with the error class, so an ordinary day
+showed a rider a red status bar. Worse, it raised the line that section 3.2's Metro-North
+clause was deliberately built only to ride, so that clause spoke every day too and the
+trade it was designed around was gone. Raising therefore reopened the devaluation 3.2
+names ("a status line that always says something is a status line nobody reads") through
+the clause added to answer Q7. The count is not lost: it is served on every railroad block
+and on `/api/status`, and the contract monitor prints it every run, which is the operator's
+copy this section always intended. What a rider loses is being told on a day when nothing
+else is wrong, and that is the same trade 3.2 already makes for Metro-North.
+
 ### 3.5 What `SystemFreshness` has to carry
 
 The audit's acceptance case has two clauses and the models can express neither:
@@ -1395,6 +1410,24 @@ something:
   the measured note that it must not be able to raise the status line on its own.
 - **Q1** made the ferry rows in 4.1, 4.2 and 4.6 definite instead of conditional.
 - **Q7** added a row to 4.4 for the suppression count.
+
+**ERRATUM, 2026-09-16, on Q7's answer above.** "Yes for the status line" is right and is
+unchanged; what it did not say is whether that count may RAISE the line or only ride one,
+and as built it raised. Measured at 6.3, on the capture this document sizes everything
+else from: a healthy LIRR withholds 24 of its 68 positioned vehicles, about a third of its
+markers, on an ordinary evening with nothing wrong. So a clause that can raise the line
+raises it on every poll, and `frontend/map.js` paints any raised line with the error
+class, which gave a rider a permanently red status bar and spent the colour that tells
+them a feed is actually down. That is section 3.2's own hazard, "a status line that always
+says something is a status line nobody reads", reopened through the clause added to answer
+this question, and it also raised the line that Q5's Metro-North clause was deliberately
+built only to ride, so that clause spoke every day too. **The count therefore rides the
+railroad line and never raises one**, exactly as Q5's clause does, and the answer above
+should be read as "yes for the status line, as a clause that rides it". Nothing is lost to
+an operator or to a later reader: the count is served on every railroad block, published
+on `/api/status` as `railroad_positions`, and printed per system by the contract monitor
+on every one of its six-hourly runs. What a rider gives up is being told on a day when
+nothing else is wrong, which is the same trade Q5 already made for Metro-North.
 
 **One correction that is not a decision, made while amending and recorded so it is not
 mistaken for one.** Applying clause (c) to 3.3's table exposed a row that was wrong before

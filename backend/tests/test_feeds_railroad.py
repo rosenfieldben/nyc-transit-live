@@ -491,12 +491,17 @@ def test_metro_north_is_exempt_at_the_decoder(monkeypatch):
 
 def _mnr_aged(seconds: int) -> bytes:
     """The committed Metro-North capture with every positioned vehicle's stamp moved
-    `seconds` behind its header: the world the capture cannot show, since all 49 of its
-    stamps ARE the header, so a gate on them would pass everything and prove nothing."""
+    `seconds` behind its header and every trip_update stamped AT the header: the world the
+    capture cannot show, since all 49 of its stamps ARE the header, so a gate on them would
+    pass everything and prove nothing. The prediction clocks are supplied because the
+    ladder gates on a prediction's own clock and Metro-North dates none of its 119
+    trip_updates; tests/test_position_ladder.py's copy of this world says why at length."""
     raw, _expected = _load("MNR")
     feed = pb.FeedMessage.FromString(raw)
     header = int(feed.header.timestamp)
     for entity in feed.entity:
+        if entity.HasField("trip_update"):
+            entity.trip_update.timestamp = header
         if entity.HasField("vehicle") and entity.vehicle.HasField("position"):
             entity.vehicle.timestamp = header - seconds
     return feed.SerializeToString()
@@ -505,8 +510,8 @@ def _mnr_aged(seconds: int) -> bytes:
 def test_a_gated_combined_layout_places_exactly_what_its_ladder_estimates(monkeypatch):
     """N2 under the gate, on the combined layout (memo D13, mutation 7). No committed world
     gates a combined entity, because Metro-North is exempt; the aged world above admitted
-    to the policy set is the one that does. There the ladder estimates 23 trains (their
-    undated predictions fall back to the header, 0 s old) and withholds 10, the GPS pass
+    to the policy set is the one that does. There the ladder estimates 23 trains (that
+    world stamps each prediction at the header, 0 s old) and withholds 10, the GPS pass
     emits nothing, and the placement pass must draw exactly the 23 as `estimated`. Its
     per-entity skip asks the same _accepted_as_gps the GPS pass emits by; one that asked
     the base rule instead skips every one of them, and the block would serve 23 estimates
@@ -689,6 +694,124 @@ def test_an_undated_fix_with_nothing_fresh_is_drawn_and_never_counted_absent():
         "placed": 0,
         "suppressed": 23,
     }
+
+
+# The two worlds of the ladder's undated-PREDICTION rule. 6006_2026-06-20 is the audit's
+# F01 witness, step 5 on a fix 53676 s old with a prediction 52538 s old behind it;
+# GO201_26_6272 is one of the 56 trips the placement pass draws from a prediction alone
+# (1720 s old), so nothing the ladder does touches it and only the SERVED clock shows.
+UNDATED_PREDICTION = "6006_2026-06-20"
+UNDATED_PREDICTION_NO_VEHICLE = "GO201_26_6272"
+
+
+def _undated_prediction(raw: bytes, trip_id: str) -> bytes:
+    """The capture with `trip_id`'s trip_update stripped of its own clock, where it stood.
+    Protobuf zero is absence (_railroad_observed_at). The capture's only undated
+    trip_updates are its canceled trips, which are not placeable at all, so no vehicle on
+    it rides a prediction with no clock and this world has to be built."""
+    feed = pb.FeedMessage.FromString(raw)
+    for entity in feed.entity:
+        if entity.HasField("trip_update") and entity.trip_update.trip.trip_id == trip_id:
+            entity.trip_update.timestamp = 0
+    return feed.SerializeToString()
+
+
+def test_an_undated_prediction_promotes_nobody_at_either_pass():
+    """An unknown age is not a fresh one on the PREDICTION side either, which is the same
+    ruling the undated fix gets above. Clear the F01 witness's prediction clock: its own
+    fix is still 53676 s old and the prediction that might stand in for it now carries no
+    time at all, so neither pass may draw it and the counts do not move. Reading the
+    served clock instead, whose fallback is the feed header (design 3.3), scored that
+    prediction 0 s old at the header and drew train 521 as an `estimated` marker dated
+    now, with the counts at 27/7/11/0/23: F01 reopened through the prediction side."""
+    raw = _raw("LIRR")
+    world = _undated_prediction(raw, UNDATED_PREDICTION)
+    header, gps, placed = _both_passes("LIRR", world)
+    assert [t for t in gps + placed if t["trip_id"] == UNDATED_PREDICTION] == []
+    # Nothing else moved with it: the two surfaces are the capture's own, row for row.
+    _base_header, base_gps, base_placed = _both_passes("LIRR", raw)
+    assert gps == base_gps and placed == base_placed
+    assert feeds.railroad._position_steps(world, "LIRR", _stops("LIRR"), header) == {
+        "reported": 27,
+        "estimated": 6,
+        "qualified": 11,
+        "placed": 0,
+        "suppressed": 24,
+    }
+
+
+def test_an_undated_prediction_is_still_served_the_headers_clock():
+    """THE OTHER SIDE OF THAT SEAM, and the reason it is a seam. What the ladder GATES on
+    is the prediction's own clock; what a row is SERVED keeps the feed header as its
+    fallback, which design 3.3 blesses because the header is a real number this provider
+    sent. So a trip with no vehicle, its prediction clock cleared, is placed exactly as
+    it was and reports the header: the pass draws its 62 rows either way, and this one is
+    dated 0 s old rather than 1720 s. Only the gate changed."""
+    raw = _raw("LIRR")
+    trip = UNDATED_PREDICTION_NO_VEHICLE
+    base_header, _base_gps, base_placed = _both_passes("LIRR", raw)
+    dated = [base_header - t["observed_at"] for t in base_placed if t["trip_id"] == trip]
+    assert dated == [1720.0]
+
+    header, _gps, placed = _both_passes("LIRR", _undated_prediction(raw, trip))
+    rows = [t for t in placed if t["trip_id"] == trip]
+    assert [t["provenance"] for t in rows] == ["placed"]
+    assert [t["observed_at"] for t in rows] == [header]
+    assert len(placed) == len(base_placed) == 62
+
+
+def _untripped_vehicle(raw: bytes, trip_id: str) -> tuple[bytes, str]:
+    """The capture with `trip_id`'s vehicle stripped of its trip id, where it stood, and
+    the entity id that vehicle is known by afterwards. Its trip_update keeps the trip id,
+    so the feed still names the trip and still predicts it: what changes is that nothing
+    joins the vehicle to it. Every positioned vehicle on both captures names its trip, so
+    this world is built too."""
+    feed = pb.FeedMessage.FromString(raw)
+    (entity,) = [
+        e
+        for e in feed.entity
+        if e.HasField("vehicle")
+        and e.vehicle.HasField("position")
+        and e.vehicle.trip.trip_id == trip_id
+    ]
+    entity.vehicle.trip.trip_id = ""
+    return feed.SerializeToString(), entity.id
+
+
+def test_a_vehicle_with_no_trip_id_is_counted_nowhere_while_its_trip_is_drawn():
+    """D6'S RULE, ONE KEY SHAPE OVER. GO201_26_7768 is one of the 24: its own fix is past
+    OBS_MAX_S and its prediction is 1114 s old, so the ladder withholds it and the count
+    says so. Blank its VEHICLE's trip id and the ladder judges the same vehicle under its
+    entity id, where no trip_update can be joined to it: the placement pass, which reads a
+    verdict back by trip id (_ladder_step_behind, positioned_ids), places that trip exactly
+    as it places a trip with no vehicle, whatever its prediction's age (memo D1). Drawing
+    it is right and stays. Counting the vehicle `suppressed` is what cannot stand: those
+    words are "last seen over 10m ago" AND nowhere on the map, and the map is showing that
+    train. So it goes in no count, as the box-rejected vehicle within OBS_MAX_S does, and
+    the five counts sum to 67 of the 68. Before that rule the status line said a train was
+    not shown while the placement pass drew it."""
+    raw = _raw("LIRR")
+    trip = "GO201_26_7768"
+    stops = _stops("LIRR")
+    base_header, _base_gps, base_placed = _both_passes("LIRR", raw)
+    assert trip not in {t["trip_id"] for t in base_placed}, "withheld at step 5 as captured"
+    assert feeds.railroad._position_steps(raw, "LIRR", stops, base_header)["suppressed"] == 24
+
+    world, entity_id = _untripped_vehicle(raw, trip)
+    header, gps, placed = _both_passes("LIRR", world)
+    assert [t["trip_id"] for t in gps if t["trip_id"] in (trip, entity_id)] == []
+    rows = [t for t in placed if t["trip_id"] == trip]
+    assert [t["provenance"] for t in rows] == ["placed"]
+    assert [header - t["observed_at"] for t in rows] == [1114.0]
+    steps = feeds.railroad._position_steps(world, "LIRR", stops, header)
+    assert steps == {
+        "reported": 27,
+        "estimated": 6,
+        "qualified": 11,
+        "placed": 0,
+        "suppressed": 23,
+    }
+    assert sum(steps.values()) == 67
 
 
 # ---------------- placement golden ----------------

@@ -253,7 +253,16 @@ test("A2j. a vanish rescue and a status transition in one poll are one write, no
   // status line, where it belongs, and in no announcement: the rescue speaks the line's
   // words ("no longer shown, last seen over 10m ago"), and never its number.
   expect(await page.evaluate(() => document.activeElement.id)).toBe("map");
-  await expect(page.locator("#status")).toContainText("railroad: LIRR 1 train not shown, last seen over 10m ago");
+  // The rescue speaks the count's WORDS ("no longer shown, last seen over 10m ago") and
+  // never its number, which is the point. The number is not on the status line here
+  // either, and that is the other half of the same rule: this is the poll on which
+  // Metro-North recovered, so the railroad is now wholly healthy and the withheld clause
+  // rides a line that is no longer raised. A train can therefore leave the map with the
+  // line saying nothing at all, which is the trade design 3.2 takes over a status line a
+  // rider stops reading; frontend/positions.test.js pins the riding, clause by clause.
+  const status = page.locator("#status");
+  await expect(status).not.toContainText("railroad:");
+  await expect(status).not.toContainText("not shown");
 });
 
 test("A2l. a status change the animation tick finds mid-poll joins that poll's one write, after the rescue (6.3)", async ({ page }) => {
@@ -310,23 +319,36 @@ test("A2k. the count of trains not shown changing, appearing or clearing says no
   // not, because what it speaks is a system's degraded membership and the count is none.
   const ctx = await installMocks(page);
   let suppressed = 23;
+  // METRO-NORTH'S POLL IS OLD SO THE LINE IS RAISED, because the withheld clause rides a
+  // line and never raises one: on a wholly healthy railroad it says nothing at all, which
+  // is what smoke.spec.js's C2j pins. The count still has to be able to change in view of
+  // a rider without the live region saying a word, and that is what this test is about.
   ctx.overrides.railroads = (route, fixtures) =>
-    json(route, fixtures.railroadsWithSystems({ lirrPositions: fixtures.positionSteps({ suppressed }) }));
+    json(
+      route,
+      fixtures.railroadsWithSystems({
+        mnrAt: fixtures.FROZEN_S - 180,
+        lirrPositions: fixtures.positionSteps({ suppressed }),
+      }),
+    );
   await open(page);
   const status = page.locator("#status");
   await expect(status).toContainText(
-    "railroad: LIRR 23 trains not shown, last seen over 10m ago; MNR position age unavailable",
+    "railroad: MNR as of 3m ago; LIRR 23 trains not shown, last seen over 10m ago; MNR position age unavailable",
   );
   await watchBatches(page);
   for (const [next, line] of [
-    [24, "railroad: LIRR 24 trains not shown"],
+    [24, "LIRR 24 trains not shown"],
     [0, null],
-    [1, "railroad: LIRR 1 train not shown"],
+    [1, "LIRR 1 train not shown"],
   ]) {
     suppressed = next;
     await page.evaluate(() => refreshAll());
     if (line) await expect(status).toContainText(line);
-    else await expect(status).not.toContainText("railroad:");
+    else await expect(status).not.toContainText("not shown");
+    // The line it rides is still there either way, so a vanishing count is the clause
+    // going quiet rather than the whole line going away.
+    await expect(status).toContainText("railroad: MNR as of 3m ago");
   }
   expect(await batches(page), "a count is not news").toEqual([]);
 });

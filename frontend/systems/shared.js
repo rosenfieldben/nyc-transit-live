@@ -578,8 +578,22 @@ function holdPageAnnouncements() {
 
 // A poll's render ends: everything held so far, from any caller, is spoken as one write
 // (composeAnnouncements) in the order it was said, or nothing when nothing was held.
+//
+// THE LAST POLL OUT SPEAKS, NOT THE FIRST, and that is a review fix. This decremented and
+// then wrote unconditionally, so with polls overlapping (R2 fires whichever sources are
+// not already in flight, and the hold spans the whole fetch phase, up to
+// FETCH_DEADLINE_MS) a short poll that started second and ended first would flush a
+// still-rendering poll's held text, and that poll's own later messages then went out in a
+// second write. One poll's news became two writes in the wrong order, which is exactly
+// what holding exists to prevent. Writing only when the count reaches zero restores the
+// invariant the paragraph above states. The cost, stated: a held write now waits for the
+// last overlapping poll rather than the next poll to finish, so a chain of overlapping
+// slow polls defers it further than the single FETCH_DEADLINE_MS the first cut promised.
+// It still cannot wait forever, because each poll's hold is released in a finally and
+// each fetch is bounded by its own AbortSignal.timeout.
 function releasePageAnnouncements() {
   pagePollsRendering = Math.max(0, pagePollsRendering - 1);
+  if (pagePollsRendering > 0) return false;
   const text = composeAnnouncements(heldPageAnnouncements);
   heldPageAnnouncements = [];
   if (!pageAnnounceEl || !text) return false;

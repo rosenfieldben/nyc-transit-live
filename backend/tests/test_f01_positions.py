@@ -127,6 +127,10 @@ MNR_STEPS = {"reported": 33, "estimated": 0, "qualified": 0, "placed": 0, "suppr
 # One of the 24: its fix is over 600 s old and its one placeable prediction is 1114 s old,
 # too old to use. The built world gives that prediction a clock 300 s old.
 STEP_4_TRIP = "GO201_26_7768"
+# The audit's own F01 witness, train 521: its fix is 53676 s (14h 54m 36s) old, the oldest
+# on the capture, and it is one of the 24. The built world clears the clock on the one
+# prediction behind it, which is the other door a marker for it could come through.
+F01_WITNESS = "6006_2026-06-20"
 
 
 def _shift_trip_start(trip) -> None:
@@ -176,6 +180,21 @@ def _with_a_usable_old_prediction(lirr_bytes: bytes) -> bytes:
         if e.HasField("trip_update") and e.trip_update.trip.trip_id == STEP_4_TRIP
     ]
     entity.trip_update.timestamp = int(NOW) - 300
+    return feed.SerializeToString()
+
+
+def _with_an_undated_prediction(lirr_bytes: bytes) -> bytes:
+    """The built world for the ladder's undated-PREDICTION rule: F01_WITNESS's trip update
+    stripped of its own clock, protobuf zero being absence (_railroad_observed_at). The
+    capture's only undated trip updates are its canceled trips, which are not placeable at
+    all, so a vehicle riding a prediction with no time on it has to be built."""
+    feed = pb.FeedMessage.FromString(lirr_bytes)
+    (entity,) = [
+        e
+        for e in feed.entity
+        if e.HasField("trip_update") and e.trip_update.trip.trip_id == F01_WITNESS
+    ]
+    entity.trip_update.timestamp = 0
     return feed.SerializeToString()
 
 
@@ -406,6 +425,29 @@ async def test_step_4_is_served_as_placed_in_a_built_world(f01_world):
     moved = {**LIRR_STEPS, "placed": 1, "suppressed": 23}
     assert body["systems"]["LIRR"]["positions"] == moved
     assert status["railroad_positions"]["LIRR"] == moved
+
+
+@pytest.mark.anyio
+async def test_an_undated_prediction_serves_no_marker_for_the_f01_witness(f01_world):
+    """THE ACCEPTANCE'S OWN WITNESS, THROUGH THE PREDICTION DOOR. Train 521's fix is
+    53676 s old and the map stopped drawing it; this world also clears the clock on the one
+    prediction behind it, so nothing about this train carries a time a rider could read.
+    The body must carry no row for it, and the counts must not move: it is still one of the
+    24, on the status line and on no surface.
+
+    WHAT THIS FORBIDS, and it is the acceptance itself. The ladder gates on a prediction's
+    OWN clock. Gating on the clock the ROW is served, whose fallback is the feed header
+    (design 3.3), scored that undated prediction 0 s old, because at this poll the header
+    IS the clock: the body then carried train 521 as an `estimated` marker with observed_at
+    == NOW, a train last seen fifteen hours ago dated to the second, and the counts read
+    27/7/11/0/23. A rider's client qualifies what the row says about itself, so a row
+    dated now is an unqualified one."""
+    lirr_bytes = _with_an_undated_prediction(_restamp(_raw("LIRR")))
+    assert _own_fix_ages(lirr_bytes)[F01_WITNESS] == 53676.0
+    body, status = await _poll_and_serve(_Upstream(lirr_bytes, _restamp(_raw("MNR"))))
+    assert [t for t in body["data"] if t["trip_id"] == F01_WITNESS] == []
+    assert body["systems"]["LIRR"]["positions"] == LIRR_STEPS
+    assert status["railroad_positions"]["LIRR"] == LIRR_STEPS
 
 
 @pytest.mark.anyio

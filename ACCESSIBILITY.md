@@ -104,7 +104,11 @@ Three things stop that gate from being decoration:
 - When the thing being held **genuinely disappears**, focus moves to the map
   container and the page says so once, politely: "The 1 train you were following
   left the feed. Focus moved to the map.", or "Alerts cleared. Focus moved to the
-  map." `vanish.spec.js A8a` through `A8h`.
+  map." `vanish.spec.js A8a` through `A8h`. A railroad train the map stopped drawing
+  because its own position is more than ten minutes old is still in the feed, so its
+  sentence says instead what the status line counts it as, not shown and last seen over
+  ten minutes ago: "The LIRR Babylon Branch you were following is no longer shown, last
+  seen over 10m ago. Focus moved to the map." `announce.spec.js A2j`.
 - Nothing is announced and nothing is moved when the rider was **not** inside the
   thing that vanished. `vanish.spec.js A8b`, `A8g`.
 - Closing the mobile overlay un-inerts the background **before** restoring focus,
@@ -142,6 +146,21 @@ Three things stop that gate from being decoration:
 - Two refreshes of unchanged data announce **nothing**, and a countdown tick
   never speaks. `announce.spec.js A2g`, `stations.spec.js A1r`, `A1p`.
 - A new agency-wide alert announces once, as a summary. `announce.spec.js A2h`.
+- A poll that has two things to say says them in **one** write. Everything said to the
+  page region while a poll is rendering, by the poll itself or by anything else (the
+  animation tick noticing a feed recover, say), is held and spoken once when that poll
+  ends, in the order it was said. So when a train the rider was following is taken off
+  the map on the same poll that a feed's status changes, the two sentences reach the
+  region together ("The LIRR Babylon Branch you were following is no longer shown, last
+  seen over 10m ago. Focus moved to the map. Live data current again for
+  Metro-North."), rather than one after the other, where the second would replace the
+  first before a screen reader read it. `announce.spec.js A2j` counts the records in
+  every MutationObserver batch, and `A2l` lets the animation tick run in the middle of
+  the poll. The cost: anything said while a poll is rendering waits for it to end, at
+  most fifteen seconds; a rescue's focus move is not delayed. The number of trains the
+  map is not drawing, which the status line states, is never announced, whether it
+  appears or changes: `announce.spec.js A2k`. The alert banner's write can still follow
+  the poll's in the same stretch (N6, open).
 - A station board's age travels with the countdowns it qualifies: a row whose
   prediction is old says "as of 10m ago" in its spoken sentence as well as on
   screen, and that qualifier appearing announces **once**, whether a refresh
@@ -260,10 +279,22 @@ hundred of them, and tabbing through every bus in Brooklyn to reach a control is
 not a keyboard path anyone wants. This is a considered exception with a stated
 equivalent: the station panel is the keyboard path to the same arrival data, one
 Tab away via the skip link. Markers do carry accessible names, so a screen reader
-on a touch device announces "1 train, next stop Times Sq-42 St, Northbound"
-rather than an unlabeled button (`markers.spec.js A2a` through `A2d`,
-`frontend/markers.test.js`), and the map container itself stays focusable so
-Leaflet's arrow-key panning still works (`markers.spec.js A2e`). Where a vehicle
+on a touch device announces "1 train, next stop Times Sq-42 St, Northbound,
+scheduled position, no GPS" rather than an unlabeled button (`markers.spec.js A2a`
+through `A2d`, `frontend/markers.test.js`). A vehicle's name ends with the words its
+popup uses for how its position was obtained and, once its own observation is more than
+90 seconds old, how old that observation is ("live GPS, as of 5m ago", "estimated from
+a prediction", "scheduled position, no GPS"); a fresh bus or ferry fix, whose popup says
+nothing about it, adds nothing to its name either. The name is re-derived whenever the
+marker's dimming is, on every poll (one whose fetch failed included) and on the
+animation tick that finds an observation crossing 90 seconds, so a rider who cannot see
+a marker fade because its own observation aged hears why (`frontend/positions.test.js`,
+`smoke.spec.js C2j`, `C2l`, `C2m`). What a name does not carry is its system's age: a
+marker dimmed because its whole feed is stale, and every Metro-North position, which is
+undated, leave that age to the status line and the page region. A marker is not a live
+region, so none of this is announced.
+The map container itself stays focusable so Leaflet's arrow-key panning still works
+(`markers.spec.js A2e`). Where a vehicle
 sits on top of a station, its popup carries an "Also here" link to that station's
 arrivals so the station stays reachable (`crosslink.spec.js A3a`, `A3b`).
 

@@ -127,24 +127,70 @@ async function loadRailroadStations() {
 
 /* ---------------- Railroads (LIRR + MNR) ---------------- */
 
-// isPlacedRailroad (placed-at-station vs live GPS) lives in helpers.js so it is
-// node-testable; it keys off the authoritative stop_id the GPS decode leaves null.
+// WHAT A TRAIN IS DRAWN FROM IS SERVED, NOT INFERRED (contract 6.3). Every row carries
+// its provenance (reported, estimated, placed or retained) and its own observation's
+// clock, and every decision below reads those two fields: the glyph (railroadHollow),
+// glide versus snap (drawnFromPrediction), the words (positionQualifier), the cross-link
+// (railroadAtItsStation), the dimming (vehicleMarkerAge) and the glide freeze
+// (railroadGlideAt). isPlacedRailroad read stop_id instead and is deleted: an estimated
+// train names a stop exactly as a placed one does, and a field's shape cannot say which
+// of section 3.4's steps a train reached. ONE MORE FIELD IS REMEMBERED, NOT SERVED: a
+// `retained` row no longer says how it was drawn, because retention stamps over its
+// provenance, so each record keeps the provenance its train was last served with
+// (`drawnFrom`) and a retained train is drawn as it was before (drawnFromPrediction says
+// why and what a never-seen retained row gets).
 
 // Square markers, colored by railroadColor (railroad route ids collide with the
-// subway palette, so they get their own). GPS trains are filled; placed trains
-// (a station estimate from the schedule, no live position) are hollow, so the
-// two are visually distinct.
-function railroadIcon(train) {
+// subway palette, so they get their own). A position the train reported is filled; one
+// derived from a prediction (placed at its stop, or estimated between two) is hollow,
+// so the two are visually distinct, and a row that claims neither is hollow too, because
+// the filled square is the glyph that says GPS. `before` is the record's drawnFrom.
+function railroadIcon(train, before = null) {
   const color = railroadColor(train.route_id);
-  const rect = isPlacedRailroad(train)
+  const rect = railroadHollow(train, before)
     ? `<rect x="2" y="2" width="12" height="12" rx="1.5" fill="#fff" stroke="${color}" stroke-width="2.5"/>`
     : `<rect x="1.5" y="1.5" width="13" height="13" rx="1.5" fill="${color}" stroke="#fff" stroke-width="1.5"/>`;
   const html = `<svg viewBox="0 0 16 16">${rect}</svg>`;
   return L.divIcon({ className: "railroad-marker", html, iconSize: [16, 16], iconAnchor: [8, 8] });
 }
 
+// The words one train carries about its position (positionQualifier), read against its
+// own system's block: LIRR's positions are age-gated and Metro-North's are not, which
+// the board takes from UNDATED_SYSTEMS rather than from either name.
+function railroadPosition(train, now = correctedNow()) {
+  return vehiclePosition("railroads", [train.system], train, now);
+}
+
+// The clock a gliding train is drawn at: the live one until the earlier of its system's
+// freeze deadline and its own prediction's (glideDeadline), and pinned there after, so a
+// placed or estimated train riding an old trip update never dead-reckons in a healthy
+// feed. On the committed capture 53 of LIRR's 56 placed trains ride a prediction older
+// than 90 s, so those 53 hold still and dim where they used to glide at full opacity.
+function railroadGlideAt(train, now = correctedNow()) {
+  return glideClock(now, glideDeadline(systemStaleAtOf("railroads", train.system), train));
+}
+
+// A train's accessible name at `now`: the fields its popup renders (A2) and its
+// position's words. THE ONE COMPOSITION the apply path and the stale sweep both write, so
+// a fix that crosses OBS_FRESH_S between polls gains its age in the name on the same tick
+// that dims its marker (observationCrossed), and a poll that fails re-applies nothing but
+// still sweeps, so the name keeps saying what the popup says.
+function railroadMarkerName(train, now = correctedNow()) {
+  return railroadTrainName(train, railroadRouteNames.get(`${train.system}|${train.route_id}`), railroadPosition(train, now));
+}
+
+// Why this train is leaving the map, as the vanishing-focus rescue words it (withheldFix):
+// its last served row read against its system's block and the envelope that dropped it.
+function railroadWithheld(train, now = correctedNow()) {
+  const source = sourceDescriptor("railroads");
+  const block = source ? sourceSystems(source)[train.system] : null;
+  return withheldFix(train, block, source ? source.servedAt : null, now);
+}
+
 function railroadPopup(record) {
   const t = record.latest;
+  const now = correctedNow();
+  const position = railroadPosition(t, now);
   const head = formatRailroadHead(t.system, t.route_id, railroadRouteNames.get(`${t.system}|${t.route_id}`));
   return (
     // Scoped to the train's OWN system (LIRR/MNR) so a numeric route id shared with
@@ -152,39 +198,58 @@ function railroadPopup(record) {
     routeAlertsBlock(t.system, t.route_id) +
     `<b style="color:${readableInk(railroadColor(t.route_id))}">${esc(head)}</b>` +
     (t.train_num ? `<br>Train ${esc(t.train_num)}` : "") +
-    // Placed trains carry a next/current station; GPS trains do not.
-    (isPlacedRailroad(t) && t.stop_name ? `<br>Next stop: ${esc(t.stop_name)}` : "") +
+    // A train drawn from a prediction names the stop it is at or heading for; a GPS fix
+    // names none, so the line is there exactly when the field is.
+    (t.stop_name ? `<br>Next stop: ${esc(t.stop_name)}` : "") +
     (t.direction ? `<br>${esc(t.direction)}` : "") +
-    `<br><span class="popup-sub">${isPlacedRailroad(t) ? "scheduled (no GPS)" : "live GPS"}</span>` +
-    // A2: the station this train is sitting on, reachable. A placed train is drawn AT
-    // its station's coordinates and covers the dot entirely, so without this the
-    // arrivals a rider came for are unreachable at that pixel. "At" is read from the
-    // stop_id the payload already carries, never from distance; the registry key is
-    // system-qualified because LIRR and MNR id spaces are independent and both are
-    // bare integers. See the principle comment at crossLinkHtml in shared.js.
-    (isPlacedRailroad(t) ? crossLinkHtml(`${t.system}|${t.stop_id}`) : "") +
-    // C2: how old this train's own SYSTEM is when LIRR or MNR has gone stale. The
-    // train already names its system, so unlike the subway there is no route
-    // mapping to consult.
-    stalePopupLine(systemAgeOf("railroads", t.system))
+    // HOW THIS POSITION WAS OBTAINED, AND HOW OLD IT IS, in the compact form this popup
+    // has always used: "live GPS", "live GPS, as of 5m ago", "estimated from a
+    // prediction", "scheduled (no GPS)", "showing last known, as of 7m ago". Before 6.3
+    // this line said "live GPS" of a fix fifteen hours old, which is F01.
+    `<br><span class="popup-sub">${esc(position.compact)}</span>` +
+    // A2: the station this train is sitting on, reachable. A train drawn AT its
+    // station's coordinates covers the dot entirely, so without this the arrivals a
+    // rider came for are unreachable at that pixel. "At" is railroadAtItsStation, read
+    // from the payload and the clock the marker is glided by, never from distance: a
+    // placed or estimated train between two stations names only the stop it is heading
+    // for, and gets no link until it is drawn there. The registry key is
+    // system-qualified because LIRR and MNR id spaces are independent and both are bare
+    // integers. See the principle comment at crossLinkHtml in shared.js. A retained
+    // placement is asked as the placement it was (record.drawnFrom): still frozen where
+    // its glide stopped, so it is at its station only if that is where it stopped.
+    (railroadAtItsStation(t, railroadGlideAt(t, now), record.drawnFrom)
+      ? crossLinkHtml(`${t.system}|${t.stop_id}`)
+      : "") +
+    // C2: how old this train's own SYSTEM is when LIRR or MNR has gone stale, unless the
+    // line above already said an age at least that old (vehicleStaleLine).
+    vehicleStaleLine(systemAgeOf("railroads", t.system), position)
   );
 }
 
-// Re-dim every railroad marker from its own system's current age (C2). GPS and
-// placed trains are treated alike: both are drawn from the same feed, so a stale
-// LIRR dims its GPS trains as readily as its scheduled ones.
+// Re-dim every railroad marker from the larger of its system's age and its own
+// observation's (6.3). GPS and placed trains are treated alike on the first count: both
+// are drawn from the same feed, so a stale LIRR dims them all. The second is what 6.3
+// adds: an LIRR fix or prediction past OBS_FRESH_S dims its own marker in a healthy
+// feed, which on the committed capture is 11 fixes and 53 placements. And the name is
+// re-derived here too, so the marker that dims says why in its accessible name at the
+// same moment (railroadMarkerName); setMarkerName writes only a name that changed.
 staleTreatments.push(() => {
+  const now = correctedNow();
   for (const record of railroads.values()) {
-    dimMarker(record.marker, systemAgeOf("railroads", record.latest.system));
+    const t = record.latest;
+    dimMarker(record.marker, vehicleMarkerAge("railroads", systemAgeOf("railroads", t.system), t, now));
+    setMarkerName(record.marker, railroadMarkerName(t, now));
   }
 });
 
 // Keyed by (system, trip_id): LIRR and MNR trip_id namespaces are independent, so
-// trip_id alone would collide (the backend dedups by the same composite). Placed
-// trains glide between their prev and next station via trainLatLng (the subway v2
-// path), animated by animateTrains; GPS trains move by their reported position
-// via setLatLng each poll and are never routed through trainLatLng.
-const railroads = new Map(); // `${system}|${trip_id}` -> { marker, routeId, placed, latest, fState, _segId }
+// trip_id alone would collide (the backend dedups by the same composite). Trains drawn
+// from a prediction glide between their prev and next station via trainLatLng (the
+// subway v2 path), animated by animateTrains; a reported position moves by setLatLng each
+// poll and is never routed through trainLatLng. `hollow` is the glyph the icon was last
+// drawn with, the re-skin gate below; `drawnFrom` is the provenance the train was last
+// served with before any retention, which is how a retained row is drawn.
+const railroads = new Map(); // `${system}|${trip_id}` -> { marker, routeId, hollow, drawnFrom, latest, fState, _segId }
 
 function railroadKey(train) {
   return `${train.system}|${train.trip_id}`;
@@ -197,17 +262,28 @@ function railroadKey(train) {
 const RAILROAD_SLICE_OPTS = { maxSlice: RAILROAD_ROUTE_MAX_SLICE, acceptDist: RAILROAD_ROUTE_ACCEPT_DIST };
 
 function applyRailroads(data) {
-  // Skew-corrected now, same basis as applyTrains; placed trains interpolate
-  // between their prev and next station, GPS trains use their reported position.
-  const now = Date.now() / 1000 - (minClockOffset ?? 0);
+  // Skew-corrected now, same basis as applyTrains; a train drawn from a prediction
+  // interpolates between its prev and next station, a reported one sits where it was.
+  const now = correctedNow();
   const seen = new Set();
   for (const train of data) {
     const key = railroadKey(train);
     seen.add(key);
-    const placed = isPlacedRailroad(train);
     const record = railroads.get(key);
+    // HOW THE TRAIN WAS LAST SERVED BEFORE ANY RETENTION: this row's provenance, or, for a
+    // retained row, whatever the record last remembered (null for a train first seen
+    // retained). A retained train is drawn as it was drawn before (drawnFromPrediction):
+    // a placement stays hollow and frozen on its glide, and does not jump to its next stop
+    // wearing the GPS glyph.
+    const before = train.provenance === "retained" ? (record ? record.drawnFrom : null) : train.provenance;
+    // Both from the SERVED provenance (6.3): whether this train glides, and which glyph
+    // it wears. A train can change ladder step between polls (its fix aging past
+    // OBS_FRESH_S while a fresh prediction stands in for it), so both are re-read here.
+    const glides = drawnFromPrediction(train, before);
+    const hollow = railroadHollow(train, before);
     if (record) {
-      if (placed) {
+      record.drawnFrom = before;
+      if (glides) {
         // Same slice caching as applyTrains, but key geometry by (system,
         // route_id) and pass the railroad tolerances. A mid-trip route relabel
         // changes segId and re-projects onto the new route's geometry.
@@ -224,39 +300,33 @@ function applyRailroads(data) {
       }
       record.latest = train;
       // THE LABEL TRACKS THE DATA, including the field a reader would not guess: a
-      // train can move BETWEEN placed and GPS positioning between polls, which flips
-      // the "scheduled position, no GPS" clause the name ends with, and that clause is
-      // how a rider knows how much to trust the position.
-      setMarkerName(
-        record.marker,
-        railroadTrainName(train, railroadRouteNames.get(`${train.system}|${train.route_id}`)),
-      );
-      const age = systemAgeOf("railroads", train.system);
-      // A placed train is glided through the freeze clock so a retained system's
-      // trains stop advancing (C2). A GPS train has no interpolation to freeze: it
-      // sits at its last reported position, which for retained data is the position
-      // it last reported, so re-applying it is already the frozen answer.
+      // train can change ladder step between polls, which changes the position clause
+      // the name ends with ("live GPS", "live GPS, as of 5m ago", "estimated from a
+      // prediction", "scheduled position, no GPS"), and that clause is how a rider knows
+      // how much to trust the position.
+      setMarkerName(record.marker, railroadMarkerName(train, now));
+      const age = vehicleMarkerAge("railroads", systemAgeOf("railroads", train.system), train, now);
+      // A train drawn from a prediction is glided through its freeze clock, so a
+      // retained system's trains stop advancing (C2), a retained placement included (it
+      // is still drawn as one), and so does one riding an old prediction in a healthy
+      // system (6.3). A reported position has no interpolation to freeze: it sits where it
+      // was last reported, which for a retained fix is the position it last reported, so
+      // re-applying it is already the frozen answer.
       record.marker.setLatLng(
-        placed
-          ? trainLatLng(
-              train,
-              glideClock(now, systemStaleAtOf("railroads", train.system)),
-              record.fState,
-            )
-          : [train.latitude, train.longitude],
+        glides ? trainLatLng(train, railroadGlideAt(train, now), record.fState) : [train.latitude, train.longitude],
       );
       dimMarker(record.marker, age);
-      // Re-skin when the route color or the GPS/placed status flips (a placed
-      // train can pick up a GPS position on a later poll, or lose one).
-      if (record.routeId !== train.route_id || record.placed !== placed) {
-        record.marker.setIcon(railroadIcon(train));
+      // Re-skin when the route color or the glyph flips (a train can pick up a fresh
+      // fix on a later poll, or lose it to a prediction; retention flips neither).
+      if (record.routeId !== train.route_id || record.hollow !== hollow) {
+        record.marker.setIcon(railroadIcon(train, before));
         record.routeId = train.route_id;
-        record.placed = placed;
+        record.hollow = hollow;
       }
       if (record.marker.isPopupOpen()) updatePopupKeepingFocus(record.marker);
     } else {
-      const newRecord = { routeId: train.route_id, placed, latest: train, fState: {} };
-      if (placed) {
+      const newRecord = { routeId: train.route_id, hollow, drawnFrom: before, latest: train, fState: {} };
+      if (glides) {
         newRecord._segId = `${train.route_id}|${train.prev_time}|${train.stop_id}`;
         train._route = computeRouteSlice(
           train,
@@ -264,19 +334,14 @@ function applyRailroads(data) {
           RAILROAD_SLICE_OPTS,
         );
       }
-      const age = systemAgeOf("railroads", train.system);
+      const age = vehicleMarkerAge("railroads", systemAgeOf("railroads", train.system), train, now);
       newRecord.marker = labeledMarker(
-        placed
-          ? trainLatLng(
-              train,
-              glideClock(now, systemStaleAtOf("railroads", train.system)),
-              newRecord.fState,
-            )
-          : [train.latitude, train.longitude],
-        // Dimmed at creation for the same reason as the subway: retained data must
-        // never render live, not even for one frame (the "C2b" spec).
-        { icon: railroadIcon(train), opacity: markerOpacity(age) },
-        railroadTrainName(train, railroadRouteNames.get(`${train.system}|${train.route_id}`)),
+        glides ? trainLatLng(train, railroadGlideAt(train, now), newRecord.fState) : [train.latitude, train.longitude],
+        // Dimmed at creation for the same reason as the subway: retained data, and
+        // since 6.3 an old observation, must never render live, not even for one frame
+        // (the "C2b" spec).
+        { icon: railroadIcon(train, before), opacity: markerOpacity(age) },
+        railroadMarkerName(train, now),
       )
         .bindPopup(() => railroadPopup(newRecord))
         .addTo(railroadLayer);
@@ -285,6 +350,11 @@ function applyRailroads(data) {
   }
   for (const [key, record] of railroads) {
     if (!seen.has(key)) {
+      // WHY IT LEFT, for the rescue's words if the rider was holding its popup (A4): a fix
+      // the position ladder stopped drawing for its age is "no longer shown, last seen
+      // over 10m ago", the status line's account of it, and not "left the feed"
+      // (withheldFix). labeledMarker's `remove` hook reads it.
+      record.marker._vanishReason = railroadWithheld(record.latest, now);
       railroadLayer.removeLayer(record.marker);
       railroads.delete(key);
     }

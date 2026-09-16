@@ -55,6 +55,40 @@ FEED_STALE_AFTER_S = 90
 # from the app, so tests/test_contract_monitor.py holds the two copies equal.
 OPERATOR_STALE_AFTER_S = 600.0
 
+# THE POSITION LADDER'S TWO NUMBERS (sections 3.3 and 3.4 of
+# docs/design/freshness-contract.md, contract 6.3): how old a vehicle's own observation
+# may be before the railroad shared rule stops drawing it as it stands. feeds.railroad
+# reads both when a decode runs rather than importing them, because this module imports
+# feeds before it defines anything (feeds.railroad._observation_limits says why that
+# order cannot be turned around).
+#
+# OBS_FRESH_S IS FEED_STALE_AFTER_S: ONE NUMBER, NOT TWO (design 3.3). It is the rider's
+# threshold one level down. A position older than it reads "live GPS, as of {age} ago"
+# and dims, and a prediction newer than it may stand in for the position (step 2).
+# Aliased rather than restated so the two cannot drift, and not overridable for the
+# reason FEED_STALE_AFTER_S is not. SENSITIVITY, measured on the committed LIRR capture at
+# its header (design 3.4 and Q4): at 90 s its 68 served vehicles split 27 reported, 6
+# estimated, 11 qualified, 0 placed and 24 not drawn. Letting step 2 accept a prediction
+# up to 300 s old gives 27/8/9/0/24, up to 600 s 27/11/6/0/24, and with no limit at all
+# 27/15/6/0/20, which rescues 4 of the 24 only by estimating from predictions between
+# 1114 and 52538 s old. The estimate threshold decides how honest a label is on 6 to 11
+# markers; it is not the number that decides whether the 24 exist.
+OBS_FRESH_S = FEED_STALE_AFTER_S
+
+# OBS_MAX_S IS THE RETENTION CAP'S NUMBER AND NOT ITS SEAM. Q2 adopted
+# FEED_RETENTION_MAX_S's value and its argument together ("a ten-minute-old train
+# position, rendered AS stale, is honest context a rider can use, while an hour-old one
+# is a ghost"): past it a vehicle is drawn only if a prediction within it still places
+# the train, and is otherwise counted rather than drawn. It is its own literal because an
+# alias would take the C6 override along with the value, and the contract tier
+# compresses the retention cap to 20 s (tests/contract/conftest.py): under an alias every
+# LIRR vehicle more than 20 s old would leave that tier's map, a gate nobody chose.
+# tests/test_position_ladder.py holds the two equal where the seam is unset, and holds
+# this one at 600 where it is set. SENSITIVITY (Q2), same capture: at 600 s the 24 are
+# not drawn; at 1800 s 15 of them stay, dimmed and labeled, and 9 go; at 3600 s 20 stay
+# and 4 go.
+OBS_MAX_S = 600.0
+
 # How long ONE failed subsystem's data is carried forward inside an aggregate
 # envelope before it is dropped (C2). Ten minutes, and the reasoning is the same
 # shape as the alerts retention cap but at a much shorter horizon because vehicle

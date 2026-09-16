@@ -1362,15 +1362,25 @@ test("C2a. railroad partial outage: MNR dims and ages while LIRR stays live (C2)
 
   // First the healthy baseline, so the dimming below is a CHANGE rather than the
   // state the page happened to load in.
-  ctx.overrides.railroads = (route, fixtures) => json(route, fixtures.railroadsWithSystems({}));
+  // The LIRR placed train is served with the anchors the poller carries forward from a
+  // train's second poll on (the stock fixture's is a first poll, drawn ON its station),
+  // so there is a glide to watch.
+  const gliding = (fixtures) =>
+    fixtures.railroads().data.map((t) =>
+      t.system === "LIRR"
+        ? { ...t, prev_lat: 40.69, prev_lon: -73.79, prev_time: fx.FROZEN_S - 120, next_time: fx.FROZEN_S + 180 }
+        : t,
+    );
+  ctx.overrides.railroads = (route, fixtures) => json(route, fixtures.railroadsWithSystems({ data: gliding(fixtures) }));
   await page.clock.runFor(15_000);
   expect(await markerOpacities(page, ".railroad-marker")).toEqual(["1", "1"]);
   await expect(status).not.toHaveClass(/error/);
   // The healthy system's PLACED train still glides on the live clock, so the freeze
-  // machinery cannot have been wired in a way that pins a fresh system too. (It
-  // pins the ANIMATION path, which is the authority for a visible layer: the
-  // apply path re-places the same markers and the next tick overwrites it, so a
-  // wrong clock there is only observable through a hidden layer.)
+  // machinery cannot have been wired in a way that pins a fresh system too, nor, since
+  // 6.3, a train whose own prediction is fresh. (It pins the ANIMATION path, which is
+  // the authority for a visible layer: the apply path re-places the same markers and
+  // the next tick overwrites it, so a wrong clock there is only observable through a
+  // hidden layer.)
   const lirrAt = () => page.evaluate(() => railroads.get("LIRR|lirr-placed-1").marker.getLatLng().lat);
   const lirrStart = await lirrAt();
   await page.clock.runFor(30_000);
@@ -1749,7 +1759,10 @@ test("C2e. PATH staleness: gliding halts and markers dim, then recovery resumes 
   await expect(popup(page)).toContainText("as of 3m ago");
   await expect(page.locator("#status")).toContainText("PATH: as of 3m ago");
 
-  // Recovery: a fresh poll un-dims and the glide resumes.
+  // Recovery: a fresh poll un-dims and the glide resumes. Its trains are dated by that
+  // poll's own trip updates (6.3): a recovered feed that re-served the wedged poll's
+  // clocks would be old observations in a healthy system, which is C2k's state, not
+  // this one.
   ctx.overrides.path = (route) => {
     const body = longGlide();
     const at = fx.FROZEN_S + 215;
@@ -1759,7 +1772,9 @@ test("C2e. PATH staleness: gliding halts and markers dim, then recovery resumes 
       feed_timestamp: at - 5,
       served_at: at,
       trains: body.trains.map((t) =>
-        t.id === "p-2" ? { ...t, prev_time: at - 30, next_time: at + 3600 } : t,
+        t.id === "p-2"
+          ? { ...t, prev_time: at - 30, next_time: at + 3600, observed_at: at - 5 }
+          : { ...t, observed_at: at - 5 },
       ),
     });
   };
@@ -2451,3 +2466,457 @@ function nextF03Poll(board, dt) {
   }
   return next;
 }
+
+/* ---- 6.3: F01, the old GPS observations ------------------------------------------
+   C2j is the auditor's acceptance on the map. It renders the /api/railroads body the
+   real backend served in backend/tests/test_f01_positions.py's world, committed as
+   fixtures/f01_railroads.json, which that test fails the moment the backend stops
+   serving, so the two halves of the acceptance cannot drift apart. C2k and C2l are the
+   two behaviours one frame cannot show: the per-observation glide freeze (memo D13,
+   mutation 5) and the animation tick re-dimming a fix that crosses between polls.
+------------------------------------------------------------------------------------ */
+
+const F01_BODY = () => require("./fixtures/f01_railroads.json");
+
+// The design's trip ids (section 3.4, measured in scratch map63 and pinned backend-side
+// by test_position_ladder.py): the six the ladder estimates, the eleven it qualifies and
+// the twenty-four it draws nothing for.
+const F01_ESTIMATED = [
+  "6029_2026-06-20", "GO201_26_6187_1", "GO201_26_6188", "GO201_26_6468_2932_METS", "GO201_26_6665",
+  "GO201_26_8768",
+];
+const F01_QUALIFIED = [
+  "6017_2026-06-20", "6027_2026-06-20", "GO201_26_6040", "GO201_26_6186_1", "GO201_26_6369_2932_METS",
+  "GO201_26_6570", "GO201_26_7766", "GO201_26_7987", "GO201_26_7990_2", "GO201_26_8960", "GO201_26_8971",
+];
+const F01_ABSENT = [
+  "6006_2026-06-20", "GO201_26_6183", "GO201_26_6184", "GO201_26_6269", "GO201_26_6367_2932_METS",
+  "GO201_26_6393_2932_METS", "GO201_26_6567", "GO201_26_6664", "GO201_26_6767", "GO201_26_6768",
+  "GO201_26_6877", "GO201_26_7583_1", "GO201_26_7585_1", "GO201_26_7713", "GO201_26_7767", "GO201_26_7768",
+  "GO201_26_7984", "GO201_26_7985", "GO201_26_8945", "GO201_26_8956", "GO201_26_8957", "GO201_26_8958",
+  "GO201_26_8961", "GO201_26_8766",
+];
+
+// Boot with the F01 world as /api/railroads, and wait for every one of its markers. The
+// other feeds are the stock fixtures, fresh at FROZEN, so the railroad is the only thing
+// on the page with anything to say.
+async function bootF01(page, serve = (route) => json(route, F01_BODY())) {
+  const ctx = await boot(page, (c) => {
+    c.overrides.railroads = serve;
+  });
+  await expect(railroadMarkers(page)).toHaveCount(F01_BODY().data.length);
+  return ctx;
+}
+
+// Every railroad marker in one pass: its served row's provenance, the age of its own
+// observation on the page's clock (computed here from the served values, not by the
+// helper under test), its opacity, its glyph, its accessible name and its popup as the
+// app renders it.
+const f01Markers = (page) =>
+  page.evaluate(() => {
+    const now = Date.now() / 1000 - (minClockOffset ?? 0);
+    const servedAt = sources.railroads.servedAt;
+    return [...railroads.values()].map((record) => {
+      const t = record.latest;
+      return {
+        key: `${t.system}|${t.trip_id}`,
+        trip: t.trip_id,
+        system: t.system,
+        provenance: t.provenance,
+        age: typeof t.observed_at === "number" ? servedAt - t.observed_at + Math.max(now - servedAt, 0) : null,
+        opacity: record.marker.options.opacity ?? 1,
+        hollow: !!record.marker.getElement().querySelector('rect[fill="#fff"]'),
+        name: record.marker._a11yName,
+        popup: railroadPopup(record),
+      };
+    });
+  });
+
+// The backend's next successful poll of the F01 world, `dt` seconds on, with the
+// provider's own stamps (every row's observed_at) left exactly where they were: the
+// railroad stays healthy by every system clock while its rows' observations age, which
+// is the state F01 is about.
+function nextF01Poll(body, dt) {
+  const next = JSON.parse(JSON.stringify(body));
+  next.served_at += dt;
+  next.fetched_at += dt;
+  if (typeof next.feed_timestamp === "number") next.feed_timestamp += dt;
+  for (const block of Object.values(next.systems)) {
+    block.fetched_at += dt;
+    if (typeof block.feed_timestamp === "number") block.feed_timestamp += dt;
+  }
+  return next;
+}
+
+test("C2j. F01's acceptance, map half: no old fix reads as live, a fresh prediction reads as an estimate, and the 24 absent trains are a count on the status line (6.3)", async ({
+  page,
+}) => {
+  // THE AUDITOR'S SENTENCE, on the map: "a fresh header containing an old vehicle
+  // observation never produces an unqualified live-GPS marker; a usable prediction can
+  // produce a clearly labeled estimated marker instead." And N2's beside it: "a
+  // positioned vehicle the GPS pass rejects is considered by the placement pass, and
+  // appears on some surface or on none for a stated reason."
+  //
+  // THE BODY IS NOT HAND-WRITTEN: it is the committed LIRR and Metro-North captures,
+  // served by the real backend in this suite's frozen time, the LIRR header on the poll
+  // clock. A HEALTHY railroad: both feeds decoded, nothing retained, so no system clock
+  // on the page can tell an old fix apart. Only each row's own observed_at can.
+  await bootF01(page);
+  const body = F01_BODY();
+  const markers = await f01Markers(page);
+  const lirr = markers.filter((m) => m.system === "LIRR");
+  const mnr = markers.filter((m) => m.system === "MNR");
+  const tally = (list) => list.reduce((acc, m) => ({ ...acc, [m.provenance]: (acc[m.provenance] ?? 0) + 1 }), {});
+  // One marker per served row: LIRR's 38 fixes, 6 estimates and 56 placements, and
+  // Metro-North's 33 fixes and 3 placements.
+  expect(markers).toHaveLength(body.data.length);
+  expect(tally(lirr)).toEqual({ reported: 38, estimated: 6, placed: 56 });
+  expect(tally(mnr)).toEqual({ reported: 33, placed: 3 });
+
+  // (a) NO OLD FIX READS AS A LIVE ONE. The acceptance as its own conjunction: no marker
+  // whose own observation is over 90 s is at full opacity with a bare "live GPS"...
+  const bare = (m) => m.popup.includes('<span class="popup-sub">live GPS</span>');
+  const old = lirr.filter((m) => m.age > 90);
+  expect(old.filter((m) => m.opacity === 1 && bare(m))).toEqual([]);
+  // ...and each half on its own, because either one missing is F01 back on one surface.
+  // EVERY marker over 90 s is dimmed (the 11 qualified fixes and the 53 placements riding
+  // a prediction that old), and every one under it, in this healthy railroad, is not.
+  expect(old).toHaveLength(64);
+  expect(old.filter((m) => m.opacity !== 0.45).map((m) => m.key)).toEqual([]);
+  expect(lirr.filter((m) => m.age <= 90).every((m) => m.opacity === 1)).toBe(true);
+  expect(mnr.every((m) => m.opacity === 1), "Metro-North dates nothing, and is healthy").toBe(true);
+  // EVERY old fix says its age, in its popup and its name, in the same words.
+  const qualified = old.filter((m) => m.provenance === "reported");
+  expect(qualified.map((m) => m.trip).sort()).toEqual(F01_QUALIFIED);
+  for (const m of qualified) {
+    const said = m.popup.match(/<span class="popup-sub">(live GPS, as of [^<]+ ago)<\/span>/);
+    expect(said, `${m.key} popup`).not.toBeNull();
+    expect(m.name.endsWith(`, ${said[1]}`), `${m.key}: ${m.name}`).toBe(true);
+    expect(m.hollow, `${m.key} is still its own reported position`).toBe(false);
+  }
+  // The oldest fix on the map is 593 s, "10m": the fifteen-hour one is not drawn at all.
+  expect(Math.max(...lirr.filter((m) => m.provenance === "reported").map((m) => m.age))).toBe(593);
+  // And the 27 fresh fixes are exactly what they always were: filled, bright, "live GPS".
+  const fresh = lirr.filter((m) => m.provenance === "reported" && m.age <= 90);
+  expect(fresh).toHaveLength(27);
+  expect(fresh.filter((m) => !(bare(m) && !m.hollow && m.name.endsWith(", live GPS")))).toEqual([]);
+
+  // (b) A USABLE PREDICTION, A CLEARLY LABELED ESTIMATE INSTEAD: the design's six, hollow,
+  // bright (their predictions are 4 or 5 s old), and saying so in the popup and the name.
+  const estimates = lirr.filter((m) => m.provenance === "estimated");
+  expect(estimates.map((m) => m.trip).sort()).toEqual(F01_ESTIMATED);
+  for (const m of estimates) {
+    expect(m.popup, m.key).toContain('<span class="popup-sub">estimated from a prediction</span>');
+    expect(m.name.endsWith(", estimated from a prediction"), `${m.key}: ${m.name}`).toBe(true);
+    expect(m.hollow, m.key).toBe(true);
+    expect(m.opacity, m.key).toBe(1);
+  }
+
+  // (c) AND THE STATUS LINE SAYS NOTHING, because nothing is wrong. Withholding is
+  // LIRR's steady state, not a fault: this world is the committed capture, healthy, with
+  // 24 of 68 withheld, so a clause that could RAISE the line would raise it on every poll
+  // and map.js would paint the page's status bar in the error class every poll. Design
+  // 3.2's rule ("a status line that always says something is a status line nobody
+  // reads") is what the withheld clause now obeys, and it rides a raised line instead.
+  // REVIEW FIX: this asserted the raised line and its red until the whole-branch review
+  // measured what that meant on an ordinary day. frontend/positions.test.js pins the
+  // riding, clause by clause; here the acceptance world pins the quiet.
+  const status = page.locator("#status");
+  await expect(status).not.toHaveClass(/error/);
+  await expect(status).not.toContainText("railroad:");
+
+  // (d) AND NOWHERE ELSE (design 4.4 and Q7): the count reaches no marker, no popup and
+  // no name, and none of the 24 has a marker, ghost or otherwise.
+  for (const m of markers) {
+    for (const text of [m.name, m.popup]) {
+      expect(text, m.key).not.toMatch(/not shown|last seen|trains? not|position age unavailable/);
+    }
+  }
+  const drawn = new Set(markers.map((m) => m.trip));
+  expect(F01_ABSENT.filter((trip) => drawn.has(trip))).toEqual([]);
+});
+
+test("C2k. an estimate stops gliding when its own prediction passes 90 s, in a railroad that stays healthy (6.3)", async ({
+  page,
+}) => {
+  // THE DEAD-RECKONING TEST (memo D13, mutation 5). Before 6.3 a glide froze only when a
+  // SYSTEM went stale, so a train drawn from an old prediction in a healthy feed slid on
+  // along its route for as long as the page stayed open. Here the railroad stays healthy
+  // throughout: every poll re-serves the F01 world with its system clocks moved to that
+  // poll and every row's own stamp left where it was, so only the observations age.
+  //
+  // THE LONG STRETCH IS JUMPED (fastForward), not run frame by frame: 136 railroad
+  // markers gliding at ten ticks a second make two minutes of runFor longer than a
+  // test's budget, and what is under test is where the tick puts the marker once the
+  // crossing is behind it, which a jump followed by a second of ticks shows exactly.
+  const TRIP = "LIRR|GO201_26_8768"; // estimated: 265 s out of its last stop, 423 s to Jamaica, prediction 4 s old
+  let polls = 0;
+  await bootF01(page, (route) => json(route, nextF01Poll(F01_BODY(), 15 * polls++)));
+  const lat = () => page.evaluate((key) => railroads.get(key).marker.getLatLng().lat, TRIP);
+  const start = await lat();
+  await page.clock.runFor(20_000);
+  const gliding = await lat();
+  expect(gliding, "it glides while its prediction is fresh").not.toBe(start);
+  // Its prediction was taken 4 s before FROZEN, so it crosses 90 s at FROZEN + 86. Jump
+  // past that (the poll that lands on the way still dates the railroad well inside its
+  // 90 s), let the tick run, and it must hold still from then on.
+  await page.clock.fastForward(75_000);
+  await page.clock.runFor(1_000);
+  const frozen = await lat();
+  await page.clock.runFor(10_000);
+  expect(await lat(), "and holds still once it is not").toBe(frozen);
+  // Where the SYSTEM's deadline alone would put it, which is the dead reckoning.
+  const reckoned = await page.evaluate((key) => {
+    const t = railroads.get(key).latest;
+    const now = Date.now() / 1000 - (minClockOffset ?? 0);
+    return trainLatLng(t, glideClock(now, systemStaleAtOf("railroads", t.system)), {})[0];
+  }, TRIP);
+  expect(reckoned).not.toBe(frozen);
+  // The railroad really is healthy, and says so by saying nothing: no age, and no
+  // withheld clause either, since that one rides a raised line and never raises one.
+  const line = await page.locator("#status").textContent();
+  expect(line).not.toMatch(/railroad:/);
+  // And the estimate says how old its prediction is now, dimmed like any old observation.
+  await page.evaluate((key) => railroads.get(key).marker.openPopup(), TRIP);
+  await expect(popup(page)).toContainText(/estimated from a prediction, as of \d+s ago/);
+  expect(await page.evaluate((key) => railroads.get(key).marker.options.opacity, TRIP)).toBe(0.45);
+});
+
+test("C2l. a fix that crosses 90 s between polls is dimmed by the animation tick, and nothing is said (6.3)", async ({
+  page,
+}) => {
+  // A marker's own observation goes stale by TIME PASSING, exactly as a system does. The
+  // tick used to wake the sweeps only when the stale set of SYSTEMS changed, and one fix
+  // crossing in a healthy feed changes no system, so it stayed bright until the next
+  // poll, up to fifteen seconds late. And it is no membership change either, so the
+  // page's live region must say nothing about it.
+  await bootF01(page);
+  await page.evaluate(() => {
+    window.__pageRecords = [];
+    new MutationObserver((records) => window.__pageRecords.push(records.length)).observe(
+      document.getElementById("page-announce"),
+      { childList: true, characterData: true, subtree: true },
+    );
+  });
+  // The oldest LIRR fix still under 90 s at boot: 86 s old, so it crosses 4 s in.
+  const edge = await page.evaluate(() => {
+    const servedAt = sources.railroads.servedAt;
+    let found = null;
+    for (const [key, record] of railroads) {
+      const t = record.latest;
+      if (t.provenance !== "reported" || typeof t.observed_at !== "number") continue;
+      const age = servedAt - t.observed_at;
+      if (age < 90 && (!found || age > found.age)) found = { key, age };
+    }
+    return found;
+  });
+  expect(edge.age).toBe(86);
+  const opacity = () => page.evaluate((key) => railroads.get(key).marker.options.opacity ?? 1, edge.key);
+  expect(await opacity()).toBe(1);
+  const polls = await page.evaluate(() => sources.railroads.fetchedAt);
+  await page.clock.runFor(6_000); // past its crossing, and nine seconds before the next poll
+  expect(await page.evaluate(() => sources.railroads.fetchedAt), "no poll landed").toBe(polls);
+  expect(await opacity(), "dimmed on the tick, not at the next poll").toBe(0.45);
+  // AND ITS NAME SAYS WHY ON THE SAME TICK: the sweep that dimmed it re-derived its
+  // accessible name, which until then kept the bare "live GPS" of the last poll, so a
+  // rider who cannot see the fade heard nothing change until the next poll landed.
+  const named = await page.evaluate((key) => {
+    const marker = railroads.get(key).marker;
+    return { name: marker._a11yName, label: marker.getElement().getAttribute("aria-label") };
+  }, edge.key);
+  expect(named.name).toMatch(/, live GPS, as of \d+s ago$/);
+  expect(named.label, "and it is on the element a screen reader reads").toBe(named.name);
+  // Its popup, rendered now, says what the dimming means.
+  await page.evaluate((key) => railroads.get(key).marker.openPopup(), edge.key);
+  await expect(popup(page)).toContainText("live GPS, as of 92s ago");
+  expect(await page.evaluate(() => window.__pageRecords), "one fix aging is not news").toEqual([]);
+});
+
+test("C2m. every other system dims, words and freezes one old observation in a healthy feed, not only the railroad (6.3)", async ({
+  page,
+}) => {
+  // MEMO D8: the subway's, buses', PATH's, NJ Transit's and the ferry's positions are
+  // QUALIFIED PER OBSERVATION (dimmed, an age in words, the glide frozen), and C2j to C2l
+  // serve only the railroad. Here every feed is healthy, each envelope fresh at FROZEN,
+  // and in each system one vehicle's OWN observation is 120 s old beside a sibling whose
+  // observation is fresh. No system clock can dim, word or freeze that vehicle; only its
+  // row's observed_at can. Each system has its own call sites for all three
+  // (vehicleMarkerAge at every opacity site; subwayGlideAt, pathGlideAt and njtPointFor for
+  // the freeze), and a site that read its system alone passes every spec above this one.
+  const OLD = fx.FROZEN_S - 120;
+  const old = (row) => ({ ...row, observed_at: OLD });
+  // PATH's stock trains carry no anchors, so here both glide Newark to World Trade Center
+  // over an hour (pathAdvanced's segment, stretched as C2e stretches it), p-2 from a trip
+  // update 120 s old.
+  const pathBody = () => {
+    const body = fx.path();
+    const glide = {
+      latitude: 40.71271, longitude: -74.01193, stop_id: "26734", stop_name: "World Trade Center",
+      prev_lat: 40.73454, prev_lon: -74.16375, prev_time: fx.FROZEN_S - 60, next_time: fx.FROZEN_S + 3600,
+    };
+    return { ...body, trains: body.trains.map((t) => ({ ...t, ...glide, ...(t.id === "p-2" ? { observed_at: OLD } : {}) })) };
+  };
+  await boot(page, (c) => {
+    c.overrides.buses = (route, f) => {
+      const body = f.buses();
+      return json(route, { ...body, data: body.data.map((b) => (b.id === "MTA NYCT_101" ? old(b) : b)) });
+    };
+    c.overrides.subways = (route, f) => {
+      const body = f.subways();
+      return json(route, { ...body, data: body.data.map((t) => (t.trip_id === "sub-1" ? old(t) : t)) });
+    };
+    c.overrides.path = (route) => json(route, pathBody());
+    c.overrides.njt = (route, f) => {
+      const body = f.njt();
+      return json(route, { ...body, trains: body.trains.map((t) => (t.id === "NJ_3800" ? old(t) : t)) });
+    };
+    c.overrides.ferry = (route, f) => {
+      const body = f.ferry();
+      return json(route, { ...body, boats: body.boats.map((b) => (b.id === "H1" ? { ...old(b), updated_at: OLD } : b)) });
+    };
+  });
+  await waitForReady(page);
+  const read = () =>
+    page.evaluate(() => {
+      const one = (records, key, popupOf) => {
+        const record = records.get(key);
+        const at = record.marker.getLatLng();
+        return {
+          opacity: record.marker.options.opacity ?? 1,
+          name: record.marker._a11yName,
+          at: [at.lat, at.lng],
+          popup: popupOf(record),
+        };
+      };
+      return {
+        bus: one(buses, "MTA NYCT_101", busPopup),
+        busFresh: one(buses, "MTA NYCT_102", busPopup),
+        subway: one(trains, "sub-1", trainPopup),
+        subwayFresh: one(trains, "sub-2", trainPopup),
+        path: one(pathTrainRecords, "p-2", pathTrainPopup),
+        pathFresh: one(pathTrainRecords, "p-1", pathTrainPopup),
+        njt: one(njtTrainRecords, "NJ_3800", njtTrainPopup),
+        ferry: one(ferryBoatRecords, "H1", ferryBoatPopup),
+        ferryFresh: one(ferryBoatRecords, "H3", ferryBoatPopup),
+      };
+    });
+  const AGED = ["bus", "subway", "path", "njt", "ferry"];
+  const before = await read();
+
+  // (a) DIMMED, each by its own observation, beside a sibling that is not.
+  for (const key of AGED) expect(before[key].opacity, key).toBe(0.45);
+  for (const key of ["busFresh", "subwayFresh", "pathFresh", "ferryFresh"]) expect(before[key].opacity, key).toBe(1);
+
+  // (b) ITS AGE IN WORDS, in its popup and at the end of its name, the same answer: the
+  // popup's words and the name's spoken form differ only in a placement's parentheses.
+  const words = {
+    bus: "live GPS",
+    subway: "scheduled position (no GPS)",
+    path: "scheduled position (no GPS)",
+    njt: "estimated from a prediction",
+    ferry: "live GPS",
+  };
+  const spoken = { ...words, subway: "scheduled position, no GPS", path: "scheduled position, no GPS" };
+  for (const key of AGED) {
+    expect(before[key].popup, key).toContain(`${words[key]}, as of 2m ago`);
+    expect(before[key].name.endsWith(`, ${spoken[key]}, as of 2m ago`), `${key}: ${before[key].name}`).toBe(true);
+  }
+  // ...and on neither a fresh sibling nor the status line: no SYSTEM here is old.
+  for (const key of ["busFresh", "subwayFresh", "pathFresh", "ferryFresh"]) {
+    expect(before[key].name, key).not.toContain("as of");
+  }
+  expect(await page.locator("#status").textContent()).not.toContain("as of");
+
+  // (c) THE GLIDE FROZEN AT THE OBSERVATION'S DEADLINE: ten seconds of animation ticks,
+  // and the gliding systems' old vehicles have not moved while their fresh siblings have...
+  await page.clock.runFor(10_000);
+  const after = await read();
+  for (const key of ["subway", "path", "njt"]) expect(after[key].at, `${key} holds still`).toEqual(before[key].at);
+  for (const key of ["subwayFresh", "pathFresh"]) expect(after[key].at, `${key} glides`).not.toEqual(before[key].at);
+  // ...and each old one is not where its system's deadline alone would put it now, which is
+  // the dead reckoning a per-system freeze would draw.
+  const reckoned = await page.evaluate(() => {
+    const now = Date.now() / 1000 - (minClockOffset ?? 0);
+    const at = (t, staleAt) => trainLatLng(t, glideClock(now, staleAt), {});
+    const sub = trains.get("sub-1").latest;
+    return {
+      subway: at(sub, subwaySystemStaleAt(sub)),
+      path: at(pathTrainRecords.get("p-2").latest, pathSystemStaleAt()),
+      njt: at(njtTrainRecords.get("NJ_3800").glide, njtSystemStaleAt()),
+    };
+  });
+  for (const key of ["subway", "path", "njt"]) expect(reckoned[key], key).not.toEqual(after[key].at);
+});
+
+test("C2n. a retained train is drawn as it was before: an LIRR placement stays hollow, holds still and links no station (6.3)", async ({
+  page,
+}) => {
+  // RETENTION FREEZES A TRAIN WHERE IT WAS (C2), AND STAMPS OVER HOW IT WAS DRAWN: every
+  // carried row arrives `retained` (feeds/shared.py _stamp_retained), whatever it was
+  // served as before. The first cut of 6.3 read `retained` as a fix, so in any LIRR or
+  // Metro-North outage every placed or estimated train with anchors snapped to its NEXT
+  // stop (the coordinates its row carries), re-skinned to the filled glyph that says GPS
+  // and offered "Also here" for a station it had not reached, for the whole retention
+  // window: the dead reckoning C2 exists to prevent. Each record now remembers the
+  // provenance its train was served with, and a retained train is drawn from that.
+  const KEY = "LIRR|lirr-placed-1";
+  const JAMAICA = [40.7005, -73.8095]; // its next stop, and its row's latitude/longitude
+  // The LIRR placement with the anchors the poller carries forward from a second poll on.
+  const gliding = (fixtures) =>
+    fixtures.railroads().data.map((t) =>
+      t.system === "LIRR"
+        ? { ...t, prev_lat: 40.69, prev_lon: -73.79, prev_time: fx.FROZEN_S - 120, next_time: fx.FROZEN_S + 180 }
+        : t,
+    );
+  const ctx = await boot(page, (c) => {
+    c.overrides.railroads = (route, fixtures) => json(route, fixtures.railroadsWithSystems({ data: gliding(fixtures) }));
+  });
+  await waitForReady(page);
+  const read = () =>
+    page.evaluate((key) => {
+      const record = railroads.get(key);
+      const at = record.marker.getLatLng();
+      return {
+        at: [at.lat, at.lng],
+        hollow: !!record.marker.getElement().querySelector('rect[fill="#fff"]'),
+        provenance: record.latest.provenance,
+        popup: railroadPopup(record),
+        name: record.marker._a11yName,
+      };
+    }, KEY);
+  await page.clock.runFor(5_000);
+  const healthy = await read();
+  expect(healthy.provenance).toBe("placed");
+  expect(healthy.hollow).toBe(true);
+  expect(healthy.popup, "gliding toward Jamaica, not on it").not.toContain("Also here");
+
+  // LIRR fails from the next poll: its block freezes at its last decode, retention began
+  // at FROZEN + 15, and the backend re-serves its last rows stamped `retained`, each keeping
+  // the clock it was observed at.
+  ctx.overrides.railroads = (route, fixtures) => {
+    const body = fixtures.railroadsWithSystems({
+      data: gliding(fixtures),
+      fetchedAt: fx.FROZEN_S + 15,
+      lirrAt: fx.FROZEN_S,
+      lirrOk: false,
+      lirrRetainedSince: fx.FROZEN_S + 15,
+    });
+    body.data = body.data.map((t) =>
+      t.system === "LIRR" ? { ...t, observed_at: fx.FROZEN_S - 5, provenance: "retained" } : t,
+    );
+    return json(route, body);
+  };
+  await page.clock.runFor(11_000);
+  await expect.poll(async () => (await read()).provenance).toBe("retained");
+  const held = await read();
+  expect(held.hollow, "still the glyph that says no GPS").toBe(true);
+  expect(held.at, "not jumped to its next stop").not.toEqual(JAMAICA);
+  expect(held.popup, "no link to a station it has not reached").not.toContain("Also here");
+  expect(held.popup).toContain("showing last known");
+  expect(held.name).toMatch(/, showing last known, as of \d+s ago$/);
+  // And it holds still from there: its system's freeze is retained_since.
+  await page.clock.runFor(10_000);
+  const later = await read();
+  expect(later.at, "frozen where retention found it").toEqual(held.at);
+  expect(later.hollow).toBe(true);
+});

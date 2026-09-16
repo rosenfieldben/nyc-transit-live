@@ -399,6 +399,7 @@ def _system_freshness(
     now: float,
     routes: dict[str, list[str]] | None = None,
     feed_timestamps: dict[str, float | None] | None = None,
+    positions: dict[str, dict[str, int]] | None = None,
 ) -> dict[str, dict]:
     """Build the per-system freshness block published in the aggregate envelope.
 
@@ -430,6 +431,13 @@ def _system_freshness(
     than null: null means "this envelope does not do route coverage at all" (the
     railroad and alerts blocks), and the client's fail-safe for that is to dim on
     the source's worst system, which would be wrong here.
+
+    `positions` is the railroad's per-system position-ladder counts (contract 6.3),
+    under the same last-known rule as feed_timestamp: a system present in the mapping
+    decoded this poll and publishes its counts, and one absent from it did not, so it
+    keeps the counts it last published rather than blanking them. Only the railroad
+    passes it. Without it a block carries no counts and serves null, which is the
+    model's answer for a system with no ladder.
     """
     failed = set(failed_systems)
     previous = prev or {}
@@ -458,6 +466,10 @@ def _system_freshness(
             "retained_since": retained_since.get(system),
             "routes": None if routes is None else routes.get(system, []),
         }
+        if positions is not None:
+            blocks[system]["positions"] = (
+                positions[system] if system in positions else was.get("positions")
+            )
     return blocks
 
 
@@ -582,6 +594,7 @@ async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
             feed_timestamp,
             failed_feeds,
             feed_ts_by_system,
+            position_steps,
         ) = await main.fetch_railroad_trains(client, getattr(app.state, "railroad_stops", {}))
     except RuntimeError as exc:
         # Every railroad feed failed this poll.
@@ -663,6 +676,10 @@ async def _refresh_railroads(app: FastAPI, client: httpx.AsyncClient) -> None:
         # block reports None without this function, this call site, or the model ever
         # naming it. The reason lives once, above that frozenset.
         feed_ts_by_system,
+        # What the position ladder did with each decoded system's vehicles (contract
+        # 6.3), last-known for a failed one. The rider's status line reads the
+        # suppression count here, and /api/status projects the same blocks.
+        positions=position_steps,
     )
     # Carry each placed train's prev station forward across polls (the feeds prune
     # the just-departed stop, so the decode leaves prev_* null), giving the gliding

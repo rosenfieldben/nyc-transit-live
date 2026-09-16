@@ -522,7 +522,80 @@ function setStatus(text, isError = false) {
 // rule belongs in writing before something does.
 const pageAnnounceEl = document.getElementById("page-announce");
 
+// 6.3: ONE WRITE PER RENDER (memo D11, and N6's prescribed shape). A poll can bring two
+// of this region's writers together. refreshAll applies each source as its response
+// lands (refreshSource), and a vehicle that has left the payload is removed right there,
+// inside apply: if the rider's focus was in its popup, the vanishing-focus door writes
+// this region at that moment (applyVanishingFocus). The same refreshAll writes it again
+// from its tail when a system's degraded membership changed (announceStatusTransition).
+// The age gate made that pair reachable from an ordinary poll: it takes a train off the
+// map in a feed that is decoding, so a system recovering on the same poll is announced
+// in the same render as the rescue. The two writes sit in different microtasks (apply's,
+// and the one after `await Promise.all`), so a MutationObserver reports them as two
+// batches of one record each and a per-batch count alone cannot see them collide. But
+// when the railroad response is the poll's last to settle, nothing separates them but
+// microtasks: no task boundary, so no rendering opportunity, and an atomic polite region
+// read after that task says only the second sentence. And a task boundary is no promise
+// of one either (several tasks can run inside one frame). So while a poll renders, this
+// region's writes are HELD, and the poll's end speaks them once, composed in the order
+// they happened.
+//
+// EVERY WRITER'S WRITES ARE HELD, NOT ONLY THE POLL'S OWN, and that is the correction a
+// review measured. The first cut held only what ran synchronously inside the poll's
+// applies and its status transition, and the animation tick slipped between them:
+// refreshSource rebuilds the freshness index as each response lands, so a tick after the
+// railroad's response and before the poll's last one saw Metro-North recover and said so
+// at once, and the rescue the apply had held came out alone at the poll's end, second.
+// The pair was split, and reversed. Whatever speaks here while a poll renders (the tick,
+// a layer toggle, the alert banner, a rescue) now joins that poll's one write. Between
+// polls nothing is held and every write goes at once, exactly as before.
+//
+// A COUNT, BECAUSE POLLS OVERLAP (refreshAll fires whichever sources are not already in
+// flight, R2), and every poll's end speaks whatever is held by then, so a write waits for
+// the NEXT poll end, never for a quiet moment that overlapping polls could put off
+// indefinitely. The cost, stated: a write that lands while a poll renders waits for that
+// end, which FETCH_DEADLINE_MS bounds at fifteen seconds; a rescue's focus move itself
+// happens at once. N6 itself is not closed here: tickAlertBanner runs after the poll's
+// end, and can still speak after the held write in the same stretch, as before 6.3.
+let pagePollsRendering = 0;
+let heldPageAnnouncements = [];
+
 function announcePage(text) {
+  if (!pageAnnounceEl || !text) return false;
+  if (pagePollsRendering > 0) {
+    heldPageAnnouncements.push(text);
+    return true;
+  }
+  pageAnnounceEl.textContent = text;
+  return true;
+}
+
+// A poll starts rendering: until its releasePageAnnouncements, every write to this region
+// is held.
+function holdPageAnnouncements() {
+  pagePollsRendering += 1;
+}
+
+// A poll's render ends: everything held so far, from any caller, is spoken as one write
+// (composeAnnouncements) in the order it was said, or nothing when nothing was held.
+//
+// THE LAST POLL OUT SPEAKS, NOT THE FIRST, and that is a review fix. This decremented and
+// then wrote unconditionally, so with polls overlapping (R2 fires whichever sources are
+// not already in flight, and the hold spans the whole fetch phase, up to
+// FETCH_DEADLINE_MS) a short poll that started second and ended first would flush a
+// still-rendering poll's held text, and that poll's own later messages then went out in a
+// second write. One poll's news became two writes in the wrong order, which is exactly
+// what holding exists to prevent. Writing only when the count reaches zero restores the
+// invariant the paragraph above states. The cost, stated: a held write now waits for the
+// last overlapping poll rather than the next poll to finish, so a chain of overlapping
+// slow polls defers it further than the single FETCH_DEADLINE_MS the first cut promised.
+// It still cannot wait forever, because each poll's hold is released in a finally and
+// each fetch is bounded by its own AbortSignal.timeout.
+function releasePageAnnouncements() {
+  pagePollsRendering = Math.max(0, pagePollsRendering - 1);
+  if (pagePollsRendering > 0) return false;
+  const text = composeAnnouncements(heldPageAnnouncements);
+  heldPageAnnouncements = [];
   if (!pageAnnounceEl || !text) return false;
   pageAnnounceEl.textContent = text;
   return true;
@@ -658,7 +731,10 @@ function worstSystemFreshness(sourceKey) {
 // system files load) so their top-level pushes land in an existing array.
 const staleTreatments = [];
 
+// Every sweep re-notes the observation crossings it sees (vehicleMarkerAge), so the
+// earliest pending one is recomputed from scratch whenever the sweeps run.
 function applyStaleTreatment() {
+  nextObservationCrossing = null;
   for (const sweep of staleTreatments) sweep();
 }
 
@@ -668,8 +744,71 @@ function applyStaleTreatment() {
 // that state, which a class-based approach would have to guard.
 // `base` is the marker's own resting opacity, which staleness compounds with rather
 // than replaces (only the ferry layer has one; see markerOpacity).
+// Written only when it changes: since 6.3 the sweeps also run when one observation
+// crosses OBS_FRESH_S between polls, and the other few thousand markers they visit then
+// already carry the opacity they would be given.
 function dimMarker(marker, age, base = 1) {
-  marker.setOpacity(markerOpacity(age, base));
+  const opacity = markerOpacity(age, base);
+  if (marker.options.opacity !== opacity) marker.setOpacity(opacity);
+}
+
+/* ---------------- 6.3: a vehicle, judged by its own observation ---------------- */
+
+// The skew-corrected clock every apply path, every popup and the animation tick glide,
+// age and word a vehicle by (the axis trainLatLng and servedAge share): the client's clock
+// less the smallest skew-plus-latency any served_at has shown (noteClockOffset).
+function correctedNow() {
+  return Date.now() / 1000 - (minClockOffset ?? 0);
+}
+
+// A source's descriptor from map.js's `sources`, or null. map.js loads LAST, so every
+// page has it by the time anything renders; the typeof is for the one caller that loads
+// the system files without map.js at all, the F12 audit harness
+// (docs/reviews/audit-2026-09-05/f12_stale_error_body_overwrites.mjs), which renders a
+// bus popup and must get a board with no envelope behind it (ages from the corrected
+// clock alone, served_at unknown), not a ReferenceError.
+function sourceDescriptor(sourceKey) {
+  return typeof sources === "undefined" ? null : sources[sourceKey] || null;
+}
+
+// The board one vehicle's words are read against (positionBoard): its source's ingested
+// envelope, the systems it belongs to, and the corrected clock.
+function vehicleBoard(sourceKey, names, now = correctedNow()) {
+  return positionBoard(sourceDescriptor(sourceKey) || {}, names, now);
+}
+
+// THE ONE CALL every vehicle surface makes for its words (popup line, compact railroad
+// line, accessible name), so no surface composes its own.
+function vehiclePosition(sourceKey, names, row, now = correctedNow()) {
+  return positionQualifier(row, vehicleBoard(sourceKey, names, now));
+}
+
+// The earliest instant a currently fresh observation on the map crosses OBS_FRESH_S, on
+// the corrected clock, or null. Kept because a marker's own observation goes stale by
+// TIME PASSING, exactly as a system does, and the stale-set signature that wakes the
+// sweeps from the animation tick is a set of SYSTEMS: a fix crossing 90 s between polls
+// in a healthy feed changes no system, so before this it stayed bright until the next
+// poll landed, up to fifteen seconds late. The tick compares one number per frame.
+let nextObservationCrossing = null;
+
+// THE AGE A VEHICLE MARKER IS DIMMED BY, at every opacity site: markerAge over its
+// system's age and its own observation's (servedAge from the envelope's served_at), and
+// the note of when that observation will cross if it has not yet.
+function vehicleMarkerAge(sourceKey, systemAge, row, now = correctedNow()) {
+  const source = sourceDescriptor(sourceKey);
+  const own = observationAge(row, source ? source.servedAt : null, now);
+  if (own != null && !staleAge(own)) {
+    const at = observationStaleAt(row);
+    if (at != null && (nextObservationCrossing == null || at < nextObservationCrossing)) {
+      nextObservationCrossing = at;
+    }
+  }
+  return markerAge(systemAge, own);
+}
+
+// Has an observation crossed since the sweeps last ran? The animation tick's question.
+function observationCrossed(now) {
+  return nextObservationCrossing != null && now >= nextObservationCrossing;
 }
 
 /* ---------------- A2: the one place a map marker is born ---------------- */
@@ -721,8 +860,8 @@ function dimMarker(marker, age, base = 1) {
    moves focus to the checkbox the rider just activated, so the predicate is false and the
    door stays silent; a vehicle ageing out of the feed while its popup is open leaves focus
    inside the doomed subtree, and that is the case worth rescuing. */
-function planVanishingFocus(subtree, { label = null, kind = "vehicle" } = {}) {
-  return vanishingFocusPlan(subtree, document.activeElement, { label, kind });
+function planVanishingFocus(subtree, { label = null, kind = "vehicle", reason = null } = {}) {
+  return vanishingFocusPlan(subtree, document.activeElement, { label, kind, reason });
 }
 
 // SPLIT FROM THE PLAN, and the split is not cosmetic. The banner is rebuilt by replacing
@@ -761,7 +900,9 @@ function labeledMarker(latlng, options, name) {
   marker.on("remove", () => {
     const popup = typeof marker.getPopup === "function" ? marker.getPopup() : null;
     const el = popup && typeof popup.getElement === "function" ? popup.getElement() : null;
-    rescueVanishingFocus(el, { label: marker._a11yName, kind: "vehicle" });
+    // `_vanishReason` is set by a departure sweep that knows why the vehicle left (6.3: a
+    // railroad fix withheld for its age); absent, the general sentence is spoken.
+    rescueVanishingFocus(el, { label: marker._a11yName, kind: "vehicle", reason: marker._vanishReason ?? null });
   });
   // RELABEL AFTER A RE-SKIN TOO, so the name survives no matter what order a caller
   // does things in. Today setIcon happens to reuse the same element and attributes
@@ -782,9 +923,14 @@ function labeledMarker(latlng, options, name) {
 
 // Set or refresh a marker's accessible name. SAFE AND EXPECTED TO BE CALLED EVERY
 // POLL: the name is remembered on the marker so a rebuilt element can be relabeled
-// from the last known value, and re-applying an unchanged name costs one attribute
-// write and announces nothing (a marker is not a live region).
+// from the last known value, and it announces nothing (a marker is not a live region).
+// AN UNCHANGED NAME IS NOT REWRITTEN, since 6.3: every stale sweep re-derives its
+// markers' names as well as their opacity, and those sweeps visit every marker on the
+// map, so a write per marker per sweep would be thousands of attribute writes for the one
+// name that changed. A rebuilt element is relabeled by the `add` hook and the setIcon
+// wrapper above, never by this, so skipping a same-name call loses nothing.
 function setMarkerName(marker, name) {
+  if (marker._a11yName === name) return;
   marker._a11yName = name;
   applyMarkerName(marker);
 }
@@ -827,15 +973,18 @@ function applyMarkerName(marker) {
 // reach the station without touching where anything is drawn. So offsetting is the
 // narrower permission and linking is the general one.
 //
-// PLACED RAILROAD TRAINS ARE DERIVED, AND TAKE THE CROSS-LINK ANYWAY. isPlacedRailroad
-// means the train carries a stop_id and is drawn at its station's coordinates from the
-// schedule; a railroad train with real GPS carries no stop_id at all. So a placed train
-// would qualify for the offset by the rule above. It gets the link instead, as the
-// deliberate conservative choice: the link never moves a marker, and the subway and
-// PATH offsets are tuned to grid geometry those two systems share and the commuter
-// railroads do not. Recorded because an earlier version of this comment had it
-// backwards, calling placed trains measured, and a reader who inherited that would
-// draw the wrong conclusion about every system here.
+// PLACED RAILROAD TRAINS ARE DERIVED, AND TAKE THE CROSS-LINK ANYWAY. A railroad train
+// served `placed` or `estimated` is drawn from a prediction, at or toward the station
+// its stop_id names; a railroad train with real GPS carries no stop_id at all. So a
+// placed train would qualify for the offset by the rule above. It gets the link
+// instead, as the deliberate conservative choice: the link never moves a marker, and
+// the subway and PATH offsets are tuned to grid geometry those two systems share and
+// the commuter railroads do not. Recorded because an earlier version of this comment
+// had it backwards, calling placed trains measured, and a reader who inherited that
+// would draw the wrong conclusion about every system here. Since 6.3 the gate is
+// railroadAtItsStation rather than stop_id, for the reason NJ Transit's is
+// njtAtItsStation: a train gliding TOWARD its stop is not at it, and gets its link
+// only once it is drawn there.
 //
 // THE LINK IS NOT A REPLACEMENT FOR THE PANE ORDERING. Vehicles still paint above
 // stations, because that is the right visual layering; the link exists so the station
@@ -1523,9 +1672,10 @@ const TRAIN_TICK_MS = 100;
 let lastTrainTick = 0;
 
 function animateTrains(ts) {
-  // Glides subway trains, placed railroad trains, PATH trains and NJ Transit
-  // trains between polls. GPS railroad trains are not animated here: they move by their
-  // reported position in applyRailroads. Anchorless PATH trains cost one
+  // Glides subway trains, railroad trains drawn from a prediction (placed or
+  // estimated), PATH trains and NJ Transit trains between polls. A reported railroad
+  // position is not animated here: it moves by its reported position in
+  // applyRailroads. Anchorless PATH trains cost one
   // trainLatLng fallback each and stay put, so no per-record gate is needed.
   // Each layer is gated on its own visibility; rAF keeps rescheduling so
   // animation resumes on re-toggle.
@@ -1537,17 +1687,25 @@ function animateTrains(ts) {
     // waiting up to 15s for the next poll. The sweep runs only when the stale set
     // actually changes (C2).
     refreshSystemFreshness();
-    if (staleSetChanged()) {
-      applyStaleTreatment();
+    const now = correctedNow();
+    // 6.3: ONE OBSERVATION crossing OBS_FRESH_S between polls wakes the sweeps too
+    // (observationCrossed), so its marker dims on this tick rather than at the next
+    // poll. That is no change in any SYSTEM's membership, so it re-dims and says
+    // nothing: the live region below still speaks only when the stale set of systems
+    // moves, exactly as before.
+    const systemsMoved = staleSetChanged();
+    if (systemsMoved || observationCrossed(now)) applyStaleTreatment();
+    if (systemsMoved) {
       // AND SAY SO. A system goes stale by time passing, not only by a poll landing,
       // so the tick is where a mid-interval crossing is detected; announcing only from
       // the poll tail would leave a rider up to fifteen seconds behind the dimming
       // they cannot see. announceStatusTransition compares against what was last
       // announced, so being called from here AND from the poll tail is harmless: the
-      // second call finds an unchanged set and says nothing.
+      // second call finds an unchanged set and says nothing. A tick that lands while a
+      // poll is rendering is held with that poll's writes and spoken in its one write, in
+      // order (announcePage says why that matters).
       announceStatusTransition(systemFreshnessIndex);
     }
-    const now = Date.now() / 1000 - (minClockOffset ?? 0);
     // REDUCED MOTION STOPS THE GLIDE, AND NOTHING ELSE. The freshness rebuild, the
     // dimming sweep and the announcement above all still run: those are data honesty,
     // not motion, and suppressing them would be the gate changing WHAT is shown rather
@@ -1558,20 +1716,26 @@ function animateTrains(ts) {
       requestAnimationFrame(animateTrains);
       return;
     }
-    // glideClock pins a marker at its system's freeze deadline instead of
-    // dead-reckoning it forward on a feed that is not being refreshed. A system with
-    // no deadline gets `now` back unchanged, so healthy gliding is untouched.
+    // glideClock pins a marker at its freeze deadline instead of dead-reckoning it
+    // forward: its system's, when the feed is not being refreshed, and since 6.3 its own
+    // observation's, when the fix or prediction it is glided from is past OBS_FRESH_S
+    // (glideDeadline takes the earlier). A marker with neither gets `now` back
+    // unchanged, so healthy gliding from fresh data is untouched. Each system's glide
+    // clock is one function (subwayGlideAt, railroadGlideAt, pathGlideAt, njtPointFor)
+    // that its apply path calls too, so the poll and the tick cannot freeze one marker
+    // at two different instants.
     if (map.hasLayer(subwayLayer)) {
       for (const record of trains.values()) {
-        const at = glideClock(now, subwaySystemStaleAt(record.latest));
-        record.marker.setLatLng(trainLatLng(record.latest, at, record.fState));
+        record.marker.setLatLng(trainLatLng(record.latest, subwayGlideAt(record.latest, now), record.fState));
       }
     }
     if (map.hasLayer(railroadLayer)) {
       for (const record of railroads.values()) {
-        if (record.placed) {
-          const at = glideClock(now, systemStaleAtOf("railroads", record.latest.system));
-          record.marker.setLatLng(trainLatLng(record.latest, at, record.fState));
+        // Only a train drawn from a prediction glides; a reported one sits where it was. A
+        // retained train is drawn as it was before retention (record.drawnFrom), so a
+        // retained placement keeps gliding, frozen by its system's retained_since.
+        if (drawnFromPrediction(record.latest, record.drawnFrom)) {
+          record.marker.setLatLng(trainLatLng(record.latest, railroadGlideAt(record.latest, now), record.fState));
         }
       }
     }
@@ -1591,10 +1755,10 @@ function animateTrains(ts) {
     if (map.hasLayer(pathTrains)) {
       // PATH is single-feed, so its system is the synthesized one named after the
       // source: it flows through the SAME freeze rule as the aggregates rather than
-      // being exempted by having no systems block (see ingestSystems).
-      const at = glideClock(now, systemStaleAtOf("path", "path"));
+      // being exempted by having no systems block (see ingestSystems). Per train since
+      // 6.3, because each carries its own trip update's clock (pathGlideAt).
       for (const record of pathTrainRecords.values()) {
-        record.marker.setLatLng(trainLatLng(record.latest, at, record.fState));
+        record.marker.setLatLng(trainLatLng(record.latest, pathGlideAt(record.latest, now), record.fState));
       }
     }
   }

@@ -202,7 +202,9 @@ async function loadNjtStops() {
 // times against 15a's stop coordinates. The railroad's hollow variant is exactly
 // the "this is a schedule estimate" signal a rider has already learned on the
 // LIRR and Metro-North markers, so NJT borrows it rather than inventing a second
-// vocabulary for the same fact.
+// vocabulary for the same fact. Both provenances this feed serves, `placed` and
+// `estimated`, wear that glyph on the railroad too (railroadHollow), so 6.3 adds no
+// branch here: the popup and the name say which of the two a train is.
 function njtIcon(train) {
   const color = njtRouteColor(train.route_id, njtRouteColors);
   const html =
@@ -213,11 +215,13 @@ function njtIcon(train) {
 
 function njtTrainPopup(record) {
   const t = record.latest;
+  const position = njtPosition(t);
   return (
     njtTrainPopupHtml(
       t,
       njtRouteName(t.route_id, njtRouteNames),
       njtRouteColor(t.route_id, njtRouteColors),
+      position,
     ) +
     // A2: the station this train is drawn on, reachable. A train drawn at its stop
     // covers the station square entirely, so without this the departures a rider
@@ -233,9 +237,26 @@ function njtTrainPopup(record) {
     // station the vehicle is not at. "At" is still read from the payload rather
     // than from distance.
     (njtAtItsStation(t) ? crossLinkHtml(`NJT|${t.stop_id}`) : "") +
-    // C2: how old this train's data is when NJ Transit has gone dark.
-    stalePopupLine(njtSystemAge())
+    // C2: how old this train's data is when NJ Transit has gone dark, unless the
+    // position's own words already stated an age that old (vehicleStaleLine).
+    vehicleStaleLine(njtSystemAge(), position)
   );
+}
+
+// The words one NJ Transit train carries about its position (6.3), from its served
+// provenance: `placed` at or approaching a stop, `estimated` when feeds/njt.py case 3
+// interpolated it between two, dated by the feed header (section 3.3), and read against
+// NJ Transit's one system. Before 6.3 every NJT popup said "scheduled position (no GPS)"
+// whatever the backend served; the 60 in-transit trains of the committed capture are
+// served `estimated`, and now say so.
+function njtPosition(train, now = correctedNow()) {
+  return vehiclePosition("njt", ["njt"], train, now);
+}
+
+// An NJ Transit train's accessible name at `now`, the one composition the apply path and
+// the stale sweep both write (railroadMarkerName in railroad.js says why the sweep does).
+function njtMarkerName(train, now = correctedNow()) {
+  return njtTrainName(train, njtRouteName(train.route_id, njtRouteNames), njtPosition(train, now));
 }
 
 // NJ Transit's one system. The envelope carries a single-entry `systems` block
@@ -260,9 +281,15 @@ function njtSystemStaleAt() {
 // running the generator or the monitor, so an NJT that has gone dark while every
 // other feed keeps decoding is a recurring production state rather than an
 // outage scenario.
+//
+// 6.3: and from each train's own observation, whichever is older (vehicleMarkerAge).
 staleTreatments.push(() => {
   const age = njtSystemAge();
-  for (const record of njtTrainRecords.values()) dimMarker(record.marker, age);
+  const now = correctedNow();
+  for (const record of njtTrainRecords.values()) {
+    dimMarker(record.marker, vehicleMarkerAge("njt", age, record.latest, now));
+    setMarkerName(record.marker, njtMarkerName(record.latest, now));
+  }
 });
 
 // train.id -> { marker, color, latest, glide, fState, _segId }.
@@ -283,9 +310,12 @@ const njtTrainRecords = new Map();
 // so the poll path, the creation path and animateTrains cannot drift about which
 // object they interpolate, which is the drift that produced the f-squared defect in
 // the first place. A record with no glide sits at the position the server served.
+// The freeze is the earlier of NJ Transit's deadline and this train's own observation's
+// (glideDeadline, 6.3), read off the served row: the reconciled glide copy moves only its
+// coordinates, so its clock is the row's.
 function njtPointFor(record, now) {
   return record.glide
-    ? trainLatLng(record.glide, glideClock(now, njtSystemStaleAt()), record.fState)
+    ? trainLatLng(record.glide, glideClock(now, glideDeadline(njtSystemStaleAt(), record.latest)), record.fState)
     : [record.latest.latitude, record.latest.longitude];
 }
 
@@ -323,11 +353,12 @@ function applyNjt(data) {
       // wording ("NJ Transit route 7") permanently once the real route table lands,
       // because route_id never changed. It also carries the delay, which moves poll
       // to poll while nothing else about the train does.
-      setMarkerName(record.marker, njtTrainName(train, njtRouteName(train.route_id, njtRouteNames)));
+      setMarkerName(record.marker, njtMarkerName(train, now));
       // Frozen glide clock while the feed is stale, so a retained train stops
-      // advancing along its route instead of dead-reckoning on a dead feed (C2).
+      // advancing along its route instead of dead-reckoning on a dead feed (C2), and
+      // since 6.3 while its own observation is past OBS_FRESH_S (njtPointFor).
       record.marker.setLatLng(njtPointFor(record, now));
-      dimMarker(record.marker, njtSystemAge());
+      dimMarker(record.marker, vehicleMarkerAge("njt", njtSystemAge(), train, now));
       // RE-SKINNED ON THE COLOUR, NOT ON THE ROUTE ID, and that is a deliberate
       // divergence from path.js and railroad.js rather than a copy that drifted.
       // Both of those gate the re-icon on route_id changing, and the step-1
@@ -355,13 +386,13 @@ function applyNjt(data) {
         fState: {},
         _segId: segId,
       };
-      const age = njtSystemAge();
+      const age = vehicleMarkerAge("njt", njtSystemAge(), train, now);
       newRecord.marker = labeledMarker(
         njtPointFor(newRecord, now),
-        // Dimmed at creation, like every other system: retained data must never
-        // render live, not even for one frame (the C2b spec).
+        // Dimmed at creation, like every other system: retained data, and since 6.3 an
+        // old observation, must never render live, not even for one frame (the C2b spec).
         { icon: njtIcon(train), opacity: markerOpacity(age) },
-        njtTrainName(train, njtRouteName(train.route_id, njtRouteNames)),
+        njtMarkerName(train, now),
       )
         .bindPopup(() => njtTrainPopup(newRecord))
         .addTo(njtTrains);

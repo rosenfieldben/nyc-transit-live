@@ -2374,6 +2374,11 @@ def check_production(
             results.append(Result("production:feeds", PASS, f"{len(feeds_map)} feeds fresh"))
 
     results.append(_check_production_alerts(data))
+    # CONTRACT 6.3, and here rather than beside the board lines below because it is a
+    # FIELD OF THE PAYLOAD ALREADY PARSED, not another read of the deployment: it costs
+    # no fetch, so it cannot lengthen the request sequence
+    # test_production_accepts_both_url_forms pins.
+    results.append(_check_production_railroad_positions(data))
     # F1. Both of these probe the deployment AGAIN, after every judgement above has
     # been made from the first payload, so a slow or flapping second probe can only
     # add a line rather than change one.
@@ -2537,13 +2542,165 @@ def _check_production_alerts(data: dict) -> Result:
     return Result("production:alerts", PASS, "no degraded alert systems")
 
 
+# ---------------------------------------------------------------------------
+# Production: the position ladder's counts (contract 6.3)
+# ---------------------------------------------------------------------------
+
+# Railroad system names safe to print, for the reason _SAFE_ROUTE_ID_RE gives below:
+# railroad_positions' keys arrive from the same operator-pasted URL and this detail is
+# rendered as markdown in $GITHUB_STEP_SUMMARY. What matches is named, what does not is
+# counted. "LIRR" and "MNR" are four characters; this is wide, not tight.
+#
+# ITS OWN NAME, THOUGH THE PATTERN EQUALS _SAFE_ROUTE_ID_RE's TODAY, because the two
+# describe different populations: NJ Transit route ids and railroad system keys widen for
+# different reasons, and one constant would make widening either one widen both silently.
+#
+# \Z, NOT $, AND THAT IS THE WHOLE POINT OF THE ANCHOR. Python's $ also matches just
+# BEFORE a final newline, so "LIRR\n" matched a pattern written to mean "four safe
+# characters and nothing else" and was interpolated verbatim into the detail. One raw
+# newline breaks a GitHub-flavored markdown table mid-cell and corrupts every row after
+# it, and format_lines' one-line-per-check promise with it, so the escape hatch this
+# pattern exists to close was open on any key an operator-pasted URL chose to end with a
+# newline. \Z matches at the end of the string and nowhere else. THE SAME HOLE WAS OPEN
+# IN _SAFE_ROUTE_ID_RE AND _SAFE_GROUP_RE, both of which PREDATE this branch and are
+# therefore live in production:njt-routes and the board-contributor line today; the
+# 6.3 whole-branch review found all three and this commit closes all three.
+_SAFE_RAILROAD_SYSTEM_RE = re.compile(r"^[A-Za-z0-9_-]{1,16}\Z")
+
+# The ladder's five rungs in the order section 3.4 puts them, which is the order the
+# detail prints and the order models.PositionSteps declares.
+_LADDER_RUNGS = ("reported", "estimated", "qualified", "placed", "suppressed")
+
+# How many systems the detail may NAME before the rest are only counted, the way an
+# unprintable name already is. The safe pattern above bounds each name at 16 characters
+# but NOT the number of them, and a system's phrase runs about 35 bytes, so a payload
+# with 20,000 well-formed blocks writes a ~700 KB detail as one summary-table row.
+# GitHub caps a job summary at 1 MiB per step and DROPS everything past the cap, so that
+# one row would suppress the whole table, FAIL rows about that same deployment included.
+# A monitor that a malformed payload can silence is worse than a truncated line.
+#
+# TEN, because the deployment serves one block per railroad it polls and
+# feeds.RAILROAD_FEED_URLS holds two (LIRR, MNR). Five times the real number means no
+# honest publication reaches this cap and no real run is ever truncated by it, so a
+# detail that says "N more" is itself the signal that the payload is not the
+# deployment's.
+#
+# THIS IS ONE INSTANCE OF A CLASS, not the whole of it. production:feeds joins the
+# /api/status feed keys (contract_monitor.py:2356-2371) and production:alerts joins the
+# degraded system names (contract_monitor.py:2526, 2538) from the same operator-pasted
+# URL with the same absence of a count cap. Those predate this branch and are left as
+# they are; this is the instance the 6.3 branch review reached.
+_MAX_NAMED_SYSTEMS = 10
+
+
+def _check_production_railroad_positions(data: dict) -> Result:
+    """How many railroad trains the deployment is drawing, and how many it is withholding.
+
+    THE BLIND SPOT THIS CLOSES. Contract 6.3 stopped the map drawing an LIRR train whose
+    own GPS fix is over ten minutes old and whose predictions are no better, and on the
+    committed capture that is 24 of 68 trains. Every existing line would call that
+    deployment healthy, and correctly: the feeds decode (railroad-realtime), the headers
+    are fresh (production:feeds), the statics are ready. The trains are simply not there.
+    An operator reading this summary should not have to open the map to learn that a
+    quarter of a railroad went unshown, so the counts ride every arm of this line, the way
+    production:njt-routes carries "12 routes, 8214 points" whether it passes or warns.
+
+    NO COUNT WARRANTS A WARN, AND THAT IS A DECISION RATHER THAN AN OMISSION. The obvious
+    candidate is `suppressed > 0`, and it is wrong: 24 withheld trains is what the
+    committed evening looks like with nothing wrong at all, so that band would warn on
+    every run and this file's opening rule is that a monitor which flaps gets muted. The
+    next candidate, a system drawing nothing while withholding something, is untested
+    rather than safe: a thin overnight LIRR is exactly the shape that produces it, and
+    _HEALTH_CODE_NOTES["observations-qualified"] already records that a sparsely served
+    LIRR can have every prediction past 600 s with nothing wrong. Nobody knows this
+    distribution yet. Open question 1 of docs/reviews/audit-2026-09-05.md asks for a week
+    of deployed measurement of how old LIRR's predictions are when nothing is wrong, and
+    the honest band is the one that week hands back. Until then this line is detection and
+    not severity, which is the rule production:njt-routes already states for itself, and
+    the railroads keep their existing severity elsewhere: railroad-realtime fails on a feed
+    that will not decode, and production:healthz carries observations-qualified.
+
+    SO IT NEVER FAILS. There are four non-PASS arms, all WARN, and they divide into two
+    kinds. THE PAYLOAD IS NOT THERE TO READ, which is a fact about the deployment rather
+    than about the railroads: railroad_positions absent or null (a release older than
+    6.3), not a mapping at all (a proxy or an error page answering in the deployment's
+    place), or an empty mapping (models.py defaults it, and a deployment that has not yet
+    completed a railroad poll serves {}, each block keeping its last known counts through
+    a failed poll). THE PAYLOAD IS THERE AND PART OF IT WILL NOT PRINT, which is the
+    fourth arm and is NOT about the payload being missing: a block whose counts read fine
+    can still sit under a system key the safe pattern rejects, and a key that reads fine
+    can still carry counts that are not five non-negative ints (a rung missing, a
+    negative, a bool, or 27 served as the string "27"). Either one WARNs while every
+    other system's counts are still printed in the same detail. None of the four is worth
+    an exit code.
+    """
+    name = "production:railroad-positions"
+    positions = data.get("railroad_positions")
+    if positions is None:
+        return Result(
+            name, WARN, "/api/status served no railroad_positions (a release older than 6.3)"
+        )
+    if not isinstance(positions, dict):
+        return Result(name, WARN, f"railroad_positions is unusable ({type(positions).__name__})")
+    if not positions:
+        return Result(
+            name, WARN, "railroad_positions is empty: no railroad has completed a poll yet"
+        )
+
+    named: list[str] = []
+    unprintable = 0
+    unusable: list[str] = []
+    for system in sorted(positions):
+        if not _SAFE_RAILROAD_SYSTEM_RE.match(str(system)):
+            # Counted, never quoted. See _SAFE_RAILROAD_SYSTEM_RE.
+            unprintable += 1
+            continue
+        steps = positions[system]
+        counts = [steps.get(rung) for rung in _LADDER_RUNGS] if isinstance(steps, dict) else []
+        # The length is checked as well as the values: all() of an empty list is True, so
+        # a block that is not a mapping at all would otherwise read as five good counts.
+        if len(counts) != len(_LADDER_RUNGS) or not all(
+            isinstance(n, int) and not isinstance(n, bool) and n >= 0 for n in counts
+        ):
+            unusable.append(str(system))
+            continue
+        drawn = "/".join(str(n) for n in counts[:4])
+        named.append(f"{system} {drawn} drawn, {counts[4]} not shown")
+
+    # ONE BUDGET ACROSS BOTH LISTS, spent on the counts first and on the unusable names
+    # with what is left, because both are wire-supplied and either one alone can run to
+    # 20,000 entries. APPLIED AFTER EVERY BLOCK IS CLASSIFIED, so the cap changes what
+    # the detail PRINTS and never what the line SAYS: the status below is still read off
+    # the full `unusable` list, and a bad block past the cap still WARNs.
+    shown = named[:_MAX_NAMED_SYSTEMS]
+    shown_unusable = sorted(unusable)[: _MAX_NAMED_SYSTEMS - len(shown)]
+    over = (len(named) - len(shown)) + (len(unusable) - len(shown_unusable))
+
+    parts = list(shown)
+    if over:
+        parts.append(f"{over} more not named (over the {_MAX_NAMED_SYSTEMS} name cap)")
+    if unprintable:
+        parts.append(f"{unprintable} with an unprintable system name")
+    if shown_unusable:
+        parts.append("unusable counts: " + ", ".join(shown_unusable))
+    summary = "; ".join(parts)
+    if unprintable or unusable:
+        return Result(name, WARN, summary)
+    return Result(name, PASS, summary)
+
+
 # Route ids safe to print. The detail string below is written to the run log AND to
 # $GITHUB_STEP_SUMMARY, which GitHub renders as MARKDOWN, and this payload comes
 # from a URL an operator pasted into a repository variable. Same rule
 # _check_production_health holds itself to: what matches is named, what does not is
 # counted, so nothing that can answer that URL gets to write into the job summary.
 # NJ Transit rail route ids are 1..12 today, so this is wide, not tight.
-_SAFE_ROUTE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,16}$")
+#
+# \Z, not $, for the reason spelled out at _SAFE_RAILROAD_SYSTEM_RE: $ also matches
+# before a final newline, so "1\n" passed this pattern and printed. This one PREDATES
+# the 6.3 branch, so the hole was live in production:njt-routes; the branch review found
+# it while reading the copy 6.3 added.
+_SAFE_ROUTE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,16}\Z")
 
 
 def _check_production_njt_routes(
@@ -2641,7 +2798,12 @@ def _check_production_njt_routes(
 # markdown in the job summary. What looks like a feed-group key ("ACE", "1-7+S") is
 # named and anything else is counted. The plus sign is the one character the 1-7+S
 # group adds to that rule.
-_SAFE_GROUP_RE = re.compile(r"^[A-Za-z0-9+_-]{1,16}$")
+#
+# \Z, not $, for the reason spelled out at _SAFE_RAILROAD_SYSTEM_RE: $ also matches
+# before a final newline, so "ACE\n" passed this pattern and printed. This one PREDATES
+# the 6.3 branch too, so the hole was live in the board-contributor line; the branch
+# review found it while reading the copy 6.3 added.
+_SAFE_GROUP_RE = re.compile(r"^[A-Za-z0-9+_-]{1,16}\Z")
 
 # What a non-200 from the board means, where it means something in particular. Keyed
 # by the status line _fetch_retrying writes and worded here, so nothing from the wire

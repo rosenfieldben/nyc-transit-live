@@ -189,17 +189,29 @@ async function refreshAll() {
   // fetches hit their AbortSignal.timeout, record their errors, and a later tick whose
   // fired set is non-empty (once they free up) repaints the honest state.
   if (!fired.length) return;
-  await Promise.all(fired.map(refreshSource));
-  // Re-dim every marker from the ages this tick's responses produced (C2). Runs
-  // unconditionally rather than only when the stale set changed, because a poll can
-  // also have ADDED markers to an already-stale system through a path that did not
-  // create them (a route relabel moving a train between groups).
-  refreshSystemFreshness();
-  applyStaleTreatment();
-  // A2: the page's live region, from the same index the dimming just used. Judged on
-  // degraded-set membership in helpers.js, so a poll that only makes an already-stale
-  // system older says nothing.
-  announceStatusTransition(systemFreshnessIndex);
+  // 6.3: THIS RENDER'S ANNOUNCEMENTS ARE HELD from here to its end and spoken as one write
+  // (memo D11; why every caller's write is held, and the measured cost, are at announcePage
+  // in systems/shared.js). A vehicle an apply removes under the rider's focus, a status
+  // change the animation tick notices while responses are still landing, and the status
+  // transition below all reach the region in this poll's one write, in that order.
+  holdPageAnnouncements();
+  try {
+    await Promise.all(fired.map((source) => refreshSource(source)));
+    // Re-dim every marker from the ages this tick's responses produced (C2). Runs
+    // unconditionally rather than only when the stale set changed, because a poll can
+    // also have ADDED markers to an already-stale system through a path that did not
+    // create them (a route relabel moving a train between groups).
+    refreshSystemFreshness();
+    applyStaleTreatment();
+    // A2: the page's live region, from the same index the dimming just used. Judged on
+    // degraded-set membership in helpers.js, so a poll that only makes an already-stale
+    // system older says nothing, and neither does anything the position ladder counts:
+    // a suppressed count moving from 23 to 24 changes the status line and no membership.
+    announceStatusTransition(systemFreshnessIndex);
+  } finally {
+    // In a `finally`, so a throw above cannot leave the region held for every poll after.
+    releasePageAnnouncements();
+  }
   const counts = Object.values(sources)
     .map((s) => `${s.count.toLocaleString()} ${s.label}`)
     .join(" · ");

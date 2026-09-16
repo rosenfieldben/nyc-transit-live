@@ -9,7 +9,7 @@ shelf life.
 bash docs/reviews/audit-2026-09-05/run_all.sh      # from the repository root
 ```
 
-Fifteen scripts, about sixteen seconds. Each one exits 0 while the finding still
+Fifteen scripts, about ten seconds. Each one exits 0 while the finding still
 behaves the way the table records it, and non-zero the moment the code stops
 matching. So these are regression checks on the audit record, not one-off prints: a
 red run means the table is stale, which is the only failure mode that matters once
@@ -137,7 +137,7 @@ FIXTURE came off the network, which is exactly why it was worth re-running this.
 
 | Script | Finding | What it drives |
 | --- | --- | --- |
-| `f01_lirr_gps_observation_age.py` | F01 | The real `_decode_railroad_vehicles`, `_refresh_railroads` and `GET /api/railroads` over the committed LIRR and MNR captures. |
+| `f01_lirr_gps_observation_age.py` | F01 | The acceptance world of `backend/tests/test_f01_positions.py` (both committed railroad captures re-stamped onto one frozen clock) through the real `_position_ladder`, `_decode_railroad_vehicles`, `_decode_railroad_placements`, `fetch_railroad_trains`, `_refresh_railroads` and the ASGI `GET /api/railroads` and `GET /api/status`. |
 | `f02_canceled_railroad_gps.py` | F02 | The real railroad decoders and routes over the committed capture, plus a synthetic combined-entity feed in the Metro-North layout. |
 | `f03_arrivals_content_freshness.py` | F03 | The acceptance world of `backend/tests/test_f03_boards.py` (the committed subway capture re-stamped 600s behind the poll clock on one feed group, a current copy on another) through the real fetch path, `_refresh_subways` and the ASGI app, then the real popup and panel in a `node:vm` over the served board. |
 | `f04_airtrain_historical_reference.py` | F04 | The real `load_airtrain` and `/api/airtrain`, then the shipped `stations.js` and `helpers.js` renderers in a `node:vm` against six injected New York instants. |

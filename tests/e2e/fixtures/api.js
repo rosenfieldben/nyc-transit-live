@@ -17,9 +17,34 @@
 // each the way its own endpoint serves them; every per-system block carries its own
 // feed_timestamp. The stock values are FRESH, a few seconds behind FROZEN_S, so a board
 // rendered at FROZEN has nothing to qualify. frontend/boards.test.js pins exactly that.
+//
+// AND SINCE 6.3 EVERY VEHICLE ROW CARRIES THE SAME PAIR, because the map now reads it:
+// a marker's words, its dimming and its glide freeze come from its row's own provenance
+// and observed_at (positionQualifier), so a row without them would read "age unknown"
+// and every existing spec would be asserting about a different map. Each row carries the
+// provenance its system's decoder serves (feeds/*.py): buses and ferry boats `reported`,
+// subway and PATH trains `placed`, NJ Transit's in-transit train `estimated` and its
+// others `placed`, Metro-North's GPS train `reported`, LIRR's train with no vehicle
+// `placed`. Its observed_at is FRESH: 5 s behind the poll that serves it, the envelope's
+// own content convention, or null for Metro-North, which dates nothing. A ROW'S CLOCK
+// FOLLOWS ITS POLL: every builder that takes a fetchedAt stamps its rows from it
+// (stampObserved), so a spec that serves a later poll serves observations as young as
+// that poll, and a spec that means an OLD observation sets one on the built body, where
+// nothing stamps over it. The ferry keeps the backend's own pair, observed_at equal to
+// updated_at, both of them the boat's vehicle.timestamp.
 
 const FROZEN_MS = Date.UTC(2026, 6, 2, 12, 0, 0); // 2026-07-02T12:00:00Z
 const FROZEN_S = FROZEN_MS / 1000;
+
+// How old a fixture row's own observation is at the poll that serves it: fresh, and the
+// same five seconds the envelope's feed_timestamp trails its fetched_at by.
+const OBSERVED_LAG_S = 5;
+
+// Rows with their observation stamped from the poll that serves them. A row whose
+// observed_at is null keeps it: that is a provider that dates nothing (Metro-North), not
+// a stamp waiting to be filled.
+const stampObserved = (rows, fetchedAt) =>
+  (rows || []).map((row) => (row.observed_at === null ? row : { ...row, observed_at: fetchedAt - OBSERVED_LAG_S }));
 
 // A successful feed envelope: content 5s old at poll time (fresh). served_at (R1) is
 // the response build time; it defaults to fetchedAt (served the instant it was
@@ -29,7 +54,7 @@ const envelope = (data, fetchedAt = FROZEN_S, servedAt = fetchedAt) => ({
   fetched_at: fetchedAt,
   feed_timestamp: fetchedAt - 5,
   served_at: servedAt,
-  data,
+  data: stampObserved(data, fetchedAt),
 });
 
 // ---- Per-system freshness blocks (C2) ----
@@ -45,6 +70,10 @@ const envelope = (data, fetchedAt = FROZEN_S, servedAt = fetchedAt) => ({
 // which is what pollers._system_freshness does: a failed system keeps the content time
 // it last reported. Pass `feedTimestamp: null` for a system with no content clock at
 // all, which is Metro-North's standing answer.
+//
+// `positions` (6.3) is the position ladder's five counts, which the backend serves on
+// the railroad blocks and as null on every other (models.PositionSteps): pass
+// positionSteps({...}) for a railroad system.
 const systemBlock = (
   fetchedAt,
   {
@@ -52,6 +81,7 @@ const systemBlock = (
     retainedSince = null,
     routes = null,
     feedTimestamp = fetchedAt == null ? null : fetchedAt - 5,
+    positions = null,
   } = {},
 ) => ({
   fetched_at: fetchedAt,
@@ -59,6 +89,18 @@ const systemBlock = (
   ok,
   retained_since: retainedSince,
   routes,
+  positions,
+});
+
+// One railroad system's position-ladder counts, all zero unless given: reported,
+// estimated, qualified, placed and suppressed (section 3.4's steps 1 to 5).
+const positionSteps = (over = {}) => ({
+  reported: 0,
+  estimated: 0,
+  qualified: 0,
+  placed: 0,
+  suppressed: 0,
+  ...over,
 });
 
 // The subways envelope with per-system blocks for the two feed groups the fixtures'
@@ -84,7 +126,7 @@ const subwaysWithSystems = ({
   // which is how feeds/subway.py folds them; a failed ACE did not decode this poll.
   feed_timestamp: aceOk ? Math.min(fetchedAt - 5, aceContentAt) : fetchedAt - 5,
   served_at: servedAt,
-  data: data ?? subways().data,
+  data: stampObserved(data ?? subways().data, fetchedAt),
   systems: {
     "1-7+S": systemBlock(fetchedAt, { routes: ["1"] }),
     ACE: systemBlock(aceAt, {
@@ -98,6 +140,14 @@ const subwaysWithSystems = ({
 
 // The railroads envelope with per-system blocks. LIRR stays fresh at the envelope's
 // own stamp; MNR's is passed in, so a test can freeze MNR while LIRR advances.
+//
+// Each block carries its position-ladder counts (6.3), as the backend serves them for
+// this fixture's world: LIRR's one train has no vehicle, so the ladder counts nothing
+// for it, and Metro-North's GPS train is one `reported`. Pass `lirrPositions` to put a
+// suppressed count on the status line. `lirrAt` / `lirrOk` / `lirrRetainedSince` are
+// MNR's three for LIRR, so a spec can take LIRR down instead; its rows keep whatever
+// provenance and observed_at the spec gives them after the build (a retained row keeps
+// the clock it was observed at, which stampObserved would otherwise move to this poll).
 const railroadsWithSystems = ({
   data,
   fetchedAt = FROZEN_S,
@@ -105,16 +155,26 @@ const railroadsWithSystems = ({
   mnrAt = fetchedAt,
   mnrOk = true,
   mnrRetainedSince = null,
+  lirrAt = fetchedAt,
+  lirrOk = true,
+  lirrRetainedSince = null,
+  lirrPositions = positionSteps(),
+  mnrPositions = positionSteps({ reported: 1 }),
 } = {}) => ({
   fetched_at: fetchedAt,
   feed_timestamp: fetchedAt - 5,
   served_at: servedAt,
-  data: data ?? railroads().data,
+  data: stampObserved(data ?? railroads().data, fetchedAt),
   systems: {
-    LIRR: systemBlock(fetchedAt),
+    LIRR: systemBlock(lirrAt, { ok: lirrOk, retainedSince: lirrRetainedSince, positions: lirrPositions }),
     // NULL, NOT MISSING: Metro-North's header is a lagging copy, so the backend never
     // publishes it as MNR's content time (feeds.RAILROAD_FRESHNESS_SYSTEMS).
-    MNR: systemBlock(mnrAt, { ok: mnrOk, retainedSince: mnrRetainedSince, feedTimestamp: null }),
+    MNR: systemBlock(mnrAt, {
+      ok: mnrOk,
+      retainedSince: mnrRetainedSince,
+      feedTimestamp: null,
+      positions: mnrPositions,
+    }),
   },
 });
 
@@ -155,8 +215,14 @@ const alertsWithSystems = ({
 
 const buses = () =>
   envelope([
-    { id: "MTA NYCT_101", route_id: "M15", latitude: 40.72, longitude: -73.98, bearing: 90.0 },
-    { id: "MTA NYCT_102", route_id: "B46", latitude: 40.68, longitude: -73.94, bearing: null },
+    {
+      id: "MTA NYCT_101", route_id: "M15", latitude: 40.72, longitude: -73.98, bearing: 90.0,
+      observed_at: FROZEN_S - 5, provenance: "reported",
+    },
+    {
+      id: "MTA NYCT_102", route_id: "B46", latitude: 40.68, longitude: -73.94, bearing: null,
+      observed_at: FROZEN_S - 5, provenance: "reported",
+    },
   ]);
 
 const subways = () =>
@@ -173,6 +239,8 @@ const subways = () =>
       prev_lon: -73.99,
       prev_time: FROZEN_S - 60,
       next_time: FROZEN_S + 60,
+      observed_at: FROZEN_S - 5,
+      provenance: "placed",
     },
     {
       trip_id: "sub-2",
@@ -186,11 +254,21 @@ const subways = () =>
       prev_lon: -74.0,
       prev_time: FROZEN_S - 30,
       next_time: FROZEN_S + 90,
+      observed_at: FROZEN_S - 5,
+      provenance: "placed",
     },
   ]);
 
-// One GPS train (real position, null station/anchor fields) and one placed train
-// (at its next station, anchors filled), exactly as the two decode paths emit.
+// One GPS train (real position, null station/anchor fields) and one placed train (at
+// its next station), exactly as the two decode paths emit.
+//
+// THE PLACED TRAIN CARRIES NO ANCHORS, since 6.3. That is what the placement decode
+// emits on a train's first poll (none of the 56 placed rows in the committed LIRR golden
+// has one; the poller carries the previous stop forward from the second poll on), and it
+// is what draws the train ON its station, which is what the cross-link specs need now
+// that the link asks railroadAtItsStation rather than stop_id. A spec about the glide
+// gives it anchors itself (C2a). Metro-North's train is undated, as all of Metro-North
+// is; LIRR's is fresh at the poll that serves it (stampObserved).
 const railroads = () =>
   envelope([
     {
@@ -208,6 +286,8 @@ const railroads = () =>
       prev_lon: null,
       prev_time: null,
       next_time: null,
+      observed_at: null,
+      provenance: "reported",
     },
     {
       system: "LIRR",
@@ -220,10 +300,12 @@ const railroads = () =>
       stop_id: "12",
       stop_name: "Jamaica",
       direction: "Outbound",
-      prev_lat: 40.69,
-      prev_lon: -73.79,
-      prev_time: FROZEN_S - 120,
+      prev_lat: null,
+      prev_lon: null,
+      prev_time: null,
       next_time: FROZEN_S + 180,
+      observed_at: FROZEN_S - 5,
+      provenance: "placed",
     },
   ]);
 
@@ -386,7 +468,7 @@ const njtWithSystems = ({
   fetched_at: fetchedAt,
   feed_timestamp: fetchedAt - 5,
   served_at: servedAt,
-  trains: trains ?? njt().trains,
+  trains: stampObserved(trains ?? njt().trains, fetchedAt),
   systems: { njt: systemBlock(at, { ok, retainedSince }) },
 });
 
@@ -408,6 +490,10 @@ const njt = () => ({
     // being drawn at f squared of its segment. 40.741182 / -74.096156 is exactly 0.4
     // of the way from 112 to 109, matching prev_time and next_time below (120s of a
     // 300s leg elapsed at FROZEN_S).
+    //
+    // SERVED `estimated`, the one NJ Transit branch that is not `placed` (feeds/njt.py
+    // case 3 interpolated it between two stops), so since 6.3 its popup and name say
+    // "estimated from a prediction" where they said "scheduled position".
     {
       id: "NJ_3800", trip_id: "NJ_3800", route_id: "9", headsign: "New York",
       train_num: "3800", latitude: 40.741182, longitude: -74.096156,
@@ -415,6 +501,7 @@ const njt = () => ({
       delay: 250,
       prev_lat: 40.734924, prev_lon: -74.164581, prev_time: FROZEN_S - 120,
       next_time: FROZEN_S + 180,
+      observed_at: FROZEN_S - 5, provenance: "estimated",
     },
     // Dwelling at Hoboken: null anchors, so it sits placed on the station square
     // (trainLatLng's own fallback) and its popup carries the cross-link.
@@ -423,6 +510,7 @@ const njt = () => ({
       train_num: "6633", latitude: 40.734984, longitude: -74.027683,
       status: "at-station", stop_id: "12", stop_name: "Hoboken", delay: 0,
       prev_lat: null, prev_lon: null, prev_time: null, next_time: null,
+      observed_at: FROZEN_S - 5, provenance: "placed",
     },
     // The two ADDED trips. Empty trip_id on both, distinct backend ids, and a route
     // that /api/njt-routes never serves.
@@ -431,12 +519,14 @@ const njt = () => ({
       train_num: "9001", latitude: 40.7401, longitude: -74.0701,
       status: "approaching", stop_id: null, stop_name: null, delay: null,
       prev_lat: null, prev_lon: null, prev_time: null, next_time: null,
+      observed_at: FROZEN_S - 5, provenance: "placed",
     },
     {
       id: "njt:9002", trip_id: "", route_id: "17", headsign: "Hoboken",
       train_num: "9002", latitude: 40.7402, longitude: -74.0702,
       status: "approaching", stop_id: null, stop_name: null, delay: null,
       prev_lat: null, prev_lon: null, prev_time: null, next_time: null,
+      observed_at: FROZEN_S - 5, provenance: "placed",
     },
   ],
 });
@@ -541,17 +631,21 @@ const path = () => ({
   feed_timestamp: FROZEN_S - 5,
   served_at: FROZEN_S,
   trains: [
+    // PATH dates every train by its own trip update (section 3.3) and places it at its
+    // stop, so each row is `placed` with that trip update's clock.
     {
       id: "p-1", route_id: "862",
       latitude: 40.71271, longitude: -74.01193, stop_id: "26734",
       stop_name: "World Trade Center", direction: "To New York",
       prev_lat: null, prev_lon: null, prev_time: null, next_time: FROZEN_S + 120,
+      observed_at: FROZEN_S - 5, provenance: "placed",
     },
     {
       id: "p-2", route_id: "862",
       latitude: 40.73454, longitude: -74.16375, stop_id: "26733",
       stop_name: "Newark", direction: "To New York",
       prev_lat: null, prev_lon: null, prev_time: null, next_time: FROZEN_S + 15,
+      observed_at: FROZEN_S - 5, provenance: "placed",
     },
   ],
 });
@@ -574,6 +668,7 @@ const pathAdvanced = () => ({
       latitude: 40.71271, longitude: -74.01193, stop_id: "26734",
       stop_name: "World Trade Center", direction: "To New York",
       prev_lat: null, prev_lon: null, prev_time: null, next_time: FROZEN_S + 120,
+      observed_at: FROZEN_S + 10, provenance: "placed",
     },
     {
       id: "p-2", route_id: "862",
@@ -581,6 +676,7 @@ const pathAdvanced = () => ({
       stop_name: "World Trade Center", direction: "To New York",
       prev_lat: 40.73454, prev_lon: -74.16375, prev_time: FROZEN_S,
       next_time: FROZEN_S + 60,
+      observed_at: FROZEN_S + 10, provenance: "placed",
     },
   ],
 });
@@ -641,14 +737,18 @@ const ferryEnvelope = (boats, fetchedAt = FROZEN_S, servedAt = fetchedAt) => ({
 // Three boats spanning the render states: an under-way route boat (active), a
 // STOPPED_AT boat (docked/dimmed), and a null-route boat (Unassigned, neutral).
 // No bearing field (14b omits it). Stable ids so the next poll keys by id.
+// Each boat's observed_at is its updated_at: the backend serves one vehicle.timestamp
+// under both names (6.1), and a GPS boat is `reported`.
+const boat = (row) => ({ ...row, observed_at: row.updated_at, provenance: "reported" });
+
 const ferry = () =>
   ferryEnvelope([
-    { id: "H1", label: "H201", trip_id: "t-er-1", route_id: "ER",
-      latitude: 40.706, longitude: -73.99, speed: 6.5, status: "IN_TRANSIT_TO", updated_at: FROZEN_S - 3 },
-    { id: "H2", label: "H202", trip_id: "t-sb-1", route_id: "SB",
-      latitude: 40.70355, longitude: -74.00512, speed: 0.0, status: "STOPPED_AT", updated_at: FROZEN_S - 2 },
-    { id: "H3", label: "H099", trip_id: "t-x-1", route_id: null,
-      latitude: 40.69, longitude: -73.98, speed: 4.0, status: "IN_TRANSIT_TO", updated_at: FROZEN_S - 4 },
+    boat({ id: "H1", label: "H201", trip_id: "t-er-1", route_id: "ER",
+      latitude: 40.706, longitude: -73.99, speed: 6.5, status: "IN_TRANSIT_TO", updated_at: FROZEN_S - 3 }),
+    boat({ id: "H2", label: "H202", trip_id: "t-sb-1", route_id: "SB",
+      latitude: 40.70355, longitude: -74.00512, speed: 0.0, status: "STOPPED_AT", updated_at: FROZEN_S - 2 }),
+    boat({ id: "H3", label: "H099", trip_id: "t-x-1", route_id: null,
+      latitude: 40.69, longitude: -73.98, speed: 4.0, status: "IN_TRANSIT_TO", updated_at: FROZEN_S - 4 }),
   ]);
 
 // The NEXT poll: H1 moved to a new position (same id -> the same marker moves,
@@ -656,12 +756,12 @@ const ferry = () =>
 const ferryMoved = () =>
   ferryEnvelope(
     [
-      { id: "H1", label: "H201", trip_id: "t-er-1", route_id: "ER",
-        latitude: 40.708, longitude: -73.985, speed: 7.0, status: "IN_TRANSIT_TO", updated_at: FROZEN_S + 12 },
-      { id: "H2", label: "H202", trip_id: "t-sb-1", route_id: "SB",
-        latitude: 40.70355, longitude: -74.00512, speed: 0.0, status: "STOPPED_AT", updated_at: FROZEN_S + 10 },
-      { id: "H3", label: "H099", trip_id: "t-x-1", route_id: null,
-        latitude: 40.69, longitude: -73.98, speed: 4.0, status: "IN_TRANSIT_TO", updated_at: FROZEN_S + 11 },
+      boat({ id: "H1", label: "H201", trip_id: "t-er-1", route_id: "ER",
+        latitude: 40.708, longitude: -73.985, speed: 7.0, status: "IN_TRANSIT_TO", updated_at: FROZEN_S + 12 }),
+      boat({ id: "H2", label: "H202", trip_id: "t-sb-1", route_id: "SB",
+        latitude: 40.70355, longitude: -74.00512, speed: 0.0, status: "STOPPED_AT", updated_at: FROZEN_S + 10 }),
+      boat({ id: "H3", label: "H099", trip_id: "t-x-1", route_id: null,
+        latitude: 40.69, longitude: -73.98, speed: 4.0, status: "IN_TRANSIT_TO", updated_at: FROZEN_S + 11 }),
     ],
     FROZEN_S + 15,
   );
@@ -673,12 +773,12 @@ const ferryMoved = () =>
 const ferryDocked = () =>
   ferryEnvelope(
     [
-      { id: "H1", label: "H201", trip_id: "t-er-1", route_id: "ER",
-        latitude: 40.70355, longitude: -74.00512, speed: 0.0, status: "STOPPED_AT", updated_at: FROZEN_S + 12 },
-      { id: "H2", label: "H202", trip_id: "t-sb-1", route_id: "SB",
-        latitude: 40.70355, longitude: -74.00512, speed: 0.0, status: "STOPPED_AT", updated_at: FROZEN_S + 10 },
-      { id: "H3", label: "H099", trip_id: "t-x-1", route_id: null,
-        latitude: 40.69, longitude: -73.98, speed: 4.0, status: "IN_TRANSIT_TO", updated_at: FROZEN_S + 11 },
+      boat({ id: "H1", label: "H201", trip_id: "t-er-1", route_id: "ER",
+        latitude: 40.70355, longitude: -74.00512, speed: 0.0, status: "STOPPED_AT", updated_at: FROZEN_S + 12 }),
+      boat({ id: "H2", label: "H202", trip_id: "t-sb-1", route_id: "SB",
+        latitude: 40.70355, longitude: -74.00512, speed: 0.0, status: "STOPPED_AT", updated_at: FROZEN_S + 10 }),
+      boat({ id: "H3", label: "H099", trip_id: "t-x-1", route_id: null,
+        latitude: 40.69, longitude: -73.98, speed: 4.0, status: "IN_TRANSIT_TO", updated_at: FROZEN_S + 11 }),
     ],
     FROZEN_S + 15,
   );
@@ -787,6 +887,7 @@ module.exports = {
   FROZEN_S,
   envelope,
   systemBlock,
+  positionSteps,
   subwaysWithSystems,
   railroadsWithSystems,
   alertsWithSystems,

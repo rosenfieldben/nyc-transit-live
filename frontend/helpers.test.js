@@ -59,7 +59,7 @@ const {
   projectOntoRoute,
   computeRouteSlice,
   railroadColor,
-  isPlacedRailroad,
+  positionQualifier,
   orderedRailroadBuckets,
   railroadArrivalsHtml,
   formatRailroadHead,
@@ -272,7 +272,9 @@ test("pathTrainPopupHtml shows placement fields, never the unstable trip id", ()
     stop_name: "Journal Square",
     direction: "To New Jersey",
   };
-  const html = pathTrainPopupHtml(train, "Newark - World Trade Center", "#d93a30");
+  // 6.3: the position line is the served provenance's words (positionQualifier).
+  const position = positionQualifier({ observed_at: 995, provenance: "placed" }, { now: 1000, servedAt: 1000, system: "path" });
+  const html = pathTrainPopupHtml(train, "Newark - World Trade Center", "#d93a30", position);
   assert.ok(html.includes("Newark - World Trade Center"));
   assert.ok(html.includes("Next stop: Journal Square"));
   assert.ok(html.includes("To New Jersey"));
@@ -370,20 +372,10 @@ test("railroadColor is deterministic, from the palette, and null-safe", () => {
   assert.notEqual(railroadColor("1"), lineColor("1"));
 });
 
-test("isPlacedRailroad keys off stop_id (the authoritative placed-vs-GPS signal)", () => {
-  // A GPS train: the decode emits stop_id/stop_name null even though it has a
-  // real position, so it is NOT placed.
-  assert.equal(isPlacedRailroad({ stop_id: null, stop_name: null, next_time: null }), false);
-  // A normal placed train (timed next stop).
-  assert.equal(isPlacedRailroad({ stop_id: "12", stop_name: "Jamaica", next_time: 1000 }), true);
-  // The case the old time/direction-based check missed: a no-times MNR placement
-  // has next_time/prev_lat/direction all null but a real stop_id, and must still
-  // read as placed so its marker, label, and next-stop popup line stay correct.
-  assert.equal(
-    isPlacedRailroad({ stop_id: "1", stop_name: "Grand Central", next_time: null, prev_lat: null, direction: null }),
-    true,
-  );
-});
+// isPlacedRailroad's test went with it in 6.3: the railroad glyph, glide, words and
+// cross-link read the served provenance now (railroadHollow, drawnFromPrediction,
+// positionQualifier, railroadAtItsStation), and frontend/positions.test.js pins them,
+// the no-times Metro-North placement this test existed for included.
 
 // `now` is passed explicitly for determinism; minClockOffset is null here (nothing
 // calls noteClockOffset before these), so the client-elapsed term reduces to
@@ -1763,8 +1755,9 @@ test("C2 systemAges ages each system separately; a block with no clock of its ow
 test("6.2 the door reads each block's content clock, and nothing it was not asked for", () => {
   // THE DOOR IN THE LITERAL SENSE: a field the contract adds to a block reaches no
   // surface until this function reads it, which is how 6.1's per-system content clock
-  // reached none. Pinned as an exact key set, so a sixth name cannot slip in unread and
-  // the fifth cannot slip out.
+  // reached none. Pinned as an exact key set, so a seventh name cannot slip in unread and
+  // the sixth cannot slip out. 6.3 added the sixth, `positions`, the ladder's counts the
+  // status line reads (null on every one of these blocks, which carry none).
   const systems = ingestSystems(
     {
       fetched_at: 1000,
@@ -1782,7 +1775,7 @@ test("6.2 the door reads each block's content clock, and nothing it was not aske
   for (const [name, system] of Object.entries(systems)) {
     assert.deepEqual(
       Object.keys(system).sort(),
-      ["feedTimestamp", "fetchedAt", "ok", "retainedSince", "routes"],
+      ["feedTimestamp", "fetchedAt", "ok", "positions", "retainedSince", "routes"],
       name,
     );
   }
@@ -1893,7 +1886,8 @@ test("6.2 a system with NO content clock borrows nobody's: Metro-North beside a 
     ),
   };
   assert.deepEqual(systemAges(source, now), { LIRR: 300, MNR: 0 });
-  assert.equal(staleness(source, now), "railroad: LIRR as of 5m ago");
+  // Metro-North's clause (6.3) rides the line the stale LIRR raised; it never raises one.
+  assert.equal(staleness(source, now), "railroad: LIRR as of 5m ago; MNR position age unavailable");
   // The same payload from a backend that predates the per-system clock reads exactly as
   // it did before 6.2: the envelope's lag, for both.
   const older = {
@@ -1904,7 +1898,7 @@ test("6.2 a system with NO content clock borrows nobody's: Metro-North beside a 
     ),
   };
   assert.deepEqual(systemAges(older, now), { LIRR: 300, MNR: 300 });
-  assert.equal(staleness(older, now), "railroad: as of 5m ago");
+  assert.equal(staleness(older, now), "railroad: as of 5m ago; MNR position age unavailable");
 });
 
 test("6.2 staleness' THIRD population: content old while the poll is fresh, in a clause of its own", () => {
@@ -2015,7 +2009,8 @@ test("C2 staleness names a DEGRADED subsystem while the healthy ones stay quiet"
     ),
   };
   // The spec's example: MNR named, LIRR silent, the age MNR's own.
-  assert.equal(staleness(railroads, now), "railroad: MNR as of 6m ago");
+  // 6.3: Metro-North's own clause rides the line its outage raised, and never raises one.
+  assert.equal(staleness(railroads, now), "railroad: MNR as of 6m ago; MNR position age unavailable");
   // The subway's systems are feed GROUPS, so systemNoun makes the phrase read right.
   const subways = {
     label: "trains",
@@ -2736,31 +2731,44 @@ test("A2: every marker name is built from the fields its popup renders", () => {
   assert.equal(subwayTrainName({}), "Subway train");
   assert.equal(subwayTrainName(null), "Subway train");
 
-  // Railroad: the popup's own head builder, and the GPS-versus-scheduled clause,
-  // which is the part that tells a rider how much to trust the position.
+  // Railroad: the popup's own head builder, and the position clause, which is the part
+  // that tells a rider how much to trust the position. Since 6.3 it is the answer
+  // positionQualifier gives the popup's compact line, said aloud, handed to the builder
+  // rather than guessed from stop_id.
+  const at = { now: 1000, servedAt: 1000 };
+  const gps = positionQualifier({ observed_at: 995, provenance: "reported" }, { ...at, system: "LIRR" });
+  const sched = positionQualifier({ observed_at: null, provenance: "placed" }, { ...at, system: "MNR" });
   assert.equal(
-    railroadTrainName({ system: "LIRR", route_id: "10", train_num: "2751", direction: "Eastbound" }, "Babylon Branch"),
+    railroadTrainName({ system: "LIRR", route_id: "10", train_num: "2751", direction: "Eastbound" }, "Babylon Branch", gps),
     "LIRR Babylon Branch, train 2751, Eastbound, live GPS",
   );
-  // A PLACED train (it carries stop_id) says so, and only a placed train has a next
-  // stop to give.
+  // A PLACED train says so, and a train that names a stop has a next stop to give.
   assert.equal(
-    railroadTrainName({ system: "MNR", route_id: "1", train_num: "8801", stop_id: "1", stop_name: "Grand Central" }, "Hudson"),
+    railroadTrainName(
+      { system: "MNR", route_id: "1", train_num: "8801", stop_id: "1", stop_name: "Grand Central" },
+      "Hudson",
+      sched,
+    ),
     "Metro-North Hudson, train 8801, next stop Grand Central, scheduled position, no GPS",
   );
   // NO MIDDOT. The popup head joins system and route with "·", which is a visual
   // separator; spoken, it is noise or the words "middle dot". Same fields, spoken
   // shape. And "MNR" becomes the word a rider uses, as the A1 panel already does.
-  assert.ok(!railroadTrainName({ system: "MNR", route_id: "1" }, "Hudson").includes("\u00b7"));
-  assert.equal(railroadTrainName({ system: "LIRR", route_id: "10" }), "LIRR route 10, live GPS");
+  assert.ok(!railroadTrainName({ system: "MNR", route_id: "1" }, "Hudson", sched).includes("·"));
+  assert.equal(railroadTrainName({ system: "LIRR", route_id: "10" }, null, gps), "LIRR route 10, live GPS");
 
   // PATH: always a scheduled position, which the popup states and the name repeats.
+  const placedPath = positionQualifier({ observed_at: 995, provenance: "placed" }, { ...at, system: "path" });
   assert.equal(
-    pathTrainName({ route_id: "862", stop_name: "Grove St", direction: "To Newark" }, "Newark - World Trade Center"),
+    pathTrainName(
+      { route_id: "862", stop_name: "Grove St", direction: "To Newark" },
+      "Newark - World Trade Center",
+      placedPath,
+    ),
     "Newark - World Trade Center, PATH, next stop Grove St, To Newark, scheduled position, no GPS",
   );
   // No route name resolved yet: formatPathHead's fallback, not a blank.
-  assert.equal(pathTrainName({ route_id: "862" }), "PATH route 862, PATH, scheduled position, no GPS");
+  assert.equal(pathTrainName({ route_id: "862" }, null, placedPath), "PATH route 862, PATH, scheduled position, no GPS");
 
   // Ferry: the status in the popup's own words, lowercased into the sentence.
   assert.equal(
@@ -3406,6 +3414,7 @@ test("AMENDMENT A: a route with no line still gets a colour and a head, never a 
     { route_id: "17", train_num: "1701", headsign: "Meadowlands", stop_name: "Secaucus Junction" },
     njtRouteName("17", names),
     njtRouteColor("17", colors),
+    positionQualifier({ observed_at: 995, provenance: "placed" }, { now: 1000, servedAt: 1000, system: "njt" }),
   );
   assert.match(html, /NJ Transit route 17/);
   assert.match(html, /Train 1701/);
@@ -3482,7 +3491,9 @@ test("njtKey is the backend id, which is what makes ADDED trips distinct markers
   assert.equal(njtKey(null), undefined);
   assert.equal(njtKey(undefined), undefined);
   assert.match(njtTrainPopupHtml(null, null, "#DD3439"), /NJ Transit/);
-  assert.equal(njtTrainName(null), "NJ Transit, NJ Transit, scheduled position, no GPS");
+  // 6.3: a row with nothing in it says "age unknown" about its position, the pessimistic
+  // fail-safe (design 3.1), rather than a constant that would be false of half the layer.
+  assert.equal(njtTrainName(null, null, positionQualifier(null, {})), "NJ Transit, NJ Transit, age unknown");
   assert.deepEqual([...njtRouteTables(null).names], [], "a payload that never arrived");
   assert.deepEqual(
     [...njtRouteTables([{ route: "9", name: "Northeast Corridor", color: "DD3439" }]).index],
@@ -3517,30 +3528,50 @@ test("njtTrainPopupHtml and njtTrainName word one train the same way", () => {
     route_id: "7", train_num: "6633", headsign: "Dover",
     stop_name: "Summit", delay: 250,
   };
-  const html = njtTrainPopupHtml(train, "Morris & Essex Line", "#08A652");
+  const position = positionQualifier({ ...train, observed_at: 995, provenance: "placed" }, { now: 1000, servedAt: 1000, system: "njt" });
+  const html = njtTrainPopupHtml(train, "Morris & Essex Line", "#08A652", position);
+  assert.match(html, /<span class="popup-sub">scheduled position \(no GPS\)<\/span>$/);
   assert.match(html, /Morris &amp; Essex Line/, "the ampersand in a real route name is escaped");
   assert.match(html, /Train 6633/);
   assert.match(html, /To Dover/);
   assert.match(html, /Next stop: Summit/);
   assert.match(html, /4 min late/);
   assert.equal(
-    njtTrainName(train, "Morris & Essex Line"),
+    njtTrainName(train, "Morris & Essex Line", position),
     "Morris & Essex Line, NJ Transit, train 6633, to Dover, next stop Summit, 4 min late, scheduled position, no GPS",
   );
 });
 
-test("EVERY NJT train popup says it is a scheduled position, with no GPS branch to take", () => {
-  // The railroad popup prints this line only for its placed trains. NJ Transit's
-  // vehicle positions feed is deliberately never fetched, so there is no GPS
-  // variant here and a train that looks like one (a full lat/lon and a status of
-  // in-transit) must still say so.
-  for (const train of [
-    { route_id: "9" },
-    { route_id: "9", status: "in-transit", latitude: 40.7, longitude: -74.1 },
-    { route_id: "9", status: "at-station", stop_name: "Trenton" },
-  ]) {
-    assert.match(njtTrainPopupHtml(train, "Northeast Corridor", "#DD3439"), /scheduled position \(no GPS\)/);
-    assert.match(njtTrainName(train, "Northeast Corridor"), /scheduled position, no GPS$/);
+test("EVERY NJT train popup says how its position was derived, from the served provenance, and none says GPS (6.3)", () => {
+  // NJ Transit's vehicle positions feed is deliberately never fetched, so no train on
+  // this layer is GPS. WHICH derivation a train is comes from the backend: a train at or
+  // approaching a stop is served `placed`, one feeds/njt.py interpolated between two
+  // stops `estimated`. Before 6.3 this test pinned "scheduled position" for every train,
+  // the in-transit one included, which was the constant positionQualifier replaced.
+  const at = { now: 1000, servedAt: 1000, system: "njt" };
+  const cases = [
+    [
+      { route_id: "9", status: "at-station", stop_name: "Trenton", provenance: "placed", observed_at: 995 },
+      "scheduled position (no GPS)",
+      "scheduled position, no GPS",
+    ],
+    [
+      { route_id: "9", status: "in-transit", latitude: 40.7, longitude: -74.1, provenance: "estimated", observed_at: 995 },
+      "estimated from a prediction",
+      "estimated from a prediction",
+    ],
+    [
+      { route_id: "9", provenance: "placed", observed_at: 700 },
+      "scheduled position (no GPS), as of 5m ago",
+      "scheduled position, no GPS, as of 5m ago",
+    ],
+  ];
+  for (const [train, words, spoken] of cases) {
+    const position = positionQualifier(train, at);
+    const html = njtTrainPopupHtml(train, "Northeast Corridor", "#DD3439", position);
+    assert.ok(html.endsWith(`<span class="popup-sub">${words}</span>`), html);
+    assert.doesNotMatch(html, /live GPS/);
+    assert.ok(njtTrainName(train, "Northeast Corridor", position).endsWith(`, ${spoken}`));
   }
 });
 

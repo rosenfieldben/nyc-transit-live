@@ -139,6 +139,35 @@ class BusFeed(BaseModel):
     data: list[Vehicle]
 
 
+class PositionSteps(BaseModel):
+    """What the position ladder did with one railroad system's vehicles on its last decode
+    (contract 6.3; section 3.4 of docs/design/freshness-contract.md).
+
+    ONE COUNT PER TRIP, after the live path's (system, trip_id) dedupe, over the
+    positioned, non-canceled vehicles that reach a surface or are withheld for age: the
+    first four sum to the markers vehicle entities produce, and `suppressed` is the rest.
+    One vehicle is in no count, and on purpose: a coordinate the railroad box rejects,
+    whose trip nothing can place, and whose own fix is within OBS_MAX_S (or undated on a
+    gated row). It is no marker, and it was not withheld for age, so `suppressed`'s words
+    ("last seen over 10m ago") would be false of it; the same vehicle with its fix past
+    OBS_MAX_S is counted `suppressed`. On the committed captures at their headers, LIRR is
+    27, 6, 11, 0 and 24 and Metro-North 33, 0, 0, 0 and 0 (its position row is not
+    age-gated). feeds.railroad._position_steps computes it and says why.
+
+    THE FIFTH COUNT IS THE ONLY TRACE OF A TRAIN THE MAP NO LONGER DRAWS, and it is a count
+    rather than a list on purpose: design Q7 puts it on the status line and nowhere on the
+    map, because a per-marker ghost would reintroduce the falsehood the gate removed.
+    """
+
+    reported: int  # step 1: drawn at its own position, its fix within OBS_FRESH_S
+    estimated: int  # step 2: placed from a prediction within OBS_FRESH_S
+    qualified: int  # step 3: its own position within OBS_MAX_S, or undated on a gated row
+    placed: int  # step 4, plus a vehicle the box rejected whose trip N2 placed
+    # step 5: nothing honest left to draw (design Q7's count), plus a vehicle the box
+    # rejected that nothing placed, whose own fix is past OBS_MAX_S
+    suppressed: int
+
+
 class SystemFreshness(BaseModel):
     """One subsystem's own freshness inside an aggregate envelope (C2).
 
@@ -204,6 +233,16 @@ class SystemFreshness(BaseModel):
     # no markers left to describe. Null on the railroad and alerts blocks, whose
     # entities already carry their own system name.
     routes: list[str] | None = None
+    # WHAT THE POSITION LADDER DID WITH THIS SYSTEM'S VEHICLES (contract 6.3), populated
+    # on the railroad blocks only. It rides here, on the envelope the rider's client
+    # already reads, because the suppression count has to reach the status line and the
+    # client never fetches /api/status, which carries the same counts for the monitor as a
+    # sibling key of its own (railroad_positions). The same last-known rule as fetched_at
+    # and feed_timestamp: a failed system keeps the counts of its last decode. Null on
+    # every system without a ladder (the subway groups, the alert feeds) and on a railroad
+    # block before its first decode. A railroad station board's block is its system's
+    # block verbatim, so it carries the same counts, which nothing renders there.
+    positions: PositionSteps | None = None
 
 
 class SubwayFeed(BaseModel):
@@ -929,6 +968,14 @@ class StatusResponse(BaseModel):
     njt_mint_cooldown: NjtMintCooldown | None = None
     subway_feeds: SubwayFeedHealth | None
     railroad_feeds: RailroadFeedHealth | None
+    # THE POSITION LADDER'S COUNTS PER RAILROAD SYSTEM (contract 6.3), a SIBLING of
+    # railroad_feeds rather than keys inside it: that dict is {total, ok, failed}, pinned
+    # exactly (tests/test_api.py), and it answers whether a feed decoded, where these
+    # answer what its decode drew. Read off the same per-system blocks /api/railroads
+    # serves, so the two surfaces cannot disagree, and a failing system keeps its last
+    # decode's counts. Empty before the first railroad decode, and defaulted so every
+    # pre-6.3 /api/status fixture validates unchanged.
+    railroad_positions: dict[str, PositionSteps] = {}
     path_feeds: PathFeedHealth | None
     # Defaulted so pre-14b /api/status fixtures validate unchanged; the live
     # handler always populates it once the first ferry poll runs.

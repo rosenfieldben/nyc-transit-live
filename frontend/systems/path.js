@@ -159,6 +159,7 @@ function pathIcon(train) {
 
 function pathTrainPopup(record) {
   const t = record.latest;
+  const position = pathPosition(t);
   // No routeAlertsBlock prepend (the subway trainPopup's alert join): PATH
   // has no alerts feed. Reads record.latest so the popup a rider holds open
   // across polls always renders the newest placement, like the other systems.
@@ -167,11 +168,13 @@ function pathTrainPopup(record) {
       t,
       pathRouteNames.get(t.route_id) || null,
       pathRouteColors.get(t.route_id) ?? PATH_FALLBACK_COLOR,
+      position,
     ) +
     // C2: PATH is single-feed, so its system is the synthesized one named after the
     // source (ingestSystems). It gets the SAME age line as the aggregate systems
-    // rather than being exempt from staleness for lacking a systems block.
-    stalePopupLine(pathSystemAge())
+    // rather than being exempt from staleness for lacking a systems block, unless the
+    // position's own words already stated an age that old.
+    vehicleStaleLine(pathSystemAge(), position)
   );
 }
 
@@ -186,9 +189,34 @@ function pathSystemStaleAt() {
   return systemStaleAtOf("path", "path");
 }
 
-// Re-dim every PATH train from its source's age (C2).
+// The words one PATH train carries about its position (6.3): `placed`, dated by its own
+// trip update (section 3.3), read against PATH's one system.
+function pathPosition(train, now = correctedNow()) {
+  return vehiclePosition("path", ["path"], train, now);
+}
+
+// The clock a PATH train glides by: the earlier of PATH's freeze deadline and its own
+// trip update's (glideDeadline), so a train whose prediction stopped moving holds still
+// in a feed whose other trains are current.
+function pathGlideAt(train, now = correctedNow()) {
+  return glideClock(now, glideDeadline(pathSystemStaleAt(), train));
+}
+
+// A PATH train's accessible name at `now`, the one composition the apply path and the
+// stale sweep both write (railroadMarkerName in railroad.js says why the sweep writes it).
+function pathMarkerName(train, now = correctedNow()) {
+  return pathTrainName(train, pathRouteNames.get(train.route_id), pathPosition(train, now));
+}
+
+// Re-dim every PATH train from the larger of its source's age and its own trip
+// update's (C2, 6.3).
 staleTreatments.push(() => {
-  for (const record of pathTrainRecords.values()) dimMarker(record.marker, pathSystemAge());
+  const now = correctedNow();
+  const age = pathSystemAge();
+  for (const record of pathTrainRecords.values()) {
+    dimMarker(record.marker, vehicleMarkerAge("path", age, record.latest, now));
+    setMarkerName(record.marker, pathMarkerName(record.latest, now));
+  }
 });
 
 // Stable backend id -> { marker, routeId, latest, fState, _segId }. 13c had no
@@ -229,13 +257,12 @@ function applyPath(data) {
       // because route_id never changed. A name gated the same way would strand
       // "PATH route 862" forever after the real route name arrived. Recomputed every
       // poll instead, which is what ferry.js already does for its colour.
-      setMarkerName(record.marker, pathTrainName(train, pathRouteNames.get(train.route_id)));
+      setMarkerName(record.marker, pathMarkerName(train, now));
       // Frozen glide clock while the feed is stale, so an anchored train stops
-      // advancing along its route instead of dead-reckoning on a dead feed (C2).
-      record.marker.setLatLng(
-        trainLatLng(train, glideClock(now, pathSystemStaleAt()), record.fState),
-      );
-      dimMarker(record.marker, pathSystemAge());
+      // advancing along its route instead of dead-reckoning on a dead feed (C2), and
+      // since 6.3 while its own trip update is past OBS_FRESH_S, however healthy PATH is.
+      record.marker.setLatLng(trainLatLng(train, pathGlideAt(train, now), record.fState));
+      dimMarker(record.marker, vehicleMarkerAge("path", pathSystemAge(), train, now));
       if (record.routeId !== train.route_id) {
         record.marker.setIcon(pathIcon(train));
         record.routeId = train.route_id;
@@ -246,12 +273,13 @@ function applyPath(data) {
       newRecord._segId = `${train.route_id}|${train.prev_time}|${train.stop_id}`;
       train._route = computePathRouteSlice(train, pathRouteIndex.get(train.route_id), PATH_SLICE_OPTS);
       newRecord.marker = labeledMarker(
-        trainLatLng(train, glideClock(now, pathSystemStaleAt()), newRecord.fState),
+        trainLatLng(train, pathGlideAt(train, now), newRecord.fState),
         {
           icon: pathIcon(train),
-          opacity: markerOpacity(pathSystemAge()), // dim on the first frame, as elsewhere
+          // Dim on the first frame, as elsewhere, from the system's age or the train's own.
+          opacity: markerOpacity(vehicleMarkerAge("path", pathSystemAge(), train, now)),
         },
-        pathTrainName(train, pathRouteNames.get(train.route_id)),
+        pathMarkerName(train, now),
       )
         .bindPopup(() => pathTrainPopup(newRecord))
         .addTo(pathTrains);

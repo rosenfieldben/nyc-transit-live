@@ -23,6 +23,7 @@ function busIcon(bus) {
 
 function busPopup(record) {
   const b = record.latest;
+  const position = busPosition(b);
   const heading = b.bearing != null ? `${Math.round(b.bearing)}°` : "unknown";
   const note = busRouteNotes.get(b.route_id);
   const showNote = note && Date.now() - note.at < NOTE_TTL_MS;
@@ -32,18 +33,40 @@ function busPopup(record) {
     routeAlertsBlock("bus", b.route_id) +
     `<b style="color:${readableInk(routeColor(b.route_id))}">${esc(b.route_id ?? "Unknown route")}</b>` +
     `<br>Bus ${esc(b.id)}<br>Heading: ${heading}` +
+    // 6.3: a bus is GPS, so a fresh one says nothing here, and one whose own fix is past
+    // OBS_FRESH_S says "live GPS, as of 2m ago" (positionLineHtml).
+    positionLineHtml(position) +
     (showNote ? `<br><span class="popup-sub">${esc(note.message)}</span>` : "") +
     // C2: buses are a single feed, so their system is the synthesized one named
     // after the source. Same age line as every other vehicle popup, so the
     // single-feed sources are not quietly exempt from the freshness rules.
-    stalePopupLine(systemAgeOf("buses", "buses"))
+    vehicleStaleLine(systemAgeOf("buses", "buses"), position)
   );
 }
 
-// Re-dim every bus from its source's age (C2). Buses do not glide, so there is no
-// freeze clock here: a bus sits at its last reported position either way.
+// The words one bus carries about its position, read against the buses' one system.
+function busPosition(bus, now = correctedNow()) {
+  return vehiclePosition("buses", ["buses"], bus, now);
+}
+
+// A bus's accessible name at `now`, the one composition the apply path and the stale
+// sweep both write (railroadMarkerName in railroad.js says why the sweep writes it too).
+function busMarkerName(bus, now = correctedNow()) {
+  return busName(bus, busPosition(bus, now));
+}
+
+// Re-dim every bus from the larger of its source's age and its own fix's (C2, 6.3).
+// Buses do not glide, so there is no freeze clock here: a bus sits at its last
+// reported position either way.
+// The name is re-derived with the opacity, so a fix that crosses OBS_FRESH_S between
+// polls says its age in the name on the tick that dims it.
 staleTreatments.push(() => {
-  for (const record of buses.values()) dimMarker(record.marker, systemAgeOf("buses", "buses"));
+  const now = correctedNow();
+  const age = systemAgeOf("buses", "buses");
+  for (const record of buses.values()) {
+    dimMarker(record.marker, vehicleMarkerAge("buses", age, record.latest, now));
+    setMarkerName(record.marker, busMarkerName(record.latest, now));
+  }
 });
 
 /* ----- On-demand bus route line (click a bus to draw its route) ----- */
@@ -288,15 +311,20 @@ function applyBuses(data) {
       // (the bearing-only branch above even rewrites the svg in place rather than
       // re-iconing), so a name written once at creation would describe a bus that
       // turned twenty minutes ago. Refreshed here, after every field it reads is
-      // settled and before the popup update that reads the same record.
-      setMarkerName(record.marker, busName(bus));
+      // settled and before the popup update that reads the same record. Since 6.3 it
+      // also carries the bus's own fix's age once that is past OBS_FRESH_S.
+      setMarkerName(record.marker, busMarkerName(bus));
+      // 6.3: the reuse path dims too, from this poll's own fix, so a bus whose fix went
+      // fresh again is bright on the poll that says so rather than at the sweep after it.
+      dimMarker(record.marker, vehicleMarkerAge("buses", systemAgeOf("buses", "buses"), bus));
       if (record.marker.isPopupOpen()) updatePopupKeepingFocus(record.marker);
     } else {
       const newRecord = { bearing: bus.bearing, routeId: bus.route_id, latest: bus };
       newRecord.marker = labeledMarker([bus.latitude, bus.longitude], {
         icon: busIcon(bus),
-        opacity: markerOpacity(systemAgeOf("buses", "buses")), // dim on the first frame
-      }, busName(bus))
+        // Dim on the first frame, from the larger of the system's age and the fix's own.
+        opacity: markerOpacity(vehicleMarkerAge("buses", systemAgeOf("buses", "buses"), bus)),
+      }, busMarkerName(bus))
         .bindPopup(() => busPopup(newRecord))
         .on("popupopen", () => showBusRoute(newRecord.latest))
         .on("popupclose", () => releaseBusRoute(newRecord.latest, newRecord.marker))

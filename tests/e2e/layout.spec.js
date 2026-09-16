@@ -713,11 +713,12 @@ async function popupOnTheMapAt375(page) {
   await expect
     .poll(async () => page.evaluate(() => (typeof railroads === "undefined" ? 0 : railroads.size)), { timeout: 15_000 })
     .toBeGreaterThan(0);
-  // A PLACED railroad train, the same subject the gate's cross-link state uses: it sits on
-  // its station rather than at a GPS fix, which is what makes its popup reproducible.
+  // A railroad train drawn ON its station, the same subject the gate's cross-link state
+  // uses (railroadAtItsStation): it sits on its station rather than at a GPS fix, which
+  // is what makes its popup reproducible.
   await page.evaluate(() => {
-    const placed = [...railroads.values()].find((r) => r.placed);
-    if (!placed) throw new Error("the fixture no longer has a placed railroad train");
+    const placed = [...railroads.values()].find((r) => railroadAtItsStation(r.latest));
+    if (!placed) throw new Error("the fixture no longer has a railroad train drawn on its station");
     placed.marker.openPopup();
   });
   await expectState(page, "one popup open", "the popup correction specs need exactly one");
@@ -941,7 +942,7 @@ test("A4l. Leaflet's own autopan is not the rider taking over", async ({ page })
   await popupOnTheMapAt375(page);
 
   const staged = await page.evaluate(() => {
-    const placed = [...railroads.values()].find((r) => r.placed);
+    const placed = [...railroads.values()].find((r) => railroadAtItsStation(r.latest));
     const popup = placed.marker.getPopup();
     let autoPanned = false;
     const note = () => {

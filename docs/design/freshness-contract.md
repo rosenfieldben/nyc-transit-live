@@ -1,7 +1,16 @@
 # The freshness and provenance contract
 
-**Status:** a design for review. Nothing in it is implemented on this branch, and this
-branch changes no code, no test, no fixture and no golden.
+**Status:** BUILT, section 6 in order, one branch per step. It was a design for review on
+`claude/design-freshness-contract` (PR #108), which changed no code, no test, no fixture and
+no golden, and that sentence is what this line replaces. N2's shared accepted set landed
+first on `claude/n2-shared-gps-set` (PR #109), then 6.0's bus probe on
+`claude/bus-observation-probe` (PR #110), 6.1 on `claude/freshness-6-1-models` (PR #111),
+6.2 on `claude/freshness-6-2-boards` (PR #112), and 6.3 on `claude/freshness-6-3-positions`,
+which closes F01 and is the branch this line is written on. **A "today" or a "currently"
+below is the world this design was written against unless a sentence beside it says
+otherwise.** Corrections made after a step landed are marked at the sentence; the open
+questions in section 5 are deliberately not, because a question rewritten after it is
+answered stops being evidence of what was actually asked.
 
 **Written against:** `672206a`, the `main` this branch forked from, with items 1 to 6 of
 the Release 1 order in [the audit record](../reviews/audit-2026-09-05.md) already landed
@@ -89,14 +98,26 @@ day. It is a morning rush-hour position on an evening map.
 feed is not merely serving old fixes, it is serving old fixes of trains it describes as
 moving, which is the reading a marker on a map gives them anyway.
 
-`_decode_railroad_vehicles` reads `v.HasField("position")`, the geographic box, the
-cancellation set and the route join. It never reads `v.timestamp`, and its own docstring
-records that `now` is unused in that phase. All 69 observations therefore leave the decoder
+`_decode_railroad_vehicles` read `v.HasField("position")`, the geographic box, the
+cancellation set and the route join. It never read `v.timestamp`, and its own docstring
+recorded that `now` is unused in that phase. All 69 observations therefore left the decoder
 wearing the feed's freshness and nothing of their own.
 
-**Since F02 landed, 68 of the 69 are served** (the canceled 5-train is now dropped before
-emission, for cancellation and not for age), so **41 stale observations still reach riders
-unqualified**. That is the live number.
+**Since F02 landed, 68 of the 69 were served** (the canceled 5-train is dropped before
+emission, for cancellation and not for age), so **41 stale observations reached riders
+unqualified**. That was the live number.
+
+**BUILT AT 6.3, AND THE TWO PARAGRAPHS ABOVE ARE THE BEFORE.** The decoder reads
+`v.timestamp` on every row (`_railroad_observed_at`, `backend/feeds/railroad.py:98`, emitted
+at `:663`) and emits only what the position ladder draws at a vehicle's own position, and
+the docstring that recorded `now` as unused now says the opposite in capitals: "THE AGE GATE
+IS APPLIED HERE, AND ITS CLOCK IS NOT `now`" (`railroad.py:572`). The same bytes serve **38**
+GPS rows, the oldest served fix is **593s**, 6 aged trains are drawn as estimates, 11 are
+drawn qualified and dimmed, and 24 are withheld and counted, so the 41 that reached a rider
+unqualified are now **none**. The counts are asked of the decoder rather than of the
+goldens: `test_the_lirr_capture_orders_27_6_11_0_24` in
+`backend/tests/test_position_ladder.py`, and the served body in
+`backend/tests/test_f01_positions.py`.
 
 **Filtering will not restore them, which is what makes this a design job.** Of the 42 stale
 observations, all 42 join a trip update in the same feed by `trip_id`, and only **15** have
@@ -121,14 +142,16 @@ are fresh (90s or newer), **zero** have a trip update older than 90 seconds. The
 agree when the feed is healthy and diverge only on the trains that are already a problem,
 which is the evidence that this is a real signal and not noise.
 
-**N2 rides here.** `positioned_ids` (`backend/feeds/railroad.py:342`) is built from every
-entity with a position, with no geographic box and no age check, and the placement pass
-skips any trip in it. It is therefore STRICTLY BROADER than the set the GPS pass actually
-emits. A positioned vehicle rejected by the box appears on no surface at all: not as GPS,
-because the box dropped it, and not as an estimate, because `positioned_ids` still claims
-it. Whoever adds an age gate to the GPS pass widens that hole by exactly the number of
-observations the gate rejects, unless the two passes are made to share one accepted set.
-That is the same edit.
+**N2 rode here, and is closed.** `positioned_ids` was built from every entity with a
+position, with no geographic box and no age check, and the placement pass skipped any trip
+in it. It was therefore STRICTLY BROADER than the set the GPS pass actually emitted. A
+positioned vehicle rejected by the box appeared on no surface at all: not as GPS, because
+the box dropped it, and not as an estimate, because `positioned_ids` still claimed it. An
+age gate on the GPS pass would widen that hole by exactly the number of observations the
+gate rejects, unless the two passes were made to share one accepted set. That was the same
+edit, and it landed first, on `claude/n2-shared-gps-set` (PR #109): `positioned_ids`
+(`backend/feeds/railroad.py:1012`) is now narrowed by `_accepted_as_gps` at `:1033`, and
+6.3 widened that one function with the position ladder rather than going around it.
 
 ### 1.3 The acceptance case that makes this one contract and not three
 
@@ -203,7 +226,9 @@ trip update, including all 42 of the stale ones.
 GPS reading, and LIRR is the one system where we can tell the difference before deciding.
 
 LIRR is therefore the only provider that supplies an independent observation time for
-BOTH kinds of observation, and today the decoder reads neither.
+BOTH kinds of observation, and when this was written the decoder read neither. It reads both
+from 6.1: `_railroad_observed_at` (`backend/feeds/railroad.py:98`) for the vehicle and
+`_prediction_observed_at` (`:775`) for the trip update.
 
 ### 2.2 Metro-North
 
@@ -485,10 +510,14 @@ Transit and ferry dock arrivals have no per-observation clock either, but their 
 send a header, so 3.3 ages them against that and their `observed_at` is the header rather
 than null. Only the first group is null, and only the first group is non-gated.
 
-**`observed_at` is not a new name.** The audit's own reproduction already uses it:
-`f01_lirr_gps_observation_age.py:412` asserts that `models.RailroadFeed` STRIPS an
-`observed_at` added to a cached train, so the field name is already written down and the
-model already has a documented behavior toward it.
+**`observed_at` was not a new name.** The audit's own reproduction already used it,
+asserting that `models.RailroadFeed` STRIPPED an `observed_at` added to a cached train, so
+the field name was already written down and the model already had a documented behavior
+toward it. 6.1 reversed the behavior rather than working around it:
+`RailroadTrain.observed_at` is a served field (`backend/models.py:127`), and
+`docs/reviews/audit-2026-09-05/f01_lirr_gps_observation_age.py` records the flip. The line
+number that citation once carried is not repeated here, because that script is rewritten
+whenever its finding moves.
 
 **`provenance` is a closed enumeration of five values.** The names are lowercase single
 words, needing none of the hyphens the health codes and `NjtTrain.status` carry, and a value
@@ -508,7 +537,8 @@ those two nothing upstream can widen it.
 | `unknown` | Provenance could not be determined. | nothing |
 
 **The client already computes this enumeration, from the shape of the fields, and that is
-the thing to stop.** `frontend/helpers.js:211` is the whole of today's provenance system:
+the thing to stop.** This was the whole of the client's provenance system, at
+`frontend/helpers.js:211` when this was written:
 
 ```js
 function isPlacedRailroad(t) {
@@ -519,7 +549,9 @@ function isPlacedRailroad(t) {
 A rule that reads presence-of-a-field as meaning-about-the-world is exactly what breaks the
 moment a decoder starts filling `stop_id` for a GPS train, and it is duplicated per system
 on the client. Moving it to the server is most of the work of this contract and none of the
-risk.
+risk. **Done at 6.3:** `isPlacedRailroad` is deleted rather than fixed, the served
+`provenance` is read instead, and `frontend/positions.test.js` asserts the function is gone
+from every frontend file rather than merely unused. The old anchor is now popup geometry.
 
 **Two notes on the enumeration itself.**
 
@@ -615,11 +647,12 @@ describes the provider rather than the observation, which is exactly why it belo
 and not on the markers.
 
 **The rule's two halves cover every row of 3.3 once each, and that is worth checking rather
-than assuming.** Eleven rows are age-gated, so clause (b) speaks for them and clause (c)
+than assuming.** Twelve rows are age-gated, so clause (b) speaks for them and clause (c)
 catches a null that should not have been there. Metro-North's two rows are the only ones a
-whole system's line has to speak for. Buses are undecided until 6.0 and alerts are carried
-by retention. Nothing falls between, which was not true of the first draft of this rule: it
-left the 62 subway trains with no VehiclePosition qualified nowhere, until measuring
+whole system's line has to speak for. Buses were undecided until 6.0, whose probe made their
+row gated like the rest, and alerts are carried by retention. Nothing falls between, which
+was not true of the first draft of this rule: it left the 62 subway trains with no
+VehiclePosition qualified nowhere, until measuring
 `feeds/subway.py:155-175` showed they are placed from their trip update like every other
 subway train and are therefore dated by the group header rather than undated.
 
@@ -743,9 +776,9 @@ placement derived from a nine-minute-old prediction.
 | 5. nothing | **24** | **the marker is gone** |
 
 **Twenty-four of sixty-eight LIRR trains disappear from the map, and that is the decision
-this section exists to put in front of a reader.** Today all 68 are drawn as live. Under
-this policy 27 stay as they are, 17 become honest, and 24 stop being drawn, because there
-is nothing honest left to draw: their GPS is over ten minutes old and so is every
+this section exists to put in front of a reader.** Before 6.3 all 68 were drawn as live.
+Under this policy 27 stay as they are, 17 become honest, and 24 stop being drawn, because
+there is nothing honest left to draw: their GPS is over ten minutes old and so is every
 prediction behind them.
 
 **Step 4 never fires on this capture, and the exact reason is sharper than "the predictions
@@ -765,6 +798,49 @@ argued about:** relaxing step 2 from 90s to 300s moves 2 vehicles from step 3 to
 and to 600s moves 5. It never changes the 24. The estimate threshold is a choice about how
 honest a label is on 6 to 11 markers; the `OBS_MAX_S` value is the choice that decides
 whether 24 riders' trains exist.
+
+**Amended while building it, and recorded here so it is not mistaken for a decision.** The
+cost table above was met exactly, which is why nothing in it is edited: 6.3 serves
+**27 / 6 / 11 / 0 / 24** on the committed LIRR capture and 33 / 0 / 0 / 0 / 0 on
+Metro-North's. What follows is the one vehicle those five rows do not cover, and where the
+counts are carried.
+
+**A positioned vehicle the geographic box rejects is judged by N2's fallback rather than by
+the ladder, and not every step is true of it.** When its own fix is past `OBS_MAX_S` and
+nothing can place its trip it is counted at step 5, because "last seen over 10m ago" is as
+true of it out of the box as in it: moving `GO201_26_8945` out keeps the count at 24
+(`test_an_out_of_range_vehicle_withheld_for_age_stays_counted_withheld`,
+`backend/tests/test_feeds_railroad.py`). When its fix is WITHIN `OBS_MAX_S` it is counted
+nowhere, because it is no marker and it was not withheld for age, so step 5's claim about
+when it was last seen would be false of it. Moving `GO201_26_7987` out takes step 3 from 11
+to 10 and the five counts then sum to 67 of the 68
+(`test_an_out_of_range_vehicle_with_a_recent_fix_and_no_placeable_trip_is_counted_nowhere`).
+That is a decision rather than a gap, and it is the only case in which these five rows do
+not partition the fleet.
+
+**The carrier is `positions.suppressed`**, the fifth count of `models.PositionSteps`
+(`backend/models.py:142`), on the per-system block of the envelope a rider's client already
+reads (`SystemFreshness.positions`, `:245`), and projected for the operator as
+`/api/status`'s `railroad_positions` (`backend/routes/status.py:214`, built by
+`_railroad_positions` at `:221`) so the two surfaces cannot disagree about a count. Step 5's
+row says "the marker is gone"; the count is what a rider is given instead, which is Q7's
+answer, rendered as "LIRR 24 trains not shown, last seen over 10m ago" (`withheldClause`,
+`frontend/helpers.js:873`).
+
+**Amended while building it, and recorded here so it is not mistaken for a decision this
+section made: the clause RIDES the status line and never raises it.** As built it raised
+the line, on the argument that a train which has left the map is the one thing no marker
+can say. The whole-branch review measured what raising meant: the committed capture
+withholds 24 of 68 on a wholly healthy railroad, so the line was non-null on every poll,
+and `frontend/map.js` paints any rendered line with the error class, so an ordinary day
+showed a rider a red status bar. Worse, it raised the line that section 3.2's Metro-North
+clause was deliberately built only to ride, so that clause spoke every day too and the
+trade it was designed around was gone. Raising therefore reopened the devaluation 3.2
+names ("a status line that always says something is a status line nobody reads") through
+the clause added to answer Q7. The count is not lost: it is served on every railroad block
+and on `/api/status`, and the contract monitor prints it every run, which is the operator's
+copy this section always intended. What a rider loses is being told on a day when nothing
+else is wrong, and that is the same trade 3.2 already makes for Metro-North.
 
 ### 3.5 What `SystemFreshness` has to carry
 
@@ -843,15 +919,22 @@ another **25** exact dict-literal equalities across `test_api.py`, `test_feeds.p
 `test_feeds_ferry.py` and `test_feeds_path.py`, **10** of which pin `SystemFreshness` to
 exactly its four fields. Those are deliberate guards against silent shape drift and they
 fail on the first commit of this work, which is correct: they should be updated, not
-relaxed.
+relaxed. **Built at 6.1, and they were updated rather than relaxed.** `SystemFreshness` now
+carries SIX fields, not four: `feed_timestamp` from 3.5 below (`backend/models.py:209`) and
+`positions` from 6.3's suppression count (`:245`), beside the `fetched_at`, `ok`,
+`retained_since` and `routes` it had (`:191`, `:215`, `:220`, `:235`).
 
 **The gap is the other direction, and it is the one to fix in the same commit.** The row
 models are locked; the arrivals ENVELOPES are not.
-`test_station_arrivals_validates_handler_shape` (`backend/tests/test_models.py:215-223`)
-only validates a four-key payload, and pydantic ignores fields it is not given, so adding
-`served_at` and `systems` to `StationArrivals` passes it silently. The five envelopes this
-contract widens are exactly the five with no field-set lock, which is presumably how they
-came to be missing `served_at` in the first place.
+`test_station_arrivals_validates_handler_shape` only validates a four-key payload, and
+pydantic ignores fields it is not given, so adding `served_at` and `systems` to
+`StationArrivals` passes it silently. The five envelopes this contract widens are exactly
+the five with no field-set lock, which is presumably how they came to be missing
+`served_at` in the first place. **Closed at 6.1:** all five are locked by
+`test_arrivals_envelope_field_set_is_locked` over an `ARRIVALS_ENVELOPES` table
+(`backend/tests/test_models.py:267`), and `test_every_arrivals_envelope_is_locked` asserts
+the roster itself, so a sixth envelope added later cannot be the one nothing covers. The
+handler-shape test still validates its payload and is now at `:285`.
 
 ### 4.2 The decoders
 
@@ -859,7 +942,7 @@ came to be missing `served_at` in the first place.
 | --- | --- |
 | `feeds/railroad.py` `_decode_railroad_vehicles` | Read `v.timestamp`, emit `observed_at` for LIRR and `None` for MNR, apply the LIRR age gate, and stop returning a bare list of trains that the placement pass has to second-guess. |
 | `feeds/railroad.py` `_decode_railroad_feed` | Build `positioned_ids` from the SAME accepted set the GPS pass emitted, which closes N2, and read `tu.timestamp` for the prediction gate and for a placed train's `observed_at`. |
-| `feeds/__init__.py` `RAILROAD_FRESHNESS_SYSTEMS` | Unchanged in value, but it now has a THIRD reader. It has two today: `railroad.py:580` (may this header drive `feed_timestamp`) and `contract_monitor.py:678` (may this header raise a staleness WARN). The per-provider policy table must not become a fourth place where Metro-North's exclusion is restated. |
+| `feeds/__init__.py` `RAILROAD_FRESHNESS_SYSTEMS` | Unchanged in value, but it now has a THIRD reader. It had two when this was written, and both anchors have since moved: may this header drive `feed_timestamp` is `railroad.py:1252`, and may this header raise a staleness WARN is `contract_monitor.py:732`. **Built: the value is still `frozenset({"LIRR"})` (`railroad.py:51`) and it has five reads, not three.** The three new ones are `_railroad_observed_at` (`railroad.py:121`, may this system's vehicle stamp become an `observed_at`), `_position_age_gated` (`:136`, is this system's position row age-gated) and `routes/status.py:573` (the served-observation health code's own gate). The per-provider policy table did NOT become another place where Metro-North's exclusion is restated: `_position_age_gated` reads the set and says so in its docstring. |
 | `feeds/subway.py` | A NEW join: `_decode_feed` visits only `trip_update` entities today, so the 98 VehiclePositions have to be indexed by `trip_id` first. Then `v.timestamp` onto each joined train, the group header onto the other 62 and onto each arrival. |
 | `feeds/njt.py` | Emit `provenance: "placed"` (or `"estimated"` on the interpolated segment) and the header as `observed_at`. No new clock: the header is the only one. |
 | `feeds/path.py` | Read `tu.timestamp` per entity. This is the one decoder where the new clock is strictly better than the envelope clock it has. |
@@ -892,34 +975,45 @@ and the handler gains `served_at` and the `systems` map. The other four arrivals
 follow the same shape; the vehicle endpoints change only in that their payload rows are
 wider.
 
-`/api/status` gains nothing structural. It already reports per-feed content lag, and the
-new per-system `feed_timestamp` is the same number it has, moved to where the client that
-never fetches `/api/status` can read it.
+`/api/status` gains nothing structural for 3.5's clock. It already reports per-feed content
+lag, and the new per-system `feed_timestamp` is the same number it has, moved to where the
+client that never fetches `/api/status` can read it. **6.3 did add one key**, and it is a
+projection rather than a second record: `railroad_positions`
+(`backend/routes/status.py:214`, built by `_railroad_positions` at `:221`) carries the
+ladder's counts off the same per-system blocks `/api/railroads` serves, so the operator's
+snapshot and the rider's envelope cannot disagree about a count. The contract monitor reads
+it as `production:railroad-positions`.
 
-**Asserted today that this makes false:** the comment at `backend/routes/subway.py:85-92`
+**Asserted today that this makes false:** the comment at `backend/routes/subway.py:89-102`
 says "THE OLDEST CONTRIBUTING GROUP'S poll time, not the aggregate's" and explains that the
 honest answer for a union is the worst of its parts. The reasoning survives intact; the
 sentence stops being the whole answer, because poll time was never the clock that F03 was
-about.
+about. **Built at 6.1:** the comment carries that second half itself now ("THE REASONING
+SURVIVED 6.1 AND THE SENTENCE STOPPED BEING THE WHOLE ANSWER", `:97`), and the content-time
+sibling sits beside it as `_oldest_contributing_content_at` (`:106`).
 
 ### 4.4 The frontend
 
 | Surface | Change |
 | --- | --- |
-| Popup | Render the provenance word and the age line from the SERVED values instead of deriving them. `isPlacedRailroad` (`helpers.js:211`) is deleted rather than fixed. |
-| Station panel | Stop computing `ageSeconds` as `now - payload.fetched_at` (`helpers.js:2193`) and read the served content clock. Per-row qualification, so a stale contributor's rows are marked and a healthy contributor's are not. |
-| Marker style | `STALE_MARKER_OPACITY` becomes per-observation. Today a marker dims only when its whole SYSTEM is stale, which is why 41 stale LIRR observations sit at full opacity inside a healthy feed. |
+| Popup | Render the provenance word and the age line from the SERVED values instead of deriving them. `isPlacedRailroad` is deleted rather than fixed. **Built at 6.3:** it is gone, `positionQualifier` (`helpers.js:1133`) is the one helper every vehicle surface renders a position's words through, and `railroadHollow` (`:1267`) records why the glyph stopped reading `stop_id`. The old anchor, `helpers.js:211`, is now unrelated popup geometry. |
+| Station panel | Stop computing `ageSeconds` as `now - payload.fetched_at` and read the served content clock. Per-row qualification, so a stale contributor's rows are marked and a healthy contributor's are not. **Built at 6.2:** `ageSeconds` is gone and `boardSystemLine` replaced it, which the comment at `helpers.js:2846` states. The old anchor, `helpers.js:2193`, is now a headsign comment. |
+| Marker style | `STALE_MARKER_OPACITY` becomes per-observation. Before 6.3 a marker dimmed only when its whole SYSTEM was stale, which is why 41 stale LIRR observations sat at full opacity inside a healthy feed. **Built at 6.3:** every opacity site asks `vehicleMarkerAge` (`frontend/systems/shared.js:783`), which takes the worse of the system's age and the row's own (`observationAge`, `helpers.js:1066`) before `markerOpacity` (`:669`) sees it. |
 | Glide / animation | The freeze deadline (`systemStaleAtOf`, `glideClock`) becomes per-observation too. Dead-reckoning a position from a ten-minute-old fix is the animated form of the same falsehood. |
 | Live region | One write per render, not two. N6 is open on `#page-announce` and a per-observation qualifier is exactly the kind of second writer that trips it. |
-| `ingestSystems` | The single door every freshness value enters through (`helpers.js:489-516`), and it reads exactly four names. Any field the contract adds to an envelope reaches no surface at all until this function changes, and nothing currently tests that it drops the rest. This is the first frontend edit, not the last. |
-| The shared lag term | `systemAges` computes `ages[name] = Math.max(lag, poll, 0)` with `lag` taken from the ENVELOPE (`helpers.js:552-563`), so every system of a source shares one content-lag number. A per-system content clock replaces that term, and this is the line that makes it possible. |
+| `ingestSystems` | The single door every freshness value enters through (`helpers.js:498-530`), and it read exactly four names. Any field the contract adds to an envelope reaches no surface at all until this function changes, and nothing currently tests that it drops the rest. This is the first frontend edit, not the last. **Built: it reads six**, the four plus `feed_timestamp` (6.1) and `positions` (6.3). |
+| The shared lag term | `systemAges` computed `ages[name] = Math.max(lag, poll, 0)` with `lag` taken from the ENVELOPE, so every system of a source shared one content-lag number. A per-system content clock replaces that term, and this is the line that makes it possible. **Built at 6.1:** `systemAges` is `helpers.js:643-650` and its lag term is `systemLag` (`:626`), which reads the system's own `feedTimestamp` and falls back to the envelope's only for a block that carries none. |
 | Suppression count | NEW, and Q7's answer: when the ladder's step 5 drops observations for age, the count reaches the status line and nothing else. A rider can otherwise not tell "no trains on this branch" from "we dropped 24 of them". No per-marker ghost, which is the thing being fixed. |
 | Status line | Gaining two clauses, one of them in new wording. `staleness()` already produces "railroad: MNR as of 6m ago" and the two-clause stale/blind split; it gains a THIRD population (systems whose CONTENT is old while their poll is current), which reuses "as of {age} ago" verbatim, and a FOURTH (systems with no observation clock, per Q5's amendment to 3.2), which is the one new string. Neither may be merged into an existing clause, for the same reason the first two were split: a system in one state announced with another state's age is the exact defect that split them. |
 
-**Asserted today that this makes false:** `helpers.js:2193` computes the panel's age from
-`fetched_at` and the comment above `feedAgeLine` says the line exists so a popup "must say
-how old they are rather than imply liveness". The mechanism is right and the input is
-wrong, so the line is currently silent in exactly the case it was written for.
+**Asserted today that this makes false:** the panel computed its age from `fetched_at`, and
+the comment above the popup's age line said that line exists so a popup "must say how old
+they are rather than imply liveness". The mechanism was right and the input was wrong, so
+the line was silent in exactly the case it was written for. **Built at 6.2 and 6.3, and
+neither anchor survives:** `ageSeconds` gave way to `boardSystemLine` (`helpers.js:2846`),
+and `feedAgeLine` is no longer in the tree, its work split between `stalePopupLine`
+(`helpers.js:901`), which still speaks for a system's age, and `positionQualifier`
+(`:1133`), which speaks for the observation's.
 
 ### 4.5 The monitor
 
@@ -970,11 +1064,11 @@ new fields per record rewrites all eleven:
 
 | Golden | Records | Beyond the two new fields |
 | --- | --- | --- |
-| `railroad_lirr_expected.json` | 68 | **68 to 38.** 27 fresh plus 11 aged; 6 move to the placed golden and 24 leave every golden. |
-| `railroad_lirr_placed_expected.json` | 56 | **56 to 62**, the 6 estimated trains arriving from the GPS pass. |
+| `railroad_lirr_expected.json` | 68 | **68 to 38, built at 6.3 and 38 on disk.** 27 fresh plus 11 aged; 6 move to the placed golden and 24 leave every golden. |
+| `railroad_lirr_placed_expected.json` | 56 | **56 to 62, built at 6.3 and 62 on disk**, the 6 estimated trains arriving from the GPS pass. |
 | `railroad_mnr_expected.json` | 49 | Count unchanged. Every row gets `observed_at: null`, which is the whole Metro-North policy made visible in one file. |
 | `railroad_mnr_placed_expected.json` | 1 | Count unchanged. |
-| `railroad_lirr_arrivals_expected.json` | 765 | Rows gain the prediction's own clock; the LIRR prediction gate may drop rows. |
+| `railroad_lirr_arrivals_expected.json` | 765 | Rows gain the prediction's own clock; the LIRR prediction gate may drop rows. **It dropped none:** 765 rows at 6.1 and byte-identical through 6.3, which moved only the two position goldens above. |
 | `railroad_mnr_arrivals_expected.json` | 926 | Rows gain `observed_at: null`. |
 | `njt_tu_expected.json` | 68 trains + 648 arrivals | The largest golden in the repository. `observed_at` the header on all 716. The 68 TRAINS are `placed` or `estimated` (60 estimated, 8 placed, following the motion state exactly); the 648 ARRIVALS are `reported`, because a prediction is sent rather than derived. An earlier draft of this row said every row was placed or estimated, which was wrong about 648 of the 716. |
 | `subway_1_7_s_expected.json` | 95 | Rows gain the vehicle clock where a VehiclePosition joins and the group header where none does; 16 of the 98 joined observations are over 90s. |
@@ -990,12 +1084,20 @@ started yet or having no resolvable upcoming stop, so they are stale observation
 that are on no map. The feed number is still correct about the feed, and the row keeps it
 because it is what the vehicle join actually sees.
 
-**6.3's gate is sized from the served number.** A gate acts on trains that reach a rider,
-so the subway half of F01 is two markers on this capture rather than sixteen: reading the
-feed figure as the workload overestimates it by a FACTOR of eight, not by eight markers.
+**The subway half of F01 is sized from the served number, not the feed's.** A rule acts on
+trains that reach a rider, so it is two markers on this capture rather than sixteen: reading
+the feed figure as the workload overestimates it by a FACTOR of eight, not by eight markers.
 The measurement is pinned
-at `test_subway_positions_take_the_vehicle_clock_where_one_joins` rather than left in prose
-here, so the 2 and the 84 move together or fail.
+at `test_subway_positions_take_the_vehicle_clock_where_one_joins`
+(`backend/tests/test_models.py:615`) rather than left in prose here, so the 2 and the 84 move
+together or fail.
+
+**That paragraph opened "6.3's gate is sized from the served number" until 6.3 corrected it,
+and the word "gate" overstated what 6.3 built.** The gate is the
+railroad shared rule alone, LIRR by policy and Metro-North exempt by policy, and no other
+system's positions are dropped past `OBS_MAX_S`. Those two subway markers are QUALIFIED by
+the rendering, dimmed and dated and frozen exactly as any other system's aged position is,
+which is 3.2's half of this contract rather than 3.4's.
 
 The two count changes in the LIRR goldens are arithmetic from section 3.4's policy, stated
 here so a regeneration that produces different numbers is a signal rather than a surprise.
@@ -1014,31 +1116,43 @@ it is worth more than the commit that would have swallowed it. The counterpart r
 exists on the other side: the invariant belongs in a test asked of the decoder, so a
 recapture cannot move a count silently either.
 
-**One model-level fact belongs here rather than in 4.1, because a reproduction already pins
-it:** `models.RailroadFeed` does not merely lack an observation time, it STRIPS one. Adding
-`observed_at` to a cached train and serving it through `/api/railroads` drops the key, and
-`f01_lirr_gps_observation_age.py:412` asserts exactly that. So the field cannot be smuggled
-in through the cache; it lands in the model or it lands nowhere.
+**One model-level fact belonged here rather than in 4.1, because a reproduction already
+pinned it:** `models.RailroadFeed` did not merely lack an observation time, it STRIPPED one.
+Adding `observed_at` to a cached train and serving it through `/api/railroads` dropped the
+key, and `f01_lirr_gps_observation_age.py` asserted exactly that. So the field could not be
+smuggled in through the cache; it had to land in the model. **It did, at 6.1:**
+`RailroadTrain.observed_at` (`backend/models.py:127`), and the reproduction now records the
+flip rather than the strip.
 
-**Asserted today that this makes false:** `railroad_lirr_expected.json` currently asserts
-that 68 positioned LIRR vehicles are served. Twenty-four of those rows are the finding.
-F02's fix has already established the pattern for this: the invariant belongs in
+**Asserted today that this makes false:** `railroad_lirr_expected.json` asserted that 68
+positioned LIRR vehicles are served. Twenty-four of those rows were the finding. F02's fix
+had already established the pattern for this: the invariant belongs in
 `test_feeds_railroad.py` as a law asked of the decoder rather than of the golden, so a
-recapture cannot bless the old behavior back in.
+recapture cannot bless the old behavior back in. **Built at 6.3, exactly as forecast:** the
+golden asserts 38, and the laws are asked of the decoder, at
+`test_the_lirr_capture_orders_27_6_11_0_24` (`backend/tests/test_position_ladder.py`) and
+across `backend/tests/test_feeds_railroad.py`, with the served body committed as
+`tests/e2e/fixtures/f01_railroads.json` and read by `backend/tests/test_f01_positions.py`.
 
 ### 4.7 The audit reproductions
 
-`f01_lirr_gps_observation_age.py` and `f03_arrivals_content_freshness.py` both exit 0 today
-because the defects hold. Under the directory README's own rule, a fixed finding's script
+`f01_lirr_gps_observation_age.py` and `f03_arrivals_content_freshness.py` both exited 0
+because the defects held. Under the directory README's own rule, a fixed finding's script
 becomes the regression check on the FIX and must carry the before and the after. Both flip
 when this work lands, and both should be rewritten in the F02/F05/F10/F12 shape rather than
 deleted: the measured before-values in this document are the ones they should pin.
 
-**Asserted today that this makes false:** both scripts exit 0 precisely because the defect
-holds, so each one's success is currently a report that a rider is being misled. That is
+**Asserted today that this makes false:** both scripts exited 0 precisely because the defect
+held, so each one's success was a report that a rider is being misled. That is
 the intended design of the directory (a red run means the audit table is stale), and it is
-worth saying out loud that these two are the only files in the repository whose passing
-this work is supposed to break.
+worth saying out loud that these two were the only files in the repository whose passing
+this work was supposed to break.
+
+**Both have flipped, and both were rewritten rather than deleted.**
+`f03_arrivals_content_freshness.py` was rewritten at 6.2 (`claude/freshness-6-2-boards`) and
+`f01_lirr_gps_observation_age.py` in 6.3's acceptance commit on this branch, each over the
+world its own fix built and each carrying the audit's figure in the label of every check
+that moved. The before-values measured in this document are the ones they pin.
 
 ---
 
@@ -1297,17 +1411,43 @@ something:
 - **Q1** made the ferry rows in 4.1, 4.2 and 4.6 definite instead of conditional.
 - **Q7** added a row to 4.4 for the suppression count.
 
+**ERRATUM, 2026-09-16, on Q7's answer above.** "Yes for the status line" is right and is
+unchanged; what it did not say is whether that count may RAISE the line or only ride one,
+and as built it raised. Measured at 6.3, on the capture this document sizes everything
+else from: a healthy LIRR withholds 24 of its 68 positioned vehicles, about a third of its
+markers, on an ordinary evening with nothing wrong. So a clause that can raise the line
+raises it on every poll, and `frontend/map.js` paints any raised line with the error
+class, which gave a rider a permanently red status bar and spent the colour that tells
+them a feed is actually down. That is section 3.2's own hazard, "a status line that always
+says something is a status line nobody reads", reopened through the clause added to answer
+this question, and it also raised the line that Q5's Metro-North clause was deliberately
+built only to ride, so that clause spoke every day too. **The count therefore rides the
+railroad line and never raises one**, exactly as Q5's clause does, and the answer above
+should be read as "yes for the status line, as a clause that rides it". Nothing is lost to
+an operator or to a later reader: the count is served on every railroad block, published
+on `/api/status` as `railroad_positions`, and printed per system by the contract monitor
+on every one of its six-hourly runs. What a rider gives up is being told on a day when
+nothing else is wrong, which is the same trade Q5 already made for Metro-North.
+
 **One correction that is not a decision, made while amending and recorded so it is not
 mistaken for one.** Applying clause (c) to 3.3's table exposed a row that was wrong before
 any question was answered: "Subway, position, no VehiclePosition" was marked as having no
 clock and therefore non-gated. It is not. `feeds/subway.py:155-175` places EVERY subway
 train from its trip update, so a train with no vehicle entity is dated by its group's header
-exactly like a prediction, not left undated. That row is now age-gated, which moves the
-tally to eleven gated and four not, removes the 62 trains from every list of undated
-observations, and leaves **Metro-North as the only wholly undated system**, so the
-per-system clause Q5 introduced applies to exactly one source today. The first draft of the
-amended rule left those 62 trains qualified nowhere; this closes that hole rather than
-documenting it.
+exactly like a prediction, not left undated. That row is now age-gated, which moved the
+tally to eleven gated and four not on the day this was written, removes the 62 trains from
+every list of undated observations, and leaves **Metro-North as the only wholly undated
+system**, so the per-system clause Q5 introduced applies to exactly one source today. The
+first draft of the amended rule left those 62 trains qualified nowhere; this closes that
+hole rather than documenting it.
+
+**The tally moved once more, at 6.0, and two of the three places that state it were not
+moved with it.** The bus probe made the buses row age-gated, so 3.3 reads TWELVE gated and
+three not, which is what the sentence under its table says and what counting the table
+gives. The two that ran a row behind from 6.0 until 6.3 corrected them are the sentence
+above and the one in 3.2 that reads the split off for clause (c). No policy changed with
+either; the number was arithmetic about a table, and three copies of it is how one of them
+goes stale.
 
 **One consequence of Q5 worth stating on its own, because it is the largest rider-visible
 effect of any answer here.** Had Q5 been answered yes, which is what section 3.2 originally
@@ -1321,6 +1461,9 @@ measurable and worth revisiting rather than arguing about in advance.
 
 ---
 
-**Nothing here is built yet.** This is the design the Release 1 order put at item 7, and
-the two items it blocks are items 8 and 9. With the eight questions settled the build can
-start at 6.0, the bus probe, which Q6 made a gate rather than a note.
+**Nothing here was built when this was written.** This is the design the Release 1 order put
+at item 7, and the two items it blocks are items 8 and 9. With the eight questions settled
+the build started at 6.0, the bus probe, which Q6 made a gate rather than a note, and ran
+through 6.1, 6.2 and 6.3 in that order. **All four steps are built**, on the branches the
+status line at the top of this document names: F03 closed at 6.2 and F01, with N2 already
+under it, at 6.3.

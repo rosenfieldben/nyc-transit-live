@@ -73,14 +73,16 @@ test("A2a. a subway trip whose route changes under the same id is relabeled", as
   await open(page, ctx);
 
   const first = await labelOf(page, "subway", "sub-1");
-  expect(first.aria).toBe("1 train, next stop Times Sq-42 St, Northbound");
+  // Every subway train is placed from its trip update, and since 6.3 its name ends by
+  // saying so, in the words its popup now carries (positionQualifier, said aloud).
+  expect(first.aria).toBe("1 train, next stop Times Sq-42 St, Northbound, scheduled position, no GPS");
   // The whole tab-order policy, asserted on a real marker rather than in the abstract.
   expect(first.role).toBe("img");
   expect(first.tabindex).toBeNull();
 
   await page.clock.runFor(POLL_MS + 1000);
   await expect.poll(async () => (await labelOf(page, "subway", "sub-1")).aria).toBe(
-    "2 train, next stop Wall St, Southbound",
+    "2 train, next stop Wall St, Southbound, scheduled position, no GPS",
   );
   // Same element, not a new one: this is a relabel, not a lucky recreation. If the
   // marker had been destroyed and rebuilt the test would pass for the wrong reason.
@@ -273,8 +275,11 @@ test("A2j. an NJT train's label picks up its route name late, and its delay ever
     .toContain("3 min early");
   const later = (await labelOf(page, "njt", "NJ_3800")).aria;
   expect(later).not.toContain("late");
-  // Every NJT train is a schedule estimate and the name says so, on every poll.
-  expect(later).toContain("scheduled position, no GPS");
+  // Every NJT train says how its position was derived, on every poll (6.3): NJ_3800 is
+  // between two stops, so the backend serves it `estimated`, and the name says that
+  // rather than the "scheduled position" every NJT name said before.
+  expect(later).toContain("estimated from a prediction");
+  expect(later).not.toContain("GPS");
 
   // AND THE MARKER RE-SKINS, not just the label. njt.js gates its re-icon on the
   // RESOLVED COLOUR rather than on route_id, because route_id never changes after a

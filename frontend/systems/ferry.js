@@ -178,13 +178,27 @@ function ferryBoatPopup(record) {
   // newest status/route, like the other systems. Prepend ROUTE-scoped ferry alerts,
   // joined on (ferry, route_id) exactly as the subway train popup joins by route; a
   // null-route boat matches nothing (matchRouteAlerts guards on a falsy route id).
+  const position = ferryPosition(b);
   return (
     routeAlertsBlock("ferry", b.route_id) +
-    ferryBoatPopupHtml(b, ferryRouteNames.get(b.route_id) || null, ferryColorFor(b.route_id)) +
+    ferryBoatPopupHtml(b, ferryRouteNames.get(b.route_id) || null, ferryColorFor(b.route_id), position) +
     // C2: single-feed source, synthesized system, same age line as every other
-    // vehicle popup.
-    stalePopupLine(systemAgeOf("ferry", "ferry"))
+    // vehicle popup, unless the boat's own words already stated an age that old.
+    vehicleStaleLine(systemAgeOf("ferry", "ferry"), position)
   );
+}
+
+// The words one boat carries about its position (6.3): GPS, dated by its own
+// vehicle.timestamp (served as observed_at, and as updated_at before that), read
+// against the ferry's one system. A fresh fix says nothing, as it always has.
+function ferryPosition(boat, now = correctedNow()) {
+  return vehiclePosition("ferry", ["ferry"], boat, now);
+}
+
+// A boat's accessible name at `now`, the one composition the apply path and the stale
+// sweep both write (railroadMarkerName in railroad.js says why the sweep writes it too).
+function ferryMarkerName(boat, now = correctedNow()) {
+  return ferryBoatName(boat, ferryRouteNames.get(boat.route_id), ferryPosition(boat, now));
 }
 
 // A boat's resting opacity: dimmed while it is parked at a dock. This USED TO be a
@@ -196,10 +210,14 @@ function ferryBaseOpacity(boat) {
   return ferryBoatIconState(boat.status) === "docked" ? FERRY_DOCKED_OPACITY : 1;
 }
 
-// Re-dim every boat from its source's age and its own docked state (C2).
+// Re-dim every boat from the larger of its source's age and its own fix's, compounded
+// with its own docked state (C2, 6.3).
 staleTreatments.push(() => {
+  const now = correctedNow();
+  const age = systemAgeOf("ferry", "ferry");
   for (const record of ferryBoatRecords.values()) {
-    dimMarker(record.marker, systemAgeOf("ferry", "ferry"), ferryBaseOpacity(record.latest));
+    dimMarker(record.marker, vehicleMarkerAge("ferry", age, record.latest, now), ferryBaseOpacity(record.latest));
+    setMarkerName(record.marker, ferryMarkerName(record.latest, now));
   }
 });
 
@@ -243,10 +261,11 @@ function applyFerryBoats(data) {
       // dock, arriving, under way) and it is the one a rider is listening for. Like
       // the re-icon above, this reads the RESOLVED route name, so a boat named before
       // the route table landed gets its real route once it does.
-      setMarkerName(record.marker, ferryBoatName(boat, ferryRouteNames.get(boat.route_id)));
+      setMarkerName(record.marker, ferryMarkerName(boat));
       // Re-applied every poll, not only when the icon changes: a boat that docks or
-      // departs changes its resting opacity, and its feed may have gone stale.
-      dimMarker(record.marker, systemAgeOf("ferry", "ferry"), ferryBaseOpacity(boat));
+      // departs changes its resting opacity, and its feed, or since 6.3 its own fix, may
+      // have gone stale.
+      dimMarker(record.marker, vehicleMarkerAge("ferry", systemAgeOf("ferry", "ferry"), boat), ferryBaseOpacity(boat));
       if (record.marker.isPopupOpen()) updatePopupKeepingFocus(record.marker);
     } else {
       const color = ferryColorFor(boat.route_id);
@@ -257,9 +276,13 @@ function applyFerryBoats(data) {
       };
       newRecord.marker = labeledMarker([boat.latitude, boat.longitude], {
         icon: ferryBoatIcon(boat, color),
-        // Dim on the first frame, for staleness and/or for being docked.
-        opacity: markerOpacity(systemAgeOf("ferry", "ferry"), ferryBaseOpacity(boat)),
-      }, ferryBoatName(boat, ferryRouteNames.get(boat.route_id)))
+        // Dim on the first frame, for staleness (the feed's or the fix's) and/or for
+        // being docked.
+        opacity: markerOpacity(
+          vehicleMarkerAge("ferry", systemAgeOf("ferry", "ferry"), boat),
+          ferryBaseOpacity(boat),
+        ),
+      }, ferryMarkerName(boat))
         .bindPopup(() => ferryBoatPopup(newRecord))
         .addTo(ferryBoats);
       ferryBoatRecords.set(boat.id, newRecord);

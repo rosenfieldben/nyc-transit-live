@@ -25,6 +25,7 @@ from models import (
     PathFeed,
     PathStationArrivals,
     PathTrain,
+    PositionSteps,
     RailroadArrival,
     RailroadFeed,
     RailroadFeedHealth,
@@ -37,6 +38,7 @@ from models import (
     SubwayFeed,
     SubwayFeedHealth,
     SubwayStop,
+    SystemFreshness,
     Train,
     Vehicle,
 )
@@ -409,12 +411,39 @@ def test_status_model_validates_handler_shape():
             "path_static": "failed",
             "subway_feeds": {"total": 8, "ok": 7, "failed": ["BDFM"]},
             "railroad_feeds": {"total": 2, "ok": 1, "failed": ["MNR"]},
+            # 6.3: a sibling of railroad_feeds, projected off the /api/railroads blocks.
+            "railroad_positions": {
+                "LIRR": {
+                    "reported": 27,
+                    "estimated": 6,
+                    "qualified": 11,
+                    "placed": 0,
+                    "suppressed": 24,
+                },
+            },
             "path_feeds": {"total": 1, "ok": 1, "failed": [], "unresolved": 0},
         }
     )
     BusIndexStatus.model_validate({"status": "building", "partial": False})
     SubwayFeedHealth.model_validate({"total": 8, "ok": 8, "failed": []})
     RailroadFeedHealth.model_validate({"total": 2, "ok": 2, "failed": []})
+
+
+def test_position_steps_are_the_five_rungs_of_the_ladder():
+    # Contract 6.3, section 3.4's order, one count per step: the carrier the rider's status
+    # line reads its suppression clause from (/api/railroads' systems blocks) and the
+    # monitor reads its counts from (/api/status railroad_positions). Strict, like every
+    # other lock here, so a step renamed on one side cannot drift silently.
+    assert list(PositionSteps.model_fields) == [
+        "reported",
+        "estimated",
+        "qualified",
+        "placed",
+        "suppressed",
+    ]
+    # Null on every block with no ladder, and on a railroad block before its first decode.
+    assert SystemFreshness.model_fields["positions"].default is None
+    assert StatusResponse.model_fields["railroad_positions"].default == {}
 
 
 def test_decoded_train_keys_cover_model():
@@ -523,7 +552,8 @@ def _lirr():
     raw = (FIXTURES / "railroad_lirr.pb").read_bytes()
     stops = json.loads((FIXTURES / "railroad_lirr_stops.json").read_text())
     header = 1782006915.0
-    gps, _ = feeds._decode_railroad_vehicles(raw, "LIRR", header)
+    # With the stops the placement pass uses, as the live path decodes it (contract 6.3).
+    gps, _ = feeds._decode_railroad_vehicles(raw, "LIRR", header, stops)
     placed, arrivals = feeds._decode_railroad_feed(raw, "LIRR", stops, header)
     return header, gps, placed, arrivals
 
@@ -532,7 +562,7 @@ def _mnr():
     raw = (FIXTURES / "railroad_mnr.pb").read_bytes()
     stops = json.loads((FIXTURES / "railroad_mnr_stops.json").read_text())
     header = 1782006692.0
-    gps, _ = feeds._decode_railroad_vehicles(raw, "MNR", header)
+    gps, _ = feeds._decode_railroad_vehicles(raw, "MNR", header, stops)
     placed, arrivals = feeds._decode_railroad_feed(raw, "MNR", stops, header)
     return header, gps, placed, arrivals
 
@@ -546,8 +576,13 @@ def test_lirr_positions_carry_the_vehicles_own_clock():
     assert all(t["observed_at"] is not None for t in gps)
     assert all(t["provenance"] == "reported" for t in gps)
     ages = sorted(header - t["observed_at"] for t in gps)
-    assert ages[0] == 4.0 and ages[-1] == 53676.0  # the design's freshest and oldest
-    assert sum(1 for a in ages if a > 90) == 41  # 42 less F02's canceled trip
+    # The design's freshest, and the oldest F01's age gate still serves (contract 6.3):
+    # 593 s, inside OBS_MAX_S, where the oldest served before the gate was 53676 s.
+    assert ages[0] == 4.0 and ages[-1] == 593.0
+    # The 11 qualified. Before the gate 41 served fixes were over 90 s (42 on the wire
+    # less F02's canceled trip); the placement pass now estimates 6 of them and 24 are
+    # withheld and counted.
+    assert sum(1 for a in ages if a > 90) == 11
     assert not any(t["observed_at"] == header for t in gps)
 
 
@@ -567,7 +602,10 @@ def test_lirr_predictions_and_placements_carry_the_prediction_clock():
     header, _gps, placed, arrivals = _lirr()
     assert placed and _rows(arrivals)
     assert all(t["observed_at"] is not None for t in placed)
-    assert all(t["provenance"] == "placed" for t in placed)
+    # `placed`, or `estimated` for the six stale vehicles whose trip's fresh prediction
+    # stands in for their own fix (contract 6.3). Either way the clock is the prediction's.
+    assert {t["provenance"] for t in placed} == {"placed", "estimated"}
+    assert sum(1 for t in placed if t["provenance"] == "estimated") == 6
     assert all(r["observed_at"] is not None for r in _rows(arrivals))
     # Not one flat value: these rows are dated per trip, not per message.
     assert len({t["observed_at"] for t in placed}) > 1

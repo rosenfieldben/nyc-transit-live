@@ -32,15 +32,23 @@ function trainIcon(train) {
 
 function trainPopup(record) {
   const t = record.latest;
+  const position = subwayPosition(t);
   return (
     routeAlertsBlock("subway", t.route_id) +
     `<b style="color:${readableInk(lineColor(t.route_id))}">${esc(t.route_id ?? "?")} train</b>` +
     `<br>Next stop: ${esc(t.stop_name ?? t.stop_id ?? "unknown")}` +
     (t.direction ? `<br>${esc(t.direction)}` : "") +
+    // 6.3: HOW THIS POSITION WAS OBTAINED, a word this popup never carried. Every subway
+    // train is placed from its trip update (feeds/subway.py), so its provenance is
+    // `placed` and section 3.2's rule (a) says a surface carries its word whenever the
+    // provenance is not `reported`: "scheduled position (no GPS)", with its age once the
+    // clock that dates it (the group header, or the joined vehicle's) is past OBS_FRESH_S.
+    positionLineHtml(position) +
     `<br><span class="popup-sub">Trip ${esc(t.trip_id ?? "?")}</span>` +
-    // C2: how old this train's own feed group is, when that group has gone stale.
-    // A dimmed marker says "not current"; this says how far from current.
-    stalePopupLine(subwaySystemAge(t))
+    // C2: how old this train's own feed group is, when that group has gone stale and
+    // the line above has not already said so. A dimmed marker says "not current"; this
+    // says how far from current.
+    vehicleStaleLine(subwaySystemAge(t), position)
   );
 }
 
@@ -92,7 +100,7 @@ function noteSubwaySystems(systems) {
 // on the map all the same. It rendered full opacity, unfrozen and with no age line,
 // right next to its dimmed siblings from the same dead group.
 function subwaySystemFreshness(train) {
-  const groups = subwayRouteCoverage ? (subwayGroupsByRoute.get(train.route_id) ?? []) : [];
+  const groups = subwayGroupsFor(train);
   if (!groups.length) return worstSystemFreshness("subways");
   const worst = { age: null, staleAt: null };
   for (const group of groups) {
@@ -114,9 +122,40 @@ function subwaySystemStaleAt(train) {
   return subwaySystemFreshness(train).staleAt;
 }
 
-// Re-dim every subway marker from its own group's current age (C2).
+// The feed groups whose served coverage lists this train's route, or [] when the payload
+// does no route coverage or no group lists it (subwaySystemFreshness says what [] means).
+function subwayGroupsFor(train) {
+  return subwayRouteCoverage ? (subwayGroupsByRoute.get(train.route_id) ?? []) : [];
+}
+
+// The words one subway train carries about its position (6.3), read against its own feed
+// groups; positionBoard takes the worst of the source when none lists its route, the same
+// direction subwaySystemFreshness takes for the same miss.
+function subwayPosition(train, now = correctedNow()) {
+  return vehiclePosition("subways", subwayGroupsFor(train), train, now);
+}
+
+// A subway train's accessible name at `now`, the one composition the apply path and the
+// stale sweep both write (railroadMarkerName in railroad.js says why the sweep does).
+function subwayMarkerName(train, now = correctedNow()) {
+  return subwayTrainName(train, subwayPosition(train, now));
+}
+
+// The clock a subway train glides by: the earlier of its groups' freeze deadline and its
+// own observation's (glideDeadline), so a train dated by an old header or an old joined
+// vehicle holds still in a group whose other trains are current.
+function subwayGlideAt(train, now = correctedNow()) {
+  return glideClock(now, glideDeadline(subwaySystemStaleAt(train), train));
+}
+
+// Re-dim every subway marker from the larger of its own group's current age and its own
+// observation's (C2, 6.3).
 staleTreatments.push(() => {
-  for (const record of trains.values()) dimMarker(record.marker, subwaySystemAge(record.latest));
+  const now = correctedNow();
+  for (const record of trains.values()) {
+    dimMarker(record.marker, vehicleMarkerAge("subways", subwaySystemAge(record.latest), record.latest, now));
+    setMarkerName(record.marker, subwayMarkerName(record.latest, now));
+  }
 });
 
 // Static route geometry, fetched once at startup (not polled). Canvas
@@ -280,12 +319,13 @@ function applyTrains(data) {
       // THE LABEL TRACKS THE DATA: a subway train's next stop and direction change on
       // every poll while the marker is reused, and those are the whole content of its
       // name.
-      setMarkerName(record.marker, subwayTrainName(train));
+      setMarkerName(record.marker, subwayMarkerName(train, now));
       // Placed through the freeze clock, not the raw one: a retained group's trains
-      // must not advance on a poll that only re-served them (C2).
+      // must not advance on a poll that only re-served them (C2), and since 6.3 neither
+      // may a train whose own observation is past OBS_FRESH_S (subwayGlideAt).
       const fresh = subwaySystemFreshness(train);
-      record.marker.setLatLng(trainLatLng(train, glideClock(now, fresh.staleAt), record.fState));
-      dimMarker(record.marker, fresh.age);
+      record.marker.setLatLng(trainLatLng(train, subwayGlideAt(train, now), record.fState));
+      dimMarker(record.marker, vehicleMarkerAge("subways", fresh.age, train, now));
       if (record.routeId !== train.route_id) {
         record.marker.setIcon(trainIcon(train));
         record.routeId = train.route_id;
@@ -297,17 +337,18 @@ function applyTrains(data) {
       train._route = computeRouteSlice(train, routeIndex.get(train.route_id));
       const fresh = subwaySystemFreshness(train);
       newRecord.marker = labeledMarker(
-        trainLatLng(train, glideClock(now, fresh.staleAt), newRecord.fState),
+        trainLatLng(train, subwayGlideAt(train, now), newRecord.fState),
         {
           icon: trainIcon(train),
           // Dimmed AT CREATION, not by the sweep afterwards: a retained train first
           // seen during an outage (a reload mid-outage) must be dim on the very
           // first frame it exists, never full-opacity for a beat. This is the
           // invariant the "C2b" e2e spec pins, and the reason the retention flag and
-          // this rendering ship in one commit.
-          opacity: markerOpacity(fresh.age),
+          // this rendering ship in one commit. Since 6.3 the same holds for a train
+          // whose own observation is old in a group that is not.
+          opacity: markerOpacity(vehicleMarkerAge("subways", fresh.age, train, now)),
         },
-        subwayTrainName(train),
+        subwayMarkerName(train, now),
       )
         .bindPopup(() => trainPopup(newRecord))
         .addTo(subwayLayer);

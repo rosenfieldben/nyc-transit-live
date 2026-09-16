@@ -411,7 +411,15 @@ is not the same thing and is never cleared on close.
   These do report real GPS, so trains with a vehicle position render at their
   true lat/lon; trains without one are placed at their next station from the
   trip updates and glide between stations (hollow markers, so the two are
-  visually distinct).
+  visually distinct). An LIRR fix is drawn at its own position only while it is
+  fresh enough to stand (contract 6.3): past 90 s a fresh prediction stands in for
+  it as a hollow marker reading "estimated from a prediction", a fix between 90 s
+  and 10 minutes old with no fresh prediction is drawn faded and says its age, and a
+  train whose own fix is past 10 minutes and whose trip has no prediction within 10
+  minutes that can still place it is not drawn, and the status line counts it (24 on
+  the committed capture: 20 whose trip has no prediction that recent, and 4 whose
+  recent prediction names no stop still ahead). Metro-North dates no fix, so its
+  trains are never aged.
 - **PATH**: the community GTFS-RT bridge feed (jamespfennell's
   path-train-gtfs-realtime, sourced from the PANYNJ API; no official feed
   exists), decoded into placed trains with backend-synthesized identity, plus
@@ -713,6 +721,25 @@ sentence: NJ Transit's zero-byte 200 meaning no active rail alerts (see **The st
 parse boundary**). It is null on an ordinary decode and null on a failure, and a
 served-empty system is never in `degraded_systems`, because it decoded.
 
+`railroad_positions` carries, per railroad system, what the position ladder did with
+its vehicles on the last decode (contract 6.3, section 3.4 of
+`docs/design/freshness-contract.md`): `reported` (drawn at its own GPS position, the fix
+within 90 s), `estimated` (placed from a prediction within 90 s because its own fix is
+older), `qualified` (its own position, older than 90 s and within 600 s, or undated),
+`placed` (from a prediction within 600 s, plus a vehicle whose own coordinate the
+railroad box rejected, which N2's fallback places from its trip update whatever that
+prediction's age) and `suppressed` (nothing honest left to draw, so no marker at all:
+its own fix is past 600 s and no prediction within 600 s can place its trip, and that
+includes a box-rejected vehicle whose fix is past 600 s and whose trip nothing can
+place). One vehicle is in no count: a box-rejected coordinate whose trip nothing can
+place and whose fix is within 600 s, which is no marker and was not withheld for its
+age. It is a sibling of `railroad_feeds` rather than part of it, read
+off the same per-system blocks `/api/railroads` serves, and a failing system keeps the
+counts of its last decode. On the committed captures LIRR is 27, 6, 11, 0 and 24, and
+Metro-North, whose positions are not age-gated, 33 reported. The contract monitor reads
+this key and prints it per system (`production:railroad-positions`, described under the
+monitor below), so a day with trains withheld is legible without opening the map.
+
 `GET /healthz` is the readiness probe (Railway's healthcheck points here). It
 returns 503 when the app can't serve fresh data: no feed is fresh, the bus route
 index build has failed, or the subway static load has failed (and is retrying).
@@ -862,7 +889,10 @@ whether its last poll succeeded, and since when its data has been carried forwar
 The two timestamps diverge exactly when something is wrong, and that divergence is
 the signal. The subway blocks also list the routes each system's served data
 covers, because a subway train names no feed group and the client needs the join
-to know which markers a stale block describes.
+to know which markers a stale block describes. The railroad blocks also carry
+`positions`, the counts `/api/status` publishes as `railroad_positions`, because the
+rider's status line has to say how many trains the map is no longer drawing and the
+client never fetches `/api/status`; every other block serves it null.
 
 A failed system's data is carried forward for up to `FEED_RETENTION_MAX_S` (600s)
 rather than vanishing, and the client renders it as what it is: dimmed markers, an
@@ -873,6 +903,35 @@ goes and only the block remains, still reporting the outage, so the disappearanc
 stays explained. Retention and that rendering are deliberately coupled: see
 `FEED_RETENTION_ENABLED` in `backend/cache.py` for why the flag must never move
 without them.
+
+Since contract 6.3 every vehicle marker is also judged by its OWN observation, the
+`observed_at` its row carries, and not only by its system's age. A marker whose own
+fix or prediction is more than 90 s old is dimmed, and its popup and accessible name
+say how old ("live GPS, as of 5m ago", "scheduled position (no GPS), as of 15m ago"),
+even inside a feed that is decoding normally; a train drawn from a prediction stops
+gliding at that point rather than dead-reckoning from it. A marker's accessible name
+is re-derived whenever its dimming is, so it gains that age on the same animation tick
+that dims it. Every popup and name also says how its position was obtained, from the
+served `provenance`, except a fresh bus or ferry fix, which adds nothing (silence means
+current there, as it always has): "live GPS" on the
+railroad, "estimated from a prediction" for a train placed between two stops from a
+fresh prediction (LIRR's estimates, and NJ Transit's in-transit trains), and
+"scheduled position (no GPS)" for one placed at a stop (subway, PATH, NJ Transit and
+the railroad's placements, "scheduled (no GPS)" in the railroad popup). A railroad
+train the position ladder drew nothing for appears nowhere on the map and is counted
+instead. That count rides the status line rather than raising it: whenever the railroad
+line is already rendering for some other reason it gains a clause of its own
+("LIRR 24 trains not shown, last seen over 10m ago"), and on a healthy railroad it says
+nothing. Withholding is LIRR's steady state rather than a fault, since the committed
+evening withholds 24 of 68 with nothing wrong, so a clause that could raise the line
+would raise it on every poll and paint the status bar in the error class every day, which
+is the devaluation section 3.2 of the contract exists to prevent. The count is still
+published on every railroad block, on `/api/status` and in the contract monitor's summary,
+which is where a count nobody has a threshold for belongs. The same rule and the same
+reason keep "MNR position age unavailable" riding the line and never raising it, because
+Metro-North dates none of its positions on any day. While a failed railroad's rows are retained, each train
+keeps the glyph and the glide it had before: a placement stays hollow and holds still
+where its glide stopped, rather than wearing the GPS glyph at its next stop.
 
 The single-feed sources (buses, PATH, ferry) carry no `systems` block. The client
 synthesizes a one-system block from their envelope `fetched_at` and
@@ -998,6 +1057,27 @@ lines, because every rider qualifier built on that clock would be unwatched. An 
 board, or one that could not be fetched, is a `WARN`, since `production:status`
 already fails a deployment that is down.
 
+`production:railroad-positions` reads the ladder's counts (`railroad_positions`, the
+sibling key described above) and prints them per railroad on every arm, as
+`LIRR 27/6/11/0 drawn, 24 not shown`: the four numbers are section 3.4's steps in order,
+reported, estimated, qualified and placed, and the last is how many trains the deployment
+withheld because nothing honest was left to draw. That last number is the point of the
+line. A deployment that stops drawing a quarter of a railroad is healthy by every other
+check here, since the feeds decode, the headers are fresh and the statics are ready, so
+without this an operator would have to open the map to find out.
+
+**No count moves this line off `PASS`,** including a railroad drawing nothing at all, and
+that is a decision rather than an omission. Twenty-four withheld LIRR trains is what the
+committed evening looks like with nothing wrong, so a band on the withheld count would
+`WARN` on every run, and a monitor that flaps is one an operator learns to ignore. The
+honest band is the one open question 1 of `docs/reviews/audit-2026-09-05.md` asks a week
+of deployed measurement for, and it is not guessed at here. Severity for the railroads
+stays where it already is: `railroad-realtime` fails a feed that will not decode, and
+`production:healthz` carries `observations-qualified`. The only `WARN`s are about the
+payload rather than the railroads: a release older than contract 6.3 serves no such key, a
+deployment that has not yet completed a railroad poll serves an empty map, and a block
+whose counts cannot be read is reported while the systems that can be read still print.
+
 A degraded alert system stays a `WARN` while the backend is still carrying its
 alerts forward, and becomes a `FAIL` once that retention horizon has passed and
 riders are genuinely seeing nothing for it. The alerts poll's own age is checked
@@ -1032,7 +1112,12 @@ alert feed and cannot heal on its own: that is a `FAIL`.
   line.
 - [x] **8. Commuter rail (GPS)**: `/api/railroads` serves the LIRR and
   Metro-North trains that report a vehicle position, drawn as a toggleable layer
-  of square markers at their real lat/lon.
+  of square markers at their real lat/lon. Since contract 6.3 an LIRR fix is served
+  at its own position only while it is fresh enough to stand (section 3.4 of the
+  freshness contract): past 90 s a fresh prediction stands in for it as an
+  `estimated` placement, and a train whose own fix is past 600 s and whose trip has no
+  prediction within 600 s that can still place it is not drawn and is counted instead.
+  Metro-North dates no fix, so its positions are not age-gated.
 - [x] **9. Commuter rail (station placement)**: the position-less railroad trains
   the GPS slice omits are placed at their next station from the trip updates (the
   way subways are placed), joining the static railroad GTFS for coordinates and

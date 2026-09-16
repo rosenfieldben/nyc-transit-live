@@ -736,7 +736,9 @@ place and whose fix is within 600 s, which is no marker and was not withheld for
 age. It is a sibling of `railroad_feeds` rather than part of it, read
 off the same per-system blocks `/api/railroads` serves, and a failing system keeps the
 counts of its last decode. On the committed captures LIRR is 27, 6, 11, 0 and 24, and
-Metro-North, whose positions are not age-gated, 33 reported.
+Metro-North, whose positions are not age-gated, 33 reported. The contract monitor reads
+this key and prints it per system (`production:railroad-positions`, described under the
+monitor below), so a day with trains withheld is legible without opening the map.
 
 `GET /healthz` is the readiness probe (Railway's healthcheck points here). It
 returns 503 when the app can't serve fresh data: no feed is fresh, the bus route
@@ -1047,6 +1049,27 @@ clock by design. A board that serves rows with no content clock is a `FAIL` on b
 lines, because every rider qualifier built on that clock would be unwatched. An empty
 board, or one that could not be fetched, is a `WARN`, since `production:status`
 already fails a deployment that is down.
+
+`production:railroad-positions` reads the ladder's counts (`railroad_positions`, the
+sibling key described above) and prints them per railroad on every arm, as
+`LIRR 27/6/11/0 drawn, 24 not shown`: the four numbers are section 3.4's steps in order,
+reported, estimated, qualified and placed, and the last is how many trains the deployment
+withheld because nothing honest was left to draw. That last number is the point of the
+line. A deployment that stops drawing a quarter of a railroad is healthy by every other
+check here, since the feeds decode, the headers are fresh and the statics are ready, so
+without this an operator would have to open the map to find out.
+
+**No count moves this line off `PASS`,** including a railroad drawing nothing at all, and
+that is a decision rather than an omission. Twenty-four withheld LIRR trains is what the
+committed evening looks like with nothing wrong, so a band on the withheld count would
+`WARN` on every run, and a monitor that flaps is one an operator learns to ignore. The
+honest band is the one open question 1 of `docs/reviews/audit-2026-09-05.md` asks a week
+of deployed measurement for, and it is not guessed at here. Severity for the railroads
+stays where it already is: `railroad-realtime` fails a feed that will not decode, and
+`production:healthz` carries `observations-qualified`. The only `WARN`s are about the
+payload rather than the railroads: a release older than contract 6.3 serves no such key, a
+deployment that has not yet completed a railroad poll serves an empty map, and a block
+whose counts cannot be read is reported while the systems that can be read still print.
 
 A degraded alert system stays a `WARN` while the backend is still carrying its
 alerts forward, and becomes a `FAIL` once that retention horizon has passed and

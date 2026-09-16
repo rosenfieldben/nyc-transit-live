@@ -999,6 +999,20 @@ def _status_json(**overrides):
         # age_s is part of a healthy alerts payload: the poll-level age is what
         # catches a TOTAL outage, where the per-system map freezes and looks fine.
         "alerts": {"age_s": 30.0, "degraded_systems": []},
+        # CONTRACT 6.3: a healthy deployment serves the ladder's counts per railroad,
+        # and 24 withheld LIRR trains is what the committed evening looks like with
+        # nothing wrong, so the happy path carries a non-zero `suppressed` deliberately.
+        # A release older than 6.3 serves no such key, which is its own band below.
+        "railroad_positions": {
+            "LIRR": {
+                "reported": 27,
+                "estimated": 6,
+                "qualified": 11,
+                "placed": 0,
+                "suppressed": 24,
+            },
+            "MNR": {"reported": 33, "estimated": 0, "qualified": 0, "placed": 0, "suppressed": 0},
+        },
     }
     base.update(overrides)
     return json.dumps(base).encode()
@@ -3235,6 +3249,117 @@ def test_an_unreachable_probe_is_a_fail(response):
     health = next(r for r in results if r.name == "production:healthz")
     assert health.status == cm.FAIL
     assert "unreachable" in health.detail
+
+
+# ---------------------------------------------------------------------------
+# production:railroad-positions (6.3): how many trains are drawn, and how many are not
+# ---------------------------------------------------------------------------
+
+
+def _positions_line(fetch):
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
+    return next(r for r in results if r.name == "production:railroad-positions")
+
+
+# The committed evening, as _status_json serves it: LIRR 27/6/11/0/24, MNR 33/0/0/0/0.
+_HEALTHY_POSITIONS_DETAIL = "LIRR 27/6/11/0 drawn, 24 not shown; MNR 33/0/0/0 drawn, 0 not shown"
+_MNR_STEPS = {"reported": 33, "estimated": 0, "qualified": 0, "placed": 0, "suppressed": 0}
+
+
+def test_production_railroad_positions_pass_carries_the_counts():
+    """THE GREEN PATH, and the counts are the whole deliverable. A deployment
+    withholding 24 LIRR trains is healthy by every other line here: the feeds decode,
+    the headers are fresh, the statics are ready. "24 not shown" in the job summary is
+    what saves an operator from opening the map to find that out."""
+    line = _positions_line(_healthy_prod())
+    assert line.status == cm.PASS
+    assert line.detail == _HEALTHY_POSITIONS_DETAIL
+
+
+def test_production_railroad_positions_never_warns_on_a_count():
+    """THE DECISION, pinned: no value of the five rungs moves this line off PASS, not
+    even a railroad drawing nothing while withholding everything. 24 withheld trains is
+    the committed evening with nothing wrong, so a band on `suppressed` would warn on
+    every run, and a thin overnight LIRR is exactly the shape that draws zero. Nobody
+    knows this distribution until open question 1's week of deployed measurement, and a
+    line that flaps before its normal is known is the one an operator learns to ignore.
+    Severity for the railroads stays where it already is: railroad-realtime on a feed
+    that will not decode, production:healthz on observations-qualified."""
+    withheld = {
+        "LIRR": {"reported": 0, "estimated": 0, "qualified": 0, "placed": 0, "suppressed": 68},
+        "MNR": {"reported": 0, "estimated": 0, "qualified": 0, "placed": 0, "suppressed": 0},
+    }
+    line = _positions_line(_healthy_prod(railroad_positions=withheld))
+    assert line.status == cm.PASS
+    assert line.detail == "LIRR 0/0/0/0 drawn, 68 not shown; MNR 0/0/0/0 drawn, 0 not shown"
+
+
+def test_production_railroad_positions_absent_is_warn_and_never_fail():
+    """A RELEASE OLDER THAN 6.3 serves no such key, and a JSON null reaches the same
+    branch. That is a fact about the deployment, not about the railroads, so it is said
+    once and never exits the run non-zero: this line adds detection, not severity, the
+    rule production:njt-routes already states for itself."""
+    line = _positions_line(_healthy_prod(railroad_positions=None))
+    assert line.status == cm.WARN
+    assert "older than 6.3" in line.detail
+
+
+def test_production_railroad_positions_empty_is_warn_not_a_silent_pass():
+    """models.py defaults the key to {}, so a deployment that has not yet completed a
+    railroad poll serves an empty map. Passing on it would report counts nobody has,
+    which is the rule production:alerts states: silence must be chosen, never
+    defaulted."""
+    line = _positions_line(_healthy_prod(railroad_positions={}))
+    assert line.status == cm.WARN
+    assert "no railroad has completed a poll" in line.detail
+
+
+@pytest.mark.parametrize(
+    "steps",
+    [
+        pytest.param({"reported": 27, "estimated": 6, "qualified": 11, "placed": 0}, id="missing"),
+        pytest.param({rung: 1 for rung in cm._LADDER_RUNGS} | {"suppressed": -1}, id="negative"),
+        pytest.param({rung: 1 for rung in cm._LADDER_RUNGS} | {"placed": True}, id="bool"),
+        pytest.param({rung: 1 for rung in cm._LADDER_RUNGS} | {"reported": "27"}, id="string"),
+        pytest.param([27, 6, 11, 0, 24], id="not-a-map"),
+    ],
+)
+def test_production_railroad_positions_unusable_counts_are_warn(steps):
+    """A rung missing, negative, a bool, a string, or the whole block the wrong shape.
+    A proxy or an error page in front of the deployment can answer with a differently
+    shaped object, so a count that cannot be read is reported rather than printed as
+    None, and the systems that DO read are still counted in the same detail."""
+    line = _positions_line(_healthy_prod(railroad_positions={"LIRR": steps, "MNR": _MNR_STEPS}))
+    assert line.status == cm.WARN
+    assert "unusable counts: LIRR" in line.detail
+    assert "MNR 33/0/0/0 drawn, 0 not shown" in line.detail, "a bad block hides no good one"
+
+
+def test_production_railroad_positions_counts_an_unprintable_system_name():
+    """SAME RULE AS production:njt-routes: what matches the safe pattern is named, what
+    does not is COUNTED. This detail is written to $GITHUB_STEP_SUMMARY, which GitHub
+    renders as markdown, and railroad_positions' keys arrive from a URL an operator
+    pasted into a repository variable."""
+    hostile = "[click](https://evil.example)"
+    line = _positions_line(
+        _healthy_prod(railroad_positions={hostile: _MNR_STEPS, "MNR": _MNR_STEPS})
+    )
+    assert line.status == cm.WARN
+    assert "1 with an unprintable system name" in line.detail
+    assert "evil.example" not in line.detail and "[click]" not in line.detail
+    assert "evil.example" not in cm.format_summary_table([line])
+
+
+def test_production_railroad_positions_costs_no_fetch():
+    """IT IS A FIELD OF THE PAYLOAD ALREADY PARSED, not another read of the deployment.
+    test_production_accepts_both_url_forms pins the exact request sequence, and the
+    2026-07-24 incident it records is what a fifth probe would have risked; this asserts
+    the same thing from the other side, so a later rewrite that reaches for the network
+    here fails with the reason attached."""
+    fetch = _healthy_prod()
+    before = len(fetch.calls)
+    assert _positions_line(fetch).status == cm.PASS
+    assert len(fetch.calls) - before == 5, "check_production's five reads, and not a sixth"
 
 
 # ---------------------------------------------------------------------------

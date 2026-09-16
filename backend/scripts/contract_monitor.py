@@ -2374,6 +2374,11 @@ def check_production(
             results.append(Result("production:feeds", PASS, f"{len(feeds_map)} feeds fresh"))
 
     results.append(_check_production_alerts(data))
+    # CONTRACT 6.3, and here rather than beside the board lines below because it is a
+    # FIELD OF THE PAYLOAD ALREADY PARSED, not another read of the deployment: it costs
+    # no fetch, so it cannot lengthen the request sequence
+    # test_production_accepts_both_url_forms pins.
+    results.append(_check_production_railroad_positions(data))
     # F1. Both of these probe the deployment AGAIN, after every judgement above has
     # been made from the first payload, so a slow or flapping second probe can only
     # add a line rather than change one.
@@ -2535,6 +2540,101 @@ def _check_production_alerts(data: dict) -> Result:
             "production:alerts", WARN, "degraded alert systems (alerts still retained): " + names
         )
     return Result("production:alerts", PASS, "no degraded alert systems")
+
+
+# ---------------------------------------------------------------------------
+# Production: the position ladder's counts (contract 6.3)
+# ---------------------------------------------------------------------------
+
+# Railroad system names safe to print, for the reason _SAFE_ROUTE_ID_RE gives below:
+# railroad_positions' keys arrive from the same operator-pasted URL and this detail is
+# rendered as markdown in $GITHUB_STEP_SUMMARY. What matches is named, what does not is
+# counted. "LIRR" and "MNR" are four characters; this is wide, not tight.
+#
+# ITS OWN NAME, THOUGH THE PATTERN EQUALS _SAFE_ROUTE_ID_RE's TODAY, because the two
+# describe different populations: NJ Transit route ids and railroad system keys widen for
+# different reasons, and one constant would make widening either one widen both silently.
+_SAFE_RAILROAD_SYSTEM_RE = re.compile(r"^[A-Za-z0-9_-]{1,16}$")
+
+# The ladder's five rungs in the order section 3.4 puts them, which is the order the
+# detail prints and the order models.PositionSteps declares.
+_LADDER_RUNGS = ("reported", "estimated", "qualified", "placed", "suppressed")
+
+
+def _check_production_railroad_positions(data: dict) -> Result:
+    """How many railroad trains the deployment is drawing, and how many it is withholding.
+
+    THE BLIND SPOT THIS CLOSES. Contract 6.3 stopped the map drawing an LIRR train whose
+    own GPS fix is over ten minutes old and whose predictions are no better, and on the
+    committed capture that is 24 of 68 trains. Every existing line would call that
+    deployment healthy, and correctly: the feeds decode (railroad-realtime), the headers
+    are fresh (production:feeds), the statics are ready. The trains are simply not there.
+    An operator reading this summary should not have to open the map to learn that a
+    quarter of a railroad went unshown, so the counts ride every arm of this line, the way
+    production:njt-routes carries "12 routes, 8214 points" whether it passes or warns.
+
+    NO COUNT WARRANTS A WARN, AND THAT IS A DECISION RATHER THAN AN OMISSION. The obvious
+    candidate is `suppressed > 0`, and it is wrong: 24 withheld trains is what the
+    committed evening looks like with nothing wrong at all, so that band would warn on
+    every run and this file's opening rule is that a monitor which flaps gets muted. The
+    next candidate, a system drawing nothing while withholding something, is untested
+    rather than safe: a thin overnight LIRR is exactly the shape that produces it, and
+    _HEALTH_CODE_NOTES["observations-qualified"] already records that a sparsely served
+    LIRR can have every prediction past 600 s with nothing wrong. Nobody knows this
+    distribution yet. Open question 1 of docs/reviews/audit-2026-09-05.md asks for a week
+    of deployed measurement of how old LIRR's predictions are when nothing is wrong, and
+    the honest band is the one that week hands back. Until then this line is detection and
+    not severity, which is the rule production:njt-routes already states for itself, and
+    the railroads keep their existing severity elsewhere: railroad-realtime fails on a feed
+    that will not decode, and production:healthz carries observations-qualified.
+
+    SO IT NEVER FAILS. The only non-PASS arm is the payload not being there to read, which
+    is a fact about the deployment rather than about the railroads: a release older than
+    6.3 serves no such key, and one that has not yet completed a railroad poll serves {}
+    (models.py defaults it, and each block keeps its last known counts through a failed
+    poll). Both are worth saying once in the summary and neither is worth an exit code.
+    """
+    name = "production:railroad-positions"
+    positions = data.get("railroad_positions")
+    if positions is None:
+        return Result(
+            name, WARN, "/api/status served no railroad_positions (a release older than 6.3)"
+        )
+    if not isinstance(positions, dict):
+        return Result(name, WARN, f"railroad_positions is unusable ({type(positions).__name__})")
+    if not positions:
+        return Result(
+            name, WARN, "railroad_positions is empty: no railroad has completed a poll yet"
+        )
+
+    parts: list[str] = []
+    unprintable = 0
+    unusable: list[str] = []
+    for system in sorted(positions):
+        if not _SAFE_RAILROAD_SYSTEM_RE.match(str(system)):
+            # Counted, never quoted. See _SAFE_RAILROAD_SYSTEM_RE.
+            unprintable += 1
+            continue
+        steps = positions[system]
+        counts = [steps.get(rung) for rung in _LADDER_RUNGS] if isinstance(steps, dict) else []
+        # The length is checked as well as the values: all() of an empty list is True, so
+        # a block that is not a mapping at all would otherwise read as five good counts.
+        if len(counts) != len(_LADDER_RUNGS) or not all(
+            isinstance(n, int) and not isinstance(n, bool) and n >= 0 for n in counts
+        ):
+            unusable.append(str(system))
+            continue
+        drawn = "/".join(str(n) for n in counts[:4])
+        parts.append(f"{system} {drawn} drawn, {counts[4]} not shown")
+
+    if unprintable:
+        parts.append(f"{unprintable} with an unprintable system name")
+    if unusable:
+        parts.append("unusable counts: " + ", ".join(sorted(unusable)))
+    summary = "; ".join(parts)
+    if unprintable or unusable:
+        return Result(name, WARN, summary)
+    return Result(name, PASS, summary)
 
 
 # Route ids safe to print. The detail string below is written to the run log AND to

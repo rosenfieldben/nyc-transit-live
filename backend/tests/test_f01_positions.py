@@ -63,6 +63,7 @@ fails the acceptance.
 import json
 import os
 import re
+import statistics
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -355,6 +356,38 @@ async def test_acceptance_no_old_fix_is_served_as_live_and_every_one_is_accounte
         f"renders. If the change is intentional, regenerate with {REGENERATE_VAR}=1 and "
         "review the diff; otherwise the backend has drifted."
     )
+
+
+@pytest.mark.anyio
+async def test_the_placement_passs_predictions_are_open_question_1s_numbers(f01_world):
+    """The fact the boards measured, re-derived on the map's surface, for open question 1
+    of docs/reviews/audit-2026-09-05.md.
+
+    LIRR dates each prediction by its own trip update's last recomputation rather than by a
+    header that moves every poll, so most LIRR predictions are old on an ordinary evening.
+    The boards showed that in words a rider reads. Section 6.3 leaves a trip placed from a
+    prediction alone outside the gate (memo D1), so the same fact now stands under a marker
+    a rider believes, and these are its numbers. They are asked of the SERVED body, so the
+    entry and the capture cannot drift apart, exactly as test_health_observations.py holds
+    the boards' half. Nothing here is a threshold: no assertion below decides whether such a
+    prediction should place a train, which is what the entry leaves open."""
+    body, _status = await _poll_and_serve(_Upstream(_restamp(_raw("LIRR")), _restamp(_raw("MNR"))))
+    placed = [t for t in body["data"] if t["system"] == "LIRR" and t["provenance"] == "placed"]
+    ages = sorted(NOW - t["observed_at"] for t in placed)
+    assert len(ages) == 56
+    assert sum(1 for age in ages if age > cache.OBS_MAX_S) == 49
+    assert sum(1 for age in ages if age > cache.OBS_FRESH_S) == 53
+    assert statistics.median(ages) == 1778.0
+    assert (min(ages), max(ages)) == (7.0, 7255.0)
+    # What gating this surface on the operator band too would cost, which is the size of
+    # the decision the entry defers: the six estimates ride predictions 4 and 5 s old and
+    # would survive it, and seven placements would.
+    estimated = [
+        t for t in body["data"] if t["system"] == "LIRR" and t["provenance"] == "estimated"
+    ]
+    assert len(estimated) == 6
+    survivors = len(estimated) + sum(1 for age in ages if age <= cache.OBS_MAX_S)
+    assert len(placed) + len(estimated) == 62 and survivors == 13
 
 
 @pytest.mark.anyio

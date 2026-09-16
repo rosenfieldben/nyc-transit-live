@@ -589,6 +589,77 @@ def test_a_repeated_vehicle_is_emitted_only_as_the_copy_that_earns_its_step(ages
     assert [t for t in gps if t["trip_id"] != REPEATED] == expected["trains"]
 
 
+def _undated_vehicle(raw: bytes, trip_id: str) -> bytes:
+    """The capture with `trip_id`'s vehicle entity stripped of its timestamp, where it
+    stood. Protobuf zero is absence (_railroad_observed_at), so the fix keeps its
+    coordinates and loses its age. Neither committed capture carries an undated vehicle,
+    so the two worlds the ladder's undated rule decides have to be built."""
+    feed = pb.FeedMessage.FromString(raw)
+    for entity in feed.entity:
+        if entity.HasField("vehicle") and entity.vehicle.trip.trip_id == trip_id:
+            entity.vehicle.timestamp = 0
+    return feed.SerializeToString()
+
+
+# The two worlds of the ladder's undated rule, each built from a trip whose own fix
+# decides it today, so undating one MOVES it: GO201_26_6955 is step 1 on the capture (own
+# fix 81 s) with a 4 s prediction behind it, and 6006_2026-06-20 is the audit's witness,
+# step 5 at 53676 s, with nothing placeable inside OBS_FRESH_S behind it.
+UNDATED_TO_ESTIMATE = "GO201_26_6955"
+UNDATED_TO_QUALIFIED = "6006_2026-06-20"
+
+
+def test_an_undated_fix_with_a_fresh_prediction_is_estimated_and_not_drawn():
+    """An unknown age is not a fresh one, at both passes. This vehicle is step 1 today on
+    a fix 81 s old; strip the timestamp and the age nobody knows cannot be within
+    OBS_FRESH_S, so the step-2 estimate behind it (4 s old) is what the rider gets. The
+    GPS pass must stop emitting it and the placement pass must start, dated by the
+    prediction rather than by the blank fix. Reading step 3 before step 2 for an undated
+    vehicle, the other way the order could have gone, would serve it at its own position
+    under an "age unknown" label instead, which is the decision _position_ladder's
+    docstring records."""
+    raw = _raw("LIRR")
+    world = _undated_vehicle(raw, UNDATED_TO_ESTIMATE)
+    _header, gps, placed = _both_passes("LIRR", world)
+    assert [t for t in gps if t["trip_id"] == UNDATED_TO_ESTIMATE] == []
+    rows = [t for t in placed if t["trip_id"] == UNDATED_TO_ESTIMATE]
+    assert [t["provenance"] for t in rows] == ["estimated"]
+    assert rows[0]["observed_at"] is not None, "the estimate carries the prediction's clock"
+    # One trip moved from one surface to the other, and nothing else moved with it.
+    base_header, base_gps, base_placed = _both_passes("LIRR", raw)
+    assert len(gps) == len(base_gps) - 1 and len(placed) == len(base_placed) + 1
+    assert feeds.railroad._position_steps(world, "LIRR", _stops("LIRR"), base_header) == {
+        "reported": 26,
+        "estimated": 7,
+        "qualified": 11,
+        "placed": 0,
+        "suppressed": 24,
+    }
+
+
+def test_an_undated_fix_with_nothing_fresh_is_drawn_and_never_counted_absent():
+    """The same rule's other half. The capture's oldest fix is step 5 today, one of the 24
+    the map stops drawing, and its prediction is 52538 s old, so nothing above step 3
+    holds. Strip its timestamp and the train comes back: an age nobody knows is not an age
+    past OBS_MAX_S either, so it is drawn at its own position and qualified in words
+    ("age unknown"), and it leaves the suppressed count rather than staying in it. Counting
+    it would put it behind a status line that says its train was last seen over ten minutes
+    ago, which is a claim about a clock this row does not have."""
+    raw = _raw("LIRR")
+    world = _undated_vehicle(raw, UNDATED_TO_QUALIFIED)
+    header, gps, placed = _both_passes("LIRR", world)
+    rows = [t for t in gps if t["trip_id"] == UNDATED_TO_QUALIFIED]
+    assert [t["observed_at"] for t in rows] == [None]
+    assert [t for t in placed if t["trip_id"] == UNDATED_TO_QUALIFIED] == []
+    assert feeds.railroad._position_steps(world, "LIRR", _stops("LIRR"), header) == {
+        "reported": 27,
+        "estimated": 6,
+        "qualified": 12,
+        "placed": 0,
+        "suppressed": 23,
+    }
+
+
 # ---------------- placement golden ----------------
 
 

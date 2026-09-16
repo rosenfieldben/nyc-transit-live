@@ -326,6 +326,19 @@ def _position_ladder(
     not age-gated (_position_age_gated) is step 1 throughout, because there is no age to
     order it by.
 
+    AN UNKNOWN AGE IS NOT A FRESH ONE, AND THAT IS A DECISION RATHER THAN A CONSEQUENCE
+    OF THE ORDER. A gated row whose vehicle carries no timestamp has an age nobody knows,
+    and unknown is not within OBS_FRESH_S, so such a vehicle can never be step 1. It is
+    asked step 2 first, and a prediction inside OBS_FRESH_S answers "where is this train
+    now" better than a position whose age is a blank, so a fresh estimate takes it. Only
+    when nothing fresh is placeable does it fall to step 3, drawn at its own position and
+    said "age unknown" (design 3.2 clause (c)). Steps 4 and 5 are therefore out of its
+    reach, which is the point rather than an accident: step 5's status line says a train
+    was last seen over OBS_MAX_S ago, and that is a claim nobody can make about a fix
+    with no time on it (models.PositionSteps, and _position_steps holds the same rule for
+    a box-rejected copy). Both worlds are pinned at the ladder in
+    tests/test_position_ladder.py and at both passes in tests/test_feeds_railroad.py.
+
     WHO IS COVERED: every vehicle _passes_base_rule accepts (a vehicle, not canceled,
     positioned, inside the box), keyed by the trip id the GPS pass emits for it. A trip
     with no vehicle is not a vehicle and stays out, placed as it always was whatever its

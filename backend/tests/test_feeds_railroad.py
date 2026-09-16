@@ -546,10 +546,12 @@ def test_a_gated_combined_layout_places_exactly_what_its_ladder_estimates(monkey
     assert gps == []
 
 
-def _repeated_vehicle(raw: bytes, trip_id: str, ages: tuple[int, ...]) -> bytes:
+def _repeated_vehicle(raw: bytes, trip_id: str, ages: tuple[int | None, ...]) -> bytes:
     """The capture with `trip_id`'s vehicle entity replaced, where it stood, by one copy per
     age in the order given, each under an entity id of its own and `age` seconds behind the
-    header. tests/test_position_ladder.py builds the same world for the ladder."""
+    header. An age of None leaves the copy undated (protobuf zero, which
+    _railroad_observed_at reads as absence). tests/test_position_ladder.py builds the same
+    world for the ladder."""
     feed = pb.FeedMessage.FromString(raw)
     header = int(feed.header.timestamp)
     world = pb.FeedMessage()
@@ -562,7 +564,7 @@ def _repeated_vehicle(raw: bytes, trip_id: str, ages: tuple[int, ...]) -> bytes:
             copy = world.entity.add()
             copy.CopyFrom(entity)
             copy.id = f"{entity.id}~{n}"
-            copy.vehicle.timestamp = header - age
+            copy.vehicle.timestamp = 0 if age is None else header - age
     return world.SerializeToString()
 
 
@@ -586,6 +588,35 @@ def test_a_repeated_vehicle_is_emitted_only_as_the_copy_that_earns_its_step(ages
     gps, _ts = feeds._decode_railroad_vehicles(world, "LIRR", expected["now"], _stops("LIRR"))
     rows = [t for t in gps if t["trip_id"] == REPEATED]
     assert [expected["now"] - t["observed_at"] for t in rows] == [served_age]
+    assert [t for t in gps if t["trip_id"] != REPEATED] == expected["trains"]
+
+
+@pytest.mark.parametrize(
+    ("ages", "served"),
+    [
+        pytest.param((None, 1), 1.0, id="undated-then-fresh"),
+        pytest.param((1, None), 1.0, id="fresh-then-undated"),
+        pytest.param((None, 700), None, id="undated-then-withheld"),
+        pytest.param((700, None), None, id="withheld-then-undated"),
+    ],
+)
+def test_an_undated_copy_is_emitted_only_where_its_own_step_earns_it(ages, served):
+    """The undated rule's half at the ENTITY, which the ladder alone cannot hold. A trip
+    takes the best step any of its copies earns, so a trip carrying an undated copy and a
+    fresh one is step 1, and the undated copy must not be emitted under that step: an age
+    nobody knows is not an age within OBS_FRESH_S, and the live path's first-wins dedupe
+    would otherwise be free to serve the undated copy as an unqualified live marker. With
+    a 700 s copy instead the trip is step 3, and now it is the undated copy that is drawn,
+    with a null clock, while the 700 s one is the copy past OBS_MAX_S. So the same
+    accepting rule emits a different copy in each world, and neither emits two. Both
+    orders, because feed order is exactly what must not decide it."""
+    raw, expected = _load("LIRR")
+    world = _repeated_vehicle(raw, REPEATED, ages)
+    gps, _ts = feeds._decode_railroad_vehicles(world, "LIRR", expected["now"], _stops("LIRR"))
+    rows = [t for t in gps if t["trip_id"] == REPEATED]
+    assert len(rows) == 1, "one train, one marker, whichever copy earned it"
+    observed = rows[0]["observed_at"]
+    assert (None if observed is None else expected["now"] - observed) == served
     assert [t for t in gps if t["trip_id"] != REPEATED] == expected["trains"]
 
 

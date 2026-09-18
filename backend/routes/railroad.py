@@ -46,9 +46,19 @@ async def get_railroads(request: Request, response: Response) -> dict:
 async def get_railroad_routes(request: Request, response: Response) -> list[dict]:
     """Static LIRR + Metro-North route geometry for drawing and gliding: one entry
     per (system, route) with its rider-facing `name` (from routes.txt, null when
-    the route has no name) and polylines as [lat, lon] point lists. Built once at
-    startup, so clients can cache it between loads. Keyed by system because LIRR
-    and MNR route ids collide (both have a "1").
+    the route has no name), the feed's own `color` and `text_color`, and polylines
+    as [lat, lon] point lists. Built once at startup, so clients can cache it
+    between loads. Keyed by system because LIRR and MNR route ids collide (both
+    have a "1").
+
+    THE TWO COLOURS ARE THE AGENCY'S OWN, from routes.txt's route_color and
+    route_text_color, hex with no leading "#" and null when the feed leaves the
+    column blank. Both feeds fill both on every route today, so unlike
+    /api/njt-routes a client here can trust text_color rather than computing its
+    own ink; null still has to be handled, because a future publication may blank
+    a column and the field is not defaulted. ADDITIVE SINCE
+    claude/railroad-route-colors: a client that predates the two fields is
+    unaffected, which matters because this answer is cacheable for an hour.
 
     KNOWN GAP: the builder drops a route with no usable geometry, so a
     geometry-less route's name never reaches the frontend. That is acceptable:
@@ -67,6 +77,8 @@ async def get_railroad_routes(request: Request, response: Response) -> list[dict
             "system": system,
             "route": entry["route"],
             "name": entry["name"],
+            "color": entry["color"],
+            "text_color": entry["text_color"],
             "polylines": entry["polylines"],
         }
         for system, entries in by_system.items()

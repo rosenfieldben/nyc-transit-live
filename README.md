@@ -1269,7 +1269,14 @@ alert feed and cannot heal on its own: that is a `FAIL`.
 ## Notes
 
 - The MTA's logos, official map, and route symbols require a license. Use your
-  own colors and markers rather than official MTA branding.
+  own colors and markers rather than official MTA branding. A color an agency
+  publishes as `route_color` in its own GTFS is feed data, and is read and drawn as
+  such (the same reasoning the NYC Ferry note gives above): that is why
+  `/api/railroad-routes` and `/api/njt-routes` both carry the feed's `color` and
+  `text_color`, while the logos, the official map and the route symbols stay
+  off-limits. The subway is the exception and stays one: its bullet keeps the app's
+  own palette and its own rounded-rectangle shape rather than the authority's, which
+  the map redesign ledger ruled deliberately (R1).
 - Cache the static GTFS in memory on startup — it's large; don't reload per request.
 - Phase 4 (subways) is the hard part: joining realtime `trip_id`s to physical
   stations involves fiddly matching against the static schedule, and the subway

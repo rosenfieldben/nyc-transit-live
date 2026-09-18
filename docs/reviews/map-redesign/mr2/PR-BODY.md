@@ -23,7 +23,8 @@ and the contract tier aims every NJ Transit seam at its simulator as it always h
 | `98eaa4e` | round 2: an adversarial pass over the written diff |
 | `36b1a4e` | round 2 continued: the key derived from the data, and a toolbar to reach it |
 | `3d56e94` | round 3: the review's 17 findings, and four operator rulings |
-| `db047fe` | round 3: five specs the mutation run said were missing |
+| `418750c` | round 3: two specs the mutation run said were missing |
+| `db047fe` | round 3: three more specs the mutation run said were missing |
 | (tip) | round 3: the ledger and this body |
 
 ## Before and after

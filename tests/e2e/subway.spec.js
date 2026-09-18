@@ -990,6 +990,28 @@ test("D2x. a station name is painted below every vehicle, which is the pane it i
     expect(tip.opacity, `${tip.name} draws at the ink the contrast was measured at`).toBe("1");
   }
 
+  /* AND THE RIDER'S OWN QUESTION, ASKED AT THE PIXEL: is anything painted over the bullet that
+     says which train this is. elementsFromPoint returns the stack front to back, so a label
+     above the marker would appear before it. This is the assertion the original defect would
+     have failed and the box-versus-anchor measurement that missed it could not make. */
+  const covered = await page.evaluate(() =>
+    [...trains.values()].map((record) => {
+      const el = record.marker.getElement();
+      const box = el.getBoundingClientRect();
+      const stack = document.elementsFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+      const me = stack.indexOf(el);
+      return {
+        route: record.latest?.route_id,
+        labelsAbove: stack.slice(0, me === -1 ? stack.length : me).filter((n) => n.classList?.contains("stn-label"))
+          .length,
+      };
+    }),
+  );
+  expect(covered.length, "there are trains on this map").toBeGreaterThan(0);
+  for (const train of covered) {
+    expect(train.labelsAbove, `a station name is painted over the ${train.route} bullet`).toBe(0);
+  }
+
   // The pane the labels are in is below the vehicles and above the dots they name, and it is
   // NOT the pane Leaflet would have used.
   expect(where.labelPaneZ).toBeLessThan(where.markerPaneZ);

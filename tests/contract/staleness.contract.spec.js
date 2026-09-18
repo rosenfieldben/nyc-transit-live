@@ -335,7 +335,22 @@ test("C6e2. a poisoned subway group is named in the status line", async ({ page,
   // survives that, and it is the rider-facing one anyway.
   await openMap(page);
   const status = page.locator("#status");
-  await expect(status).toContainText(/trains/i, { timeout: 60_000 });
+  /* MR1 MOVED THE LIVENESS GUARD, AND ONLY THE LIVENESS GUARD. This line read
+     toContainText(/trains/i) on a HEALTHY page, which held because the status line carried
+     the subway's COUNT ("142 trains") beside its clock. The map redesign takes that line
+     apart: the counts are the feed strip's per-feed counts, the clock is the header's, and
+     #status carries the problems and nothing else, so on a healthy page it is empty by
+     design. The guard has to key on something the healthy page still says.
+     THE CLAIM BELOW IS UNTOUCHED, and it is the whole spec: once BDFM is poisoned, the
+     status line names it. What replaces the guard says the same thing the count said, where
+     the count now is: the subway feed has decoded and the strip is counting its trains.
+     NOT "the note is empty", which was the first attempt and was wrong on a REAL backend:
+     this tier boots the app against a simulator and the static archives load behind the
+     realtime feeds, so for the first polls the note legitimately carries four "still loading"
+     sentences. The line below is what says BDFM is not among them yet. */
+  await expect(page.locator("#toggle-subway .feed-count"), "the subway feed has decoded").not.toHaveText("", {
+    timeout: 60_000,
+  });
   await expect(status).not.toContainText(/BDFM/i);
 
   await control(request, { key: "subway:BDFM", mode: "empty" });

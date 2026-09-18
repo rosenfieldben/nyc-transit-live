@@ -212,9 +212,6 @@ async function refreshAll() {
     // In a `finally`, so a throw above cannot leave the region held for every poll after.
     releasePageAnnouncements();
   }
-  const counts = Object.values(sources)
-    .map((s) => `${s.count.toLocaleString()} ${s.label}`)
-    .join(" · ");
   const problems = Object.values(sources)
     .filter((s) => s.error)
     .map((s) => `${s.label}: ${s.error}`)
@@ -223,11 +220,27 @@ async function refreshAll() {
     // .map(parseInt) footgun), leaving the client-elapsed term and the served_at-
     // absent fallback branch reading a nonsense clock.
     .concat(Object.values(sources).map((s) => staleness(s)).filter(Boolean));
-  const now = new Date().toLocaleTimeString();
-  // A3: composition moved into statusLineText so the order and the never-truncate rule
-  // are stated once and tested, rather than living in a template literal here. compact
-  // drops the clock's seconds on a narrow screen; see the rule beside the helper.
-  setStatus(statusLineText({ counts, clock: now, problems }, { compact: narrowViewport() }), problems.length > 0);
+  /* MR1: THE STATUS LINE IS NOW THE FEED STRIP, in three places instead of one.
+     Its counts are the per-feed counts on the strip's eight buttons, its clock is the
+     header's own, and its PROBLEMS are the strip's trailing note, which is still #status
+     and still carries the error class. So this hands setStatus the note rather than the
+     composed line.
+
+     statusNoteText IS THE SAME JOIN statusLineText USES, extracted rather than rewritten
+     here, so the note and the composition cannot word the same trouble two ways; the node
+     test asserts the composed line's tail IS this string. What matters more is what this
+     does NOT do: `problems` arrives already composed by staleness() (plus any hard upstream
+     error above), and it is rendered verbatim. Re-deriving it from the freshness index is
+     mutation M4, and the two clauses that would go missing first are the withheld count and
+     Metro-North's undated clause, because both RIDE a raised line rather than raising one.
+
+     A3's rules survive the move: nothing is truncated (statusNoteText joins whole clauses
+     and the note wraps rather than clipping), and the compact arm is gone because the one
+     thing it shed was the clock's seconds and the clock is no longer in this element. */
+  setStatus(statusNoteText(problems), problems.length > 0);
+  // The counts and the freshness dots, from the same registries and the same index this
+  // poll just refreshed.
+  refreshFeedStrip();
 
   // Refresh whichever station popup is open (subway or railroad) so the train
   // list (not just the countdowns) stays current on the same ~15s cadence as the

@@ -233,7 +233,7 @@ The map follows one rule: **animate the journey, never the adjustment.**
 
 axe reports a third category besides pass and fail: **incomplete**, meaning it
 needs a human. A green "zero violations" says nothing about those, so the gate
-asserts them too. The list is closed: an incomplete finding outside these five
+asserts them too. The list is closed: an incomplete finding outside these six
 shapes fails the build. Each entry names the test that answers the question axe
 declined, and `a11y.spec.js A1z` **asserts that pairing**, so an exception cannot
 quietly become a suppression with a sentence attached.
@@ -243,6 +243,7 @@ quietly become a suppression with a sentence attached.
 | Contrast of a single-character glyph inside an SVG icon (route letters on markers, the legend swatches) | axe cannot tell a route letter from a decorative mark when the visible text is one character | `a11y.spec.js A1z` measures every rendered SVG glyph against the fill of the topmost shape drawn under it, which is what a rider actually sees the character against; a glyph whose backing cannot be resolved to a colour is a failure, not a skip |
 | Contrast of a single-character arrival badge | the same tool limit in HTML: a badge reading "2" is one character | `layout.spec.js A4g` computes the contrast of every rendered `.arr-badge` in-page with the same sRGB and relative-luminance formulas as the app |
 | Contrast of a single-character glyph on a Leaflet control (the zoom minus, the popup close) | as above, and these are third-party markup | `a11y.spec.js A1z` measures both against their own control backgrounds |
+| Contrast of a Key panel row clipped by the panel's own scroll boundary | the Key panel scrolls at phone widths, where its rows are one column and do not fit, and axe cannot determine the background of an element that is partially clipped | `a11y.spec.js A1x` measures every Key panel row's computed ink against the header's computed background at 1280, 375 and 320, in both themes, and fails if the header's surface is anything but opaque |
 | Contrast of Leaflet's attribution, which sits directly on map tiles | the background is live imagery, so there is no single colour to compute against | `a11y.spec.js A1z` composites the attribution's translucent background over **both** extremes a tile can be, black and white, and requires AA against the worse of the two, which bounds every possible tile |
 | Whether the skip link's target becomes visible on activation | the panel is hidden at scan time and no static rule can activate a link | `mobile.spec.js A6g` presses it at 375 and asserts focus lands inside the panel that was hidden a moment earlier; `A6h` asserts the desktop behaviour it must not break |
 

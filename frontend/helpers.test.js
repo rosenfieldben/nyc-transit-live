@@ -3048,28 +3048,83 @@ test("A3: every muted ink in style.css clears AA on the surface it prints on", (
     assert.ok(color, `${selector} must still declare a color`);
     return color[1].trim();
   };
-  // Selector -> the opaque surface it is actually painted on, from the A3 inventory.
+  // MR1 SPLIT THIS TEST IN TWO HALVES, because the chrome is now tokenised and the popups
+  // are not: the popups keep their literal white surface until MR5 restyles them, while
+  // every chrome ink resolves through a custom property and has to be checked against BOTH
+  // themes. The claim is unchanged in both halves: a muted ink clears AA on the surface it
+  // is actually painted on, and the surfaces this test believes in are asserted too, so a
+  // stylesheet that moved one cannot make the pairing pass while the real thing got worse.
+
+  // Half one: the popup inks, on the literal surface the popups still have.
   const WHITE = "#ffffff";
-  const BANNER_AMBER = "#fde8b0";
-  const cases = [
-    [".popup-sub", WHITE],
-    [".arr-none", WHITE],
-    [".popup-stale", WHITE],
-    [".alert-stale", BANNER_AMBER],
-  ];
-  for (const [selector, surface] of cases) {
+  for (const selector of [".popup-sub", ".arr-none", ".popup-stale"]) {
     const ink = declared(selector);
-    const ratio = contrastRatio(ink, surface);
+    const ratio = contrastRatio(ink, WHITE);
     assert.ok(
       ratio >= 4.5,
-      `${selector} is ${ink} on ${surface} = ${ratio.toFixed(2)}, below the 4.5 it owes`,
+      `${selector} is ${ink} on ${WHITE} = ${ratio.toFixed(2)}, below the 4.5 it owes`,
     );
   }
-  // And the surfaces themselves are still what this test believes: a stylesheet that
-  // darkened the banner would make the assertion above pass while the real pairing got
-  // worse, which is the same vacuity trap in a different coat.
-  assert.ok(css.includes("background: #fde8b0"), "the banner strip is still amber");
-  assert.ok(css.includes("background: #fff;"), "the legend panel is still opaque white");
+  assert.ok(css.includes("background: #fff;"), "the popup surface is still opaque white");
+
+  // Half two: the chrome, resolved per theme out of the two :root blocks. The tokens are
+  // read from the stylesheet rather than repeated here, so a token edited without measuring
+  // fails this test instead of shipping.
+  const tokens = (selector) => {
+    const block = css.match(new RegExp(`${selector}\\s*\\{([\\s\\S]*?)\\n\\}`));
+    assert.ok(block, `${selector} must declare the token set`);
+    const out = {};
+    for (const [, name, value] of block[1].matchAll(/--([\w-]+):\s*([^;]+);/g)) out[name] = value.trim();
+    return out;
+  };
+  const light = tokens(":root,\n:root\\[data-theme=\"light\"\\]");
+  const dark = tokens(':root\\[data-theme="dark"\\]');
+
+  for (const [theme, t] of [["light", light], ["dark", dark]]) {
+    // TEXT owes 4.5. Each of these is a real string in the chrome: the muted feed names and
+    // the note, the ink the rows are set in, the accent variant the stale note and the OFF
+    // mark are set in, and the filled button's label on its own background.
+    for (const [ink, surface, what] of [
+      [t.muted, t.surface, "muted text on the header surface"],
+      [t.ink, t.surface, "body text on the header surface"],
+      [t["accent-ink"], t.surface, "the accent AS TEXT on the header surface"],
+      [t.chipink, t["accent-ink"], "the filled button's label on its own fill"],
+      [t.surface, t.ink, "an active view preset's label on its inverted fill"],
+    ]) {
+      const ratio = contrastRatio(ink, surface);
+      assert.ok(
+        ratio != null && ratio >= 4.5,
+        `${theme}: ${what} is ${ink} on ${surface} = ${ratio}, below the 4.5 it owes`,
+      );
+    }
+    // NON-TEXT owes 3. The freshness dots and the focus ring are graphics: each carries a
+    // fact (live, stale, scheduled-only, focused) that a rider has to be able to SEE, and
+    // none of them is text.
+    for (const [mark, surface, what] of [
+      [t.accent, t.surface, "the stale freshness dot"],
+      [t.live, t.surface, "the live freshness dot"],
+      [t.scheduled, t.surface, "the scheduled-only freshness dot"],
+      [t.focus, t.surface, "the focus ring on the header surface"],
+      [t.focus, t.bg, "the focus ring on the map's own backdrop"],
+    ]) {
+      const ratio = contrastRatio(mark, surface);
+      assert.ok(
+        ratio != null && ratio >= 3,
+        `${theme}: ${what} is ${mark} on ${surface} = ${ratio}, below the 3 it owes`,
+      );
+    }
+  }
+
+  // AND THE HEADER SURFACE IS OPAQUE, which is the A3 ruling this stage had the most reason
+  // to lose: the handoff draws the header at 90% over blurred map tiles. axe cannot decide
+  // the contrast of text over a translucent surface whose backdrop is an image, so every
+  // string in the chrome would join the undecidable set that making this surface opaque took
+  // from nine entries to one. Asserted as the absence of the two ways it would come back.
+  const headerRule = css.match(/#panel \{([\s\S]*?)\n\}/);
+  assert.ok(headerRule, "#panel must still exist in style.css");
+  assert.match(headerRule[1], /background: var\(--surface\);/, "the header surface is a token");
+  assert.doesNotMatch(headerRule[1], /backdrop-filter/, "the header must not blur its backdrop");
+  assert.doesNotMatch(headerRule[1], /color-mix|rgba/, "the header surface must not be translucent");
 });
 
 test("A3: readableTextOn replaces the hand-curated dark-text set, and is never wrong", () => {
@@ -3898,4 +3953,211 @@ test("the live region calls NJ Transit by name, never by its payload key", () =>
   assert.equal(statusAnnouncement([], ["njt|njt"]), "Live data delayed for NJ Transit.");
   assert.equal(describeIdentity("njt|njt"), "NJ Transit");
   assert.equal(statusAnnouncement(["njt|njt"], []), "Live data current again for NJ Transit.");
+});
+
+/* ==================================================================
+   MR1: the feed strip, the note, and the theme
+   ==================================================================
+
+   The pure half of the map redesign's stage 1. What is here is everything the header decides
+   from a count, an age and a hidden set; what is NOT here is the DOM wiring, which is in
+   systems/shared.js and is covered by the hermetic e2e suite because it needs a browser.
+
+   Separate require, additive, leaving the blocks above untouched. */
+const {
+  FEEDS, feedDotState, feedTooltip, feedStripModel, statusNoteText, themeChoice, nextTheme,
+} = require("./helpers.js");
+// FEED_STALE_AFTER_S is already in this file's top import block; named here so the threshold
+// assertions below read as what they are.
+const FEED_STALE_S = require("./helpers.js").FEED_STALE_AFTER_S;
+
+test("MR1: the feed strip is the design's eight feeds, in the design's order", () => {
+  // THE ORDER IS THE SPEC'S, not an alphabetisation and not the old checkbox order. The
+  // handoff's row 2 lists them in this order and the whole strip reads as one sentence about
+  // the region: the two city systems, the three commuter railroads, then the three smaller
+  // operators. Pinned as a list because a reordering is invisible to every other test.
+  assert.deepEqual(
+    FEEDS.map((f) => f.key),
+    ["subway", "buses", "lirr", "mnr", "njt", "path", "ferry", "airtrain"],
+  );
+  assert.deepEqual(
+    FEEDS.map((f) => f.name),
+    ["Subway", "Buses", "LIRR", "Metro-North", "NJ Transit", "PATH", "Ferry", "AirTrain"],
+  );
+  // LIRR AND METRO-NORTH ARE TWO FEEDS INSIDE ONE SOURCE, which is the reason this table
+  // exists at all: the old panel had one "Railroads" checkbox for both, and the freshness
+  // index, the status line and the C6 dimming specs have always treated them separately.
+  const railroads = FEEDS.filter((f) => f.source === "railroads");
+  assert.deepEqual(railroads.map((f) => f.system), ["LIRR", "MNR"]);
+  // And exactly one feed has no source behind it.
+  assert.deepEqual(FEEDS.filter((f) => f.source == null).map((f) => f.key), ["airtrain"]);
+  // Every feed carries exactly one kind of leading mark: a colour tick or an agency glyph,
+  // never both and never neither.
+  for (const feed of FEEDS) {
+    assert.equal(
+      Boolean(feed.tick) !== Boolean(feed.glyph),
+      true,
+      `${feed.key} must carry a tick or a glyph, not both and not neither`,
+    );
+  }
+  assert.deepEqual(
+    FEEDS.filter((f) => f.glyph).map((f) => f.glyph),
+    ["L", "M", "NJ"],
+  );
+});
+
+test("MR1: the freshness dot is the FEED's, and a null age is never live", () => {
+  // Three states, and they are about the poll rather than about the observations inside it:
+  // the v3 brief says in as many words that a feed can be green while a third of its trains
+  // are drawn dimmed, and that this is correct.
+  assert.equal(feedDotState({ age: 12 }), "live");
+  assert.equal(feedDotState({ age: FEED_STALE_S - 1 }), "live");
+  // The threshold is the app's, not a second copy of it.
+  assert.equal(feedDotState({ age: FEED_STALE_S }), "stale");
+  assert.equal(feedDotState({ age: 600 }), "stale");
+  // A FEED WITH NO REALTIME SOURCE IS SCHEDULED-ONLY, whatever else is true of it. AirTrain
+  // is the one, and passing it an age would be a caller bug rather than a state.
+  assert.equal(feedDotState({ scheduled: true }), "scheduled");
+  assert.equal(feedDotState({ scheduled: true, age: 5 }), "scheduled");
+  // AND A NULL AGE IS NOT LIVE. A feed that has never decoded has no freshness to report,
+  // and "live" is the one answer that would be a lie. The status line calls this state "not
+  // reporting"; the dot has a smaller vocabulary and says stale.
+  assert.equal(feedDotState({ age: null }), "stale");
+  assert.equal(feedDotState({}), "stale");
+});
+
+test("MR1: the tooltip says the state and the ACTION, in the design's words", () => {
+  // The handoff's three examples, verbatim.
+  assert.equal(
+    feedTooltip({ name: "Subway", state: "live", age: 12 }),
+    "Live · 12s · hide Subway",
+  );
+  assert.equal(
+    feedTooltip({ name: "Metro-North", state: "stale", age: 360 }),
+    "As of 6m ago · hide Metro-North",
+  );
+  assert.equal(
+    feedTooltip({ name: "NJ Transit", state: "scheduled" }),
+    "Scheduled · hide NJ Transit",
+  );
+  // THE VERB IS THE ACTION, NOT THE STATE, which none of the three examples could show
+  // because all three are of a showing feed. A tooltip reading "hide" on a button that shows
+  // would be wrong in the one place a rider looks to find out what pressing it does.
+  assert.equal(
+    feedTooltip({ name: "LIRR", state: "live", age: 8, hidden: true }),
+    "Live · 8s · show LIRR",
+  );
+  assert.equal(
+    feedTooltip({ name: "AirTrain", state: "scheduled", hidden: true }),
+    "Scheduled · show AirTrain",
+  );
+  // AND A FEED WITH NO AGE SAYS SO rather than saying "As of null ago". The word is the
+  // status line's own for the same state.
+  assert.equal(
+    feedTooltip({ name: "PATH", state: "stale", age: null }),
+    "Not reporting · hide PATH",
+  );
+  // The age is humanizeAge's, so the strip and the status line never word one age two ways.
+  assert.equal(feedTooltip({ name: "Ferry", state: "stale", age: 7200 }), "As of 2h ago · hide Ferry");
+});
+
+test("MR1: aria-pressed and the OFF mark come from one decision and cannot disagree", () => {
+  const model = feedStripModel({
+    counts: { subway: 1234, buses: 56, lirr: 7, mnr: 3, njt: 4, path: 2, ferry: 3 },
+    ages: { subway: 12, buses: 20, lirr: 400, mnr: null, njt: 30, path: 40, ferry: 50 },
+    hidden: new Set(["lirr", "ferry"]),
+  });
+  const by = Object.fromEntries(model.map((e) => [e.key, e]));
+
+  // THE INVARIANT THAT KILLS MUTATIONS M1 AND M2: `pressed` (what aria-pressed is written
+  // from) and `off` (what the strike and the visible mark are drawn from) are one boolean
+  // read two ways. A stage that updated one without the other would have to break this.
+  for (const entry of model) {
+    assert.equal(entry.pressed, !entry.off, `${entry.key}: pressed and off disagree`);
+  }
+  assert.deepEqual(model.filter((e) => e.off).map((e) => e.key), ["lirr", "ferry"]);
+  assert.deepEqual(model.filter((e) => e.pressed).map((e) => e.key), [
+    "subway", "buses", "mnr", "njt", "path", "airtrain",
+  ]);
+
+  // The counts come from the caller's registries and are localised, so a five-figure bus
+  // fleet reads as a number rather than as a digit run.
+  assert.equal(by.subway.count, (1234).toLocaleString());
+  assert.equal(by.lirr.count, "7");
+  // AIRTRAIN HAS NO COUNT, and null rather than "0": it has no vehicles at all, and 0 would
+  // be a claim about a fleet that does not exist.
+  assert.equal(by.airtrain.count, null);
+  assert.equal(by.airtrain.dot, "scheduled");
+
+  // The dots follow the ages, per feed, including the two railroads separately.
+  assert.equal(by.subway.dot, "live");
+  assert.equal(by.lirr.dot, "stale");
+  assert.equal(by.mnr.dot, "stale"); // null age: never decoded, so not live
+  // And a hidden feed's tooltip offers to show it.
+  assert.match(by.lirr.title, /show LIRR$/);
+  assert.match(by.subway.title, /hide Subway$/);
+
+  // A feed the caller said nothing about is not invented: no count, and an age of null.
+  const quiet = feedStripModel({});
+  assert.equal(quiet.length, FEEDS.length);
+  for (const entry of quiet) {
+    assert.equal(entry.count, null);
+    assert.equal(entry.pressed, true);
+    assert.equal(entry.off, false);
+  }
+});
+
+test("MR1: the trailing note is the status line's tail, verbatim", () => {
+  // ONE JOIN, TWO SURFACES. statusLineText composes the pre-MR1 line and statusNoteText is
+  // the note the header renders; the note must BE the line's tail, because the alternative
+  // is two functions that can word the same trouble two ways. This is the differential that
+  // keeps the retained composition honest rather than decorative.
+  const problems = [
+    "railroad: MNR as of 6m ago; LIRR 24 trains not shown, last seen over 10m ago",
+    "trains: ACE group as of 10m ago",
+  ];
+  const note = statusNoteText(problems);
+  const line = statusLineText({ counts: "2 buses", clock: "8:01:23 AM", problems });
+  assert.equal(line, `2 buses · 8:01:23 AM: ${note}`);
+  assert.ok(line.endsWith(note), "the note is the line's tail, character for character");
+
+  // Nothing is truncated or abbreviated, at any length. The F01 world's real sentence is the
+  // longest this app produces and it survives whole.
+  const f01 =
+    "railroad: MNR as of 6m ago; LIRR 24 trains not shown, last seen over 10m ago; " +
+    "MNR position age unavailable";
+  assert.equal(statusNoteText([f01]), f01);
+
+  // Falsy entries are dropped rather than rendered as empty segments, so a source with
+  // nothing to say does not contribute a stray separator.
+  assert.equal(statusNoteText([null, "a: b", "", undefined, "c: d"]), "a: b; c: d");
+  // AND A HEALTHY DAY IS EMPTY, which the v3 brief singles out: "nothing at all on a healthy
+  // day, which is the common case and must not get noisier".
+  assert.equal(statusNoteText([]), "");
+  assert.equal(statusNoteText(), "");
+  assert.equal(statusNoteText(null), "");
+});
+
+test("MR1: the theme renders with storage empty, and an unrecognised value is no value", () => {
+  // THE PAGE MUST RENDER WITH STORAGE EMPTY. index.html authors data-theme="light", so that
+  // is the second-chance answer rather than a guess, and a null store (nothing saved, or a
+  // private window where the read threw and the caller passed null) lands on it.
+  assert.equal(themeChoice(null, "light"), "light");
+  assert.equal(themeChoice(undefined, "light"), "light");
+  // A stored choice wins over the markup, in both directions.
+  assert.equal(themeChoice("dark", "light"), "dark");
+  assert.equal(themeChoice("light", "dark"), "light");
+  // AN UNRECOGNISED VALUE IS TREATED AS NO VALUE rather than passed through. A stored "Dark"
+  // or "" reaching the root attribute would match neither token block and leave the page in
+  // the unqualified light set by accident instead of by choice.
+  assert.equal(themeChoice("Dark", "dark"), "dark");
+  assert.equal(themeChoice("", "dark"), "dark");
+  assert.equal(themeChoice("solarized", "light"), "light");
+  // No markup value either: light, which is what the stylesheet's unqualified block is.
+  assert.equal(themeChoice(null, null), "light");
+  assert.equal(themeChoice(null, "nonsense"), "light");
+  // And the toggle has exactly two destinations.
+  assert.equal(nextTheme("light"), "dark");
+  assert.equal(nextTheme("dark"), "light");
+  assert.equal(nextTheme(null), "dark"); // an absent attribute reads as light, so pressing darkens
 });

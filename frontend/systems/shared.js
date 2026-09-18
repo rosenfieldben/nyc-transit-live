@@ -24,7 +24,15 @@ const map = L.map("map", {
   zoomAnimation: motionAtLoad,
   fadeAnimation: motionAtLoad,
   markerZoomAnimation: motionAtLoad,
+  // MR1: the zoom control is added below instead, at bottom right, under the view-preset
+  // stack (design section 3). It used to sit top left, which is why the old alert strip
+  // carried `left: 54px` to clear it: before that offset, elementFromPoint over zoom-in
+  // returned the banner and the map could not be zoomed while any alert was showing. The
+  // header now owns the top edge, so the control moves out from under it rather than the
+  // chrome being nudged around it.
+  zoomControl: false,
 }).setView([40.7128, -74.006], 12);
+L.control.zoom({ position: "bottomright" }).addTo(map);
 
 // Everything this app owns follows the preference LIVE. One class on the root element
 // drives every css transition (see the reduced-motion rules in style.css), and one flag
@@ -105,43 +113,290 @@ map.panBy = (offset, options) => {
 applyMotionPreference(motionAtLoad);
 watchMotionPreference(applyMotionPreference);
 
-/* ----- A3: the legend disclosure, and the one place the breakpoint is read ----------
-   The legend collapses under 700px and is always open above it. Both facts live here
-   rather than being split between a CSS rule and a click handler, because the two would
-   drift: a rider who rotates a phone into landscape crosses the breakpoint without any
-   click, and the version of this that only listened for clicks left the legend hidden
-   on a screen with room for it.
+/* ----- A3, EXTENDED BY MR1: the Key disclosure, and the one place the breakpoint is read
+   -----------------------------------------------------------------------------------------
+   The rule A3 wrote still holds: the breakpoint is read HERE rather than being split between
+   a CSS rule and a click handler, because the two would drift. A rider who rotates a phone
+   into landscape crosses 700px without any click, and the version of this that only listened
+   for clicks left the legend hidden on a screen with room for it.
 
-   ARIA AND THE ATTRIBUTE ARE SET TOGETHER, always, so what a screen reader is told and
-   what is drawn cannot disagree. Above the breakpoint the button is display:none, and
-   aria-expanded is reported as true, because the legend genuinely is expanded there.
+   ARIA AND THE ATTRIBUTE ARE STILL SET TOGETHER, always, so what a screen reader is told and
+   what is drawn cannot disagree. FOCUS STILL STAYS ON THE BUTTON: the panel expands in place,
+   so there is nowhere to send focus and nothing is destroyed.
 
-   FOCUS STAYS ON THE BUTTON. The panel expands in place, so there is nowhere to send
-   focus and nothing is destroyed; this is deliberately NOT the popup or banner case
-   where a control is replaced. */
+   WHAT MR1 CHANGES, and it is a real behaviour change rather than a restyle:
+
+   THE KEY IS A TOGGLE AT EVERY WIDTH NOW. The design's row 1 carries a Key button at every
+   width and its panel is closed until pressed (README section 1, and the 05-key-open
+   capture is a 1280px screen with it open). Before this, the button was display:none above
+   700px and the legend was unconditionally open there. So `open` is now one boolean the
+   rider owns rather than one the viewport decides, and mobile.spec.js's A6c moved with it.
+
+   AND BELOW 700px THE SAME BOOLEAN FOLDS THE REST. The brief: "the subway key and the feed
+   strip fold behind the Key button, leaving one row". One boolean, one aria-expanded, and
+   everything that folds folds together, which is what makes the button's name honest: Key
+   reveals the key AND the things that were folded to make room for it.
+
+   A CONSEQUENCE WORTH STATING RATHER THAN DISCOVERING: the feed strip carries the status
+   note, so below 700px the note folds with it. Today's status line does not fold (it is a
+   sibling of #legend, not a child). The accessible path is unchanged either way, because
+   #page-announce speaks every status transition and is never folded; what changes is that a
+   sighted rider on a phone reads the note after one tap instead of at a glance. The v3.1
+   amendment carved the ALERTS strip out of the fold and did not carve this out, so MR1
+   implements it as specified; it is recorded as a finding in docs/reviews/map-redesign-rounds.md
+   for the operator to rule on before MR2. */
 const legendToggleEl = document.getElementById("legend-toggle");
 const legendEl = document.getElementById("legend");
-let legendOpen = false;
+// Everything that folds behind the Key button below the breakpoint. The alerts strip is
+// deliberately NOT in this list and must never be given the class: that is mutation M3.
+const foldEls = [...document.querySelectorAll(".hdr-fold")];
+const viewStackEl = document.getElementById("view-stack");
+let keyOpen = false;
 
-function applyLegendDisclosure() {
+function applyHeaderDisclosure() {
   if (!legendToggleEl || !legendEl) return;
   const narrow = narrowViewport();
-  const open = narrow ? legendOpen : true;
-  legendEl.hidden = !open;
-  legendToggleEl.setAttribute("aria-expanded", String(open));
+  /* WHAT IS ABOUT TO STOP EXISTING FOR THE RIDER, ASKED BEFORE IT DOES (round 2). Focus
+     stays on the button when the rider presses it, which is A3's rule and still true; what
+     that rule never covered is focus INSIDE what is being folded. Two ways to reach it: Tab
+     to a feed toggle on a phone and press Key, or have focus in the strip when a resize
+     crosses the breakpoint, which needs no press at all. Either way the element holding
+     focus is hidden and the browser drops the rider on <body>, which this app treats as a
+     defect everywhere else it can happen (applyVanishingFocus, and the popup and banner
+     doors that use it).
+     The Key button is where focus goes, because it is the control that did it and the one
+     that undoes it. Silent, deliberately: the rider pressed a disclosure and the disclosure
+     closed, which is not news, and #page-announce is for things they did not do. */
+  /* AND THE VIEW STACK COUNTS AS FOLDING, because below the breakpoint it stands down while
+     the Key is open (style.css says why: at 320 the presets painted over four rows of the
+     key). It is hidden by a CSS rule rather than by the `hidden` attribute, so it is not in
+     foldEls, and a rider who tabs to City and presses Key would have been dropped on <body>
+     by a display:none they did not ask for. */
+  const standingDown = narrow && !keyOpen ? [] : narrow ? [viewStackEl] : [];
+  const folding = [legendEl, ...(narrow ? foldEls : []), ...standingDown];
+  const losingFocus =
+    document.activeElement &&
+    folding.some((el) => el && el !== document.activeElement && el.contains(document.activeElement));
+  legendEl.hidden = !keyOpen;
+  for (const el of foldEls) el.hidden = narrow && !keyOpen;
+  legendToggleEl.setAttribute("aria-expanded", String(keyOpen));
+  if (losingFocus) legendToggleEl.focus();
 }
 
 if (legendToggleEl) {
   legendToggleEl.addEventListener("click", () => {
-    legendOpen = !legendOpen;
-    applyLegendDisclosure();
+    keyOpen = !keyOpen;
+    applyHeaderDisclosure();
   });
 }
-applyLegendDisclosure();
+applyHeaderDisclosure();
 if (typeof matchMedia === "function") {
   const mql = matchMedia(MOBILE_QUERY);
-  if (mql.addEventListener) mql.addEventListener("change", applyLegendDisclosure);
+  if (mql.addEventListener) mql.addEventListener("change", applyHeaderDisclosure);
 }
+
+/* ----- MR1: the theme ----------------------------------------------------------------
+   data-theme on the root element, which is where index.html already writes "light" so the
+   page renders in a complete theme before this file runs. style.css defines one token set
+   per value and one basemap filter per value; nothing else in the app reads the attribute.
+
+   PERSISTED, AND THE READ AND THE WRITE ARE BOTH GUARDED. localStorage throws rather than
+   returning null in a private window with site data blocked, and a throw here would kill
+   this file and every script after it, which is the whole page. So both directions are in
+   try/catch and an empty or refused store leaves the markup's own "light" standing, which
+   is the state the page is authored in. Mutation M5 is the theme not persisted.
+
+   NO MARKER IS REBUILT. The prototype tears the map down and rebuilds it at the same view
+   on a theme change, because its marker SVGs embed the ink and paper tokens. MR1's markers
+   are today's markers and embed none of them, so there is nothing to rebuild; the stage
+   that gives a marker a token is the stage that owes the rebuild. The P1f to P1n pins are
+   what keep that claim honest. */
+const THEME_KEY = "nyc-transit-live.theme";
+const themeToggleEl = document.getElementById("theme-toggle");
+
+const storedTheme = () => {
+  try {
+    const value = localStorage.getItem(THEME_KEY);
+    return value === "dark" || value === "light" ? value : null;
+  } catch {
+    return null; // private window, blocked site data: no stored preference, not a crash
+  }
+};
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  if (themeToggleEl) {
+    /* THE LABEL IS THE ACTION, AND THERE IS NO SECOND ANSWER (round 2). This carried
+       aria-pressed as well, and the two contradicted each other out loud: in the dark theme
+       the button read "Light" and reported pressed, so a screen reader said "Light, pressed",
+       which states that the light theme is on while the page is dark. The toggle-button
+       pattern aria-pressed belongs to is one whose label does NOT change with the state, and
+       the design's label does: it is "Dark" and "Light", the thing pressing it will do.
+       So the name says what the press does, and nothing claims a state to disagree with it.
+       A rider does not learn the current theme from this button, and did not before either:
+       they learn it from the page, and the button tells them where the press leads. */
+    themeToggleEl.textContent = theme === "dark" ? "Light" : "Dark";
+    themeToggleEl.removeAttribute("aria-pressed");
+  }
+}
+
+applyTheme(themeChoice(storedTheme(), document.documentElement.getAttribute("data-theme")));
+
+if (themeToggleEl) {
+  themeToggleEl.addEventListener("click", () => {
+    const next = nextTheme(document.documentElement.getAttribute("data-theme"));
+    applyTheme(next);
+    try {
+      localStorage.setItem(THEME_KEY, next);
+    } catch {
+      // Nothing to do and nothing to say: the theme is applied, it just will not survive a
+      // reload. Telling a rider their browser refused a write would be noise about a
+      // preference they can set again in one press.
+    }
+  });
+}
+
+/* ----- MR1: the clock --------------------------------------------------------------------
+   HH:MM:SS in the rider's own locale, the same formatter the status line's clock used, so
+   the two never disagreed about what time it is and still do not.
+
+   THE DIGITS TICK UNDER REDUCED MOTION; THE DOT DOES NOT. The preference is about movement,
+   and a clock that stopped would be a lie rather than a kindness. The blink is a CSS
+   animation turned off by the .reduced-motion class (style.css), which is the one door
+   applyMotionPreference writes, so it follows the preference live like every other animation
+   this app owns rather than only at load. That gate is what mutation M6 reverts. */
+const clockTimeEl = document.getElementById("clock-time");
+if (clockTimeEl) {
+  const tickClock = () => {
+    clockTimeEl.textContent = new Date().toLocaleTimeString();
+  };
+  tickClock();
+  setInterval(tickClock, 1000);
+}
+
+/* ----- MR1: the subway colour key ------------------------------------------------------
+   Grouped by trunk, and DISPLAY ONLY: route focus arrives with the subway restyle in MR2,
+   when these become buttons that do something. Spans until then, because a focusable
+   control that does nothing is a tab stop a rider pays for and gets nothing back, which is
+   what A1y's walk invariants are for.
+
+   BUILT FROM lineColor() AND readableTextOn(), NOT FROM THE DESIGN'S TABLE, and this is the
+   one place MR1 knowingly departs from the drawing. The design gives the official MTA trunk
+   palette; this repository's standing ruling is the opposite ("The MTA's logos, official
+   map, and route symbols require a license. Use your own colors and markers rather than
+   official MTA branding", README Notes), and LINE_COLORS exists because of it. A key in one
+   palette over lines and markers drawn in another would also be simply wrong: the key's job
+   is to say which colour on THIS map is which route. So it reads the palette the map draws
+   with, and it changes when MR2 changes that palette, whichever way the operator rules.
+   Measured, every trunk clears 4.5:1 through readableTextOn: the lowest is 4.72 on the
+   4-5-6 green and the L's grey takes dark ink at 5.00 where white would have been 3.48.
+   docs/reviews/map-redesign-rounds.md carries the ruling question as a finding. */
+const SUBWAY_KEY_TRUNKS = [
+  ["1", "2", "3"], ["4", "5", "6"], ["7"], ["A", "C", "E"], ["B", "D", "F", "M"],
+  ["G"], ["J", "Z"], ["L"], ["N", "Q", "R", "W"], ["S"],
+];
+const subwayKeyEl = document.getElementById("subway-key");
+if (subwayKeyEl) {
+  /* AND IT IS OUT OF THE ACCESSIBILITY TREE WHILE IT IS ONLY A KEY (round 2). Twenty-six
+     spans reading "1 2 3 4 5 6 7 A C E ..." put twenty-six bare characters into the page's
+     reading order whose only information is the COLOUR beside them, which is the one thing
+     that does not survive being spoken. The route identities themselves are not lost: every
+     marker and every popup names its route in words, which is where a rider gets them today.
+     This comes back the moment the key does something: MR2 makes these buttons with real
+     names ("Focus route 1") and a real effect, and a control is a different thing from a
+     colour swatch. The attribute is in index.html rather than written here, so it holds
+     before this file runs. */
+  for (const trunk of SUBWAY_KEY_TRUNKS) {
+    const group = document.createElement("span");
+    group.className = "bul-group";
+    for (const route of trunk) {
+      const bullet = document.createElement("span");
+      bullet.className = "bul";
+      bullet.style.background = lineColor(route);
+      bullet.style.color = readableTextOn(lineColor(route));
+      bullet.textContent = route;
+      group.append(bullet);
+    }
+    subwayKeyEl.append(group);
+  }
+}
+
+/* ----- MR1: the view presets -----------------------------------------------------------
+   City, Rail and Region, the design's three centres and zooms, with flyTo at 0.8s (README
+   section 3). The Names toggle the design puts in this stack waits for MR2, where there are
+   labels to toggle.
+
+   FLYTO IS GATED ON THE MOTION PREFERENCE, which the design does not say and this app does
+   everywhere: a 0.8s animated pan is motion, and motionAllowed() is the one door. Under
+   reduced motion the view still changes, at once, because the DESTINATION is the thing the
+   rider asked for and only the journey was decoration.
+
+   THE ACTIVE PRESET IS aria-pressed, not a class alone, and it CLEARS when the map stops
+   being the view it names: a highlighted "City" over a map showing New Jersey would be a lie.
+
+   ASKED OF THE MAP, NOT OF A FLAG. The first cut set a "flying" flag and had the end handler
+   ignore one event; flyTo fires BOTH zoomend and moveend when it lands, so the second one
+   cleared the preset the first had just arrived at, and the button went dark the instant it
+   became true. A flag counting events is a guess about Leaflet's internals. Whether the map
+   IS at the preset is not a guess, and it is also the exact thing the button claims, so the
+   question and the assertion are the same sentence.
+
+   AND THE TOLERANCE IS IN PIXELS, NOT DEGREES, which is the second thing measured here. A
+   degree tolerance means a different distance at every zoom and a flyTo lands through pixel
+   arithmetic, so at zoom 10 it arrived 0.0007 degrees off its target and a 1e-4 allowance
+   read that as the rider having moved: the button went dark at the instant it became true.
+   Two pixels is a rounding allowance at any zoom, and a rider's pan is orders of magnitude
+   more than two pixels. */
+const VIEW_PRESETS = [
+  { id: "view-city", center: [40.7295, -73.99], zoom: 13 },
+  { id: "view-rail", center: [40.76, -73.96], zoom: 11 },
+  { id: "view-region", center: [40.79, -73.9], zoom: 10 },
+];
+const VIEW_EPSILON_PX = 2;
+let activeView = null;
+
+function mapIsAt(preset) {
+  if (map.getZoom() !== preset.zoom) return false;
+  return map.latLngToContainerPoint(preset.center).distanceTo(map.getSize().divideBy(2)) <= VIEW_EPSILON_PX;
+}
+
+function paintViewPresets() {
+  for (const preset of VIEW_PRESETS) {
+    const button = document.getElementById(preset.id);
+    if (button) button.setAttribute("aria-pressed", String(activeView === preset.id));
+  }
+}
+
+for (const preset of VIEW_PRESETS) {
+  const button = document.getElementById(preset.id);
+  if (!button) continue;
+  button.addEventListener("click", () => {
+    activeView = preset.id;
+    paintViewPresets();
+    // The design's 0.8s fly, GATED ON THE MOTION PREFERENCE, which the design does not
+    // mention and this app does everywhere. Under reduced motion the view still changes, at
+    // once: the destination is what the rider asked for and only the journey was decoration.
+    if (motionAllowed()) map.flyTo(preset.center, preset.zoom, { duration: 0.8 });
+    /* MR1 ROUND 2: animate:false, AND IT IS NOT BELT AND BRACES. motionAllowed() is read live
+       on every press, so a rider who turns the preference on mid-session takes this branch
+       immediately; what this branch could not do until now is honour them. Leaflet reads
+       zoomAnimation ONCE, when the map is constructed (helpers.js says so at
+       watchMotionPreference, and it is the reason applyMotionPreference cannot reach it), so
+       on a map built while motion was allowed a bare setView still animates the zoom. The
+       option is the supported way to say no to that one call. A rider who set the preference
+       before load is unaffected either way, which is why this needed the mid-session case to
+       be seen at all. */
+    else map.setView(preset.center, preset.zoom, { animate: false });
+  });
+}
+map.on("moveend zoomend", () => {
+  if (activeView == null) return;
+  const preset = VIEW_PRESETS.find((p) => p.id === activeView);
+  if (preset && mapIsAt(preset)) return;
+  activeView = null;
+  paintViewPresets();
+});
+paintViewPresets();
 
 // Station dots get their own canvas pane sandwiched between the route lines
 // (overlayPane, 400) and the train/bus markers (markerPane, 600), so the
@@ -161,9 +416,30 @@ const subwayLayer = L.layerGroup().addTo(map);
 const routeLinesLayer = L.layerGroup().addTo(map);
 const busRouteLayer = L.layerGroup().addTo(map); // the one clicked bus route
 const stationLayer = L.layerGroup().addTo(map);
-const railroadLayer = L.layerGroup().addTo(map); // LIRR + MNR GPS markers
-const railroadRouteLinesLayer = L.layerGroup().addTo(map); // LIRR + MNR route geometry
-const railroadStationLayer = L.layerGroup().addTo(map); // LIRR + MNR clickable stations
+// MR1: THE RAILROADS SPLIT PER AGENCY, because the design's feed strip has one button per
+// FEED and LIRR and Metro-North are two feeds inside one source. They poll together and
+// they fail apart: the per-system freshness index has always carried them separately
+// (`railroads|LIRR`, `railroads|MNR`), the status line has always named them separately,
+// and the C6 dimming specs exist precisely because one can go stale while the other does
+// not. The single "Railroads" checkbox was the odd one out.
+//
+// NOTHING ABOUT A MARKER CHANGES HERE, only which group it is added to; the P1h and P1i
+// pins hold every railroad mark and popup byte-identical across this commit. The three
+// accessors below are what railroad.js writes through, so the choice of group is made in
+// one place from the row's own `system` rather than at each call site.
+const lirrLayer = L.layerGroup().addTo(map); // LIRR GPS and placed markers
+const lirrRouteLinesLayer = L.layerGroup().addTo(map); // LIRR branch geometry
+const lirrStationLayer = L.layerGroup().addTo(map); // LIRR clickable stations
+const mnrLayer = L.layerGroup().addTo(map); // Metro-North markers
+const mnrRouteLinesLayer = L.layerGroup().addTo(map); // Metro-North line geometry
+const mnrStationLayer = L.layerGroup().addTo(map); // Metro-North clickable stations
+
+// Metro-North or LIRR, and LIRR is the default rather than a third branch: the railroad
+// feed serves exactly these two systems (backend RAILROAD_FRESHNESS_SYSTEMS), and a row
+// naming neither would be a decoder bug rather than a rendering choice.
+const railroadVehicleLayer = (system) => (system === "MNR" ? mnrLayer : lirrLayer);
+const railroadLineLayer = (system) => (system === "MNR" ? mnrRouteLinesLayer : lirrRouteLinesLayer);
+const railroadStopLayer = (system) => (system === "MNR" ? mnrStationLayer : lirrStationLayer);
 // AirTrain JFK is static-only (no realtime feed exists). Its own layers so it
 // toggles independently of the railroad group.
 const airtrainRouteLinesLayer = L.layerGroup().addTo(map); // 3 branch guideways
@@ -257,11 +533,19 @@ const njtTrains = L.layerGroup().addTo(map); // placed trains gliding between st
    popup already landed, and animating a correction shows the rider the wrong position
    first and then slides the whole field away from it. */
 
-// The chrome that paints over the popup pane. Both are siblings of #map with a z-index
-// above .leaflet-map-pane's stacking context, which is the property that makes them
-// obstacles rather than just neighbours. Listed rather than derived, so adding a third
-// overlay is a deliberate edit here and not a silent regression.
-const POPUP_OBSTACLE_IDS = ["panel", "alert-banner"];
+/* The chrome that paints over the popup pane. Each is outside .leaflet-map-pane's stacking
+   context and above it, which is the property that makes them obstacles rather than just
+   neighbours. Listed rather than derived, so adding a third overlay is a deliberate edit
+   here and not a silent regression.
+
+   MR1 ROUND 2 ADDED THE THIRD, AND THE COMMENT ABOVE IS EXACTLY WHY IT HAD TO. The view
+   preset stack is fixed to the bottom right at z-index 1000 and paints over the popup pane
+   like the other two; left off this list it was an overlay the correction could not see, so
+   a popup that grew under it was neither moved nor noticed, and its clicks went to the
+   presets. It is a CHILD of #panel rather than a sibling of #map, which changes nothing
+   here: what this list wants is a box that covers the popup, and popupObstacles reads a
+   rect. */
+const POPUP_OBSTACLE_IDS = ["panel", "alert-banner", "view-stack"];
 
 function popupObstacles() {
   return POPUP_OBSTACLE_IDS.map((id) => document.getElementById(id))
@@ -470,27 +754,202 @@ map.on("popupopen", (event) => {
 });
 
 
-function bindToggle(checkboxId, layers) {
-  const box = document.getElementById(checkboxId);
-  const sync = () => {
-    for (const layer of layers) {
-      if (box.checked) map.addLayer(layer);
-      else map.removeLayer(layer);
-    }
-  };
-  box.addEventListener("change", sync);
-  sync(); // some browsers restore checkbox state across reloads without firing change
-}
-bindToggle("toggle-buses", [busLayer, busRouteLayer]);
-bindToggle("toggle-subways", [subwayLayer, routeLinesLayer]);
-bindToggle("toggle-stations", [stationLayer]);
-bindToggle("toggle-railroads", [railroadLayer, railroadRouteLinesLayer, railroadStationLayer]);
-bindToggle("toggle-airtrain", [airtrainRouteLinesLayer, airtrainStationLayer]);
-bindToggle("toggle-path", [pathRouteLines, pathStations, pathTrains]);
-bindToggle("toggle-ferries", [ferryRouteLines, ferryDocks, ferryBoats]);
-bindToggle("toggle-njt", [njtRouteLines, njtStations, njtTrains]);
+/* ---------------- MR1: the feed strip ------------------------------------------------
+   The old layer checkboxes and the old status line, restyled into the design's row 2, with
+   their semantics kept and two of them made stronger.
 
+   ONE BUTTON PER FEED, IN THE DESIGN'S ORDER, from helpers.js's FEEDS. Two differences
+   from the eight checkboxes it replaces, both deliberate:
+     - "Railroads" becomes LIRR and Metro-North, which is why the railroad layer groups
+       split above.
+     - "Stations" (the subway station dots) folds into Subway. The design's feed toggle
+       adds and removes that system's layer groups as one (lines, stations, vehicles), and
+       station VISIBILITY becomes a zoom question in MR2 rather than a checkbox. It also
+       retires the duplicate-name hazard that checkbox carried: it read "Stations" beside
+       the "Stations" button that opens the panel, and needed an aria-label to tell them
+       apart.
+
+   ARIA-PRESSED IS WRITTEN BY THE CODE THAT SHOWS AND HIDES THE LAYER, in one function, on
+   the same line of reasoning the legend disclosure uses for aria-expanded: what a screen
+   reader is told and what is drawn cannot disagree if there is only one writer. Mutation
+   M1 is aria-pressed not written on toggle, and M2 is the visible state carried by opacity
+   alone; both die here because `pressed` and `off` come out of feedStripModel together.
+
+   THE BUTTONS ARE GENERATED rather than written into index.html. The checkboxes were static
+   markup so the legend disclosure had no load-order dependency, and that argument does not
+   transfer: these are not a disclosure, and their count, dot and tooltip are rewritten on
+   every poll anyway, so eight static copies would be eight chances to drift from FEEDS. */
+
+// The rider's hidden set, by feed key. Not persisted: which layers are showing has never
+// survived a reload in this app and MR1 is not the stage that changes that.
+const hiddenFeeds = new Set();
+
+// Whether a feed is currently showing. The one accessor for anything outside this file that
+// needs to know, so a system asks the state rather than reading it back off a control: the
+// old answer was `document.getElementById("toggle-buses").checked` and it died the moment
+// the checkbox became a button. A listener registered in a later file runs after the strip's
+// own click handler, so this is already current when it is asked.
+function feedShowing(key) {
+  return !hiddenFeeds.has(key);
+}
+
+// The layer groups each feed owns. Every one of these is declared in this file, so the
+// table cannot name a group that does not exist.
+const FEED_LAYERS = {
+  subway: () => [subwayLayer, routeLinesLayer, stationLayer],
+  buses: () => [busLayer, busRouteLayer],
+  lirr: () => [lirrLayer, lirrRouteLinesLayer, lirrStationLayer],
+  mnr: () => [mnrLayer, mnrRouteLinesLayer, mnrStationLayer],
+  njt: () => [njtRouteLines, njtStations, njtTrains],
+  path: () => [pathRouteLines, pathStations, pathTrains],
+  ferry: () => [ferryRouteLines, ferryDocks, ferryBoats],
+  airtrain: () => [airtrainRouteLinesLayer, airtrainStationLayer],
+};
+
+/* Each feed's count, FROM THE EXISTING VEHICLE REGISTRIES. These are the same Maps the
+   status line's counts were built from, read here per feed instead of per source; the two
+   railroads are counted out of the one `railroads` Map by the system half of its key,
+   which is the same split the freshness index and the status line already make.
+
+   AirTrain returns null rather than 0. It has no vehicles at all (static timetable data,
+   no realtime feed anywhere behind it), and 0 would be a claim about a fleet that does not
+   exist. A count of its stations would be a different kind of number wearing the badge.
+
+   Read through functions because these registries are declared in the per-system files,
+   which load after this one; by the time a poll calls this they all exist. */
+const railroadFleet = (system) => {
+  let n = 0;
+  for (const key of railroads.keys()) if (key.startsWith(`${system}|`)) n += 1;
+  return n;
+};
+const FEED_COUNTS = {
+  subway: () => trains.size,
+  buses: () => buses.size,
+  lirr: () => railroadFleet("LIRR"),
+  mnr: () => railroadFleet("MNR"),
+  njt: () => njtTrainRecords.size,
+  path: () => pathTrainRecords.size,
+  ferry: () => ferryBoatRecords.size,
+  airtrain: () => null,
+};
+
+/* A feed's own freshness, out of the index every other rendering surface reads.
+   WORST-OF-SOURCE FOR A WHOLE-SOURCE FEED, and the named system only for the two
+   railroads: worstSystemFreshness scans the index by source prefix, so it is right whether
+   the envelope carried per-system blocks or the synthesized single one, and it does not
+   depend on guessing what that synthesized system is called. Over-reporting age is the
+   fail-safe direction, which is the same argument systemFreshnessOf makes. */
+function feedAge(feed) {
+  if (feed.source == null) return null; // AirTrain: no feed behind it to be fresh or stale
+  return feed.system ? systemAgeOf(feed.source, feed.system) : worstSystemFreshness(feed.source).age;
+}
+
+// The eight buttons live in their own wrapper, because the wrapper is what folds below
+// 700px and the note beside it does not (round 3, by ruling: index.html says why).
+const feedButtonsEl = document.getElementById("feed-buttons");
 const statusEl = document.getElementById("status");
+const feedButtons = new Map(); // feed key -> its button element
+
+// Show or hide one feed's layer groups. The ONE writer of both aria-pressed and the visible
+// off treatment, so they cannot disagree.
+function applyFeedVisibility(key) {
+  const hidden = hiddenFeeds.has(key);
+  for (const layer of FEED_LAYERS[key]()) {
+    if (hidden) map.removeLayer(layer);
+    else map.addLayer(layer);
+  }
+}
+
+// Write one model onto the buttons. THE ONE WRITER of aria-pressed and of the off
+// treatment, so the state a screen reader is told and the state a rider sees come off the
+// same boolean; that is what mutations M1 and M2 have to break.
+function paintFeedStrip(entries) {
+  for (const entry of entries) {
+    const button = feedButtons.get(entry.key);
+    if (!button) continue;
+    button.setAttribute("aria-pressed", String(entry.pressed));
+    button.classList.toggle("feed-off", entry.off);
+    button.title = entry.title;
+    button.querySelector(".feed-count").textContent = entry.count ?? "";
+    button.querySelector(".feed-dot").dataset.state = entry.dot;
+  }
+}
+
+/* Paint the strip from the counts and ages the app already has. Called from the poll tail
+   beside the status note, and from the animation tick when the stale set moves, because a
+   feed crosses into stale by time passing rather than by a response arriving: a dot that
+   only changed on a poll would stay green through a feed that had stopped answering.
+
+   NEVER AT MODULE SCOPE, and that is a load-order fact rather than a preference. FEED_COUNTS
+   reads the per-system registries, which are declared in the files that load AFTER this one;
+   calling this while this file is still evaluating throws ReferenceError on `trains` and
+   takes shared.js, stations.js and map.js down with it. Measured: it did, and the page came
+   up with no markers at all. buildFeedStrip paints the count-free model instead. */
+function refreshFeedStrip() {
+  if (!feedButtonsEl) return;
+  const counts = {};
+  const ages = {};
+  for (const feed of FEEDS) {
+    const count = FEED_COUNTS[feed.key]();
+    if (count != null) counts[feed.key] = count;
+    ages[feed.key] = feedAge(feed);
+  }
+  paintFeedStrip(feedStripModel({ counts, ages, hidden: hiddenFeeds }));
+}
+
+function buildFeedStrip() {
+  if (!feedButtonsEl) return;
+  for (const feed of FEEDS) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.id = `toggle-${feed.key}`;
+    button.className = "feed";
+    // The leading mark: a colour tick for the systems the design gives one, the agency
+    // glyph block for LIRR, Metro-North and NJ Transit. Decorative either way, because the
+    // feed's NAME is right beside it and a screen reader reading a colour swatch as well
+    // would say the same thing twice.
+    const mark = document.createElement("span");
+    mark.setAttribute("aria-hidden", "true");
+    if (feed.glyph) {
+      mark.className = "feed-glyph";
+      mark.textContent = feed.glyph;
+    } else {
+      mark.className = "feed-tick";
+      mark.style.background = feed.tick;
+    }
+    const name = document.createElement("span");
+    name.className = "feed-name";
+    name.textContent = feed.name;
+    const count = document.createElement("span");
+    count.className = "feed-count";
+    const dot = document.createElement("span");
+    dot.className = "feed-dot";
+    dot.setAttribute("aria-hidden", "true");
+    // THE VISIBLE OFF MARK, and it is a separate mark rather than only a strike because
+    // the v3 brief asks for both and neither alone is enough: a strike can be missed at 10px
+    // and a fade is not state at all. aria-hidden because aria-pressed on the button is
+    // already the state a screen reader is told, and saying it twice is noise.
+    const off = document.createElement("span");
+    off.className = "feed-offmark";
+    off.setAttribute("aria-hidden", "true");
+    off.textContent = "off";
+    button.append(mark, name, count, dot, off);
+    button.addEventListener("click", () => {
+      if (hiddenFeeds.has(feed.key)) hiddenFeeds.delete(feed.key);
+      else hiddenFeeds.add(feed.key);
+      applyFeedVisibility(feed.key);
+      refreshFeedStrip();
+    });
+    feedButtons.set(feed.key, button);
+    feedButtonsEl.append(button);
+    applyFeedVisibility(feed.key);
+  }
+  // The count-free model: every feed showing, no counts, and each dot in the state its
+  // absent age earns (stale for a feed that has not decoded, scheduled for AirTrain). The
+  // first poll paints the rest. See refreshFeedStrip for why this cannot be that.
+  paintFeedStrip(feedStripModel({ hidden: hiddenFeeds }));
+}
+buildFeedStrip();
 
 function setStatus(text, isError = false) {
   statusEl.textContent = text;
@@ -1536,40 +1995,28 @@ const alertKey = (a) => `${a.system}|${a.id}|${hashString(String(a.header ?? "")
 // re-parse identical markup for no visual change.
 let lastBannerKey = null;
 
-// A3 review: THE PANEL HAS TO KNOW HOW TALL THIS IS, because under 700px the two share
-// the bottom of the screen. The banner moved to the bottom so it would stop covering the
-// Stations toggle; the legend panel grows down from the top; and with the legend expanded
-// they met. Measured at 375x667 with one agency-wide alert: #panel ran to y=657 while the
-// banner occupied y 595..645.
-//
-// WHAT THE OVERLAP ACTUALLY COST, since the first reading of it was wrong. The banner is
-// z-index 1001 and the panel 1000, and elementFromPoint across the alert row returned the
-// row at every sample, so no alert text was ever hidden. Two things were: axe stopped
-// being able to decide the row's contrast at all ("background color could not be
-// determined because it partially overlaps other elements"), and the panel's last 62px
-// sat behind the banner with no way to bring them out, because the panel scrolls its own
-// overflow and its end is exactly what lands there. On a phone during a systemwide
-// incident that is the status line, which is the surface that says whether the data a
-// rider is looking at is current.
-//
-// PUBLISHED RATHER THAN GUESSED because the height varies with the number of alerts and
-// with how the header wraps at a given width: any fixed reservation in the stylesheet
-// would be right for one alert and wrong for two. style.css subtracts it from the panel's
-// mobile max-height, so the panel now stops above the banner and scrolls instead.
-function publishBannerHeight(el) {
-  const px = el.childElementCount ? el.getBoundingClientRect().height : 0;
-  document.documentElement.style.setProperty("--alert-banner-height", `${px}px`);
-}
+/* MR1 RETIRED --alert-banner-height AND publishBannerHeight WITH IT, and the reason it
+   existed is worth keeping written down because it is the reason it can go.
 
-// The banner's height changes with the viewport even when its CONTENT has not changed: the
-// same header wraps to one line at 1280 and two at 320, and renderAlertBanner returns early
-// on an unchanged key so it would never republish. Rotating a phone would then leave the
-// panel sized against the old height. Cheap enough to run raw (one rect read plus one
-// custom property write), and there is no work to debounce.
-window.addEventListener("resize", () => {
-  const el = document.getElementById("alert-banner");
-  if (el) publishBannerHeight(el);
-});
+   Under 700px the banner and the legend panel shared the bottom of the screen: the banner
+   had moved there so it would stop covering the Stations toggle, the panel grew down from
+   the top, and with the legend expanded they met. Measured at 375x667 with one agency-wide
+   alert, #panel ran to y=657 while the banner occupied y 595..645. Nothing was hidden from
+   VIEW (the banner painted above the panel), but two things broke: axe stopped being able to
+   decide the row's contrast at all ("background color could not be determined because it
+   partially overlaps other elements"), and the panel's last 62px sat behind the banner with
+   no way to bring them out, because the panel scrolls its own overflow and its END is what
+   landed there. On a phone during a systemwide incident, that end is the status line.
+
+   So the height was MEASURED and published as a custom property rather than reserved in the
+   stylesheet, because it grows with each alert and with how the strip wraps at a given
+   width, and the panel's mobile max-height subtracted it.
+
+   The strip is a ROW OF THE HEADER now (v3.1 point 1). Two boxes that cannot overlap need no
+   arithmetic between them: nothing subtracts the strip's height because nothing is positioned
+   against it, the axe undecidable is gone with the overlap, and the note that used to be the
+   unreachable thing is a row above the strip rather than the tail of a scrolling panel. The
+   resize republisher goes too; there is no consumer left to keep current. */
 
 // A4: what the banner is about to destroy, captured while it still exists.
 //
@@ -1611,7 +2058,6 @@ function renderAlertBanner(alerts) {
     // afterwards there is nothing left to ask.
     const plan = planVanishingFocus(bannerFocusVictim(el), { kind: "alerts" });
     el.replaceChildren(); // nothing to show and alerts are current: no banner strip
-    publishBannerHeight(el);
     applyVanishingFocus(plan);
     return;
   }
@@ -1654,7 +2100,6 @@ function renderAlertBanner(alerts) {
   // the body. The dismiss button also cannot survive its own click, since dismissing
   // empties `shown`, so every dismissal lands on this path or the unmount above.
   if (hadFocus && !dismissBtn) applyVanishingFocus(rebuildPlan);
-  publishBannerHeight(el);
   if (dismissBtn) {
     dismissBtn.addEventListener("click", () => {
       for (const alert of shown) dismissedAlertIds.add(alertKey(alert));
@@ -1695,6 +2140,11 @@ function animateTrains(ts) {
     // moves, exactly as before.
     const systemsMoved = staleSetChanged();
     if (systemsMoved || observationCrossed(now)) applyStaleTreatment();
+    // MR1: and the feed strip's dots move with them. A feed crosses into stale by time
+    // passing rather than by a response arriving, so a dot repainted only from the poll
+    // tail would stay green through a feed that had stopped answering. Gated on the same
+    // transition as the marker sweep, so a quiet tick costs one string compare.
+    if (systemsMoved) refreshFeedStrip();
     if (systemsMoved) {
       // AND SAY SO. A system goes stale by time passing, not only by a poll landing,
       // so the tick is where a mid-interval crossing is detected; announcing only from
@@ -1729,14 +2179,17 @@ function animateTrains(ts) {
         record.marker.setLatLng(trainLatLng(record.latest, subwayGlideAt(record.latest, now), record.fState));
       }
     }
-    if (map.hasLayer(railroadLayer)) {
-      for (const record of railroads.values()) {
-        // Only a train drawn from a prediction glides; a reported one sits where it was. A
-        // retained train is drawn as it was before retention (record.drawnFrom), so a
-        // retained placement keeps gliding, frozen by its system's retained_since.
-        if (drawnFromPrediction(record.latest, record.drawnFrom)) {
-          record.marker.setLatLng(trainLatLng(record.latest, railroadGlideAt(record.latest, now), record.fState));
-        }
+    // MR1: PER AGENCY, because the two railroads now toggle separately. The guard used to
+    // be one map.hasLayer for the pair; asking each record about its own group is the same
+    // test at the resolution the feed strip introduced, and it keeps a hidden LIRR from
+    // paying for Metro-North's glide or the other way round.
+    for (const record of railroads.values()) {
+      if (!map.hasLayer(railroadVehicleLayer(record.latest.system))) continue;
+      // Only a train drawn from a prediction glides; a reported one sits where it was. A
+      // retained train is drawn as it was before retention (record.drawnFrom), so a
+      // retained placement keeps gliding, frozen by its system's retained_since.
+      if (drawnFromPrediction(record.latest, record.drawnFrom)) {
+        record.marker.setLatLng(trainLatLng(record.latest, railroadGlideAt(record.latest, now), record.fState));
       }
     }
     if (map.hasLayer(njtTrains)) {

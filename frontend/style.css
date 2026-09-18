@@ -19,152 +19,677 @@ main {
   width: 100%;
 }
 
-/* Legend + status panel, top right */
+/* ==================================================================
+   MR1: design tokens, self-hosted type, and the top bar
+   ==================================================================
 
-/* A3: OPAQUE, AND THAT IS AN ACCESSIBILITY DECISION RATHER THAN A VISUAL ONE.
-   This surface was rgba(255, 255, 255, 0.92), and the 8% of map tile showing through
-   was the single largest source of undecidable contrast on the page: axe reported
-   "background color could not be determined because element contains an image node"
-   for all seven layer-toggle labels, because resolving their background meant
-   resolving live imagery. Contrast over a solid colour is machine-checkable; contrast
-   over the map never is, at any alpha. Measured: opaque takes the undecidable set from
-   9 entries to 1 and the color-contrast passes from 7 nodes to 15, with no text colour
-   changed and no violation introduced.
+   The Modernist token set from the handoff (docs/design/map-redesign/README.md, "Design
+   tokens"), the header that replaced the right-hand legend panel, the feed strip, the Key
+   panel, the alerts row and the bottom-right control stack.
 
-   The 8% was never buying much. Composited over the darkest possible tile the old
-   surface was rgb(235, 235, 235), so nothing here was ever failing AA; the problem was
-   that no machine could prove it. See the conversion rule in tests/e2e/a11y.spec.js.
+   WHAT DID NOT CHANGE, and the rest of this file is the proof: markers, popups, station
+   dots, the station panel and the reduced-motion rules. MR1 is tokens and chrome; every
+   marker family keeps the colours it has, which is why the tokens below are used by the
+   chrome and by nothing that draws on the map. The MR2 to MR5 stages are where a token
+   reaches a marker, and each brings the rebuild that a themed marker owes. */
 
-   AND IT IS BOUNDED BY THE VIEWPORT, which is a SEPARATE fix that happens to live in
-   the same rule. RE-MEASURED after A3's review round 2 found the numbers here had gone
-   stale (the mobile override below moved one of them, and this comment still quoted the
-   pre-fix figure as the fixed one), and RE-MEASURED AGAIN in 15c, which added three
-   legend rows and a toggle and moved both unbounded numbers by about a hundred pixels.
-   Twice now the stale figure has been in this block, so read the pair below as what it
-   is: a measurement that a row added to the legend invalidates.
-   With the legend expanded and no alert showing:
+/* ----- Archivo, self-hosted -------------------------------------------------------------
+   Two files, not six, and one @font-face per subset rather than per weight, because Archivo
+   is variable-only on Google Fonts: asking for 400, 600 and 800 returns the same .woff2
+   three times. `font-weight: 100 900` declares the file's real range and the browser
+   instantiates the three weights the design uses from it. Three static rules over one
+   variable file would download it three times for no gain. Provenance, version, axes and
+   the OFL are in fonts/README.md; the unicode-range values are Google's own, so the
+   latin-ext file is fetched only when a glyph needs it. */
+@font-face {
+  font-family: "Archivo";
+  font-style: normal;
+  font-weight: 100 900;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("fonts/archivo-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
+    U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Archivo";
+  font-style: normal;
+  font-weight: 100 900;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("fonts/archivo-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304,
+    U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0,
+    U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
 
-     unbounded  1280x720  content 869px, runs to y=879, so 159px off the bottom
-     unbounded   375x667  content 982px, runs to y=992, so 325px off the bottom
-     bounded    1280x720  ends at y=710 (max-height 700)
-     bounded     375x667  ends at y=637 (max-height 627, from the mobile rule below)
+/* ----- The tokens -----------------------------------------------------------------------
+   Both sets on the ROOT, keyed by data-theme, which index.html writes as "light" so the
+   page is never in a half-styled state before script runs. The light set is also the
+   unqualified default, so a root with the attribute removed by anything still renders.
 
-   The BOUNDED pair is unchanged by 15c and cannot move with the row count: it is what
-   max-height produces, which is the whole reason the bound exists.
+   `--chrome-font` exists so every chrome rule names one thing and the fallback chain is
+   written once: if the woff2 is blocked or still loading, the chrome is set in the same
+   system-ui the rest of this file uses rather than in a serif default. */
+:root,
+:root[data-theme="light"] {
+  --bg: #f3f2f2;
+  --surface: #eae9e9;
+  --ink: #201e1d;
+  --muted: #605d5d;
+  --accent: #ec3013;
+  /* THE ACCENT AS TEXT IS NOT THE ACCENT, and this is measured rather than taste. The
+     handoff's accent carries 3.47 on its own surface, and it is used as TEXT in several
+     places the design draws (a stale note, a stale footer, an "in under 30 seconds"
+     countdown, the OFF mark). 3.47 is below the 4.5 that 10px and 12px text owes, so a
+     darkened variant carries the words and the undarkened accent carries the MARKS, where
+     3:1 applies and 3.47 clears it. That split is exactly the one readableInk already makes
+     in this app for route colours: "the brand colour stays on the SHAPES that carry
+     identity, where the label carries the meaning".
+     It is also the filled button's BACKGROUND, because on the plain accent NEITHER ink
+     reaches 4.5: white measures 4.20 and dark ink 4.14. That is the case this file has met
+     once before, at the no-id PATH fallback, and recorded as "a fill that has to move
+     rather than an ink that has to be chosen". Measured: #bd260f carries --chipink at 5.45
+     and reads 5.03 on --surface. */
+  --accent-ink: #bd260f;
+  /* The focus ring, tokenised for the same reason: #1d4ed8 measures 5.53 on the light
+     surface and 2.10 on the dark one, and mobile.spec.js A6f requires 3:1 against the
+     nearest opaque ancestor. A theme that halved every ring would have been a silent
+     regression, since nothing in the suite scanned the dark theme before this stage. */
+  --focus: #1d4ed8;
+  --divider: rgba(32, 30, 29, 0.4);
+  --rule: rgba(32, 30, 29, 0.15);
+  --chipink: #f3f2f2;
+  --halo: rgba(243, 242, 242, 0.92);
+  --shadow: 0 3px 10px rgba(45, 43, 43, 0.16);
+  --live: #00933c;
+  --scheduled: #6d6e71;
+  --chrome-font: "Archivo", system-ui, sans-serif;
+  /* The paper the Key panel's glyphs are drawn on, and it is the SAME in both themes on
+      purpose: see .legend-row svg. */
+  --glyph-plate: #f3f2f2;
+}
 
-   With one agency-wide alert at 375x667 the mobile rule takes it to 587, clear of the
-   banner. Bounded it scrolls its own overflow, so every row stays reachable and the
-   panel cannot grow off the screen as systems are added.
+:root[data-theme="dark"] {
+  --bg: #201e1d;
+  --surface: #2d2b2b;
+  --ink: #f3f2f2;
+  --muted: #bab6b6;
+  --accent: #ff563c;
+  /* Lightened rather than darkened: on a dark surface the accent has to move AWAY from the
+     paper. #ff563c reads 4.46 as text on --surface, which misses by 0.04; #ff7863 reads
+     5.44, and carries --chipink at 5.62 as the filled button's background. */
+  --accent-ink: #ff7863;
+  --focus: #7795e8;
+  --glyph-plate: #f3f2f2;
+  --divider: rgba(243, 242, 242, 0.35);
+  --rule: rgba(243, 242, 242, 0.14);
+  --chipink: #201e1d;
+  --halo: rgba(32, 30, 29, 0.9);
+  --shadow: 0 3px 10px rgba(0, 0, 0, 0.5);
+  --live: #00933c;
+  --scheduled: #9a9a9a;
+}
 
-   Do not credit this half with the axe conversion, which is a claim about the DESKTOP
-   scan and still measures true: removing max-height and overflow-y leaves A1i, A1j, A1k
-   and A1l green, because the opaque background alone converts all eight entries.
-   Reverting to rgba fails three of them.
+/* The map's own backdrop, so a tile gap reads as paper rather than as white in the dark
+   theme. Leaflet paints its container background over this, hence both. */
+body,
+.leaflet-container {
+  background: var(--bg);
+}
 
-   What changed is that a fifth spec now depends on the bounding. The same mutation fails
-   A1m2 on "the set of surfaces undecidable at mobile width has changed", because an
-   unbounded panel reaches down into the alert banner and axe stops being able to decide
-   the alert row's contrast. Removing only the base rule does it too: the mobile override
-   sets a height but takes its overflow-y from here, so without it the content spills
-   past the bound anyway. Two fixes, one rule, and now each has its own evidence. */
+/* ----- The basemap's filter -------------------------------------------------------------
+   The cream, desaturated look is a CSS filter on the tile pane and nothing else: the tile
+   origin is unchanged (OSM, same URL, same CSP allowance), which is what makes it
+   provider-independent. The dark arm inverts, which is why the hue rotation is there: an
+   inverted map without it comes out in complementary colours. */
+.leaflet-tile-pane {
+  filter: saturate(0.2) sepia(0.12) brightness(1.07) contrast(0.86);
+}
+
+:root[data-theme="dark"] .leaflet-tile-pane {
+  filter: grayscale(0.7) invert(1) hue-rotate(180deg) brightness(0.7) contrast(1);
+}
+
+/* ----- Leaflet's own controls -----------------------------------------------------------
+   Zero radius, one hairline, the token surface. The zoom control moved to bottom right in
+   systems/shared.js, under the view stack.
+
+   EVERY SELECTOR HERE IS PREFIXED WITH .leaflet-container, AND THAT IS NOT DECORATION.
+   vendor/leaflet/leaflet.css loads first, so an equal-specificity rule of ours wins by
+   order, but Leaflet writes some of its own at two classes: `.leaflet-container
+   .leaflet-control-attribution { background: rgba(255,255,255,0.8) }` and `.leaflet-touch
+   .leaflet-bar a`. Measured, the unprefixed version of this block lost the attribution's
+   background to that rule and left it translucent white over the tiles, which A1z caught at
+   4.06 against the worst tile: it bounds the attribution over black and over white BECAUSE
+   Leaflet's default is translucent, and an opaque surface is what takes the bound away. The
+   prototype's stylesheet prefixes every one of these for the same reason. */
+.leaflet-container .leaflet-bar {
+  box-shadow: none;
+  border-radius: 0;
+  border: 1px solid var(--divider);
+}
+
+.leaflet-container .leaflet-bar a,
+.leaflet-container .leaflet-bar a:first-child,
+.leaflet-container .leaflet-bar a:last-child {
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
+  border-bottom-color: var(--divider);
+  font: 800 16px var(--chrome-font);
+}
+
+.leaflet-container .leaflet-bar a:hover {
+  background: color-mix(in srgb, var(--ink) 10%, var(--surface));
+}
+
+/* MR1 ROUND 2: AND THE DISABLED STATE SURVIVES THE RESTYLE. Leaflet greys out "+" at max
+   zoom and "-" at min through `.leaflet-bar a.leaflet-disabled`, and the rule above set the
+   colour for every state at a higher specificity, so at zoom 19 the "+" looked exactly as
+   live as the "-" and did nothing when pressed. Same idea in the token palette: the glyph
+   goes to the muted ink and the cursor stops inviting the press. */
+.leaflet-container .leaflet-bar a.leaflet-disabled {
+  background: var(--surface);
+  color: var(--muted);
+  cursor: default;
+}
+
+.leaflet-container .leaflet-control-attribution {
+  background: var(--surface);
+  color: var(--muted);
+  font: 10px var(--chrome-font);
+}
+
+.leaflet-container .leaflet-control-attribution a {
+  color: var(--muted);
+}
+
+/* ----- The top bar ---------------------------------------------------------------------
+
+   A3'S OPACITY RULING SURVIVES THE REDESIGN, AND THIS IS THE ONE PLACE MR1 OVERRULES THE
+   DRAWING. The handoff gives the header `color-mix(in srgb, var(--surface) 90%, transparent)`
+   with `backdrop-filter: blur(14px)`. The panel this replaces was rgba(255,255,255,0.92)
+   once and was made opaque for a measured reason recorded in this file's history: axe cannot
+   decide the contrast of text over a translucent surface whose backdrop is a tile IMAGE, so
+   every string in the chrome joined the undecidable set, and making the surface opaque took
+   that set from nine entries to one and color-contrast passes from seven nodes to fifteen.
+   a11y.spec.js's undecidable list is closed and asserted, so translucent chrome does not
+   merely look risky here, it fails the gate. Measured on this branch before the fix: the
+   drawn 90% surface put the brand, the clock, all eight feed names and the note into
+   `incomplete` at all three widths.
+
+   So: the token surface at FULL opacity, and no backdrop-filter. The visual difference is
+   small, the accessibility difference is the whole reason the rule exists, and the finding
+   is recorded in docs/reviews/map-redesign-rounds.md.
+
+   NO FILTER, NO TRANSFORM, NO CONTAIN ON THIS ELEMENT, for a second reason: #view-stack is
+   a fixed-position child, and any of those properties would make this element its
+   containing block and drag the control stack up into the header.
+
+   BOUNDED AND SCROLLABLE, which is the other fix that lived in the old #panel rule: the Key
+   panel open on a 320px screen is taller than the viewport, and without a bound its last
+   rows were unreachable. The bound is on the header and the scroll is on the Key panel, so
+   the one row that must always be legible (the alerts strip) is never what scrolls away. */
 #panel {
   position: absolute;
-  top: 10px;
-  right: 10px;
-  z-index: 1000; /* above Leaflet panes */
-  background: #fff;
-  padding: 8px 12px;
-  border-radius: 6px;
-  font: 13px/1.5 system-ui, sans-serif;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
-  max-width: 240px;
+  inset: 0 0 auto 0;
+  z-index: 1000;
   box-sizing: border-box;
-  max-height: calc(100vh - 20px); /* the 10px inset, top and bottom */
+  background: var(--surface);
+  border-bottom: 2px solid var(--divider);
+  color: var(--ink);
+  font: 400 12px/1.4 var(--chrome-font);
+  /* A COLUMN THAT CANNOT OUTGROW THE SCREEN, and the flex is what makes the bound mean
+     something. Capping the Key panel at a fraction of the viewport is not enough on a small
+     screen: measured at 320x640 with the Key open, row 1 wraps to three lines and the feed
+     strip to four, so a Key panel capped at 60vh still ran 14px past the bottom edge and
+     took the alerts row with it. Here the header is bounded, the Key panel is the only thing
+     allowed to shrink, and the alerts row is flex:none, so the row that must never be lost
+     is the one thing that cannot be. */
+  display: flex;
+  flex-direction: column;
+  /* AND IT NEVER COVERS THE MAP'S OWN CONTROLS. 72px is Leaflet's bottom-right corner: the
+     zoom control is two 30px buttons plus a border at a 4px inset, and the attribution strip
+     sits under it. Measured at 320x640 with the Key open and no reserve, the header ran to
+     y=620 and put the zoom control AND the attribution underneath it, which axe reported as
+     three undecidable nodes and which matters for more than axe: the OpenStreetMap
+     attribution is a condition of using the tiles and has to stay legible. */
+  max-height: calc(100% - 72px);
+}
+
+#panel > * {
+  flex: none;
+}
+
+/* Row 1. Wraps rather than shrinking: nothing here has a fixed height that holds text. */
+#hdr-row1 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 20px;
+  padding: 0 16px;
+  min-height: 48px;
+}
+
+#brand {
+  font: 800 15px var(--chrome-font);
+  letter-spacing: -0.02em;
+}
+
+#clock {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: -12px;
+  font: 600 10px var(--chrome-font);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+#clock-dot {
+  width: 5px;
+  height: 5px;
+  background: var(--accent);
+  display: inline-block;
+  flex: none;
+}
+
+/* THE BLINK IS GATED, and on .reduced-motion rather than on a media query, so it follows
+   applyMotionPreference LIVE: a rider who turns the preference on mid-session stops the
+   blink without reloading, exactly like the marker transitions and the panel below. That
+   class is the one door, written by applyMotionPreference onto the root element, and a
+   media query here would be a second door that a mid-session change could not reach.
+   The DIGITS are not gated; see the clock in systems/shared.js for why. */
+@keyframes hdr-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+#clock-dot {
+  animation: hdr-blink 2s ease-in-out infinite;
+}
+
+.reduced-motion #clock-dot {
+  animation: none;
+}
+
+/* The subway colour key. `margin-right: auto` is what pushes the actions to the right edge
+   and lets the key take the room between. */
+#subway-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-right: auto;
+}
+
+.bul-group {
+  display: flex;
+  gap: 2px;
+}
+
+/* RULING: THE APP'S OWN SHAPE, NOT THE ROUNDEL. The handoff draws these as 22px circles,
+   which is the MTA's route symbol, and this repository's README Notes rule the other way in
+   as many words: "The MTA's logos, official map, and route symbols require a license. Use
+   your own colors and markers rather than official MTA branding." The colours were already
+   the app's (lineColor(), which exists for the same reason); the shape follows. The radius is
+   the subway marker's own: systems/subway.js draws `<rect rx="3">` in an 18-unit box, which
+   is 3.7px on a 22px chip. MR2 draws the ribbons in lineColor() and the bullets in this
+   shape, so the key and the map agree there too. */
+.bul {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: 800 11.5px var(--chrome-font);
+  flex: none;
+}
+
+#hdr-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+/* The two text actions and the one filled action. All three are 30px tall, which clears the
+   24px target floor layout.spec.js enforces without needing a pseudo-element. */
+/* Hidden until MR4 by ruling (index.html says why), and `hidden` has to beat the author
+   display below, which is the same trap #route-banner and the fold elements carry. */
+#theme-toggle[hidden] {
+  display: none;
+}
+
+#theme-toggle,
+#legend-toggle {
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: 600 10px var(--chrome-font);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+#theme-toggle:hover,
+#legend-toggle:hover {
+  color: var(--ink);
+}
+
+#stations-toggle {
+  height: 30px;
+  padding: 0 14px;
+  margin-left: 8px;
+  border: 0;
+  border-radius: 0;
+  background: var(--accent-ink);
+  color: var(--chipink);
+  font: 700 10px var(--chrome-font);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+#stations-toggle:hover {
+  filter: brightness(0.92);
+}
+
+/* ----- Row 2: the feed strip ----------------------------------------------------------- */
+#toggles {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 4px;
+  padding: 0 10px;
+  min-height: 30px;
+  border-top: 1px solid var(--rule);
+}
+
+#feed-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 4px;
+}
+
+/* THE ROW IS ITS CONTENTS WHEN ITS CONTENTS ARE THE NOTE ALONE (round 3). Below the
+   breakpoint the buttons fold and the note stays; on a healthy day the note is empty, and a
+   30px band with nothing in it and a hairline over it is chrome a phone cannot spare. So the
+   row keeps no minimum at that width and the empty note draws nothing, which collapses the
+   whole thing to zero until there is something to say. */
+#status:empty {
+  display: none;
+}
+
+/* The fold elements are hidden with the `hidden` ATTRIBUTE below 700px, and an author
+   display would defeat it. This file has been bitten by that once already, on #route-banner;
+   the rule is stated for every element that can be hidden that way. */
+#feed-buttons[hidden],
+#subway-key[hidden],
+#legend[hidden] {
+  display: none;
+}
+
+.feed {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.feed:hover {
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+}
+
+/* MR1 ROUND 2: THE TICK CARRIES ITS OWN EDGE, because its FILL cannot carry both themes.
+   These are identity colours, the 8th Avenue blue and the rest, and they are theme-blind by
+   nature: measured against the header surface, Subway's #0039A6 reads 8.11 in the light
+   theme and 1.43 in the dark, and Buses and AirTrain are 2.16 and 2.76 there, all under the
+   3:1 a mark owes. Lightening them per theme would be inventing a second palette for the
+   same routes. So the mark keeps its colour and gains a one-pixel ink boundary, which is
+   exactly how every vehicle on this map is already drawn: a route-coloured shape with a
+   paper stroke, so the SHAPE reads whatever is behind it. --ink on --surface is 13.70 light
+   and 12.60 dark, so the edge is never the thing that fails. */
+.feed-tick {
+  width: 12px;
+  height: 3px;
+  flex: none;
+  box-shadow: 0 0 0 1px var(--ink);
+}
+
+.feed-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 13px;
+  min-width: 11px;
+  padding: 0 3px;
+  background: var(--ink);
+  color: var(--surface);
+  font: 800 8px var(--chrome-font);
+  flex: none;
+}
+
+.feed-name {
+  font: 600 10px var(--chrome-font);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.feed-count {
+  font: 800 12px var(--chrome-font);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Empty for AirTrain, which has no vehicles to count. The gap is collapsed rather than left
+   as a hole. */
+.feed-count:empty {
+  display: none;
+}
+
+.feed-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--divider);
+}
+
+.feed-dot[data-state="live"] {
+  background: var(--live);
+}
+
+.feed-dot[data-state="stale"] {
+  background: var(--accent);
+}
+
+.feed-dot[data-state="scheduled"] {
+  background: var(--scheduled);
+}
+
+/* HIDDEN IS THREE MARKS, NOT A FADE. The v3 brief: "state must not be conveyed by opacity
+   alone". The strike and the word are both drawn, because a strike through 10px uppercase is
+   easy to miss and a fade is not state at all; aria-pressed on the button carries the same
+   fact to a screen reader. Mutation M2 removes the word and the strike and leaves the fade. */
+.feed-offmark {
+  display: none;
+  font: 800 8px var(--chrome-font);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+}
+
+/* MR1 ROUND 2: THE FADE IS ON THE MARKS, NOT ON THE BUTTON, and that is the difference
+   between a fade that adds information and one that takes it away. A blanket 0.55 on the
+   button dimmed the two things that carry the state: measured, the OFF mark fell to 2.50 and
+   the feed's own name to 2.25 against the header surface, both under the 4.5 they owe. The
+   fix for "state must not be conveyed by opacity alone" was itself made illegible by
+   opacity. So the tick, the glyph, the count and the dot fade, because they are what the
+   rider no longer needs to read; the name and the OFF mark stay at full strength, because
+   they are what says why. */
+.feed.feed-off .feed-tick,
+.feed.feed-off .feed-glyph,
+.feed.feed-off .feed-count,
+.feed.feed-off .feed-dot {
+  opacity: 0.45;
+}
+
+.feed.feed-off .feed-name,
+.feed.feed-off .feed-count {
+  text-decoration: line-through;
+}
+
+.feed.feed-off .feed-offmark {
+  display: inline;
+}
+
+/* The trailing note: staleness()'s text, whole. `margin-left: auto` puts it at the row's far
+   end, and overflow-wrap is the never-truncate rule made visual at every width rather than
+   only under the breakpoint, which is where it used to live. */
+#status {
+  margin-left: auto;
+  padding: 0 4px;
+  font: 600 10px var(--chrome-font);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+#status.error {
+  color: var(--accent-ink);
+}
+
+/* The clicked-bus route banner, its own header row. */
+#route-banner[hidden] {
+  display: none;
+}
+
+#route-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 16px;
+  border-top: 1px solid var(--rule);
+  font: 600 10px var(--chrome-font);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* The route's colour as a mark rather than as ink; systems/buses.js says why. The ink
+   boundary is the same one the feed ticks carry, for the same reason. */
+#route-banner-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+}
+
+#route-banner-label::before {
+  content: "";
+  width: 12px;
+  height: 3px;
+  flex: none;
+  background: var(--route-ink, var(--ink));
+  box-shadow: 0 0 0 1px var(--ink);
+}
+
+#route-clear {
+  min-height: 24px;
+  padding: 2px 8px;
+  border: 1px solid var(--divider);
+  background: transparent;
+  color: var(--ink);
+  font: 600 10px var(--chrome-font);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+#route-clear:hover {
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+}
+
+/* ----- The Key panel -------------------------------------------------------------------
+   Two columns, hairline-free, and SCROLLABLE, which is the second half of the old #panel
+   rule's bound: eighteen rows do not fit a 320x640 screen and the rows that fell off the
+   end used to be unreachable. 52vh leaves the alerts row and both header rows in view at
+   the smallest width the axe specs run at. */
+#legend {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px 18px;
+  padding: 10px 14px 12px;
+  border-top: 2px solid var(--divider);
+  /* THE ONE ROW THAT MAY SHRINK, and it scrolls what it cannot show. min-height:0 is the
+     part that is easy to leave out and silently disables the whole thing: a flex item's
+     default min-height is auto, which refuses to shrink below its content, so without it
+     this panel pushes the alerts row off the screen exactly as it did before the header
+     became a column. 52vh is the cap when there IS room, so the Key does not swallow the
+     map on a desktop. */
+  flex: 0 1 auto;
+  /* MR1 ROUND 2: A FLOOR, because "the only row allowed to shrink" and "allowed to vanish"
+     are not the same permission. min-height: 0 is what lets it shrink at all, and with a tall
+     row 1, a wrapped feed strip and three alerts it shrank to a slit: open, reporting
+     aria-expanded="true", and showing no rows. 96px is three rows and the scrollbar that says
+     there are more; below that the header itself is what has to give, which is the bound
+     above and the reason the alerts row can scroll too. */
+  min-height: min(96px, 100%);
+  max-height: 52vh;
   overflow-y: auto;
 }
 
 .legend-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
+/* MR1 ROUND 2: EVERY GLYPH SITS ON PAPER, IN BOTH THEMES, and the reason is that these
+   glyphs are pictures of MARKERS and MR1 does not restyle a marker. They were drawn for an
+   opaque white panel and they carry the map's own marker colours; measured against the dark
+   token surface they run from 1.11 to 2.63, all under the 3:1 a mark owes, and the one that
+   would "fix" them is a repaint of the markers themselves, which is MR2 through MR4. A key
+   whose glyphs did not match the map would be worse than a dim one.
+   So the glyph keeps its colour exactly and gains the paper it was drawn on, which is what a
+   printed key does and what the light theme was already giving it for free. Measured on the
+   plate: 3.80 at the lowest (the ferry hull) and 10.87 at the highest, in both themes,
+   because the plate does not move. The wider consequence, that a dark basemap and unthemed
+   markers are the same problem ON THE MAP, is a finding in the ledger rather than a thing
+   this rule can reach. */
 .legend-row svg {
   width: 16px;
   height: 16px;
   flex-shrink: 0;
+  box-sizing: content-box;
+  padding: 1px;
+  background: var(--glyph-plate);
 }
 
 .legend-note {
-  color: #555;
-  font-size: 12px;
-  margin-top: 2px;
-}
-
-#toggles {
-  display: flex;
-  flex-wrap: wrap;
-  row-gap: 4px;
-  column-gap: 14px;
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px solid #ddd;
-}
-
-#toggles label {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  cursor: pointer;
-  user-select: none;
-}
-
-#route-banner[hidden] {
-  display: none; /* author display:flex would otherwise defeat the hidden attribute */
-}
-
-#route-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px solid #ddd;
-  font-weight: 600;
-}
-
-/* A3: meets the 24px floor, which it did not before. Measured at 59x18 in the inventory
-   and missed by A2's floor work for a mundane reason: it only exists after a rider has
-   clicked a bus, so a sample of the resting page never sees it. The height comes from
-   padding and a min-height rather than a larger font, so the button looks the same as it
-   did; inline-flex keeps the label centred in the taller box. */
-#route-clear {
-  display: inline-flex;
-  align-items: center;
-  border: 1px solid #ccc;
-  background: #f6f6f6;
-  border-radius: 4px;
-  min-height: 24px;
-  padding: 1px 7px;
-  font: 12px system-ui, sans-serif;
-  cursor: pointer;
-}
-
-#route-clear:hover {
-  background: #ececec;
-}
-
-#status {
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px solid #ddd;
-  color: #333;
-}
-
-#status.error {
-  color: #a00000;
-  font-weight: 600;
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 11px;
 }
 
 /* Rotating bus markers */
@@ -322,84 +847,126 @@ main {
   font-style: italic;
 }
 
-/* Agency-wide alerts banner: a quiet but noticeable strip across the top of the map.
-   #alert-banner is just a positioning anchor and is empty (no visible box) until
-   map.js injects .alert-banner-strip. No MTA branding.
-   Anchored top-LEFT (not centered) and stacked ABOVE the top-right #panel. A centered
-   banner slid under the panel at narrow widths and was painted behind it (same
-   z-index, panel later in the DOM), hiding the alert on mobile. Left-anchored with a
-   higher z-index, a systemwide alert is always visible; on a narrow screen it may
-   briefly overlap the legend, which is acceptable since dismissing it restores the
-   panel and an agency-wide alert outranks the legend during an incident. */
-#alert-banner {
-  position: absolute;
-  top: 10px;
-  /* A2: STARTS CLEAR OF THE ZOOM CONTROL. The banner used to begin at 10px, the same
-     place Leaflet's zoom control sits, and won the stacking contest by exactly one
-     (banner 1001, control corner 1000). Measured before the fix: elementFromPoint over
-     the zoom-in button returned the banner, so the map could not be zoomed at all
-     while any agency-wide alert was showing, which is precisely when a rider wants to
-     look closer. 54px clears the control (10px margin + 34px button + 10px gap)
-     without moving the control itself, so nothing a rider has learned moves. */
-  left: 54px;
-  /* A3: AND IT STOPS CLEAR OF THE LEGEND PANEL, for the same reason A2 made it start
-     clear of the zoom control. The banner is z-index 1001 and #panel is 1000, so
-     wherever they meet the banner wins and whatever is under it stops being tappable.
-     The panel is `right: 10px; max-width: 240px`, so its left edge sits at
-     viewport - 250; 260px reserves that plus a 10px gap.
+/* ----- The service alerts row ----------------------------------------------------------
+   A FULL-WIDTH ROW INSIDE THE HEADER, with the red top rule, and it NEVER FOLDS (v3.1
+   point 1). #alert-banner is still only the anchor and is still empty until map.js injects
+   .alert-banner-strip, so an ordinary day has no row here at all rather than an empty one.
 
-     THE OVERLAP WAS REAL AND WIDER THAN THE PHONE. With `right: 10px` the banner ran to
-     x=614 at any width past 624 (54 + the 560px cap), while the panel's left edge is at
-     viewport - 250, so the two collided at every width below about 864: 320 and 375
-     where it was first measured, and the whole 701..864 band besides. The first version
-     of this fix moved the banner only under the mobile breakpoint and left that band
-     broken, which the boundary spec caught on its first run. Reserving the space here
-     fixes every width at once instead of one range at a time. */
-  right: 260px;
-  max-width: 560px; /* left-aligned; full width only on a narrow screen */
-  z-index: 1001; /* above Leaflet panes AND the legend #panel (z-index 1000) */
-}
+   THIS RETIRES A WHOLE CLASS OF BUG RATHER THAN RESTYLING ONE. The strip used to be an
+   independently positioned box, and every number in it was arithmetic on the legend panel's
+   geometry: `right: 260px` was "the panel is 240px wide at right:10px, plus a 10px gap",
+   `left: 54px` was "clear Leaflet's zoom control or the map cannot be zoomed during an
+   alert", and `body.stations-docked` moved it again when the station panel docked. A
+   partial earlier fix that only moved it under the mobile breakpoint left the whole 701 to
+   864px band broken. Two boxes that cannot overlap need none of it: this is a row, its
+   siblings are rows, and the header is the only thing positioned.
 
-/* The zoom control belongs to the MAP, which the docked panel pushes right, while the
-   banner is positioned against the body. Mirror the same offset the map itself takes
-   (see body.stations-docked #map below) so the clearance holds when the panel is
-   docked, instead of the banner sliding back over the control. */
-body.stations-docked #alert-banner {
-  left: calc(min(360px, 92vw) + 54px);
+   It also retires --alert-banner-height, which existed so the legend panel could subtract
+   the banner's height from its own bound. Nothing subtracts anything now. */
+/* MR1 ROUND 2: THE STRIP SHRINKS LAST, AND IT DOES SHRINK. The header's bound caps its BOX,
+   and a box whose children are all flex:none overflows it rather than obeying it: with the
+   Key open and three wrapped alerts at 320, the row ran past the 72px reserve and back over
+   Leaflet's zoom control and the OSM attribution, which is the thing the reserve exists to
+   keep clear. The Key gives way first (it is 0 1 auto with the lower floor); this gives way
+   second, and scrolls what it cannot show, so the row is never pushed off the screen and
+   never covers the attribution. It never folds, which is a different promise and still kept:
+   it carries no fold class and is always rendered. */
+#alert-banner:not(:empty) {
+  display: block;
+  border-top: 2px solid var(--accent);
+  flex: 0 1 auto;
+  min-height: min(48px, 100%);
+  overflow-y: auto;
 }
 
 .alert-banner-strip {
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  background: #fde8b0;
-  border: 1px solid #d9a406;
-  border-radius: 6px;
-  padding: 7px 10px;
-  font: 12px/1.4 system-ui, sans-serif;
-  color: #4a3c10;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  padding: 10px 14px;
+  font: 400 12px/1.45 var(--chrome-font);
+  color: var(--ink);
 }
 
 .alert-banner-rows {
   flex: 1;
+  min-width: 0;
 }
 
 .alert-banner-row + .alert-banner-row {
-  margin-top: 4px;
-  padding-top: 4px;
-  border-top: 1px solid rgba(217, 164, 6, 0.4);
+  margin-top: 8px;
+}
+
+/* The freshness hedge, in the accent rather than in an amber of its own: this file now has
+   one attention colour and the hedge is the same kind of statement as a stale feed's note.
+
+   MR1 ROUND 2: SCOPED TO THE STRIP, because `.alert-stale` is not the strip's class. The
+   same class carries the same hedge inside every popup's alert block (systems/shared.js's
+   routeAlertsBlock and stationAlertsBlock), where the surface is still the popup's white and
+   the ink is still #666 at 5.74. Unscoped, this rule repainted all of them: 6.09 in the
+   light theme, which is legal and out of scope, and 2.59 in the dark one, which is neither.
+   The pins did not catch it because they hold popup HTML, and this is a computed style. */
+#alert-banner .alert-stale {
+  color: var(--accent-ink);
+  font-weight: 600;
 }
 
 #alert-banner-dismiss {
   flex: none;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0 4px;
   border: none;
   background: transparent;
   cursor: pointer;
-  font-size: 16px;
-  line-height: 1;
-  color: #4a3c10;
-  padding: 0 2px;
+  font: 400 16px/1 var(--chrome-font);
+  color: var(--muted);
+}
+
+#alert-banner-dismiss:hover {
+  color: var(--ink);
+}
+
+/* ----- The bottom-right control stack ---------------------------------------------------
+   Above Leaflet's zoom control, which systems/shared.js puts in the same corner. FIXED
+   rather than absolute, because this is a child of the header (it is chrome, so it belongs
+   inside the banner landmark and inside the station panel's inert sweep) while it draws at
+   the other end of the viewport. The header carries no filter, transform or contain, so it
+   is not a containing block and `fixed` means the viewport; the comment on #panel says so
+   from the other side. */
+#view-stack {
+  position: fixed;
+  right: 12px;
+  bottom: 100px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--divider);
+}
+
+#view-stack button {
+  height: 30px;
+  min-width: 72px;
+  padding: 0 12px;
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  background: transparent;
+  color: var(--ink);
+  font: 600 10px var(--chrome-font);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: left;
+  cursor: pointer;
+}
+
+#view-stack button:last-child {
+  border-bottom: 0;
+}
+
+#view-stack button[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--surface);
 }
 
 /* ==================================================================
@@ -446,21 +1013,13 @@ body.stations-docked #alert-banner {
   text-decoration: none;
 }
 
-#stations-toggle {
-  display: block;
-  width: 100%;
-  margin-bottom: 8px;
-  padding: 6px 10px;
-  font: 600 13px system-ui, sans-serif;
-  color: #1a1a1a;
-  background: #f1f5f9;
-  border: 1px solid #cbd5e1;
-  border-radius: 4px;
-  cursor: pointer;
-}
-#stations-toggle:hover {
-  background: #e2e8f0;
-}
+/* MR1 ROUND 2: #stations-toggle IS STYLED IN THE HEADER BLOCK, AND WAS STYLED TWICE.
+   This rule is where A1 put it, with the station surface it opens, and it was written for a
+   vertical panel: `display: block; width: 100%` is a full-width row in a 240px box. The
+   header gives it the design's one filled action, and this rule sat LATER in the file at
+   equal specificity, so it won: measured, the button rendered as a full-width light-grey
+   bordered box and the accent fill never appeared on screen at all. Deleted rather than
+   moved, because the header rule is the whole of it now. */
 
 /* The slide-over: over the map on narrow viewports, above the Leaflet panes
    (which top out around z-index 700) and above the legend. */
@@ -643,26 +1202,46 @@ body.stations-docked #alert-banner {
 #stations-panel :focus-visible,
 #stations-toggle:focus-visible,
 #legend-toggle:focus-visible,
-#toggles label:focus-within,
-#toggles input:focus-visible,
+#theme-toggle:focus-visible,
+/* MR1 ROUND 2: the Key panel is a tab stop (it scrolls, so it has to be), and it was the one
+   new control left out of this list, falling back to the browser's own ring. */
+#legend:focus-visible,
+#toggles button:focus-visible,
+#view-stack button:focus-visible,
 #route-clear:focus-visible,
 #alert-banner-dismiss:focus-visible,
 .popup-crosslink:focus-visible,
 .leaflet-popup-close-button:focus-visible,
 .leaflet-control-zoom a:focus-visible,
 .leaflet-control-attribution a:focus-visible {
-  outline: 3px solid #1d4ed8;
+  outline: 3px solid var(--focus);
   outline-offset: 1px;
   border-radius: 3px;
 }
 
-/* The layer toggles are a checkbox inside a label, and the checkbox is what receives
-   focus while the label is what a rider sees and clicks. Ringing the label via
-   :focus-within puts the indicator around the whole target rather than around a 13px
-   box, which is the same reasoning that made the label the 24px hit target in A2. */
-#toggles label:focus-within {
-  outline-offset: 2px;
+/* MR1 ROUND 2: THE ONE FILLED CONTROL RINGS INSIDE ITSELF, because its own background is
+   not the header's. Every other control here is transparent, so the ring lands on --surface
+   and --focus clears it at 5.53 and 4.86. The Stations button is the design's one accent
+   fill, and no single colour clears 3:1 against BOTH that fill and the surface beside it:
+   measured, --focus reads 1.10 on the fill, --ink 2.73, and --chipink clears the fill at 5.45
+   but the surface at 1.06. A negative offset puts the ring on the fill, where one colour is
+   enough and where the measurement and the drawing agree about which surface it is on.
+   (This was invisible until round 2 deleted the old A1 rule that had been overriding the
+   fill: a bug hiding a bug, and the ring spec found the second one the same hour.) */
+#stations-toggle:focus-visible {
+  outline-color: var(--chipink);
+  outline-offset: -3px;
 }
+
+/* MR1: the feed toggles are BUTTONS now, so the ring goes on the control itself.
+   The rule they replace ringed the LABEL through :focus-within, because a layer toggle was a
+   13px checkbox inside a label and ringing the checkbox would have drawn a 13px indicator
+   around a 24px target. A button is its own target at 30px tall, so there is nothing to
+   delegate to and the extra outline-offset that compensated for the delegation is gone with
+   The ring becomes var(--focus) rather than var(--accent): it is measured against the
+   surfaces it appears on (mobile.spec.js A6f requires 3:1 against the nearest opaque
+   ancestor), and the token carries #1d4ed8 in the light theme unchanged plus a lightened
+   #7795e8 in the dark one, where the original measured 2.10. */
 
 /* Docked rather than overlaid once there is room for both, per the phase's
    placement decision: at this width the panel and the map coexist instead of the
@@ -688,6 +1267,16 @@ body.stations-docked #alert-banner {
   body.stations-docked #map {
     left: min(360px, 92vw);
     width: calc(100% - min(360px, 92vw));
+  }
+
+  /* MR1: AND THE HEADER MOVES WITH THE MAP IT BELONGS TO. The docked panel is beside the
+     map rather than over it, and the chrome is the map's chrome: left at 0 it ran under the
+     panel and the brand, the clock and the first two trunks of the subway key were behind
+     it. The old right-hand legend never met this because it was anchored to the other edge,
+     which is also why the alert strip needed its own body.stations-docked rule and now does
+     not: it is a row of this element. */
+  body.stations-docked #panel {
+    left: min(360px, 92vw);
   }
 }
 
@@ -754,20 +1343,16 @@ body.stations-docked #alert-banner {
   transform: translateX(-50%);
 }
 
-/* The layer toggles were 13px checkboxes inside 20px-high labels. The LABEL is the hit
-   target (clicking it toggles its input), so giving the label the floor is enough and
-   the checkbox keeps its native size. */
-#toggles label {
-  min-height: 24px;
-}
-
-/* The banner's dismiss control measured 13x16: padding takes it to the floor without
-   enlarging the glyph. */
-#alert-banner-dismiss {
-  min-width: 24px;
-  min-height: 24px;
-  padding: 4px 6px;
-}
+/* MR1: every chrome control is at or above the A2 floor by its own height, so the rules that
+   used to raise them are gone rather than restated.
+   The layer toggles were 13px checkboxes inside 20px labels and needed the label given a
+   min-height; the feed buttons that replace them are 30px. #alert-banner-dismiss measured
+   13x16 and needed padding; it now carries min-width, min-height and padding in its own rule
+   beside the rest of the alerts row, because the floor is part of that control's definition
+   rather than an afterthought applied in a different section of this file. The header's three
+   actions and the three view presets are all 30px for the same reason.
+   layout.spec.js is what holds this, at both widths, and its control list moved with the
+   selectors. */
 
 /* ---------------- A2: reduced motion ---------------- */
 
@@ -804,11 +1389,6 @@ body.stations-docked #alert-banner {
    is a number that drifts. The 1100px docked threshold is a different decision and
    A3 does not touch it. */
 
-/* The legend disclosure button exists at every width and is hidden above the
-   breakpoint, so the control is never present without being usable. */
-#legend-toggle {
-  display: none;
-}
 
 /* Same shape for the panel's close button: hidden where the panel is a drawer beside
    the map and #stations-toggle is visible next to it, shown where the panel covers the
@@ -850,60 +1430,56 @@ body.stations-docked #alert-banner {
     cursor: pointer;
   }
 
-  #legend-toggle {
-    display: block;
-    width: 100%;
-    margin-bottom: 6px;
-    padding: 6px 10px;
-    min-height: 24px;
-    font: 600 13px system-ui, sans-serif;
-    color: #1a1a1a;
-    background: #f1f5f9;
-    border: 1px solid #cbd5e1;
-    border-radius: 4px;
-    text-align: left;
-    cursor: pointer;
+  /* MR1: THE HEADER FOLDS TO ONE ROW, and the arithmetic that used to be here is gone.
+     The subway key and the feed strip are hidden behind the Key button by
+     applyHeaderDisclosure in systems/shared.js (the `hidden` attribute, not a rule here, so
+     one boolean drives what is drawn and what aria-expanded says). The alerts row does NOT
+     fold, at any width, which is v3.1 point 1.
+
+     WHAT THIS REPLACES. `max-width: 60vw` and `max-height: calc(100vh - 40px -
+     var(--alert-banner-height, 0px))` were both about two independently positioned boxes:
+     the panel was a 240px box at top right and the banner a strip at the bottom, and the
+     panel's bound existed so its end did not scroll away behind the banner during an
+     incident, with the banner's measured height published from script because it grows with
+     each alert. The strip is a row of this header now, so there is nothing to subtract and
+     nothing to measure: the header is full width, bounded by the viewport, and the Key panel
+     is what scrolls. */
+  #hdr-row1 {
+    padding: 0 12px;
   }
 
-  #panel {
-    max-width: 60vw;
-    /* AND IT STOPS ABOVE THE BANNER, which at this width lives at the bottom of the
-       screen. 40px is this layout's own geometry: the panel's 10px top inset, the
-       banner's 22px bottom inset, and an 8px gap between them. The banner's HEIGHT is
-       not a constant and is not guessed here: systems/shared.js measures the rendered
-       strip and publishes it, because it grows with each additional alert and with how
-       the header wraps at a given width.
-       Without this the panel ran to y=657 at 375x667 while the banner sat at 595..645.
-       Nothing was hidden from view (the banner paints above the panel), but the panel's
-       last 62px were unreachable: it scrolls its own overflow, so its END is what lands
-       behind the banner, and on a phone during an incident that is the status line. */
-    max-height: calc(100vh - 40px - var(--alert-banner-height, 0px));
+  #toggles {
+    padding: 0 8px;
+    min-height: 0;
   }
 
-  /* THE ALERT BANNER MOVES OFF THE CONTROLS. Measured before this rule, at both 320
-     and 375 with an agency-wide alert showing: document.elementFromPoint at the
-     centre of #stations-toggle returned div.alert-banner-row, and a real Playwright
-     click on the toggle timed out on actionability. The Stations panel is the entire
-     text path to arrivals, so on a phone during a systemwide incident the one surface
-     built for riders who cannot use the map could not be tapped. It stayed reachable
-     by keyboard, because Tab and Enter do not hit-test, which is exactly why nothing
-     had noticed.
-     The banner goes to the bottom rather than the panel going down: banner height
-     varies with the number of alerts, so any top offset for the panel would be a
-     guess that breaks on the second alert. `bottom: 22px` clears Leaflet's
-     attribution strip, which must stay legible for the tile licence. */
-  #alert-banner {
-    top: auto;
-    bottom: 22px;
-    left: 8px;
-    right: 8px;
-    max-width: none;
+  /* The note is the row at this width, so it takes the row's own left edge rather than
+     trailing to the right of buttons that are not there. */
+  #feed-buttons[hidden] ~ #status {
+    margin-left: 0;
+    padding: 6px 0;
   }
 
-  /* The docked offset above is a desktop rule; at this width nothing is docked, and
-     leaving it applied would push the banner off the right edge. */
-  body.stations-docked #alert-banner {
-    left: 8px;
+  /* The Key panel gets more of the screen once it is the only thing open, and it still
+     stops short of the alerts row below it. */
+  #legend {
+    grid-template-columns: 1fr;
+    max-height: 60vh;
+  }
+
+  /* The presets clear the attribution strip and Leaflet's zoom control at this width. */
+  #view-stack {
+    bottom: 92px;
+  }
+
+  /* AND THEY STAND DOWN WHILE THE KEY IS OPEN. On a phone the open Key panel reaches most of
+     the screen, and the stack is fixed to the viewport rather than to the header, so the two
+     collide: measured at 320x640, the presets painted over four rows of the key. A rider
+     reading the key is not choosing a view, and the header is what they asked for, so the
+     chrome that was asked for wins. Above the breakpoint there is room for both and this
+     does not apply. */
+  #legend:not([hidden]) ~ #view-stack {
+    display: none;
   }
 
   /* Popups are sized to the viewport, not to Leaflet's 300px default plus whatever
@@ -912,9 +1488,7 @@ body.stations-docked #alert-banner {
     max-width: calc(100vw - 60px);
   }
 
-  /* The status line wraps rather than truncating; the never-truncate rule for problem
-     statements is stated at statusLineText in helpers.js. */
-  #status {
-    overflow-wrap: anywhere;
-  }
+  /* The note wraps rather than truncating at every width now; the rule moved into the base
+     #status rule, because the never-truncate rule for problem statements was never about the
+     breakpoint. Stated at statusNoteText in helpers.js. */
 }

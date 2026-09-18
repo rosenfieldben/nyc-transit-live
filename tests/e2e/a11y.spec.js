@@ -67,8 +67,14 @@ const agencyAlert = (n) => ({
 // analyze() never resolves and the spec dies on the test timeout rather than on a
 // violation. setFixedTime pins Date.now (which keeps the app's skew calibration at zero
 // and its ages deterministic) while leaving timers running.
-async function open(page, { alerts = 0, stationAlerts = false } = {}) {
+async function open(page, { alerts = 0, stationAlerts = false, staleRailroad = false } = {}) {
   const ctx = await installMocks(page);
+  // Metro-North's own poll aged six minutes: enough to raise the status line and dim its
+  // markers, and nothing else about the page changes.
+  if (staleRailroad) {
+    ctx.overrides.railroads = (route, fixtures) =>
+      json(route, fixtures.railroadsWithSystems({ mnrAt: fx.FROZEN_S - 360 }));
+  }
   // Agency-wide alerts go to the banner; station-scoped ones go to the panel and the
   // popups (F11). A state asks for one kind or the other, never a mix, so that a
   // contrast finding names one surface rather than two.
@@ -161,6 +167,22 @@ function identities(page, targets) {
    the old count. The shapes below say what an incomplete may BE; anything outside them
    fails, however many of them there are. */
 const UNDECIDABLE_SHAPES = [
+  {
+    /* MR1. The Key panel scrolls at phone widths, where its eighteen rows are one column and
+       do not fit; a row straddling its own scroll boundary is CLIPPED, and axe reports a
+       clipped element as one whose background it cannot determine. A rider scrolls and reads
+       it, so this is a tool limit rather than a defect, and it is the narrowest kind: the
+       rows' ink and the surface behind them are two custom properties with fixed values.
+       Scoped to #legend by both the id and the message, so it cannot excuse an obscured
+       element anywhere else, and answered by A1x below rather than assumed. */
+    name: "a Key panel row clipped by the panel's own scroll boundary",
+    rule: "color-contrast",
+    message: /partially obscured by another element|obscured by another element/,
+    where: (id) => /^#legend /.test(id),
+    decider:
+      "a11y.spec.js A1x measures every Key panel row's computed ink against the header's " +
+      "computed background at 1280, 375 and 320, in both themes, and requires 4.5",
+  },
   {
     name: "a single-character glyph drawn inside an SVG icon",
     rule: "color-contrast",
@@ -314,7 +336,39 @@ const STATES = [
          the drawer, could never be caught here. */
       await expectState(page, "panel closed", "the gate's map-alone state");
     },
-    targets: ["leaflet-control-zoom", "#toggles", "#status"],
+    /* MR1 MOVED THESE, and the reason is the fold. `#toggles` and `#status` are inside the
+       feed strip, which folds behind the Key button below 700px, so at 375 they are not on
+       the page for axe to examine and this list would have failed as the vacuity check it is.
+       A state that runs at more than one width can only name targets that exist at all of
+       them; the strip and the note get their own state below, at all three widths, which is
+       MORE coverage than naming them here ever gave (the Key panel itself was never scanned
+       open at 375 before, because the disclosure kept it shut and nothing opened it). */
+    targets: ["leaflet-control-zoom", "#panel", "#view-stack"],
+  },
+  {
+    /* MR1: THE HEADER WITH EVERYTHING OPEN, at all three widths. The feed strip's eight
+       buttons, the trailing note and the Key panel's eighteen rows are the largest block of
+       new text this stage adds, and below 700px they are reachable only through this
+       disclosure. Run at NARROW too, because 320 is where the header has the least room and
+       the most chance of overlapping something. */
+    key: "key open",
+    alerts: 0,
+    viewports: [DESKTOP, PHONE, NARROW],
+    // A STALE FEED, SO THE NOTE HAS SOMETHING TO SCAN. #status is one of this state's targets
+    // and it is EMPTY on a healthy page by design, which would make the anti-vacuity check
+    // pass on an element axe never looked at. A degraded feed also puts the note in its
+    // .error colour, which is the one chrome string that changes colour at all.
+    staleRailroad: true,
+    async reach(page) {
+      if (await page.evaluate(() => !document.getElementById("stations-panel").hidden)) {
+        await page.evaluate(() => closeStationsPanel());
+      }
+      await page.locator("#legend-toggle").click();
+      await expect(page.locator("#legend")).toBeVisible();
+      await expect(page.locator("#toggles")).toBeVisible();
+      await expect(page.locator("#toggle-subway")).toBeVisible();
+    },
+    targets: ["#toggles", "#status", "#legend", "toggle-subway", "legend-row"],
   },
   {
     key: "panel list",
@@ -455,6 +509,11 @@ const STATES = [
     // stops reaching it. That is the half the first draft was missing: the state reached
     // the wrong popup AND nothing asked whether a cross-link had been examined.
     targets: ["leaflet-popup", "popup-crosslink"],
+    // BOTH THEMES, by ruling. A popup is the surface a rider reads longest and the one MR1
+    // does not restyle: its vocabulary is MR5's. Scanning it in the dark theme now is how
+    // "unchanged" stops being an assumption, and it is what will catch MR5 the first time a
+    // popup rule reaches for a token.
+    themes: ["light", "dark"],
   },
   {
     key: "banner active",
@@ -508,6 +567,18 @@ async function assertNothingIsMidTransition(page, label) {
       document
         .getAnimations()
         .filter((a) => a.playState === "running")
+        /* MR1: AN ENDLESS ANIMATION IS NOT A TRANSITION, and waiting for one is waiting
+           forever. This asked for an empty list, which is the right question about a
+           TRANSITION: it is a move from one settled state to another, so "still running"
+           means the scan is early. The header's clock carries a dot that pulses on a 2s loop
+           for as long as the page is open, and it never settles by design; measured, every
+           one of the seventeen scans died on its five-second wait rather than on anything it
+           found. What the wait protects is a measurement taken between two states, so the
+           filter is on the thing that HAS two states. The pulse is still gated and still
+           asserted, at motion.spec.js A5b and A5d, which is where a claim about the
+           preference belongs; and the element it animates is a 5px square carrying no text,
+           so its opacity is nothing axe measures contrast against. */
+        .filter((a) => !(a.effect && a.effect.getComputedTiming().iterations === Infinity))
         .map((a) => a.transitionProperty || a.animationName || "an animation")
         .sort(),
     );
@@ -523,27 +594,109 @@ async function assertNothingIsMidTransition(page, label) {
     });
 }
 
+/* MR1: A THEME AXIS, AND ONLY ONE STATE OPTS INTO IT SO FAR. The page has two themes as of
+   this stage and every scan above ran in one of them, so a token that failed only in the dark
+   set would ship unseen; the popup state opts in by ruling, because a popup is the surface a
+   rider spends the longest reading and it is the one this stage does NOT restyle.
+
+   SET THROUGH applyTheme(), NOT THROUGH THE BUTTON, because the button is hidden until MR4
+   (index.html says why) and a spec that clicked it would be testing a control a rider cannot
+   reach. Going through the app's own function rather than writing the attribute keeps the
+   test on the same path the rider will take when the control comes back. */
+async function setTheme(page, theme) {
+  await page.evaluate((want) => applyTheme(want), theme);
+  await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+}
+
 for (const state of STATES) {
   // Two widths unless a state asks for more. The loop used to be viewport-outer with a
   // fixed pair; it is state-outer now so one state can opt into a third width without
   // every other state paying for it.
   for (const viewport of state.viewports ?? [DESKTOP, PHONE]) {
     if (state.only && state.only !== viewport) continue;
-    test(`A1w. page-wide axe at ${viewport.width}: ${state.key}`, async ({ page }) => {
-      await page.setViewportSize(viewport);
-      await open(page, { alerts: state.alerts, stationAlerts: state.stationAlerts });
-      await state.reach(page);
-      await assertNothingIsMidTransition(page, `${viewport.width} / ${state.key}`);
+    for (const theme of state.themes ?? ["light"]) {
+      const label = `${viewport.width} / ${state.key}${theme === "light" ? "" : ` / ${theme}`}`;
+      test(`A1w. page-wide axe at ${viewport.width}: ${state.key}${theme === "light" ? "" : ` (${theme})`}`, async ({
+        page,
+      }) => {
+        await page.setViewportSize(viewport);
+        await open(page, {
+          alerts: state.alerts,
+          stationAlerts: state.stationAlerts,
+          staleRailroad: state.staleRailroad,
+        });
+        if (theme !== "light") await setTheme(page, theme);
+        await state.reach(page);
+        await assertNothingIsMidTransition(page, label);
 
-      // NO include() AT ALL: this is the whole document, which is the deliverable.
-      const results = await scanPage(page);
-      const label = `${viewport.width} / ${state.key}`;
-      expect(violations(results), `${label}: page-wide axe violations`).toEqual([]);
-      await assertUndecidablesAreKnown(page, results, label);
-      assertScanned(results, { targets: state.targets, label });
-    });
+        // NO include() AT ALL: this is the whole document, which is the deliverable.
+        const results = await scanPage(page);
+        expect(violations(results), `${label}: page-wide axe violations`).toEqual([]);
+        await assertUndecidablesAreKnown(page, results, label);
+        assertScanned(results, { targets: state.targets, label });
+      });
+    }
   }
 }
+
+test("A1x. the Key panel's rows are legible, at every width and in both themes", async ({ page }) => {
+  /* THE ANSWER TO THE SHAPE ABOVE. axe declines a row that its own panel has clipped, so the
+     question is asked here instead, and asked of the COMPUTED values rather than of the
+     stylesheet: a row's ink and the header's background are both custom properties, and a
+     token edited without measuring is exactly what this catches.
+
+     EVERY ROW, not a sample. The Key panel is the app's one long list of chrome text, the
+     rows that fail are by construction the ones a rider has to scroll to, and a spec that
+     measured the first three would be measuring the ones axe could already decide.
+
+     BOTH THEMES, because MR1 is the stage that gave this page a second one and nothing in
+     this suite had ever scanned it. AND THREE WIDTHS, because the panel is two columns at
+     1280 and one below, and the row that straddles the scroll boundary differs at each. */
+  for (const viewport of [DESKTOP, PHONE, NARROW]) {
+    await page.setViewportSize(viewport);
+    await open(page, { alerts: 0 });
+    await page.locator("#legend-toggle").click();
+    await expect(page.locator("#legend")).toBeVisible();
+
+    for (const theme of ["light", "dark"]) {
+      await setTheme(page, theme);
+
+      const measured = await page.evaluate(() => {
+        const srgb = (c) => {
+          c /= 255;
+          return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+        };
+        const lum = ([r, g, b]) => 0.2126 * srgb(r) + 0.7152 * srgb(g) + 0.0722 * srgb(b);
+        const parse = (value) => {
+          const m = String(value).match(/rgba?\(([^)]+)\)/);
+          return m ? m[1].split(/[\s,/]+/).filter(Boolean).map(Number).slice(0, 3) : null;
+        };
+        // The header's surface, read off the element that paints it rather than assumed: if
+        // it ever stops being opaque this returns the transparent value and the ratio below
+        // goes null, which is a failure rather than a pass.
+        const panel = getComputedStyle(document.getElementById("panel")).backgroundColor;
+        const surface = /rgba?\([^)]*,\s*0?\.\d+\)/.test(panel) ? null : parse(panel);
+        const rows = [...document.querySelectorAll("#legend .legend-row, #legend .legend-note")];
+        return {
+          surface,
+          panel,
+          rows: rows.map((row, i) => {
+            const ink = parse(getComputedStyle(row).color);
+            if (!ink || !surface) return { i, ink: getComputedStyle(row).color, ratio: null };
+            const [hi, lo] = [lum(ink), lum(surface)].sort((a, b) => b - a);
+            return { i, ink: getComputedStyle(row).color, ratio: +((hi + 0.05) / (lo + 0.05)).toFixed(2) };
+          }),
+        };
+      });
+
+      const label = `${viewport.width} / ${theme}`;
+      expect(measured.surface, `${label}: the header surface must be opaque (got ${measured.panel})`).not.toBeNull();
+      expect(measured.rows.length, `${label}: the scan must find rows, or it decides nothing`).toBe(19);
+      const dim = measured.rows.filter((r) => r.ratio === null || r.ratio < 4.5);
+      expect(dim, `${label}: every Key panel row must clear AA on the header's surface`).toEqual([]);
+    }
+  }
+});
 
 test("A1z. the deciders: every named undecidable is answered by measurement", async ({ page }) => {
   // THE OTHER HALF OF THE EXCEPTION LIST. Each shape above says axe cannot decide something;
@@ -575,6 +728,15 @@ test("A1z. the deciders: every named undecidable is answered by measurement", as
 
   await page.setViewportSize(DESKTOP);
   await open(page, { alerts: 0 });
+
+  /* AND THE KEY PANEL IS OPENED, FOR THE SAME REASON THE POPUP IS BELOW. MR1 made the Key a
+     disclosure at every width (it used to be unconditionally open above 700px), and shape 1
+     of UNDECIDABLE_SHAPES excuses every single-character glyph drawn inside an SVG icon,
+     which is exactly what the legend's subway "A" is. A closed panel renders none of them,
+     so this spec would go on passing while the one class of glyph it was written to decide
+     had left the page. */
+  await page.locator("#legend-toggle").click();
+  await expect(page.locator("#legend")).toBeVisible();
 
   /* AND A POPUP IS OPENED, BECAUSE THE DECIDER SAYS SO. Round 4: shape 3 of
      UNDECIDABLE_SHAPES excuses BOTH `.leaflet-control-zoom-out span` and
@@ -628,7 +790,19 @@ test("A1z. the deciders: every named undecidable is answered by measurement", as
        painted fill="none", a colour this parser cannot read: each used to produce NaN,
        and `NaN < 4.5` is false, so an unmeasurable glyph passed as if it had been measured.
        Every one of them now returns a null ratio with a `why`, and null is a failure. */
-    const glyphs = [...document.querySelectorAll("svg text")].map((text) => {
+    const glyphs = [...document.querySelectorAll("svg text")]
+      // MR1: A GLYPH THAT IS NOT RENDERED HAS NO CONTRAST, and reporting it as unmeasurable
+      // is a false positive rather than the vigilance the rest of this scan is. A hidden
+      // element's rect is all zeros, so its centre is (0, 0) and nothing is under it: before
+      // this filter, closing any disclosure that contains a glyph failed this spec with "no
+      // painted shape sits under this glyph's centre". The Key panel is such a disclosure
+      // now, and the spec OPENS it (see the caller) so its glyphs are still in the sample;
+      // this filter is for the ones a state genuinely does not render.
+      .filter((text) => {
+        const b = text.getBoundingClientRect();
+        return b.width > 0 && b.height > 0;
+      })
+      .map((text) => {
       const svg = text.closest("svg");
       const shapes = svg ? [...svg.querySelectorAll("rect, circle, ellipse, path, polygon")] : [];
       const box = text.getBoundingClientRect();
@@ -707,7 +881,17 @@ test("A1z. the deciders: every named undecidable is answered by measurement", as
     const attribution = document.querySelector(".leaflet-control-attribution");
     const attrStyle = getComputedStyle(attribution);
     const attrBg = parse(attrStyle.backgroundColor);
-    const attrAlpha = Number((attrStyle.backgroundColor.match(/[\d.]+\)$/) || ["1)"])[0].replace(")", "")) || 1;
+    /* THE ALPHA, READ AS AN ALPHA. This took the last number before the ")" and called it the
+       alpha, which is true of `rgba(r, g, b, a)` and false of `rgb(r, g, b)`: on an opaque
+       background it returned the BLUE CHANNEL. It went unnoticed for as long as Leaflet's own
+       translucent default was in force, and MR1 made the attribution opaque (var(--surface)),
+       at which point the blend below produced ratios of 2118582 over black and -0.11 over
+       white. A four-component colour has an alpha and a three-component one is opaque. */
+    const attrParts = (String(attrStyle.backgroundColor).match(/rgba?\(([^)]+)\)/) || [, ""])[1]
+      .split(/[\s,/]+/)
+      .filter(Boolean)
+      .map(Number);
+    const attrAlpha = attrParts.length > 3 ? attrParts[3] : 1;
 
     return {
       // The zoom control is opaque white with its own border, so this one is a plain
@@ -937,7 +1121,12 @@ async function assertOwnedControlsReachable(page, walk, label, must = []) {
       "#stations-search",
       "#stations-close",
       "#alert-banner-dismiss",
-      "#toggles input",
+      // MR1: the layer toggles are BUTTONS in the feed strip now, not checkboxes in labels,
+      // and the header brought two more controls this list owes a reachability claim for:
+      // the theme toggle and the view presets.
+      "#toggles button",
+      "#theme-toggle",
+      "#view-stack button",
       "#route-clear",
       ".station-row",
     ];

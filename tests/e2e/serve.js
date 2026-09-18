@@ -13,12 +13,18 @@ const ROOT = path.resolve(__dirname, "..", "..", "frontend");
 const PORT = Number(process.env.E2E_PORT || 5173);
 
 // Only the content types the frontend actually serves; anything else is octet.
-// .png is here for the vendored Leaflet marker/layer images under vendor/leaflet.
+// .png is here for the vendored Leaflet marker/layer images under vendor/leaflet, and
+// .woff2 for the self-hosted Archivo under fonts/. THE FONT ENTRY IS NOT OPTIONAL: this
+// server sends X-Content-Type-Options: nosniff, mirroring the backend, and a font served as
+// application/octet-stream under nosniff is a browser's decision to refuse rather than a
+// certainty. The real backend needs nothing added: StaticFiles asks Python's mimetypes,
+// which already answers font/woff2.
 const TYPES = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".png": "image/png",
+  ".woff2": "font/woff2",
 };
 
 // Frontend security headers, MIRRORING backend/main.py's security_headers middleware

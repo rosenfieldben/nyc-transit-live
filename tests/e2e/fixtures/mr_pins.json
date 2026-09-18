@@ -1,0 +1,548 @@
+{
+ "alertBanner": {
+  "html": "<div class=\"alert-banner-strip\"><div class=\"alert-banner-rows\"><div class=\"alert-banner-row\">Reduced service systemwide while crews clear a disabled train</div><div class=\"alert-banner-row\">Some elevators are out of service across the system</div></div><button type=\"button\" id=\"alert-banner-dismiss\" title=\"Dismiss\">×</button></div>",
+  "rows": [
+   "Reduced service systemwide while crews clear a disabled train",
+   "Some elevators are out of service across the system"
+  ]
+ },
+ "legend": {
+  "names": [
+   "Bus (arrow points where it's heading)",
+   "Bus, heading unknown",
+   "Subway train, at/approaching the stop shown",
+   "Subway route line",
+   "Subway station (click for arrivals)",
+   "LIRR / Metro-North train (live GPS)",
+   "LIRR / Metro-North train (scheduled or estimated, no GPS)",
+   "LIRR / Metro-North route line",
+   "LIRR / Metro-North station (click for arrivals)",
+   "AirTrain JFK route line (scheduled service, no live tracking)",
+   "AirTrain JFK station (click for scheduled headways)",
+   "PATH station (click for arrivals); trains are diamonds",
+   "NYC Ferry boat (live GPS); dimmed when at a dock",
+   "Ferry dock (click for arrivals)",
+   "NJ Transit route line",
+   "NJ Transit train (scheduled or estimated, no GPS)",
+   "NJ Transit station (click for departures)",
+   "Color indicates route · click a bus to draw its route"
+  ]
+ },
+ "markers": {
+  "airtrain": {
+   "airtrainStations": [
+    {
+     "html": "<svg viewBox=\"0 0 14 14\"><rect x=\"1.5\" y=\"1.5\" width=\"11\" height=\"11\" rx=\"2\" fill=\"#fff\" stroke=\"#b5179e\" stroke-width=\"2.5\"/></svg>",
+     "className": "airtrain-marker",
+     "size": [
+      14,
+      14
+     ],
+     "anchor": [
+      7,
+      7
+     ],
+     "popupAnchor": [
+      0,
+      0
+     ],
+     "opacity": 1
+    },
+    {
+     "html": "<svg viewBox=\"0 0 14 14\"><rect x=\"1.5\" y=\"1.5\" width=\"11\" height=\"11\" rx=\"2\" fill=\"#fff\" stroke=\"#b5179e\" stroke-width=\"2.5\"/></svg>",
+     "className": "airtrain-marker",
+     "size": [
+      14,
+      14
+     ],
+     "anchor": [
+      7,
+      7
+     ],
+     "popupAnchor": [
+      0,
+      0
+     ],
+     "opacity": 1
+    },
+    {
+     "html": "<svg viewBox=\"0 0 14 14\"><rect x=\"1.5\" y=\"1.5\" width=\"11\" height=\"11\" rx=\"2\" fill=\"#fff\" stroke=\"#b5179e\" stroke-width=\"2.5\"/></svg>",
+     "className": "airtrain-marker",
+     "size": [
+      14,
+      14
+     ],
+     "anchor": [
+      7,
+      7
+     ],
+     "popupAnchor": [
+      0,
+      0
+     ],
+     "opacity": 1
+    }
+   ]
+  },
+  "buses": {
+   "buses": [
+    {
+     "html": "<svg viewBox=\"0 0 20 20\" style=\"transform: rotate(90deg)\">\n           <path d=\"M10 2 L16 17 L10 13 L4 17 Z\" fill=\"hsl(329, 75%, 40%)\" stroke=\"#fff\" stroke-width=\"1.2\"/>\n         </svg>",
+     "className": "bus-marker",
+     "size": [
+      20,
+      20
+     ],
+     "anchor": [
+      10,
+      10
+     ],
+     "popupAnchor": [
+      0,
+      0
+     ],
+     "opacity": 1
+    },
+    {
+     "html": "<svg viewBox=\"0 0 20 20\">\n           <circle cx=\"10\" cy=\"10\" r=\"5.5\" fill=\"hsl(292, 75%, 40%)\" stroke=\"#fff\" stroke-width=\"1.5\"/>\n         </svg>",
+     "className": "bus-marker",
+     "size": [
+      20,
+      20
+     ],
+     "anchor": [
+      10,
+      10
+     ],
+     "popupAnchor": [
+      0,
+      0
+     ],
+     "opacity": 1
+    }
+   ]
+  },
+  "ferry": {
+   "ferryBoats": [
+    {
+     "html": "<svg viewBox=\"0 0 22 14\"><rect x=\"1\" y=\"3\" width=\"20\" height=\"8\" rx=\"4\" fill=\"#00839c\" stroke=\"#fff\" stroke-width=\"1.5\"/></svg>",
+     "className": "ferry-marker ferry-active",
+     "size": [
+      22,
+      14
+     ],
+     "anchor": [
+      11,
+      7
+     ],
+     "popupAnchor": [
+      0,
+      0
+     ],
+     "opacity": 1
+    },
+    {
+     "html": "<svg viewBox=\"0 0 22 14\"><rect x=\"1\" y=\"3\" width=\"20\" height=\"8\" rx=\"4\" fill=\"#ffd100\" stroke=\"#fff\" stroke-width=\"1.5\"/></svg>",
+     "className": "ferry-marker ferry-docked",
+     "size": [
+      22,
+      14
+     ],
+     "anchor": [
+      11,
+      7
+     ],
+     "popupAnchor": [
+      0,
+      0
+     ],
+     "opacity": 0.55
+    },
+    {
+     "html": "<svg viewBox=\"0 0 22 14\"><rect x=\"1\" y=\"3\" width=\"20\" height=\"8\" rx=\"4\" fill=\"#78909c\" stroke=\"#fff\" stroke-width=\"1.5\"/></svg>",
+     "className": "ferry-marker ferry-active",
+     "size": [
+      22,
+      14
+     ],
+     "anchor": [
+      11,
+      7
+     ],
+     "popupAnchor": [
+      0,
+      0
+     ],
+     "opacity": 1
+    }
+   ],
+   "ferryDocks": [
+    {
+     "radius": 4.5,
+     "color": "#fff",
+     "weight": 1.5,
+     "fillColor": "#0e7490",
+     "fillOpacity": 1,
+     "pane": "overlayPane",
+     "opacity": 1
+    },
+    {
+     "radius": 4.5,
+     "color": "#fff",
+     "weight": 1.5,
+     "fillColor": "#0e7490",
+     "fillOpacity": 1,
+     "pane": "overlayPane",
+     "opacity": 1
+    }
+   ]
+  },
+  "lirr": {
+   "lirrTrains": [
+    [
+     "LIRR|lirr-placed-1",
+     {
+      "html": "<svg viewBox=\"0 0 16 16\"><rect x=\"2\" y=\"2\" width=\"12\" height=\"12\" rx=\"1.5\" fill=\"#fff\" stroke=\"#5d4037\" stroke-width=\"2.5\"/></svg>",
+      "className": "railroad-marker",
+      "size": [
+       16,
+       16
+      ],
+      "anchor": [
+       8,
+       8
+      ],
+      "popupAnchor": [
+       0,
+       0
+      ],
+      "opacity": 1
+     }
+    ]
+   ]
+  },
+  "mnr": {
+   "mnrTrains": [
+    [
+     "MNR|mnr-gps-1",
+     {
+      "html": "<svg viewBox=\"0 0 16 16\"><rect x=\"1.5\" y=\"1.5\" width=\"13\" height=\"13\" rx=\"1.5\" fill=\"#5d4037\" stroke=\"#fff\" stroke-width=\"1.5\"/></svg>",
+      "className": "railroad-marker",
+      "size": [
+       16,
+       16
+      ],
+      "anchor": [
+       8,
+       8
+      ],
+      "popupAnchor": [
+       0,
+       0
+      ],
+      "opacity": 1
+     }
+    ]
+   ]
+  },
+  "njt": {
+   "njtTrains": [
+    {
+     "html": "<svg viewBox=\"0 0 16 16\"><rect x=\"2\" y=\"2\" width=\"12\" height=\"12\" rx=\"1.5\" fill=\"#fff\" stroke=\"#DD3439\" stroke-width=\"2.5\"/></svg>",
+     "className": "njt-marker",
+     "size": [
+      16,
+      16
+     ],
+     "anchor": [
+      8,
+      8
+     ],
+     "popupAnchor": [
+      0,
+      0
+     ],
+     "opacity": 1
+    },
+    {
+     "html": "<svg viewBox=\"0 0 16 16\"><rect x=\"2\" y=\"2\" width=\"12\" height=\"12\" rx=\"1.5\" fill=\"#fff\" stroke=\"#E66859\" stroke-width=\"2.5\"/></svg>",
+     "className": "njt-marker",
+     "size": [
+      16,
+      16
+     ],
+     "anchor": [
+      8,
+      8
+     ],
+     "popupAnchor": [
+      0,
+      0
+     ],
+     "opacity": 1
+    },
+    {
+     "html": "<svg viewBox=\"0 0 16 16\"><rect x=\"2\" y=\"2\" width=\"12\" height=\"12\" rx=\"1.5\" fill=\"#fff\" stroke=\"#4a4e69\" stroke-width=\"2.5\"/></svg>",
+     "className": "njt-marker",
+     "size": [
+      16,
+      16
+     ],
+     "anchor": [
+      8,
+      8
+     ],
+     "popupAnchor": [
+      0,
+      0
+     ],
+     "opacity": 1
+    },
+    {
+     "html": "<svg viewBox=\"0 0 16 16\"><rect x=\"2\" y=\"2\" width=\"12\" height=\"12\" rx=\"1.5\" fill=\"#fff\" stroke=\"#4a4e69\" stroke-width=\"2.5\"/></svg>",
+     "className": "njt-marker",
+     "size": [
+      16,
+      16
+     ],
+     "anchor": [
+      8,
+      8
+     ],
+     "popupAnchor": [
+      0,
+      0
+     ],
+     "opacity": 1
+    }
+   ],
+   "njtStations": [
+    {
+     "html": "<svg viewBox=\"0 0 12 12\"><rect x=\"1\" y=\"1\" width=\"10\" height=\"10\" rx=\"1.5\" fill=\"#334155\" stroke=\"#fff\" stroke-width=\"1.5\"/></svg>",
+     "className": "njt-station-marker",
+     "size": [
+      12,
+      12
+     ],
+     "anchor": [
+      6,
+      6
+     ],
+     "popupAnchor": [
+      0,
+      0
+     ],
+     "opacity": 1
+    },
+    {
+     "html": "<svg viewBox=\"0 0 12 12\"><rect x=\"1\" y=\"1\" width=\"10\" height=\"10\" rx=\"1.5\" fill=\"#334155\" stroke=\"#fff\" stroke-width=\"1.5\"/></svg>",
+     "className": "njt-station-marker",
+     "size": [
+      12,
+      12
+     ],
+     "anchor": [
+      6,
+      6
+     ],
+     "popupAnchor": [
+      0,
+      0
+     ],
+     "opacity": 1
+    },
+    {
+     "html": "<svg viewBox=\"0 0 12 12\"><rect x=\"1\" y=\"1\" width=\"10\" height=\"10\" rx=\"1.5\" fill=\"#334155\" stroke=\"#fff\" stroke-width=\"1.5\"/></svg>",
+     "className": "njt-station-marker",
+     "size": [
+      12,
+      12
+     ],
+     "anchor": [
+      6,
+      6
+     ],
+     "popupAnchor": [
+      0,
+      0
+     ],
+     "opacity": 1
+    }
+   ]
+  },
+  "path": {
+   "pathTrains": [
+    {
+     "html": "<svg viewBox=\"0 0 16 16\"><path d=\"M8 1.5 L14.5 8 L8 14.5 L1.5 8 Z\" fill=\"#d93a30\" stroke=\"#fff\" stroke-width=\"1.5\"/></svg>",
+     "className": "path-marker",
+     "size": [
+      16,
+      16
+     ],
+     "anchor": [
+      8,
+      20
+     ],
+     "popupAnchor": [
+      0,
+      -20
+     ],
+     "opacity": 1
+    },
+    {
+     "html": "<svg viewBox=\"0 0 16 16\"><path d=\"M8 1.5 L14.5 8 L8 14.5 L1.5 8 Z\" fill=\"#d93a30\" stroke=\"#fff\" stroke-width=\"1.5\"/></svg>",
+     "className": "path-marker",
+     "size": [
+      16,
+      16
+     ],
+     "anchor": [
+      8,
+      20
+     ],
+     "popupAnchor": [
+      0,
+      -20
+     ],
+     "opacity": 1
+    }
+   ],
+   "pathStations": [
+    {
+     "radius": 4,
+     "color": "#fff",
+     "weight": 1.5,
+     "fillColor": "#3d5a80",
+     "fillOpacity": 1,
+     "pane": "overlayPane",
+     "opacity": 1
+    },
+    {
+     "radius": 4,
+     "color": "#fff",
+     "weight": 1.5,
+     "fillColor": "#3d5a80",
+     "fillOpacity": 1,
+     "pane": "overlayPane",
+     "opacity": 1
+    }
+   ]
+  },
+  "railroadStations": {
+   "railroadStations": [
+    {
+     "radius": 3.5,
+     "color": "#334155",
+     "weight": 2.5,
+     "fillColor": "#fff",
+     "fillOpacity": 1,
+     "pane": "overlayPane",
+     "opacity": 1
+    },
+    {
+     "radius": 3.5,
+     "color": "#334155",
+     "weight": 2.5,
+     "fillColor": "#fff",
+     "fillOpacity": 1,
+     "pane": "overlayPane",
+     "opacity": 1
+    }
+   ]
+  },
+  "subway": {
+   "subwayTrains": [
+    {
+     "html": "<svg viewBox=\"0 0 18 18\">\n      <rect x=\"1.5\" y=\"1.5\" width=\"15\" height=\"15\" rx=\"3\" fill=\"#c0392b\" stroke=\"#fff\" stroke-width=\"1.5\"/>\n      <text x=\"9\" y=\"9.5\" text-anchor=\"middle\" dominant-baseline=\"central\"\n            font-size=\"9\" font-weight=\"700\"\n            font-family=\"system-ui, sans-serif\" fill=\"#ffffff\">1</text>\n    </svg>",
+     "className": "train-marker",
+     "size": [
+      18,
+      18
+     ],
+     "anchor": [
+      9,
+      22
+     ],
+     "popupAnchor": [
+      0,
+      -22
+     ],
+     "opacity": 1
+    },
+    {
+     "html": "<svg viewBox=\"0 0 18 18\">\n      <rect x=\"1.5\" y=\"1.5\" width=\"15\" height=\"15\" rx=\"3\" fill=\"#1f5fbf\" stroke=\"#fff\" stroke-width=\"1.5\"/>\n      <text x=\"9\" y=\"9.5\" text-anchor=\"middle\" dominant-baseline=\"central\"\n            font-size=\"9\" font-weight=\"700\"\n            font-family=\"system-ui, sans-serif\" fill=\"#ffffff\">A</text>\n    </svg>",
+     "className": "train-marker",
+     "size": [
+      18,
+      18
+     ],
+     "anchor": [
+      9,
+      22
+     ],
+     "popupAnchor": [
+      0,
+      -22
+     ],
+     "opacity": 1
+    }
+   ],
+   "subwayStations": [
+    {
+     "radius": 4,
+     "color": "#333",
+     "weight": 1.5,
+     "fillColor": "#fff",
+     "fillOpacity": 1,
+     "pane": "overlayPane",
+     "opacity": 1
+    },
+    {
+     "radius": 4,
+     "color": "#333",
+     "weight": 1.5,
+     "fillColor": "#fff",
+     "fillOpacity": 1,
+     "pane": "overlayPane",
+     "opacity": 1
+    }
+   ]
+  }
+ },
+ "popups": {
+  "airtrain": {
+   "airtrain station": "<b>Terminal Alpha</b><div class=\"popup-sub\">AirTrain JFK · scheduled service (no live tracking)</div><div>Jamaica: every ~7 min <span class=\"popup-sub\">(scheduled)</span></div><div>Howard Beach: every ~7 min <span class=\"popup-sub\">(scheduled)</span></div>"
+  },
+  "buses": {
+   "bus": "<b style=\"color:hsl(329, 75%, 40%)\">M15</b><br>Bus MTA NYCT_101<br>Heading: 90°"
+  },
+  "ferry": {
+   "ferry boat": "<b style=\"color:#007c94\">East River</b> <span class=\"popup-sub\">NYC Ferry</span><br>Boat H201<br>Under way<br>12.6 kn",
+   "ferry dock": "<b>Wall St/Pier 11</b> <span class=\"popup-sub\">NYC Ferry</span> <span class=\"popup-access\" title=\"Wheelchair accessible\">♿</span><div class=\"arr-dir\" style=\"color:#007c94\">East River</div>1 min<div class=\"arr-dir\" style=\"color:#8c7300\">South Brooklyn</div>departs 1 min"
+  },
+  "lirr": {
+   "lirr train": "<b style=\"color:#5d4037\">LIRR · Babylon Branch</b><br>Train 521<br>Next stop: Jamaica<br>Outbound<br><span class=\"popup-sub\">scheduled (no GPS)</span><button type=\"button\" class=\"popup-crosslink\" data-station-key=\"LIRR|12\">Also here: Jamaica</button>",
+   "lirr station": "<b>Jamaica</b> <span class=\"popup-sub\">LIRR</span><div class=\"arr-dir\">Inbound</div><span class=\"arr-badge\" style=\"background:#5d4037;color:#ffffff\">1</span> Babylon Branch <span class=\"popup-sub\">#8412</span> 4 min<div class=\"arr-dir\">Outbound</div><span class=\"arr-badge\" style=\"background:#5d4037;color:#ffffff\">1</span> Babylon Branch <span class=\"popup-sub\">#8413</span> 7 min"
+  },
+  "mnr": {
+   "mnr train": "<b style=\"color:#5d4037\">MNR · Hudson</b><br>Train 1797<br><span class=\"popup-sub\">live GPS</span>",
+   "mnr station": "<b>Grand Central</b> <span class=\"popup-sub\">MNR</span><div class=\"arr-dir\">Inbound</div><span class=\"arr-badge\" style=\"background:#5d4037;color:#ffffff\">1</span> Hudson <span class=\"popup-sub\">#795</span> 4 min<div class=\"arr-dir\">Outbound</div><span class=\"arr-badge\" style=\"background:#5d4037;color:#ffffff\">1</span> Hudson <span class=\"popup-sub\">#812</span> 6 min"
+  },
+  "njt": {
+   "njt train": "<b style=\"color:#DD3439\">Northeast Corridor</b> <span class=\"popup-sub\">NJ Transit</span><br>Train 3800<br>To New York<br>Next stop: New York Penn Station<br>4 min late<br><span class=\"popup-sub\">estimated from a prediction</span>",
+   "njt station": "<b>New York Penn Station</b> <span class=\"popup-sub\">NJ Transit</span><span class=\"arr-badge\" style=\"background:#DD3439;color:#ffffff\">9</span> Trenton <span class=\"popup-sub\">3800</span> 1 min<br><span class=\"arr-badge\" style=\"background:#E66859;color:#1a1a1a\">2</span> Dover <span class=\"popup-sub\">6634</span> 5 min<br><span class=\"arr-badge\" style=\"background:#4a4e69;color:#ffffff\">?</span> Bay Head 8 min"
+  },
+  "path": {
+   "path train": "<b style=\"color:#d93a30\">Newark - World Trade Center</b> <span class=\"popup-sub\">PATH</span><br>Next stop: World Trade Center<br>To New York<br><span class=\"popup-sub\">scheduled position (no GPS)</span>",
+   "path station": "<b>World Trade Center</b> <span class=\"popup-sub\">PATH</span><div class=\"arr-dir\">To New York</div><span class=\"arr-badge\" style=\"background:#4d92fb;color:#1a1a1a\">859</span> Hoboken - 33rd 1 min<div class=\"arr-dir\">To New Jersey</div><span class=\"arr-badge\" style=\"background:#d93a30;color:#ffffff\">862</span> Newark - World Trade Center 5 min"
+  },
+  "subway": {
+   "subway train": "<b style=\"color:#c0392b\">1 train</b><br>Next stop: Times Sq-42 St<br>Northbound<br><span class=\"popup-sub\">scheduled position (no GPS)</span><br><span class=\"popup-sub\">Trip sub-1</span>",
+   "subway station": "<b>Times Sq-42 St</b><div class=\"arr-dir\">Northbound</div><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">1</span> 1 min<br><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span> 5 min<div class=\"arr-dir\">Southbound</div><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">1</span> 3 min"
+  }
+ },
+ "status": {
+  "f01": "railroad: MNR as of 6m ago; LIRR 24 trains not shown, last seen over 10m ago; MNR position age unavailable",
+  "f03": "trains: ACE group as of 10m ago"
+ }
+}

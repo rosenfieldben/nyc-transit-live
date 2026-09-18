@@ -167,17 +167,34 @@ test(`A4b. every interactive thing on the map surface meets the 24px floor at ${
     ).toBeLessThan(HIT_FLOOR);
   }
 
-  // The controls, which meet the floor by padding rather than by pseudo-element.
-  // A3 added the route-line clear button and the legend disclosure; both were measured
-  // sub-floor in the inventory (#route-clear at 59x18) or are new in this phase.
+  /* The controls, which meet the floor by padding rather than by pseudo-element.
+     A3 added the route-line clear button and the legend disclosure; both were measured
+     sub-floor in the inventory (#route-clear at 59x18) or are new in that phase.
+
+     MR1 REPLACED ONE ENTRY AND ADDED THREE. "#toggles label" was a 13px checkbox inside a
+     label given a min-height, and the feed strip's buttons are 30px in their own right;
+     "#legend-toggle" is no longer width-conditional, because the Key is a disclosure at every
+     width now; and the theme toggle and the view presets are new controls this stage brings,
+     which is exactly the class of thing that stayed unmeasured last time (#route-clear went
+     a whole phase at 59x18 because nothing sampled it).
+     THE FEED STRIP IS OPENED FIRST at phone widths, since it folds behind the Key there and a
+     control that is not rendered has no box to measure. */
+  if (viewport.width <= 700) {
+    await page.locator("#legend-toggle").click();
+    await expect(page.locator("#feed-buttons")).toBeVisible();
+  }
   const controls = [
-    "#toggles label",
+    "#toggle-subway",
+    "#toggle-airtrain",
     "#alert-banner-dismiss",
     ".leaflet-control-zoom-in",
     ".leaflet-control-zoom-out",
     "#stations-toggle",
+    "#legend-toggle",
   ];
-  if (viewport.width <= 700) controls.push("#legend-toggle");
+  // The view presets stand down while the Key is open on a phone (they would paint over it),
+  // so they are measured where they are drawn.
+  if (viewport.width > 700) controls.push("#view-city", "#view-region");
   for (const selector of controls) {
     const box = await rect(page, selector);
     expect(box, `${selector} must exist at ${label}`).not.toBeNull();
@@ -643,7 +660,12 @@ test("A4i. closing the docked panel gives the map its column back", async ({ pag
         mapWidth: Math.round(m.width),
         overflow: de.scrollWidth - de.clientWidth,
         strip: !!(at && document.getElementById("map").contains(at)),
-        bannerLeft: getComputedStyle(document.getElementById("alert-banner")).left,
+        // MR1: THE SECOND RULE KEYED ON THIS CLASS IS THE HEADER'S, not the banner's. The
+        // alerts strip is a row inside the header now and is positioned by nothing, so it has
+        // no `left` to rot; the header is what has to step aside for the docked column, and
+        // it is what would strand the brand, the clock and the first two trunks of the subway
+        // key behind the panel if the reservation outlived the panel again.
+        headerLeft: getComputedStyle(document.getElementById("panel")).left,
       };
     });
 
@@ -652,6 +674,7 @@ test("A4i. closing the docked panel gives the map its column back", async ({ pag
   expect(open1.reserved, "the panel is docked open at 1280").toBe(true);
   expect(open1.mapLeft, "the map starts beside the panel").toBe(360);
   expect(open1.strip, "the panel occupies the column while it is open").toBe(false);
+  expect(open1.headerLeft, "the header steps aside for the docked panel too").toBe("360px");
 
   // Closed: the column comes back, in both rules, with no sideways scroll either way.
   await page.locator("#stations-toggle").click();
@@ -663,7 +686,7 @@ test("A4i. closing the docked panel gives the map its column back", async ({ pag
     mapWidth: 1280,
     overflow: 0,
     strip: true,
-    bannerLeft: "54px",
+    headerLeft: "0px",
   });
 
   // And reopening reserves it again, so this is a property of the panel's state rather
@@ -732,6 +755,22 @@ async function popupOnTheMapAt375(page) {
    the app's correction having run at all. So the centre claim below is made only when no
    autopanstart fired, and the claim that always holds is about where the POPUP ended up,
    which is the fact a rider can see. */
+/* HOW FAR THE POPUP HAS TO GROW TO REACH THE CHROME, MEASURED RATHER THAN GUESSED.
+
+   These specs used a literal 80px, which was right for one chrome and is a silent trap for
+   the next: MR1 replaced a tall right-hand legend panel with a top bar that is one row high
+   at 375, and 80px of upward growth stopped reaching it. The premise assertion caught that
+   honestly (willOverlap came back false), which is exactly what a premise assertion is for,
+   and the fix is to stop writing the number down. The growth is now the gap plus an overlap,
+   so a stage that makes the header taller or shorter changes what these specs push, not
+   whether they still test anything. */
+const growthThatReachesTheChrome = (page, overlapBy = 40) =>
+  page.evaluate((overlap) => {
+    const a = openPopupsOnMap()[0].getElement().getBoundingClientRect();
+    const b = document.getElementById("panel").getBoundingClientRect();
+    return Math.max(overlap, Math.ceil(a.top - b.bottom) + overlap);
+  }, overlapBy);
+
 const growAndSettle = (page, by) =>
   page.evaluate(
     (px) =>
@@ -816,21 +855,22 @@ test("A4j. once the rider moves the map, the popup correction stands down", asyn
   });
   expect(dragged, "the drag must actually have moved the map, or there is no takeover").not.toEqual(before);
 
-  // THE PREMISE, MEASURED RATHER THAN ASSUMED: the popup is currently clear of the legend
-  // and 80px of upward growth will put it underneath. Without this the spec would pass just
-  // as well on a popup nowhere near the chrome, which is a spec about nothing.
-  const willCollide = await page.evaluate(() => {
+  // THE PREMISE, MEASURED RATHER THAN ASSUMED: the popup is currently clear of the chrome and
+  // this much upward growth will put it underneath. Without this the spec would pass just as
+  // well on a popup nowhere near the chrome, which is a spec about nothing.
+  const grow = await growthThatReachesTheChrome(page);
+  const willCollide = await page.evaluate((px) => {
     const a = openPopupsOnMap()[0].getElement().getBoundingClientRect();
     const b = document.getElementById("panel").getBoundingClientRect();
     const overlapsNow = a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
-    return { overlapsNow, willOverlap: a.left < b.right && a.right > b.left && a.top - 80 < b.bottom };
-  });
+    return { overlapsNow, willOverlap: a.left < b.right && a.right > b.left && a.top - px < b.bottom };
+  }, grow);
   expect(willCollide, "the growth must be what creates the collision, not the drag").toEqual({
     overlapsNow: false,
     willOverlap: true,
   });
 
-  const after = await growAndSettle(page, 80);
+  const after = await growAndSettle(page, grow);
   // THE ASSERTION, in the terms a rider sees: the popup is under the legend and the app left
   // it there. This is the fact Leaflet's own autopan cannot fake: an autopan pushes an
   // overflowing popup back DOWN into the viewport, deeper under the legend, never clear of it.
@@ -858,7 +898,7 @@ test("A4j. once the rider moves the map, the popup correction stands down", asyn
      seconds later throws their position away exactly as before.
      The takeover is a property of the rider's ownership of THIS popup, and it ends when the
      popup does (popupopen resets it), so it must survive every resize in between. */
-  const again = await growAndSettle(page, 40);
+  const again = await growAndSettle(page, await growthThatReachesTheChrome(page));
   expect(again.underTheLegend, "and it must still be declined on the NEXT refresh, and every one after").toBe(true);
   expect(again.clearingMoveExists, "with a clearing move still available the second time").toBe(true);
 });
@@ -894,7 +934,7 @@ test("A4m. a rider who pans with the arrow keys owns the view too", async ({ pag
     "the arrow key must actually reach Leaflet's keyboard pan, or this spec presses nothing",
   ).toBeGreaterThan(0);
 
-  const after = await growAndSettle(page, 80);
+  const after = await growAndSettle(page, await growthThatReachesTheChrome(page));
   expect(after.underTheLegend, "a keyboard pan is a rider taking over, exactly like a drag").toBe(true);
   expect(after.clearingMoveExists, "with a clearing move available, so declining it is a decision").toBe(true);
 });
@@ -910,7 +950,7 @@ test("A4k. with no rider takeover, that same growth DOES move the popup clear", 
     const c = map.getCenter();
     return { lat: c.lat, lng: c.lng };
   });
-  const after = await growAndSettle(page, 80);
+  const after = await growAndSettle(page, await growthThatReachesTheChrome(page));
 
   // THE SAME OBSERVABLE AS A4j, IN THE OPPOSITE DIRECTION. A pair that asserts one fact each
   // way pins a decision; A4j alone would be satisfied by a correction that never runs.

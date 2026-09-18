@@ -107,10 +107,145 @@ function narrowViewport(mql = null) {
    than introducing a statement, and it is what shipped. */
 function statusLineText({ counts, clock, problems = [] } = {}, { compact = false } = {}) {
   const time = compact ? String(clock ?? "").replace(/:\d\d(?=(\s|$))/, "") : clock;
-  const stated = (problems ?? []).filter(Boolean);
+  const stated = statusNoteText(problems);
   const head = [counts, time].filter(Boolean).join(" \u00b7 ");
-  if (!stated.length) return counts ? `${counts} \u00b7 updated ${time}` : `updated ${time}`;
-  return `${head}: ${stated.join("; ")}`;
+  if (!stated) return counts ? `${counts} \u00b7 updated ${time}` : `updated ${time}`;
+  return `${head}: ${stated}`;
+}
+
+/* MR1: THE PROBLEMS, ON THEIR OWN, and the one place the "; " join and the drop-empties
+   rule live.
+
+   The redesign's header renders the status line's three parts in three places: the counts
+   become the feed strip's per-feed counts, the clock becomes row 1's, and the problems
+   become the strip's TRAILING NOTE. So the page no longer composes the line above, and
+   this is what it renders instead. Extracted rather than reimplemented at the call site
+   because the two must not be able to word the same trouble two ways: statusLineText now
+   calls this, and the node test asserts the composed line's tail IS this string, so the
+   retained composition is the oracle the note is checked against rather than dead code.
+
+   Every rule the line owed the problems it still owes: nothing is truncated, nothing is
+   abbreviated, falsy entries are dropped rather than rendered as empty segments, and the
+   separator is a semicolon and a space. What this deliberately does NOT do is decide
+   anything: `problems` arrives already composed by staleness() (plus any hard upstream
+   error), and re-deriving it from the freshness index is the defect mutation M4 exists to
+   catch. Empty string when there is nothing wrong, which is the common case. */
+function statusNoteText(problems = []) {
+  return (problems ?? []).filter(Boolean).join("; ");
+}
+
+/* ----- MR1: the theme's two decisions ---------------------------------------------------
+   The only two parts of theming that are decisions rather than plumbing, lifted out so they
+   are testable under `node --test` and so systems/shared.js has nothing to get wrong.
+
+   THE PAGE MUST RENDER WITH STORAGE EMPTY, which is what themeChoice is for. localStorage
+   returns null when nothing was ever stored and THROWS in a private window with site data
+   blocked, so the caller passes whatever it managed to read (or null) and this decides. An
+   unrecognised value is treated as no value rather than passed through: a stored "Dark" or
+   "" would otherwise reach the root attribute and match neither token block, leaving the
+   page in the unqualified light set by accident rather than by choice. The authored value is
+   the second-chance answer because index.html writes data-theme="light" itself, so the
+   markup is a real answer and not a guess. */
+function themeChoice(stored, authored) {
+  if (stored === "dark" || stored === "light") return stored;
+  return authored === "dark" ? "dark" : "light";
+}
+
+// The other side of the toggle. Two values, so this is one line, and it is here rather than
+// inline so the toggle and any future caller cannot disagree about what "the other one" is.
+function nextTheme(current) {
+  return current === "dark" ? "light" : "dark";
+}
+
+/* ----- MR1: the feed strip -----------------------------------------------------------
+   The eight feeds of the redesign's row 2, in the order the design lists them, and the
+   pure part of what each button shows. The DOM wiring is in systems/shared.js; everything
+   decidable from a count and an age is decided here, so it is testable under `node --test`
+   without a browser.
+
+   ONE BUTTON PER FEED, WHICH IS NOT ONE BUTTON PER SOURCE. LIRR and Metro-North are two
+   feeds inside the one `railroads` source: they poll together, they fail apart, and the
+   per-system freshness index has always carried them separately (`railroads|LIRR` and
+   `railroads|MNR`). The old panel's single "Railroads" checkbox was the odd one out, and
+   splitting it is why MR1 splits the railroad layer groups per agency.
+
+   AIRTRAIN HAS NO SOURCE AT ALL. It is static timetable data loaded once, with no
+   realtime feed anywhere behind it, so it has no age to report and no vehicles to count.
+   Its dot is the scheduled-only gray permanently, and it shows no count, because a count
+   of its stations would be a different kind of number wearing the same badge. */
+const FEEDS = [
+  { key: "subway", name: "Subway", source: "subways", system: null, tick: "#0039A6" },
+  { key: "buses", name: "Buses", source: "buses", system: null, tick: "#605d5d" },
+  { key: "lirr", name: "LIRR", source: "railroads", system: "LIRR", glyph: "L" },
+  { key: "mnr", name: "Metro-North", source: "railroads", system: "MNR", glyph: "M" },
+  { key: "njt", name: "NJ Transit", source: "njt", system: "njt", glyph: "NJ" },
+  { key: "path", name: "PATH", source: "path", system: "path", tick: "#d93a30" },
+  { key: "ferry", name: "Ferry", source: "ferry", system: "ferry", tick: "#00839c" },
+  { key: "airtrain", name: "AirTrain", source: null, system: null, tick: "#6d6e71" },
+];
+
+/* The freshness dot's three states, and they are the FEED's, not its observations'.
+   A feed can be green while a third of its trains are drawn dimmed, and the v3 brief says
+   in as many words that this is correct: the dot reflects the poll, the dimming reflects
+   each observation.
+
+   A NULL AGE IS NOT LIVE. A feed that has never decoded anything has no freshness to
+   report, and "live" is the one answer that would be a lie; the status line has always
+   called that state `not reporting` and this returns "stale" for it, which is the same
+   judgment in the dot's smaller vocabulary. That is also what a rider sees for the first
+   instant after load, beside a count of zero, which is honest. */
+function feedDotState({ scheduled = false, age = null } = {}) {
+  if (scheduled) return "scheduled";
+  return age != null && !staleAge(age) ? "live" : "stale";
+}
+
+/* The tooltip, in the design's words ("Live · 12s · hide Subway", "As of 6m ago · hide
+   Metro-North", "Scheduled · hide NJ Transit"), with two things the design's three
+   examples could not show because all three are of a showing feed:
+
+   THE VERB IS THE ACTION, NOT THE STATE. A hidden feed's button shows it again, so its
+   tooltip says "show". A tooltip that said "hide" on a button that shows would be wrong
+   in the one place a rider looks to find out what pressing it does.
+
+   AND A FEED WITH NO AGE SAYS SO. "As of null ago" is the failure this avoids; the word
+   is `not reporting`, which is the status line's own for the same state. */
+function feedTooltip({ name, state, age = null, hidden = false } = {}) {
+  const action = `${hidden ? "show" : "hide"} ${name}`;
+  if (state === "scheduled") return `Scheduled \u00b7 ${action}`;
+  if (state === "live") return `Live \u00b7 ${humanizeAge(age)} \u00b7 ${action}`;
+  if (age == null) return `Not reporting \u00b7 ${action}`;
+  return `As of ${humanizeAge(age)} ago \u00b7 ${action}`;
+}
+
+/* One entry per feed, ready to render: the count as text, the dot's state, the tooltip,
+   and whether the OFF treatment applies.
+
+   `counts` and `ages` are read by feed key. A feed with no count (AirTrain) gets null
+   rather than 0, because 0 vehicles and no such number are different claims. `hidden` is
+   the set of feed keys the rider has switched off, and it drives BOTH `pressed` (which is
+   what aria-pressed is written from) and `off` (which is what the strike and the visible
+   mark are drawn from), so the two cannot disagree: that disagreement is mutations M1 and
+   M2, and it is the whole reason this is one function and not two. */
+function feedStripModel({ counts = {}, ages = {}, hidden = null } = {}) {
+  const off = hidden ?? new Set();
+  return FEEDS.map((feed) => {
+    const isOff = off.has(feed.key);
+    const scheduled = feed.source == null;
+    const age = scheduled ? null : (ages[feed.key] ?? null);
+    const state = feedDotState({ scheduled, age });
+    const count = Object.prototype.hasOwnProperty.call(counts, feed.key) ? counts[feed.key] : null;
+    return {
+      key: feed.key,
+      name: feed.name,
+      tick: feed.tick ?? null,
+      glyph: feed.glyph ?? null,
+      count: count == null ? null : Number(count).toLocaleString(),
+      dot: state,
+      pressed: !isOff,
+      off: isOff,
+      title: feedTooltip({ name: feed.name, state, age, hidden: isOff }),
+    };
+  });
 }
 
 /* ----- A3: contrast, computed rather than curated ----------------------------
@@ -3471,6 +3606,7 @@ if (typeof module !== "undefined" && module.exports) {
     LINE_COLORS, FEED_STALE_AFTER_S, FETCH_DEADLINE_MS, shouldRefresh,
     // A3: one luminance path for the whole app.
     parseColor, relativeLuminance, contrastRatio, readableTextOn, readableInk, statusLineText,
+    statusNoteText, FEEDS, feedDotState, feedTooltip, feedStripModel, themeChoice, nextTheme,
     MOBILE_MAX_WIDTH_PX, MOBILE_QUERY, narrowViewport,
     INK_LIGHT, INK_DARK,
     humanizeAge, alertsStale, alertsFreshnessBasis, ALERTS_STALE_AFTER_S,

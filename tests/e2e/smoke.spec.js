@@ -52,6 +52,12 @@ test.afterEach(async ({ page }) => {
 const busMarkers = (page) => page.locator(".bus-marker");
 const trainMarkers = (page) => page.locator(".train-marker");
 const railroadMarkers = (page) => page.locator(".railroad-marker");
+
+/* MR1: THE COUNTS MOVED FROM THE STATUS LINE TO THE FEED STRIP, one per feed instead of one
+   line of six. Every "N buses" assertion below became this: the same number, read where a
+   rider now reads it. The strip folds behind the Key below 700px, but every spec in this file
+   runs at the config's 1280, where it does not. */
+const feedCount = (page, key) => page.locator(`#toggle-${key} .feed-count`);
 const pathMarkers = (page) => page.locator(".path-marker");
 const ferryMarkers = (page) => page.locator(".ferry-marker");
 const njtMarkers = (page) => page.locator(".njt-marker");
@@ -68,7 +74,7 @@ async function waitForReady(page) {
     () =>
       typeof stationLayer !== "undefined" &&
       stationLayer.getLayers().length === 2 &&
-      railroadStationLayer.getLayers().length === 2 &&
+      lirrStationLayer.getLayers().length + mnrStationLayer.getLayers().length === 2 &&
       railroadRouteNames.size >= 1 &&
       routeIndex.size === 2 &&
       // NJT's static pair, so a spec that opens an NJT popup or reads a route
@@ -89,12 +95,12 @@ test("1. map boot: every layer populates and the status line shows counts", asyn
   // Route geometry and station/route-name lookups all built from the fixtures.
   const built = await page.evaluate(() => ({
     subwayStations: stationLayer.getLayers().length,
-    railroadStations: railroadStationLayer.getLayers().length,
+    railroadStations: lirrStationLayer.getLayers().length + mnrStationLayer.getLayers().length,
     subwayRoutes: routeIndex.size,
     mnrName: railroadRouteNames.get("MNR|1"),
     lirrName: railroadRouteNames.get("LIRR|1"),
     subwayLines: map.hasLayer(routeLinesLayer),
-    railroadLines: map.hasLayer(railroadRouteLinesLayer),
+    railroadLines: map.hasLayer(lirrRouteLinesLayer) && map.hasLayer(mnrRouteLinesLayer),
   }));
   expect(built).toEqual({
     subwayStations: 2,
@@ -106,12 +112,18 @@ test("1. map boot: every layer populates and the status line shows counts", asyn
     railroadLines: true,
   });
 
+  // THE COUNTS, on the feed strip. The two railroads are counted apart now, which is the
+  // thing the one "N railroad" number could never say.
+  await expect(feedCount(page, "buses")).toHaveText("2");
+  await expect(feedCount(page, "subway")).toHaveText("2");
+  await expect(feedCount(page, "lirr")).toHaveText("1");
+  await expect(feedCount(page, "mnr")).toHaveText("1");
+  // AND THE NOTE SAYS NOTHING, which is what "updated" used to stand in for: the old line
+  // ended with the clock and the word only when there was nothing wrong.
   const status = page.locator("#status");
-  await expect(status).toContainText("2 buses");
-  await expect(status).toContainText("2 trains");
-  await expect(status).toContainText("2 railroad");
-  await expect(status).toContainText("updated");
+  await expect(status).toHaveText("");
   await expect(status).not.toHaveClass(/error/);
+  await expect(page.locator("#clock-time"), "and the clock is where the freshness stamp went").not.toHaveText("");
 });
 
 test("2. empty-feed grace: last-known kept, then cleared past the stale window", async ({ page }) => {
@@ -138,7 +150,7 @@ test("2. empty-feed grace: last-known kept, then cleared past the stale window",
   await expect(railroadMarkers(page)).toHaveCount(0);
   await expect(status).not.toContainText("showing last known");
   await expect(status).toContainText("feed empty");
-  await expect(status).toContainText("0 buses");
+  await expect(feedCount(page, "buses"), "and the strip counts the empty fleet").toHaveText("0");
 });
 
 test("3. failed poll: a 502 keeps last-known markers and surfaces the error", async ({ page }) => {
@@ -190,7 +202,9 @@ test("5. popup supersession: a later railroad click wins the in-flight race", as
   const subwayResponse = page.waitForResponse((r) => r.url().includes("/api/subway-arrivals/"));
   await page.evaluate(() => {
     stationLayer.getLayers()[0].openPopup(); // subway: fetch delayed
-    railroadStationLayer.getLayers()[1].openPopup(); // railroad: supersedes it
+    // MR1 SPLIT THE RAILROAD STATION LAYER PER AGENCY, so "index 1 of the pair" is now
+    // Metro-North's own group's only station. Same station, named rather than counted.
+    mnrStationLayer.getLayers()[0].openPopup(); // railroad: supersedes it
   });
 
   // Opening the railroad popup closes the subway one, but Leaflet removes a faded
@@ -213,26 +227,48 @@ test("5. popup supersession: a later railroad click wins the in-flight race", as
 });
 
 test("6. layer toggle: Railroads hides then restores markers, dots and lines", async ({ page }) => {
+  /* MR1 SPLIT THIS CONTROL IN TWO, and the spec gained a claim rather than losing one. The
+     design's feed strip has one button per FEED, and LIRR and Metro-North are two feeds
+     inside one source: they poll together and fail apart, which is what the C6 dimming specs
+     are about. So "Railroads hides then restores" is now asked of each agency, and the half
+     that could not be asked before is asked here too: hiding one railroad must leave the
+     other alone. The toggles are BUTTONS with aria-pressed now, not checkboxes, so this
+     clicks and reads the attribute. */
   await boot(page);
   await waitForReady(page);
   const layerState = () =>
     page.evaluate(() => ({
-      stations: map.hasLayer(railroadStationLayer),
-      lines: map.hasLayer(railroadRouteLinesLayer),
+      lirrStations: map.hasLayer(lirrStationLayer),
+      lirrLines: map.hasLayer(lirrRouteLinesLayer),
+      mnrStations: map.hasLayer(mnrStationLayer),
+      mnrLines: map.hasLayer(mnrRouteLinesLayer),
     }));
+  const lirr = page.locator("#toggle-lirr");
+  const mnr = page.locator("#toggle-mnr");
 
-  expect(await layerState()).toEqual({ stations: true, lines: true });
+  expect(await layerState()).toEqual({ lirrStations: true, lirrLines: true, mnrStations: true, mnrLines: true });
+  await expect(lirr).toHaveAttribute("aria-pressed", "true");
+  await expect(mnr).toHaveAttribute("aria-pressed", "true");
 
-  await page.locator("#toggle-railroads").uncheck();
+  // ONE RAILROAD OFF: its own marker, dots and lines go and its sibling's stay. The fixture
+  // serves one train each, so the count drops to exactly the other agency's.
+  await lirr.click();
+  await expect(railroadMarkers(page)).toHaveCount(1);
+  expect(await layerState()).toEqual({ lirrStations: false, lirrLines: false, mnrStations: true, mnrLines: true });
+  await expect(lirr).toHaveAttribute("aria-pressed", "false");
+  await expect(mnr).toHaveAttribute("aria-pressed", "true");
+
+  await mnr.click();
   await expect(railroadMarkers(page)).toHaveCount(0);
-  expect(await layerState()).toEqual({ stations: false, lines: false });
-  // Other modes are untouched by the railroad toggle.
+  expect(await layerState()).toEqual({ lirrStations: false, lirrLines: false, mnrStations: false, mnrLines: false });
+  // Other modes are untouched by either railroad toggle.
   await expect(busMarkers(page)).toHaveCount(2);
   await expect(trainMarkers(page)).toHaveCount(2);
 
-  await page.locator("#toggle-railroads").check();
+  await lirr.click();
+  await mnr.click();
   await expect(railroadMarkers(page)).toHaveCount(2);
-  expect(await layerState()).toEqual({ stations: true, lines: true });
+  expect(await layerState()).toEqual({ lirrStations: true, lirrLines: true, mnrStations: true, mnrLines: true });
 });
 
 test("7. bus route: clicking a bus draws the line and banner, clear removes both", async ({ page }) => {
@@ -284,10 +320,10 @@ test("8. AirTrain: static branches, scheduled popup (not live), toggle", async (
   expect(probe).toEqual({ stationTimer: null, openStation: null, hasArrBadge: false });
 
   // Toggle hides then restores the AirTrain layers (square markers + route lines).
-  await page.locator("#toggle-airtrain").uncheck();
+  await page.locator("#toggle-airtrain").click();
   await expect(page.locator(".airtrain-marker")).toHaveCount(0);
   expect(await page.evaluate(() => map.hasLayer(airtrainRouteLinesLayer))).toBe(false);
-  await page.locator("#toggle-airtrain").check();
+  await page.locator("#toggle-airtrain").click();
   await expect(page.locator(".airtrain-marker")).toHaveCount(3);
   expect(await page.evaluate(() => map.hasLayer(airtrainRouteLinesLayer))).toBe(true);
 });
@@ -455,7 +491,7 @@ test("13. PATH boot: lines, stations and trains render; the toggle hides all thr
   expect(ctx.leaks).toEqual([]); // the four PATH endpoints are all mocked locally
 
   const status = page.locator("#status");
-  await expect(status).toContainText("2 PATH");
+  await expect(feedCount(page, "path")).toHaveText("2");
   await expect(status).not.toHaveClass(/error/);
 
   const layerState = () =>
@@ -466,14 +502,14 @@ test("13. PATH boot: lines, stations and trains render; the toggle hides all thr
     }));
   expect(await layerState()).toEqual({ lines: true, stations: true, trains: true });
 
-  await page.locator("#toggle-path").uncheck();
+  await page.locator("#toggle-path").click();
   await expect(pathMarkers(page)).toHaveCount(0);
   expect(await layerState()).toEqual({ lines: false, stations: false, trains: false });
   // Other modes are untouched by the PATH toggle.
   await expect(trainMarkers(page)).toHaveCount(2);
   await expect(railroadMarkers(page)).toHaveCount(2);
 
-  await page.locator("#toggle-path").check();
+  await page.locator("#toggle-path").click();
   await expect(pathMarkers(page)).toHaveCount(2);
   expect(await layerState()).toEqual({ lines: true, stations: true, trains: true });
 });
@@ -701,7 +737,7 @@ test("18. Ferry boot: lines, docks and boats render; the toggle hides all three 
   expect(ctx.leaks).toEqual([]); // the four ferry endpoints are all mocked locally
 
   const status = page.locator("#status");
-  await expect(status).toContainText("3 ferries");
+  await expect(feedCount(page, "ferry")).toHaveText("3");
   await expect(status).not.toHaveClass(/error/);
 
   const layerState = () =>
@@ -712,13 +748,13 @@ test("18. Ferry boot: lines, docks and boats render; the toggle hides all three 
     }));
   expect(await layerState()).toEqual({ lines: true, docks: true, boats: true });
 
-  await page.locator("#toggle-ferries").uncheck();
+  await page.locator("#toggle-ferry").click();
   await expect(ferryMarkers(page)).toHaveCount(0);
   expect(await layerState()).toEqual({ lines: false, docks: false, boats: false });
   // Other modes are untouched by the ferry toggle.
   await expect(busMarkers(page)).toHaveCount(2);
 
-  await page.locator("#toggle-ferries").check();
+  await page.locator("#toggle-ferry").click();
   await expect(ferryMarkers(page)).toHaveCount(3);
   expect(await layerState()).toEqual({ lines: true, docks: true, boats: true });
 });
@@ -848,7 +884,7 @@ test("22. Ferry poll split: an empty 200 clears boats, a 502 keeps last-known", 
   ctx.overrides.ferry = (route, fixtures) => json(route, fixtures.ferryEnvelope([], fx.FROZEN_S + 60));
   await page.clock.runFor(15_000);
   await expect(ferryMarkers(page)).toHaveCount(0); // empty-success replaces
-  await expect(status).toContainText("0 ferries");
+  await expect(feedCount(page, "ferry")).toHaveText("0");
 });
 
 test("23. Ferry cold start: docks and lines appear without a reload once 503s heal", async ({ page }) => {
@@ -1947,14 +1983,14 @@ test("33. NJ Transit: lines, station squares, and two ADDED trips that share an 
   await page.clock.runFor(300);
 
   // The status line counts NJ Transit alongside everything else.
-  await expect(page.locator("#status")).toContainText("4 NJ Transit");
+  await expect(feedCount(page, "njt")).toHaveText("4");
 
   // The toggle takes all three layers together, which is the whole system.
-  await page.locator("#toggle-njt").uncheck();
+  await page.locator("#toggle-njt").click();
   expect(
     await page.evaluate(() => [map.hasLayer(njtRouteLines), map.hasLayer(njtStations), map.hasLayer(njtTrains)]),
   ).toEqual([false, false, false]);
-  await page.locator("#toggle-njt").check();
+  await page.locator("#toggle-njt").click();
   expect(
     await page.evaluate(() => [map.hasLayer(njtRouteLines), map.hasLayer(njtStations), map.hasLayer(njtTrains)]),
   ).toEqual([true, true, true]);
@@ -2214,7 +2250,7 @@ test("35. two NJT states with nothing to draw: an empty feed clears, an absent o
   expect(await page.evaluate(() => njtTrainRecords.size)).toBe(0);
   // IMMEDIATELY, not after the stale window: no clock advance beyond the one poll.
   // And an empty NJT night is not an error, exactly as an empty ferry night is not.
-  await expect(status).toContainText("0 NJ Transit");
+  await expect(feedCount(page, "njt")).toHaveText("0");
   await expect(status).not.toHaveClass(/error/);
   expect(await status.textContent()).not.toContain("NJ Transit:");
   // The stations and the lines are untouched: they are static and have nothing to
@@ -2234,7 +2270,7 @@ test("35. two NJT states with nothing to draw: an empty feed clears, an absent o
     );
   await page.clock.runFor(15_000);
   await page.clock.runFor(15_000);
-  await expect(status).toContainText("0 NJ Transit");
+  await expect(feedCount(page, "njt")).toHaveText("0");
   await expect(status).not.toHaveClass(/error/);
   expect(await status.textContent()).not.toContain("NJT_USERNAME");
   // A warming 503 is a different thing and MUST still surface, which is why the

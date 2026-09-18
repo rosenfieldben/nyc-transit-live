@@ -844,7 +844,9 @@ function feedAge(feed) {
   return feed.system ? systemAgeOf(feed.source, feed.system) : worstSystemFreshness(feed.source).age;
 }
 
-const togglesEl = document.getElementById("toggles");
+// The eight buttons live in their own wrapper, because the wrapper is what folds below
+// 700px and the note beside it does not (round 3, by ruling: index.html says why).
+const feedButtonsEl = document.getElementById("feed-buttons");
 const statusEl = document.getElementById("status");
 const feedButtons = new Map(); // feed key -> its button element
 
@@ -884,7 +886,7 @@ function paintFeedStrip(entries) {
    takes shared.js, stations.js and map.js down with it. Measured: it did, and the page came
    up with no markers at all. buildFeedStrip paints the count-free model instead. */
 function refreshFeedStrip() {
-  if (!togglesEl) return;
+  if (!feedButtonsEl) return;
   const counts = {};
   const ages = {};
   for (const feed of FEEDS) {
@@ -896,7 +898,7 @@ function refreshFeedStrip() {
 }
 
 function buildFeedStrip() {
-  if (!togglesEl) return;
+  if (!feedButtonsEl) return;
   for (const feed of FEEDS) {
     const button = document.createElement("button");
     button.type = "button";
@@ -939,8 +941,7 @@ function buildFeedStrip() {
       refreshFeedStrip();
     });
     feedButtons.set(feed.key, button);
-    // Before the note, which stays last in the row: the design puts it at margin-left auto.
-    togglesEl.insertBefore(button, statusEl);
+    feedButtonsEl.append(button);
     applyFeedVisibility(feed.key);
   }
   // The count-free model: every feed showing, no counts, and each dot in the state its

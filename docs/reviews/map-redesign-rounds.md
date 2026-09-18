@@ -55,10 +55,10 @@ stage.
 
 | Stage | Scope | State |
 | --- | --- | --- |
-| **MR1** | **Tokens and chrome.** The Modernist token set on the root with `data-theme`, self-hosted Archivo 400/600/800, the `.leaflet-tile-pane` filters for both themes, and a `localStorage`-persisted theme toggle. The `<header>` replaces the right-hand `<aside>`: brand and blinking clock, the subway bullet key (display only), the Dark/Light, Key and Stations buttons, the feed strip, the Key panel, and the service alerts strip as a full-width row inside the header. The bottom-right control stack with the City/Rail/Region presets and the restyled zoom control. No marker, line, station, label, popup or route-table change: the pins prove it. | in review |
-| **MR2** | **Subway.** Trunk ribbons (casing plus line, yellow drawn last), the bullet train marker with its halo and lift, local dot versus transfer ring stations, the haloed permanent-tooltip labels with their zoom gating, the Names toggle, and route focus wired to the stage 1 bullets. | planned |
+| **MR1** | **Tokens and chrome.** The Modernist token set on the root with `data-theme`, self-hosted Archivo 400/600/800, the `.leaflet-tile-pane` filters for both themes, and a `localStorage`-persisted theme toggle, **built and tested and then hidden until MR4** (round 3, R2). The `<header>` replaces the right-hand `<aside>`: brand and blinking clock, the subway bullet key (display only, and in the app's own shape), the Key and Stations buttons, the feed strip, the Key panel, and the service alerts strip as a full-width row inside the header. The bottom-right control stack with the City/Rail/Region presets and the restyled zoom control. No marker, line, station, label, popup or route-table change: the pins prove it. | in review |
+| **MR2** | **Subway.** Trunk ribbons (casing plus line, yellow drawn last), the bullet train marker with its halo and lift, local dot versus transfer ring stations, the haloed permanent-tooltip labels with their zoom gating, the Names toggle, and route focus wired to the stage 1 bullets. Every ribbon takes its colour from `lineColor()` and every bullet keeps the app's own rounded rectangle, never the authority's palette or its roundel (round 3, R1). | planned |
 | **MR3** | **Commuter rail.** The real route tables (§6 of the brief: name-keyed codes for LIRR and Metro-North, the feed's `route_short_name` and `route_color` for NJ Transit, `route_color` added to `/api/railroad-routes`), the branch lines, the square stations, and `railTagIcon` with the §3.1 provenance states: solid versus outlined body, filled versus outlined chevron, dimming for age. | planned |
-| **MR4** | **The other families.** PATH diamonds and lines, ferry dashed routes, dock dots and hulls, AirTrain's gray dashed service, and the bus arrow and dot at the muted hashed hue. The §3.3 dimmed and absent states for each. | planned |
+| **MR4** | **The other families.** PATH diamonds and lines, ferry dashed routes, dock dots and hulls, AirTrain's gray dashed service, and the bus arrow and dot at the muted hashed hue. The §3.3 dimmed and absent states for each. **Also the dark theme's release**: MR1 built it and hid the toggle, and MR4 is the stage at which every mark on the map has the casing that makes it legal (round 3, R2). | planned |
 | **MR5** | **Popups.** The `.pk/.pt/.kv/.dir/.arr/.fresh/.alert/.xlink` vocabulary, the §4 words routed from `positionQualifier()` and the per-system freshness rather than re-derived, the arrivals qualifier column, and the autopan padding that clears the stage 1 chrome. | planned |
 
 ---
@@ -238,7 +238,7 @@ anything was changed.
 
 | # | Finding | Disposition |
 | --- | --- | --- |
-| G15 | **In the dark theme every Key panel glyph falls under the 3:1 mark floor**, from **1.11** (the subway station ring) to **2.63** (the ferry dock). They were drawn for an opaque white panel and they carry the map's own marker colours. | **The key is fixed; the map is not, and the map is the real finding.** The glyphs keep their colours exactly and gain the paper they were drawn on, measured at 3.98 to 11.31 in both themes, because a key whose glyphs did not match the map would be worse than a dim one. **THE SAME ARITHMETIC HOLDS ON THE MAP.** The dark basemap filter is MR1's and the markers are not: until MR2 through MR4 give every mark the paper casing and stroke the design specifies, a rider who picks the dark theme gets a map whose markers read at those same ratios. That is the cost of shipping the theme one stage before the marks, it is stated here rather than discovered, and MR2 is where it starts being paid down. |
+| G15 | **In the dark theme every Key panel glyph falls under the 3:1 mark floor**, from **1.11** (the subway station ring) to **2.63** (the ferry dock). They were drawn for an opaque white panel and they carry the map's own marker colours. | **The key is fixed; the map is not, and the map is the real finding.** The glyphs keep their colours exactly and gain the paper they were drawn on, measured at 3.98 to 11.31 in both themes, because a key whose glyphs did not match the map would be worse than a dim one. **THE SAME ARITHMETIC HOLDS ON THE MAP.** The dark basemap filter is MR1's and the markers are not: until MR2 through MR4 give every mark the paper casing and stroke the design specifies, a rider who picks the dark theme gets a map whose markers read at those same ratios. That is the cost of shipping the theme one stage before the marks, it is stated here rather than discovered, and **round 3's R2 is the operator's answer to it: the cost is not paid at all, because the toggle is hidden until MR4.** |
 
 **One recorded and not changed.**
 
@@ -264,10 +264,50 @@ added them.
 | M5 | the theme not persisted | killed | `chrome.spec.js` D1g |
 | M6 | the clock blink not gated by the motion preference | killed | `motion.spec.js` A5b |
 
+### Round 3: the operator's rulings
+
+Four rulings came back on the round 2 diff. Each is recorded here with the reason it
+was given, what MR1 changed to obey it, and the spec that now holds it.
+
+| # | Ruling | What it changed here |
+| --- | --- | --- |
+| R1 | **The handoff's MTA palette row and its circular lettered bullets are overruled by the README's own rule.** `docs/design/map-redesign/README.md` says in its Notes that "The MTA's logos, official map, and route symbols require a license", and the official roundel is a route symbol. The handoff drew one anyway and pasted the authority's hex values beside it. The app's own rule wins: MR2 draws trunk ribbons in `lineColor()`'s answer and bullets in the app's own shape. | **Obeyed in MR1.** The subway key's swatches already took their colour from `lineColor()` and their ink from `readableTextOn()`, never from the handoff's table, so only the shape was wrong: `.bul` is `border-radius: 4px`, which is what `systems/subway.js` already draws (`<rect rx="3">` in an 18 unit box) for every train on the map. The key and the marker are now the same mark at two sizes, which is what a key is for. `chrome.spec.js` **D1l** holds it: no bullet is a circle, and all 23 bullets across the 10 trunks carry exactly `lineColor()`'s answer. |
+| R2 | **The dark theme waits for MR4.** Keep the tokens, the plumbing, the tile filter and the tests; hide the toggle until every mark has its paper casing. | **Obeyed, and G15 is why.** Round 2 measured every Key glyph in the dark theme at **1.11 to 2.63** and fixed it with `--glyph-plate`, a light casing under the mark. The same arithmetic holds for the markers, the labels and the popups on the map, and MR1 is not allowed to touch any of them: shipping the toggle would hand a rider a theme that is legal in the chrome and illegal everywhere else. So `#theme-toggle` carries `hidden` and `#theme-toggle[hidden] { display: none }`, and nothing else is removed. `applyTheme`, `storedTheme`, `nextTheme`, `themeChoice`, the `data-theme` token blocks, the `.leaflet-tile-pane` filters and their tests all stay, D1g drives them through `applyTheme` instead of through a click, and the axe scan still measures both themes. MR4 unhides one attribute. |
+| R3 | **The trailing status note does not fold below 700px.** It is empty on a healthy day. The alerts strip and the note are the two carve-outs; the feed buttons and the Key still fold. | **This is F19, ruled on.** The fold class moved off `#toggles` and onto a new inner `#feed-buttons`, so row 2 folds its buttons and keeps its note. `#status:empty { display: none }` means the healthy day costs no row at all, and `#feed-buttons[hidden] ~ #status` reclaims the left margin when it is the only thing left. `chrome.spec.js` **D1k** holds it at 375 and 320 with the Key folded: the note is visible, reads `staleness()`'s text in full ("railroad: MNR as of 6m ago; MNR position age unavailable"), carries `.error`, fits the viewport and is not truncated. **A6c** now asserts both halves: `#feed-buttons` is hidden and `#status` has no `.hdr-fold` ancestor. |
+| R4 | **An opened popup, both themes, joins the axe scan**, so popup contrast is measured from here on. If it is not small, it becomes MR2's first item. | **It was small, so it is done here, not deferred.** The a11y suite already ran a list of page states; it gained a theme axis (`state.themes ?? ["light"]`, and a `setTheme` helper that calls `applyTheme` and waits on `data-theme`), and the "popup open with cross-link" state opts in with `themes: ["light", "dark"]`. About fifteen lines. It came back green at both themes at all three widths, which is the measurement the ruling asked for rather than a promise of one. MR2 inherits a scan that will fail the moment a popup token drifts. |
+
+**What R2 costs, said plainly.** The dark theme is now reachable only from the console
+in this stage, so the pair of screenshots below is a light-theme pair, and the dark
+half of the design is evidenced by the token blocks, the tile filter, D1g, D1h and the
+axe scan rather than by a picture. That is the ruling's intent: the theme is built and
+tested, and it is not offered until it is true everywhere.
+
+### Mutations, re-run after round 3
+
+All six still die, each on a fresh copy of the tree with the mutation applied alone.
+M3 and M6 were the two the rulings could plausibly have broken, and neither moved: the
+clock's gate is untouched by hiding a sibling button, and moving the fold class inward
+narrowed what folds without changing what may never fold. **M4 now dies on five
+assertions rather than three**, because R3's D1k reads the note at both phone widths and
+a re-derived note is wrong there too.
+
+| # | Guard reverted | Result | Killed by |
+| --- | --- | --- | --- |
+| M1 | `aria-pressed` not updated on toggle | killed | `chrome.spec.js` D1c |
+| M2 | hidden feed by opacity alone | killed | `chrome.spec.js` D1c |
+| M3 | the alerts strip given the fold class | killed | `mobile.spec.js` A6c |
+| M4 | the note re-derived instead of taking `staleness()` | killed | `chrome.spec.js` D1d and D1k at both widths, pins P1a and P1b |
+| M5 | the theme not persisted | killed | `chrome.spec.js` D1g |
+| M6 | the clock blink not gated by the motion preference | killed | `motion.spec.js` A5b |
+
 ### Before and after
 
 `docs/reviews/map-redesign/mr1/`, from the hermetic harness at the frozen clock with
 one agency-wide alert showing, so the pair differs by the stage and by nothing else.
+Regenerated after round 3, so the "after" pair shows the rounded-rectangle bullets, no
+theme toggle, and the note carved out of the fold. **It is a light-theme pair**, because
+R2 hides the toggle; the dark theme's evidence is the token blocks, the tile filter, D1g,
+D1h and the axe scan.
 
 | | 1280 | 375 |
 | --- | --- | --- |
@@ -278,7 +318,12 @@ one agency-wide alert showing, so the pair differs by the stage and by nothing e
 
 ## Stage MR2: subway
 
-*Not started.*
+*Not started.* Carries round 3's R1: ribbons in `lineColor()`'s answer, bullets in
+the app's own shape. The handoff's palette row and its lettered roundel are overruled
+and are not to be copied out of `docs/design/map-redesign/README.md`.
+
+The popup axe scan R4 asked for is **not** MR2's first item, because it was small
+enough to land in MR1: MR2 inherits it green in both themes.
 
 ## Stage MR3: commuter rail
 
@@ -286,7 +331,9 @@ one agency-wide alert showing, so the pair differs by the stage and by nothing e
 
 ## Stage MR4: the other families
 
-*Not started.*
+*Not started.* Carries round 3's R2: when the last family on the map has its paper
+casing, `#theme-toggle` loses its `hidden` attribute and the dark theme is offered.
+Everything else it needs already ships in MR1 and is tested there.
 
 ## Stage MR5: popups
 

@@ -166,15 +166,24 @@ test("A6c. the Key is a disclosure at every width, and the phone folds the strip
   await open(page);
 
   const toggle = page.locator("#legend-toggle");
-  const strip = page.locator("#toggles");
+  const strip = page.locator("#feed-buttons");
   const key = page.locator("#subway-key");
 
-  // Closed by default, and on a phone the strip and the subway key are folded behind it.
+  // Closed by default, and on a phone the eight feed buttons and the subway key are folded
+  // behind it.
   await expect(toggle).toBeVisible();
   await expect(page.locator("#legend")).toBeHidden();
   await expect(strip).toBeHidden();
   await expect(key).toBeHidden();
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  // AND THE NOTE IS NOT FOLDED WITH THEM (round 3, by ruling). It is the second carve-out
+  // beside the alerts strip, and for the same reason: it speaks only when something is
+  // wrong. Asserted as the absence of the fold class rather than as visibility, because on
+  // this healthy page it is empty and an empty note draws nothing.
+  expect(
+    await page.evaluate(() => document.getElementById("status").closest(".hdr-fold") !== null),
+    "the trailing note must never be inside the fold",
+  ).toBe(false);
   // AND THE ALERTS ROW IS NOT FOLDED WITH THEM, at any width. v3.1 point 1, and the one
   // carve-out this disclosure has: it carries no hdr-fold class and is a sibling of the rows
   // that do. Asserted as the absence of the class, because a strip that happened to be empty
@@ -303,7 +312,9 @@ test("A6f. every control this app owns shows a focus ring, at 3:1 or better", as
      The feed toggles appear here for the first time as BUTTONS: the old "#toggles input"
      sampled a 13px checkbox that ringed its label through :focus-within, and that delegation
      went with the checkboxes. */
-  const CLOSED = ["#legend-toggle", "#theme-toggle", "#stations-toggle", "#view-city", "#view-region"];
+  // #theme-toggle is not here: it is hidden until MR4 by ruling, and a control a rider
+  // cannot reach owes no ring. It rejoins this list with the attribute.
+  const CLOSED = ["#legend-toggle", "#stations-toggle", "#view-city", "#view-region"];
   const OPEN = [
     "#toggles button",
     "#alert-banner-dismiss",
@@ -322,7 +333,7 @@ test("A6f. every control this app owns shows a focus ring, at 3:1 or better", as
          rider who is tabbing is actually in. */
       await page.locator("#legend-toggle").focus();
       await page.keyboard.press("Enter");
-      await expect(page.locator("#toggles")).toBeVisible();
+      await expect(page.locator("#feed-buttons")).toBeVisible();
     }
     for (const selector of controls) {
     // focus() rather than a click: :focus-visible is exactly the distinction being

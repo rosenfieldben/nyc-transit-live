@@ -67,8 +67,14 @@ const agencyAlert = (n) => ({
 // analyze() never resolves and the spec dies on the test timeout rather than on a
 // violation. setFixedTime pins Date.now (which keeps the app's skew calibration at zero
 // and its ages deterministic) while leaving timers running.
-async function open(page, { alerts = 0, stationAlerts = false } = {}) {
+async function open(page, { alerts = 0, stationAlerts = false, staleRailroad = false } = {}) {
   const ctx = await installMocks(page);
+  // Metro-North's own poll aged six minutes: enough to raise the status line and dim its
+  // markers, and nothing else about the page changes.
+  if (staleRailroad) {
+    ctx.overrides.railroads = (route, fixtures) =>
+      json(route, fixtures.railroadsWithSystems({ mnrAt: fx.FROZEN_S - 360 }));
+  }
   // Agency-wide alerts go to the banner; station-scoped ones go to the panel and the
   // popups (F11). A state asks for one kind or the other, never a mix, so that a
   // contrast finding names one surface rather than two.
@@ -348,6 +354,11 @@ const STATES = [
     key: "key open",
     alerts: 0,
     viewports: [DESKTOP, PHONE, NARROW],
+    // A STALE FEED, SO THE NOTE HAS SOMETHING TO SCAN. #status is one of this state's targets
+    // and it is EMPTY on a healthy page by design, which would make the anti-vacuity check
+    // pass on an element axe never looked at. A degraded feed also puts the note in its
+    // .error colour, which is the one chrome string that changes colour at all.
+    staleRailroad: true,
     async reach(page) {
       if (await page.evaluate(() => !document.getElementById("stations-panel").hidden)) {
         await page.evaluate(() => closeStationsPanel());
@@ -498,6 +509,11 @@ const STATES = [
     // stops reaching it. That is the half the first draft was missing: the state reached
     // the wrong popup AND nothing asked whether a cross-link had been examined.
     targets: ["leaflet-popup", "popup-crosslink"],
+    // BOTH THEMES, by ruling. A popup is the surface a rider reads longest and the one MR1
+    // does not restyle: its vocabulary is MR5's. Scanning it in the dark theme now is how
+    // "unchanged" stops being an assumption, and it is what will catch MR5 the first time a
+    // popup rule reaches for a token.
+    themes: ["light", "dark"],
   },
   {
     key: "banner active",
@@ -578,25 +594,48 @@ async function assertNothingIsMidTransition(page, label) {
     });
 }
 
+/* MR1: A THEME AXIS, AND ONLY ONE STATE OPTS INTO IT SO FAR. The page has two themes as of
+   this stage and every scan above ran in one of them, so a token that failed only in the dark
+   set would ship unseen; the popup state opts in by ruling, because a popup is the surface a
+   rider spends the longest reading and it is the one this stage does NOT restyle.
+
+   SET THROUGH applyTheme(), NOT THROUGH THE BUTTON, because the button is hidden until MR4
+   (index.html says why) and a spec that clicked it would be testing a control a rider cannot
+   reach. Going through the app's own function rather than writing the attribute keeps the
+   test on the same path the rider will take when the control comes back. */
+async function setTheme(page, theme) {
+  await page.evaluate((want) => applyTheme(want), theme);
+  await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+}
+
 for (const state of STATES) {
   // Two widths unless a state asks for more. The loop used to be viewport-outer with a
   // fixed pair; it is state-outer now so one state can opt into a third width without
   // every other state paying for it.
   for (const viewport of state.viewports ?? [DESKTOP, PHONE]) {
     if (state.only && state.only !== viewport) continue;
-    test(`A1w. page-wide axe at ${viewport.width}: ${state.key}`, async ({ page }) => {
-      await page.setViewportSize(viewport);
-      await open(page, { alerts: state.alerts, stationAlerts: state.stationAlerts });
-      await state.reach(page);
-      await assertNothingIsMidTransition(page, `${viewport.width} / ${state.key}`);
+    for (const theme of state.themes ?? ["light"]) {
+      const label = `${viewport.width} / ${state.key}${theme === "light" ? "" : ` / ${theme}`}`;
+      test(`A1w. page-wide axe at ${viewport.width}: ${state.key}${theme === "light" ? "" : ` (${theme})`}`, async ({
+        page,
+      }) => {
+        await page.setViewportSize(viewport);
+        await open(page, {
+          alerts: state.alerts,
+          stationAlerts: state.stationAlerts,
+          staleRailroad: state.staleRailroad,
+        });
+        if (theme !== "light") await setTheme(page, theme);
+        await state.reach(page);
+        await assertNothingIsMidTransition(page, label);
 
-      // NO include() AT ALL: this is the whole document, which is the deliverable.
-      const results = await scanPage(page);
-      const label = `${viewport.width} / ${state.key}`;
-      expect(violations(results), `${label}: page-wide axe violations`).toEqual([]);
-      await assertUndecidablesAreKnown(page, results, label);
-      assertScanned(results, { targets: state.targets, label });
-    });
+        // NO include() AT ALL: this is the whole document, which is the deliverable.
+        const results = await scanPage(page);
+        expect(violations(results), `${label}: page-wide axe violations`).toEqual([]);
+        await assertUndecidablesAreKnown(page, results, label);
+        assertScanned(results, { targets: state.targets, label });
+      });
+    }
   }
 }
 
@@ -620,12 +659,7 @@ test("A1x. the Key panel's rows are legible, at every width and in both themes",
     await expect(page.locator("#legend")).toBeVisible();
 
     for (const theme of ["light", "dark"]) {
-      await page.evaluate((want) => {
-        if (document.documentElement.getAttribute("data-theme") !== want) {
-          document.getElementById("theme-toggle").click();
-        }
-      }, theme);
-      await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+      await setTheme(page, theme);
 
       const measured = await page.evaluate(() => {
         const srgb = (c) => {

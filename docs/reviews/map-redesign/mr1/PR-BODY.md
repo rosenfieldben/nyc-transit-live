@@ -18,7 +18,8 @@ and neither `contract_monitor.py` nor a fixture generator was run.
 | `88f0862` | tokens and chrome, and the status line taken apart |
 | `4b5d583` | round 1: twenty findings, six mutations, and the before-and-after pair |
 | `4c37c11` | the pull request body, in the F1 form |
-| (tip) | round 2: sixteen findings from the adversarial pass, fixed |
+| `138c50b` | round 2: sixteen findings from the adversarial pass, fixed |
+| (tip) | round 3: the operator's four rulings, obeyed and recorded |
 
 ## Before and after
 
@@ -119,8 +120,11 @@ MR1's subway key is therefore built from `lineColor()` and `readableTextOn()`, w
 both the ruling's requirement and the only honest option, since a key in one palette
 over lines drawn in another says nothing true about the map under it. Every trunk
 clears 4.5:1 that way, the lowest being **4.72** on the 4-5-6 green; the L's grey takes
-dark ink at 5.00 where white would have been 3.48. **MR2 draws the ribbons and the
-bullet markers, so MR2 is where this has to be settled.**
+dark ink at 5.00 where white would have been 3.48.
+
+**It has since been ruled on: the README wins** (round 3, R1 below). The shape followed
+the colour, so `.bul` is now a rounded rectangle at `border-radius: 4px`, which is what
+`systems/subway.js` already draws for every train on the map, and D1l holds it.
 
 ## The pins, and what they hold
 
@@ -167,9 +171,12 @@ A guard nobody has seen fire is indistinguishable from one that cannot.
 | a browser that refuses `localStorage` still gets a page | D1h | both accessors made to throw; the markers still load, which means `shared.js` finished |
 | Archivo is ours and the page asks nobody else for type | D1i | `document.fonts.check` at all three weights, the harness's leak list empty, and the served content type |
 | the presets fly, and stand down when the rider takes over | D1j | the map asked whether it IS at the preset, in pixels |
+| the note does NOT fold at phone widths | D1k at 375 and 320 | the note read with the Key folded: visible, `staleness()`'s full sentence, inside the viewport and not truncated |
+| the subway key is the app's own mark, not the authority's roundel | D1l | no bullet is a circle, and all 23 bullets carry exactly `lineColor()`'s answer |
+| an opened popup is measured for contrast, in BOTH themes | `a11y.spec.js`, the popup state with `themes: ["light", "dark"]` | the scan that MR2 through MR5 inherit, so a popup token that drifts fails here |
 | every Key panel row is legible, both themes, three widths | `a11y.spec.js` A1x | the decider for the new undecidable shape |
 | the whole header fits the viewport in both Key states | `mobile.spec.js` A6k and A6l | at 320 and 375, with one alert and with three, and the Key panel proven to be the row that gives way |
-| every new control meets the 24px floor and rings on focus | `layout.spec.js` A4b, `mobile.spec.js` A6f | the theme toggle, the presets and the feed buttons, at every width they are drawn at |
+| every new control meets the 24px floor and rings on focus | `layout.spec.js` A4b, `mobile.spec.js` A6f | the presets and the feed buttons, at every width they are drawn at; the theme toggle left those two lists when R2 hid it, since a control nobody can reach is not a control |
 | the clock blinks, and stops under the preference | `motion.spec.js` A5b and A5d | both halves, and the DIGITS asserted as still running, so a mutation that froze the whole clock cannot pass |
 
 ## What round 1 found
@@ -250,8 +257,26 @@ be worse than a dim one.
 **The same arithmetic holds on the map.** The dark basemap filter is MR1's and the markers
 are not: until MR2 through MR4 give every mark the paper casing and stroke the design
 specifies, a rider who picks the dark theme gets a map whose markers read at those same
-ratios. That is the cost of shipping the theme one stage before the marks. It is stated
-here rather than discovered, and MR2 is where it starts being paid down.
+ratios. **That cost is no longer paid, because the operator ruled the theme should not be
+offered until it is true everywhere** (round 3, R2): the toggle is `hidden`, everything
+behind it ships and is tested, and MR4 removes one attribute.
+
+## What round 3 ruled
+
+Four rulings came back on the round 2 diff. All four are obeyed in this branch; the
+ledger carries each with its reason.
+
+| # | Ruling | Obeyed by |
+| --- | --- | --- |
+| **R1** | The handoff's MTA palette row and its circular lettered bullets are overruled by the README's own rule. MR2 draws ribbons in `lineColor()` and bullets in the app's own shape. | The colours already came from `lineColor()`; only the shape was wrong. `.bul` is `border-radius: 4px`, which is `systems/subway.js`'s `<rect rx="3">` in an 18 unit box, so the key and the marker are one mark at two sizes. **D1l** holds it: no bullet is a circle, and all 23 bullets across the 10 trunks carry exactly `lineColor()`'s answer. Recorded against MR2 in the ledger's stage table. |
+| **R2** | The dark theme waits for MR4. Keep the tokens, the plumbing, the filter and the tests; hide the toggle until every mark has its paper casing. | `#theme-toggle` carries `hidden`, plus one rule to make it so. Nothing else is removed: `applyTheme`, `storedTheme`, `nextTheme`, `themeChoice`, the `data-theme` token blocks and the `.leaflet-tile-pane` filters all stay, D1g and D1h drive them through `applyTheme` rather than through a visible press, and the axe scan still measures both themes. MR4 unhides one attribute. |
+| **R3** | The trailing status note does not fold below 700px. The alerts strip and the note are the two carve-outs; the feed buttons and the Key still fold. | The fold class moved off `#toggles` onto a new inner `#feed-buttons`, so row 2 folds its buttons and keeps its note. `#status:empty { display: none }` means a healthy day costs no row at all. **D1k** reads the note at 375 and 320 with the Key folded: visible, `staleness()`'s full sentence, carrying `.error`, inside the viewport, not truncated. **A6c** now asserts both halves. This closes the deviation round 1 raised. |
+| **R4** | An opened popup, both themes, joins the axe scan. If it is not small, it becomes MR2's first item. | **It was small, about fifteen lines, so it is done here rather than deferred.** The a11y suite's state list gained a theme axis and the "popup open with cross-link" state opts in with `themes: ["light", "dark"]`. Green at both themes at all three widths, which is the measurement the ruling asked for rather than a promise of one. |
+
+**What R2 costs, said plainly.** The dark theme is reachable only from the console in
+this stage, so the screenshot pair below is a light-theme pair and the dark half of the
+design is evidenced by the token blocks, the tile filter, D1g, D1h and the axe scan
+rather than by a picture. That is the ruling's intent: built and tested, not offered.
 
 ## Mutations, each run and recorded
 
@@ -264,7 +289,7 @@ against it.
 | M1 | `aria-pressed` not updated when a feed is toggled (the layer still hides, the OFF mark still appears) | **killed** | `chrome.spec.js` D1c: `pressed` reads `"true"` on a hidden feed |
 | M2 | hidden feed conveyed by opacity alone (the strike and the visible OFF mark removed) | **killed** | `chrome.spec.js` D1c: `offMarkShown: false`, `strike: "none"` |
 | M3 | the service alerts strip given the fold class | **killed** | `mobile.spec.js` A6c: "the service alerts strip must never be given the fold class" |
-| M4 | the trailing note re-derived from the freshness index instead of taking `staleness()`'s output | **killed** | `chrome.spec.js` D1d and pins P1a, P1b: the withheld count and the undated clause both vanish, because neither is an age |
+| M4 | the trailing note re-derived from the freshness index instead of taking `staleness()`'s output | **killed** | `chrome.spec.js` D1d and D1k at both phone widths, and pins P1a, P1b: the withheld count and the undated clause both vanish, because neither is an age |
 | M5 | the theme not persisted to `localStorage` | **killed** | `chrome.spec.js` D1g: the stored value reads `null` |
 | M6 | the clock blink not gated by the motion preference | **killed** | `motion.spec.js` A5b: `animationName` reads `hdr-blink` under `prefers-reduced-motion: reduce` |
 
@@ -293,17 +318,18 @@ see a caller that stopped calling. The browser is where a wiring mutation dies.
   carry 36 em-dashes between them. Changing a received design document to satisfy a
   house style corrupts the one thing that file is for. Every other commit is at zero on
   its added lines and in its message.
-- **The status note folds with the feed strip below 700px**, where today's status line
-  does not (it is a sibling of `#legend`, not a child). v3.1 carved the ALERTS strip out
-  of the fold and did not carve this out, so MR1 implements it as specified. The
-  accessible path is unchanged either way, because `#page-announce` speaks every status
-  transition and is never folded; what changes is that a sighted rider on a phone reads
-  the note after one tap instead of at a glance. If it should join the alerts row's
-  carve-out, MR2 is the place.
-- **The dark theme stops at the Stations panel's edge.** The handoff's scope note and
-  the stage brief both put that panel out of scope, and its colours ARE its measured
-  contrast relationships: A1i, A1j, A1k, A1l and A1m2 depend on them. Worth a stage of
-  its own rather than a corner of this one.
+- ~~**The status note folds with the feed strip below 700px**~~, where today's status
+  line does not. **Ruled on and reversed in this branch** (round 3, R3): the note is the
+  second carve-out beside the alerts strip, the feed buttons and the Key still fold, and
+  D1k holds the note at 375 and 320. Nothing is deferred to MR2.
+- **The dark theme ships built, tested and hidden** (round 3, R2). The tokens, the tile
+  filter, `applyTheme`, the persistence and their tests are all here; `#theme-toggle`
+  carries `hidden` until MR4, because the arithmetic in the round 2 section below holds
+  on the map as well as in the Key. The screenshots are therefore a light-theme pair.
+- **The dark theme stops at the Stations panel's edge**, and will still do so when MR4
+  unhides it. The handoff's scope note and the stage brief both put that panel out of
+  scope, and its colours ARE its measured contrast relationships: A1i, A1j, A1k, A1l and
+  A1m2 depend on them. Worth a stage of its own rather than a corner of this one.
 - **`statusLineText` is no longer the page's renderer.** It is kept, exported and
   tested, and the MR1 node test asserts the composed line's tail IS `statusNoteText`'s
   output, so the retained composition is the oracle the note is checked against rather
@@ -361,6 +387,8 @@ em-dash count is over each commit's added lines and its message.
 | `03d82b3` pins | 1718 | 281 | 218 | 4 | 38 | 0 |
 | `88f0862` chrome | 1718 | 287 | 234 | 4 | 38 | 0 |
 | `4b5d583` round 1 | 1718 | 287 | 234 | 4 | 38 | 0 |
+| `138c50b` round 2 | 1718 | 287 | 234 | 4 | 38 | 0 |
+| (tip) round 3 | 1718 | 287 | 239 | 4 | 38 | 0 |
 
 - **`fe82a66`'s 36 are the handoff's own**, in the two documents recorded verbatim. See
   the deviations section.
@@ -370,8 +398,13 @@ em-dash count is over each commit's added lines and its message.
   loads, so their rows carry the numbers of the commit before and after them
   respectively. `03d82b3` adds tests only; `88f0862` is the one commit with production
   changes, and every tier ran on it.
-- **The e2e count grows twice**: 204 to 218 with the fourteen pins, and 218 to 234 with
-  MR1's own eleven claims in `chrome.spec.js` plus the five A6k/A6l rewrites and A1x.
+- **The e2e count grows three times**: 204 to 218 with the fourteen pins, 218 to 234 with
+  MR1's own eleven claims in `chrome.spec.js` plus the five A6k/A6l rewrites and A1x, and
+  234 to 239 with round 3. **Round 2 added no tests and that is deliberate**: it was an
+  adversarial read of the production diff, and every one of its sixteen findings was
+  caught by a guard that already existed or by measuring with the repository's own
+  helpers. Round 3's five are D1k at 375 and 320, D1l, and the popup axe scan run a
+  second time in the dark theme at 1280 and 375.
 - **The node count grows once**: 281 to 287, six tests for the pure half.
 - **The browser contract tier is the C6 dimming series**, C6e1 through C6e4, green at
   every point. Three are byte-unchanged; C6e2's one changed line is in the deviations.

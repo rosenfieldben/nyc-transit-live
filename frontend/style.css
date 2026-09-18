@@ -336,10 +336,18 @@ body,
   gap: 2px;
 }
 
+/* RULING: THE APP'S OWN SHAPE, NOT THE ROUNDEL. The handoff draws these as 22px circles,
+   which is the MTA's route symbol, and this repository's README Notes rule the other way in
+   as many words: "The MTA's logos, official map, and route symbols require a license. Use
+   your own colors and markers rather than official MTA branding." The colours were already
+   the app's (lineColor(), which exists for the same reason); the shape follows. The radius is
+   the subway marker's own: systems/subway.js draws `<rect rx="3">` in an 18-unit box, which
+   is 3.7px on a 22px chip. MR2 draws the ribbons in lineColor() and the bullets in this
+   shape, so the key and the map agree there too. */
 .bul {
   width: 22px;
   height: 22px;
-  border-radius: 50%;
+  border-radius: 4px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -356,6 +364,12 @@ body,
 
 /* The two text actions and the one filled action. All three are 30px tall, which clears the
    24px target floor layout.spec.js enforces without needing a pseudo-element. */
+/* Hidden until MR4 by ruling (index.html says why), and `hidden` has to beat the author
+   display below, which is the same trap #route-banner and the fold elements carry. */
+#theme-toggle[hidden] {
+  display: none;
+}
+
 #theme-toggle,
 #legend-toggle {
   height: 30px;
@@ -403,10 +417,26 @@ body,
   border-top: 1px solid var(--rule);
 }
 
+#feed-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 4px;
+}
+
+/* THE ROW IS ITS CONTENTS WHEN ITS CONTENTS ARE THE NOTE ALONE (round 3). Below the
+   breakpoint the buttons fold and the note stays; on a healthy day the note is empty, and a
+   30px band with nothing in it and a hairline over it is chrome a phone cannot spare. So the
+   row keeps no minimum at that width and the empty note draws nothing, which collapses the
+   whole thing to zero until there is something to say. */
+#status:empty {
+  display: none;
+}
+
 /* The fold elements are hidden with the `hidden` ATTRIBUTE below 700px, and an author
    display would defeat it. This file has been bitten by that once already, on #route-banner;
    the rule is stated for every element that can be hidden that way. */
-#toggles[hidden],
+#feed-buttons[hidden],
 #subway-key[hidden],
 #legend[hidden] {
   display: none;
@@ -1420,6 +1450,14 @@ body,
 
   #toggles {
     padding: 0 8px;
+    min-height: 0;
+  }
+
+  /* The note is the row at this width, so it takes the row's own left edge rather than
+     trailing to the right of buttons that are not there. */
+  #feed-buttons[hidden] ~ #status {
+    margin-left: 0;
+    padding: 6px 0;
   }
 
   /* The Key panel gets more of the screen once it is the only thing open, and it still

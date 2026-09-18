@@ -181,7 +181,7 @@ test(`A4b. every interactive thing on the map surface meets the 24px floor at ${
      control that is not rendered has no box to measure. */
   if (viewport.width <= 700) {
     await page.locator("#legend-toggle").click();
-    await expect(page.locator("#toggles")).toBeVisible();
+    await expect(page.locator("#feed-buttons")).toBeVisible();
   }
   const controls = [
     "#toggle-subway",
@@ -191,7 +191,6 @@ test(`A4b. every interactive thing on the map surface meets the 24px floor at ${
     ".leaflet-control-zoom-out",
     "#stations-toggle",
     "#legend-toggle",
-    "#theme-toggle",
   ];
   // The view presets stand down while the Key is open on a phone (they would paint over it),
   // so they are measured where they are drawn.

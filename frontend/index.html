@@ -151,9 +151,21 @@
            become buttons with real names and a real effect. -->
       <div id="subway-key" class="hdr-fold" aria-hidden="true"></div>
       <div id="hdr-actions">
-        <!-- The theme toggle. aria-pressed rather than a label swap alone, so the state is
-             in the accessibility tree and not only in the word. -->
-        <button type="button" id="theme-toggle" aria-pressed="false">Dark</button>
+        <!-- THE THEME TOGGLE IS HIDDEN UNTIL MR4, BY RULING, and it is hidden rather than
+             deleted because everything behind it ships now and works.
+             WHY. The dark theme is chrome and tokens, which is MR1; the MARKS it has to sit
+             behind are MR2 through MR4. Measured on this branch: in the dark theme every Key
+             panel glyph reads between 1.11 and 2.63 against the surface, against the 3:1 a
+             mark owes, because those glyphs carry the map's own marker colours and were drawn
+             for an opaque white panel. The same arithmetic holds ON THE MAP, where the dark
+             basemap filter is MR1's and the markers are not: a rider who chose dark today
+             would get a map whose every mark reads at those ratios. The design's answer is
+             the paper casing and stroke it gives every mark, and that arrives with the marks.
+             WHAT STILL SHIPS: the token set, the tile filter, the persistence, and every test
+             of all three. The specs drive applyTheme() directly rather than this control, so
+             the machinery stays honest while the control stays out of a rider's reach.
+             MR4 deletes the `hidden` attribute and nothing else. -->
+        <button type="button" id="theme-toggle" hidden>Dark</button>
         <!-- A3, EXTENDED. This was the "Legend" button and it is now "Key", and it keeps
              its id, its aria-controls and its disclosure contract because three suites pin
              them. What MR1 extends: it is present at every width now (the design's row 1
@@ -180,9 +192,18 @@
          disclosure had no load-order dependency; these are not a disclosure, and their
          count, freshness dot and tooltip are written on every poll anyway, so static
          markup would be eight copies of a shape that must agree with FEEDS and would drift
-         from it. They are inserted before the note below, which stays in the markup because
-         setStatus() looks it up at module scope. -->
-    <div id="toggles" class="hdr-fold">
+         from it. They go into #feed-buttons below, which is also what folds; the note stays
+         in the markup because setStatus() looks it up at module scope. -->
+    <div id="toggles">
+      <!-- THE BUTTONS FOLD; THE NOTE DOES NOT (round 3, by ruling). The fold class is on this
+           wrapper rather than on the row, so below 700px the eight feed buttons and the subway
+           key go behind Key and the trailing note stays. It costs a rider nothing on a healthy
+           day, because the note is EMPTY then and the row collapses to nothing (#status:empty
+           is display:none and the row has no min-height at that width); it costs them a tap
+           on the day it says something, which is the day it matters. The alerts strip and this
+           note are now the two carve-outs, and they are the two surfaces that speak only when
+           something is wrong. -->
+      <div id="feed-buttons" class="hdr-fold"></div>
       <!-- The trailing note: staleness()'s output, VERBATIM. Nothing here re-derives it
            (mutation M4); map.js hands statusNoteText() the same `problems` array the status
            line was composed from, so the withheld count and Metro-North's undated clause

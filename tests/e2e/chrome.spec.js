@@ -236,10 +236,18 @@ for (const [label, viewport] of [
         });
     });
 
-    // Folded: the key and the strip are away, and the Key button says so.
-    await expect(page.locator("#toggles")).toBeHidden();
+    // Folded: the eight feed buttons and the subway key are away, and the Key button says so.
+    await expect(page.locator("#feed-buttons")).toBeHidden();
     await expect(page.locator("#subway-key")).toBeHidden();
     await expect(page.locator("#legend-toggle")).toHaveAttribute("aria-expanded", "false");
+    // AND THE NOTE IS NOT FOLDED WITH THEM (round 3, by ruling): it is the second carve-out
+    // beside this strip, and the two of them are the surfaces that speak only when something
+    // is wrong. Asserted as the absence of the fold class, because on a healthy page the note
+    // is empty and an empty note draws nothing.
+    expect(
+      await page.evaluate(() => document.getElementById("status").closest(".hdr-fold") !== null),
+      "the trailing note must never be inside the fold",
+    ).toBe(false);
 
     // AND THE ALERT IS THERE ANYWAY: visible, readable, and dismissible.
     await expect(page.locator(".alert-banner-row")).toHaveText(
@@ -252,11 +260,22 @@ for (const [label, viewport] of [
   });
 }
 
+// The theme, driven the way the app drives it. THE BUTTON IS HIDDEN UNTIL MR4 BY RULING
+// (index.html says why: the dark theme is chrome, and the MARKS it has to sit behind arrive
+// with MR2 through MR4), so these specs go through applyTheme() and the toggle's own click
+// handler rather than through a control a rider cannot reach. What is being tested is the
+// machinery, which ships now; what is withheld is the way in.
+const pressTheme = (page) => page.evaluate(() => document.getElementById("theme-toggle").click());
+
 test("D1g. the theme persists across a reload, and the page renders with storage empty", async ({ page }) => {
   /* BOTH DIRECTIONS OF MUTATION M5. A theme that is applied but not stored is forgotten on
      reload; a page that depends on the store renders half-styled when there is nothing in it,
      which is every first visit and every private window. */
   await open(page);
+
+  // THE CONTROL IS OUT OF REACH, and that is asserted rather than assumed: a ruling that only
+  // lived in a comment would be undone by the next person who deleted the attribute.
+  await expect(page.locator("#theme-toggle")).toBeHidden();
   const theme = () => page.locator("html").getAttribute("data-theme");
   const surface = () => page.evaluate(() => getComputedStyle(document.getElementById("panel")).backgroundColor);
 
@@ -266,7 +285,7 @@ test("D1g. the theme persists across a reload, and the page renders with storage
   const light = await surface();
   await expect(page.locator("#theme-toggle")).toHaveText("Dark");
 
-  await page.locator("#theme-toggle").click();
+  await pressTheme(page);
   expect(await theme()).toBe("dark");
   await expect(page.locator("#theme-toggle")).toHaveText("Light");
   const dark = await surface();
@@ -322,7 +341,7 @@ test("D1h. the theme survives a browser that refuses localStorage", async ({ pag
   expect(await page.locator("html").getAttribute("data-theme")).toBe("light");
 
   // And the toggle still works for this session, it just will not be remembered.
-  await page.locator("#theme-toggle").click();
+  await pressTheme(page);
   expect(await page.locator("html").getAttribute("data-theme")).toBe("dark");
   await expect(page.locator(".train-marker")).toHaveCount(2);
 });
@@ -404,3 +423,82 @@ test("D1j. the view presets fly the map and stand down when the rider takes over
     .poll(async () => (await pressed()).join(","), { timeout: 5_000 })
     .toBe("view-city:false,view-rail:false,view-region:false");
 });
+
+for (const [label, viewport] of [
+  ["375", PHONE],
+  ["320", NARROW],
+]) {
+  test(`D1k. the trailing note is readable at ${label} with the key folded`, async ({ page }) => {
+    /* THE POSITIVE HALF OF RULING 3, and the reason the carve-out exists. D1f says the note is
+       not inside the fold; this says what that buys a rider: on the day something is wrong,
+       on the smallest screen, with the key folded and the eight feed buttons away, the note
+       is on the page and legible without a tap. It carries staleness()'s whole sentence, not
+       a truncation, which is the never-truncate rule made visual at a width where truncating
+       would be the tempting thing to do. */
+    await page.setViewportSize(viewport);
+    await open(page, (ctx) => {
+      ctx.overrides.railroads = (route, fixtures) =>
+        json(route, fixtures.railroadsWithSystems({ mnrAt: fx.FROZEN_S - 360 }));
+    });
+
+    await expect(page.locator("#feed-buttons"), "the buttons are folded at this width").toBeHidden();
+    await expect(page.locator("#legend-toggle")).toHaveAttribute("aria-expanded", "false");
+
+    const note = page.locator("#status");
+    await expect(note).toBeVisible();
+    // The whole sentence, including the undated clause that RIDES it: Metro-North dates none
+    // of its positions on any day, so that clause is there whenever the railroad line is
+    // raised, and a note that dropped it at a narrow width would be truncating by another name.
+    await expect(note).toHaveText("railroad: MNR as of 6m ago; MNR position age unavailable");
+    await expect(note).toHaveClass(/error/);
+
+    const box = await note.boundingBox();
+    expect(box.width, "the note is drawn").toBeGreaterThan(0);
+    expect(box.x + box.width, "and it fits the screen rather than running off it").toBeLessThanOrEqual(
+      viewport.width + 1,
+    );
+    // WHOLE, NOT CLIPPED. A note that wrapped is fine and a note the box cut off is not, so
+    // the element's scroll width must not exceed what is drawn.
+    const clipped = await note.evaluate((el) => el.scrollWidth > el.clientWidth + 1);
+    expect(clipped, "the note wraps rather than truncating").toBe(false);
+  });
+}
+
+test("D1l. the subway key is the app's own mark, not the MTA's roundel", async ({ page }) => {
+  /* BY RULING, and the ruling is this repository's own: "The MTA's logos, official map, and
+     route symbols require a license. Use your own colors and markers rather than official MTA
+     branding" (README, Notes). The handoff draws these as circles, which is the route symbol;
+     the colours were already the app's, because lineColor() exists for the same reason, and
+     the shape now follows it. The radius is the subway marker's own, so the key and the map
+     are the same mark. */
+  await open(page);
+  const bullets = await page.evaluate(() =>
+    [...document.querySelectorAll("#subway-key .bul")].map((b) => ({
+      route: b.textContent,
+      radius: getComputedStyle(b).borderTopLeftRadius,
+      background: getComputedStyle(b).backgroundColor,
+    })),
+  );
+  // Ten trunks, twenty-three routes: 1-2-3, 4-5-6, 7, A-C-E, B-D-F-M, G, J-Z, L, N-Q-R-W, S.
+  expect(bullets.length, "the key carries the routes the app draws").toBe(23);
+  for (const b of bullets) {
+    expect(b.radius, `${b.route} must not be a circle`).not.toBe("50%");
+    expect(parseFloat(b.radius), `${b.route}'s radius`).toBeLessThan(11);
+    expect(parseFloat(b.radius), `${b.route}'s radius`).toBeGreaterThan(0);
+  }
+  // AND THE COLOURS ARE THE APP'S, read back against lineColor() itself rather than against a
+  // table copied into this spec.
+  const agree = await page.evaluate(() =>
+    [...document.querySelectorAll("#subway-key .bul")].every((b) => {
+      const want = lineColor(b.textContent);
+      const el = document.createElement("span");
+      el.style.color = want;
+      document.body.append(el);
+      const normalised = getComputedStyle(el).color;
+      el.remove();
+      return getComputedStyle(b).backgroundColor === normalised;
+    }),
+  );
+  expect(agree, "every bullet is lineColor()'s answer for its route").toBe(true);
+});
+

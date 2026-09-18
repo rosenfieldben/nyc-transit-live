@@ -170,8 +170,8 @@ test("A2d. toggling a layer off and on does not leave its markers anonymous", as
   expect(before.length).toBeGreaterThan(0);
   expect(before.every((name) => name && name.includes("AirTrain JFK station"))).toBe(true);
 
-  await page.locator("#toggle-airtrain").uncheck();
-  await page.locator("#toggle-airtrain").check();
+  await page.locator("#toggle-airtrain").click();
+  await page.locator("#toggle-airtrain").click();
   await expect.poll(async () => (await namedAirtrain()).length).toBe(before.length);
   const after = await namedAirtrain();
   expect(after, "a re-shown layer keeps its names").toEqual(before);

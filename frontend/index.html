@@ -1,5 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<!-- MR1: data-theme on the ROOT, written here rather than by script, so the page renders
+     in a complete theme before any JavaScript runs and with localStorage empty or refused.
+     systems/shared.js swaps it to "dark" and back and persists the choice; style.css
+     defines one token set per value and the basemap's filter per value. -->
+<html lang="en" data-theme="light">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -12,6 +16,14 @@
        integrity is the repository's own. Leaflet stays BSD-2-Clause; its license
        rides along at vendor/leaflet/LICENSE. -->
   <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+  <!-- MR1: Archivo is SELF-HOSTED under fonts/, declared in style.css, for the same reason
+       Leaflet is. The app's CSP is `default-src 'self'` and font-src has no directive of
+       its own, so it falls back to that and a Google Fonts <link> plus the
+       fonts.gstatic.com files behind it are both refused by the browser. Self-hosting keeps
+       the CSP string byte-identical (a backend test pins it) and means the page makes no
+       third-party request for type at all. Provenance, version, axes and the OFL are in
+       fonts/README.md. No <link> here: the @font-face rules travel with the stylesheet
+       that uses them. -->
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -92,137 +104,227 @@
        ambient. Kept separate from both visible surfaces so a repaint and an
        announcement cannot be coupled by accident, exactly as #stations-announce is. -->
   <div id="page-announce" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
-  <!-- Agency-wide service alerts strip, populated by map.js only when there is
-       something to show (empty otherwise, so no banner element is rendered).
-       A4: a <section> with a name, which makes it a landmark. Its rows were reported by
-       axe's `region` rule at both viewports in every state that had an alert, because
-       they were page content sitting outside every landmark. Naming the strip is the
-       structural fix; it also means a screen-reader rider can jump to the alerts
-       directly rather than discovering them by tabbing past them. -->
-  <section id="alert-banner" aria-label="Service alerts"></section>
-  <!-- NOTE THE NEAR-MISS: this is id="panel", the LEGEND. The A1 station surface is
-       id="stations-panel" and is a different thing entirely. They are not to be
-       unified; the ids only look similar. -->
-  <!-- A4: <aside>, i.e. a complementary landmark. The legend, the layer checkboxes, the
-       route banner and the status line are all support material for the map rather than
-       the app's main content, which is exactly what `complementary` means. Before this
-       they were the largest block of landmark-less content on the page: #legend, #toggles,
-       #status and #route-banner-label were reported by `region` in every measured state. -->
-  <aside id="panel" aria-label="Legend, layers and status">
-    <!-- A1's toggle lives in the controls cluster with the layer checkboxes. -->
-    <button type="button" id="stations-toggle" aria-expanded="false" aria-controls="stations-panel">
-      Stations
-    </button>
-    <!-- A3: the legend collapses on a phone. Fourteen legend rows and a note are most of
-         this panel's height, and on a 375x667 screen they pushed the layer toggles and
-         the status line off the bottom. The button is present in the markup at every
-         width and HIDDEN BY CSS above the mobile breakpoint, rather than being created
-         by script, so the disclosure has no load-order dependency and a rider whose
-         JavaScript has not run yet is never shown a control that does nothing.
-         aria-expanded is maintained by the same code that sets the hidden attribute, so
-         what a screen reader is told and what is drawn cannot disagree. -->
-    <button type="button" id="legend-toggle" aria-expanded="false" aria-controls="legend">
-      Legend
-    </button>
-    <div id="legend">
-    <div class="legend-row">
-      <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M10 2 L16 17 L10 13 L4 17 Z" fill="#1d4ed8" stroke="#fff" stroke-width="1.2"/></svg>
-      Bus (arrow points where it's heading)
+  <!-- MR1: THE TOP BAR. One <header> replaces the right-hand <aside> legend panel AND the
+       separately positioned alert strip, which is the redesign's first structural move
+       (docs/design/map-redesign/README.md section 1, and V3-NOTES' v3.1 point 1).
+
+       IT KEEPS id="panel", AND THAT IS LOAD-BEARING RATHER THAN LAZY. The station panel's
+       inert sweep walks from #stations-panel up to <body> inerting siblings at each level
+       (stations.js setBackgroundInert), and three suites assert the result by id: the
+       inert set is exactly ["alert-banner", "map", "panel"], and #stations-toggle,
+       #legend-toggle and a layer toggle must each report focusable:false with
+       ownInert:false, i.e. inertness INHERITED from this element. A rename would have
+       turned all of that green-by-vacuity. The alert strip moving INSIDE keeps that set
+       unchanged for the same reason: a descendant of an inert element is inert.
+       And systems/shared.js's POPUP_OBSTACLE_IDS names both ids as the geometry a popup
+       must avoid.
+
+       IT IS A <header>, NOT AN <aside>, so the landmark is `banner` rather than
+       `complementary`: this is now the page's chrome across the top rather than material
+       beside the map. As a direct child of <body> it is a banner landmark without a role
+       attribute, and the alert strip keeps its own named region inside it.
+
+       THE NEAR-MISS IS STILL A NEAR-MISS: this is id="panel". The A1 station surface is
+       id="stations-panel" and is a different thing entirely. They are not to be unified. -->
+  <header id="panel" aria-label="Map chrome: key, layers, status and alerts">
+    <!-- ROW 1. Brand, clock, the subway colour key, and the three actions. -->
+    <div id="hdr-row1">
+      <span id="brand">NYC Transit Live</span>
+      <!-- The clock. Its accent square blinks, and the blink is gated on motionAllowed()
+           exactly like every other animation this app owns (mutation M6). The DIGITS keep
+           ticking under reduced motion: a clock that stopped would be a lie, and the
+           preference is about movement, not about information. aria-hidden because the
+           status line's own freshness words are the accessible answer to "how current is
+           this", and a time that changes every second in a live region would be noise. -->
+      <span id="clock" aria-hidden="true"><i id="clock-dot"></i><span id="clock-time"></span></span>
+      <!-- The subway colour key. DISPLAY ONLY in MR1: route focus arrives with the subway
+           restyle in MR2, when these become buttons with real names and a real effect. So
+           they are spans, not buttons: a focusable control that does nothing would fail
+           A1y's walk invariants for exactly the right reason. Filled by systems/shared.js
+           from lineColor() and readableTextOn(), so the palette lives in one place and the
+           key cannot disagree with the lines and markers on the map beneath it. -->
+      <div id="subway-key" class="hdr-fold" role="group" aria-label="Subway route colours"></div>
+      <div id="hdr-actions">
+        <!-- The theme toggle. aria-pressed rather than a label swap alone, so the state is
+             in the accessibility tree and not only in the word. -->
+        <button type="button" id="theme-toggle" aria-pressed="false">Dark</button>
+        <!-- A3, EXTENDED. This was the "Legend" button and it is now "Key", and it keeps
+             its id, its aria-controls and its disclosure contract because three suites pin
+             them. What MR1 extends: it is present at every width now (the design's row 1
+             carries it, and the Key panel is a toggle at every width), and below 700px the
+             same one boolean also folds the subway key and the feed strip, leaving one row.
+             systems/shared.js's applyHeaderDisclosure is the one place that knows both. -->
+        <button type="button" id="legend-toggle" aria-expanded="false" aria-controls="legend">Key</button>
+        <!-- A1's toggle, unchanged in every respect the specs assert: the id, the
+             aria-expanded, the aria-controls, the Escape path and the Close button below
+             700px. Only its styling moves. -->
+        <button type="button" id="stations-toggle" aria-expanded="false" aria-controls="stations-panel">
+          Stations
+        </button>
+      </div>
     </div>
-    <div class="legend-row">
-      <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="10" cy="10" r="5.5" fill="#1d4ed8" stroke="#fff" stroke-width="1.5"/></svg>
-      Bus, heading unknown
+    <!-- ROW 2, THE FEED STRIP: the old layer checkboxes and the old status line, moved and
+         restyled, with their semantics kept. It keeps id="toggles" and the note keeps
+         id="status", because a11y.spec.js names both as the targets its anti-vacuity check
+         requires to have been scanned, and the contract tier reads #status for the C6
+         dimming specs.
+
+         THE EIGHT BUTTONS ARE GENERATED, by systems/shared.js from helpers.js's FEEDS, and
+         that is a change of habit worth stating. The checkboxes were static markup so the
+         disclosure had no load-order dependency; these are not a disclosure, and their
+         count, freshness dot and tooltip are written on every poll anyway, so static
+         markup would be eight copies of a shape that must agree with FEEDS and would drift
+         from it. They are inserted before the note below, which stays in the markup because
+         setStatus() looks it up at module scope. -->
+    <div id="toggles" class="hdr-fold">
+      <!-- The trailing note: staleness()'s output, VERBATIM. Nothing here re-derives it
+           (mutation M4); map.js hands statusNoteText() the same `problems` array the status
+           line was composed from, so the withheld count and Metro-North's undated clause
+           arrive unchanged, and a healthy day leaves it empty.
+           EMPTY IN THE MARKUP, where the status line said "Loading...". This element is the
+           note now, not the line: the line had a clock and counts to be loading, and a note
+           whose whole job is to be silent on a healthy day must not open by saying something.
+           The feeds' own dots carry "nothing has decoded yet" until the first poll lands. -->
+      <div id="status"></div>
     </div>
-    <div class="legend-row">
-      <svg aria-hidden="true" viewBox="0 0 18 18"><rect x="1.5" y="1.5" width="15" height="15" rx="3" fill="#1f5fbf" stroke="#fff" stroke-width="1.5"/><text x="9" y="9.5" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="700" font-family="system-ui, sans-serif" fill="#fff">A</text></svg>
-      Subway train, at/approaching the stop shown
-    </div>
-    <div class="legend-row">
-      <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M2 15 C9 15 9 5 18 5" stroke="#1f5fbf" stroke-width="2.5" fill="none" opacity="0.6"/></svg>
-      Subway route line
-    </div>
-    <div class="legend-row">
-      <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="10" cy="10" r="4.5" fill="#fff" stroke="#333" stroke-width="2"/></svg>
-      Subway station (click for arrivals)
-    </div>
-    <div class="legend-row">
-      <svg aria-hidden="true" viewBox="0 0 16 16"><rect x="1.5" y="1.5" width="13" height="13" rx="1.5" fill="#7b1fa2" stroke="#fff" stroke-width="1.5"/></svg>
-      LIRR / Metro-North train (live GPS)
-    </div>
-    <div class="legend-row">
-      <svg aria-hidden="true" viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="12" rx="1.5" fill="#fff" stroke="#7b1fa2" stroke-width="2.5"/></svg>
-      LIRR / Metro-North train (scheduled or estimated, no GPS)
-    </div>
-    <div class="legend-row">
-      <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M2 15 C9 15 9 5 18 5" stroke="#7b1fa2" stroke-width="2.5" fill="none" opacity="0.6"/></svg>
-      LIRR / Metro-North route line
-    </div>
-    <div class="legend-row">
-      <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="10" cy="10" r="4" fill="#fff" stroke="#334155" stroke-width="2.5"/></svg>
-      LIRR / Metro-North station (click for arrivals)
-    </div>
-    <div class="legend-row">
-      <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M2 15 C9 15 9 5 18 5" stroke="#b5179e" stroke-width="2.5" fill="none" opacity="0.6"/></svg>
-      AirTrain JFK route line (scheduled service, no live tracking)
-    </div>
-    <div class="legend-row">
-      <svg aria-hidden="true" viewBox="0 0 14 14"><rect x="1.5" y="1.5" width="11" height="11" rx="2" fill="#fff" stroke="#b5179e" stroke-width="2.5"/></svg>
-      AirTrain JFK station (click for scheduled headways)
-    </div>
-    <div class="legend-row">
-      <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="10" cy="10" r="4.5" fill="#3d5a80" stroke="#fff" stroke-width="1.5"/></svg>
-      PATH station (click for arrivals); trains are diamonds
-    </div>
-    <div class="legend-row">
-      <svg aria-hidden="true" viewBox="0 0 22 14"><rect x="1" y="3" width="20" height="8" rx="4" fill="#00839c" stroke="#fff" stroke-width="1.5"/></svg>
-      NYC Ferry boat (live GPS); dimmed when at a dock
-    </div>
-    <div class="legend-row">
-      <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="10" cy="10" r="4.5" fill="#0e7490" stroke="#fff" stroke-width="1.5"/></svg>
-      Ferry dock (click for arrivals)
-    </div>
-    <div class="legend-row">
-      <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M2 15 C9 15 9 5 18 5" stroke="#075AAA" stroke-width="2.5" fill="none" opacity="0.6"/></svg>
-      NJ Transit route line
-    </div>
-    <div class="legend-row">
-      <svg aria-hidden="true" viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="12" rx="1.5" fill="#fff" stroke="#075AAA" stroke-width="2.5"/></svg>
-      NJ Transit train (scheduled or estimated, no GPS)
-    </div>
-    <div class="legend-row">
-      <!-- viewBox 16, matching the train row above it. .legend-row svg is a fixed 16px
-           box, so the viewBox alone decides a swatch's apparent size: at viewBox 12
-           this 10-unit square scaled UP to 13.3px and read LARGER than the 12px train
-           square, which is the reverse of what the map draws and of what this file and
-           systems/njt.js both say about it. -->
-      <svg aria-hidden="true" viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="10" rx="1.5" fill="#334155" stroke="#fff" stroke-width="1.5"/></svg>
-      NJ Transit station (click for departures)
-    </div>
-    <div class="legend-note">Color indicates route &middot; click a bus to draw its route</div>
-    </div><!-- /#legend -->
+    <!-- The clicked-bus route banner, unchanged in id and shape, now its own header row. -->
     <div id="route-banner" hidden>
       <span id="route-banner-label"></span>
       <button id="route-clear" type="button" title="Remove route line">&times; clear</button>
     </div>
-    <div id="toggles">
-      <label><input type="checkbox" id="toggle-buses" checked> Buses</label>
-      <label><input type="checkbox" id="toggle-subways" checked> Subways</label>
-      <!-- aria-label, not new visible text: the button above and this checkbox both
-           read "Stations" but do different things (open the station list versus show
-           or hide the subway station markers), and two controls announcing the same
-           name is worst for exactly the users A1 exists for. The visible label,
-           layout and CSS are untouched. -->
-      <label><input type="checkbox" id="toggle-stations" aria-label="Show subway station markers" checked> Stations</label>
-      <label><input type="checkbox" id="toggle-railroads" checked> Railroads</label>
-      <label><input type="checkbox" id="toggle-airtrain" checked> AirTrain JFK</label>
-      <label><input type="checkbox" id="toggle-path" checked> PATH</label>
-      <label><input type="checkbox" id="toggle-ferries" checked> Ferries</label>
-      <!-- "NJ Transit" spelled out rather than "NJT": the abbreviation is what the
-           feed and the code call it, and the label is what a rider reads. -->
-      <label><input type="checkbox" id="toggle-njt" checked> NJ Transit</label>
+    <!-- THE KEY PANEL. Still id="legend", still shown and hidden by the `hidden` ATTRIBUTE
+         (see the [hidden] rule in style.css: an author display:grid would otherwise defeat
+         it, which this repo has already been bitten by once on #route-banner).
+
+         EVERY ROW THE LEGEND HAD, VERBATIM, GLYPH AND SENTENCE. The design's Key panel
+         lists the redesign's own glyphs, and MR1 does not draw those yet: a key showing a
+         route-bullet train and a branch tag over a map drawing rounded squares would be
+         worse than no key. So the rows are today's, restyled into the design's two-column
+         grid, and each stage that changes a marker brings its own row with it. P1e is the
+         pin that says nothing was lost. The design's two explanatory notes (the zoom
+         thresholds and the agency-glyph table) arrive with MR2 and MR3, which is where the
+         things they explain arrive. -->
+      <!-- tabindex AND A NAME, because this panel SCROLLS. axe's scrollable-region-focusable
+         rule is a real requirement rather than a formality: a region with its own overflow
+         that no keyboard can reach has content only a mouse can see, and at 375 and 320 the
+         Key is exactly that. It holds no focusable rows of its own, so the panel itself is
+         the tab stop, and it carries a name because A1y's walk requires every stop to have
+         one. "Map key" rather than "Key" so it does not share an accessible name with the
+         button that opens it, which is the same rule #toggle-stations used to need. -->
+    <div id="legend" tabindex="0" role="group" aria-label="Map key">
+      <div class="legend-row">
+        <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M10 2 L16 17 L10 13 L4 17 Z" fill="#1d4ed8" stroke="#fff" stroke-width="1.2"/></svg>
+        Bus (arrow points where it's heading)
+      </div>
+      <div class="legend-row">
+        <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="10" cy="10" r="5.5" fill="#1d4ed8" stroke="#fff" stroke-width="1.5"/></svg>
+        Bus, heading unknown
+      </div>
+      <div class="legend-row">
+        <svg aria-hidden="true" viewBox="0 0 18 18"><rect x="1.5" y="1.5" width="15" height="15" rx="3" fill="#1f5fbf" stroke="#fff" stroke-width="1.5"/><text x="9" y="9.5" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="700" font-family="system-ui, sans-serif" fill="#fff">A</text></svg>
+        Subway train, at/approaching the stop shown
+      </div>
+      <div class="legend-row">
+        <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M2 15 C9 15 9 5 18 5" stroke="#1f5fbf" stroke-width="2.5" fill="none" opacity="0.6"/></svg>
+        Subway route line
+      </div>
+      <div class="legend-row">
+        <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="10" cy="10" r="4.5" fill="#fff" stroke="#333" stroke-width="2"/></svg>
+        Subway station (click for arrivals)
+      </div>
+      <div class="legend-row">
+        <svg aria-hidden="true" viewBox="0 0 16 16"><rect x="1.5" y="1.5" width="13" height="13" rx="1.5" fill="#7b1fa2" stroke="#fff" stroke-width="1.5"/></svg>
+        LIRR / Metro-North train (live GPS)
+      </div>
+      <div class="legend-row">
+        <svg aria-hidden="true" viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="12" rx="1.5" fill="#fff" stroke="#7b1fa2" stroke-width="2.5"/></svg>
+        LIRR / Metro-North train (scheduled or estimated, no GPS)
+      </div>
+      <div class="legend-row">
+        <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M2 15 C9 15 9 5 18 5" stroke="#7b1fa2" stroke-width="2.5" fill="none" opacity="0.6"/></svg>
+        LIRR / Metro-North route line
+      </div>
+      <div class="legend-row">
+        <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="10" cy="10" r="4" fill="#fff" stroke="#334155" stroke-width="2.5"/></svg>
+        LIRR / Metro-North station (click for arrivals)
+      </div>
+      <div class="legend-row">
+        <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M2 15 C9 15 9 5 18 5" stroke="#b5179e" stroke-width="2.5" fill="none" opacity="0.6"/></svg>
+        AirTrain JFK route line (scheduled service, no live tracking)
+      </div>
+      <div class="legend-row">
+        <svg aria-hidden="true" viewBox="0 0 14 14"><rect x="1.5" y="1.5" width="11" height="11" rx="2" fill="#fff" stroke="#b5179e" stroke-width="2.5"/></svg>
+        AirTrain JFK station (click for scheduled headways)
+      </div>
+      <div class="legend-row">
+        <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="10" cy="10" r="4.5" fill="#3d5a80" stroke="#fff" stroke-width="1.5"/></svg>
+        PATH station (click for arrivals); trains are diamonds
+      </div>
+      <div class="legend-row">
+        <svg aria-hidden="true" viewBox="0 0 22 14"><rect x="1" y="3" width="20" height="8" rx="4" fill="#00839c" stroke="#fff" stroke-width="1.5"/></svg>
+        NYC Ferry boat (live GPS); dimmed when at a dock
+      </div>
+      <div class="legend-row">
+        <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="10" cy="10" r="4.5" fill="#0e7490" stroke="#fff" stroke-width="1.5"/></svg>
+        Ferry dock (click for arrivals)
+      </div>
+      <div class="legend-row">
+        <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M2 15 C9 15 9 5 18 5" stroke="#075AAA" stroke-width="2.5" fill="none" opacity="0.6"/></svg>
+        NJ Transit route line
+      </div>
+      <div class="legend-row">
+        <svg aria-hidden="true" viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="12" rx="1.5" fill="#fff" stroke="#075AAA" stroke-width="2.5"/></svg>
+        NJ Transit train (scheduled or estimated, no GPS)
+      </div>
+      <div class="legend-row">
+        <!-- viewBox 16, matching the train row above it. .legend-row svg is a fixed 16px
+             box, so the viewBox alone decides a swatch's apparent size: at viewBox 12
+             this 10-unit square scaled UP to 13.3px and read LARGER than the 12px train
+             square, which is the reverse of what the map draws and of what this file and
+             systems/njt.js both say about it. -->
+        <svg aria-hidden="true" viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="10" rx="1.5" fill="#334155" stroke="#fff" stroke-width="1.5"/></svg>
+        NJ Transit station (click for departures)
+      </div>
+      <!-- MR1 ADDS THIS ROW, and it is the one addition rather than a carry-forward.
+           The freshness contract draws a vehicle dimmed when its own observation is older
+           than the app will vouch for, per observation rather than per feed, so a dimmed
+           train can sit beside a bright one inside a healthy system. That was already true
+           on the map and explained NOWHERE in the legend: measured, the seventeen rows here
+           mention dimming exactly once, in "dimmed when at a dock", which is a docked boat
+           and a different rule entirely. The glyph is the bus arrow at the contract's own
+           marker opacity so the row shows the treatment rather than describing it. -->
+      <div class="legend-row">
+        <svg aria-hidden="true" viewBox="0 0 20 20" opacity="0.45"><path d="M10 2 L16 17 L10 13 L4 17 Z" fill="#1d4ed8" stroke="#fff" stroke-width="1.2"/></svg>
+        Dimmed vehicle: its position is older than a live fix; the popup says how old
+      </div>
+      <div class="legend-note">Color indicates route &middot; click a bus to draw its route</div>
+      </div><!-- /#legend -->
+    <!-- THE SERVICE ALERTS STRIP, now a full-width row INSIDE the header. v3.1 point 1:
+         it never folds, at any width, so it carries no hdr-fold class and is a sibling of
+         the rows that do. That is also what retires a whole class of geometry bug: the
+         strip used to be an independently positioned box whose `right: 260px` was
+         arithmetic on the legend panel's width, and three specs existed only to assert
+         that the panel stopped above it. Two boxes that cannot overlap need no such
+         assertion.
+
+         A4: still a <section> with a name, so its rows are inside a landmark of their own
+         and a screen-reader rider can jump straight to them. Populated by map.js only when
+         there is something to show, and empty otherwise. -->
+    <section id="alert-banner" aria-label="Service alerts"></section>
+    <!-- THE BOTTOM-RIGHT CONTROL STACK, positioned over the map but a CHILD OF THE HEADER
+         on purpose: as a body sibling it would be page content outside every landmark
+         (axe's `region` rule) and a new member of the inert sweep's set, and it is neither
+         of those things conceptually. It is chrome. The Names toggle the design puts here
+         waits for MR2, where labels exist to toggle.
+         The header must therefore not become a containing block for fixed descendants,
+         which is one of the reasons it carries no filter or backdrop-filter; style.css
+         says the other. -->
+    <div id="view-stack" role="group" aria-label="Map view">
+      <button type="button" id="view-city" aria-pressed="false">City</button>
+      <button type="button" id="view-rail" aria-pressed="false">Rail</button>
+      <button type="button" id="view-region" aria-pressed="false">Region</button>
     </div>
-    <div id="status">Loading&hellip;</div>
-  </aside>
+  </header>
   <!-- Self-hosted Leaflet (see the stylesheet comment in <head>). -->
   <script src="vendor/leaflet/leaflet.js"></script>
   <script src="helpers.js"></script>

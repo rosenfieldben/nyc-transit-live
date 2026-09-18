@@ -244,8 +244,15 @@ async function showBusRoute(bus) {
 document.getElementById("route-clear").addEventListener("click", clearBusRoute);
 
 // Keep the banner honest when the Buses toggle hides the route line layer.
-document.getElementById("toggle-buses").addEventListener("change", (e) => {
-  document.getElementById("route-banner").hidden = !e.target.checked || !shownBusRoute;
+//
+// MR1: A CLICK ON A BUTTON, NOT A CHANGE ON A CHECKBOX, and the state comes from the strip
+// rather than from the control. The feed toggles are buttons with aria-pressed now, which
+// fire no `change` event and carry no `.checked`, so the old listener went silent and the
+// banner went on claiming a route line that was no longer drawn. Asking feedShowing() rather
+// than reading the button's attribute keeps this on the same side of the truth as the layer
+// itself; this listener is registered after the strip's own, so the set is already updated.
+document.getElementById("toggle-buses").addEventListener("click", () => {
+  document.getElementById("route-banner").hidden = !feedShowing("buses") || !shownBusRoute;
 });
 
 const buses = new Map(); // bus id -> { marker, routeId, bearing, latest }

@@ -91,19 +91,32 @@ test("A2f. a feed going stale announces once, and then stays quiet", async ({ pa
 });
 
 test("A2g. two unchanged refreshes of a healthy page say nothing at all", async ({ page }) => {
-  // The status line rewrites itself every poll because it contains a clock. Anything
-  // comparing rendered text would announce forever; this is the spec that fails if
-  // someone reaches for a string compare.
+  /* The chrome rewrites itself continuously, and none of that is news. Anything comparing
+     rendered text would announce forever; this is the spec that fails if someone reaches for
+     a string compare.
+
+     MR1 MOVED THE VACUITY GUARD, and kept it honest. It used to read #status, which repainted
+     every poll because the status line CONTAINED the clock. The clock is its own element in
+     the header now and the note is only the problems, so on a healthy page #status is empty
+     and stays empty: reading it would have made this spec vacuous in the quietest possible
+     way, passing because nothing anywhere had changed. The clock is what repaints now, so
+     the clock is what proves the page was alive; and #status staying empty through it is a
+     second claim worth making, because a note that invented something to say on a healthy
+     poll is exactly what mutation M4 produces. */
   await installMocks(page);
   await open(page);
   await watchAnnouncements(page);
 
-  const before = await page.locator("#status").textContent();
+  const clock = () => page.locator("#clock-time").textContent();
+  const note = () => page.locator("#status").textContent();
+  const beforeClock = await clock();
+  expect(await note(), "a healthy page's note starts empty").toBe("");
   await page.clock.runFor(POLL_MS * 2 + 2000);
-  const after = await page.locator("#status").textContent();
 
-  // The visible line really did change, or this spec proves nothing.
-  expect(after, "the status line must actually have repainted").not.toBe(before);
+  // The visible chrome really did repaint, or this spec proves nothing.
+  expect(await clock(), "the clock must actually have repainted").not.toBe(beforeClock);
+  // And the note still has nothing to say, because nothing is wrong.
+  expect(await note(), "a healthy poll must not give the note something to say").toBe("");
   expect(await announcements(page), "a repaint is not an announcement").toEqual([]);
 });
 

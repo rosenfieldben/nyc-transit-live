@@ -193,13 +193,13 @@ test("A7f. hiding the Buses layer preserves the route line, and showing it bring
   const drawn = await drawnLines(page);
 
   // Hide the layer the way a rider does.
-  await page.locator("#toggle-buses").uncheck();
+  await page.locator("#toggle-buses").click();
   expect(await drawnLines(page), "hiding the layer must not DESTROY the line").toBe(drawn);
   // The banner is honest about the line being off screen while the layer is hidden.
   await expect(page.locator("#route-banner")).toBeHidden();
 
   // And show it again.
-  await page.locator("#toggle-buses").check();
+  await page.locator("#toggle-buses").click();
   expect(await drawnLines(page), "showing the layer brings the same line back").toBe(drawn);
   await expect(page.locator("#route-banner")).toBeVisible();
 
@@ -298,7 +298,7 @@ test("A7h. hiding the Buses layer mid-fetch discards the route rather than banne
 
   // The rider hides the layer while the fetch is in the air. This is the real control,
   // not a direct call: the defect ran through Leaflet's own `remove: this.closePopup`.
-  await page.locator("#toggle-buses").uncheck();
+  await page.locator("#toggle-buses").click();
 
   await geometryArrived;
   for (let i = 0; i < 10; i++) {
@@ -315,7 +315,7 @@ test("A7h. hiding the Buses layer mid-fetch discards the route rather than banne
   }
 
   // And showing the layer again brings back a map with no phantom route on it.
-  await page.locator("#toggle-buses").check();
+  await page.locator("#toggle-buses").click();
   expect(await drawnLines(page), "nothing reappears when the layer comes back").toBe(0);
   await expect(page.locator("#route-banner")).toBeHidden();
 });

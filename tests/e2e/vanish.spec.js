@@ -136,12 +136,15 @@ test("A8b. hiding a layer under an open popup is silent, because the rider is on
   await page.evaluate((key) => railroads.get(key).marker.openPopup(), id);
   await expectPopupState(page, { registry: "railroads", key: id }, true);
 
-  // Uncheck through the real control, so focus goes where a rider's focus really goes.
-  await page.locator("#toggle-railroads").focus();
-  await page.locator("#toggle-railroads").uncheck();
+  // Through the real control, so focus goes where a rider's focus really goes. MR1 made the
+  // feed toggles buttons with aria-pressed and split the railroads per agency; this popup is
+  // whichever railroad came first out of the registry, so the control is chosen from its key.
+  const feed = id.startsWith("MNR|") ? "#toggle-mnr" : "#toggle-lirr";
+  await page.locator(feed).focus();
+  await page.locator(feed).click();
 
   const after = await state(page);
-  expect(after.active, "focus stays on the control the rider is operating").toBe("toggle-railroads");
+  expect(after.active, "focus stays on the control the rider is operating").toBe(feed.slice(1));
   expect(after.announced, "and nothing is announced, because nothing the rider held vanished").toBe("");
 
   // The marker really was destroyed, so this is not passing because nothing happened.
@@ -166,7 +169,7 @@ test("A8c. a layer toggle DOES rescue when the rider is somehow inside the popup
 
   // Driven programmatically, because a real click on the checkbox is precisely what moves
   // focus off the popup; this is the shape a future non-click layer control would have.
-  await page.evaluate(() => map.removeLayer(railroadLayer));
+  await page.evaluate((key) => map.removeLayer(railroadVehicleLayer(key.startsWith("MNR|") ? "MNR" : "LIRR")), id);
 
   await expect.poll(async () => (await state(page)).active, { timeout: 5_000 }).toBe("map");
   expect((await state(page)).announced, "the same door, the same wording").toMatch(

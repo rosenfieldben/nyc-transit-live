@@ -222,13 +222,20 @@ const accessibleNames = (page, selector) =>
   );
 
 test("P1e. every name the legend says today", async ({ page }) => {
-  // THE LIST, not the markup. MR1 replaces these seventeen rows and the note with the
-  // Key panel, whose rows are different glyphs in a different grid; what may not happen
-  // is that a rider loses a sentence. The stage-1 spec asserts the Key panel's names are
-  // a SUPERSET of this list (the design adds rows), which is only checkable because the
-  // list is written down here first.
+  // THE LIST, not the markup, and asserted as a SUPERSET rather than as an equality. MR1
+  // replaces these rows' styling and the grid they sit in; MR2 through MR5 replace the
+  // glyphs themselves as each stage changes the markers they describe. What may not happen
+  // at any stage is that a rider loses a sentence, so the claim is "every name that was here
+  // is still here" and additions are allowed: MR1 already makes one, a dimmed-vehicle row
+  // that the freshness contract needed and this legend never had.
+  //
+  // The golden is still the measured seventeen-plus-the-note from before the restyle, so a
+  // row dropped in any later stage fails here by name.
   await boot(page);
-  pin("legend/names", await accessibleNames(page, "#legend .legend-row, #legend .legend-note"));
+  const names = await accessibleNames(page, "#legend .legend-row, #legend .legend-note");
+  pin("legend/names", names.filter((name) => (readGolden().legend?.names ?? names).includes(name)));
+  const missing = (readGolden().legend?.names ?? []).filter((name) => !names.includes(name));
+  expect(missing, "the Key panel lost a sentence the legend used to say").toEqual([]);
 });
 
 /* ---------------- P5 and P6: markers and popups, per system ---------------- */
@@ -263,7 +270,13 @@ const captureMarks = (page, spec) =>
       subwayTrains: () => subwayLayer,
       subwayStations: () => stationLayer,
       buses: () => busLayer,
-      railroadStations: () => railroadStationLayer,
+      // MR1 SPLIT THIS GROUP PER AGENCY so the feed strip can toggle the two railroads
+      // separately. Concatenated LIRR-then-MNR, which is the order the one group held them
+      // in, so the golden measured before the split still holds BYTE FOR BYTE: the split
+      // changed which group a station is in and nothing about the station.
+      railroadStations: () => ({
+        getLayers: () => [...lirrStationLayer.getLayers(), ...mnrStationLayer.getLayers()],
+      }),
       njtTrains: () => njtTrains,
       njtStations: () => njtStations,
       pathTrains: () => pathTrains,

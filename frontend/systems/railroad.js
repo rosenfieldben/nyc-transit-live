@@ -46,7 +46,7 @@ async function loadRailroadRoutes() {
         opacity: 0.5,
         interactive: false,
         renderer: lineRenderer,
-      }).addTo(railroadRouteLinesLayer);
+      }).addTo(railroadLineLayer(route.system));
     }
   }
   return true;
@@ -97,7 +97,7 @@ async function loadRailroadStations() {
           Date.now() / 1000 - (minClockOffset ?? 0),
           (routeId) => railroadRouteNames.get(`${s.system}|${routeId}`) || null,
         ),
-    })).addTo(railroadStationLayer);
+    })).addTo(railroadStopLayer(station.system));
     registerStation({
       // The system is part of the key AND the label: LIRR and Metro-North have
       // independent id spaces that do collide, and a rider searching "Jamaica"
@@ -115,7 +115,7 @@ async function loadRailroadStations() {
       wheelchair: false, // the railroad stops endpoint carries no accessibility field
       arrivalsUrl,
       marker,
-      layer: railroadStationLayer,
+      layer: railroadStopLayer(station.system),
       // The railroad renderer resolves route names per system; the panel needs the
       // same resolution so its sentences say "Babylon" rather than "5".
       nameFor: (routeId) => railroadRouteNames.get(`${station.system}|${routeId}`) || null,
@@ -344,7 +344,7 @@ function applyRailroads(data) {
         railroadMarkerName(train, now),
       )
         .bindPopup(() => railroadPopup(newRecord))
-        .addTo(railroadLayer);
+        .addTo(railroadVehicleLayer(train.system));
       railroads.set(key, newRecord);
     }
   }
@@ -355,7 +355,7 @@ function applyRailroads(data) {
       // over 10m ago", the status line's account of it, and not "left the feed"
       // (withheldFix). labeledMarker's `remove` hook reads it.
       record.marker._vanishReason = railroadWithheld(record.latest, now);
-      railroadLayer.removeLayer(record.marker);
+      railroadVehicleLayer(record.latest.system).removeLayer(record.marker);
       railroads.delete(key);
     }
   }

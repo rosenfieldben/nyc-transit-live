@@ -145,38 +145,86 @@ test("A6b. crossing the 700px boundary does not hand the overlap back", async ({
   }
 });
 
-test("A6c. the legend collapses on a phone and is open where there is room", async ({ page }) => {
+test("A6c. the Key is a disclosure at every width, and the phone folds the strip behind it", async ({
+  page,
+}) => {
+  /* MR1 CHANGED THIS BEHAVIOUR, and the spec changed with it rather than being loosened.
+
+     BEFORE: #legend-toggle was display:none above 700px and #legend was unconditionally open
+     there; below the breakpoint the button appeared and the legend started closed.
+     NOW: the design's row 1 carries a Key button at EVERY width and its panel is a toggle at
+     every width (README section 1; the handoff's own 05-key-open capture is a 1280px screen
+     with it open). Below 700px the same one boolean also folds the subway key and the feed
+     strip, which is the brief's "leaving one row".
+
+     WHAT DID NOT CHANGE, and is still asserted here: the panel opens in place, so focus stays
+     on the button both ways; aria-expanded and the drawn state are written together by
+     applyHeaderDisclosure and cannot disagree; and crossing the breakpoint without a click is
+     handled, because a rider who rotates a phone crosses it with no press at all. */
   await page.setViewportSize(PHONE);
   await installMocks(page);
   await open(page);
 
-  // Closed by default at phone width, per the phase decision.
-  await expect(page.locator("#legend-toggle")).toBeVisible();
-  await expect(page.locator("#legend")).toBeHidden();
-  await expect(page.locator("#legend-toggle")).toHaveAttribute("aria-expanded", "false");
+  const toggle = page.locator("#legend-toggle");
+  const strip = page.locator("#toggles");
+  const key = page.locator("#subway-key");
 
-  // FOCUS STAYS PUT, both ways. The legend expands in place, so nothing the rider is
-  // holding is destroyed and there is nowhere to send focus; moving it would be the rude
-  // case this project keeps designing out.
-  await page.locator("#legend-toggle").focus();
+  // Closed by default, and on a phone the strip and the subway key are folded behind it.
+  await expect(toggle).toBeVisible();
+  await expect(page.locator("#legend")).toBeHidden();
+  await expect(strip).toBeHidden();
+  await expect(key).toBeHidden();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  // AND THE ALERTS ROW IS NOT FOLDED WITH THEM, at any width. v3.1 point 1, and the one
+  // carve-out this disclosure has: it carries no hdr-fold class and is a sibling of the rows
+  // that do. Asserted as the absence of the class, because a strip that happened to be empty
+  // would satisfy a visibility assertion here and prove nothing.
+  expect(
+    await page.evaluate(() => document.getElementById("alert-banner").classList.contains("hdr-fold")),
+    "the service alerts strip must never be given the fold class",
+  ).toBe(false);
+
+  // FOCUS STAYS PUT, both ways. The panel expands in place, so nothing the rider is holding
+  // is destroyed and there is nowhere to send focus; moving it would be the rude case this
+  // project keeps designing out.
+  await toggle.focus();
   await page.keyboard.press("Enter");
   await expect(page.locator("#legend")).toBeVisible();
-  await expect(page.locator("#legend-toggle")).toHaveAttribute("aria-expanded", "true");
-  await expect(page.locator("#legend-toggle")).toBeFocused();
+  await expect(strip).toBeVisible();
+  await expect(key).toBeVisible();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(toggle).toBeFocused();
 
   await page.keyboard.press("Enter");
   await expect(page.locator("#legend")).toBeHidden();
-  await expect(page.locator("#legend-toggle")).toHaveAttribute("aria-expanded", "false");
-  await expect(page.locator("#legend-toggle")).toBeFocused();
+  await expect(strip).toBeHidden();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(toggle).toBeFocused();
 
-  // AND THE ROTATION CASE. Widening past the breakpoint must open the legend without a
-  // click, because a screen with room for it showing a collapsed legend is the bug this
-  // listener exists to prevent. aria-expanded has to follow, or a screen reader is told
-  // the opposite of what is drawn.
+  /* AND THE ROTATION CASE, which is now the other way round from what it was. Widening past
+     the breakpoint no longer opens the Key, because the Key is the rider's choice at every
+     width and opening it on a resize would be the page overriding them. What crossing the
+     breakpoint DOES do is unfold the strip and the subway key, which are the rows that are
+     only folded for want of room: a screen with room for them showing them folded is the bug
+     the matchMedia listener exists to prevent, and it is exactly the bug the old spec named,
+     kept here against the rows it now applies to. */
   await page.setViewportSize({ width: 1280, height: 720 });
+  await expect(strip).toBeVisible();
+  await expect(key).toBeVisible();
+  await expect(toggle).toBeVisible();
+  await expect(page.locator("#legend")).toBeHidden();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+  // The button still works at the roomy width, and still leaves focus where it was.
+  await toggle.click();
   await expect(page.locator("#legend")).toBeVisible();
-  await expect(page.locator("#legend-toggle")).toHaveAttribute("aria-expanded", "true");
-  await expect(page.locator("#legend-toggle")).toBeHidden();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+
+  // Back to the phone with the Key open: the strip stays out, because one boolean drives all
+  // three and the rider has it open.
+  await page.setViewportSize(PHONE);
+  await expect(page.locator("#legend")).toBeVisible();
+  await expect(strip).toBeVisible();
 });
 
 test("A6d. the stations panel is a full-width overlay, with the A1 focus contract intact", async ({ page }) => {
@@ -247,17 +295,36 @@ test("A6f. every control this app owns shows a focus ring, at 3:1 or better", as
   });
   await expect(page.locator(".leaflet-popup-close-button")).toBeVisible();
 
-  const controls = [
-    "#legend-toggle",
-    "#stations-toggle",
+  /* MR1: TWO PASSES, BECAUSE THE PHONE HEADER HAS TWO STATES and a control that is not
+     rendered has no ring to measure. With the Key closed the view presets are on screen and
+     the feed strip is folded; with it open the strip is on screen and the presets stand down,
+     because at 320 they painted over four rows of the key. Every control this app owns is in
+     one pass or the other, and none is in neither, which is the claim this spec makes.
+     The feed toggles appear here for the first time as BUTTONS: the old "#toggles input"
+     sampled a 13px checkbox that ringed its label through :focus-within, and that delegation
+     went with the checkboxes. */
+  const CLOSED = ["#legend-toggle", "#theme-toggle", "#stations-toggle", "#view-city", "#view-region"];
+  const OPEN = [
+    "#toggles button",
     "#alert-banner-dismiss",
-    "#toggles input",
     ".leaflet-control-zoom-in",
     ".leaflet-popup-close-button",
   ];
 
   const measured = [];
-  for (const selector of controls) {
+  for (const [phase, controls] of [["closed", CLOSED], ["open", OPEN]]) {
+    if (phase === "open") {
+      /* OPENED FROM THE KEYBOARD, NOT WITH A CLICK, and the difference is the whole subject
+         of this spec. A pointer press sets the browser's interaction modality to pointer, and
+         after that a programmatic focus() no longer matches :focus-visible, so every control
+         measured in this pass came back with no ring: the spec would have reported the
+         correct code as broken. Enter keeps the modality on keyboard, which is the state a
+         rider who is tabbing is actually in. */
+      await page.locator("#legend-toggle").focus();
+      await page.keyboard.press("Enter");
+      await expect(page.locator("#toggles")).toBeVisible();
+    }
+    for (const selector of controls) {
     // focus() rather than a click: :focus-visible is exactly the distinction being
     // tested, and a mouse click is the case that must NOT ring.
     await page.locator(selector).first().focus();
@@ -297,6 +364,7 @@ test("A6f. every control this app owns shows a focus ring, at 3:1 or better", as
         };
       }, selector),
     );
+    }
   }
 
   for (const m of measured) {
@@ -439,27 +507,37 @@ test("A6j. rotating a docked desktop panel down to a phone leaves a way out", as
   await expect(page.locator("#stations-panel")).toBeHidden();
 });
 
-// A6k: the legend panel and the alert banner share the bottom of a phone screen, and
-// this is the spec that keeps them out of each other's way.
-//
-// WHAT WENT WRONG AND WHAT IT COST. A3 moved the banner to the bottom so it would stop
-// covering the Stations toggle. The legend panel grows DOWN from the top, and with the
-// legend expanded at 375x667 it ran to y=657 while the banner sat at 595..645. The alert
-// text itself was never hidden (the banner is z-index 1001 to the panel's 1000, and
-// elementFromPoint returned the alert row at every sample across it), so this is not the
-// occlusion defect it first looked like. What it cost was the other direction: the panel
-// scrolls its own overflow, so its END is what lands behind the banner, and its end is
-// the status line. On a phone during a systemwide incident the rider could not reach the
-// line that says whether the data they are looking at is current.
-//
-// Both widths, both legend states, because the panel is only tall enough to reach the
-// banner in one of them and a spec that only tried the collapsed state would pass
-// without touching the defect.
+/* A6k, A6l AND A6m WERE THREE SPECS ABOUT TWO BOXES THAT COULD COLLIDE. MR1 made the
+   collision impossible, so they become one spec about the thing that replaced it.
+
+   WHAT THEY WERE FOR, kept because it is the reason the replacement is stronger. A3 moved the
+   alert banner to the bottom of a phone screen so it would stop covering the Stations toggle.
+   The legend panel grew DOWN from the top, and with the legend expanded at 375x667 it ran to
+   y=657 while the banner sat at 595..645. The alert text itself was never hidden (the banner
+   was z-index 1001 to the panel's 1000, and elementFromPoint returned the alert row at every
+   sample across it). What it cost was the other direction: the panel scrolls its own overflow,
+   so its END is what landed behind the banner, and its end was the status line. On a phone
+   during a systemwide incident the rider could not reach the line that says whether the data
+   they are looking at is current. A6l and A6m then held the machinery that fix needed: a
+   measured --alert-banner-height republished on resize and on dismissal, because the banner's
+   height grows with each alert and any fixed reservation would be right for one and wrong for
+   two.
+
+   WHY ALL OF THAT IS GONE. The alerts strip is a ROW OF THE HEADER now (v3.1 point 1), and the
+   header is a bounded flex column whose Key panel is the only row allowed to shrink. Two rows
+   of one column cannot overlap, there is no height to publish because nothing is positioned
+   against anything, and the note that used to be the unreachable thing is a row ABOVE the
+   strip rather than the tail of a scrolling panel.
+
+   SO THE CLAIM IS NOW STRUCTURAL, AND IT IS THE STRONGER ONE: at every phone width, in both
+   Key states, with one alert and with three, the alerts row is on screen and every row of the
+   header is inside the viewport. A regression that let the header outgrow the screen fails
+   here whichever row it pushed off. */
 for (const [label, viewport] of [
   ["320", NARROW],
   ["375", PHONE],
 ]) {
-  test(`A6k. the legend panel stops above the alert banner at ${label}`, async ({ page }) => {
+  test(`A6k. the alerts row is on screen at ${label}, in both Key states`, async ({ page }) => {
     await page.setViewportSize(viewport);
     await withBanner(page);
     await open(page);
@@ -472,124 +550,116 @@ for (const [label, viewport] of [
       }
       const boxes = await page.evaluate(() => {
         const rect = (sel) => {
-          const r = document.querySelector(sel).getBoundingClientRect();
-          return { top: Math.round(r.top), bottom: Math.round(r.bottom) };
+          const el = document.querySelector(sel);
+          if (!el) return null;
+          const b = el.getBoundingClientRect();
+          return { top: Math.round(b.top), bottom: Math.round(b.bottom), height: Math.round(b.height) };
         };
-        return { panel: rect("#panel"), banner: rect("#alert-banner") };
+        return {
+          header: rect("#panel"),
+          alerts: rect("#alert-banner"),
+          row: rect(".alert-banner-row"),
+          dismiss: rect("#alert-banner-dismiss"),
+          viewport: window.innerHeight,
+        };
       });
+      // THE WHOLE HEADER FITS. Not "the panel stops above the banner" but "nothing was
+      // pushed off the bottom", which is the claim the column bound actually makes.
       expect(
-        boxes.panel.bottom,
-        `${state}: the panel must end above the banner (panel ${JSON.stringify(boxes.panel)}, banner ${JSON.stringify(boxes.banner)})`,
-      ).toBeLessThanOrEqual(boxes.banner.top);
+        boxes.header.bottom,
+        `${state}: the header must fit the viewport (header ${JSON.stringify(boxes.header)}, ` +
+          `viewport ${boxes.viewport})`,
+      ).toBeLessThanOrEqual(boxes.viewport);
+      // AND THE ALERTS ROW IS INSIDE IT, with its text and its dismiss control on screen.
+      expect(boxes.alerts.bottom, `${state}: the alerts row's bottom edge`).toBeLessThanOrEqual(boxes.viewport);
+      expect(boxes.row.height, `${state}: the alert's own row must be drawn`).toBeGreaterThan(0);
+      expect(boxes.dismiss.bottom, `${state}: the dismiss control must be on screen`).toBeLessThanOrEqual(
+        boxes.viewport,
+      );
+      // AND THE STRIP IS THE HEADER'S LAST ROW, so nothing can be pushed below it.
+      expect(
+        await page.evaluate(() => document.getElementById("panel").lastElementChild.id),
+        `${state}: a row after the alerts strip would be the one that falls off the bottom`,
+      ).toBe("view-stack");
+      expect(
+        await page.evaluate(() => {
+          const rows = [...document.getElementById("panel").children].filter((el) => el.id !== "view-stack");
+          return rows[rows.length - 1].id;
+        }),
+        `${state}: the alerts strip must be the header's last row`,
+      ).toBe("alert-banner");
     }
+  });
 
-    // And the consequence, asserted as the rider experiences it rather than as geometry:
-    // scrolled to the end of the expanded panel, the status line is on screen and on top.
-    await page.evaluate(() => {
-      const panel = document.getElementById("panel");
-      panel.scrollTop = panel.scrollHeight;
-    });
-    const statusReachable = await page.evaluate(() => {
-      const el = document.getElementById("status");
-      const r = el.getBoundingClientRect();
-      const top = document.elementFromPoint(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2));
-      return { inView: r.bottom <= window.innerHeight && r.top >= 0, onTop: !!(top && (top === el || el.contains(top))) };
-    });
-    expect(statusReachable, "the status line must be reachable at the end of the panel's scroll").toEqual({
-      inView: true,
-      onTop: true,
-    });
+  test(`A6l. three alerts do not push the header off the screen at ${label}`, async ({ page }) => {
+    /* THE CASE THE PUBLISHED HEIGHT EXISTED FOR, asked of the structure instead. The banner
+       grows with each alert, which is why a fixed reservation was never an option; here the
+       Key is open AND three alerts are showing, which is the tallest this chrome gets, and
+       the Key panel is what gives way. */
+    await page.setViewportSize(viewport);
+    const ctx = await installMocks(page);
+    ctx.overrides.alerts = (route, fixtures) =>
+      json(route, {
+        ...fixtures.alerts(),
+        alerts: [1, 2, 3].map((n) => ({
+          id: `mobile-many-${n}`,
+          system: "subway",
+          header: `Alert ${n}: a systemwide incident with enough words in it to wrap on a phone screen`,
+          description: null,
+          effect: "REDUCED_SERVICE",
+          cause: "OTHER_CAUSE",
+          routes: [],
+          stops: [],
+          starts_at: fx.FROZEN_S - 600,
+          ends_at: null,
+        })),
+      });
+    await open(page);
+    await expect(page.locator(".alert-banner-row")).toHaveCount(3);
+    await page.locator("#legend-toggle").click();
+    await expect(page.locator("#legend")).toBeVisible();
+
+    const measured = await page.evaluate(() => ({
+      header: Math.round(document.getElementById("panel").getBoundingClientRect().bottom),
+      alerts: Math.round(document.getElementById("alert-banner").getBoundingClientRect().bottom),
+      key: Math.round(document.getElementById("legend").getBoundingClientRect().height),
+      keyScrolls: document.getElementById("legend").scrollHeight > document.getElementById("legend").clientHeight,
+      viewport: window.innerHeight,
+    }));
+    expect(measured.header, `the header must still fit (${JSON.stringify(measured)})`).toBeLessThanOrEqual(
+      measured.viewport,
+    );
+    expect(measured.alerts, "all three alerts stay on screen").toBeLessThanOrEqual(measured.viewport);
+    // AND THE KEY IS WHAT GAVE WAY, which is the point of it being the only shrinkable row.
+    // A header that fit because the Key happened to be short would prove nothing.
+    expect(measured.keyScrolls, `the Key panel must be the row that gives way (${JSON.stringify(measured)})`).toBe(
+      true,
+    );
   });
 }
 
-test("A6l. the reserved strip follows the banner's height when the viewport changes", async ({ page }) => {
-  // The height is published by systems/shared.js when the banner RENDERS, and
-  // renderAlertBanner returns early on an unchanged key, so a viewport change alone would
-  // never republish it. That matters because the same header wraps to one line on a
-  // tablet and more than one on a phone: a rider who rotates would leave the panel sized
-  // against a height that is no longer true. The listener is what keeps them apart, and
-  // this is the spec that fails if it is removed.
-  await page.setViewportSize({ width: 1280, height: 720 });
-  await withBanner(page);
-  await open(page);
-  await expect(page.locator(".alert-banner-row").first()).toBeVisible();
-  const wide = await page.evaluate(() =>
-    getComputedStyle(document.documentElement).getPropertyValue("--alert-banner-height").trim(),
-  );
-
-  await page.setViewportSize(NARROW);
-  // The panel is docked open at 1280 and becomes the full-screen overlay on the way
-  // down, so it is covering the legend disclosure until the rider dismisses it. Closing
-  // it here is the rider's own first move, not a workaround: A6j is the spec for that
-  // path, and this one is about what the layout does afterwards.
-  await page.locator("#stations-close").click({ timeout: 5_000 });
-  await expect(page.locator("#stations-panel")).toBeHidden();
-  await page.locator("#legend-toggle").click();
-  await expect(page.locator("#legend")).toBeVisible();
-  const narrow = await page.evaluate(() =>
-    getComputedStyle(document.documentElement).getPropertyValue("--alert-banner-height").trim(),
-  );
-  // Not a fixed pair of numbers: what is being asserted is that the published height
-  // TRACKS the layout, and pinning the exact pixels would fail on a font metric change
-  // that broke nothing. The banner is genuinely taller at 320 than at 1280 with this
-  // header, which is what makes the comparison meaningful rather than tautological.
-  expect(
-    parseFloat(narrow),
-    `the banner is taller on a phone, so the reservation must grow (1280: ${wide}, 320: ${narrow})`,
-  ).toBeGreaterThan(parseFloat(wide));
-
-  const boxes = await page.evaluate(() => {
-    const rect = (sel) => {
-      const r = document.querySelector(sel).getBoundingClientRect();
-      return { top: Math.round(r.top), bottom: Math.round(r.bottom) };
-    };
-    return { panel: rect("#panel"), banner: rect("#alert-banner") };
-  });
-  expect(
-    boxes.panel.bottom,
-    `after rotating down the panel must still end above the banner (panel ${JSON.stringify(boxes.panel)}, banner ${JSON.stringify(boxes.banner)})`,
-  ).toBeLessThanOrEqual(boxes.banner.top);
-});
-
-test("A6m. dismissing the banner gives the reserved strip back", async ({ page }) => {
-  // ROUND 2 FOUND THIS AS A COVERAGE HOLE, and it is the honest kind: the fix had three
-  // publish sites and only two of them were pinned. Deleting the publish on the
-  // empty-banner branch left the whole 121-spec suite green, so half of the height fix
-  // was unmutated. That branch is not an edge case: it is the dismiss button, and it is
-  // also every standing incident that simply ends on a later poll.
-  //
-  // Measured with that line deleted, at 375x667 with the legend expanded: after
-  // dismissing, --alert-banner-height stays at 49.59px instead of dropping to 0, the
-  // panel keeps max-height 577px instead of 627px, and 50px of phone screen stays
-  // reserved for a banner that is gone, for the rest of the session. Nothing heals it
-  // until the next banner render or a resize.
+test("A6m. dismissing the alerts row gives its space back to the map", async ({ page }) => {
+  /* THE OTHER HALF OF A6m AS IT WAS: dismissing used to hand a reservation back to the panel,
+     and now it hands height back to the header, which hands it to the map. Asserted on the
+     header rather than on a custom property, because the property is gone: nothing subtracts
+     the strip's height from anything any more, and a test on a value nobody reads would be a
+     test of its own plumbing. */
   await page.setViewportSize(PHONE);
   await withBanner(page);
   await open(page);
   await expect(page.locator(".alert-banner-row").first()).toBeVisible();
-  await page.locator("#legend-toggle").click();
-  await expect(page.locator("#legend")).toBeVisible();
 
-  const reserved = async () =>
-    page.evaluate(() => ({
-      published: getComputedStyle(document.documentElement).getPropertyValue("--alert-banner-height").trim(),
-      panelBottom: Math.round(document.getElementById("panel").getBoundingClientRect().bottom),
-    }));
-
-  const showing = await reserved();
-  expect(parseFloat(showing.published), "a banner is showing, so it reserves height").toBeGreaterThan(0);
+  const headerBottom = () => page.evaluate(() => Math.round(document.getElementById("panel").getBoundingClientRect().bottom));
+  const withAlert = await headerBottom();
+  expect(withAlert, "a banner is showing, so the header is taller for it").toBeGreaterThan(0);
 
   await page.locator("#alert-banner-dismiss").click();
-  await expect(page.locator(".alert-banner-row")).toHaveCount(0);
-
-  const dismissed = await reserved();
-  expect(parseFloat(dismissed.published), "a dismissed banner reserves nothing").toBe(0);
-  // And the panel actually grows into the strip, which is the rider-facing half: the
-  // property alone could be right while nothing consumed it.
+  await expect(page.locator("#alert-banner")).toBeEmpty();
+  const without = await headerBottom();
   expect(
-    dismissed.panelBottom,
-    `the panel must take the strip back (showing ${showing.panelBottom}, dismissed ${dismissed.panelBottom})`,
-  ).toBeGreaterThan(showing.panelBottom);
+    without,
+    `dismissing must shorten the header (with ${withAlert}, without ${without})`,
+  ).toBeLessThan(withAlert);
 });
 
 test("A6n. the keyboard exit from the full-screen panel is where the comment says it is", async ({ page }) => {

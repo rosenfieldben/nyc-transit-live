@@ -89,6 +89,21 @@ test.describe("with reduced motion requested", () => {
       markerZoom: map.options.markerZoomAnimation,
     }));
     expect(options).toEqual({ zoom: false, fade: false, markerZoom: false });
+
+    /* MR1: AND THE CLOCK'S DOT DOES NOT BLINK. The redesign's header carries a live clock
+       with a 5px accent square that pulses beside it, and the handoff says in as many words
+       that the pulse stops under the preference. It is gated on .motion-on rather than on a
+       media query, like every other animation this app owns, so it follows the preference
+       LIVE rather than only at load.
+       THE DIGITS ARE NOT GATED and are asserted as still running, because the preference is
+       about movement: a clock that stopped would be a lie rather than a kindness, and a
+       mutation that "fixed" the blink by freezing the whole clock would otherwise pass. */
+    const clock = await page.evaluate(() => ({
+      dot: getComputedStyle(document.getElementById("clock-dot")).animationName,
+      time: document.getElementById("clock-time").textContent,
+    }));
+    expect(clock.dot, "the clock dot must not animate under the preference").toBe("none");
+    expect(clock.time, "while the clock itself keeps telling the time").not.toBe("");
   });
 
   test("A5c. the station panel appears without animating, and says the same things", async ({ page }) => {
@@ -119,7 +134,7 @@ test.describe("with reduced motion requested", () => {
   });
 });
 
-test("A5d. without the preference, the map still glides", async ({ page }) => {
+test("A5d. without the preference, the map still glides, and the clock blinks", async ({ page }) => {
   // The control. Without this, every assertion above would also pass on a map whose
   // animation had simply been deleted, and the suite would be pinning a regression
   // rather than a preference.
@@ -136,6 +151,13 @@ test("A5d. without the preference, the map still glides", async ({ page }) => {
     moved.lat !== start.lat || moved.lng !== start.lng,
     "between polls the train should be interpolating toward its next stop",
   ).toBe(true);
+
+  // MR1: and the other half of A5b's clock claim. Without this the gate there is satisfied
+  // by a blink that was simply never written.
+  expect(
+    await page.evaluate(() => getComputedStyle(document.getElementById("clock-dot")).animationName),
+    "with no preference set, the clock's dot blinks",
+  ).toBe("hdr-blink");
 });
 
 test.describe("with reduced motion requested, the map itself", () => {

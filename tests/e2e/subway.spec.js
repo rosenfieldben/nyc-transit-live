@@ -29,12 +29,14 @@ const DESKTOP = { width: 1280, height: 720 };
 const withYellow = (ctx) => {
   ctx.overrides.subwayRoutes = (route, fixtures) =>
     json(route, [
-      ...fixtures.subwayRoutes(),
-      // N and Q are two of the four the yellow trunk is, and they are listed FIRST so the
-      // payload order is the opposite of the draw order: a spec over a payload that already
-      // happened to end with yellow would pass with the sort deleted.
+      /* N AND Q COME FIRST IN THE PAYLOAD, and that is the whole reason this world exists.
+         The mutation run caught the first version of this fixture appending them instead:
+         the payload then already ended with yellow, so D2g passed with trunkDrawOrder
+         reduced to `return [...routeIds]` and the spec measured nothing. A draw-order test
+         over a payload that happens to arrive in draw order is not a test. */
       { route: "N", polylines: [[[40.7, -74.0], [40.71, -73.99]]] },
       { route: "Q", polylines: [[[40.72, -73.98], [40.73, -73.97]]] },
+      ...fixtures.subwayRoutes(),
     ]);
 };
 
@@ -298,6 +300,51 @@ test("D2h. a ribbon is a casing in paper under a line in the app's own colour", 
     expect(layer.join).toBe("round");
     expect(layer.interactive, "a ribbon never takes a click").toBe(false);
   }
+});
+
+test("D2m. focusing a route actually repaints the canvas, not just the options", async ({ page }) => {
+  /* THE GAP THE SCREENSHOTS FOUND. D2b asserts what focus writes into each layer's options,
+     which is exactly what the mutation "focus re-rendering layers" attacks; neither says the
+     canvas ever repainted. It matters because a ribbon is drawn by a canvas renderer, and a
+     renderer redraws on requestAnimationFrame: measured while capturing this stage's
+     screenshots, a page whose clock was PAUSED took the new opacities into its options and
+     went on showing the old picture, because rAF never fired. In a rider's browser rAF is
+     real, so this is a property of the test harness rather than of the app, and it is worth a
+     spec precisely because it makes every other focus assertion here look stronger than it is.
+
+     MEASURED AS PIXELS, from the overlay canvas the ribbons are drawn on. At 0.18 a line's
+     pixels are still there but far more transparent, so the honest measure is the WEIGHT of
+     the ink rather than a count of touched pixels. */
+  await open(page, withYellow);
+  const inkWeight = () =>
+    page.evaluate(() => {
+      const canvas = document.querySelector(".leaflet-overlay-pane canvas");
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      let sum = 0;
+      for (let i = 3; i < data.length; i += 4) sum += data[i];
+      return sum;
+    });
+  // The clock is paused in this suite, so the rAF the renderer schedules is advanced by hand.
+  const settle = () => page.clock.runFor(200);
+
+  await settle();
+  const before = await inkWeight();
+  expect(before, "the ribbons must actually be on the canvas").toBeGreaterThan(0);
+
+  await page.locator('#subway-key .bul[aria-label="Focus route 1"]').click();
+  await settle();
+  const focused = await inkWeight();
+  expect(focused, "focusing must take ink off the canvas, not only out of the options").toBeLessThan(before * 0.9);
+
+  await page.locator('#subway-key .bul[aria-label="Focus route 1"]').click();
+  await settle();
+  // WITHIN A TENTH OF A PERCENT, NOT EXACTLY. Clearing repaints the whole picture, and a
+  // canvas that has been cleared and redrawn differs from the first draw by antialiasing
+  // rounding at the ends of round-capped strokes: measured, 293 alpha units out of 1.59
+  // million. An exact comparison here would be a test of the rasteriser.
+  const cleared = await inkWeight();
+  expect(Math.abs(cleared - before) / before, `clearing puts it back (${before} then ${cleared})`).toBeLessThan(0.001);
 });
 
 /* ---------------- the stations ---------------- */

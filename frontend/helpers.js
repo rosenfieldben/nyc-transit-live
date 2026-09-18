@@ -101,14 +101,25 @@ const FOCUS_DIM_LINE = 0.18;
 const FOCUS_DIM_CASING = 0;
 const FOCUS_DIM_TRAIN = 0.15;
 
-// The opacity (for a ribbon) or the base (for a train) one part of one route draws at,
-// given whichever route is focused. No focus means every part is at full.
-function focusOpacity(focusedRoute, routeId, part) {
+/* The opacity (for a ribbon) or the base (for a train) one part draws at, given the SET of
+   routes currently focused. An empty set means nothing is focused and every part is at full.
+
+   ROUND 2 MADE THIS MEMBERSHIP RATHER THAN EQUALITY. Focusing a route used to compare one id
+   against one id, which is wrong wherever two routes share track: the archive draws J and
+   not Z, so a Z bullet compared against J's ribbon matched nothing and dimmed the whole map.
+   A ribbon carries the SET of routes that share it and a bullet focuses the union of the
+   sets it belongs to, so this takes a set on one side and one id on the other.
+
+   `routeIds` is accepted as an array (a ribbon's set) or a single id (a train's route), so
+   one function answers for both surfaces. */
+function focusOpacity(focusRoutes, routeIds, part) {
   const full = { line: RIBBON_LINE_OPACITY, casing: RIBBON_CASING_OPACITY, train: 1 };
   const dimmed = { line: FOCUS_DIM_LINE, casing: FOCUS_DIM_CASING, train: FOCUS_DIM_TRAIN };
   if (!(part in full)) return 1;
-  if (!focusedRoute) return full[part];
-  return String(routeId ?? "") === String(focusedRoute) ? full[part] : dimmed[part];
+  const focus = Array.isArray(focusRoutes) ? focusRoutes : focusRoutes ? [focusRoutes] : [];
+  if (!focus.length) return full[part];
+  const mine = (Array.isArray(routeIds) ? routeIds : [routeIds]).map((id) => String(id ?? "")).filter(Boolean);
+  return mine.some((id) => focus.map(String).includes(id)) ? full[part] : dimmed[part];
 }
 
 // What the page live region says when focus moves. The bullet's own label does not change
@@ -120,6 +131,163 @@ function routeFocusAnnouncement(routeId) {
 
 function routeFocusLabel(routeId) {
   return `Focus route ${routeId}`;
+}
+
+/* ----- MR2 round 2: the key, built from the data rather than from a table -----------------
+
+   THE TABLE WAS WRONG AND COULD NOT BE RIGHT. MR1 hard-coded ten trunks and twenty-three
+   bullets. Measured against the real static archive, that table and the network disagree in
+   both directions: Z, W and S draw no ribbon at all, so pressing one dimmed the whole map
+   and highlighted nothing, while FS, GS, H and SI are drawn and had no bullet, so the
+   Staten Island Railway and every shuttle were unfocusable. MR1's bullets were display only,
+   so the mismatch was invisible; MR2 made them controls, which is what made three of
+   twenty-three controls do nothing.
+
+   SO THE KEY IS DERIVED. The universe of bullets is the loaded route list, plus every route
+   id seen on a train, plus the declared aliases below; the groups are the trunks, which are
+   the routes that share lineColor()'s answer; and focus is MEMBERSHIP in a ribbon's route
+   set rather than equality with a ribbon's route id.
+
+   WHAT A RIBBON'S ROUTE SET IS. A drawn route's ribbon carries its own id and the ids of
+   every trunk-mate that has no geometry of its own, because that is what sharing track
+   means in this data: the archive draws J and not Z, N/Q/R and not W, GS/FS/H and not S,
+   and in each case the missing route runs on its neighbour's line. So J's ribbon is {J, Z},
+   each of N, Q and R's is {that, W}, and each shuttle's is {that, S}.
+
+   AND A BULLET FOCUSES THE UNION of the sets of every ribbon it belongs to. Z lights the
+   J/Z ribbon and the trains on either; W lights all three Broadway ribbons and their trains;
+   1 lights only the 1, because the 1's ribbon is shared with nothing. A bullet whose set
+   draws nothing right now is still drawn, disabled and with a reason, and it never dims the
+   map: a control that silently does nothing is worse than one that says why. */
+
+// One bullet standing for several feed route ids. The shuttles are the case: the map draws
+// three of them (GS, FS, H) and a rider knows one S. An alias COLLAPSES ids that exist; it
+// never invents a bullet for ids that do not, so a world with no shuttles has no S.
+const SUBWAY_KEY_ALIASES = { S: ["GS", "FS", "H"] };
+
+// Digits before letters, then lexicographic: the order the MTA prints and the order MR1's
+// table happened to be written in, derived rather than transcribed.
+function compareRouteIds(a, b) {
+  const digit = (id) => /^\d/.test(id);
+  if (digit(a) !== digit(b)) return digit(a) ? -1 : 1;
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+// Every route id the key could show, alias-collapsed and ordered. `routes` is the loaded
+// route list ([{route, polylines}]); `trainRoutes` is whatever is on the map.
+function subwayRouteUniverse(routes, trainRoutes = []) {
+  const ids = new Set();
+  for (const entry of routes ?? []) if (entry?.route) ids.add(String(entry.route));
+  for (const id of trainRoutes) if (id) ids.add(String(id));
+  // Collapse an alias only when at least one of its targets is really here.
+  for (const [alias, targets] of Object.entries(SUBWAY_KEY_ALIASES)) {
+    if (targets.some((target) => ids.has(target))) {
+      for (const target of targets) ids.delete(target);
+      ids.add(alias);
+    }
+  }
+  return [...ids].sort(compareRouteIds);
+}
+
+// The ids a bullet stands for: itself, or its alias targets.
+function bulletRouteIds(bullet) {
+  return SUBWAY_KEY_ALIASES[bullet] ?? [bullet];
+}
+
+// Which routes have geometry of their own, from the loaded list.
+function drawnRouteIds(routes) {
+  return new Set((routes ?? []).filter((entry) => (entry?.polylines ?? []).length > 0).map((entry) => String(entry.route)));
+}
+
+/* The set of routes one drawn route's ribbon carries: itself, plus every route in the same
+   trunk that has no geometry of its own. `known` is every route id the app has heard of,
+   BEFORE aliasing, because the orphans are feed ids (GS is drawn, S is not a feed id at
+   all, so S is attached through its alias by the caller). */
+function ribbonRouteSet(routeId, routes, known) {
+  const drawn = drawnRouteIds(routes);
+  const trunk = lineColor(routeId);
+  const orphans = [...known].filter((id) => id !== routeId && !drawn.has(id) && lineColor(id) === trunk);
+  return [routeId, ...orphans].sort(compareRouteIds);
+}
+
+/* THE FOCUS SET IS THE BULLET'S OWN IDS, and that is a correction the round's own new spec
+   made rather than a thing designed in. The first version focused the TRANSITIVE CLOSURE of
+   the ribbons a bullet touches, which is right for Z (the J/Z ribbon) and wrong for N: N's
+   ribbon carries W because the app has no W shape, W's neighbours Q and R carry W for the
+   same reason, so focusing N reached Q and R through W and lit the whole Broadway trunk when
+   a rider asked for one route of it. Membership is therefore asymmetric on purpose: a RIBBON
+   lights when its route set contains one of the bullet's ids, and the bullet's ids never
+   grow. focusRoutesForBullet is bulletRouteIds under another name, and it has that name so
+   the call sites read as the decision rather than as a coincidence. */
+const focusRoutesForBullet = bulletRouteIds;
+
+/* The routes a press would leave lit, which is NOT the focus set: it is the focus set plus
+   whoever else rides the ribbons those ids ride. Pressing Z lights the ribbon J is drawn as,
+   so the Z bullet's title says "shares track with J" even though no J TRAIN lights. Used for
+   the title and, as a boolean, for the enabled state. */
+function bulletTrackSet(bullet, routes, trainRoutes = []) {
+  const ids = bulletRouteIds(bullet);
+  const known = new Set([
+    ...(routes ?? []).map((entry) => String(entry?.route)).filter(Boolean),
+    ...trainRoutes.map(String).filter(Boolean),
+    ...ids,
+  ]);
+  const out = new Set(ids);
+  for (const drawnId of drawnRouteIds(routes)) {
+    const set = ribbonRouteSet(drawnId, routes, known);
+    if (set.some((id) => ids.includes(id))) for (const id of set) out.add(id);
+  }
+  return [...out].sort(compareRouteIds);
+}
+
+/* Whether pressing a bullet would light anything: a ribbon whose set it is in, or a train of
+   its own. A bullet that would light nothing is drawn disabled rather than left to dim the
+   map for no reason. This asks the RIBBONS and not the ids, because Z has no shape and no
+   train of its own and still lights the ribbon J is drawn as. */
+function bulletDrawsSomething(bullet, routes, trainRoutes = []) {
+  const ids = bulletRouteIds(bullet);
+  const known = new Set([
+    ...(routes ?? []).map((entry) => String(entry?.route)).filter(Boolean),
+    ...trainRoutes.map(String).filter(Boolean),
+    ...ids,
+  ]);
+  for (const drawnId of drawnRouteIds(routes)) {
+    if (ribbonRouteSet(drawnId, routes, known).some((id) => ids.includes(id))) return true;
+  }
+  return trainRoutes.map(String).some((id) => ids.includes(id));
+}
+
+// The sentence a disabled bullet carries, and the one an S-shaped alias carries whether or
+// not it is disabled. Both are titles rather than labels: the accessible NAME stays
+// "Focus route S" so it does not move with the state (the aria-pressed rule MR1 round 2
+// settled), and the title is where the detail goes.
+function bulletTitle(bullet, trackSet, enabled) {
+  const ids = bulletRouteIds(bullet);
+  const stands = ids.length > 1 ? `${bullet} is ${ids.join(", ")}. ` : "";
+  if (!enabled) return `${stands}Nothing on the map right now for ${bullet}.`;
+  const others = trackSet.filter((id) => !ids.includes(id));
+  const shares = others.length ? ` Shares track with ${others.join(", ")}.` : "";
+  return `${stands}Focus ${bullet}.${shares}`.trim();
+}
+
+/* The whole key, grouped by trunk. Groups are ordered by their first bullet, and bullets
+   inside a group by the same comparator, so the key's order is a function of the data. */
+function subwayKeyModel(routes, trainRoutes = []) {
+  const universe = subwayRouteUniverse(routes, trainRoutes);
+  const groups = new Map();
+  for (const bullet of universe) {
+    const enabled = bulletDrawsSomething(bullet, routes, trainRoutes);
+    const color = lineColor(bulletRouteIds(bullet)[0]);
+    const entry = {
+      id: bullet,
+      focus: focusRoutesForBullet(bullet),
+      enabled,
+      title: bulletTitle(bullet, bulletTrackSet(bullet, routes, trainRoutes), enabled),
+    };
+    if (groups.has(color)) groups.get(color).bullets.push(entry);
+    else groups.set(color, { color, bullets: [entry] });
+  }
+  return [...groups.values()];
 }
 
 /* A station is a LOCAL dot when one route serves it and a TRANSFER ring when two or more
@@ -3745,6 +3913,9 @@ if (typeof module !== "undefined" && module.exports) {
     RIBBON_CASING_WEIGHT, RIBBON_CASING_OPACITY, RIBBON_LINE_WEIGHT, RIBBON_LINE_OPACITY,
     FOCUS_DIM_LINE, FOCUS_DIM_CASING, FOCUS_DIM_TRAIN, focusOpacity,
     routeFocusAnnouncement, routeFocusLabel,
+    // MR2 round 2: the key derived from the data, and focus as membership.
+    SUBWAY_KEY_ALIASES, compareRouteIds, subwayRouteUniverse, bulletRouteIds, drawnRouteIds,
+    ribbonRouteSet, focusRoutesForBullet, bulletTrackSet, bulletDrawsSomething, bulletTitle, subwayKeyModel,
     STATION_LOCAL_RADIUS, STATION_TRANSFER_RADIUS, STATION_TRANSFER_WEIGHT,
     isTransferStation, stationMarkStyle, stationLabelClass,
     LABEL_HUB_ZOOM, LABEL_ALL_ZOOM, labelZoomBand, stationLabelShown,

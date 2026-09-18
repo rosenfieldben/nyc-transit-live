@@ -220,6 +220,8 @@ async function loadRouteLines() {
     );
   }
   drawRibbons(routes);
+  // The key is derived from this list, so it cannot exist until the list does.
+  refreshSubwayKey();
   return true;
 }
 
@@ -252,19 +254,24 @@ function drawRibbons(routes) {
   const byRoute = new Map(routes.map((route) => [route.route, route]));
   const order = trunkDrawOrder(routes.map((route) => route.route));
   const paper = paperColor();
-  const focused = currentFocusRoute();
+  const focused = currentFocusRoutes();
+  /* EVERY POLYLINE CARRIES THE SET OF ROUTES THAT SHARE IT (round 2), not just the route it
+     was drawn from: its own id plus every trunk-mate with no geometry of its own, which is
+     what sharing track means in this data. helpers.js's ribbonRouteSet decides it and the
+     long comment there says why. It is what lets a Z bullet light the J's ribbon. */
   const add = (routeId, part, style) => {
+    const routeSet = ribbonRouteSet(routeId, routes, subwayKnownRoutes());
     for (const points of byRoute.get(routeId)?.polylines ?? []) {
       const layer = L.polyline(points, {
         ...style,
-        opacity: focusOpacity(focused, routeId, part),
+        opacity: focusOpacity(focused, routeSet, part),
         lineCap: "round",
         lineJoin: "round",
         interactive: false,
         renderer: lineRenderer,
       });
       layer.addTo(routeLinesLayer);
-      subwayRibbons.push({ route: routeId, part, layer });
+      subwayRibbons.push({ route: routeId, routes: routeSet, part, layer });
     }
   };
   for (const routeId of order) add(routeId, "casing", { color: paper, weight: RIBBON_CASING_WEIGHT });
@@ -284,9 +291,9 @@ function drawRibbons(routes) {
    rather than erasing the focus, and a train that arrives while a route is focused is drawn
    dim on its first frame rather than at full for a beat. */
 function applySubwayFocus() {
-  const focused = currentFocusRoute();
+  const focused = currentFocusRoutes();
   for (const ribbon of subwayRibbons) {
-    const want = focusOpacity(focused, ribbon.route, ribbon.part);
+    const want = focusOpacity(focused, ribbon.routes, ribbon.part);
     if (ribbon.layer.options.opacity !== want) ribbon.layer.setStyle({ opacity: want });
   }
   const now = correctedNow();
@@ -299,10 +306,37 @@ function applySubwayFocus() {
   }
 }
 
+/* Every route id the app has heard of: the ones with geometry and the ones only a train
+   names. The second half is why the tags cannot be computed once and left: the static route
+   list usually resolves BEFORE the first poll, so at draw time no train route is known and
+   every ribbon would carry only its own id. Measured in the fixture world shaped like the
+   real archive: J's ribbon came out {J} rather than {J, Z} until this was split out. */
+function subwayKnownRoutes() {
+  const ids = new Set(routeIndex.keys());
+  if (typeof trains !== "undefined") {
+    for (const record of trains.values()) if (record.latest?.route_id) ids.add(record.latest.route_id);
+  }
+  return ids;
+}
+
+/* Re-tag every ribbon with the set of routes that share it, from what the app knows NOW.
+   Called by refreshSubwayKey, which is called when the route list resolves and from the
+   poll tail, so a W train arriving at 6am is what puts W on the Broadway ribbons. */
+function retagSubwayRibbons() {
+  if (!subwayRibbons.length) return;
+  const routes = [...routeIndex.entries()].map(([route, variants]) => ({ route, polylines: variants }));
+  const known = subwayKnownRoutes();
+  const cache = new Map();
+  for (const ribbon of subwayRibbons) {
+    if (!cache.has(ribbon.route)) cache.set(ribbon.route, ribbonRouteSet(ribbon.route, routes, known));
+    ribbon.routes = cache.get(ribbon.route);
+  }
+}
+
 // One train's focus multiplier, read live so every path that dims a marker composes the
 // same two numbers.
 function subwayFocusBase(train) {
-  return focusOpacity(currentFocusRoute(), train.route_id, "train");
+  return focusOpacity(currentFocusRoutes(), train.route_id, "train");
 }
 
 
@@ -497,5 +531,10 @@ function applyTrains(data) {
       trains.delete(id);
     }
   }
+  /* AND THE KEY LEARNS WHAT IS ON THE MAP (round 2). What a bullet can light changes with
+     the feed: a W bullet lights nothing at 3am and three ribbons at 8am. refreshSubwayKey
+     rebuilds only when the set of bullets changes and otherwise just repaints their enabled
+     state, so this costs a signature comparison per poll rather than a rebuilt toolbar. */
+  refreshSubwayKey();
 }
 

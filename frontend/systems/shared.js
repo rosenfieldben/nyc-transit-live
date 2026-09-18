@@ -323,49 +323,156 @@ if (clockTimeEl) {
    Measured, every trunk clears 4.5:1 through readableTextOn: the lowest is 4.72 on the
    4-5-6 green and the L's grey takes dark ink at 5.00 where white would have been 3.48.
    docs/reviews/map-redesign-rounds.md carries the ruling question as a finding. */
-const SUBWAY_KEY_TRUNKS = [
-  ["1", "2", "3"], ["4", "5", "6"], ["7"], ["A", "C", "E"], ["B", "D", "F", "M"],
-  ["G"], ["J", "Z"], ["L"], ["N", "Q", "R", "W"], ["S"],
-];
-// MR2: route -> its bullet, filled by the loop below and read by paintRouteFocus. Declared
-// BEFORE the loop because a module-scope const is in the temporal dead zone until its own
-// line runs, and the loop runs at module scope.
-const subwayKeyBullets = new Map();
+/* ----- MR2 round 2: the key, derived and focusable ---------------------------------------
+
+   MR1 hard-coded ten trunks and twenty-three bullets, and MR2 round 2 measured that table
+   against the real static archive and found it wrong in both directions: three of its
+   bullets drew nothing and four drawn routes had no bullet. helpers.js now derives the
+   whole thing (subwayKeyModel, and the long comment there says how); this builds it.
+
+   IT IS AN ARIA TOOLBAR WITH A ROVING TABINDEX, which is the other half of the same round.
+   Twenty-three buttons in the header cost twenty-three tab stops: reaching the Stations
+   button took 32 presses where it took nine before. A toolbar is one tab stop, and the
+   arrow keys move inside it, which is the pattern for a row of related controls and the
+   reason a rider is not made to walk the subway system to reach a button.
+
+   BUILT WHEN THE DATA ARRIVES, NOT AT MODULE SCOPE. The route list is fetched, so at load
+   there is nothing to derive a key from. refreshSubwayKey is called when the routes resolve
+   and from the poll tail; it REBUILDS only when the universe of bullets changes and
+   otherwise just repaints, so a key does not twitch under a rider's hand every fifteen
+   seconds. */
 const subwayKeyEl = document.getElementById("subway-key");
+const subwayKeyBullets = new Map(); // bullet id -> its button
+let subwayKeyUniverse = ""; // the signature of the bullets currently drawn
+let subwayKeyFocusSets = new Map(); // bullet id -> the route ids it focuses
+
+// Whatever the map can currently draw a train for. The loaded route list is subway.js's
+// (routeIndex), and it loads after this file, so both are read late and by name.
+function subwayTrainRoutes() {
+  if (typeof trains === "undefined") return [];
+  return [...new Set([...trains.values()].map((record) => record.latest?.route_id).filter(Boolean))];
+}
+
+function subwayRouteList() {
+  if (typeof routeIndex === "undefined") return [];
+  return [...routeIndex.entries()].map(([route, variants]) => ({ route, polylines: variants }));
+}
+
+/* THE ROVING TABINDEX. Exactly one bullet is in the tab order at a time: the focused route's
+   if there is one, else the first enabled bullet. Everything else is tabbable only from
+   inside, with the arrow keys. */
+function paintRovingTabindex() {
+  const bullets = [...subwayKeyBullets.values()];
+  if (!bullets.length) return;
+  const enabled = bullets.filter((b) => b.getAttribute("aria-disabled") !== "true");
+  const pressed = bullets.find((b) => b.getAttribute("aria-pressed") === "true");
+  const stop = pressed ?? enabled[0] ?? bullets[0];
+  for (const bullet of bullets) bullet.tabIndex = bullet === stop ? 0 : -1;
+}
+
+function moveKeyFocus(from, delta) {
+  const bullets = [...subwayKeyBullets.values()].filter((b) => b.getAttribute("aria-disabled") !== "true");
+  if (!bullets.length) return;
+  const at = bullets.indexOf(from);
+  const next =
+    delta === "home" ? bullets[0]
+    : delta === "end" ? bullets[bullets.length - 1]
+    : bullets[(at + delta + bullets.length) % bullets.length];
+  for (const bullet of bullets) bullet.tabIndex = bullet === next ? 0 : -1;
+  next.focus();
+}
+
 if (subwayKeyEl) {
-  /* AND IT IS OUT OF THE ACCESSIBILITY TREE WHILE IT IS ONLY A KEY (round 2). Twenty-six
-     spans reading "1 2 3 4 5 6 7 A C E ..." put twenty-six bare characters into the page's
-     reading order whose only information is the COLOUR beside them, which is the one thing
-     that does not survive being spoken. The route identities themselves are not lost: every
-     marker and every popup names its route in words, which is where a rider gets them today.
-     This comes back the moment the key does something: MR2 makes these buttons with real
-     names ("Focus route 1") and a real effect, and a control is a different thing from a
-     colour swatch. The attribute is in index.html rather than written here, so it holds
-     before this file runs. */
-  for (const trunk of SUBWAY_KEY_TRUNKS) {
-    const group = document.createElement("span");
-    group.className = "bul-group";
-    for (const route of trunk) {
-      /* MR2: A BUTTON, which is what the MR1 comment above promised. Its text is the bare
-         route id and nothing else, deliberately: chrome.spec.js D1l reads each bullet's
-         textContent and resolves the colour it expects as lineColor(textContent), so a
-         visually hidden label inside the chip would make that check compare the wrong
-         thing. The name goes on aria-label instead, where it does not move with the state
-         and can therefore carry aria-pressed. */
+  /* THE ONE KEYDOWN THIS FILE OWNS, and it is a control's own activation rather than a
+     router: map.js has the page's only key router and frontend/keyboard.test.js fails on a
+     second one. This is scoped to the toolbar, it handles only the five keys a toolbar owes,
+     and it is named in that test's table with this reason. */
+  subwayKeyEl.addEventListener("keydown", (event) => {
+    const bullet = event.target.closest?.(".bul");
+    if (!bullet || !subwayKeyEl.contains(bullet)) return;
+    const move =
+      event.key === "ArrowRight" || event.key === "ArrowDown" ? 1
+      : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1
+      : event.key === "Home" ? "home"
+      : event.key === "End" ? "end"
+      : null;
+    if (move === null) return;
+    event.preventDefault();
+    moveKeyFocus(bullet, move);
+  });
+}
+
+function buildSubwayKey(model) {
+  if (!subwayKeyEl) return;
+  subwayKeyEl.replaceChildren();
+  subwayKeyBullets.clear();
+  for (const group of model) {
+    const groupEl = document.createElement("span");
+    groupEl.className = "bul-group";
+    for (const entry of group.bullets) {
+      /* THE TEXT IS THE BARE BULLET ID AND NOTHING ELSE, deliberately: chrome.spec.js D1l
+         reads each bullet's textContent and resolves the colour it expects as
+         lineColor(textContent), so a visually hidden label inside the chip would make that
+         check compare the wrong thing. The name goes on aria-label, where it does not move
+         with the state and can therefore carry aria-pressed; the detail goes on title. */
       const bullet = document.createElement("button");
       bullet.type = "button";
       bullet.className = "bul";
-      bullet.style.background = lineColor(route);
-      bullet.style.color = readableTextOn(lineColor(route));
-      bullet.textContent = route;
-      bullet.setAttribute("aria-label", routeFocusLabel(route));
+      bullet.style.background = group.color;
+      bullet.style.color = readableTextOn(group.color);
+      bullet.textContent = entry.id;
+      bullet.setAttribute("aria-label", routeFocusLabel(entry.id));
       bullet.setAttribute("aria-pressed", "false");
-      bullet.addEventListener("click", () => toggleRouteFocus(route));
-      subwayKeyBullets.set(route, bullet);
-      group.append(bullet);
+      bullet.tabIndex = -1;
+      bullet.addEventListener("click", () => toggleRouteFocus(entry.id));
+      subwayKeyBullets.set(entry.id, bullet);
+      groupEl.append(bullet);
     }
-    subwayKeyEl.append(group);
+    subwayKeyEl.append(groupEl);
   }
+  paintSubwayKeyState(model);
+}
+
+/* THE ENABLED STATE IS REPAINTED EVERY POLL, because what a bullet can light changes with
+   the feed: a W bullet lights nothing at 3am and lights three ribbons at 8am.
+
+   aria-disabled RATHER THAN disabled, and that is the accessibility difference that
+   matters: a `disabled` button leaves the tab order and the accessibility tree entirely, so
+   a rider who cannot see the key would never learn the route exists. aria-disabled keeps it
+   announced, with its title saying why, and the click handler below is what makes it inert. */
+function paintSubwayKeyState(model) {
+  for (const group of model) {
+    for (const entry of group.bullets) {
+      const bullet = subwayKeyBullets.get(entry.id);
+      if (!bullet) continue;
+      bullet.setAttribute("aria-disabled", String(!entry.enabled));
+      bullet.title = entry.title;
+      subwayKeyFocusSets.set(entry.id, entry.focus);
+    }
+  }
+  paintRovingTabindex();
+}
+
+// Called when the route list resolves and from the poll tail. Rebuilds only when the set of
+// bullets changes; otherwise repaints, so the key does not twitch every fifteen seconds.
+function refreshSubwayKey() {
+  // The ribbons' tags and the key's sets are two halves of one answer, so they are refreshed
+  // together and from the same inputs. Late-bound by name: systems/subway.js loads after
+  // this file and owns the marks.
+  if (typeof retagSubwayRibbons === "function") retagSubwayRibbons();
+  if (!subwayKeyEl) return;
+  const model = subwayKeyModel(subwayRouteList(), subwayTrainRoutes());
+  const signature = model.map((g) => g.bullets.map((b) => b.id).join("")).join("|");
+  if (signature !== subwayKeyUniverse) {
+    subwayKeyUniverse = signature;
+    buildSubwayKey(model);
+    // A rebuild can take the focused bullet away with it; if it does, the focus goes too
+    // rather than being held by an id nothing draws.
+    if (focusedBullet && !subwayKeyBullets.has(focusedBullet)) clearRouteFocus();
+    else paintRouteFocus();
+    return;
+  }
+  paintSubwayKeyState(model);
 }
 
 /* ----- MR2: route focus ------------------------------------------------------------------
@@ -375,8 +482,13 @@ if (subwayKeyEl) {
    rather than in systems/subway.js because the CONTROLS are here (the bullets, the Escape
    rung's entry point) and the drawing is there, and one of the two has to load first.
 
+   FOCUS IS MEMBERSHIP, not equality (round 2). The state is the BULLET that is pressed and
+   the SET of route ids it stands for; a ribbon or a train is focused when its own route is
+   in that set. That is what lets Z light the J/Z ribbon and W light all three Broadway
+   ones, and helpers.js's subwayKeyModel is where the sets come from.
+
    IT IS OPACITY AND NOTHING ELSE. No layer is added, removed or rebuilt, which is what
-   subway.spec.js D2e holds by comparing layer identity across a focus and a clear. A
+   subway.spec.js D2d holds by comparing layer identity across a focus and a clear. A
    rebuild would also be a correctness problem rather than only a cost: setIcon replaces a
    marker's element, so any focus state written onto the DOM would be lost the next time a
    train's route id changed, while state held in Leaflet's options survives.
@@ -384,40 +496,58 @@ if (subwayKeyEl) {
    AND IT COMPOSES WITH THE FRESHNESS CONTRACT rather than competing with it. dimMarker and
    markerOpacity already take a `base` multiplier; focus supplies it. Nothing in section 3.3
    is touched, a stale train on the focused route stays dim, and the poll that re-dims every
-   marker fifteen seconds later re-reads the focus instead of erasing it. That last part is
-   the one a test cannot see by pressing a button and looking: subway.spec.js D2f advances
-   the clock through a poll and asserts the dimming is still there. */
-let focusedRoute = null;
+   marker fifteen seconds later re-reads the focus instead of erasing it. */
+let focusedBullet = null;
+let focusedRoutes = [];
 
-function currentFocusRoute() {
-  return focusedRoute;
+// The route ids currently focused, or an empty array. systems/subway.js asks this rather
+// than comparing ids, so membership is decided in one place.
+function currentFocusRoutes() {
+  return focusedRoutes;
+}
+
+function currentFocusBullet() {
+  return focusedBullet;
 }
 
 function paintRouteFocus() {
-  for (const [route, bullet] of subwayKeyBullets) {
-    bullet.setAttribute("aria-pressed", String(route === focusedRoute));
+  for (const [id, bullet] of subwayKeyBullets) {
+    bullet.setAttribute("aria-pressed", String(id === focusedBullet));
   }
+  paintRovingTabindex();
   // Late-bound by name, because systems/subway.js loads after this file and owns the marks.
   if (typeof applySubwayFocus === "function") applySubwayFocus();
 }
 
-// Press a bullet: focus that route, or clear it if it was already focused. Pressing a
-// DIFFERENT bullet moves the focus rather than clearing, which is the only one of the three
-// transitions a rider can reach by accident.
-function toggleRouteFocus(route) {
-  focusedRoute = focusedRoute === route ? null : route;
+/* Press a bullet: focus it, or clear it if it was already focused. Pressing a DIFFERENT
+   bullet moves the focus rather than clearing.
+
+   A BULLET THAT WOULD LIGHT NOTHING NEVER DIMS THE MAP. That is the whole point of drawing
+   it disabled: before round 2, three of twenty-three bullets dimmed the entire map and
+   highlighted nothing, which is a control that appears to work and does not. */
+function toggleRouteFocus(id) {
+  const bullet = subwayKeyBullets.get(id);
+  if (bullet && bullet.getAttribute("aria-disabled") === "true") return;
+  if (focusedBullet === id) {
+    focusedBullet = null;
+    focusedRoutes = [];
+  } else {
+    focusedBullet = id;
+    focusedRoutes = subwayKeyFocusSets.get(id) ?? [id];
+  }
   paintRouteFocus();
-  announcePage(routeFocusAnnouncement(focusedRoute));
+  announcePage(routeFocusAnnouncement(focusedBullet));
 }
 
 // The Escape rung's entry point (the ladder is in map.js, and it is the page's only keydown
-// handler: frontend/keyboard.test.js fails on a second one, and a second one bound in the
+// ROUTER: frontend/keyboard.test.js fails on a second one, and a second one bound in the
 // bubble phase would be inert anyway because the ladder captures and stops the event).
 // Returns whether there was anything to clear, so the ladder can tell "handled" from "leave
 // the event alone".
 function clearRouteFocus() {
-  if (!focusedRoute) return false;
-  focusedRoute = null;
+  if (!focusedBullet) return false;
+  focusedBullet = null;
+  focusedRoutes = [];
   paintRouteFocus();
   announcePage(routeFocusAnnouncement(null));
   return true;

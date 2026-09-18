@@ -486,8 +486,18 @@ test("D1l. the subway key is the app's own mark, not the MTA's roundel", async (
       background: getComputedStyle(b).backgroundColor,
     })),
   );
-  // Ten trunks, twenty-three routes: 1-2-3, 4-5-6, 7, A-C-E, B-D-F-M, G, J-Z, L, N-Q-R-W, S.
-  expect(bullets.length, "the key carries the routes the app draws").toBe(23);
+  /* THE COUNT IS NO LONGER A LITERAL, and that is MR2 round 2's correction. MR1 wrote ten
+     trunks and twenty-three bullets into a table, and measured against the real static
+     archive the table and the network disagreed in both directions: three of its bullets
+     drew nothing and four drawn routes had no bullet. The key is derived from the loaded
+     route list now, so the honest claim here is that it carries a bullet for what the world
+     it booted into can draw, which in the stock fixture is the two routes it serves. The
+     derivation itself is subway.spec.js D2a and the node tier. */
+  const drawable = await page.evaluate(() => subwayRouteUniverse(subwayRouteList(), subwayTrainRoutes()));
+  expect(bullets.map((b) => b.route).sort(), "the key carries the routes the app can draw").toEqual(
+    [...drawable].sort(),
+  );
+  expect(bullets.length, "and the scan must find bullets, or it decides nothing").toBeGreaterThan(0);
   for (const b of bullets) {
     expect(b.radius, `${b.route} must not be a circle`).not.toBe("50%");
     expect(parseFloat(b.radius), `${b.route}'s radius`).toBeLessThan(11);
@@ -497,7 +507,9 @@ test("D1l. the subway key is the app's own mark, not the MTA's roundel", async (
   // table copied into this spec.
   const agree = await page.evaluate(() =>
     [...document.querySelectorAll("#subway-key .bul")].every((b) => {
-      const want = lineColor(b.textContent);
+      // An ALIAS bullet's text is not a feed route id (S stands for GS, FS and H), so the
+      // colour it owes is its first target's. bulletRouteIds is the one place that knows.
+      const want = lineColor(bulletRouteIds(b.textContent)[0]);
       const el = document.createElement("span");
       el.style.color = want;
       document.body.append(el);

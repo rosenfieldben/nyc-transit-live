@@ -45,6 +45,17 @@ const {
   stationLabelShown,
   markerOpacity,
   STALE_MARKER_OPACITY,
+  SUBWAY_KEY_ALIASES,
+  compareRouteIds,
+  subwayRouteUniverse,
+  bulletRouteIds,
+  drawnRouteIds,
+  ribbonRouteSet,
+  focusRoutesForBullet,
+  bulletTrackSet,
+  bulletDrawsSomething,
+  bulletTitle,
+  subwayKeyModel,
 } = require("./helpers.js");
 
 const INK = "#201e1d";
@@ -244,4 +255,233 @@ test("MR2: one station's name is on screen only when the band, its kind and the 
       assert.equal(stationLabelShown(zoom, routes, false), false, `${zoom}/${routes}`);
     }
   }
+});
+
+/* ---------------- the derived key (round 2, G3) ----------------
+   The key was a hand-written table of five trunks until round 2. The table was wrong in
+   both directions at once: it offered bullets for routes the feed never carries (Z, W and a
+   bare S are not feed ids), and it had no bullet for SI at all. So the key is now a
+   function of the loaded route list and the trains on the map, and focus is MEMBERSHIP in a
+   ribbon's route set rather than equality with one route id.
+
+   THE FIXTURE IS THE REAL WORLD'S SHAPE. Measured from the MTA static archive
+   (gtfs_subway.zip, fetched during this stage): 24 routes and 35 shapes, and the drawn set
+   is 1 2 3 4 5 6 7 A B C D E F FS G GS H J L M N Q R SI. There is no Z shape, no W shape
+   and no S shape, which is the whole reason this section exists. REAL_SHAPED keeps one id
+   per trunk from that list so the assertions can be read, and every claim below holds of
+   the full 24 for the same reason it holds of these nine. */
+
+const REAL_SHAPED = ["1", "J", "N", "Q", "R", "GS", "FS", "H", "SI"];
+const shapedWorld = (ids = REAL_SHAPED) =>
+  ids.map((route) => ({ route, polylines: [[[40.7, -73.9], [40.8, -73.8]]] }));
+
+test("MR2 G3: the bullet list is the loaded routes plus the trains, alias-collapsed", () => {
+  // GS, FS and H are three feed ids for one bullet, so they collapse into S; Z arrives as a
+  // train with no shape of its own and still earns a bullet, because the app can draw it.
+  assert.deepEqual(subwayRouteUniverse(shapedWorld(), ["1", "Z"]), [
+    "1", "J", "N", "Q", "R", "S", "SI", "Z",
+  ]);
+  // SI is in the archive and was missing from the hand-written table. It is here by
+  // construction now rather than by anybody remembering it.
+  assert.ok(subwayRouteUniverse(shapedWorld(), []).includes("SI"));
+  // The alias collapses only when one of its targets is really present: a world with no
+  // shuttle at all has no S bullet to press.
+  assert.deepEqual(subwayRouteUniverse(shapedWorld(["1"]), []), ["1"]);
+  assert.deepEqual(subwayRouteUniverse(shapedWorld(["GS"]), []), ["S"]);
+  assert.deepEqual(subwayRouteUniverse(shapedWorld(["H"]), []), ["S"]);
+  // Digits before letters, then lexicographic, so S sorts before SI and 7 before A.
+  assert.deepEqual(subwayRouteUniverse(shapedWorld(["A", "7", "SI", "GS", "1"]), []), [
+    "1", "7", "A", "S", "SI",
+  ]);
+  assert.equal(compareRouteIds("S", "SI") < 0, true);
+  assert.equal(compareRouteIds("7", "A") < 0, true);
+  assert.equal(compareRouteIds("A", "7") > 0, true);
+  assert.equal(compareRouteIds("Q", "Q"), 0);
+  // Nothing loaded is not an error, it is an empty key.
+  assert.deepEqual(subwayRouteUniverse([], []), []);
+  assert.deepEqual(subwayRouteUniverse(null, []), []);
+});
+
+test("MR2 G3: a bullet stands for feed ids, and S stands for three of them", () => {
+  assert.deepEqual(bulletRouteIds("S"), ["GS", "FS", "H"]);
+  assert.deepEqual(bulletRouteIds("1"), ["1"]);
+  assert.deepEqual(bulletRouteIds("SI"), ["SI"]);
+  assert.deepEqual(Object.keys(SUBWAY_KEY_ALIASES), ["S"]);
+});
+
+test("MR2 G3: a drawn ribbon carries every trunk-mate that has no geometry of its own", () => {
+  const routes = shapedWorld();
+  const known = new Set([...REAL_SHAPED, "Z"]);
+  // The J/Z ribbon. Z has no shape, shares the brown trunk, and rides J's polylines, so the
+  // polyline's tag is the union and not J alone.
+  assert.deepEqual(ribbonRouteSet("J", routes, known), ["J", "Z"]);
+  // A route whose trunk has no orphan carries itself.
+  assert.deepEqual(ribbonRouteSet("1", routes, known), ["1"]);
+  assert.deepEqual(ribbonRouteSet("SI", routes, known), ["SI"]);
+  // W is not in this world at all, so no yellow ribbon claims it.
+  assert.deepEqual(ribbonRouteSet("N", routes, known), ["N"]);
+  // Let a W train arrive and all three yellow ribbons pick it up, because all three are
+  // track it could be on and the app has no shape to tell them apart.
+  const withW = new Set([...known, "W"]);
+  assert.deepEqual(ribbonRouteSet("N", routes, withW), ["N", "W"]);
+  assert.deepEqual(ribbonRouteSet("Q", routes, withW), ["Q", "W"]);
+  assert.deepEqual(ribbonRouteSet("R", routes, withW), ["R", "W"]);
+  // A route that IS drawn is never somebody else's orphan, which is what keeps the 1 out of
+  // the 2's tag in the full archive.
+  assert.deepEqual(ribbonRouteSet("1", shapedWorld(["1", "2", "3"]), new Set(["1", "2", "3"])), ["1"]);
+});
+
+test("MR2 G3: only routes with geometry count as drawn", () => {
+  assert.deepEqual([...drawnRouteIds(shapedWorld(["1", "J"]))], ["1", "J"]);
+  // A route the backend lists with no shapes is loaded but not drawn, and that distinction
+  // is the one a disabled bullet is made of.
+  assert.deepEqual([...drawnRouteIds([{ route: "L", polylines: [] }])], []);
+  assert.deepEqual([...drawnRouteIds([{ route: "L" }])], []);
+  assert.deepEqual([...drawnRouteIds(null)], []);
+});
+
+test("MR2 G3: focus is membership, so Z lights the J/Z ribbon and W lights all three yellows", () => {
+  const routes = shapedWorld();
+  /* THE FOCUS SET IS THE BULLET'S OWN IDS AND NEVER GROWS. The first version of this took
+     the transitive closure of the ribbons a bullet touches, and D2o caught what that does
+     to the Broadway trunk: N's ribbon carries W, W's closure is N, Q and R, so focusing N
+     reached Q and R through W and lit three routes when a rider asked for one. A ribbon
+     lights because ITS set contains one of the bullet's ids; the bullet's ids stay put. */
+  assert.deepEqual(focusRoutesForBullet("Z"), ["Z"]);
+  assert.deepEqual(focusRoutesForBullet("N"), ["N"]);
+  assert.deepEqual(focusRoutesForBullet("S"), ["GS", "FS", "H"]);
+  assert.deepEqual(focusRoutesForBullet("SI"), ["SI"]);
+
+  // Z: the user's first case. Z's id is on J's polylines, so pressing Z lights that ribbon.
+  assert.ok(ribbonRouteSet("J", routes, new Set([...REAL_SHAPED, "Z"])).includes("Z"));
+  // and no other ribbon carries it, so nothing else lights.
+  for (const drawn of ["1", "N", "SI", "GS"]) {
+    assert.equal(ribbonRouteSet(drawn, routes, new Set([...REAL_SHAPED, "Z"])).includes("Z"), false, drawn);
+  }
+  // W: the user's second case. N, Q and R are each drawn, W is not, so all three carry it
+  // and pressing W lights the whole Broadway trunk, which is the honest answer.
+  const withW = new Set([...REAL_SHAPED, "W"]);
+  for (const drawn of ["N", "Q", "R"]) assert.ok(ribbonRouteSet(drawn, routes, withW).includes("W"), drawn);
+  // and pressing N lights N ALONE, which is the asymmetry the closure got wrong.
+  const n = focusRoutesForBullet("N");
+  assert.equal(ribbonRouteSet("N", routes, withW).some((id) => n.includes(id)), true);
+  assert.equal(ribbonRouteSet("Q", routes, withW).some((id) => n.includes(id)), false);
+  assert.equal(ribbonRouteSet("R", routes, withW).some((id) => n.includes(id)), false);
+
+  // The TRACK set is still the closure, and it is what the title is written from: pressing
+  // Z really does light the ribbon J is drawn as, and the tooltip says so.
+  assert.deepEqual(bulletTrackSet("Z", routes, ["Z"]), ["J", "Z"]);
+  assert.deepEqual(bulletTrackSet("J", routes, ["Z"]), ["J", "Z"]);
+  assert.deepEqual(bulletTrackSet("W", routes, ["W"]), ["N", "Q", "R", "W"]);
+  assert.deepEqual(bulletTrackSet("S", routes, []), ["FS", "GS", "H"]);
+  assert.deepEqual(bulletTrackSet("SI", routes, []), ["SI"]);
+  // A route with a shape of its own and no orphan trunk-mate shares track with nobody, which
+  // is what stage 1's behaviour was and what must not have changed for the common case.
+  assert.deepEqual(bulletTrackSet("1", routes, ["1"]), ["1"]);
+});
+
+test("MR2 G3: a bullet whose set draws nothing is disabled and says why", () => {
+  // THE MUTATION THIS KILLS is "a bullet with an empty set dims the map": a route the
+  // backend lists with no shapes and no train running. Pressing it would drop every ribbon
+  // and every train to the focus floor and light nothing, which is a blank map with no way
+  // back except pressing the same dead bullet again.
+  const routes = [...shapedWorld(), { route: "L", polylines: [] }];
+  assert.deepEqual(bulletTrackSet("L", routes, []), ["L"]);
+  assert.equal(bulletDrawsSomething("L", routes, []), false);
+  assert.equal(bulletTitle("L", ["L"], false), "Nothing on the map right now for L.");
+  // It is still in the key: a rider looking for the L learns it is not running, which is
+  // information, and an absent bullet is not.
+  assert.ok(subwayRouteUniverse(routes, []).includes("L"));
+  // One L train on the map is enough to enable it, with no shape anywhere.
+  assert.equal(bulletDrawsSomething("L", routes, ["L"]), true);
+  // and a drawn route is enabled with no train at all, because its ribbon is the thing
+  // being focused.
+  assert.equal(bulletDrawsSomething("1", routes, []), true);
+  // Z IS ENABLED BY J'S RIBBON with neither a shape nor a train of its own, which is why
+  // this asks the ribbons rather than the id: a set-membership test over drawn ids alone
+  // would grey out the one bullet round 2 exists to make reachable.
+  assert.equal(bulletDrawsSomething("Z", routes, []), true);
+  // and the S bullet is enabled by any one of its three, not by all three.
+  assert.equal(bulletDrawsSomething("S", [{ route: "GS", polylines: [[[1, 2], [3, 4]]] }], []), true);
+});
+
+test("MR2 G3: the title explains an alias and a shared track, and the name never moves", () => {
+  const routes = shapedWorld();
+  // The S tooltip the user asked for: the bullet says which three routes it is.
+  assert.equal(bulletTitle("S", bulletTrackSet("S", routes, []), true), "S is GS, FS, H. Focus S.");
+  // A disabled alias still explains itself before saying it is dark.
+  assert.equal(bulletTitle("S", ["GS", "FS", "H"], false), "S is GS, FS, H. Nothing on the map right now for S.");
+  // Shared track is named, so pressing Z and watching J light is explained before it
+  // happens rather than after.
+  assert.equal(bulletTitle("Z", ["J", "Z"], true), "Focus Z. Shares track with J.");
+  assert.equal(bulletTitle("W", ["N", "Q", "R", "W"], true), "Focus W. Shares track with N, Q, R.");
+  // The plain case says nothing it does not need to.
+  assert.equal(bulletTitle("1", ["1"], true), "Focus 1.");
+  // THE ACCESSIBLE NAME IS NOT THE TITLE and does not move with the state, which is the
+  // aria-pressed rule MR1 round 2 settled: a button whose name changes when pressed is
+  // announced twice and read as two controls.
+  assert.equal(routeFocusLabel("1"), "Focus route 1");
+  assert.equal(routeFocusLabel("S"), "Focus route S");
+});
+
+test("MR2 G3: the whole key is grouped by trunk, in an order the data decides", () => {
+  const model = subwayKeyModel(shapedWorld(), ["1", "Z"]);
+  assert.deepEqual(
+    model.map((group) => [group.color, group.bullets.map((b) => b.id)]),
+    [
+      ["#c0392b", ["1"]],
+      ["#7d5a3c", ["J", "Z"]],
+      ["#e6b800", ["N", "Q", "R"]],
+      ["#566573", ["S"]],
+      ["#34495e", ["SI"]],
+    ],
+  );
+  // A group's colour is lineColor's answer for the bullet's first feed id, never a hex out
+  // of the handoff: ruling R1 again, and the reason S is the shuttle grey rather than the
+  // design's own.
+  for (const group of model) {
+    for (const bullet of group.bullets) {
+      assert.equal(group.color, lineColor(bulletRouteIds(bullet.id)[0]), bullet.id);
+    }
+  }
+  // Every bullet carries its own focus set, enabled flag and title, so the DOM builder has
+  // no decisions left to make and there is one place to test them.
+  const all = model.flatMap((group) => group.bullets);
+  assert.deepEqual(all.map((b) => b.id), ["1", "J", "Z", "N", "Q", "R", "S", "SI"]);
+  assert.ok(all.every((b) => b.enabled === true));
+  assert.deepEqual(all.find((b) => b.id === "Z").focus, ["Z"]);
+  assert.deepEqual(all.find((b) => b.id === "S").focus, ["GS", "FS", "H"]);
+  // and the title carries the closure the focus set deliberately does not.
+  assert.equal(all.find((b) => b.id === "Z").title, "Focus Z. Shares track with J.");
+  assert.equal(all.find((b) => b.id === "S").title, "S is GS, FS, H. Focus S.");
+  // An empty world is an empty key rather than five empty groups.
+  assert.deepEqual(subwayKeyModel([], []), []);
+});
+
+test("MR2 G3: focusOpacity reads a ribbon's whole set, not one route id", () => {
+  // The ribbon on Jamaica Ave is tagged ["J","Z"]. Focusing either one leaves it full.
+  const jz = ["J", "Z"];
+  assert.equal(focusOpacity(["J", "Z"], jz, "line"), RIBBON_LINE_OPACITY);
+  assert.equal(focusOpacity(["J", "Z"], jz, "casing"), RIBBON_CASING_OPACITY);
+  // and a route outside the set drops, part by part, exactly as equality used to.
+  assert.equal(focusOpacity(["J", "Z"], ["1"], "line"), FOCUS_DIM_LINE);
+  assert.equal(focusOpacity(["J", "Z"], ["1"], "casing"), FOCUS_DIM_CASING);
+  assert.equal(focusOpacity(["J", "Z"], ["1"], "train"), FOCUS_DIM_TRAIN);
+  // A train is tagged with one id and still matches a multi-route focus: this is the Z
+  // train under the Z bullet.
+  assert.equal(focusOpacity(["J", "Z"], "Z", "train"), 1);
+  assert.equal(focusOpacity(["J", "Z"], "J", "train"), 1);
+  // A bare string focus still works, because stage 1's single-route call sites and the
+  // Escape ladder both pass one.
+  assert.equal(focusOpacity("4", ["4"], "line"), RIBBON_LINE_OPACITY);
+  assert.equal(focusOpacity("4", ["5"], "line"), FOCUS_DIM_LINE);
+  // Nothing focused is full for everything, whichever shape the arguments take.
+  for (const empty of [null, "", []]) {
+    assert.equal(focusOpacity(empty, jz, "line"), RIBBON_LINE_OPACITY, JSON.stringify(empty));
+    assert.equal(focusOpacity(empty, jz, "train"), 1, JSON.stringify(empty));
+  }
+  // A part nobody named is left alone rather than guessed at.
+  assert.equal(focusOpacity(["J"], ["1"], "halo"), 1);
+  // Ids are compared as strings, because a route id off the wire may be a number.
+  assert.equal(focusOpacity(["7"], [7], "line"), RIBBON_LINE_OPACITY);
 });

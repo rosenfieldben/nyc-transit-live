@@ -158,7 +158,13 @@
            a button labelled "Focus route 4" whose label does not move with its state, which
            is what lets it carry aria-pressed (round 2 removed an aria-pressed whose label
            contradicted it). systems/shared.js builds them. -->
-      <div id="subway-key" class="hdr-fold" role="group" aria-label="Focus a subway route"></div>
+      <!-- ROUND 2: A TOOLBAR, ONE TAB STOP. Twenty-three buttons in the header cost
+           twenty-three tab stops, measured: reaching the Stations button took 32 presses
+           where it took nine before. A toolbar with a roving tabindex is one stop and the
+           arrow keys move inside it, which is the pattern for a row of related controls.
+           The bullets themselves are built from the loaded route list rather than written
+           here, because a hard-coded key and the network disagreed in both directions. -->
+      <div id="subway-key" class="hdr-fold" role="toolbar" aria-orientation="horizontal" aria-label="Focus a subway route"></div>
       <div id="hdr-actions">
         <!-- THE THEME TOGGLE IS HIDDEN UNTIL MR4, BY RULING, and it is hidden rather than
              deleted because everything behind it ships now and works.

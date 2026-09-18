@@ -402,6 +402,19 @@ body,
   z-index: 1;
 }
 
+/* A BULLET THAT CAN LIGHT NOTHING RIGHT NOW. aria-disabled rather than `disabled`, so it
+   stays in the accessibility tree and keeps its title, which is the sentence that says why;
+   a `disabled` button would vanish from the tree and a rider who cannot see the key would
+   never learn the route exists. The treatment is a fade AND a loss of the pointer cursor,
+   because the fade alone would be state by opacity, which MR1 round 2 ruled out twice. The
+   chip's letter is still the route's own ink on the route's own colour, so it is as legible
+   as any other; what the fade says is "not now", and the title says why. */
+.bul[aria-disabled="true"] {
+  filter: grayscale(0.7);
+  opacity: 0.55;
+  cursor: default;
+}
+
 /* THE PRESSED STATE IS A SECOND RING, IN INK, separated from the chip by a ring of surface
    so it reads as a halo rather than as a border on the chip: --ink on --surface is 13.70
    light and 12.60 dark. It is deliberately not the focus ring's colour, because a rider

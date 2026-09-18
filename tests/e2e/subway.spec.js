@@ -40,6 +40,48 @@ const withYellow = (ctx) => {
     ]);
 };
 
+/* A WORLD SHAPED LIKE THE REAL STATIC ARCHIVE, which is the only world where round 2's
+   findings have subjects. Measured, the archive draws J and not Z, N/Q/R and not W, GS/FS/H
+   and not S, and SI; the stock fixture draws two routes and nothing shares track with
+   anything, so every membership claim over it would pass without looking. */
+const REAL_SHAPED = ["1", "J", "N", "Q", "R", "GS", "FS", "H", "SI"];
+
+const withRealShapedRoutes = (trainRoutes = [], extraRoutes = []) => (ctx) => {
+  ctx.overrides.subwayRoutes = (route) =>
+    json(route, [
+      ...REAL_SHAPED.map((r) => ({ route: r, polylines: [[[40.7, -74.0], [40.71, -73.99]]] })),
+      ...extraRoutes,
+    ]);
+  if (trainRoutes.length) {
+    ctx.overrides.subways = (route, fixtures) => {
+      const body = fixtures.subwaysWithSystems({});
+      trainRoutes.forEach((id, i) => {
+        if (body.data[i]) body.data[i] = { ...body.data[i], route_id: id };
+      });
+      return json(route, body);
+    };
+  }
+};
+
+/* ONE ROUTE THE BACKEND LISTS AND NEVER DRAWS, which is the subject of the disabled-bullet
+   claim and does not exist in any other world here. The real endpoint deduplicates shapes
+   and has never served an empty list for a route, but it is reachable: a route whose shapes
+   all failed to parse comes back with `polylines: []`, and the bullet derived from it can
+   light nothing. */
+const withDarkRoute = (trainRoutes = []) => withRealShapedRoutes(trainRoutes, [{ route: "L", polylines: [] }]);
+
+const keyBullets = (page) =>
+  page.evaluate(() =>
+    [...document.querySelectorAll("#subway-key .bul-group")].map((g) =>
+      [...g.querySelectorAll(".bul")].map((b) => ({
+        id: b.textContent,
+        disabled: b.getAttribute("aria-disabled") === "true",
+        title: b.title,
+        tabIndex: b.tabIndex,
+      })),
+    ),
+  );
+
 const withLocalStation = (ctx) => {
   ctx.overrides.subwayStops = (route, fixtures) =>
     json(route, [
@@ -51,16 +93,19 @@ const withLocalStation = (ctx) => {
     ]);
 };
 
-async function open(page, before, { stations = 14, viewport = DESKTOP } = {}) {
+async function open(page, before, { stations = 14, viewport = DESKTOP, ribbons = 4 } = {}) {
   await page.setViewportSize(viewport);
   const ctx = await installMocks(page);
   if (before) await before(ctx);
   await page.clock.install({ time: new Date(fx.FROZEN_MS) });
   await page.clock.pauseAt(new Date(fx.FROZEN_MS));
   await page.goto("/");
+  // The ribbon count is waited on rather than "more than zero", because the key is derived
+  // from the route list and a spec that read it mid-load would see a shorter one.
   await page.waitForFunction(
-    (want) => trains.size === 2 && stationRegistry.length === want && routeLinesLayer.getLayers().length > 0,
-    stations,
+    (want) =>
+      trains.size === 2 && stationRegistry.length === want.stations && routeLinesLayer.getLayers().length === want.ribbons,
+    { stations, ribbons },
     { timeout: 15_000 },
   );
   await page.clock.runFor(1000);
@@ -70,13 +115,32 @@ async function open(page, before, { stations = 14, viewport = DESKTOP } = {}) {
 const ribbons = (page) =>
   page.evaluate(() => subwayRibbons.map((r) => ({ route: r.route, part: r.part, opacity: r.layer.options.opacity })));
 
+// The same ribbons with their route SETS, which is what round 2's membership claims read.
+const ribbonSets = (page) =>
+  page.evaluate(() =>
+    subwayRibbons.map((r) => ({ route: r.route, routes: r.routes, part: r.part, opacity: r.layer.options.opacity })),
+  );
+
 const trainOpacities = (page) =>
   page.evaluate(() => Object.fromEntries([...trains.entries()].map(([id, r]) => [id, r.marker.options.opacity ?? 1])));
 
 /* ---------------- the bullets, and what pressing one does ---------------- */
 
-test("D2a. the subway key is twenty-three named buttons, and each one is its own route", async ({ page }) => {
-  await open(page);
+test("D2a. the key is derived from the loaded route list, grouped by trunk", async ({ page }) => {
+  /* ROUND 2 REPLACED A TABLE WITH A DERIVATION. MR1 hard-coded ten trunks and twenty-three
+     bullets; measured against the real static archive that table and the network disagreed
+     in both directions, and MR2 made the bullets controls, so three of twenty-three controls
+     did nothing and four drawn routes could not be reached at all. */
+  await open(page, withRealShapedRoutes(["1", "Z"]), { ribbons: 18 });
+  const groups = await keyBullets(page);
+  // One group per trunk, in the data's order, and the shuttles collapsed into one S.
+  expect(groups.map((g) => g.map((b) => b.id).join(""))).toEqual(["1", "JZ", "NQR", "S", "SI"]);
+  // SI HAS ITS BULLET, which the hard-coded key never gave it although the map draws it.
+  expect(groups.flat().map((b) => b.id)).toContain("SI");
+  // And every bullet is one the world can draw something for.
+  const universe = await page.evaluate(() => subwayRouteUniverse(subwayRouteList(), subwayTrainRoutes()));
+  expect(groups.flat().map((b) => b.id).sort()).toEqual([...universe].sort());
+
   const key = await page.evaluate(() =>
     [...document.querySelectorAll("#subway-key .bul")].map((b) => ({
       tag: b.tagName,
@@ -85,7 +149,6 @@ test("D2a. the subway key is twenty-three named buttons, and each one is its own
       pressed: b.getAttribute("aria-pressed"),
     })),
   );
-  expect(key.length, "the key draws one bullet per route in SUBWAY_KEY_TRUNKS").toBe(23);
   expect([...new Set(key.map((b) => b.tag))], "every bullet is a button now, not a span").toEqual(["BUTTON"]);
   // THE NAME IS ON aria-label AND THE TEXT IS THE BARE ROUTE ID, which is not a style choice:
   // D1l resolves each bullet's expected colour as lineColor(textContent), so a visually hidden
@@ -95,22 +158,28 @@ test("D2a. the subway key is twenty-three named buttons, and each one is its own
     expect(bullet.pressed, `bullet ${bullet.text} starts unpressed`).toBe("false");
   }
   // And the group is back in the accessibility tree, which MR1 took it out of while it was
-  // only a colour swatch and promised to restore "the moment the key does something".
+  // only a colour swatch and promised to restore "the moment the key does something". It is
+  // a TOOLBAR as of round 2, which is what buys the one tab stop D2r measures.
   await expect(page.locator("#subway-key")).not.toHaveAttribute("aria-hidden", "true");
   await expect(page.locator("#subway-key")).toHaveAttribute("aria-label", "Focus a subway route");
+  await expect(page.locator("#subway-key")).toHaveAttribute("role", "toolbar");
 
   /* AND A PRESSED BULLET PAINTS ITS RING OVER ITS NEIGHBOURS. Round 1 of the review found
      this by looking at the drawn key rather than at the rules: the bullets are siblings in
      a flex group with the design's 2px gap, all `position: relative` with `z-index: auto`,
      and siblings paint in DOM order, so a ring reaching 4px out was drawn into the gap and
      then covered by the next bullet's background for its outer half. On the "2" bullet,
-     which has a neighbour on both sides, it came out whole on the left and cut off on the
-     right. The stacking level is the fix; this is what says it is still there. */
-  await page.locator('#subway-key .bul[aria-label="Focus route 2"]').click();
+     which had a neighbour on both sides, it came out whole on the left and cut off on the
+     right. The stacking level is the fix; this is what says it is still there.
+
+     THE BULLET IS Q, the middle of the N-Q-R group, because this world is shaped like the
+     real archive and has no 2 or 3. That is itself the round's point: a spec that names a
+     route the data does not have is a spec about a table rather than about a map. */
+  await page.locator('#subway-key .bul[aria-label="Focus route Q"]').click();
   const stacking = await page.evaluate(() => ({
-    pressed: getComputedStyle(document.querySelector('#subway-key .bul[aria-label="Focus route 2"]')).zIndex,
-    plain: getComputedStyle(document.querySelector('#subway-key .bul[aria-label="Focus route 3"]')).zIndex,
-    ring: getComputedStyle(document.querySelector('#subway-key .bul[aria-label="Focus route 2"]')).boxShadow,
+    pressed: getComputedStyle(document.querySelector('#subway-key .bul[aria-label="Focus route Q"]')).zIndex,
+    plain: getComputedStyle(document.querySelector('#subway-key .bul[aria-label="Focus route R"]')).zIndex,
+    ring: getComputedStyle(document.querySelector('#subway-key .bul[aria-label="Focus route Q"]')).boxShadow,
   }));
   expect(stacking.pressed, "a pressed bullet must paint above its neighbours").not.toBe("auto");
   expect(stacking.plain, "and an ordinary one must not, so the header still paints in source order").toBe("auto");
@@ -263,13 +332,237 @@ test("D2f. Escape clears the focus, and only once there is nothing else to close
   expect(await state()).toEqual({ popups: 0, panel: false, focused: "false" });
 });
 
+/* ---------------- round 2, G3: focus is membership ----------------
+   The four cases the operator named, each in the world that has a subject for it. What
+   every one of them is really asserting is that a route with no shape of its own is
+   REACHABLE: before round 2 the Z bullet was a coloured span over a map that draws J, and
+   pressing it would have dimmed everything and lit nothing. */
+
+test("D2n. a route with no shape rides its trunk-mate's ribbon, and either bullet lights both", async ({ page }) => {
+  // THE Z CASE. The archive draws J and not Z, and they share the brown trunk, so J's
+  // polylines carry both ids and pressing either one leaves that ribbon alone.
+  await open(page, withRealShapedRoutes(["1", "Z"]), { ribbons: 18 });
+
+  const tags = await ribbonSets(page);
+  const sets = Object.fromEntries(tags.filter((r) => r.part === "line").map((r) => [r.route, r.routes.join("+")]));
+  expect(sets.J, "the Jamaica Ave ribbon is J AND Z, which is the whole of G3").toBe("J+Z");
+  // and nobody else picked up a passenger: every other drawn route carries itself alone.
+  expect(sets["1"]).toBe("1");
+  expect(sets.N).toBe("N");
+  expect(sets.SI).toBe("SI");
+
+  await page.locator('#subway-key .bul[aria-label="Focus route Z"]').click();
+  const byKey = Object.fromEntries((await ribbonSets(page)).map((r) => [`${r.route}|${r.part}`, r.opacity]));
+  expect(byKey["J|line"], "pressing Z lights the ribbon Z runs on").toBe(1);
+  expect(byKey["J|casing"]).toBe(0.9);
+  expect(byKey["1|line"], "and every ribbon it does not run on drops").toBe(0.18);
+  expect(byKey["1|casing"]).toBe(0);
+  expect(byKey["N|line"]).toBe(0.18);
+
+  // The trains, which is the half a ribbon test would miss: sub-2 is the Z train.
+  expect(await trainOpacities(page)).toEqual({ "sub-1": 0.15, "sub-2": 1 });
+  await expect(page.locator("#page-announce")).toHaveText("Focused on the Z; press again to clear.");
+
+  /* PRESSING J LIGHTS THE SAME RIBBON AND A DIFFERENT TRAIN, and that asymmetry is the
+     model rather than a gap in it. The ribbon is shared because the app has no Z shape to
+     separate it with; the trains are not shared, because every train carries its own
+     route_id. So a rider asking for the J gets the J's track and the J's trains, and the Z
+     train beside it dims. sub-2 is that Z train. */
+  await page.locator('#subway-key .bul[aria-label="Focus route J"]').click();
+  expect(Object.fromEntries((await ribbonSets(page)).map((r) => [`${r.route}|${r.part}`, r.opacity]))).toEqual(byKey);
+  expect(await trainOpacities(page)).toEqual({ "sub-1": 0.15, "sub-2": 0.15 });
+  // Only one bullet is pressed at a time even though both resolve to the same routes: the
+  // pressed state is the CONTROL's, not the route set's.
+  await expect(page.locator('#subway-key .bul[aria-label="Focus route J"]')).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator('#subway-key .bul[aria-label="Focus route Z"]')).toHaveAttribute("aria-pressed", "false");
+  // And the title said so before it happened.
+  await expect(page.locator('#subway-key .bul[aria-label="Focus route Z"]')).toHaveAttribute(
+    "title",
+    "Focus Z. Shares track with J.",
+  );
+});
+
+test("D2o. a W train lights all three yellow ribbons, because no shape tells them apart", async ({ page }) => {
+  /* THE W CASE, and the one where membership is a set rather than a pair. N, Q and R are
+     each drawn and W is not, so W could be on any of the three and all three light. The
+     alternative would be a W bullet that dims the map and lights one marker, which is worse
+     than not offering it. */
+  await open(page, withRealShapedRoutes(["W", "1"]), { ribbons: 18 });
+
+  const sets = Object.fromEntries(
+    (await ribbonSets(page)).filter((r) => r.part === "line").map((r) => [r.route, r.routes.join("+")]),
+  );
+  expect([sets.N, sets.Q, sets.R]).toEqual(["N+W", "Q+W", "R+W"]);
+
+  await page.locator('#subway-key .bul[aria-label="Focus route W"]').click();
+  const byKey = Object.fromEntries((await ribbonSets(page)).map((r) => [`${r.route}|${r.part}`, r.opacity]));
+  for (const route of ["N", "Q", "R"]) {
+    expect(byKey[`${route}|line`], `${route} is track W could be on`).toBe(1);
+    expect(byKey[`${route}|casing`]).toBe(0.9);
+  }
+  for (const route of ["1", "J", "SI", "GS"]) {
+    expect(byKey[`${route}|line`], `${route} is not`).toBe(0.18);
+    expect(byKey[`${route}|casing`]).toBe(0);
+  }
+  // sub-1 is the W train and sub-2 is a 1 train.
+  expect(await trainOpacities(page)).toEqual({ "sub-1": 1, "sub-2": 0.15 });
+
+  // AND N'S OWN BULLET LIGHTS THE SAME RIBBON, not a different one: the ribbon is one
+  // object with one opacity, so the set is on the layer and not on the press.
+  await page.locator('#subway-key .bul[aria-label="Focus route N"]').click();
+  const afterN = Object.fromEntries((await ribbonSets(page)).map((r) => [`${r.route}|${r.part}`, r.opacity]));
+  expect(afterN["N|line"]).toBe(1);
+  expect(afterN["Q|line"], "Q is a different ribbon and N is not on it").toBe(0.18);
+  // The W train drops now, which is the honest answer: it may be on Q's track instead.
+  expect(await trainOpacities(page)).toEqual({ "sub-1": 0.15, "sub-2": 0.15 });
+});
+
+test("D2p. one S bullet is three shuttles, and SI has a bullet at last", async ({ page }) => {
+  /* THE S AND SI CASES. GS, FS and H are three feed ids for what a rider calls the shuttle,
+     so they collapse into one control that focuses all three; SI is a drawn route the
+     hard-coded key simply never offered. */
+  await open(page, withRealShapedRoutes(["1", "Z"]), { ribbons: 18 });
+  const ids = (await keyBullets(page)).flat().map((b) => b.id);
+  expect(ids, "one bullet, not three").toContain("S");
+  expect(ids).not.toContain("GS");
+  expect(ids).not.toContain("FS");
+  expect(ids).not.toContain("H");
+  expect(ids, "and the one the table forgot").toContain("SI");
+
+  // THE TOOLTIP SAYS WHICH THREE, which is what makes one control for three routes legible.
+  await expect(page.locator('#subway-key .bul[aria-label="Focus route S"]')).toHaveAttribute(
+    "title",
+    "S is GS, FS, H. Focus S.",
+  );
+
+  await page.locator('#subway-key .bul[aria-label="Focus route S"]').click();
+  const byKey = Object.fromEntries((await ribbonSets(page)).map((r) => [`${r.route}|${r.part}`, r.opacity]));
+  for (const route of ["GS", "FS", "H"]) {
+    expect(byKey[`${route}|line`], `${route} is one of the three`).toBe(1);
+    expect(byKey[`${route}|casing`]).toBe(0.9);
+  }
+  for (const route of ["1", "J", "N", "SI"]) expect(byKey[`${route}|line`], route).toBe(0.18);
+  // The announcement uses the bullet a rider pressed, not the three ids underneath it.
+  await expect(page.locator("#page-announce")).toHaveText("Focused on the S; press again to clear.");
+
+  await page.locator('#subway-key .bul[aria-label="Focus route SI"]').click();
+  const si = Object.fromEntries((await ribbonSets(page)).map((r) => [`${r.route}|${r.part}`, r.opacity]));
+  expect(si["SI|line"]).toBe(1);
+  expect(si["GS|line"], "SI is its own trunk and takes nothing with it").toBe(0.18);
+  await expect(page.locator('#subway-key .bul[aria-label="Focus route SI"]')).toHaveAttribute("title", "Focus SI.");
+});
+
+test("D2q. a bullet that would light nothing is present, disabled, and cannot dim the map", async ({ page }) => {
+  /* THE MUTATION THIS KILLS is "a bullet with an empty set dims the map". A route the
+     backend lists with no shapes and no train running has nothing to focus, and the naive
+     implementation, where a bullet is a control and every control focuses its own id, would
+     drop every ribbon to 0.18 and every train to 0.15 and light nothing at all: a blank map
+     whose only way back is pressing the same dead bullet a second time.
+
+     IT IS STILL IN THE KEY, and that is the accessibility decision rather than a cosmetic
+     one. `disabled` would take it out of the tab order and out of the accessibility tree,
+     so a rider who cannot see the key would not learn the route exists; aria-disabled keeps
+     it announced with its title saying why. */
+  await open(page, withDarkRoute(["1", "Z"]), { ribbons: 18 });
+
+  const all = (await keyBullets(page)).flat();
+  const dark = all.find((b) => b.id === "L");
+  expect(dark, "the route is listed, so its bullet is drawn").toBeTruthy();
+  expect(dark.disabled).toBe(true);
+  expect(dark.title, "and it says why rather than just looking grey").toBe("Nothing on the map right now for L.");
+  // Every other bullet in this world is live, so "disabled" is a measurement and not a mood.
+  expect(all.filter((b) => b.disabled).map((b) => b.id)).toEqual(["L"]);
+
+  const before = await ribbonSets(page);
+  const trainsBefore = await trainOpacities(page);
+  /* FORCED, and that is the point rather than a workaround. Playwright's actionability check
+     treats aria-disabled="true" as not enabled and refuses to click, which is what a mouse
+     rider's browser does NOT do: the element is a live <button> with no `disabled` attribute
+     and a real click lands on it. Forcing the click is therefore the faithful simulation,
+     and the inertness under test is the handler's own early return. */
+  await page.locator('#subway-key .bul[aria-label="Focus route L"]').click({ force: true });
+  expect(await ribbonSets(page), "pressing it must not dim one single ribbon").toEqual(before);
+  expect(await trainOpacities(page), "nor one single train").toEqual(trainsBefore);
+  await expect(page.locator('#subway-key .bul[aria-label="Focus route L"]')).toHaveAttribute("aria-pressed", "false");
+  // Nothing was announced either, because nothing happened.
+  await expect(page.locator("#page-announce")).toHaveText("");
+
+  // IT IS NOT A TAB STOP AND NOT IN THE ARROW ROTATION, which is the other half of inert:
+  // a rider arrowing along the key does not land on a control that will not act.
+  expect(dark.tabIndex).toBe(-1);
+  await page.locator('#subway-key .bul[aria-label="Focus route SI"]').focus();
+  await page.keyboard.press("ArrowRight");
+  // SI is the last enabled bullet in this world, so ArrowRight wraps past the dark L to the
+  // first one rather than stopping on it.
+  expect(await page.evaluate(() => document.activeElement.getAttribute("aria-label"))).toBe("Focus route 1");
+
+  // A live bullet still works in the same key, so the disabling is per bullet.
+  await page.locator('#subway-key .bul[aria-label="Focus route 1"]').click();
+  const byKey = Object.fromEntries((await ribbonSets(page)).map((r) => [`${r.route}|${r.part}`, r.opacity]));
+  expect(byKey["1|line"]).toBe(1);
+  expect(byKey["J|line"]).toBe(0.18);
+});
+
+test("D2r. the key is one tab stop, and the arrow keys move inside it", async ({ page }) => {
+  /* F4, FIXED. Twenty-three bullets as twenty-three tab stops put the Stations button 32
+     presses from the top of the document where it used to be nine. A toolbar is one stop.
+
+     THE COUNT ITSELF IS NOT MEASURED HERE, because this world serves nine routes and the
+     number only means something over the real twenty-four; it was taken with the same
+     harness as the other MR2 numbers and both figures are in the ledger. What IS measured
+     here is the property the count follows from, which is that the number of tab stops the
+     key costs does not grow with the number of routes. */
+  await open(page, withRealShapedRoutes(["1", "Z"]), { ribbons: 18 });
+
+  const stops = () => page.evaluate(() => [...document.querySelectorAll("#subway-key .bul")].map((b) => b.tabIndex));
+  const ids = (await keyBullets(page)).flat().map((b) => b.id);
+  expect(ids.length, "eight bullets in this world").toBe(8);
+  expect((await stops()).filter((t) => t === 0).length, "and one tab stop between them").toBe(1);
+  expect((await stops())[0], "which is the first bullet until a rider moves it").toBe(0);
+
+  // TABBING PAST THE KEY COSTS ONE PRESS. Counted from the bullet itself so the count is
+  // about the key and not about whatever precedes it in the header.
+  await page.locator('#subway-key .bul[aria-label="Focus route 1"]').focus();
+  await page.keyboard.press("Tab");
+  const after = await page.evaluate(() => document.activeElement.id || document.activeElement.getAttribute("aria-label"));
+  expect(after, "one Tab leaves the whole key behind").not.toMatch(/^Focus route/);
+
+  // ARROWS MOVE WITHIN, and the single stop moves with the focus so that returning to the
+  // key by Tab returns to where the rider left it.
+  await page.locator('#subway-key .bul[aria-label="Focus route 1"]').focus();
+  const here = () => page.evaluate(() => document.activeElement.getAttribute("aria-label"));
+  await page.keyboard.press("ArrowRight");
+  expect(await here()).toBe("Focus route J");
+  expect(await stops()).toEqual([-1, 0, -1, -1, -1, -1, -1, -1]);
+  await page.keyboard.press("ArrowDown");
+  expect(await here(), "down is the same as right in a horizontal toolbar, and costs nothing").toBe("Focus route Z");
+  await page.keyboard.press("ArrowLeft");
+  expect(await here()).toBe("Focus route J");
+  await page.keyboard.press("End");
+  expect(await here()).toBe("Focus route SI");
+  await page.keyboard.press("ArrowRight");
+  expect(await here(), "and it wraps rather than stopping").toBe("Focus route 1");
+  await page.keyboard.press("ArrowLeft");
+  expect(await here(), "in both directions").toBe("Focus route SI");
+  await page.keyboard.press("Home");
+  expect(await here()).toBe("Focus route 1");
+
+  // A KEY THAT MOVES DOES NOT STRAND THE TAB STOP: pressing a bullet makes the pressed one
+  // the stop, so a rider who tabs away and back lands on the route they focused.
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  await expect(page.locator('#subway-key .bul[aria-label="Focus route SI"]')).toHaveAttribute("aria-pressed", "true");
+  expect(await stops()).toEqual([-1, -1, -1, -1, -1, -1, -1, 0]);
+  expect((await stops()).filter((t) => t === 0).length, "still exactly one").toBe(1);
+});
+
 /* ---------------- the ribbons ---------------- */
 
 test("D2g. the yellow trunk is drawn last, on the map, in both passes", async ({ page }) => {
   /* THE MUTATION THIS KILLS is "yellow not drawn last". The payload lists N and Q FIRST, so a
      spec over a payload that happened to end with yellow would pass with the sort deleted.
      Asserted on the layer group's own order, which is canvas paint order. */
-  await open(page, withYellow);
+  await open(page, withYellow, { ribbons: 8 });
   const order = await page.evaluate(() => subwayRibbons.map((r) => `${r.route}|${r.part}`));
   const casings = order.filter((k) => k.endsWith("|casing"));
   const lines = order.filter((k) => k.endsWith("|line"));
@@ -334,7 +627,7 @@ test("D2m. focusing a route actually repaints the canvas, not just the options",
      MEASURED AS PIXELS, from the overlay canvas the ribbons are drawn on. At 0.18 a line's
      pixels are still there but far more transparent, so the honest measure is the WEIGHT of
      the ink rather than a count of touched pixels. */
-  await open(page, withYellow);
+  await open(page, withYellow, { ribbons: 8 });
   const inkWeight = () =>
     page.evaluate(() => {
       const canvas = document.querySelector(".leaflet-overlay-pane canvas");
@@ -541,7 +834,7 @@ test("D2k. no subway mark is a circle, which is the map's half of ruling R1", as
      THE STATION DOTS AND RINGS ARE CIRCLES AND THAT IS THE POINT: a circle always means
      subway and a square always means regional rail, which is the design's own rule. What may
      not be a circle is the route BULLET, so the claim is scoped to the train markers. */
-  await open(page, withYellow);
+  await open(page, withYellow, { ribbons: 8 });
   const marks = await page.evaluate(() =>
     [...document.querySelectorAll(".train-marker svg")].map((svg) => ({
       circles: svg.querySelectorAll("circle").length,

@@ -271,10 +271,10 @@ ledger carries each with its reason.
 | **R1** | The handoff's MTA palette row and its circular lettered bullets are overruled by the README's own rule. MR2 draws ribbons in `lineColor()` and bullets in the app's own shape. | The colours already came from `lineColor()`; only the shape was wrong. `.bul` is `border-radius: 4px`, which is `systems/subway.js`'s `<rect rx="3">` in an 18 unit box, so the key and the marker are one mark at two sizes. **D1l** holds it: no bullet is a circle, and all 23 bullets across the 10 trunks carry exactly `lineColor()`'s answer. Recorded against MR2 in the ledger's stage table. |
 | **R2** | The dark theme waits for MR4. Keep the tokens, the plumbing, the filter and the tests; hide the toggle until every mark has its paper casing. | `#theme-toggle` carries `hidden`, plus one rule to make it so. Nothing else is removed: `applyTheme`, `storedTheme`, `nextTheme`, `themeChoice`, the `data-theme` token blocks and the `.leaflet-tile-pane` filters all stay, D1g and D1h drive them through `applyTheme` rather than through a visible press, and the axe scan still measures both themes. MR4 unhides one attribute. |
 | **R3** | The trailing status note does not fold below 700px. The alerts strip and the note are the two carve-outs; the feed buttons and the Key still fold. | The fold class moved off `#toggles` onto a new inner `#feed-buttons`, so row 2 folds its buttons and keeps its note. `#status:empty { display: none }` means a healthy day costs no row at all. **D1k** reads the note at 375 and 320 with the Key folded: visible, `staleness()`'s full sentence, carrying `.error`, inside the viewport, not truncated. **A6c** now asserts both halves. This closes the deviation round 1 raised. |
-| **R4** | An opened popup, both themes, joins the axe scan. If it is not small, it becomes MR2's first item. | **It was small, about fifteen lines, so it is done here rather than deferred.** The a11y suite's state list gained a theme axis and the "popup open with cross-link" state opts in with `themes: ["light", "dark"]`. Green at both themes at all three widths, which is the measurement the ruling asked for rather than a promise of one. |
+| **R4** | An opened popup, both themes, joins the axe scan. If it is not small, it becomes MR2's first item. | **It was small, about fifteen lines, so it is done here rather than deferred.** The a11y suite's state list gained a theme axis and the "popup open with cross-link" state opts in with `themes: ["light", "dark"]`. Green at both themes at the two widths that state runs at, 1280 and 375, which is the measurement the ruling asked for rather than a promise of one. |
 
 **What R2 costs, said plainly.** The dark theme is reachable only from the console in
-this stage, so the screenshot pair below is a light-theme pair and the dark half of the
+this stage, so the screenshot pair above is a light-theme pair and the dark half of the
 design is evidenced by the token blocks, the tile filter, D1g, D1h and the axe scan
 rather than by a picture. That is the ruling's intent: built and tested, not offered.
 
@@ -324,7 +324,7 @@ see a caller that stopped calling. The browser is where a wiring mutation dies.
   D1k holds the note at 375 and 320. Nothing is deferred to MR2.
 - **The dark theme ships built, tested and hidden** (round 3, R2). The tokens, the tile
   filter, `applyTheme`, the persistence and their tests are all here; `#theme-toggle`
-  carries `hidden` until MR4, because the arithmetic in the round 2 section below holds
+  carries `hidden` until MR4, because the arithmetic in the round 2 section above holds
   on the map as well as in the Key. The screenshots are therefore a light-theme pair.
 - **The dark theme stops at the Stations panel's edge**, and will still do so when MR4
   unhides it. The handoff's scope note and the stage brief both put that panel out of

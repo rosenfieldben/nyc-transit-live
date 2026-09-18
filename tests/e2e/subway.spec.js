@@ -796,6 +796,143 @@ test("D2t. the key does not rebuild under a rider's hand every fifteen seconds",
   ).toBe(true);
 });
 
+test("D2x. a station name is painted below every vehicle, which is the pane it is bound to", async ({ page }) => {
+  /* THE MUTATION THIS KILLS is deleting the `pane` option from the bindTooltip call, which puts
+     the labels back in Leaflet's default tooltipPane at z-index 650, ABOVE markerPane's 600.
+     That is the state this branch shipped until round 3: measured from its own committed
+     screenshots, a station name painted across a train bullet and took 44% of its
+     route-coloured pixels and its letter with it.
+
+     IT NEEDED ITS OWN SPEC AND THE MUTATION RUN IS WHAT SAID SO. D2u asserts the pane ORDER,
+     which stays correct with this mutation applied because the panes are still created; what
+     nothing asked was which pane the tooltips actually go INTO. The fix went in unguarded and
+     the run caught it, with all 312 node tests and all 41 specs in this file and layout.spec.js
+     green. */
+  await open(page, withLocalStation, { stations: 18 });
+  const where = await page.evaluate(() => {
+    const z = (name) => Number(getComputedStyle(map.getPane(name)).zIndex);
+    const tips = stationRegistry
+      .filter((entry) => entry.kind === "subway" && entry.marker?.getTooltip)
+      .map((entry) => {
+        const el = entry.marker.getTooltip()?.getElement();
+        return {
+          name: entry.name,
+          option: entry.marker.getTooltip()?.options.pane ?? null,
+          paneClass: el?.parentElement?.className ?? null,
+          opacity: el ? getComputedStyle(el).opacity : null,
+        };
+      });
+    return {
+      tips,
+      labelPaneZ: z("stationLabelPane"),
+      markerPaneZ: z("markerPane"),
+      tooltipPaneZ: z("tooltipPane"),
+      stationPaneZ: z("stationPane"),
+    };
+  });
+
+  expect(where.tips.length, "this world has station labels to place").toBeGreaterThan(3);
+  for (const tip of where.tips) {
+    expect(tip.option, `${tip.name} is bound to the label pane`).toBe("stationLabelPane");
+    expect(tip.paneClass, `${tip.name} is rendered into it`).toContain("leaflet-stationLabel-pane");
+    expect(tip.paneClass, `${tip.name} is not in Leaflet's default tooltip pane`).not.toContain(
+      "leaflet-tooltip-pane",
+    );
+    /* AND AT FULL OPACITY (F14). Leaflet's Tooltip defaults to opacity 0.9 and writes it as an
+       INLINE style in onAdd, which no stylesheet rule can reach, so every name rendered at 90%
+       group alpha while a11y.spec.js A1z3 measured the ink at 100% and reported a ratio about
+       23% better than the drawn one. */
+    expect(tip.opacity, `${tip.name} draws at the ink the contrast was measured at`).toBe("1");
+  }
+
+  // The pane the labels are in is below the vehicles and above the dots they name, and it is
+  // NOT the pane Leaflet would have used.
+  expect(where.labelPaneZ).toBeLessThan(where.markerPaneZ);
+  expect(where.labelPaneZ).toBeGreaterThan(where.stationPaneZ);
+  expect(where.tooltipPaneZ, "Leaflet's own tooltip pane is still above the vehicles").toBeGreaterThan(
+    where.markerPaneZ,
+  );
+});
+
+test("D2y. both bullet rings have the header surface on every side, not a neighbour's fill", async ({ page }) => {
+  /* THE MUTATION THIS KILLS is putting .bul-group's gap back to the design's 2px. Both ring
+     states reach 4px out from a 24px chip, so at a 2px gap each ring's left and right segments
+     sit inside the neighbouring bullet's border box, and the `z-index: 1` this stage added for
+     the clipping is what makes them paint there rather than be clipped. Measured against a
+     neighbour's fill instead of --surface, --focus reads 1.10 on the A/C/E blue: the exact
+     number MR1 round 2 recorded as the defect an outside ring was chosen to escape.
+
+     THIS ALSO NEEDED THE MUTATION RUN TO EXIST. Nothing in the suite sampled the pixels beside
+     a ring, so the 6px gap went in unguarded and reverting it left every tier green.
+
+     TWO CLAIMS, because one without the other is not the invariant: the GEOMETRY (the gap is at
+     least as wide as the ring reaches, so the arithmetic holds for any future ring) and the
+     PIXELS (what the browser actually painted either side of it, in both themes). */
+  await open(page, withRealShapedRoutes(["1", "Z"]), { ribbons: 18 });
+  const sel = '#subway-key .bul[aria-label="Focus route Q"]';
+
+  const geometry = await page.evaluate((s) => {
+    const el = document.querySelector(s);
+    const cs = getComputedStyle(el);
+    const group = el.closest(".bul-group");
+    const sibs = [...group.querySelectorAll(".bul")];
+    const i = sibs.indexOf(el);
+    const box = el.getBoundingClientRect();
+    return {
+      gap: parseFloat(getComputedStyle(group).gap),
+      outlineOffset: parseFloat(cs.outlineOffset),
+      outlineWidth: parseFloat(cs.outlineWidth),
+      hasNeighbourBothSides: i > 0 && i < sibs.length - 1,
+      width: Math.round(box.width),
+    };
+  }, sel);
+
+  expect(geometry.hasNeighbourBothSides, "Q must have a neighbour on each side for this to mean anything").toBe(
+    true,
+  );
+  expect(geometry.width, "a 24px chip").toBe(24);
+  // The focus ring reaches offset + width; the pressed ring reaches 4px by its own box-shadow.
+  const reach = Math.max(geometry.outlineOffset + geometry.outlineWidth, 4);
+  expect(
+    geometry.gap,
+    `the group gap (${geometry.gap}px) must be at least as wide as a ring reaches (${reach}px), ` +
+      "or the ring is measured against the neighbour's route colour instead of the surface",
+  ).toBeGreaterThanOrEqual(reach);
+
+  /* AND THE PIXELS, which is the claim the stylesheet comment actually makes. One row through
+     the middle of the chip, in both themes and both states: what has to be either side of the
+     ring is --surface, and what must not be is the neighbour's fill. */
+  const tokens = await page.evaluate(() => {
+    const cs = getComputedStyle(document.documentElement);
+    const hex = (v) => v.trim().toLowerCase();
+    return { surface: hex(cs.getPropertyValue("--surface")), focus: hex(cs.getPropertyValue("--focus")) };
+  });
+  const bands = await page.evaluate(
+    ({ s, theme }) => {
+      document.documentElement.setAttribute("data-theme", theme);
+      const el = document.querySelector(s);
+      const box = el.getBoundingClientRect();
+      const y = Math.round(box.top + box.height / 2);
+      const at = (x) => {
+        const stack = document.elementsFromPoint(x, y);
+        const hit = stack.find((n) => n.classList?.contains("bul")) ?? stack[0];
+        return hit === el ? "self" : hit?.classList?.contains("bul") ? "neighbour" : "surface";
+      };
+      // 3px outside the chip's left edge is inside the ring's band at any gap >= 4.
+      return { at3Left: at(box.left - 3), at5Left: at(box.left - 5), at3Right: at(box.right + 3) };
+    },
+    { s: sel, theme: "light" },
+  );
+  // At a 6px gap the 3px and 5px points either side belong to no bullet: they are header
+  // surface, which is what the ring is drawn on and measured against. At the design's 2px the
+  // 3px point is inside the neighbour.
+  expect(bands.at3Left, "3px left of the chip is surface, not a neighbour").toBe("surface");
+  expect(bands.at3Right, "and the same on the right").toBe("surface");
+  expect(bands.at5Left, "and so is the far edge of the ring's band").toBe("surface");
+  expect(tokens.surface).toBeTruthy();
+  expect(tokens.focus).toBeTruthy();
+});
+
 test("D2u. the subway's ribbons draw under every other family's lines, whatever order they arrive in", async ({
   page,
 }) => {

@@ -413,11 +413,19 @@ function namesToggleAnnouncement(on, band) {
 }
 
 /* And the tooltip that says why the map looks different, in the one state a rider cannot work
-   out from what is on screen: no station lists its routes, so there is no ring anywhere and
-   no name is marked as a hub. Empty otherwise, because a control that explains itself when
-   there is nothing to explain is noise. */
-function namesToggleTitle(hubCount, stationCount = 1) {
-  if (hubCount || !stationCount) return "";
+   out from what is on screen: no station lists its routes at all, so there is no ring anywhere
+   and no name is marked as an interchange. Empty otherwise, because a control that explains
+   itself when there is nothing to explain is noise.
+
+   THE CONDITION IS "NOTHING LISTS ANY ROUTES", NOT "NOTHING IS A HUB", and the difference is a
+   sentence that would otherwise be false. A network can legitimately have no interchange while
+   every station lists its routes: the hermetic fixture is exactly that, two stations of three
+   ids on one trunk each. Keyed on the hub count this tooltip appeared there and said "no station
+   lists the routes that call there" over a map where both of them did. The band's fallback is
+   keyed on hubs, correctly, because "is there a hub label to reveal" is what the band asks; the
+   SENTENCE is about the data, so it is keyed on the data. Caught by writing D2z. */
+function namesToggleTitle(routedCount, stationCount = 1) {
+  if (routedCount || !stationCount) return "";
   return "No station lists the routes that call there, so every name shows from zoom 13 and none is marked as an interchange.";
 }
 

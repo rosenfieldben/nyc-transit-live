@@ -535,6 +535,59 @@ test("D2q. a bullet that would light nothing is present, disabled, and cannot di
   );
   expect(stops).toEqual(["false"]);
 
+  /* AND THE TREATMENT IS DRAWN, in both themes, which the mutation run had to tell me was
+     unguarded: nothing asserted the disabled bullet's painted colours, so keeping the inline
+     route chip (and with it the old blanket fade's illegible letter) left every tier green.
+
+     THE CHIP CARRIES THE STATE AND THE LETTER CARRIES THE ROUTE (F17). The first treatment was
+     `filter: grayscale(0.7); opacity: 0.55` on the whole button, which took the route letter to
+     between 2.17 and 3.80 against its own chip from between 5.00 and 9.30: a state conveyed by
+     making a route name unreadable, which MR1 round 2 ruled out twice. */
+  for (const theme of ["light", "dark"]) {
+    const drawn = await page.evaluate(
+      (t) => {
+        document.documentElement.setAttribute("data-theme", t);
+        const el = document.querySelector('#subway-key .bul[aria-label="Focus route L"]');
+        const live = document.querySelector('#subway-key .bul[aria-label="Focus route 1"]');
+        const cs = getComputedStyle(el);
+        const root = getComputedStyle(document.documentElement);
+        return {
+          background: cs.backgroundColor,
+          color: cs.color,
+          wantBackground: root.getPropertyValue("--chip-off").trim(),
+          wantInk: root.getPropertyValue("--chip-off-ink").trim(),
+          opacity: cs.opacity,
+          filter: cs.filter,
+          cursor: cs.cursor,
+          liveBackground: getComputedStyle(live).backgroundColor,
+          // contrastRatio and parseColor are the page's own helpers, so the number asserted
+          // here is the one the app would compute rather than a second implementation.
+          ratio: contrastRatio(cs.color, cs.backgroundColor),
+          isToken:
+            JSON.stringify(parseColor(cs.backgroundColor).map(Math.round)) ===
+            JSON.stringify(parseColor(root.getPropertyValue("--chip-off").trim()).map(Math.round)),
+          inkIsToken:
+            JSON.stringify(parseColor(cs.color).map(Math.round)) ===
+            JSON.stringify(parseColor(root.getPropertyValue("--chip-off-ink").trim()).map(Math.round)),
+        };
+      },
+      theme,
+    );
+    // The chip is the token's grey, not the route's colour and not a faded version of it.
+    expect(drawn.isToken, `${theme}: the dark chip must be --chip-off (${drawn.background})`).toBe(true);
+    expect(drawn.inkIsToken, `${theme}: and its letter --chip-off-ink (${drawn.color})`).toBe(true);
+    expect(drawn.background, `${theme}: not the route's own colour`).not.toBe(drawn.liveBackground);
+    expect(drawn.opacity, `${theme}: state is not conveyed by opacity`).toBe("1");
+    expect(drawn.filter, `${theme}: nor by a filter over the letter`).toBe("none");
+    expect(drawn.cursor, `${theme}: and the pointer says it will not act`).toBe("default");
+    /* THE LETTER CLEARS 4.5 AGAINST ITS OWN CHIP, which is the whole point: 10px and 12px text
+       owes 4.5, and the treatment this replaced measured as low as 2.17. */
+    expect(drawn.ratio, `${theme}: the route letter on a dark chip reads ${drawn.ratio}`).toBeGreaterThanOrEqual(
+      4.5,
+    );
+  }
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+
   // A live bullet still works in the same key, so the disabling is per bullet.
   await page.locator('#subway-key .bul[aria-label="Focus route 1"]').click();
   const byKey = Object.fromEntries((await ribbonSets(page)).map((r) => [`${r.route}|${r.part}`, r.opacity]));
@@ -794,6 +847,98 @@ test("D2t. the key does not rebuild under a rider's hand every fifteen seconds",
     ),
     "a real change in the bullet set rebuilds them",
   ).toBe(true);
+});
+
+test("D2z. a network with no interchange anywhere shows every name from 13, not nothing from 12", async ({
+  page,
+}) => {
+  /* THE BROWSER HALF OF F1. The node tier kills the band rule itself, but nothing asked whether
+     paintZoomBand actually passes the hub count, which is the part that can only be answered by
+     a page: it counts `.stn-label.hub` in the DOM, so it depends on the labels existing by the
+     time it runs, which is why loadStations calls it again.
+
+     THE STOCK FIXTURE IS THIS WORLD ALREADY, and that is worth saying: its two stations are
+     ["1","2","3"] and ["A","C","E"], three ids each and one trunk each, so after F9 neither is
+     an interchange and this is the no-hub case without anything being contrived. It stands in
+     for the degraded backend, where stop_times.txt is missing and every station lists no routes
+     at all: same shape, no hub to reveal, and "hubs from 12" correctly showing nothing. */
+  await open(page);
+  const painted = () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll(".stn-label")]
+        .filter((el) => getComputedStyle(el).display !== "none")
+        .map((el) => el.textContent)
+        .sort(),
+    );
+  const setZoom = async (z) => {
+    await page.evaluate((zoom) => map.setZoom(zoom, { animate: false }), z);
+    await expect(page.locator("html")).toHaveAttribute("data-zoom", String(z));
+  };
+  expect(
+    await page.evaluate(() => document.querySelectorAll(".stn-label.hub").length),
+    "this world has no interchange, which is the premise",
+  ).toBe(0);
+  expect(
+    await page.evaluate(() => document.querySelectorAll(".stn-label").length),
+    "and it does have station labels",
+  ).toBeGreaterThan(0);
+
+  await setZoom(11);
+  await expect(page.locator("html")).toHaveAttribute("data-label-band", "none");
+  expect(await painted()).toEqual([]);
+
+  // 12 is still nothing, because with no hub to thin the field 12 is the zoom the collision
+  // measurements found worst.
+  await setZoom(12);
+  await expect(page.locator("html")).toHaveAttribute("data-label-band", "none");
+  expect(await painted(), "at 12 a hubless network still shows nothing").toEqual([]);
+
+  // And 13 is everything, one zoom earlier than the all band, so a rider does not have to
+  // reach 14 to see any name at all.
+  await setZoom(13);
+  await expect(page.locator("html")).toHaveAttribute("data-label-band", "all");
+  expect(await painted(), "at 13 every name").toEqual(["Canal St", "Times Sq-42 St"]);
+
+  /* AND THE TOOLTIP SAYS WHY, in the one state a rider cannot deduce from the screen. Not here:
+     this world's stations DO list their routes, they just happen to be one line each, so there
+     is nothing to explain. The sentence is for the world where no station lists anything. */
+  await expect(page.locator("#names-toggle")).toHaveAttribute("title", "");
+
+  await expect(page.locator("#names-toggle")).toHaveAttribute("aria-pressed", "true");
+});
+
+test("D2z1. when no station lists its routes at all, the toggle's tooltip says why", async ({ page }) => {
+  /* THE DEGRADED BACKEND ITSELF. stop_times.txt is not a required member of the subway static
+     archive, load_subway_station_routes returns {} on any failure, and the endpoint then serves
+     routes: [] for every station while the status stays "ready". So this world is reachable and
+     it is the one a rider cannot diagnose: no ring anywhere, no name marked as an interchange,
+     and no error. The band's fallback keeps the names visible from 13, and the toggle carries
+     the sentence that explains the missing rings.
+
+     THE BACKEND HALF IS ITS OWN BRANCH after this one merges, with all three consumers of the
+     index named in the ledger. This is the honest frontend behaviour in the meantime. */
+  await open(page, (ctx) => {
+    ctx.overrides.subwayStops = (route, fixtures) =>
+      json(route, fixtures.subwayStops().map(({ routes, ...rest }) => rest));
+  });
+  expect(
+    await page.evaluate(() => stationRegistry.filter((e) => e.kind === "subway").every((e) => !e.routes.length)),
+    "no station lists a route, which is the premise",
+  ).toBe(true);
+  expect(await page.evaluate(() => document.querySelectorAll(".stn-label.hub").length)).toBe(0);
+  // No ring anywhere either, which is the same predicate.
+  expect(
+    await page.evaluate(() =>
+      stationRegistry.filter((e) => e.kind === "subway").every((e) => e.marker.options.stroke === false),
+    ),
+  ).toBe(true);
+
+  await page.evaluate(() => map.setZoom(13, { animate: false }));
+  await expect(page.locator("html")).toHaveAttribute("data-label-band", "all");
+  await expect(page.locator("#names-toggle")).toHaveAttribute(
+    "title",
+    "No station lists the routes that call there, so every name shows from zoom 13 and none is marked as an interchange.",
+  );
 });
 
 test("D2x. a station name is painted below every vehicle, which is the pane it is bound to", async ({ page }) => {

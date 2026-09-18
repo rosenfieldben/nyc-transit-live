@@ -339,9 +339,13 @@ test("MR2 F7: the Names toggle says what happened, and says why when there is no
   // The one state a rider cannot work out from the screen: on, and nothing can show.
   assert.match(namesToggleAnnouncement(true, "none"), /^Station names on; none at this zoom/);
 
-  // The tooltip carries the other one, which is the degraded backend rather than the zoom.
-  assert.equal(namesToggleTitle(325, 496), "");
-  assert.equal(namesToggleTitle(1, 496), "");
+  /* The tooltip carries the other one, which is the degraded backend rather than the zoom, and
+     it is keyed on HOW MANY STATIONS LIST ROUTES rather than on how many are hubs. A network
+     with no interchange and a full route index is a legitimate network, and over that map this
+     sentence would be false: the hermetic fixture is exactly that case. */
+  assert.equal(namesToggleTitle(496, 496), "");
+  assert.equal(namesToggleTitle(2, 2), "");
+  assert.equal(namesToggleTitle(1, 496), "", "one station listing routes is enough to make it true");
   assert.match(namesToggleTitle(0, 496), /No station lists the routes that call there/);
   assert.match(namesToggleTitle(0, 496), /from zoom 13/);
   // No stations at all is not that state, it is a map that has not loaded yet.

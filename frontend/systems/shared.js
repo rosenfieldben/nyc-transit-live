@@ -594,7 +594,28 @@ function paintZoomBand() {
   const hubs = document.querySelectorAll(".stn-label.hub").length;
   document.documentElement.setAttribute("data-zoom", String(zoom));
   document.documentElement.setAttribute("data-label-band", labelZoomBand(zoom, !labels || hubs > 0));
-  if (namesToggleEl) namesToggleEl.title = namesToggleTitle(hubs, labels);
+  /* THE TOOLTIP IS KEYED ON THE DATA, NOT ON THE HUB COUNT, which is a distinction D2z had to
+     teach me: a network can have no interchange while every station lists its routes, and over
+     that map the sentence "no station lists the routes that call there" is simply false. So the
+     band asks the labels (is there a hub to reveal) and the sentence asks the registry (did the
+     backend serve the index at all). Late-bound by name, because stations.js loads after this. */
+  if (namesToggleEl) {
+    /* try/catch AND NOT typeof, which is the trap this file has already fallen into once this
+       stage. stationRegistry is a module-scope const in stations.js, which loads AFTER this
+       file, and `typeof` on a binding in its temporal dead zone THROWS rather than returning
+       "undefined": it only answers "undefined" for a name that was never declared at all. The
+       first paint runs before stations.js has, so this has to survive that. */
+    let subway = [];
+    try {
+      subway = stationRegistry.filter((entry) => entry.kind === "subway");
+    } catch {
+      subway = [];
+    }
+    namesToggleEl.title = namesToggleTitle(
+      subway.filter((entry) => (entry.routes ?? []).length > 0).length,
+      subway.length,
+    );
+  }
 }
 map.on("zoomend", paintZoomBand);
 

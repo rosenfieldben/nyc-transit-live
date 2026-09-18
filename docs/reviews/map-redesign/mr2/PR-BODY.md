@@ -25,7 +25,8 @@ and the contract tier aims every NJ Transit seam at its simulator as it always h
 | `3d56e94` | round 3: the review's 17 findings, and four operator rulings |
 | `418750c` | round 3: two specs the mutation run said were missing |
 | `db047fe` | round 3: three more specs the mutation run said were missing |
-| (tip) | round 3: the ledger and this body |
+| `0936e50` | round 3: the ledger and this body |
+| (tip) | round 3: the after captures regenerated, and D2x asks the rider's question |
 
 ## Before and after
 

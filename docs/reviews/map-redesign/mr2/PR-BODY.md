@@ -4,16 +4,20 @@ Stage 2 of 5 of Phase MR, against the v3.1 handoff at
 [`docs/design/map-redesign/`](https://github.com/rosenfieldben/nyc-transit-live/tree/claude/mr2-subway/docs/design/map-redesign)
 as amended by the ledger's rulings. Trunk ribbons, the bullet train marker, dot-or-ring
 stations, haloed station names with their zoom gate and a Names toggle, and route focus
-wired to the bullets MR1 drew. **No NJ Transit mint was spent**: nothing in this branch
-touches the backend, `njt_auth.py` or any credentialed path, and the contract tier aims
-every NJ Transit seam at its simulator as it always has.
+wired to the bullets MR1 drew. And, on the operator's instruction after round 2, the key
+those bullets live in is now **derived from the loaded route list** rather than written
+down, every drawn polyline carries the **set** of routes that ride it, focus is membership
+in that set, and the key is an **ARIA toolbar with one tab stop**. **No NJ Transit mint was
+spent**: nothing in this branch touches the backend, `njt_auth.py` or any credentialed path,
+and the contract tier aims every NJ Transit seam at its simulator as it always has.
 
 | Commit | |
 | --- | --- |
 | `cd8ad77` | pins: what the subway restyle is not allowed to change on its way past |
 | `ecb67da` | the subway, drawn as ribbons, bullets, dots and rings |
 | `8e8e3b5` | the round, the measurements and the before-and-after pair |
-| (tip) | round 2: an adversarial pass over the written diff |
+| `98eaa4e` | round 2: an adversarial pass over the written diff |
+| (tip) | round 2 continued: the key derived from the data, and a toolbar to reach it |
 
 ## Before and after
 
@@ -107,6 +111,16 @@ of them. So: all casings, then all lines, each pass in trunk order.
 implementation's version of that sort tests only N and R and leaves Q and W under the
 darker trunks. A test written against N would have passed.
 
+**And the key is a function of the data rather than a table beside it.** MR1 wrote down ten
+trunks and twenty-three bullets, and measured against the real archive that table and the
+network disagreed in both directions. So `subwayKeyModel(routes, trainRoutes)` returns the
+whole key and the DOM builder has no decisions left to make: the universe of bullets, their
+grouping, each one's focus set, its enabled state and its title all come from one place
+where a node test can ask them directly. A ribbon's tag is the same arithmetic from the
+other end (`ribbonRouteSet`), which is what lets a route with no geometry of its own still
+be reachable: pressing Z lights the polylines J is drawn as, because those polylines know
+they carry Z.
+
 **The bullet's halo is a token rather than `#fff`**, which is the only thing about the body
 that moved: it used to be a 1.5px white stroke ON the body and is now a 1.5-unit paper ring
 BEHIND it, at the design's 0.95. The body's geometry is unchanged (`rect 1.5,1.5,15,15
@@ -156,7 +170,8 @@ and `D2f` walks all three rungs to say so.
 
 MR1's round 2 was the highest-yield step of that stage and MR2 had not had one: the
 workflow that ran BEFORE this stage was recon, and the mutations after it test the guards
-rather than the diff. Three findings, two fixed.
+rather than the diff. Three findings, two fixed here and the third fixed on the operator's
+instruction in "Round 2, continued" two sections below.
 
 - **The pressed bullet's ring was clipped by its neighbour.** The bullets are siblings in a
   flex group with the design's 2px gap, all `position: relative` with `z-index: auto`, and
@@ -181,6 +196,76 @@ and a `setIcon` relabel, on both the option and the rendered element; the labels
 `aria-hidden` after a feed toggle; the pressed ring's backdrop really is `--surface`, so
 the 13.70 and 5.53 are measured against the right colour; and a label overlaps a train
 bullet in a 2x3 pixel corner and no more.
+
+## Round 2 produced an incident, and the incident produced a rule
+
+The multi-agent review was given the repository's own working tree, and its verifiers test a
+finding the way this project does: by applying the mutation and seeing whether a spec dies.
+Two of those mutations were applied to `frontend/systems/subway.js` and `frontend/map.js`
+WHILE the gates for that round were running against the same files, and one reached a
+commit. `dda884b` as first written carried M3's own sabotage, `subwayFocusBase` stripped
+from two of the four dimming call sites, so its gate numbers described a tree that was never
+the one committed. Both files were restored to `ecb67da`'s versions byte for byte, a stray
+probe spec the run left behind was removed, every tier was re-run, and the commit was
+amended before it went anywhere. **Nothing was pushed at any point.**
+
+**The lesson is the mechanism, not the mutation**, and it is now the standing rule rather
+than the next stage's plan. `.claude/workflows/README.md` is new and states it for every
+review and probe workflow in this repository, with this incident as the evidence;
+`.claude/workflows/adversarial-review.js` carries it as `RULE 0` and passes
+`isolation: "worktree"` at all four of its `agent()` spawn sites, so a worktree is not
+something a caller has to remember. The caller's half is written there too: **before any
+commit, confirm the working tree is what the gates ran on.** Every commit after the incident
+did that, and the mutation run below uses a real `git worktree` detached at the commit under
+test rather than the tree the gates had just passed.
+
+## Round 2, continued: the operator's two remaining instructions, taken
+
+**G3 / F3. The key is derived from the data, and ribbons are tagged by route.** `helpers.js`
+takes the loaded route list and the trains on the map and returns the whole model: the
+bullet universe (alias-collapsed, so `S` stands for `GS`, `FS` and `H`), each bullet's focus
+set, whether a press would light anything, and the sentence its title carries. `subway.js`
+tags every drawn polyline with the SET of routes that ride it, which is the route itself
+plus every trunk-mate the app has no geometry for, so the Jamaica Avenue ribbon is `J+Z` and
+the three yellow ribbons become `N+W`, `Q+W` and `R+W` the moment a W train appears. Over
+the real archive the key comes out as the 22 bullets `1 2 3 4 5 6 7 A C E B D F M G J L N Q
+R S SI`: the 24 drawn routes with the three shuttle ids collapsed into one. A bullet whose
+press would light nothing is drawn with `aria-disabled` and a title saying why, rather than
+`disabled`, because a disabled button leaves the accessibility tree and a rider who cannot
+see the key would never learn the route exists. `D2n` (Z), `D2o` (W), `D2p` (S and SI) and
+`D2q` (the dark bullet) hold the four cases.
+
+**And membership is asymmetric, which the new specs had to teach me.** The first version
+focused the transitive CLOSURE of the ribbons a bullet touches. That is right for Z, where
+the J/Z ribbon is the only thing carrying Z, and wrong for N: N's ribbon carries W because
+the app has no W shape, W's closure reaches Q and R for the same reason, so pressing N lit
+the whole Broadway trunk when a rider asked for one route of it. `D2o` failed on its first
+run and was right to. A RIBBON lights when its own route set contains one of the bullet's
+ids, and the bullet's ids never grow; the closure survives as `bulletTrackSet`, which is
+only what the "shares track with" half of a title is written from. So pressing J and
+pressing Z light the same ribbon and different trains, because a train carries its own
+`route_id` where a shared ribbon cannot, and `D2n` asserts exactly that. **M8 is its
+mutation.**
+
+**F4. The key is an ARIA toolbar with a roving tabindex.** `role="toolbar"`, exactly one
+bullet at `tabIndex 0` (the pressed one if there is one, else the first enabled one),
+ArrowRight/Left/Up/Down wrapping both ways, Home and End, and disabled bullets skipped. The
+keydown is scoped to the key and named in `frontend/keyboard.test.js` with its reason, which
+is that test's existing seam for a control's own activation as opposed to a second
+page-level router.
+
+**Measured after, on the same harness and the same real 24-route list as the 32: 10 presses
+from the top of the document to the Stations button, one of them a bullet.** The arithmetic
+is the claim itself, 32 less 23 bullets plus 1 stop is 10, and the nine presses this stage
+started from are that 10 less the key. `D2r` holds the property the number follows from,
+which is that the key's cost does not grow with the route list.
+
+**One more finding, from writing `D2q`.** Playwright's actionability check treats
+`aria-disabled="true"` as not enabled and refuses to click it, which is not what a browser
+does: the element is a live `<button>` with no `disabled` attribute and a real press lands
+on it. A spec that accepted the refusal would be asserting the test runner's opinion instead
+of the page's behaviour, and would pass with the guard removed. `D2q` forces the click, with
+the reason written at the call, and **M7** is the mutation that deletes the guard it meets.
 
 ## Four findings for the operator
 
@@ -210,7 +295,8 @@ is the stage that makes it bite.
 The fix is an alias table, so one bullet can name several feed route ids, plus a decision
 about SI in the key. Both touch MR1's trunk set rather than this stage's five items.
 Focusing by colour instead would be worse: 1, 2 and 3 share one hex, so it would light all
-three.
+three. **Fixed on the operator's instruction**, one section up: the table is gone entirely
+and the key is derived.
 
 **F4. The key costs twenty-three tab stops.** Measured from the top of the document,
 reaching the Stations button now takes **32 presses**, where before this stage it took
@@ -218,7 +304,8 @@ nine. The skip link is still the first stop, so a rider heading for the station 
 unaffected; a rider heading for the Key or Stations button walks the whole key. The
 standard remedy is a roving tabindex (`role="toolbar"`, one tab stop, arrow keys inside),
 about twenty-five lines, and `frontend/keyboard.test.js` already has the seam for it. It is
-a new interaction mechanism rather than one of this stage's five items.
+a new interaction mechanism rather than one of this stage's five items. **Fixed on the
+operator's instruction**, one section up: **10 presses** after, one of them a bullet.
 
 **F2. A yellow line on a paper casing reads 1.67 in the light theme.** Every trunk against
 `--paper`, through the repository's own helpers: N/Q/R/W **1.67**, B/D/F/M 2.52, G 2.66,
@@ -235,7 +322,7 @@ for the same reason MR1's Key glyphs were.
 
 | Claim | Witness |
 | --- | --- |
-| the key is 23 named buttons whose text is still the bare route id | `subway.spec.js` D2a |
+| the key is derived from the loaded route list, grouped by trunk, every bullet a named button whose text is still the bare route id | `subway.spec.js` D2a, which resolves its own expectation through `subwayRouteUniverse(subwayRouteList(), subwayTrainRoutes())` rather than writing the list down |
 | focus dims every other ribbon and every other train, and pressing again clears | D2b |
 | pressing a different bullet moves the focus rather than clearing it | D2c |
 | focus is opacity only: no layer is added, removed or rebuilt | D2d, on `L.Util.stamp` identity across a focus and a clear |
@@ -249,11 +336,19 @@ for the same reason MR1's Key glyphs were.
 | MR1's chrome and the status line are where MR1 left them | D2l |
 | focusing actually repaints the canvas, not just the options | D2m, on the overlay canvas's alpha channel |
 | the labels are legible over any tile, in both themes, and out of the reading order | `a11y.spec.js` A1z3 |
-| the draw order, the focus opacities, the station predicate and the zoom band | `frontend/subway.test.js`, 13 tests |
+| Z lights the ribbon J is drawn as, and its own train, and pressing J lights the same ribbon and a different train | D2n |
+| a W train lights all three yellow ribbons, and pressing N lights N alone | D2o, which is the spec that found the closure defect |
+| one S bullet is three shuttles with a tooltip that says so, and SI has a bullet | D2p |
+| a bullet that would light nothing is present, `aria-disabled`, explains itself, is skipped by the arrow keys, and cannot dim the map | D2q |
+| the key is one tab stop, and the arrows, Home and End move inside it | D2r, including that the single stop follows the pressed bullet |
+| the draw order, the focus opacities, the station predicate, the zoom band, the derived key and the membership rule | `frontend/subway.test.js`, 22 tests |
 
 ## Mutations, each run and recorded
 
-Each on a fresh copy of the tree, the mutation applied alone, the named tier run against it.
+Each in a real `git worktree` detached at the commit under test, the mutation applied alone,
+the named tier run against it, and `git checkout -- .` between runs; the main tree was
+verified clean before and after the whole run. That is the incident's lesson applied to my
+own probes and not only to the review agents'.
 
 | # | Guard reverted | Result | Killed by |
 | --- | --- | --- | --- |
@@ -262,7 +357,9 @@ Each on a fresh copy of the tree, the mutation applied alone, the named tier run
 | M3 | the freshness contract's dimming lost under the new icon | **killed** | D2e, and `smoke.spec.js` C2b, C2c, C2h, C2m |
 | M4 | the labels not gated by zoom | **killed** | D2j |
 | M5 | the transfer ring drawn for single-route stations | **killed** | node, three tests, and D2i and D2j |
-| M6 | a circular bullet | **killed** | D2k |
+| M6 | a circular bullet | **killed** | D2k, and pins P1f |
+| M7 | a bullet with an empty set dims the map | **killed** | D2q: every ribbon and every train compared before and after the press, and `#page-announce` required to have said nothing |
+| M8 | focus is the transitive closure again, which is the defect `D2o` found | **killed** | node `MR2 G3: the whole key is grouped by trunk`, and D2n and D2o |
 
 **M1 found a real defect in its own test on the first run**, which is what a mutation run
 is for: the draw-order fixture APPENDED the yellow routes, so the payload already arrived
@@ -270,9 +367,16 @@ in draw order and D2g passed with `trunkDrawOrder` reduced to `return [...routeI
 fixture now prepends them, and the comment records why a draw-order test over a payload
 that happens to arrive in draw order is not a test.
 
-**The node tier killed two of the six on its own**, two more than MR1 managed, and the
-reason is the shape of this stage rather than better testing: MR2's decisions are
-arithmetic over data the page already has, and MR1's were wiring.
+**The node tier killed three of the eight on its own**, three more than MR1 managed, and the
+reason is the shape of this stage rather than better testing: MR2's decisions are arithmetic
+over data the page already has, and MR1's were wiring.
+
+**One failure in the run was not the mutation's**, recorded because a mutation table that
+launders a flake is worse than one with a gap in it. Under M6, a batch running `pins.spec.js`
+and `subway.spec.js` together on two workers also failed P1m, the ferry pin, which has
+nothing to do with a subway icon. It did not reproduce: `pins.spec.js` alone with M6 applied
+fails P1f and nothing else. It is local server contention, and the `pin()` helper cannot be
+the cause because in assert mode it only reads the golden.
 
 ## Gates, after each commit
 
@@ -284,12 +388,19 @@ on the same code. Zero em-dashes on every added line and in every commit message
 | --- | --- | --- | --- | --- | --- |
 | `cd8ad77` pins | 1718 | 287 | 242 | 4 | 38 |
 | `ecb67da` subway | 1718 | 300 | 255 | 4 | 38 |
-| (tip) the round | 1718 | 300 | 256 | 4 | 38 |
+| `8e8e3b5` the round and the pair | 1718 | 300 | 256 | 4 | 38 |
+| `98eaa4e` round 2 | 1718 | 300 | 256 | 4 | 38 |
+| (tip) round 2 continued | 1718 | 309 | 261 | 4 | 38 |
 
-- **The node count grows once**, 287 to 300: thirteen tests for the pure half.
-- **The e2e count grows three times**: 239 to 242 with the three new pins, 242 to 255 with
-  MR2's twelve claims plus `A1z3`, and 255 to 256 with D2m, which the screenshot capture
-  found was missing.
+- **The node count grows twice**, 287 to 300 with thirteen tests for the pure half, and 300
+  to 309 with nine more for the derived key, the membership rule and the corrected asymmetry.
+- **The e2e count grows four times**: 239 to 242 with the three new pins, 242 to 255 with
+  MR2's twelve claims plus `A1z3`, 255 to 256 with D2m, which the screenshot capture found
+  was missing, and 256 to 261 with D2n through D2r.
+- **No NJ Transit mint was spent at any point.** `NJT_USERNAME` and `NJT_PASSWORD` are unset
+  in this environment and `njt_auth` reads a missing field as "not configured" rather than
+  posting a doomed mint, so the contract tier's 503s are the unauthenticated path failing
+  upstream, which costs nothing against the ten-a-day cap.
 - **The browser contract tier is the C6 dimming series**, C6e1 through C6e4, green at every
   point and byte-unchanged: MR2 changed what a subway marker looks like and nothing about
   when it dims.
@@ -313,4 +424,6 @@ on the same code. Zero em-dashes on every added line and in every commit message
   meant selectors that never matched. MR2 follows MR1.
 
 ---
-_Generated by [Claude Code](https://claude.ai/code)_
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+https://claude.ai/code/session_017oZP4Mtd6BLoSvAeVaPrJz

@@ -31,7 +31,7 @@ to be argued in the script.
 
 Isolation makes the race impossible for agents a script spawns. It cannot make it
 impossible for anything else that writes while you are not looking. So: **before any
-commit, confirm the working tree is what the gates ran on** — `git status --short`, and a
+commit, confirm the working tree is what the gates ran on**: `git status --short`, and a
 diff against the last commit you controlled. A commit whose message cites gate numbers is
 making a claim about a specific tree, and that claim is only true if the tree did not move
 underneath it.

@@ -202,9 +202,16 @@ instruction in "Round 2, continued" two sections below.
 hits reads as if it looked only where it found something: `.bul` and `.stn-label` reach no
 other surface (the MR1 `.alert-stale` hazard); route focus survives a feed hide and show
 and a `setIcon` relabel, on both the option and the rendered element; the labels come back
-`aria-hidden` after a feed toggle; the pressed ring's backdrop really is `--surface`, so
-the 13.70 and 5.53 are measured against the right colour; and a label overlaps a train
-bullet in a 2x3 pixel corner and no more.
+`aria-hidden` after a feed toggle; and a label overlaps a train bullet in a 2x3 pixel corner
+and no more.
+
+**Two of those "clean" findings were wrong and round 3 found both.** The last one is the
+label overlap: measured as a box against the anchor rather than as painted text, it was 44%
+of a bullet's pixels and its route letter (F2 below). And "the pressed ring's backdrop
+really is `--surface`, so the 13.70 and 5.53 are measured against the right colour" was true
+of the ring's top and bottom edges only; its left and right sat on the neighbouring bullet's
+fill at 1.10 (F3 and F10 below). Both are left standing here, struck through by the sections
+that follow, because a review record edited to look consistent is worth nothing.
 
 ## Round 2 produced an incident, and the incident produced a rule
 

@@ -492,10 +492,19 @@ hits reads as if it looked only where it found something:
   marker rather than on the tooltip element Leaflet recreates.
 - The pressed ring's backdrop really is `--surface` (`#panel`, measured as
   `rgb(234, 233, 233)`), so the 13.70 and 5.53 this stage claims are measured against the
-  right colour rather than an assumed one.
+  right colour rather than an assumed one. **WRONG, and round 3's F3 and F10 say how**: true
+  of the ring's top and bottom edges, and its left and right sat on the neighbouring bullet's
+  fill at 1.10.
 - A station label overlaps a train bullet in a 2x3 pixel corner and no more: the bullet is
   lifted 21px above its anchor and the label sits 7px to the right of it, so the
-  tooltipPane being above the markerPane costs the bullet's bottom three pixels.
+  tooltipPane being above the markerPane costs the bullet's bottom three pixels. **WRONG, and
+  round 3's F2 says how**: measured as a box against the anchor rather than as painted text.
+  It was 44% of a bullet's route-coloured pixels and its letter.
+
+**Both are left standing above rather than rewritten**, with the corrections attached, because
+a review record edited to look consistent afterwards is worth nothing. The pattern they share
+is worth more than either: both were measured with the right instrument pointed at the wrong
+thing, a box instead of the ink and one edge instead of four.
 
 ### Four findings for the operator
 

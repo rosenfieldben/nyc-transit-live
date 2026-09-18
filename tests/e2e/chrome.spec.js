@@ -394,10 +394,17 @@ test("D1j. the view presets fly the map and stand down when the rider takes over
       return { lat: +c.lat.toFixed(3), lng: +c.lng.toFixed(3), zoom: map.getZoom() };
     });
 
+  /* MR2 ADDED A FOURTH BUTTON TO THIS STACK, and it is in these lists deliberately rather
+     than filtered out: the Names toggle is a #view-stack button, it carries aria-pressed for
+     the same reason the presets do, and a list that quietly excluded it would stop noticing
+     if it lost its state. It starts PRESSED because the station names start shown, which is
+     the one asymmetry with the three presets: a preset claims "the map is here now" and
+     nothing is true at load, while Names claims "the names are on" and that is true at load. */
   expect(await pressed(), "nothing is active until the rider asks for a view").toEqual([
     "view-city:false",
     "view-rail:false",
     "view-region:false",
+    "names-toggle:true",
   ]);
 
   /* THE CLOCK IS DRIVEN, BECAUSE THE PRESET FLIES. flyTo is a 0.8s animation and this suite
@@ -409,19 +416,19 @@ test("D1j. the view presets fly the map and stand down when the rider takes over
   await page.clock.runFor(1200);
   await expect.poll(async () => (await view()).zoom, { timeout: 5_000 }).toBe(10);
   expect(await view()).toEqual({ lat: 40.79, lng: -73.9, zoom: 10 });
-  expect(await pressed()).toEqual(["view-city:false", "view-rail:false", "view-region:true"]);
+  expect(await pressed()).toEqual(["view-city:false", "view-rail:false", "view-region:true", "names-toggle:true"]);
 
   await page.locator("#view-city").click();
   await page.clock.runFor(1200);
   await expect.poll(async () => (await view()).zoom, { timeout: 5_000 }).toBe(13);
   expect(await view()).toEqual({ lat: 40.729, lng: -73.99, zoom: 13 });
-  expect(await pressed()).toEqual(["view-city:true", "view-rail:false", "view-region:false"]);
+  expect(await pressed()).toEqual(["view-city:true", "view-rail:false", "view-region:false", "names-toggle:true"]);
 
   // THE RIDER MOVES, AND THE PRESET STOPS CLAIMING THE VIEW.
   await page.evaluate(() => map.panBy([160, 160], { animate: false }));
   await expect
     .poll(async () => (await pressed()).join(","), { timeout: 5_000 })
-    .toBe("view-city:false,view-rail:false,view-region:false");
+    .toBe("view-city:false,view-rail:false,view-region:false,names-toggle:true");
 });
 
 for (const [label, viewport] of [

@@ -45,6 +45,142 @@ function lineColor(routeId) {
   return LINE_COLORS[routeId] ?? LINE_COLORS[routeId[0]] ?? "#555555";
 }
 
+/* ---------------- MR2: how the subway is drawn ----------------
+
+   THE PURE HALF OF STAGE MR2, here rather than in systems/subway.js so a node test can
+   ask it directly and so the two surfaces that have to agree (the map and the Key panel)
+   read one answer. Nothing here touches the DOM, Leaflet or a clock; the caller resolves
+   the two theme colours and passes them in, which is also what lets a theme swap restyle
+   a canvas layer without rebuilding it.
+
+   THE PALETTE IS THIS APP'S OWN, and that is a ruling rather than an oversight. The v3.1
+   handoff gives the authority's official trunk hexes and a circular lettered bullet; the
+   repository's own README says route symbols require a license and to use our own colours
+   and markers, and round 3 of the map-redesign review ruled the README wins (R1). So every
+   ribbon takes lineColor()'s answer and every bullet keeps the rounded rectangle
+   systems/subway.js has always drawn. */
+
+// The yellow trunk, which is the one that has to be drawn last: its #e6b800 disappears
+// under any of the darker trunks it shares track with, and a rider reading Broadway would
+// see the 1-2-3's red where the N-Q-R-W runs beside it.
+const YELLOW_TRUNK_ROUTES = ["N", "Q", "R", "W"];
+
+// lineColor's rule, asked of the trunk rather than of the palette: an exact id first, then
+// its first character, so a lettered variant lands on the same trunk as its parent.
+function isYellowTrunk(routeId) {
+  const id = String(routeId ?? "");
+  if (!id) return false;
+  return YELLOW_TRUNK_ROUTES.includes(id) || YELLOW_TRUNK_ROUTES.includes(id[0]);
+}
+
+// Route ids ordered for drawing: yellow last, everything else in the order it arrived.
+// STABLE INSIDE EACH GROUP, so a static payload that lists its routes differently moves
+// nothing a rider can see except the one thing this function exists to decide.
+function trunkDrawOrder(routeIds) {
+  const ids = [...routeIds];
+  return [...ids.filter((id) => !isYellowTrunk(id)), ...ids.filter((id) => isYellowTrunk(id))];
+}
+
+// The two polylines one shape is drawn as. The casing is the paper the line is printed on:
+// it is what separates a trunk from the basemap and from the trunk beside it.
+const RIBBON_CASING_WEIGHT = 6.5;
+const RIBBON_CASING_OPACITY = 0.9;
+const RIBBON_LINE_WEIGHT = 4;
+const RIBBON_LINE_OPACITY = 1;
+
+/* ROUTE FOCUS IS OPACITY AND NOTHING ELSE, and it COMPOSES with the freshness contract's
+   dimming rather than replacing it. markerOpacity and dimMarker already take a `base`
+   multiplier, so a train's opacity is its own observation's answer times this one: a stale
+   train on the focused route stays dim, and a stale train off it is dimmed twice. Nothing
+   in section 3.3's rendering is touched to make that true.
+
+   The ribbons are not markers and have no age, so for them these ARE the opacities, which
+   is why the unfocused casing is 0 rather than a factor: a casing at 18% of paper is a grey
+   smear, and the design asks for the line alone to survive. */
+const FOCUS_DIM_LINE = 0.18;
+const FOCUS_DIM_CASING = 0;
+const FOCUS_DIM_TRAIN = 0.15;
+
+// The opacity (for a ribbon) or the base (for a train) one part of one route draws at,
+// given whichever route is focused. No focus means every part is at full.
+function focusOpacity(focusedRoute, routeId, part) {
+  const full = { line: RIBBON_LINE_OPACITY, casing: RIBBON_CASING_OPACITY, train: 1 };
+  const dimmed = { line: FOCUS_DIM_LINE, casing: FOCUS_DIM_CASING, train: FOCUS_DIM_TRAIN };
+  if (!(part in full)) return 1;
+  if (!focusedRoute) return full[part];
+  return String(routeId ?? "") === String(focusedRoute) ? full[part] : dimmed[part];
+}
+
+// What the page live region says when focus moves. The bullet's own label does not change
+// with the state (it stays "Focus route 4"), which is what lets it carry aria-pressed; this
+// is the sentence that tells a rider what just happened and how to undo it.
+function routeFocusAnnouncement(routeId) {
+  return routeId ? `Focused on the ${routeId}; press again to clear.` : "Route focus cleared.";
+}
+
+function routeFocusLabel(routeId) {
+  return `Focus route ${routeId}`;
+}
+
+/* A station is a LOCAL dot when one route serves it and a TRANSFER ring when two or more
+   do. ZERO ROUTES IS LOCAL, not transfer, and that is the direction that matters: the
+   routes field is optional on the stops endpoint, and a backend that serves none would
+   otherwise turn all 496 stations into transfer rings, which is a claim about the network
+   rather than a missing value. Measured against the real static archive, 171 stations have
+   one route and 325 have two or more; none has zero, which is exactly why the fallback has
+   to be chosen deliberately rather than discovered. */
+const STATION_LOCAL_RADIUS = 3.5;
+const STATION_TRANSFER_RADIUS = 4.5;
+const STATION_TRANSFER_WEIGHT = 2;
+
+function isTransferStation(routeCount) {
+  return (routeCount ?? 0) >= 2;
+}
+
+// The circleMarker options one station is drawn with. `ink` and `paper` are resolved by the
+// caller from the theme tokens, so this stays pure and a theme swap is a setStyle rather
+// than a rebuild.
+function stationMarkStyle(routeCount, ink, paper) {
+  return isTransferStation(routeCount)
+    ? {
+        radius: STATION_TRANSFER_RADIUS,
+        fillColor: paper,
+        fillOpacity: 1,
+        color: ink,
+        weight: STATION_TRANSFER_WEIGHT,
+        stroke: true,
+      }
+    : { radius: STATION_LOCAL_RADIUS, fillColor: ink, fillOpacity: 1, color: ink, weight: 0, stroke: false };
+}
+
+// The tooltip class one station's name is drawn with. A hub is the same station a transfer
+// ring is, so the two read one predicate rather than two.
+function stationLabelClass(routeCount) {
+  return isTransferStation(routeCount) ? "stn-label hub" : "stn-label";
+}
+
+/* THE ZOOM GATE, as a band rather than a number, because CSS cannot compare integers. The
+   root carries data-zoom="<n>" and the stylesheet enumerates the zooms in each band, which
+   is what the reference stylesheet does; this is the same decision in one place a node test
+   can ask, so the enumeration in the stylesheet and the attribute the map writes cannot
+   drift apart without a test saying so. */
+const LABEL_HUB_ZOOM = 12;
+const LABEL_ALL_ZOOM = 14;
+
+function labelZoomBand(zoom) {
+  if (!Number.isFinite(zoom) || zoom < LABEL_HUB_ZOOM) return "none";
+  return zoom >= LABEL_ALL_ZOOM ? "all" : "hubs";
+}
+
+// Whether one station's name is on screen: the band, the station's own kind, and the Names
+// toggle, which overrides both.
+function stationLabelShown(zoom, routeCount, labelsOn) {
+  if (!labelsOn) return false;
+  const band = labelZoomBand(zoom);
+  if (band === "all") return true;
+  return band === "hubs" && isTransferStation(routeCount);
+}
+
 // Railroad route ids (LIRR branch codes, MNR line numbers) collide with subway
 // ids and with each other, so they get their own palette rather than reusing
 // lineColor. Deterministic per id from a fixed palette, with a neutral default
@@ -3604,6 +3740,14 @@ if (typeof module !== "undefined" && module.exports) {
     hashString, bannerRenderKey,
     RAILROAD_ROUTE_MAX_SLICE, RAILROAD_ROUTE_ACCEPT_DIST, RAILROAD_BUCKET_ORDER,
     LINE_COLORS, FEED_STALE_AFTER_S, FETCH_DEADLINE_MS, shouldRefresh,
+    // MR2: the subway's drawing decisions, pure so the map and the Key read one answer.
+    YELLOW_TRUNK_ROUTES, isYellowTrunk, trunkDrawOrder,
+    RIBBON_CASING_WEIGHT, RIBBON_CASING_OPACITY, RIBBON_LINE_WEIGHT, RIBBON_LINE_OPACITY,
+    FOCUS_DIM_LINE, FOCUS_DIM_CASING, FOCUS_DIM_TRAIN, focusOpacity,
+    routeFocusAnnouncement, routeFocusLabel,
+    STATION_LOCAL_RADIUS, STATION_TRANSFER_RADIUS, STATION_TRANSFER_WEIGHT,
+    isTransferStation, stationMarkStyle, stationLabelClass,
+    LABEL_HUB_ZOOM, LABEL_ALL_ZOOM, labelZoomBand, stationLabelShown,
     // A3: one luminance path for the whole app.
     parseColor, relativeLuminance, contrastRatio, readableTextOn, readableInk, statusLineText,
     statusNoteText, FEEDS, feedDotState, feedTooltip, feedStripModel, themeChoice, nextTheme,

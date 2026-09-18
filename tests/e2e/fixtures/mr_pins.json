@@ -475,7 +475,7 @@
   "subway": {
    "subwayTrains": [
     {
-     "html": "<svg viewBox=\"0 0 18 18\">\n      <rect x=\"1.5\" y=\"1.5\" width=\"15\" height=\"15\" rx=\"3\" fill=\"#c0392b\" stroke=\"#fff\" stroke-width=\"1.5\"/>\n      <text x=\"9\" y=\"9.5\" text-anchor=\"middle\" dominant-baseline=\"central\"\n            font-size=\"9\" font-weight=\"700\"\n            font-family=\"system-ui, sans-serif\" fill=\"#ffffff\">1</text>\n    </svg>",
+     "html": "<svg viewBox=\"0 0 18 18\">\n      <rect x=\"0\" y=\"0\" width=\"18\" height=\"18\" rx=\"4\" style=\"fill: var(--paper)\" opacity=\"0.95\"/>\n      <rect x=\"1.5\" y=\"1.5\" width=\"15\" height=\"15\" rx=\"3\" fill=\"#c0392b\"/>\n      <text x=\"9\" y=\"9.5\" text-anchor=\"middle\" dominant-baseline=\"central\"\n            font-size=\"10.5\" font-weight=\"800\"\n            font-family=\"Archivo, system-ui, sans-serif\" fill=\"#ffffff\">1</text>\n    </svg>",
      "className": "train-marker",
      "size": [
       18,
@@ -483,16 +483,16 @@
      ],
      "anchor": [
       9,
-      22
+      21
      ],
      "popupAnchor": [
       0,
-      -22
+      -21
      ],
      "opacity": 1
     },
     {
-     "html": "<svg viewBox=\"0 0 18 18\">\n      <rect x=\"1.5\" y=\"1.5\" width=\"15\" height=\"15\" rx=\"3\" fill=\"#1f5fbf\" stroke=\"#fff\" stroke-width=\"1.5\"/>\n      <text x=\"9\" y=\"9.5\" text-anchor=\"middle\" dominant-baseline=\"central\"\n            font-size=\"9\" font-weight=\"700\"\n            font-family=\"system-ui, sans-serif\" fill=\"#ffffff\">A</text>\n    </svg>",
+     "html": "<svg viewBox=\"0 0 18 18\">\n      <rect x=\"0\" y=\"0\" width=\"18\" height=\"18\" rx=\"4\" style=\"fill: var(--paper)\" opacity=\"0.95\"/>\n      <rect x=\"1.5\" y=\"1.5\" width=\"15\" height=\"15\" rx=\"3\" fill=\"#1f5fbf\"/>\n      <text x=\"9\" y=\"9.5\" text-anchor=\"middle\" dominant-baseline=\"central\"\n            font-size=\"10.5\" font-weight=\"800\"\n            font-family=\"Archivo, system-ui, sans-serif\" fill=\"#ffffff\">A</text>\n    </svg>",
      "className": "train-marker",
      "size": [
       18,
@@ -500,30 +500,30 @@
      ],
      "anchor": [
       9,
-      22
+      21
      ],
      "popupAnchor": [
       0,
-      -22
+      -21
      ],
      "opacity": 1
     }
    ],
    "subwayStations": [
     {
-     "radius": 4,
-     "color": "#333",
-     "weight": 1.5,
-     "fillColor": "#fff",
+     "radius": 4.5,
+     "color": "#201e1d",
+     "weight": 2,
+     "fillColor": "#f3f2f2",
      "fillOpacity": 1,
      "pane": "overlayPane",
      "opacity": 1
     },
     {
-     "radius": 4,
-     "color": "#333",
-     "weight": 1.5,
-     "fillColor": "#fff",
+     "radius": 4.5,
+     "color": "#201e1d",
+     "weight": 2,
+     "fillColor": "#f3f2f2",
      "fillOpacity": 1,
      "pane": "overlayPane",
      "opacity": 1

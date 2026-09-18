@@ -233,7 +233,7 @@ The map follows one rule: **animate the journey, never the adjustment.**
 
 axe reports a third category besides pass and fail: **incomplete**, meaning it
 needs a human. A green "zero violations" says nothing about those, so the gate
-asserts them too. The list is closed: an incomplete finding outside these six
+asserts them too. The list is closed: an incomplete finding outside these seven
 shapes fails the build. Each entry names the test that answers the question axe
 declined, and `a11y.spec.js A1z` **asserts that pairing**, so an exception cannot
 quietly become a suppression with a sentence attached.
@@ -245,6 +245,7 @@ quietly become a suppression with a sentence attached.
 | Contrast of a single-character glyph on a Leaflet control (the zoom minus, the popup close) | as above, and these are third-party markup | `a11y.spec.js A1z` measures both against their own control backgrounds |
 | Contrast of a Key panel row clipped by the panel's own scroll boundary | the Key panel scrolls at phone widths, where its rows are one column and do not fit, and axe cannot determine the background of an element that is partially clipped | `a11y.spec.js A1x` measures every Key panel row's computed ink against the header's computed background at 1280, 375 and 320, in both themes, and fails if the header's surface is anything but opaque |
 | Contrast of Leaflet's attribution, which sits directly on map tiles | the background is live imagery, so there is no single colour to compute against | `a11y.spec.js A1z` composites the attribution's translucent background over **both** extremes a tile can be, black and white, and requires AA against the worse of the two, which bounds every possible tile |
+| Contrast of a station name label, which sits directly on map tiles | a station's name is a permanent Leaflet tooltip with no background of its own: it is ink over live imagery with a halo of stacked text-shadows, so there is no single colour to compute against | `a11y.spec.js A1z3` composites the halo over **both** extremes a tile can be, black and white, measures the label's own ink against the worse of the two and requires AA, in both themes; it also asserts that every tooltip on the page is a station label, which is what keeps the exception from widening. What it does not claim: a text-shadow is a spread rather than a fill, so this is the answer at a character's edge, where legibility is decided, and optimistic in the counters of an "o" |
 | Whether the skip link's target becomes visible on activation | the panel is hidden at scan time and no static rule can activate a link | `mobile.spec.js A6g` presses it at 375 and asserts focus lands inside the panel that was hidden a moment earlier; `A6h` asserts the desktop behaviour it must not break |
 
 This inventory may only shrink by **conversion**: an entry leaves it by becoming

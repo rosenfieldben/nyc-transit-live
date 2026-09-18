@@ -193,8 +193,15 @@ test(`A4b. every interactive thing on the map surface meets the 24px floor at ${
     "#legend-toggle",
   ];
   // The view presets stand down while the Key is open on a phone (they would paint over it),
-  // so they are measured where they are drawn.
-  if (viewport.width > 700) controls.push("#view-city", "#view-region");
+  // so they are measured where they are drawn. MR2's Names toggle is the fourth button in
+  // that stack and stands down with them.
+  if (viewport.width > 700) controls.push("#view-city", "#view-region", "#names-toggle");
+  /* MR2: A ROUTE BULLET, which became a control in this stage and is therefore on the floor
+     like every other. It is measured where it is drawn: the subway key folds behind the Key
+     button below 700px, and at phone widths this helper has already opened that disclosure
+     (see the top of this function), so the bullets are on screen at every width sampled. The
+     design draws them at 22px and this app draws them at 24 for exactly this reason. */
+  controls.push("#subway-key button");
   for (const selector of controls) {
     const box = await rect(page, selector);
     expect(box, `${selector} must exist at ${label}`).not.toBeNull();

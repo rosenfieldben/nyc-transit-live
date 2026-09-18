@@ -3,16 +3,35 @@
 
 /* ---------------- Subways ---------------- */
 
+/* MR2: THE BULLET, LIFTED ABOVE ITS RIBBON.
+
+   THE SHAPE IS THIS APP'S OWN, by ruling R1 of docs/reviews/map-redesign-rounds.md. The
+   handoff draws this as two concentric circles with a letter in them, which is the MTA's
+   route symbol; the repository's README says route symbols require a license and to use our
+   own markers. So the geometry ports and the artwork does not: an 18-unit box, a halo behind
+   the body, the design's type sizes and the design's anchors, drawn as the rounded rectangle
+   this file has always drawn and MR1's Key already shows.
+
+   THE HALO IS A TOKEN RATHER THAN #fff, which is the only thing about the body that moved.
+   It used to be a 1.5px white stroke ON the body; it is now a 1.5-unit paper ring BEHIND it,
+   at the design's 0.95, which is the same visual weight and follows a theme swap through the
+   cascade at no cost (style.css says why the canvas cannot do the same and has to resolve
+   the token in script). The body's geometry is unchanged: rect 1.5,1.5,15,15 rx 3.
+
+   AND IT SITS ONE PIXEL HIGHER, iconAnchor [9,21] rather than [9,22], which is the design's
+   number for a mark lifted to clear the ribbon under it rather than the station dot. The
+   24x24 hit target and its bottom anchoring are style.css's and are unchanged. */
 function trainIcon(train) {
   const route = train.route_id ?? "";
   const label = /^[A-Za-z0-9]{1,3}$/.test(route) ? route : "?";
   const color = lineColor(route);
   const textColor = readableTextOn(color);
   const html = `<svg viewBox="0 0 18 18">
-      <rect x="1.5" y="1.5" width="15" height="15" rx="3" fill="${color}" stroke="#fff" stroke-width="1.5"/>
+      <rect x="0" y="0" width="18" height="18" rx="4" style="fill: var(--paper)" opacity="0.95"/>
+      <rect x="1.5" y="1.5" width="15" height="15" rx="3" fill="${color}"/>
       <text x="9" y="9.5" text-anchor="middle" dominant-baseline="central"
-            font-size="${label.length > 1 ? 7 : 9}" font-weight="700"
-            font-family="system-ui, sans-serif" fill="${textColor}">${esc(label)}</text>
+            font-size="${label.length > 1 ? 8.5 : 10.5}" font-weight="800"
+            font-family="Archivo, system-ui, sans-serif" fill="${textColor}">${esc(label)}</text>
     </svg>`;
   // A2: OFFSET, not centred, so the square floats above its point instead of covering
   // the station dot underneath. A subway train's position is DERIVED (placed at its
@@ -25,8 +44,8 @@ function trainIcon(train) {
     className: "train-marker",
     html,
     iconSize: [18, 18],
-    iconAnchor: [9, 22],
-    popupAnchor: [0, -22],
+    iconAnchor: [9, 21],
+    popupAnchor: [0, -21],
   });
 }
 
@@ -153,7 +172,14 @@ function subwayGlideAt(train, now = correctedNow()) {
 staleTreatments.push(() => {
   const now = correctedNow();
   for (const record of trains.values()) {
-    dimMarker(record.marker, vehicleMarkerAge("subways", subwaySystemAge(record.latest), record.latest, now));
+    dimMarker(
+      record.marker,
+      vehicleMarkerAge("subways", subwaySystemAge(record.latest), record.latest, now),
+      // MR2: the sweep re-derives the product rather than erasing the focus. Without this
+      // base a focused route would un-dim itself on the next poll, and a focus spec that
+      // pressed a button and looked immediately would still have passed.
+      subwayFocusBase(record.latest),
+    );
     setMarkerName(record.marker, subwayMarkerName(record.latest, now));
   }
 });
@@ -192,17 +218,91 @@ async function loadRouteLines() {
       route.route,
       route.polylines.map((points) => ({ points, cum: polylineCumLengths(points) })),
     );
-    for (const points of route.polylines) {
-      L.polyline(points, {
-        color: lineColor(route.route),
-        weight: 2.5,
-        opacity: 0.5,
+  }
+  drawRibbons(routes);
+  return true;
+}
+
+/* MR2: EVERY SHAPE IS DRAWN TWICE, a casing in paper and a line in lineColor(), which is
+   what makes a ribbon rather than a hairline. The casing is what separates a trunk from the
+   basemap and from the trunk beside it; before this the lines were 2.5px at opacity 0.5
+   straight onto the tiles, which is why every trunk reads better after this stage than
+   before it even where the arithmetic against paper is poor (the ledger has the numbers).
+
+   TWO PASSES, NOT ONE PER SHAPE, and that is a decision the design does not make explicitly.
+   Casing and line interleaved per route means a route drawn later cuts a paper gap through
+   every route already drawn, which is the classic bridge look at a crossing and a disaster
+   where two trunks run together for miles: the yellow trunk is drawn last on purpose, so
+   interleaving would have it erase a stripe out of every trunk it shares track with. All
+   casings, then all lines, gives every line a paper edge against the map and lets no line be
+   eaten by a later casing.
+
+   THE YELLOW TRUNK IS LAST IN BOTH PASSES. trunkDrawOrder is in helpers.js with a node test,
+   because the reference implementation's version of this sort tests only N and R and leaves
+   Q and W under the darker trunks, which is exactly the kind of half-right that passes a
+   test written against N.
+
+   AND EVERY RIBBON IS REGISTERED, because route focus restyles these and a layer it cannot
+   see is a route that never dims. The registry is built here rather than by a later sweep
+   over routeLinesLayer, so a bus route line (busRouteLayer is its own group) can never be
+   mistaken for a subway ribbon. */
+const subwayRibbons = [];
+
+function drawRibbons(routes) {
+  const byRoute = new Map(routes.map((route) => [route.route, route]));
+  const order = trunkDrawOrder(routes.map((route) => route.route));
+  const paper = paperColor();
+  const focused = currentFocusRoute();
+  const add = (routeId, part, style) => {
+    for (const points of byRoute.get(routeId)?.polylines ?? []) {
+      const layer = L.polyline(points, {
+        ...style,
+        opacity: focusOpacity(focused, routeId, part),
+        lineCap: "round",
+        lineJoin: "round",
         interactive: false,
         renderer: lineRenderer,
-      }).addTo(routeLinesLayer);
+      });
+      layer.addTo(routeLinesLayer);
+      subwayRibbons.push({ route: routeId, part, layer });
     }
+  };
+  for (const routeId of order) add(routeId, "casing", { color: paper, weight: RIBBON_CASING_WEIGHT });
+  for (const routeId of order) add(routeId, "line", { color: lineColor(routeId), weight: RIBBON_LINE_WEIGHT });
+}
+
+/* MR2: route focus, applied. Called by paintRouteFocus in systems/shared.js, which owns the
+   state and the controls; this owns the marks.
+
+   OPACITY ONLY. Every ribbon keeps its geometry, its renderer and its identity, and every
+   train keeps its icon: what changes is one number per layer. subway.spec.js D2e holds that
+   by comparing the layer objects themselves across a focus and a clear.
+
+   THE TRAINS GO THROUGH dimMarker WITH A BASE, which is how focus composes with the
+   freshness contract instead of fighting it. The same call is made at creation, on every
+   reuse and by the stale sweep, so a poll fifteen seconds later re-derives the same product
+   rather than erasing the focus, and a train that arrives while a route is focused is drawn
+   dim on its first frame rather than at full for a beat. */
+function applySubwayFocus() {
+  const focused = currentFocusRoute();
+  for (const ribbon of subwayRibbons) {
+    const want = focusOpacity(focused, ribbon.route, ribbon.part);
+    if (ribbon.layer.options.opacity !== want) ribbon.layer.setStyle({ opacity: want });
   }
-  return true;
+  const now = correctedNow();
+  for (const record of trains.values()) {
+    dimMarker(
+      record.marker,
+      vehicleMarkerAge("subways", subwaySystemAge(record.latest), record.latest, now),
+      subwayFocusBase(record.latest),
+    );
+  }
+}
+
+// One train's focus multiplier, read live so every path that dims a marker composes the
+// same two numbers.
+function subwayFocusBase(train) {
+  return focusOpacity(currentFocusRoute(), train.route_id, "train");
 }
 
 
@@ -250,14 +350,47 @@ async function loadStations() {
     return false;
   }
   if (!stations.length) return false; // failed-warmup []: retry until the backend heals
+  const ink = inkColor();
+  const paper = paperColor();
   for (const station of stations) {
+    /* MR2: A DOT WHERE ONE ROUTE CALLS AND A RING WHERE TWO OR MORE DO, so the map says
+       which stations are interchanges without a rider having to open anything. The decision
+       and the two theme colours are helpers.js's (stationMarkStyle), which keeps it node
+       tested and keeps this file free of a second copy of the rule; the colours are passed
+       in rather than reached for, which is what lets MR4 restyle these in place.
+
+       `pane` is NOT set here and that is deliberate: it lives on the RENDERER
+       (L.canvas({ pane: "stationPane" })), and writing it onto the circleMarker would look
+       identical on screen while moving the marker's own pane option off Leaflet's default.
+       P2a pins both, which is how that distinction got written down. */
+    const routeCount = (station.routes ?? []).length;
     const marker = L.circleMarker([station.lat, station.lon], {
-      radius: 4,
-      color: "#333",
-      weight: 1.5,
-      fillColor: "#fff",
-      fillOpacity: 1,
+      ...stationMarkStyle(routeCount, ink, paper),
       renderer: stationRenderer,
+    });
+    /* THE NAME, as a permanent tooltip, and OUT OF THE ACCESSIBILITY TREE.
+
+       A canvas circleMarker has no element, which is why station dots have never had an
+       accessible name (the A2 footnote in shared.js says so and names the station panel as
+       the equivalent). A permanent tooltip is the first DOM these stations have ever had,
+       and leaving it in the tree would put 496 bare place names into the reading order
+       whose only information is WHERE they are, which is the one thing that does not
+       survive being spoken. That is the same argument MR1 made for the subway key, and the
+       same equivalent answers it: the station panel is the text surface, it is searchable,
+       and it is one Tab away. So the label is aria-hidden and a sighted rider reads it.
+
+       It is therefore invisible to axe as well, which is why a11y.spec.js A1z2 measures its
+       ink against its halo directly. ACCESSIBILITY.md carries both statements. */
+    marker.on("tooltipopen", (event) => {
+      const el = event.tooltip?.getElement?.();
+      if (el) el.setAttribute("aria-hidden", "true");
+    });
+    marker.bindTooltip(station.name ?? station.id, {
+      permanent: true,
+      direction: "right",
+      offset: [7, 0],
+      className: stationLabelClass(routeCount),
+      interactive: false,
     });
     // Built once and used twice: the popup descriptor below and the A1 station
     // registry both need it, and two copies of a URL template is how the two
@@ -325,7 +458,7 @@ function applyTrains(data) {
       // may a train whose own observation is past OBS_FRESH_S (subwayGlideAt).
       const fresh = subwaySystemFreshness(train);
       record.marker.setLatLng(trainLatLng(train, subwayGlideAt(train, now), record.fState));
-      dimMarker(record.marker, vehicleMarkerAge("subways", fresh.age, train, now));
+      dimMarker(record.marker, vehicleMarkerAge("subways", fresh.age, train, now), subwayFocusBase(train));
       if (record.routeId !== train.route_id) {
         record.marker.setIcon(trainIcon(train));
         record.routeId = train.route_id;
@@ -346,7 +479,10 @@ function applyTrains(data) {
           // invariant the "C2b" e2e spec pins, and the reason the retention flag and
           // this rendering ship in one commit. Since 6.3 the same holds for a train
           // whose own observation is old in a group that is not.
-          opacity: markerOpacity(vehicleMarkerAge("subways", fresh.age, train, now)),
+          // MR2: AND THE FOCUS BASE AT CREATION TOO, for the same reason the dimming is
+          // applied here rather than left to the sweep: a train that arrives while a route
+          // is focused must be drawn dim on its very first frame, never at full for a beat.
+          opacity: markerOpacity(vehicleMarkerAge("subways", fresh.age, train, now), subwayFocusBase(train)),
         },
         subwayMarkerName(train, now),
       )

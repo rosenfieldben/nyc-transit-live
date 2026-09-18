@@ -242,6 +242,38 @@ function applyTheme(theme) {
 
 applyTheme(themeChoice(storedTheme(), document.documentElement.getAttribute("data-theme")));
 
+/* ----- MR2: the two theme colours the canvas cannot read -------------------------------
+
+   A divIcon is HTML, so a mark drawn there says `style="fill: var(--paper)"` and follows a
+   theme swap through the cascade at no cost. A canvas layer cannot: Leaflet hands a colour
+   STRING to the 2D context, and `var(--paper)` is not one. So the two tokens every MR2 mark
+   is drawn from are resolved here, once per call, from the root the theme is written on.
+
+   THIS IS WHAT MAKES MR4'S SWAP A setStyle RATHER THAN A REBUILD. The ribbons and the
+   station circles keep their geometry and take new colours; nothing is torn down and
+   nothing is re-fetched. The fallbacks are the light theme's literals, for the one case
+   where the stylesheet has not applied yet (a test that renders the markers with no
+   document styles, which frontend/boards.test.js does).
+
+   Read live rather than cached, because a cache would be a second copy of the theme and the
+   whole point of a token is that there is one. */
+function rootToken(name, fallback) {
+  try {
+    const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return value || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function paperColor() {
+  return rootToken("--paper", "#f3f2f2");
+}
+
+function inkColor() {
+  return rootToken("--ink", "#201e1d");
+}
+
 if (themeToggleEl) {
   themeToggleEl.addEventListener("click", () => {
     const next = nextTheme(document.documentElement.getAttribute("data-theme"));
@@ -295,6 +327,10 @@ const SUBWAY_KEY_TRUNKS = [
   ["1", "2", "3"], ["4", "5", "6"], ["7"], ["A", "C", "E"], ["B", "D", "F", "M"],
   ["G"], ["J", "Z"], ["L"], ["N", "Q", "R", "W"], ["S"],
 ];
+// MR2: route -> its bullet, filled by the loop below and read by paintRouteFocus. Declared
+// BEFORE the loop because a module-scope const is in the temporal dead zone until its own
+// line runs, and the loop runs at module scope.
+const subwayKeyBullets = new Map();
 const subwayKeyEl = document.getElementById("subway-key");
 if (subwayKeyEl) {
   /* AND IT IS OUT OF THE ACCESSIBILITY TREE WHILE IT IS ONLY A KEY (round 2). Twenty-six
@@ -310,15 +346,108 @@ if (subwayKeyEl) {
     const group = document.createElement("span");
     group.className = "bul-group";
     for (const route of trunk) {
-      const bullet = document.createElement("span");
+      /* MR2: A BUTTON, which is what the MR1 comment above promised. Its text is the bare
+         route id and nothing else, deliberately: chrome.spec.js D1l reads each bullet's
+         textContent and resolves the colour it expects as lineColor(textContent), so a
+         visually hidden label inside the chip would make that check compare the wrong
+         thing. The name goes on aria-label instead, where it does not move with the state
+         and can therefore carry aria-pressed. */
+      const bullet = document.createElement("button");
+      bullet.type = "button";
       bullet.className = "bul";
       bullet.style.background = lineColor(route);
       bullet.style.color = readableTextOn(lineColor(route));
       bullet.textContent = route;
+      bullet.setAttribute("aria-label", routeFocusLabel(route));
+      bullet.setAttribute("aria-pressed", "false");
+      bullet.addEventListener("click", () => toggleRouteFocus(route));
+      subwayKeyBullets.set(route, bullet);
       group.append(bullet);
     }
     subwayKeyEl.append(group);
   }
+}
+
+/* ----- MR2: route focus ------------------------------------------------------------------
+
+   ONE PIECE OF STATE, and every surface reads it rather than keeping its own copy: the
+   bullets' aria-pressed, the ribbons' opacity and the trains' dimming base. It lives here
+   rather than in systems/subway.js because the CONTROLS are here (the bullets, the Escape
+   rung's entry point) and the drawing is there, and one of the two has to load first.
+
+   IT IS OPACITY AND NOTHING ELSE. No layer is added, removed or rebuilt, which is what
+   subway.spec.js D2e holds by comparing layer identity across a focus and a clear. A
+   rebuild would also be a correctness problem rather than only a cost: setIcon replaces a
+   marker's element, so any focus state written onto the DOM would be lost the next time a
+   train's route id changed, while state held in Leaflet's options survives.
+
+   AND IT COMPOSES WITH THE FRESHNESS CONTRACT rather than competing with it. dimMarker and
+   markerOpacity already take a `base` multiplier; focus supplies it. Nothing in section 3.3
+   is touched, a stale train on the focused route stays dim, and the poll that re-dims every
+   marker fifteen seconds later re-reads the focus instead of erasing it. That last part is
+   the one a test cannot see by pressing a button and looking: subway.spec.js D2f advances
+   the clock through a poll and asserts the dimming is still there. */
+let focusedRoute = null;
+
+function currentFocusRoute() {
+  return focusedRoute;
+}
+
+function paintRouteFocus() {
+  for (const [route, bullet] of subwayKeyBullets) {
+    bullet.setAttribute("aria-pressed", String(route === focusedRoute));
+  }
+  // Late-bound by name, because systems/subway.js loads after this file and owns the marks.
+  if (typeof applySubwayFocus === "function") applySubwayFocus();
+}
+
+// Press a bullet: focus that route, or clear it if it was already focused. Pressing a
+// DIFFERENT bullet moves the focus rather than clearing, which is the only one of the three
+// transitions a rider can reach by accident.
+function toggleRouteFocus(route) {
+  focusedRoute = focusedRoute === route ? null : route;
+  paintRouteFocus();
+  announcePage(routeFocusAnnouncement(focusedRoute));
+}
+
+// The Escape rung's entry point (the ladder is in map.js, and it is the page's only keydown
+// handler: frontend/keyboard.test.js fails on a second one, and a second one bound in the
+// bubble phase would be inert anyway because the ladder captures and stops the event).
+// Returns whether there was anything to clear, so the ladder can tell "handled" from "leave
+// the event alone".
+function clearRouteFocus() {
+  if (!focusedRoute) return false;
+  focusedRoute = null;
+  paintRouteFocus();
+  announcePage(routeFocusAnnouncement(null));
+  return true;
+}
+
+/* ----- MR2: the label gate and the Names toggle ------------------------------------------
+
+   THE ROOT CARRIES BOTH ATTRIBUTES. data-zoom is the design's, written as the integer zoom
+   so a reader or a future rule can find it; data-label-band is labelZoomBand()'s answer and
+   is what style.css actually reads. The stylesheet says why the design's enumerated zoom
+   list is not safe to depend on.
+
+   WRITTEN ON zoomend AND ONCE AT LOAD, because a map that opens at zoom 13 has never fired
+   one. Math.round, because getZoom() is fractional mid-flight and data-zoom is a label for
+   a settled state. */
+function paintZoomBand() {
+  const zoom = Math.round(map.getZoom());
+  document.documentElement.setAttribute("data-zoom", String(zoom));
+  document.documentElement.setAttribute("data-label-band", labelZoomBand(zoom));
+}
+map.on("zoomend", paintZoomBand);
+paintZoomBand();
+
+const namesToggleEl = document.getElementById("names-toggle");
+if (namesToggleEl) {
+  namesToggleEl.addEventListener("click", () => {
+    const on = document.documentElement.getAttribute("data-labels") !== "off";
+    document.documentElement.setAttribute("data-labels", on ? "off" : "on");
+    namesToggleEl.setAttribute("aria-pressed", String(!on));
+  });
 }
 
 /* ----- MR1: the view presets -----------------------------------------------------------

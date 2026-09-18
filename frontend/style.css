@@ -101,6 +101,15 @@ main {
   --divider: rgba(32, 30, 29, 0.4);
   --rule: rgba(32, 30, 29, 0.15);
   --chipink: #f3f2f2;
+  /* MR2: THE PAPER THE MAP IS PRINTED ON, and it is a token so that MR4's theme swap is a
+     setStyle rather than a rebuild. Every mark MR2 draws sits on it: the ribbon casings,
+     the bullet's halo, the transfer ring's fill. It matches --bg because that is what
+     paper means here, and it is named separately because a mark asks a different question
+     of it than a page background does, and MR4 may have to answer them differently. The
+     canvas cannot read a custom property (Leaflet hands a colour string to the 2D
+     context), so systems/shared.js resolves this one at draw time; the divIcons read it
+     through the cascade and cost nothing. */
+  --paper: #f3f2f2;
   --halo: rgba(243, 242, 242, 0.92);
   --shadow: 0 3px 10px rgba(45, 43, 43, 0.16);
   --live: #00933c;
@@ -126,6 +135,7 @@ main {
   --divider: rgba(243, 242, 242, 0.35);
   --rule: rgba(243, 242, 242, 0.14);
   --chipink: #201e1d;
+  --paper: #201e1d;
   --halo: rgba(32, 30, 29, 0.9);
   --shadow: 0 3px 10px rgba(0, 0, 0, 0.5);
   --live: #00933c;
@@ -344,16 +354,58 @@ body,
    the subway marker's own: systems/subway.js draws `<rect rx="3">` in an 18-unit box, which
    is 3.7px on a 22px chip. MR2 draws the ribbons in lineColor() and the bullets in this
    shape, so the key and the map agree there too. */
+/* MR2: AND NOW IT IS A BUTTON, so it is 24px rather than the design's 22. MR1 left these
+   as spans and put the key out of the accessibility tree, saying in as many words that it
+   would come back "the moment the key does something"; item 5 of this stage is that moment.
+   A control is measured against the WCAG 2.2 target floor layout.spec.js A4b enforces, and
+   22px is under it: at 22 with the design's 2px group gap the centres are 24 apart, which
+   is exactly the boundary of 2.5.8's spacing exception rather than clear of it. Two pixels
+   of drawing lose to a measured floor, which is the fourth time in this phase that has
+   happened and the same way it was decided the first three. */
 .bul {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   border-radius: 4px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   font: 800 11.5px var(--chrome-font);
   flex: none;
+  /* A button reset: these carry their own fill and their own ring. */
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  position: relative;
 }
+
+/* THE RING IS OUTSIDE THE CHIP, ON THE HEADER SURFACE, and that is measured. MR1 round 2
+   found --focus at 1.10 against the one accent fill and answered it with an inset ring in
+   --chipink, which works when there is ONE fill. Here there are ten, so no single inset
+   colour can clear 3:1 against all of them. Put the ring outside and it is measured against
+   --surface instead, where --focus reads 5.53 light and 4.86 dark. */
+.bul:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* THE PRESSED STATE IS A SECOND RING, IN INK, separated from the chip by a ring of surface
+   so it reads as a halo rather than as a border on the chip: --ink on --surface is 13.70
+   light and 12.60 dark. It is deliberately not the focus ring's colour, because a rider
+   tabbing across the key has to be able to tell "this one is focused" from "this one is
+   focused AND pressed". */
+.bul[aria-pressed="true"] {
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--ink);
+}
+
+/* THE DESIGN FADES EVERY OTHER BULLET TO 0.3 AND THIS DOES NOT, which is a deviation with
+   a measurement behind it. A 24px chip at 0.3 over --surface blends both the fill and the
+   letter towards the surface, and the letter's contrast against its own chip collapses to
+   near 1:1: the state would be conveyed by making twenty-five route names unreadable. MR1
+   round 2 found the same defect in the feed strip's OFF treatment (a blanket opacity took
+   the mark to 2.50 and the name to 2.25) and fixed it the same way, by fading only what is
+   decorative. Here nothing is decorative: the letter IS the route. So the key says which
+   route is focused with the ring above, and the map says it by dimming every other route,
+   which is where a rider is looking. */
 
 #hdr-actions {
   display: flex;
@@ -1297,6 +1349,76 @@ body,
 }
 .popup-crosslink:hover {
   background: #eef2f7;
+}
+
+/* ----- MR2: the station name labels ------------------------------------------------------
+
+   Leaflet permanent tooltips, so the class is on a .leaflet-tooltip and everything Leaflet
+   gives a tooltip by default has to come back off: the surface, the border, the shadow, the
+   padding, and the ::before that draws its pointer. THE POINTER IS NOT THE MARKER HIT
+   TARGET: .leaflet-marker-icon::before a few rules down is a different pseudo-element on a
+   different element family, and merging the two rules would put a 24px invisible box on
+   every station name.
+
+   THE HALO IS THE BACKGROUND, because a name over a basemap has no background a contrast
+   tool can resolve; four stacked text-shadows in --halo give the ink something to sit on
+   at any tile. a11y.spec.js A1z2 measures it, because axe cannot.
+
+   pointer-events: none, so a name never swallows a click meant for the dot under it or for
+   a train passing over it. */
+.stn-label {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+  margin: 0;
+  font: 600 10.5px/1 var(--chrome-font);
+  letter-spacing: 0.01em;
+  color: var(--ink);
+  text-shadow:
+    0 0 2px var(--halo),
+    0 0 2px var(--halo),
+    0 0 3px var(--halo),
+    0 0 4px var(--halo);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.stn-label::before {
+  display: none;
+}
+
+/* A hub is the same station a transfer ring is: one predicate in helpers.js decides both,
+   so a station cannot draw a ring and label itself local. */
+.stn-label.hub {
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+/* THE GATE, AND WHY IT IS A BAND RATHER THAN THE ZOOM ITSELF. The design writes data-zoom
+   on the root and enumerates `[data-zoom="12"] ... [data-zoom="19"]` in the stylesheet,
+   because CSS cannot compare integers. An enumeration fails silently outside its range: at
+   zoom 20, or at any fractional zoom, no selector matches and every name disappears with no
+   error. So the root carries BOTH: data-zoom, which is the design's attribute and what a
+   reader or a future rule would look for, and data-label-band, which is labelZoomBand()'s
+   answer and is what these selectors read. The band has three values, is decided in one
+   node-tested function, and cannot run out of range.
+
+   The Names toggle comes LAST and at matching specificity rather than with !important: the
+   hub rule above is (0,4,0), so the off rule is written twice to reach it, and source order
+   does the rest. */
+.stn-label {
+  display: none;
+}
+
+:root[data-label-band="hubs"] .stn-label.hub,
+:root[data-label-band="all"] .stn-label {
+  display: block;
+}
+
+:root[data-labels="off"] .stn-label,
+:root[data-labels="off"] .stn-label.hub {
+  display: none;
 }
 
 /* ---------------- A2: the 24px hit-target floor (WCAG 2.2) ---------------- */

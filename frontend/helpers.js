@@ -125,6 +125,16 @@ function focusOpacity(focusRoutes, routeIds, part) {
 // What the page live region says when focus moves. The bullet's own label does not change
 // with the state (it stays "Focus route 4"), which is what lets it carry aria-pressed; this
 // is the sentence that tells a rider what just happened and how to undo it.
+/* WHETHER ONE MARK IS OUTSIDE THE CURRENT FOCUS. The same membership question focusOpacity
+   answers, asked as a boolean, because round 3's F4 remedy needs it for something other than
+   an opacity: an off-focus marker also leaves the accessibility tree and stops taking clicks.
+   Nothing focused means nothing is off focus. */
+function isOffFocus(focusRoutes, routeId) {
+  const focus = (Array.isArray(focusRoutes) ? focusRoutes : focusRoutes ? [focusRoutes] : []).map(String);
+  if (!focus.length) return false;
+  return !focus.includes(String(routeId ?? ""));
+}
+
 function routeFocusAnnouncement(routeId) {
   return routeId ? `Focused on the ${routeId}; press again to clear.` : "Route focus cleared.";
 }
@@ -290,26 +300,48 @@ function subwayKeyModel(routes, trainRoutes = []) {
   return [...groups.values()];
 }
 
-/* A station is a LOCAL dot when one route serves it and a TRANSFER ring when two or more
-   do. ZERO ROUTES IS LOCAL, not transfer, and that is the direction that matters: the
-   routes field is optional on the stops endpoint, and a backend that serves none would
-   otherwise turn all 496 stations into transfer rings, which is a claim about the network
-   rather than a missing value. Measured against the real static archive, 171 stations have
-   one route and 325 have two or more; none has zero, which is exactly why the fallback has
-   to be chosen deliberately rather than discovered. */
+/* A station is a LOCAL dot when the routes calling there belong to ONE trunk and a TRANSFER
+   ring when they belong to two or more.
+
+   IT COUNTS TRUNKS, NOT ROUTE IDS (round 3, F9). Counting ids made a skip-stop pair into an
+   interchange: Marcy Av is served by the J and the Z, which are one line taking turns at the
+   same platform, and Hewes St, Lorimer St and the rest of the Jamaica line are the same. So
+   are the local/express pairs, every ["A","C"] and ["4","5"] stop. All of them were drawn
+   with the paper transfer ring and, worse, given the `hub` class that the zoom-12 band exists
+   to keep sparse. lineColor() already knows which ids are one line, because they share a
+   colour by definition, so the trunk count is the question and the id count was a proxy for
+   it that is wrong in exactly the cases the network has most of.
+
+   ZERO ROUTES IS LOCAL, not transfer, and that is the direction that matters: the routes
+   field is optional on the stops endpoint, and a backend serving none would otherwise turn
+   all 496 stations into transfer rings, which is a claim about the network rather than a
+   missing value. Measured against the real static archive, 171 stations list one route and
+   325 list two or more; none lists zero, which is exactly why the fallback has to be chosen
+   deliberately rather than discovered. */
 const STATION_LOCAL_RADIUS = 3.5;
 const STATION_TRANSFER_RADIUS = 4.5;
 const STATION_TRANSFER_WEIGHT = 2;
 
-function isTransferStation(routeCount) {
-  return (routeCount ?? 0) >= 2;
+// The distinct trunks calling at a station. Two unknown ids collapse into one trunk, which is
+// the conservative direction: an id lineColor() cannot place must not invent an interchange.
+function stationTrunks(routes) {
+  return new Set(
+    (routes ?? [])
+      .map((id) => String(id ?? ""))
+      .filter(Boolean)
+      .map((id) => lineColor(id)),
+  );
+}
+
+function isTransferStation(routes) {
+  return stationTrunks(routes).size >= 2;
 }
 
 // The circleMarker options one station is drawn with. `ink` and `paper` are resolved by the
 // caller from the theme tokens, so this stays pure and a theme swap is a setStyle rather
 // than a rebuild.
-function stationMarkStyle(routeCount, ink, paper) {
-  return isTransferStation(routeCount)
+function stationMarkStyle(routes, ink, paper) {
+  return isTransferStation(routes)
     ? {
         radius: STATION_TRANSFER_RADIUS,
         fillColor: paper,
@@ -323,8 +355,8 @@ function stationMarkStyle(routeCount, ink, paper) {
 
 // The tooltip class one station's name is drawn with. A hub is the same station a transfer
 // ring is, so the two read one predicate rather than two.
-function stationLabelClass(routeCount) {
-  return isTransferStation(routeCount) ? "stn-label hub" : "stn-label";
+function stationLabelClass(routes) {
+  return isTransferStation(routes) ? "stn-label hub" : "stn-label";
 }
 
 /* THE ZOOM GATE, as a band rather than a number, because CSS cannot compare integers. The
@@ -335,18 +367,67 @@ function stationLabelClass(routeCount) {
 const LABEL_HUB_ZOOM = 12;
 const LABEL_ALL_ZOOM = 14;
 
-function labelZoomBand(zoom) {
-  if (!Number.isFinite(zoom) || zoom < LABEL_HUB_ZOOM) return "none";
+/* AND ONE FALLBACK ZOOM, for the world where no station is a hub (round 3, F1). The routes
+   per station come from stop_times.txt, which is NOT a required member of the subway static
+   archive: load_subway_station_routes returns {} on any failure and the endpoint then serves
+   routes: [] for all 496 stations while the status stays "ready". Every station is then a
+   local, no label carries the `hub` class, and "hubs from 12" correctly reveals nothing. That
+   is the right answer to that data and the wrong thing to show a rider, who gets a map with
+   no names at the opening zoom and at the City preset while the Names button reads pressed.
+
+   So with no hubs the band skips the hubs step and shows every name from 13: one zoom later
+   than the hub band, because with no hub to thin the field 12 is the zoom the collision
+   measurements found worst (89% of painted labels overlapping another), and one zoom earlier
+   than the all band, because a rider should not have to reach 14 to see any name at all.
+   THE BACKEND HALF IS ITS OWN BRANCH: stop_times.txt should be a required member, the rule
+   PATH and the ferry already apply to shapes.txt, and the ledger records it with its three
+   consumers named. */
+const LABEL_NO_HUB_ZOOM = 13;
+
+function labelZoomBand(zoom, hasHubs = true) {
+  if (!Number.isFinite(zoom)) return "none";
+  if (!hasHubs) return zoom >= LABEL_NO_HUB_ZOOM ? "all" : "none";
+  if (zoom < LABEL_HUB_ZOOM) return "none";
   return zoom >= LABEL_ALL_ZOOM ? "all" : "hubs";
+}
+
+/* THE NAMES TOGGLE'S SENTENCE, round 3. The button flips a preference that outlives the
+   zoom, so it stays operable everywhere; what it must not do is claim an effect it does not
+   have. Below zoom 12 the band is "none" and no name can show whatever the preference says.
+   In the "hubs" band a network whose stations carry no routes has no hub either, and that is
+   a reachable backend state rather than a hypothetical: stop_times.txt is not a required
+   member of the static archive (backend/static_data.py), load_subway_station_routes returns
+   {} on any failure, and the endpoint then serves routes: [] for all 496 stations while the
+   status stays "ready". Every station is a local, no label carries the hub class, and at the
+   opening zoom 12 and the City preset's 13 nothing renders while the button reads pressed.
+
+   The band's arithmetic is not the bug and is not changed here: "hubs from 12" showing no
+   hubs is the right answer to that data. What was wrong is a control claiming otherwise in
+   silence, so the toggle says which of the three it is. THE BACKEND HALF IS NOT THIS
+   BRANCH'S: the railroad warmup gates its ready on a non-empty index and the subway warmup
+   does not, and that is one line in a file this stage does not touch. */
+function namesToggleAnnouncement(on, band) {
+  if (!on) return "Station names off.";
+  if (band === "none") return "Station names on; none at this zoom, zoom in to see them.";
+  return "Station names on.";
+}
+
+/* And the tooltip that says why the map looks different, in the one state a rider cannot work
+   out from what is on screen: no station lists its routes, so there is no ring anywhere and
+   no name is marked as a hub. Empty otherwise, because a control that explains itself when
+   there is nothing to explain is noise. */
+function namesToggleTitle(hubCount, stationCount = 1) {
+  if (hubCount || !stationCount) return "";
+  return "No station lists the routes that call there, so every name shows from zoom 13 and none is marked as an interchange.";
 }
 
 // Whether one station's name is on screen: the band, the station's own kind, and the Names
 // toggle, which overrides both.
-function stationLabelShown(zoom, routeCount, labelsOn) {
+function stationLabelShown(zoom, routes, labelsOn, hasHubs = true) {
   if (!labelsOn) return false;
-  const band = labelZoomBand(zoom);
+  const band = labelZoomBand(zoom, hasHubs);
   if (band === "all") return true;
-  return band === "hubs" && isTransferStation(routeCount);
+  return band === "hubs" && isTransferStation(routes);
 }
 
 // Railroad route ids (LIRR branch codes, MNR line numbers) collide with subway
@@ -3911,14 +3992,15 @@ if (typeof module !== "undefined" && module.exports) {
     // MR2: the subway's drawing decisions, pure so the map and the Key read one answer.
     YELLOW_TRUNK_ROUTES, isYellowTrunk, trunkDrawOrder,
     RIBBON_CASING_WEIGHT, RIBBON_CASING_OPACITY, RIBBON_LINE_WEIGHT, RIBBON_LINE_OPACITY,
-    FOCUS_DIM_LINE, FOCUS_DIM_CASING, FOCUS_DIM_TRAIN, focusOpacity,
+    FOCUS_DIM_LINE, FOCUS_DIM_CASING, FOCUS_DIM_TRAIN, focusOpacity, isOffFocus,
     routeFocusAnnouncement, routeFocusLabel,
     // MR2 round 2: the key derived from the data, and focus as membership.
     SUBWAY_KEY_ALIASES, compareRouteIds, subwayRouteUniverse, bulletRouteIds, drawnRouteIds,
     ribbonRouteSet, focusRoutesForBullet, bulletTrackSet, bulletDrawsSomething, bulletTitle, subwayKeyModel,
     STATION_LOCAL_RADIUS, STATION_TRANSFER_RADIUS, STATION_TRANSFER_WEIGHT,
-    isTransferStation, stationMarkStyle, stationLabelClass,
-    LABEL_HUB_ZOOM, LABEL_ALL_ZOOM, labelZoomBand, stationLabelShown,
+    isTransferStation, stationTrunks, stationMarkStyle, stationLabelClass,
+    LABEL_HUB_ZOOM, LABEL_ALL_ZOOM, LABEL_NO_HUB_ZOOM, labelZoomBand, stationLabelShown,
+    namesToggleAnnouncement, namesToggleTitle,
     // A3: one luminance path for the whole app.
     parseColor, relativeLuminance, contrastRatio, readableTextOn, readableInk, statusLineText,
     statusNoteText, FEEDS, feedDotState, feedTooltip, feedStripModel, themeChoice, nextTheme,

@@ -82,6 +82,16 @@ const keyBullets = (page) =>
     ),
   );
 
+/* THE STOCK FIXTURE HAS NO INTERCHANGE AND, AFTER ROUND 3, NEVER DID. Its two subway
+   stations are ["1","2","3"] and ["A","C","E"], which read as transfers only while the rule
+   counted route IDS; counting TRUNKS (F9) makes both of them locals, correctly, because the
+   1/2/3 are one line and so are the A/C/E. So a spec about rings has to bring a station that
+   really is one, and a spec about the hub label band has to bring a hub. They go in through
+   the per-spec override seam rather than into the shared fixture, where they would move every
+   other spec's world.
+
+   X05 is the F9 case itself: a skip-stop pair, two ids and one trunk, which must draw as a
+   dot. It is the station that would have been a ring before round 3. */
 const withLocalStation = (ctx) => {
   ctx.overrides.subwayStops = (route, fixtures) =>
     json(route, [
@@ -90,6 +100,10 @@ const withLocalStation = (ctx) => {
       // node test calls the direction that matters.
       { id: "L01", name: "Lorimer St", lat: 40.7141, lon: -73.9503, routes: ["L"] },
       { id: "X01", name: "Nowhere", lat: 40.7, lon: -73.95 },
+      // Two TRUNKS, so a ring and a hub label: the only real interchange in this world.
+      { id: "X04", name: "Fulton St", lat: 40.7102, lon: -74.0074, routes: ["A", "4", "J"] },
+      // Two IDS and one trunk, which is the F9 case: a dot, not a ring.
+      { id: "X05", name: "Marcy Av", lat: 40.7083, lon: -73.9578, routes: ["J", "Z"] },
     ]);
 };
 
@@ -487,14 +501,39 @@ test("D2q. a bullet that would light nothing is present, disabled, and cannot di
   // Nothing was announced either, because nothing happened.
   await expect(page.locator("#page-announce")).toHaveText("");
 
-  // IT IS NOT A TAB STOP AND NOT IN THE ARROW ROTATION, which is the other half of inert:
-  // a rider arrowing along the key does not land on a control that will not act.
+  /* IT IS NOT A TAB STOP AND NOT IN THE ARROW ROTATION, which is the other half of inert: a
+     rider arrowing along the key does not land on a control that will not act.
+
+     THE TWO PRESSES THAT MEASURE IT ARE THE ONES EITHER SIDE OF IT (round 3, F13). This spec
+     used to press ArrowRight from SI and assert it wrapped to 1, and that answer is the same
+     with the aria-disabled filters deleted: with nothing pressed the roving stop is bullets[0]
+     either way, and the wrap is (7+1)%8 = 0 against (8+1)%9 = 0, both "1". Deleting both
+     filters left 92 specs green. The DOM order here is 1, J, Z, L, N, Q, R, S, SI, so the
+     presses that can tell the difference are the step forward from Z and the step back from N,
+     which must skip L in both directions. */
   expect(dark.tabIndex).toBe(-1);
+  const at = () => page.evaluate(() => document.activeElement.getAttribute("aria-label"));
+  expect((await keyBullets(page)).flat().map((b) => b.id), "L sits between Z and N").toEqual([
+    "1", "J", "Z", "L", "N", "Q", "R", "S", "SI",
+  ]);
+
+  await page.locator('#subway-key .bul[aria-label="Focus route Z"]').focus();
+  await page.keyboard.press("ArrowRight");
+  expect(await at(), "forward over the dark bullet lands past it, not on it").toBe("Focus route N");
+  await page.keyboard.press("ArrowLeft");
+  expect(await at(), "and back again skips it too").toBe("Focus route Z");
+
   await page.locator('#subway-key .bul[aria-label="Focus route SI"]').focus();
   await page.keyboard.press("ArrowRight");
-  // SI is the last enabled bullet in this world, so ArrowRight wraps past the dark L to the
-  // first one rather than stopping on it.
-  expect(await page.evaluate(() => document.activeElement.getAttribute("aria-label"))).toBe("Focus route 1");
+  // SI is the last enabled bullet in this world, so ArrowRight wraps to the first one.
+  expect(await at()).toBe("Focus route 1");
+  // And no disabled bullet is ever the single tab stop, at any point in the rotation.
+  const stops = await page.evaluate(() =>
+    [...document.querySelectorAll("#subway-key .bul")]
+      .filter((b) => b.tabIndex === 0)
+      .map((b) => b.getAttribute("aria-disabled")),
+  );
+  expect(stops).toEqual(["false"]);
 
   // A live bullet still works in the same key, so the disabling is per bullet.
   await page.locator('#subway-key .bul[aria-label="Focus route 1"]').click();
@@ -556,6 +595,342 @@ test("D2r. the key is one tab stop, and the arrow keys move inside it", async ({
   expect((await stops()).filter((t) => t === 0).length, "still exactly one").toBe(1);
 });
 
+test("D2v. an off-focus train leaves the reading order and stops taking clicks, and comes back", async ({
+  page,
+}) => {
+  /* THE OPERATOR'S RULING ON F4. Focus keeps multiplying on the freshness contract's own
+     opacity and markerOpacity is untouched, so FOCUS_DIM_TRAIN stays 0.15 and an off-focus
+     stale train still lands at 0.45 * 0.15 = 0.0675. What is wrong with 0.0675 is not the
+     number: Leaflet's setOpacity writes nothing but style.opacity, so that marker was
+     invisible and still took the click at its 24px halo and still announced itself to a
+     screen reader as a train a rider could choose. A mark the map has deliberately pushed
+     into the background must not be the thing a tap lands on.
+
+     BOTH DIRECTIONS, because a focus that left a marker permanently silent and unclickable
+     would be worse than the dimming it completes. */
+  await open(page);
+  const reach = () =>
+    page.evaluate(() =>
+      Object.fromEntries(
+        [...trains.entries()].map(([id, r]) => {
+          const el = r.marker.getElement();
+          return [
+            id,
+            {
+              hidden: el.getAttribute("aria-hidden"),
+              pointer: getComputedStyle(el).pointerEvents,
+              haloPointer: getComputedStyle(el, "::before").pointerEvents,
+              opacity: r.marker.options.opacity ?? 1,
+              named: !!el.getAttribute("aria-label"),
+            },
+          ];
+        }),
+      ),
+    );
+
+  const before = await reach();
+  for (const [id, m] of Object.entries(before)) {
+    expect(m.hidden, `${id} starts in the tree`).toBe(null);
+    expect(m.pointer, `${id} starts clickable`).not.toBe("none");
+    expect(m.named, `${id} keeps its accessible name either way`).toBe(true);
+  }
+
+  await page.locator('#subway-key .bul[aria-label="Focus route 1"]').click();
+  const focused = await reach();
+  // sub-1 is on the focused route and sub-2 is not.
+  expect(focused["sub-1"].hidden, "the focused route's train is untouched").toBe(null);
+  expect(focused["sub-1"].pointer).not.toBe("none");
+  expect(focused["sub-2"].hidden, "an off-focus train leaves the accessibility tree").toBe("true");
+  expect(focused["sub-2"].pointer, "and stops taking clicks").toBe("none");
+  // THE HALO TOO, which is the 24px box that actually swallows the click; it sets no
+  // pointer-events of its own, so it inherits, and that is the thing being relied on.
+  expect(focused["sub-2"].haloPointer).toBe("none");
+  // The dimming is unchanged and still the contract's own product.
+  expect(focused["sub-2"].opacity).toBeCloseTo(0.15, 5);
+
+  // A REAL CLICK AT ITS CENTRE MUST NOT OPEN ITS POPUP, which is the claim in the form a
+  // rider makes it. Asked of the map rather than the DOM, because the paused clock keeps a
+  // closed popup's element alive.
+  const at = await page.evaluate(() => {
+    const el = trains.get("sub-2").marker.getElement();
+    const r = el.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  });
+  await page.mouse.click(at.x, at.y);
+  expect(await page.evaluate(() => openPopupsOnMap().length), "a dimmed train is not a target").toBe(0);
+
+  // AND IT ALL COMES BACK on clear, attribute for attribute.
+  await page.locator('#subway-key .bul[aria-label="Focus route 1"]').click();
+  expect(await reach()).toEqual(before);
+  // Including that it is clickable again.
+  await page.mouse.click(at.x, at.y);
+  expect(await page.evaluate(() => openPopupsOnMap().length), "and is a target once focus clears").toBe(1);
+});
+
+test("D2w. the reach survives a poll, and a train arriving mid-focus is out of reach at once", async ({ page }) => {
+  /* setIcon REPLACES THE ELEMENT, so both attributes would be dropped silently by any poll
+     that relabelled a route, and a train that arrived while a route was focused would be
+     drawn dim and left clickable until the next press. Both are re-derived at the poll tail. */
+  const ctx = await open(page);
+  await page.locator('#subway-key .bul[aria-label="Focus route 1"]').click();
+  const hidden = () =>
+    page.evaluate(() =>
+      Object.fromEntries(
+        [...trains.entries()].map(([id, r]) => [id, r.marker.getElement().getAttribute("aria-hidden")]),
+      ),
+    );
+  expect(await hidden()).toEqual({ "sub-1": null, "sub-2": "true" });
+
+  await page.clock.runFor(15_000);
+  await expect.poll(hidden, { message: "a poll must not restore the reach" }).toEqual({
+    "sub-1": null,
+    "sub-2": "true",
+  });
+
+  // Now a third train arrives on a route that is not focused.
+  ctx.overrides.subways = (route, fixtures) => {
+    const body = fixtures.subwaysWithSystems({});
+    body.data.push({ ...body.data[1], trip_id: "sub-3", vehicle_id: "sub-3", route_id: "L" });
+    return json(route, body);
+  };
+  await page.clock.runFor(15_000);
+  await expect
+    .poll(hidden, { message: "a train arriving mid-focus is out of reach on its first frame" })
+    .toEqual({ "sub-1": null, "sub-2": "true", "sub-3": "true" });
+});
+
+/* ---------------- round 3: the guards nothing was measuring ---------------- */
+
+test("D2s. a focused bullet disappearing from the key takes the focus with it", async ({ page }) => {
+  /* THE MUTATION THIS KILLS is replacing refreshSubwayKey's rebuild branch
+     `if (focusedBullet && !subwayKeyBullets.has(focusedBullet)) clearRouteFocus();`
+     with a bare paintRouteFocus(). Measured, that mutation leaves the whole suite green while
+     doing this to a rider: focus the Z, let the next poll carry no Z train so the universe
+     loses the Z bullet, and every ribbon and every train stays dimmed with NO bullet showing
+     aria-pressed and the live region still saying "press again to clear". The state survives
+     in a variable pointing at a control that is no longer on the page.
+
+     No spec in the suite shrank the bullet universe while a route was focused, which is the
+     only way to reach it: D2e re-serves the same route ids, and the one other spec that changes
+     the universe focuses nothing. */
+  const ctx = await open(page, withRealShapedRoutes(["1", "Z"]), { ribbons: 18 });
+  await page.locator('#subway-key .bul[aria-label="Focus route Z"]').click();
+  const dimmed = (rs) => rs.filter((r) => r.part === "line" && r.opacity === 0.18).length;
+  expect(dimmed(await ribbonSets(page)), "eight of the nine ribbons dim").toBe(8);
+  await expect(page.locator('#subway-key .bul[aria-label="Focus route Z"]')).toHaveAttribute("aria-pressed", "true");
+
+  // The next poll carries no Z train, so Z stops being a route this map can draw anything for
+  // and the bullet goes with it.
+  ctx.overrides.subways = (route, fixtures) => json(route, fixtures.subwaysWithSystems({}));
+  await page.clock.runFor(15_000);
+  await expect
+    .poll(() => page.evaluate(() => [...document.querySelectorAll("#subway-key .bul")].map((b) => b.textContent)))
+    .not.toContain("Z");
+
+  // AND THE MAP IS BACK, which is the whole claim: no ribbon dim, no train dim, nothing pressed.
+  expect(dimmed(await ribbonSets(page)), "nothing may be left dimmed").toBe(0);
+  expect(Object.values(await trainOpacities(page)).every((o) => o === 1), "nor any train").toBe(true);
+  expect(
+    await page.evaluate(() => [...document.querySelectorAll("#subway-key .bul[aria-pressed='true']")].length),
+  ).toBe(0);
+  expect(await page.evaluate(() => currentFocusBullet())).toBe(null);
+  await expect(page.locator("#page-announce")).toHaveText("Route focus cleared.");
+});
+
+test("D2t. the key does not rebuild under a rider's hand every fifteen seconds", async ({ page }) => {
+  /* THE MUTATION THIS KILLS is replacing refreshSubwayKey's `if (signature !== subwayKeyUniverse)`
+     with `if (true)`, so the poll tail rebuilds the toolbar every time. 92 specs stay green,
+     and a rider holding keyboard focus on a bullet loses it every fifteen seconds, because
+     buildSubwayKey calls replaceChildren() and removes the button they are standing on.
+
+     The guard's own comment claims "a key does not twitch under a rider's hand every fifteen
+     seconds" and nothing measured it: no spec advanced a poll with focus inside the key. */
+  await open(page, withRealShapedRoutes(["1", "Z"]), { ribbons: 18 });
+  const bullet = '#subway-key .bul[aria-label="Focus route N"]';
+  await page.locator(bullet).focus();
+  const stamp = () =>
+    page.evaluate(() => ({
+      focused: document.activeElement.getAttribute("aria-label"),
+      // A rebuild replaces every button, so element identity is the question. Leaflet has no
+      // stamp for a DOM node, so a marker attribute is written and looked for afterwards.
+      marked: document.querySelector('#subway-key .bul[aria-label="Focus route N"]').dataset.probe ?? null,
+    }));
+  await page.evaluate(() => {
+    document.querySelector('#subway-key .bul[aria-label="Focus route N"]').dataset.probe = "same-node";
+  });
+  expect(await stamp()).toEqual({ focused: "Focus route N", marked: "same-node" });
+
+  // Two polls, same route ids both times.
+  await page.clock.runFor(15_000);
+  await page.clock.runFor(15_000);
+  expect(await stamp(), "the same button, still focused, after two polls").toEqual({
+    focused: "Focus route N",
+    marked: "same-node",
+  });
+
+  /* AND THE LEGITIMATE REBUILD STILL HAPPENS, which is the other half: a poll that really does
+     change the set of bullets must replace them, and that is allowed to cost the focus. A
+     guard that never rebuilt would be just as wrong and would pass the assertion above. */
+  await page.evaluate(() => {
+    for (const b of document.querySelectorAll("#subway-key .bul")) b.dataset.probe = "old";
+  });
+  const routes = [...REAL_SHAPED, "L"];
+  const ctx2 = { overrides: {} };
+  await page.evaluate(() => {}); // no-op, keeps the shape of the surrounding code explicit
+  await page.evaluate((ids) => {
+    // Teach the page a new drawable route the way a poll would: a train on a route the key
+    // has never seen. The signature changes, so the toolbar is rebuilt.
+    const [first] = trains.values();
+    first.latest = { ...first.latest, route_id: "L" };
+    refreshSubwayKey();
+    return ids;
+  }, routes);
+  await expect
+    .poll(() => page.evaluate(() => [...document.querySelectorAll("#subway-key .bul")].map((b) => b.textContent)))
+    .toContain("L");
+  expect(
+    await page.evaluate(() =>
+      [...document.querySelectorAll("#subway-key .bul")].every((b) => b.dataset.probe === undefined),
+    ),
+    "a real change in the bullet set rebuilds them",
+  ).toBe(true);
+});
+
+test("D2u. the subway's ribbons draw under every other family's lines, whatever order they arrive in", async ({
+  page,
+}) => {
+  /* THE MUTATION THIS KILLS is putting the ribbons back on the shared lineRenderer (round 3,
+     F6). Every family passed one L.canvas to its route lines, and Leaflet's canvas draws its
+     layers in INSERTION order regardless of LayerGroup, so a 6.5px casing in --paper at 0.9
+     arriving after a 2.5px line ERASES it. The eleven static loaders start together and land
+     in whatever order their responses arrive, and /api/subway-routes is the largest payload
+     and re-fetches on a warming 503, so in production the ribbons routinely landed last:
+     whether PATH's 33rd St line survived was a race.
+
+     ASSERTED AS PANES, NOT PIXELS, and deliberately: the claim is that no arrival order can
+     change the answer, and a pixel test can only sample the order it happened to get. A pane
+     below the shared one is that guarantee, so what is asserted is the z-index relation and
+     that every family's line renderer is on the right side of it. The shuffle is what makes
+     it a claim about order: the four families' geometry is drawn in a randomised sequence and
+     the relation has to hold at the end of every one of them. */
+  await open(page, withRealShapedRoutes(["1", "Z"]), { ribbons: 18 });
+
+  const order = await page.evaluate(() => {
+    const z = (name) => Number(getComputedStyle(map.getPane(name)).zIndex);
+    const paneOf = (layer) => layer.options.renderer?.options.pane ?? "overlayPane";
+    /* Every family's route lines, as the app actually built them. The layer-group names are
+       each family's own (railroadLineLayer is a FUNCTION of the agency, which is MR1's split
+       so the two feeds toggle separately), and a name that is not defined in this build reads
+       as an empty list rather than throwing, so this spec does not depend on which families a
+       given fixture world happens to load. */
+    const group = (fn) => {
+      try {
+        const layers = fn();
+        return layers && layers.getLayers ? layers.getLayers() : [];
+      } catch {
+        return [];
+      }
+    };
+    const families = {
+      subway: subwayRibbons.map((r) => r.layer),
+      lirr: group(() => railroadLineLayer("LIRR")),
+      mnr: group(() => railroadLineLayer("MNR")),
+      path: group(() => pathRouteLines),
+      ferry: group(() => ferryRouteLines),
+      airtrain: group(() => airtrainRouteLinesLayer),
+    };
+    const panes = {};
+    for (const [name, layers] of Object.entries(families)) {
+      panes[name] = [...new Set(layers.map(paneOf))];
+    }
+    return {
+      panes,
+      counts: Object.fromEntries(Object.entries(families).map(([k, v]) => [k, v.length])),
+      zIndex: {
+        subwayLinePane: z("subwayLinePane"),
+        overlayPane: z("overlayPane"),
+        stationPane: z("stationPane"),
+        stationLabelPane: z("stationLabelPane"),
+        markerPane: z("markerPane"),
+      },
+    };
+  });
+
+  // THE PANE ORDER ITSELF, which is what systems/shared.js documents in one block.
+  expect(order.zIndex.subwayLinePane, "the subway's lines are the base network").toBeLessThan(
+    order.zIndex.overlayPane,
+  );
+  expect(order.zIndex.overlayPane).toBeLessThan(order.zIndex.stationPane);
+  expect(order.zIndex.stationPane).toBeLessThan(order.zIndex.stationLabelPane);
+  expect(order.zIndex.stationLabelPane, "a name may cover its own dot and never a train").toBeLessThan(
+    order.zIndex.markerPane,
+  );
+
+  // And every subway ribbon is on that pane while no other family is.
+  expect(order.panes.subway).toEqual(["subwayLinePane"]);
+  expect(order.counts.subway).toBe(18);
+  /* AT LEAST ONE OTHER FAMILY HAS TO HAVE DRAWN, or the comparison below is a claim about an
+     empty list. The fixture world serves LIRR and Metro-North branches and PATH and ferry
+     routes, so this is a premise assertion rather than a hope; it fails loudly if a future
+     fixture stops serving them and quietly turns this spec into nothing. */
+  const others = ["lirr", "mnr", "path", "ferry", "airtrain"].filter((f) => order.counts[f] > 0);
+  expect(others.length, `no other family drew a line: ${JSON.stringify(order.counts)}`).toBeGreaterThan(0);
+  for (const family of others) {
+    expect(order.panes[family], `${family} keeps the shared canvas`).not.toContain("subwayLinePane");
+    expect(order.panes[family], `${family} is on the shared canvas`).toEqual(["overlayPane"]);
+  }
+
+  /* SHUFFLED INSERTION ORDER. Four families' lines are drawn again, in a randomised sequence,
+     directly onto the two renderers. If the subway shared a canvas with the rest, the last
+     family in each shuffle would paint over the others and the winner would change run to run;
+     with two panes the subway is under all of them in every permutation, which is what this
+     loop asserts rather than assuming. */
+  const shuffles = await page.evaluate(() => {
+    const results = [];
+    const probe = L.layerGroup().addTo(map);
+    for (let round = 0; round < 8; round++) {
+      probe.clearLayers();
+      const families = ["subway", "railroad", "path", "ferry"];
+      for (let i = families.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [families[i], families[j]] = [families[j], families[i]];
+      }
+      const built = [];
+      for (const family of families) {
+        const line = L.polyline(
+          [
+            [40.75, -73.99],
+            [40.76, -73.98],
+          ],
+          {
+            weight: family === "subway" ? 6.5 : 2.5,
+            renderer: family === "subway" ? subwayLineRenderer : lineRenderer,
+          },
+        );
+        line.addTo(probe);
+        built.push({ family, pane: line.options.renderer.options.pane ?? "overlayPane" });
+      }
+      // The subway's line is on the lower pane no matter where in the order it was added.
+      const subway = built.find((b) => b.family === "subway");
+      results.push({
+        order: families.join(">"),
+        subwayPane: subway.pane,
+        othersPane: [...new Set(built.filter((b) => b.family !== "subway").map((b) => b.pane))],
+      });
+    }
+    probe.remove();
+    return results;
+  });
+
+  expect(shuffles.length).toBe(8);
+  for (const run of shuffles) {
+    expect(run.subwayPane, `order ${run.order}`).toBe("subwayLinePane");
+    expect(run.othersPane, `order ${run.order}`).toEqual(["overlayPane"]);
+  }
+  // And the shuffle really did shuffle, so this is a claim about order rather than one order.
+  expect(new Set(shuffles.map((r) => r.order)).size, "the orders must actually differ").toBeGreaterThan(1);
+});
+
 /* ---------------- the ribbons ---------------- */
 
 test("D2g. the yellow trunk is drawn last, on the map, in both passes", async ({ page }) => {
@@ -606,6 +981,26 @@ test("D2h. a ribbon is a casing in paper under a line in the app's own colour", 
   // than a rebuild: the canvas cannot read a custom property, so the resolver's answer is
   // asserted to BE the token rather than a literal that happens to match it today.
   expect([...new Set(casings.map((l) => l.color))]).toEqual([measured.paper]);
+  /* AND THE RESOLVER REALLY READS THE TOKEN (round 3, F12). The assertion above compares the
+     casing to getComputedStyle's --paper, and paperColor()'s FALLBACK is "#f3f2f2", which is
+     the light theme's --paper byte for byte. Every spec in this suite runs in the light theme,
+     so the comparison held whether or not the resolver had ever looked at a custom property:
+     pointing both resolvers at names that do not exist left all 261 specs green. So the token
+     is moved and the resolver asked again, which is the one question a literal cannot pass. */
+  const follows = await page.evaluate(() => {
+    const before = { paper: paperColor(), ink: inkColor() };
+    document.documentElement.style.setProperty("--paper", "#ff00ff");
+    document.documentElement.style.setProperty("--ink", "#00ff00");
+    const after = { paper: paperColor(), ink: inkColor() };
+    document.documentElement.style.removeProperty("--paper");
+    document.documentElement.style.removeProperty("--ink");
+    return { before, after, restored: { paper: paperColor(), ink: inkColor() } };
+  });
+  expect(follows.after, "paperColor and inkColor must read the tokens, not return a literal").toEqual({
+    paper: "#ff00ff",
+    ink: "#00ff00",
+  });
+  expect(follows.restored, "and follow them back").toEqual(follows.before);
   expect(new Set(lines.map((l) => l.color))).toEqual(new Set([measured.lineColors.one, measured.lineColors.a]));
   for (const layer of measured.layers) {
     expect(layer.cap).toBe("round");
@@ -624,13 +1019,23 @@ test("D2m. focusing a route actually repaints the canvas, not just the options",
      real, so this is a property of the test harness rather than of the app, and it is worth a
      spec precisely because it makes every other focus assertion here look stronger than it is.
 
-     MEASURED AS PIXELS, from the overlay canvas the ribbons are drawn on. At 0.18 a line's
-     pixels are still there but far more transparent, so the honest measure is the WEIGHT of
-     the ink rather than a count of touched pixels. */
+     MEASURED AS PIXELS, from the canvas the ribbons are drawn on. At 0.18 a line's pixels are
+     still there but far more transparent, so the honest measure is the WEIGHT of the ink
+     rather than a count of touched pixels.
+
+     THE PANE IS THE SUBWAY'S OWN as of round 3 (F6), not the shared overlay pane: a 6.5px
+     paper casing on the canvas every other family draws on erased their thin lines whenever
+     the subway's static fetch happened to land last. Reading the shared canvas here would now
+     measure the OTHER families' lines and no ribbon at all, which is worth saying out loud
+     because it would not have failed: it would have gone quietly green with nothing under
+     test, the exact shape this suite keeps catching. */
   await open(page, withYellow, { ribbons: 8 });
   const inkWeight = () =>
     page.evaluate(() => {
-      const canvas = document.querySelector(".leaflet-overlay-pane canvas");
+      // Leaflet names the element from the pane: createPane("subwayLinePane") gives
+      // class="leaflet-pane leaflet-subwayLine-pane". A miss here is a null and a thrown
+      // error rather than a quietly green spec.
+      const canvas = document.querySelector(".leaflet-subwayLine-pane canvas");
       const ctx = canvas.getContext("2d", { willReadFrequently: true });
       const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
       let sum = 0;
@@ -661,11 +1066,11 @@ test("D2m. focusing a route actually repaints the canvas, not just the options",
 
 /* ---------------- the stations ---------------- */
 
-test("D2i. a transfer ring where two or more routes call, a local dot where one does", async ({ page }) => {
+test("D2i. a transfer ring where two trunks call, a local dot where one does", async ({ page }) => {
   /* THE MUTATION THIS KILLS is "the transfer ring drawn for single-route stations". The stock
      fixture's two stations are BOTH transfers, so this world adds a one-route station and a
      station with no routes field at all: without them the assertion has no subject. */
-  await open(page, withLocalStation, { stations: 16 });
+  await open(page, withLocalStation, { stations: 18 });
   const marks = await page.evaluate(() => {
     const ink = getComputedStyle(document.documentElement).getPropertyValue("--ink").trim();
     const paper = getComputedStyle(document.documentElement).getPropertyValue("--paper").trim();
@@ -682,7 +1087,15 @@ test("D2i. a transfer ring where two or more routes call, a local dot where one 
         rendererPane: o.renderer.options.pane,
       };
     };
-    return { ink, paper, transfer: of("127"), local: of("L01"), routeless: of("X01") };
+    return {
+      ink,
+      paper,
+      transfer: of("X04"),
+      local: of("L01"),
+      routeless: of("X01"),
+      oneTrunk: of("127"),
+      skipStop: of("X05"),
+    };
   });
 
   expect(marks.transfer.routes).toBe(3);
@@ -703,9 +1116,21 @@ test("D2i. a transfer ring where two or more routes call, a local dot where one 
   expect(marks.routeless.radius).toBe(3.5);
   expect(marks.routeless.stroke).toBe(false);
 
-  // And all three are still drawn by the canvas on stationPane, which is the pane the
+  /* AND THE F9 CASE, IN BOTH ITS FORMS. Three ids on one trunk (the 1/2/3 at Times Sq) and
+     two ids on one trunk (the J/Z at Marcy Av) are both LOCALS: they are one line, taking
+     turns or running express, and drawing them as interchanges said something false about the
+     network at 325 of its 496 stations. This is the assertion that dies if the predicate goes
+     back to counting ids, and it is the only one in the suite that can tell the difference. */
+  expect(marks.oneTrunk.routes, "the 1, 2 and 3 are three ids").toBe(3);
+  expect(marks.oneTrunk.stroke, "and one trunk, so a dot").toBe(false);
+  expect(marks.oneTrunk.radius).toBe(3.5);
+  expect(marks.skipStop.routes, "the J and the Z are two ids").toBe(2);
+  expect(marks.skipStop.stroke, "and one line taking turns, so a dot").toBe(false);
+  expect(marks.skipStop.radius).toBe(3.5);
+
+  // And all of them are still drawn by the canvas on stationPane, which is the pane the
   // z-index depends on and the one P2a pins.
-  for (const mark of [marks.transfer, marks.local, marks.routeless]) {
+  for (const mark of [marks.transfer, marks.local, marks.routeless, marks.oneTrunk, marks.skipStop]) {
     expect(mark.rendererPane).toBe("stationPane");
   }
 });
@@ -717,7 +1142,7 @@ test("D2j. station names appear at the right zooms, hubs first, and the Names to
      than as the attribute, so the stylesheet's own selectors are what is being tested; an
      attribute written correctly and a rule that never matched would pass an attribute check
      and show every name in the city at zoom 3. */
-  await open(page, withLocalStation, { stations: 16 });
+  await open(page, withLocalStation, { stations: 18 });
   const painted = () =>
     page.evaluate(() =>
       [...document.querySelectorAll(".leaflet-tooltip")]
@@ -736,11 +1161,22 @@ test("D2j. station names appear at the right zooms, hubs first, and the Names to
 
   await setZoom(12);
   await expect(page.locator("html")).toHaveAttribute("data-label-band", "hubs");
-  expect(await painted(), "at 12 the transfer stations only").toEqual(["Canal St", "Times Sq-42 St"]);
+  // ONE HUB IN THIS WORLD, and it is the only station here with two trunks. Before round 3
+  // this line read ["Canal St", "Times Sq-42 St"], both of which are one line under three or
+  // four ids; counting trunks made them locals and left this assertion with no subject, which
+  // is why X04 exists.
+  expect(await painted(), "at 12 the interchange only").toEqual(["Fulton St"]);
 
   await setZoom(14);
   await expect(page.locator("html")).toHaveAttribute("data-label-band", "all");
-  expect(await painted(), "at 14 every station").toEqual(["Canal St", "Lorimer St", "Nowhere", "Times Sq-42 St"]);
+  expect(await painted(), "at 14 every station").toEqual([
+    "Canal St",
+    "Fulton St",
+    "Lorimer St",
+    "Marcy Av",
+    "Nowhere",
+    "Times Sq-42 St",
+  ]);
 
   // A hub's name is drawn larger, which is the same predicate the ring is.
   // READ AS THREE FACTS RATHER THAN AS ONE className STRING: Leaflet adds and removes its own
@@ -760,8 +1196,10 @@ test("D2j. station names appear at the right zooms, hubs first, and the Names to
       ]),
     ),
   );
-  expect(sizes["Times Sq-42 St"]).toEqual({ size: "11.5px", weight: "700", label: true, hub: true });
+  expect(sizes["Fulton St"]).toEqual({ size: "11.5px", weight: "700", label: true, hub: true });
   expect(sizes["Lorimer St"]).toEqual({ size: "10.5px", weight: "600", label: true, hub: false });
+  // And the F9 pair is drawn as a local name, not a hub's.
+  expect(sizes["Marcy Av"]).toEqual({ size: "10.5px", weight: "600", label: true, hub: false });
 
   // THE NAMES TOGGLE, which overrides the band in one direction only.
   await page.locator("#names-toggle").click();
@@ -774,7 +1212,23 @@ test("D2j. station names appear at the right zooms, hubs first, and the Names to
   await page.locator("#names-toggle").click();
   await expect(page.locator("html")).toHaveAttribute("data-labels", "on");
   await expect(page.locator("#names-toggle")).toHaveAttribute("aria-pressed", "true");
-  expect(await painted()).toEqual(["Canal St", "Times Sq-42 St"]);
+  expect(await painted()).toEqual(["Fulton St"]);
+
+  /* AND IT SAYS SO, which it did not until round 3 (F7). The labels are aria-hidden by
+     design, so this sentence is the only evidence a screen reader gets that the press did
+     anything, and at a zoom where no name can show it is the only thing that stops the button
+     claiming an effect it does not have. */
+  await page.locator("#names-toggle").click();
+  await expect(page.locator("#page-announce")).toHaveText("Station names off.");
+  await page.locator("#names-toggle").click();
+  await expect(page.locator("#page-announce")).toHaveText("Station names on.");
+  await setZoom(11);
+  await page.locator("#names-toggle").click();
+  await page.locator("#names-toggle").click();
+  await expect(page.locator("#page-announce")).toHaveText(
+    "Station names on; none at this zoom, zoom in to see them.",
+  );
+  await setZoom(12);
 
   /* AND THE WHOLE GRID, AGAINST helpers.js's OWN ANSWER.
 
@@ -809,7 +1263,8 @@ test("D2j. station names appear at the right zooms, hubs first, and the Names to
             const el = tip && tip.getElement && tip.getElement();
             if (!el) continue;
             const drawn = getComputedStyle(el).display !== "none";
-            const want = stationLabelShown(z, (entry.routes ?? []).length, on);
+            const hubs = document.querySelectorAll(".stn-label.hub").length;
+          const want = stationLabelShown(z, entry.routes ?? [], on, hubs > 0);
             if (drawn !== want) out.push(`${entry.name}: drawn ${drawn}, oracle says ${want}`);
           }
           return out;

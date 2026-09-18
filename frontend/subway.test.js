@@ -37,11 +37,15 @@ const {
   STATION_TRANSFER_RADIUS,
   STATION_TRANSFER_WEIGHT,
   isTransferStation,
+  stationTrunks,
   stationMarkStyle,
   stationLabelClass,
   LABEL_HUB_ZOOM,
   LABEL_ALL_ZOOM,
   labelZoomBand,
+  LABEL_NO_HUB_ZOOM,
+  namesToggleAnnouncement,
+  namesToggleTitle,
   stationLabelShown,
   markerOpacity,
   STALE_MARKER_OPACITY,
@@ -166,18 +170,18 @@ test("MR2: the focus state's three transitions, and the words each one says", ()
 
 /* ---------------- stations ---------------- */
 
-test("MR2: one route is a local dot and two or more is a transfer ring", () => {
-  assert.equal(isTransferStation(1), false);
-  assert.equal(isTransferStation(2), true);
-  assert.equal(isTransferStation(6), true);
+test("MR2: one trunk is a local dot and two or more is a transfer ring", () => {
+  assert.equal(isTransferStation(["1"]), false);
+  assert.equal(isTransferStation(["1", "A"]), true);
+  assert.equal(isTransferStation(["1", "A", "L", "G", "J", "7"]), true);
 
-  const local = stationMarkStyle(1, INK, PAPER);
+  const local = stationMarkStyle(["1"], INK, PAPER);
   assert.equal(local.radius, STATION_LOCAL_RADIUS);
   assert.equal(local.fillColor, INK);
   assert.equal(local.stroke, false);
   assert.equal(local.weight, 0);
 
-  const transfer = stationMarkStyle(3, INK, PAPER);
+  const transfer = stationMarkStyle(["1", "A", "L"], INK, PAPER);
   assert.equal(transfer.radius, STATION_TRANSFER_RADIUS);
   assert.equal(transfer.fillColor, PAPER);
   assert.equal(transfer.color, INK);
@@ -188,23 +192,50 @@ test("MR2: one route is a local dot and two or more is a transfer ring", () => {
   assert.ok(STATION_TRANSFER_RADIUS > STATION_LOCAL_RADIUS);
 });
 
+test("MR2 F9: a skip-stop pair and a local/express pair are ONE trunk, so they are locals", () => {
+  /* THE MUTATION THIS KILLS is counting route ids instead of trunks, which is what this did
+     until round 3 found it. The J and the Z are one line taking turns at the same platform,
+     and the archive has a Jamaica Avenue station for every pair of them; every ["A","C"] and
+     ["4","5"] stop is the same shape. Counting ids drew all of them as interchanges and, worse,
+     gave them the hub class the zoom-12 band exists to keep sparse. lineColor() already knows
+     which ids are one line, because sharing a colour is what that means. */
+  for (const pair of [["J", "Z"], ["A", "C"], ["A", "C", "E"], ["4", "5"], ["4", "5", "6"], ["N", "Q", "R", "W"]]) {
+    assert.equal(isTransferStation(pair), false, pair.join("/"));
+    assert.equal(stationLabelClass(pair), "stn-label", pair.join("/"));
+    assert.equal(stationMarkStyle(pair, INK, PAPER).stroke, false, pair.join("/"));
+    assert.equal(stationTrunks(pair).size, 1, pair.join("/"));
+  }
+  // A real interchange still is one: two trunks, whatever the id count.
+  for (const real of [["J", "L"], ["A", "1"], ["4", "6", "N"], ["GS", "7"]]) {
+    assert.equal(isTransferStation(real), true, real.join("/"));
+    assert.equal(stationLabelClass(real), "stn-label hub", real.join("/"));
+  }
+  // Two ids lineColor cannot place collapse into one trunk rather than inventing a transfer:
+  // an unknown id must not make a claim about the network.
+  assert.equal(isTransferStation(["ZZ1", "ZZ2"]), false);
+  // Ids off the wire may be numbers.
+  assert.equal(isTransferStation([4, 5]), false);
+  assert.equal(isTransferStation([4, "A"]), true);
+});
+
 test("MR2: a station with no routes is a local dot, which is the direction that matters", () => {
   // THE MUTATION THIS KILLS is "the transfer ring drawn for single-route stations", and
   // this is its quieter twin. The routes field is optional on the stops endpoint. Against
   // the real static archive 171 stations have one route and 325 have two or more and none
   // has zero, so a backend that stopped serving the index would turn all 496 into transfer
   // rings: a claim about the network made out of a missing value.
-  for (const missing of [0, null, undefined]) {
-    assert.equal(isTransferStation(missing), false, String(missing));
-    assert.equal(stationMarkStyle(missing, INK, PAPER).radius, STATION_LOCAL_RADIUS, String(missing));
-    assert.equal(stationMarkStyle(missing, INK, PAPER).stroke, false, String(missing));
+  for (const missing of [[], null, undefined, [""], [null]]) {
+    assert.equal(isTransferStation(missing), false, JSON.stringify(missing));
+    assert.equal(stationMarkStyle(missing, INK, PAPER).radius, STATION_LOCAL_RADIUS, JSON.stringify(missing));
+    assert.equal(stationMarkStyle(missing, INK, PAPER).stroke, false, JSON.stringify(missing));
+    assert.equal(stationLabelClass(missing), "stn-label", JSON.stringify(missing));
   }
 });
 
 test("MR2: the two theme colours are the caller's, so a theme swap is a setStyle", () => {
   // The style function never reaches for a token itself, which is what lets MR4 restyle a
   // canvas layer in place instead of rebuilding 496 of them.
-  const dark = stationMarkStyle(3, "#f3f2f2", "#201e1d");
+  const dark = stationMarkStyle(["1", "A", "L"], "#f3f2f2", "#201e1d");
   assert.equal(dark.color, "#f3f2f2");
   assert.equal(dark.fillColor, "#201e1d");
 });
@@ -212,13 +243,22 @@ test("MR2: the two theme colours are the caller's, so a theme swap is a setStyle
 /* ---------------- labels ---------------- */
 
 test("MR2: a hub label is the same station a transfer ring is", () => {
-  assert.equal(stationLabelClass(1), "stn-label");
-  assert.equal(stationLabelClass(2), "stn-label hub");
-  assert.equal(stationLabelClass(0), "stn-label");
+  assert.equal(stationLabelClass(["1"]), "stn-label");
+  assert.equal(stationLabelClass(["1", "A"]), "stn-label hub");
+  assert.equal(stationLabelClass([]), "stn-label");
   assert.equal(stationLabelClass(undefined), "stn-label");
   // One predicate behind both, so a station cannot draw a ring and label itself local.
-  for (const n of [0, 1, 2, 3, 9]) {
-    assert.equal(stationLabelClass(n).includes("hub"), isTransferStation(n), String(n));
+  for (const routes of [[], ["1"], ["J", "Z"], ["1", "A"], ["1", "A", "L"], ["4", "5", "6", "N", "Q"]]) {
+    assert.equal(
+      stationLabelClass(routes).includes("hub"),
+      isTransferStation(routes),
+      JSON.stringify(routes),
+    );
+    assert.equal(
+      stationMarkStyle(routes, INK, PAPER).stroke,
+      isTransferStation(routes),
+      JSON.stringify(routes),
+    );
   }
 });
 
@@ -237,8 +277,8 @@ test("MR2: the zoom band is none below 12, hubs at 12 and 13, and all from 14", 
 });
 
 test("MR2: one station's name is on screen only when the band, its kind and the toggle agree", () => {
-  const LOCAL = 1;
-  const HUB = 3;
+  const LOCAL = ["1"];
+  const HUB = ["1", "A", "L"];
   // Below the band nothing shows.
   assert.equal(stationLabelShown(11, HUB, true), false);
   assert.equal(stationLabelShown(11, LOCAL, true), false);
@@ -255,6 +295,57 @@ test("MR2: one station's name is on screen only when the band, its kind and the 
       assert.equal(stationLabelShown(zoom, routes, false), false, `${zoom}/${routes}`);
     }
   }
+});
+
+test("MR2 F1: with no hub anywhere the band skips a step and shows every name from 13", () => {
+  /* THE DEGRADED BACKEND STATE, and the reason it is worth a band of its own: stop_times.txt
+     is not a required member of the subway static archive, load_subway_station_routes returns
+     {} on any failure, and the endpoint then serves routes: [] for all 496 stations while the
+     status stays "ready". Every station is a local, no label carries the hub class, and
+     "hubs from 12" correctly reveals nothing at the opening zoom and at the City preset while
+     the Names button reads pressed. The arithmetic was right and the map was blank.
+
+     13 rather than 12, because with no hub to thin the field the collision measurements make
+     12 the worst zoom (89% of painted labels overlapping another); and 13 rather than 14,
+     because a rider should not have to reach 14 to see any name at all. */
+  assert.equal(LABEL_NO_HUB_ZOOM, 13);
+  assert.equal(labelZoomBand(11, false), "none");
+  assert.equal(labelZoomBand(12, false), "none");
+  assert.equal(labelZoomBand(13, false), "all");
+  assert.equal(labelZoomBand(19, false), "all");
+  // The band with hubs is untouched, which is the half that must not have moved.
+  for (const z of [0, 11]) assert.equal(labelZoomBand(z, true), "none", String(z));
+  for (const z of [12, 13]) assert.equal(labelZoomBand(z, true), "hubs", String(z));
+  for (const z of [14, 19]) assert.equal(labelZoomBand(z, true), "all", String(z));
+  // Default is the hub world, so no existing call site changed meaning.
+  for (const z of [11, 12, 13, 14]) assert.equal(labelZoomBand(z), labelZoomBand(z, true), String(z));
+  // A local station's own name shows at 13 in that world and not at 12.
+  assert.equal(stationLabelShown(13, ["1"], true, false), true);
+  assert.equal(stationLabelShown(12, ["1"], true, false), false);
+  // And the toggle still overrides it.
+  assert.equal(stationLabelShown(13, ["1"], false, false), false);
+  // A non-number is still off, whichever world it is.
+  for (const z of [null, undefined, NaN, "13"]) assert.equal(labelZoomBand(z, false), "none", String(z));
+});
+
+test("MR2 F7: the Names toggle says what happened, and says why when there is nothing to show", () => {
+  // It announced NOTHING before round 3, while route focus has announced since this stage was
+  // written. The labels are aria-hidden by design, so this sentence is the only evidence a
+  // screen reader gets that the press did anything at all.
+  assert.equal(namesToggleAnnouncement(false, "all"), "Station names off.");
+  assert.equal(namesToggleAnnouncement(false, "none"), "Station names off.");
+  assert.equal(namesToggleAnnouncement(true, "all"), "Station names on.");
+  assert.equal(namesToggleAnnouncement(true, "hubs"), "Station names on.");
+  // The one state a rider cannot work out from the screen: on, and nothing can show.
+  assert.match(namesToggleAnnouncement(true, "none"), /^Station names on; none at this zoom/);
+
+  // The tooltip carries the other one, which is the degraded backend rather than the zoom.
+  assert.equal(namesToggleTitle(325, 496), "");
+  assert.equal(namesToggleTitle(1, 496), "");
+  assert.match(namesToggleTitle(0, 496), /No station lists the routes that call there/);
+  assert.match(namesToggleTitle(0, 496), /from zoom 13/);
+  // No stations at all is not that state, it is a map that has not loaded yet.
+  assert.equal(namesToggleTitle(0, 0), "");
 });
 
 /* ---------------- the derived key (round 2, G3) ----------------

@@ -446,6 +446,18 @@ function paintSubwayKeyState(model) {
       const bullet = subwayKeyBullets.get(entry.id);
       if (!bullet) continue;
       bullet.setAttribute("aria-disabled", String(!entry.enabled));
+      /* AND THE INLINE CHIP GETS OUT OF THE STYLESHEET'S WAY when the bullet is dark. The
+         enabled chip is the route's own colour, written inline because it comes from the data;
+         an inline style beats a rule, so the grey the disabled state needs (style.css,
+         --chip-off) can only land if these two properties are cleared. Written back when it is
+         live again, which is the half that would otherwise leave a route permanently grey. */
+      if (entry.enabled) {
+        bullet.style.background = group.color;
+        bullet.style.color = readableTextOn(group.color);
+      } else {
+        bullet.style.removeProperty("background");
+        bullet.style.removeProperty("color");
+      }
       bullet.title = entry.title;
       subwayKeyFocusSets.set(entry.id, entry.focus);
     }
@@ -563,22 +575,42 @@ function clearRouteFocus() {
    WRITTEN ON zoomend AND ONCE AT LOAD, because a map that opens at zoom 13 has never fired
    one. Math.round, because getZoom() is fractional mid-flight and data-zoom is a label for
    a settled state. */
+/* DECLARED BEFORE paintZoomBand IS CALLED. A module-scope const is in the temporal dead zone
+   until its own line runs, and this file has already taken the whole page down that way once
+   this stage; paintZoomBand writes this button's title, so the button is looked up first and
+   the first paint happens after the handler below. */
+const namesToggleEl = document.getElementById("names-toggle");
+
 function paintZoomBand() {
   const zoom = Math.round(map.getZoom());
+  /* THE HUB COUNT IS READ OFF THE DOM rather than recomputed: "is there a hub label to
+     reveal" is exactly the question the band is about to be asked, and the labels are the
+     thing that answers it. Zero hubs with labels present is the degraded backend state
+     helpers.js describes at LABEL_NO_HUB_ZOOM, where the band shows every name from 13
+     instead of showing nothing from 12. Before any station has loaded there are no labels
+     either way, so the first paint is unaffected and loadStations calls this again when they
+     arrive. */
+  const labels = document.querySelectorAll(".stn-label").length;
+  const hubs = document.querySelectorAll(".stn-label.hub").length;
   document.documentElement.setAttribute("data-zoom", String(zoom));
-  document.documentElement.setAttribute("data-label-band", labelZoomBand(zoom));
+  document.documentElement.setAttribute("data-label-band", labelZoomBand(zoom, !labels || hubs > 0));
+  if (namesToggleEl) namesToggleEl.title = namesToggleTitle(hubs, labels);
 }
 map.on("zoomend", paintZoomBand);
-paintZoomBand();
 
-const namesToggleEl = document.getElementById("names-toggle");
 if (namesToggleEl) {
   namesToggleEl.addEventListener("click", () => {
     const on = document.documentElement.getAttribute("data-labels") !== "off";
     document.documentElement.setAttribute("data-labels", on ? "off" : "on");
     namesToggleEl.setAttribute("aria-pressed", String(!on));
+    /* AND IT SAYS WHAT HAPPENED, which route focus has done since this stage was written and
+       this control did not. The labels are aria-hidden by design, so for a screen reader this
+       sentence is the ONLY evidence the press did anything; and at a zoom where no name can
+       show, it is the only thing that stops the button claiming an effect it does not have. */
+    announcePage(namesToggleAnnouncement(!on, document.documentElement.getAttribute("data-label-band")));
   });
 }
+paintZoomBand();
 
 /* ----- MR1: the view presets -----------------------------------------------------------
    City, Rail and Region, the design's three centres and zooms, with flyTo at 0.8s (README
@@ -657,11 +689,53 @@ map.on("moveend zoomend", () => {
 });
 paintViewPresets();
 
-// Station dots get their own canvas pane sandwiched between the route lines
-// (overlayPane, 400) and the train/bus markers (markerPane, 600), so the
-// station canvas — not the route-line canvas it overlaps — receives clicks.
+/* ===== THE PANE ORDER, IN ONE PLACE =====================================================
+   Every z-index this map depends on, lowest first. Leaflet owns the ones without a
+   createPane call (frontend/vendor/leaflet/leaflet.css); the three marked OURS are made here.
+
+     200  tilePane            the basemap
+     390  subwayLinePane      OURS. Subway ribbons, and nothing else.
+     400  overlayPane         every other family's route lines, on one shared canvas
+     450  stationPane         OURS. Every family's station dots, on one shared canvas.
+     460  stationLabelPane    OURS. Subway station name labels.
+     500  shadowPane          Leaflet's marker shadows (unused here)
+     600  markerPane          every vehicle: trains, buses, boats, planes
+     650  tooltipPane         Leaflet's default for tooltips; this app puts none here
+     700  popupPane           the popups
+
+   WHY THE SUBWAY'S LINES GOT A PANE OF THEIR OWN (MR2 round 3). Every family passed the same
+   L.canvas to its route lines, and Leaflet's canvas draws its layers in INSERTION order
+   (_initPath appends to _drawLast; _draw walks the list), independently of which LayerGroup
+   they belong to. That was harmless while the subway drew 2.5px hairlines at opacity 0.5. It
+   stopped being harmless when MR2 gave the subway a 6.5px casing in --paper at 0.9: a casing
+   that wide, drawn later, ERASES a thin line beside it. PATH's 33rd St line runs under 6th
+   Avenue at weight 2.5, the AirTrain at Howard Beach is weight 3, the LIRR Atlantic Branch
+   beside the A and C is 2.5. And the order was a race: all eleven static loaders are kicked
+   off together in map.js, /api/subway-routes is by far the largest payload and re-fetches on
+   a warming 503, so in production the ribbons routinely landed last and whether another
+   family's line survived depended on which response arrived first.
+
+   A pane BELOW overlayPane makes the answer the same every time and the right way round: the
+   subway is the base network on this map, so its ribbons go under everything, and no fetch
+   order can change it. Nothing else moves, which is what MR2's pins require.
+
+   Station dots sit between the route lines and the vehicles so the station canvas, not the
+   route-line canvas it overlaps, receives clicks. Station name labels sit just above the
+   dots: a name may cover the dot it names, which is its own station, and may never cover a
+   train. A permanent Leaflet tooltip defaults to tooltipPane at 650, ABOVE the vehicles, and
+   measured from this stage's own committed screenshots that cost a train bullet 44% of its
+   route-coloured pixels, letter and all. */
+map.createPane("subwayLinePane");
+map.getPane("subwayLinePane").style.zIndex = 390;
+
 map.createPane("stationPane");
 map.getPane("stationPane").style.zIndex = 450;
+
+// The label pane, per the order above. Round 2's pass measured the label's BOX against the
+// anchor rather than its painted text, called it a 2x3 pixel corner, and that is how a name
+// painted across a train bullet got through a review that was looking for exactly this.
+map.createPane("stationLabelPane");
+map.getPane("stationLabelPane").style.zIndex = 460;
 
 L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 19,

@@ -111,6 +111,10 @@ main {
      through the cascade and cost nothing. */
   --paper: #f3f2f2;
   --halo: rgba(243, 242, 242, 0.92);
+  /* THE CHIP A DISABLED BULLET WEARS, and its ink, per theme (round 3, F17). Measured:
+     #6b6b6b carries white at 5.33 and reads 4.40 against this theme's --surface. */
+  --chip-off: #6b6b6b;
+  --chip-off-ink: #ffffff;
   --shadow: 0 3px 10px rgba(45, 43, 43, 0.16);
   --live: #00933c;
   --scheduled: #6d6e71;
@@ -140,6 +144,11 @@ main {
   --shadow: 0 3px 10px rgba(0, 0, 0, 0.5);
   --live: #00933c;
   --scheduled: #9a9a9a;
+  /* #b0b0b0 carries dark ink at 8.03 and reads 6.49 against the dark --surface. One grey
+     cannot clear 3:1 against both surfaces, because they sit either side of mid grey, so this
+     is a token per theme rather than one colour computed from the route. */
+  --chip-off: #b0b0b0;
+  --chip-off-ink: #1a1a1a;
 }
 
 /* The map's own backdrop, so a tile gap reads as paper rather than as white in the dark
@@ -341,9 +350,25 @@ body,
   margin-right: auto;
 }
 
+/* THE GAP IS 6px AND THE DESIGN DRAWS 2px, which is a deviation with arithmetic behind it
+   and it is the fix for two round 3 findings at once. Both ring states reach 4px out from a
+   24px chip (focus: offset 2 + width 2; pressed: a surface band at 0-2 and ink at 2-4), so
+   with the drawn 2px gap the outward half of each ring lands INSIDE the neighbouring
+   bullet's border box, and the `z-index: 1` below is precisely what makes it paint there
+   rather than be clipped. Measured against the neighbour's fill instead of --surface,
+   --focus reads 1.10 on the A/C/E blue, 1.08 on J/Z, 1.23 on 1/2/3 and 1.42 on 4/5/6, and
+   --ink reads 2.73, 2.69, and in the dark theme 1.67 on the yellow trunk and 2.52 on the
+   orange: every one under the 3:1 a focus or state indicator owes the colour beside it, and
+   1.10 is the exact number MR1 round 2 recorded as the defect the outside ring was chosen to
+   escape. 6px is the minimum that works: a 2px surface band inside the ring, the ring at
+   2-4px, and 2px of surface outside it before the neighbour begins, so both boundaries are
+   the surface the 5.53 and 13.70 were measured against.
+
+   The drawn 2px was drawn for bullets that were swatches. Making them controls is what put a
+   ring around them, and a ring needs somewhere to be. */
 .bul-group {
   display: flex;
-  gap: 2px;
+  gap: 6px;
 }
 
 /* RULING: THE APP'S OWN SHAPE, NOT THE ROUNDEL. The handoff draws these as 22px circles,
@@ -382,7 +407,9 @@ body,
    found --focus at 1.10 against the one accent fill and answered it with an inset ring in
    --chipink, which works when there is ONE fill. Here there are ten, so no single inset
    colour can clear 3:1 against all of them. Put the ring outside and it is measured against
-   --surface instead, where --focus reads 5.53 light and 4.86 dark. */
+   --surface instead, where --focus reads 5.53 light and 4.86 dark. THAT HOLDS ON ALL FOUR
+   SIDES ONLY BECAUSE .bul-group's gap is 6px; at the design's 2px the ring's left and right
+   segments sit on the neighbour's fill instead, which is the round 3 finding recorded there. */
 .bul:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
@@ -405,19 +432,32 @@ body,
 /* A BULLET THAT CAN LIGHT NOTHING RIGHT NOW. aria-disabled rather than `disabled`, so it
    stays in the accessibility tree and keeps its title, which is the sentence that says why;
    a `disabled` button would vanish from the tree and a rider who cannot see the key would
-   never learn the route exists. The treatment is a fade AND a loss of the pointer cursor,
-   because the fade alone would be state by opacity, which MR1 round 2 ruled out twice. The
-   chip's letter is still the route's own ink on the route's own colour, so it is as legible
-   as any other; what the fade says is "not now", and the title says why. */
+   never learn the route exists.
+
+   THE CHIP GOES GREY AND THE LETTER DOES NOT (round 3, F17). This was
+   `filter: grayscale(0.7); opacity: 0.55` on the whole button, and the comment here claimed
+   the letter was "still the route's own ink on the route's own colour, so it is as legible as
+   any other". Measured over --surface, it was not: the route letter fell to between 2.17 and
+   3.80 against its own chip, from between 5.00 and 9.30. That is a state conveyed by making a
+   route name unreadable, which is exactly the defect MR1 round 2 found in the feed strip's OFF
+   treatment and answered the same way: fade the thing the rider no longer needs to read, and
+   leave at full strength the thing that says why. So the chip carries the state and the letter
+   carries the route, at 5.33 in the light theme and 8.03 in the dark.
+
+   THE COLOURS ARE TOKENS, WHICH MEANS THE BUILDER HAS TO GET OUT OF THE WAY: the enabled chip
+   is an inline background written by systems/shared.js, and an inline style beats a stylesheet,
+   so paintSubwayKeyState clears both inline properties on a disabled bullet and writes them
+   back when it is live again. */
 .bul[aria-disabled="true"] {
-  filter: grayscale(0.7);
-  opacity: 0.55;
+  background: var(--chip-off);
+  color: var(--chip-off-ink);
   cursor: default;
 }
 
 /* THE PRESSED STATE IS A SECOND RING, IN INK, separated from the chip by a ring of surface
    so it reads as a halo rather than as a border on the chip: --ink on --surface is 13.70
-   light and 12.60 dark. It is deliberately not the focus ring's colour, because a rider
+   light and 12.60 dark. Same 6px dependency as the focus ring above, for the same reason and
+   with the same numbers on the other side of it. It is deliberately not the focus ring's colour, because a rider
    tabbing across the key has to be able to tell "this one is focused" from "this one is
    focused AND pressed". */
 .bul[aria-pressed="true"] {
@@ -1482,9 +1522,16 @@ body,
    version was not actually handing the station back; it was leaving between zero and
    one pixel of margin, which any future change to an icon size or an anchor would
    spend without anyone noticing. Aligning the halo's bottom edge to the icon's keeps
-   the full 24px of reach and leaves 4px of clearance instead. The spec asserts the
+   the full 24px of reach and leaves real clearance instead. The spec asserts the
    margin rather than only the anchor pixel, because an assertion on the anchor alone
-   cannot tell these two configurations apart. */
+   cannot tell these two configurations apart.
+
+   THE NUMBER IS (iconAnchor.y - iconSize.y): 3px for the subway and 4px for PATH. It read
+   "4px" for both until MR2 round 3, which is exactly the silent spending this comment
+   warned about happening to it: this stage lifted the subway's anchor from [9,22] to
+   [9,21] and left the sentence behind. layout.spec.js A4c measures the first covered
+   pixel and asserts the number now, rather than probing a fixed three-pixel band that
+   passed with zero slack. */
 .train-marker::before,
 .path-marker::before {
   top: auto;

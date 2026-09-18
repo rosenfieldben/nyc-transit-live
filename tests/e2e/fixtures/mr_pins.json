@@ -511,19 +511,19 @@
    ],
    "subwayStations": [
     {
-     "radius": 4.5,
+     "radius": 3.5,
      "color": "#201e1d",
-     "weight": 2,
-     "fillColor": "#f3f2f2",
+     "weight": 0,
+     "fillColor": "#201e1d",
      "fillOpacity": 1,
      "pane": "overlayPane",
      "opacity": 1
     },
     {
-     "radius": 4.5,
+     "radius": 3.5,
      "color": "#201e1d",
-     "weight": 2,
-     "fillColor": "#f3f2f2",
+     "weight": 0,
+     "fillColor": "#201e1d",
      "fillOpacity": 1,
      "pane": "overlayPane",
      "opacity": 1

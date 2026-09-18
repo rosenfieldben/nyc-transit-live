@@ -188,6 +188,12 @@ staleTreatments.push(() => {
 // renderer keeps ~22k points cheap; lines are decorative, so failures are
 // silent and the map just shows markers without them.
 const lineRenderer = L.canvas({ padding: 0.3 });
+
+/* THE SUBWAY'S RIBBONS DRAW ON THEIR OWN CANVAS, in the pane systems/shared.js creates at
+   z-index 390, below the one every other family shares. The comment at that createPane call
+   is the whole reason: one canvas draws its layers in insertion order, the static fetches
+   land in a race, and a 6.5px paper casing arriving last erases a 2.5px line beside it. */
+const subwayLineRenderer = L.canvas({ padding: 0.3, pane: "subwayLinePane" });
 const routeIndex = new Map(); // route_id -> [{ points, cum }] for interpolation
 
 // Every system's static loader (this one and its siblings in the other system
@@ -268,7 +274,7 @@ function drawRibbons(routes) {
         lineCap: "round",
         lineJoin: "round",
         interactive: false,
-        renderer: lineRenderer,
+        renderer: subwayLineRenderer,
       });
       layer.addTo(routeLinesLayer);
       subwayRibbons.push({ route: routeId, routes: routeSet, part, layer });
@@ -290,6 +296,32 @@ function drawRibbons(routes) {
    reuse and by the stale sweep, so a poll fifteen seconds later re-derives the same product
    rather than erasing the focus, and a train that arrives while a route is focused is drawn
    dim on its first frame rather than at full for a beat. */
+/* AN OFF-FOCUS TRAIN IS ALSO OUT OF REACH (round 3, F4), and this is the operator's ruling
+   rather than a choice made here. Focus keeps multiplying on the freshness contract's own
+   opacity and markerOpacity is untouched, so FOCUS_DIM_TRAIN stays 0.15 and an off-focus
+   stale train still lands at 0.45 * 0.15 = 0.0675. What was wrong was not the number: it was
+   that Leaflet's setOpacity writes nothing but style.opacity, so a marker at 0.0675 was
+   invisible and still took the click at its 24px halo and still announced itself as a train
+   to a screen reader. A mark the map has deliberately pushed into the background must not be
+   the thing a rider's tap lands on, and must not be read out as though it were on offer.
+
+   BOTH ARE REVERSIBLE AND BOTH ARE REMOVED ON CLEAR, which is the half a test has to hold in
+   the other direction: a focus that leaves a marker permanently silent and unclickable would
+   be worse than the dimming it was meant to complete. pointer-events on the element covers
+   the ::before halo too, because that rule sets no pointer-events of its own. */
+function paintSubwayFocusReach(record) {
+  const el = record.marker.getElement();
+  if (!el) return;
+  const off = isOffFocus(currentFocusRoutes(), record.latest?.route_id);
+  if (off) {
+    el.setAttribute("aria-hidden", "true");
+    el.style.pointerEvents = "none";
+    return;
+  }
+  el.removeAttribute("aria-hidden");
+  el.style.pointerEvents = "";
+}
+
 function applySubwayFocus() {
   const focused = currentFocusRoutes();
   for (const ribbon of subwayRibbons) {
@@ -303,6 +335,7 @@ function applySubwayFocus() {
       vehicleMarkerAge("subways", subwaySystemAge(record.latest), record.latest, now),
       subwayFocusBase(record.latest),
     );
+    paintSubwayFocusReach(record);
   }
 }
 
@@ -397,9 +430,11 @@ async function loadStations() {
        (L.canvas({ pane: "stationPane" })), and writing it onto the circleMarker would look
        identical on screen while moving the marker's own pane option off Leaflet's default.
        P2a pins both, which is how that distinction got written down. */
-    const routeCount = (station.routes ?? []).length;
+    /* THE ROUTES THEMSELVES, NOT THEIR COUNT (round 3, F9): a dot or a ring is a question
+       about how many TRUNKS call here, and the J and the Z are one line taking turns. */
+    const stationRoutes = station.routes ?? [];
     const marker = L.circleMarker([station.lat, station.lon], {
-      ...stationMarkStyle(routeCount, ink, paper),
+      ...stationMarkStyle(stationRoutes, ink, paper),
       renderer: stationRenderer,
     });
     /* THE NAME, as a permanent tooltip, and OUT OF THE ACCESSIBILITY TREE.
@@ -423,8 +458,19 @@ async function loadStations() {
       permanent: true,
       direction: "right",
       offset: [7, 0],
-      className: stationLabelClass(routeCount),
+      className: stationLabelClass(stationRoutes),
       interactive: false,
+      // BELOW THE VEHICLES, not above them: the default tooltipPane is 650 and markerPane is
+      // 600, so a name painted over the bullet that identifies a train. shared.js says what
+      // was measured.
+      pane: "stationLabelPane",
+      /* AND AT FULL OPACITY. Leaflet's Tooltip defaults to opacity 0.9 and writes it as an
+         INLINE style in onAdd, which no stylesheet rule can reach, so every name rendered at
+         90% group alpha while a11y.spec.js A1z3 measured the ink at 100% and reported a ratio
+         about 23% better than the drawn one. The .stn-label rule enumerates the other five
+         tooltip defaults it takes back off; this is the sixth, and it has to be an option
+         because it is not a rule. */
+      opacity: 1,
     });
     // Built once and used twice: the popup descriptor below and the A1 station
     // registry both need it, and two copies of a URL template is how the two
@@ -454,6 +500,11 @@ async function loadStations() {
       layer: stationLayer,
     });
   }
+  /* THE BAND IS REPAINTED NOW THE LABELS EXIST. It was painted once at load, when there were
+     no stations and so no way to tell a network with hubs from one whose backend served no
+     routes at all. The band's fallback for the second case (helpers.js, LABEL_NO_HUB_ZOOM)
+     can only be decided once the labels are in the DOM, which is here. */
+  paintZoomBand();
   return true;
 }
 
@@ -536,5 +587,10 @@ function applyTrains(data) {
      rebuilds only when the set of bullets changes and otherwise just repaints their enabled
      state, so this costs a signature comparison per poll rather than a rebuilt toolbar. */
   refreshSubwayKey();
+  /* AND EVERY MARKER'S REACH IS RE-DERIVED, so a train that arrives while a route is focused
+     is out of the tree and out of the way on its first frame rather than after the next press.
+     setIcon replaces the element, which is the other reason this is re-applied rather than
+     written once: a route relabel would otherwise drop both attributes silently. */
+  for (const record of trains.values()) paintSubwayFocusReach(record);
 }
 

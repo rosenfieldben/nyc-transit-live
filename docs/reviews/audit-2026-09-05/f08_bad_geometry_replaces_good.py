@@ -197,6 +197,18 @@ GOOD_STOPS_TXT = csv_text(STOPS_COLS, STOP_ROWS)
 GOOD_TRIPS_TXT = csv_text(TRIPS_COLS, ())
 GOOD_SHAPES_TXT = csv_text(SHAPES_COLS, SHAPE_ROWS)
 
+# stop_times.txt joined _REQUIRED_MEMBERS with the F1 branch (MR2's review finding:
+# the routes-per-station index feeds the transfer ring, the hub label class and the
+# station alerts join, so an archive without it is a reduced archive). Header only, in
+# every archive below, for the same reason trips.txt is: this record is about a
+# shapes.txt that is invalid UTF-8, and every archive here has to be otherwise complete
+# or the validator rejects it for the wrong reason and the record stops measuring what
+# it was taken for. That is exactly what happened when the member was added: the run
+# derailed at phase 2 with "REJECTED missing required member(s): stop_times.txt".
+GOOD_STOP_TIMES_TXT = csv_text(
+    ["trip_id", "stop_id", "arrival_time", "departure_time", "stop_sequence"], ()
+)
+
 # Invalid UTF-8 ONLY in shapes.txt: a lone 0xFF byte inside a latitude field. The
 # header and the row structure are otherwise exactly the good file's.
 BAD_SHAPES_BYTES = (
@@ -226,6 +238,7 @@ ARCHIVE_GOOD = write_zip(
         "stops.txt": GOOD_STOPS_TXT,
         "trips.txt": GOOD_TRIPS_TXT,
         "shapes.txt": GOOD_SHAPES_TXT,
+        "stop_times.txt": GOOD_STOP_TIMES_TXT,
     },
 )
 ARCHIVE_BAD_UTF8 = write_zip(
@@ -234,6 +247,7 @@ ARCHIVE_BAD_UTF8 = write_zip(
         "stops.txt": GOOD_STOPS_TXT,  # byte identical to the good archive's
         "trips.txt": GOOD_TRIPS_TXT,
         "shapes.txt": BAD_SHAPES_BYTES,
+        "stop_times.txt": GOOD_STOP_TIMES_TXT,
     },
 )
 ARCHIVE_EMPTY_SHAPES = write_zip(
@@ -242,6 +256,7 @@ ARCHIVE_EMPTY_SHAPES = write_zip(
         "stops.txt": GOOD_STOPS_TXT,
         "trips.txt": GOOD_TRIPS_TXT,
         "shapes.txt": EMPTY_SHAPES_TXT,
+        "stop_times.txt": GOOD_STOP_TIMES_TXT,
     },
 )
 ARCHIVE_NO_SHAPES = write_zip(
@@ -249,6 +264,7 @@ ARCHIVE_NO_SHAPES = write_zip(
     {
         "stops.txt": GOOD_STOPS_TXT,
         "trips.txt": GOOD_TRIPS_TXT,
+        "stop_times.txt": GOOD_STOP_TIMES_TXT,
     },
 )
 

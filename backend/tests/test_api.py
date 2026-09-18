@@ -2485,6 +2485,91 @@ async def test_subway_static_warmup_loading_to_ready(monkeypatch):
     assert app.state.subway_station_routes == {"101": ["1"]}  # routes-per-station wired (H5)
 
 
+async def test_subway_static_failed_reload_keeps_the_previous_station_routes(monkeypatch):
+    """F1's third part: the last-known-good rule applied to the routes-per-station
+    index. Now that a parse problem in stop_times.txt is a FAILED load rather than an
+    empty index, the thing that must not happen is the failure emptying what the
+    handlers already serve. A reduced archive being rejected is only an improvement if
+    the previous index survives the rejection.
+
+    STRUCTURAL, and that is why it is worth pinning: _warm_subway_static assigns
+    app.state only after the whole attempt succeeds, so a failure cannot half-write. A
+    future refactor that assigned each loader's result as it arrived would still pass
+    every status test above and would wipe the index on the first bad publication."""
+    monkeypatch.setattr(app_module, "STATIC_RETRY_S", 3600)  # park after the first failure
+    previous = {"101": ["1", "2"], "103": ["1"]}
+
+    async def fake_stops():
+        return SUBWAY_STOPS
+
+    def routes_raise():
+        raise RuntimeError("stop_times.txt: Bad CRC-32")
+
+    monkeypatch.setattr(app_module, "load_subway_stops", fake_stops)
+    monkeypatch.setattr(app_module, "load_subway_route_shapes", lambda: [])
+    monkeypatch.setattr(app_module, "load_subway_stations", lambda: SUBWAY_STOPS)
+    monkeypatch.setattr(app_module, "load_subway_station_routes", routes_raise)
+
+    # A process that has already served riders: the group is ready and every field the
+    # handlers read is populated.
+    app = _fake_app(
+        subway_static_status="ready",
+        subway_stops=SUBWAY_STOPS,
+        subway_routes=[{"route": "1", "polylines": []}],
+        subway_stations=SUBWAY_STOPS,
+        subway_station_routes=previous,
+    )
+    task = asyncio.create_task(app_module._warm_subway_static(app))
+    try:
+        for _ in range(200):
+            if app.state.subway_static_status == "failed":
+                break
+            await asyncio.sleep(0.005)
+        assert app.state.subway_static_status == "failed"
+        # THE CLAIM. The index a rider's transfer rings, hub labels and station alerts
+        # are drawn from is exactly what it was.
+        assert app.state.subway_station_routes == previous
+        # And the same for its siblings, which is the rule this one is an instance of.
+        assert app.state.subway_stops == SUBWAY_STOPS
+        assert app.state.subway_stations == SUBWAY_STOPS
+        assert app.state.subway_routes == [{"route": "1", "polylines": []}]
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_subway_static_warmup_fails_when_station_routes_raise(monkeypatch):
+    """The wiring F1 depends on, asserted rather than assumed: a raise from
+    load_subway_station_routes reaches the warmup's `except Exception` and drives the
+    group to "failed". Everything else in this branch (the /healthz code, the monitor's
+    check) hangs off that status, so it is worth one test of its own."""
+    monkeypatch.setattr(app_module, "STATIC_RETRY_S", 3600)
+
+    async def fake_stops():
+        return SUBWAY_STOPS
+
+    def routes_raise():
+        raise RuntimeError("stop_times.txt: Bad CRC-32")
+
+    monkeypatch.setattr(app_module, "load_subway_stops", fake_stops)
+    monkeypatch.setattr(app_module, "load_subway_route_shapes", lambda: [])
+    monkeypatch.setattr(app_module, "load_subway_stations", lambda: SUBWAY_STOPS)
+    monkeypatch.setattr(app_module, "load_subway_station_routes", routes_raise)
+    app = _fake_app(subway_static_status="loading")
+    task = asyncio.create_task(app_module._warm_subway_static(app))
+    try:
+        for _ in range(200):
+            if app.state.subway_static_status == "failed":
+                break
+            await asyncio.sleep(0.005)
+        assert app.state.subway_static_status == "failed"
+        # It never reached ready, so nothing was promoted from the reduced archive.
+        assert getattr(app.state, "subway_station_routes", None) is None
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
 async def test_subway_static_warmup_retries_after_failure(monkeypatch):
     # loading -> failed -> retry -> ready, driven with the retry interval shortened.
     monkeypatch.setattr(app_module, "STATIC_RETRY_S", 0.01)

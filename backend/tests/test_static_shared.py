@@ -748,12 +748,19 @@ EXPECTED_REQUIRED = {
     # with no cache, a required member missing means the system is absent from the
     # map entirely, so the set is not free and is not padded.
     #
-    # The subway wants no trips.txt and no stop_times.txt: both feed only the H5
-    # routes-per-station popup enrichment, which already degrades to an empty index,
-    # and the subway route lines come from the shape_id regex rather than trips.txt.
-    # PATH and ferry DO want stop_times.txt, where it drives advance matching (13d)
-    # and the dock/route alert join (H5) rather than an enrichment.
-    "subway": ("shapes.txt", "stops.txt"),
+    # THE SUBWAY WANTS trips.txt AND stop_times.txt NOW, and this note used to say the
+    # opposite: that both fed only the H5 routes-per-station popup enrichment, which
+    # already degraded to an empty index. Three consumers read that index today and all
+    # three are rider-visible (MR2's transfer ring, MR2's hub label class, F11's station
+    # alerts join), so an archive missing either file is a reduced archive whose
+    # promotion costs a rider three things. MR2's review finding F1 is the
+    # reproduction: with stop_times.txt absent the index came back empty, every station
+    # drew as a local, no name rendered at zooms 12 or 13, and subway_static_status
+    # stayed "ready" with /healthz green. backend/static_data.py's _REQUIRED_MEMBERS
+    # comment carries the argument; this is the declaration it is held to.
+    # PATH and ferry have wanted stop_times.txt all along, where it drives advance
+    # matching (13d) and the dock/route alert join (H5) rather than an enrichment.
+    "subway": ("shapes.txt", "stop_times.txt", "stops.txt", "trips.txt"),
     "railroad": ("routes.txt", "shapes.txt", "stops.txt", "trips.txt"),
     "path": ("routes.txt", "shapes.txt", "stop_times.txt", "stops.txt", "trips.txt"),
     "ferry": ("routes.txt", "shapes.txt", "stop_times.txt", "stops.txt", "trips.txt"),

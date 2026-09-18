@@ -61,20 +61,32 @@ stage.
 | **MR4** | **The other families.** PATH diamonds and lines, ferry dashed routes, dock dots and hulls, AirTrain's gray dashed service, and the bus arrow and dot at the muted hashed hue. The §3.3 dimmed and absent states for each. **Also the dark theme's release**: MR1 built it and hid the toggle, and MR4 is the stage at which every mark on the map has the casing that makes it legal (round 3, R2). | planned |
 | **MR5** | **Popups.** The `.pk/.pt/.kv/.dir/.arr/.fresh/.alert/.xlink` vocabulary, the §4 words routed from `positionQualifier()` and the per-system freshness rather than re-derived, the arrivals qualifier column, and the autopan padding that clears the stage 1 chrome. | planned |
 
-### One backend branch this phase owes, after MR2 merges
+### The backend branch this phase owed, and paid
 
-**`stop_times.txt` should be a required member of the subway static archive**, which is the
-rule `shapes.txt` already gets and the rule PATH and the ferry already apply. Today
-`static_data.py`'s `_REQUIRED_MEMBERS` is `("stops.txt", "shapes.txt")`,
-`load_subway_station_routes` catches every exception and returns `{}`, and the subway warmup
-then reports `ready` with an all-empty index where the railroad warmup beside it gates on a
-non-empty one. Reproduced by execution in MR2 round 3.
+**`stop_times.txt` is a required member of the subway static archive now**, which is the rule
+`shapes.txt` already got and the rule PATH and the ferry already applied. Delivered on
+`claude/subway-static-station-routes`, one backend commit, after MR2 merged.
 
-**Three consumers depend on that index**, which is why it is worth a required member rather
-than a frontend fallback: the transfer ring, the hub label class that the zoom-12 label band is
-built on, and the station alerts matcher. MR2 ships the honest frontend behaviour in the
-meantime (no ring, no hub class, every name from zoom 13, and the Names toggle saying why), and
-that fallback stays useful afterwards for a partial index rather than an absent one.
+**What it was.** `_REQUIRED_MEMBERS` was `("stops.txt", "shapes.txt")`,
+`load_subway_station_routes` caught every exception and returned `{}`, and the subway warmup
+then reported `ready` with an all-empty index while `/healthz` stayed green. **Three consumers
+depend on that index and all three are rider-visible**: the transfer ring, the hub label class
+the zoom-12 band is built on, and the station alerts matcher. Reproduced by execution in MR2
+round 3.
+
+**What it is.** `_REQUIRED_MEMBERS` is `("stops.txt", "shapes.txt", "trips.txt",
+"stop_times.txt")`, so a reduced publication fails the load through `require_members`, the
+group reports `failed`, `HEALTH_SUBWAY_STATIC_FAILED` fires, `/healthz` degrades and the
+monitor's existing `subway-static-failed` check sees it: no new code and no new check, which is
+asserted in the monitor's hermetic tests rather than trusted. `load_subway_station_routes`
+raises instead of swallowing, because a parse problem in a required member is a failed load.
+What stays tolerant is a station with no trips, which is data rather than failure. The
+last-known-good index survives a failed reload, which the warmup already guaranteed
+structurally and a test now pins.
+
+**MR2's frontend fallback stays** and is still worth having: it covers a PARTIAL index, where
+some stations list routes and others do not, which no required member can rule out. The
+backend change covers the absent one.
 
 ---
 
@@ -550,7 +562,7 @@ nothing.
 | **F4** | **Route focus wrote into the freshness contract's channel with a stronger value.** `FOCUS_DIM_TRAIN` 0.15 is below `STALE_MARKER_OPACITY` 0.45, so a live off-focus train draws dimmer than a ten-minute-stale on-focus one, and an off-focus stale train lands at **0.0675** while staying clickable and screen-reader-announced. Leaflet's `setOpacity` writes nothing but `style.opacity`. Corroborated by the app's own convention: `FERRY_DOCKED_OPACITY` is 0.55, deliberately ABOVE the floor. | **The operator's ruling: keep both numbers and take the reach instead.** Focus still multiplies on the contract's own opacity and `markerOpacity` is untouched. While a route is focused every off-focus marker is `aria-hidden` and takes no pointer events, and clearing restores both. `D2v` walks it in both directions including a real click at the marker's centre; `D2w` holds it across a poll and for a train arriving mid-focus, because `setIcon` replaces the element. |
 | **F9** | **`isTransferStation` counted route IDS, so skip-stop and local-express pairs were interchanges.** Marcy Av is J and Z, one line taking turns; every `["A","C"]` and `["4","5"]` stop is the same shape. All of them drew the paper transfer ring and took the `hub` class the zoom-12 band exists to keep sparse. | **The operator's ruling: count TRUNKS**, the groups `lineColor()` already knows, because sharing a colour is what being one line means. `P1f`'s subway station pin moves with it: six lines, both stations, ring to dot, nothing else in any pin. |
 | **F6** | **The 6.5px paper casings shared one canvas with every other family's route lines.** Leaflet's canvas draws in insertion order regardless of LayerGroup, the eleven static loaders start together, and `/api/subway-routes` is the largest payload and re-fetches on a warming 503, so the ribbons routinely landed last and erased PATH's 33rd St line (weight 2.5), the AirTrain at Howard Beach (3) and the LIRR Atlantic Branch (2.5). Whether another family's line survived was a race. | **The operator's ruling: a `subwayLinePane` below `overlayPane`**, so the subway is the base network and no arrival order can change it. The whole pane order is documented in one block where the panes are created, and `D2u` pins it with four families drawn in shuffled insertion order. |
-| **F1** | **Every station name can vanish with a green status.** `stop_times.txt` is not a required member of the subway static archive, `load_subway_station_routes` returns `{}` on any failure, and the endpoint then serves `routes: []` for all 496 stations while `subway_static_status` stays `ready`. Every station is a local, no label carries `hub`, and at the opening zoom 12 and the City preset's 13 nothing renders while the Names button reads pressed. Reproduced by execution against an archive with no `stop_times.txt`. | **Split on the operator's ruling.** The band's arithmetic was right and is not the bug: "hubs from 12" showing no hubs is the correct answer to that data. **This branch keeps the frontend's half**: with no hub anywhere the band shows every name from **13**, one zoom later than the hub band because 12 is the worst zoom the collision measurements found, and one earlier than the all band because a rider should not need 14 to see any name. Plus F7 below. **The backend half is its own branch after MR2 merges**: `stop_times.txt` becomes a required member, the rule PATH and the ferry already apply to `shapes.txt`. Its three consumers are the transfer ring, the hub label class and the station alerts matcher. |
+| **F1** | **Every station name can vanish with a green status.** `stop_times.txt` is not a required member of the subway static archive, `load_subway_station_routes` returns `{}` on any failure, and the endpoint then serves `routes: []` for all 496 stations while `subway_static_status` stays `ready`. Every station is a local, no label carries `hub`, and at the opening zoom 12 and the City preset's 13 nothing renders while the Names button reads pressed. Reproduced by execution against an archive with no `stop_times.txt`. | **Split on the operator's ruling.** The band's arithmetic was right and is not the bug: "hubs from 12" showing no hubs is the correct answer to that data. **This branch keeps the frontend's half**: with no hub anywhere the band shows every name from **13**, one zoom later than the hub band because 12 is the worst zoom the collision measurements found, and one earlier than the all band because a rider should not need 14 to see any name. Plus F7 below. **The backend half is its own branch after MR2 merges**: `stop_times.txt` becomes a required member, the rule PATH and the ferry already apply to `shapes.txt`. Its three consumers are the transfer ring, the hub label class and the station alerts matcher. **FIXED on branch `claude/subway-static-station-routes`**, one backend commit: `trips.txt` and `stop_times.txt` joined `_REQUIRED_MEMBERS`, `load_subway_station_routes` stopped swallowing, and the last-known-good index is held by a test. The section on this phase's backend obligation records what it did. |
 | **F7** | **The Names toggle reported a state it did not have.** Below zoom 12 the band is `none` and two of the three view presets put the map there, so the button flipped `data-labels` with no visible change, no announcement and `aria-pressed="true"` intact. Route focus has announced since this stage was written; this control never did. | **Fixed.** It announces, and carries a tooltip in the one state a rider cannot deduce from the screen. **And writing its spec found a false sentence in the fix**: keyed on the hub count, the tooltip appeared over any hubless network and claimed no station listed its routes above a map where every station did. The band is keyed on hubs (that is what the band asks) and the sentence on the registry (that is what the sentence is about). |
 | **F17** | **The disabled bullet's fade made its route letter unreadable.** `filter: grayscale(0.7); opacity: 0.55` on the whole button took the letter to between **2.17 and 3.80** against its own chip, from between 5.00 and 9.30, and the rule's comment claimed it was "as legible as any other". State conveyed by making a route name unreadable, which MR1 round 2 ruled out twice. | **Fixed the way MR1 round 2 fixed the OFF treatment**: the chip carries the state and the letter carries the route. `--chip-off` per theme, measured at 5.33 light and 8.03 dark, with the chip at 4.40 and 6.49 against its own surface. One grey cannot clear 3:1 against both surfaces, because they sit either side of mid grey, so it is a token per theme. |
 | **F15** | **`layout.spec.js` A4c probed a fixed three-pixel band and this stage had spent the slack.** Lifting `iconAnchor` from `[9,22]` to `[9,21]` moved the halo's bottom edge from 4px above the anchor to 3px, so the probe passed with exactly zero margin while `style.css`'s comment went on stating the measurement as 4px. | **Fixed.** A4c finds the FIRST covered pixel and asserts the number, per system: 3 for the subway, 4 for PATH, both `iconAnchor.y - iconSize.y`. A claim that can go stale loudly instead of quietly. |

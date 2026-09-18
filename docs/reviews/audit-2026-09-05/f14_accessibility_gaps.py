@@ -174,8 +174,24 @@ function makeEl(tag, id) {
   el.insertBefore = (c) => el.appendChild(c);
   el.removeChild = (c) => { el.children = el.children.filter((x) => x !== c); };
   el.remove = () => {};
-  el.querySelector = () => null;
-  el.querySelectorAll = () => [];
+  /* SYNTHESISED, NOT null, which is the philosophy this whole stub already runs on:
+     getElementById below creates an element on demand rather than answering null. The old
+     `() => null` is how this record went red, because MR1's paintFeedStrip does
+     `button.querySelector(".feed-count").textContent = ...` and null became a TypeError at
+     load. Cached per selector so two reads of the same child are the same element, which is
+     what lets a written dataset or textContent be read back. */
+  el._queried = new Map();
+  el.querySelector = (selector) => {
+    const key = String(selector);
+    if (!el._queried.has(key)) {
+      const child = makeEl("div", "");
+      child.className = key.startsWith(".") ? key.slice(1).split(".").join(" ") : "";
+      child.parentElement = el;
+      el._queried.set(key, child);
+    }
+    return el._queried.get(key);
+  };
+  el.querySelectorAll = (selector) => [el.querySelector(selector)];
   el.closest = () => null;
   el.contains = (n) => n === el || el.children.some((c) => c && c.contains && c.contains(n));
   el.getBoundingClientRect = () => ({ x: 0, y: 0, top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 });
@@ -236,6 +252,29 @@ function makeMarker(latlng, options, factory) {
   rec.openPopup = () => { rec._popupOpen = true; rec.fire("popupopen"); return rec; };
   rec.closePopup = () => { rec._popupOpen = false; rec.fire("popupclose"); return rec; };
   rec.setPopupContent = () => rec;
+  /* MR2 binds a permanent tooltip to every subway station: the name label. Without this
+     loadStations threw at the first station and registered NONE of them, which is why two
+     of this record's claims read as changed: picking a station could not pan a map with no
+     stations in it, and the panel search could not match one. The tooltip carries a real
+     element so the aria-hidden the production code sets on tooltipopen has somewhere to
+     land, and the className it is bound with is kept, because the `hub` class in it is what
+     MR2's zoom band reveals. */
+  rec.bindTooltip = (content, options = {}) => {
+    const tipEl = makeEl("div", "");
+    tipEl.className = options.className || "leaflet-tooltip";
+    tipEl.textContent = String(content);
+    rec._tooltip = {
+      options,
+      getElement: () => tipEl,
+      setContent(html) { tipEl.textContent = String(html); },
+    };
+    rec.fire("tooltipopen", { tooltip: rec._tooltip });
+    return rec;
+  };
+  rec.unbindTooltip = () => rec;
+  rec.getTooltip = () => rec._tooltip || null;
+  rec.openTooltip = () => rec;
+  rec.closeTooltip = () => rec;
   rec.setLatLng = (ll) => { rec._latlng = ll; return rec; };
   rec.getLatLng = () => rec._latlng;
   rec.setIcon = (icon) => { rec.options.icon = icon; return rec; };
@@ -274,7 +313,19 @@ const L = {
   circleMarker: (ll, o) => makeMarker(ll, o, "L.circleMarker"),
   polyline: () => ({ addTo() { return this; }, setStyle() { return this; }, getLatLngs: () => [] }),
   tileLayer: () => ({ addTo() { return this; } }),
+  // MR1 restyled Leaflet's zoom control and systems/shared.js constructs it at module
+  // scope, so without this the whole file threw at load and every claim below became
+  // unreachable: that is how this record went red. Namespaced members are their own
+  // objects rather than one permissive proxy, so a member this stub does not model still
+  // fails by name.
+  control: {
+    zoom: () => ({ addTo() { return this; } }),
+    attribution: () => ({ addTo() { return this; } }),
+    scale: () => ({ addTo() { return this; } }),
+  },
+  Util: { stamp: (obj) => (obj.__stamp ??= ++stampSeq) },
 };
+let stampSeq = 0;
 
 /* ---- stub network: three committed-fixture endpoints, everything else hangs ---- */
 const responders = new Map();
@@ -670,8 +721,16 @@ def main() -> int:
 
     check(poll == 15000 and alert_poll == 60000,
           f"poll cadence changed: {poll} ms map, {alert_poll} ms alerts", "a")
-    check(len(one_second_timers) == 2,
-          f"expected 2 one-second countdown tickers with a station open, saw {len(one_second_timers)}", "a")
+    # THREE, AND IT WAS TWO WHEN THIS RECORD WAS TAKEN. MR1 added the header's blinking
+    # clock (systems/shared.js, `setInterval(tickClock, 1000)`), so with a station open the
+    # one-second tickers are now that clock plus the two countdown repainters this record
+    # was measuring, renderStationDetail and renderStation. The CLAIM is unaffected: none of
+    # the three can be stopped by any control, which is what (a) says, and every other check
+    # for (a) still holds. What moved is the count, so the count moves here, named.
+    check(len(one_second_timers) == 3,
+          f"expected 3 one-second tickers with a station open (MR1's clock plus the two "
+          f"countdown repainters), saw {len(one_second_timers)}: "
+          f"{[t['label'] for t in one_second_timers]}", "a")
     check(not pause_controls, "a pause/stop/resume control now exists in index.html", "a")
     check(not pause_api, f"a pause/resume API now exists in the frontend: {pause_api}", "a")
     check(15000 in survivors and 60000 in survivors,
@@ -693,7 +752,19 @@ def main() -> int:
     for hit in moves:
         print(f"      {hit}")
     custom_controls = source_hits(r"L\.control\b|L\.Control\b", FRONTEND)
-    print(f"  custom Leaflet controls the app adds                : {len(custom_controls)}")
+    # MR1 CONSTRUCTS LEAFLET'S OWN ZOOM CONTROL EXPLICITLY, to move it to the bottom right.
+    # That is a reposition of a control this record already accounts for in the prose below
+    # ("Leaflet's own default zoom control is present ... it zooms rather than pans"), not a
+    # new control and not a pan control. The guard below is about a control that could PAN,
+    # so it is narrowed to the controls that are not that zoom rather than tripping on any
+    # use of L.control at all. A genuine pan control still fails it, by name.
+    zoom_reposition = [hit for hit in custom_controls if "L.control.zoom(" in hit]
+    other_controls = [hit for hit in custom_controls if "L.control.zoom(" not in hit]
+    print(f"  custom Leaflet controls the app adds                : {len(custom_controls)}"
+          f" ({len(zoom_reposition)} repositioning Leaflet's own zoom control,"
+          f" {len(other_controls)} other)")
+    for hit in zoom_reposition:
+        print(f"      {hit}")
     print(f"  map movements caused by picking a station in the panel: "
           f"{len(data['movesFromStationSelect'])} "
           f"({', '.join(m['how'] for m in data['movesFromStationSelect']) or 'none'})")
@@ -706,7 +777,9 @@ def main() -> int:
     doc_drag = "Panning the map is drag-only" in access
     print(f"  ACCESSIBILITY.md states the gap and names 2.5.7     : {doc_drag and doc_257}")
     check(not pan_controls, "a pan control now exists in index.html", "b")
-    check(not custom_controls, f"the app now adds custom Leaflet controls: {custom_controls}", "b")
+    check(not other_controls,
+          f"the app now adds a custom Leaflet control that is not the repositioned zoom, "
+          f"which could be a pan control: {other_controls}", "b")
     check(len(data["movesFromStationSelect"]) >= 1,
           "selecting a station no longer pans the map (the partial pointer path is gone)", "b")
     check(doc_drag and doc_257, "ACCESSIBILITY.md no longer documents the dragging gap", "b")

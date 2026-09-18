@@ -168,6 +168,55 @@ function fixtureRowCount(stopId) {
 
 /* ------------------------------------------------------------------ DOM stub */
 
+/* A MINIMAL SELECTOR MATCHER OVER THE TREE THE PRODUCTION CODE BUILDS, and it throws on a
+   form it does not implement. Answering null for every selector is what this stub used to
+   do, and it is how this record went red: MR1's paintFeedStrip does
+   `button.querySelector(".feed-count").textContent = ...`, so null became a TypeError at
+   load and every arm below became unreachable. A stub that cannot tell "no match" from "I
+   do not implement this" is not answering the question.
+
+   There is no parsed HTML here, which is fine: the elements this searches are the ones
+   buildFeedStrip created and appended itself, so the tree under test is the real one.
+   BOTH class channels are read, because the production code uses both: `el.className = ...`
+   on creation and `classList.add` later. */
+const SELECTOR_FORM = /^(?:#[\w-]+|(?:\.[\w-]+)+|[a-zA-Z][\w-]*)$/;
+
+function stubClasses(el) {
+  return new Set([
+    ...String(el.className ?? "").split(/\s+/).filter(Boolean),
+    ...(el.classList?._s ?? []),
+  ]);
+}
+
+function stubMatches(el, selector) {
+  const sel = String(selector).trim();
+  if (!SELECTOR_FORM.test(sel)) {
+    throw new Error(
+      `audit DOM stub: unimplemented selector ${JSON.stringify(sel)}. It supports #id, ` +
+        `.class, .class.class and a bare tag. Teach it the new form rather than letting it ` +
+        `answer null, which is how this record went red once already.`,
+    );
+  }
+  if (sel.startsWith("#")) return el.id === sel.slice(1);
+  if (sel.startsWith(".")) {
+    const have = stubClasses(el);
+    return sel.slice(1).split(".").every((cls) => have.has(cls));
+  }
+  return String(el.tagName ?? "").toUpperCase() === sel.toUpperCase();
+}
+
+function stubQuery(root, selector) {
+  const out = [];
+  const walk = (el) => {
+    for (const child of el.children ?? []) {
+      if (child && stubMatches(child, selector)) out.push(child);
+      if (child) walk(child);
+    }
+  };
+  walk(root);
+  return out;
+}
+
 function makeEl(id) {
   const el = {
     id,
@@ -177,7 +226,15 @@ function makeEl(id) {
     className: "",
     innerHTML: "",
     value: "",
-    style: {},
+    // setProperty and removeProperty because MR1's chrome writes custom properties on
+    // elements (the measured heights it republishes), not only named style fields.
+    style: {
+      setProperty(name, value) { this[name] = value; },
+      removeProperty(name) { delete this[name]; },
+      getPropertyValue(name) { return this[name] ?? ""; },
+    },
+    // MR1's feed strip writes a dot's state through dataset, so the stub has to carry one.
+    dataset: {},
     children: [],
     parentElement: null,
     classList: {
@@ -195,8 +252,8 @@ function makeEl(id) {
     focus() {},
     click() {},
     closest() { return null; },
-    querySelector() { return null; },
-    querySelectorAll() { return []; },
+    querySelector(selector) { return stubQuery(el, selector)[0] ?? null; },
+    querySelectorAll(selector) { return stubQuery(el, selector); },
     contains() { return false; },
     remove() {},
     appendChild(child) { this.children.push(child); child.parentElement = this; return child; },
@@ -226,27 +283,61 @@ function makeDocument() {
     createTextNode(t) { const el = makeEl(null); el.tagName = "#text"; el.textContent = t; return el; },
     addEventListener() {},
     removeEventListener() {},
-    querySelector() { return null; },
-    querySelectorAll() { return []; },
+    querySelector(selector) {
+      for (const el of byId.values()) if (stubMatches(el, selector)) return el;
+      for (const el of byId.values()) {
+        const hit = stubQuery(el, selector)[0];
+        if (hit) return hit;
+      }
+      return null;
+    },
+    querySelectorAll(selector) {
+      const out = [];
+      for (const el of byId.values()) {
+        if (stubMatches(el, selector)) out.push(el);
+        out.push(...stubQuery(el, selector));
+      }
+      return out;
+    },
   };
 }
 
 /* -------------------------------------------------------------- Leaflet stub */
 
-// Every L.* member is a recorder that returns the same chainable node, which is all
-// shared.js and buses.js need at load. Calls are recorded so arm 4 can count polylines.
+/* Every L.* member is a recorder that returns the same chainable node, which is all
+   shared.js and buses.js need at load. Calls are recorded so arm 4 can count polylines.
+
+   RECORDERS NEST NOW, and that is what repaired this record. The first version returned a
+   plain function for `L.anything`, so a one-level member worked and a NAMESPACED one did
+   not: MR1's restyled zoom control calls `L.control.zoom(...)`, `.zoom` on a bare function
+   is undefined, and the whole of shared.js threw at load with "L.control.zoom is not a
+   function" before arm 1 could run. Each recorder is itself proxied now, so any depth of
+   namespace answers (`L.control.zoom`, `L.Util.stamp`) without this stub having to enumerate
+   Leaflet's surface, which is the property that kept it small in the first place.
+
+   THE RECORDED NAME IS THE FULL PATH, so arm 4's `c.method === "polyline"` still counts
+   exactly what it counted: a top-level call records its own name, unchanged. */
 function leafletStub() {
   const calls = [];
+  const chain = (method) => {
+    const recorder = (...args) => {
+      calls.push({ method, args });
+      return node;
+    };
+    return new Proxy(recorder, {
+      get(target, prop) {
+        if (typeof prop === "symbol" || prop in target) return target[prop];
+        return chain(`${method}.${String(prop)}`);
+      },
+    });
+  };
   const node = new Proxy(
     { __leaflet: true, calls },
     {
       get(target, prop) {
         if (prop in target) return target[prop];
         if (typeof prop === "symbol") return undefined;
-        return (...args) => {
-          calls.push({ method: String(prop), args });
-          return node;
-        };
+        return chain(String(prop));
       },
       set(target, prop, value) { target[prop] = value; return true; },
     },

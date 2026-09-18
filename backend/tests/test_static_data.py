@@ -15,6 +15,7 @@ import httpx
 import pytest
 
 import static_data
+import static_shared
 
 pytestmark = pytest.mark.anyio
 
@@ -77,10 +78,16 @@ def write_gtfs_zip(path, stop_rows=STOP_ROWS, shape_rows=None, members=None):
 def write_loadable_gtfs_zip(path, stop_rows=STOP_ROWS, shape_rows=()):
     """Write a zip that passes validate_subway_archive (C5 seam).
 
-    The validator requires trips.txt and shapes.txt to be PRESENT (the subway load
-    reads both), so every archive a cache-lifecycle test hands the loader carries
-    them. Header-only is enough and keeps each test's subject unchanged: an empty
-    shapes.txt yields the same [] route lines a missing one used to.
+    The validator requires stops.txt, shapes.txt, trips.txt AND stop_times.txt to be
+    PRESENT, so every archive a cache-lifecycle test hands the loader carries all four.
+    Header-only is enough for three of them and keeps each test's subject unchanged: an
+    empty shapes.txt yields the same [] route lines a missing one used to, and an empty
+    stop_times.txt yields the same {} routes-per-station index.
+
+    THE LAST TWO ARE NEW AS OF THE F1 BRANCH. This docstring claimed trips.txt was
+    required for a while when it was not, which is its own small lesson about a comment
+    outliving the tuple it describes; both are genuinely required now and
+    backend/static_data.py's _REQUIRED_MEMBERS says why.
     """
     write_gtfs_zip(
         path,
@@ -88,6 +95,7 @@ def write_loadable_gtfs_zip(path, stop_rows=STOP_ROWS, shape_rows=()):
             "stops.txt": csv_text(STOPS_COLS, stop_rows),
             "trips.txt": csv_text(TRIPS_COLS, ()),
             "shapes.txt": csv_text(SHAPES_COLS, shape_rows),
+            "stop_times.txt": csv_text(STOP_TIMES_COLS, ()),
         },
     )
 
@@ -342,13 +350,187 @@ def test_load_subway_station_routes_end_to_end(gtfs_zip):
     assert idx == {"101": ["1", "2"], "103": ["1"]}
 
 
-def test_load_subway_station_routes_missing_tables_returns_empty(gtfs_zip):
-    # A zip without trips/stop_times (route lines and markers can still load) must
-    # yield an empty index, not raise: the routes are popup enrichment only.
+# ---------------- F1: the index is required, so its tables are too ----------------
+#
+# THE FINDING, in one sentence: stop_times.txt was not a required member, this loader
+# swallowed every exception and returned {}, and /api/subway-stations then served
+# routes: [] for all 496 stations while subway_static_status stayed "ready" and
+# /healthz stayed green. Three consumers read that index and all three are
+# rider-visible (the transfer ring, the hub label class, the station alerts join), so
+# the reduced archive was promoted and the operator surface said nothing.
+#
+# The two tests below used to assert the swallowing, one for a missing table and one
+# for a corrupt zip. They now assert the opposite, which is the whole change: these are
+# the same two inputs, with the answer reversed on purpose rather than deleted, so the
+# reversal is legible in the diff.
+
+
+def test_load_subway_station_routes_raises_on_missing_tables(gtfs_zip):
+    # A zip without trips/stop_times cannot produce the index, and returning {} made
+    # that indistinguishable from a network where nothing calls anywhere. It raises
+    # now, and validate_subway_archive rejects such an archive before the loader is
+    # reached at all (the test below).
     write_gtfs_zip(gtfs_zip)  # default: stops.txt only, no trips/stop_times
-    assert static_data.load_subway_station_routes() == {}
+    with pytest.raises(Exception):
+        static_data.load_subway_station_routes()
 
 
-def test_load_subway_station_routes_bad_zip_returns_empty(gtfs_zip):
+def test_load_subway_station_routes_raises_on_bad_zip(gtfs_zip):
     gtfs_zip.write_bytes(b"corrupt")
+    with pytest.raises(Exception):
+        static_data.load_subway_station_routes()
+
+
+def test_load_subway_station_routes_raises_on_corrupt_stop_times(gtfs_zip):
+    """A stop_times.txt that is present and unreadable. This is the case a required
+    member set alone does NOT cover: the archive is structurally complete, so
+    validate_subway_archive passes it, and only the loader refusing to swallow turns
+    it into a failed load. It is the mutation target for the removed except clause."""
+    body = csv_text(STOP_TIMES_COLS, [{"trip_id": "t1", "stop_id": "101N", "stop_sequence": "1"}])
+    with zipfile.ZipFile(gtfs_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("stops.txt", csv_text(STOPS_COLS, ROUTE_STOP_ROWS))
+        zf.writestr("shapes.txt", csv_text(SHAPES_COLS, ()))
+        zf.writestr("trips.txt", csv_text(TRIPS_COLS, [{"route_id": "1", "trip_id": "t1"}]))
+        zf.writestr("stop_times.txt", body)
+    # Corrupt stop_times.txt's DEFLATE payload in place. Its stored CRC and its bytes
+    # then disagree, so opening the archive and listing it still work and only READING
+    # that member raises. A garbled CSV ROW would not do: the parser skips those by
+    # design, and that tolerance is deliberately kept.
+    #
+    # LOCATED THROUGH header_offset, not by searching for the name. The filename
+    # appears twice, in the local header and again in the central directory, and a
+    # first draft of this test flipped a byte after the LAST occurrence, which
+    # corrupted the central directory and made the whole archive unopenable. That
+    # version passed for the wrong reason, which is exactly what the premise assertion
+    # below is here to catch.
+    raw = bytearray(gtfs_zip.read_bytes())
+    with zipfile.ZipFile(gtfs_zip) as zf:
+        offset = zf.getinfo("stop_times.txt").header_offset
+    name_len = int.from_bytes(raw[offset + 26 : offset + 28], "little")
+    extra_len = int.from_bytes(raw[offset + 28 : offset + 30], "little")
+    payload = offset + 30 + name_len + extra_len
+    raw[payload] ^= 0xFF
+    gtfs_zip.write_bytes(bytes(raw))
+
+    # THE PREMISE, asserted rather than assumed: this archive is structurally complete,
+    # so require_members passes it. That is what makes this the case only the loader's
+    # own refusal to swallow can catch, and what makes it the mutation target for the
+    # deleted except clause. Without this assertion the test could be passing because
+    # the zip had become unopenable, which the bad-zip test above already covers.
+    with zipfile.ZipFile(gtfs_zip) as zf:
+        assert set(zf.namelist()) == {"stops.txt", "shapes.txt", "trips.txt", "stop_times.txt"}
+        static_data.validate_subway_archive(zf)  # raises if the premise is wrong
+
+    with pytest.raises(Exception):
+        static_data.load_subway_station_routes()
+
+
+@pytest.mark.parametrize("missing", ["stop_times.txt", "trips.txt"])
+def test_validate_rejects_an_archive_without_the_station_routes_tables(gtfs_zip, missing):
+    """F1's reproduction, pinned. A publication missing either table must fail the
+    load through require_members, exactly as PATH and the ferry already do, so the
+    group reaches "failed" rather than "ready" with an empty index."""
+    members = {
+        "stops.txt": csv_text(STOPS_COLS, ROUTE_STOP_ROWS),
+        "shapes.txt": csv_text(SHAPES_COLS, ()),
+        "trips.txt": csv_text(TRIPS_COLS, ()),
+        "stop_times.txt": csv_text(STOP_TIMES_COLS, ()),
+    }
+    del members[missing]
+    write_gtfs_zip(gtfs_zip, members=members)
+    with zipfile.ZipFile(gtfs_zip) as zf:
+        with pytest.raises(static_data.StaticValidationError) as err:
+            static_data.validate_subway_archive(zf)
+    # Named, because the operator reads this string off /api/status as
+    # last_download_error and "invalid archive" alone would not say which file.
+    assert missing in str(err.value)
+
+
+@pytest.mark.parametrize("missing", ["stop_times.txt", "trips.txt"])
+async def test_a_reduced_publication_fails_the_load_rather_than_serving_an_empty_index(
+    gtfs_zip, monkeypatch, missing
+):
+    """F1 END TO END at the loader, which is the scenario as it would actually arrive:
+    the MTA publishes an archive without the table, so the cached copy is rejected AND
+    the redownload of the same publication is rejected too, and the load raises. The
+    warmup turns that into subway_static_status "failed", HEALTH_SUBWAY_STATIC_FAILED,
+    a degraded /healthz, and the monitor's existing subway-static check.
+
+    BOTH ENDS MATTER. Rejecting the cache alone would only mean "treating as absent"
+    and a redownload; it is the second rejection that makes it a failure rather than a
+    slow path to the same reduced archive."""
+    members = {
+        "stops.txt": csv_text(STOPS_COLS, ROUTE_STOP_ROWS),
+        "shapes.txt": csv_text(SHAPES_COLS, ()),
+        "trips.txt": csv_text(TRIPS_COLS, ()),
+        "stop_times.txt": csv_text(STOP_TIMES_COLS, ()),
+    }
+    del members[missing]
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, content in members.items():
+            zf.writestr(name, content)
+    reduced = buf.getvalue()
+
+    downloads = []
+
+    # INJECTED AT THE TRANSFER, not at _download_zip, and that distinction is the
+    # test. A first draft stubbed _download_zip to write the reduced archive straight
+    # to the cache path, which bypassed staged_fetch entirely: the archive was promoted
+    # unvalidated, stops.txt parsed fine, and the load returned happily. That draft
+    # would have passed with _REQUIRED_MEMBERS reverted, because nothing in it ever ran
+    # the validator on the download. The real chain is staged_fetch validating the
+    # STAGED bytes and refusing to promote them, so the real chain is what runs here.
+    real_staged_fetch = static_shared.staged_fetch
+
+    async def publishes(url, dest, validate, **kwargs):
+        async def transfer(u, stage, deadline_s):
+            downloads.append(1)
+            stage.write_bytes(reduced)
+
+        await real_staged_fetch(url, dest, validate, **kwargs, download=transfer)
+
+    monkeypatch.setattr(static_data, "staged_fetch", publishes)
+    write_gtfs_zip(gtfs_zip, members=members)  # the cache is the reduced archive too
+
+    with pytest.raises(static_data.StaticValidationError) as err:
+        await static_data.load_subway_stops()
+    assert missing in str(err.value)
+    assert downloads == [1], "the rejected cache must be re-downloaded exactly once"
+    # The cache is untouched by the rejection, which is the last-known-good rule at the
+    # archive level: staged_fetch deletes the stage and leaves dest alone.
+    assert gtfs_zip.exists()
+
+
+def test_a_station_with_no_trips_is_still_tolerated(gtfs_zip):
+    """The line between an archive this loader cannot read and an archive that says
+    nothing calls at a stop. The second is data: the index simply has no entry for
+    that station, and every consumer reads that as no routes. Only the first is a
+    failed load, which is what keeps this change from turning a quiet night into an
+    outage."""
+    write_gtfs_zip(
+        gtfs_zip,
+        members={
+            "stops.txt": csv_text(STOPS_COLS, ROUTE_STOP_ROWS),
+            "shapes.txt": csv_text(SHAPES_COLS, ()),
+            "trips.txt": csv_text(TRIPS_COLS, [{"route_id": "1", "trip_id": "t1"}]),
+            # t1 calls at 101N only, so 103 is a station with no trips.
+            "stop_times.txt": csv_text(
+                STOP_TIMES_COLS, [{"trip_id": "t1", "stop_id": "101N", "stop_sequence": "1"}]
+            ),
+        },
+    )
+    assert static_data.load_subway_station_routes() == {"101": ["1"]}
+    # An archive with headers and no trip rows at all is the same kind of quiet, and
+    # is still a load rather than a failure.
+    write_gtfs_zip(
+        gtfs_zip,
+        members={
+            "stops.txt": csv_text(STOPS_COLS, ROUTE_STOP_ROWS),
+            "shapes.txt": csv_text(SHAPES_COLS, ()),
+            "trips.txt": csv_text(TRIPS_COLS, ()),
+            "stop_times.txt": csv_text(STOP_TIMES_COLS, ()),
+        },
+    )
     assert static_data.load_subway_station_routes() == {}

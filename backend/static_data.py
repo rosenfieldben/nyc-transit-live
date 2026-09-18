@@ -48,17 +48,37 @@ MAX_AGE_DAYS = 30
 # stops.txt places every marker and every train. shapes.txt draws every subway
 # route line.
 #
-# trips.txt and stop_times.txt are deliberately NOT here even though the subway
-# reads both. Their only subway consumer is load_subway_station_routes (the H5
-# routes-per-station popup enrichment), which already swallows any problem and
-# returns an empty index, and the map is fully functional without it: the route
-# lines come from the shape_id regex, not from trips.txt. An earlier version of
-# this list required trips.txt while excluding stop_times.txt on exactly the
-# "it only feeds enrichment" grounds that apply to both, which was inconsistent;
-# the visible-loss rule above is the one that actually distinguishes them. PATH
-# and ferry DO require stop_times.txt, because there it drives advance matching
-# and the dock/route alert join (13d, H5) rather than an enrichment.
-_REQUIRED_MEMBERS = ("stops.txt", "shapes.txt")
+# trips.txt AND stop_times.txt ARE HERE NOW, and this comment used to argue the
+# opposite. It said their only subway consumer was load_subway_station_routes, "the
+# H5 routes-per-station popup enrichment, which already swallows any problem and
+# returns an empty index", and that the map was fully functional without it. That was
+# true when it was written. It stopped being true twice over, and the rule that
+# distinguishes these members is the visible-loss rule above, not the age of the
+# sentence below it.
+#
+# THREE CONSUMERS READ THAT INDEX TODAY, and losing it is visible in all three:
+#
+#   1. The transfer ring. MR2 draws a station as a paper ring when two or more
+#      TRUNKS call there and a filled dot when one does, from station.routes. With
+#      an empty index every one of the 496 stations is a dot, so the map stops
+#      saying which stations are interchanges.
+#   2. The hub label class. The same predicate gives a station's name label its
+#      `hub` class, and the zoom band reveals only hub labels at zooms 12 and 13.
+#      With an empty index no label carries it, so NO station name renders at the
+#      opening zoom or at the City preset while the Names control reads pressed.
+#   3. The station alerts join (F11). A route-scoped service alert reaches a station
+#      through its routes, so an empty index means a station with a live alert on
+#      every route serving it shows none of them.
+#
+# So an archive without either file is a reduced archive whose promotion costs a
+# rider three things, which is exactly the case the rule says to keep the
+# last-known-good for instead. MR2's review finding F1 is the reproduction: with
+# stop_times.txt absent the loader returned {}, /api/subway-stations served
+# routes: [] for all 496 stations, and subway_static_status stayed "ready" with
+# /healthz green, so the operator surface said nothing at all. PATH and ferry have
+# required stop_times.txt all along, for the same kind of reason (advance matching
+# and the dock/route alert join, 13d and H5); the subway is the one that was behind.
+_REQUIRED_MEMBERS = ("stops.txt", "shapes.txt", "trips.txt", "stop_times.txt")
 
 
 def validate_subway_archive(zf: zipfile.ZipFile) -> None:
@@ -366,18 +386,26 @@ def load_subway_station_routes() -> dict[str, list[str]]:
     """Routes-per-station index (parent station_id -> [route_id]) from the cached
     static GTFS, joining stop_times -> trips -> route_id and folding platforms up
     to parents. Assumes the zip exists (call after load_subway_stops ensured it).
-    Purely enriches station popups with the routes that serve a stop, so a
-    route-scoped service alert reaches the station even when no train is imminent
-    there; any parse problem logs and returns {} rather than raising, exactly
-    like the decorative route-line and station-marker loaders."""
-    try:
-        with zipfile.ZipFile(SUBWAY_GTFS_ZIP) as zf:
-            trip_routes = _parse_trip_routes(zf)
-            trip_stops = _parse_trip_stops(zf)
-            child_to_parent = _parse_child_to_parent(zf)
-        index = derive_subway_station_routes(trip_routes, trip_stops, child_to_parent)
-        logger.info("Loaded subway routes-per-station index (%d stations)", len(index))
-        return index
-    except Exception as exc:
-        logger.warning("Could not load subway station routes (%s); station popups omit routes", exc)
-        return {}
+
+    RAISES rather than returning {} on a parse problem, and that reverses what this
+    function used to do. It caught every exception, logged a warning and returned an
+    empty index, on the grounds that the routes were popup enrichment and the map was
+    fully functional without them. Three consumers read the index now, all
+    rider-visible (the transfer ring, the hub label class, the station alerts join),
+    and _REQUIRED_MEMBERS above names them: the files this reads are required members,
+    so a problem parsing one is a failed load of the archive, not a warning. The
+    warmup's `except Exception` catches it, the subway static group reports "failed",
+    /healthz degrades, and the last-known-good index stays in app.state.
+
+    WHAT IS STILL TOLERATED is a station with no trips serving it, which is data
+    rather than failure: derive_subway_station_routes simply yields no entry for it,
+    and a station absent from the index reads as no routes at every consumer. The
+    difference is between an archive this loader cannot read and an archive that says
+    nothing calls at a stop."""
+    with zipfile.ZipFile(SUBWAY_GTFS_ZIP) as zf:
+        trip_routes = _parse_trip_routes(zf)
+        trip_stops = _parse_trip_stops(zf)
+        child_to_parent = _parse_child_to_parent(zf)
+    index = derive_subway_station_routes(trip_routes, trip_stops, child_to_parent)
+    logger.info("Loaded subway routes-per-station index (%d stations)", len(index))
+    return index

@@ -3143,6 +3143,32 @@ def test_every_degraded_code_fails_the_run(code):
     assert code in health.detail
 
 
+def test_a_failed_subway_static_group_fails_the_monitor_without_a_new_check():
+    """F1's operator end, asserted rather than trusted. The branch that made
+    trips.txt and stop_times.txt required members added no monitor code at all: it
+    relies on the chain subway_static_status "failed" -> HEALTH_SUBWAY_STATIC_FAILED in
+    /healthz degraded -> this check. Each link is held elsewhere (the status half in
+    test_api's healthz code tests, the code-to-tuple half by the equality assertion
+    above), and this is the link from the code to a nonzero exit, named for the case
+    rather than generated from the tuple.
+
+    WORTH ITS OWN TEST EVEN THOUGH test_every_degraded_code_fails_the_run is
+    parametrized over the same tuple: that test proves every listed code fails the run,
+    which is a property of the list. This one says the state F1 introduced is ON the
+    list and reaches the operator, which is the claim "no new code, no new check"
+    actually rests on. Delete subway-static-failed from PRODUCTION_HEALTH_CODES and the
+    parametrized test simply stops generating a case for it, silently; this one fails."""
+    assert "subway-static-failed" in cm.PRODUCTION_HEALTH_CODES
+    fetch = _healthy_prod(health=_healthz_json(status="fail", degraded=["subway-static-failed"]))
+    results = cm.check_production(fetch, NO_SLEEP, 1000.0, _PROD_BASE)
+    health = next(r for r in results if r.name == "production:healthz")
+    assert health.status == cm.FAIL
+    assert "subway-static-failed" in health.detail
+    # And it needs no prose of its own: the code names what broke, which is the rule
+    # _HEALTH_CODE_NOTES exists to make exceptions to.
+    assert "subway-static-failed" not in cm._HEALTH_CODE_NOTES
+
+
 def test_a_degraded_probe_answering_503_is_read_not_called_unreachable():
     """/healthz replies 503 EXACTLY WHEN IT IS DEGRADED, so the one probe with
     something to say arrives as a non-200. Routed through _fetch_retrying it would

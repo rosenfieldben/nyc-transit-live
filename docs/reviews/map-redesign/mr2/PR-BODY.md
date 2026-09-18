@@ -12,7 +12,8 @@ every NJ Transit seam at its simulator as it always has.
 | --- | --- |
 | `cd8ad77` | pins: what the subway restyle is not allowed to change on its way past |
 | `ecb67da` | the subway, drawn as ribbons, bullets, dots and rings |
-| (tip) | the round, the measurements and the before-and-after pair |
+| `8e8e3b5` | the round, the measurements and the before-and-after pair |
+| (tip) | round 2: an adversarial pass over the written diff |
 
 ## Before and after
 
@@ -151,7 +152,37 @@ and `D2f` walks all three rungs to say so.
 | the route bullet's size | 22x22 | the bullets are controls now, and 22 is under the WCAG 2.2 target floor `layout.spec.js A4b` enforces: at 22 with the design's 2px group gap the centres are 24 apart, which is the boundary of 2.5.8's spacing exception rather than clear of it | 24x24, and the bullets joined A4b's list and the a11y owned list rather than being exempted |
 | the unfocused bullets | fade to opacity 0.3 | a 24px chip at 0.3 over `--surface` blends both fill and letter towards the surface and the letter's contrast against its own chip collapses to near 1:1: the state would be conveyed by making twenty-five route names unreadable. MR1 round 2 found the same defect in the feed strip's OFF treatment | not implemented. The pressed bullet carries a ring in `--ink` (13.70 light, 12.60 dark on `--surface`), the focus ring sits OUTSIDE the chip where it is measured against the surface rather than against ten different fills, and the map says which route is focused by dimming every other one |
 
-## Two findings for the operator
+## What round 2 found, after the diff was written
+
+MR1's round 2 was the highest-yield step of that stage and MR2 had not had one: the
+workflow that ran BEFORE this stage was recon, and the mutations after it test the guards
+rather than the diff. Three findings, two fixed.
+
+- **The pressed bullet's ring was clipped by its neighbour.** The bullets are siblings in a
+  flex group with the design's 2px gap, all `position: relative` with `z-index: auto`, and
+  siblings paint in DOM order, so a ring reaching 4px out was drawn into the gap and then
+  painted over by the next bullet's background for its outer half. Measured on the "2"
+  bullet: whole on the left, cut off on the right. **This is MR1's G1 in a different
+  costume**, a rule that looks right and draws wrong, and the only way to see either one is
+  to look at the drawn page. Fixed with one stacking level; `D2a` holds it.
+- **`stationLabelShown` was exported, node tested and called by nothing.** The gate is three
+  CSS rules, so a node test over that function read as coverage and decided nothing.
+  Converted rather than deleted: `D2j` now drives the stylesheet against it across zooms 11
+  to 15 in both toggle states. **And then the comment saying so was corrected**, because a
+  mutation showed the grid's limit: the oracle and the attribute the CSS reads both come
+  from `labelZoomBand`, so a mutation to the RULE moves both sides together and leaves all
+  thirteen specs green. The node tier kills that one, and the division is now written down.
+- **Three bullets focus nothing and four drawn routes have no bullet.** Raised as F3 below.
+
+**What the pass checked and found clean**, recorded because a review that lists only its
+hits reads as if it looked only where it found something: `.bul` and `.stn-label` reach no
+other surface (the MR1 `.alert-stale` hazard); route focus survives a feed hide and show
+and a `setIcon` relabel, on both the option and the rendered element; the labels come back
+`aria-hidden` after a feed toggle; the pressed ring's backdrop really is `--surface`, so
+the 13.70 and 5.53 are measured against the right colour; and a label overlaps a train
+bullet in a 2x3 pixel corner and no more.
+
+## Four findings for the operator
 
 **F1. The station names collide.** In the viewport over Midtown, the share of painted
 labels whose box intersects another one is **89% at zoom 12, 77% at 13, 40% at 14 and 29%
@@ -166,6 +197,28 @@ intersects one already placed, recomputed on `moveend`; or **narrow what a hub i
 interchanges. The first is a new mechanism with its own questions (which label wins, and
 does it flicker on a pan); the second is a threshold the record does not fix. Shipped as
 specified and raised here, which is how the MTA palette question reached round 3.
+
+**F3. Three of the twenty-three bullets focus nothing, and four drawn routes have no
+bullet.** Against the real static archive the map draws `1 2 3 4 5 6 7 A B C D E F FS G GS
+H J L M N Q R SI`, and the key is MR1's ten trunks. **Z, W and S draw no ribbon at all**,
+so pressing one dims the whole map and highlights nothing; **FS, GS, H and SI have no
+bullet**, so the Staten Island Railway and every shuttle are unfocusable. The **S** bullet
+is the sharp one: the shuttles ARE drawn, under the ids GS, FS and H, and focusing S
+matches none of them. MR1's bullets were display only, so the mismatch was invisible; MR2
+is the stage that makes it bite.
+
+The fix is an alias table, so one bullet can name several feed route ids, plus a decision
+about SI in the key. Both touch MR1's trunk set rather than this stage's five items.
+Focusing by colour instead would be worse: 1, 2 and 3 share one hex, so it would light all
+three.
+
+**F4. The key costs twenty-three tab stops.** Measured from the top of the document,
+reaching the Stations button now takes **32 presses**, where before this stage it took
+nine. The skip link is still the first stop, so a rider heading for the station panel is
+unaffected; a rider heading for the Key or Stations button walks the whole key. The
+standard remedy is a roving tabindex (`role="toolbar"`, one tab stop, arrow keys inside),
+about twenty-five lines, and `frontend/keyboard.test.js` already has the seam for it. It is
+a new interaction mechanism rather than one of this stage's five items.
 
 **F2. A yellow line on a paper casing reads 1.67 in the light theme.** Every trunk against
 `--paper`, through the repository's own helpers: N/Q/R/W **1.67**, B/D/F/M 2.52, G 2.66,

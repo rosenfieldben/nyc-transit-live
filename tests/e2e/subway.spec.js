@@ -98,6 +98,25 @@ test("D2a. the subway key is twenty-three named buttons, and each one is its own
   // only a colour swatch and promised to restore "the moment the key does something".
   await expect(page.locator("#subway-key")).not.toHaveAttribute("aria-hidden", "true");
   await expect(page.locator("#subway-key")).toHaveAttribute("aria-label", "Focus a subway route");
+
+  /* AND A PRESSED BULLET PAINTS ITS RING OVER ITS NEIGHBOURS. Round 1 of the review found
+     this by looking at the drawn key rather than at the rules: the bullets are siblings in
+     a flex group with the design's 2px gap, all `position: relative` with `z-index: auto`,
+     and siblings paint in DOM order, so a ring reaching 4px out was drawn into the gap and
+     then covered by the next bullet's background for its outer half. On the "2" bullet,
+     which has a neighbour on both sides, it came out whole on the left and cut off on the
+     right. The stacking level is the fix; this is what says it is still there. */
+  await page.locator('#subway-key .bul[aria-label="Focus route 2"]').click();
+  const stacking = await page.evaluate(() => ({
+    pressed: getComputedStyle(document.querySelector('#subway-key .bul[aria-label="Focus route 2"]')).zIndex,
+    plain: getComputedStyle(document.querySelector('#subway-key .bul[aria-label="Focus route 3"]')).zIndex,
+    ring: getComputedStyle(document.querySelector('#subway-key .bul[aria-label="Focus route 2"]')).boxShadow,
+  }));
+  expect(stacking.pressed, "a pressed bullet must paint above its neighbours").not.toBe("auto");
+  expect(stacking.plain, "and an ordinary one must not, so the header still paints in source order").toBe("auto");
+  expect(stacking.ring, "the ring is a surface gap and then ink, measured against the header's surface").toMatch(
+    /0px 0px 0px 2px.*0px 0px 0px 4px/,
+  );
 });
 
 test("D2b. focusing a route dims every other ribbon and every other train, and pressing again clears", async ({
@@ -463,6 +482,51 @@ test("D2j. station names appear at the right zooms, hubs first, and the Names to
   await expect(page.locator("html")).toHaveAttribute("data-labels", "on");
   await expect(page.locator("#names-toggle")).toHaveAttribute("aria-pressed", "true");
   expect(await painted()).toEqual(["Canal St", "Times Sq-42 St"]);
+
+  /* AND THE WHOLE GRID, AGAINST helpers.js's OWN ANSWER.
+
+     Round 1 of the review found that `stationLabelShown` was exported and node tested and
+     called by nothing: the gate is three CSS rules, so a node test over that function looked
+     like the gate's test and decided nothing. Deleting it would have been one answer. This is
+     the better one, and it is the shape this repository already uses for `statusLineText`:
+     the function becomes the ORACLE, and the page is checked against it. Read as COMPUTED
+     display, so what is compared is what the cascade actually did.
+
+     AND HERE IS WHAT THIS DOES NOT CATCH, measured rather than assumed. The oracle and the
+     attribute the stylesheet reads are computed from the same `labelZoomBand`, so a mutation
+     to the RULE moves both sides of this comparison together and the grid agrees with
+     itself: `labelZoomBand` made to return "none" above zoom 14 leaves all thirteen specs in
+     this file green. The node tier is what kills that one, and it does. So the division is:
+     the node tier pins what the rule IS, and this pins that the stylesheet implements
+     whatever the rule says, which is the half that can rot without anyone editing a number.
+     Its value over the literal assertions above is zoom 15, which no literal covers, and
+     both toggle states at every zoom rather than at one. */
+  for (const labelsOn of [true, false]) {
+    await page.evaluate((on) => {
+      document.documentElement.setAttribute("data-labels", on ? "on" : "off");
+    }, labelsOn);
+    for (const zoom of [11, 12, 13, 14, 15]) {
+      await setZoom(zoom);
+      const disagreements = await page.evaluate(
+        ({ z, on }) => {
+          const out = [];
+          for (const entry of stationRegistry) {
+            if (entry.kind !== "subway" || !entry.marker) continue;
+            const tip = entry.marker.getTooltip && entry.marker.getTooltip();
+            const el = tip && tip.getElement && tip.getElement();
+            if (!el) continue;
+            const drawn = getComputedStyle(el).display !== "none";
+            const want = stationLabelShown(z, (entry.routes ?? []).length, on);
+            if (drawn !== want) out.push(`${entry.name}: drawn ${drawn}, oracle says ${want}`);
+          }
+          return out;
+        },
+        { z: zoom, on: labelsOn },
+      );
+      expect(disagreements, `zoom ${zoom}, names ${labelsOn ? "on" : "off"}`).toEqual([]);
+    }
+  }
+  await page.evaluate(() => document.documentElement.setAttribute("data-labels", "on"));
 });
 
 /* ---------------- the ruling ---------------- */

@@ -388,6 +388,20 @@ body,
   outline-offset: 2px;
 }
 
+/* BOTH RINGS HAVE TO PAINT OVER THEIR NEIGHBOURS, and without this neither does. The
+   bullets are siblings in a flex group with the design's 2px gap, they are all
+   `position: relative` with `z-index: auto`, and siblings paint in DOM order: so a ring
+   that reaches 4px out is drawn in the 2px of gap and then COVERED by the next bullet's
+   background for its outer half. Measured on the "2" bullet, which has a neighbour on
+   both sides: the ring came out whole on the left, where the earlier sibling paints
+   below it, and cut off on the right. One stacking level is the whole fix, and it is on
+   the two states rather than on `.bul`, so an ordinary bullet keeps painting in source
+   order like everything else in the header. */
+.bul:focus-visible,
+.bul[aria-pressed="true"] {
+  z-index: 1;
+}
+
 /* THE PRESSED STATE IS A SECOND RING, IN INK, separated from the chip by a ring of surface
    so it reads as a halo rather than as a border on the chip: --ink on --surface is 13.70
    light and 12.60 dark. It is deliberately not the focus ring's colour, because a rider

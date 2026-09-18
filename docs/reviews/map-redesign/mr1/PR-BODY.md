@@ -19,7 +19,9 @@ and neither `contract_monitor.py` nor a fixture generator was run.
 | `4b5d583` | round 1: twenty findings, six mutations, and the before-and-after pair |
 | `4c37c11` | the pull request body, in the F1 form |
 | `138c50b` | round 2: sixteen findings from the adversarial pass, fixed |
-| (tip) | round 3: the operator's four rulings, obeyed and recorded |
+| `cad6bdd` | round 3: the operator's four rulings, obeyed and recorded |
+| `b1d2be5` | four cross-references in the round 3 record, corrected |
+| (tip) | this body's own commit and gate tables, with the round 3 hashes filled in |
 
 ## Before and after
 
@@ -388,14 +390,16 @@ em-dash count is over each commit's added lines and its message.
 | `88f0862` chrome | 1718 | 287 | 234 | 4 | 38 | 0 |
 | `4b5d583` round 1 | 1718 | 287 | 234 | 4 | 38 | 0 |
 | `138c50b` round 2 | 1718 | 287 | 234 | 4 | 38 | 0 |
-| (tip) round 3 | 1718 | 287 | 239 | 4 | 38 | 0 |
+| `cad6bdd` round 3 | 1718 | 287 | 239 | 4 | 38 | 0 |
+| `b1d2be5` cross-references | 1718 | 287 | 239 | 4 | 38 | 0 |
+| (tip) this body's tables | 1718 | 287 | 239 | 4 | 38 | 0 |
 
 - **`fe82a66`'s 36 are the handoff's own**, in the two documents recorded verbatim. See
   the deviations section.
 - **The heavy tiers ran at the branch point, at `03d82b3` and at the tip**, not after
   each of the four commits, and this table says so rather than implying sixteen runs.
-  `fe82a66` and `4b5d583` are documents and screenshots only and change no file any tier
-  loads, so their rows carry the numbers of the commit before and after them
+  `fe82a66`, `4b5d583`, `b1d2be5` and the tip are documents and screenshots only and
+  change no file any tier loads, so their rows carry the numbers of the commit before and after them
   respectively. `03d82b3` adds tests only; `88f0862` is the one commit with production
   changes, and every tier ran on it.
 - **The e2e count grows three times**: 204 to 218 with the fourteen pins, 218 to 234 with

@@ -100,3 +100,37 @@ jobs:
           name: contract-e2e-traces
           path: test-results/
           retention-days: 7
+
+  # The audit records (docs/reviews/audit-2026-09-05). Each script re-derives one
+  # finding's numbers against the live code and exits non-zero the moment the code
+  # stops matching what the record says, so the suite is a regression check on a
+  # written claim rather than a one-off print. run_all.sh already exits 1 on any red
+  # row, so this job is the script and nothing else.
+  #
+  # WHY IT IS A JOB NOW. It was run by hand, and three records sat red on main for a
+  # whole stage without anyone noticing: MR1 restyled Leaflet's zoom control and MR2
+  # rewrote systems/shared.js, and the three Node harnesses' own stubbed Leaflet and
+  # DOM outgrew the frontend they load. Nothing failed, because nothing ran them. A
+  # record that only an operator remembers to run is a record that goes stale between
+  # the stages it exists to protect.
+  #
+  # BOTH RUNTIMES, because the fifteen scripts are eleven Python and two Node plus two
+  # more that drive Node from Python. Dev dependencies only: nothing here needs the
+  # network, a credential or a live upstream, and the NJT scripts refuse to run at all
+  # if a real credential is present, so this job cannot spend a mint.
+  audit-records:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - run: pip install -r backend/requirements-dev.txt
+      # PY is the interpreter the scripts run under; run_all.sh defaults it to
+      # .venv/bin/python, which a runner does not have.
+      - run: bash docs/reviews/audit-2026-09-05/run_all.sh
+        env:
+          PY: python

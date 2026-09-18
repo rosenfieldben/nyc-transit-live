@@ -48,15 +48,38 @@ fidelity is judged against.
 
 ## The five stages
 
-Each stage is one pull request. **The pins land before anything is restyled**, as
-their own commit at the head of stage 1, and the C6-series dimming specs, the F01
-and F03 e2e specs, and the axe specs at desktop, 375 and 320 stay green at every
-stage.
+Each stage is one pull request.
+
+### The standing rules every stage is held to
+
+Collected here because they were scattered across three stages' findings, and a rule a
+future stage has to go looking for is a rule it will miss.
+
+1. **The pins land before anything is restyled**, as their own commit at the head of the
+   stage, and they say what the stage may NOT change.
+2. **These stay green at every stage**: the C6-series dimming specs, the F01 and F03 e2e
+   specs, and the axe specs at desktop, 375 and 320.
+3. **`docs/reviews/audit-2026-09-05/run_all.sh` is a gate of every stage**, at fifteen of
+   fifteen. Added after MR2, and added because it was learned the hard way: the suite was run
+   by hand, so when MR1 restyled Leaflet's zoom control and MR2 rewrote
+   `frontend/systems/shared.js`, three of its Node harnesses' own stubbed Leaflet and DOM
+   outgrew the frontend they load, and **F11, F12 and F14 sat red on `main` through a whole
+   stage** with nothing failing, because nothing ran them. F11 is the record for the station
+   alerts join, which is one of the three consumers the F1 backend branch exists to protect,
+   so the gap was directly over something two stages had just worked on. It is a CI job now
+   (`audit-records` in `.github/workflows/ci.yml`), so a stage cannot merge past a red row,
+   and a record that goes stale says so on the pull request rather than waiting to be noticed.
+4. **Every review and probe workflow runs in its own worktree**, and before any commit the
+   working tree is confirmed to be what the gates ran on. `.claude/workflows/README.md` states
+   it and `adversarial-review.js` enforces it; MR2 round 2's incident is the evidence.
+5. **A fix is finished when reverting it fails something**, not when it works. MR2 round 3 had
+   three fixes survive their own mutation on the first run, each already verified by hand and
+   commented.
 
 | Stage | Scope | State |
 | --- | --- | --- |
 | **MR1** | **Tokens and chrome.** The Modernist token set on the root with `data-theme`, self-hosted Archivo 400/600/800, the `.leaflet-tile-pane` filters for both themes, and a `localStorage`-persisted theme toggle, **built and tested and then hidden until MR4** (round 3, R2). The `<header>` replaces the right-hand `<aside>`: brand and blinking clock, the subway bullet key (display only, and in the app's own shape), the Key and Stations buttons, the feed strip, the Key panel, and the service alerts strip as a full-width row inside the header. The bottom-right control stack with the City/Rail/Region presets and the restyled zoom control. No marker, line, station, label, popup or route-table change: the pins prove it. | merged |
-| **MR2** | **Subway.** Trunk ribbons (casing plus line, yellow drawn last), the bullet train marker with its halo and lift, local dot versus transfer ring stations, the haloed permanent-tooltip labels with their zoom gating, the Names toggle, and route focus wired to the stage 1 bullets. Every ribbon takes its colour from `lineColor()` and every bullet keeps the app's own rounded rectangle, never the authority's palette or its roundel (round 3, R1). **And, on the operator's instruction after round 2**, the key is derived from the loaded route list rather than written down, every drawn polyline carries the set of routes that ride it, focus is membership in that set, and the key is an ARIA toolbar with one tab stop. **Round 3 adds**, on four more rulings: the subway's ribbons on their own pane below every other family's lines, the station labels on a pane below every vehicle, transfer counted by TRUNK rather than by route id, and an off-focus marker out of the accessibility tree and out of the click path while a route is focused. | in review |
+| **MR2** | **Subway.** Trunk ribbons (casing plus line, yellow drawn last), the bullet train marker with its halo and lift, local dot versus transfer ring stations, the haloed permanent-tooltip labels with their zoom gating, the Names toggle, and route focus wired to the stage 1 bullets. Every ribbon takes its colour from `lineColor()` and every bullet keeps the app's own rounded rectangle, never the authority's palette or its roundel (round 3, R1). **And, on the operator's instruction after round 2**, the key is derived from the loaded route list rather than written down, every drawn polyline carries the set of routes that ride it, focus is membership in that set, and the key is an ARIA toolbar with one tab stop. **Round 3 adds**, on four more rulings: the subway's ribbons on their own pane below every other family's lines, the station labels on a pane below every vehicle, transfer counted by TRUNK rather than by route id, and an off-focus marker out of the accessibility tree and out of the click path while a route is focused. | merged |
 | **MR3** | **Commuter rail.** The real route tables (§6 of the brief: name-keyed codes for LIRR and Metro-North, the feed's `route_short_name` and `route_color` for NJ Transit, `route_color` added to `/api/railroad-routes`), the branch lines, the square stations, and `railTagIcon` with the §3.1 provenance states: solid versus outlined body, filled versus outlined chevron, dimming for age. | planned |
 | **MR4** | **The other families.** PATH diamonds and lines, ferry dashed routes, dock dots and hulls, AirTrain's gray dashed service, and the bus arrow and dot at the muted hashed hue. The §3.3 dimmed and absent states for each. **Also the dark theme's release**: MR1 built it and hid the toggle, and MR4 is the stage at which every mark on the map has the casing that makes it legal (round 3, R2). | planned |
 | **MR5** | **Popups.** The `.pk/.pt/.kv/.dir/.arr/.fresh/.alert/.xlink` vocabulary, the §4 words routed from `positionQualifier()` and the per-system freshness rather than re-derived, the arrivals qualifier column, and the autopan padding that clears the stage 1 chrome. | planned |

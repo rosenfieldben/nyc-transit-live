@@ -142,6 +142,51 @@ class StubStyle {
 
 let DOC = null; // set once the document exists (focus needs it)
 
+/* A MINIMAL SELECTOR MATCHER, AND IT THROWS ON ANYTHING IT DOES NOT IMPLEMENT.
+   This stub used to answer every querySelector with null, as a documented limitation, and
+   that silence is precisely how this record went red: MR1's feed strip does
+   `button.querySelector(".feed-count").textContent = ...`, so null became a TypeError
+   several frames from its cause, and the whole harness died before reaching claim (a).
+   A stub that returns nothing for a selector it does not understand cannot tell "no match
+   in this tree" from "I do not implement this", and only the first of those is an answer.
+
+   THE IMPLEMENTED FORMS ARE EXACTLY THE ONES THE LOADED PRODUCTION FILES USE, measured
+   rather than guessed: #id, .class, .class.class, and a bare tag name. Everything else
+   raises, so the next selector shape the frontend adopts fails HERE, naming itself, instead
+   of silently matching nothing and being discovered as a null dereference elsewhere. */
+const SELECTOR_FORM = /^(?:#[\w-]+|(?:\.[\w-]+)+|[a-zA-Z][\w-]*)$/;
+
+function matchesSelector(el, selector) {
+  const sel = String(selector).trim();
+  if (!SELECTOR_FORM.test(sel)) {
+    throw new Error(
+      `audit DOM stub: unimplemented selector ${JSON.stringify(sel)}. It supports #id, ` +
+        `.class, .class.class and a bare tag. Teach it the new form rather than letting it ` +
+        `answer null, which is how this record went red once already.`,
+    );
+  }
+  if (sel.startsWith("#")) return el.id === sel.slice(1);
+  if (sel.startsWith(".")) {
+    return sel
+      .slice(1)
+      .split(".")
+      .every((cls) => el.classList.contains(cls));
+  }
+  return el.tagName === sel.toUpperCase();
+}
+
+function descendantsOf(root) {
+  const out = [];
+  const walk = (el) => {
+    for (const child of el.children) {
+      out.push(child);
+      walk(child);
+    }
+  };
+  walk(root);
+  return out;
+}
+
 class El {
   constructor(tagName) {
     this.tagName = String(tagName).toUpperCase();
@@ -246,8 +291,14 @@ class El {
   closest() {
     return null;
   }
-  querySelector() {
-    return null; // see the stub-limitation note in the header
+  querySelector(selector) {
+    return descendantsOf(this).find((el) => matchesSelector(el, selector)) ?? null;
+  }
+  querySelectorAll(selector) {
+    return descendantsOf(this).filter((el) => matchesSelector(el, selector));
+  }
+  matches(selector) {
+    return matchesSelector(this, selector);
   }
   getBoundingClientRect() {
     return { x: 0, y: 0, top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 };
@@ -330,8 +381,11 @@ function makeDocument(html) {
     elementCount: all.length,
     getElementById: (id) => byId.get(id) ?? null,
     createElement: (tag) => new El(tag),
-    querySelector: () => null,
-    querySelectorAll: () => [],
+    // Over the whole parsed tree, by the same matcher the elements use.
+    querySelector: (selector) =>
+      [htmlEl, ...descendantsOf(htmlEl)].find((el) => matchesSelector(el, selector)) ?? null,
+    querySelectorAll: (selector) =>
+      [htmlEl, ...descendantsOf(htmlEl)].filter((el) => matchesSelector(el, selector)),
     addEventListener: () => {},
     removeEventListener: () => {},
   };
@@ -406,6 +460,14 @@ function makeLeaflet(mapLayers, firedMapEvents) {
     hasLayer: (layer) => mapLayers.has(layer),
     closePopup: () => mapStub,
     getContainer: () => DOC.getElementById("map"),
+    // MR1 and MR2 additions. The zoom the map reports drives systems/shared.js's
+    // paintZoomBand, which writes data-zoom and data-label-band on the root; 12 is the
+    // zoom the app opens at, so the band this harness runs under is the real opening one.
+    getZoom: () => 12,
+    setZoom: () => mapStub,
+    flyTo: () => mapStub,
+    getCenter: () => ({ lat: 40.7128, lng: -74.006 }),
+    latLngToContainerPoint: () => ({ x: 0, y: 0 }),
     fire,
   };
   const layerGroup = () => {
@@ -449,6 +511,30 @@ function makeLeaflet(mapLayers, firedMapEvents) {
       },
       getLatLng: () => latlng,
       setLatLng: () => marker,
+      /* MR2 binds a permanent tooltip to every subway station: the name label. The tooltip
+         carries a real element so the aria-hidden the production code sets on tooltipopen
+         has somewhere to land, and the className it is bound with is kept, because the
+         `hub` class in it is what MR2's zoom band reveals. */
+      bindTooltip(content, options = {}) {
+        const el = new El("div");
+        el.className = options.className ?? "leaflet-tooltip";
+        el.textContent = String(content);
+        marker.tooltip = {
+          options,
+          getElement: () => el,
+          setContent: (html) => {
+            el.textContent = String(html);
+          },
+        };
+        for (const fn of marker.handlers.get("tooltipopen") ?? []) {
+          fn.call(marker, { tooltip: marker.tooltip });
+        }
+        return marker;
+      },
+      unbindTooltip: () => marker,
+      getTooltip: () => marker.tooltip ?? null,
+      openTooltip: () => marker,
+      closeTooltip: () => marker,
       openPopup() {
         marker.popupOpen = true;
         for (const fn of marker.handlers.get("popupopen") ?? []) fn.call(marker);
@@ -476,8 +562,19 @@ function makeLeaflet(mapLayers, firedMapEvents) {
     divIcon: () => ({}),
     icon: () => ({}),
     latLng: (a, b) => ({ lat: a, lng: b }),
+    // MR1 restyled Leaflet's zoom control and systems/shared.js constructs it at module
+    // scope, so this stub has to answer L.control.zoom or the whole file throws and every
+    // claim below it becomes unreachable. That is how this record went red.
+    control: {
+      zoom: () => ({ addTo: () => ({}) }),
+      attribution: () => ({ addTo: () => ({}) }),
+      scale: () => ({ addTo: () => ({}) }),
+    },
+    Util: { stamp: (obj) => (obj.__stamp ??= ++stampCounter) },
   };
 }
+
+let stampCounter = 0;
 
 /* ==================================================================
    Fixtures (committed) and the injected fault

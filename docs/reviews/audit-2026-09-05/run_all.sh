@@ -26,7 +26,13 @@ PY="${PY:-$ROOT/.venv/bin/python}"
 NODE="${NODE:-node}"
 DIR="docs/reviews/audit-2026-09-05"
 
-if [ ! -x "$PY" ]; then
+# command -v, not [ -x ], because PY may be a bare interpreter NAME rather than a path:
+# CI sets PY=python and lets the runner's PATH resolve it, exactly as NODE above is a bare
+# "node". A -x test on "python" asks whether ./python exists in the repository root, which it
+# does not, so the guard rejected a perfectly good interpreter and the audit-records job went
+# red on its first run. command -v answers for both forms: it resolves a name on PATH, and for
+# a value containing a slash it still requires that the file be executable.
+if ! command -v "$PY" >/dev/null 2>&1; then
   echo "no python at $PY; set PY=/path/to/python (needs backend/requirements-dev.txt)" >&2
   exit 2
 fi

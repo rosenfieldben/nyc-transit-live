@@ -6,6 +6,28 @@
    "Some elevators are out of service across the system"
   ]
  },
+ "board": {
+  "f03": {
+   "arrivals": [
+    "5 train in 2 minutes, 8:02 AM arrival, as of 10m ago",
+    "2 train in 3 minutes, 8:02 AM arrival, as of 10m ago",
+    "5 train in 3 minutes, 8:02 AM arrival",
+    "2 train in 5 minutes, 8:05 AM arrival",
+    "5 train in 10 minutes, 8:09 AM arrival, as of 10m ago",
+    "5 train in 12 minutes, 8:11 AM arrival",
+    "2 train now, 7:59 AM arrival, as of 10m ago",
+    "5 train in 3 minutes, 8:02 AM arrival, as of 10m ago",
+    "5 train in 3 minutes, 8:03 AM arrival",
+    "2 train in 9 minutes, 8:09 AM arrival",
+    "2 train in 9 minutes, 8:09 AM arrival, as of 10m ago",
+    "5 train in 12 minutes, 8:12 AM arrival"
+   ],
+   "spoken": "Prospect Av, Subway. Northbound: 5 train in 2 minutes, 8:02 AM arrival, as of 10m ago. 2 train in 3 minutes, 8:02 AM arrival, as of 10m ago. 5 train in 3 minutes, 8:02 AM arrival. 2 train in 5 minutes, 8:05 AM arrival. 5 train in 10 minutes, 8:09 AM arrival, as of 10m ago. 5 train in 12 minutes, 8:11 AM arrival. Southbound: 2 train now, 7:59 AM arrival, as of 10m ago. 5 train in 3 minutes, 8:02 AM arrival, as of 10m ago. 5 train in 3 minutes, 8:03 AM arrival. 2 train in 9 minutes, 8:09 AM arrival. 2 train in 9 minutes, 8:09 AM arrival, as of 10m ago. 5 train in 12 minutes, 8:12 AM arrival",
+   "panelStaleLines": 0,
+   "qualifiersInPopup": 6,
+   "popup": "<b>Prospect Av</b><div class=\"arr-dir\">Northbound</div><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 2 min <span class=\"arr-qualifier\">as of 10m ago</span><br><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span> 3 min <span class=\"arr-qualifier\">as of 10m ago</span><br><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 3 min<br><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span> 5 min<br><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 10 min <span class=\"arr-qualifier\">as of 10m ago</span><br><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 12 min<div class=\"arr-dir\">Southbound</div><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span> now <span class=\"arr-qualifier\">as of 10m ago</span><br><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 3 min <span class=\"arr-qualifier\">as of 10m ago</span><br><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 3 min<br><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span> 9 min<br><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span> 9 min <span class=\"arr-qualifier\">as of 10m ago</span><br><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 12 min"
+  }
+ },
  "legend": {
   "names": [
    "Bus (arrow points where it's heading)",
@@ -509,6 +531,20 @@
    ]
   }
  },
+ "panel": {
+  "subway": {
+   "results": [
+    "Times Sq-42 StSubway123"
+   ],
+   "detailHeading": "Times Sq-42 St (Subway)",
+   "arrivals": [
+    "1 train in 1 minute, 8:01 AM arrival",
+    "2 train in 5 minutes, 8:05 AM arrival",
+    "1 train in 3 minutes, 8:03 AM arrival"
+   ],
+   "spoken": "Times Sq-42 St, Subway. Northbound: 1 train in 1 minute, 8:01 AM arrival. 2 train in 5 minutes, 8:05 AM arrival. Southbound: 1 train in 3 minutes, 8:03 AM arrival"
+  }
+ },
  "popups": {
   "airtrain": {
    "airtrain station": "<b>Terminal Alpha</b><div class=\"popup-sub\">AirTrain JFK · scheduled service (no live tracking)</div><div>Jamaica: every ~7 min <span class=\"popup-sub\">(scheduled)</span></div><div>Howard Beach: every ~7 min <span class=\"popup-sub\">(scheduled)</span></div>"
@@ -539,6 +575,31 @@
   "subway": {
    "subway train": "<b style=\"color:#c0392b\">1 train</b><br>Next stop: Times Sq-42 St<br>Northbound<br><span class=\"popup-sub\">scheduled position (no GPS)</span><br><span class=\"popup-sub\">Trip sub-1</span>",
    "subway station": "<b>Times Sq-42 St</b><div class=\"arr-dir\">Northbound</div><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">1</span> 1 min<br><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span> 5 min<div class=\"arr-dir\">Southbound</div><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">1</span> 3 min"
+  }
+ },
+ "registry": {
+  "subway": {
+   "key": "subway|127",
+   "kind": "subway",
+   "systemLabel": "Subway",
+   "noun": "train",
+   "id": "127",
+   "name": "Times Sq-42 St",
+   "lat": 40.7554,
+   "lon": -73.9874,
+   "routes": [
+    "1",
+    "2",
+    "3"
+   ],
+   "wheelchair": false,
+   "arrivalsUrl": "/api/subway-arrivals/127",
+   "markerIsCircleMarker": true,
+   "markerInStationLayer": true,
+   "markerLayerIsStationLayer": true,
+   "markerOptionsPane": "overlayPane",
+   "markerRendererPane": "stationPane",
+   "hasPopup": true
   }
  },
  "status": {

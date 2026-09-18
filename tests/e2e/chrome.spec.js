@@ -265,13 +265,22 @@ test("D1g. the theme persists across a reload, and the page renders with storage
   expect(await theme()).toBe("light");
   const light = await surface();
   await expect(page.locator("#theme-toggle")).toHaveText("Dark");
-  await expect(page.locator("#theme-toggle")).toHaveAttribute("aria-pressed", "false");
 
   await page.locator("#theme-toggle").click();
   expect(await theme()).toBe("dark");
   await expect(page.locator("#theme-toggle")).toHaveText("Light");
-  await expect(page.locator("#theme-toggle")).toHaveAttribute("aria-pressed", "true");
   const dark = await surface();
+
+  /* THE LABEL IS THE WHOLE ANSWER, AND NOTHING CONTRADICTS IT (round 2). This carried
+     aria-pressed too, and the pair said opposite things out loud: in the dark theme the
+     button reads "Light" and reported pressed, so a screen reader said "Light, pressed",
+     which states that the light theme is on while the page is dark. aria-pressed belongs to
+     a toggle whose label does NOT move with the state, and the design's label is the action.
+     Asserted as an absence, because the defect was an extra claim rather than a missing one. */
+  expect(
+    await page.locator("#theme-toggle").getAttribute("aria-pressed"),
+    "the label is the action, so nothing may also claim a state",
+  ).toBeNull();
   expect(dark, "the two themes must actually paint differently").not.toBe(light);
   expect(await page.evaluate(() => localStorage.getItem("nyc-transit-live.theme"))).toBe("dark");
 

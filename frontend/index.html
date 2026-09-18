@@ -143,7 +143,13 @@
            A1y's walk invariants for exactly the right reason. Filled by systems/shared.js
            from lineColor() and readableTextOn(), so the palette lives in one place and the
            key cannot disagree with the lines and markers on the map beneath it. -->
-      <div id="subway-key" class="hdr-fold" role="group" aria-label="Subway route colours"></div>
+      <!-- aria-hidden while it is only a KEY (round 2): twenty-six spans reading "1 2 3 4 5 6
+           7 A C E ..." put twenty-six bare characters into the reading order whose only
+           information is the colour beside them, which is the one thing that does not survive
+           being spoken. Every marker and every popup names its route in words, which is where
+           a rider gets the identities today. It comes back into the tree in MR2, when these
+           become buttons with real names and a real effect. -->
+      <div id="subway-key" class="hdr-fold" aria-hidden="true"></div>
       <div id="hdr-actions">
         <!-- The theme toggle. aria-pressed rather than a label swap alone, so the state is
              in the accessibility tree and not only in the word. -->

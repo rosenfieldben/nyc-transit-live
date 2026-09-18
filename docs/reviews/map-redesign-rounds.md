@@ -182,6 +182,88 @@ tail, the theme's two decisions), and none of that can see a caller that stopped
 calling. The browser is where a wiring mutation dies, which is what these six confirm
 and what the tier split is for.
 
+### Round 2: the adversarial pass over the production diff
+
+Four dimensions read the production half of the diff (`frontend/index.html`,
+`style.css`, `helpers.js`, `map.js`, `systems/*.js`) and raised **25 findings**, each
+handed to a hostile verifier whose default was REFUTED. Sixteen are fixed below. Every
+number in this table was re-measured here, against the repository's own helpers, before
+anything was changed.
+
+**The two that mattered most were a bug hiding a bug.**
+
+| # | Finding | Disposition |
+| --- | --- | --- |
+| G1 | **The design's one filled button never rendered at all.** The old A1 `#stations-toggle` rule survived the rewrite, and it sits LATER in the stylesheet at equal specificity, so it won: the Stations button drew as the A1 panel's full-width light-grey bordered row (`display: block; width: 100%`), not as the accent chip. It is visibly wrong in the "after" screenshot committed at `4b5d583`. | **Fixed.** The old rule is deleted rather than moved; the header rule is the whole of it now. |
+| G2 | **And deleting it exposed the ring the fill had been hiding.** With the accent fill finally drawn, the focus ring is measured against it: `--focus` reads **1.10** on `--accent-ink`. No single colour clears 3:1 against both that fill and the surface beside it (`--focus` 1.10 on the fill, `--ink` 2.73, `--chipink` 5.45 on the fill but 1.06 on the surface). | **Fixed.** The one filled control rings INSIDE itself, `outline-color: var(--chipink); outline-offset: -3px`, where one colour is enough and where the measurement and the drawing agree about which surface the ring is on. Caught by `mobile.spec.js` A6f within the hour. |
+
+**One leaked out of scope, and the pins could not see it.**
+
+| # | Finding | Disposition |
+| --- | --- | --- |
+| G3 | **`.alert-stale` is not the strip's class.** The same class carries the same freshness hedge inside every popup's alert block (`routeAlertsBlock`, `stationAlertsBlock`), where the surface is still the popup's white. Unscoped, the new rule repainted all of them: **6.09** in the light theme, legal but out of scope, and **2.59** in the dark, which is neither. The pins did not catch it because they hold popup HTML and this is a computed style. | **Fixed**, scoped to `#alert-banner`. And noted as a real limit of P1f to P1n: byte-identical HTML does not mean an unchanged rendering, because a stylesheet reaches a popup without touching its markup. |
+
+**One defeated the fix it was part of.**
+
+| # | Finding | Disposition |
+| --- | --- | --- |
+| G4 | **The OFF treatment was faded along with everything else.** A blanket `opacity: 0.55` on a hidden feed's button dimmed the two things that carry the state: the OFF mark fell to **2.50** and the feed's own name to **2.25** against the header surface, both under the 4.5 they owe. The remedy for "state must not be conveyed by opacity alone" was itself made illegible by opacity. | **Fixed.** The fade is on the tick, the glyph, the count and the dot, which the rider no longer needs to read; the name and the OFF mark stay at full strength at **5.03** and **5.38**, because they are what says why. |
+
+**Six more, each confirmed and fixed.**
+
+| # | Finding | Disposition |
+| --- | --- | --- |
+| G5 | **The view preset stack was an overlay the popup correction could not see.** It is fixed to the bottom right at z-index 1000 and paints over the popup pane exactly like the other two, and `POPUP_OBSTACLE_IDS` listed only `panel` and `alert-banner`, whose own comment says the list exists so that "adding a third overlay is a deliberate edit here and not a silent regression". Verified independently as high severity. | **Fixed**: `view-stack` joins the list. |
+| G6 | **The fold could strand keyboard focus on `<body>`.** Two ways in: Tab to a feed toggle on a phone and press Key, or hold focus in the strip while a resize crosses the breakpoint, which needs no press at all. The view stack's stand-down is a third, by a CSS `display: none` the rider did not ask for. This app treats a dropped focus as a defect everywhere else it can happen. | **Fixed.** `applyHeaderDisclosure` asks what is about to stop existing before it does, and sends focus to the Key button, which is the control that did it and the one that undoes it. Silent: a rider who pressed a disclosure is not owed news that it closed. |
+| G7 | **The theme toggle claimed a state its own label contradicted.** In the dark theme it read "Light" and reported `aria-pressed="true"`, so a screen reader said "Light, pressed", which states that the light theme is on while the page is dark. `aria-pressed` belongs to a toggle whose label does NOT move with the state; the design's label is the action. | **Fixed**: the label is the whole answer and `aria-pressed` is gone. D1g asserts its absence, because the defect was an extra claim rather than a missing one. |
+| G8 | **The feed strip's colour ticks are theme-blind.** Against the header surface: Subway's `#0039A6` reads **8.11** light and **1.43** dark; Buses **2.16** and AirTrain **2.76** dark. All under the 3:1 a mark owes. | **Fixed without inventing a second palette.** The tick keeps its identity colour and gains a one-pixel `--ink` boundary, which is how every vehicle on this map is already drawn: a route-coloured shape with a paper stroke, so the SHAPE reads whatever is behind it. |
+| G9 | **Leaflet's disabled zoom state was overridden.** The new `.leaflet-bar a` rule set the colour for every state at a higher specificity than `.leaflet-disabled`, so at zoom 19 the "+" looked exactly as live as the "-" and did nothing. | **Fixed**: the disabled glyph goes to `--muted` and the cursor stops inviting the press. |
+| G10 | **The bus route banner's label was a hashed hue on a surface that can now be dark.** `routeColor()` returns `hsl(h, 75%, 40%)`, measured against the old panel's opaque white and set straight onto the text. | **Fixed by the rule this app already states** at `readableInk`: "the brand colour stays on the SHAPES that carry identity". The route's colour is a mark before the words; the words are `--ink`. |
+
+**Three about the header's own bounds.**
+
+| # | Finding | Disposition |
+| --- | --- | --- |
+| G11 | **The Key panel could be open, report itself expanded, and show no rows.** `min-height: 0` is what lets it shrink at all, and with a tall row 1, a wrapped feed strip and three alerts it shrank to a slit. | **Fixed**: a `min(96px, 100%)` floor, which is three rows and the scrollbar that says there are more. |
+| G12 | **The 72px bottom reserve bounds the header's BOX, not its content.** A box whose children are all `flex: none` overflows its own `max-height`: with the Key open and three wrapped alerts at 320, the alerts row ran past the reserve and back over Leaflet's zoom control and the OSM attribution, which is the thing the reserve exists to keep clear. | **Fixed**: the alerts row shrinks second (after the Key) and scrolls what it cannot show, with a `min(48px, 100%)` floor. It still never folds, which is a different promise and still kept. |
+| G13 | **`#legend` became a tab stop and was the one new control left out of the focus-ring list**, falling back to the browser's own ring. | **Fixed.** |
+
+**And one where the preference was read live but could not be honoured.**
+
+| # | Finding | Disposition |
+| --- | --- | --- |
+| G14 | **A view preset still animated when reduced motion was turned on mid-session.** `motionAllowed()` is read live on every press, so the non-animated branch was taken correctly; what it could not do was honour the rider, because Leaflet reads `zoomAnimation` ONCE at construction (`helpers.js` says so at `watchMotionPreference`) and a bare `setView` on a map built while motion was allowed still animates the zoom. A rider who set the preference before load was never affected, which is why only the mid-session case could show it. | **Fixed**: `setView(..., { animate: false })`, the supported way to say no to that one call. |
+
+**And one that is bigger than any fix in this stage.**
+
+| # | Finding | Disposition |
+| --- | --- | --- |
+| G15 | **In the dark theme every Key panel glyph falls under the 3:1 mark floor**, from **1.11** (the subway station ring) to **2.63** (the ferry dock). They were drawn for an opaque white panel and they carry the map's own marker colours. | **The key is fixed; the map is not, and the map is the real finding.** The glyphs keep their colours exactly and gain the paper they were drawn on, measured at 3.98 to 11.31 in both themes, because a key whose glyphs did not match the map would be worse than a dim one. **THE SAME ARITHMETIC HOLDS ON THE MAP.** The dark basemap filter is MR1's and the markers are not: until MR2 through MR4 give every mark the paper casing and stroke the design specifies, a rider who picks the dark theme gets a map whose markers read at those same ratios. That is the cost of shipping the theme one stage before the marks, it is stated here rather than discovered, and MR2 is where it starts being paid down. |
+
+**One recorded and not changed.**
+
+| # | Finding | Disposition |
+| --- | --- | --- |
+| G16 | **The freshness dot distinguishes live from stale by hue alone**, and the two measure **1.05** against each other. | **Confirmed but not changed, because the information is in text in all three states.** An amber dot and a raised status line are the same condition by construction: `feedDotState` returns "stale" exactly when `staleAge(age)` is true, which is exactly when `staleness()` puts that system in its `stale` population and the note names it. The tooltip carries all three states in words, and AirTrain's scheduled-only state also shows as the absence of a count. The dot is the design's, at 5px, and no shape is distinguishable from another at 5px; the words are what carry it, and they are already there. |
+
+**Seven raised and refuted**, or already fixed by another finding in the same round, and
+recorded rather than dropped: they are in the run's journal with the measurement that
+refuted each.
+
+### Mutations, re-run after round 2
+
+All six still die, and three now die on more assertions than before, because round 2
+added them.
+
+| # | Guard reverted | Result | Killed by |
+| --- | --- | --- | --- |
+| M1 | `aria-pressed` not updated on toggle | killed | `chrome.spec.js` D1c |
+| M2 | hidden feed by opacity alone | killed | `chrome.spec.js` D1c |
+| M3 | the alerts strip given the fold class | killed | `mobile.spec.js` A6c |
+| M4 | the note re-derived instead of taking `staleness()` | killed | `chrome.spec.js` D1d, pins P1a and P1b |
+| M5 | the theme not persisted | killed | `chrome.spec.js` D1g |
+| M6 | the clock blink not gated by the motion preference | killed | `motion.spec.js` A5b |
+
 ### Before and after
 
 `docs/reviews/map-redesign/mr1/`, from the hermetic harness at the frozen clock with

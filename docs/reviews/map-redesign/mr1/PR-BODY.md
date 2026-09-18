@@ -17,6 +17,8 @@ and neither `contract_monitor.py` nor a fixture generator was run.
 | `03d82b3` | pins: what the redesign is not allowed to change by accident |
 | `88f0862` | tokens and chrome, and the status line taken apart |
 | `4b5d583` | round 1: twenty findings, six mutations, and the before-and-after pair |
+| `4c37c11` | the pull request body, in the F1 form |
+| (tip) | round 2: sixteen findings from the adversarial pass, fixed |
 
 ## Before and after
 
@@ -202,6 +204,54 @@ stopped reaching a one-row top bar. A6f's restructure opened a disclosure with a
 which sets the pointer modality and stops a programmatic focus matching
 `:focus-visible`, so every control came back ringless. And A6k, A6l and A6m were three
 specs about two boxes that can no longer collide.
+
+## What round 2 found, after the diff was written
+
+An adversarial pass over the production half of the diff raised 25 findings and verified
+each against the tree. **Sixteen were real and are fixed**; the ledger has every number.
+The five worth reading here:
+
+- **The design's one filled button never rendered at all.** The old A1 `#stations-toggle`
+  rule survived the rewrite and sits LATER in the stylesheet at equal specificity, so it
+  won: the Stations button drew as the A1 panel's full-width grey row. It is visibly wrong
+  in the "after" screenshot committed at `4b5d583`, which this branch replaces.
+- **And deleting it exposed a second defect the first had hidden.** With the accent fill
+  finally drawn, the focus ring measures **1.10** against it, and no single colour clears
+  3:1 against both the fill and the surface beside it. The one filled control now rings
+  inside itself.
+- **`.alert-stale` is not the strip's class.** It carries the same hedge inside every
+  popup's alert block, and the unscoped rule repainted all of them: **2.59** in the dark
+  theme. **The pins could not see this**, and that is worth stating as their limit: byte-
+  identical popup HTML does not mean an unchanged rendering, because a stylesheet reaches a
+  popup without touching its markup.
+- **The OFF treatment was faded along with everything else.** A blanket `opacity: 0.55`
+  took the OFF mark to **2.50** and the feed's name to **2.25**: the remedy for "state must
+  not be conveyed by opacity alone" was itself made illegible by opacity.
+- **The view preset stack was an overlay the popup correction could not see.**
+  `POPUP_OBSTACLE_IDS`, whose own comment says the list exists so a third overlay is a
+  deliberate edit rather than a silent regression, did not have it.
+
+The rest: focus stranded on `<body>` by the fold, a theme toggle announcing "Light,
+pressed" while the page is dark, feed ticks at **1.43** in the dark theme, Leaflet's
+disabled zoom state overridden, the Key panel able to report itself expanded while showing
+no rows, the alerts row able to overflow the 72px reserve and cover the OSM attribution,
+`#legend` left out of the focus-ring list, the route banner's hashed hue as ink on a
+surface that can be dark, and a preset still animating when reduced motion is turned on
+mid-session.
+
+### One finding is bigger than its fix, and it is the one to read
+
+**In the dark theme every Key panel glyph falls under the 3:1 mark floor**, from 1.11 to
+2.63. They were drawn for an opaque white panel and they carry the map's own marker
+colours. The key is fixed (each glyph keeps its colour and gains the paper it was drawn
+on, 3.98 to 11.31 in both themes), because a key whose glyphs did not match the map would
+be worse than a dim one.
+
+**The same arithmetic holds on the map.** The dark basemap filter is MR1's and the markers
+are not: until MR2 through MR4 give every mark the paper casing and stroke the design
+specifies, a rider who picks the dark theme gets a map whose markers read at those same
+ratios. That is the cost of shipping the theme one stage before the marks. It is stated
+here rather than discovered, and MR2 is where it starts being paid down.
 
 ## Mutations, each run and recorded
 

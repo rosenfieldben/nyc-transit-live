@@ -150,14 +150,37 @@ const legendEl = document.getElementById("legend");
 // Everything that folds behind the Key button below the breakpoint. The alerts strip is
 // deliberately NOT in this list and must never be given the class: that is mutation M3.
 const foldEls = [...document.querySelectorAll(".hdr-fold")];
+const viewStackEl = document.getElementById("view-stack");
 let keyOpen = false;
 
 function applyHeaderDisclosure() {
   if (!legendToggleEl || !legendEl) return;
   const narrow = narrowViewport();
+  /* WHAT IS ABOUT TO STOP EXISTING FOR THE RIDER, ASKED BEFORE IT DOES (round 2). Focus
+     stays on the button when the rider presses it, which is A3's rule and still true; what
+     that rule never covered is focus INSIDE what is being folded. Two ways to reach it: Tab
+     to a feed toggle on a phone and press Key, or have focus in the strip when a resize
+     crosses the breakpoint, which needs no press at all. Either way the element holding
+     focus is hidden and the browser drops the rider on <body>, which this app treats as a
+     defect everywhere else it can happen (applyVanishingFocus, and the popup and banner
+     doors that use it).
+     The Key button is where focus goes, because it is the control that did it and the one
+     that undoes it. Silent, deliberately: the rider pressed a disclosure and the disclosure
+     closed, which is not news, and #page-announce is for things they did not do. */
+  /* AND THE VIEW STACK COUNTS AS FOLDING, because below the breakpoint it stands down while
+     the Key is open (style.css says why: at 320 the presets painted over four rows of the
+     key). It is hidden by a CSS rule rather than by the `hidden` attribute, so it is not in
+     foldEls, and a rider who tabs to City and presses Key would have been dropped on <body>
+     by a display:none they did not ask for. */
+  const standingDown = narrow && !keyOpen ? [] : narrow ? [viewStackEl] : [];
+  const folding = [legendEl, ...(narrow ? foldEls : []), ...standingDown];
+  const losingFocus =
+    document.activeElement &&
+    folding.some((el) => el && el !== document.activeElement && el.contains(document.activeElement));
   legendEl.hidden = !keyOpen;
   for (const el of foldEls) el.hidden = narrow && !keyOpen;
   legendToggleEl.setAttribute("aria-expanded", String(keyOpen));
+  if (losingFocus) legendToggleEl.focus();
 }
 
 if (legendToggleEl) {
@@ -203,10 +226,17 @@ const storedTheme = () => {
 function applyTheme(theme) {
   document.documentElement.setAttribute("data-theme", theme);
   if (themeToggleEl) {
-    // The label is the ACTION, the aria-pressed is the STATE. A button reading "Dark" while
-    // reporting pressed=true would be two answers to one question.
+    /* THE LABEL IS THE ACTION, AND THERE IS NO SECOND ANSWER (round 2). This carried
+       aria-pressed as well, and the two contradicted each other out loud: in the dark theme
+       the button read "Light" and reported pressed, so a screen reader said "Light, pressed",
+       which states that the light theme is on while the page is dark. The toggle-button
+       pattern aria-pressed belongs to is one whose label does NOT change with the state, and
+       the design's label does: it is "Dark" and "Light", the thing pressing it will do.
+       So the name says what the press does, and nothing claims a state to disagree with it.
+       A rider does not learn the current theme from this button, and did not before either:
+       they learn it from the page, and the button tells them where the press leads. */
     themeToggleEl.textContent = theme === "dark" ? "Light" : "Dark";
-    themeToggleEl.setAttribute("aria-pressed", String(theme === "dark"));
+    themeToggleEl.removeAttribute("aria-pressed");
   }
 }
 
@@ -267,6 +297,15 @@ const SUBWAY_KEY_TRUNKS = [
 ];
 const subwayKeyEl = document.getElementById("subway-key");
 if (subwayKeyEl) {
+  /* AND IT IS OUT OF THE ACCESSIBILITY TREE WHILE IT IS ONLY A KEY (round 2). Twenty-six
+     spans reading "1 2 3 4 5 6 7 A C E ..." put twenty-six bare characters into the page's
+     reading order whose only information is the COLOUR beside them, which is the one thing
+     that does not survive being spoken. The route identities themselves are not lost: every
+     marker and every popup names its route in words, which is where a rider gets them today.
+     This comes back the moment the key does something: MR2 makes these buttons with real
+     names ("Focus route 1") and a real effect, and a control is a different thing from a
+     colour swatch. The attribute is in index.html rather than written here, so it holds
+     before this file runs. */
   for (const trunk of SUBWAY_KEY_TRUNKS) {
     const group = document.createElement("span");
     group.className = "bul-group";
@@ -338,7 +377,16 @@ for (const preset of VIEW_PRESETS) {
     // mention and this app does everywhere. Under reduced motion the view still changes, at
     // once: the destination is what the rider asked for and only the journey was decoration.
     if (motionAllowed()) map.flyTo(preset.center, preset.zoom, { duration: 0.8 });
-    else map.setView(preset.center, preset.zoom);
+    /* MR1 ROUND 2: animate:false, AND IT IS NOT BELT AND BRACES. motionAllowed() is read live
+       on every press, so a rider who turns the preference on mid-session takes this branch
+       immediately; what this branch could not do until now is honour them. Leaflet reads
+       zoomAnimation ONCE, when the map is constructed (helpers.js says so at
+       watchMotionPreference, and it is the reason applyMotionPreference cannot reach it), so
+       on a map built while motion was allowed a bare setView still animates the zoom. The
+       option is the supported way to say no to that one call. A rider who set the preference
+       before load is unaffected either way, which is why this needed the mid-session case to
+       be seen at all. */
+    else map.setView(preset.center, preset.zoom, { animate: false });
   });
 }
 map.on("moveend zoomend", () => {
@@ -485,11 +533,19 @@ const njtTrains = L.layerGroup().addTo(map); // placed trains gliding between st
    popup already landed, and animating a correction shows the rider the wrong position
    first and then slides the whole field away from it. */
 
-// The chrome that paints over the popup pane. Both are siblings of #map with a z-index
-// above .leaflet-map-pane's stacking context, which is the property that makes them
-// obstacles rather than just neighbours. Listed rather than derived, so adding a third
-// overlay is a deliberate edit here and not a silent regression.
-const POPUP_OBSTACLE_IDS = ["panel", "alert-banner"];
+/* The chrome that paints over the popup pane. Each is outside .leaflet-map-pane's stacking
+   context and above it, which is the property that makes them obstacles rather than just
+   neighbours. Listed rather than derived, so adding a third overlay is a deliberate edit
+   here and not a silent regression.
+
+   MR1 ROUND 2 ADDED THE THIRD, AND THE COMMENT ABOVE IS EXACTLY WHY IT HAD TO. The view
+   preset stack is fixed to the bottom right at z-index 1000 and paints over the popup pane
+   like the other two; left off this list it was an overlay the correction could not see, so
+   a popup that grew under it was neither moved nor noticed, and its clicks went to the
+   presets. It is a CHILD of #panel rather than a sibling of #map, which changes nothing
+   here: what this list wants is a box that covers the popup, and popupObstacles reads a
+   rect. */
+const POPUP_OBSTACLE_IDS = ["panel", "alert-banner", "view-stack"];
 
 function popupObstacles() {
   return POPUP_OBSTACLE_IDS.map((id) => document.getElementById(id))

@@ -236,8 +236,16 @@ async function showBusRoute(bus) {
   }
   shownBusRoute = { routeId: bus.route_id, busId: bus.id };
   const banner = document.getElementById("route-banner");
-  document.getElementById("route-banner-label").textContent = `Bus route ${bus.route_id}`;
-  document.getElementById("route-banner-label").style.color = routeColor(bus.route_id);
+  /* MR1 ROUND 2: THE COLOUR MOVED FROM THE TEXT TO A SWATCH, which is the rule this app
+     already states at readableInk: "the brand colour stays on the SHAPES that carry identity,
+     where 3:1 applies and the label carries the meaning". The label was set directly to the
+     route's hashed hue, which was measured against the old panel's opaque white; the header
+     surface is a token now and can be #2d2b2b, where an hsl(h, 75%, 40%) hue has no chance.
+     So the route's colour is a mark before the words and the words are --ink, legible in both
+     themes by construction. The custom property is what the stylesheet paints the mark with. */
+  const label = document.getElementById("route-banner-label");
+  label.textContent = `Bus route ${bus.route_id}`;
+  label.style.setProperty("--route-ink", routeColor(bus.route_id));
   banner.hidden = false;
 }
 

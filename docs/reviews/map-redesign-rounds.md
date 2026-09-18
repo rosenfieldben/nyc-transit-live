@@ -72,14 +72,38 @@ popup without anyone noticing, because nothing in the suite asserts that they di
 not move. Stage 1's first commit is therefore six pins with no production change
 behind them, each written to fail if stage 1 drifts outside its scope:
 
-| Pin | What it holds |
-| --- | --- |
-| P1 | The status line's text in the **F03 world** (content stale behind a fresh poll), character for character, as `staleness()` produces it. |
-| P2 | The status line's text in the **F01 world** (a railroad position past the age gate), character for character, including the withheld-count clause. |
-| P3 | The **alert banner rows** for the existing banner fixture: every row's marks and text, in order. |
-| P4 | The **legend's accessible names**, every one of them, so the Key panel can be checked against the list rather than against a memory of it. |
-| P5 | Per system, that its **markers' HTML is byte-identical** before and after the stage. Screenshot-free: the assertion is on the DOM, not on pixels. |
-| P6 | Per system, that its **popup HTML is byte-identical** before and after the stage. Same shape as P5. |
+All of them live in `tests/e2e/pins.spec.js` against the golden
+`tests/e2e/fixtures/mr_pins.json`, which was **measured from the running page, not
+written by hand**.
+
+| Pin | What it holds | Measured value |
+| --- | --- | --- |
+| P1a | The status line's words in the **F03 world**: the ACE group's content ten minutes behind a poll that keeps succeeding. | `trains: ACE group as of 10m ago` |
+| P1b | The status line's words in the **F01 world**: the committed capture with Metro-North's own poll aged six minutes, which is the one world where all three clauses arrive together. | `railroad: MNR as of 6m ago; LIRR 24 trains not shown, last seen over 10m ago; MNR position age unavailable` |
+| P1c | A **healthy day says nothing** and is not painted as an error. | `` (empty) |
+| P1d | The **alert banner's subtree**, byte for byte, plus its rows' text in order. | `.alert-banner-strip` / `.alert-banner-rows` / `.alert-banner-row` / `#alert-banner-dismiss` unchanged |
+| P1e | Every **accessible name the legend says**, with the `aria-hidden` glyphs removed, so the Key panel is checked against the list rather than against a memory of it. | 17 rows plus the note |
+| P1f to P1n | Per system, every **mark's HTML** (divIcons) or **renderer options** (canvas circleMarkers) with its anchors and its per-observation opacity, and its **popup HTML** as a rider sees it, read through the marker that owns it. Screenshot-free: the assertion is on the DOM and on Leaflet's options, never on pixels. | 9 families, 14 popups |
+
+Two things the pins had to be written around, both measured rather than guessed:
+
+- **The status pins assert the problems tail, not the whole line.** The whole line is the
+  thing MR1 takes apart: the counts become the feed strip's, the clock becomes the
+  header's, and only the problems stay in `#status`. A pin on the composed line would
+  have been a pin on the change. `statusTail()` strips a counts-and-clock head when there
+  is one, so the same pin reads the same string before and after.
+- **A popup is read through its marker, not through `.leaflet-popup-content`.** This app
+  can hold a vehicle popup and a station popup open at once, so that selector is not
+  unique and `map.closePopup()` closes only the map's current one. And the settle loop
+  runs on the driver's side, because the suite's clock is paused and an in-page
+  `setTimeout` never fires: the first cut of this helper deadlocked every station pin for
+  the full timeout.
+- **The pin ids are literal strings, and two shapes had to be thrown away to learn it.**
+  `tests/specids.js` collects test ids by pattern, and an id it cannot collect is worse
+  than a missing one: a claim citing it resolves against nothing and still reads as
+  evidence. `P5/P6.` dies on the slash, and a title built as `` `${system.id}. ...` ``
+  loses all nine ids while every test still passes. Hence `P1a` through `P1n`, one literal
+  title per pin over a shared body.
 
 ### Round 1 findings
 

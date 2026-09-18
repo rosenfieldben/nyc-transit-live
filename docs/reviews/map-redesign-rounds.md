@@ -55,11 +55,26 @@ stage.
 
 | Stage | Scope | State |
 | --- | --- | --- |
-| **MR1** | **Tokens and chrome.** The Modernist token set on the root with `data-theme`, self-hosted Archivo 400/600/800, the `.leaflet-tile-pane` filters for both themes, and a `localStorage`-persisted theme toggle, **built and tested and then hidden until MR4** (round 3, R2). The `<header>` replaces the right-hand `<aside>`: brand and blinking clock, the subway bullet key (display only, and in the app's own shape), the Key and Stations buttons, the feed strip, the Key panel, and the service alerts strip as a full-width row inside the header. The bottom-right control stack with the City/Rail/Region presets and the restyled zoom control. No marker, line, station, label, popup or route-table change: the pins prove it. | in review |
-| **MR2** | **Subway.** Trunk ribbons (casing plus line, yellow drawn last), the bullet train marker with its halo and lift, local dot versus transfer ring stations, the haloed permanent-tooltip labels with their zoom gating, the Names toggle, and route focus wired to the stage 1 bullets. Every ribbon takes its colour from `lineColor()` and every bullet keeps the app's own rounded rectangle, never the authority's palette or its roundel (round 3, R1). | planned |
+| **MR1** | **Tokens and chrome.** The Modernist token set on the root with `data-theme`, self-hosted Archivo 400/600/800, the `.leaflet-tile-pane` filters for both themes, and a `localStorage`-persisted theme toggle, **built and tested and then hidden until MR4** (round 3, R2). The `<header>` replaces the right-hand `<aside>`: brand and blinking clock, the subway bullet key (display only, and in the app's own shape), the Key and Stations buttons, the feed strip, the Key panel, and the service alerts strip as a full-width row inside the header. The bottom-right control stack with the City/Rail/Region presets and the restyled zoom control. No marker, line, station, label, popup or route-table change: the pins prove it. | merged |
+| **MR2** | **Subway.** Trunk ribbons (casing plus line, yellow drawn last), the bullet train marker with its halo and lift, local dot versus transfer ring stations, the haloed permanent-tooltip labels with their zoom gating, the Names toggle, and route focus wired to the stage 1 bullets. Every ribbon takes its colour from `lineColor()` and every bullet keeps the app's own rounded rectangle, never the authority's palette or its roundel (round 3, R1). **And, on the operator's instruction after round 2**, the key is derived from the loaded route list rather than written down, every drawn polyline carries the set of routes that ride it, focus is membership in that set, and the key is an ARIA toolbar with one tab stop. **Round 3 adds**, on four more rulings: the subway's ribbons on their own pane below every other family's lines, the station labels on a pane below every vehicle, transfer counted by TRUNK rather than by route id, and an off-focus marker out of the accessibility tree and out of the click path while a route is focused. | in review |
 | **MR3** | **Commuter rail.** The real route tables (§6 of the brief: name-keyed codes for LIRR and Metro-North, the feed's `route_short_name` and `route_color` for NJ Transit, `route_color` added to `/api/railroad-routes`), the branch lines, the square stations, and `railTagIcon` with the §3.1 provenance states: solid versus outlined body, filled versus outlined chevron, dimming for age. | planned |
 | **MR4** | **The other families.** PATH diamonds and lines, ferry dashed routes, dock dots and hulls, AirTrain's gray dashed service, and the bus arrow and dot at the muted hashed hue. The §3.3 dimmed and absent states for each. **Also the dark theme's release**: MR1 built it and hid the toggle, and MR4 is the stage at which every mark on the map has the casing that makes it legal (round 3, R2). | planned |
 | **MR5** | **Popups.** The `.pk/.pt/.kv/.dir/.arr/.fresh/.alert/.xlink` vocabulary, the §4 words routed from `positionQualifier()` and the per-system freshness rather than re-derived, the arrivals qualifier column, and the autopan padding that clears the stage 1 chrome. | planned |
+
+### One backend branch this phase owes, after MR2 merges
+
+**`stop_times.txt` should be a required member of the subway static archive**, which is the
+rule `shapes.txt` already gets and the rule PATH and the ferry already apply. Today
+`static_data.py`'s `_REQUIRED_MEMBERS` is `("stops.txt", "shapes.txt")`,
+`load_subway_station_routes` catches every exception and returns `{}`, and the subway warmup
+then reports `ready` with an all-empty index where the railroad warmup beside it gates on a
+non-empty one. Reproduced by execution in MR2 round 3.
+
+**Three consumers depend on that index**, which is why it is worth a required member rather
+than a frontend fallback: the transfer ring, the hub label class that the zoom-12 label band is
+built on, and the station alerts matcher. MR2 ships the honest frontend behaviour in the
+meantime (no ring, no hub class, every name from zoom 13, and the Names toggle saying why), and
+that fallback stays useful afterwards for a partial index rather than an absent one.
 
 ---
 
@@ -318,12 +333,317 @@ D1h and the axe scan.
 
 ## Stage MR2: subway
 
-*Not started.* Carries round 3's R1: ribbons in `lineColor()`'s answer, bullets in
-the app's own shape. The handoff's palette row and its lettered roundel are overruled
-and are not to be copied out of `docs/design/map-redesign/README.md`.
+Ribbons, bullets, dots, rings, names and route focus. Carries round 3's **R1**: ribbons in
+`lineColor()`'s answer, bullets in the app's own shape, and the handoff's palette row and
+its lettered roundel overruled and not copied. The popup axe scan **R4** asked for landed
+in MR1, so MR2 inherits it green in both themes and adds one undecidable shape of its own.
 
-The popup axe scan R4 asked for is **not** MR2's first item, because it was small
-enough to land in MR1: MR2 inherits it green in both themes.
+### The pins, and why three of them are new
+
+P1f already held every subway mark byte for byte, and MR2 is the stage that deliberately
+moves it: its MARK half is regenerated below and the before and after are recorded here,
+which is what "measured" means for a mark a stage exists to change. Its POPUP half is not
+regenerated. The popups are stage MR5, so a subway popup that changes in MR2 is a defect,
+and that claim stays an assertion; after the regeneration the golden's diff is one key
+wide (`markers.subway`), which is how that was checked rather than asserted.
+
+What MR2 reaches past on its way is the rest, and three pins landed first to say so.
+
+| Pin | What it holds |
+| --- | --- |
+| **P2a** | A subway station's registry entry, field by field, minus the two object fields, which are pinned as the questions actually asked of them: is this still the marker the panel syncs to, is it still in the layer the feed strip toggles, and is it still drawn by the canvas on `stationPane`. It also records the distinction P1f's station pin cannot show: the marker's own `pane` option is `overlayPane`, Leaflet's default for a vector layer, and the drawing is on `stationPane` through the RENDERER. Writing `pane` onto the circleMarker would look identical on screen and fail this pin, which is exactly the point. |
+| **P2b** | The station panel for a subway station, read from the DOM after a search and a selection: the results list, the detail heading, the arrivals rows and the words spoken into the panel's live region, in one pin because they are one act. |
+| **P2c** | F03's qualifiers on both surfaces, as a MEASURED golden. C2i already holds this world and holds it harder. This is a second witness of a different kind: C2i says what the rows should read and would have to be edited to accept a change; this says what they did read before MR2 and fails without anyone editing anything. |
+
+### What the two marks were, and what they are
+
+The before is the golden as `origin/main` served it; the after is the golden this branch
+regenerated.
+
+| | before | after |
+| --- | --- | --- |
+| train icon | `<rect x=1.5 y=1.5 w=15 h=15 rx=3 fill=#c0392b stroke=#fff stroke-width=1.5>` and a `system-ui` 700 9px letter | a `var(--paper)` halo `<rect x=0 y=0 w=18 h=18 rx=4 opacity=.95>` behind the same body rect with no stroke, and an Archivo 800 10.5px letter |
+| anchors | `iconAnchor [9,22]`, `popupAnchor [0,-22]` | `[9,21]`, `[0,-21]` |
+| station | `radius 4, color #333, weight 1.5, fillColor #fff` | transfer `radius 4.5, color --ink, weight 2, fillColor --paper`; local `radius 3.5, fillColor --ink, no stroke` |
+
+The body's geometry did not move. What moved is that its hard-coded white stroke became a
+paper ring BEHIND it, which is a token and therefore follows a theme swap through the
+cascade at no cost, and that the type is the design's.
+
+### The measurements the stage brief asked for
+
+Taken against the REAL network rather than the hermetic fixture, because the fixture
+serves two shapes and two stations and cannot answer a question about drawing a city.
+`docs/reviews/map-redesign/mr2/MEASURING.md` carries the two commands that rebuild the
+capture and the harness that runs it; the capture itself is 514 KB and is deliberately not
+committed.
+
+**The network, measured**: 24 routes, **35 shapes**, **22,520 points**, **496 parent
+stations**, of which **171 have one route** and **325 have two or more**, and none has
+zero. MR2 draws 70 polylines and 45,040 points, exactly double, and 171 dots and 325
+rings, which the shipped code reproduces exactly.
+
+**Doubling the polylines costs nothing measurable.** A/B in one page, four animated pans
+at City zoom per sample, 250 to 330 frames each:
+
+| | polylines | median | p90 | p95 |
+| --- | --- | --- | --- | --- |
+| before | 35 | 17.0 to 19.0 ms | 20.4 to 22.6 | 21.6 to 25.4 |
+| with the casings | 70 | 17.2 to 18.2 ms | 20.4 to 22.4 | 21.5 to 24.2 |
+
+So the answer to the brief's conditional is no: it does not cost more than a few
+milliseconds per frame, it does not cost anything, and there is no cut to propose.
+
+**The labels are where the cost is, and it is the PAINTED count that decides it.** Same
+harness, same page:
+
+| painted labels | median | p90 | p95 |
+| --- | --- | --- | --- |
+| 0 | 17.0 to 17.4 ms | 20.4 to 21.1 | 21.5 to 23.3 |
+| 10 | 17.8 | 21.0 | 22.1 |
+| 156 (a viewport gate at City zoom) | 20.0 | 26.7 | 33.7 |
+| 325 (the zoom gate at City zoom, which is what ships) | 19.8 to 21.2 | 26.7 to 29.5 | 30.5 to 36.8 |
+| 496 (every name, which is the band from zoom 14) | 20.8 to 23.2 | 29.5 to 32.9 | 34.7 to 44.9 |
+
+The shipped code measures the same: 20.7 median / 35.3 p95 at City zoom with 325 painted,
+and 18.4 / 22.7 with the Names toggle off, which is the no-labels baseline exactly.
+
+**So the tooltips are NOT gated to the viewport, and that is a decision with a measurement
+behind it rather than a default.** The brief's own test was the count: at zoom 14 over
+Midtown, **62 of the 496 labels are inside the viewport**, which is not thousands, so they
+may all be permanent. The cost that does exist is not recovered by a viewport gate either:
+156 painted costs the same as 325 (20.0 vs 19.8 median, 33.7 vs 30.5 p95), the whole
+difference appears between 10 painted and 156, and a viewport gate would add a `moveend`
+handler and a class sweep for no measured gain. The two switches that DO work are the zoom
+band and the Names toggle, and with names off the frame time returns to baseline exactly.
+
+### Round 1: what building the stage found
+
+| # | Finding | Disposition |
+| --- | --- | --- |
+| H1 | **A module-scope `const` is in the temporal dead zone until its own line runs**, and the bullet registry was declared after the loop that fills it. `systems/shared.js` threw at load and every one of the 54 smoke specs timed out at boot, which reads as a suite-wide failure rather than as one line in the wrong place. This is the same shape as MR1's feed strip painting at module scope. | **Fixed**: the registry is declared above the loop, with the reason in a comment. |
+| H2 | **`fill="var(--paper)"` works in a Chromium presentation attribute and `style="fill: var(--paper)"` works everywhere**, and the difference matters because the failure mode is a black square rather than an error. Measured both in the browser; the CSP is `style-src 'self' 'unsafe-inline'`, so the style form is allowed. | **Fixed**: the style form, in the marker and in the Key. |
+| H3 | **The Key panel's glyphs may NOT use the theme tokens**, because `.legend-row svg` sits on `--glyph-plate`, which is `#f3f2f2` in BOTH themes by MR1 round 2's ruling. A glyph drawn in `var(--paper)` would be a dark halo on a light plate the moment MR4 unhides the dark theme. | **Fixed**: the three subway glyphs carry the light theme's literals, and the comment says why. Measured on the plate: the bullet body and the ribbon line read 5.45 and the dot and ring read 14.86. |
+| H4 | **Two passes, not one per shape**, which the design does not say. Casing and line interleaved per route means a route drawn later cuts a paper gap through every route already drawn; since the yellow trunk is drawn LAST on purpose, interleaving would have it erase a stripe out of every trunk it shares track with, which on Broadway is three of them. | **Decided and recorded**: all casings, then all lines, each pass in trunk order. |
+| H5 | **The reference implementation's yellow-last sort tests only N and R.** `sort((a, b) => (a.route === "N" \|\| a.route === "R") - ...)` leaves Q and W under the darker trunks, and a test written against N would pass. | **Not ported.** `trunkDrawOrder` keys on the trunk and is node tested over all four, including a lettered variant. |
+| H6 | **The 24px target floor beats the design's 22px bullet.** The bullets are controls now. At 22 with the design's 2px group gap the centres are 24 apart, which is exactly the boundary of 2.5.8's spacing exception rather than clear of it. | **Deviation, measured.** 24x24, and the bullets joined `layout.spec.js` A4b's list and `a11y.spec.js`'s owned list rather than being exempted. |
+| H7 | **The design's "every other bullet fades to 0.3" is not implemented.** A 24px chip at 0.3 over `--surface` blends both the fill and the letter towards the surface, and the letter's contrast against its own chip collapses to near 1:1: the state would be conveyed by making twenty-five route names unreadable. MR1 round 2 found the same defect in the feed strip's OFF treatment and fixed it the same way, by fading only what is decorative; here nothing is decorative, because the letter IS the route. | **Deviation, measured.** The pressed bullet carries a ring in `--ink` (13.70 light, 12.60 dark on `--surface`), the focus ring sits OUTSIDE the chip where it is measured against the surface rather than against ten different fills, and the map says which route is focused by dimming every other one. |
+| H8 | **A permanent tooltip is the first DOM a subway station has ever had.** The A2 footnote records that a canvas circleMarker has no element and therefore no accessible name, with the station panel as the stated equivalent. Leaving 496 place names in the reading order would undo that silently. | **Fixed**: every label is `aria-hidden`, with the equivalent restated, and `A1z3` asserts it. |
+| H9 | **And `aria-hidden` does not exempt a label from axe's contrast rule**, which is correct: hidden from a screen reader is not hidden from an eye. Two new undecidable findings appeared in every scanned state, and a third message appears when the Key panel is open and overlaps the labels. | **Fixed**: a seventh named shape in `UNDECIDABLE_SHAPES` covering both messages for one element pattern, `A1z3` as its decider, and the matching row in `ACCESSIBILITY.md`. `A1z3` was mutation-tested by removing the halo, which fails it. |
+| H10 | **The design's zoom enumeration fails silently outside its range.** `[data-zoom="12"]` through `[data-zoom="19"]` matches nothing at zoom 20 and nothing at a fractional zoom, and the consequence is that every name disappears with no error. | **Fixed**: the root carries `data-zoom` (the design's attribute) AND `data-label-band`, which is `labelZoomBand()`'s answer and is what the stylesheet reads. Three values, one node-tested function, no range to fall out of. |
+| H11 | **`IMPLEMENTATION.md` puts these attributes on a `#map` wrapper and MR1 put `data-theme` on `<html>`.** Following the file would have meant selectors that never matched. | **Followed MR1**, which is the shipped decision, and recorded here rather than left to be rediscovered. |
+| H12 | **Escape had to join the existing ladder rather than bind a listener.** `frontend/keyboard.test.js` permits exactly one page-level keydown handler, and a second one bound in the bubble phase would have been inert anyway, because the ladder captures and stops the event. | **Fixed**: a rung at the BOTTOM of `map.js`'s ladder, below the popup and the panel, because route focus is a map-wide state rather than a surface anyone stands in. `D2f` walks all three rungs, which is what says the rung is last rather than merely present. |
+| H13 | **A paused clock does not run `requestAnimationFrame`, and a canvas renderer redraws on one.** Found while capturing this stage's screenshots: the focus screenshot showed the undimmed map while every layer's `options.opacity` had already changed. It is a property of the harness rather than of the app, and it exposed a real gap in the specs, which asserted what focus WRITES and never that anything repainted. | **Fixed in the tests**: `D2m` reads the overlay canvas's alpha channel and requires focus to take ink off it and clearing to put it back. |
+| H14 | **The first draw-order fixture appended the yellow routes** instead of prepending them, so the payload already arrived in draw order and `D2g` passed with `trunkDrawOrder` reduced to `return [...routeIds]`. Found by the mutation run, not by review. | **Fixed**: N and Q come first in the payload, and the comment records why a draw-order test over a payload that happens to arrive in draw order is not a test. |
+
+### Round 2: an adversarial pass over the written diff
+
+MR1's round 2 was the highest-yield step of that stage, and MR2 had not had one: the
+workflow before this stage was written was RECON (six readers over the terrain, two
+critics), and the mutations after it test the guards rather than the diff. This is the
+pass over the production half as written. A multi-agent run is still going; what is below
+is what the inline pass found and verified, and a later commit may extend it.
+
+| # | Finding | Disposition |
+| --- | --- | --- |
+| G1 | **The pressed bullet's ring was clipped by its neighbour.** The bullets are siblings in a flex group with the design's 2px gap, all `position: relative` with `z-index: auto`, and siblings paint in DOM order, so a ring reaching 4px out was drawn into the gap and then painted over by the next bullet's background for its outer half. Measured on the "2" bullet, which has a neighbour on both sides: whole on the left, where the earlier sibling paints below it, and cut off on the right. This is MR1's G1 again in a different costume, a rule that looks right and draws wrong, and the only way to see either one is to look at the drawn page. | **Fixed**: one stacking level, on the two states rather than on `.bul`, so an ordinary bullet keeps painting in source order. `D2a` holds it. |
+| G2 | **`stationLabelShown` was exported, node tested, and called by nothing.** The label gate is three CSS rules; a node test over that function looked like the gate's test and decided nothing, which is worse than an absent test because it reads as coverage. | **Converted rather than deleted**, which is the shape this repository already uses for `statusLineText`: the function is the ORACLE and `D2j` now drives the stylesheet against it across zooms 11 to 15 in both toggle states. **And then the comment saying so was corrected**, because a mutation run showed the grid's limit: the oracle and the attribute the CSS reads both come from `labelZoomBand`, so a mutation to the RULE moves both sides of the comparison together and leaves all thirteen specs in that file green. The node tier kills that one. The division is now written down: node pins what the rule is, the grid pins that the stylesheet implements whatever the rule says. |
+| G3 | **Three of the twenty-three bullets focus nothing, and four drawn routes have no bullet.** Against the real static archive the map draws `1 2 3 4 5 6 7 A B C D E F FS G GS H J L M N Q R SI`, and the key is MR1's ten trunks. So **Z, W and S draw no ribbon at all** (pressing one dims the whole map and highlights nothing), and **FS, GS, H and SI have no bullet**, which means the Staten Island Railway and every shuttle are unfocusable and the **S** bullet that looks like it should focus a shuttle matches none of their ids. MR1's bullets were display only, so the mismatch was invisible; MR2 is the stage that makes it bite. | **Raised as F3, then fixed on the operator's instruction**: the key is derived from the loaded route list rather than written down, and focus is membership in a ribbon's route set rather than equality with one id. "Round 2, continued" below is the whole of it, `D2n` through `D2q` hold it, and M7 and M8 are its mutations. |
+
+**And the pass itself produced an incident worth recording**, because it is a hazard for
+every future stage that runs one. The multi-agent run was given the repository's own
+working tree, and its verifiers test a finding the way this project does: by applying the
+mutation and seeing whether a spec dies. Two of those mutations were applied to
+`frontend/systems/subway.js` and `frontend/map.js` WHILE the gates for this round were
+being run against the same files, and one of them reached a commit: `dda884b` as first
+written carried M3's own sabotage, `subwayFocusBase` stripped from two of the four dimming
+call sites, so its gate numbers described a tree that was never the one committed. The
+agent had already un-applied its `subway.js` mutation by the time this was noticed; the
+`map.js` one, an Escape ladder reordered to put route focus above the station panel, was
+still applied because the run was stopped mid-flight.
+
+Both files were restored to `ecb67da`'s versions byte for byte, a stray probe spec the run
+left in `tests/e2e/` was removed, every tier was re-run against the restored tree, and the
+commit was amended before it went anywhere. **The lesson is the mechanism, not the
+mutation**: a review that verifies by mutation must run in its own checkout, and the next
+stage's pass gets `isolation: "worktree"` rather than the shared tree. Nothing was pushed
+at any point.
+
+**And on the operator's instruction that is now the standing rule rather than the next
+stage's plan.** `.claude/workflows/README.md` is new and states it for every review and
+probe workflow in this repository, with this incident as the evidence;
+`.claude/workflows/adversarial-review.js` carries it as `RULE 0` and passes
+`isolation: "worktree"` at all four of its `agent()` spawn sites, so a worktree is not
+something a caller has to remember. The caller's own half is written there too: **before
+any commit, confirm the working tree is what the gates ran on**, by `git status --short`
+and a diff against the last commit you controlled. Every commit from here in this stage
+did that, and the mutation run below used a real `git worktree` off the commit under test
+rather than the tree the gates had just passed.
+
+**What the pass checked and found clean**, recorded because a review that lists only its
+hits reads as if it looked only where it found something:
+
+- `.bul` and `.stn-label` reach no surface outside the subway key and the station labels,
+  which is the MR1 G3 hazard (an unscoped `.alert-stale` repainted every popup's alert
+  block, and byte-identical HTML pins could not see it).
+- Route focus survives a feed hide and show, and a `setIcon` route relabel, on both
+  `options.opacity` and the rendered element's inline style.
+- The labels come back `aria-hidden` after a feed toggle, because the listener is on the
+  marker rather than on the tooltip element Leaflet recreates.
+- The pressed ring's backdrop really is `--surface` (`#panel`, measured as
+  `rgb(234, 233, 233)`), so the 13.70 and 5.53 this stage claims are measured against the
+  right colour rather than an assumed one. **WRONG, and round 3's F3 and F10 say how**: true
+  of the ring's top and bottom edges, and its left and right sat on the neighbouring bullet's
+  fill at 1.10.
+- A station label overlaps a train bullet in a 2x3 pixel corner and no more: the bullet is
+  lifted 21px above its anchor and the label sits 7px to the right of it, so the
+  tooltipPane being above the markerPane costs the bullet's bottom three pixels. **WRONG, and
+  round 3's F2 says how**: measured as a box against the anchor rather than as painted text.
+  It was 44% of a bullet's route-coloured pixels and its letter.
+
+**Both are left standing above rather than rewritten**, with the corrections attached, because
+a review record edited to look consistent afterwards is worth nothing. The pattern they share
+is worth more than either: both were measured with the right instrument pointed at the wrong
+thing, a box instead of the ink and one edge instead of four.
+
+### Four findings for the operator
+
+| # | Finding | Proposal |
+| --- | --- | --- |
+| **F1** | **The station names collide.** Measured in the viewport over Midtown, the share of painted labels whose box intersects another one is **89% at zoom 12, 77% at 13, 40% at 14 and 29% at 15**. The design's gating (hubs from 12, all from 14) does not declutter, and neither does the reference implementation. It is visible in `after-desktop.png`, where "34 St-Penn Station", "34 St-Penn Sta" and "34 St-Herald Sq" sit on top of one another. A rider can turn the names off, which is what the Names toggle is for, and the zoom that reads best is 15. | Two remedies, neither of them in this stage's scope: **declutter**, by hiding a label whose box intersects one already placed, recomputed on `moveend`, cheapest-first; or **narrow what a hub is**, since "two or more routes" is 325 of 496 stations and the design's word suggests the big interchanges. The first is a new mechanism with its own questions (which label wins, and does it flicker on a pan); the second is a threshold the record does not fix. Shipping as specified and raising it, which is how the MTA palette question reached round 3. |
+| **F3** | **Three of the twenty-three bullets focus nothing** (Z, W and S draw no ribbon against the real archive), **and four routes the map draws have no bullet** (FS, GS, H, SI). The S bullet is the sharp one: the shuttles ARE drawn, under the ids GS, FS and H, and focusing S matches none of them. | Two parts, both touching MR1's trunk set rather than this stage's five items. An **alias table**, so one bullet can name several feed route ids (S to S, GS, FS and H), which is the only way the key and the feed can disagree about an id without a rider noticing. And a **decision about SI**, which the map draws and the key does not explain. Focusing by colour instead would be worse, not better: 1, 2 and 3 share one hex, so it would light all three. **Fixed**, see "Round 2, continued" below. |
+| **F4** | **The key costs twenty-three tab stops.** Measured from the top of the document, reaching the Stations button now takes **32 presses**, twenty-three of them route bullets, where before this stage it took nine. The skip link is still the first stop, so a rider heading for the station panel is unaffected; a rider heading for the Key or Stations button walks the whole key. | The standard remedy is a roving tabindex: `role="toolbar"`, one tab stop, arrow keys inside. It is about twenty-five lines and `frontend/keyboard.test.js` already has the seam for it (a keydown outside the ladder is allowed when it is named as a control's own activation, with its reason). It is a new interaction mechanism rather than one of this stage's five items, so it is raised rather than taken. **Fixed on the operator's instruction**: measured after, **10 presses**, one of them a bullet. See "Round 2, continued" below. |
+| **F2** | **A yellow line on a paper casing reads 1.67 in the light theme.** Measured through the repository's own helpers, every trunk against `--paper`: N/Q/R/W **1.67**, B/D/F/M 2.52, G 2.66, L 3.11, and everything else between 4.22 and 8.31. Three trunks are under the 3:1 a non-text indicator owes against the colour beside it. **It is better than what it replaces**: before this stage the same lines were 2.5px at opacity 0.5 straight onto the basemap, so every trunk gained rather than lost. And route identity is never carried by a line alone: every train names its route in words, every popup does, and the Key panel does. | Recorded rather than fixed, because the fix is a palette change and the palette is the app's own by ruling R1. If the operator wants the three to clear 3:1 against paper, that is a change to `LINE_COLORS`, which every surface reads, and it belongs in a stage of its own rather than in a corner of this one. The dark theme's column is worse (SI 1.79, A 2.73, S 2.77, J 2.69) and is MR4's to answer, for the same reason MR1's Key glyphs were. |
+
+### Round 2, continued: the operator's three instructions
+
+The operator read round 2 and answered it with three instructions before the push. The
+first is the worktree rule, recorded with the incident above. The other two are the
+findings this round raised and did not take, taken.
+
+| # | Instruction | What it is now |
+| --- | --- | --- |
+| **G3 / F3** | **The key is data-driven and ribbons are tagged by route.** A bullet for every route the app can draw a ribbon or a train for, from the loaded route list, grouped by trunk. Each drawn polyline carries the set of routes that share it, and focus is membership: Z lights the J/Z ribbon and its trains, W the N/Q/R/W ribbon and its trains. The S bullet focuses GS, FS and H together with a tooltip that says so. SI gets its bullet. A bullet whose set draws nothing is present and `aria-disabled` with a reason, and never dims the map. | `helpers.js` derives the whole model from `(routes, trainRoutes)`: the bullet universe (alias-collapsed, `S` standing for `GS`, `FS`, `H`), each bullet's focus set, whether a press would light anything, and the title. `subway.js` tags every polyline with `ribbonRouteSet`, which is the route itself plus every trunk-mate the app has no geometry for, so the J ribbon is `J+Z` and the three yellow ribbons become `N+W`, `Q+W`, `R+W` the moment a W train appears. Over the real archive the key comes out as the 22 bullets `1 2 3 4 5 6 7 A C E B D F M G J L N Q R S SI`, which is the 24 drawn routes with the three shuttle ids collapsed into one. `D2n` (Z), `D2o` (W), `D2p` (S and SI) and `D2q` (the dark bullet) hold the four cases; M7 and M8 are its mutations. |
+| **F4** | **The key is an ARIA toolbar with a roving tabindex, one tab stop.** Measure the tab count to Stations after, beside the 32. | `role="toolbar"`, exactly one bullet at `tabIndex 0` (the pressed one if there is one, else the first enabled one), ArrowRight/Left/Up/Down wrapping both ways, Home and End, and disabled bullets skipped. The keydown is scoped to the key and named in `frontend/keyboard.test.js` with its reason, which is that test's existing seam for a control's own activation rather than a second page-level router. **Measured after, same harness and the same real 24-route list as the 32: 10 presses from the top of the document to the Stations button, one of them a bullet.** The arithmetic is the claim itself: 32 less 23 bullets plus 1 stop is 10, and the nine presses this stage started from are that 10 less the key. `D2r` holds the property the number follows from, which is that the key's cost does not grow with the route list. |
+
+Two more findings came out of building those two, both from the new specs rather than from
+reading the diff:
+
+| # | Finding | Disposition |
+| --- | --- | --- |
+| G4 | **Focus closed transitively, and lit three routes when a rider asked for one.** The first version of membership focused the transitive closure of the ribbons a bullet touches. That is correct for Z, where the J/Z ribbon is the only thing carrying Z, and wrong for N: N's ribbon carries W because the app has no W shape, W's closure reaches Q and R for the same reason, so pressing N lit the whole Broadway trunk. Found by `D2o` on its first run, which is the direction that matters: the spec that failed was the one asserting what a rider would want, not one asserting the implementation back at itself. | **Fixed.** Membership is asymmetric on purpose now: a RIBBON lights when its own route set contains one of the bullet's ids, and the bullet's ids never grow. `focusRoutesForBullet` is the focus set and is `bulletRouteIds` under a name that reads as the decision; the closure survives as `bulletTrackSet`, which is only what the "shares track with" half of a title is written from. So pressing J and pressing Z light the same ribbon and different trains, and `D2n` asserts exactly that, because a train carries its own `route_id` where a shared ribbon cannot. M8 is its mutation. |
+| G5 | **`aria-disabled` is not `disabled`, and Playwright will not click it.** Playwright's actionability check treats `aria-disabled="true"` as not enabled and refuses the click, which is not what a browser does: the element is a live `<button>` with no `disabled` attribute and a real press lands on it. A spec that accepted the refusal would be asserting the test runner's opinion instead of the page's behaviour, and would pass with the guard removed. | **`click({ force: true })` in `D2q`, with the reason written at the call.** The inertness under test is `toggleRouteFocus`'s own early return, which is what a rider's press actually meets, and M7 is the mutation that removes it. |
+
+### Round 3: the multi-agent adversarial pass, and four rulings
+
+The review that round 2 started ran to completion in its own worktree (the rule that incident
+produced, now enforced at all four spawn sites) and returned **17 confirmed findings, five of
+them high**. Fourteen agents, 21 candidates, six solo verifiers and three batched ones. **Two
+of its findings contradicted claims this branch had already made**, which is recorded here as
+plainly as the fixes, because a review whose own record is edited to look consistent is worth
+nothing.
+
+| # | Finding | Disposition |
+| --- | --- | --- |
+| **F2** | **The station name labels painted over the train bullets.** A permanent Leaflet tooltip defaults to `tooltipPane` at z-index 650 and the vehicles are in `markerPane` at 600. Verified from this stage's own committed screenshots, `after-desktop.png` against `after-desktop-names-off.png`: same commit, same frozen clock, same view, differing only by `data-labels`. One bullet lost **44% of its route-coloured pixels** and its route letter with them. **Round 2's own pass called this "a 2x3 pixel corner and no more"**, and that note was wrong: it measured the label's BOX against the anchor rather than its painted text, which is how a defect got through a review that was looking directly at it. | **Fixed.** A `stationLabelPane` at 460, above the dots a name may cover (its own station) and below every vehicle it may not. `D2x` asks which pane the tooltips are actually IN, which is the question the pane-order assertions do not. |
+| **F3**, **F10** | **Both bullet rings were measured against the wrong backdrop.** Both reach 4px out from a 24px chip while `.bul-group`'s gap was the design's 2px, so each ring's left and right segments sat inside the neighbouring bullet's border box, and **round 2's own `z-index: 1` fix is exactly what makes them paint there** rather than be clipped. Against a neighbour's fill `--focus` reads **1.10** on the A/C/E blue, 1.08 on J/Z, 1.23 on 1/2/3, 1.42 on 4/5/6; `--ink` reads 2.73 and 2.69, and in the dark theme 1.67 on the yellow trunk. 1.10 is the exact number MR1 round 2 recorded as the defect an outside ring was chosen to escape, so the claim "measured against `--surface`, where `--focus` reads 5.53" held for the top and bottom edges only. | **Fixed with one number**: the gap is **6px**, the minimum that leaves a 2px surface band inside the ring and 2px outside it before the neighbour begins. Verified at the pixel level in both themes and both states: surface, ring, surface, on both sides. A third deviation from the drawn design, with the arithmetic beside it. |
+| **F4** | **Route focus wrote into the freshness contract's channel with a stronger value.** `FOCUS_DIM_TRAIN` 0.15 is below `STALE_MARKER_OPACITY` 0.45, so a live off-focus train draws dimmer than a ten-minute-stale on-focus one, and an off-focus stale train lands at **0.0675** while staying clickable and screen-reader-announced. Leaflet's `setOpacity` writes nothing but `style.opacity`. Corroborated by the app's own convention: `FERRY_DOCKED_OPACITY` is 0.55, deliberately ABOVE the floor. | **The operator's ruling: keep both numbers and take the reach instead.** Focus still multiplies on the contract's own opacity and `markerOpacity` is untouched. While a route is focused every off-focus marker is `aria-hidden` and takes no pointer events, and clearing restores both. `D2v` walks it in both directions including a real click at the marker's centre; `D2w` holds it across a poll and for a train arriving mid-focus, because `setIcon` replaces the element. |
+| **F9** | **`isTransferStation` counted route IDS, so skip-stop and local-express pairs were interchanges.** Marcy Av is J and Z, one line taking turns; every `["A","C"]` and `["4","5"]` stop is the same shape. All of them drew the paper transfer ring and took the `hub` class the zoom-12 band exists to keep sparse. | **The operator's ruling: count TRUNKS**, the groups `lineColor()` already knows, because sharing a colour is what being one line means. `P1f`'s subway station pin moves with it: six lines, both stations, ring to dot, nothing else in any pin. |
+| **F6** | **The 6.5px paper casings shared one canvas with every other family's route lines.** Leaflet's canvas draws in insertion order regardless of LayerGroup, the eleven static loaders start together, and `/api/subway-routes` is the largest payload and re-fetches on a warming 503, so the ribbons routinely landed last and erased PATH's 33rd St line (weight 2.5), the AirTrain at Howard Beach (3) and the LIRR Atlantic Branch (2.5). Whether another family's line survived was a race. | **The operator's ruling: a `subwayLinePane` below `overlayPane`**, so the subway is the base network and no arrival order can change it. The whole pane order is documented in one block where the panes are created, and `D2u` pins it with four families drawn in shuffled insertion order. |
+| **F1** | **Every station name can vanish with a green status.** `stop_times.txt` is not a required member of the subway static archive, `load_subway_station_routes` returns `{}` on any failure, and the endpoint then serves `routes: []` for all 496 stations while `subway_static_status` stays `ready`. Every station is a local, no label carries `hub`, and at the opening zoom 12 and the City preset's 13 nothing renders while the Names button reads pressed. Reproduced by execution against an archive with no `stop_times.txt`. | **Split on the operator's ruling.** The band's arithmetic was right and is not the bug: "hubs from 12" showing no hubs is the correct answer to that data. **This branch keeps the frontend's half**: with no hub anywhere the band shows every name from **13**, one zoom later than the hub band because 12 is the worst zoom the collision measurements found, and one earlier than the all band because a rider should not need 14 to see any name. Plus F7 below. **The backend half is its own branch after MR2 merges**: `stop_times.txt` becomes a required member, the rule PATH and the ferry already apply to `shapes.txt`. Its three consumers are the transfer ring, the hub label class and the station alerts matcher. |
+| **F7** | **The Names toggle reported a state it did not have.** Below zoom 12 the band is `none` and two of the three view presets put the map there, so the button flipped `data-labels` with no visible change, no announcement and `aria-pressed="true"` intact. Route focus has announced since this stage was written; this control never did. | **Fixed.** It announces, and carries a tooltip in the one state a rider cannot deduce from the screen. **And writing its spec found a false sentence in the fix**: keyed on the hub count, the tooltip appeared over any hubless network and claimed no station listed its routes above a map where every station did. The band is keyed on hubs (that is what the band asks) and the sentence on the registry (that is what the sentence is about). |
+| **F17** | **The disabled bullet's fade made its route letter unreadable.** `filter: grayscale(0.7); opacity: 0.55` on the whole button took the letter to between **2.17 and 3.80** against its own chip, from between 5.00 and 9.30, and the rule's comment claimed it was "as legible as any other". State conveyed by making a route name unreadable, which MR1 round 2 ruled out twice. | **Fixed the way MR1 round 2 fixed the OFF treatment**: the chip carries the state and the letter carries the route. `--chip-off` per theme, measured at 5.33 light and 8.03 dark, with the chip at 4.40 and 6.49 against its own surface. One grey cannot clear 3:1 against both surfaces, because they sit either side of mid grey, so it is a token per theme. |
+| **F15** | **`layout.spec.js` A4c probed a fixed three-pixel band and this stage had spent the slack.** Lifting `iconAnchor` from `[9,22]` to `[9,21]` moved the halo's bottom edge from 4px above the anchor to 3px, so the probe passed with exactly zero margin while `style.css`'s comment went on stating the measurement as 4px. | **Fixed.** A4c finds the FIRST covered pixel and asserts the number, per system: 3 for the subway, 4 for PATH, both `iconAnchor.y - iconSize.y`. A claim that can go stale loudly instead of quietly. |
+| **F5**, **F11**, **F12**, **F13** | **Four guards and assertions that measured nothing**, each confirmed by a mutation the whole suite survived. F5: nothing shrank the bullet universe while a route was focused, so the rebuild's focus-clearing branch was untested and deleting it left the map permanently dimmed with no pressed control. F11: nothing advanced a poll with focus inside the toolbar, so the signature guard's own claim was unmeasured. F12: `paperColor`'s fallback is the light theme's `--paper` byte for byte and every spec runs in the light theme, so `D2h`'s token assertion held whether or not a token was ever read. F13: `D2q` put the dark bullet at index 3 of 9, where the roving stop and the arrow wrap give identical answers with and without the guard. | **All four fixed as tests.** `D2s` shrinks the universe under a focus; `D2t` advances two polls with focus in the toolbar and also asserts the legitimate rebuild still happens; `D2h` moves the tokens and asks the resolvers again; `D2q` presses the two keys either side of the dark bullet. |
+| **F14** | **Leaflet's Tooltip defaults to `opacity: 0.9` and writes it as an INLINE style**, which no stylesheet rule can reach, so every station name drew at 90% group alpha while `A1z3` measured its ink at 100% and reported a ratio about 23% better than the drawn one. The `.stn-label` rule enumerates five tooltip defaults it takes back off; this was the sixth. | **Fixed** with `opacity: 1` in the `bindTooltip` options, because it is not a rule. `D2x` holds it beside the pane, since both are properties of that one call. |
+| **F8** | **Partly refuted, and this is why findings get verified.** The claim was that `stationMarkStyle`'s local branch dropped a hit-radius invariant: 4.75px before, 3.5px after. The arithmetic is right and the framing is not. In the vendored Leaflet, `_containsPoint` is `radius + (stroke ? weight/2 : 0) + renderer.tolerance`, which is **also the drawn outer radius**, so the hit radius has always equalled the drawn one and there was no separate invariant to re-establish. The local dot is smaller because the design specifies a smaller dot. The proposed remedy, a `tolerance` on the renderer, would have silently grown the hit radius of PATH, railroad and ferry stations, three systems this stage's pins exist to hold still. | **Not changed.** The residue worth recording: tapping a local station is harder than before, by the design's own call, and the A2 footnote's marker-versus-panel equivalence already covers the target-size question for every mark on this map. |
+| **F16** | **The Key panel's station row draws two marks and its caption describes one thing**, so a rider sees the difference and does not learn what it means. Real, and not fixable here: a second row moves `A1x`'s pinned row count, and rewording the caption drops an exact sentence, which is precisely what `P1e` forbids ("no stage takes a sentence away from this panel, additions only"). Tried both, put both back. | **Recorded for the stage that owns the Key panel**, with the reason written at the markup. The same discipline as the "ALL LINES" button. |
+
+**Round 3's own fixes went in half guarded, and the mutation run is what said so.** Three of
+them survived their first mutation: the label pane (**M9**), the 6px gap (**M10**) and the
+disabled chip's drawn treatment (**M19**), with a fourth (**M14**) dying only at the node tier.
+`D2x`, `D2y`, `D2z` and `D2z1` exist because of that, and the lesson is the one this stage
+keeps relearning: **a fix is not finished when it works, it is finished when reverting it
+fails something.**
+
+**And writing those specs found two more defects in round 3's own work**: the Names toggle's
+false sentence above, and a `typeof stationRegistry` guard that took the whole page down,
+because `typeof` on a module-scope `const` in its temporal dead zone THROWS rather than
+answering "undefined" (it answers that only for a name never declared at all). This file had
+already been taken down that way once this stage.
+
+### Mutations
+
+Each in a real `git worktree` detached at the commit under test, the mutation applied
+alone, the named tier run against it, and `git checkout -- .` between runs; the main tree
+was verified clean before and after the whole run. That is the incident's lesson applied to
+my own probes and not only to the review agents': the earlier runs of M1 to M6 used a copy
+of the tree (`git ls-files --cached --others --exclude-standard`, so a new untracked file
+was included), which is enough isolation only as long as nothing else is running.
+
+| # | Guard reverted | Result | Killed by |
+| --- | --- | --- | --- |
+| M1 | the yellow trunk not drawn last (`trunkDrawOrder` returns its input) | **killed** | node `MR2: the yellow trunk is drawn last`, and `subway.spec.js` **D2g** once its fixture stopped handing the payload to it in draw order (H14) |
+| M2 | route focus rebuilding the ribbon layers instead of changing their opacity | **killed** | `subway.spec.js` **D2d**, on layer identity: every `L.Util.stamp` is unchanged across a focus and a clear |
+| M3 | the freshness contract's dimming lost under the new icon (the age dropped at all four call sites) | **killed** | `subway.spec.js` **D2e**, and `smoke.spec.js` **C2b**, **C2c**, **C2h** and **C2m** |
+| M4 | the labels not gated by zoom (`.stn-label { display: block }` unconditionally) | **killed** | `subway.spec.js` **D2j**, which reads COMPUTED display rather than the attribute, so a band written correctly over a rule that never matched still fails |
+| M5 | the transfer ring drawn for single-TRUNK stations (`isTransferStation` at `>= 1`) | **killed** | node, four tests, and `subway.spec.js` **D2i**, **D2j**, **D2z** and pin **P1f**. Re-cut in round 3: the original counted route ids and F9 replaced that line, so the same guard is probed in its new form and M13 is the other half. |
+| M6 | a circular bullet (the body rect replaced by a circle) | **killed** | `subway.spec.js` **D2k**, which is `D1l`'s sibling on the map, and pins **P1f**, because the subway train's HTML is pinned and this is the stage that regenerated it |
+| M7 | a bullet with an empty set dims the map (the `aria-disabled` early return in `toggleRouteFocus` deleted) | **killed** | `subway.spec.js` **D2q**: every ribbon and every train is compared before and after the press, and `#page-announce` is required to have said nothing |
+| M8 | focus is the transitive closure again (`subwayKeyModel` hands `bulletTrackSet` to the focus field), which is G4 put back | **killed** | node `MR2 G3: the whole key is grouped by trunk`, and `subway.spec.js` **D2n** and **D2o** |
+| M9 | the labels go back to Leaflet's default `tooltipPane`, above the vehicles (F2) | **killed, second time** | `D2x`. **It survived the first run**: `D2u`'s pane-order assertions stay correct with the `bindTooltip` option deleted, because the panes are still created. |
+| M10 | `.bul-group`'s gap back to the design's 2px, so both rings land on the neighbour's fill (F3, F10) | **killed, second time** | `D2y`. **It survived the first run** too: nothing in the suite sampled the pixels beside a ring. |
+| M11 | the ribbons back on the canvas every other family shares (F6) | **killed** | `D2u`, and `D2m`, which would otherwise be reading the wrong canvas entirely |
+| M12 | an off-focus marker stays in the accessibility tree and keeps taking clicks (F4) | **killed** | `D2v` and `D2w` |
+| M13 | the station predicate counts route ids again (F9) | **killed** | node `MR2 F9`, and `D2i`, `D2j` and pin `P1f` |
+| M14 | with no hub anywhere the band shows nothing instead of everything from 13 (F1) | **killed** | node `MR2 F1`, and `D2z` and `D2z1`. **Only the node tier caught it on the first run**, which is why the two browser specs exist. |
+| M15 | the rebuild stops clearing a focus whose bullet has gone (F5) | **killed** | `D2s` |
+| M16 | the key rebuilds every poll (F11) | **killed** | `D2t` |
+| M17 | the token resolvers can only ever return their literal fallback (F12) | **killed** | `D2h` |
+| M18 | the roving tabindex and the arrow keys stop skipping disabled bullets (F13) | **killed** | `D2q` |
+| M19 | the disabled chip keeps its inline route colour, so the token never lands (F17) | **killed, second time** | `D2q`'s drawn-treatment block. **It survived the first run**: nothing asserted the disabled bullet's painted colours. |
+| M20 | the Names toggle stops announcing (F7) | **killed** | `D2j` |
+| M21 | the tooltip goes back to Leaflet's default 0.9 group alpha (F14) | **killed** | `D2x` |
+
+**Twenty-one mutations, all killed, and the node tier takes five of them on its own**: the
+draw order, the station predicate, the zoom band, the no-hub fallback and the key's grouping.
+That is five more than MR1 managed and the reason is the shape of this stage rather than
+better testing, because MR2's decisions are arithmetic over data the page already has. The
+sixteen that only the browser kills are all wiring: which function a call site passes an age
+to, which pane a tooltip is bound to, whether a renderer repaints, whether a stylesheet rule
+matches, whether a click handler returns early, what a canvas actually painted.
+
+**Three of round 3's fixes survived their own mutation on the first run** (M9, M10, M19) and a
+fourth was caught by the node tier alone (M14). Every one of those four was a fix whose
+correctness I had verified by hand, measured, and written a comment about, and none of them
+had a test that would have noticed it being reverted. That is the sharpest thing this stage
+learned and it is worth more than any single finding in the table above.
+
+**One failure in the run was not the mutation's**, and it is recorded because a mutation
+table that launders a flake is worse than one with a gap in it. Under M6, a batch running
+`pins.spec.js` and `subway.spec.js` together on two workers also failed **P1m**, the ferry
+pin, which has nothing to do with a subway icon. It did not reproduce: `pins.spec.js` alone
+with M6 applied fails **P1f** and nothing else, and P1m passes. It is the same local server
+contention this stage met once before, and the `pin()` helper cannot be the cause, because
+in assert mode it only reads the golden.
+
+### Before and after
+
+`docs/reviews/map-redesign/mr2/`, from the hermetic harness at the frozen clock over the
+REAL subway geometry, centred on Midtown at zoom 13, so the pair shows a network rather
+than the fixture's two shapes.
+
+| | 1280 | 375 |
+| --- | --- | --- |
+| before | `before-desktop.png` | `before-375.png` |
+| after | `after-desktop.png` | `after-375.png` |
+
+Two more, because two of this stage's five items cannot be seen in a still of the default
+state: `after-desktop-names-off.png` is the same view with the Names toggle off, which is
+the ribbons and the marks without the label noise F1 describes, and
+`after-desktop-focus-4.png` is route focus on the 4, where the Lexington Avenue trunk
+stands at full strength and every other trunk is at 0.18 with its casing gone.
+
 
 ## Stage MR3: commuter rail
 

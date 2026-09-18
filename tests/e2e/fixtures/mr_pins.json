@@ -6,6 +6,28 @@
    "Some elevators are out of service across the system"
   ]
  },
+ "board": {
+  "f03": {
+   "arrivals": [
+    "5 train in 2 minutes, 8:02 AM arrival, as of 10m ago",
+    "2 train in 3 minutes, 8:02 AM arrival, as of 10m ago",
+    "5 train in 3 minutes, 8:02 AM arrival",
+    "2 train in 5 minutes, 8:05 AM arrival",
+    "5 train in 10 minutes, 8:09 AM arrival, as of 10m ago",
+    "5 train in 12 minutes, 8:11 AM arrival",
+    "2 train now, 7:59 AM arrival, as of 10m ago",
+    "5 train in 3 minutes, 8:02 AM arrival, as of 10m ago",
+    "5 train in 3 minutes, 8:03 AM arrival",
+    "2 train in 9 minutes, 8:09 AM arrival",
+    "2 train in 9 minutes, 8:09 AM arrival, as of 10m ago",
+    "5 train in 12 minutes, 8:12 AM arrival"
+   ],
+   "spoken": "Prospect Av, Subway. Northbound: 5 train in 2 minutes, 8:02 AM arrival, as of 10m ago. 2 train in 3 minutes, 8:02 AM arrival, as of 10m ago. 5 train in 3 minutes, 8:02 AM arrival. 2 train in 5 minutes, 8:05 AM arrival. 5 train in 10 minutes, 8:09 AM arrival, as of 10m ago. 5 train in 12 minutes, 8:11 AM arrival. Southbound: 2 train now, 7:59 AM arrival, as of 10m ago. 5 train in 3 minutes, 8:02 AM arrival, as of 10m ago. 5 train in 3 minutes, 8:03 AM arrival. 2 train in 9 minutes, 8:09 AM arrival. 2 train in 9 minutes, 8:09 AM arrival, as of 10m ago. 5 train in 12 minutes, 8:12 AM arrival",
+   "panelStaleLines": 0,
+   "qualifiersInPopup": 6,
+   "popup": "<b>Prospect Av</b><div class=\"arr-dir\">Northbound</div><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 2 min <span class=\"arr-qualifier\">as of 10m ago</span><br><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span> 3 min <span class=\"arr-qualifier\">as of 10m ago</span><br><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 3 min<br><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span> 5 min<br><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 10 min <span class=\"arr-qualifier\">as of 10m ago</span><br><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 12 min<div class=\"arr-dir\">Southbound</div><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span> now <span class=\"arr-qualifier\">as of 10m ago</span><br><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 3 min <span class=\"arr-qualifier\">as of 10m ago</span><br><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 3 min<br><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span> 9 min<br><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span> 9 min <span class=\"arr-qualifier\">as of 10m ago</span><br><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 12 min"
+  }
+ },
  "legend": {
   "names": [
    "Bus (arrow points where it's heading)",
@@ -453,7 +475,7 @@
   "subway": {
    "subwayTrains": [
     {
-     "html": "<svg viewBox=\"0 0 18 18\">\n      <rect x=\"1.5\" y=\"1.5\" width=\"15\" height=\"15\" rx=\"3\" fill=\"#c0392b\" stroke=\"#fff\" stroke-width=\"1.5\"/>\n      <text x=\"9\" y=\"9.5\" text-anchor=\"middle\" dominant-baseline=\"central\"\n            font-size=\"9\" font-weight=\"700\"\n            font-family=\"system-ui, sans-serif\" fill=\"#ffffff\">1</text>\n    </svg>",
+     "html": "<svg viewBox=\"0 0 18 18\">\n      <rect x=\"0\" y=\"0\" width=\"18\" height=\"18\" rx=\"4\" style=\"fill: var(--paper)\" opacity=\"0.95\"/>\n      <rect x=\"1.5\" y=\"1.5\" width=\"15\" height=\"15\" rx=\"3\" fill=\"#c0392b\"/>\n      <text x=\"9\" y=\"9.5\" text-anchor=\"middle\" dominant-baseline=\"central\"\n            font-size=\"10.5\" font-weight=\"800\"\n            font-family=\"Archivo, system-ui, sans-serif\" fill=\"#ffffff\">1</text>\n    </svg>",
      "className": "train-marker",
      "size": [
       18,
@@ -461,16 +483,16 @@
      ],
      "anchor": [
       9,
-      22
+      21
      ],
      "popupAnchor": [
       0,
-      -22
+      -21
      ],
      "opacity": 1
     },
     {
-     "html": "<svg viewBox=\"0 0 18 18\">\n      <rect x=\"1.5\" y=\"1.5\" width=\"15\" height=\"15\" rx=\"3\" fill=\"#1f5fbf\" stroke=\"#fff\" stroke-width=\"1.5\"/>\n      <text x=\"9\" y=\"9.5\" text-anchor=\"middle\" dominant-baseline=\"central\"\n            font-size=\"9\" font-weight=\"700\"\n            font-family=\"system-ui, sans-serif\" fill=\"#ffffff\">A</text>\n    </svg>",
+     "html": "<svg viewBox=\"0 0 18 18\">\n      <rect x=\"0\" y=\"0\" width=\"18\" height=\"18\" rx=\"4\" style=\"fill: var(--paper)\" opacity=\"0.95\"/>\n      <rect x=\"1.5\" y=\"1.5\" width=\"15\" height=\"15\" rx=\"3\" fill=\"#1f5fbf\"/>\n      <text x=\"9\" y=\"9.5\" text-anchor=\"middle\" dominant-baseline=\"central\"\n            font-size=\"10.5\" font-weight=\"800\"\n            font-family=\"Archivo, system-ui, sans-serif\" fill=\"#ffffff\">A</text>\n    </svg>",
      "className": "train-marker",
      "size": [
       18,
@@ -478,35 +500,49 @@
      ],
      "anchor": [
       9,
-      22
+      21
      ],
      "popupAnchor": [
       0,
-      -22
+      -21
      ],
      "opacity": 1
     }
    ],
    "subwayStations": [
     {
-     "radius": 4,
-     "color": "#333",
-     "weight": 1.5,
-     "fillColor": "#fff",
+     "radius": 3.5,
+     "color": "#201e1d",
+     "weight": 0,
+     "fillColor": "#201e1d",
      "fillOpacity": 1,
      "pane": "overlayPane",
      "opacity": 1
     },
     {
-     "radius": 4,
-     "color": "#333",
-     "weight": 1.5,
-     "fillColor": "#fff",
+     "radius": 3.5,
+     "color": "#201e1d",
+     "weight": 0,
+     "fillColor": "#201e1d",
      "fillOpacity": 1,
      "pane": "overlayPane",
      "opacity": 1
     }
    ]
+  }
+ },
+ "panel": {
+  "subway": {
+   "results": [
+    "Times Sq-42 StSubway123"
+   ],
+   "detailHeading": "Times Sq-42 St (Subway)",
+   "arrivals": [
+    "1 train in 1 minute, 8:01 AM arrival",
+    "2 train in 5 minutes, 8:05 AM arrival",
+    "1 train in 3 minutes, 8:03 AM arrival"
+   ],
+   "spoken": "Times Sq-42 St, Subway. Northbound: 1 train in 1 minute, 8:01 AM arrival. 2 train in 5 minutes, 8:05 AM arrival. Southbound: 1 train in 3 minutes, 8:03 AM arrival"
   }
  },
  "popups": {
@@ -539,6 +575,31 @@
   "subway": {
    "subway train": "<b style=\"color:#c0392b\">1 train</b><br>Next stop: Times Sq-42 St<br>Northbound<br><span class=\"popup-sub\">scheduled position (no GPS)</span><br><span class=\"popup-sub\">Trip sub-1</span>",
    "subway station": "<b>Times Sq-42 St</b><div class=\"arr-dir\">Northbound</div><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">1</span> 1 min<br><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span> 5 min<div class=\"arr-dir\">Southbound</div><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">1</span> 3 min"
+  }
+ },
+ "registry": {
+  "subway": {
+   "key": "subway|127",
+   "kind": "subway",
+   "systemLabel": "Subway",
+   "noun": "train",
+   "id": "127",
+   "name": "Times Sq-42 St",
+   "lat": 40.7554,
+   "lon": -73.9874,
+   "routes": [
+    "1",
+    "2",
+    "3"
+   ],
+   "wheelchair": false,
+   "arrivalsUrl": "/api/subway-arrivals/127",
+   "markerIsCircleMarker": true,
+   "markerInStationLayer": true,
+   "markerLayerIsStationLayer": true,
+   "markerOptionsPane": "overlayPane",
+   "markerRendererPane": "stationPane",
+   "hasPopup": true
   }
  },
  "status": {

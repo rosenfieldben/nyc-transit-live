@@ -359,6 +359,16 @@ function closeStationsPanelIfOpen() {
   return true;
 }
 
+/* MR2: THE LAST RUNG, and it is deliberately last. Route focus is not a transient the
+   rider is standing in; it is a map-wide state, so it cannot be "the surface you are in"
+   and it must not pre-empt one. Escape closes what you are in, and when there is nothing to
+   close it clears the focused route. That also keeps this file the page's ONLY keydown
+   handler, which frontend/keyboard.test.js enforces and which a second listener bound
+   elsewhere could not have worked around anyway: this one captures and stops the event. */
+function clearRouteFocusIfAny() {
+  return typeof clearRouteFocus === "function" ? clearRouteFocus() : false;
+}
+
 function closeOpenPopup() {
   // THE POPUP THE RIDER IS IN, when they are in one: closing "the topmost" would be the
   // recency answer again, one level up from the field this file stopped reading.
@@ -379,7 +389,7 @@ document.addEventListener(
         ? closeStationsPanelIfOpen()
         : inside === "popup"
           ? closeOpenPopup()
-          : closeOpenPopup() || closeStationsPanelIfOpen();
+          : closeOpenPopup() || closeStationsPanelIfOpen() || clearRouteFocusIfAny();
     if (!closed) return; // nothing transient: leave the event entirely alone
     event.preventDefault();
     event.stopPropagation();

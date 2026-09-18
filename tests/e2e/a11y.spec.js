@@ -241,6 +241,39 @@ const UNDECIDABLE_SHAPES = [
       "which bounds every possible tile without needing to know which tile is under it.",
   },
   {
+    /* MR2. A station's name is a permanent Leaflet tooltip drawn straight onto the basemap,
+       so its background is live imagery and there is no single colour to compute against.
+       This is the same genuine tool limit as the attribution below it, and it is decided the
+       same way: by bounding the answer over every tile a rider could be looking at rather
+       than by guessing which one they are.
+
+       SCOPED BY THE ONLY IDENTITY A TOOLTIP HAS. Leaflet gives every tooltip an auto id, and
+       identities() returns an element's id when it has one, so the class this page puts on
+       the element never reaches here. The pattern is therefore Leaflet's id shape, and A1z3
+       closes the hole by asserting that every .leaflet-tooltip on the page IS a station
+       label: this app binds tooltips in exactly one place (systems/subway.js), and if a
+       second surface ever binds one, that assertion fails rather than this exception
+       silently widening to cover it. */
+    name: "a station name label, which sits directly on map tiles",
+    rule: "color-contrast",
+    /* TWO MESSAGES, BECAUSE THE LABEL HAS TWO WAYS OF BEING UNDECIDABLE and they are the same
+       element. Over open map it is ink on live imagery ("contains an image node"). With the
+       Key panel open it is also UNDER the chrome ("overlapped by another element"), which is
+       a different sentence about the same tooltip: axe stops at the overlap before it reaches
+       the tile. Both are excused for one element pattern and both are answered by one spec,
+       which measures with the chrome closed, where a rider can actually read the label. A
+       label a rider cannot see because the Key is over it has no legibility question to
+       answer; it has a stacking one, and mobile.spec.js A6k and A6l are where the chrome's
+       geometry is held. */
+    message: /background color could not be determined because (element contains an image node|it is overlapped by another element)/,
+    where: (id) => /^#leaflet-tooltip-\d+$/.test(id),
+    decider:
+      "a11y.spec.js A1z3 composites each label's halo over BOTH extremes a tile can be " +
+      "(black and white), measures the label's own ink against the worse of the two, and " +
+      "requires AA, in both themes; it also asserts that every tooltip on the page is a " +
+      "station label, which is what keeps this exception from widening.",
+  },
+  {
     name: "the skip link, judged by a static rule that cannot run the page",
     rule: "skip-link",
     // "Skip link target should become visible on activation". The panel is hidden at scan
@@ -936,6 +969,111 @@ test("A1z. the deciders: every named undecidable is answered by measurement", as
   ).toBeGreaterThanOrEqual(4.5);
 });
 
+test("A1z3. the station name labels are legible over any tile, in both themes", async ({ page }) => {
+  /* MR2'S OWN UNDECIDABLE, ANSWERED. A station's name is a permanent Leaflet tooltip drawn
+     straight onto the basemap: transparent background, ink text, and four stacked
+     text-shadows in --halo that give the ink something to sit on. axe reports exactly what
+     it should ("background color could not be determined because element contains an image
+     node"), so the answer is bounded here the way the attribution's is, over BOTH extremes a
+     tile can be rather than over whichever tile happened to load.
+
+     WHAT THIS DOES NOT CLAIM. A text-shadow is a spread, not a fill: between the strokes of
+     a character the tile is closer to the surface than the halo is. So this measures the
+     halo as the effective background, which is the right answer at the glyph's edge (where
+     legibility is decided) and optimistic in the counters of an "o". Stating that is the
+     point of a decider: it says what was measured rather than that something was checked.
+
+     BOTH THEMES, although only one is reachable by a rider until MR4 (ruling R2). The dark
+     theme's tokens ship now and are what MR4 will unhide, and nothing a rider can see would
+     catch a mistake in them in the meantime, which is precisely why a measurement has to. */
+  await page.setViewportSize(DESKTOP);
+  await open(page, { alerts: 0 });
+  // Zoom 12 is the map's opening view and the band where hub labels show, so the fixture's
+  // two stations are drawn; asserted rather than assumed, because a spec measuring nothing
+  // passes.
+  await expect(page.locator(".leaflet-tooltip")).toHaveCount(2);
+
+  for (const theme of ["light", "dark"]) {
+    if (theme !== "light") await setTheme(page, theme);
+    const measured = await page.evaluate(() => {
+      const srgb = (c) => {
+        const v = c / 255;
+        return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+      };
+      const lum = ([r, g, b]) => 0.2126 * srgb(r) + 0.7152 * srgb(g) + 0.0722 * srgb(b);
+      const ratio = (a, b) => {
+        const [hi, lo] = lum(a) >= lum(b) ? [lum(a), lum(b)] : [lum(b), lum(a)];
+        return (hi + 0.05) / (lo + 0.05);
+      };
+      // A four-component colour has an alpha and a three-component one is opaque, which is
+      // the bug the attribution's own parser above records having had.
+      const rgba = (css) => {
+        const parts = (String(css).match(/rgba?\(([^)]+)\)/) || [, ""])[1]
+          .split(/[\s,/]+/)
+          .filter(Boolean)
+          .map(Number);
+        if (parts.length < 3) return null;
+        return { rgb: parts.slice(0, 3), alpha: parts.length > 3 ? parts[3] : 1 };
+      };
+      const over = (colour, base) => colour.rgb.map((c, i) => c * colour.alpha + base[i] * (1 - colour.alpha));
+
+      const labels = [...document.querySelectorAll(".leaflet-tooltip")];
+      return {
+        // THE SCOPE CLOSURE the exception depends on: this app binds tooltips in exactly one
+        // place, so every tooltip is a station label. If a second surface ever binds one,
+        // this fails rather than the exception quietly widening to cover it.
+        allAreLabels: labels.every((el) => el.classList.contains("stn-label")),
+        // And they are out of the reading order, which is the other half of the statement:
+        // 496 bare place names whose only information is where they are would be noise, and
+        // the station panel is the text surface that carries them properly.
+        allAriaHidden: labels.every((el) => el.getAttribute("aria-hidden") === "true"),
+        rows: labels.map((el) => {
+          const style = getComputedStyle(el);
+          const ink = rgba(style.color);
+          // The halo is the shadow's colour; the shadow shorthand puts it first in Chromium.
+          const halo = rgba(style.textShadow);
+          // Null rather than a NaN that would slip past a `< 4.5` comparison, which is the
+          // mistake the glyph measurement above records having made and fixed.
+          if (!ink || !halo) {
+            return { name: el.textContent, overBlack: null, overWhite: null, why: "no halo to measure against" };
+          }
+          return {
+            name: el.textContent,
+            overBlack: ratio(ink.rgb, over(halo, [0, 0, 0])),
+            overWhite: ratio(ink.rgb, over(halo, [255, 255, 255])),
+            // A background of its own would make all of this moot, and the design says there
+            // is none; a rule that put one back would be measured here as a pass and is
+            // therefore asserted separately.
+            background: style.backgroundColor,
+            pointerEvents: style.pointerEvents,
+          };
+        }),
+      };
+    });
+
+    expect(measured.allAreLabels, `${theme}: every tooltip on this page must be a station label`).toBe(true);
+    expect(measured.allAriaHidden, `${theme}: every station label must be out of the reading order`).toBe(true);
+    expect(measured.rows.length, `${theme}: the scan must find labels, or it decides nothing`).toBeGreaterThan(0);
+
+    for (const row of measured.rows) {
+      expect(row.why ?? null, `${theme}: "${row.name}" could not be measured`).toBe(null);
+      const worst = Math.min(row.overBlack, row.overWhite);
+      expect(
+        worst,
+        `${theme}: "${row.name}" over the worst possible tile ` +
+          `(black ${row.overBlack.toFixed(2)}, white ${row.overWhite.toFixed(2)})`,
+      ).toBeGreaterThanOrEqual(4.5);
+      // The halo IS the background; a real one would mean the label had stopped being the
+      // thing this measurement describes.
+      expect(row.background, `${theme}: "${row.name}" must have no background of its own`).toMatch(
+        /rgba\(0, 0, 0, 0\)|transparent/,
+      );
+      // And a name never swallows a click meant for the dot under it.
+      expect(row.pointerEvents, `${theme}: "${row.name}" must not take pointer events`).toBe("none");
+    }
+  }
+});
+
 test("A1l. the gate has teeth: a defect anywhere on the page IS caught", async ({ page }) => {
   // This spec tests the GATE, not the markup, and it is here because the gate silently lost
   // its teeth once already in the scoped era (the include() array). Now that the scope is
@@ -1127,6 +1265,11 @@ async function assertOwnedControlsReachable(page, walk, label, must = []) {
       "#toggles button",
       "#theme-toggle",
       "#view-stack button",
+      // MR2: the subway key's bullets are controls now (route focus), and the Names toggle
+      // joined #view-stack above. A bullet has no id, so they collapse to one key here and
+      // the claim is that the key is reachable at all; chrome.spec.js D2a is what says all
+      // twenty-three are buttons with names.
+      "#subway-key button",
       "#route-clear",
       ".station-row",
     ];

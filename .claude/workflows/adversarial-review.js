@@ -22,6 +22,29 @@ export const meta = {
 // defaults to be talked out of by a diff that feels important; every past review
 // felt important.
 
+/* RULE 0: EVERY AGENT RUNS IN ITS OWN WORKTREE, AND THIS ONE IS PAID FOR IN BLOOD.
+   A review that verifies a finding the way this repository does, by applying the
+   mutation and seeing whether a spec dies, WRITES TO THE TREE. Run over the shared
+   checkout, those writes race whatever the caller is doing. Measured, on stage MR2 of
+   the map redesign: two verifier mutations landed in frontend/systems/subway.js and
+   frontend/map.js while the caller was running that round's gates over the same files,
+   one of them reached a commit, and that commit's gate numbers described a tree that was
+   never the one committed. The agent had already reverted its own edit by the time
+   anyone noticed, which is precisely what makes this class of bug invisible: the
+   evidence deletes itself.
+
+   So isolation is not a tuning knob here. It is ~200-500ms and a little disk per agent,
+   and the alternative is a review that can corrupt the thing it is reviewing.
+
+   AND THE CALLER OWES ONE CHECK BACK: before any commit, confirm the working tree is
+   what the gates ran on (`git status --short` and a diff against the last commit you
+   controlled). Isolation makes the race impossible for agents this script spawns; the
+   check is what catches anything else that writes while you are not looking.
+
+   THIS IS THE RULE FOR EVERY REVIEW AND PROBE WORKFLOW IN THIS REPOSITORY, not only
+   this one. .claude/workflows/README.md says so in one place; this file is where it is
+   enforced. */
+
 // RULE 3: SIZE TO THE DIFF. One finder dimension per 150 changed lines, floor 2,
 // cap 5. A 130-line monitor change does not need six independent lenses; a
 // 2000-line refactor does not get twelve.
@@ -218,7 +241,7 @@ const found = await parallel(
         'Do not report style preferences. Rate severity honestly: critical means green would mean the ' +
         'wrong thing or a rider-visible break, low means cleanup.' +
         RESTORE,
-      { label: 'find:' + d.key, phase: 'Find', schema: FINDINGS_SCHEMA }
+      { label: 'find:' + d.key, phase: 'Find', schema: FINDINGS_SCHEMA, isolation: 'worktree' }
     )
   )
 )
@@ -250,7 +273,7 @@ const triage = await agent(
     'expensive: critical or high severity, or a claim that turns on subtle control flow you could not settle by ' +
     'reading. Everything else will be verified in batches, which is adequate for mechanical claims.' +
     RESTORE,
-  { label: 'triage', phase: 'Triage', schema: TRIAGE_SCHEMA }
+  { label: 'triage', phase: 'Triage', schema: TRIAGE_SCHEMA, isolation: 'worktree' }
 )
 
 const survivors = (triage && triage.survivors) || []
@@ -315,7 +338,7 @@ const verdictSets = await parallel(
           '\n\nThe single finding to verify:\n' +
           JSON.stringify(f, null, 2) +
           RESTORE,
-        { label: 'verify:' + (f.file || 'unknown'), phase: 'Verify', schema: VERDICT_SCHEMA }
+        { label: 'verify:' + (f.file || 'unknown'), phase: 'Verify', schema: VERDICT_SCHEMA, isolation: 'worktree' }
       )
     ),
     // RULE 2: CHEAP MODEL FOR THE MECHANICAL HALF. Batched, on haiku. These are
@@ -332,6 +355,7 @@ const verdictSets = await parallel(
           label: 'verify:batch' + (i + 1),
           phase: 'Verify',
           schema: VERDICT_SCHEMA,
+          isolation: 'worktree',
           model: CHEAP_MODEL,
           effort: 'low',
         }

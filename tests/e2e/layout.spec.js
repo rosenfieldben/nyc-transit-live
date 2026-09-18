@@ -193,8 +193,15 @@ test(`A4b. every interactive thing on the map surface meets the 24px floor at ${
     "#legend-toggle",
   ];
   // The view presets stand down while the Key is open on a phone (they would paint over it),
-  // so they are measured where they are drawn.
-  if (viewport.width > 700) controls.push("#view-city", "#view-region");
+  // so they are measured where they are drawn. MR2's Names toggle is the fourth button in
+  // that stack and stands down with them.
+  if (viewport.width > 700) controls.push("#view-city", "#view-region", "#names-toggle");
+  /* MR2: A ROUTE BULLET, which became a control in this stage and is therefore on the floor
+     like every other. It is measured where it is drawn: the subway key folds behind the Key
+     button below 700px, and at phone widths this helper has already opened that disclosure
+     (see the top of this function), so the bullets are on screen at every width sampled. The
+     design draws them at 22px and this app draws them at 24 for exactly this reason. */
+  controls.push("#subway-key button");
   for (const selector of controls) {
     const box = await rect(page, selector);
     expect(box, `${selector} must exist at ${label}`).not.toBeNull();
@@ -273,25 +280,37 @@ test("A4c. the enlarged hit areas did not hand the station dots back to the trai
       const point = map.latLngToContainerPoint(record.marker.getLatLng());
       const x = container.left + point.x;
       const y = container.top + point.y;
-      // Probe the anchor AND the two pixels just above it. The anchor alone is not
-      // enough: a halo centred on the icon stops within a pixel of the anchor without
-      // quite touching it, so an anchor-only assertion passes in both configurations
-      // and proves nothing. The clearance is what matters, so the clearance is what is
-      // measured.
+      /* MEASURE THE CLEARANCE, DO NOT PROBE A FIXED BAND. This asked dy in {0,1,2} until
+         MR2 round 3, and by then MR2 had spent the slack: lifting the subway's iconAnchor
+         from [9,22] to [9,21] moved the halo's bottom edge from 4px above the anchor to
+         3px, so a three-pixel probe passed with exactly zero margin and the next anchor
+         tweak would have spent the last pixel silently. The style.css comment that states
+         the margin was left saying 4 while the page drew 3.
+
+         So the spec now finds the FIRST covered pixel and asserts the number, which is a
+         claim that can go stale loudly instead of quietly: change an anchor or an icon
+         size and this fails with both numbers in the message. */
       const el = record.marker.getElement();
-      const covered = [0, 1, 2].filter((dy) => document.elementsFromPoint(x, y - dy).includes(el));
+      let clearance = null;
+      for (let dy = 0; dy <= 12; dy++) {
+        if (document.elementsFromPoint(x, y - dy).includes(el)) { clearance = dy; break; }
+      }
       return {
-        covered,
+        clearance,
         stack: document.elementsFromPoint(x, y).map((node) => (node.className || node.tagName).toString()),
       };
     }, system);
 
-    // The marker must not be painted at its own anchor point or immediately above it.
-    // That band belongs to the station dot underneath.
+    /* The arithmetic, per system: the halo is `bottom: 0; height: 24px` on the icon, so its
+       bottom edge is (iconAnchor.y - iconSize.y) pixels above the anchor. Subway: 21 - 18 = 3.
+       PATH: 20 - 16 = 4. Both are the clearance the station dot underneath gets. */
+    const WANT = { subway: 3, path: 4 };
     expect(
-      result.covered,
-      `${system}: hit area reaches its own anchor band, where the station is. Stack: ${JSON.stringify(result.stack)}`,
-    ).toEqual([]);
+      result.clearance,
+      `${system}: the hit area's clearance above its anchor moved. That band belongs to the ` +
+        `station dot underneath, and style.css's .train-marker::before comment states the number. ` +
+        `Stack: ${JSON.stringify(result.stack)}`,
+    ).toBe(WANT[system]);
   }
 });
 

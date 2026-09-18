@@ -3,7 +3,11 @@
      in a complete theme before any JavaScript runs and with localStorage empty or refused.
      systems/shared.js swaps it to "dark" and back and persists the choice; style.css
      defines one token set per value and the basemap's filter per value. -->
-<html lang="en" data-theme="light">
+<!-- MR2: data-labels on the ROOT for the same reason, so the station names render in a
+     settled state before any script runs. data-zoom and data-label-band are written by
+     systems/shared.js on every zoomend, because only the map knows the zoom; the band is
+     what the stylesheet reads (style.css says why an enumerated zoom list is not safe). -->
+<html lang="en" data-theme="light" data-labels="on">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -148,8 +152,19 @@
            information is the colour beside them, which is the one thing that does not survive
            being spoken. Every marker and every popup names its route in words, which is where
            a rider gets the identities today. It comes back into the tree in MR2, when these
-           become buttons with real names and a real effect. -->
-      <div id="subway-key" class="hdr-fold" aria-hidden="true"></div>
+           become buttons with real names and a real effect.
+
+           MR2 IS THAT STAGE, so the attribute is gone and the group is named. Each bullet is
+           a button labelled "Focus route 4" whose label does not move with its state, which
+           is what lets it carry aria-pressed (round 2 removed an aria-pressed whose label
+           contradicted it). systems/shared.js builds them. -->
+      <!-- ROUND 2: A TOOLBAR, ONE TAB STOP. Twenty-three buttons in the header cost
+           twenty-three tab stops, measured: reaching the Stations button took 32 presses
+           where it took nine before. A toolbar with a roving tabindex is one stop and the
+           arrow keys move inside it, which is the pattern for a row of related controls.
+           The bullets themselves are built from the loaded route list rather than written
+           here, because a hard-coded key and the network disagreed in both directions. -->
+      <div id="subway-key" class="hdr-fold" role="toolbar" aria-orientation="horizontal" aria-label="Focus a subway route"></div>
       <div id="hdr-actions">
         <!-- THE THEME TOGGLE IS HIDDEN UNTIL MR4, BY RULING, and it is hidden rather than
              deleted because everything behind it ships now and works.
@@ -248,15 +263,37 @@
         Bus, heading unknown
       </div>
       <div class="legend-row">
-        <svg aria-hidden="true" viewBox="0 0 18 18"><rect x="1.5" y="1.5" width="15" height="15" rx="3" fill="#1f5fbf" stroke="#fff" stroke-width="1.5"/><text x="9" y="9.5" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="700" font-family="system-ui, sans-serif" fill="#fff">A</text></svg>
+        <!-- MR2: the mark the map now draws, so the key stays a true description of it.
+             A paper halo behind the app's own rounded rectangle, the letter in Archivo at
+             the design's size.
+             THE COLOURS ARE LITERALS, NOT TOKENS, and that is MR1 round 2's ruling rather
+             than an oversight: .legend-row svg sits on --glyph-plate, which is #f3f2f2 in
+             BOTH themes, so a glyph drawn in var(--paper) would be a dark halo on a light
+             plate the moment the dark theme is unhidden. The plate does not move, so neither
+             do these. The row's accessible NAME is unchanged (P1e holds it). -->
+        <svg aria-hidden="true" viewBox="0 0 18 18"><rect x="0" y="0" width="18" height="18" rx="4" fill="#f3f2f2" opacity="0.95"/><rect x="1.5" y="1.5" width="15" height="15" rx="3" fill="#1f5fbf"/><text x="9" y="9.5" text-anchor="middle" dominant-baseline="central" font-size="10.5" font-weight="800" font-family="Archivo, system-ui, sans-serif" fill="#ffffff">A</text></svg>
         Subway train, at/approaching the stop shown
       </div>
       <div class="legend-row">
-        <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M2 15 C9 15 9 5 18 5" stroke="#1f5fbf" stroke-width="2.5" fill="none" opacity="0.6"/></svg>
+        <!-- MR2: a casing and a line, which is what a ribbon is. -->
+        <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M2 15 C9 15 9 5 18 5" stroke="#f3f2f2" stroke-width="6.5" stroke-opacity="0.9" fill="none" stroke-linecap="round"/><path d="M2 15 C9 15 9 5 18 5" stroke="#1f5fbf" stroke-width="4" fill="none" stroke-linecap="round"/></svg>
         Subway route line
       </div>
       <div class="legend-row">
-        <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="10" cy="10" r="4.5" fill="#fff" stroke="#333" stroke-width="2"/></svg>
+        <!-- MR2: BOTH marks in one glyph rather than a second row. The map now draws two
+             kinds of subway station, a filled dot where one TRUNK calls and a ring where two
+             or more do, and a key that showed only one of them would be a false description.
+             THE WORDS DO NOT NAME THE RING, and round 3 tried to and put it back (F16). The
+             glyph draws two marks while the caption describes one thing, which is a real gap:
+             a rider sees the difference and does not learn what it means. Both ways of closing
+             it break a promise this stage made and pinned. A second row moves A1x's row count.
+             Rewording this caption drops an exact sentence, and P1e's rule is that no stage may
+             take a sentence away from this panel, additions only. So it is a KEY PANEL change
+             rather than a subway one, and it is recorded in the ledger for the stage that owns
+             this panel rather than taken here.
+             One row rather than two keeps every accessible name in this panel exactly as it
+             was (P1e) and keeps A1x's row count honest without moving a literal. -->
+        <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="5.5" cy="10" r="3.5" fill="#201e1d"/><circle cx="14.5" cy="10" r="4.5" fill="#f3f2f2" stroke="#201e1d" stroke-width="2"/></svg>
         Subway station (click for arrivals)
       </div>
       <div class="legend-row">
@@ -350,6 +387,11 @@
       <button type="button" id="view-city" aria-pressed="false">City</button>
       <button type="button" id="view-rail" aria-pressed="false">Rail</button>
       <button type="button" id="view-region" aria-pressed="false">Region</button>
+      <!-- MR2: the fourth button the design puts in this stack, which waited for MR1 to
+           have no labels to toggle. It starts pressed because the names start shown, and
+           its label does not move with its state, so aria-pressed is the right attribute
+           here for the same reason it is on the three presets above. -->
+      <button type="button" id="names-toggle" aria-pressed="true">Names</button>
     </div>
   </header>
   <!-- Self-hosted Leaflet (see the stylesheet comment in <head>). -->

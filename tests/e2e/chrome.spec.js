@@ -394,10 +394,17 @@ test("D1j. the view presets fly the map and stand down when the rider takes over
       return { lat: +c.lat.toFixed(3), lng: +c.lng.toFixed(3), zoom: map.getZoom() };
     });
 
+  /* MR2 ADDED A FOURTH BUTTON TO THIS STACK, and it is in these lists deliberately rather
+     than filtered out: the Names toggle is a #view-stack button, it carries aria-pressed for
+     the same reason the presets do, and a list that quietly excluded it would stop noticing
+     if it lost its state. It starts PRESSED because the station names start shown, which is
+     the one asymmetry with the three presets: a preset claims "the map is here now" and
+     nothing is true at load, while Names claims "the names are on" and that is true at load. */
   expect(await pressed(), "nothing is active until the rider asks for a view").toEqual([
     "view-city:false",
     "view-rail:false",
     "view-region:false",
+    "names-toggle:true",
   ]);
 
   /* THE CLOCK IS DRIVEN, BECAUSE THE PRESET FLIES. flyTo is a 0.8s animation and this suite
@@ -409,19 +416,19 @@ test("D1j. the view presets fly the map and stand down when the rider takes over
   await page.clock.runFor(1200);
   await expect.poll(async () => (await view()).zoom, { timeout: 5_000 }).toBe(10);
   expect(await view()).toEqual({ lat: 40.79, lng: -73.9, zoom: 10 });
-  expect(await pressed()).toEqual(["view-city:false", "view-rail:false", "view-region:true"]);
+  expect(await pressed()).toEqual(["view-city:false", "view-rail:false", "view-region:true", "names-toggle:true"]);
 
   await page.locator("#view-city").click();
   await page.clock.runFor(1200);
   await expect.poll(async () => (await view()).zoom, { timeout: 5_000 }).toBe(13);
   expect(await view()).toEqual({ lat: 40.729, lng: -73.99, zoom: 13 });
-  expect(await pressed()).toEqual(["view-city:true", "view-rail:false", "view-region:false"]);
+  expect(await pressed()).toEqual(["view-city:true", "view-rail:false", "view-region:false", "names-toggle:true"]);
 
   // THE RIDER MOVES, AND THE PRESET STOPS CLAIMING THE VIEW.
   await page.evaluate(() => map.panBy([160, 160], { animate: false }));
   await expect
     .poll(async () => (await pressed()).join(","), { timeout: 5_000 })
-    .toBe("view-city:false,view-rail:false,view-region:false");
+    .toBe("view-city:false,view-rail:false,view-region:false,names-toggle:true");
 });
 
 for (const [label, viewport] of [
@@ -479,8 +486,18 @@ test("D1l. the subway key is the app's own mark, not the MTA's roundel", async (
       background: getComputedStyle(b).backgroundColor,
     })),
   );
-  // Ten trunks, twenty-three routes: 1-2-3, 4-5-6, 7, A-C-E, B-D-F-M, G, J-Z, L, N-Q-R-W, S.
-  expect(bullets.length, "the key carries the routes the app draws").toBe(23);
+  /* THE COUNT IS NO LONGER A LITERAL, and that is MR2 round 2's correction. MR1 wrote ten
+     trunks and twenty-three bullets into a table, and measured against the real static
+     archive the table and the network disagreed in both directions: three of its bullets
+     drew nothing and four drawn routes had no bullet. The key is derived from the loaded
+     route list now, so the honest claim here is that it carries a bullet for what the world
+     it booted into can draw, which in the stock fixture is the two routes it serves. The
+     derivation itself is subway.spec.js D2a and the node tier. */
+  const drawable = await page.evaluate(() => subwayRouteUniverse(subwayRouteList(), subwayTrainRoutes()));
+  expect(bullets.map((b) => b.route).sort(), "the key carries the routes the app can draw").toEqual(
+    [...drawable].sort(),
+  );
+  expect(bullets.length, "and the scan must find bullets, or it decides nothing").toBeGreaterThan(0);
   for (const b of bullets) {
     expect(b.radius, `${b.route} must not be a circle`).not.toBe("50%");
     expect(parseFloat(b.radius), `${b.route}'s radius`).toBeLessThan(11);
@@ -490,7 +507,9 @@ test("D1l. the subway key is the app's own mark, not the MTA's roundel", async (
   // table copied into this spec.
   const agree = await page.evaluate(() =>
     [...document.querySelectorAll("#subway-key .bul")].every((b) => {
-      const want = lineColor(b.textContent);
+      // An ALIAS bullet's text is not a feed route id (S stands for GS, FS and H), so the
+      // colour it owes is its first target's. bulletRouteIds is the one place that knows.
+      const want = lineColor(bulletRouteIds(b.textContent)[0]);
       const el = document.createElement("span");
       el.style.color = want;
       document.body.append(el);

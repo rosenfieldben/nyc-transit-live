@@ -74,6 +74,11 @@ const PAGE_LEVEL_RECEIVERS = new Set([
 
 const ACTIVATION_KEYDOWNS = {
   "systems/shared.js button": "the Leaflet popup close button, whose href A4 removed (Enter and Space activation)",
+  "systems/shared.js subwayKeyEl":
+    "MR2 round 2: the subway key is an ARIA toolbar with a roving tabindex, so the arrow " +
+    "keys, Home and End move focus INSIDE it. Scoped to that element, five keys, no routing: " +
+    "the page's one key router is still map.js's Escape ladder. The toolbar exists because " +
+    "twenty-three bullets in the header otherwise cost twenty-three tab stops",
 };
 
 /* ROUND 3 WENT THROUGH THE SCAN A THIRD TIME, and the lesson has stopped being about

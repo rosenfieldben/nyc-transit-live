@@ -71,7 +71,7 @@ function pin(key, measured) {
 
 // The same frozen-clock boot the rest of the suite uses (fixtures/api.js FROZEN_MS), so
 // every age in a popup and every clock in a status line is a constant.
-async function boot(page, before, { railroadCount = 2 } = {}) {
+async function boot(page, before, { railroadCount = 2, stationCount = 14 } = {}) {
   const ctx = await installMocks(page);
   if (before) await before(ctx);
   await page.clock.install({ time: new Date(fx.FROZEN_MS) });
@@ -79,18 +79,19 @@ async function boot(page, before, { railroadCount = 2 } = {}) {
   await page.goto("/");
   // Every system's marks, not "more than five of them": these pins read specific registry
   // keys, and a partially loaded page would quietly pin a shorter list. The counts are the
-  // stock fixtures' (mock.js); railroadCount is the one a spec overrides, because P2
-  // serves the F01 capture's 136 rows instead of the fixture's 2.
+  // stock fixtures' (mock.js); two are overridable, because two pins change the world they
+  // boot into: P1b serves the F01 capture's 136 railroad rows instead of the fixture's 2,
+  // and P2c adds F03's Prospect Av to the fourteen stations.
   await page.waitForFunction(
     (want) =>
       trains.size === 2 &&
       buses.size === 2 &&
-      railroads.size === want &&
+      railroads.size === want.railroads &&
       pathTrainRecords.size === 2 &&
       ferryBoatRecords.size === 3 &&
       njtTrainRecords.size === 4 &&
-      stationRegistry.length === 14,
-    railroadCount,
+      stationRegistry.length === want.stations,
+    { stations: stationCount, railroads: railroadCount },
     { timeout: 15_000 },
   );
   // One tick, so the first poll's status write has landed.
@@ -448,3 +449,119 @@ test(
   "P1n. airtrain: every mark and every popup, byte for byte",
   markPin("airtrain", { groups: ["airtrainStations"], popups: ["airtrain station"] }),
 );
+
+/* ---------------- P2: what stage MR2 is not allowed to change ----------------
+
+   MR2 restyles the subway: two polylines per shape instead of one, a haloed bullet in
+   place of the flat rounded square, dot-or-ring stations instead of one white circle,
+   permanent name labels, and route focus. Four things sit right beside all of that and
+   are NOT its to move, so they are written down here before a line of it is written.
+
+   WHY THESE FOUR AND NOT THE MARKS THEMSELVES. P1f already holds every subway mark byte
+   for byte, and MR2 is the stage that deliberately moves it: its golden is regenerated
+   and the before-and-after is recorded in docs/reviews/map-redesign-rounds.md, which is
+   what "measured" means for a mark a stage exists to change. What may not move is
+   everything the restyle touches on its way past: the registry entry a station's identity
+   lives in, the panel that reads it, and the qualifiers F03's acceptance put on a board.
+   A circleMarker's options and a divIcon's HTML are the two things MR2 rewrites, and both
+   are read by surfaces that have nothing to do with how a station looks.
+
+   P1f's subway popup pin is NOT regenerated either. The popups are stage MR5, so a
+   subway popup that changes in MR2 is a defect, and that claim stays an assertion. */
+
+// The registry entry a subway station's identity lives in, minus the two object fields,
+// which are pinned as the questions actually asked of them: is this still the marker the
+// panel syncs to, is it still in the layer the feed strip toggles, and is it still drawn
+// by the canvas on stationPane. MR2 rewrites the options of that very marker, so the
+// claim is that rewriting them leaves the object, its layer and its pane alone.
+const registryEntry = (page, key) =>
+  page.evaluate((k) => {
+    const entry = stationRegistry.find((row) => row.key === k);
+    if (!entry) return null;
+    const { marker, layer, ...rest } = entry;
+    return {
+      ...rest,
+      markerIsCircleMarker: marker instanceof L.CircleMarker,
+      markerInStationLayer: stationLayer.hasLayer(marker),
+      markerLayerIsStationLayer: layer === stationLayer,
+      // The OPTIONS pane is overlayPane (Leaflet's default for a vector layer) and the
+      // drawing is on stationPane through the renderer, which is the distinction P1f's
+      // station pin cannot show and the one the z-index depends on.
+      markerOptionsPane: marker.options.pane ?? null,
+      markerRendererPane: marker.options.renderer?.options?.pane ?? null,
+      hasPopup: !!marker.getPopup(),
+    };
+  }, key);
+
+test("P2a. a subway station's registry entry, field by field", async ({ page }) => {
+  await boot(page);
+  pin("registry/subway", await registryEntry(page, "subway|127"));
+});
+
+/* The station panel's whole rendering for one subway station, read from the DOM after a
+   search and a selection, exactly as a rider reaches it. Four surfaces in one pin because
+   they are one act: the results list, the detail heading, the arrivals rows and the words
+   spoken into #stations-announce. MR2 changes the station MARKER; the panel reads the
+   registry entry beside it, and this is what says the two did not get confused. */
+const panelState = (page) =>
+  page.evaluate(() => {
+    const text = (el) => (el?.textContent ?? "").trim().replace(/\s+/g, " ");
+    return {
+      results: [...document.querySelectorAll("#stations-results button.station-row")].map(text),
+      detailHeading: text(document.querySelector("#stations-detail h3, #stations-detail .station-detail-name")),
+      arrivals: [...document.querySelectorAll("#stations-detail ul.station-arrivals li")].map(text),
+      spoken: text(document.getElementById("stations-announce")),
+    };
+  });
+
+async function selectStation(page, query) {
+  await page.locator("#stations-search").fill(query);
+  await page.locator("#stations-results button.station-row").first().click();
+  // The board is fetched, so the rows arrive a round trip later; the clock is paused, so
+  // the driver's side is what advances it (the note at popupHtml says why).
+  for (let i = 0; i < 80; i++) {
+    const rows = await page.locator("#stations-detail ul.station-arrivals li").count();
+    if (rows > 0) return;
+    await page.clock.runFor(100);
+  }
+}
+
+test("P2b. the station panel for a subway station, as a rider reaches it", async ({ page }) => {
+  await boot(page);
+  await selectStation(page, "times sq");
+  pin("panel/subway", await panelState(page));
+});
+
+/* F03's qualifiers, on both surfaces, as a MEASURED golden.
+
+   C2i already holds this world and holds it harder: it asserts twelve hand-written rows
+   and the popup's exact markup, and it is the browser half of an acceptance whose other
+   half is a backend test. So this pin is not there to catch something C2i would miss. It
+   is a second witness of a different KIND: C2i says what the rows should read and would
+   have to be edited to accept a change, and this says what they DID read before MR2 and
+   fails without anyone editing anything. A stage that restyles the subway has no business
+   near either one. */
+test("P2c. F03's board qualifiers, on the panel and in the popup", async ({ page }) => {
+  const board = require("./fixtures/f03_board_219.json");
+  const prospect = { id: "219", name: "Prospect Av", lat: 40.8196, lon: -73.9015, routes: ["2", "5"] };
+  await boot(
+    page,
+    (ctx) => {
+      ctx.overrides.subwayStops = (route, fixtures) => json(route, [...fixtures.subwayStops(), prospect]);
+      ctx.overrides.subwayArrivals = (route, fixtures) =>
+        route.request().url().endsWith("/219") ? json(route, board) : json(route, fixtures.subwayArrivals());
+    },
+    { stationCount: 15 },
+  );
+  await selectStation(page, "prospect");
+  const state = await panelState(page);
+  pin("board/f03", {
+    arrivals: state.arrivals,
+    spoken: state.spoken,
+    // The panel's own stale line, which each row speaking for itself is supposed to make
+    // empty; a pin on its ABSENCE, because an element that reappears is the failure.
+    panelStaleLines: await page.locator(".station-detail-stale").count(),
+    qualifiersInPopup: await page.locator(".leaflet-popup-content .arr-qualifier").count(),
+    popup: await page.locator(".leaflet-popup-content").innerHTML(),
+  });
+});

@@ -242,6 +242,38 @@ function applyTheme(theme) {
 
 applyTheme(themeChoice(storedTheme(), document.documentElement.getAttribute("data-theme")));
 
+/* ----- MR2: the two theme colours the canvas cannot read -------------------------------
+
+   A divIcon is HTML, so a mark drawn there says `style="fill: var(--paper)"` and follows a
+   theme swap through the cascade at no cost. A canvas layer cannot: Leaflet hands a colour
+   STRING to the 2D context, and `var(--paper)` is not one. So the two tokens every MR2 mark
+   is drawn from are resolved here, once per call, from the root the theme is written on.
+
+   THIS IS WHAT MAKES MR4'S SWAP A setStyle RATHER THAN A REBUILD. The ribbons and the
+   station circles keep their geometry and take new colours; nothing is torn down and
+   nothing is re-fetched. The fallbacks are the light theme's literals, for the one case
+   where the stylesheet has not applied yet (a test that renders the markers with no
+   document styles, which frontend/boards.test.js does).
+
+   Read live rather than cached, because a cache would be a second copy of the theme and the
+   whole point of a token is that there is one. */
+function rootToken(name, fallback) {
+  try {
+    const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return value || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function paperColor() {
+  return rootToken("--paper", "#f3f2f2");
+}
+
+function inkColor() {
+  return rootToken("--ink", "#201e1d");
+}
+
 if (themeToggleEl) {
   themeToggleEl.addEventListener("click", () => {
     const next = nextTheme(document.documentElement.getAttribute("data-theme"));
@@ -291,35 +323,315 @@ if (clockTimeEl) {
    Measured, every trunk clears 4.5:1 through readableTextOn: the lowest is 4.72 on the
    4-5-6 green and the L's grey takes dark ink at 5.00 where white would have been 3.48.
    docs/reviews/map-redesign-rounds.md carries the ruling question as a finding. */
-const SUBWAY_KEY_TRUNKS = [
-  ["1", "2", "3"], ["4", "5", "6"], ["7"], ["A", "C", "E"], ["B", "D", "F", "M"],
-  ["G"], ["J", "Z"], ["L"], ["N", "Q", "R", "W"], ["S"],
-];
+/* ----- MR2 round 2: the key, derived and focusable ---------------------------------------
+
+   MR1 hard-coded ten trunks and twenty-three bullets, and MR2 round 2 measured that table
+   against the real static archive and found it wrong in both directions: three of its
+   bullets drew nothing and four drawn routes had no bullet. helpers.js now derives the
+   whole thing (subwayKeyModel, and the long comment there says how); this builds it.
+
+   IT IS AN ARIA TOOLBAR WITH A ROVING TABINDEX, which is the other half of the same round.
+   Twenty-three buttons in the header cost twenty-three tab stops: reaching the Stations
+   button took 32 presses where it took nine before. A toolbar is one tab stop, and the
+   arrow keys move inside it, which is the pattern for a row of related controls and the
+   reason a rider is not made to walk the subway system to reach a button.
+
+   BUILT WHEN THE DATA ARRIVES, NOT AT MODULE SCOPE. The route list is fetched, so at load
+   there is nothing to derive a key from. refreshSubwayKey is called when the routes resolve
+   and from the poll tail; it REBUILDS only when the universe of bullets changes and
+   otherwise just repaints, so a key does not twitch under a rider's hand every fifteen
+   seconds. */
 const subwayKeyEl = document.getElementById("subway-key");
+const subwayKeyBullets = new Map(); // bullet id -> its button
+let subwayKeyUniverse = ""; // the signature of the bullets currently drawn
+let subwayKeyFocusSets = new Map(); // bullet id -> the route ids it focuses
+
+// Whatever the map can currently draw a train for. The loaded route list is subway.js's
+// (routeIndex), and it loads after this file, so both are read late and by name.
+function subwayTrainRoutes() {
+  if (typeof trains === "undefined") return [];
+  return [...new Set([...trains.values()].map((record) => record.latest?.route_id).filter(Boolean))];
+}
+
+function subwayRouteList() {
+  if (typeof routeIndex === "undefined") return [];
+  return [...routeIndex.entries()].map(([route, variants]) => ({ route, polylines: variants }));
+}
+
+/* THE ROVING TABINDEX. Exactly one bullet is in the tab order at a time: the focused route's
+   if there is one, else the first enabled bullet. Everything else is tabbable only from
+   inside, with the arrow keys. */
+function paintRovingTabindex() {
+  const bullets = [...subwayKeyBullets.values()];
+  if (!bullets.length) return;
+  const enabled = bullets.filter((b) => b.getAttribute("aria-disabled") !== "true");
+  const pressed = bullets.find((b) => b.getAttribute("aria-pressed") === "true");
+  const stop = pressed ?? enabled[0] ?? bullets[0];
+  for (const bullet of bullets) bullet.tabIndex = bullet === stop ? 0 : -1;
+}
+
+function moveKeyFocus(from, delta) {
+  const bullets = [...subwayKeyBullets.values()].filter((b) => b.getAttribute("aria-disabled") !== "true");
+  if (!bullets.length) return;
+  const at = bullets.indexOf(from);
+  const next =
+    delta === "home" ? bullets[0]
+    : delta === "end" ? bullets[bullets.length - 1]
+    : bullets[(at + delta + bullets.length) % bullets.length];
+  for (const bullet of bullets) bullet.tabIndex = bullet === next ? 0 : -1;
+  next.focus();
+}
+
 if (subwayKeyEl) {
-  /* AND IT IS OUT OF THE ACCESSIBILITY TREE WHILE IT IS ONLY A KEY (round 2). Twenty-six
-     spans reading "1 2 3 4 5 6 7 A C E ..." put twenty-six bare characters into the page's
-     reading order whose only information is the COLOUR beside them, which is the one thing
-     that does not survive being spoken. The route identities themselves are not lost: every
-     marker and every popup names its route in words, which is where a rider gets them today.
-     This comes back the moment the key does something: MR2 makes these buttons with real
-     names ("Focus route 1") and a real effect, and a control is a different thing from a
-     colour swatch. The attribute is in index.html rather than written here, so it holds
-     before this file runs. */
-  for (const trunk of SUBWAY_KEY_TRUNKS) {
-    const group = document.createElement("span");
-    group.className = "bul-group";
-    for (const route of trunk) {
-      const bullet = document.createElement("span");
+  /* THE ONE KEYDOWN THIS FILE OWNS, and it is a control's own activation rather than a
+     router: map.js has the page's only key router and frontend/keyboard.test.js fails on a
+     second one. This is scoped to the toolbar, it handles only the five keys a toolbar owes,
+     and it is named in that test's table with this reason. */
+  subwayKeyEl.addEventListener("keydown", (event) => {
+    const bullet = event.target.closest?.(".bul");
+    if (!bullet || !subwayKeyEl.contains(bullet)) return;
+    const move =
+      event.key === "ArrowRight" || event.key === "ArrowDown" ? 1
+      : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1
+      : event.key === "Home" ? "home"
+      : event.key === "End" ? "end"
+      : null;
+    if (move === null) return;
+    event.preventDefault();
+    moveKeyFocus(bullet, move);
+  });
+}
+
+function buildSubwayKey(model) {
+  if (!subwayKeyEl) return;
+  subwayKeyEl.replaceChildren();
+  subwayKeyBullets.clear();
+  for (const group of model) {
+    const groupEl = document.createElement("span");
+    groupEl.className = "bul-group";
+    for (const entry of group.bullets) {
+      /* THE TEXT IS THE BARE BULLET ID AND NOTHING ELSE, deliberately: chrome.spec.js D1l
+         reads each bullet's textContent and resolves the colour it expects as
+         lineColor(textContent), so a visually hidden label inside the chip would make that
+         check compare the wrong thing. The name goes on aria-label, where it does not move
+         with the state and can therefore carry aria-pressed; the detail goes on title. */
+      const bullet = document.createElement("button");
+      bullet.type = "button";
       bullet.className = "bul";
-      bullet.style.background = lineColor(route);
-      bullet.style.color = readableTextOn(lineColor(route));
-      bullet.textContent = route;
-      group.append(bullet);
+      bullet.style.background = group.color;
+      bullet.style.color = readableTextOn(group.color);
+      bullet.textContent = entry.id;
+      bullet.setAttribute("aria-label", routeFocusLabel(entry.id));
+      bullet.setAttribute("aria-pressed", "false");
+      bullet.tabIndex = -1;
+      bullet.addEventListener("click", () => toggleRouteFocus(entry.id));
+      subwayKeyBullets.set(entry.id, bullet);
+      groupEl.append(bullet);
     }
-    subwayKeyEl.append(group);
+    subwayKeyEl.append(groupEl);
+  }
+  paintSubwayKeyState(model);
+}
+
+/* THE ENABLED STATE IS REPAINTED EVERY POLL, because what a bullet can light changes with
+   the feed: a W bullet lights nothing at 3am and lights three ribbons at 8am.
+
+   aria-disabled RATHER THAN disabled, and that is the accessibility difference that
+   matters: a `disabled` button leaves the tab order and the accessibility tree entirely, so
+   a rider who cannot see the key would never learn the route exists. aria-disabled keeps it
+   announced, with its title saying why, and the click handler below is what makes it inert. */
+function paintSubwayKeyState(model) {
+  for (const group of model) {
+    for (const entry of group.bullets) {
+      const bullet = subwayKeyBullets.get(entry.id);
+      if (!bullet) continue;
+      bullet.setAttribute("aria-disabled", String(!entry.enabled));
+      /* AND THE INLINE CHIP GETS OUT OF THE STYLESHEET'S WAY when the bullet is dark. The
+         enabled chip is the route's own colour, written inline because it comes from the data;
+         an inline style beats a rule, so the grey the disabled state needs (style.css,
+         --chip-off) can only land if these two properties are cleared. Written back when it is
+         live again, which is the half that would otherwise leave a route permanently grey. */
+      if (entry.enabled) {
+        bullet.style.background = group.color;
+        bullet.style.color = readableTextOn(group.color);
+      } else {
+        bullet.style.removeProperty("background");
+        bullet.style.removeProperty("color");
+      }
+      bullet.title = entry.title;
+      subwayKeyFocusSets.set(entry.id, entry.focus);
+    }
+  }
+  paintRovingTabindex();
+}
+
+// Called when the route list resolves and from the poll tail. Rebuilds only when the set of
+// bullets changes; otherwise repaints, so the key does not twitch every fifteen seconds.
+function refreshSubwayKey() {
+  // The ribbons' tags and the key's sets are two halves of one answer, so they are refreshed
+  // together and from the same inputs. Late-bound by name: systems/subway.js loads after
+  // this file and owns the marks.
+  if (typeof retagSubwayRibbons === "function") retagSubwayRibbons();
+  if (!subwayKeyEl) return;
+  const model = subwayKeyModel(subwayRouteList(), subwayTrainRoutes());
+  const signature = model.map((g) => g.bullets.map((b) => b.id).join("")).join("|");
+  if (signature !== subwayKeyUniverse) {
+    subwayKeyUniverse = signature;
+    buildSubwayKey(model);
+    // A rebuild can take the focused bullet away with it; if it does, the focus goes too
+    // rather than being held by an id nothing draws.
+    if (focusedBullet && !subwayKeyBullets.has(focusedBullet)) clearRouteFocus();
+    else paintRouteFocus();
+    return;
+  }
+  paintSubwayKeyState(model);
+}
+
+/* ----- MR2: route focus ------------------------------------------------------------------
+
+   ONE PIECE OF STATE, and every surface reads it rather than keeping its own copy: the
+   bullets' aria-pressed, the ribbons' opacity and the trains' dimming base. It lives here
+   rather than in systems/subway.js because the CONTROLS are here (the bullets, the Escape
+   rung's entry point) and the drawing is there, and one of the two has to load first.
+
+   FOCUS IS MEMBERSHIP, not equality (round 2). The state is the BULLET that is pressed and
+   the SET of route ids it stands for; a ribbon or a train is focused when its own route is
+   in that set. That is what lets Z light the J/Z ribbon and W light all three Broadway
+   ones, and helpers.js's subwayKeyModel is where the sets come from.
+
+   IT IS OPACITY AND NOTHING ELSE. No layer is added, removed or rebuilt, which is what
+   subway.spec.js D2d holds by comparing layer identity across a focus and a clear. A
+   rebuild would also be a correctness problem rather than only a cost: setIcon replaces a
+   marker's element, so any focus state written onto the DOM would be lost the next time a
+   train's route id changed, while state held in Leaflet's options survives.
+
+   AND IT COMPOSES WITH THE FRESHNESS CONTRACT rather than competing with it. dimMarker and
+   markerOpacity already take a `base` multiplier; focus supplies it. Nothing in section 3.3
+   is touched, a stale train on the focused route stays dim, and the poll that re-dims every
+   marker fifteen seconds later re-reads the focus instead of erasing it. */
+let focusedBullet = null;
+let focusedRoutes = [];
+
+// The route ids currently focused, or an empty array. systems/subway.js asks this rather
+// than comparing ids, so membership is decided in one place.
+function currentFocusRoutes() {
+  return focusedRoutes;
+}
+
+function currentFocusBullet() {
+  return focusedBullet;
+}
+
+function paintRouteFocus() {
+  for (const [id, bullet] of subwayKeyBullets) {
+    bullet.setAttribute("aria-pressed", String(id === focusedBullet));
+  }
+  paintRovingTabindex();
+  // Late-bound by name, because systems/subway.js loads after this file and owns the marks.
+  if (typeof applySubwayFocus === "function") applySubwayFocus();
+}
+
+/* Press a bullet: focus it, or clear it if it was already focused. Pressing a DIFFERENT
+   bullet moves the focus rather than clearing.
+
+   A BULLET THAT WOULD LIGHT NOTHING NEVER DIMS THE MAP. That is the whole point of drawing
+   it disabled: before round 2, three of twenty-three bullets dimmed the entire map and
+   highlighted nothing, which is a control that appears to work and does not. */
+function toggleRouteFocus(id) {
+  const bullet = subwayKeyBullets.get(id);
+  if (bullet && bullet.getAttribute("aria-disabled") === "true") return;
+  if (focusedBullet === id) {
+    focusedBullet = null;
+    focusedRoutes = [];
+  } else {
+    focusedBullet = id;
+    focusedRoutes = subwayKeyFocusSets.get(id) ?? [id];
+  }
+  paintRouteFocus();
+  announcePage(routeFocusAnnouncement(focusedBullet));
+}
+
+// The Escape rung's entry point (the ladder is in map.js, and it is the page's only keydown
+// ROUTER: frontend/keyboard.test.js fails on a second one, and a second one bound in the
+// bubble phase would be inert anyway because the ladder captures and stops the event).
+// Returns whether there was anything to clear, so the ladder can tell "handled" from "leave
+// the event alone".
+function clearRouteFocus() {
+  if (!focusedBullet) return false;
+  focusedBullet = null;
+  focusedRoutes = [];
+  paintRouteFocus();
+  announcePage(routeFocusAnnouncement(null));
+  return true;
+}
+
+/* ----- MR2: the label gate and the Names toggle ------------------------------------------
+
+   THE ROOT CARRIES BOTH ATTRIBUTES. data-zoom is the design's, written as the integer zoom
+   so a reader or a future rule can find it; data-label-band is labelZoomBand()'s answer and
+   is what style.css actually reads. The stylesheet says why the design's enumerated zoom
+   list is not safe to depend on.
+
+   WRITTEN ON zoomend AND ONCE AT LOAD, because a map that opens at zoom 13 has never fired
+   one. Math.round, because getZoom() is fractional mid-flight and data-zoom is a label for
+   a settled state. */
+/* DECLARED BEFORE paintZoomBand IS CALLED. A module-scope const is in the temporal dead zone
+   until its own line runs, and this file has already taken the whole page down that way once
+   this stage; paintZoomBand writes this button's title, so the button is looked up first and
+   the first paint happens after the handler below. */
+const namesToggleEl = document.getElementById("names-toggle");
+
+function paintZoomBand() {
+  const zoom = Math.round(map.getZoom());
+  /* THE HUB COUNT IS READ OFF THE DOM rather than recomputed: "is there a hub label to
+     reveal" is exactly the question the band is about to be asked, and the labels are the
+     thing that answers it. Zero hubs with labels present is the degraded backend state
+     helpers.js describes at LABEL_NO_HUB_ZOOM, where the band shows every name from 13
+     instead of showing nothing from 12. Before any station has loaded there are no labels
+     either way, so the first paint is unaffected and loadStations calls this again when they
+     arrive. */
+  const labels = document.querySelectorAll(".stn-label").length;
+  const hubs = document.querySelectorAll(".stn-label.hub").length;
+  document.documentElement.setAttribute("data-zoom", String(zoom));
+  document.documentElement.setAttribute("data-label-band", labelZoomBand(zoom, !labels || hubs > 0));
+  /* THE TOOLTIP IS KEYED ON THE DATA, NOT ON THE HUB COUNT, which is a distinction D2z had to
+     teach me: a network can have no interchange while every station lists its routes, and over
+     that map the sentence "no station lists the routes that call there" is simply false. So the
+     band asks the labels (is there a hub to reveal) and the sentence asks the registry (did the
+     backend serve the index at all). Late-bound by name, because stations.js loads after this. */
+  if (namesToggleEl) {
+    /* try/catch AND NOT typeof, which is the trap this file has already fallen into once this
+       stage. stationRegistry is a module-scope const in stations.js, which loads AFTER this
+       file, and `typeof` on a binding in its temporal dead zone THROWS rather than returning
+       "undefined": it only answers "undefined" for a name that was never declared at all. The
+       first paint runs before stations.js has, so this has to survive that. */
+    let subway = [];
+    try {
+      subway = stationRegistry.filter((entry) => entry.kind === "subway");
+    } catch {
+      subway = [];
+    }
+    namesToggleEl.title = namesToggleTitle(
+      subway.filter((entry) => (entry.routes ?? []).length > 0).length,
+      subway.length,
+    );
   }
 }
+map.on("zoomend", paintZoomBand);
+
+if (namesToggleEl) {
+  namesToggleEl.addEventListener("click", () => {
+    const on = document.documentElement.getAttribute("data-labels") !== "off";
+    document.documentElement.setAttribute("data-labels", on ? "off" : "on");
+    namesToggleEl.setAttribute("aria-pressed", String(!on));
+    /* AND IT SAYS WHAT HAPPENED, which route focus has done since this stage was written and
+       this control did not. The labels are aria-hidden by design, so for a screen reader this
+       sentence is the ONLY evidence the press did anything; and at a zoom where no name can
+       show, it is the only thing that stops the button claiming an effect it does not have. */
+    announcePage(namesToggleAnnouncement(!on, document.documentElement.getAttribute("data-label-band")));
+  });
+}
+paintZoomBand();
 
 /* ----- MR1: the view presets -----------------------------------------------------------
    City, Rail and Region, the design's three centres and zooms, with flyTo at 0.8s (README
@@ -398,11 +710,53 @@ map.on("moveend zoomend", () => {
 });
 paintViewPresets();
 
-// Station dots get their own canvas pane sandwiched between the route lines
-// (overlayPane, 400) and the train/bus markers (markerPane, 600), so the
-// station canvas — not the route-line canvas it overlaps — receives clicks.
+/* ===== THE PANE ORDER, IN ONE PLACE =====================================================
+   Every z-index this map depends on, lowest first. Leaflet owns the ones without a
+   createPane call (frontend/vendor/leaflet/leaflet.css); the three marked OURS are made here.
+
+     200  tilePane            the basemap
+     390  subwayLinePane      OURS. Subway ribbons, and nothing else.
+     400  overlayPane         every other family's route lines, on one shared canvas
+     450  stationPane         OURS. Every family's station dots, on one shared canvas.
+     460  stationLabelPane    OURS. Subway station name labels.
+     500  shadowPane          Leaflet's marker shadows (unused here)
+     600  markerPane          every vehicle: trains, buses, boats, planes
+     650  tooltipPane         Leaflet's default for tooltips; this app puts none here
+     700  popupPane           the popups
+
+   WHY THE SUBWAY'S LINES GOT A PANE OF THEIR OWN (MR2 round 3). Every family passed the same
+   L.canvas to its route lines, and Leaflet's canvas draws its layers in INSERTION order
+   (_initPath appends to _drawLast; _draw walks the list), independently of which LayerGroup
+   they belong to. That was harmless while the subway drew 2.5px hairlines at opacity 0.5. It
+   stopped being harmless when MR2 gave the subway a 6.5px casing in --paper at 0.9: a casing
+   that wide, drawn later, ERASES a thin line beside it. PATH's 33rd St line runs under 6th
+   Avenue at weight 2.5, the AirTrain at Howard Beach is weight 3, the LIRR Atlantic Branch
+   beside the A and C is 2.5. And the order was a race: all eleven static loaders are kicked
+   off together in map.js, /api/subway-routes is by far the largest payload and re-fetches on
+   a warming 503, so in production the ribbons routinely landed last and whether another
+   family's line survived depended on which response arrived first.
+
+   A pane BELOW overlayPane makes the answer the same every time and the right way round: the
+   subway is the base network on this map, so its ribbons go under everything, and no fetch
+   order can change it. Nothing else moves, which is what MR2's pins require.
+
+   Station dots sit between the route lines and the vehicles so the station canvas, not the
+   route-line canvas it overlaps, receives clicks. Station name labels sit just above the
+   dots: a name may cover the dot it names, which is its own station, and may never cover a
+   train. A permanent Leaflet tooltip defaults to tooltipPane at 650, ABOVE the vehicles, and
+   measured from this stage's own committed screenshots that cost a train bullet 44% of its
+   route-coloured pixels, letter and all. */
+map.createPane("subwayLinePane");
+map.getPane("subwayLinePane").style.zIndex = 390;
+
 map.createPane("stationPane");
 map.getPane("stationPane").style.zIndex = 450;
+
+// The label pane, per the order above. Round 2's pass measured the label's BOX against the
+// anchor rather than its painted text, called it a 2x3 pixel corner, and that is how a name
+// painted across a train bullet got through a review that was looking for exactly this.
+map.createPane("stationLabelPane");
+map.getPane("stationLabelPane").style.zIndex = 460;
 
 L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 19,

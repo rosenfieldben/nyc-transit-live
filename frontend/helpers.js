@@ -45,6 +45,399 @@ function lineColor(routeId) {
   return LINE_COLORS[routeId] ?? LINE_COLORS[routeId[0]] ?? "#555555";
 }
 
+/* ---------------- MR2: how the subway is drawn ----------------
+
+   THE PURE HALF OF STAGE MR2, here rather than in systems/subway.js so a node test can
+   ask it directly and so the two surfaces that have to agree (the map and the Key panel)
+   read one answer. Nothing here touches the DOM, Leaflet or a clock; the caller resolves
+   the two theme colours and passes them in, which is also what lets a theme swap restyle
+   a canvas layer without rebuilding it.
+
+   THE PALETTE IS THIS APP'S OWN, and that is a ruling rather than an oversight. The v3.1
+   handoff gives the authority's official trunk hexes and a circular lettered bullet; the
+   repository's own README says route symbols require a license and to use our own colours
+   and markers, and round 3 of the map-redesign review ruled the README wins (R1). So every
+   ribbon takes lineColor()'s answer and every bullet keeps the rounded rectangle
+   systems/subway.js has always drawn. */
+
+// The yellow trunk, which is the one that has to be drawn last: its #e6b800 disappears
+// under any of the darker trunks it shares track with, and a rider reading Broadway would
+// see the 1-2-3's red where the N-Q-R-W runs beside it.
+const YELLOW_TRUNK_ROUTES = ["N", "Q", "R", "W"];
+
+// lineColor's rule, asked of the trunk rather than of the palette: an exact id first, then
+// its first character, so a lettered variant lands on the same trunk as its parent.
+function isYellowTrunk(routeId) {
+  const id = String(routeId ?? "");
+  if (!id) return false;
+  return YELLOW_TRUNK_ROUTES.includes(id) || YELLOW_TRUNK_ROUTES.includes(id[0]);
+}
+
+// Route ids ordered for drawing: yellow last, everything else in the order it arrived.
+// STABLE INSIDE EACH GROUP, so a static payload that lists its routes differently moves
+// nothing a rider can see except the one thing this function exists to decide.
+function trunkDrawOrder(routeIds) {
+  const ids = [...routeIds];
+  return [...ids.filter((id) => !isYellowTrunk(id)), ...ids.filter((id) => isYellowTrunk(id))];
+}
+
+// The two polylines one shape is drawn as. The casing is the paper the line is printed on:
+// it is what separates a trunk from the basemap and from the trunk beside it.
+const RIBBON_CASING_WEIGHT = 6.5;
+const RIBBON_CASING_OPACITY = 0.9;
+const RIBBON_LINE_WEIGHT = 4;
+const RIBBON_LINE_OPACITY = 1;
+
+/* ROUTE FOCUS IS OPACITY AND NOTHING ELSE, and it COMPOSES with the freshness contract's
+   dimming rather than replacing it. markerOpacity and dimMarker already take a `base`
+   multiplier, so a train's opacity is its own observation's answer times this one: a stale
+   train on the focused route stays dim, and a stale train off it is dimmed twice. Nothing
+   in section 3.3's rendering is touched to make that true.
+
+   The ribbons are not markers and have no age, so for them these ARE the opacities, which
+   is why the unfocused casing is 0 rather than a factor: a casing at 18% of paper is a grey
+   smear, and the design asks for the line alone to survive. */
+const FOCUS_DIM_LINE = 0.18;
+const FOCUS_DIM_CASING = 0;
+const FOCUS_DIM_TRAIN = 0.15;
+
+/* The opacity (for a ribbon) or the base (for a train) one part draws at, given the SET of
+   routes currently focused. An empty set means nothing is focused and every part is at full.
+
+   ROUND 2 MADE THIS MEMBERSHIP RATHER THAN EQUALITY. Focusing a route used to compare one id
+   against one id, which is wrong wherever two routes share track: the archive draws J and
+   not Z, so a Z bullet compared against J's ribbon matched nothing and dimmed the whole map.
+   A ribbon carries the SET of routes that share it and a bullet focuses the union of the
+   sets it belongs to, so this takes a set on one side and one id on the other.
+
+   `routeIds` is accepted as an array (a ribbon's set) or a single id (a train's route), so
+   one function answers for both surfaces. */
+function focusOpacity(focusRoutes, routeIds, part) {
+  const full = { line: RIBBON_LINE_OPACITY, casing: RIBBON_CASING_OPACITY, train: 1 };
+  const dimmed = { line: FOCUS_DIM_LINE, casing: FOCUS_DIM_CASING, train: FOCUS_DIM_TRAIN };
+  if (!(part in full)) return 1;
+  const focus = Array.isArray(focusRoutes) ? focusRoutes : focusRoutes ? [focusRoutes] : [];
+  if (!focus.length) return full[part];
+  const mine = (Array.isArray(routeIds) ? routeIds : [routeIds]).map((id) => String(id ?? "")).filter(Boolean);
+  return mine.some((id) => focus.map(String).includes(id)) ? full[part] : dimmed[part];
+}
+
+// What the page live region says when focus moves. The bullet's own label does not change
+// with the state (it stays "Focus route 4"), which is what lets it carry aria-pressed; this
+// is the sentence that tells a rider what just happened and how to undo it.
+/* WHETHER ONE MARK IS OUTSIDE THE CURRENT FOCUS. The same membership question focusOpacity
+   answers, asked as a boolean, because round 3's F4 remedy needs it for something other than
+   an opacity: an off-focus marker also leaves the accessibility tree and stops taking clicks.
+   Nothing focused means nothing is off focus. */
+function isOffFocus(focusRoutes, routeId) {
+  const focus = (Array.isArray(focusRoutes) ? focusRoutes : focusRoutes ? [focusRoutes] : []).map(String);
+  if (!focus.length) return false;
+  return !focus.includes(String(routeId ?? ""));
+}
+
+function routeFocusAnnouncement(routeId) {
+  return routeId ? `Focused on the ${routeId}; press again to clear.` : "Route focus cleared.";
+}
+
+function routeFocusLabel(routeId) {
+  return `Focus route ${routeId}`;
+}
+
+/* ----- MR2 round 2: the key, built from the data rather than from a table -----------------
+
+   THE TABLE WAS WRONG AND COULD NOT BE RIGHT. MR1 hard-coded ten trunks and twenty-three
+   bullets. Measured against the real static archive, that table and the network disagree in
+   both directions: Z, W and S draw no ribbon at all, so pressing one dimmed the whole map
+   and highlighted nothing, while FS, GS, H and SI are drawn and had no bullet, so the
+   Staten Island Railway and every shuttle were unfocusable. MR1's bullets were display only,
+   so the mismatch was invisible; MR2 made them controls, which is what made three of
+   twenty-three controls do nothing.
+
+   SO THE KEY IS DERIVED. The universe of bullets is the loaded route list, plus every route
+   id seen on a train, plus the declared aliases below; the groups are the trunks, which are
+   the routes that share lineColor()'s answer; and focus is MEMBERSHIP in a ribbon's route
+   set rather than equality with a ribbon's route id.
+
+   WHAT A RIBBON'S ROUTE SET IS. A drawn route's ribbon carries its own id and the ids of
+   every trunk-mate that has no geometry of its own, because that is what sharing track
+   means in this data: the archive draws J and not Z, N/Q/R and not W, GS/FS/H and not S,
+   and in each case the missing route runs on its neighbour's line. So J's ribbon is {J, Z},
+   each of N, Q and R's is {that, W}, and each shuttle's is {that, S}.
+
+   AND A BULLET FOCUSES THE UNION of the sets of every ribbon it belongs to. Z lights the
+   J/Z ribbon and the trains on either; W lights all three Broadway ribbons and their trains;
+   1 lights only the 1, because the 1's ribbon is shared with nothing. A bullet whose set
+   draws nothing right now is still drawn, disabled and with a reason, and it never dims the
+   map: a control that silently does nothing is worse than one that says why. */
+
+// One bullet standing for several feed route ids. The shuttles are the case: the map draws
+// three of them (GS, FS, H) and a rider knows one S. An alias COLLAPSES ids that exist; it
+// never invents a bullet for ids that do not, so a world with no shuttles has no S.
+const SUBWAY_KEY_ALIASES = { S: ["GS", "FS", "H"] };
+
+// Digits before letters, then lexicographic: the order the MTA prints and the order MR1's
+// table happened to be written in, derived rather than transcribed.
+function compareRouteIds(a, b) {
+  const digit = (id) => /^\d/.test(id);
+  if (digit(a) !== digit(b)) return digit(a) ? -1 : 1;
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+// Every route id the key could show, alias-collapsed and ordered. `routes` is the loaded
+// route list ([{route, polylines}]); `trainRoutes` is whatever is on the map.
+function subwayRouteUniverse(routes, trainRoutes = []) {
+  const ids = new Set();
+  for (const entry of routes ?? []) if (entry?.route) ids.add(String(entry.route));
+  for (const id of trainRoutes) if (id) ids.add(String(id));
+  // Collapse an alias only when at least one of its targets is really here.
+  for (const [alias, targets] of Object.entries(SUBWAY_KEY_ALIASES)) {
+    if (targets.some((target) => ids.has(target))) {
+      for (const target of targets) ids.delete(target);
+      ids.add(alias);
+    }
+  }
+  return [...ids].sort(compareRouteIds);
+}
+
+// The ids a bullet stands for: itself, or its alias targets.
+function bulletRouteIds(bullet) {
+  return SUBWAY_KEY_ALIASES[bullet] ?? [bullet];
+}
+
+// Which routes have geometry of their own, from the loaded list.
+function drawnRouteIds(routes) {
+  return new Set((routes ?? []).filter((entry) => (entry?.polylines ?? []).length > 0).map((entry) => String(entry.route)));
+}
+
+/* The set of routes one drawn route's ribbon carries: itself, plus every route in the same
+   trunk that has no geometry of its own. `known` is every route id the app has heard of,
+   BEFORE aliasing, because the orphans are feed ids (GS is drawn, S is not a feed id at
+   all, so S is attached through its alias by the caller). */
+function ribbonRouteSet(routeId, routes, known) {
+  const drawn = drawnRouteIds(routes);
+  const trunk = lineColor(routeId);
+  const orphans = [...known].filter((id) => id !== routeId && !drawn.has(id) && lineColor(id) === trunk);
+  return [routeId, ...orphans].sort(compareRouteIds);
+}
+
+/* THE FOCUS SET IS THE BULLET'S OWN IDS, and that is a correction the round's own new spec
+   made rather than a thing designed in. The first version focused the TRANSITIVE CLOSURE of
+   the ribbons a bullet touches, which is right for Z (the J/Z ribbon) and wrong for N: N's
+   ribbon carries W because the app has no W shape, W's neighbours Q and R carry W for the
+   same reason, so focusing N reached Q and R through W and lit the whole Broadway trunk when
+   a rider asked for one route of it. Membership is therefore asymmetric on purpose: a RIBBON
+   lights when its route set contains one of the bullet's ids, and the bullet's ids never
+   grow. focusRoutesForBullet is bulletRouteIds under another name, and it has that name so
+   the call sites read as the decision rather than as a coincidence. */
+const focusRoutesForBullet = bulletRouteIds;
+
+/* The routes a press would leave lit, which is NOT the focus set: it is the focus set plus
+   whoever else rides the ribbons those ids ride. Pressing Z lights the ribbon J is drawn as,
+   so the Z bullet's title says "shares track with J" even though no J TRAIN lights. Used for
+   the title and, as a boolean, for the enabled state. */
+function bulletTrackSet(bullet, routes, trainRoutes = []) {
+  const ids = bulletRouteIds(bullet);
+  const known = new Set([
+    ...(routes ?? []).map((entry) => String(entry?.route)).filter(Boolean),
+    ...trainRoutes.map(String).filter(Boolean),
+    ...ids,
+  ]);
+  const out = new Set(ids);
+  for (const drawnId of drawnRouteIds(routes)) {
+    const set = ribbonRouteSet(drawnId, routes, known);
+    if (set.some((id) => ids.includes(id))) for (const id of set) out.add(id);
+  }
+  return [...out].sort(compareRouteIds);
+}
+
+/* Whether pressing a bullet would light anything: a ribbon whose set it is in, or a train of
+   its own. A bullet that would light nothing is drawn disabled rather than left to dim the
+   map for no reason. This asks the RIBBONS and not the ids, because Z has no shape and no
+   train of its own and still lights the ribbon J is drawn as. */
+function bulletDrawsSomething(bullet, routes, trainRoutes = []) {
+  const ids = bulletRouteIds(bullet);
+  const known = new Set([
+    ...(routes ?? []).map((entry) => String(entry?.route)).filter(Boolean),
+    ...trainRoutes.map(String).filter(Boolean),
+    ...ids,
+  ]);
+  for (const drawnId of drawnRouteIds(routes)) {
+    if (ribbonRouteSet(drawnId, routes, known).some((id) => ids.includes(id))) return true;
+  }
+  return trainRoutes.map(String).some((id) => ids.includes(id));
+}
+
+// The sentence a disabled bullet carries, and the one an S-shaped alias carries whether or
+// not it is disabled. Both are titles rather than labels: the accessible NAME stays
+// "Focus route S" so it does not move with the state (the aria-pressed rule MR1 round 2
+// settled), and the title is where the detail goes.
+function bulletTitle(bullet, trackSet, enabled) {
+  const ids = bulletRouteIds(bullet);
+  const stands = ids.length > 1 ? `${bullet} is ${ids.join(", ")}. ` : "";
+  if (!enabled) return `${stands}Nothing on the map right now for ${bullet}.`;
+  const others = trackSet.filter((id) => !ids.includes(id));
+  const shares = others.length ? ` Shares track with ${others.join(", ")}.` : "";
+  return `${stands}Focus ${bullet}.${shares}`.trim();
+}
+
+/* The whole key, grouped by trunk. Groups are ordered by their first bullet, and bullets
+   inside a group by the same comparator, so the key's order is a function of the data. */
+function subwayKeyModel(routes, trainRoutes = []) {
+  const universe = subwayRouteUniverse(routes, trainRoutes);
+  const groups = new Map();
+  for (const bullet of universe) {
+    const enabled = bulletDrawsSomething(bullet, routes, trainRoutes);
+    const color = lineColor(bulletRouteIds(bullet)[0]);
+    const entry = {
+      id: bullet,
+      focus: focusRoutesForBullet(bullet),
+      enabled,
+      title: bulletTitle(bullet, bulletTrackSet(bullet, routes, trainRoutes), enabled),
+    };
+    if (groups.has(color)) groups.get(color).bullets.push(entry);
+    else groups.set(color, { color, bullets: [entry] });
+  }
+  return [...groups.values()];
+}
+
+/* A station is a LOCAL dot when the routes calling there belong to ONE trunk and a TRANSFER
+   ring when they belong to two or more.
+
+   IT COUNTS TRUNKS, NOT ROUTE IDS (round 3, F9). Counting ids made a skip-stop pair into an
+   interchange: Marcy Av is served by the J and the Z, which are one line taking turns at the
+   same platform, and Hewes St, Lorimer St and the rest of the Jamaica line are the same. So
+   are the local/express pairs, every ["A","C"] and ["4","5"] stop. All of them were drawn
+   with the paper transfer ring and, worse, given the `hub` class that the zoom-12 band exists
+   to keep sparse. lineColor() already knows which ids are one line, because they share a
+   colour by definition, so the trunk count is the question and the id count was a proxy for
+   it that is wrong in exactly the cases the network has most of.
+
+   ZERO ROUTES IS LOCAL, not transfer, and that is the direction that matters: the routes
+   field is optional on the stops endpoint, and a backend serving none would otherwise turn
+   all 496 stations into transfer rings, which is a claim about the network rather than a
+   missing value. Measured against the real static archive, 171 stations list one route and
+   325 list two or more; none lists zero, which is exactly why the fallback has to be chosen
+   deliberately rather than discovered. */
+const STATION_LOCAL_RADIUS = 3.5;
+const STATION_TRANSFER_RADIUS = 4.5;
+const STATION_TRANSFER_WEIGHT = 2;
+
+// The distinct trunks calling at a station. Two unknown ids collapse into one trunk, which is
+// the conservative direction: an id lineColor() cannot place must not invent an interchange.
+function stationTrunks(routes) {
+  return new Set(
+    (routes ?? [])
+      .map((id) => String(id ?? ""))
+      .filter(Boolean)
+      .map((id) => lineColor(id)),
+  );
+}
+
+function isTransferStation(routes) {
+  return stationTrunks(routes).size >= 2;
+}
+
+// The circleMarker options one station is drawn with. `ink` and `paper` are resolved by the
+// caller from the theme tokens, so this stays pure and a theme swap is a setStyle rather
+// than a rebuild.
+function stationMarkStyle(routes, ink, paper) {
+  return isTransferStation(routes)
+    ? {
+        radius: STATION_TRANSFER_RADIUS,
+        fillColor: paper,
+        fillOpacity: 1,
+        color: ink,
+        weight: STATION_TRANSFER_WEIGHT,
+        stroke: true,
+      }
+    : { radius: STATION_LOCAL_RADIUS, fillColor: ink, fillOpacity: 1, color: ink, weight: 0, stroke: false };
+}
+
+// The tooltip class one station's name is drawn with. A hub is the same station a transfer
+// ring is, so the two read one predicate rather than two.
+function stationLabelClass(routes) {
+  return isTransferStation(routes) ? "stn-label hub" : "stn-label";
+}
+
+/* THE ZOOM GATE, as a band rather than a number, because CSS cannot compare integers. The
+   root carries data-zoom="<n>" and the stylesheet enumerates the zooms in each band, which
+   is what the reference stylesheet does; this is the same decision in one place a node test
+   can ask, so the enumeration in the stylesheet and the attribute the map writes cannot
+   drift apart without a test saying so. */
+const LABEL_HUB_ZOOM = 12;
+const LABEL_ALL_ZOOM = 14;
+
+/* AND ONE FALLBACK ZOOM, for the world where no station is a hub (round 3, F1). The routes
+   per station come from stop_times.txt, which is NOT a required member of the subway static
+   archive: load_subway_station_routes returns {} on any failure and the endpoint then serves
+   routes: [] for all 496 stations while the status stays "ready". Every station is then a
+   local, no label carries the `hub` class, and "hubs from 12" correctly reveals nothing. That
+   is the right answer to that data and the wrong thing to show a rider, who gets a map with
+   no names at the opening zoom and at the City preset while the Names button reads pressed.
+
+   So with no hubs the band skips the hubs step and shows every name from 13: one zoom later
+   than the hub band, because with no hub to thin the field 12 is the zoom the collision
+   measurements found worst (89% of painted labels overlapping another), and one zoom earlier
+   than the all band, because a rider should not have to reach 14 to see any name at all.
+   THE BACKEND HALF IS ITS OWN BRANCH: stop_times.txt should be a required member, the rule
+   PATH and the ferry already apply to shapes.txt, and the ledger records it with its three
+   consumers named. */
+const LABEL_NO_HUB_ZOOM = 13;
+
+function labelZoomBand(zoom, hasHubs = true) {
+  if (!Number.isFinite(zoom)) return "none";
+  if (!hasHubs) return zoom >= LABEL_NO_HUB_ZOOM ? "all" : "none";
+  if (zoom < LABEL_HUB_ZOOM) return "none";
+  return zoom >= LABEL_ALL_ZOOM ? "all" : "hubs";
+}
+
+/* THE NAMES TOGGLE'S SENTENCE, round 3. The button flips a preference that outlives the
+   zoom, so it stays operable everywhere; what it must not do is claim an effect it does not
+   have. Below zoom 12 the band is "none" and no name can show whatever the preference says.
+   In the "hubs" band a network whose stations carry no routes has no hub either, and that is
+   a reachable backend state rather than a hypothetical: stop_times.txt is not a required
+   member of the static archive (backend/static_data.py), load_subway_station_routes returns
+   {} on any failure, and the endpoint then serves routes: [] for all 496 stations while the
+   status stays "ready". Every station is a local, no label carries the hub class, and at the
+   opening zoom 12 and the City preset's 13 nothing renders while the button reads pressed.
+
+   The band's arithmetic is not the bug and is not changed here: "hubs from 12" showing no
+   hubs is the right answer to that data. What was wrong is a control claiming otherwise in
+   silence, so the toggle says which of the three it is. THE BACKEND HALF IS NOT THIS
+   BRANCH'S: the railroad warmup gates its ready on a non-empty index and the subway warmup
+   does not, and that is one line in a file this stage does not touch. */
+function namesToggleAnnouncement(on, band) {
+  if (!on) return "Station names off.";
+  if (band === "none") return "Station names on; none at this zoom, zoom in to see them.";
+  return "Station names on.";
+}
+
+/* And the tooltip that says why the map looks different, in the one state a rider cannot work
+   out from what is on screen: no station lists its routes at all, so there is no ring anywhere
+   and no name is marked as an interchange. Empty otherwise, because a control that explains
+   itself when there is nothing to explain is noise.
+
+   THE CONDITION IS "NOTHING LISTS ANY ROUTES", NOT "NOTHING IS A HUB", and the difference is a
+   sentence that would otherwise be false. A network can legitimately have no interchange while
+   every station lists its routes: the hermetic fixture is exactly that, two stations of three
+   ids on one trunk each. Keyed on the hub count this tooltip appeared there and said "no station
+   lists the routes that call there" over a map where both of them did. The band's fallback is
+   keyed on hubs, correctly, because "is there a hub label to reveal" is what the band asks; the
+   SENTENCE is about the data, so it is keyed on the data. Caught by writing D2z. */
+function namesToggleTitle(routedCount, stationCount = 1) {
+  if (routedCount || !stationCount) return "";
+  return "No station lists the routes that call there, so every name shows from zoom 13 and none is marked as an interchange.";
+}
+
+// Whether one station's name is on screen: the band, the station's own kind, and the Names
+// toggle, which overrides both.
+function stationLabelShown(zoom, routes, labelsOn, hasHubs = true) {
+  if (!labelsOn) return false;
+  const band = labelZoomBand(zoom, hasHubs);
+  if (band === "all") return true;
+  return band === "hubs" && isTransferStation(routes);
+}
+
 // Railroad route ids (LIRR branch codes, MNR line numbers) collide with subway
 // ids and with each other, so they get their own palette rather than reusing
 // lineColor. Deterministic per id from a fixed palette, with a neutral default
@@ -3604,6 +3997,18 @@ if (typeof module !== "undefined" && module.exports) {
     hashString, bannerRenderKey,
     RAILROAD_ROUTE_MAX_SLICE, RAILROAD_ROUTE_ACCEPT_DIST, RAILROAD_BUCKET_ORDER,
     LINE_COLORS, FEED_STALE_AFTER_S, FETCH_DEADLINE_MS, shouldRefresh,
+    // MR2: the subway's drawing decisions, pure so the map and the Key read one answer.
+    YELLOW_TRUNK_ROUTES, isYellowTrunk, trunkDrawOrder,
+    RIBBON_CASING_WEIGHT, RIBBON_CASING_OPACITY, RIBBON_LINE_WEIGHT, RIBBON_LINE_OPACITY,
+    FOCUS_DIM_LINE, FOCUS_DIM_CASING, FOCUS_DIM_TRAIN, focusOpacity, isOffFocus,
+    routeFocusAnnouncement, routeFocusLabel,
+    // MR2 round 2: the key derived from the data, and focus as membership.
+    SUBWAY_KEY_ALIASES, compareRouteIds, subwayRouteUniverse, bulletRouteIds, drawnRouteIds,
+    ribbonRouteSet, focusRoutesForBullet, bulletTrackSet, bulletDrawsSomething, bulletTitle, subwayKeyModel,
+    STATION_LOCAL_RADIUS, STATION_TRANSFER_RADIUS, STATION_TRANSFER_WEIGHT,
+    isTransferStation, stationTrunks, stationMarkStyle, stationLabelClass,
+    LABEL_HUB_ZOOM, LABEL_ALL_ZOOM, LABEL_NO_HUB_ZOOM, labelZoomBand, stationLabelShown,
+    namesToggleAnnouncement, namesToggleTitle,
     // A3: one luminance path for the whole app.
     parseColor, relativeLuminance, contrastRatio, readableTextOn, readableInk, statusLineText,
     statusNoteText, FEEDS, feedDotState, feedTooltip, feedStripModel, themeChoice, nextTheme,

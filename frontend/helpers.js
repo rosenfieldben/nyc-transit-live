@@ -2593,7 +2593,14 @@ function busMarkColor(routeId) {
     : `hsl(${hue}, ${BUS_MARK_SATURATION}%, ${BUS_MARK_LIGHTNESS_TOKEN})`;
 }
 
-// The same colour with the token resolved, for measuring one theme's end of it.
+/* The same colour with the token resolved, for the two callers that cannot read a custom
+   property: the measurement, and the CANVAS. A clicked bus's route line is a polyline, so
+   Leaflet hands its colour to the 2D context as a STRING and `var(--bus-mark-lightness)` is not
+   one; the mark beside it is HTML and takes the token directly. Round 1 is why this has a
+   second caller at all: the stage tokenised the mark's lightness and left the route line at
+   routeColor's raw wheel, so a rider clicking a bus got a line in a different colour from the
+   arrow they clicked, and in the dark theme 169 of the 360 hashed hues read under 3:1 against
+   the paper (worst 1.45), 217 of them once the line's own 0.65 opacity is composited. */
 function busMarkColorAt(routeId, lightness) {
   const hue = busMarkHue(routeId);
   return hue == null ? routeColor(routeId) : `hsl(${hue}, ${BUS_MARK_SATURATION}%, ${lightness}%)`;

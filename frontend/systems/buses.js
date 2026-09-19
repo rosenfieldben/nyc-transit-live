@@ -27,6 +27,19 @@ function busIcon(bus) {
   return busMarkIcon(busMarkColor(bus.route_id), busHasHeading(bus) ? bus.bearing : null);
 }
 
+/* MR4 ROUND 1: the clicked route line is the seventh canvas family, and the only one whose
+   colour depends on something besides the theme. The route id was written onto each layer at
+   draw for exactly this: the painter recomputes per route rather than per family.
+
+   COLOUR ONLY. The line's 0.65 opacity is the design's constant and belongs to nothing else,
+   but it is not passed, because there is no reason to write it twice. */
+registerCanvasFamily("bus route lines", ({ busLightness }) => {
+  for (const layer of busRouteLayer.getLayers()) {
+    if (!layer.options.routeId || !layer.setStyle) continue;
+    layer.setStyle({ color: busMarkColorAt(layer.options.routeId, busLightness) });
+  }
+});
+
 function busPopup(record) {
   const b = record.latest;
   const position = busPosition(b);
@@ -233,7 +246,19 @@ async function showBusRoute(bus) {
 
   for (const points of geometry.directions ?? []) {
     L.polyline(points, {
-      color: routeColor(bus.route_id),
+      /* MR4 ROUND 1: THE SAME WHEEL THE ARROW IS DRAWN FROM. This was routeColor's raw
+         hsl(h, 75%, 40%) while the mark beside it had been muted and tokenised, so clicking a
+         bus drew a line in a different colour from the arrow that was clicked. It is also the
+         colour helpers.js says out loud owes 3:1 BECAUSE it is a polyline colour, and in the
+         dark theme the raw wheel leaves 169 of 360 hues under that floor (worst 1.45), 217 of
+         them once this line's own 0.65 opacity is composited.
+
+         RESOLVED AT DRAW AND REGISTERED BELOW, because a canvas cannot read the token the mark
+         uses. THE ROUTE ID RIDES ON THE LAYER so the repaint can recompute per route: the
+         colour depends on the route as well as the theme, which is what makes this family
+         different from the other six. */
+      routeId: bus.route_id,
+      color: busMarkColorAt(bus.route_id, busMarkLightness()),
       weight: 3.5,
       opacity: 0.65,
       interactive: false,

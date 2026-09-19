@@ -153,6 +153,14 @@ const canvasPaints = (page) =>
       ferryDockFills: [...new Set(ferryDocks.getLayers().map((l) => l.options.fillColor))],
       ferryLines: [...new Set(ferryRouteLines.getLayers().map((l) => l.options.color))],
       airtrainLines: [...new Set(airtrainRouteLinesLayer.getLayers().map((l) => l.options.color))],
+      busRouteLines: [...new Set(busRouteLayer.getLayers().map((l) => l.options.color))],
+      // The arrow's own fill, so the two halves of one route's colour can be compared rather
+      // than each asserted against a literal.
+      busMarkFill: [...new Set(
+        [...document.querySelectorAll(".bus-marker svg path, .bus-marker svg circle")].map(
+          (el) => getComputedStyle(el).fill,
+        ),
+      )],
       registered: canvasThemeFamilies.map((f) => f.name),
       // Every family whose paint threw on the last swap. A rider is told nothing; a test is,
       // which is the whole reason the catch records instead of swallowing.
@@ -192,6 +200,15 @@ test("D5b. a swap repaints every canvas family, in place, and rebuilds nothing",
   });
   expect(tagged, "this world draws marks to repaint").toBe(23);
 
+  /* AND A ROUTE LINE A RIDER DREW BY CLICKING A BUS, because the seventh family does not exist
+     until they do: `busRouteLayer` is empty on a fresh page, so a swap over it would repaint
+     nothing and prove nothing. Round 1 added this family, and this is the world where it has a
+     layer to repaint. */
+  await page.evaluate(() => showBusRoute([...buses.values()][0].latest));
+  await expect
+    .poll(() => page.evaluate(() => busRouteLayer.getLayers().length), { timeout: 10_000 })
+    .toBeGreaterThan(0);
+
   // A POPUP A RIDER IS HOLDING OPEN, which is the thing a rebuild would take away.
   await page.evaluate(() => [...pathTrainRecords.values()][0].marker.openPopup());
   await expect(page.locator(".leaflet-popup")).toBeVisible();
@@ -208,7 +225,7 @@ test("D5b. a swap repaints every canvas family, in place, and rebuilds nothing",
   /* SIX FAMILIES, AND THE COUNT IS ASSERTED so a seventh added later cannot ride along
      unmeasured: families.test.js proves every token-resolving file registers, and this proves
      every registration is exercised by the assertions below. */
-  expect(before.registered.length, `registered: ${before.registered.join(", ")}`).toBe(6);
+  expect(before.registered.length, `registered: ${before.registered.join(", ")}`).toBe(7);
   /* AND THE IDENTITY PROBE HAS A SUBJECT FOR EVERY FAMILY IT NAMES, asserted as a premise
      rather than assumed: a null on both sides of the comparison below would compare nothing,
      which is exactly what this test did for the rail casings until the round that found it. */
@@ -237,6 +254,29 @@ test("D5b. a swap repaints every canvas family, in place, and rebuilds nothing",
   expect(after.airtrainLines, "the guideway's gray has two values and this is the other").toEqual([
     "#9a9a9a",
   ]);
+  /* AND THE CLICKED ROUTE LINE MOVED WITH ITS OWN ARROW, which is the assertion round 1's
+     finding is really about: before it, the line was drawn from the raw hashed wheel and the
+     mark from the muted one, so a rider clicking a bus got a line in a different colour from
+     the thing they clicked, in both themes. The two are compared to EACH OTHER rather than to
+     a literal, because "the same colour" is the claim. */
+  expect(after.busRouteLines, "the line took the dark theme's lightness").not.toEqual(
+    before.busRouteLines,
+  );
+  const sameColour = async () =>
+    page.evaluate(() => {
+      const probe = document.createElement("span");
+      probe.style.color = busRouteLayer.getLayers()[0].options.color;
+      document.body.append(probe);
+      const line = getComputedStyle(probe).color;
+      probe.remove();
+      const marks = [...document.querySelectorAll(".bus-marker svg path, .bus-marker svg circle")];
+      const bus = [...buses.values()][0];
+      const mine = marks.find((el) => el.closest(".leaflet-marker-icon") === bus.marker.getElement());
+      return { line, mark: mine ? getComputedStyle(mine).fill : null };
+    });
+  const dark = await sameColour();
+  expect(dark.mark, "the bus whose route this is is on the page").not.toBeNull();
+  expect(dark.line, "one route, one colour, in the dark theme").toBe(dark.mark);
 
   /* AND WHAT MUST NOT MOVE DID NOT. Every colour below is an agency's published one or the
      app's fixed route palette, and a swap that repainted them would erase the identity MR2 and

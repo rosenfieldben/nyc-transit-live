@@ -368,7 +368,11 @@ test("MR4 theme: every file that resolves a theme token for a canvas mark regist
 
      THE MUTATION THE OPERATOR NAMED is the rail casings left out of the restyle, and it dies
      here as well as on the page: delete railroad.js's registration and this fails by name. */
-  const RESOLVERS = /\b(paperColor|inkColor|scheduledColor)\(\)/;
+  /* FOUR RESOLVERS, and the fourth arrived in round 1: `busMarkLightness()` reads
+     `--bus-mark-lightness` for the one bus colour a cascade cannot reach, the clicked route
+     LINE, which is a canvas polyline. It belongs in this scrape for the same reason the other
+     three do: a file that resolves a token for a canvas mark owes a painter. */
+  const RESOLVERS = /\b(paperColor|inkColor|scheduledColor|busMarkLightness)\(\)/;
   const files = readdirSync(SYSTEMS).filter((n) => n.endsWith(".js"));
   const owes = [];
   const registers = [];
@@ -429,7 +433,7 @@ test("MR4 theme: every file that resolves a theme token for a canvas mark regist
   // fails rather than passing over an empty set.
   assert.deepEqual(sites, {
     "airtrain.js": 1,
-    "buses.js": 0,
+    "buses.js": 1,
     "ferry.js": 1,
     "njt.js": 0,
     "path.js": 1,
@@ -438,7 +442,7 @@ test("MR4 theme: every file that resolves a theme token for a canvas mark regist
   });
   // AND THE FOUR THAT MUST BE THERE, named, because "the sets are equal" is also true of two
   // empty sets and a stage that deleted every registration would pass it.
-  for (const name of ["subway.js", "railroad.js", "path.js", "ferry.js", "airtrain.js"]) {
+  for (const name of ["subway.js", "railroad.js", "path.js", "ferry.js", "airtrain.js", "buses.js"]) {
     assert.ok(registers.includes(name), `${name} must register its canvas family`);
   }
 });
@@ -469,6 +473,12 @@ test("MR4 theme: every registry entry declares whether it may pass an opacity, a
     "path stations": { file: "path.js", opacity: true },
     "ferry docks": { file: "ferry.js", opacity: true },
     "airtrain lines": { file: "airtrain.js", opacity: true },
+    /* THE SEVENTH, from round 1, and it declares the stricter side. The clicked route line's
+       0.65 is the design's constant and belongs to nothing else, so it COULD pass it; it does
+       not, because there is no reason to write a number twice and because this is the one
+       family whose colour depends on something besides the theme (the route), which is enough
+       for one painter to carry. */
+    "bus route lines": { file: "buses.js", opacity: false },
   };
   for (const [family, { file, opacity }] of Object.entries(registry)) {
     const body = stripComments(src(file));

@@ -261,7 +261,12 @@ function registerCanvasFamily(name, paint) {
 // The tokens every canvas family is drawn from, read once per swap rather than once per
 // layer: getComputedStyle is the expensive half and the answer cannot change mid-sweep.
 function canvasThemeTokens() {
-  return { paper: paperColor(), ink: inkColor(), scheduled: scheduledColor() };
+  return {
+    paper: paperColor(),
+    ink: inkColor(),
+    scheduled: scheduledColor(),
+    busLightness: busMarkLightness(),
+  };
 }
 
 /* Every family whose paint threw on the last swap, newest run only. A rider is told nothing:
@@ -372,6 +377,18 @@ function inkColor() {
    it is resolved here beside paper and ink and handed to the registry with them. */
 function scheduledColor() {
   return rootToken("--scheduled", "#6d6e71");
+}
+
+/* MR4 ROUND 1: THE BUS WHEEL'S LIGHTNESS AS A NUMBER, for the one bus colour a cascade cannot
+   reach. The MARK is HTML and takes `var(--bus-mark-lightness)` in an inline style; the clicked
+   route LINE is a canvas polyline, so Leaflet hands its colour to the 2D context as a string and
+   a custom property is not one. Same token, read here and resolved at draw, so the arrow and the
+   line a rider draws by clicking it are the same colour in either theme. The fallback is the
+   README's light value, as the token's own is. */
+function busMarkLightness() {
+  const raw = rootToken("--bus-mark-lightness", `${BUS_MARK_LIGHTNESS}%`);
+  const parsed = Number.parseFloat(String(raw));
+  return Number.isFinite(parsed) ? parsed : BUS_MARK_LIGHTNESS;
 }
 
 

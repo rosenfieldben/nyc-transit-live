@@ -396,10 +396,28 @@ test("D4e. AirTrain draws a gray dashed guideway and the commuter square", async
     expect(line.weight).toBe(3);
     expect(line.dash).toBe("8 5");
   }
+  /* AND THE MAGENTA IS GONE, NAMED. Round 1 found the first version of this line could not
+     fail: it asked `/magenta|#e|#f0f/i`, and `#b5179e` (the only magenta this stage removed)
+     matches none of those. The colour is named now, and it is asked of the two surfaces that
+     carried it: the guideway, and the station panel's route chip, which kept it for a stage
+     after the map stopped drawing it. */
+  const MAGENTA = "#b5179e";
+  expect(lines.map((l) => String(l.color).toLowerCase())).not.toContain(MAGENTA);
   expect(
-    lines.some((l) => /magenta|#e|#f0f/i.test(String(l.color))),
-    "the magenta is gone",
-  ).toBe(false);
+    await page.evaluate(() => document.documentElement.outerHTML.toLowerCase()),
+    "no surface on the page still paints the AirTrain magenta",
+  ).not.toContain(MAGENTA);
+  /* AND THE PANEL'S ROUTE CHIP IS THE GUIDEWAY'S GRAY, asked of the function the panel builds
+     it with rather than of a rendered row, because the chip only exists while an AirTrain
+     station is selected and a sweep of the document would pass over a page that has none. This
+     is the surface that kept the magenta for a stage after the map stopped drawing it. */
+  const chip = await page.evaluate(() => ({
+    airtrain: stationChipStyle({ kind: "airtrain" }, "A"),
+    scheduled: scheduledColor(),
+  }));
+  expect(chip.airtrain.bg, "the chip is the scheduled token, live").toBe(chip.scheduled);
+  expect(chip.airtrain.bg.toLowerCase()).not.toBe(MAGENTA);
+  expect(chip.airtrain.fg, "and its ink is chosen for that background").toBeTruthy();
 
   /* THE STATIONS ARE THE COMMUTER SQUARE, byte for byte the same markup the three rail
      families draw, which is what "the fourth family to draw it" means. Compared against a
@@ -537,6 +555,16 @@ test("D4f. a bus is an arrow when a heading is served and a dot when one is not"
       probe.remove();
       return out;
     }, css);
+  /* AND THE TOKEN IS DECLARED, which the comparison below cannot tell on its own: the var's
+     FALLBACK is the same 38% (deliberately, so a context with no stylesheet still gets a
+     colour), so a stylesheet that never declared `--bus-mark-lightness` would resolve to the
+     identical rgb and this would pass. Asked of the root directly, and theme.spec.js D5c is
+     the other half: with no token declared, both themes would draw the fallback and its
+     "the two themes draw them at different lightnesses" would fail. */
+  const token = await page.evaluate(() =>
+    getComputedStyle(document.documentElement).getPropertyValue("--bus-mark-lightness").trim(),
+  );
+  expect(token, "the light theme declares the README's value").toBe("38%");
   expect(arrow.fill, "the drawn arrow is the token resolved by the light theme").toBe(
     await resolved(hues.lightEnd),
   );

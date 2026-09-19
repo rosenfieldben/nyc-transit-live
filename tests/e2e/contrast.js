@@ -24,8 +24,15 @@
    numbers are what make that decision readable rather than a single number that hides which
    half of a mark is carrying it.
 
-   AN ALPHA IS COMPOSITED RATHER THAN IGNORED, which is the mistake the attribution's own parser
-   in a11y.spec.js records having made: the subway's plate is paper at 0.95 and is not opaque. */
+   AN ALPHA IS COMPOSITED RATHER THAN IGNORED, and round 1 found that this was only half true.
+   The code composited an rgba() COLOUR's alpha, which no mark on this map has, and ignored the
+   one alpha that is actually here: the subway's plate carries `opacity="0.95"` as an ELEMENT
+   attribute, so its computed fill is an opaque rgb() and the compositing branch never ran. Both
+   are handled now: a paint's effective alpha is its colour's alpha times the element's own
+   `opacity` and its `fill-opacity` or `stroke-opacity`, and that is composited over the surface
+   before the ratio. It changes no verdict today (the plate's paint IS the surface colour, so
+   compositing it over the surface returns the surface), which is exactly why it had to be
+   measured rather than assumed. */
 
 // Every family on the map, by the class its marks carry. NJ Transit is absent on purpose: MR3
 // made the rail tag and the commuter square one grammar for all three rail agencies, so it has
@@ -64,14 +71,21 @@ async function measureMarkContrast(page) {
         if (parts.length < 3) return null;
         return { rgb: parts.slice(0, 3), alpha: parts.length > 3 ? parts[3] : 1 };
       };
-      const ratio = (colour, base) => {
+      const ratio = (colour, base, alpha = 1) => {
         const c = parse(colour);
         const b = parse(base);
         if (!c || !b) return null;
-        const over = c.rgb.map((v, i) => v * c.alpha + b.rgb[i] * (1 - c.alpha));
+        const a = Math.max(0, Math.min(1, c.alpha * alpha));
+        const over = c.rgb.map((v, i) => v * a + b.rgb[i] * (1 - a));
         const [hi, lo] =
           lum(over) >= lum(b.rgb) ? [lum(over), lum(b.rgb)] : [lum(b.rgb), lum(over)];
         return (hi + 0.05) / (lo + 0.05);
+      };
+      // The element's own transparency, which is where this map's only non-opaque paint lives.
+      const alphaOf = (style, which) => {
+        const own = Number(style.opacity);
+        const paint = Number(which === "fill" ? style.fillOpacity : style.strokeOpacity);
+        return (Number.isFinite(own) ? own : 1) * (Number.isFinite(paint) ? paint : 1);
       };
       /* A PAINT IS ONLY MEASURED IF IT IS A COLOUR, and this guard is the round's own repair.
 
@@ -120,9 +134,14 @@ async function measureMarkContrast(page) {
           // colour is not a paint this measurement can say anything about, and pretending
           // otherwise is how a mark gets credit for a colour it does not carry.
           .filter(({ css }) => isColour(css))
-          .map(({ kind, css }) => {
+          .map(({ kind, css, alpha = 1 }) => {
             const value = resolve(css);
-            return { kind, css: value, onPaper: ratio(value, paper), onSurface: ratio(value, surface) };
+            return {
+              kind,
+              css: value,
+              onPaper: ratio(value, paper, alpha),
+              onSurface: ratio(value, surface, alpha),
+            };
           })
           .filter((p) => p.onPaper != null);
         rows.push({ family, paints: measured });
@@ -146,8 +165,10 @@ async function measureMarkContrast(page) {
           for (const shape of el.querySelectorAll("path, circle, rect, text, line, polyline")) {
             const tag = shape.tagName.toLowerCase();
             const style = getComputedStyle(shape);
-            if (PAINTS_FILL.has(tag)) paints.push({ kind: `${tag} fill`, css: style.fill });
-            paints.push({ kind: `${tag} stroke`, css: style.stroke });
+            if (PAINTS_FILL.has(tag)) {
+              paints.push({ kind: `${tag} fill`, css: style.fill, alpha: alphaOf(style, "fill") });
+            }
+            paints.push({ kind: `${tag} stroke`, css: style.stroke, alpha: alphaOf(style, "stroke") });
           }
           push(family, paints);
         }

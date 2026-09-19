@@ -314,7 +314,18 @@ function stationChipStyle(entry, routeId) {
     const bg = colorFor(routeId) || "#546e7a";
     return { bg, fg: readableTextOn(bg) };
   }
-  if (entry.kind === "airtrain") return { bg: "#b5179e", fg: readableTextOn("#b5179e") };
+  /* MR4 ROUND 1: THE SAME GRAY THE GUIDEWAY IS DRAWN IN, because the magenta this chip carried
+     is a colour the map no longer paints anywhere. AirTrain's line became `--scheduled`
+     (#6d6e71 light, #9a9a9a dark), which is the token the app already used for "scheduled, no
+     live feed", and a chip keyed to a colour a rider cannot see on the map is a legend for
+     nothing. Read LIVE rather than frozen, so the chip and the guideway agree in whichever
+     theme is current; the panel re-renders on every poll, so a swap with it open heals on the
+     next one. The other chips are feed colours and fixed palettes, which is why this is the one
+     that can be a token at all. */
+  if (entry.kind === "airtrain") {
+    const bg = scheduledColor();
+    return { bg, fg: readableTextOn(bg) };
+  }
   const bg = lineColor(routeId);
   return { bg, fg: readableTextOn(bg) };
 }

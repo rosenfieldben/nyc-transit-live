@@ -91,10 +91,10 @@
   "marks": {
    "light": {
     "subway train": {
-     "paint": "rect stroke",
-     "colour": "rgb(0, 0, 0)",
-     "onPaper": 18.79,
-     "onSurface": 17.33
+     "paint": "rect fill",
+     "colour": "rgb(192, 57, 43)",
+     "onPaper": 4.87,
+     "onSurface": 4.49
     },
     "bus": {
      "paint": "circle fill",
@@ -116,9 +116,9 @@
     },
     "rail tag": {
      "paint": "rect stroke",
-     "colour": "rgb(0, 0, 0)",
-     "onPaper": 18.79,
-     "onSurface": 17.33
+     "colour": "rgb(32, 30, 29)",
+     "onPaper": 14.86,
+     "onSurface": 13.7
     },
     "rail station square": {
      "paint": "rect stroke",

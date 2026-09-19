@@ -372,6 +372,8 @@ test("MR4 theme: every file that resolves a theme token for a canvas mark regist
   const files = readdirSync(SYSTEMS).filter((n) => n.endsWith(".js"));
   const owes = [];
   const registers = [];
+  const sites = {};
+  const entries = {};
   for (const name of files) {
     // shared.js DEFINES the resolvers and the registry; it draws no family of its own.
     if (name === "shared.js") continue;
@@ -381,8 +383,28 @@ test("MR4 theme: every file that resolves a theme token for a canvas mark regist
        mangled file is a scrape that can miss a call site. Script() parses without running
        anything, which is all these files would tolerate outside a browser anyway. */
     new Script(code, { filename: `stripped:${name}` });
-    if (RESOLVERS.test(code)) owes.push(name);
-    if (code.includes("registerCanvasFamily(")) registers.push(name);
+    /* A DRAW SITE, NOT A RESOLVER CALL, and the difference is why this counts runs of lines.
+       One draw resolves as many tokens as its style needs: loadSubwayStations takes inkColor()
+       and paperColor() on consecutive lines and is ONE place that draws. Counting calls would
+       make that file owe three registrations for two families and fail on correct code;
+       counting FILES (which is what the first draft did) lets a file that already registers
+       anything hide a second, uncovered draw. A maximal run of consecutive resolver lines is
+       the middle: it merges one draw's several tokens and separates two draws. */
+    const lines = code.split("\n");
+    let count = 0;
+    let inRun = false;
+    for (const line of lines) {
+      if (RESOLVERS.test(line)) {
+        if (!inRun) count += 1;
+        inRun = true;
+      } else {
+        inRun = false;
+      }
+    }
+    sites[name] = count;
+    entries[name] = (code.match(/registerCanvasFamily\(/g) ?? []).length;
+    if (count > 0) owes.push(name);
+    if (entries[name] > 0) registers.push(name);
   }
   assert.deepEqual(
     owes.slice().sort(),
@@ -391,11 +413,91 @@ test("MR4 theme: every file that resolves a theme token for a canvas mark regist
       .filter((f) => !registers.includes(f))
       .join(", ") || "(none)"}`,
   );
+  /* AND PER FILE, NOT ONLY PER SET, which is the round 1 review's finding: `subway.js` draws
+     from tokens at two independent sites and registers two families, and a file-granular check
+     passes with either registration deleted, or with a THIRD uncovered draw added. The count
+     is the guard: a new token-resolving draw in any of these files has to bring a painter with
+     it or this fails by name and by number. */
+  for (const name of owes) {
+    assert.ok(
+      entries[name] >= sites[name],
+      `${name} draws from a resolved token at ${sites[name]} site(s) and registers ` +
+        `${entries[name]} painter(s): every canvas draw that resolves a token owes one`,
+    );
+  }
+  // The shape of the world this is asserting over, so a scrape that silently found nothing
+  // fails rather than passing over an empty set.
+  assert.deepEqual(sites, {
+    "airtrain.js": 1,
+    "buses.js": 0,
+    "ferry.js": 1,
+    "njt.js": 0,
+    "path.js": 1,
+    "railroad.js": 1,
+    "subway.js": 2,
+  });
   // AND THE FOUR THAT MUST BE THERE, named, because "the sets are equal" is also true of two
   // empty sets and a stage that deleted every registration would pass it.
   for (const name of ["subway.js", "railroad.js", "path.js", "ferry.js", "airtrain.js"]) {
     assert.ok(registers.includes(name), `${name} must register its canvas family`);
   }
+});
+
+test("MR4 theme: every registry entry declares whether it may pass an opacity, and four may", () => {
+  /* ROUND 1'S REVIEW FOUND THE GUARD BELOW RUNNING OVER TWO OF SIX ENTRIES. "Colour only,
+     never opacity" is written as the rule for the whole registry, and the assertion that
+     enforces it names `railroad.js` and `subway.js`, which are exactly the two entries that
+     keep it. The other four hand a whole style object to setStyle, opacity and all.
+
+     SO THE RULE IS RESTATED AS WHAT IT ACTUALLY IS, per family, and the split is not arbitrary:
+     an entry may not write an opacity that something ELSE owns.
+
+     THE TWO THAT MAY NOT. A subway ribbon's opacity belongs to route focus, which reads it
+     back and guards on it, and a rail casing shares its layer group with branch lines that are
+     dimmed by nothing but must not be touched. A swap that passed opacity to either would
+     undo a rider's focus the moment they changed theme.
+
+     THE FOUR THAT MAY, because nothing else writes theirs: a station dot, a dock and a
+     guideway are not vehicles, so the freshness contract never dims them, and route focus
+     does not reach them. What they pass is a CONSTANT of the design rather than a live value,
+     which is the property this asserts directly: the same number whatever the caller's tokens
+     are. A stage that gives one of these families an opacity treatment has to come here. */
+  const registry = {
+    "rail casings": { file: "railroad.js", opacity: false },
+    "subway ribbons": { file: "subway.js", opacity: false },
+    "subway stations": { file: "subway.js", opacity: true },
+    "path stations": { file: "path.js", opacity: true },
+    "ferry docks": { file: "ferry.js", opacity: true },
+    "airtrain lines": { file: "airtrain.js", opacity: true },
+  };
+  for (const [family, { file, opacity }] of Object.entries(registry)) {
+    const body = stripComments(src(file));
+    const at = body.indexOf(`registerCanvasFamily("${family}"`);
+    assert.ok(at >= 0, `${file} must register "${family}"`);
+    const entry = body.slice(at, body.indexOf("\n});", at));
+    if (!opacity) {
+      assert.doesNotMatch(entry, /opacity/, `"${family}" may not write an opacity`);
+    }
+  }
+  // AND THE SIX ARE ALL OF THEM, so a seventh cannot ride along without declaring its side.
+  const registered = [];
+  for (const name of readdirSync(SYSTEMS).filter((n) => n.endsWith(".js"))) {
+    if (name === "shared.js") continue;
+    for (const m of stripComments(src(name)).matchAll(/registerCanvasFamily\("([^"]+)"/g)) {
+      registered.push(m[1]);
+    }
+  }
+  assert.deepEqual(registered.slice().sort(), Object.keys(registry).sort());
+
+  /* AND THE OPACITIES THE FOUR PASS ARE CONSTANTS, asked of the builders rather than of the
+     text: the same value for two completely different token sets is what "not a live value"
+     means, and it is what makes passing them harmless. */
+  assert.equal(airtrainLineStyle("#000000").opacity, airtrainLineStyle("#ffffff").opacity);
+  assert.equal(ferryDockStyle("#000000").fillOpacity, ferryDockStyle("#ffffff").fillOpacity);
+  assert.equal(
+    stationMarkStyle([], "#000000", "#000000").fillOpacity,
+    stationMarkStyle([], "#ffffff", "#ffffff").fillOpacity,
+  );
 });
 
 test("MR4 theme: the rail casings are restyled by RENDERER, never by sweeping their group", () => {

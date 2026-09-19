@@ -73,8 +73,35 @@ async function measureMarkContrast(page) {
           lum(over) >= lum(b.rgb) ? [lum(over), lum(b.rgb)] : [lum(b.rgb), lum(over)];
         return (hi + 0.05) / (lo + 0.05);
       };
-      // Any colour the app chose, handed back through the browser's own parser, so a hex from a
-      // canvas option and a computed style are compared in one form rather than two.
+      /* A PAINT IS ONLY MEASURED IF IT IS A COLOUR, and this guard is the round's own repair.
+
+         `resolve` hands a value back through the browser's own parser so a hex from a canvas
+         option and a computed style are compared in one form rather than two. It does that by
+         assigning to a probe's `color`, and CSSOM DROPS an assignment it cannot parse: the
+         probe then keeps its INHERITED colour and that colour is measured as if it were the
+         mark's. `none` is the value this bites on, and it is everywhere: it is the computed
+         `stroke` of every shape that sets no stroke, and it is a legal SVG paint rather than a
+         colour.
+
+         MEASURED, IN THE COMMITTED GOLDEN. The subway train icon is two rects and a text with
+         no stroke anywhere, so three of its paints computed to `none`, each resolved to the
+         document's inherited black, and P4c recorded "subway train" and "rail tag" in the light
+         theme as carrying `rgb(0, 0, 0)` at 18.79. No mark on this map paints black. The floor
+         in theme.spec.js D5d is a maximum over a mark's paints, so a phantom at 18.79 would
+         have carried any mark past it: a test that cannot fail, which is one of the four defect
+         shapes this phase keeps producing, in the test written to measure the others.
+
+         CSS.supports IS THE RIGHT QUESTION because it asks the browser what it will accept as a
+         colour rather than re-implementing a parser here. `none`, `context-fill`, a url() paint
+         server and an empty string all answer false and are dropped; every real colour, in any
+         notation, answers true. */
+      const isColour = (value) => {
+        try {
+          return CSS.supports("color", String(value));
+        } catch {
+          return false;
+        }
+      };
       const resolve = (value) => {
         const probe = document.createElement("span");
         probe.style.color = value;
@@ -89,6 +116,10 @@ async function measureMarkContrast(page) {
       const rows = [];
       const push = (family, paints) => {
         const measured = paints
+          // The guard above, applied BEFORE the probe: a value the browser will not take as a
+          // colour is not a paint this measurement can say anything about, and pretending
+          // otherwise is how a mark gets credit for a colour it does not carry.
+          .filter(({ css }) => isColour(css))
           .map(({ kind, css }) => {
             const value = resolve(css);
             return { kind, css: value, onPaper: ratio(value, paper), onSurface: ratio(value, surface) };
@@ -97,13 +128,26 @@ async function measureMarkContrast(page) {
         rows.push({ family, paints: measured });
       };
 
+      /* WHICH PAINTS A SHAPE ACTUALLY PAINTS, which is the second half of the same repair and
+         was found the same way: by reading the golden after regenerating it. A `<line>` has no
+         area, so it paints its stroke and nothing else, but its COMPUTED fill is the property's
+         initial value, `rgb(0, 0, 0)`, which IS a real colour, so the guard above admits
+         it. The rail tag carries one `<line>` (the divider between its agency and branch
+         blocks), and P4c recorded that family in the light theme as carrying `line fill
+         rgb(0, 0, 0)` at 18.79: a black no mark paints, on a shape that paints no fill.
+
+         So the paints are enumerated per element KIND rather than uniformly. Everything else
+         paints both: a `<rect>` or a `<path>` whose author set no fill really is drawn black,
+         which is a defect worth measuring rather than a phantom worth dropping. */
+      const PAINTS_FILL = new Set(["path", "circle", "rect", "text", "ellipse", "polygon"]);
       for (const [family, selector] of Object.entries(markFamilies)) {
         for (const el of document.querySelectorAll(selector)) {
           const paints = [];
-          for (const shape of el.querySelectorAll("path, circle, rect, text, line")) {
+          for (const shape of el.querySelectorAll("path, circle, rect, text, line, polyline")) {
+            const tag = shape.tagName.toLowerCase();
             const style = getComputedStyle(shape);
-            paints.push({ kind: `${shape.tagName.toLowerCase()} fill`, css: style.fill });
-            paints.push({ kind: `${shape.tagName.toLowerCase()} stroke`, css: style.stroke });
+            if (PAINTS_FILL.has(tag)) paints.push({ kind: `${tag} fill`, css: style.fill });
+            paints.push({ kind: `${tag} stroke`, css: style.stroke });
           }
           push(family, paints);
         }

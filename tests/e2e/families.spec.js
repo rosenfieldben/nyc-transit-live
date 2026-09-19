@@ -343,10 +343,21 @@ test("D4d. a dock's name rides the label pane, the Names toggle, and no subway c
   // BOTH DOCKS HAVE A NAME BOUND at every zoom; what the band decides is whether it is drawn.
   expect((await counts()).ferryTotal).toBe(2);
   expect((await at(12)).ferry, "below the all band a dock's name is not drawn").toEqual([]);
+  expect((await at(13)).ferry, "nor at 13, which is the design's 'names from 14'").toEqual([]);
   expect((await at(14)).ferry, "at 14 every name is drawn").toEqual([
     "South Williamsburg",
     "Wall St/Pier 11",
   ]);
+  /* AND THE BAND IS THE FERRY'S OWN, which round 1's review is the reason for. The docks first
+     hung on `data-label-band`, the subway's attribute, which carries the subway's DEGRADED
+     answer as well as its ordinary one: with no subway station listing a route, that band
+     reads "all" from 13 and every dock name came on a zoom early for a reason that has
+     nothing to do with the ferry. THIS IS THE MUTATION: point the CSS rule back at
+     `data-label-band`. */
+  await expect(page.locator("html")).toHaveAttribute("data-ferry-label-band", "all");
+  await page.evaluate(() => map.setZoom(13, { animate: false }));
+  await expect(page.locator("html")).toHaveAttribute("data-ferry-label-band", "none");
+  await page.evaluate(() => map.setZoom(14, { animate: false }));
 
   // THE NAMES TOGGLE IS A PREFERENCE OVER EVERY BAND, the ferry's included.
   await page.locator("#names-toggle").click();
@@ -415,13 +426,45 @@ test("D4e. AirTrain draws a gray dashed guideway and the commuter square", async
      rides alongside so a family can still be asked for by name. */
   expect(squares.airClass).toEqual(["rail-stn-marker rail-airtrain-stn"]);
   expect(squares.railClass).toMatch(/^rail-stn-marker /);
-  const sentinels = await page.evaluate(() => ({
-    vehicles: document.querySelectorAll(".leaflet-marker-icon:not(.rail-stn-marker)").length,
-    stations: document.querySelectorAll(".rail-stn-marker").length,
-    oldClass: document.querySelectorAll(".airtrain-marker").length,
-  }));
+  const sentinels = await page.evaluate(() => {
+    const vehicles = [...document.querySelectorAll(".leaflet-marker-icon:not(.rail-stn-marker)")];
+    return {
+      vehicles: vehicles.length,
+      // WHAT IS IN THAT BUCKET, not only how many: a family that joined the marker pane
+      // without joining rail-stn-marker while not being a vehicle would inflate the count
+      // again, and a number alone would not say which family did it.
+      vehicleClasses: [
+        ...new Set(
+          vehicles.map(
+            (el) =>
+              [...el.classList]
+                .filter((c) => c !== "leaflet-marker-icon" && c !== "leaflet-zoom-animated" && c !== "leaflet-interactive")
+                .sort()
+                .join(" "),
+          ),
+        ),
+      ].sort(),
+      stations: document.querySelectorAll(".rail-stn-marker").length,
+      oldClass: document.querySelectorAll(".airtrain-marker").length,
+    };
+  });
   expect(sentinels.oldClass, "the old airtrain-marker class is retired").toBe(0);
   expect(sentinels.stations, "five rail stations and three AirTrain squares").toBe(8);
+  /* AND THE SENTINEL SIX SPECS SHARE IS ASSERTED, which the first draft of this test computed
+     and then dropped on the floor: a value read and never asked about is the smallest version
+     of a test that cannot fail, in the spec written to close exactly this carry-forward. The
+     bucket is 15 in this world and every class in it is a vehicle's. */
+  expect(sentinels.vehicles, "AirTrain's three stations left the vehicle bucket").toBe(15);
+  expect(sentinels.vehicleClasses).toEqual([
+    "bus-marker",
+    "ferry-active ferry-marker",
+    "ferry-docked ferry-marker",
+    "path-marker",
+    "rail-lirr rail-tag-marker rail-tag-outlined",
+    "rail-mnr rail-tag-marker rail-tag-solid",
+    "rail-njt rail-tag-marker rail-tag-outlined",
+    "train-marker",
+  ]);
 
   /* AIRTRAIN HAS NO DIMMED STATE AND THAT IS THE POINT OF THE FAMILY. It serves no realtime
      feed at all, so there is no observation to age and nothing to dim; its popups say so.

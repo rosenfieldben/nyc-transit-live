@@ -125,12 +125,16 @@ test("D5a. the toggle is in a rider's reach, and its name is the action with no 
 const canvasPaints = (page) =>
   page.evaluate(() => {
     const casings = [];
+    const casingIds = [];
     const branchLines = [];
     for (const group of [lirrRouteLinesLayer, mnrRouteLinesLayer, njtRouteLines]) {
       for (const layer of group.getLayers()) {
-        (layer.options.renderer === railroadCasingRenderer ? casings : branchLines).push(
-          layer.options.color,
-        );
+        if (layer.options.renderer === railroadCasingRenderer) {
+          casings.push(layer.options.color);
+          casingIds.push(layer._leaflet_id);
+        } else {
+          branchLines.push(layer.options.color);
+        }
       }
     }
     const subwayCasings = subwayRibbons.filter((r) => r.part === "casing");
@@ -150,13 +154,25 @@ const canvasPaints = (page) =>
       ferryLines: [...new Set(ferryRouteLines.getLayers().map((l) => l.options.color))],
       airtrainLines: [...new Set(airtrainRouteLinesLayer.getLayers().map((l) => l.options.color))],
       registered: canvasThemeFamilies.map((f) => f.name),
-      // Identity, for the no-rebuild half: a setStyle keeps a layer, a rebuild makes a new one.
+      // Every family whose paint threw on the last swap. A rider is told nothing; a test is,
+      // which is the whole reason the catch records instead of swallowing.
+      failures: canvasThemeFailures.map((f) => `${f.name}: ${f.message}`),
+      /* Identity, for the no-rebuild half: a setStyle keeps a layer, a rebuild makes a new one.
+
+         THE RAIL CASING'S ID IS READ RATHER THAN LEFT null, and the round found this one in its
+         own test: it was written `railCasing: null`, which is the SAME literal on both sides of
+         the comparison, so the one family this test names as the mutation target was the one
+         family whose identity was never compared. A painter rewritten to remove each casing
+         and add a fresh polyline in its place would have passed every assertion here: the
+         colours would read the dark paper because the new layers carry it, the marker probes
+         are untouched because a casing has no element, and the popup is a PATH train's. */
       ids: {
         pathStation: pathStations.getLayers()[0]._leaflet_id,
         ferryDock: ferryDocks.getLayers()[0]._leaflet_id,
         airtrainLine: airtrainRouteLinesLayer.getLayers()[0]._leaflet_id,
         subwayCasing: subwayCasings[0].layer._leaflet_id,
-        railCasing: null,
+        railCasing: casingIds[0] ?? null,
+        railCasingCount: casingIds.length,
       },
     };
   });
@@ -193,6 +209,14 @@ test("D5b. a swap repaints every canvas family, in place, and rebuilds nothing",
      unmeasured: families.test.js proves every token-resolving file registers, and this proves
      every registration is exercised by the assertions below. */
   expect(before.registered.length, `registered: ${before.registered.join(", ")}`).toBe(6);
+  /* AND THE IDENTITY PROBE HAS A SUBJECT FOR EVERY FAMILY IT NAMES, asserted as a premise
+     rather than assumed: a null on both sides of the comparison below would compare nothing,
+     which is exactly what this test did for the rail casings until the round that found it. */
+  for (const [family, id] of Object.entries(before.ids)) {
+    expect(id, `${family} must have an identity to compare`).not.toBeNull();
+    expect(typeof id, `${family}'s identity must be a real Leaflet id`).not.toBe("undefined");
+  }
+  expect(before.ids.railCasingCount, "there are rail casings to keep").toBeGreaterThan(0);
 
   await toggle(page).click();
   expect(await theme(page)).toBe("dark");
@@ -228,6 +252,12 @@ test("D5b. a swap repaints every canvas family, in place, and rebuilds nothing",
      marker element kept the attribute written onto it before the swap, and the popup a rider
      had open is still open with the same content in it. */
   expect(after.ids).toEqual(before.ids);
+  /* AND NO FAMILY'S PAINT THREW, which is the half a colour assertion cannot make. The swap
+     catches per family so one failure cannot stop the others, and a caught failure used to be
+     silent: the page would report the dark theme, the button would read "Light", and one
+     family would still be wearing the light theme's colours with nothing anywhere saying so.
+     THIS IS THE MUTATION: make any painter throw. */
+  expect(after.failures, "no canvas family's paint threw during the swap").toEqual([]);
   const survived = await page.evaluate(() => ({
     icons: document.querySelectorAll(".leaflet-marker-icon").length,
     probed: document.querySelectorAll(".leaflet-marker-icon[data-swap-probe]").length,

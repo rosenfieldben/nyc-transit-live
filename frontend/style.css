@@ -1559,17 +1559,24 @@ body,
   display: block;
 }
 
-/* ----- MR4: the ferry's dock names, on the subway's band --------------------------------
+/* ----- MR4: the ferry's dock names, on their OWN band -------------------------------------
 
    The design puts dock names at the same zoom as subway station names ("subway/PATH/ferry
-   station groups added at zoom >= 12 (names from 14 ...)"), so a dock rides `data-label-band`
-   rather than earning a third attribute. It is written as its OWN rule rather than by leaving
-   the subway's selector unscoped, because a shared selector is how the subway's band came to
-   govern a family that had not been invented when it was written.
+   station groups added at zoom >= 12 (names from 14 ...)"), and the first draft of this rule
+   therefore hung them on `data-label-band` and said so. Round 1's review measured the cost:
+   that attribute carries the subway's DEGRADED answer as well as its ordinary one. When no
+   subway station lists a route (a documented backend state), the subway's band reads "all"
+   from zoom 13, and every dock name came on with it, one zoom early, for a reason that has
+   nothing to do with the ferry.
+
+   SO IT IS `data-ferry-label-band`, which is MR3's own sentence about the rail names applied
+   again: the two bands overlap and one attribute cannot hold two answers. A dock's answer is
+   the zoom and nothing else, because a dock has no interchange to reveal and no degraded
+   state to fall back to.
 
    NEVER .hub, for the rail rule's reason: a hub is a subway transfer station by one predicate
    and a dock is not one. */
-:root[data-label-band="all"] .stn-label:where(.ferry) {
+:root[data-ferry-label-band="all"] .stn-label:where(.ferry) {
   display: block;
 }
 

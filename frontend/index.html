@@ -257,12 +257,22 @@
          one. "Map key" rather than "Key" so it does not share an accessible name with the
          button that opens it, which is the same rule #toggle-stations used to need. -->
     <div id="legend" tabindex="0" role="group" aria-label="Map key">
+      <!-- MR4 ROUND 1: THE SWATCH IS A COLOUR A BUS CAN ACTUALLY BE. This row's glyph took the
+           design's 14px box, arrow path and paper stroke in this stage and kept #1d4ed8, which
+           is hsl(224, 76%, 48%): the unmuted family finding Q2 measured as leaving 147 of 360
+           hashed hues under the 3:1 a mark owes. The caption says "Color indicates route", so
+           the swatch stands for a route colour and had to be one. #354d8d is hsl(224, 45%, 38%),
+           the same hue at the muted saturation and at the LIGHT theme's lightness, which is the
+           right end for a plate that is #f3f2f2 in both themes by ruling H3. Measured on that
+           plate: 7.24, against the 6.00 it replaces. A literal rather than the token for H3's
+           reason: `var(--bus-mark-lightness)` would resolve to the DARK end on a light plate
+           the moment a rider changed theme. -->
       <div class="legend-row">
-        <svg aria-hidden="true" viewBox="0 0 14 14"><path d="M7 1 L12 13 L7 10 L2 13 Z" fill="#1d4ed8" stroke="#f3f2f2" stroke-width="0.8"/></svg>
+        <svg aria-hidden="true" viewBox="0 0 14 14"><path d="M7 1 L12 13 L7 10 L2 13 Z" fill="#354d8d" stroke="#f3f2f2" stroke-width="0.8"/></svg>
         Bus (arrow points where it's heading)
       </div>
       <div class="legend-row">
-        <svg aria-hidden="true" viewBox="0 0 14 14"><circle cx="7" cy="7" r="3.5" fill="#1d4ed8" stroke="#f3f2f2" stroke-width="1"/></svg>
+        <svg aria-hidden="true" viewBox="0 0 14 14"><circle cx="7" cy="7" r="3.5" fill="#354d8d" stroke="#f3f2f2" stroke-width="1"/></svg>
         Bus, heading unknown
       </div>
       <div class="legend-row">
@@ -361,7 +371,7 @@
            and a different rule entirely. The glyph is the bus arrow at the contract's own
            marker opacity so the row shows the treatment rather than describing it. -->
       <div class="legend-row">
-        <svg aria-hidden="true" viewBox="0 0 14 14" opacity="0.45"><path d="M7 1 L12 13 L7 10 L2 13 Z" fill="#1d4ed8" stroke="#f3f2f2" stroke-width="0.8"/></svg>
+        <svg aria-hidden="true" viewBox="0 0 14 14" opacity="0.45"><path d="M7 1 L12 13 L7 10 L2 13 Z" fill="#354d8d" stroke="#f3f2f2" stroke-width="0.8"/></svg>
         Dimmed vehicle: its position is older than a live fix; the popup says how old
       </div>
       <div class="legend-note">Color indicates route &middot; click a bus to draw its route</div>

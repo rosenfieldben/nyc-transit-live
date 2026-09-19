@@ -423,6 +423,27 @@ function railLabelBand(zoom) {
   return zoom >= RAIL_LABEL_ZOOM ? "all" : "none";
 }
 
+/* THE FERRY'S DOCK NAMES, ON THEIR OWN ATTRIBUTE FOR MR3's REASON AND A SHARPER ONE.
+
+   The design puts dock names at the same zoom as subway station names ("names from 14"), so
+   MR4 first hung them on `data-label-band` and wrote down that they were riding the subway's
+   answer. Round 1's review measured what that costs: the subway's band has a DEGRADED value
+   the ferry has no business inheriting. When the backend serves no routes for any subway
+   station (a state helpers.js documents at LABEL_NO_HUB_ZOOM and D2z exercises), the subway's
+   band reads "all" from 13 instead of hubs from 12, and every dock name came on one zoom
+   early with it, for a reason that has nothing to do with the ferry.
+
+   SAME ZOOM, DIFFERENT QUESTION, which is exactly what MR3 said when it gave the rail names
+   `data-rail-label-band`: "the two bands overlap and one attribute cannot hold two answers".
+   The ferry's answer is the zoom and nothing else, because a dock has no interchange to
+   reveal and no degraded state to fall back to. */
+const FERRY_LABEL_ZOOM = LABEL_ALL_ZOOM;
+
+function ferryLabelBand(zoom) {
+  if (!Number.isFinite(zoom)) return "none";
+  return zoom >= FERRY_LABEL_ZOOM ? "all" : "none";
+}
+
 /* THE NAMES TOGGLE'S SENTENCE, round 3. The button flips a preference that outlives the
    zoom, so it stays operable everywhere; what it must not do is claim an effect it does not
    have. Below zoom 12 the band is "none" and no name can show whatever the preference says.
@@ -5033,7 +5054,8 @@ if (typeof module !== "undefined" && module.exports) {
     ferryDockStyle, FERRY_DOCK_COLOR, FERRY_DOCK_RADIUS, FERRY_DOCK_STROKE,
     airtrainLineStyle, AIRTRAIN_LINE_DASH, AIRTRAIN_LINE_WEIGHT,
     busMarkSvg, busHasHeading, BUS_MARK_BOX, BUS_ARROW_PATH, BUS_DOT_R,
-    railLabelBand, RAIL_LABEL_ZOOM, railroadStationName, railFamilyClass,
+    railLabelBand, RAIL_LABEL_ZOOM, ferryLabelBand, FERRY_LABEL_ZOOM,
+    railroadStationName, railFamilyClass,
     AGE_UNKNOWN, observationDimAge, observationGated, OBSERVATION_GATED,
     vehicleStaleLine, composeAnnouncements, withheldTrains, withheldClause,
     thresholdOverrides, CONTRACT_FLAG_PARAM,

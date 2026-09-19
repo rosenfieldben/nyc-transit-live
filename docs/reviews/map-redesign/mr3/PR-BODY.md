@@ -1,6 +1,6 @@
 # Phase MR, stage 3 of 5: the commuter-rail grammar
 
-Ten commits off `origin/main` (`49c5956`): the pins, the grammar as pure arithmetic with
+Eleven commits off `origin/main` (`49c5956`): the pins, the grammar as pure arithmetic with
 the brief's 3.1 table as its oracle, the wiring, the round entries and the captures, your
 rulings on N1 through N5, and round 4 (the adversarial panel's two criticals plus your
 rulings R-a through R-d). LIRR, Metro-North and NJ Transit draw **one grammar** for the
@@ -247,12 +247,14 @@ held through any change to the surface it exists to watch.
 
 ## Tests
 
-`tests/e2e/rail.spec.js`, **D3a** through **D3f**: the six reachable rows on one page found
+`tests/e2e/rail.spec.js`, **D3a** through **D3g**: the six reachable rows on one page found
 by **accessible name**, with four distinct marks across them; the retained row over two
-polls; squares and circles counted both ways with one shape asserted byte for byte across
-three agencies; the rail label band at 10, 11 and under the Names toggle; the casing pair and
-the feed's colours; and Metro-North solid, live, saying its undated policy once on the status
-line and never on a marker.
+polls, drawn dim at the contract's 0.45 off the element's inline style; squares and circles
+counted both ways with one shape asserted byte for byte across three agencies; the rail label
+band at 10, 11 and under the Names toggle; the casing and the line, their two canvases and the
+feed's colours; Metro-North solid, live, saying its undated policy once on the status line and
+never on a marker; and **D3g**, round 4's, that a page with rail labels and no subway ones
+keeps the subway's ordinary band rather than the degraded one.
 
 **`smoke.spec.js` C2j, the F01 acceptance, now reads the body AND head of all 136 markers**,
 which it could not do before, because two of its populations drew the same mark.
@@ -309,8 +311,8 @@ mutation "not worth keeping": a surviving mutation is the finding.
 | `ruff check` / `ruff format` | clean, 79 files |
 | `mypy` | clean, 30 source files |
 | contract-tier lint and format | clean |
-| node | **334** passed (from 312) |
-| hermetic e2e | **281** passed (from 270) |
+| node | **337** passed (from 312) |
+| hermetic e2e | **282** passed (from 270) |
 | browser contract tier (C6) | **4** passed |
 | contract API tier | **38** passed |
 | `run_all.sh` | **15 of 15** |

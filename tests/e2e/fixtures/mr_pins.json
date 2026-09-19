@@ -883,36 +883,98 @@
    "spoken": "Times Sq-42 St, Subway. Northbound: 1 train in 1 minute, 8:01 AM arrival. 2 train in 5 minutes, 8:05 AM arrival. Southbound: 1 train in 3 minutes, 8:03 AM arrival"
   }
  },
- "popups": {
-  "airtrain": {
-   "airtrain station": "<b>Terminal Alpha</b><div class=\"popup-sub\">AirTrain JFK · scheduled service (no live tracking)</div><div>Jamaica: every ~7 min <span class=\"popup-sub\">(scheduled)</span></div><div>Howard Beach: every ~7 min <span class=\"popup-sub\">(scheduled)</span></div>"
+ "popupText": {
+  "f01": {
+   "aged": {
+    "seen": "LIRR route 5 Train 514 live GPS, as of 5m ago",
+    "spoken": "LIRR route 5 Train 514 live GPS, as of 5m ago"
+   },
+   "estimated": {
+    "seen": "LIRR route 9 Next stop: Port Washington Outbound estimated from a prediction",
+    "spoken": "LIRR route 9 Next stop: Port Washington Outbound estimated from a prediction"
+   },
+   "placed": {
+    "seen": "LIRR · Babylon Branch Next stop: Grand Central Outbound scheduled (no GPS), as of 29m ago",
+    "spoken": "LIRR · Babylon Branch Next stop: Grand Central Outbound scheduled (no GPS), as of 29m ago"
+   },
+   "unqualified": {
+    "seen": "LIRR · Babylon Branch Train 7566 live GPS",
+    "spoken": "LIRR · Babylon Branch Train 7566 live GPS"
+   }
   },
-  "buses": {
-   "bus": "<b style=\"color:hsl(329, 75%, 40%)\">M15</b><br>Bus MTA NYCT_101<br>Heading: 90°"
-  },
-  "ferry": {
-   "ferry boat": "<b style=\"color:#007c94\">East River</b> <span class=\"popup-sub\">NYC Ferry</span><br>Boat H201<br>Under way<br>12.6 kn",
-   "ferry dock": "<b>Wall St/Pier 11</b> <span class=\"popup-sub\">NYC Ferry</span> <span class=\"popup-access\" title=\"Wheelchair accessible\">♿</span><div class=\"arr-dir\" style=\"color:#007c94\">East River</div>1 min<div class=\"arr-dir\" style=\"color:#8c7300\">South Brooklyn</div>departs 1 min"
-  },
-  "lirr": {
-   "lirr train": "<b style=\"color:#5d4037\">LIRR · Babylon Branch</b><br>Train 521<br>Next stop: Jamaica<br>Outbound<br><span class=\"popup-sub\">scheduled (no GPS)</span><button type=\"button\" class=\"popup-crosslink\" data-station-key=\"LIRR|12\">Also here: Jamaica</button>",
-   "lirr station": "<b>Jamaica</b> <span class=\"popup-sub\">LIRR</span><div class=\"arr-dir\">Inbound</div><span class=\"arr-badge\" style=\"background:#5d4037;color:#ffffff\">1</span> Babylon Branch <span class=\"popup-sub\">#8412</span> 4 min<div class=\"arr-dir\">Outbound</div><span class=\"arr-badge\" style=\"background:#5d4037;color:#ffffff\">1</span> Babylon Branch <span class=\"popup-sub\">#8413</span> 7 min"
-  },
-  "mnr": {
-   "mnr train": "<b style=\"color:#5d4037\">MNR · Hudson</b><br>Train 1797<br><span class=\"popup-sub\">live GPS</span>",
-   "mnr station": "<b>Grand Central</b> <span class=\"popup-sub\">MNR</span><div class=\"arr-dir\">Inbound</div><span class=\"arr-badge\" style=\"background:#5d4037;color:#ffffff\">1</span> Hudson <span class=\"popup-sub\">#795</span> 4 min<div class=\"arr-dir\">Outbound</div><span class=\"arr-badge\" style=\"background:#5d4037;color:#ffffff\">1</span> Hudson <span class=\"popup-sub\">#812</span> 6 min"
-  },
-  "njt": {
-   "njt train": "<b style=\"color:#DD3439\">Northeast Corridor</b> <span class=\"popup-sub\">NJ Transit</span><br>Train 3800<br>To New York<br>Next stop: New York Penn Station<br>4 min late<br><span class=\"popup-sub\">estimated from a prediction</span>",
-   "njt station": "<b>New York Penn Station</b> <span class=\"popup-sub\">NJ Transit</span><span class=\"arr-badge\" style=\"background:#DD3439;color:#ffffff\">9</span> Trenton <span class=\"popup-sub\">3800</span> 1 min<br><span class=\"arr-badge\" style=\"background:#E66859;color:#1a1a1a\">2</span> Dover <span class=\"popup-sub\">6634</span> 5 min<br><span class=\"arr-badge\" style=\"background:#4a4e69;color:#ffffff\">?</span> Bay Head 8 min"
-  },
-  "path": {
-   "path train": "<b style=\"color:#d93a30\">Newark - World Trade Center</b> <span class=\"popup-sub\">PATH</span><br>Next stop: World Trade Center<br>To New York<br><span class=\"popup-sub\">scheduled position (no GPS)</span>",
-   "path station": "<b>World Trade Center</b> <span class=\"popup-sub\">PATH</span><div class=\"arr-dir\">To New York</div><span class=\"arr-badge\" style=\"background:#4d92fb;color:#1a1a1a\">859</span> Hoboken - 33rd 1 min<div class=\"arr-dir\">To New Jersey</div><span class=\"arr-badge\" style=\"background:#d93a30;color:#ffffff\">862</span> Newark - World Trade Center 5 min"
-  },
-  "subway": {
-   "subway train": "<b style=\"color:#c0392b\">1 train</b><br>Next stop: Times Sq-42 St<br>Northbound<br><span class=\"popup-sub\">scheduled position (no GPS)</span><br><span class=\"popup-sub\">Trip sub-1</span>",
-   "subway station": "<b>Times Sq-42 St</b><div class=\"arr-dir\">Northbound</div><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">1</span> 1 min<br><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span> 5 min<div class=\"arr-dir\">Southbound</div><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">1</span> 3 min"
+  "stock": {
+   "subway train": {
+    "seen": "1 train Next stop: Times Sq-42 St Northbound scheduled position (no GPS) Trip sub-1",
+    "spoken": "1 train Next stop: Times Sq-42 St Northbound scheduled position (no GPS) Trip sub-1",
+    "labels": []
+   },
+   "subway station": {
+    "seen": "Times Sq-42 St Northbound 1 1 min 2 5 min Southbound 1 3 min",
+    "spoken": "Times Sq-42 St Northbound 1 1 min 2 5 min Southbound 1 3 min",
+    "labels": []
+   },
+   "bus": {
+    "seen": "M15 Bus MTA NYCT_101 Heading: 90°",
+    "spoken": "M15 Bus MTA NYCT_101 Heading: 90°",
+    "labels": []
+   },
+   "lirr train": {
+    "seen": "LIRR · Babylon Branch Train 521 Next stop: Jamaica Outbound scheduled (no GPS) Also here: Jamaica",
+    "spoken": "LIRR · Babylon Branch Train 521 Next stop: Jamaica Outbound scheduled (no GPS) Also here: Jamaica",
+    "labels": []
+   },
+   "lirr station": {
+    "seen": "Jamaica LIRR Inbound 1 Babylon Branch #8412 4 min Outbound 1 Babylon Branch #8413 7 min",
+    "spoken": "Jamaica LIRR Inbound 1 Babylon Branch #8412 4 min Outbound 1 Babylon Branch #8413 7 min",
+    "labels": []
+   },
+   "mnr train": {
+    "seen": "MNR · Hudson Train 1797 live GPS",
+    "spoken": "MNR · Hudson Train 1797 live GPS",
+    "labels": []
+   },
+   "mnr station": {
+    "seen": "Grand Central MNR Inbound 1 Hudson #795 4 min Outbound 1 Hudson #812 6 min",
+    "spoken": "Grand Central MNR Inbound 1 Hudson #795 4 min Outbound 1 Hudson #812 6 min",
+    "labels": []
+   },
+   "njt train": {
+    "seen": "Northeast Corridor NJ Transit Train 3800 To New York Next stop: New York Penn Station 4 min late estimated from a prediction",
+    "spoken": "Northeast Corridor NJ Transit Train 3800 To New York Next stop: New York Penn Station 4 min late estimated from a prediction",
+    "labels": []
+   },
+   "njt station": {
+    "seen": "New York Penn Station NJ Transit 9 Trenton 3800 1 min 2 Dover 6634 5 min ? Bay Head 8 min",
+    "spoken": "New York Penn Station NJ Transit 9 Trenton 3800 1 min 2 Dover 6634 5 min ? Bay Head 8 min",
+    "labels": []
+   },
+   "path train": {
+    "seen": "Newark - World Trade Center PATH Next stop: World Trade Center To New York scheduled position (no GPS)",
+    "spoken": "Newark - World Trade Center PATH Next stop: World Trade Center To New York scheduled position (no GPS)",
+    "labels": []
+   },
+   "path station": {
+    "seen": "World Trade Center PATH To New York 859 Hoboken - 33rd 1 min To New Jersey 862 Newark - World Trade Center 5 min",
+    "spoken": "World Trade Center PATH To New York 859 Hoboken - 33rd 1 min To New Jersey 862 Newark - World Trade Center 5 min",
+    "labels": []
+   },
+   "ferry boat": {
+    "seen": "East River NYC Ferry Boat H201 Under way 12.6 kn",
+    "spoken": "East River NYC Ferry Boat H201 Under way 12.6 kn",
+    "labels": []
+   },
+   "ferry dock": {
+    "seen": "Wall St/Pier 11 NYC Ferry ♿ East River 1 min South Brooklyn departs 1 min",
+    "spoken": "Wall St/Pier 11 NYC Ferry ♿ East River 1 min South Brooklyn departs 1 min",
+    "labels": [
+     "Wheelchair accessible"
+    ]
+   },
+   "airtrain station": {
+    "seen": "Terminal Alpha AirTrain JFK · scheduled service (no live tracking) Jamaica: every ~7 min (scheduled) Howard Beach: every ~7 min (scheduled)",
+    "spoken": "Terminal Alpha AirTrain JFK · scheduled service (no live tracking) Jamaica: every ~7 min (scheduled) Howard Beach: every ~7 min (scheduled)",
+    "labels": []
+   }
   }
  },
  "registry": {

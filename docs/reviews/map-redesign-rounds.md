@@ -1439,6 +1439,105 @@ disagreed and the disagreement was measured rather than argued.
 | **S3** | **How does auto-pan clear the chrome?** The README's recipe is `autoPanPaddingTopLeft = [24, headerBottom + 12]`, `autoPanPaddingBottomRight = [110, 40]`, then `_adjustPan()`. **Measured on this app, the literal recipe is broken.** See the section below. | **Clamp each padding to what the measured map and popup can satisfy**, keep `panPopupClearOfChrome` as the authority for the real boxes and for post-paint growth, and stand down while `riderOwnsTheView`. The cap and the stand-down are pinned. The README carries an erratum beside its recipe. |
 | **S4** | **How does the Key explain the rail tag's head (finding F17)?** The map draws FOUR heads, not the three a first reading suggests: filled chevron, outlined chevron, outlined dot and a filled dot (a GPS fix that serves no bearing). | **Two rows, framed by AXIS rather than by shape.** One row for filled against outlined (the heading is trusted, or it is not), one for chevron against dot (a heading is served, or it is not). `A1x`, `D2l` and `P1e` move by two, recorded as before. |
 
+### The pins invert, and the retired goldens are the before
+
+MR1 through MR4 pinned every popup's HTML byte for byte, and each of those stages said in as
+many words that "the popups are stage MR5, so a popup that moves here is a defect". That claim
+held for four stages and it is what let them restyle the whole map without touching a word a
+rider reads. **MR5 changes this markup on purpose**, so the same pin is now a pin on the thing
+being changed, which is the error the header of `pins.spec.js` exists to warn about.
+
+So the pins invert. What is pinned from here is what a rider READS, extracted as TEXT rather
+than as markup, taken before any restyle and held after: **`popupText/stock`** (all fourteen
+surfaces, one per system and kind) and **`popupText/f01`** (the ladder world, one railroad
+popup per position state, which is where `positionQualifier`'s vocabulary is on screen at
+once). The fourteen `popups/*` entries they replace were these, and this table is their record:
+
+| system | surface | markup pinned |
+| --- | --- | --- |
+| `airtrain` | `airtrain station` | 256 |
+| `buses` | `bus` | 79 |
+| `ferry` | `ferry boat` | 117 |
+| `ferry` | `ferry dock` | 269 |
+| `lirr` | `lirr station` | 381 |
+| `lirr` | `lirr train` | 250 |
+| `mnr` | `mnr station` | 368 |
+| `mnr` | `mnr train` | 98 |
+| `njt` | `njt station` | 410 |
+| `njt` | `njt train` | 230 |
+| `path` | `path station` | 344 |
+| `path` | `path train` | 202 |
+| `subway` | `subway station` | 336 |
+| `subway` | `subway train` | 186 |
+
+**Three views, not one, and none of them is `textContent` or `innerText`.** `textContent`
+inserts nothing at element boundaries, so a dropped `<br>` is invisible and two words fuse
+into a run-on a pin cannot tell from the real thing. `innerText` is computed from rendered
+boxes, so it moves when `display` moves, and changing `display` is this stage's entire job.
+The reader is a tree walk: `seen` (every text node), `spoken` (the same with `aria-hidden`
+subtrees removed, which is what a screen reader gets and what will diverge once the map's own
+marks sit inside `.pt`), and `labels` (text that exists only in an attribute, which today is
+exactly the dock's `title="Wheelchair accessible"` and which a reader of text nodes alone
+would lose silently).
+
+**The seconds are redacted and the redaction is asserted.** An age under 120s renders in
+seconds, and the settle loop advances a paused clock, so a live feed's age is `1s` or `2s`
+depending on how many round trips an arrivals fetch took. `smoke.spec.js` already takes this
+exact escape for the same reason. Digits become `{n}` and no surface may carry a raw seconds
+age into the golden.
+
+**And the inversion is more dangerous than the pins it replaces**, for one structural reason
+worth stating plainly: in MR1 through MR4 these goldens were ASSERT-ONLY, so a broken reader
+FAILED. MR5 regenerates them by design, so every emptiness that used to be loud becomes silent
+the moment it is written into the golden and matches itself forever. Two guards landed with
+the inversion, both outside `pin()`:
+
+- **`MR_PINS_REGENERATE` is now asserted unset in CI.** Nothing anywhere checked it, and the
+  regenerate branch returns before `expect` ever runs, so a shell with it exported saw every
+  pin in the file pass and a CI job that inherited it would have been green forever against an
+  empty golden.
+- **A pin key is asserted to be at most two levels.** `pin` destructures exactly two segments,
+  so a three-level key writes to its second and drops the third silently; two such keys
+  overwrite each other and the failure reads as an unrelated diff.
+
+Per surface: a floor on the length read, a check that the fourteen surfaces do not all read as
+one string, and the dock's attribute-only label asserted present so `labels` is known to be
+doing work. P4b2 is the round this repo paid for that lesson in.
+
+### The coverage test, and what it can and cannot prove
+
+The claim is that every rider-visible string in a popup is pinned, and the hard part is making
+it something other than a list checking itself. **`P5b` builds its inventory from the running
+app, never from the golden.** The roots are read off live objects (each popup's bound content
+function, and `openStation.render` for a station board), the call graph is walked by taking
+each function's own source through `Function.prototype.toString` and resolving its callees on
+`globalThis`, and the literals are extracted from that source. This works here and only here
+because the app is BUILDLESS: the page is plain ordered `<script>` tags, so every popup builder
+is a top-level function and `String(fn)` is the real source of the real function.
+
+Three things the first runs taught, each now written into the test:
+
+1. **Comments have to come out first, with a scanner rather than a regex.** `railroadPopup`'s
+   own comment contains the word "station's", and that apostrophe opened a single-quoted string
+   to a naive scanner which then ran across three template literals and reported four lines of
+   prose as rider text.
+2. **A candidate is prose or a label, never an identifier.** Two letters together, then either
+   a space or a capital. Without that filter the report was 72 lines, 50 of them enum values
+   and field names, and a waiver list that long IS the escape hatch.
+3. **Entities are decoded**, because the builder writes `&middot;` and the rider reads the
+   character.
+
+**What it cannot prove, stated here rather than discovered later**: a lost DATA string, a train
+number, a station name, a headsign, is an interpolation and invisible to it. Only the pins see
+those. It is a supplement to `P5a` and `P5c`, never a substitute.
+
+**The waivers are two maps, not one.** `NOT_RIDER_TEXT` is "a rider never reads this" (three
+entries: two Intl arguments and `positionQualifier`'s spoken form, which reaches a marker's
+accessible name and never a popup). `UNREACHED_STATES` is "a rider does read this and no world
+pinned here renders it" (fourteen entries, each naming the state), which makes it a backlog
+with reasons rather than an excuse, visible in every diff. A waiver the extractor no longer
+finds is itself a failure, so dead ones cannot accumulate behind the live ones.
+
 ### The README's auto-pan recipe is measured broken on this app
 
 Recorded here and as an erratum in `docs/design/map-redesign/README.md`, because a recipe that

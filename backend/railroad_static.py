@@ -189,15 +189,49 @@ def _parse_shapes(zf: zipfile.ZipFile) -> dict[str, list]:
 
 
 def _parse_routes(zf: zipfile.ZipFile) -> dict[str, dict]:
-    """routes.txt -> route_id -> {long_name, short_name}, each a stripped string
-    or None when blank. Rows with no route_id are skipped; first-writer-wins on a
-    duplicate route_id.
+    """routes.txt -> route_id -> {long_name, short_name, color, text_color}, each a
+    stripped string or None when blank. Rows with no route_id are skipped;
+    first-writer-wins on a duplicate route_id.
 
     routes.txt is treated as OPTIONAL: a zip without it yields an empty table
     rather than failing the whole system load, because the names are a rider-facing
-    convenience, not load-critical like stops/trips/shapes. route_color is
-    deliberately NOT read: the project uses its own palette rather than agency
-    branding (see the README MTA-branding note), so the agency colors are unused.
+    convenience, not load-critical like stops/trips/shapes.
+
+    THIS COMMENT USED TO SAY: "route_color is deliberately NOT read: the project
+    uses its own palette rather than agency branding (see the README MTA-branding
+    note), so the agency colors are unused." THE BELIEF BEHIND IT WAS THAT THESE
+    TWO FEEDS DO NOT PUBLISH A COLOUR, which is why njt_static was described as the
+    one railroad-ish feed that did. Both halves are wrong, and both are corrected
+    on claude/railroad-route-colors rather than deleted, because the reasoning is
+    what future stages will reach for again.
+
+    WHAT THE FEEDS ACTUALLY CARRY, probed 2026-09-18 against the live archives:
+
+        LIRR  (gtfslirr.zip)  13 routes, route_color set on all 13,
+                              route_text_color set on all 13. No
+                              route_short_name COLUMN at all, so short_name is
+                              None for every LIRR route. Ronkonkoma (4) and
+                              Greenport (13) share A626AA.
+        MNR   (gtfsmnr.zip)    6 routes, route_color set on all 6,
+                              route_text_color set on all 6. The New Haven family
+                              (New Haven 3, New Canaan 4, Danbury 5, Waterbury 6)
+                              all carry one red, EE0034; Hudson and Harlem carry
+                              their own green and blue.
+
+    AND THE BRANDING ARGUMENT DOES NOT REACH THEM. A colour an agency publishes as
+    route_color in its own GTFS is feed data, read like any other column, exactly
+    as the ferry's colours already are (the README says so at the NYC Ferry note
+    and now at the MTA-branding note). What stays off-limits is unchanged: the
+    logos, the official map and the route symbols. The subway is the one system
+    whose palette is still the project's own rather than the feed's, which the map
+    redesign ledger ruled deliberately (R1), and nothing here touches it.
+
+    CARRIED VERBATIM: the value is whitespace-stripped and otherwise untouched, so
+    hex arrives exactly as published (no "#" added or removed, no case folded), the
+    same rule njt_static._parse_routes follows. A parser that normalises hides what
+    the feed said, and two feeds normalising differently is how a colour stops
+    being comparable across systems. Neither field is defaulted to a fallback
+    colour: inventing one would hide a blank column.
     """
     routes: dict[str, dict] = {}
     try:
@@ -213,6 +247,8 @@ def _parse_routes(zf: zipfile.ZipFile) -> dict[str, dict]:
             routes[route_id] = {
                 "long_name": (row.get("route_long_name") or "").strip() or None,
                 "short_name": (row.get("route_short_name") or "").strip() or None,
+                "color": (row.get("route_color") or "").strip() or None,
+                "text_color": (row.get("route_text_color") or "").strip() or None,
             }
     return routes
 
@@ -282,10 +318,12 @@ def build_railroad_route_shapes(
 ) -> list[dict]:
     """Per-route representative polylines for one railroad system.
 
-    Returns [{"route": route_id, "name": str | None, "polylines": [...]}, ...]
+    Returns [{"route": route_id, "name", "color", "text_color", "polylines"}, ...]
     sorted by route_id. `name` is the rider-facing route name (long_name, else
     short_name, else null) looked up in `route_names` (the parsed routes.txt
-    table); pass it to fill names, omit it for a geometry-only build. A pure
+    table); `color` and `text_color` are that table's route_color and
+    route_text_color, carried verbatim (see _parse_routes). Pass the table to fill
+    all three, omit it for a geometry-only build, which leaves all three null. A pure
     transform over the already-parsed tables (no zip read, no network), so the
     lifespan builds it from app.state.railroad_static[system] without re-parsing.
     A route dropped here for having no usable geometry (below) also loses its
@@ -315,7 +353,17 @@ def build_railroad_route_shapes(
     for route_id, kept in route_geometry.route_polylines(trips, shapes).items():
         info = (route_names or {}).get(route_id) or {}
         name = info.get("long_name") or info.get("short_name")
-        routes.append({"route": route_id, "name": name, "polylines": kept})
+        # .get() rather than [] on the two colours, so a geometry-only build (no
+        # route_names at all) yields None instead of raising, exactly as `name` does.
+        routes.append(
+            {
+                "route": route_id,
+                "name": name,
+                "color": info.get("color"),
+                "text_color": info.get("text_color"),
+                "polylines": kept,
+            }
+        )
     return routes
 
 

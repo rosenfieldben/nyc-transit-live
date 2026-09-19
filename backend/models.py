@@ -281,6 +281,20 @@ class RailroadRoute(BaseModel):
     system: str  # "LIRR" or "MNR" (route ids collide across systems)
     route: str
     name: str | None  # rider-facing route name from routes.txt, null when absent
+    # THE FEED'S OWN COLOURS, carried exactly as routes.txt publishes them: hex
+    # digits with no leading "#", case untouched, None when the column is blank or
+    # absent. Both feeds fill both columns on every route (the numbers are on
+    # railroad_static._parse_routes, which reads them).
+    #
+    # BOTH DEFAULT TO None, which the other fields deliberately do not, so the wire
+    # shape is ADDITIVE: a payload built before these existed still validates. That
+    # matters because the endpoint's answer is client-cached for an hour, so a
+    # client holding yesterday's payload must not start failing on a field the
+    # server has only just begun to send. The defaults are not an invitation for
+    # the builder to omit them; test_models' field-set lock requires every builder
+    # entry to carry both.
+    color: str | None = None
+    text_color: str | None = None
     polylines: list[list[list[float]]]
 
 
@@ -547,10 +561,21 @@ class NjtStop(BaseModel):
 class NjtRoute(BaseModel):
     """One NJ Transit rail line's drawable geometry (15c).
 
-    Mirrors RailroadRoute and adds the two colour fields, because unlike the LIRR
-    and Metro-North feeds this one publishes route_color. There is no `system`
+    Mirrors RailroadRoute, including the two colour fields. There is no `system`
     field: NJ Transit is one system whose route ids are its own namespace, so
     nothing here needs the (system, route) key the railroad model carries.
+
+    THIS DOCSTRING USED TO SAY the colour fields were here "because unlike the LIRR
+    and Metro-North feeds this one publishes route_color". THAT WAS WRONG, and is
+    corrected on claude/railroad-route-colors. Both MTA railroad feeds publish
+    route_color on every route, and route_text_color too; what was actually true is
+    only that this project had chosen not to read theirs. The two feeds are now
+    read the same way, and RailroadRoute carries the same two fields.
+
+    WHERE NJ TRANSIT REALLY DOES DIFFER is route_text_color, and in the opposite
+    direction from what the old sentence implied: it is empty on all twelve NJT
+    routes, while LIRR and Metro-North fill it on every route. So a renderer can
+    trust a railroad text_color and must compute its own for NJ Transit.
     """
 
     route: str

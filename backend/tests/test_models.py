@@ -172,29 +172,75 @@ def test_railroad_feed_envelope_validates():
 
 def test_railroad_route_model_validates_sample():
     RailroadRoute.model_validate(
-        {"system": "MNR", "route": "3", "name": "New Haven", "polylines": [[[41.0, -73.0]]]}
+        {
+            "system": "MNR",
+            "route": "3",
+            "name": "New Haven",
+            "color": "EE0034",
+            "text_color": "FFFFFF",
+            "polylines": [[[41.0, -73.0]]],
+        }
     )
-    # name is nullable (a route with no routes.txt entry).
+    # name is nullable (a route with no routes.txt entry), and so is either colour
+    # (a route whose feed leaves the column blank).
     RailroadRoute.model_validate(
-        {"system": "MNR", "route": "3", "name": None, "polylines": [[[41.0, -73.0], [41.1, -73.1]]]}
+        {
+            "system": "MNR",
+            "route": "3",
+            "name": None,
+            "color": None,
+            "text_color": None,
+            "polylines": [[[41.0, -73.0], [41.1, -73.1]]],
+        }
     )
+
+
+def test_railroad_route_colour_fields_are_additive():
+    # THE WIRE SHAPE IS ADDITIVE: a payload built before color/text_color existed
+    # still validates, and both come back None rather than missing. This is what the
+    # None defaults on the model buy, and it is not cosmetic: /api/railroad-routes
+    # is cacheable for an hour, so a client holding a payload from before the fields
+    # were served must not start failing the moment the server adds them. Removing
+    # either default fails here.
+    before = RailroadRoute.model_validate(
+        {"system": "LIRR", "route": "5", "name": "Montauk Branch", "polylines": [[[40.7, -74.0]]]}
+    )
+    assert before.color is None
+    assert before.text_color is None
 
 
 def test_railroad_route_builder_output_covers_model():
-    # The builder emits {route, name, polylines}; the endpoint adds system. Tie the
-    # two together so a field added to the builder or the model can't drift apart:
-    # each builder entry plus "system" must be exactly the model's field set. Also
-    # confirm the name is filled from the routes table (long_name, else short_name).
+    # The builder emits {route, name, color, text_color, polylines}; the endpoint
+    # adds system. Tie the two together so a field added to the builder or the model
+    # can't drift apart: each builder entry plus "system" must be exactly the model's
+    # field set. THIS EQUALITY IS WHAT KEEPS THE None DEFAULTS HONEST: the defaults
+    # mean an entry that silently stopped carrying a colour would still validate, so
+    # the key set, not validation, is what catches a builder that drops one.
     shapes = {"a": [[0.0, 0.0], [0.0, 1.0], [0.0, 2.0]]}
     trips = {"t1": {"route_id": "5", "shape_id": "a"}}
-    route_names = {"5": {"long_name": "Montauk Branch", "short_name": None}}
+    route_names = {
+        "5": {
+            "long_name": "Montauk Branch",
+            "short_name": None,
+            "color": "00B2A9",
+            "text_color": "121212",
+        }
+    }
     entries = railroad_static.build_railroad_route_shapes(trips, shapes, route_names)
     assert entries  # guard against a vacuous pass
     for entry in entries:
         assert set(entry) | {"system"} == set(RailroadRoute.model_fields)
     assert entries[0]["name"] == "Montauk Branch"
-    # Omitting the routes table leaves name null (geometry-only build).
-    assert railroad_static.build_railroad_route_shapes(trips, shapes)[0]["name"] is None
+    # Both colours come from the routes table, each from its own key.
+    assert entries[0]["color"] == "00B2A9"
+    assert entries[0]["text_color"] == "121212"
+    # Omitting the routes table leaves all three null (geometry-only build), and the
+    # keys are still present, so the lock above holds for that build too.
+    geometry_only = railroad_static.build_railroad_route_shapes(trips, shapes)[0]
+    assert geometry_only["name"] is None
+    assert geometry_only["color"] is None
+    assert geometry_only["text_color"] is None
+    assert set(geometry_only) | {"system"} == set(RailroadRoute.model_fields)
 
 
 SUBWAY_STOP = {"id": "A01", "name": "Alpha", "lat": 40.7, "lon": -74.0, "routes": ["1", "2"]}

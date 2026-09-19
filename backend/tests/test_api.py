@@ -1441,10 +1441,20 @@ async def test_railroad_routes_endpoint_flattens_and_caches(client):
             {
                 "route": "5",
                 "name": "Montauk Branch",
+                "color": "00B2A9",
+                "text_color": "121212",
                 "polylines": [[[40.7, -74.0], [40.71, -74.01]]],
             }
         ],
-        "MNR": [{"route": "9", "name": None, "polylines": [[[41.0, -73.0], [41.1, -73.1]]]}],
+        "MNR": [
+            {
+                "route": "9",
+                "name": None,
+                "color": None,
+                "text_color": None,
+                "polylines": [[[41.0, -73.0], [41.1, -73.1]]],
+            }
+        ],
     }
     res = await client.get("/api/railroad-routes")
     assert res.status_code == 200
@@ -1453,16 +1463,73 @@ async def test_railroad_routes_endpoint_flattens_and_caches(client):
             "system": "LIRR",
             "route": "5",
             "name": "Montauk Branch",  # rider-facing name carried through
+            "color": "00B2A9",  # the feed's own hex, verbatim, no leading "#"
+            "text_color": "121212",
             "polylines": [[[40.7, -74.0], [40.71, -74.01]]],
         },
         {
             "system": "MNR",
             "route": "9",
             "name": None,  # a route with no routes.txt name is still served
+            "color": None,  # and a route whose feed left the columns blank
+            "text_color": None,
             "polylines": [[[41.0, -73.0], [41.1, -73.1]]],
         },
     ]
     assert "max-age" in res.headers.get("cache-control", "")
+
+
+async def test_railroad_routes_endpoint_serves_both_colours_per_system_and_route(client):
+    # The two colours are served PER (system, route), which is the key this endpoint
+    # exists to preserve: LIRR and MNR both have a route "1" and they are different
+    # lines with different colours. A flattening that dropped `system`, or one that
+    # looked a colour up by route_id alone, would answer one of these twice.
+    app_module.app.state.railroad_static_status = "ready"
+    app_module.app.state.railroad_routes = {
+        "LIRR": [
+            {
+                "route": "1",
+                "name": "Babylon Branch",
+                "color": "00985F",  # LIRR 1 is green
+                "text_color": "FFFFFF",
+                "polylines": [[[40.7, -74.0], [40.71, -74.01]]],
+            },
+            {
+                "route": "11",
+                "name": "Belmont Park",
+                "color": None,  # a blank column stays null, never a fallback colour
+                "text_color": "FFFFFF",
+                "polylines": [[[40.72, -74.02], [40.73, -74.03]]],
+            },
+        ],
+        "MNR": [
+            {
+                "route": "1",
+                "name": "Hudson",
+                "color": "009B3A",  # MNR 1 is a DIFFERENT green, same route id
+                "text_color": "FFFFFF",
+                "polylines": [[[41.0, -73.0], [41.1, -73.1]]],
+            },
+            {
+                "route": "4",
+                "name": "New Canaan",
+                "color": "EE0034",  # the shared New Haven red
+                "text_color": "FFFFFF",
+                "polylines": [[[41.2, -73.2], [41.3, -73.3]]],
+            },
+        ],
+    }
+    res = await client.get("/api/railroad-routes")
+    assert res.status_code == 200
+    served = {(e["system"], e["route"]): (e["color"], e["text_color"]) for e in res.json()}
+    assert served == {
+        ("LIRR", "1"): ("00985F", "FFFFFF"),
+        ("LIRR", "11"): (None, "FFFFFF"),
+        ("MNR", "1"): ("009B3A", "FFFFFF"),
+        ("MNR", "4"): ("EE0034", "FFFFFF"),
+    }
+    # The colliding route id really did keep two colours apart.
+    assert served[("LIRR", "1")] != served[("MNR", "1")]
 
 
 # ---------------- /api/path-stops and /api/path-routes ----------------
@@ -2184,7 +2251,14 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
                 "stops": {"1": {"name": "Aville", "lat": 40.7, "lon": -74.0}},
                 "trips": {"t1": {"route_id": "5", "shape_id": "s1"}},
                 "shapes": {"s1": [[40.7, -74.0], [40.71, -74.01]]},
-                "routes": {"5": {"long_name": "Montauk Branch", "short_name": None}},
+                "routes": {
+                    "5": {
+                        "long_name": "Montauk Branch",
+                        "short_name": None,
+                        "color": "00B2A9",
+                        "text_color": "121212",
+                    }
+                },
             },
             "MNR": None,
         }
@@ -2261,6 +2335,10 @@ async def test_lifespan_starts_polls_and_shuts_down_cleanly(monkeypatch):
                 {
                     "route": "5",
                     "name": "Montauk Branch",
+                    # The feed's own two colours, carried from routes.txt through
+                    # the builder without the warmup re-parsing anything.
+                    "color": "00B2A9",
+                    "text_color": "121212",
                     "polylines": [[[40.7, -74.0], [40.71, -74.01]]],
                 }
             ]
@@ -2692,7 +2770,14 @@ async def test_railroad_static_warmup_loading_to_ready(monkeypatch):
                 "stops": {"1": {"name": "Aville", "lat": 40.7, "lon": -74.0}},
                 "trips": {"t1": {"route_id": "5", "shape_id": "s1"}},
                 "shapes": {"s1": [[40.7, -74.0], [40.71, -74.01]]},
-                "routes": {"5": {"long_name": "Montauk Branch", "short_name": None}},
+                "routes": {
+                    "5": {
+                        "long_name": "Montauk Branch",
+                        "short_name": None,
+                        "color": "00B2A9",
+                        "text_color": "121212",
+                    }
+                },
             },
             "MNR": None,  # failed system -> None, GPS-only
         }
@@ -2722,7 +2807,14 @@ async def test_railroad_static_warmup_all_systems_none_is_failed_then_recovers(m
             "stops": {"1": {"name": "Aville", "lat": 40.7, "lon": -74.0}},
             "trips": {"t1": {"route_id": "5", "shape_id": "s1"}},
             "shapes": {"s1": [[40.7, -74.0], [40.71, -74.01]]},
-            "routes": {"5": {"long_name": "Montauk Branch", "short_name": None}},
+            "routes": {
+                "5": {
+                    "long_name": "Montauk Branch",
+                    "short_name": None,
+                    "color": "00B2A9",
+                    "text_color": "121212",
+                }
+            },
         },
         "MNR": None,
     }

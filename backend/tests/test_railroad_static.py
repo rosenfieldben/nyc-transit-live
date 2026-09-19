@@ -4,6 +4,13 @@ Small synthetic LIRR/MNR-style zips are built in tmp_path; RAILROAD_STATIC_ZIPS 
 RAILROAD_STATIC_URLS are monkeypatched so no test touches the network (failure
 cases point the URLs at a closed local port). No real-zip fixture: the real
 archives are large and gitignored.
+
+ONE REAL TABLE IS COMMITTED, THOUGH: fixtures/railroad_gtfs/ holds each system's
+real routes.txt, 13 LIRR rows and 6 MNR rows copied from the live archives (its
+README records the probe and the single deliberate departure). The colour tests
+below read those rather than synthetic rows, because what they assert is what the
+FEEDS publish, and a synthetic row would only prove the parser agrees with
+whatever the test author typed.
 """
 
 import csv
@@ -11,6 +18,7 @@ import io
 import os
 import time
 import zipfile
+from pathlib import Path
 
 import pytest
 
@@ -24,8 +32,17 @@ DEAD_URL = "http://127.0.0.1:9/google_transit.zip"
 STOPS_COLS = ["stop_id", "stop_name", "stop_lat", "stop_lon"]
 TRIPS_COLS = ["route_id", "service_id", "trip_id", "trip_headsign", "direction_id", "shape_id"]
 SHAPES_COLS = ["shape_id", "shape_pt_sequence", "shape_pt_lat", "shape_pt_lon"]
-# route_color is a real GTFS column but is deliberately not parsed (own palette).
-ROUTES_COLS = ["route_id", "route_short_name", "route_long_name", "route_color"]
+# Both colour columns are parsed as of claude/railroad-route-colors; the comment
+# here used to say route_color was deliberately not read (own palette), which was
+# wrong about both this project's rule and what these feeds publish. See
+# railroad_static._parse_routes for the corrected reasoning and the probe numbers.
+ROUTES_COLS = [
+    "route_id",
+    "route_short_name",
+    "route_long_name",
+    "route_color",
+    "route_text_color",
+]
 
 # Numeric/opaque stop_ids (no N/S suffix) and shape_ids that would NOT match the
 # subway shape regex, mirroring the railroad GTFS shape.
@@ -84,8 +101,19 @@ def shape_rows(shape_id, points):
 
 DEFAULT_SHAPE_ROWS = shape_rows("5", [(40.70, -74.00), (40.71, -74.01)])
 ROUTE_ROWS = [
-    {"route_id": "5", "route_long_name": "Montauk Branch", "route_color": "00B2A9"},
-    {"route_id": "8", "route_short_name": "WH", "route_long_name": "", "route_color": "00A1DE"},
+    {
+        "route_id": "5",
+        "route_long_name": "Montauk Branch",
+        "route_color": "00B2A9",
+        "route_text_color": "121212",
+    },
+    {
+        "route_id": "8",
+        "route_short_name": "WH",
+        "route_long_name": "",
+        "route_color": "00A1DE",
+        "route_text_color": "121212",
+    },
 ]
 
 
@@ -198,9 +226,19 @@ def test_parse_routes_reads_names_blank_to_none(tmp_path):
     path = tmp_path / "g.zip"
     write_railroad_zip(path)
     routes = railroad_static._parse_system(path)["routes"]
-    assert routes["5"] == {"long_name": "Montauk Branch", "short_name": None}
+    assert routes["5"] == {
+        "long_name": "Montauk Branch",
+        "short_name": None,
+        "color": "00B2A9",
+        "text_color": "121212",
+    }
     # route 8 carries a short_name but a blank long_name.
-    assert routes["8"] == {"long_name": None, "short_name": "WH"}
+    assert routes["8"] == {
+        "long_name": None,
+        "short_name": "WH",
+        "color": "00A1DE",
+        "text_color": "121212",
+    }
 
 
 def test_parse_routes_missing_member_degrades_to_empty(tmp_path):
@@ -218,6 +256,130 @@ def test_parse_routes_missing_member_degrades_to_empty(tmp_path):
     data = railroad_static._parse_system(path)
     assert data["routes"] == {}
     assert "8" in data["stops"] and "GO5_1" in data["trips"]  # the rest loaded fine
+
+
+# ---------------- routes.txt colours, against each feed's real table ----------------
+#
+# These read fixtures/railroad_gtfs/, which is the live routes.txt for each system
+# (see that directory's README for the probe and its one deliberate departure). The
+# point of using the real tables is that the claim under test is about what the
+# FEEDS publish, which synthetic rows cannot establish.
+
+RAILROAD_FIXTURES = Path(__file__).parent / "fixtures" / "railroad_gtfs"
+
+
+def parse_fixture_routes(tmp_path, fixture_name):
+    """Parse one system's committed real routes.txt through the production parser."""
+    path = tmp_path / "g.zip"
+    write_railroad_zip(
+        path,
+        members={
+            "stops.txt": csv_text(STOPS_COLS, STOP_ROWS),
+            "trips.txt": csv_text(TRIPS_COLS, TRIP_ROWS),
+            "shapes.txt": csv_text(SHAPES_COLS, DEFAULT_SHAPE_ROWS),
+            "routes.txt": (RAILROAD_FIXTURES / fixture_name).read_text(encoding="utf-8"),
+        },
+    )
+    return railroad_static._parse_system(path)["routes"]
+
+
+def test_parse_routes_reads_both_colours_verbatim_from_the_lirr_feed(tmp_path):
+    routes = parse_fixture_routes(tmp_path, "lirr_routes.txt")
+    assert len(routes) == 13  # the live feed's route count, not a synthetic subset
+
+    # VERBATIM: the hex arrives exactly as published. Upper case, no leading "#",
+    # nothing normalised. Asserted as literals rather than against a transform of
+    # the file, so a parser that lower-cased or prepended "#" fails here.
+    assert routes["1"]["color"] == "00985F"
+    assert routes["1"]["text_color"] == "FFFFFF"
+    assert routes["9"]["color"] == "C60C30"
+    assert routes["2"]["text_color"] == "121212"
+
+    # Every route carries both, which is the fact the old comment denied. The one
+    # exception is the fixture's own blanked row, below.
+    assert all(r["color"] for rid, r in routes.items() if rid != "11")
+    assert all(r["text_color"] for r in routes.values())
+
+    # A COLOUR IS NOT A ROUTE ID: Ronkonkoma and Greenport share one purple.
+    assert routes["4"]["color"] == routes["13"]["color"] == "A626AA"
+
+    # The LIRR feed publishes no route_short_name COLUMN at all, so short_name is
+    # None for all thirteen. This is the absent-column path, not a blank cell.
+    assert all(r["short_name"] is None for r in routes.values())
+    assert routes["5"]["long_name"] == "Montauk Branch"
+
+
+def test_parse_routes_reads_both_colours_verbatim_from_the_mnr_feed(tmp_path):
+    routes = parse_fixture_routes(tmp_path, "mnr_routes.txt")
+    assert len(routes) == 6  # the live feed's route count
+
+    assert routes["1"]["color"] == "009B3A"  # Hudson, green
+    assert routes["2"]["color"] == "0039A6"  # Harlem, blue
+    assert all(r["text_color"] == "FFFFFF" for r in routes.values())
+
+    # THE NEW HAVEN FAMILY SHARES ONE RED. Four route ids, one colour, so anything
+    # keying a map by colour would collapse New Canaan, Danbury and Waterbury into
+    # New Haven.
+    assert [routes[rid]["color"] for rid in ("3", "4", "5", "6")] == ["EE0034"] * 4
+    assert routes["3"]["long_name"] == "New Haven"
+    assert routes["6"]["long_name"] == "Waterbury"
+
+
+def test_parse_routes_blank_colour_is_none_and_the_two_columns_are_independent(tmp_path):
+    # The fixture blanks route_color on LIRR 11 (Belmont Park) and leaves its
+    # route_text_color filled: the one row where the columns disagree. A blank
+    # column is None, never "" and never a fallback colour, and text_color comes
+    # from its OWN column, so reading it out of route_color's would answer None.
+    routes = parse_fixture_routes(tmp_path, "lirr_routes.txt")
+    assert routes["11"]["color"] is None
+    assert routes["11"]["text_color"] == "FFFFFF"
+    assert routes["11"]["long_name"] == "Belmont Park"  # the row parsed, it is not skipped
+
+
+def test_parse_routes_carries_hex_verbatim_without_normalising(tmp_path):
+    # Synthetic on purpose, and separate from the fixture tests above: neither live
+    # feed publishes a "#" or lower case, so the only way to pin that the parser
+    # does not "helpfully" normalise is to hand it something a normaliser would
+    # change. Whitespace is the one thing stripped (GTFS exporters pad cells).
+    rows = [
+        {"route_id": "h", "route_color": "#00985F", "route_text_color": "#FFFFFF"},
+        {"route_id": "lo", "route_color": "00985f", "route_text_color": "ffffff"},
+        {"route_id": "pad", "route_color": "  00985F  ", "route_text_color": " FFFFFF "},
+    ]
+    path = tmp_path / "g.zip"
+    write_railroad_zip(path, routes=rows)
+    routes = railroad_static._parse_system(path)["routes"]
+    assert routes["h"]["color"] == "#00985F"  # the "#" is neither stripped nor added
+    assert routes["h"]["text_color"] == "#FFFFFF"
+    assert routes["lo"]["color"] == "00985f"  # case is left exactly as published
+    assert routes["lo"]["text_color"] == "ffffff"
+    assert routes["pad"]["color"] == "00985F"  # whitespace only
+    assert routes["pad"]["text_color"] == "FFFFFF"
+
+
+def test_parse_routes_absent_colour_columns_are_none(tmp_path):
+    # A publication whose routes.txt has no colour columns at all (the pre-2026
+    # shape this project assumed) still parses: both fields are None, and the names
+    # are unaffected.
+    path = tmp_path / "g.zip"
+    write_railroad_zip(
+        path,
+        members={
+            "stops.txt": csv_text(STOPS_COLS, STOP_ROWS),
+            "trips.txt": csv_text(TRIPS_COLS, TRIP_ROWS),
+            "shapes.txt": csv_text(SHAPES_COLS, DEFAULT_SHAPE_ROWS),
+            "routes.txt": csv_text(
+                ["route_id", "route_long_name"], [{"route_id": "5", "route_long_name": "Montauk"}]
+            ),
+        },
+    )
+    routes = railroad_static._parse_system(path)["routes"]
+    assert routes["5"] == {
+        "long_name": "Montauk",
+        "short_name": None,
+        "color": None,
+        "text_color": None,
+    }
 
 
 def test_parse_routes_skips_blank_id_and_dedups_first_wins(tmp_path):
@@ -463,6 +625,43 @@ def test_route_builder_reverse_direction_collapses():
     routes = railroad_static.build_railroad_route_shapes(trips, shapes)
     assert len(routes) == 1
     assert len(routes[0]["polylines"]) == 1  # one direction kept, the reverse dropped
+
+
+def test_route_builder_carries_both_colours_and_leaves_polylines_alone():
+    # The builder is where routes.txt meets geometry, so this pins that the colours
+    # ride along WITHOUT the geometry changing: the same trips/shapes with and
+    # without a routes table must produce identical polylines.
+    shapes = {"a": [[0.0, 0.0], [0.0, 1.0], [0.0, 2.0]]}
+    trips = {"t1": _trip("3", "a")}
+    table = {
+        "3": {
+            "long_name": "New Haven",
+            "short_name": None,
+            "color": "EE0034",
+            "text_color": "FFFFFF",
+        }
+    }
+    with_colours = railroad_static.build_railroad_route_shapes(trips, shapes, table)
+    geometry_only = railroad_static.build_railroad_route_shapes(trips, shapes)
+    assert with_colours[0]["color"] == "EE0034"
+    assert with_colours[0]["text_color"] == "FFFFFF"
+    assert geometry_only[0]["color"] is None
+    assert geometry_only[0]["text_color"] is None
+    # THE POLYLINES ARE UNTOUCHED, which is the half of this branch that must not
+    # move: adding colour to the payload is additive, not a geometry change.
+    assert with_colours[0]["polylines"] == geometry_only[0]["polylines"]
+
+
+def test_route_builder_colour_survives_a_route_with_no_name():
+    # A route can carry a colour and no name (the two columns are independent), and
+    # the colour must not be dropped along with the missing name.
+    shapes = {"a": [[0.0, 0.0], [0.0, 1.0], [0.0, 2.0]]}
+    trips = {"t1": _trip("7", "a")}
+    table = {"7": {"long_name": None, "short_name": None, "color": "6E3219", "text_color": None}}
+    built = railroad_static.build_railroad_route_shapes(trips, shapes, table)
+    assert built[0]["name"] is None
+    assert built[0]["color"] == "6E3219"
+    assert built[0]["text_color"] is None
 
 
 def test_route_builder_blank_and_degenerate_shapes_contribute_nothing():

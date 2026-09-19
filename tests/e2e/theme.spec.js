@@ -477,8 +477,12 @@ test("D5d. each family's identifying paint is named, and the app's own clear 3:1
      measured the KEY PANEL's glyphs in the dark theme and found them between 1.11 and 2.63
      against the surface, because they carry the map's own marker colours and the panel was
      drawn for opaque white. MR1's answer for the panel was `--glyph-plate`, which stays LIGHT
-     in both themes, so those glyphs keep their light-theme arithmetic and this stage leaves
-     them where they are. The MAP had no such answer, and that is what held the toggle back.
+     in both themes, so those glyphs keep their light-theme arithmetic whatever theme a rider
+     chooses, and this spec measures the MAP rather than the panel. (Round 2 redrew seven of
+     those glyphs, and that changes nothing here: the plate did not move, so their arithmetic
+     did not either, and what holds them is a11y.spec.js A1z plus the node tier's
+     frontend/keyglyphs.test.js.) The MAP had no such answer, and that is what held the toggle
+     back.
 
      THE DEFINITION IS IN tests/e2e/contrast.js, with the argument for each half of it: the
      surface is the theme's own `--paper` because a tile is an image and no mark clears 3:1

@@ -68,3 +68,59 @@ for (const [name, viewport, preset] of [
     });
   }
 }
+
+/* MR4 ROUND 2 ADDS THE KEY PANEL'S OWN FRAMES, and the reason is that the six frames above
+   photograph it CLOSED. The Key is a disclosure at every width, so every capture this stage took
+   shows the button and not the panel: the round that rewrote seven of the panel's rows is
+   invisible in its own evidence. Measured rather than assumed, which is how this was found: the
+   six frames above regenerate identically from the tree before this round and the tree after it.
+
+   SO THESE ARE THE ROUND'S BEFORE AND AFTER, and the pair is the deliverable. Desktop shows the
+   panel as a two-column grid, 375 shows it as one column with its own scroll, and both themes
+   because the glyphs are literals on a plate that does not move and a reader should be able to
+   check that claim rather than take it.
+
+   THE PRESET IS STILL THE CITY'S, so the map under the panel is the same map the four frames
+   above show and the only difference between a pair is the panel. */
+for (const [name, viewport] of [
+  ["key-desktop", { width: 1280, height: 720 }],
+  ["key-375", { width: 375, height: 720 }],
+]) {
+  for (const theme of ["light", "dark"]) {
+    const label = theme === "light" ? name : `${name}-dark`;
+    test(`capture ${TAG} ${label} with the Key open`, async ({ page }) => {
+      await page.setViewportSize(viewport);
+      await installMocks(page);
+      await page.clock.install({ time: new Date(fx.FROZEN_MS) });
+      await page.goto("/");
+      await page.waitForFunction(
+        () =>
+          buses.size === 2 &&
+          pathTrainRecords.size === 2 &&
+          ferryBoatRecords.size === 3 &&
+          railroads.size === 2 &&
+          njtTrainRecords.size === 4 &&
+          stationRegistry.length === 14 &&
+          airtrainRouteLinesLayer.getLayers().length > 0,
+        null,
+        { timeout: 20_000 },
+      );
+      if (theme === "dark") {
+        const button = page.locator("#theme-toggle");
+        if (await button.isVisible()) await button.click();
+        else await page.evaluate(() => applyTheme("dark"));
+        await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+      }
+      await page.locator("#view-city").click();
+      await expect(page.locator("#view-city")).toHaveAttribute("aria-pressed", "true");
+      /* THE PANEL IS OPENED THROUGH THE CONTROL, never by removing the attribute, for the reason
+         the theme is set through the button above: a frame taken past the control is a picture of
+         a state a rider may not be able to reach. */
+      await page.locator("#legend-toggle").click();
+      await expect(page.locator("#legend")).toBeVisible();
+      await expect(page.locator("#legend-toggle")).toHaveAttribute("aria-expanded", "true");
+      await page.waitForTimeout(1500);
+      await page.screenshot({ path: path.join(OUT, `${TAG}-${label}.png`) });
+    });
+  }
+}

@@ -168,7 +168,7 @@ function identities(page, targets) {
    fails, however many of them there are. */
 const UNDECIDABLE_SHAPES = [
   {
-    /* MR1. The Key panel scrolls at phone widths, where its eighteen rows are one column and
+    /* MR1. The Key panel scrolls at phone widths, where its sixteen rows are one column and
        do not fit; a row straddling its own scroll boundary is CLIPPED, and axe reports a
        clipped element as one whose background it cannot determine. A rider scrolls and reads
        it, so this is a tool limit rather than a defect, and it is the narrowest kind: the
@@ -432,7 +432,7 @@ const STATES = [
   },
   {
     /* MR1: THE HEADER WITH EVERYTHING OPEN, at all three widths. The feed strip's eight
-       buttons, the trailing note and the Key panel's eighteen rows are the largest block of
+       buttons, the trailing note and the Key panel's sixteen rows are the largest block of
        new text this stage adds, and below 700px they are reachable only through this
        disclosure. Run at NARROW too, because 320 is where the header has the least room and
        the most chance of overlapping something. */

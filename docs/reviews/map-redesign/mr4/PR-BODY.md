@@ -171,15 +171,64 @@ every browser gate.**
 
 **Q9. Seven of the Key panel's eighteen rows describe marks that no longer exist, and they have
 since MR3.** That stage gave the three rail families one grammar (the tag, the commuter square, a
-casing under the agency's colour) and updated none of the legend's rail rows: rows 6 and 7 still
-draw an LIRR/Metro-North train as a 16x16 purple rounded square, row 8 its route line as a flat
-`#7b1fa2` line, row 9 its station as a white ring stroked `#334155`, and rows 15 to 17 do the same
-three things for NJ Transit. **Recorded and not fixed, and it wants a ruling**, because the repo's
-own principle cuts the other way: G15's disposition says "a key whose glyphs did not match the map
-would be worse than a dim one", which is why MR2 updated the subway's rows and why this stage
-updated the four rows for the families it redrew. The rail rows are not this stage's marks, and
-drawing a 35-to-45px two-block tag at legend scale is a design decision rather than a swap. The
-row LABELS are right, so nothing a rider READS is wrong, only every glyph beside them.
+casing under the agency's colour) and updated none of the legend's rail rows: rows 6 and 7 drew
+an LIRR/Metro-North train as a 16x16 purple rounded square, row 8 its route line as a flat
+`#7b1fa2` line, row 9 its station as a white ring stroked `#334155`, and rows 15 to 17 did the
+same three things for NJ Transit. It wanted a ruling because the repo's own principle cuts the
+other way: G15's disposition says "a key whose glyphs did not match the map would be worse than a
+dim one", which is why MR2 updated the subway's rows and why this stage updated the four rows for
+the families it redrew. **The ruling granted the round, and round 2 is it.** See "Round 2" below.
+
+## Round 2: the Key panel, and Q1 in the statement
+
+Two rulings on the round 1 findings that were referred up.
+
+**Q1a: fills stay the agency's published colours, and each family's identifying paint is named
+and measured.** `theme.spec.js D5d` now carries a table naming the carrying paint per family per
+theme and whether the APP chose that colour or an AGENCY published it. Where the app chose it, the
+spec requires 3:1. Where an agency published it, the value is read and reported. `ACCESSIBILITY.md`
+states both halves. **One paint is under the floor and it is named rather than smoothed:** the
+ferry boat's hull at **1.31** in the light theme, which is the colour NYC Ferry publishes for its
+South Brooklyn route; its only other paint is the paper casing every mark carries, which cannot
+raise a fill's ratio against paper. The exemption is asserted BY MEASUREMENT, so the day a stage
+gives the hull an ink edge, D5d fails and the paragraph can promise the floor for all ten families.
+Round 1's report had PATH's diamond at 2.76; that was a route colour this app serves but does not
+draw, and on the drawn page it is **4.09** light and **3.64** dark, so PATH clears in both.
+
+**Q9: the Key panel is now a picture of the map.** Three regional rail station rows become the one
+commuter square `railStationSvg` draws, named for all four families. Three commuter train rows
+become the two tag bodies `railTagSvg` draws. The subway station row splits so the transfer ring
+gets the name F16 asked for. **Sixteen rows and one note**, from eighteen and one.
+
+Two rows are beyond the ruling's three named items and are flagged as such: the LIRR / Metro-North
+and NJ Transit **route line** glyphs, which drew a flat line at an opacity the map has never used
+for a rail line. Same defect, same panel, same round; neither costs a sentence.
+
+**"At legend scale" was the one real design decision.** The rail tag is the only glyph in this
+panel that carries type, and type does not survive scaling: in the shared 16px cell the tag's 8px
+Archivo renders at **3.66px**. Widening the cell buys almost nothing while the viewBox is 30 tall,
+because it is then height-constrained by the air the stem and head hang in. So the viewBox is
+cropped to the tag and the CELL adapts to the mark, at a scale of exactly **1.00** and type at the
+map's own 8px. No stem and no head: those captions name the body axis, and a glyph drawing a mark
+its caption never explains is F16 again. That wants a row of its own and is recorded as **F17**.
+
+**All three row counts moved rather than being relaxed, including one the ruling did not name.**
+`a11y.spec.js A1x` 19 to 17, `pins.spec.js P1e` from a superset to an ordered equality, and
+`subway.spec.js D2l` 18 to 16, which nobody had noticed was a third independent count on this
+panel. P1e's superset is the reason Q9 could sit for two stages: "additions only" made replacing a
+stale row the one thing a stage could not do.
+
+**Two new guards, for claims nothing on this repo could see.** `frontend/keyglyphs.test.js`
+compares every Key glyph to the mark's own source, so the panel drifting from the map fails on the
+node tier rather than waiting for a reviewer. `a11y.spec.js A1x2` measures the size the tag's type
+is drawn at: deleting one CSS declaration scales it to 3.05px and every other gate stays green
+(**F18**). A ninth undecidable shape was added for axe declining the tag's type as "overlapped by
+another element", with `A1z` as its decider, measured at 14.86, 4.69, 14.86 and 14.86.
+
+**The captures did not need regenerating and that was measured, not assumed:** the six frames are
+taken with the Key closed, and the tree before this round regenerates them identically. Since a
+reviewer of a Key round should be able to see the Key, **four new frames open it** (desktop and
+375, both themes), with a before pair beside them.
 
 ## Round 1: the adversarial pass, and what it found in this stage's own tests
 

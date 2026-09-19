@@ -764,7 +764,7 @@ body,
 
 /* ----- The Key panel -------------------------------------------------------------------
    Two columns, hairline-free, and SCROLLABLE, which is the second half of the old #panel
-   rule's bound: eighteen rows do not fit a 320x640 screen and the rows that fell off the
+   rule's bound: the panel's rows do not fit a 320x640 screen and the rows that fell off the
    end used to be unreachable. 52vh leaves the alerts row and both header rows in view at
    the smallest width the axe specs run at. */
 #legend {

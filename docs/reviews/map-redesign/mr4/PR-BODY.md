@@ -330,8 +330,8 @@ table is in the ledger. Four are worth naming here:
 | `ruff check` / `ruff format --check` | clean |
 | `mypy` | clean, 30 source files |
 | contract-tier lint | clean |
-| node | 343 + 6 passed |
-| hermetic e2e | 300 passed |
+| node | 361 passed (343 + 6 at round 1, plus 12 in the new `frontend/keyglyphs.test.js`) |
+| hermetic e2e | 301 passed (the new `a11y.spec.js A1x2`) |
 | contract browser tier | 5 passed (C6e5 new) |
 | contract API tier | 38 passed |
 | `run_all.sh` | 15 passed |

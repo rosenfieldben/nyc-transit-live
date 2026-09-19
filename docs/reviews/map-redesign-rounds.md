@@ -1149,9 +1149,11 @@ guard's coverage) each came back from two lenses with the same file and line.
 
 ### The mutations
 
-Each one in a `git worktree` **detached at the commit under test** (`65193fd`), with the
-worktree's sha echoed before the run and compared against the commit's, so a run against the
-wrong tree is visible rather than silent. That is review-workflow RULE 0b applied to the
+Each one in a `git worktree` **detached at the commit under test**, with the worktree's sha
+echoed before the run and compared against the commit's, so a run against the wrong tree is
+visible rather than silent. **Every one of them was re-run at the round-1 tip (`3fdc074`)** and
+the results below are that run; M22 through M33 were first run at `65193fd` and killed there
+too. That is review-workflow RULE 0b applied to the
 mutation harness, which is where MR3 learned it: its M9 came back green twice because the
 mutated worktree was being served the main checkout's frontend. The driver kills the static
 server **by port** and sets `CI=1` so Playwright refuses to reuse one, and it refuses to run a
@@ -1175,6 +1177,22 @@ browser gate at all while the port is still held.
 **One flake, recorded rather than smoothed over.** In the three-file run of M33, P1k (the NJ
 Transit marks) also failed; on an isolated re-run of the same mutation against the same sha it
 passed, and the mutation reaches nothing NJ Transit draws. The kill above is the isolated run.
+
+**And one per guard the round repaired**, which is the operator's rule applied to the review's
+own findings rather than only to the stage's.
+
+| # | Guard reverted | Result | Killed by |
+| --- | --- | --- | --- |
+| **M34** | the colour guard dropped from the contrast measurement, so `none` is resolved to the probe's inherited colour again | **killed** | P4c, on the numbers: two families come back carrying `rgb(0, 0, 0)` |
+| **M35** | a `<line>`'s phantom fill counted again | **killed** | P4c, on the rail tag's row |
+| **M36** | the rail casing's identity back to a literal `null` on both sides | **killed** | D5b's premise loop, which asserts every id in the probe is non-null |
+| **M37** | `paintZoomBand` counts registry entries that are not on the map again | **killed** | `subway.spec.js` D2z2 |
+| **M38** | the band no longer repainted when a feed's visibility changes | **killed** | D2z2's other half, the press that puts the layer back |
+| **M39** | a family's painter throws (the ferry docks call a function that does not exist) | **killed**, 2 e2e | D5b's `failures` assertion AND D5d, which finds the dock still wearing the light theme's ring. **This is the mutation that proves the catch records instead of swallowing**: before the round, both of those passed. |
+| **M40** | one of `subway.js`'s two registrations deleted, which the file-granular scrape allowed | **killed**, node and e2e | the site-count assertion, the six-families list, and D5b and D5d on the page |
+| **M41** | a focus-owning entry passes opacity, which is the rule the per-entry guard states | **killed**, 2 node | the per-entry opacity test and the casings-by-renderer test |
+| **M42** | the ferry's dock names back on the subway's band, degraded value and all | **killed** | D4d, on `data-ferry-label-band` at 13 and at 14 |
+
 
 ## Stage MR5: popups
 

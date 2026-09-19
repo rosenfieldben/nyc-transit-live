@@ -1,9 +1,10 @@
 # Phase MR, stage 4 of 5: the other four families, and the dark theme's release
 
-Off `origin/main` (`db73f05`): the pins, the four families' marks as pure arithmetic, the
-wiring, the canvas theme registry, ruling **R2 met** (`#theme-toggle` loses its `hidden`
-attribute and the dark theme is a thing a rider can choose), the round entries and the
-captures. **Frontend only**: no backend file changes, so nothing here deploys a service. No NJ
+Eight commits off `origin/main` (`db73f05`): the pins, the four families' marks as pure
+arithmetic, the wiring, the canvas theme registry, ruling **R2 met** (`#theme-toggle` loses its
+`hidden` attribute and the dark theme is a thing a rider can choose), the round entries, the
+captures, and round 1 of the adversarial pass. **Frontend only**: no backend file changes, so
+nothing here deploys a service. No NJ
 Transit credential is set in this environment and the contract tier drives a simulator, so **no
 mint was spent**. No em-dashes on added lines.
 
@@ -80,12 +81,12 @@ fill IS the surface and its outline is what a rider sees.
 | PATH station dot | fill `rgb(243, 242, 242)` | 14.86 | 12.60 | 14.86 |
 | PATH train | path fill `rgb(217, 58, 48)` | 3.64 | 3.08 | 4.09 |
 | bus | path fill `rgb(199, 107, 155)` | 4.75 | 4.02 | 6.65 |
-| ferry boat | path fill `rgb(0, 131, 156)` | 3.74 | 3.17 | **1.31** |
+| ferry boat | path fill `rgb(0, 131, 156)` | 3.74 | 3.17 | 1.31 |
 | ferry dock | fill `rgb(0, 131, 156)` | 3.74 | 3.17 | 3.98 |
 | rail station square | rect stroke `rgb(243, 242, 242)` | 14.86 | 12.60 | 14.86 |
-| rail tag | rect stroke `rgb(243, 242, 242)` | 14.86 | 12.60 | 18.79 |
+| rail tag | rect stroke `rgb(243, 242, 242)` | 14.86 | 12.60 | 14.86 |
 | subway station dot | fill `rgb(243, 242, 242)` | 14.86 | 12.60 | 14.86 |
-| subway train | **text** fill `rgb(255, 255, 255)` | 16.60 | 14.07 | 18.79 |
+| subway train | text fill `rgb(255, 255, 255)` | 16.60 | 14.07 | 4.87 |
 
 Every family clears 3:1 in dark, and the four this stage drew clear it on their FILL rather than
 on a letter printed on them, which is the stronger claim and the one MR4 is answerable for.
@@ -95,6 +96,13 @@ change without noticing. **The two numbers worth reading twice are in that table
 train is carried by its white letter, not by its route square (`#1f5fbf` reads 2.73 against the
 dark paper), and the ferry boat's light-theme 1.31 is the South Brooklyn yellow the feed
 publishes. Both are finding Q1 and both want a ruling.
+
+**And this table is the round-1 version of itself**, which is worth saying because the first one
+was wrong in two rows. The measurement resolved every paint through a probe, CSSOM drops a value
+it cannot parse, and `none` (the computed stroke of every shape that sets no stroke) therefore
+measured as the probe's inherited black: the subway train and the rail tag were recorded at
+18.79 in the light theme on a colour no mark paints. Regenerating the golden and READING IT
+found the second half, a `<line>`'s phantom fill. R1 in the round below has the repair.
 
 ## Nine findings, all measured
 
@@ -173,6 +181,26 @@ updated the four rows for the families it redrew. The rail rows are not this sta
 drawing a 35-to-45px two-block tag at legend scale is a design decision rather than a swap. The
 row LABELS are right, so nothing a rider READS is wrong, only every glyph beside them.
 
+## Round 1: the adversarial pass, and what it found in this stage's own tests
+
+Five finder dimensions over the production diff, each in a worktree detached at the commit,
+pointed at the four shapes this phase's defects have taken. **Ten findings: nine repaired, one
+for a ruling (Q9 above).** Three of the nine were the third shape, a test that cannot fail, in
+the tests this stage wrote to catch the others.
+
+| | What was wrong | The repair |
+| --- | --- | --- |
+| **the measurement measured paints that do not exist** | `contrast.js` resolves a paint through a probe's `color`, and CSSOM DROPS a value it cannot parse. `none` is the computed stroke of every shape that sets no stroke, so it left the probe's INHERITED colour to be measured as the mark's: P4c recorded the subway train and the rail tag in the light theme at **18.79 on `rgb(0, 0, 0)`**, and no mark on this map paints black. D5d's floor is a MAXIMUM over a mark's paints, so a phantom at 18.79 would have carried any mark past it. | `CSS.supports("color", value)`, which asks the browser what it will take as a colour. And regenerating the golden and READING IT found the second half: a `<line>` has no area, so it paints its stroke and nothing else, but its computed FILL is the initial black, which the first guard admits. Paints are enumerated per element kind now. |
+| **three tests that could not fail** | D5b's no-rebuild probe had `railCasing: null` on both sides of its identity comparison, so the one family it names as its mutation target was the one it asserted nothing about. D4e computed the vehicle sentinel (the number six specs share, which this stage moved from 18 to 15) and never asked about it. The registry-coverage scrape was file-granular, so `subway.js`'s two draw sites passed with either registration deleted. | The casing ids are collected and every id in the probe is asserted non-null; the vehicle bucket is asserted by count AND by the set of classes in it; and the scrape counts DRAW SITES per file, where a site is a maximal run of consecutive resolver lines, which merges one draw's several tokens and separates two draws. |
+| **the ferry's dock names rode the subway's degraded band** | `data-label-band` reads "all" from zoom 13 when no subway station lists a route, so every dock name came on a zoom early against the design's "names from 14", for a reason that has nothing to do with the ferry. | `data-ferry-label-band`, which is MR3's own sentence about the rail names applied again: the two bands overlap and one attribute cannot hold two answers. |
+| **the band's sentinel lost the "actually painted" half** | Moving off the DOM meant a subway a rider pressed OFF read as "stations exist, zero hubs", the DEGRADED band. | `map.hasLayer`, plus the half the finding did not name: the band was only recomputed on `zoomend`, so `applyFeedVisibility` repaints it. **And measuring it corrected the review's reason**: the finding said a tooltip on a removed layer is not in the document, and it is, so the DOM count had the same defect and this one is older than the diff. D2z2 asserts the measurement as well as the behaviour. |
+| **a swallowed paint error, and a comment that promised a recovery** | `repaintCanvasFamilies` caught every error with no signal, and said "the next draw reads the live token anyway". After load there is no next draw: every loader draws once per page. | It records into `canvasThemeFailures`, which D5b asserts is empty; the comment says what is true; the catch stays, because one family may not take the swap down with it. A rider is still told nothing, because there is no action for them in it. |
+| **"colour only, never opacity" ran over two of six entries** | And they are exactly the two that keep it. | The rule is restated per family, because an entry may not write an opacity that something ELSE owns, and the six are asserted to be all of them, so a seventh has to declare its side. |
+| **the Key pictured a bus in a colour no bus can be** | The three bus glyphs took the design's box, path and stroke in this stage and kept `#1d4ed8`, which is the unmuted family Q2 replaced, in a row captioned "Color indicates route". | `#354d8d`, the same hue at the muted saturation and the light theme's lightness, which is the right end for a plate that is light in both themes by ruling H3. 7.24 on that plate, against the 6.00 it replaces. |
+
+**Two findings came back from two different lenses each** with the same file and line (the null
+identity and the opacity guard's coverage), which is the cheap part of a fan-out to verify.
+
 ## Pins
 
 P1f, P1g, P1h and P1j already held these marks byte for byte and this stage moves four of those
@@ -215,15 +243,19 @@ a defect and that claim stays an assertion. It held: regenerating moved `census/
 
 ## Mutations, each in a worktree detached at the commit
 
-Twelve, with the worktree's sha echoed and compared before every run, the server killed by PORT
-rather than by command text, and `CI=1` so Playwright cannot serve the unmutated tree. The full
-table with what killed each one is in the ledger. Two entries are worth naming here:
+**Twenty-one**: twelve for the stage and nine more for the guards round 1 repaired, every one of
+them re-run at the round-1 tip, with the worktree's sha echoed and compared before every run, the
+server killed by PORT rather than by command text, and `CI=1` so Playwright cannot serve the
+unmutated tree. The full table with what killed each one is in the ledger. Three are worth naming
+here:
 
 - **M30** (the diamond's stroke as a presentation attribute) is **killed at the node tier only,
   with every browser gate green**, and that is finding Q8 rather than a sleeping guard.
 - **M32** was **restated once**: its first draft also deleted the registry query the Names
   toggle's title is built from, so the page died on a ReferenceError and 24 specs went red, which
   proves nothing about the guard under test. A mutation reverts one decision.
+- **M39** makes a family's painter throw, and it is the one that proves round 1's repair: before
+  it, D5b and D5d both passed with a family left wearing the previous theme.
 
 ## Gates
 
@@ -233,11 +265,18 @@ table with what killed each one is in the ledger. Two entries are worth naming h
 | `ruff check` / `ruff format --check` | clean |
 | `mypy` | clean, 30 source files |
 | contract-tier lint | clean |
-| node | 342 + 6 passed |
-| hermetic e2e | 299 passed |
+| node | 343 + 6 passed |
+| hermetic e2e | 300 passed |
 | contract browser tier | 5 passed (C6e5 new) |
 | contract API tier | 38 passed |
 | `run_all.sh` | 15 passed |
+
+`run_all.sh` needed one repair of its own on the way, and it is the same shape as MR3's finding
+about the animation wait. It went 14/15 with nothing in the repository having moved: F14's tree
+walk found the `ACCESSIBILITY.md` inside two of the review's own per-agent worktrees and reported
+"screen readers are now named outside the statement of absence". The walk prunes any directory
+holding a `.git` entry of its own now, which is what a nested worktree or clone is. A record whose
+verdict depends on whether someone happened to be reviewing at the time is not a record.
 
 Two harnesses and two audit drivers gained the stand-ins MR4's load-time registry needs
 (`boards.test.js`, `f03`, `f04`), which is what `f03`'s `staleTreatments` stand-in already was.

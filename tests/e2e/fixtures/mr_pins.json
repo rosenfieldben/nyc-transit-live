@@ -1,6 +1,6 @@
 {
  "alertBanner": {
-  "html": "<div class=\"alert-banner-strip\"><div class=\"alert-banner-rows\"><div class=\"alert-banner-row\">Reduced service systemwide while crews clear a disabled train</div><div class=\"alert-banner-row\">Some elevators are out of service across the system</div></div><button type=\"button\" id=\"alert-banner-dismiss\" title=\"Dismiss\">×</button></div>",
+  "html": "<div class=\"alert-banner-strip\"><div class=\"alert-banner-rows\"><div class=\"alert-banner-row\">Reduced service systemwide while crews clear a disabled train</div><div class=\"alert-banner-row\">Some elevators are out of service across the system</div></div><button type=\"button\" id=\"alert-banner-dismiss\" title=\"Dismiss\">\u00d7</button></div>",
   "rows": [
    "Reduced service systemwide while crews clear a disabled train",
    "Some elevators are out of service across the system"
@@ -44,6 +44,88 @@
    "panelStaleLines": 0,
    "qualifiersInPopup": 6,
    "popup": "<b>Prospect Av</b><div class=\"arr-dir\">Northbound</div><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 2 min <span class=\"arr-qualifier\">as of 10m ago</span><br><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span> 3 min <span class=\"arr-qualifier\">as of 10m ago</span><br><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 3 min<br><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span> 5 min<br><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 10 min <span class=\"arr-qualifier\">as of 10m ago</span><br><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 12 min<div class=\"arr-dir\">Southbound</div><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span> now <span class=\"arr-qualifier\">as of 10m ago</span><br><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 3 min <span class=\"arr-qualifier\">as of 10m ago</span><br><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 3 min<br><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span> 9 min<br><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span> 9 min <span class=\"arr-qualifier\">as of 10m ago</span><br><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 12 min"
+  }
+ },
+ "census": {
+  "stock": {
+   "markerIcons": 23,
+   "vehicleSentinel": 18,
+   "railStationMarkers": 5,
+   "markerIconsByClass": {
+    "bus-marker leaflet-interactive": 2,
+    "leaflet-interactive train-marker": 2,
+    "leaflet-interactive rail-mnr rail-tag-marker rail-tag-solid": 1,
+    "leaflet-interactive rail-lirr rail-tag-marker rail-tag-outlined": 1,
+    "leaflet-interactive path-marker": 2,
+    "ferry-active ferry-marker leaflet-interactive": 2,
+    "ferry-docked ferry-marker leaflet-interactive": 1,
+    "leaflet-interactive rail-njt rail-tag-marker rail-tag-outlined": 4,
+    "leaflet-interactive rail-lirr-stn rail-stn-marker": 1,
+    "leaflet-interactive rail-mnr-stn rail-stn-marker": 1,
+    "airtrain-marker leaflet-interactive": 3,
+    "leaflet-interactive rail-njt-stn rail-stn-marker": 3
+   },
+   "stnLabels": 7,
+   "stnLabelsSubway": 2,
+   "stnLabelsRail": 5,
+   "stnLabelsHub": 0,
+   "stnLabelsHubSubway": 0,
+   "trainMarkers": 2,
+   "busMarkers": 2,
+   "pathMarkers": 2,
+   "ferryMarkers": 3,
+   "airtrainMarkers": 3,
+   "canvas": {
+    "subwayStations": 2,
+    "pathStations": 2,
+    "ferryDocks": 2,
+    "pathRouteLines": 4,
+    "ferryRouteLines": 2,
+    "airtrainRouteLines": 2,
+    "subwayRibbons": 4
+   }
+  }
+ },
+ "ferry": {
+  "compound-healthy": {
+   "H1": {
+    "status": "IN_TRANSIT_TO",
+    "docked": false,
+    "option": 1,
+    "drawn": 1
+   },
+   "H2": {
+    "status": "STOPPED_AT",
+    "docked": true,
+    "option": 0.55,
+    "drawn": 0.55
+   },
+   "H3": {
+    "status": "IN_TRANSIT_TO",
+    "docked": false,
+    "option": 1,
+    "drawn": 1
+   }
+  },
+  "compound-stale": {
+   "H1": {
+    "status": "IN_TRANSIT_TO",
+    "docked": false,
+    "option": 0.45,
+    "drawn": 0.45
+   },
+   "H2": {
+    "status": "STOPPED_AT",
+    "docked": true,
+    "option": 0.24750000000000003,
+    "drawn": 0.2475
+   },
+   "H3": {
+    "status": "IN_TRANSIT_TO",
+    "docked": false,
+    "option": 0.45,
+    "drawn": 0.45
+   }
   }
  },
  "ladder": {
@@ -147,7 +229,7 @@
    "NJ Transit route line",
    "NJ Transit train (scheduled or estimated, no GPS)",
    "NJ Transit station (click for departures)",
-   "Color indicates route · click a bus to draw its route"
+   "Color indicates route \u00b7 click a bus to draw its route"
   ]
  },
  "markers": {
@@ -675,21 +757,21 @@
  },
  "popups": {
   "airtrain": {
-   "airtrain station": "<b>Terminal Alpha</b><div class=\"popup-sub\">AirTrain JFK · scheduled service (no live tracking)</div><div>Jamaica: every ~7 min <span class=\"popup-sub\">(scheduled)</span></div><div>Howard Beach: every ~7 min <span class=\"popup-sub\">(scheduled)</span></div>"
+   "airtrain station": "<b>Terminal Alpha</b><div class=\"popup-sub\">AirTrain JFK \u00b7 scheduled service (no live tracking)</div><div>Jamaica: every ~7 min <span class=\"popup-sub\">(scheduled)</span></div><div>Howard Beach: every ~7 min <span class=\"popup-sub\">(scheduled)</span></div>"
   },
   "buses": {
-   "bus": "<b style=\"color:hsl(329, 75%, 40%)\">M15</b><br>Bus MTA NYCT_101<br>Heading: 90°"
+   "bus": "<b style=\"color:hsl(329, 75%, 40%)\">M15</b><br>Bus MTA NYCT_101<br>Heading: 90\u00b0"
   },
   "ferry": {
    "ferry boat": "<b style=\"color:#007c94\">East River</b> <span class=\"popup-sub\">NYC Ferry</span><br>Boat H201<br>Under way<br>12.6 kn",
-   "ferry dock": "<b>Wall St/Pier 11</b> <span class=\"popup-sub\">NYC Ferry</span> <span class=\"popup-access\" title=\"Wheelchair accessible\">♿</span><div class=\"arr-dir\" style=\"color:#007c94\">East River</div>1 min<div class=\"arr-dir\" style=\"color:#8c7300\">South Brooklyn</div>departs 1 min"
+   "ferry dock": "<b>Wall St/Pier 11</b> <span class=\"popup-sub\">NYC Ferry</span> <span class=\"popup-access\" title=\"Wheelchair accessible\">\u267f</span><div class=\"arr-dir\" style=\"color:#007c94\">East River</div>1 min<div class=\"arr-dir\" style=\"color:#8c7300\">South Brooklyn</div>departs 1 min"
   },
   "lirr": {
-   "lirr train": "<b style=\"color:#5d4037\">LIRR · Babylon Branch</b><br>Train 521<br>Next stop: Jamaica<br>Outbound<br><span class=\"popup-sub\">scheduled (no GPS)</span><button type=\"button\" class=\"popup-crosslink\" data-station-key=\"LIRR|12\">Also here: Jamaica</button>",
+   "lirr train": "<b style=\"color:#5d4037\">LIRR \u00b7 Babylon Branch</b><br>Train 521<br>Next stop: Jamaica<br>Outbound<br><span class=\"popup-sub\">scheduled (no GPS)</span><button type=\"button\" class=\"popup-crosslink\" data-station-key=\"LIRR|12\">Also here: Jamaica</button>",
    "lirr station": "<b>Jamaica</b> <span class=\"popup-sub\">LIRR</span><div class=\"arr-dir\">Inbound</div><span class=\"arr-badge\" style=\"background:#5d4037;color:#ffffff\">1</span> Babylon Branch <span class=\"popup-sub\">#8412</span> 4 min<div class=\"arr-dir\">Outbound</div><span class=\"arr-badge\" style=\"background:#5d4037;color:#ffffff\">1</span> Babylon Branch <span class=\"popup-sub\">#8413</span> 7 min"
   },
   "mnr": {
-   "mnr train": "<b style=\"color:#5d4037\">MNR · Hudson</b><br>Train 1797<br><span class=\"popup-sub\">live GPS</span>",
+   "mnr train": "<b style=\"color:#5d4037\">MNR \u00b7 Hudson</b><br>Train 1797<br><span class=\"popup-sub\">live GPS</span>",
    "mnr station": "<b>Grand Central</b> <span class=\"popup-sub\">MNR</span><div class=\"arr-dir\">Inbound</div><span class=\"arr-badge\" style=\"background:#5d4037;color:#ffffff\">1</span> Hudson <span class=\"popup-sub\">#795</span> 4 min<div class=\"arr-dir\">Outbound</div><span class=\"arr-badge\" style=\"background:#5d4037;color:#ffffff\">1</span> Hudson <span class=\"popup-sub\">#812</span> 6 min"
   },
   "njt": {

@@ -867,6 +867,19 @@ def main() -> int:
     print(f"  it also states one browser engine only (Chromium)   : {one_engine}")
 
     skip_dirs = {".git", ".venv", "node_modules", "__pycache__", os.path.join("docs", "reviews")}
+
+    # AND NEVER INTO ANOTHER CHECKOUT OF THIS REPOSITORY, which is what a nested git worktree
+    # is. Measured 2026-09-19: an adversarial-review run leaves worktrees under
+    # .claude/worktrees/<run>-N while it is alive, this walk found the ACCESSIBILITY.md inside
+    # two of them, and claim (d) failed with "screen readers are now named outside the
+    # statement of absence" naming the repository's own file three times over. Nothing had
+    # moved; a review happened to be running. A record whose verdict depends on that is not a
+    # record, the same way MR3's round 4 found that a gate whose verdict depends on how fast
+    # the machine is is not a gate. A directory holding a .git entry of its own is another
+    # checkout, whoever put it there, so the prune is stated generally rather than as a list
+    # of tool directories that would fall behind the next tool.
+    def _is_nested_checkout(parent: str, name: str) -> bool:
+        return os.path.exists(os.path.join(parent, name, ".git"))
     at_rx = re.compile(r"NVDA|JAWS|VoiceOver|Narrator|TalkBack|Dragon naturally|screen magnifier", re.I)
     mentions: dict[str, int] = {}
     for base, dirs, files in os.walk(REPO):
@@ -874,7 +887,7 @@ def main() -> int:
         if any(part in skip_dirs for part in rel_base.split(os.sep)) or rel_base.startswith("docs/reviews"):
             dirs[:] = []
             continue
-        dirs[:] = [d for d in dirs if d not in skip_dirs]
+        dirs[:] = [d for d in dirs if d not in skip_dirs and not _is_nested_checkout(base, d)]
         for name in files:
             if not name.endswith((".md", ".js", ".py", ".html", ".css", ".yml", ".yaml", ".json")):
                 continue

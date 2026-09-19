@@ -1054,6 +1054,25 @@ not the expression that produced it.
 
 | **Q9** | **Seven of the Key panel's eighteen rows describe marks that no longer exist, and they have since MR3.** That stage gave LIRR, Metro-North and NJ Transit one grammar (the rail tag, the commuter square, a casing under the agency's own colour) and updated none of the legend's rail rows. Measured from `index.html` on this branch: rows 6 and 7 draw an LIRR/Metro-North train as a 16x16 purple rounded square, row 8 its route line as a flat `#7b1fa2` 2.5px line, row 9 its station as a white ring stroked `#334155`, and rows 15, 16 and 17 do the same three things for NJ Transit in `#075AAA`. Every one of those is a mark this map stopped drawing in MR3. | **Recorded and NOT fixed, and it wants a ruling because the repo's own principle cuts the other way.** MR1's G15 disposition says it out loud: "a key whose glyphs did not match the map would be worse than a dim one", which is why MR2 updated the subway's three rows with the subway's marks and why MR4 updated the four rows for the families it redrew (the bus arrow and dot, the AirTrain guideway and square, the PATH dot, the ferry hull and dock). The rail rows are not this stage's marks: the operator scoped the rail marks out of MR4 and asked for the Key's glyphs to be left unchanged on their plate, and drawing a 35-to-45px two-block tag at legend scale is a design decision rather than a mechanical swap. So it is named here with its measurement. **MR5 or a stage of its own is the natural home**; the row LABELS are already right, so nothing a rider reads is wrong, only every glyph beside them. |
 
+### Every sentinel over a class this stage widened, re-read
+
+The operator bound this stage to re-read every count over a class it widens, and MR4 widens
+three: `.stn-label` gains the ferry's two dock names, `.rail-stn-marker` gains AirTrain's three
+station squares, and `stationLabelPane` gains a fourth family's labels. This is the audit, and
+the counts are the stock fixture world's (P4a's census is the standing version of it).
+
+| Sentinel | Where | Before | After | Verdict |
+| --- | --- | --- | --- | --- |
+| `.leaflet-marker-icon:not(.rail-stn-marker)` > 5, "the vehicles have landed" | `announce`, `busroute`, `crosslink`, `layout`, `mobile`, `motion` | 18 | **15** | **More correct, not less.** AirTrain's three stations were counted as vehicles by every one of these; they are stations and now they are excluded. The margin over the threshold falls from 13 to 10, and in a world where ONLY AirTrain had loaded the count is now 0 rather than 3, which is the direction that cannot produce a false pass. |
+| `.leaflet-marker-icon`, total | P4a's census, `theme.spec.js` D5b's no-rebuild probe | 23 | 23 | Unchanged, and that is the claim: no family gained or lost a mark. D5b tags all 23 elements before a theme swap and requires the same 23 after it. |
+| `.rail-stn-marker` | P4a, `families.spec.js` D4e | 5 | **8** | Deliberate: the three AirTrain squares joined the class whose members are rail-grammar STATIONS, which is what they are. |
+| `.airtrain-marker` | P4a, D4e | 3 | **0** | The old class is retired, and BOTH counts are kept so the retirement is asserted rather than assumed. |
+| `.stn-label` (unqualified) | `paintZoomBand`'s band sentinel | 7 | **not counted at all** | The band asks `stationRegistry` by `kind` now. This is the repair: `:not(.rail)` was MR3's patch and MR4 would have needed `:not(.rail):not(.ferry)`, which is a list that is wrong once per stage. |
+| `.stn-label:not(.rail)` | `subway.spec.js` D2j, `rail.spec.js` D3g | 2 | **would have been 4** | The defect, caught by P4a's census on its first outing. Both now ask `.stn-label.subway`, a positive class no other family can join. |
+| `.stn-label.subway` / `.rail` / `.ferry` | P4a, D2j, D3d, D3g, D4d | (new) | 2 / 5 / 2 | Positive per family, so the next family to join this pane changes one number rather than inflating someone else's. |
+| `.leaflet-tooltip`, total | `a11y.spec.js` A1z3 | 7 | **9** | The two dock names. A1z3 also asserts the three per-family counts, and measures every one of the nine by the same loop rather than excusing the new family from it. |
+| `markerIconsByClass` | P4a | 12 keys | 12 keys | One key changed name (`airtrain-marker` to `rail-airtrain-stn rail-stn-marker`), which is the per-class tally doing its job: a family that changes class moves a key rather than a total. |
+
 ### The tests, and what each tier is for
 
 **Node, `frontend/families.test.js`, 11 tests.** Every mark as a function of its inputs, one

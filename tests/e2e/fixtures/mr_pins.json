@@ -349,6 +349,8 @@
    "Subway transfer station: two or more route lines meet (click for arrivals)",
    "LIRR / Metro-North / NJ Transit train (live GPS)",
    "LIRR / Metro-North / NJ Transit train (scheduled or estimated, no GPS); NJ Transit is always this",
+   "Commuter train heading: filled when it is trusted, outlined when it is not",
+   "Commuter train heading: a chevron when one is served, a dot when none is",
    "LIRR / Metro-North route line",
    "Regional rail station: LIRR, Metro-North, NJ Transit, AirTrain JFK (click for arrivals or departures; AirTrain is scheduled only)",
    "AirTrain JFK route line (scheduled service, no live tracking)",

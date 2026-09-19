@@ -792,8 +792,10 @@ test("A1x. the Key panel's rows are legible, at every width and in both themes",
          three commuter train rows into the two tag bodies it draws, and split the subway station
          row so the transfer ring gets the name finding F16 asked for: 18 - 2 - 1 + 1 = 16, plus
          the note. A literal rather than a range, because a count that tolerated drift would not
-         have caught any of the six rows MR3 left describing marks the app had stopped drawing. */
-      expect(measured.rows.length, `${label}: the scan must find rows, or it decides nothing`).toBe(17);
+         have caught any of the six rows MR3 left describing marks the app had stopped drawing.
+         MR5 adds two more for finding F17, the tag's head in its two axes, so eighteen rows plus
+         the note is nineteen. */
+      expect(measured.rows.length, `${label}: the scan must find rows, or it decides nothing`).toBe(19);
       const dim = measured.rows.filter((r) => r.ratio === null || r.ratio < 4.5);
       expect(dim, `${label}: every Key panel row must clear AA on the header's surface`).toEqual([]);
     }

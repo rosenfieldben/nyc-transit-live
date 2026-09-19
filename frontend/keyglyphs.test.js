@@ -35,6 +35,7 @@ const { join } = require("node:path");
 const {
   railStationSvg,
   railTagSvg,
+  railTagChevronPath,
   railTagGeometry,
   railBranchPaint,
   railBranchColor,
@@ -380,4 +381,76 @@ test("9. no Key glyph takes the map's own rail-tag class", () => {
   assert.equal(/class="[^"]*(?<![-\w])rail-tag\b/.test(railTagSvg({
     system: "LIRR", code: "BAB", color: "00985F", state: { body: "solid", head: "filled", headingTrusted: true },
   })), true, "and the map's own tag is what the pattern is looking for");
+});
+
+/* MR5, finding F17: THE TWO HEAD ROWS, AND THEY ARE THE MAP'S OWN HEADS.
+
+   MR4 round 2 added the two commuter train rows and drew no head on either, because those
+   captions name the BODY state and a glyph drawing a mark its caption never explains is F16
+   in a new row. It recorded the head as F17. These are the rows, and there are two because
+   the head is two independent questions rather than a list of four shapes: is the heading
+   TRUSTED (filled or outlined), and is a heading SERVED at all (chevron or dot).
+
+   THE ORACLE IS railTagSvg'S OWN OUTPUT, not a number typed here. `RAIL_TAG_DOT_R` and
+   `RAIL_TAG_TRACK_Y` are not exported, and exporting them to assert against would only move
+   the copy: the head this panel draws is right if and only if it is the head the map draws,
+   so the map's builder is asked for one and the two are compared. Same discipline as test 8
+   above, where the tag body's oracle is railTagSvg rather than a transcription of it. */
+test("10. the two commuter head rows draw the map's own chevron and dot", () => {
+  const trusted = row("Commuter train heading: filled when it is trusted, outlined when it is not");
+  const served = row("Commuter train heading: a chevron when one is served, a dot when none is");
+
+  // The map's heads, asked for rather than transcribed. A chevron at bearing 0 is the same
+  // path railTagChevronPath returns; a dot-headed tag carries the circle.
+  const mapChevron = railTagSvg({
+    system: "LIRR", code: "BAB", color: "00985F",
+    state: { body: "solid", head: "filled", headingTrusted: true }, bearing: 0,
+  });
+  const mapDot = railTagSvg({
+    system: "LIRR", code: "BAB", color: "00985F",
+    state: { body: "outlined", head: "outlined", headingTrusted: false },
+  });
+  const mapCircle = el(mapDot, "circle");
+
+  /* THE PATHS ARE railTagChevronPath'S, TRANSLATED AND NOT REDRAWN. The map centres its
+     chevron on the tag's own centre; the Key places two of them side by side, so the claim
+     is that each row's paths are exactly what the function returns for the cx it was given.
+     A glyph that drew a chevron of its own shape would fail here even if it looked right. */
+  for (const glyph of [trusted, served]) {
+    const first = el(glyph, "path", 0);
+    assert.equal(first.d, railTagChevronPath(5), "the left mark is railTagChevronPath at cx 5");
+  }
+  assert.equal(el(trusted, "path", 1).d, railTagChevronPath(18), "the right mark is the same path at cx 18");
+
+  /* ROW ONE IS THE FILL AXIS: the same shape twice, in the map's two head paints. Filled is
+     ink with a 1-unit paper stroke, outlined is paper with a 1.4-unit ink stroke, and the
+     1.4 is the heavier edge a hollow shape this small needs to stay a shape. */
+  const filled = el(trusted, "path", 0);
+  const outlined = el(trusted, "path", 1);
+  assert.equal(filled.fill, INK);
+  assert.equal(filled.stroke, PAPER);
+  assert.equal(outlined.fill, PAPER);
+  assert.equal(outlined.stroke, INK);
+  assert.equal(outlined["stroke-width"], mapCircle["stroke-width"],
+    "the outlined head's edge is the weight the map's outlined head uses");
+  assert.ok(outlined["stroke-width"] > filled["stroke-width"],
+    "an outlined head carries a heavier edge than a filled one, as the map draws it");
+
+  /* ROW TWO IS THE SHAPE AXIS, so its fill is held CONSTANT: both marks are the filled form
+     and the only thing that varies is chevron against dot. A row that varied both at once
+     would be a second list rather than an axis, which is the whole reason F17 is two rows. */
+  const chevron = el(served, "path", 0);
+  const dot = el(served, "circle");
+  assert.equal(chevron.fill, dot.fill, "row two holds the fill constant; only the shape varies");
+  assert.equal(chevron.stroke, dot.stroke);
+  assert.equal(dot.r, mapCircle.r, "the dot's radius is the map's RAIL_TAG_DOT_R");
+  assert.equal(dot.cy, mapCircle.cy, "and it sits on the map's own track line");
+
+  // Both glyphs open their viewBox at the chevron's own y, so nothing is re-scaled to fit:
+  // the marks are the map's geometry translated, which is what the two assertions above mean.
+  for (const glyph of [trusted, served]) {
+    const view = String(el(glyph, "svg").viewBox).split(/\s+/).map(Number);
+    assert.equal(view[1], 15.5, "the viewBox starts where railTagChevronPath starts");
+    assert.equal(view[3], 9, "and is the chevron's own height");
+  }
 });

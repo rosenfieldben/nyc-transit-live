@@ -1601,3 +1601,47 @@ and the next poll's `update()` put it back to 40.67322. **`layout.spec.js A4j` e
 declines to assert against this** ("if Leaflet autopanned, the centre moved for a reason that
 is not this correction"), so widening the hole would have been invisible to the whole suite.
 
+
+### F17 paid: the Key gains the head's two axes, by axis and not by list
+
+MR4 round 2 recorded F17 rather than fixing it, and said why: "It is a new row with a new
+sentence, which is a ruling this round does not have." The ruling arrived with this stage
+(**option 3, framed by axis**), and the framing is the whole content of it. The tag's head
+answers two independent questions, and a panel that answered them with four pictures would be
+another list of shapes, which is what F16 was about. So it is two rows, one per axis, and each
+row holds the other axis constant:
+
+| row | the axis | left mark | right mark | held constant |
+| --- | --- | --- | --- | --- |
+| "filled when it is trusted, outlined when it is not" | is the heading TRUSTED | chevron, ink fill, 1-unit paper edge | chevron, paper fill, 1.4-unit ink edge | the shape: a chevron twice |
+| "a chevron when one is served, a dot when none is" | is a heading SERVED | chevron, ink fill, 1-unit paper edge | dot, ink fill, 1-unit paper edge | the fill: the filled form twice |
+
+**The oracle is `railTagSvg`'s own output, not a number typed into the test.** `keyglyphs.test.js`
+test 10 asks the map's builder for a chevron-headed tag and a dot-headed one and compares: each
+row's paths must equal `railTagChevronPath(cx)` for the cx the row drew at, the outlined head's
+edge weight must equal the weight the map's outlined head carries, and the dot's radius must
+equal the map's. `RAIL_TAG_DOT_R` and `RAIL_TAG_TRACK_Y` are not exported and exporting them to
+assert against would only have moved the copy; the claim is that this panel's head is the head
+the map draws, so the map is asked for one. That is the same discipline as test 8, whose oracle
+for the tag body is `railTagSvg` rather than a transcription of it, and it fails in the direction
+the defect actually travels: when the MAP changes and the panel does not follow.
+
+**The literals are H3's, again.** Both rows paint in the light theme's resolved `#201e1d` and
+`#f3f2f2` rather than in `var(--ink)` and `var(--paper)`, because `--glyph-plate` is `#f3f2f2` in
+both themes: a glyph in the tokens would be a dark plate on a light one the moment a rider chose
+dark. `PAPER` and `INK` in the test are read out of `style.css`, so a token edited without the
+glyphs following fails here too.
+
+**The three counts move by two, as the ruling said, and are recorded as before.**
+
+| pin | was | is | what it counts |
+| --- | --- | --- | --- |
+| `a11y.spec.js` **A1x** | 17 | **19** | `.legend-row` plus `.legend-note`, at three widths in both themes |
+| `subway.spec.js` **D2l** | 16 | **18** | `.legend-row` alone |
+| `pins.spec.js` **P1e** | ordered equality on 17 | **ordered equality on 19** | the accessible names themselves |
+
+The `legend/names` golden gains exactly two lines, inserted where the rows sit in the document:
+after "LIRR / Metro-North / NJ Transit train (scheduled or estimated, no GPS); NJ Transit is
+always this" and before "LIRR / Metro-North route line". Nothing else in the file moves, which is
+the point of an ordered equality: had a third row drifted in the same commit, the diff would say
+so.

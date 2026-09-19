@@ -7,10 +7,13 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { readFileSync } = require("node:fs");
+const { join } = require("node:path");
 
 const {
   RAIL_BRANCH_CODES,
   RAIL_NEUTRAL_COLOR,
+  NJT_FALLBACK_COLOR,
   railBranchCode,
   railBranchColor,
   railBranchInk,
@@ -622,4 +625,42 @@ test("MR3 bearing: the served bearing wins, the anchors are next, and nothing le
   // A slice with no measured interval is not a direction either: s0 and s1 are what make it
   // travel-directed, so without them there is nothing to read and the anchors answer.
   assert.equal(railTrainBearing({ _route: { points: [[40.7, -74.0], [40.6, -74.0]] }, ...anchored }), 0);
+});
+
+/* MR5, finding N6: ONE NEUTRAL REACHES THE NJ TRANSIT POPUP HEAD, and it is the rail
+   family's.
+
+   MR3 left two on screen for one unknown route and said so: the tag reaches
+   `railBranchColor` and draws the design's `#6d6e71`; the popup head reached
+   `njtRouteColor` and drew phase 15c's older `#4a4e69`. Route 17, the event-only
+   Meadowlands line, never appears on `/api/njt-routes` at all, so it is the live example
+   and it wore both at once. MR3 named it and left it because `P1k` pinned that popup byte
+   for byte; MR5 owns the popup and converges the two here.
+
+   ASSERTED AS A SOURCE FACT, and that is the point rather than laziness: no fixture world
+   has an unknown NJ Transit route, so the drawn page cannot tell the two neutrals apart and
+   every browser gate stays green either way. What is checkable is that the head reads the
+   SAME RESOLVER the tag does. Two constants that happen to be equal would be a coincidence
+   waiting for someone to change one of them; one function is a fact. */
+test("MR5 N6: the NJ Transit popup head resolves its colour the way the tag does", () => {
+  const njt = readFileSync(join(__dirname, "systems", "njt.js"), "utf8");
+  const body = njt.slice(njt.indexOf("function njtTrainPopup("));
+  const call = body.slice(0, body.indexOf("\n}"));
+
+  assert.match(
+    call,
+    /railBranchColor\(njtBranch\(/,
+    "the NJ Transit popup head must resolve through railBranchColor, the way njtIcon's tag does",
+  );
+  assert.ok(
+    !/njtRouteColor\(/.test(call),
+    "the NJ Transit popup head still reaches njtRouteColor, which falls back to the second neutral",
+  );
+
+  // And the two ends of the claim, so the test says what the colours ARE and not only which
+  // function was called: an unknown route resolves to the rail neutral, and the second
+  // neutral is a different colour, which is what made this a finding.
+  assert.equal(railBranchColor(null), RAIL_NEUTRAL_COLOR);
+  assert.equal(RAIL_NEUTRAL_COLOR, "#6d6e71");
+  assert.notEqual(NJT_FALLBACK_COLOR, RAIL_NEUTRAL_COLOR);
 });

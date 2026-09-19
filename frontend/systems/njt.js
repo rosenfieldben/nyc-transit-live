@@ -310,7 +310,17 @@ function njtTrainPopup(record) {
     njtTrainPopupHtml(
       t,
       njtRouteName(t.route_id, njtRouteNames),
-      njtRouteColor(t.route_id, njtRouteColors),
+      /* MR5, finding N6 paid: THE HEAD TAKES THE SAME RESOLVER THE TAG AND THE LINE DO, not
+         the same value by coincidence. MR3 left two neutrals on screen for one unknown route:
+         the tag reaches railBranchColor and draws the design's #6d6e71, while this head reached
+         njtRouteColor and drew phase 15c's older #4a4e69. Route 17, the event-only Meadowlands
+         line, never appears on /api/njt-routes at all, so it is the live example and it wore
+         both at once. MR3 named it and left it because P1k pinned this popup byte for byte and
+         that pin had to hold; MR5 is the stage that owns the popup, so it converges here.
+         STRUCTURALLY, through njtBranch: the head now reads the same published paint the tag
+         reads and falls back through the same function, so the two cannot drift again. Two
+         constants agreeing would have been a coincidence waiting to be broken. */
+      railBranchColor(njtBranch(t).color),
       position,
     ) +
     // A2: the station this train is drawn on, reachable. A train drawn at its stop

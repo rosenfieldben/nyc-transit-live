@@ -87,6 +87,134 @@
    }
   }
  },
+ "contrast": {
+  "marks": {
+   "light": {
+    "subway train": {
+     "paint": "rect stroke",
+     "colour": "rgb(0, 0, 0)",
+     "onPaper": 18.79,
+     "onSurface": 17.33
+    },
+    "bus": {
+     "paint": "circle fill",
+     "colour": "rgb(129, 53, 141)",
+     "onPaper": 6.65,
+     "onSurface": 6.13
+    },
+    "PATH train": {
+     "paint": "path fill",
+     "colour": "rgb(217, 58, 48)",
+     "onPaper": 4.09,
+     "onSurface": 3.77
+    },
+    "ferry boat": {
+     "paint": "path fill",
+     "colour": "rgb(255, 209, 0)",
+     "onPaper": 1.31,
+     "onSurface": 1.21
+    },
+    "rail tag": {
+     "paint": "rect stroke",
+     "colour": "rgb(0, 0, 0)",
+     "onPaper": 18.79,
+     "onSurface": 17.33
+    },
+    "rail station square": {
+     "paint": "rect stroke",
+     "colour": "rgb(32, 30, 29)",
+     "onPaper": 14.86,
+     "onSurface": 13.7
+    },
+    "AirTrain station square": {
+     "paint": "rect stroke",
+     "colour": "rgb(32, 30, 29)",
+     "onPaper": 14.86,
+     "onSurface": 13.7
+    },
+    "subway station dot": {
+     "paint": "fill",
+     "colour": "rgb(32, 30, 29)",
+     "onPaper": 14.86,
+     "onSurface": 13.7
+    },
+    "PATH station dot": {
+     "paint": "fill",
+     "colour": "rgb(32, 30, 29)",
+     "onPaper": 14.86,
+     "onSurface": 13.7
+    },
+    "ferry dock": {
+     "paint": "fill",
+     "colour": "rgb(0, 131, 156)",
+     "onPaper": 3.98,
+     "onSurface": 3.67
+    }
+   },
+   "dark": {
+    "subway train": {
+     "paint": "text fill",
+     "colour": "rgb(255, 255, 255)",
+     "onPaper": 16.6,
+     "onSurface": 14.07
+    },
+    "bus": {
+     "paint": "path fill",
+     "colour": "rgb(199, 107, 155)",
+     "onPaper": 4.75,
+     "onSurface": 4.02
+    },
+    "PATH train": {
+     "paint": "path fill",
+     "colour": "rgb(217, 58, 48)",
+     "onPaper": 3.64,
+     "onSurface": 3.08
+    },
+    "ferry boat": {
+     "paint": "path fill",
+     "colour": "rgb(0, 131, 156)",
+     "onPaper": 3.74,
+     "onSurface": 3.17
+    },
+    "rail tag": {
+     "paint": "rect stroke",
+     "colour": "rgb(243, 242, 242)",
+     "onPaper": 14.86,
+     "onSurface": 12.6
+    },
+    "rail station square": {
+     "paint": "rect stroke",
+     "colour": "rgb(243, 242, 242)",
+     "onPaper": 14.86,
+     "onSurface": 12.6
+    },
+    "AirTrain station square": {
+     "paint": "rect stroke",
+     "colour": "rgb(243, 242, 242)",
+     "onPaper": 14.86,
+     "onSurface": 12.6
+    },
+    "subway station dot": {
+     "paint": "fill",
+     "colour": "rgb(243, 242, 242)",
+     "onPaper": 14.86,
+     "onSurface": 12.6
+    },
+    "PATH station dot": {
+     "paint": "fill",
+     "colour": "rgb(243, 242, 242)",
+     "onPaper": 14.86,
+     "onSurface": 12.6
+    },
+    "ferry dock": {
+     "paint": "fill",
+     "colour": "rgb(0, 131, 156)",
+     "onPaper": 3.74,
+     "onSurface": 3.17
+    }
+   }
+  }
+ },
  "ferry": {
   "compound-healthy": {
    "H1": {
@@ -292,7 +420,7 @@
   "buses": {
    "buses": [
     {
-     "html": "<svg viewBox=\"0 0 14 14\" class=\"bus-mark\" aria-hidden=\"true\" focusable=\"false\" style=\"transform: rotate(90deg)\"><path d=\"M7 1 L12 13 L7 10 L2 13 Z\" style=\"fill: hsl(329, 45%, 38%); stroke: var(--paper)\" stroke-width=\"0.8\"/></svg>",
+     "html": "<svg viewBox=\"0 0 14 14\" class=\"bus-mark\" aria-hidden=\"true\" focusable=\"false\" style=\"transform: rotate(90deg)\"><path d=\"M7 1 L12 13 L7 10 L2 13 Z\" style=\"fill: hsl(329, 45%, var(--bus-mark-lightness, 38%)); stroke: var(--paper)\" stroke-width=\"0.8\"/></svg>",
      "className": "bus-marker",
      "size": [
       14,
@@ -309,7 +437,7 @@
      "opacity": 1
     },
     {
-     "html": "<svg viewBox=\"0 0 14 14\" class=\"bus-mark\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"7\" cy=\"7\" r=\"3.5\" style=\"fill: hsl(292, 45%, 38%); stroke: var(--paper)\" stroke-width=\"1\"/></svg>",
+     "html": "<svg viewBox=\"0 0 14 14\" class=\"bus-mark\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"7\" cy=\"7\" r=\"3.5\" style=\"fill: hsl(292, 45%, var(--bus-mark-lightness, 38%)); stroke: var(--paper)\" stroke-width=\"1\"/></svg>",
      "className": "bus-marker",
      "size": [
       14,

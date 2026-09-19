@@ -118,6 +118,11 @@ main {
   --shadow: 0 3px 10px rgba(45, 43, 43, 0.16);
   --live: #00933c;
   --scheduled: #6d6e71;
+  /* MR4: THE BUS MARK'S LIGHTNESS, and it is a token because a bus route's colour is a HASH
+     of its id, so its legibility is a claim about all 360 hues rather than about one colour.
+     The README's value, and the measurement is in helpers.js beside busMarkColor: at 38% on
+     this theme's paper every one of the 360 hues clears the 3:1 a mark owes (worst 3.16). */
+  --bus-mark-lightness: 38%;
   --chrome-font: "Archivo", system-ui, sans-serif;
   /* The paper the Key panel's glyphs are drawn on, and it is the SAME in both themes on
       purpose: see .legend-row svg. */
@@ -144,6 +149,12 @@ main {
   --shadow: 0 3px 10px rgba(0, 0, 0, 0.5);
   --live: #00933c;
   --scheduled: #9a9a9a;
+  /* The other end, and the reason the lightness is a token at all: 38% against this theme's
+     paper leaves 188 of the 360 hues under 3:1 (worst 1.62), because a mid-dark fill on a dark
+     surface is ledger finding G15's arithmetic again. At 60% none of them is under, on --paper
+     (worst 3.60) or on --surface (worst 3.05). The hue is still the route's; only this moves,
+     and it moves through the cascade with no rebuild. */
+  --bus-mark-lightness: 60%;
   /* #b0b0b0 carries dark ink at 8.03 and reads 6.49 against the dark --surface. One grey
      cannot clear 3:1 against both surfaces, because they sit either side of mid grey, so this
      is a token per theme rather than one colour computed from the route. */
@@ -483,8 +494,10 @@ body,
 
 /* The two text actions and the one filled action. All three are 30px tall, which clears the
    24px target floor layout.spec.js enforces without needing a pseudo-element. */
-/* Hidden until MR4 by ruling (index.html says why), and `hidden` has to beat the author
-   display below, which is the same trap #route-banner and the fold elements carry. */
+/* MR4 RELEASED THE TOGGLE and this rule stays, deliberately. `hidden` has to beat the author
+   `display` below (the same trap #route-banner and the fold elements carry), so the rule is
+   what makes the attribute mean anything at all; removing it with the attribute would leave a
+   future `hidden` on this button silently inert. Nothing sets the attribute today. */
 #theme-toggle[hidden] {
   display: none;
 }
@@ -876,19 +889,12 @@ body,
   height: 16px;
 }
 
-/* Hollow square NJ Transit train markers, and the smaller filled square its
-   stations use. Two classes rather than one because they are different sizes and
-   the e2e suite reads each on its own; the shapes and fills are argued in
-   systems/njt.js. */
-.njt-marker svg {
-  width: 16px;
-  height: 16px;
-}
-
-.njt-station-marker svg {
-  width: 12px;
-  height: 12px;
-}
+/* MR3 gave NJ Transit the rail tag and the commuter square, the same two marks LIRR and
+   Metro-North draw, and left `.njt-marker` and `.njt-station-marker` behind: no element on the
+   page has carried either class since, which the P4a census confirms by listing every class
+   that is drawn. MR4 found them while measuring every family in the dark theme and selecting
+   nothing, and deletes them for the reason written six lines above about the railroad's and
+   AirTrain's own dead selectors: a dead selector is a thing that looks live. */
 
 /* NYC Ferry boat markers: a horizontal hull shape. Boats snap to their reported
    GPS position each poll (the railroad GPS precedent), the same way the bus

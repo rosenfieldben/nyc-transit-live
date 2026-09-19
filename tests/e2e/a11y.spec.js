@@ -528,6 +528,12 @@ const STATES = [
   {
     key: "popup open with cross-link",
     alerts: 0,
+    /* MR4 ADDED 320 TO THIS STATE, so the one surface scanned in both themes is scanned at
+       every width the rest of the suite uses. A popup at 320 is the tightest text surface on
+       the page (the panel at 320 opted in during MR2 for the same reason), and the dark theme
+       is the half that had never been measured there at all: six scans now, three widths by
+       two themes, which is what the stage that RELEASES the theme owes the theme. */
+    viewports: [DESKTOP, PHONE, NARROW],
     async reach(page) {
       if (await page.evaluate(() => !document.getElementById("stations-panel").hidden)) {
         await page.evaluate(() => closeStationsPanel());
@@ -656,14 +662,18 @@ async function assertNothingIsMidTransition(page, label) {
 }
 
 /* MR1: A THEME AXIS, AND ONLY ONE STATE OPTS INTO IT SO FAR. The page has two themes as of
-   this stage and every scan above ran in one of them, so a token that failed only in the dark
+   that stage and every scan above ran in one of them, so a token that failed only in the dark
    set would ship unseen; the popup state opts in by ruling, because a popup is the surface a
-   rider spends the longest reading and it is the one this stage does NOT restyle.
+   rider spends the longest reading and it is the one MR1 did NOT restyle. MR4 added 320 to
+   that state, and MR4 is also the stage that makes the dark theme reachable at all.
 
-   SET THROUGH applyTheme(), NOT THROUGH THE BUTTON, because the button is hidden until MR4
-   (index.html says why) and a spec that clicked it would be testing a control a rider cannot
-   reach. Going through the app's own function rather than writing the attribute keeps the
-   test on the same path the rider will take when the control comes back. */
+   STILL SET THROUGH applyTheme() AND NOT THROUGH THE BUTTON, and the reason has changed with
+   the stage rather than gone away. MR1's reason was that the button was hidden, so a spec that
+   clicked it would be testing a control no rider could reach; MR4 released it, and the reason
+   now is separation: this is an axe gate over a themed page, not a test of the control. That
+   the control works, that its name is the action and that it carries no aria-pressed are
+   tests/e2e/theme.spec.js D5a's, and the swap it performs is D5b's. Going through the app's own
+   function rather than writing the attribute keeps this on the same path the rider takes. */
 async function setTheme(page, theme) {
   await page.evaluate((want) => applyTheme(want), theme);
   await expect(page.locator("html")).toHaveAttribute("data-theme", theme);

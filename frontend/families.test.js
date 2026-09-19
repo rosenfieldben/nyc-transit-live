@@ -19,8 +19,12 @@ const { Script } = require("node:vm");
 
 const {
   busMarkColor,
+  busMarkColorAt,
+  busMarkHue,
   BUS_MARK_SATURATION,
   BUS_MARK_LIGHTNESS,
+  BUS_MARK_LIGHTNESS_DARK,
+  BUS_MARK_LIGHTNESS_TOKEN,
   routeColor,
   pathDiamondSvg,
   PATH_DIAMOND_BOX,
@@ -158,43 +162,93 @@ test("MR4 buses: an arrow when a heading is served, a dot when one is not, and n
 
 /* ---------------- the muted hue ---------------- */
 
-test("MR4 buses: the muted hue keeps routeColor's hue and is the reason every route is legible", () => {
+test("MR4 buses: the muted hue keeps routeColor's hue, and its lightness is the theme's", () => {
   assert.equal(BUS_MARK_SATURATION, 45);
-  assert.equal(BUS_MARK_LIGHTNESS, 38);
+  assert.equal(BUS_MARK_LIGHTNESS, 38, "the README's value, which is the light theme's");
+  assert.equal(BUS_MARK_LIGHTNESS_DARK, 60);
   // THE HUE IS UNCHANGED, which is what "the existing hashed hue but muted" means: two buses
   // on one route are one colour and two routes are two, whichever function asks.
   for (const route of ["M15", "B46", "Bx12", "Q58", "SIM1"]) {
     const [, hue] = /^hsl\((\d+),/.exec(routeColor(route));
-    assert.equal(busMarkColor(route), `hsl(${hue}, 45%, 38%)`, route);
+    assert.equal(busMarkHue(route), Number(hue), route);
+    assert.equal(busMarkColorAt(route, 38), `hsl(${hue}, 45%, 38%)`, route);
   }
   assert.equal(busMarkColor("M15"), busMarkColor("M15"));
   assert.notEqual(busMarkColor("M15"), busMarkColor("B46"));
-  // A route with no id has no hue to mute, so it keeps routeColor's flat grey.
+  // A route with no id has no hue to mute, so it keeps routeColor's flat grey at either end.
   assert.equal(busMarkColor(null), routeColor(null));
+  assert.equal(busMarkColorAt(null, 60), routeColor(null));
   assert.equal(busMarkColor(""), routeColor(""));
 
-  /* AND THIS IS WHY IT IS MUTED, MEASURED RATHER THAN ASSERTED AS TASTE. A bus route's colour
-     is a HASH of its id, so whether any given route's arrow was legible used to be luck. Over
-     all 360 hues against the light paper the mark is stroked in, the old saturation and
-     lightness leave a large minority under the 3:1 a mark owes and the new ones leave none.
-     THIS IS THE MUTATION the operator named: the raw hashed hue in place of the muted one. */
-  const paper = "#f3f2f2";
-  const under = (sat, light) => {
+  /* THE LIGHTNESS THE PAGE DRAWS IS THE TOKEN, not a literal, and that is the whole mechanism:
+     a custom property is substituted before the value is parsed, so one string is a real
+     colour in both themes and follows a swap through the cascade with no rebuild, exactly as
+     the `var(--paper)` stroke beside it does. THE FALLBACK IS THE README'S 38%, so a context
+     with no stylesheet (node, frontend/boards.test.js) still gets a real colour. */
+  assert.equal(busMarkColor("M15"), "hsl(329, 45%, var(--bus-mark-lightness, 38%))");
+  assert.match(BUS_MARK_LIGHTNESS_TOKEN, /^var\(--bus-mark-lightness, 38%\)$/);
+});
+
+test("MR4 buses: every one of the 360 hashed hues clears 3:1 in BOTH themes, and neither end alone does", () => {
+  /* THE MEASUREMENT THIS STAGE OWES G15, RUN RATHER THAN QUOTED. A bus route's colour is a
+     HASH of its id, so whether a given route's arrow is legible used to be luck; and the
+     answer is different in each theme because the surface is. Sweeping all 360 hues against
+     both papers is the only form this claim has.
+
+     THIS IS ALSO THE MUTATION THE OPERATOR NAMED (the raw hashed hue in place of the muted
+     one) AND ONE MORE BESIDE IT (one lightness for both themes), and the second is the reason
+     the token exists: 38% is perfect in light and worst in dark, 60% the reverse. */
+  const PAPER_LIGHT = "#f3f2f2";
+  const PAPER_DARK = "#201e1d";
+  const SURFACE_DARK = "#2d2b2b"; // the dark panel plate, a lighter surface than its paper
+  const sweep = (lightness, base, saturation = BUS_MARK_SATURATION) => {
     let worst = Infinity;
-    let count = 0;
+    let under = 0;
     for (let h = 0; h < 360; h++) {
-      const ratio = contrastRatio(`hsl(${h}, ${sat}%, ${light}%)`, paper);
+      const ratio = contrastRatio(`hsl(${h}, ${saturation}%, ${lightness}%)`, base);
       if (ratio == null) continue;
       worst = Math.min(worst, ratio);
-      if (ratio < 3) count += 1;
+      if (ratio < 3) under += 1;
     }
-    return { count, worst };
+    return { under, worst: Number(worst.toFixed(2)) };
   };
-  const muted = under(BUS_MARK_SATURATION, BUS_MARK_LIGHTNESS);
-  const raw = under(75, 40);
-  assert.equal(muted.count, 0, `every hue must clear 3:1 when muted (worst ${muted.worst})`);
-  assert.ok(muted.worst >= 3, `the worst muted hue is ${muted.worst}`);
-  assert.ok(raw.count > 100, `the raw hue leaves ${raw.count} hues under 3:1, which is the point`);
+
+  // EACH THEME'S OWN VALUE CLEARS ITS OWN SURFACE, every hue, with nothing under.
+  const light = sweep(BUS_MARK_LIGHTNESS, PAPER_LIGHT);
+  assert.equal(light.under, 0, `light: ${light.under} hues under 3:1 (worst ${light.worst})`);
+  assert.ok(light.worst >= 3, `light worst is ${light.worst}`);
+  const dark = sweep(BUS_MARK_LIGHTNESS_DARK, PAPER_DARK);
+  assert.equal(dark.under, 0, `dark: ${dark.under} hues under 3:1 (worst ${dark.worst})`);
+  assert.ok(dark.worst >= 3, `dark worst is ${dark.worst}`);
+  // AND THE DARK END CLEARS THE LIGHTER OF THE TWO DARK SURFACES TOO, which is the margin
+  // against a basemap tile that is not exactly the theme's paper.
+  const onPlate = sweep(BUS_MARK_LIGHTNESS_DARK, SURFACE_DARK);
+  assert.equal(onPlate.under, 0, `dark on --surface: ${onPlate.under} under (worst ${onPlate.worst})`);
+
+  /* AND NEITHER END WOULD DO ON ITS OWN, which is what makes the token necessary rather than
+     tidy. A stage that deleted the dark value and left the README's 38% everywhere would draw
+     188 of 360 hues under the floor on a dark map, and the mirror mistake is just as bad. */
+  const lightValueInDark = sweep(BUS_MARK_LIGHTNESS, PAPER_DARK);
+  assert.ok(
+    lightValueInDark.under > 150,
+    `the light value in the dark theme leaves ${lightValueInDark.under} hues under 3:1, which is why there are two`,
+  );
+  const darkValueInLight = sweep(BUS_MARK_LIGHTNESS_DARK, PAPER_LIGHT);
+  assert.ok(
+    darkValueInLight.under > 150,
+    `the dark value in the light theme leaves ${darkValueInLight.under} hues under 3:1`,
+  );
+
+  /* AND THE HUE IT REPLACES, MEASURED, because "muted" has to be worth something. routeColor's
+     own hsl(h, 75%, 40%) is what every bus arrow was drawn in before this stage, and on the
+     light paper it is stroked against it leaves a large minority of the hashed hues under the
+     floor. Both numbers move: the saturation is what makes the worst hues dark and the
+     lightness is what makes them close to the paper, so the sweep is given both. */
+  const raw = sweep(40, PAPER_LIGHT, 75);
+  assert.ok(raw.under > 100, `the unmuted hue leaves ${raw.under} hues under 3:1 (worst ${raw.worst})`);
+  // AND THE MUTED ONE IS STRICTLY BETTER AT THE SAME LIGHTNESS, which separates the two moves:
+  // lowering the saturation alone already rescues most of them.
+  assert.ok(sweep(40, PAPER_LIGHT).under < raw.under);
 });
 
 /* ---------------- PATH's station, which is the subway's local dot ---------------- */

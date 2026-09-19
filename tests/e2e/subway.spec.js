@@ -1796,7 +1796,11 @@ test("D2l. MR1's chrome and the status line are exactly where MR1 left them", as
   expect(chrome.note, "a healthy day still says nothing").toBe("");
   expect(chrome.noteIsError).toBe(false);
   expect(chrome.alertsFold, "the alerts strip still never folds").toBe(false);
-  expect(chrome.themeHidden, "the theme toggle is still hidden until MR4").toBe(true);
+  /* MR4 RELEASED IT, which is ruling R2's whole condition met: every mark on the map now
+     carries the paper casing or stroke the dark theme needs, so the toggle a rider can press
+     is the last piece. The assertion is INVERTED rather than deleted, because "the toggle is
+     reachable" is now the invariant and a future stage re-hiding it should fail here. */
+  expect(chrome.themeHidden, "MR4 released the theme toggle (ruling R2)").toBe(false);
   // Eighteen rows plus the one note is the nineteen a11y.spec.js A1x counts; MR2 restyled
   // three of these rows' glyphs in place and added none, which is what keeps that literal
   // and P1e's list of names both true without either one being edited.

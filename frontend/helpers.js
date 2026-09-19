@@ -2505,7 +2505,7 @@ function railStationSvg() {
    raise anything. */
 
 /* THE MUTED HASHED HUE (README: "Route colour is the existing hashed hue but muted:
-   hsl(h, 45%, 38%)").
+   hsl(h, 45%, 38%)"), AND ITS LIGHTNESS IS A TOKEN BECAUSE A DARK MAP NEEDS THE OTHER END.
 
    THE HUE IS routeColor's, UNCHANGED, and only the saturation and lightness move. That is
    what "the existing hashed hue" means and it is the property that matters: two buses on one
@@ -2514,15 +2514,51 @@ function railStationSvg() {
    A SECOND FUNCTION RATHER THAN A CHANGE TO routeColor, because routeColor is ALSO what the
    bus POPUP prints its route name in (systems/buses.js) and the popups are stage MR5's,
    pinned byte for byte by P1g. Muting routeColor itself would have moved a popup this stage
-   is not allowed to touch, which is exactly the kind of quiet reach the pins exist to catch. */
+   is not allowed to touch, which is exactly the kind of quiet reach the pins exist to catch.
+
+   WHY THE LIGHTNESS IS `var(--bus-mark-lightness)` AND NOT THE README'S 38%, MEASURED. A bus
+   route's colour is a HASH of its id, so "is this route's arrow legible" is not a question
+   about one colour, it is a question about all 360 hues. Against the light theme's paper
+   (#f3f2f2) the README's 38% is exactly right: every hue clears the 3:1 a mark owes, worst
+   3.16, where the 75%/40% it replaces leaves 147 of 360 under (worst 2.01). Against the DARK
+   theme's paper (#201e1d) the same 38% leaves 188 of 360 under 3:1, worst 1.62, because a
+   mid-dark fill on a dark surface is the G15 arithmetic all over again. And no single
+   lightness fixes both: 38% is perfect in light and worst in dark, 60% is perfect in dark
+   (worst 3.60 on --paper, 3.05 on --surface, zero hues under either) and leaves 219 of 360
+   under in light. The two ends are what the theme is for.
+
+   SO THE LIGHTNESS IS THE TOKEN AND THE HUE STAYS THE ROUTE'S. A custom property is
+   substituted before the value is parsed, so `hsl(329, 45%, var(--bus-mark-lightness))` is a
+   real colour in either theme and follows a swap through the cascade with NO rebuild, exactly
+   as the `var(--paper)` stroke beside it does. The README's 38% is unchanged: it is what
+   `--bus-mark-lightness` resolves to in the light theme, and it is written here as the var's
+   fallback so a context with no stylesheet (node, boards.test.js) still gets a real colour.
+
+   busMarkColorAt IS THE SAME FUNCTION WITH THE TOKEN RESOLVED, and it exists so the
+   measurement above can be RUN rather than quoted: frontend/families.test.js sweeps all 360
+   hues at both ends against both papers. Nothing in the app calls it. */
 const BUS_MARK_SATURATION = 45;
 const BUS_MARK_LIGHTNESS = 38;
+const BUS_MARK_LIGHTNESS_DARK = 60;
+const BUS_MARK_LIGHTNESS_TOKEN = `var(--bus-mark-lightness, ${BUS_MARK_LIGHTNESS}%)`;
+
+function busMarkHue(routeId) {
+  const hue = /^hsl\((\d+),/.exec(routeColor(routeId));
+  return hue ? Number(hue[1]) : null;
+}
 
 function busMarkColor(routeId) {
-  const base = routeColor(routeId);
-  const hue = /^hsl\((\d+),/.exec(base);
+  const hue = busMarkHue(routeId);
   // A route with no id gets routeColor's flat grey, which has no hue to mute.
-  return hue ? `hsl(${hue[1]}, ${BUS_MARK_SATURATION}%, ${BUS_MARK_LIGHTNESS}%)` : base;
+  return hue == null
+    ? routeColor(routeId)
+    : `hsl(${hue}, ${BUS_MARK_SATURATION}%, ${BUS_MARK_LIGHTNESS_TOKEN})`;
+}
+
+// The same colour with the token resolved, for measuring one theme's end of it.
+function busMarkColorAt(routeId, lightness) {
+  const hue = busMarkHue(routeId);
+  return hue == null ? routeColor(routeId) : `hsl(${hue}, ${BUS_MARK_SATURATION}%, ${lightness}%)`;
 }
 
 /* THE AIRTRAIN GUIDEWAY'S LINE, as options, for ferryDockStyle's reason: a polyline has no
@@ -4973,7 +5009,8 @@ if (typeof module !== "undefined" && module.exports) {
     segmentBearing, railTrainBearing, RAIL_HEX,
     railTagSvg, railTagChevronPath, railStationSvg, RAIL_STATION_BOX, RAIL_STATION_SQUARE,
     // MR4: the other four families' marks, pure so each state can be asked in node.
-    busMarkColor, BUS_MARK_SATURATION, BUS_MARK_LIGHTNESS,
+    busMarkColor, busMarkColorAt, busMarkHue, BUS_MARK_SATURATION,
+    BUS_MARK_LIGHTNESS, BUS_MARK_LIGHTNESS_DARK, BUS_MARK_LIGHTNESS_TOKEN,
     pathDiamondSvg, PATH_DIAMOND_BOX, PATH_DIAMOND_PATH,
     ferryHullSvg, FERRY_HULL_BOX, FERRY_HULL_PATH,
     ferryDockStyle, FERRY_DOCK_COLOR, FERRY_DOCK_RADIUS, FERRY_DOCK_STROKE,

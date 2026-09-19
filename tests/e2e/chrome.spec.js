@@ -273,9 +273,15 @@ test("D1g. the theme persists across a reload, and the page renders with storage
      which is every first visit and every private window. */
   await open(page);
 
-  // THE CONTROL IS OUT OF REACH, and that is asserted rather than assumed: a ruling that only
-  // lived in a comment would be undone by the next person who deleted the attribute.
-  await expect(page.locator("#theme-toggle")).toBeHidden();
+  /* MR4 PUT THE CONTROL IN REACH, which is ruling R2's condition met: the toggle shipped
+     hidden in MR1 because every mark on the map read below the 3:1 floor against the dark
+     basemap, and MR2, MR3 and MR4 are the stages that gave each of them its paper casing or
+     stroke. The assertion is INVERTED rather than deleted: "a rider can press this" is the
+     invariant now, and a later stage that re-hid it should fail here.
+
+     THE SPECS BELOW ALREADY DROVE THE BUTTON, not applyTheme, so nothing else in this test
+     changes: pressTheme clicks it, and it was reachable to Playwright while hidden. */
+  await expect(page.locator("#theme-toggle")).toBeVisible();
   const theme = () => page.locator("html").getAttribute("data-theme");
   const surface = () => page.evaluate(() => getComputedStyle(document.getElementById("panel")).backgroundColor);
 

@@ -166,21 +166,24 @@
            here, because a hard-coded key and the network disagreed in both directions. -->
       <div id="subway-key" class="hdr-fold" role="toolbar" aria-orientation="horizontal" aria-label="Focus a subway route"></div>
       <div id="hdr-actions">
-        <!-- THE THEME TOGGLE IS HIDDEN UNTIL MR4, BY RULING, and it is hidden rather than
-             deleted because everything behind it ships now and works.
-             WHY. The dark theme is chrome and tokens, which is MR1; the MARKS it has to sit
-             behind are MR2 through MR4. Measured on this branch: in the dark theme every Key
-             panel glyph reads between 1.11 and 2.63 against the surface, against the 3:1 a
-             mark owes, because those glyphs carry the map's own marker colours and were drawn
-             for an opaque white panel. The same arithmetic holds ON THE MAP, where the dark
-             basemap filter is MR1's and the markers are not: a rider who chose dark today
-             would get a map whose every mark reads at those ratios. The design's answer is
-             the paper casing and stroke it gives every mark, and that arrives with the marks.
-             WHAT STILL SHIPS: the token set, the tile filter, the persistence, and every test
-             of all three. The specs drive applyTheme() directly rather than this control, so
-             the machinery stays honest while the control stays out of a rider's reach.
-             MR4 deletes the `hidden` attribute and nothing else. -->
-        <button type="button" id="theme-toggle" hidden>Dark</button>
+        <!-- THE THEME TOGGLE IS RELEASED HERE, IN MR4, WHICH IS THE STAGE RULING R2 NAMED.
+             It shipped hidden in MR1 and the reason was measured, not cautious: in the dark
+             theme every Key panel glyph read between 1.11 and 2.63 against the surface where a
+             mark owes 3:1, because those glyphs carry the map's own marker colours and were
+             drawn for an opaque white panel, and THE SAME ARITHMETIC HELD ON THE MAP, whose
+             dark basemap filter was MR1's while the markers were not. Shipping the toggle then
+             would have handed a rider a theme that was legal in the chrome and illegal
+             everywhere else. The design's answer is the paper casing and stroke it gives every
+             mark, and MR2, MR3 and MR4 are the stages that give it: the subway's casing and
+             halo, the three rail families' casings and squares, and now PATH's diamond, the
+             ferry's hull and dock ring, AirTrain's square and the bus arrow and dot, every one
+             of them stroked in `var(--paper)` or repainted from it by the canvas registry.
+             So the attribute goes and nothing else does. What was already true stays true: the
+             label is the ACTION ("Dark" / "Light") and carries no aria-pressed, because a
+             toggle whose label moves with its state cannot also claim that state without
+             contradicting itself, which is ledger finding G7 and the reason D1g asserts the
+             ABSENCE of that attribute. -->
+        <button type="button" id="theme-toggle">Dark</button>
         <!-- A3, EXTENDED. This was the "Legend" button and it is now "Key", and it keeps
              its id, its aria-controls and its disclosure contract because three suites pin
              them. What MR1 extends: it is present at every width now (the design's row 1

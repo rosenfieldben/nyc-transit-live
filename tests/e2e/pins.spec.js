@@ -35,6 +35,7 @@ const path = require("node:path");
 const { test, expect } = require("@playwright/test");
 const { installMocks, json } = require("./mock");
 const fx = require("./fixtures/api");
+const { measureMarkContrast, bestPerFamily } = require("./contrast");
 
 const GOLDEN = path.join(__dirname, "fixtures", "mr_pins.json");
 const REGENERATE = !!process.env.MR_PINS_REGENERATE;
@@ -974,4 +975,53 @@ test("P4b2. the ferry's compound on a stale feed, which is where the two rules m
   expect(docked.drawn, "docked AND stale is both rules multiplied").toBeCloseTo(0.55 * 0.45, 5);
   expect(underWay.drawn, "under way AND stale is the contract's dimming alone").toBeCloseTo(0.45, 5);
   pin("ferry/compound-stale", measured);
+});
+
+/* ---------------- P4c: what every mark reads in the dark theme ---------------- */
+
+test("P4c. every marker family's contrast in BOTH themes, paint by paint", async ({ page }) => {
+  /* THE NUMBER LEDGER FINDING G15 ASKED FOR, RECORDED RATHER THAN SUMMARISED. G15 measured the
+     Key panel's glyphs in the dark theme at 1.11 to 2.63 against the surface and is the reason
+     `#theme-toggle` shipped hidden; MR4 releases it, so the same arithmetic has to be run on the
+     MAP's marks, and this is where its answers live.
+
+     A GOLDEN AND NOT ONLY A FLOOR. tests/e2e/theme.spec.js D5d asserts the floor: every family
+     clears 3:1 on the best paint it has. What a floor cannot say is WHICH paint is carrying a
+     family, and that is the interesting half, because two families clear it on their type or
+     their outline rather than on their fill:
+
+       - a subway train's route square reads 2.73 against the dark paper for the A trunk, and the
+         mark is carried by the white letter printed on it;
+       - a rail tag's body is the agency's own branch colour, and the darkest of them are carried
+         by the type and the outline the same way.
+
+     Neither is a defect of this stage and neither is this stage's to fix: those fills are
+     published colours, and MR3's finding N1 already set the principle that the feed's colour is
+     preferred and moved only where nothing else can work. What they ARE is a sentence a later
+     stage could change without noticing, so the numbers are a golden. A stage that moves a
+     published fill, or that changes which paint carries a mark, moves a row here and has to say
+     why.
+
+     BOTH THEMES, because the light theme's numbers are the control: a change that improved dark
+     by ruining light would move a row here rather than pass a dark-only floor.
+
+     THE MEASUREMENT IS tests/e2e/contrast.js, which states its own definition: the surface is
+     the theme's `--paper` (a tile is an image and no mark clears 3:1 against every possible
+     pixel), and a family is reported at its WORST mark rather than its average. */
+  await boot(page);
+  const measured = {};
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate((want) => applyTheme(want), theme);
+    await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+    const run = await measureMarkContrast(page);
+    // THE PREMISES, or this pin records an empty table: the surfaces are the theme's and every
+    // family is on the page.
+    expect(run.paper, `${theme}: the paper token`).toBe(
+      theme === "dark" ? "rgb(32, 30, 29)" : "rgb(243, 242, 242)",
+    );
+    const best = bestPerFamily(run);
+    expect(Object.keys(best).length, `${theme}: every family is measured`).toBe(10);
+    measured[theme] = best;
+  }
+  pin("contrast/marks", measured);
 });

@@ -459,31 +459,47 @@ test("D4f. a bus is an arrow when a heading is served and a dot when one is not"
   expect(dot.box).toBe("0 0 14 14");
   for (const row of [arrow, dot]) expect(row.stroke, "stroked in paper").toBe(PAPER);
 
-  /* THE MUTED HUE, ON THE PAGE. The route's hue is kept (two buses on one route are one
-     colour and two routes are two) and the saturation and lightness are the measured ones:
-     against light paper the old 75/40 left 147 of 360 hashed hues under the 3:1 a mark owes
-     and 45/38 leaves none. families.test.js holds that measurement; this asserts the page
-     draws what was measured, as a computed rgb rather than as the hsl string it was written
-     in, so a stylesheet that overrode it would fail here. */
+  /* THE MUTED HUE, ON THE PAGE, AND ITS LIGHTNESS IS A TOKEN. The route's hue is kept (two
+     buses on one route are one colour and two routes are two), the saturation is the design's
+     45%, and the LIGHTNESS is `var(--bus-mark-lightness)` because a bus route's colour is a
+     hash of its id and the answer differs per theme: 38% clears 3:1 for all 360 hues on light
+     paper and leaves 188 of them under on dark, and 60% is the mirror. helpers.js carries the
+     measurement and frontend/families.test.js runs it; what this asserts is that the page
+     draws the token form and that the light theme resolves it to the README's own value. */
   const hues = await page.evaluate(() => ({
     mark: busMarkColor("M15"),
     route: routeColor("M15"),
+    lightEnd: busMarkColorAt("M15", 38),
+    // The dot's bus is B46, a different route and so a different hue: comparing it against
+    // M15's colour would be comparing two routes and calling the difference a defect.
+    dotLightEnd: busMarkColorAt("B46", 38),
   }));
-  expect(hues.mark).toMatch(/^hsl\(\d+, 45%, 38%\)$/);
+  expect(hues.mark).toBe("hsl(329, 45%, var(--bus-mark-lightness, 38%))");
   expect(hues.mark, "muted, not the raw hashed hue").not.toBe(hues.route);
   // THE HUE IS THE SAME HUE, so a rider who learned a route's colour from its popup still
   // recognises its arrow. routeColor is untouched and still paints the popup and the route line.
   expect(/^hsl\((\d+),/.exec(hues.mark)[1]).toBe(/^hsl\((\d+),/.exec(hues.route)[1]);
-  expect(arrow.fill, "the drawn arrow is the muted hue the page computed").toBe(
-    await page.evaluate(() => {
+  /* AND THE DRAWN FILL IS THAT COLOUR RESOLVED, compared against the LIGHT END's literal
+     rather than against the token expression: if the custom property failed to resolve, the
+     fill would come back as the var's fallback or as nothing at all, and comparing the token
+     against itself could not tell. The probe is a throwaway span, so the comparison is the
+     browser's own parse of the same colour rather than a hex written in this file. */
+  const resolved = async (css) =>
+    page.evaluate((value) => {
       const probe = document.createElement("span");
-      probe.style.color = busMarkColor("M15");
+      probe.style.color = value;
       document.body.append(probe);
-      const value = getComputedStyle(probe).color;
+      const out = getComputedStyle(probe).color;
       probe.remove();
-      return value;
-    }),
+      return out;
+    }, css);
+  expect(arrow.fill, "the drawn arrow is the token resolved by the light theme").toBe(
+    await resolved(hues.lightEnd),
   );
+  expect(dot.fill, "and so is the dot, in its own route's hue").toBe(
+    await resolved(hues.dotLightEnd),
+  );
+  expect(arrow.fill, "two routes are two colours").not.toBe(dot.fill);
   for (const row of rows) expect(row.drawn, "a fresh bus is bright").toBe(1);
 });
 

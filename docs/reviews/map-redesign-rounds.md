@@ -1421,4 +1421,49 @@ executable files is comment text only and no outcome here can differ at the tip.
 
 ## Stage MR5: popups
 
-*Not started.*
+The last stage. The popup chrome, ONE vocabulary every system renders through, and the rule
+the whole stage turns on: **the words are the app's**. The Position row renders
+`positionQualifier`'s output and the `.fresh` footer the per-system freshness the app already
+computes; the README's `Live GPS | Scheduled, no GPS | Placed from arrivals` and
+`LIVE / UPDATED 12S AGO` are not typed anywhere.
+
+### The rulings this stage opened with
+
+Four, taken before any code was written, each because the design of record and the app
+disagreed and the disagreement was measured rather than argued.
+
+| | The question | The ruling |
+| --- | --- | --- |
+| **S1** | **Which form of `positionQualifier` does the Position row render?** The railroads compose their line inline in `systems/railroad.js` and print `position.compact` UNCONDITIONALLY; every other family calls the shared `positionLineHtml`, which prints `position.words` and prints NOTHING when `kind` is falsy. Measured across all fourteen position states, the two forms differ in exactly one family of rows (`placed`) and the presence rule differs for one (`reported`, fresh). | **`.words`, through one helper, and the silence rule is kept: an empty `.words` omits the row.** Two rider-visible strings change, both on the railroads, and both are the freshness contract reaching a surface that predated it: a `placed` row gains a word (`scheduled (no GPS)` to `scheduled position (no GPS)`) and a fresh GPS row stops printing `live GPS`, which is what every other family has always done. Recorded here as the before; the new string pin is taken AFTER the change and the retired markup pin keeps the before. |
+| **S2** | **What does the `.fresh` footer say when a feed is live?** The README wants `LIVE / UPDATED 12S AGO`. The app has no word for live: silence means current on every surface it owns (memo D9, and `D1e` pins that a healthy day's status note is empty). `feedDotState` computes exactly the three states the footer needs; `feedTooltip` carries their words but appends the strip button's own action. | **The footer's square is the feed strip's dot at the popup.** Present in all three states, no text when live, the app's own strings when stale or schedule-only, and its accessible name from the same helper the strip's dot uses, so the state is said one way on both surfaces. Nothing is coined. The state clause is lifted out of `feedTooltip` into a shared helper both call, so the two cannot drift. |
+| **S3** | **How does auto-pan clear the chrome?** The README's recipe is `autoPanPaddingTopLeft = [24, headerBottom + 12]`, `autoPanPaddingBottomRight = [110, 40]`, then `_adjustPan()`. **Measured on this app, the literal recipe is broken.** See the section below. | **Clamp each padding to what the measured map and popup can satisfy**, keep `panPopupClearOfChrome` as the authority for the real boxes and for post-paint growth, and stand down while `riderOwnsTheView`. The cap and the stand-down are pinned. The README carries an erratum beside its recipe. |
+| **S4** | **How does the Key explain the rail tag's head (finding F17)?** The map draws FOUR heads, not the three a first reading suggests: filled chevron, outlined chevron, outlined dot and a filled dot (a GPS fix that serves no bearing). | **Two rows, framed by AXIS rather than by shape.** One row for filled against outlined (the heading is trusted, or it is not), one for chevron against dot (a heading is served, or it is not). `A1x`, `D2l` and `P1e` move by two, recorded as before. |
+
+### The README's auto-pan recipe is measured broken on this app
+
+Recorded here and as an erratum in `docs/design/map-redesign/README.md`, because a recipe that
+is followed literally and then produces a defect is worse than one that says why it cannot be.
+
+**The first break: the padding has no viewport-fit guard and the correction cannot rescue it.**
+`#panel` is capped at `calc(100% - 72px)` (`style.css`), so with the Key open at 375x667 the
+header's bottom edge is 579 and the README's top padding is 592. Leaflet's own arithmetic is
+`i.y+e+o.y>s.y && (a = ...); i.y-a-n.y<0 && (a = ...)`, and **the second assignment overwrites
+the first**, so when the top and bottom paddings cannot both be honoured the top wins
+unconditionally. Measured: `_adjustPan()` then puts the popup at `top 592, bottom 718` on a
+667px map, 51px off the bottom edge. `popupClearingShift` returns **null**, correctly and
+uselessly: it is a collision solver and the popup is not colliding with anything, it is simply
+gone. The same arithmetic at 320x640 gives the same result, and `mobile.spec.js A6l` is the
+spec that proves the header really does reach that cap. Horizontally the paddings are
+unsatisfiable at phone widths too: `24 + 110` leaves 241px at 375 for a popup that is 256px at
+its own CSS floor, and Leaflet silently drops the right padding by the same last-write-wins.
+
+**The second break: Leaflet's padded autopan overrides the rider, and no spec would catch it.**
+The app's stated rule is that it does not tidy a position the rider chose (`riderOwnsTheView`,
+and "animate the journey, never the adjustment"). Leaflet's autopan has no such guard, and
+`popup.update()` runs it on every fifteen-second poll for every open vehicle popup. The
+README's padding grows the band in which that fires from a 5px strip to the whole header.
+Measured: after three rider drags the centre moved to 40.61903 with `riderOwnsTheView` true,
+and the next poll's `update()` put it back to 40.67322. **`layout.spec.js A4j` explicitly
+declines to assert against this** ("if Leaflet autopanned, the centre moved for a reason that
+is not this correction"), so widening the hole would have been invisible to the whole suite.
+

@@ -102,6 +102,23 @@ Leaflet popup restyle (`.leaflet-popup-content-wrapper`, `.leaflet-popup-tip`): 
 
 Auto-pan must clear the page chrome: on `popupopen`, measure the rendered header + alert strip bottom edge and set `autoPanPaddingTopLeft = [24, bottom + 12]`, `autoPanPaddingBottomRight = [110, 40]`, then call `_adjustPan()`.
 
+> **Erratum, MR5 (2026-09-19): the recipe above is measured broken on this app, and stage MR5
+> implements a clamped form of it.** Two measurements, both on the shipped frontend. (1) The
+> paddings carry no viewport-fit guard, and Leaflet's own arithmetic lets the TOP padding win
+> unconditionally when top and bottom cannot both be honoured. With the Key panel open at
+> 375x640 the header's bottom edge is 579, so the recipe asks for a top padding of 592 and
+> `_adjustPan()` puts the popup at `top 592, bottom 718` on a 667px map: 51px off the bottom.
+> The app's own `panPopupClearOfChrome` cannot rescue it, because that is a collision solver
+> and the popup is not colliding, it is off-screen. Horizontally `24 + 110` is unsatisfiable
+> below about 400px wide. (2) Leaflet's autopan has no equivalent of this app's
+> `riderOwnsTheView` guard, and `popup.update()` runs it every fifteen seconds for every open
+> vehicle popup, so the recipe's padding grows the band in which the map is yanked out from
+> under a rider from a 5px strip to the whole header. **What MR5 ships**: each padding clamped
+> to what the measured map and popup can satisfy, `panPopupClearOfChrome` kept as the authority
+> for the real boxes and for growth after the first paint, and the padding stood down while the
+> rider owns the view. The full measurements are in `docs/reviews/map-redesign-rounds.md` under
+> Stage MR5, ruling S3.
+
 Shared vocabulary (classes in `reference/map-redesign-v2.css`):
 - `.pk` kicker row: 600 10px uppercase, letter-spacing .1em, `--muted`, `flex; justify-content: space-between` (left: "Subway station", right: route bullets / direction / accessibility).
 - `.pt` title: 800 17px / 1.15, letter-spacing −.015em, with the route mark before the text (`.bul.lg` 24px bullet for subway, `.rtag` for commuter rail, `.sq` for bus/PATH/ferry).

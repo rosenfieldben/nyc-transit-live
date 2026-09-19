@@ -872,11 +872,12 @@ def build_njt_route_shapes(
 ) -> list[dict]:
     """Per-route representative polylines for NJ Transit Rail (15c).
 
-    Returns [{"route", "name", "color", "text_color", "polylines"}, ...] sorted by
-    route_id, mirroring build_railroad_route_shapes' keys and adding the two colour
-    fields this feed publishes. A pure transform over the already-parsed tables (no
-    zip read, no network), so the warmup builds it from what load_njt_static
-    already parsed rather than re-reading the archive.
+    Returns [{"route", "name", "short_name", "color", "text_color", "polylines"}, ...] sorted
+    by route_id, mirroring build_railroad_route_shapes' keys and adding the two colour fields
+    this feed publishes plus its route_short_name, which the railroads' feeds do not publish
+    at all (the LIRR's routes.txt has no such COLUMN). A pure transform over the
+    already-parsed tables (no zip read, no network), so the warmup builds it from what
+    load_njt_static already parsed rather than re-reading the archive.
 
     TWO STEPS, IN THIS ORDER, AND THE ORDER IS LOAD-BEARING.
 
@@ -927,6 +928,10 @@ def build_njt_route_shapes(
             {
                 "route": route_id,
                 "name": info.get("long_name") or info.get("short_name"),
+                # The short name ON ITS OWN, which `name` above cannot carry: that field is
+                # long-name-else-short-name and the long name is present on all twelve routes,
+                # so it is never the short one. The map's branch code is this.
+                "short_name": info.get("short_name"),
                 "color": info.get("color"),
                 "text_color": info.get("text_color"),
                 "polylines": kept,

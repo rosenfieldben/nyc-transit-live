@@ -17,6 +17,7 @@ const {
   railBranchPaint,
   railTagGeometry,
   railTagState,
+  railroadHollow,
   railTagSvg,
   railTagChevronPath,
   railStationSvg,
@@ -180,6 +181,37 @@ test("MR3 3.1: the table's dim column is the freshness contract's, at the thresh
     assert.equal(state.dim, staleAge(age), `age ${age}`);
     assert.equal(state.dim, markerOpacity(age) < 1, `age ${age} disagrees with markerOpacity`);
   }
+});
+
+test("MR3 3.1: the body is railroadHollow's answer, and row 6 is the only place it is not", () => {
+  /* ONE EXPRESSION OF THE BODY RULE, held by a test rather than by a comment. railTagState
+     CALLS railroadHollow, so this asserts the tie across every provenance and every `before`
+     the app can produce: an outlined body must mean hollow, and a solid body must mean not,
+     with the single documented exception. A copy of the rule inside railTagState would pass
+     every row of the table and fail here the first time either changed. */
+  const PROVENANCES = ["reported", "estimated", "placed", "retained", "unknown", undefined];
+  const BEFORES = [null, "reported", "estimated", "placed"];
+  let exceptions = 0;
+  for (const provenance of PROVENANCES) {
+    for (const before of BEFORES) {
+      for (const kind of ["", "aged", "estimated", "placed", "retained", "unknown"]) {
+        const row = { provenance };
+        const state = railTagState(row, before, kind, 5);
+        const hollow = railroadHollow(row, before);
+        if (kind === "unknown" && !hollow) {
+          // ROW 6: railroadHollow says solid (the provenance is `reported`) and the table says
+          // outlined. Counted rather than skipped, so the exception cannot quietly widen.
+          assert.equal(state.body, "outlined");
+          exceptions += 1;
+          continue;
+        }
+        assert.equal(state.body, hollow ? "outlined" : "solid", `${provenance}/${before}/${kind}`);
+      }
+    }
+  }
+  // Exactly the reported-and-retained-from-reported combinations, and nothing else, reach the
+  // exception: 4 befores for `reported` plus the one retained-from-reported case.
+  assert.equal(exceptions, 5);
 });
 
 /* ---------------- the code table ---------------- */

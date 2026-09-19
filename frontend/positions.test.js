@@ -714,11 +714,30 @@ test("6.3 isPlacedRailroad is gone, every sweep dims by the observation too, and
     assert.doesNotMatch(readFileSync(join(__dirname, name), "utf8"), called, name);
   }
   for (const name of files) assert.doesNotMatch(src(name), called, name);
-  // The railroad's glyph, glide, words and cross-link come from the served provenance.
+  /* The railroad's glyph, glide, words and cross-link come from the served provenance.
+
+     THE GLYPH'S CALL MOVED IN MR3 AND THE RULE DID NOT, so this follows the chain rather than
+     dropping the claim. railroadHollow used to be called from railroad.js directly, for a
+     16x16 square whose only variable was filled-or-hollow. The tag needs three decisions, so
+     railroad.js asks railTagState, and railTagState is what calls railroadHollow, keeping ONE
+     expression of "did this train report this position". Both links are asserted: railroad.js
+     must reach the table, and the table must still ask that helper. A copy of the rule inside
+     railTagState would pass the first and fail the second. */
   const railroad = src("railroad.js");
-  for (const call of ["railroadHollow(", "drawnFromPrediction(", "railroadAtItsStation(", "railroadPosition("]) {
+  for (const call of ["railTagState(", "drawnFromPrediction(", "railroadAtItsStation(", "railroadPosition("]) {
     assert.ok(railroad.includes(call), `railroad.js no longer calls ${call}`);
   }
+  const helpers = readFileSync(join(__dirname, "helpers.js"), "utf8");
+  const table = helpers.slice(helpers.indexOf("function railTagState("));
+  assert.match(
+    table.slice(0, table.indexOf("\n}\n")),
+    /railroadHollow\(/,
+    "railTagState no longer asks railroadHollow, so the body rule has a second home",
+  );
+  // AND NJ TRANSIT REACHES THE SAME TABLE. Its icon was a byte-for-byte copy of the
+  // railroad's hollow rect with no shared helper, so "one grammar for three families" is only
+  // true while this holds.
+  assert.ok(src("njt.js").includes("railTagState("), "njt.js draws its own glyph again");
   // EVERY STALE SWEEP DIMS BY THE OBSERVATION TOO, which is the site the animation tick
   // wakes when one observation crosses between polls: a sweep that dimmed by its
   // system's age alone would leave that marker bright.

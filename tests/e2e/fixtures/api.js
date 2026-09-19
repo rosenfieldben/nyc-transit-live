@@ -328,9 +328,21 @@ const railroadStops = () => [
   { system: "MNR", id: "1", name: "Grand Central", lat: 40.7527, lon: -73.9772 },
 ];
 
+/* THE TWO COLOUR FIELDS, as claude/railroad-route-colors added them and MR3 draws them: the
+   real values the live feeds publish for these two routes, hex with no "#", each with the
+   route_text_color the agency publishes beside it. Both of those inks are ILLEGIBLE on their
+   own colour (white on Babylon's green reads 3.71 and on Hudson's green 3.65), which is not a
+   quirk of this fixture but what the feeds actually serve, so these two rows exercise
+   railBranchPaint's recompute-the-ink branch on the live page rather than only in node. */
 const railroadRoutes = () => [
-  { system: "LIRR", route: "1", name: "Babylon Branch", polylines: [[[40.7, -73.8], [40.69, -73.6]]] },
-  { system: "MNR", route: "1", name: "Hudson", polylines: [[[40.9, -73.78], [41.0, -73.86]]] },
+  {
+    system: "LIRR", route: "1", name: "Babylon Branch", color: "00985F", text_color: "FFFFFF",
+    polylines: [[[40.7, -73.8], [40.69, -73.6]]],
+  },
+  {
+    system: "MNR", route: "1", name: "Hudson", color: "009B3A", text_color: "FFFFFF",
+    polylines: [[[40.9, -73.78], [41.0, -73.86]]],
+  },
 ];
 
 // A served prediction's contract pair (6.1): the provider's clock for it, and how it
@@ -439,13 +451,19 @@ const njtStops = () => [
 // Route 2 carries TWO polylines, which is what the backend's dedup leaves on a
 // branching line: the Hoboken leg and the New York Penn leg both reach a terminus
 // the other does not.
+/* short_name IS THE FEED'S route_short_name and the endpoint began serving it on
+   claude/mr3-rail, because the map's commuter rail tag prints a short branch code and the
+   brief's section 6 says NJ Transit's comes from that column rather than from a hand-written
+   table. text_color stays null on both, which is what the live feed publishes for all twelve
+   routes: the tag computes its own ink there, and that asymmetry with the railroads (which
+   publish one on every route) is exactly what railBranchPaint exists to carry. */
 const njtRoutes = () => [
   {
-    route: "9", name: "Northeast Corridor", color: "DD3439", text_color: null,
+    route: "9", name: "Northeast Corridor", short_name: "NEC", color: "DD3439", text_color: null,
     polylines: [[[40.734924, -74.164581], [40.7425, -74.07], [40.750568, -73.993519]]],
   },
   {
-    route: "2", name: "Montclair-Boonton Line", color: "E66859", text_color: null,
+    route: "2", name: "Montclair-Boonton Line", short_name: "MNBTN", color: "E66859", text_color: null,
     polylines: [
       [[40.734984, -74.027683], [40.79, -74.15], [40.86, -74.22]],
       [[40.750568, -73.993519], [40.79, -74.15], [40.86, -74.22]],

@@ -824,7 +824,47 @@ body,
   height: 18px;
 }
 
-/* Square railroad (LIRR / MNR) markers */
+/* ----- MR3: the commuter rail tag and the rail station square ----------------------------
+
+   THE SVG CARRIES ITS OWN width AND height (railTagSvg, railStationSvg), because a rail tag's
+   width depends on its branch code and a stylesheet cannot know it. So these rules set only
+   what the SVG cannot: that the marker box does not clip the glyph and that nothing in it
+   swallows a click meant for the track under it.
+
+   NO transition, deliberately. The tag's head is rotated by a transform on the path, and a
+   transition on it would sweep a chevron the long way round when a train's heading crosses
+   north between polls. The bus arrow has one and the ferry hull carries one for a rotation it
+   does not yet have; this is the one rotating mark that must not.
+
+   overflow visible, because the 1px paper backing on a solid tag is drawn at x -0.5 and is a
+   pixel wider than the viewBox on each side: that backing is what makes the tag legible on a
+   dark tile, and a clipped one would lose exactly the edge it exists for. */
+.rail-tag-marker svg,
+.rail-stn-marker svg {
+  overflow: visible;
+  display: block;
+}
+
+.rail-tag-marker svg text {
+  /* Archivo 800 at 8px, the design's type for both blocks. font-weight has to be on the text
+     element rather than inherited: an SVG text node does not take the page's body font stack
+     through the marker div, and Leaflet gives .leaflet-marker-icon no font at all. */
+  font: 800 8px var(--chrome-font);
+  letter-spacing: 0.01em;
+}
+
+/* The station square never takes a pointer event on its own shape: the click is the marker
+   div's, which the A2 floor below widens to 24px. Without this a click landing between the
+   8x8 rect and the 20x20 box would be swallowed by the svg and reach nothing. */
+.rail-stn-marker svg {
+  pointer-events: none;
+}
+
+/* Square railroad (LIRR / MNR) markers.
+   MR3 REPLACED THE 16px SQUARE WITH railTag, so this rule is now dead for LIRR and
+   Metro-North trains. It is kept because AirTrain's station square is still 14px and PATH's
+   diamond still 16, and MR4 is the stage that brings those to this family's shape; deleting
+   it now would leave the next stage guessing what the old sizes were. */
 .railroad-marker svg {
   width: 16px;
   height: 16px;
@@ -1485,6 +1525,32 @@ body,
 
 :root[data-labels="off"] .stn-label,
 :root[data-labels="off"] .stn-label.hub {
+  display: none;
+}
+
+/* ----- MR3: the commuter rail names, from zoom 11 ----------------------------------------
+
+   THEIR OWN ATTRIBUTE, not a third value on data-label-band, because the two bands overlap:
+   at zoom 14 both say "all" and one attribute cannot hold two answers. helpers.js's
+   railLabelBand decides it and paintZoomBand writes it beside the subway's.
+
+   FROM 11, THREE ZOOMS BEFORE THE SUBWAY SHOWS ALL OF ITS AND ONE BEFORE IT SHOWS ANY, and
+   the reason is density rather than importance: about 300 rail stations across the whole
+   region against 496 subway stations inside the city, so at 11 the rail names are readable
+   where the subway's would be a wall.
+
+   NEVER .hub. A hub is a subway transfer station by one predicate in helpers.js, and the
+   middle band is what reveals it; a rail station is not one and has no middle step, which is
+   why this is a pair of rules and not a trio.
+
+   THE NAMES TOGGLE COMES LAST AND AT MATCHING SPECIFICITY, exactly as the subway's pair
+   above: both selectors are (0,4,0) and source order does the rest. Put the off rule first
+   and a rail name would be unhideable. */
+:root[data-rail-label-band="all"] .stn-label.rail {
+  display: block;
+}
+
+:root[data-labels="off"] .stn-label.rail {
   display: none;
 }
 

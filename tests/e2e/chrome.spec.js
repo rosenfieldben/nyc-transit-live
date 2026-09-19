@@ -176,7 +176,7 @@ test("D1d. the trailing note is staleness()'s text, character for character", as
       return json(route, body);
     };
   });
-  await expect(page.locator(".railroad-marker")).toHaveCount(136);
+  await expect(page.locator(".rail-lirr, .rail-mnr")).toHaveCount(136);
 
   const note = page.locator("#status");
   await expect(note).toHaveText(

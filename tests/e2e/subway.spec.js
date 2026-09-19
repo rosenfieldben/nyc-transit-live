@@ -863,9 +863,12 @@ test("D2z. a network with no interchange anywhere shows every name from 13, not 
      for the degraded backend, where stop_times.txt is missing and every station lists no routes
      at all: same shape, no hub to reveal, and "hubs from 12" correctly showing nothing. */
   await open(page);
+  // THE SUBWAY'S NAMES ONLY, for the reason D2j's copy of this helper states: MR3 gave the
+  // commuter rail families their own band from zoom 11 on the same pane, so an unscoped count
+  // reads their five names here and calls a hubless SUBWAY network broken.
   const painted = () =>
     page.evaluate(() =>
-      [...document.querySelectorAll(".stn-label")]
+      [...document.querySelectorAll(".stn-label:not(.rail)")]
         .filter((el) => getComputedStyle(el).display !== "none")
         .map((el) => el.textContent)
         .sort(),
@@ -879,8 +882,8 @@ test("D2z. a network with no interchange anywhere shows every name from 13, not 
     "this world has no interchange, which is the premise",
   ).toBe(0);
   expect(
-    await page.evaluate(() => document.querySelectorAll(".stn-label").length),
-    "and it does have station labels",
+    await page.evaluate(() => document.querySelectorAll(".stn-label:not(.rail)").length),
+    "and it does have SUBWAY station labels, which is what a hubless subway network means",
   ).toBeGreaterThan(0);
 
   await setZoom(11);
@@ -1139,6 +1142,11 @@ test("D2u. the subway's ribbons draw under every other family's lines, whatever 
       subway: subwayRibbons.map((r) => r.layer),
       lirr: group(() => railroadLineLayer("LIRR")),
       mnr: group(() => railroadLineLayer("MNR")),
+      // NJ TRANSIT WAS MISSING FROM THIS LIST until MR3, which is the stage that made it
+      // matter: its lines were a single 2.5px hairline and are now a casing and a line, so it
+      // is one of the three families that can erase a neighbour and one of the three that can
+      // be erased. A family absent from this map reads as an empty list and asserts nothing.
+      njt: group(() => njtRouteLines),
       path: group(() => pathRouteLines),
       ferry: group(() => ferryRouteLines),
       airtrain: group(() => airtrainRouteLinesLayer),
@@ -1177,7 +1185,7 @@ test("D2u. the subway's ribbons draw under every other family's lines, whatever 
      empty list. The fixture world serves LIRR and Metro-North branches and PATH and ferry
      routes, so this is a premise assertion rather than a hope; it fails loudly if a future
      fixture stops serving them and quietly turns this spec into nothing. */
-  const others = ["lirr", "mnr", "path", "ferry", "airtrain"].filter((f) => order.counts[f] > 0);
+  const others = ["lirr", "mnr", "njt", "path", "ferry", "airtrain"].filter((f) => order.counts[f] > 0);
   expect(others.length, `no other family drew a line: ${JSON.stringify(order.counts)}`).toBeGreaterThan(0);
   for (const family of others) {
     expect(order.panes[family], `${family} keeps the shared canvas`).not.toContain("subwayLinePane");
@@ -1194,25 +1202,32 @@ test("D2u. the subway's ribbons draw under every other family's lines, whatever 
     const probe = L.layerGroup().addTo(map);
     for (let round = 0; round < 8; round++) {
       probe.clearLayers();
-      const families = ["subway", "railroad", "path", "ferry"];
+      // "rail" stands for the three commuter families, which draw one grammar since MR3; the
+      // two thin families are what a casing can erase.
+      const families = ["subway", "rail", "path", "ferry"];
       for (let i = families.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [families[i], families[j]] = [families[j], families[i]];
       }
       const built = [];
       for (const family of families) {
-        const line = L.polyline(
-          [
-            [40.75, -73.99],
-            [40.76, -73.98],
-          ],
-          {
-            weight: family === "subway" ? 6.5 : 2.5,
-            renderer: family === "subway" ? subwayLineRenderer : lineRenderer,
-          },
-        );
+        /* THE CASING IS PART OF THE PROBE SINCE MR3, because it is the thing that erases. The
+           subway's is 6.5px and the three rail families' is 5px, drawn in --paper at 0.9 ahead
+           of each own line, and on one canvas a casing that wide arriving after a thin line
+           covers it. So each family is drawn the way it really is: subway and rail as a pair,
+           the thin families as one line. What this asserts is unchanged, that the subway is on
+           the lower pane whatever the order; what it now also shows is that the rail casings
+           and the thin families share ONE pane, which is the cost D3e and the ledger record. */
+        const casing = family === "subway" ? 6.5 : family === "rail" ? 5 : null;
+        const renderer = family === "subway" ? subwayLineRenderer : lineRenderer;
+        const at = [
+          [40.75, -73.99],
+          [40.76, -73.98],
+        ];
+        if (casing) L.polyline(at, { weight: casing, color: "var(--paper)", opacity: 0.9, renderer }).addTo(probe);
+        const line = L.polyline(at, { weight: 2.5, renderer });
         line.addTo(probe);
-        built.push({ family, pane: line.options.renderer.options.pane ?? "overlayPane" });
+        built.push({ family, pane: line.options.renderer.options.pane ?? "overlayPane", casing });
       }
       // The subway's line is on the lower pane no matter where in the order it was added.
       const subway = built.find((b) => b.family === "subway");
@@ -1233,6 +1248,32 @@ test("D2u. the subway's ribbons draw under every other family's lines, whatever 
   }
   // And the shuffle really did shuffle, so this is a claim about order rather than one order.
   expect(new Set(shuffles.map((r) => r.order)).size, "the orders must actually differ").toBeGreaterThan(1);
+
+  /* AND THE ONE THING THIS PIN NOW SHOWS RATHER THAN GUARANTEES. MR3 put a 5px paper casing on
+     the SHARED canvas for the three rail families, which the operator specified ("casing and
+     line per branch on the existing canvas"). The subway's pane makes the subway's casing safe
+     in every permutation, and nothing makes the rail casing safe against PATH's 3.5px line, the
+     AirTrain's 3px or the ferry's 2px: on one canvas the later arrival wins, and the eleven
+     static loaders land in whatever order their responses do. So the relation is asserted as
+     what it is, all four non-subway families on one pane, and the exposure is written down in
+     docs/reviews/map-redesign-rounds.md as a finding with the measurement rather than left for
+     someone to meet on a map. A pane for the rail families, at 395, would close it in one line
+     if the operator wants it closed. */
+  const sharing = await page.evaluate(() => {
+    const paneOf = (layer) => layer.options.renderer?.options.pane ?? "overlayPane";
+    const rail = [...railroadLineLayer("LIRR").getLayers(), ...railroadLineLayer("MNR").getLayers()];
+    const thin = [...pathRouteLines.getLayers(), ...ferryRouteLines.getLayers()];
+    return {
+      railPanes: [...new Set(rail.map(paneOf))],
+      thinPanes: [...new Set(thin.map(paneOf))],
+      railCasings: rail.filter((l) => l.options.weight === 5).length,
+      thinnest: Math.min(...thin.map((l) => l.options.weight)),
+    };
+  });
+  expect(sharing.railCasings, "the rail families draw a casing per branch").toBeGreaterThan(0);
+  expect(sharing.railPanes, "on the shared canvas, as specified").toEqual(["overlayPane"]);
+  expect(sharing.thinPanes, "and so do the thin families").toEqual(["overlayPane"]);
+  expect(sharing.thinnest, "which are thinner than the casing over them").toBeLessThan(5);
 });
 
 /* ---------------- the ribbons ---------------- */
@@ -1447,9 +1488,15 @@ test("D2j. station names appear at the right zooms, hubs first, and the Names to
      attribute written correctly and a rule that never matched would pass an attribute check
      and show every name in the city at zoom 3. */
   await open(page, withLocalStation, { stations: 18 });
+  /* THE SUBWAY'S NAMES ONLY, which is what this spec is about. MR3 put the commuter rail
+     families on the same label pane with their OWN band (from zoom 11) and their own pair of
+     rules, so an unscoped count reads five rail names at zoom 11 and calls the subway's band
+     broken. `:not(.rail)` is the scope, and tests/e2e/rail.spec.js is where the rail band's own
+     numbers are held; the two bands overlap on purpose and neither one may be asserted through
+     the other. */
   const painted = () =>
     page.evaluate(() =>
-      [...document.querySelectorAll(".leaflet-tooltip")]
+      [...document.querySelectorAll(".leaflet-tooltip:not(.rail)")]
         .filter((el) => getComputedStyle(el).display !== "none")
         .map((el) => el.textContent)
         .sort(),

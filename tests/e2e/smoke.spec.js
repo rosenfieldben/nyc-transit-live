@@ -51,7 +51,10 @@ test.afterEach(async ({ page }) => {
 // global lexical scope, which page.evaluate reaches by bare name.
 const busMarkers = (page) => page.locator(".bus-marker");
 const trainMarkers = (page) => page.locator(".train-marker");
-const railroadMarkers = (page) => page.locator(".railroad-marker");
+// MR3 replaced the 16px square with railTag, which carries a per-family class so the two
+// railroads can still be counted apart from NJ Transit (two feeds, two freshness states,
+// and several specs below turn on exactly that difference).
+const railroadMarkers = (page) => page.locator(".rail-lirr, .rail-mnr");
 
 /* MR1: THE COUNTS MOVED FROM THE STATUS LINE TO THE FEED STRIP, one per feed instead of one
    line of six. Every "N buses" assertion below became this: the same number, read where a
@@ -60,7 +63,7 @@ const railroadMarkers = (page) => page.locator(".railroad-marker");
 const feedCount = (page, key) => page.locator(`#toggle-${key} .feed-count`);
 const pathMarkers = (page) => page.locator(".path-marker");
 const ferryMarkers = (page) => page.locator(".ferry-marker");
-const njtMarkers = (page) => page.locator(".njt-marker");
+const njtMarkers = (page) => page.locator(".rail-njt");
 const popup = (page) => page.locator(".leaflet-popup-content");
 
 // Wait until the first poll and the one-shot static loads (stations, route names)
@@ -1409,7 +1412,7 @@ test("C2a. railroad partial outage: MNR dims and ages while LIRR stays live (C2)
     );
   ctx.overrides.railroads = (route, fixtures) => json(route, fixtures.railroadsWithSystems({ data: gliding(fixtures) }));
   await page.clock.runFor(15_000);
-  expect(await markerOpacities(page, ".railroad-marker")).toEqual(["1", "1"]);
+  expect(await markerOpacities(page, ".rail-lirr, .rail-mnr")).toEqual(["1", "1"]);
   await expect(status).not.toHaveClass(/error/);
   // The healthy system's PLACED train still glides on the live clock, so the freeze
   // machinery cannot have been wired in a way that pins a fresh system too, nor, since
@@ -1444,7 +1447,7 @@ test("C2a. railroad partial outage: MNR dims and ages while LIRR stays live (C2)
     .toEqual({ "MNR|mnr-gps-1": 0.45, "LIRR|lirr-placed-1": 1 });
   // A GPS train is dimmed exactly like a placed one: both are drawn from the same
   // feed, so a stale MNR dims its live-GPS trains too.
-  expect((await markerOpacities(page, ".railroad-marker")).sort()).toEqual(["0.45", "1"]);
+  expect((await markerOpacities(page, ".rail-lirr, .rail-mnr")).sort()).toEqual(["0.45", "1"]);
 
   // The status line NAMES MNR and leaves LIRR out of it. The age is MNR's own: the
   // response was served 400s after MNR last decoded and the client has been sitting
@@ -1493,7 +1496,7 @@ test("C2a. railroad partial outage: MNR dims and ages while LIRR stays live (C2)
       data: fixtures.railroads().data,
     });
   await page.clock.fastForward(15_000);
-  await expect.poll(() => markerOpacities(page, ".railroad-marker")).toEqual(["0.45", "0.45"]);
+  await expect.poll(() => markerOpacities(page, ".rail-lirr, .rail-mnr")).toEqual(["0.45", "0.45"]);
   await expect(status).toContainText("railroad: as of"); // whole-source wording
 });
 
@@ -1852,15 +1855,15 @@ test("33. NJ Transit: lines, station squares, and two ADDED trips that share an 
   // index with route 2 keeping BOTH of its variants (the branch case the backend's
   // dedup exists to preserve).
   // Counted through the class the stylesheet sizes, not only through the layer, so
-  // .njt-station-marker is read by a spec rather than merely declared.
-  await expect(page.locator(".njt-station-marker")).toHaveCount(3);
+  // .rail-njt-stn is read by a spec rather than merely declared.
+  await expect(page.locator(".rail-njt-stn")).toHaveCount(3);
   // AND EVERY ONE OF THEM IS NAMED, which the A2d shape already asserts for AirTrain
   // and which nothing asserted here: applyMarkerName early-returns on a falsy name, so
   // a station square with no name gets no role, no aria-label and no aria-hidden on its
   // svg, and axe does not flag a bare div. A review round blanked njtStationName's
   // argument and all 187 node and 174 e2e tests stayed green. This is the surface it
   // matters most on: at New York Penn Station an LIRR circle sits on the same pixel.
-  const stationNames = await page.$$eval(".njt-station-marker", (els) =>
+  const stationNames = await page.$$eval(".rail-njt-stn", (els) =>
     els.map((el) => ({ aria: el.getAttribute("aria-label"), role: el.getAttribute("role") })),
   );
   expect(stationNames).toHaveLength(3);
@@ -1884,7 +1887,13 @@ test("33. NJ Transit: lines, station squares, and two ADDED trips that share an 
   }));
   expect(built).toEqual({
     stations: 3,
-    lines: 3, // one polyline for route 9, two for route 2
+    /* SIX LAYERS FOR THREE BRANCH VARIANTS, and the doubling is MR3: every branch is now a
+       CASING plus a LINE (README: "casing paper weight 5 opacity .9 plus line weight 2.5
+       opacity 1"), added back to back so a branch's own casing can never land after its own
+       line on the shared canvas and erase it. One polyline for route 9 and two for route 2,
+       times two. Asserted as the doubled number rather than divided back down, because the
+       casing is a real layer a rider sees and a count that hid it would not notice its loss. */
+    lines: 6,
     indexed: ["2", "9"],
     variantsOn2: 2,
     colorOf9: "#DD3439",
@@ -1901,12 +1910,24 @@ test("33. NJ Transit: lines, station squares, and two ADDED trips that share an 
   await expect(popup(page)).toContainText("To Meadowlands");
   await expect(popup(page)).toContainText("scheduled position (no GPS)");
   expect(await popup(page).textContent()).not.toContain("undefined");
-  // Its marker carries the neutral fallback rather than a missing stroke.
+  /* ITS MARKER CARRIES THE NEUTRAL, rather than a blank or a missing attribute, which is what
+     amendment (a) is about. WHERE the neutral lives moved in MR3: the 16x16 square carried the
+     route colour as its `stroke`, and the tag carries it as the FILL of the branch block, or,
+     on an outlined body, of the 2.5px stripe along that block's bottom. Every NJ Transit train
+     has an outlined body (this feed has no vehicle positions at all, so none can earn the
+     solid one), so the stripe is where to read it, and it is the LAST rect in the svg.
+
+     AND THE VALUE MOVED TOO, from #4a4e69 to #6d6e71, which is the README's stated neutral for
+     an unknown route. TWO NEUTRALS ARE ON SCREEN FOR ROUTE 17 UNTIL MR5: the tag and the line
+     take the design's #6d6e71 and the popup head still takes njtColor's older #4a4e69, because
+     the popups are stage MR5 and P1k pins this one byte for byte. The pin is what proves the
+     popup did not move here, and MR5 is where the two converge. */
   expect(
-    await page.evaluate(() =>
-      njtTrainRecords.get("njt:9001").marker.getElement().querySelector("rect").getAttribute("stroke"),
-    ),
-  ).toBe("#4a4e69");
+    await page.evaluate(() => {
+      const rects = njtTrainRecords.get("njt:9001").marker.getElement().querySelectorAll("rect");
+      return rects[rects.length - 1].getAttribute("fill");
+    }),
+  ).toBe("#6d6e71");
   // Closed on the marker rather than with Escape: at 1280 the station panel is
   // docked open, so focus is inside the PANEL and the Escape ladder takes the panel
   // rung, leaving this popup up and the next assertion reading two at once.
@@ -2304,7 +2325,7 @@ test("36. an NJT marker born from retained data is dim on its first frame, and a
 
   // Every marker is already dim, retention and all, and the rendered inline style is
   // what a rider sees.
-  expect(await page.$$eval(".njt-marker", (els) => [...new Set(els.map((el) => el.style.opacity || "1"))]))
+  expect(await page.$$eval(".rail-njt", (els) => [...new Set(els.map((el) => el.style.opacity || "1"))]))
     .toEqual(["0.45"]);
 
   // AND THE DIMMING IS DONE BY THE CONSTRUCTOR, not by the sweep behind it. Drives
@@ -2561,7 +2582,21 @@ const f01Markers = (page) =>
         provenance: t.provenance,
         age: typeof t.observed_at === "number" ? servedAt - t.observed_at + Math.max(now - servedAt, 0) : null,
         opacity: record.marker.options.opacity ?? 1,
-        hollow: !!record.marker.getElement().querySelector('rect[fill="#fff"]'),
+        /* THE BODY AND THE HEAD, READ AS THE DECISIONS THEY ARE. This was
+           `querySelector('rect[fill="#fff"]')`, a sniff at a paint value, which MR3's tag
+           broke twice over: its outlined body paints with `style="fill: var(--paper)"` so
+           there is no #fff to find, and the body is now only one of the three things the mark
+           says. railTagSvg writes the state's own words onto the svg's class, so this reads
+           the answer rather than an incidental fill, and gains the head for free. `hollow` is
+           kept as the old field's name for the assertions below: an outlined body is exactly
+           what it used to mean. */
+        body: record.marker.getElement().querySelector("svg.rail-tag")?.classList.contains("rail-tag-outlined")
+          ? "outlined"
+          : "solid",
+        head: record.marker.getElement().querySelector("svg.rail-tag")?.classList.contains("rail-head-filled")
+          ? "filled"
+          : "outlined",
+        hollow: !!record.marker.getElement().querySelector("svg.rail-tag-outlined"),
         name: record.marker._a11yName,
         popup: railroadPopup(record),
       };
@@ -2632,6 +2667,29 @@ test("C2j. F01's acceptance, map half: no old fix reads as live, a fresh predict
   }
   // The oldest fix on the map is 593 s, "10m": the fifteen-hour one is not drawn at all.
   expect(Math.max(...lirr.filter((m) => m.provenance === "reported").map((m) => m.age))).toBe(593);
+
+  /* AND THE BODY AND THE HEAD, ACROSS ALL 136 MARKERS, which is what MR3 made readable and is
+     the point of the brief's 3.1 table. An `estimated` train is an OUTLINED body with a FILLED
+     head ("we know where it is going but not exactly where it is"), a `placed` one is outlined
+     and outlined, and a `reported` one is solid and filled. BEFORE MR3 THE FIRST TWO WERE THE
+     SAME MARK, so this world, which is the acceptance world for exactly that distinction,
+     could not see it at all; now it can. */
+  const byProvenance = (p) => markers.filter((m) => m.provenance === p);
+  for (const m of byProvenance("reported")) {
+    expect([m.body, m.head], `${m.key} reported`).toEqual(["solid", "filled"]);
+  }
+  for (const m of byProvenance("estimated")) {
+    expect([m.body, m.head], `${m.key} estimated`).toEqual(["outlined", "filled"]);
+  }
+  for (const m of byProvenance("placed")) {
+    expect([m.body, m.head], `${m.key} placed`).toEqual(["outlined", "outlined"]);
+  }
+  // A PREMISE, because three empty loops would assert nothing: the capture's own populations,
+  // which sum to the 136 the ladder drew.
+  expect(byProvenance("reported").length).toBe(71);
+  expect(byProvenance("estimated").length).toBe(6);
+  expect(byProvenance("placed").length).toBe(59);
+  expect(71 + 6 + 59).toBe(markers.length);
   // And the 27 fresh fixes are exactly what they always were: filled, bright, "live GPS".
   const fresh = lirr.filter((m) => m.provenance === "reported" && m.age <= 90);
   expect(fresh).toHaveLength(27);
@@ -2914,7 +2972,21 @@ test("C2n. a retained train is drawn as it was before: an LIRR placement stays h
       const at = record.marker.getLatLng();
       return {
         at: [at.lat, at.lng],
-        hollow: !!record.marker.getElement().querySelector('rect[fill="#fff"]'),
+        /* THE BODY AND THE HEAD, READ AS THE DECISIONS THEY ARE. This was
+           `querySelector('rect[fill="#fff"]')`, a sniff at a paint value, which MR3's tag
+           broke twice over: its outlined body paints with `style="fill: var(--paper)"` so
+           there is no #fff to find, and the body is now only one of the three things the mark
+           says. railTagSvg writes the state's own words onto the svg's class, so this reads
+           the answer rather than an incidental fill, and gains the head for free. `hollow` is
+           kept as the old field's name for the assertions below: an outlined body is exactly
+           what it used to mean. */
+        body: record.marker.getElement().querySelector("svg.rail-tag")?.classList.contains("rail-tag-outlined")
+          ? "outlined"
+          : "solid",
+        head: record.marker.getElement().querySelector("svg.rail-tag")?.classList.contains("rail-head-filled")
+          ? "filled"
+          : "outlined",
+        hollow: !!record.marker.getElement().querySelector("svg.rail-tag-outlined"),
         provenance: record.latest.provenance,
         popup: railroadPopup(record),
         name: record.marker._a11yName,
@@ -2946,6 +3018,12 @@ test("C2n. a retained train is drawn as it was before: an LIRR placement stays h
   await expect.poll(async () => (await read()).provenance).toBe("retained");
   const held = await read();
   expect(held.hollow, "still the glyph that says no GPS").toBe(true);
+  // AND STILL AN OUTLINED HEAD, which is the half the old fill sniff could not see: a retained
+  // PLACEMENT never had a trusted heading, so retention must not hand it one.
+  expect([held.body, held.head], "a retained placement is drawn as the placement it was").toEqual([
+    "outlined",
+    "outlined",
+  ]);
   expect(held.at, "not jumped to its next stop").not.toEqual(JAMAICA);
   expect(held.popup, "no link to a station it has not reached").not.toContain("Also here");
   expect(held.popup).toContain("showing last known");

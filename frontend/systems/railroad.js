@@ -8,6 +8,18 @@ const railroadRouteIndex = new Map();
 // `system|route_id` -> rider-facing route name (e.g. "Babylon Branch"), from
 // /api/railroad-routes; used to label the railroad train and station popups.
 const railroadRouteNames = new Map();
+/* `system|route_id` -> { color, textColor }, the agency's own two colours as
+   /api/railroad-routes serves them (hex with no leading "#", null when the feed leaves a
+   column blank). MR3 draws the branch lines and the train tags from these instead of from
+   railroadColor's hash, which was never the agency's palette and could not be: it was a hash
+   of the route id, so two branches sharing one published colour got two different ones and a
+   branch whose id moved changed colour.
+
+   SEPARATE FROM railroadRouteNames RATHER THAN A FIELD ON IT, because the two are filled
+   under different conditions: a name is set only `if (route.name)` and a colour is set for
+   every route, so folding them into one map would mean either dropping the colour of a
+   nameless route or inventing a name to hold it. */
+const railroadRouteColors = new Map();
 
 async function loadRailroadRoutes() {
   let routes;
@@ -27,29 +39,72 @@ async function loadRailroadRoutes() {
   // never a fuller one. Only a fully empty payload means "ask again later".
   if (!routes.length) return false;
   for (const route of routes) {
+    const key = `${route.system}|${route.route}`;
     // Key by (system, route): LIRR and MNR route ids collide, so route_id alone
     // would merge two systems' geometry. Matches the endpoint's {system, route,
-    // name, polylines} shape and the (system, route_id) lookup in applyRailroads.
+    // name, color, text_color, polylines} shape and the (system, route_id) lookup in
+    // applyRailroads. THE TWO COLOUR FIELDS ARRIVED WITH claude/railroad-route-colors;
+    // this comment said {system, route, name, polylines} until MR3, which is the stale
+    // sentence that branch deliberately left for this stage to correct.
     railroadRouteIndex.set(
-      `${route.system}|${route.route}`,
+      key,
       route.polylines.map((points) => ({ points, cum: polylineCumLengths(points) })),
     );
     // The rider-facing route name (e.g. "Babylon Branch"), for the train and
     // station-arrivals popups; only routes with geometry reach here (see the
     // endpoint's KNOWN GAP), which is fine since a geometry-less route has no
     // trains to label either.
-    if (route.name) railroadRouteNames.set(`${route.system}|${route.route}`, route.name);
+    if (route.name) railroadRouteNames.set(key, route.name);
+    // The agency's own colours, for every route including a nameless one.
+    railroadRouteColors.set(key, { color: route.color ?? null, textColor: route.text_color ?? null });
+    const branch = railBranchColor(route.color);
     for (const points of route.polylines) {
+      /* CASING THEN LINE, IN THAT ORDER AND AS ONE PAIR (README: "casing paper weight 5
+         opacity .9 plus line weight 2.5 opacity 1, round caps"). The casing is what makes a
+         branch readable where it runs beside another one, and the pair is added back to back
+         so that on the shared canvas, which draws in INSERTION order, a branch's own casing
+         can never land after its own line and erase it.
+
+         ON THE SHARED lineRenderer, WHICH IS WHAT THE OPERATOR SPECIFIED for this stage, and
+         it is worth naming what that costs: MR2's F6 found that a 6.5px paper casing drawn
+         after a thin line ERASES it, which is why the subway got a pane of its own. This 5px
+         casing is on the same canvas as PATH's 3.5px line, the AirTrain's 3px and the ferry's
+         2px, and the loaders race, so a rail casing CAN land after one of those and cover it
+         where they overlap. D2u now measures that rather than leaving it to be discovered,
+         and the ledger's round entry states it as a finding with the measurement. */
       L.polyline(points, {
-        color: railroadColor(route.route),
+        color: "var(--paper)",
+        weight: 5,
+        opacity: 0.9,
+        lineCap: "round",
+        interactive: false,
+        renderer: lineRenderer,
+      }).addTo(railroadLineLayer(route.system));
+      L.polyline(points, {
+        color: branch,
         weight: 2.5,
-        opacity: 0.5,
+        opacity: 1,
+        lineCap: "round",
         interactive: false,
         renderer: lineRenderer,
       }).addTo(railroadLineLayer(route.system));
     }
   }
   return true;
+}
+
+// A branch's code and paint, from what /api/railroad-routes served for it. One lookup, so the
+// tag, the popup and anything later cannot resolve a branch two ways. A route the endpoint
+// never carried (no geometry, so no entry) falls back to its id in the neutral colour, which
+// railBranchCode and railBranchColor already do.
+function railroadBranch(system, routeId) {
+  const key = `${system}|${routeId}`;
+  const paint = railroadRouteColors.get(key) ?? { color: null, textColor: null };
+  return {
+    code: railBranchCode(system, routeId, railroadRouteNames.get(key) ?? null),
+    color: paint.color,
+    textColor: paint.textColor,
+  };
 }
 
 
@@ -66,18 +121,36 @@ async function loadRailroadStations() {
   // state the lenient backend warmup will not revisit, so non-empty is success.
   if (!stations.length) return false;
   for (const station of stations) {
-    // Same pane/renderer as subway stations (click priority + cheap canvas), but
-    // visually distinct: heavier, darker slate stroke and a slightly smaller
-    // radius over the shared white fill. Keyed by (system, id) in the fetch url
-    // because LIRR and MNR stop_id namespaces can collide.
-    const marker = L.circleMarker([station.lat, station.lon], {
-      radius: 3.5,
-      color: "#334155",
-      weight: 2.5,
-      fillColor: "#fff",
-      fillOpacity: 1,
-      renderer: stationRenderer,
-    });
+    /* MR3: THE PAPER SQUARE, so a square always means regional rail and a circle always
+       means subway. An L.marker with a 10x10 shape inside a 20x20 box, on stationPane by the
+       marker's OWN pane option rather than through a canvas renderer, which is the one thing
+       that changes about where it draws: it was a canvas circleMarker whose options.pane was
+       Leaflet's overlayPane default and whose renderer put it on stationPane, and it is now
+       an L.marker on stationPane directly. The pane it DRAWS on is the same either way, which
+       is what the click order and the z-index depend on and what pin P3a holds.
+
+       THROUGH labeledMarker, WHICH markers.test.js REQUIRES OF EVERY L.marker IN THE APP, and
+       the first draft of this did not: it called L.marker directly on the reasoning that a
+       station carries no accessible name by design. That reasoning is the SUBWAY's, and it
+       holds there because a canvas circleMarker has no element to name. This square is an
+       L.marker, so it has DOM either way, and a nameless div with its role stripped is worse
+       than a named one. NJ Transit's three station squares have gone through the factory
+       since 15c for exactly this reason; the guard caught the divergence in one run.
+
+       IT IS STILL NOT A TAB STOP. labeledMarker owns keyboard:false, so 300 rail stations
+       gain a name for element navigation and add nothing to the tab order, which is the
+       policy shared.js states: the A1 station panel is the keyboard path.
+
+       Keyed by (system, id) in the fetch url because LIRR and MNR stop_id namespaces can
+       collide. */
+    const marker = labeledMarker(
+      [station.lat, station.lon],
+      { icon: railStationIcon(station.system), pane: "stationPane" },
+      railroadStationName(station),
+    );
+    // The name, on the label pane the subway's names use, gated from zoom 11 by its own band
+    // and by the Names toggle. Never the hub class: a hub is a subway transfer station.
+    bindRailStationLabel(marker, station.name ?? station.id);
     // Built once, used by the popup descriptor and the A1 registry alike.
     const arrivalsUrl =
       `/api/railroad-arrivals/${encodeURIComponent(station.system)}` +
@@ -140,18 +213,64 @@ async function loadRailroadStations() {
 // (`drawnFrom`) and a retained train is drawn as it was before (drawnFromPrediction says
 // why and what a never-seen retained row gets).
 
-// Square markers, colored by railroadColor (railroad route ids collide with the
-// subway palette, so they get their own). A position the train reported is filled; one
-// derived from a prediction (placed at its stop, or estimated between two) is hollow,
-// so the two are visually distinct, and a row that claims neither is hollow too, because
-// the filled square is the glyph that says GPS. `before` is the record's drawnFrom.
-function railroadIcon(train, before = null) {
-  const color = railroadColor(train.route_id);
-  const rect = railroadHollow(train, before)
-    ? `<rect x="2" y="2" width="12" height="12" rx="1.5" fill="#fff" stroke="${color}" stroke-width="2.5"/>`
-    : `<rect x="1.5" y="1.5" width="13" height="13" rx="1.5" fill="${color}" stroke="#fff" stroke-width="1.5"/>`;
-  const html = `<svg viewBox="0 0 16 16">${rect}</svg>`;
-  return L.divIcon({ className: "railroad-marker", html, iconSize: [16, 16], iconAnchor: [8, 8] });
+/* MR3: THE TWO-PART TAG, in place of the 16x16 rounded square.
+
+   WHAT THE SQUARE COULD SAY AND THE TAG CAN. The square had one bit of information, filled
+   or hollow, carrying "GPS or not". The brief's 3.1 table needs three: where the position
+   came from (the body), whether the heading is trusted (the head), and how old it is (the
+   dimming, which is markerOpacity's and is untouched). So an `estimated` train, whose
+   position is inferred but whose heading is real, was drawn identically to a `placed` one
+   whose heading is not; now it is an outlined body with a FILLED chevron, which is the one
+   combination the whole table exists to draw.
+
+   AND THE BRANCH IS NAMED ON THE MARK. The square was a colour and nothing else, so a rider
+   could not tell a Babylon train from a Montauk one without opening it. The tag carries the
+   agency's letter and the branch's code, in the agency's own colour.
+
+   EVERY DECISION IS READ FROM THE SERVED ROW, exactly as before: railTagState takes the
+   provenance, the `before` a retained row is drawn as, and positionQualifier's kind, and
+   railTrainBearing takes the served bearing, the slice the glide already built, and the
+   served direction. Nothing here reads the shape of a field. */
+function railroadTagState(train, before = null, now = correctedNow()) {
+  const position = railroadPosition(train, now);
+  const age = vehicleMarkerAge("railroads", systemAgeOf("railroads", train.system), train, now);
+  return railTagState(train, before, position.kind, age);
+}
+
+function railroadIcon(train, before = null, now = correctedNow()) {
+  const branch = railroadBranch(train.system, train.route_id);
+  return railTagIcon({
+    system: train.system,
+    code: branch.code,
+    color: branch.color,
+    textColor: branch.textColor,
+    state: railroadTagState(train, before, now),
+    bearing: railTrainBearing(train),
+  });
+}
+
+/* THE RE-SKIN GATE, WIDENED FROM ONE BOOLEAN TO THE WHOLE MARK.
+
+   It was `record.hollow !== hollow`, which was enough when the square's only variable was
+   filled-or-hollow. The tag has five: the branch code, its colour, its ink, the body, the
+   head and the heading. A train that keeps its colour and changes provenance, or that picks
+   up a bearing on a later poll, would have kept the icon it was born with. The NJT layer
+   carries the same hazard from the other direction: its gate is the resolved colour, and
+   /api/njt-trains answers while /api/njt-routes is still retrying, so a train drawn in the
+   neutral would never re-skin once its real colour arrived.
+
+   One string, compared, so adding a sixth variable means adding it here and nowhere else. */
+function railroadSkinKey(train, state, bearing) {
+  const branch = railroadBranch(train.system, train.route_id);
+  return [
+    train.route_id,
+    branch.code,
+    branch.color,
+    branch.textColor,
+    state.body,
+    state.head,
+    state.headingTrusted && bearing != null ? Math.round(bearing) : "dot",
+  ].join("|");
 }
 
 // The words one train carries about its position (positionQualifier), read against its
@@ -249,7 +368,9 @@ staleTreatments.push(() => {
 // poll and is never routed through trainLatLng. `hollow` is the glyph the icon was last
 // drawn with, the re-skin gate below; `drawnFrom` is the provenance the train was last
 // served with before any retention, which is how a retained row is drawn.
-const railroads = new Map(); // `${system}|${trip_id}` -> { marker, routeId, hollow, drawnFrom, latest, fState, _segId }
+// `skin` is railroadSkinKey's string, which replaced MR2's `hollow` boolean: the tag has five
+// variables where the square had one (see railroadSkinKey).
+const railroads = new Map(); // `${system}|${trip_id}` -> { marker, skin, drawnFrom, latest, fState, _segId }
 
 function railroadKey(train) {
   return `${train.system}|${train.trip_id}`;
@@ -280,7 +401,6 @@ function applyRailroads(data) {
     // it wears. A train can change ladder step between polls (its fix aging past
     // OBS_FRESH_S while a fresh prediction stands in for it), so both are re-read here.
     const glides = drawnFromPrediction(train, before);
-    const hollow = railroadHollow(train, before);
     if (record) {
       record.drawnFrom = before;
       if (glides) {
@@ -316,16 +436,28 @@ function applyRailroads(data) {
         glides ? trainLatLng(train, railroadGlideAt(train, now), record.fState) : [train.latitude, train.longitude],
       );
       dimMarker(record.marker, age);
-      // Re-skin when the route color or the glyph flips (a train can pick up a fresh
-      // fix on a later poll, or lose it to a prediction; retention flips neither).
-      if (record.routeId !== train.route_id || record.hollow !== hollow) {
-        record.marker.setIcon(railroadIcon(train, before));
-        record.routeId = train.route_id;
-        record.hollow = hollow;
+      /* RE-SKIN WHEN ANY PART OF THE MARK CHANGED, which since MR3 is five things rather than
+         one: the branch code, its colour, its ink, the body, the head and the heading. A train
+         picks up a fresh fix on a later poll (body solid), loses it to a prediction (body
+         outlined), gains a bearing once its slice is built (dot to chevron), or turns; and its
+         branch colour arrives late, because /api/railroad-routes is a separate fetch that
+         retries on a warming 503 while /api/railroads is already answering. Every one of
+         those used to be invisible to a gate that compared route_id and a boolean.
+
+         THE ROTATION GOES THROUGH THE ICON, NOT A CSS TRANSITION. The bearing is rounded to a
+         degree in the skin key so a train wandering by hundredths does not rebuild its icon
+         every poll, and a rotation that crosses north jumps rather than sweeping the long way
+         round, which is why style.css gives this mark no transition. */
+      const bearing = railTrainBearing(train);
+      const state = railroadTagState(train, before, now);
+      const skin = railroadSkinKey(train, state, bearing);
+      if (record.skin !== skin) {
+        record.marker.setIcon(railroadIcon(train, before, now));
+        record.skin = skin;
       }
       if (record.marker.isPopupOpen()) updatePopupKeepingFocus(record.marker);
     } else {
-      const newRecord = { routeId: train.route_id, hollow, drawnFrom: before, latest: train, fState: {} };
+      const newRecord = { drawnFrom: before, latest: train, fState: {} };
       if (glides) {
         newRecord._segId = `${train.route_id}|${train.prev_time}|${train.stop_id}`;
         train._route = computeRouteSlice(
@@ -335,12 +467,16 @@ function applyRailroads(data) {
         );
       }
       const age = vehicleMarkerAge("railroads", systemAgeOf("railroads", train.system), train, now);
+      // Seeded from the same two calls the gate above compares, so a train's first poll and
+      // its second cannot disagree about what it is already wearing.
+      const bearing = railTrainBearing(train);
+      newRecord.skin = railroadSkinKey(train, railroadTagState(train, before, now), bearing);
       newRecord.marker = labeledMarker(
         glides ? trainLatLng(train, railroadGlideAt(train, now), newRecord.fState) : [train.latitude, train.longitude],
         // Dimmed at creation for the same reason as the subway: retained data, and
         // since 6.3 an old observation, must never render live, not even for one frame
         // (the "C2b" spec).
-        { icon: railroadIcon(train, before), opacity: markerOpacity(age) },
+        { icon: railroadIcon(train, before, now), opacity: markerOpacity(age) },
         railroadMarkerName(train, now),
       )
         .bindPopup(() => railroadPopup(newRecord))

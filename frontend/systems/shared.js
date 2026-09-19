@@ -594,6 +594,9 @@ function paintZoomBand() {
   const hubs = document.querySelectorAll(".stn-label.hub").length;
   document.documentElement.setAttribute("data-zoom", String(zoom));
   document.documentElement.setAttribute("data-label-band", labelZoomBand(zoom, !labels || hubs > 0));
+  // MR3's rail names, on their own attribute because the two bands overlap and one attribute
+  // cannot hold two answers. No hub term: a rail station is never a subway transfer station.
+  document.documentElement.setAttribute("data-rail-label-band", railLabelBand(zoom));
   /* THE TOOLTIP IS KEYED ON THE DATA, NOT ON THE HUB COUNT, which is a distinction D2z had to
      teach me: a network can have no interchange while every station lists its routes, and over
      that map the sentence "no station lists the routes that call there" is simply false. So the
@@ -1697,6 +1700,83 @@ function applyVanishingFocus(plan) {
 
 function rescueVanishingFocus(subtree, options = {}) {
   return applyVanishingFocus(planVanishingFocus(subtree, options));
+}
+
+/* ---------------- MR3: the two rail icons, one shape each for three families ----------------
+
+   THE MARKUP IS IN helpers.js AND ONLY THE WRAPPER IS HERE, which is the seam the rest of
+   this file already keeps: helpers.js never touches Leaflet (it is loaded by node with no L
+   at all), so the string is pure and testable and the four lines that need a browser are
+   these. That is why railTagSvg exists as a string builder rather than as an L.divIcon.
+
+   ONE BUILDER FOR LIRR, METRO-NORTH AND NJ TRANSIT, where before MR3 there were two: the
+   hollow rect in systems/railroad.js and a byte-identical copy of it in systems/njt.js, with
+   no shared helper between them, so changing one did not change the other. Three families
+   drawing one grammar is the whole claim of this stage, and it is only true if they call one
+   function. */
+
+// A rail train's tag. `state` is railTagState's answer and `bearing` railTrainBearing's.
+//
+// iconAnchor IS [w/2, 21] AND THAT IS THE WHOLE GEOMETRY: the glyph box is 30 tall, the tag
+// hangs in y 0 to 13, and the head is centred on y 21, so anchoring at 21 puts the head on
+// the rail and lifts the tag clear of it. iconSize is the box, which is also the click box.
+function railTagIcon({ system, code, color, textColor = null, state, bearing = null }) {
+  const geom = railTagGeometry(system, code);
+  return L.divIcon({
+    className: `rail-tag-marker ${railFamilyClass(system)} rail-tag-${state.body}`,
+    html: railTagSvg({ system, code, color, textColor, state, bearing }),
+    iconSize: [geom.width, 30],
+    iconAnchor: [geom.width / 2, 21],
+    // The popup opens off the TAG, not off the head: a popup tipped at the rail would cover
+    // the track the rider is reading. Negative y is up from the anchor, and 21 is the head's
+    // offset from the tag's own top.
+    popupAnchor: [0, -21],
+  });
+}
+
+// A rail STATION. The drawn square is 10x10 and the icon is 20x20, so the click box clears
+// WCAG 2.2's 24px floor together with the map's own padding rule (style.css says how) while
+// the mark on screen stays a 10px square rather than becoming a blob at city zoom.
+function railStationIcon(system = null) {
+  return L.divIcon({
+    className: `rail-stn-marker ${railFamilyClass(system)}-stn`,
+    html: railStationSvg(),
+    iconSize: [RAIL_STATION_BOX, RAIL_STATION_BOX],
+    iconAnchor: [RAIL_STATION_BOX / 2, RAIL_STATION_BOX / 2],
+    popupAnchor: [0, 0],
+  });
+}
+
+/* A RAIL STATION'S NAME, on the label pane the subway's names already use, with the SAME
+   permanent tooltip, the same aria-hidden and the same full opacity, and NEVER the hub class.
+
+   WHY IT SHARES subway.js's PATH RATHER THAN COPYING IT. Three of the six tooltip defaults
+   that rule takes back off are invisible in a diff (the 0.9 inline opacity Leaflet writes in
+   onAdd, the pane, and the interactive flag), and MR2 paid for each one once already. The
+   only differences here are the class, which adds `rail` so the zoom band can gate rail
+   names from 11 while the subway's start at 12, and the absence of `hub`: a hub is a subway
+   transfer station by one predicate in helpers.js, and a rail station is never one of those.
+
+   ARIA-HIDDEN FOR THE SAME REASON MR2 GAVE: a label is the first DOM these stations have
+   ever had, and 300 bare place names in the reading order whose only information is WHERE
+   they are would say nothing a screen reader can use. The station panel is the text surface
+   and it is one Tab away. a11y.spec.js measures the ink against the halo directly, because
+   axe cannot see an aria-hidden node. */
+function bindRailStationLabel(marker, text) {
+  marker.on("tooltipopen", (event) => {
+    const el = event.tooltip?.getElement?.();
+    if (el) el.setAttribute("aria-hidden", "true");
+  });
+  marker.bindTooltip(text, {
+    permanent: true,
+    direction: "right",
+    // Clear of the 10px square plus its stroke, where the subway's 7 clears a 5px dot.
+    offset: [9, 0],
+    className: "stn-label rail",
+    interactive: false,
+    pane: "stationLabelPane",
+    opacity: 1,
+  });
 }
 
 function labeledMarker(latlng, options, name) {

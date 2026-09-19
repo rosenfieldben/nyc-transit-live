@@ -274,6 +274,34 @@ const UNDECIDABLE_SHAPES = [
       "station label, which is what keeps this exception from widening.",
   },
   {
+    /* MR3. A commuter rail train is a two-part tag with 8px Archivo 800 in each block, and at
+       regional zoom the tags OVERLAP each other: a tag is 35 to 45px wide where the square it
+       replaced was 16, so with 136 of them on the F01 world's map, axe reaches a neighbouring
+       marker div before it reaches the rect the type is printed on and declines to judge.
+       Measured on the stock fixture: 37 findings at 1280 and 17 at 375, every one of them this
+       message. An overlapped node is one axe cannot decide, not one it failed.
+
+       THE SVG IS aria-hidden AND THAT IS NOT WHAT EXCUSES IT. labeledMarker puts the whole
+       train's name on the marker div as role="img" plus aria-label, so the two glyphs are a
+       picture of information a screen reader already has better; axe's color-contrast rule
+       scans them anyway, correctly, because a sighted rider still sees them. So this is a tool
+       limit about overlap, decided by measurement, exactly as the station label above is.
+
+       SCOPED BY THE SVG'S OWN CLASS, which railTagSvg writes and nothing else uses. A1z4
+       closes the hole the way A1z3 does for tooltips, by asserting that every `svg.rail-tag`
+       on the page is a rail train's tag, so a second surface adopting the class fails there
+       rather than widening this silently. */
+    name: "a commuter rail tag's type, overlapped by a neighbouring tag at regional zoom",
+    rule: "color-contrast",
+    message: /background color could not be determined because it is overlapped by another element/,
+    where: (id) => /svg\.rail-tag text/.test(id),
+    decider:
+      "a11y.spec.js A1z4 reads each tag's printed ink and the fill of the block it is printed " +
+      "on straight off the drawn page, in both themes, and requires AA; railtag.test.js " +
+      "measures the same pair in node over all 31 (route_color, route_text_color) pairs the " +
+      "three feeds publish, which is what found that eight of them do not clear as published.",
+  },
+  {
     name: "the skip link, judged by a static rule that cannot run the page",
     rule: "skip-link",
     // "Skip link target should become visible on activation". The panel is hidden at scan
@@ -988,10 +1016,19 @@ test("A1z3. the station name labels are legible over any tile, in both themes", 
      catch a mistake in them in the meantime, which is precisely why a measurement has to. */
   await page.setViewportSize(DESKTOP);
   await open(page, { alerts: 0 });
-  // Zoom 12 is the map's opening view and the band where hub labels show, so the fixture's
-  // two stations are drawn; asserted rather than assumed, because a spec measuring nothing
-  // passes.
-  await expect(page.locator(".leaflet-tooltip")).toHaveCount(2);
+  /* Zoom 12 is the map's opening view and the band where hub labels show, so the fixture's two
+     SUBWAY stations are drawn; asserted rather than assumed, because a spec measuring nothing
+     passes.
+
+     SEVEN NOW, NOT TWO, AND FIVE OF THEM ARE MR3's. The commuter rail families joined this
+     pane in stage 3: two railroad stations (LIRR Jamaica, Metro-North Grand Central) and three
+     NJ Transit ones, gated from zoom 11 by their own band, so at 12 they are all on. They
+     carry `stn-label rail` and never `hub`, which is why allAreLabels below still holds and why
+     they are measured by the same loop rather than excused from it: a rail name is ink on a
+     tile exactly as a subway name is, and MR3 gave it no different treatment to be trusted
+     about. */
+  await expect(page.locator(".leaflet-tooltip")).toHaveCount(7);
+  await expect(page.locator(".leaflet-tooltip.rail")).toHaveCount(5);
 
   for (const theme of ["light", "dark"]) {
     if (theme !== "light") await setTheme(page, theme);
@@ -1070,6 +1107,114 @@ test("A1z3. the station name labels are legible over any tile, in both themes", 
       );
       // And a name never swallows a click meant for the dot under it.
       expect(row.pointerEvents, `${theme}: "${row.name}" must not take pointer events`).toBe("none");
+    }
+  }
+});
+
+test("A1z4. every commuter rail tag's type is legible on the block it is printed on, in both themes", async ({
+  page,
+}) => {
+  /* MR3'S OWN UNDECIDABLE, ANSWERED, and answered off the DRAWN page rather than off the
+     arithmetic that built it. The tags overlap each other at regional zoom, so axe stops at a
+     neighbouring marker and cannot find the rect under the type; there is nothing wrong with
+     the contrast and nothing axe can do about it. This reads both colours out of the rendered
+     SVG and computes the ratio.
+
+     WHY BOTH HALVES OF THE TAG. The agency block prints paper on ink (or ink on paper on an
+     outlined body), which is a THEME pair and moves with data-theme; the branch block prints
+     the feed's ink on the feed's colour, which does not. Two different ways to be wrong, and
+     only one of them is what the node test covers, so both are measured here.
+
+     WHAT THIS DOES NOT CLAIM. It measures the type against the block it sits on, which is
+     opaque, so unlike A1z3 there is no tile to bound and no optimism to declare. What it
+     cannot see is a tag a NEIGHBOURING tag covers: that is a density question rather than a
+     contrast one, it is what the zoom presets and the feed toggles exist for, and it is
+     recorded as a finding in docs/reviews/map-redesign-rounds.md rather than smuggled in here.
+
+     BOTH THEMES, although only one is reachable until MR4 (ruling R2), for the reason A1z3
+     gives: the dark tokens ship now and nothing a rider can see would catch a mistake in them. */
+  await page.setViewportSize(DESKTOP);
+  await open(page, { alerts: 0 });
+  // The stock fixture's rail trains: two railroad and four NJ Transit. Asserted, because a
+  // spec measuring nothing passes.
+  await expect(page.locator("svg.rail-tag")).toHaveCount(6);
+
+  for (const theme of ["light", "dark"]) {
+    if (theme !== "light") await setTheme(page, theme);
+    const measured = await page.evaluate(() => {
+      const srgb = (c) => {
+        const v = c / 255;
+        return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+      };
+      const lum = ([r, g, b]) => 0.2126 * srgb(r) + 0.7152 * srgb(g) + 0.0722 * srgb(b);
+      const ratio = (a, b) => {
+        const [hi, lo] = lum(a) >= lum(b) ? [lum(a), lum(b)] : [lum(b), lum(a)];
+        return (hi + 0.05) / (lo + 0.05);
+      };
+      const rgb = (css) => {
+        const parts = (String(css).match(/rgba?\(([^)]+)\)/) || [, ""])[1]
+          .split(/[\s,/]+/)
+          .filter(Boolean)
+          .map(Number);
+        return parts.length >= 3 ? parts.slice(0, 3) : null;
+      };
+      const tags = [...document.querySelectorAll("svg.rail-tag")];
+      const rows = [];
+      for (const svg of tags) {
+        const outlined = svg.classList.contains("rail-tag-outlined");
+        const rects = [...svg.querySelectorAll("rect")];
+        const texts = [...svg.querySelectorAll("text")];
+        texts.forEach((text, i) => {
+          /* WHICH RECT EACH GLYPH SITS ON, read by geometry rather than by index, because the
+             two bodies have different rect counts (a solid body has a paper backing, two
+             blocks and no stripe; an outlined one has a box and a stripe). The glyph's own x
+             is inside exactly one block, so the block is found by containing it. */
+          const x = Number(text.getAttribute("x"));
+          const under = rects
+            .filter((r) => {
+              const rx = Number(r.getAttribute("x"));
+              const rw = Number(r.getAttribute("width"));
+              const rh = Number(r.getAttribute("height"));
+              // The stripe is 2.5 tall and sits under the type rather than behind it, so a
+              // block is a rect as tall as the tag; that is what excludes it.
+              return x >= rx && x <= rx + rw && rh >= 10;
+            })
+            .pop();
+          const ink = rgb(getComputedStyle(text).fill);
+          const paint = under ? rgb(getComputedStyle(under).fill) : null;
+          rows.push({
+            block: i === 0 ? "agency" : "branch",
+            body: outlined ? "outlined" : "solid",
+            glyph: text.textContent,
+            ratio: ink && paint ? ratio(ink, paint) : null,
+            why: ink && paint ? null : "no block found under the glyph",
+          });
+        });
+      }
+      return {
+        // THE SCOPE CLOSURE this exception depends on, the same one A1z3 makes for tooltips:
+        // railTagSvg is the only thing that writes this class, so every svg.rail-tag is a rail
+        // train's tag. A second surface adopting it fails here rather than widening the
+        // exception quietly.
+        allAreTags: tags.every((svg) => svg.closest(".rail-tag-marker") !== null),
+        // And every one is out of the reading order, which is the other half of the statement.
+        allAriaHidden: tags.every((svg) => svg.getAttribute("aria-hidden") === "true"),
+        rows,
+      };
+    });
+
+    expect(measured.allAreTags, `${theme}: every svg.rail-tag must belong to a rail tag marker`).toBe(true);
+    expect(measured.allAriaHidden, `${theme}: every tag must be out of the reading order`).toBe(true);
+    // Two glyphs per tag, six tags: twelve measurements, or the loop below decides nothing.
+    expect(measured.rows.length, `${theme}: the scan must find type to measure`).toBe(12);
+
+    for (const row of measured.rows) {
+      expect(row.why ?? null, `${theme}: ${row.body} ${row.block} "${row.glyph}"`).toBe(null);
+      expect(
+        row.ratio,
+        `${theme}: the ${row.block} glyph "${row.glyph}" on a ${row.body} body reads ` +
+          `${row.ratio?.toFixed(2)} against the block under it`,
+      ).toBeGreaterThanOrEqual(4.5);
     }
   }
 });

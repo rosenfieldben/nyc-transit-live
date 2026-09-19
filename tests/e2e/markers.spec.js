@@ -281,23 +281,49 @@ test("A2j. an NJT train's label picks up its route name late, and its delay ever
   expect(later).toContain("estimated from a prediction");
   expect(later).not.toContain("GPS");
 
-  // AND THE MARKER RE-SKINS, not just the label. njt.js gates its re-icon on the
-  // RESOLVED COLOUR rather than on route_id, because route_id never changes after a
-  // late route table lands and a colour-blind gate would leave every train that
-  // existed before the table drawn in the neutral fallback for the rest of the
-  // session. Read off the rendered svg, which is the only place the rider sees it.
-  const strokeOf = (id) =>
-    page.evaluate(
-      (key) => njtTrainRecords.get(key).marker.getElement().querySelector("rect").getAttribute("stroke"),
-      id,
-    );
-  expect(await strokeOf("NJ_3800")).toBe("#DD3439");
+  /* AND THE MARKER RE-SKINS, not just the label. njt.js gated its re-icon on the RESOLVED
+     COLOUR rather than on route_id, because route_id never changes after a late route table
+     lands and a colour-blind gate would leave every train that existed before the table drawn
+     in the neutral fallback for the rest of the session. MR3 WIDENED THAT GATE to the whole
+     mark (njtSkinKey): the branch code and its ink arrive on the same late fetch, and the body
+     and head move with the data every poll, so colour alone was right about one of six things.
 
-  // AMENDMENT A on a live marker: route 17 never reaches the route table at all, so
-  // its label is the route id rather than a hole where the name would be, and its
-  // marker keeps the neutral fallback rather than losing its stroke.
+     WHERE THE COLOUR LIVES MOVED WITH THE MARK. The 16x16 square carried it as the rect's
+     `stroke`; the tag carries it as a FILL, of the branch block on a solid body or of the
+     2.5px stripe along that block's bottom on an outlined one. Every NJ Transit train has an
+     outlined body, because this feed serves no vehicle positions at all and so no train here
+     can earn the solid one, which makes the stripe the last rect in the svg. Read off the
+     rendered svg, which is the only place the rider sees it. */
+  const branchFillOf = (id) =>
+    page.evaluate((key) => {
+      const rects = njtTrainRecords.get(key).marker.getElement().querySelectorAll("rect");
+      return rects[rects.length - 1].getAttribute("fill");
+    }, id);
+  expect(await branchFillOf("NJ_3800")).toBe("#DD3439");
+  // AND THE CODE ARRIVED WITH THE COLOUR, which is the half a colour-only gate could not see:
+  // the tag prints route_short_name, which reaches the page on the same late fetch.
+  expect(
+    await page.evaluate(() =>
+      njtTrainRecords.get("NJ_3800").marker.getElement().querySelectorAll("text")[1].textContent,
+    ),
+  ).toBe("NEC");
+
+  /* AMENDMENT A on a live marker: route 17 never reaches the route table at all, so its label
+     is the route id rather than a hole where the name would be, and its marker keeps the
+     neutral fallback rather than losing its colour. The tag prints the ID as its code for the
+     same reason, which is the design's stated fallback.
+
+     THE NEUTRAL IS #6d6e71 HERE AND #4a4e69 IN THE POPUP UNTIL MR5. The tag and the line take
+     the README's stated neutral for an unknown route; njtColor's older one still reaches the
+     popup head, which is stage MR5's to align and which P1k pins byte for byte in the
+     meantime. */
   const added = (await labelOf(page, "njt", "njt:9001")).aria;
   expect(added).toContain("NJ Transit route 17");
   expect(added).not.toContain("undefined");
-  expect(await strokeOf("njt:9001")).toBe("#4a4e69");
+  expect(await branchFillOf("njt:9001")).toBe("#6d6e71");
+  expect(
+    await page.evaluate(() =>
+      njtTrainRecords.get("njt:9001").marker.getElement().querySelectorAll("text")[1].textContent,
+    ),
+  ).toBe("17");
 });

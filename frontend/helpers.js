@@ -2470,6 +2470,134 @@ function railStationSvg() {
   );
 }
 
+/* ===== MR4: THE OTHER FOUR FAMILIES' MARKS, AS STRINGS ================================
+
+   PATH's diamond, the ferry's hull, the bus arrow and the bus dot. Here rather than in the
+   system files for the reason the rail tag is here: helpers.js is loaded by node with no `L`
+   and no document, so a builder that returns a STRING can be asked one state at a time by a
+   node test, and only the L.divIcon wrapper needs a browser. MR3's mutation table is the
+   argument rather than the taste: M1, M2, M5 and M19 were all killed by node tests reading
+   railTagSvg's markup directly, and none of them would have had anything to read if the
+   markup had stayed inside a Leaflet call.
+
+   EVERY STROKE IS `style="stroke: var(--paper)"`, NOT A LITERAL, and that is the whole
+   mechanism of this stage's theme swap. A divIcon is HTML, so a custom property in an inline
+   STYLE resolves through the cascade and follows a theme change at no cost: these four marks
+   need no rebuild and no restyle sweep, they simply are the right colour. A canvas mark
+   cannot do that (Leaflet hands a colour STRING to the 2D context and `var(--paper)` is not
+   one), which is why the lines and the station circles are a registry and these are not.
+
+   AND `style=` RATHER THAN THE `stroke=` ATTRIBUTE, which is not a preference: `stroke="var(--paper)"`
+   as an SVG 1.1 presentation attribute is not a paint value and does not resolve. The same
+   sentence is written above railTagSvg, and it is repeated here because this is the second
+   place in the codebase where getting it wrong would draw an invisible stroke rather than
+   raise anything. */
+
+/* THE MUTED HASHED HUE (README: "Route colour is the existing hashed hue but muted:
+   hsl(h, 45%, 38%)").
+
+   THE HUE IS routeColor's, UNCHANGED, and only the saturation and lightness move. That is
+   what "the existing hashed hue" means and it is the property that matters: two buses on one
+   route are one colour and two routes are two, whichever of the two functions asks.
+
+   A SECOND FUNCTION RATHER THAN A CHANGE TO routeColor, because routeColor is ALSO what the
+   bus POPUP prints its route name in (systems/buses.js) and the popups are stage MR5's,
+   pinned byte for byte by P1g. Muting routeColor itself would have moved a popup this stage
+   is not allowed to touch, which is exactly the kind of quiet reach the pins exist to catch. */
+const BUS_MARK_SATURATION = 45;
+const BUS_MARK_LIGHTNESS = 38;
+
+function busMarkColor(routeId) {
+  const base = routeColor(routeId);
+  const hue = /^hsl\((\d+),/.exec(base);
+  // A route with no id gets routeColor's flat grey, which has no hue to mute.
+  return hue ? `hsl(${hue[1]}, ${BUS_MARK_SATURATION}%, ${BUS_MARK_LIGHTNESS}%)` : base;
+}
+
+// PATH's diamond (README: 16x16, route fill, paper stroke 1.2). The vertices sit on the box
+// edges and the 1.2 stroke spreads 0.6 either side, so the drawn mark reaches 0.4 to 15.6
+// and nothing is clipped by the viewBox.
+const PATH_DIAMOND_BOX = 16;
+const PATH_DIAMOND_PATH = "M8 1 L15 8 L8 15 L1 8 Z";
+
+function pathDiamondSvg(color) {
+  return (
+    `<svg viewBox="0 0 ${PATH_DIAMOND_BOX} ${PATH_DIAMOND_BOX}" class="path-diamond"` +
+    ` aria-hidden="true" focusable="false">` +
+    `<path d="${PATH_DIAMOND_PATH}" style="fill: ${color}; stroke: var(--paper)" stroke-width="1.2"/>` +
+    `</svg>`
+  );
+}
+
+/* The ferry's hull (README: 22x14, `M1 3 H21 L17.5 11 H4.5 Z`, route fill, paper stroke 1).
+
+   A HULL AND NOT A ROUNDED RECT, which is the point of the shape. The file this replaces
+   already argued that a boat should read as a boat beside a subway square, a railroad square,
+   a PATH diamond and a bus arrow, and then drew a rounded rectangle; the design's path is a
+   trapezoid with a flat deck and a tapered bottom, which is the argument actually carried
+   out. */
+const FERRY_HULL_BOX = [22, 14];
+const FERRY_HULL_PATH = "M1 3 H21 L17.5 11 H4.5 Z";
+
+function ferryHullSvg(color) {
+  return (
+    `<svg viewBox="0 0 ${FERRY_HULL_BOX[0]} ${FERRY_HULL_BOX[1]}" class="ferry-hull"` +
+    ` aria-hidden="true" focusable="false">` +
+    `<path d="${FERRY_HULL_PATH}" style="fill: ${color}; stroke: var(--paper)" stroke-width="1"/>` +
+    `</svg>`
+  );
+}
+
+/* The bus mark, which is TWO marks and one box (README: "Heading known: 14x14 arrow
+   `M7 1 L12 13 L7 10 L2 13 Z` rotated to bearing, fill = route colour, paper stroke 0.8.
+   Heading unknown: 12x12 dot `r 3.5`, paper stroke 1").
+
+   ONE 14x14 BOX FOR BOTH STATES, although the design gives the dot a 12x12 one. The DRAWN
+   dot is r 3.5 either way, so the box size changes nothing a rider sees; what it would change
+   is the marker's iconSize, and a marker whose box grows and shrinks as its feed gains and
+   loses a heading is a marker whose anchor moves under the rider's pointer between polls. The
+   two states already swap through one re-skin gate in systems/buses.js and keeping the box
+   constant is what lets that gate stay a swap rather than a reposition.
+
+   THE ROTATION IS ON THE `<svg>`, not on the path, and that is load-bearing: systems/buses.js
+   animates a heading change by writing `svg.style.transform` on the existing element rather
+   than re-iconing, so the CSS transition can run. A transform on an inner path would leave
+   that write pointing at the wrong node and the arrow would snap.
+
+   GTFS bearing is degrees clockwise from north and the arrow points north before rotation,
+   which is what makes the rotation a straight pass-through with no offset. */
+const BUS_MARK_BOX = 14;
+const BUS_ARROW_PATH = "M7 1 L12 13 L7 10 L2 13 Z";
+const BUS_DOT_R = 3.5;
+
+function busMarkSvg(color, bearing = null) {
+  const open =
+    `<svg viewBox="0 0 ${BUS_MARK_BOX} ${BUS_MARK_BOX}" class="bus-mark" aria-hidden="true" focusable="false"`;
+  if (Number.isFinite(bearing)) {
+    const deg = ((Number(bearing) % 360) + 360) % 360;
+    return (
+      `${open} style="transform: rotate(${deg}deg)">` +
+      `<path d="${BUS_ARROW_PATH}" style="fill: ${color}; stroke: var(--paper)" stroke-width="0.8"/>` +
+      `</svg>`
+    );
+  }
+  const c = BUS_MARK_BOX / 2;
+  return (
+    `${open}>` +
+    `<circle cx="${c}" cy="${c}" r="${BUS_DOT_R}" style="fill: ${color}; stroke: var(--paper)" stroke-width="1"/>` +
+    `</svg>`
+  );
+}
+
+/* AND WHICH OF THE TWO A ROW EARNS, as its own predicate so the question "is this bus
+   pointed anywhere" has one answer. A bearing is a number or it is nothing: a served null, an
+   absent field and a NaN are all "we are not telling you which way this is going", and the
+   dot says so. The mutation this kills is the arrow drawn when no heading is served, which
+   would be a direction invented out of a missing field. */
+function busHasHeading(bus) {
+  return Number.isFinite(bus && bus.bearing);
+}
+
 /* ===== BEARING ALONG THE BRANCH =======================================================
 
    The heading the chevron is rotated to: the direction of travel along the branch the
@@ -4798,6 +4926,11 @@ if (typeof module !== "undefined" && module.exports) {
     RAIL_TAG_HEIGHT, railTagGeometry, railTagState,
     segmentBearing, railTrainBearing, RAIL_HEX,
     railTagSvg, railTagChevronPath, railStationSvg, RAIL_STATION_BOX, RAIL_STATION_SQUARE,
+    // MR4: the other four families' marks, pure so each state can be asked in node.
+    busMarkColor, BUS_MARK_SATURATION, BUS_MARK_LIGHTNESS,
+    pathDiamondSvg, PATH_DIAMOND_BOX, PATH_DIAMOND_PATH,
+    ferryHullSvg, FERRY_HULL_BOX, FERRY_HULL_PATH,
+    busMarkSvg, busHasHeading, BUS_MARK_BOX, BUS_ARROW_PATH, BUS_DOT_R,
     railLabelBand, RAIL_LABEL_ZOOM, railroadStationName, railFamilyClass,
     AGE_UNKNOWN, observationDimAge, observationGated, OBSERVATION_GATED,
     vehicleStaleLine, composeAnnouncements, withheldTrains, withheldClause,

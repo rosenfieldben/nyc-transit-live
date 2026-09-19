@@ -96,7 +96,9 @@ themes as a golden, because which paint carries a family is exactly what a later
 change without noticing. **The two numbers worth reading twice are in that table**: the subway
 train is carried by its white letter, not by its route square (`#1f5fbf` reads 2.73 against the
 dark paper), and the ferry boat's light-theme 1.31 is the South Brooklyn yellow the feed
-publishes. Both are finding Q1 and both want a ruling.
+publishes. Both are finding Q1, and round 2 has the ruling: the subway train's white letter is
+a paint this app chose and clears, the ferry hull's yellow is the feed's and is reported rather
+than promised.
 
 **And this table is the round-1 version of itself**, which is worth saying because the first one
 was wrong in two rows. The measurement resolved every paint through a probe, CSSOM drops a value
@@ -120,6 +122,9 @@ scaling to any mark FILL under 3:1 against the current paper, which makes those 
 theme-dependent and reaches MR2's subway square and MR3's rail tag, both out of this stage; (c)
 draw the mark PLATE in `--ink` in the dark theme so every published fill keeps its light-theme
 arithmetic, at the cost of a bright plate around every mark on a dark map.
+**RULED: (a), and answered in round 2**, which is where the table and the one exemption are.
+One number above is corrected there: PATH's diamond is 4.09 light and 3.64 dark on the drawn
+page, so the ferry hull's 1.31 is the only paint under the floor.
 
 **Q2. One lightness cannot serve both themes for the bus mark, and the README names one.** A bus
 route's colour is a hash of its id, so its legibility is a claim about all 360 hues. The README's
@@ -358,6 +363,17 @@ Two harnesses and two audit drivers gained the stand-ins MR4's load-time registr
 | before, dark | `before-desktop-dark.png` | `before-375-dark.png` | `before-region-dark.png` |
 | after | `after-desktop.png` | `after-375.png` | `after-region.png` |
 | after, dark | `after-desktop-dark.png` | `after-375-dark.png` | `after-region-dark.png` |
+
+**And round 2's own pair, which is the Key panel OPEN.** The six frames above are taken with it
+closed, so the round that rewrote seven of its rows is invisible in them. These four are the
+round's evidence, and the before pair is taken from the tree as it stood before it.
+
+| | 1280 | 375 |
+| --- | --- | --- |
+| before | `before-key-desktop.png` | `before-key-375.png` |
+| before, dark | `before-key-desktop-dark.png` | `before-key-375-dark.png` |
+| after | `after-key-desktop.png` | `after-key-375.png` |
+| after, dark | `after-key-desktop-dark.png` | `after-key-375-dark.png` |
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 

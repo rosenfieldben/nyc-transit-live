@@ -347,7 +347,13 @@ test("D5c. the divIcon marks follow the swap through the cascade, with no restyl
   const INK = { light: "rgb(32, 30, 29)", dark: "rgb(243, 242, 242)" };
   const FAMILIES = [
     { family: "PATH diamond", selector: ".path-marker svg path", paper: "stroke" },
-    { family: "ferry hull", selector: ".ferry-marker svg path", paper: "stroke" },
+    /* THE HULL IS TWO PATHS SINCE MR5 gave it an ink edge (MR4 ruling Q1), so it is two rows
+       here rather than one selector that now matches both and collects two stroke values. The
+       split is stronger than what it replaces: it says WHICH path carries WHICH token, so an
+       edit that swapped the casing and the edge would fail, where a single row asserting "the
+       strokes are paper" could not have seen it. */
+    { family: "ferry hull casing", selector: ".ferry-marker svg path:first-of-type", paper: "stroke" },
+    { family: "ferry hull edge", selector: ".ferry-marker svg path:nth-of-type(2)", paper: null, ink: "stroke" },
     { family: "bus mark", selector: ".bus-marker svg path, .bus-marker svg circle", paper: "stroke" },
     { family: "rail station square", selector: ".rail-stn-marker svg rect", paper: "fill", ink: "stroke" },
     { family: "subway plate", selector: ".train-marker svg rect:first-of-type", paper: "fill" },
@@ -372,7 +378,7 @@ test("D5c. the divIcon marks follow the swap through the cascade, with no restyl
           const values = (which) => [
             ...new Set(els.map((el) => getComputedStyle(el)[which])),
           ];
-          return { family, count: els.length, paper: values(paper), ink: ink ? values(ink) : null };
+          return { family, count: els.length, paper: paper ? values(paper) : null, ink: ink ? values(ink) : null };
         }),
       FAMILIES,
     );
@@ -384,7 +390,7 @@ test("D5c. the divIcon marks follow the swap through the cascade, with no restyl
     }
     for (const row of await read()) {
       expect(row.count, `${mode}: ${row.family} must be on the page to be measured`).toBeGreaterThan(0);
-      expect(row.paper, `${mode}: ${row.family}'s paper paint`).toEqual([PAPER[mode]]);
+      if (row.paper) expect(row.paper, `${mode}: ${row.family}'s paper paint`).toEqual([PAPER[mode]]);
       if (row.ink) expect(row.ink, `${mode}: ${row.family}'s ink paint`).toEqual([INK[mode]]);
     }
   }
@@ -467,7 +473,9 @@ const CARRIED_BY = {
   "bus": { light: { kind: "fill", chosen: "app" }, dark: { kind: "fill", chosen: "app" } },
   "ferry dock": { light: { kind: "fill", chosen: "app" }, dark: { kind: "fill", chosen: "app" } },
   "PATH train": { light: { kind: "path fill", chosen: "published" }, dark: { kind: "path fill", chosen: "published" } },
-  "ferry boat": { light: { kind: "path fill", chosen: "published" }, dark: { kind: "path fill", chosen: "published" } },
+  // MR5 gave the hull an ink edge (MR4 ruling Q1), so the paint that finds a boat is one
+  // this app chooses and owes 3:1, where it used to be the feed's published fill and did not.
+  "ferry boat": { light: { kind: "path stroke", chosen: "app" }, dark: { kind: "path stroke", chosen: "app" } },
 };
 
 test("D5d. each family's identifying paint is named, and the app's own clear 3:1 in both themes", async ({
@@ -555,13 +563,27 @@ test("D5d. each family's identifying paint is named, and the app's own clear 3:1
     expect(bestOf(theme, "ferry dock"), `${theme}: the ferry dock`).toBeGreaterThanOrEqual(3);
     expect(bestOf(theme, "AirTrain station square"), `${theme}: the AirTrain square`).toBeGreaterThanOrEqual(3);
   }
-  /* THE EXEMPTION, MEASURED RATHER THAN ASSUMED. If a future stage gives the ferry's hull an
-     ink edge, or the feed stops publishing a yellow, this fails and the statement in
-     ACCESSIBILITY.md can stop reporting a range and start promising a floor. */
-  expect(
-    bestOf("light", "ferry boat"),
-    "the ferry boat is carried by the feed's own colour in the light theme (ruling Q1a), and " +
-      "NYC Ferry's South Brooklyn yellow is the one under the floor",
-  ).toBeLessThan(3);
-  expect(bestOf("dark", "ferry boat"), "and it clears in the dark theme").toBeGreaterThanOrEqual(3);
+  /* THE EXEMPTION IS GONE, AND THIS IS THE ASSERTION THAT USED TO HOLD IT.
+
+     MR4 wrote it the other way round on purpose: `bestOf("light", "ferry boat")` was asserted
+     BELOW 3, with the comment "if a future stage gives the ferry's hull an ink edge, this
+     fails and the statement in ACCESSIBILITY.md can stop reporting a range and start
+     promising a floor". MR5 is that stage, so the assertion inverts rather than being
+     deleted. An exemption held by a measurement fails the day the measurement changes; an
+     exemption held by a comment would still be sitting here claiming 1.31.
+
+     SO EVERY FAMILY NOW CLEARS, and the loop above no longer needs the ferry boat carved out
+     of it. Measured after the edge: 14.86 in both themes, from 1.31 light and 3.74 dark. */
+  for (const theme of ["light", "dark"]) {
+    expect(
+      bestOf(theme, "ferry boat"),
+      `${theme}: the ferry boat's ink edge is a paint this app chose, so it owes the floor`,
+    ).toBeGreaterThanOrEqual(3);
+  }
+  // AND THE PUBLISHED FILL IS STILL PUBLISHED, which is the half of ruling Q1a that says what
+  // may not change: the edge was added beside the feed's colour, never instead of it.
+  const hullFills = measured.light.rows
+    .filter((r) => r.family === "ferry boat")
+    .flatMap((r) => r.paints.filter((p) => p.kind === "path fill").map((p) => p.css));
+  expect(hullFills, "a boat is still filled with the colour its route publishes").toContain("rgb(255, 209, 0)");
 });

@@ -1439,6 +1439,41 @@ disagreed and the disagreement was measured rather than argued.
 | **S3** | **How does auto-pan clear the chrome?** The README's recipe is `autoPanPaddingTopLeft = [24, headerBottom + 12]`, `autoPanPaddingBottomRight = [110, 40]`, then `_adjustPan()`. **Measured on this app, the literal recipe is broken.** See the section below. | **Clamp each padding to what the measured map and popup can satisfy**, keep `panPopupClearOfChrome` as the authority for the real boxes and for post-paint growth, and stand down while `riderOwnsTheView`. The cap and the stand-down are pinned. The README carries an erratum beside its recipe. |
 | **S4** | **How does the Key explain the rail tag's head (finding F17)?** The map draws FOUR heads, not the three a first reading suggests: filled chevron, outlined chevron, outlined dot and a filled dot (a GPS fix that serves no bearing). | **Two rows, framed by AXIS rather than by shape.** One row for filled against outlined (the heading is trusted, or it is not), one for chevron against dot (a heading is served, or it is not). `A1x`, `D2l` and `P1e` move by two, recorded as before. |
 
+### The ferry hull's ink edge, and an exemption that ended by measurement
+
+MR4's ruling Q1 left one paint on this map under the 3:1 a mark owes: the ferry boat's hull at
+**1.31** against the light paper. A boat is filled with the colour NYC Ferry publishes for its
+route, this app does not move a published fill, and the hull's only other paint was the paper
+casing, which cannot raise a fill's ratio against paper because it IS approximately the paper.
+MR4 reported it rather than promising the floor, and said in the assertion itself what would
+end it.
+
+**Two strokes on one path, wider first.** A stroke is centred on its path, so one stroke cannot
+be both the casing and the edge. The paper goes to 2 (one unit out, one in) and the ink follows
+at 0.8 on the same geometry, drawn second, so it lands on the boundary with a full unit of
+paper still outside it. Reading outward a rider gets the route's published fill, the ink edge
+that finds it, the paper casing that separates it from the tile. The drawn mark grows half a
+unit on each side and stays inside its 22x14 box. **Measured after: 14.86 in both themes.**
+
+**The exemption ended because the measurement moved, not because a sentence was edited.**
+`theme.spec.js D5d` asserted `bestOf("light", "ferry boat") < 3`, deliberately the wrong way
+round, with the note that the day a stage gave the hull an ink edge the assertion would fail
+and `ACCESSIBILITY.md` could be strengthened. It did fail, and it is inverted here rather than
+deleted. Two assertions replace it: every family now clears the floor in both themes, and the
+hull's FILL is still the feed's yellow, which is the half of Q1a that says what may not change.
+
+**What moved with it**, named because this is a marker change inside a popup stage:
+
+| | |
+| --- | --- |
+| `markers/ferry` (P1m) | regenerated: the hull is two paths now |
+| `contrast/marks` (P4c) | regenerated: `ferry boat` goes from `path fill` at 1.31/3.74 to `path stroke` at 14.86/14.86 |
+| `theme.spec.js` D5d | the exemption inverted, plus the published-fill assertion |
+| `theme.spec.js` D5c | the hull becomes TWO rows, casing and edge, which is stronger than the one it replaces: it says which path carries which token, so an edit that swapped them fails where "the strokes are paper" could not have seen it |
+| `families.test.js` | asserts the order and the relation (casing wider, drawn first) rather than a literal width |
+| `ACCESSIBILITY.md` | the exemption paragraph strengthened, keeping the history |
+| the MR4 captures | all ten `after-*` frames regenerated in one run, so they stay mutually consistent; the City and Region presets are the ones that actually show a boat |
+
 ### The pins invert, and the retired goldens are the before
 
 MR1 through MR4 pinned every popup's HTML byte for byte, and each of those stages said in as

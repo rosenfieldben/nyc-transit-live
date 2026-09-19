@@ -2666,11 +2666,32 @@ function pathDiamondSvg(color) {
 const FERRY_HULL_BOX = [22, 14];
 const FERRY_HULL_PATH = "M1 3 H21 L17.5 11 H4.5 Z";
 
+/* THE HULL'S INK EDGE, AND WHY IT IS TWO STROKES ON ONE PATH (MR4 ruling Q1, paid in MR5).
+
+   A boat is filled with the colour NYC Ferry publishes for its route, and the app does not
+   move a published fill. Measured on the drawn page, that left exactly one paint on this map
+   under the 3:1 a mark owes: South Brooklyn's #ffd100 at 1.31 against the light paper. The
+   hull's only other paint was the paper casing, which cannot raise a fill's ratio against
+   paper because it IS approximately the paper. So the ruling's answer is a third paint that
+   the app DOES choose: an ink edge, inside the casing.
+
+   TWO STROKES ON THE SAME `d`, WIDER FIRST. A stroke is centred on its path, so a single
+   stroke cannot be both the casing and the edge. The paper goes to 2 (1 out, 1 in) and the
+   ink follows at 0.8 on the same geometry, drawn second so it sits on the boundary with a
+   full pixel of paper still outside it. Reading outward a rider gets: the route's published
+   fill, the ink edge that finds it, the paper casing that separates it from the tile. The
+   drawn mark grows half a pixel on each side and stays inside its 22x14 box.
+
+   WHAT IT COSTS, named because it is a marker change in a popup stage: `markers/ferry` and
+   `contrast/marks` both move, `theme.spec.js` D5d's exemption assertion INVERTS by design,
+   and the captures that show a boat are regenerated. All four are in this stage's ledger
+   entry. What it does not touch is the fill: `color` is still the feed's, unchanged. */
 function ferryHullSvg(color) {
   return (
     `<svg viewBox="0 0 ${FERRY_HULL_BOX[0]} ${FERRY_HULL_BOX[1]}" class="ferry-hull"` +
     ` aria-hidden="true" focusable="false">` +
-    `<path d="${FERRY_HULL_PATH}" style="fill: ${color}; stroke: var(--paper)" stroke-width="1"/>` +
+    `<path d="${FERRY_HULL_PATH}" style="fill: ${color}; stroke: var(--paper)" stroke-width="2"/>` +
+    `<path d="${FERRY_HULL_PATH}" style="fill: none; stroke: var(--ink)" stroke-width="0.8"/>` +
     `</svg>`
   );
 }

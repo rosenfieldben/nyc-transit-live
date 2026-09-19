@@ -109,10 +109,10 @@
      "onSurface": 3.77
     },
     "ferry boat": {
-     "paint": "path fill",
-     "colour": "rgb(255, 209, 0)",
-     "onPaper": 1.31,
-     "onSurface": 1.21
+     "paint": "path stroke",
+     "colour": "rgb(32, 30, 29)",
+     "onPaper": 14.86,
+     "onSurface": 13.7
     },
     "rail tag": {
      "paint": "rect stroke",
@@ -171,10 +171,10 @@
      "onSurface": 3.08
     },
     "ferry boat": {
-     "paint": "path fill",
-     "colour": "rgb(0, 131, 156)",
-     "onPaper": 3.74,
-     "onSurface": 3.17
+     "paint": "path stroke",
+     "colour": "rgb(243, 242, 242)",
+     "onPaper": 14.86,
+     "onSurface": 12.6
     },
     "rail tag": {
      "paint": "rect stroke",
@@ -457,7 +457,7 @@
   "ferry": {
    "ferryBoats": [
     {
-     "html": "<svg viewBox=\"0 0 22 14\" class=\"ferry-hull\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M1 3 H21 L17.5 11 H4.5 Z\" style=\"fill: #00839c; stroke: var(--paper)\" stroke-width=\"1\"/></svg>",
+     "html": "<svg viewBox=\"0 0 22 14\" class=\"ferry-hull\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M1 3 H21 L17.5 11 H4.5 Z\" style=\"fill: #00839c; stroke: var(--paper)\" stroke-width=\"2\"/><path d=\"M1 3 H21 L17.5 11 H4.5 Z\" style=\"fill: none; stroke: var(--ink)\" stroke-width=\"0.8\"/></svg>",
      "className": "ferry-marker ferry-active",
      "size": [
       22,
@@ -474,7 +474,7 @@
      "opacity": 1
     },
     {
-     "html": "<svg viewBox=\"0 0 22 14\" class=\"ferry-hull\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M1 3 H21 L17.5 11 H4.5 Z\" style=\"fill: #ffd100; stroke: var(--paper)\" stroke-width=\"1\"/></svg>",
+     "html": "<svg viewBox=\"0 0 22 14\" class=\"ferry-hull\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M1 3 H21 L17.5 11 H4.5 Z\" style=\"fill: #ffd100; stroke: var(--paper)\" stroke-width=\"2\"/><path d=\"M1 3 H21 L17.5 11 H4.5 Z\" style=\"fill: none; stroke: var(--ink)\" stroke-width=\"0.8\"/></svg>",
      "className": "ferry-marker ferry-docked",
      "size": [
       22,
@@ -491,7 +491,7 @@
      "opacity": 0.55
     },
     {
-     "html": "<svg viewBox=\"0 0 22 14\" class=\"ferry-hull\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M1 3 H21 L17.5 11 H4.5 Z\" style=\"fill: #78909c; stroke: var(--paper)\" stroke-width=\"1\"/></svg>",
+     "html": "<svg viewBox=\"0 0 22 14\" class=\"ferry-hull\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M1 3 H21 L17.5 11 H4.5 Z\" style=\"fill: #78909c; stroke: var(--paper)\" stroke-width=\"2\"/><path d=\"M1 3 H21 L17.5 11 H4.5 Z\" style=\"fill: none; stroke: var(--ink)\" stroke-width=\"0.8\"/></svg>",
      "className": "ferry-marker ferry-active",
      "size": [
       22,

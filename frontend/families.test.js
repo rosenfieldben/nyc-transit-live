@@ -85,7 +85,26 @@ test("MR4 ferry: the boat is a hull and not a rounded rect, which is what the fi
   assert.equal(FERRY_HULL_PATH, "M1 3 H21 L17.5 11 H4.5 Z");
   assert.ok(svg.includes(FERRY_HULL_PATH));
   assert.ok(svg.includes("stroke: var(--paper)"));
-  assert.match(svg, /stroke-width="1"/);
+
+  /* MR5 GAVE THE HULL AN INK EDGE (MR4 ruling Q1), so this asserts TWO strokes on one path
+     rather than the single paper one it used to. A boat is filled with the colour the feed
+     publishes and the app does not move a published fill, so the only paint left under the
+     3:1 floor on this whole map was South Brooklyn's yellow at 1.31 against light paper. The
+     ruling's answer is a third paint the app DOES choose, inside the casing.
+
+     ASSERTED AS AN ORDER AND A RELATION, not as two numbers. A stroke is centred on its
+     path, so the casing can only stay outside the edge if it is WIDER and drawn FIRST; a
+     future edit that swapped either would put ink outside paper and the mark would lose the
+     casing that separates it from a dark tile. Reading outward: published fill, ink edge,
+     paper casing. */
+  const strokes = [...svg.matchAll(/stroke: var\(--(paper|ink)\)" stroke-width="([\d.]+)"/g)]
+    .map((m) => ({ paint: m[1], width: Number(m[2]) }));
+  assert.deepEqual(strokes.map((x) => x.paint), ["paper", "ink"], "the casing is drawn first, the edge second");
+  assert.ok(strokes[0].width > strokes[1].width, "the paper casing must be wider than the ink edge it holds");
+  // And the fill is still the feed's, untouched: that is the half of the ruling that says
+  // what may NOT change.
+  assert.ok(svg.includes("fill: #00839c"), "the published fill is unchanged");
+  assert.ok(svg.includes("fill: none"), "the edge paints no fill of its own");
   // A TRAPEZOID, NOT A RECTANGLE: the deck is wider than the keel, which is the whole reason
   // a boat reads as a boat beside four other shapes. Asserted on the geometry rather than on
   // the string, so a path that happened to contain the right characters could not pass.

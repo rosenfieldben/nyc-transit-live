@@ -1052,6 +1052,56 @@ not the expression that produced it.
 | **Q7** | **Two dead CSS selectors, found by measuring.** `.njt-marker` and `.njt-station-marker` have matched nothing since MR3 gave NJ Transit the rail tag and the commuter square; the dark-theme measurement selected zero elements through them. | **Deleted, for the reason the comment six lines above them already gives** about the railroad's and AirTrain's own dead selectors: a dead selector is a thing that looks live. The P4a census is the standing proof, since it lists every class that is actually drawn. |
 | **Q8** | **A claim this codebase repeats in four places is false, and its own ledger already said so.** Three source comments and two specs asserted that `fill="var(--paper)"` as an SVG presentation attribute "is not a paint value and does not resolve", and one of them used that as the reason a test exists. **Measured on this branch**: `stroke="var(--paper)"` on a presentation attribute computes to `rgb(243, 242, 242)`, byte for byte what the inline-style form computes to; a presentation attribute is mapped into the cascade as a declaration, so the token resolves. An UNKNOWN token (`var(--nope)`) is where black comes from, and it does that in EITHER form. MR2's finding **H2** measured this correctly and wrote "works in a Chromium presentation attribute"; the sentence got stronger every time it was copied, and MR3 and MR4 both copied the strong version. | **Every site corrected to the measured truth, and the house rule kept on its real grounds.** A presentation attribute is the lowest-priority author declaration there is, so any stylesheet rule beats the mark's own paint silently, and the style form also works where attributes are not mapped at all. That is a weaker reason and still decisive, so `families.test.js` keeps asserting the style form and now says what it is asserting. **It is also why mutation M30 is recorded as surviving every browser gate**: the two forms draw the same pixels in this browser, so a mutation that swaps them can only die at the node tier, and a reader who found the e2e green would otherwise have concluded the guard was asleep. |
 
+| **Q9** | **Seven of the Key panel's eighteen rows describe marks that no longer exist, and they have since MR3.** That stage gave LIRR, Metro-North and NJ Transit one grammar (the rail tag, the commuter square, a casing under the agency's own colour) and updated none of the legend's rail rows. Measured from `index.html` on this branch: rows 6 and 7 draw an LIRR/Metro-North train as a 16x16 purple rounded square, row 8 its route line as a flat `#7b1fa2` 2.5px line, row 9 its station as a white ring stroked `#334155`, and rows 15, 16 and 17 do the same three things for NJ Transit in `#075AAA`. Every one of those is a mark this map stopped drawing in MR3. | **Recorded and NOT fixed, and it wants a ruling because the repo's own principle cuts the other way.** MR1's G15 disposition says it out loud: "a key whose glyphs did not match the map would be worse than a dim one", which is why MR2 updated the subway's three rows with the subway's marks and why MR4 updated the four rows for the families it redrew (the bus arrow and dot, the AirTrain guideway and square, the PATH dot, the ferry hull and dock). The rail rows are not this stage's marks: the operator scoped the rail marks out of MR4 and asked for the Key's glyphs to be left unchanged on their plate, and drawing a 35-to-45px two-block tag at legend scale is a design decision rather than a mechanical swap. So it is named here with its measurement. **MR5 or a stage of its own is the natural home**; the row LABELS are already right, so nothing a rider reads is wrong, only every glyph beside them. |
+
+### The tests, and what each tier is for
+
+**Node, `frontend/families.test.js`, 11 tests.** Every mark as a function of its inputs, one
+state at a time, for the reason MR3's `railtag.test.js` gives: a mark built as a STRING can be
+asked, and a mark built inside an `L.divIcon` can only be photographed. The diamond, the hull,
+the arrow and the dot as geometry; the dock's and the guideway's options with the token as a
+parameter; the bus hue swept over all 360 hues at both theme ends against both papers; and the
+predicate table for "is this bus pointed anywhere" (a served null, an absent field, a NaN, a
+string, and zero, which is a heading and which a truthiness test would have lost).
+
+**And the theme registry asserted against the SOURCE rather than against a list**, which is what
+the operator asked for: a node test naming the six families would be a second copy of the
+registry and would agree with itself forever. The scrape reads every file in `systems/` that
+resolves `paperColor()`, `inkColor()` or `scheduledColor()` and requires each one to register a
+family. It cost two corrections on the way, both of them the same lesson:
+
+- It went red on `njt.js`, whose only mention of `paperColor()` is a SENTENCE in the MR3 comment
+  explaining that `railDrawRibbons` "gets `paperColor()` for free". The match was prose. So the
+  scrape strips comments first, which is asking the question of the program rather than of the
+  file.
+- And a stripper that ate a string or a regex would hide a real call site and leave the test
+  passing over nothing, which is one of the four defect shapes this phase keeps producing. So
+  the stripped file is COMPILED (`new vm.Script`, which parses without running) before it is
+  scraped, and the stripper itself is unit-tested on prose, a string and a division.
+
+**Hermetic e2e, `tests/e2e/families.spec.js`, D4a to D4g.** Each family's mark and its dimmed
+state on the drawn page; the ferry's docked rule alone in a healthy world, which is the half P4b2
+cannot show because there every boat is dimmed by the feed as well; the dock labels' band and the
+Names toggle; and the two counts this stage widened. Paints are read as COMPUTED STYLE and
+opacity as `el.style.opacity`, never as the option that asked for it.
+
+**Hermetic e2e, `tests/e2e/theme.spec.js`, D5a to D5d.** The control's release and G7's name rule
+at both states; the swap reaching all six canvas families while rebuilding nothing (every marker
+element tagged before the swap and found after it, a popup held open across it, the canvas
+layers' Leaflet ids compared); the divIcon population following the cascade at both ends; and
+G15's floor on the drawn page.
+
+**Contract browser tier, C6e5.** The ferry is the family worth bringing to a real backend because
+it is the only one with TWO opacity rules, and they multiply rather than replace. With
+`ferry:vehicle` killed and `ferry:tripupdate` left alive (the dimming is about POSITIONS, which
+is also the sharper test), a docked boat draws at 0.55 * 0.45 and an under-way one at 0.45, the
+option agrees with the drawn page, and both clear on recovery.
+
+**Two flakes, recorded rather than smoothed over.** `smoke.spec.js` 21 (a boat moves between
+polls without churn) failed once in a three-file parallel run and passed alone at the same sha;
+P1k failed once inside a mutation run that cannot reach anything NJ Transit draws, and passed on
+an isolated re-run. Both are timing-sensitive under load. Neither failed in any full-suite run.
+
 ### The mutations
 
 Each one in a `git worktree` **detached at the commit under test** (`65193fd`), with the

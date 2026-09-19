@@ -1842,6 +1842,495 @@ function railroadAtItsStation(row, at = null, before = null) {
   return typeof at === "number" && at >= t.next_time;
 }
 
+/* ===== MR3: THE COMMUTER RAIL GRAMMAR =================================================
+
+   Stage 3 of the map redesign draws LIRR, Metro-North and NJ Transit as one family: a
+   branch line in the agency's own colour, a paper square for a station, and a two-part tag
+   for a train whose body and head say where its position came from. Everything in this
+   block is PURE, so the table that decides a mark can be asked one row at a time by a node
+   test rather than measured off a screenshot.
+
+   THE ROUTE TABLES ARE NOT WRITTEN DOWN HERE, and that is the point of section 6 of the
+   brief: "v2's branch table is not the feed's ... Build from these; do not hand-table." The
+   names, the colours and the text colours all arrive from /api/railroad-routes and
+   /api/njt-routes. What IS written down is the one thing no feed publishes, the short code
+   a 5.6px-per-character block can hold, and it is keyed by NAME rather than by route id
+   for a measured reason: the brief found the ids in the v2 table were sample data (there is
+   no LIRR route 11; routes 12 and 13 are real and were missing; Metro-North has six routes
+   and the table had three), while the names are what the feeds actually serve and what a
+   rider reads. An id table would have been wrong on nine of eighteen rows the day it was
+   written. */
+
+// THE BRANCH CODES, keyed by the name /api/railroad-routes serves (brief 6.1 and 6.2).
+// Twelve LIRR branches and six Metro-North lines, which is what the live feeds carry.
+const RAIL_BRANCH_CODES = {
+  LIRR: {
+    "Babylon Branch": "BAB",
+    "Hempstead Branch": "HEM",
+    "Oyster Bay Branch": "OB",
+    "Ronkonkoma Branch": "RON",
+    "Montauk Branch": "MTK",
+    "Long Beach Branch": "LB",
+    "Far Rockaway Branch": "FR",
+    "West Hempstead Branch": "WH",
+    "Port Washington Branch": "PW",
+    "Port Jefferson Branch": "PJ",
+    "City Terminal Zone": "CTZ",
+    "Greenport Service": "GRN",
+  },
+  MNR: {
+    Hudson: "HUD",
+    Harlem: "HAR",
+    "New Haven": "NH",
+    "New Canaan": "NC",
+    Danbury: "DAN",
+    Waterbury: "WAT",
+  },
+};
+
+// The neutral a route nothing names or colours falls back to (README: "Unknown route ->
+// code = route id, colour #6d6e71"). It takes white ink at 4.83 and dark ink at 4.35, so
+// readableTextOn's answer on it clears 4.5, which is why this hue and not v2's #607d8b
+// (the note at railroadColor says what that one cost).
+const RAIL_NEUTRAL_COLOR = "#6d6e71";
+
+// The agency glyph and its block width (README: 11px for "L" and "M", 16px for "NJ").
+const RAIL_AGENCY = {
+  LIRR: { glyph: "L", width: 11 },
+  MNR: { glyph: "M", width: 11 },
+  NJT: { glyph: "NJ", width: 16 },
+};
+
+/* A BRANCH'S SHORT CODE, from whatever the feed gave us, with the id as the last resort.
+
+   Three sources in one order, and the order is the brief's:
+     1. NJ Transit's own route_short_name, which that feed publishes ("NEC", "NJCL") and
+        which is already exactly this kind of code, so hand-tabling it would be inventing a
+        second answer to a question the feed answers.
+     2. The name-keyed table above, for LIRR and Metro-North, whose feeds publish no short
+        name at all (the LIRR's routes.txt has no route_short_name COLUMN).
+     3. The route id, which is the README's stated fallback and is never empty on a drawn
+        train.
+
+   A code the tables do not know is NOT an error and must not blank the tag: a branch the
+   agency adds tomorrow draws as its id in the neutral colour until someone adds a row. */
+function railBranchCode(system, routeId, routeName = null, shortName = null) {
+  const short = (shortName ?? "").trim();
+  if (short) return short;
+  const table = RAIL_BRANCH_CODES[system];
+  const named = table && routeName ? table[routeName.trim()] : null;
+  if (named) return named;
+  return routeId == null ? "" : String(routeId);
+}
+
+/* A FEED COLOUR AS A CSS COLOUR. routes.txt publishes hex with NO leading "#" and the
+   backend carries it verbatim (that is the whole claim of claude/railroad-route-colors), so
+   the "#" is added at the one place the value becomes a paint instruction. A blank or
+   missing colour is the neutral, never a guess: three of NJ Transit's routes share one
+   yellow and two of the LIRR's share one purple, so a hash of the id would be a colour the
+   agency does not use, drawn as if it did. */
+function railBranchColor(color) {
+  const hex = (color ?? "").trim();
+  if (!hex) return RAIL_NEUTRAL_COLOR;
+  return hex.startsWith("#") ? hex : `#${hex}`;
+}
+
+/* THE BRANCH BLOCK'S PAINT: its fill and the ink printed on it, decided together.
+
+   THE FEED'S OWN INK IS PREFERRED, and both branches are live. Measured on the live feeds:
+   LIRR and Metro-North fill route_text_color on every route (13 of 13 and 6 of 6) and NJ
+   Transit leaves it EMPTY on all twelve. So the railroads take the agency's chosen ink and
+   NJ Transit computes one, and the same tag code serves both. Computing one for a feed that
+   supplied it would throw away the agency's own answer; trusting one that is absent would
+   print black on a dark line.
+
+   AND ONE PUBLISHED COLOUR TODAY IS A FILL NEITHER INK CAN RESCUE, which is why this
+   returns a pair rather than an ink. Measured 2026-09-19 over all 26 colours the three
+   feeds publish:
+
+     EE0034, Metro-North's New Haven red, takes white at 4.48 and dark at 3.88.
+
+   Nothing clears 4.5 on it. That colour is shared by FOUR of Metro-North's six routes (New
+   Haven, New Canaan, Danbury and Waterbury), and Metro-North's positions are not age-gated,
+   so those trains draw with a SOLID body and their code printed on that block: it is the
+   common case on that railroad, not a corner. The other 25 colours clear, the worst of them
+   at 4.69.
+
+   SO THE FILL MOVES, WHICH IS THIS REPOSITORY'S OWN REMEDY for exactly this class. The note
+   at railroadColor says it in as many words about v2's #607d8b: "That is a fill that has to
+   move rather than an ink that has to be chosen, which is the one case readableTextOn cannot
+   rescue". The move is the same scaling readableInk uses for text, so it preserves the hue,
+   and it is taken in 1% steps and stopped at the first that clears: EE0034 becomes #ec0033,
+   a two-unit change in one channel, and white goes from 4.48 to 4.55.
+
+   THE ROUTE LINE IS NOT TOUCHED. railBranchColor is what the polyline draws with, and it
+   returns the published colour always. Only the 24-by-13 block with 8px type on it moves,
+   and only when the type on it would otherwise be illegal, which is the narrowest place to
+   pay for this and the only place the shortfall does any harm. A rider comparing the tag to
+   the line on the New Haven family sees the same red; a meter does not. */
+const RAIL_INK_TARGET = 4.5;
+
+function railBranchPaint(color, textColor = null) {
+  const published = railBranchColor(color);
+  const given = (textColor ?? "").trim();
+  const preferred = given ? (given.startsWith("#") ? given : `#${given}`) : readableTextOn(published);
+  if ((contrastRatio(preferred, published) ?? 0) >= RAIL_INK_TARGET) {
+    return { fill: published, ink: preferred, moved: false };
+  }
+  // The feed's ink failed. Try the better of the two computed inks before moving the fill,
+  // because an agency that published an unreadable ink over a readable fill is a wrong ink,
+  // not a wrong colour.
+  const computed = readableTextOn(published);
+  if ((contrastRatio(computed, published) ?? 0) >= RAIL_INK_TARGET) {
+    return { fill: published, ink: computed, moved: false };
+  }
+  // Neither ink clears the published fill, so the fill moves, as little as it can. Toward
+  // black for white type and toward white for dark type, because those are the directions
+  // that help; 1% steps, first that clears.
+  const rgb = parseColor(published);
+  if (!rgb) return { fill: published, ink: computed, moved: false };
+  const toWhite = computed === INK_LIGHT;
+  for (let step = 1; step <= 100; step++) {
+    const f = step / 100;
+    const moved = rgb.map((c) => Math.round(toWhite ? c * (1 - f) : c + (255 - c) * f));
+    const hex = `#${moved.map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+    if ((contrastRatio(computed, hex) ?? 0) >= RAIL_INK_TARGET) {
+      return { fill: hex, ink: computed, moved: true };
+    }
+  }
+  // Unreachable on any real colour (black takes white at 21 and white takes dark at 18.6),
+  // and it returns the extreme rather than the unreadable pair if it ever is reached.
+  return { fill: toWhite ? "#000000" : "#ffffff", ink: computed, moved: true };
+}
+
+// The ink alone, for a caller that has already decided its fill.
+function railBranchInk(color, textColor = null) {
+  return railBranchPaint(color, textColor).ink;
+}
+
+/* THE TAG'S WIDTH, which is arithmetic and therefore testable (README: "Agency block width
+   11px (L, M) or 16px (NJ); branch block width code.length x 5.6 + 7").
+
+   Rounded to a whole pixel at the END, once, rather than per block: 5.6 per character is
+   not an integer and a tag whose two blocks were each rounded would not be as wide as the
+   sum of its parts, which shows up as a one-pixel seam between two filled rects. The
+   chevron's centre is the whole tag's centre, so an odd total width is what puts the head
+   half a pixel off the line; iconAnchor takes w/2 unrounded for that reason. */
+const RAIL_TAG_HEIGHT = 13;
+const RAIL_TAG_CODE_PER_CHAR = 5.6;
+const RAIL_TAG_CODE_PAD = 7;
+
+function railTagGeometry(system, code) {
+  const agency = RAIL_AGENCY[system] ?? RAIL_AGENCY.NJT;
+  const codeWidth = Math.round(String(code ?? "").length * RAIL_TAG_CODE_PER_CHAR + RAIL_TAG_CODE_PAD);
+  const width = agency.width + codeWidth;
+  return {
+    glyph: agency.glyph,
+    agencyWidth: agency.width,
+    codeWidth,
+    width,
+    height: RAIL_TAG_HEIGHT,
+    // The glyph box is 30 tall and the chevron's centre sits at y 21, which is what puts
+    // it on the track (README: "iconAnchor: [w/2, 21]").
+    centre: width / 2,
+  };
+}
+
+/* ===== THE STATE TABLE (brief 3.1), AS A FUNCTION, ONE CASE PER ROW ====================
+
+   The deliverable of stage 3. Seven rows, three drawing decisions and the dimming rule:
+
+     reported, unqualified   solid body     filled head      not dimmed
+     reported, qualified     solid body     filled head      DIMMED
+     estimated               OUTLINED body  FILLED head      not dimmed
+     placed                  outlined body  OUTLINED head    not dimmed
+     retained                the last state as last state    DIMMED
+     unknown, age-gated      outlined body  outlined DOT     (see below)
+     unknown, Metro-North    solid body     filled head      not dimmed
+
+   WHAT EACH COLUMN MEANS, in the brief's own words: "solid versus outlined body (position
+   from GPS versus from a prediction), and filled versus outlined chevron (heading trusted
+   or not). Dimming carries age; the body carries source. A rider should be able to read
+   'outlined body, filled chevron' as 'we know where it is going but not exactly where it
+   is.'"
+
+   IT IS KEYED ON positionQualifier's `kind`, NOT ON provenance ALONE, because two of the
+   seven rows are the same provenance and the app already has a vocabulary that separates
+   them: a `reported` fix is row 1 when fresh, row 2 when aged and row 6 when the provider
+   sent no clock at all on a system that normally does. That is one function's answer
+   (positionQualifier) rather than three re-derivations of it, which is the same discipline
+   v3.1 states for the words: "the implementation calls positionQualifier() ... never
+   re-derives it. Only the mapping of provenance + age to tag body, chevron and dimming is
+   taken from posState()."
+
+   ROW 7 IS ROW 1's CODE PATH, and that is the policy working rather than a special case.
+   Metro-North's positions are not age-gated (the freshness contract's 3.3 table: "The
+   stamp is a copy of a header that lags 2 to 4 minutes. Gating on it would mark a live
+   fleet stale"), so an undated Metro-North fix has kind "" and draws solid and live. The
+   node test asks it as its own row anyway, because it is a policy that could be broken by
+   a change that left rows 1 through 6 alone.
+
+   ROW 6 IS THE ONE DEVIATION FROM THE TABLE, and only in its opacity column. The table
+   says dimmed; this returns dim = false, because dimming is markerOpacity's and
+   markerOpacity reads an age. Clause (c) of the contract's rule is an anomaly by the
+   contract's own words ("The provider normally dates this and did not. An anomaly, so it
+   is said at the observation"), and what is anomalous is that there is NO age: staleAge
+   (null) is false, so there is nothing for dimming to carry and dimming it would tell a
+   rider "this is old" about a train whose age we have just said we do not know. The
+   pessimism the row is for is carried where it belongs, by the body and the head: outlined
+   and a dot, which is the strongest "do not trust this" the tag can draw. The body half of
+   row 6 IS obeyed, and it is the one place this goes past railroadHollow, which calls a
+   `reported` row solid whatever its clock says. */
+
+// Whether the tag's head may be a chevron at all. A dot is not a weaker chevron, it is the
+// absence of a heading: row 6 refuses a heading even where the geometry could produce one.
+function railTagHeadingTrusted(kind) {
+  return kind !== "unknown";
+}
+
+function railTagState(row, before = null, kind = null, age = null) {
+  const provenance = row ? row.provenance : null;
+  // A retained row wears what it wore. `before` is drawnFromPrediction's argument: the
+  // provenance the train was last SERVED with, because retention stamps over it. A row the
+  // page never saw before is read pessimistically, exactly as railroadHollow reads it, and
+  // for the same reason: the solid body is the one mark that claims GPS.
+  if (provenance === "retained" || kind === "retained") {
+    return {
+      body: before === "reported" ? "solid" : "outlined",
+      head: before === "reported" || before === "estimated" ? "filled" : "outlined",
+      headingTrusted: before != null,
+      dim: staleAge(age),
+      row: "retained",
+    };
+  }
+  if (kind === "estimated") {
+    // THE ONE ROW WHERE BODY AND HEAD DISAGREE, and the whole table exists to draw it: the
+    // position is inferred and the heading is not.
+    return { body: "outlined", head: "filled", headingTrusted: true, dim: staleAge(age), row: "estimated" };
+  }
+  if (kind === "placed") {
+    return { body: "outlined", head: "outlined", headingTrusted: true, dim: staleAge(age), row: "placed" };
+  }
+  if (kind === "unknown") {
+    return { body: "outlined", head: "outlined", headingTrusted: false, dim: staleAge(age), row: "unknown" };
+  }
+  // kind "" (fresh) and "aged" (stale): a reported fix, solid and headed, dimmed by its
+  // age alone. Row 7 arrives here too, with a null age on a system that is not gated.
+  return {
+    body: "solid",
+    head: "filled",
+    headingTrusted: true,
+    dim: staleAge(age),
+    row: kind === "aged" ? "reported-qualified" : "reported-unqualified",
+  };
+}
+
+/* ===== THE TAG'S MARKUP, AS A STRING ==================================================
+
+   The SVG a rail train wears, built here rather than in a system file so node can ask for
+   it. That split is the whole reason this is a string and not an L.divIcon: the divIcon
+   wrapper is four lines in systems/shared.js and needs a browser, while the markup is where
+   every decision the state table made becomes visible, and a browser test that has to find
+   a shape by screenshot is a test nobody will keep.
+
+   THE BOX IS 30 TALL AND THE TRACK IS AT y 21 (README): the tag occupies y 0 to 13, a 1px
+   stem runs from 13 to 16.5, and the head is centred on 21, which is what iconAnchor's
+   [w/2, 21] puts on the line. So the tag hangs ABOVE the rail and the head sits ON it, and
+   a rider reads the pair as one mark pointing somewhere.
+
+   PAPER AND INK ARE THE THEME'S, as inline `style` rather than as SVG attributes, which is
+   what MR2's subway bullet already does (systems/subway.js:30) and is not a style choice: a
+   `fill="var(--paper)"` ATTRIBUTE is not a paint value in SVG 1.1 and does not resolve, so
+   the marker would draw black. The BRANCH ink is a literal instead, and deliberately: it
+   depends on the branch colour, not on the theme, and it comes either from the feed's own
+   route_text_color or from readableTextOn. A token there would have made a rider's ink
+   follow the page's theme instead of the line it is printed on.
+
+   WHY THE TEXT IS NOT CENTRED WITH text-anchor ALONE. It is, but the y is the baseline and
+   Archivo 800 at 8px sits about 2.8px above it, so the constant below is measured from the
+   block rather than derived: 8.9 is the baseline that puts the cap-height's centre on the
+   13px block's centre. */
+const RAIL_TAG_TEXT_BASELINE = 8.9;
+const RAIL_TAG_BOX_HEIGHT = 30;
+const RAIL_TAG_TRACK_Y = 21;
+const RAIL_TAG_STEM_END = 16.5;
+const RAIL_TAG_STRIPE = 2.5; // the branch colour's stripe on an outlined body
+const RAIL_TAG_DOT_R = 3;
+
+// The chevron, pointing north before rotation (README's path, written from the centre so
+// one expression serves any tag width).
+function railTagChevronPath(cx) {
+  const n = (v) => Number(v.toFixed(2));
+  return `M ${n(cx)} 15.5 L ${n(cx + 5)} 24.5 L ${n(cx)} 22 L ${n(cx - 5)} 24.5 Z`;
+}
+
+/* THE WHOLE MARK. `state` is railTagState's answer, `bearing` is railTrainBearing's (null
+   when nothing on the row can say), and the two together decide the head: a chevron rotated
+   to the bearing when the state trusts a heading AND there is one, a dot otherwise.
+
+   A DOT IS NOT A FALLBACK, IT IS A STATEMENT, which is why both ways of reaching it draw
+   the same shape: the row that has no heading to give and the row whose heading the table
+   refuses to trust (kind "unknown") are both "we are not telling you which way this is
+   going", and drawing a chevron at an arbitrary angle for either would be worse than
+   drawing none. */
+function railTagSvg({ system, code, color, textColor = null, state, bearing = null } = {}) {
+  const geom = railTagGeometry(system, code);
+  const { width: w, agencyWidth: aw, codeWidth: cw, glyph, centre: cx } = geom;
+  // THE BLOCK'S paint, which may have moved off the published colour so its 8px type is
+  // legible (railBranchPaint says which colour and why). The STRIPE on an outlined body
+  // carries no type, so it takes the published colour: nothing is printed on it to rescue.
+  const paint = railBranchPaint(color, textColor);
+  const branch = paint.fill;
+  const branchInk = paint.ink;
+  const stripe = railBranchColor(color);
+  const solid = state.body === "solid";
+  const headFilled = state.head === "filled";
+  const showChevron = state.headingTrusted && bearing != null;
+
+  const body = solid
+    ? // A paper backing 1px larger at 0.9, so the tag reads against any tile, then the two
+      // blocks: the agency in ink with a paper glyph, the branch in its own colour.
+      `<rect x="-0.5" y="-0.5" width="${w + 1}" height="14" style="fill: var(--paper)" opacity="0.9"/>` +
+      `<rect x="0" y="0" width="${aw}" height="${RAIL_TAG_HEIGHT}" style="fill: var(--ink)"/>` +
+      `<rect x="${aw}" y="0" width="${cw}" height="${RAIL_TAG_HEIGHT}" fill="${branch}"/>` +
+      `<text x="${aw / 2}" y="${RAIL_TAG_TEXT_BASELINE}" text-anchor="middle" style="fill: var(--paper)">${esc(glyph)}</text>` +
+      `<text x="${aw + cw / 2}" y="${RAIL_TAG_TEXT_BASELINE}" text-anchor="middle" fill="${branchInk}">${esc(code)}</text>`
+    : // Outlined: one paper box in an ink stroke, a divider at the block edge, both texts in
+      // ink, and the branch colour reduced to a stripe along the bottom of its own block.
+      // The stroke is 1.2 and centred on the path, so the box is inset 0.6 to stay inside
+      // the 13px it is allowed.
+      `<rect x="0.6" y="0.6" width="${w - 1.2}" height="${RAIL_TAG_HEIGHT - 1.2}" style="fill: var(--paper); stroke: var(--ink)" stroke-width="1.2"/>` +
+      `<line x1="${aw}" y1="0.6" x2="${aw}" y2="${RAIL_TAG_HEIGHT - 0.6}" style="stroke: var(--ink)" stroke-width="1.2"/>` +
+      `<rect x="${aw + 0.6}" y="${RAIL_TAG_HEIGHT - 0.6 - RAIL_TAG_STRIPE}" width="${cw - 1.2}" height="${RAIL_TAG_STRIPE}" fill="${stripe}"/>` +
+      `<text x="${aw / 2}" y="${RAIL_TAG_TEXT_BASELINE}" text-anchor="middle" style="fill: var(--ink)">${esc(glyph)}</text>` +
+      `<text x="${aw + cw / 2}" y="${RAIL_TAG_TEXT_BASELINE}" text-anchor="middle" style="fill: var(--ink)">${esc(code)}</text>`;
+
+  const stem =
+    `<line x1="${cx}" y1="${RAIL_TAG_HEIGHT}" x2="${cx}" y2="${RAIL_TAG_STEM_END}"` +
+    ` style="stroke: var(--ink)" stroke-width="1"/>`;
+
+  // Filled: ink with a 1px paper stroke, so it reads on a dark tile. Outlined: paper with a
+  // 1.4px ink stroke, which is the heavier stroke the README asks for because a hollow shape
+  // this small needs more edge to stay a shape.
+  const headPaint = headFilled
+    ? `style="fill: var(--ink); stroke: var(--paper)" stroke-width="1"`
+    : `style="fill: var(--paper); stroke: var(--ink)" stroke-width="1.4"`;
+  const head = showChevron
+    ? `<path d="${railTagChevronPath(cx)}" ${headPaint} transform="rotate(${Number(bearing.toFixed(1))} ${cx} ${RAIL_TAG_TRACK_Y})"/>`
+    : `<circle cx="${cx}" cy="${RAIL_TAG_TRACK_Y}" r="${RAIL_TAG_DOT_R}" ${headPaint}/>`;
+
+  return (
+    `<svg viewBox="0 0 ${w} ${RAIL_TAG_BOX_HEIGHT}" width="${w}" height="${RAIL_TAG_BOX_HEIGHT}"` +
+    ` class="rail-tag rail-tag-${state.body} rail-head-${state.head}">${body}${stem}${head}</svg>`
+  );
+}
+
+/* THE RAIL STATION SQUARE (README: "squares, so a square always means regional rail and a
+   circle always means subway"). 10x10 box, an 8x8 paper rect in a 1.6 ink stroke, and the
+   20x20 hit target is the icon's SIZE while the drawn square stays 10: a divIcon's size is
+   its click box, so growing the box and centring the square inside it is how a 10px mark
+   gets a 20px target without becoming a 20px blob at city zoom.
+
+   A STRING HERE FOR THE SAME REASON THE TAG IS, and one shape for all three families, which
+   is what makes "a square always means regional rail" a claim a test can count rather than a
+   sentence in a design note. */
+const RAIL_STATION_BOX = 20;
+const RAIL_STATION_SQUARE = 10;
+
+function railStationSvg() {
+  const pad = (RAIL_STATION_BOX - RAIL_STATION_SQUARE) / 2;
+  return (
+    `<svg viewBox="0 0 ${RAIL_STATION_BOX} ${RAIL_STATION_BOX}" width="${RAIL_STATION_BOX}" height="${RAIL_STATION_BOX}" class="rail-stn">` +
+    `<rect x="${pad + 1}" y="${pad + 1}" width="8" height="8" style="fill: var(--paper); stroke: var(--ink)" stroke-width="1.6"/>` +
+    `</svg>`
+  );
+}
+
+/* ===== BEARING ALONG THE BRANCH =======================================================
+
+   The heading the chevron is rotated to: the direction of travel along the branch the
+   train is on, at the point it is drawn.
+
+   IT REUSES THE PROJECTION THE PAGE ALREADY DID rather than doing a second one. Every
+   gliding rail train already carries `_route`, the slice computeRouteSlice built for it
+   (its points, its cumulative lengths and the polyline it was taken from), and that slice
+   is by construction oriented prev-station-to-next-station: computeRouteSlice walks from
+   the projection of `prev` to the projection of `next`. So the slice's own direction IS
+   the direction of travel, and the bearing is the azimuth of the segment the train sits
+   on. A second projectOntoRoute call here would be a second answer to a question already
+   answered, and the two would disagree at exactly the places that matter, where two
+   branches share track.
+
+   AND IT TAKES THE SERVED DIRECTION, NOT A HEADSIGN. v3.1 overrules v2 on this in as many
+   words: "NJ Transit heading comes from the served direction passed to bearingAlong; there
+   is no headsign rule." v2 had `headsign === "New York"` as inbound, which is a string
+   match on a rider-facing label: the same trip reads "New York Penn Station" on NJ Transit
+   and "Penn Station" on the LIRR, an added trip's headsign is synthesized from the route
+   and the train number, and a branch that terminates short of the city has no such
+   headsign at all. What the railroads DO serve is `direction`, "Inbound" or "Outbound"
+   from direction_id (backend/feeds/railroad.py's _RAILROAD_DIRECTION), and what NJ Transit
+   serves is the anchor pair itself, prev and next, which is a direction of travel without
+   needing a word for it. So:
+
+     a slice, which is already prev-to-next, gives the heading directly;
+     `direction` is read only to REVERSE it, and only when the row says "Inbound",
+       because a branch polyline is stored in one direction and an inbound train runs
+       against it;
+     no slice and no anchors is no heading at all, which the tag draws as a dot.
+
+   A GPS train is the one case with a better answer than any of this, and it is used when
+   the feed gives it: RailroadTrain carries `bearing` from the vehicle itself. Reading a
+   polyline for a train that just told us where it is pointing would be re-deriving a
+   served fact, which is the mistake 6.3 exists to stop. */
+
+// The compass azimuth from one [lat, lon] to another, in degrees clockwise from north.
+// Flat-earth over a segment a few hundred metres long, with the longitude scaled by the
+// latitude's cosine so a segment does not read as more east-west than it is.
+function segmentBearing(from, to) {
+  if (!Array.isArray(from) || !Array.isArray(to)) return null;
+  const [lat1, lon1] = from;
+  const [lat2, lon2] = to;
+  if (![lat1, lon1, lat2, lon2].every((n) => Number.isFinite(n))) return null;
+  const dy = lat2 - lat1;
+  const dx = (lon2 - lon1) * Math.cos(((lat1 + lat2) / 2) * (Math.PI / 180));
+  if (dx === 0 && dy === 0) return null; // a degenerate segment points nowhere
+  const deg = (Math.atan2(dx, dy) * 180) / Math.PI;
+  return (deg + 360) % 360;
+}
+
+// Whether a served direction runs against the stored polyline. "Inbound" is the only value
+// that reverses; "Outbound", a missing direction and any word neither of those leave the
+// slice's own orientation alone, because a slice built prev-to-next is already travelling
+// the way the train is and only a polyline stored city-outward needs flipping.
+function railDirectionReverses(direction) {
+  return typeof direction === "string" && direction.trim().toLowerCase() === "inbound";
+}
+
+/* THE HEADING FOR ONE TRAIN, or null when nothing on the row can say.
+
+   Four sources, first that answers:
+     1. the feed's own `bearing`, for a GPS train that sent one;
+     2. the slice the glide is already riding (`_route`), whose direction is the
+        direction of travel;
+     3. the served anchors, prev to next, for a train with anchors and no slice;
+     4. nothing.
+   `direction` reverses 2 and 3, never 1: a served bearing is already the way the train
+   points and reversing it would turn a train around. */
+function railTrainBearing(row) {
+  const t = row || {};
+  if (Number.isFinite(t.bearing)) return ((t.bearing % 360) + 360) % 360;
+  const slice = t._route;
+  const points = slice && Array.isArray(slice.points) ? slice.points : null;
+  let heading = null;
+  if (points && points.length >= 2) {
+    heading = segmentBearing(points[0], points[points.length - 1]);
+  } else if (Number.isFinite(t.prev_lat) && Number.isFinite(t.prev_lon)) {
+    heading = segmentBearing([t.prev_lat, t.prev_lon], [t.latitude, t.longitude]);
+  }
+  if (heading == null) return null;
+  return railDirectionReverses(t.direction) ? (heading + 180) % 360 : heading;
+}
+
 // WHY A RAILROAD TRAIN LEFT THE MAP, when the served data can say: "withheld" for a fix
 // the position ladder stopped drawing for its age (section 3.4's step 5), else null. The
 // vanishing-focus rescue speaks it (vanishingFocusMessage), because "left the feed" is
@@ -4025,6 +4514,12 @@ if (typeof module !== "undefined" && module.exports) {
     OBS_MAX_S, observationAge, observationStaleAt, positionQualifier,
     POSITION_STEP_KEYS, positionSteps, positionBoard, markerAge, glideDeadline, glideAnchored,
     drawnFromPrediction, railroadHollow, railroadAtItsStation, withheldFix, positionLineHtml, positionClause,
+    // MR3: the commuter rail grammar. Pure, so the state table can be asked one row at a
+    // time and the tag's markup read as a string rather than off a screenshot.
+    RAIL_BRANCH_CODES, RAIL_NEUTRAL_COLOR, RAIL_AGENCY, railBranchCode, railBranchColor, railBranchInk, railBranchPaint, RAIL_INK_TARGET,
+    RAIL_TAG_HEIGHT, railTagGeometry, railTagState, railTagHeadingTrusted,
+    segmentBearing, railDirectionReverses, railTrainBearing,
+    railTagSvg, railTagChevronPath, railStationSvg, RAIL_STATION_BOX, RAIL_STATION_SQUARE,
     vehicleStaleLine, composeAnnouncements, withheldTrains, withheldClause,
     thresholdOverrides, CONTRACT_FLAG_PARAM,
     stalePopupLine, STALE_MARKER_OPACITY, FERRY_DOCKED_OPACITY,

@@ -217,14 +217,38 @@ test("MR3 3.1: the opacity column is the freshness contract's, at the threshold 
     assert.equal(markerOpacity(age) < 1, staleAge(age), `age ${age}`);
     assert.equal(markerOpacity(age), staleAge(age) ? STALE_MARKER_OPACITY : 1, `age ${age}`);
   }
-  /* THE TABLE CARRIES NO OPACITY AND NO AGE, asserted on the keys themselves. This is the
-     mutation "put dim back": a field here is a second dimming rule, and the three commits it
-     lived for are how the row 6 argument in helpers.js came to contradict the operator's own
-     ruling on N3. railTagState's arity is asserted too, so an age parameter cannot return
-     silently and go unread. */
-  const keys = Object.keys(railTagState({ provenance: "reported" }, null, "")).sort();
-  assert.deepEqual(keys, ["body", "head", "headingTrusted", "row"]);
-  assert.equal(railTagState.length, 1);
+  /* THE TABLE CARRIES NO OPACITY AND NO AGE, asserted on the keys of EVERY ROW rather than one.
+     This is the mutation "put dim back", and the first version of this assertion asked only the
+     fresh `reported` row, so a `dim` restored on the estimated branch alone SURVIVED it. The
+     table has five return sites; a rule that may not exist has to be absent from all of them.
+
+     WHY IT MAY NOT EXIST AT ALL: a field here is a second expression of the freshness contract's
+     dimming, living in a table nothing draws from, and the three commits it lived for are how the
+     row 6 argument in helpers.js came to contradict the operator's own ruling on N3. The opacity
+     a rider sees is markerOpacity's, applied to the marker.
+
+     AND THE EXTRA ARGUMENT IS REFUSED TOO. `railTagState.length` is 1, because parameters after
+     the first default do not count, so arity alone cannot catch a fourth parameter; what catches
+     it is that the answer must not CHANGE when one is passed. */
+  const ROWS = [
+    [{ provenance: "reported" }, null, ""],
+    [{ provenance: "reported" }, null, "aged"],
+    [{ provenance: "estimated" }, null, "estimated"],
+    [{ provenance: "placed" }, null, "placed"],
+    [{ provenance: "reported" }, null, "unknown"],
+    [{ provenance: "retained" }, "reported", "retained"],
+    [{ provenance: "retained" }, null, "retained"],
+  ];
+  for (const [row, before, kind] of ROWS) {
+    const keys = Object.keys(railTagState(row, before, kind)).sort();
+    assert.deepEqual(keys, ["body", "head", "headingTrusted", "row"], `kind ${kind || "(fresh)"}`);
+    // An age handed to it changes nothing, which is what "this table has no opacity" means.
+    assert.deepEqual(
+      railTagState(row, before, kind, 10_000),
+      railTagState(row, before, kind),
+      `kind ${kind || "(fresh)"} answers differently when handed an age`,
+    );
+  }
 });
 
 test("MR3 3.1: the body is railroadHollow's answer, and row 6 is the only place it is not", () => {

@@ -1,6 +1,6 @@
 # Phase MR, stage 4 of 5: the other four families, and the dark theme's release
 
-Fourteen commits off `origin/main` (`db73f05`): the pins, the four families' marks as pure
+The commits on this branch off `origin/main` (`db73f05`): the pins, the four families' marks as pure
 arithmetic, the wiring, the canvas theme registry, ruling **R2 met** (`#theme-toggle` loses its
 `hidden` attribute and the dark theme is a thing a rider can choose), the round entries, the
 captures, round 1 of the adversarial pass, and **round 2, which is the two rulings that came

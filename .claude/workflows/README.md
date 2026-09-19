@@ -56,6 +56,23 @@ agent whose sha does not match. A discarded verdict makes its finding **unverifi
 refuted. `adversarial-review.js` implements this as its RULE 0b, and callers pass
 `{commit: "<full sha>", branch: "<branch>"}` in `args`.
 
+## And a worktree does not get the caller's dev server
+
+**A background service the caller left running is shared with every worktree, and a worktree's
+run may silently use it instead of its own.**
+
+Measured on stage MR3 of the map redesign. `tests/e2e/playwright.config.js` sets
+`reuseExistingServer: !process.env.CI` and `tests/e2e/serve.js` resolves its document root from
+its own `__dirname`. Both are reasonable alone. Together they mean a static server left up from
+the MAIN checkout is reused by a worktree's Playwright run, and every browser assertion in that
+worktree reads the **unmutated** frontend. A mutation that reverted a confirmed critical came
+back green.
+
+So a worktree that runs browser gates kills whatever holds the port first (**by port, not by
+command text**: a `pkill` on the server's path also matches the shell running the driver), sets
+`CI=1` so nothing is reused, and refuses to run at all while the port is still held. The same
+applies to any other shared background service a workflow's agents might inherit.
+
 ## And the caller owes one check back
 
 Isolation makes the race impossible for agents a script spawns. It cannot make it

@@ -851,14 +851,60 @@ uses, and its comment called the resulting overlap an accepted cost; it also use
 Each in its own worktree detached at the commit under test, applied alone, with the main
 tree verified clean before and after.
 
+**AND THE MUTATION HARNESS ITSELF WAS BROKEN, which round 4 found by having a mutation
+survive that could not have.** M9 puts the literal `"var(--paper)"` back on the casing, which
+`rail.spec.js` D3e asserts against three ways; it came back GREEN. The cause is two lines that
+are individually reasonable: `tests/e2e/playwright.config.js` sets
+`reuseExistingServer: !process.env.CI`, and `tests/e2e/serve.js` resolves its document root from
+its own `__dirname`. So a static server left running from the MAIN checkout is silently reused
+by a worktree's run, and every browser assertion then reads the **unmutated** frontend. A
+mutation that cannot die is the one failure mode mutation testing exists to catch, and this
+harness had it for every browser-tier mutation run from a worktree while a server happened to be
+up. The node tier was never affected, because it loads files from its own cwd.
+
+The driver now kills whatever holds the port **by port rather than by command text** (a `pkill`
+on the server's path also matches the shell running the driver, which is how the first fix
+killed itself), refuses to run a browser gate while the port is still held, and sets `CI=1` so
+the worktree starts its own server from its own tree. Every row below was re-run under the
+fixed driver. **M6 is retired rather than re-run**: it reverted the inbound reversal, and the
+operator's ruling R-a removed the reversal, so its replacements are M12 and M12b, which put it
+back on each of the two geometry paths.
+
+**M17 survived its first run too, and that was a real gap in the guard rather than the
+harness.** The keys assertion asked ONE row of the table, so a `dim` field restored on the
+estimated branch alone passed it. The table has five return sites; every one is asked now, and
+each is also asked whether an age handed to it changes its answer, because `railTagState.length`
+is 1 (parameters after the first default do not count) and arity alone cannot catch a fourth
+parameter being read.
+
+### The mutations, round 4
+
+| # | Guard reverted | Result | Killed by |
+| --- | --- | --- | --- |
+| **M9** | the casing's colour back to the literal `"var(--paper)"` | **killed** | D3e's three-way assertion: equal to `paperColor()`'s live answer, matching a hex, containing no `var(`. **This is the one that exposed the harness**: it survived until the driver stopped reusing the main checkout's server |
+| **M10** | the casing back on `railroadLineRenderer` | **killed**, both specs | D3e ("no rail casing reached the casing canvas") and D2u ("lirr is on the rail panes") |
+| **M11** | the bearing read end to end over the whole branch instead of over `s0` to `s1` | **killed** | the bending-polyline case, where the two legs read 0 and 90 and the chord reads neither |
+| **M12** | the direction word turns the slice again | **killed** | the all-directions loop over a north and a south slice |
+| **M12b** | the direction word turns the served anchor pair again | **killed** | the corrected `railtag.test.js:497`, which is the line that used to assert this |
+| **M13** | one family dropped from `OBSERVATION_GATED` | **killed** | the every-family-listed test, which scrapes the call sites from `systems/` |
+| **M14** | `staticPayloadHasField` keyed on EVERY entry rather than some | **killed** | the route-17 case: a payload where one entry has no short name is a payload from a backend that knows the field |
+| **M15** | the Names sentence reads only the first band | **killed** | the four variadic cases in `subway.test.js` |
+| **M16** | `paintZoomBand`'s sentinel counts rail labels again | **killed** | D3g, on a world with rail stations and no subway ones: the band reads "all" instead of "hubs" at zoom 13 |
+| **M17** | the table grows a second dimming rule (`dim`) again | **killed after the guard was widened** | the per-row keys assertion and the "an age changes nothing" pair |
+| **M18** | `njtTagState` drops the clock it was passed | **killed** | the threading assertion in `positions.test.js` |
+| **M19** | the re-skin gate stops comparing `headingTrusted` | **killed** | the skin-key coverage test, which reads the icon's inputs off `railTagIcon` itself |
+| **M20** | Belmont Park removed from the code table | **killed** | the count assertion, which is what found it in the live feed |
+| **M21** | NJ Transit draws its own casing-and-line pair on the line renderer again | **killed**, both specs | D3e ("the line canvas holds only lines") and D2u ("njt is on the rail panes") |
+
+
 | # | Guard reverted | Result | Killed by |
 | --- | --- | --- | --- |
 | **M1** | the chevron filled for a placed train | **killed**, both tiers | `railtag.test.js` row 4, and `rail.spec.js` D3a on the page |
 | **M2** | the body solid for an estimated train | **killed**, 3 node failures | row 3, the body-is-railroadHollow's-answer tie, and the markup test |
-| **M3** | the contract's dimming lost under the new tag (`dim = false`) | **killed**, 3 node failures | row 2, row 5, and the case that ties `dim` to `markerOpacity` at 0, 1, 89, 90, 91 and 10000 seconds |
-| **M4** | Metro-North gated like every other system | **killed**, 11 node and 2 e2e failures | row 7's policy case, D3f, and nine older specs across the 6.2 and 6.3 contracts |
+| **M3** | the 6.3 erratum reverted, so an undated age-gated row draws bright again (`staleAge` drops its `AGE_UNKNOWN` clause) | **killed**, 2 node and 2 e2e failures | the header-less subway case, row 6, D3a and D3b. **Restated in round 4**: it used to revert `dim = false` inside the table, and the table no longer carries an opacity column, so the mutation now reverts the rule itself |
+| **M4** | Metro-North gated like every other system | **killed**, node and e2e | row 7's policy case and D3f. **Restated in round 4**: it is now one row of `OBSERVATION_GATED`, so the every-family-listed test catches it as well, in both directions against `UNDATED_SYSTEMS` |
 | **M5** | a circle drawn for a rail station | **killed**, both tiers | the station-square markup test, and D3c's squares-and-circles count |
-| **M6** | the bearing not reversed for inbound | **killed**, 2 node failures | the sign test, which asserts the two directions differ by exactly half a turn rather than asserting two numbers |
+| **M6** | *retired.* It reverted the inbound reversal, and the operator's ruling R-a removed the reversal: the slice's interval and the served anchor pair are travel-directed by construction. Its replacements are **M12** and **M12b**, which put the reversal back on each of the two geometry paths | | |
 | **M7** | the code table keyed by route id again | **killed** | the name-keyed test, on the two cases an id table cannot answer: a branch whose id moved, and a route with no name |
 | **M8** | the ink computed even where the feed supplies one | **killed**, 2 node failures, e2e GREEN | the two railroad ink tests. The e2e staying green is the signature, not an omission: NJ Transit publishes no `route_text_color` at all, so its half of the grammar cannot tell the difference, and the railroads' half can. |
 

@@ -1,6 +1,6 @@
 # Phase MR, stage 3 of 5: the commuter-rail grammar
 
-Eleven commits off `origin/main` (`49c5956`): the pins, the grammar as pure arithmetic with
+Twelve commits off `origin/main` (`49c5956`): the pins, the grammar as pure arithmetic with
 the brief's 3.1 table as its oracle, the wiring, the round entries and the captures, your
 rulings on N1 through N5, and round 4 (the adversarial panel's two criticals plus your
 rulings R-a through R-d). LIRR, Metro-North and NJ Transit draw **one grammar** for the
@@ -174,6 +174,11 @@ is thinner than the casing over it.
 **A pane at 395, between `subwayLinePane` and `overlayPane`, closes it in one line.** That is
 your call, not this stage's.
 
+> **SETTLED, and then settled again.** You ruled the pane in, and round 4 found that one pane
+> closed it against PATH while reopening it INSIDE the pane, because the two rail route
+> endpoints land in a race and no per-loader pass can order across them. It is two panes now,
+> 394 for every casing and 395 for every line. The top of this description has the measurement.
+
 ### N3. Row 6 of the table cannot be drawn as written
 
 The table says an age-gated row with no clock is **dimmed**. Dimming is `markerOpacity`'s,
@@ -187,6 +192,11 @@ strongest "do not trust this" the tag can draw. It is the one place the body goe
 `railroadHollow`, and the freshness contract is why: clause (c) is an **anomaly** in the
 contract's own words. The deviation is asserted **as a deviation**, so a later stage that
 decides to dim it has to come here first.
+
+> **SETTLED: row 6 dims.** You ruled the deviation out, so `AGE_UNKNOWN` is the absence of a
+> clock rather than a large number and `staleAge` names it stale in its own clause. Round 4's
+> R-b then replaced the gate that decides WHICH rows are owed a clock with the contract's 3.3
+> table, because the first cut was right by accident. The section above has both.
 
 ### N4. axe cannot judge the tag's type
 

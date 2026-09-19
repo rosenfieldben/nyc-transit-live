@@ -214,6 +214,23 @@ test("D5b. a swap repaints every canvas family, in place, and rebuilds nothing",
   await expect(page.locator(".leaflet-popup")).toBeVisible();
   const popupBefore = await page.locator(".leaflet-popup-content").textContent();
 
+  // One route's two halves, read off the drawn page: the line's colour and its own bus's fill.
+  const readSameColour = async () =>
+    page.evaluate(() => {
+      const probe = document.createElement("span");
+      probe.style.color = busRouteLayer.getLayers()[0].options.color;
+      document.body.append(probe);
+      const line = getComputedStyle(probe).color;
+      probe.remove();
+      const marks = [...document.querySelectorAll(".bus-marker svg path, .bus-marker svg circle")];
+      const bus = [...buses.values()][0];
+      const mine = marks.find((el) => el.closest(".leaflet-marker-icon") === bus.marker.getElement());
+      return { line, mark: mine ? getComputedStyle(mine).fill : null };
+    });
+
+  /* THE DRAWN COLOURS BEFORE THE THEME IS TOUCHED AT ALL, which is the only reading that can
+     see a wrong DRAW: every press repaints, so a wrong draw is corrected by the first one. */
+  const drawnBeforeAnySwap = await readSameColour();
   const before = await canvasPaints(page);
   // THE LIGHT THEME'S TOKENS, so the after has something to differ from.
   expect(before.subwayCasings, "the subway's casings are paper").toEqual(["#f3f2f2"]);
@@ -262,21 +279,21 @@ test("D5b. a swap repaints every canvas family, in place, and rebuilds nothing",
   expect(after.busRouteLines, "the line took the dark theme's lightness").not.toEqual(
     before.busRouteLines,
   );
-  const sameColour = async () =>
-    page.evaluate(() => {
-      const probe = document.createElement("span");
-      probe.style.color = busRouteLayer.getLayers()[0].options.color;
-      document.body.append(probe);
-      const line = getComputedStyle(probe).color;
-      probe.remove();
-      const marks = [...document.querySelectorAll(".bus-marker svg path, .bus-marker svg circle")];
-      const bus = [...buses.values()][0];
-      const mine = marks.find((el) => el.closest(".leaflet-marker-icon") === bus.marker.getElement());
-      return { line, mark: mine ? getComputedStyle(mine).fill : null };
-    });
-  const dark = await sameColour();
+  const dark = await readSameColour();
   expect(dark.mark, "the bus whose route this is is on the page").not.toBeNull();
   expect(dark.line, "one route, one colour, in the dark theme").toBe(dark.mark);
+  /* AND THE SAME BEFORE ANY SWAP, WHICH IS THE HALF THAT CATCHES A WRONG DRAW rather than a
+     wrong repaint. The painter runs on every press, so a line DRAWN from the wrong wheel is
+     corrected by the first one and a comparison made only afterwards passes: mutation M45 (the
+     line back to routeColor's raw hue) survived exactly that, and the only reading that can
+     see it is the one taken before the theme is ever touched. `drawnBeforeAnySwap` above is
+     that reading. */
+  expect(drawnBeforeAnySwap.mark, "the bus is on the page before the swap").not.toBeNull();
+  expect(
+    drawnBeforeAnySwap.line,
+    "one route, one colour, as DRAWN and before any repaint could correct it",
+  ).toBe(drawnBeforeAnySwap.mark);
+  expect(drawnBeforeAnySwap.line, "and the two themes are not the same colour").not.toBe(dark.line);
 
   /* AND WHAT MUST NOT MOVE DID NOT. Every colour below is an agency's published one or the
      app's fixed route palette, and a swap that repainted them would erase the identity MR2 and

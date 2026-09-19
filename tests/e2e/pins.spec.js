@@ -237,11 +237,25 @@ test("P1e. every name the legend says, and only those", async ({ page }) => {
      replaces them by ruling, which means the golden moves once, here, with the five names it drops
      written into the ledger as the round's before.
 
-     WHAT AN EQUALITY BUYS over the superset it replaces: a row removed AND replaced by a new one
-     used to pass (the count was A1x's problem and the name was nobody's), a row whose sentence was
-     quietly reworded used to pass as an addition, and two rows swapping places used to pass. All
-     three now fail here, by value, with the diff naming the sentence. A superset could only ever
-     catch a row that left without a successor. */
+     THE SUPERSET LIVED IN THE `.filter(...)`, NOT IN THE ASSERTION, and that is worth saying
+     because it is the opposite of where a reader looks. This used to pin
+     `names.filter((n) => golden.includes(n))`, so the golden only ever held the intersection of
+     the panel and the list MR1 measured, and `pin` compared that filtered list to itself.
+     `pin` has ALWAYS been an ordered deep equality (see its body above); the filter is what
+     emptied it of meaning. Dropping the filter is therefore the whole strengthening, and it also
+     repairs a trap: regenerating the old form under MR_PINS_REGENERATE would have written
+     `page INTERSECT old golden`, which for this round is the twelve survivors, silently leaving
+     the panel's four newest sentences pinned by nothing at all.
+
+     THE EXPLICIT EQUALITY BELOW IS FOR THE MESSAGE, not for the claim. `pin` already fails on any
+     difference, but it says "legend/names moved; regenerate the golden and say why", which does
+     not name the sentence that left. This one does, and mutation M61 records that `pin` alone
+     catches a reordered row even with this line reverted.
+
+     WHAT AN EQUALITY BUYS over the superset: a row removed AND replaced by a new one used to pass
+     (the count was A1x's problem and the name was nobody's), a row quietly reworded used to pass
+     as an addition, and two rows swapping places used to pass. A superset could only ever catch a
+     row that left without a successor. */
   await boot(page);
   const names = await accessibleNames(page, "#legend .legend-row, #legend .legend-note");
   pin("legend/names", names);

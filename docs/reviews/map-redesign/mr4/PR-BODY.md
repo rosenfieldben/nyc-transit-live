@@ -1,10 +1,11 @@
 # Phase MR, stage 4 of 5: the other four families, and the dark theme's release
 
-Eight commits off `origin/main` (`db73f05`): the pins, the four families' marks as pure
+Fourteen commits off `origin/main` (`db73f05`): the pins, the four families' marks as pure
 arithmetic, the wiring, the canvas theme registry, ruling **R2 met** (`#theme-toggle` loses its
 `hidden` attribute and the dark theme is a thing a rider can choose), the round entries, the
-captures, and round 1 of the adversarial pass. **Frontend only**: no backend file changes, so
-nothing here deploys a service. No NJ
+captures, round 1 of the adversarial pass, and **round 2, which is the two rulings that came
+back: Q1a in the accessibility statement and Q9 as the Key panel round**. **Frontend only**: no
+backend file changes, so nothing here deploys a service. No NJ
 Transit credential is set in this environment and the contract tier drives a simulator, so **no
 mint was spent**. No em-dashes on added lines.
 

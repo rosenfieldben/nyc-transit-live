@@ -1369,6 +1369,33 @@ the dot is therefore a new finding (F17) and not a corner of this one.**
 | **F18** | **"At legend scale" is a claim about SIZE and nothing in the suite measured size.** Measured: deleting `width: 42px` scales the type to 3.05px, an illegible smudge, and every gate stays green. The colours do not move (A1z reads computed fill, which is scale-invariant), the row counts do not move, the accessible names do not move (P1e strips the glyph, precisely because it is decorative), axe sees an `aria-hidden` subtree, and no capture is diffed byte for byte. | **Fixed in the round.** `a11y.spec.js` **A1x2** reads `getScreenCTM()` on each tag's two text nodes and asserts the scale is 1, the declared size is the map's 8 user units, the rendered size is at least 8px, the weight is 800, the cell equals the viewBox, and the class is `key-rail-tag` and not `rail-tag`. A CTM rather than a bounding box because a text element's box is its INK: "BAB" and "NEC" would answer one question two ways. |
 
 
+#### The mutations, round 2
+
+**One per changed row, as the ruling asked, plus one per guard the round moved or added.** Every
+one run in a worktree detached at the round's tip, sha echoed and compared, the server killed by
+PORT and `CI=1` so Playwright refuses to reuse one. **Seventeen, and all seventeen die.**
+
+| # | Row or guard reverted | Result | Killed by |
+| --- | --- | --- | --- |
+| **M48** | the subway station row draws BOTH marks again, with the transfer row still there | **killed**, node | `keyglyphs` 7 (one mark per row) and 7b, which notices PATH's dot is no longer the same glyph |
+| **M49** | the transfer row deleted, which is F16 un-paid | **killed**, node and 3 e2e | `keyglyphs` 7, then `A1x` (16 not 17), `P1e` and `D2l`. The row that all four counts agree about |
+| **M50** | the transfer row kept and its name reworded | **killed**, node | `keyglyphs` 7, which looks the row up BY NAME. Under the superset `P1e` this was an addition and passed |
+| **M51** | the solid tag row back to MR3's purple rounded square | **killed**, node and e2e | `keyglyphs` 8 (solid) and `A1x2`, which now finds one tag where the pair is the claim |
+| **M52** | the outlined tag's divider left at LIRR's 11 when the tag is NJ Transit's | **killed**, node | `keyglyphs` 8 (outlined), against `railTagGeometry`'s own agency width |
+| **M53** | the LIRR / Metro-North route line's casing dropped, so a ribbon is a hairline | **killed, node ONLY. Every browser gate stayed green**, and that is why `frontend/keyglyphs.test.js` exists: `A1x` measures a row's ink, `A1z` measures a glyph's type, `P1e` reads the names and strips the glyph on purpose. Nothing in the browser looks at what a Key glyph DRAWS | `keyglyphs` 4 |
+| **M54** | the casing kept and the line back to `opacity="0.6"` | **killed**, node | `keyglyphs` 4, on the half a casing check alone would miss |
+| **M55** | the merged square row back to one agency's white ring, name and all | **killed**, node and e2e | `keyglyphs` 2 and 3, then `P1e`. **Not `A1x` and not `D2l`**: a one-for-one replacement moves no count, which is the reversal the row counts cannot see |
+| **M56** | the row and its name kept, and only the square's stroke moved off `railStationSvg`'s 1.6 | **killed**, node | `keyglyphs` 2, against the builder's own output |
+| **M57** | the NJ Transit casing given the SUBWAY's 6.5 | **killed**, node | `keyglyphs` 4, and 5 is the control that says a rail ribbon reads thinner than a trunk |
+| **M58** | the `width: 42px` cell deleted, so "at legend scale" silently becomes 3.05px type | **killed**, node and e2e | `A1x2`, which is the assertion finding F18 asked for, and `keyglyphs` 8 on both rows through the CSS it reads |
+| **M59** | the Key's tag takes the map's own `rail-tag` class | **killed**, node and 2 e2e | `keyglyphs` 9, `A1x2` and **`A1z4`**, which is the closure `ACCESSIBILITY.md` states: every `svg.rail-tag` belongs to a rail tag marker |
+| **M60** | the inline font dropped, on the theory that a stylesheet supplies it | **killed**, node and e2e | `keyglyphs` 8 and `A1x2`. It does not: `.rail-tag-marker svg text` is scoped to the MARKER |
+| **M61** | `P1e`'s explicit equality reverted to the superset, AND the transfer row moved to the bottom | **killed**, e2e. **And it corrected the round's own account of what it had changed**: `pin()` has always been an ordered deep equality, so the superset lived in the `.filter(...)` this round removed, not in the assertion it added. The explicit `toEqual` is for the failure MESSAGE. That is now written at `P1e` rather than implied | `P1e`, through `pin` |
+| **M64** | the same reorder with every guard INTACT, which is M61's other half | see below | `P1e` |
+| **M62** | `A1x` updated to 17 as the ruling named, and the third count left at 18: the caller who read the ruling literally | **killed**, e2e | `D2l`. Nothing about the panel is wrong in this mutation; the gate is, and that is the finding |
+| **M63** | the Q1 exemption asserted as a comment rather than as a measurement: `D5d` claims the ferry boat clears in the light theme | **killed**, e2e | `D5d` itself, at 1.31 against a floor of 3. Which is the point: the exemption in `ACCESSIBILITY.md` is held by a measurement that fails the day the hull gains an ink edge, not by a sentence |
+
+
 
 ## Stage MR5: popups
 

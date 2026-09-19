@@ -416,77 +416,148 @@ test("D5c. the divIcon marks follow the swap through the cascade, with no restyl
 
 /* ---------------- G15's arithmetic, re-run on the marks ---------------- */
 
-test("D5d. every marker family is findable against the dark basemap, measured on the drawn page", async ({
+/* RULING Q1a, AS A TABLE: WHICH PAINT CARRIES WHICH FAMILY, AND WHO CHOSE IT.
+
+   The operator's ruling: "Fills stay the agency's published colors; each family's identifying
+   paint (letter, stroke, or casing) meets 3:1 on the drawn page in both themes, named per
+   family, with P4c as the witness."
+
+   NAMED PER FAMILY IS THE POINT. A floor taken over the best of a mark's paints is a true
+   sentence that says nothing about WHICH paint is holding it up, and "which" is exactly what a
+   later stage changes without noticing: MR4's own round 1 found P4c recording two families as
+   carried by a black no mark paints. So this table names the paint, per family AND per theme,
+   and the assertion below reads that paint rather than the maximum.
+
+   AND IT NAMES WHO CHOSE THE COLOUR, which is the other half of the ruling. Where the app
+   chooses the paint (an ink outline, an ink fill, the white letter it computes with
+   readableInk, the muted bus wheel, the design's dock cyan) the floor is a PROMISE and is
+   asserted here. Where the paint is an agency's published route colour the ruling says it
+   stays as published, so the floor is not this app's to promise: the value is RECORDED, by
+   P4c, and the statement in ACCESSIBILITY.md reports the range rather than claiming it.
+
+   TWO FAMILIES ARE IN THAT SECOND CLASS and both are vehicles whose fill is a feed colour with
+   no other paint to carry them: a PATH train and a ferry boat. Measured on this page, the
+   ferry's South Brooklyn yellow reads 1.31 against the light paper, and PATH's route 859 blue
+   (served, though this world draws only 862) reads 2.76. Their only other paint is the paper
+   casing, which is the surface by construction and reads 1.00. Giving them a clearing paint
+   means giving them an ink edge inside that casing, which is a change to two marks the stage
+   brief draws as "route fill, paper stroke", so it is reported to the operator rather than
+   taken here. */
+const CARRIED_BY = {
+  "subway train": {
+    // The route square in the light theme and the white letter printed on it in the dark: the
+    // one family whose carrying paint CHANGES with the theme, because neither of its two
+    // colours moves and the surface under them does.
+    light: { kind: "rect fill", chosen: "published" },
+    dark: { kind: "text fill", chosen: "app" },
+  },
+  "subway station dot": { light: { kind: "fill", chosen: "app" }, dark: { kind: "fill", chosen: "app" } },
+  "PATH station dot": { light: { kind: "fill", chosen: "app" }, dark: { kind: "fill", chosen: "app" } },
+  "rail station square": {
+    light: { kind: "rect stroke", chosen: "app" },
+    dark: { kind: "rect stroke", chosen: "app" },
+  },
+  "AirTrain station square": {
+    light: { kind: "rect stroke", chosen: "app" },
+    dark: { kind: "rect stroke", chosen: "app" },
+  },
+  // The tag's ink outline, which every one of its five states carries: an outlined body is
+  // stroked in ink and a solid one is FILLED with it.
+  "rail tag": { light: { kind: "rect", chosen: "app" }, dark: { kind: "rect", chosen: "app" } },
+  "bus": { light: { kind: "fill", chosen: "app" }, dark: { kind: "fill", chosen: "app" } },
+  "ferry dock": { light: { kind: "fill", chosen: "app" }, dark: { kind: "fill", chosen: "app" } },
+  "PATH train": { light: { kind: "path fill", chosen: "published" }, dark: { kind: "path fill", chosen: "published" } },
+  "ferry boat": { light: { kind: "path fill", chosen: "published" }, dark: { kind: "path fill", chosen: "published" } },
+};
+
+test("D5d. each family's identifying paint is named, and the app's own clear 3:1 in both themes", async ({
   page,
 }) => {
-  /* LEDGER FINDING G15, RE-RUN WHERE IT MATTERS. G15 measured the KEY PANEL's glyphs in the
-     dark theme and found them between 1.11 and 2.63 against the surface, because they carry the
-     map's own marker colours and the panel was drawn for opaque white. MR1's answer for the
-     panel was `--glyph-plate`, which stays LIGHT in both themes, so those glyphs keep their
-     light-theme arithmetic and this stage leaves them where they are. The MAP had no such
-     answer, and that is what held the toggle back: the same arithmetic holds on the basemap,
-     where MR1's tile filter is dark and the marks were not.
+  /* LEDGER FINDING G15, RE-RUN WHERE IT MATTERS, AND NOW IN BOTH THEMES BY RULING Q1a. G15
+     measured the KEY PANEL's glyphs in the dark theme and found them between 1.11 and 2.63
+     against the surface, because they carry the map's own marker colours and the panel was
+     drawn for opaque white. MR1's answer for the panel was `--glyph-plate`, which stays LIGHT
+     in both themes, so those glyphs keep their light-theme arithmetic and this stage leaves
+     them where they are. The MAP had no such answer, and that is what held the toggle back.
 
      THE DEFINITION IS IN tests/e2e/contrast.js, with the argument for each half of it: the
      surface is the theme's own `--paper` because a tile is an image and no mark clears 3:1
-     against every possible pixel, and a mark is found by its STRONGEST paint because a station
-     square's fill IS the surface and its outline is what a rider sees.
+     against every possible pixel, and a paint is only measured if the browser will take it as
+     a colour and the shape actually paints it.
 
-     WHAT THIS ASSERTS AND WHAT IT ONLY RECORDS. The floor is asserted for every family, on the
-     best paint each one has. The per-paint numbers are recorded by pins.spec.js P4c, and they
-     are where the interesting part is: two families clear the floor on their TYPE or their
-     OUTLINE rather than on their fill, because their fill is an agency's published colour that
-     this app does not get to move. The subway's blue trunk reads 2.73 against the dark paper and
-     is carried by the white letter on it at 14.6; the rail tags' darkest branch colours are the
-     same shape of answer. That is the design working as written (the mark is legible, and its
-     colour is still the agency's), and it is also the sentence a later stage would need a ruling
-     to change, so the numbers are in a golden rather than in a comment. */
+     WHAT THIS ASSERTS. For every family, the paint the table above names is present in both
+     themes, and where the APP chose that colour it clears 3:1 in both. Where an agency
+     published it, the value is read and reported and no floor is claimed, which is ruling Q1a
+     in one line. pins.spec.js P4c is the witness for every number. */
   await open(page);
-  await page.evaluate(() => applyTheme("dark"));
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
 
-  const measured = await measureMarkContrast(page);
-  expect(measured.paper, "the dark theme's paper").toBe("rgb(32, 30, 29)");
-  expect(measured.rows.length, "a measurement over nothing decides nothing").toBeGreaterThan(20);
-  // EVERY FAMILY IN THE LIST WAS FOUND, so a family that stopped drawing would fail here rather
-  // than quietly leave the measurement.
-  expect(Object.keys(bestPerFamily(measured)).sort()).toEqual([
-    "AirTrain station square",
-    "PATH station dot",
-    "PATH train",
-    "bus",
-    "ferry boat",
-    "ferry dock",
-    "rail station square",
-    "rail tag",
-    "subway station dot",
-    "subway train",
-  ]);
+  const measured = {};
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate((want) => applyTheme(want), theme);
+    await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+    measured[theme] = await measureMarkContrast(page);
+  }
+  expect(measured.light.paper, "the light theme's paper").toBe("rgb(243, 242, 242)");
+  expect(measured.dark.paper, "the dark theme's paper").toBe("rgb(32, 30, 29)");
 
-  for (const row of measured.rows) {
-    expect(row.paints.length, `${row.family} has paints to measure`).toBeGreaterThan(0);
-    const best = row.paints.reduce((a, b) => (b.onPaper > a.onPaper ? b : a));
+  // EVERY FAMILY IN THE TABLE IS ON THE PAGE AND EVERY FAMILY ON THE PAGE IS IN THE TABLE, so a
+  // family that stopped drawing and a family that arrived without being named both fail here.
+  for (const theme of ["light", "dark"]) {
     expect(
-      best.onPaper,
-      `${row.family}: the best of its paints is ${best.kind} ${best.css} at ` +
-        `${best.onPaper.toFixed(2)} against the dark paper, and the floor for a mark is 3`,
-    ).toBeGreaterThanOrEqual(3);
+      [...new Set(measured[theme].rows.map((r) => r.family))].sort(),
+      `${theme}: the table and the page must name the same families`,
+    ).toEqual(Object.keys(CARRIED_BY).sort());
   }
 
-  /* AND THE FAMILIES THIS STAGE DREW CLEAR THE FLOOR ON THEIR FILL, not on a letter printed on
-     them, which is the stronger claim and the one MR4 is answerable for. A PATH diamond, a ferry
-     hull, a dock and a bus mark carry no type at all, so for them there is no second paint to
-     fall back on and the fill is the whole mark. */
-  const best = bestPerFamily(measured);
-  for (const family of ["PATH train", "ferry boat", "ferry dock", "bus"]) {
-    expect(best[family].paint, `${family} is carried by a fill`).toMatch(/fill/);
-    expect(
-      best[family].onPaper,
-      `${family}: ${best[family].colour} at ${best[family].onPaper} against the dark paper`,
-    ).toBeGreaterThanOrEqual(3);
+  const reported = [];
+  for (const [family, perTheme] of Object.entries(CARRIED_BY)) {
+    for (const theme of ["light", "dark"]) {
+      const { kind, chosen } = perTheme[theme];
+      // Every MARK of the family, because a family is only as findable as its worst mark: the
+      // ferry draws three boats and the rail tag five states.
+      for (const row of measured[theme].rows.filter((r) => r.family === family)) {
+        const named = row.paints.filter((p) => p.kind.includes(kind));
+        expect(
+          named.length,
+          `${theme}: ${family} must still carry a "${kind}" paint, which is what the table says finds it`,
+        ).toBeGreaterThan(0);
+        // The best of the named kind: a subway train has two rect fills, its paper plate and
+        // its route square, and the square is the one a rider finds it by.
+        const best = named.reduce((a, b) => (b.onPaper > a.onPaper ? b : a));
+        reported.push(`${theme} ${family} ${best.kind} ${best.css} ${best.onPaper.toFixed(2)}`);
+        if (chosen !== "app") continue;
+        expect(
+          best.onPaper,
+          `${theme}: ${family} is carried by a paint this app chooses (${best.kind} ${best.css}) ` +
+            `at ${best.onPaper.toFixed(2)} against the paper, and the floor for a mark is 3`,
+        ).toBeGreaterThanOrEqual(3);
+      }
+    }
   }
-  /* THE BUS MARK IS THE ONE THIS MEASUREMENT CHANGED, and it is worth naming: at the README's
-     38% its worst hashed hue reads 1.62 here. The lightness is a token for that reason, and this
-     is the assertion that dies if a stage deletes the dark value and leaves one number. */
-  expect(best.bus.onPaper, `the bus mark reads ${best.bus.onPaper} on the dark paper`).toBeGreaterThanOrEqual(3);
+  // A measurement over nothing decides nothing: ten families, two themes, and the rail tag and
+  // the ferry draw more than one mark each.
+  expect(reported.length, `measured ${reported.length} family-marks`).toBeGreaterThan(24);
+
+  /* AND THE FOUR FAMILIES THIS STAGE DREW, asserted by name, because they are the ones MR4 is
+     answerable for. Three of them are carried by a paint this app chose; the ferry's boat is
+     the one the ruling exempts, and the exemption is stated here rather than left to a reader
+     of the table. */
+  const bestOf = (theme, family) => {
+    const rows = measured[theme].rows.filter((r) => r.family === family);
+    return Math.min(...rows.map((r) => Math.max(...r.paints.map((p) => p.onPaper))));
+  };
+  for (const theme of ["light", "dark"]) {
+    expect(bestOf(theme, "bus"), `${theme}: the bus mark`).toBeGreaterThanOrEqual(3);
+    expect(bestOf(theme, "ferry dock"), `${theme}: the ferry dock`).toBeGreaterThanOrEqual(3);
+    expect(bestOf(theme, "AirTrain station square"), `${theme}: the AirTrain square`).toBeGreaterThanOrEqual(3);
+  }
+  /* THE EXEMPTION, MEASURED RATHER THAN ASSUMED. If a future stage gives the ferry's hull an
+     ink edge, or the feed stops publishing a yellow, this fails and the statement in
+     ACCESSIBILITY.md can stop reporting a range and start promising a floor. */
+  expect(
+    bestOf("light", "ferry boat"),
+    "the ferry boat is carried by the feed's own colour in the light theme (ruling Q1a), and " +
+      "NYC Ferry's South Brooklyn yellow is the one under the floor",
+  ).toBeLessThan(3);
+  expect(bestOf("dark", "ferry boat"), "and it clears in the dark theme").toBeGreaterThanOrEqual(3);
 });

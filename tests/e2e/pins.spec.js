@@ -223,21 +223,32 @@ const accessibleNames = (page, selector) =>
     selector,
   );
 
-test("P1e. every name the legend says today", async ({ page }) => {
-  // THE LIST, not the markup, and asserted as a SUPERSET rather than as an equality. MR1
-  // replaces these rows' styling and the grid they sit in; MR2 through MR5 replace the
-  // glyphs themselves as each stage changes the markers they describe. What may not happen
-  // at any stage is that a rider loses a sentence, so the claim is "every name that was here
-  // is still here" and additions are allowed: MR1 already makes one, a dimmed-vehicle row
-  // that the freshness contract needed and this legend never had.
-  //
-  // The golden is still the measured seventeen-plus-the-note from before the restyle, so a
-  // row dropped in any later stage fails here by name.
+test("P1e. every name the legend says, and only those", async ({ page }) => {
+  /* THE LIST, not the markup, and now asserted as an EQUALITY IN ORDER rather than as a
+     superset. It was a superset for four stages and the asymmetry was deliberate: MR1 restyled
+     these rows and MR2 through MR4 replaced their glyphs, so the claim was "every name that was
+     here is still here" and an addition was free (MR1 made one, the dimmed-vehicle row the
+     freshness contract needed and this legend never had).
+
+     THE RULING THAT OWNS THIS PANEL STRENGTHENED IT RATHER THAN RELAXING IT, and the reason is
+     what a superset could not see. MR3 gave three railroads one tag and one commuter square, and
+     six rail rows went on describing marks the app had stopped drawing; "additions only" made
+     REPLACING them the one thing a stage could not do, so nothing did, for two stages. MR4 round 2
+     replaces them by ruling, which means the golden moves once, here, with the five names it drops
+     written into the ledger as the round's before.
+
+     WHAT AN EQUALITY BUYS over the superset it replaces: a row removed AND replaced by a new one
+     used to pass (the count was A1x's problem and the name was nobody's), a row whose sentence was
+     quietly reworded used to pass as an addition, and two rows swapping places used to pass. All
+     three now fail here, by value, with the diff naming the sentence. A superset could only ever
+     catch a row that left without a successor. */
   await boot(page);
   const names = await accessibleNames(page, "#legend .legend-row, #legend .legend-note");
-  pin("legend/names", names.filter((name) => (readGolden().legend?.names ?? names).includes(name)));
-  const missing = (readGolden().legend?.names ?? []).filter((name) => !names.includes(name));
-  expect(missing, "the Key panel lost a sentence the legend used to say").toEqual([]);
+  pin("legend/names", names);
+  const golden = readGolden().legend?.names ?? null;
+  if (golden) {
+    expect(names, "the Key panel's rows are this list, in this order, and nothing else").toEqual(golden);
+  }
 });
 
 /* ---------------- P1f through P1n: markers and popups, per system ---------------- */

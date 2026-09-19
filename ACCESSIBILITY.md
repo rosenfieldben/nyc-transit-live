@@ -176,7 +176,36 @@ Three things stop that gate from being decoration:
   selectors in one state at one viewport. The palette itself is covered by the
   node tests. The marker and legend glyph call sites are covered separately, by
   `a11y.spec.js A1z`, because axe cannot decide a one-character glyph; that spec
-  measures each glyph against the topmost shape drawn under it.
+  measures each glyph against the topmost shape drawn under it. Two of the Key
+  panel's glyphs are the commuter rail tag, which is the only glyph on the page
+  that carries more than one character of type, so its SIZE is measured too:
+  `a11y.spec.js A1x2` reads the glyph's own transform and fails unless that type
+  is drawn at the size the map draws it.
+- **Every marker family is findable in both themes, and no agency's colour was
+  moved to make it so.** A fill stays the colour its agency publishes. What
+  carries a mark against the theme's own paper is a paint named per family, and
+  measured on the drawn page each one meets the 3:1 a mark owes, in the light
+  theme and in the dark: the subway train's route square in light and its white
+  letter in dark; the subway and PATH station dots' fill; the regional rail and
+  AirTrain station squares' stroke; the rail tag's body; the bus arrow and the
+  bus wheel's fill; the ferry dock's fill; and PATH's diamond, which is the
+  feed's own published red. `theme.spec.js D5d` measures them against the
+  theme's `--paper`, every mark of every family rather than one per family, and
+  `pins.spec.js P4c` is the witness: it pins each number paint by paint, so a
+  repaint that lowers one is a changed pin rather than a quiet pass.
+- **One paint is reported rather than promised, and it is the ferry boat's hull
+  in the light theme, at 1.31.** A boat is filled with the colour NYC Ferry
+  publishes for its route, and South Brooklyn's `#ffd100` is that colour; the
+  hull's only other paint is the paper casing every mark on this map carries,
+  which cannot raise a fill's ratio against paper. So the floor is stated as a
+  measurement and not as a promise: the same hull reads 3.74 in the dark theme,
+  and every other boat clears in both. What tells a rider which boat this is,
+  besides the hull, is its popup and its row in the station panel, which is the
+  text equivalent the rest of this document describes. Giving the hull an ink
+  edge inside its casing would let the paragraph above promise the floor for
+  every family without touching a published fill, and `theme.spec.js D5d`
+  asserts this exemption by measurement rather than by comment, so it fails on
+  the day that changes.
 - Vehicle markers and the named controls meet the WCAG 2.2 **24px target
   floor**, sampled at 1280, 375 and 320. `layout.spec.js A4b`. Two things do
   not, and `A4b` asserts the exception rather than hiding it: Leaflet's
@@ -233,7 +262,7 @@ The map follows one rule: **animate the journey, never the adjustment.**
 
 axe reports a third category besides pass and fail: **incomplete**, meaning it
 needs a human. A green "zero violations" says nothing about those, so the gate
-asserts them too. The list is closed: an incomplete finding outside these eight
+asserts them too. The list is closed: an incomplete finding outside these nine
 shapes fails the build. Each entry names the test that answers the question axe
 declined, and `a11y.spec.js A1z` **asserts that pairing**, so an exception cannot
 quietly become a suppression with a sentence attached.
@@ -244,6 +273,7 @@ quietly become a suppression with a sentence attached.
 | Contrast of a single-character arrival badge | the same tool limit in HTML: a badge reading "2" is one character | `layout.spec.js A4g` computes the contrast of every rendered `.arr-badge` in-page with the same sRGB and relative-luminance formulas as the app |
 | Contrast of a single-character glyph on a Leaflet control (the zoom minus, the popup close) | as above, and these are third-party markup | `a11y.spec.js A1z` measures both against their own control backgrounds |
 | Contrast of a Key panel row clipped by the panel's own scroll boundary | the Key panel scrolls at phone widths, where its rows are one column and do not fit, and axe cannot determine the background of an element that is partially clipped | `a11y.spec.js A1x` measures every Key panel row's computed ink against the header's computed background at 1280, 375 and 320, in both themes, and fails if the header's surface is anything but opaque |
+| Contrast of the Key panel's two rail tag glyphs, each overlapped by the block its own type is printed on | the Key panel draws the commuter rail tag in both body states, and a tag prints its agency letter and its branch code ON the coloured blocks that identify them, so a sibling shape inside the same SVG covers each glyph's box. axe reports that as overlapped and declines three of the four glyphs. This is a different tool limit from the clipped row above it, so it is a separate entry rather than a wider pattern on that one, and it is scoped to those two glyphs by class | `a11y.spec.js A1z` measures all four against the fill of the topmost shape drawn under each, the same rule it applies to every other SVG glyph on the page, and requires AA: measured, they read 14.86, 4.69, 14.86 and 14.86, where the 4.69 is a branch code on its railroad's published green and is the pair `A1z4` asserts on the drawn page. And because this glyph's whole design is a SIZE, `a11y.spec.js A1x2` measures the size that type is drawn at, which nothing else on the page does |
 | Contrast of Leaflet's attribution, which sits directly on map tiles | the background is live imagery, so there is no single colour to compute against | `a11y.spec.js A1z` composites the attribution's translucent background over **both** extremes a tile can be, black and white, and requires AA against the worse of the two, which bounds every possible tile |
 | Contrast of a station name label, which sits directly on map tiles | a station's name is a permanent Leaflet tooltip with no background of its own: it is ink over live imagery with a halo of stacked text-shadows, so there is no single colour to compute against | `a11y.spec.js A1z3` composites the halo over **both** extremes a tile can be, black and white, measures the label's own ink against the worse of the two and requires AA, in both themes; it also asserts that every tooltip on the page is a station label, which is what keeps the exception from widening. What it does not claim: a text-shadow is a spread rather than a fill, so this is the answer at a character's edge, where legibility is decided, and optimistic in the counters of an "o" |
 | Contrast of a commuter rail tag's type, overlapped by a neighbouring tag | a rail train's mark is a two-part tag 35 to 45px wide where the square it replaced was 16, so at regional zoom the tags overlap each other and axe reaches a neighbouring marker before it reaches the block the 8px type is printed on. Measured on the stock fixture with MR3's tags on the map: 37 findings at 1280 and 17 at 375, every one of them "background color could not be determined because it is overlapped by another element". The tag's SVG is `aria-hidden` (its whole name is on the marker as `role="img"` plus `aria-label`, so the two glyphs are a picture of information a screen reader already has better), and that is not what excuses this: axe's contrast rule scans them anyway, correctly, because a sighted rider still sees them | `a11y.spec.js A1z4` reads each tag's printed ink and the fill of the block it is printed on straight off the drawn page, in both themes, and requires AA; it also asserts that every `svg.rail-tag` on the page belongs to a rail tag marker, which is what keeps the exception from widening. `frontend/railtag.test.js` measures the same pair in node over all 31 `(route_color, route_text_color)` pairs the three feeds publish, which is what found that eight of them do not clear 4.5 as published. What it does not claim: a tag a NEIGHBOURING tag covers is a density question rather than a contrast one, answered by the zoom presets and the feed toggles and recorded as a finding in `docs/reviews/map-redesign-rounds.md` |

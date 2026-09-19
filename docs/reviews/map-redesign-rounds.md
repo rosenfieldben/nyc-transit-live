@@ -1211,6 +1211,165 @@ survives for a reason that is written down.**
 | **M47** | the element's alpha not composited in the contrast measurement | **SURVIVES, and it is recorded as surviving.** The only element on this map with an opacity is the subway's plate, whose paint IS the surface colour, so compositing it over the surface returns the surface and no number moves. The repair is correct for the case it will meet and there is nothing today for a guard to see; saying so is the honest version of a green run |
 
 
+### Round 2: the operator's two rulings, and the Key panel paid
+
+Two rulings arrived on the round 1 findings that were referred up. **Q1 is answered in the
+accessibility statement and Q9 is the Key panel round.** Nothing on the map changed: every marker
+this stage drew is byte for byte what round 1 pushed, which the pins confirm (`mr_pins.json` moved
+in exactly one block, `legend/names`, and no `markers`, `popups`, `census` or `contrast` entry
+moved with it).
+
+#### Ruling Q1a, and the one paint it cannot promise
+
+> *Fills stay the agency's published colors; each family's identifying paint (letter, stroke, or
+> casing) meets 3:1 on the drawn page in both themes, named per family, with P4c as the witness.*
+
+`theme.spec.js D5d` was rewritten around a table that names the carrying paint per family and per
+theme, and says for each whether the APP chose that colour or an AGENCY published it. Where the app
+chose it, the spec asserts 3:1 or better. Where an agency published it, the value is read and
+reported and no floor is claimed. Two statements went into `ACCESSIBILITY.md`, the second of which
+is the ruling's one gap, stated rather than smoothed:
+
+| family | light theme | dark theme | chosen by |
+| --- | --- | --- | --- |
+| subway train | route square, **4.87** at worst of two | white letter, **16.60** | published (light), app (dark) |
+| subway station dot | ink fill, **14.86** | ink fill, **14.86** | app |
+| PATH station dot | ink fill, **14.86** | ink fill, **14.86** | app |
+| rail station square | ink stroke, **14.86** | ink stroke, **14.86** | app |
+| AirTrain station square | ink stroke, **14.86** | ink stroke, **14.86** | app |
+| rail tag | ink box, **14.86** at worst of six | **14.86** | app |
+| bus | muted wheel, **6.65** at worst of two | **4.75** | app |
+| ferry dock | `#00839c`, **3.98** | **3.74** | app |
+| PATH train | published red, **4.09** | **3.64** | published |
+| **ferry boat** | **1.31** | **3.74** | published |
+
+**The ferry boat's hull in the light theme is the one paint under the floor, and it is the only
+one.** A boat is filled with the colour NYC Ferry publishes for its route and South Brooklyn's
+`#ffd100` is that colour; the hull's only other paint is the paper casing, which cannot raise a
+fill's ratio against paper. So the statement reports that number rather than promising the floor
+for it, and `D5d` asserts the exemption BY MEASUREMENT (`bestOf("light", "ferry boat") < 3`), which
+means the day a stage gives the hull an ink edge the spec fails and the paragraph can be
+strengthened. **The minimal change that would let the statement promise the floor for all ten
+families, without moving a single published fill, is an ink edge inside the ferry hull's and the
+PATH diamond's paper casing.** That alters two marks and therefore the captures, which is why it is
+recorded here for a ruling rather than taken.
+
+*One correction to round 1's own report, since it was read off a throwaway probe and not off the
+drawn page:* PATH's diamond was reported at 2.76 in the light theme. That was route 859's blue,
+which this app serves but does not draw. On the drawn page the diamond is the published red at
+**4.09** light and **3.64** dark, so PATH clears in both themes and the ferry boat stands alone.
+
+#### Ruling Q9, and the five sentences that left
+
+> *Fix the Key now, as a round. The square row reads regional rail station and names LIRR,
+> Metro-North, NJ Transit and AirTrain; the commuter train row shows the two-part tag at legend
+> scale in both body states as the states study drew it; the transfer ring gets its name (F16).*
+
+**The Key's eighteen accessible names before this round**, which is the before the ruling asked to
+be recorded. Five of them leave; a row's departure is marked, and every other string is byte for
+byte what it was:
+
+| # | name before | after this round |
+| --- | --- | --- |
+| 1 | Bus (arrow points where it's heading) | unchanged |
+| 2 | Bus, heading unknown | unchanged |
+| 3 | Subway train, at/approaching the stop shown | unchanged |
+| 4 | Subway route line | unchanged |
+| 5 | Subway station (click for arrivals) | **unchanged, and its glyph now draws one mark** |
+| 6 | LIRR / Metro-North train (live GPS) | **GONE**, into the solid tag row |
+| 7 | LIRR / Metro-North train (scheduled or estimated, no GPS) | **GONE**, into the outlined tag row |
+| 8 | LIRR / Metro-North route line | unchanged, glyph redrawn |
+| 9 | LIRR / Metro-North station (click for arrivals) | **GONE**, into the commuter square row |
+| 10 | AirTrain JFK route line (scheduled service, no live tracking) | unchanged, and its glyph was already right |
+| 11 | AirTrain JFK station (click for scheduled headways) | **GONE**, into the commuter square row |
+| 12 | PATH station (click for arrivals); trains are diamonds | unchanged |
+| 13 | NYC Ferry boat (live GPS); dimmed when at a dock | unchanged |
+| 14 | Ferry dock (click for arrivals) | unchanged |
+| 15 | NJ Transit route line | unchanged, glyph redrawn |
+| 16 | NJ Transit train (scheduled or estimated, no GPS) | **GONE**, into the outlined tag row |
+| 17 | NJ Transit station (click for departures) | **GONE**, into the commuter square row |
+| 18 | Color indicates route / click a bus to draw its route | unchanged (the note) |
+
+And the three names that arrive: **Subway transfer station: two or more route lines meet (click for
+arrivals)**, **LIRR / Metro-North / NJ Transit train (live GPS)** and **LIRR / Metro-North / NJ
+Transit train (scheduled or estimated, no GPS); NJ Transit is always this**, plus the merged
+**Regional rail station: LIRR, Metro-North, NJ Transit, AirTrain JFK (click for arrivals or
+departures; AirTrain is scheduled only)**.
+
+**The arithmetic: 18 rows, minus 2 for the station merge, minus 1 for the train merge, plus 1 for
+the F16 split, is 16, and 16 plus the one note is 17.**
+
+#### The three row counts, all moved rather than relaxed
+
+The ruling named two. **There is a third**, and finding it is round 2's own first result: a panel
+with three independent counts is exactly how a row leaves quietly.
+
+| pin | was | is | what it counts |
+| --- | --- | --- | --- |
+| `a11y.spec.js` **A1x** | 19 | **17** | `.legend-row` plus `.legend-note`, at three widths in both themes |
+| `subway.spec.js` **D2l** | 18 | **16** | `.legend-row` alone, and **the count the ruling did not name** |
+| `pins.spec.js` **P1e** | superset of 18 | **ordered equality on 17** | the accessible names themselves |
+
+**P1e was strengthened, not regenerated quietly.** It had been a SUPERSET for four stages, and that
+asymmetry is what let Q9 sit for two of them: "additions only" made REPLACING a stale row the one
+thing a stage could not do, so nothing did. An equality in order now fails for three things a
+superset could never see: a row removed and replaced in the same commit, a sentence quietly
+reworded, and two rows swapping places.
+
+#### What each changed row draws now, against what the map draws
+
+| row | before | after | the map's own source |
+| --- | --- | --- | --- |
+| subway station | one glyph drawing BOTH a dot and a ring, caption describing one thing (F16) | the dot alone, caption byte for byte unchanged | `stationMarkStyle`, local branch: r 3.5, ink fill, no stroke |
+| subway transfer (**new**) | nothing in the panel named the ring | r 4.5 paper fill in a 2-unit ink stroke | `stationMarkStyle`, transfer branch, at 1:1 |
+| commuter train, solid | a 13x13 `#7b1fa2` rounded square | the LIRR tag's body at scale **1.00**: ink agency block, paper `L`, Babylon `#00985F` block, `BAB` in `#1a1a1a` | `railTagSvg`, `body === "solid"` |
+| commuter train, outlined | two rows, a `#7b1fa2` and a `#075AAA` hollow square | the NJ Transit tag's body at scale **1.00**: paper box in a 1.2 ink stroke, divider at x 16, NEC's `#DD3439` stripe | `railTagSvg`, else branch |
+| LIRR / Metro-North route line | a flat `#7b1fa2` 2.5px line at opacity **0.6**, no cap | paper casing weight 5 at 0.9, then `#00985F` at weight 2.5 and opacity 1, round caps | `railDrawRibbons` |
+| NJ Transit route line | the same three defects in `#075AAA` | the same casing; **the colour is kept**, because `#075AAA` IS a published NJ Transit route colour (the Atlantic City Rail Line's) and this row's defect was the flat line | `railDrawRibbons` |
+| regional rail station | three rows: a white ring stroked `#334155`, a filled slate `#334155` square, and AirTrain's correct one | one row, and its glyph is `railStationSvg`'s output with the tokens resolved: an 8x8 paper rect at 6,6 in a 1.6 ink stroke | `railStationSvg`, one builder for all four families |
+
+**Two of those rows are beyond the ruling's three named items and are flagged as such**: the LIRR /
+Metro-North and NJ Transit route line glyphs. They are the same defect in the same panel, recorded
+in Q9's own measurement ("row 8 its route line as a flat `#7b1fa2` 2.5px line"), and leaving two
+knowingly false glyphs in a panel whose round exists to stop it lying would have been the worse
+call. Neither row's accessible name moves, so neither costs a sentence.
+
+#### "At legend scale", which was the one real design decision
+
+`.legend-row svg` is a fixed 16px box, so a glyph's viewBox alone decides its apparent size. Every
+other glyph in this panel is a SHAPE and a shape survives being scaled. The rail tag carries TYPE,
+and type does not. Measured, three ways:
+
+| what | scale | the tag's 8px Archivo renders at |
+| --- | --- | --- |
+| the tag's native `viewBox 0 0 35 30` in the 16x16 cell | 0.457 | **3.66px** |
+| the widest tag, `0 0 45 30`, same cell | 0.356 | **2.84px** |
+| widening the cell to 40x16 while the viewBox stays 30 tall | 0.533 | **4.27px** |
+
+**The third row is the trap worth recording: widening the cell buys almost nothing while the
+viewBox is 30 tall**, because the box is then height-constrained by the air the stem and the head
+hang in. So the viewBox is cropped to the TAG (y 0 to 13, padded to 16) and the CELL adapts to the
+mark: `viewBox 42x16` in a 42x16 box is a scale of exactly **1.00** and type at the map's own 8px.
+**"At legend scale" therefore resolves to "at map scale"**, which is the states study's own left
+column: it magnifies a mark beside the map, it never shrinks one to fit a cell. 42 is
+`railTagGeometry("NJT", "NEC").width + 2`, and the height stays 16, so the plate is 44x18 against
+18x18 elsewhere and **no row's height changes**.
+
+**No stem and no head, and that is F16's lesson applied rather than an economy.** These two
+captions name the BODY state, which is where the position came from. The head is the other axis
+entirely. A glyph drawing a mark its caption never explains is precisely the gap F16 recorded, and
+repeating it in a row added by the round that fixes F16 would be perverse. **The chevron against
+the dot is therefore a new finding (F17) and not a corner of this one.**
+
+#### F17, and the one claim no existing gate could see
+
+| # | Finding | Disposition |
+| --- | --- | --- |
+| **F17** | **Nothing in the Key explains the chevron against the dot**, before this round or after it. The tag's head carries whether a heading is trusted, which is one of the two axes the states study exists to make visible, and the panel is silent on it. | **Recorded, not fixed.** It is a new row with a new sentence, which is a ruling this round does not have. The two rows added here are the body axis, and adding the head axis to their glyphs would have been F16 again. |
+| **F18** | **"At legend scale" is a claim about SIZE and nothing in the suite measured size.** Measured: deleting `width: 42px` scales the type to 3.05px, an illegible smudge, and every gate stays green. The colours do not move (A1z reads computed fill, which is scale-invariant), the row counts do not move, the accessible names do not move (P1e strips the glyph, precisely because it is decorative), axe sees an `aria-hidden` subtree, and no capture is diffed byte for byte. | **Fixed in the round.** `a11y.spec.js` **A1x2** reads `getScreenCTM()` on each tag's two text nodes and asserts the scale is 1, the declared size is the map's 8 user units, the rendered size is at least 8px, the weight is 800, the cell equals the viewBox, and the class is `key-rail-tag` and not `rail-tag`. A CTM rather than a bounding box because a text element's box is its INK: "BAB" and "NEC" would answer one question two ways. |
+
+
+
 ## Stage MR5: popups
 
 *Not started.*

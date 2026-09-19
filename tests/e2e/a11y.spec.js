@@ -184,6 +184,30 @@ const UNDECIDABLE_SHAPES = [
       "computed background at 1280, 375 and 320, in both themes, and requires 4.5",
   },
   {
+    /* MR4 ROUND 2, AND A DIFFERENT MESSAGE FROM THE SHAPE ABOVE, which is why it is a new
+       entry rather than a widened pattern. The Key panel's two commuter train rows draw the
+       rail tag, whose type is printed ON the block it belongs to, so a sibling rect inside the
+       same SVG covers the glyph's own box. axe reports that as "overlapped" rather than
+       "obscured" and declines three of the four glyphs (the solid tag's agency letter it does
+       decide). Widening shape 1's message to take "overlapped" would have excused an
+       overlapped element ANYWHERE in #legend, which is a loosening; this is scoped to the two
+       glyphs that have the property, by class and by tag.
+
+       IT IS A TOOL LIMIT AND NOT A DEFECT, and the decider is not a hope: measured in-page
+       with A1z's own selection rule, the four glyphs read 14.86, 4.69, 14.86 and 14.86 against
+       the topmost shape under each, all clear of the 4.5 A1z enforces. 4.69 is the branch code
+       on Babylon's published green, which is railBranchPaint's recomputed ink and the same pair
+       A1z4 asserts on the drawn page. */
+    name: "a rail tag's type overlapped by the block it is printed on",
+    rule: "color-contrast",
+    message: /overlapped by another element/,
+    where: (id) => /svg\.key-rail-tag text/.test(id),
+    decider:
+      "a11y.spec.js A1z measures every rendered SVG glyph, these four included, against the " +
+      "fill of the topmost shape drawn under it and requires 4.5, and a11y.spec.js A1x2 " +
+      "measures the size that type is actually drawn at.",
+  },
+  {
     name: "a single-character glyph drawn inside an SVG icon",
     rule: "color-contrast",
     // axe declines these because the visible text is one character: it cannot tell a route
@@ -762,9 +786,96 @@ test("A1x. the Key panel's rows are legible, at every width and in both themes",
 
       const label = `${viewport.width} / ${theme}`;
       expect(measured.surface, `${label}: the header surface must be opaque (got ${measured.panel})`).not.toBeNull();
-      expect(measured.rows.length, `${label}: the scan must find rows, or it decides nothing`).toBe(19);
+      /* SEVENTEEN, WHICH IS SIXTEEN ROWS PLUS THE ONE NOTE, and the number MOVED rather than
+         being relaxed (the ruling that owns the Key panel says so in as many words). MR4 round 2
+         merged three regional rail station rows into the one commuter square the map draws and
+         three commuter train rows into the two tag bodies it draws, and split the subway station
+         row so the transfer ring gets the name finding F16 asked for: 18 - 2 - 1 + 1 = 16, plus
+         the note. A literal rather than a range, because a count that tolerated drift would not
+         have caught any of the six rows MR3 left describing marks the app had stopped drawing. */
+      expect(measured.rows.length, `${label}: the scan must find rows, or it decides nothing`).toBe(17);
       const dim = measured.rows.filter((r) => r.ratio === null || r.ratio < 4.5);
       expect(dim, `${label}: every Key panel row must clear AA on the header's surface`).toEqual([]);
+    }
+  }
+});
+
+test("A1x2. the Key panel's rail tags are drawn at map scale, so their type is readable", async ({ page }) => {
+  /* THE ONE CLAIM IN THIS PANEL THAT NO OTHER SPEC CAN SEE. Every other Key glyph is a SHAPE,
+     and A1x above measures a row's ink while A1z measures a glyph's type against what is behind
+     it. Neither measures SIZE. The two commuter train rows MR4 round 2 added are the only glyphs
+     here that carry type, and their whole design decision is a size: the tag's viewBox is cropped
+     to the tag and `.legend-row svg.key-rail-tag { width: 42px }` lets the cell match it, which
+     puts the scale at exactly 1.00 and the type at the map's own 8px.
+
+     WITHOUT THIS SPEC THAT RULE IS UNTESTED. Measured: deleting the 42px declaration falls back
+     to the shared 16px cell, where a 42-wide viewBox scales to 0.38 and the 8px Archivo renders at
+     3.05px, an illegible smudge. Every existing gate stays green through it, and the reason is
+     worth stating: the colours do not move (A1z reads computed fill, which is scale-invariant),
+     the row count does not move (A1x), the accessible names do not move (P1e, which strips the
+     glyph precisely because it is decorative), axe sees an aria-hidden subtree, and no capture is
+     diffed byte for byte. A key whose glyph is a smudge is the same defect as a key whose glyph is
+     wrong, and this is the assertion that can tell.
+
+     SCALE FROM getScreenCTM RATHER THAN FROM A BOUNDING BOX, because a text element's box is its
+     INK and changes with the glyphs in it: "BAB" and "NEC" would give two different answers to one
+     question. The CTM is the mapping from user units to CSS pixels, so `a` and `d` ARE the scale,
+     and 8 user units times `d` is what a rider's eye gets. */
+  await page.setViewportSize(DESKTOP);
+  await open(page, { alerts: 0 });
+  await page.locator("#legend-toggle").click();
+  await expect(page.locator("#legend")).toBeVisible();
+
+  const measured = await page.evaluate(() => {
+    const svgs = [...document.querySelectorAll("#legend .legend-row svg.key-rail-tag")];
+    return svgs.map((svg) => {
+      const box = svg.viewBox.baseVal;
+      const rect = svg.getBoundingClientRect();
+      return {
+        viewBox: [box.width, box.height],
+        // The 1px padding on .legend-row svg is on the OUTSIDE of the content box (box-sizing
+        // content-box), so the drawn area is the client rect less two pixels each way.
+        drawn: [+(rect.width - 2).toFixed(2), +(rect.height - 2).toFixed(2)],
+        // The class the map's own tags carry must NOT be here: a11y.spec.js A1z4 counts
+        // svg.rail-tag and asserts each belongs to a .rail-tag-marker.
+        classes: svg.getAttribute("class"),
+        texts: [...svg.querySelectorAll("text")].map((text) => {
+          const ctm = text.getScreenCTM();
+          const declared = parseFloat(text.getAttribute("font-size") || getComputedStyle(text).fontSize);
+          return {
+            content: text.textContent,
+            declared,
+            scale: +ctm.d.toFixed(3),
+            renderedPx: +(declared * ctm.d).toFixed(2),
+            weight: getComputedStyle(text).fontWeight,
+          };
+        }),
+      };
+    });
+  });
+
+  // TWO ROWS, because the pair is the claim: one solid body and one outlined.
+  expect(measured.length, "the Key panel draws exactly two rail tags, one body state each").toBe(2);
+
+  for (const tag of measured) {
+    expect(tag.classes, "a Key glyph must not take the map's rail-tag class (A1z4 counts those)").toBe(
+      "key-rail-tag",
+    );
+    // THE CELL MATCHES THE viewBox, which is what makes the scale 1 rather than a coincidence of
+    // two numbers that happen to agree today.
+    expect(tag.drawn, `the cell must be the viewBox's own size, got ${tag.drawn} for ${tag.viewBox}`).toEqual(
+      tag.viewBox,
+    );
+    expect(tag.texts.length, "each tag prints an agency glyph and a branch code").toBe(2);
+    for (const text of tag.texts) {
+      expect(text.declared, `"${text.content}" is declared at the map's 8 user units`).toBe(8);
+      expect(text.scale, `"${text.content}" is drawn at scale 1, which is map scale`).toBeCloseTo(1, 2);
+      expect(
+        text.renderedPx,
+        `"${text.content}" renders at ${text.renderedPx}px, and the map draws this type at 8`,
+      ).toBeGreaterThanOrEqual(8);
+      // Archivo is variable 100 to 900, so 800 is a real weight rather than a synthesised bold.
+      expect(text.weight, `"${text.content}" keeps the tag's 800`).toBe("800");
     }
   }
 });

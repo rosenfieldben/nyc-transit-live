@@ -818,6 +818,28 @@ body,
   background: var(--glyph-plate);
 }
 
+/* MR4 ROUND 2: THE TWO COMMUTER TRAIN ROWS ARE THE ONLY GLYPHS IN THIS PANEL THAT CARRY TYPE,
+   and type does not survive being scaled. At the shared 16px cell the rail tag's own viewBox
+   (35 to 45 wide by 30 tall) scales to 0.457 and its 8px Archivo renders at 3.66px. Widening
+   alone would buy almost nothing while the viewBox stayed 30 tall, because the box is then
+   height-constrained by the air the stem and head hang in. So those two glyphs crop their
+   viewBox to the TAG and this rule lets the CELL adapt to the mark: viewBox 42x16 in a 42x16
+   box is a scale of exactly 1.00, and the type is the map's own 8px.
+
+   42 IS NOT A TASTE, it is railTagGeometry("NJT", "NEC").width + 2. NJ Transit's 16px agency
+   block sets the floor and the two spare units keep the solid body's x -0.5 paper plate off the
+   edge, since the `overflow: visible` that saves it on the map is scoped to .rail-tag-marker and
+   does not reach here. If either row's branch code changes, this number moves with it.
+
+   HEIGHT IS INHERITED at 16px, so the plate is 44x18 against 18x18 for every other row and the
+   ROW HEIGHTS DO NOT CHANGE: only the glyph column widens. (0,2,1) out-specifies the (0,1,1)
+   rule above it. tests/e2e/a11y.spec.js A1x2 measures the rendered type size, because a
+   mutation that deleted this rule would scale the type back to 3.66px and leave colour,
+   contrast and every row count exactly as they are. */
+.legend-row svg.key-rail-tag {
+  width: 42px;
+}
+
 .legend-note {
   grid-column: 1 / -1;
   color: var(--muted);

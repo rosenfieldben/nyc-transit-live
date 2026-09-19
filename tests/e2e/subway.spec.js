@@ -1877,10 +1877,14 @@ test("D2l. MR1's chrome and the status line are exactly where MR1 left them", as
      is the last piece. The assertion is INVERTED rather than deleted, because "the toggle is
      reachable" is now the invariant and a future stage re-hiding it should fail here. */
   expect(chrome.themeHidden, "MR4 released the theme toggle (ruling R2)").toBe(false);
-  // Eighteen rows plus the one note is the nineteen a11y.spec.js A1x counts; MR2 restyled
-  // three of these rows' glyphs in place and added none, which is what keeps that literal
-  // and P1e's list of names both true without either one being edited.
-  expect(chrome.legendRows, "the Key panel's row count is unchanged: MR2 restyled three glyphs in place").toBe(18);
+  /* SIXTEEN ROWS, AND THE THIRD PIN ON THIS PANEL. Sixteen plus the one note is the seventeen
+     a11y.spec.js A1x counts, and P1e holds the names. MR2 restyled three of these rows' glyphs in
+     place and added none; MR4 round 2 is the first stage to change the COUNT, merging three rail
+     station rows into one and three commuter train rows into two while splitting the subway
+     station row for finding F16. All three pins moved together, deliberately: the ruling asked
+     for them to be updated rather than relaxed, and a panel with three independent counts is
+     exactly how a row leaves quietly. */
+  expect(chrome.legendRows, "the Key panel has sixteen rows and one note").toBe(16);
   expect(chrome.keyExpanded).toBe("false");
   expect(chrome.stationsExpanded).toBe("true");
 

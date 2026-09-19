@@ -35,6 +35,7 @@ const path = require("node:path");
 const { test, expect } = require("@playwright/test");
 const { installMocks, json } = require("./mock");
 const fx = require("./fixtures/api");
+const { measureMarkContrast, bestPerFamily } = require("./contrast");
 
 const GOLDEN = path.join(__dirname, "fixtures", "mr_pins.json");
 const REGENERATE = !!process.env.MR_PINS_REGENERATE;
@@ -222,21 +223,46 @@ const accessibleNames = (page, selector) =>
     selector,
   );
 
-test("P1e. every name the legend says today", async ({ page }) => {
-  // THE LIST, not the markup, and asserted as a SUPERSET rather than as an equality. MR1
-  // replaces these rows' styling and the grid they sit in; MR2 through MR5 replace the
-  // glyphs themselves as each stage changes the markers they describe. What may not happen
-  // at any stage is that a rider loses a sentence, so the claim is "every name that was here
-  // is still here" and additions are allowed: MR1 already makes one, a dimmed-vehicle row
-  // that the freshness contract needed and this legend never had.
-  //
-  // The golden is still the measured seventeen-plus-the-note from before the restyle, so a
-  // row dropped in any later stage fails here by name.
+test("P1e. every name the legend says, and only those", async ({ page }) => {
+  /* THE LIST, not the markup, and now asserted as an EQUALITY IN ORDER rather than as a
+     superset. It was a superset for four stages and the asymmetry was deliberate: MR1 restyled
+     these rows and MR2 through MR4 replaced their glyphs, so the claim was "every name that was
+     here is still here" and an addition was free (MR1 made one, the dimmed-vehicle row the
+     freshness contract needed and this legend never had).
+
+     THE RULING THAT OWNS THIS PANEL STRENGTHENED IT RATHER THAN RELAXING IT, and the reason is
+     what a superset could not see. MR3 gave three railroads one tag and one commuter square, and
+     six rail rows went on describing marks the app had stopped drawing; "additions only" made
+     REPLACING them the one thing a stage could not do, so nothing did, for two stages. MR4 round 2
+     replaces them by ruling, which means the golden moves once, here, with the five names it drops
+     written into the ledger as the round's before.
+
+     THE SUPERSET LIVED IN THE `.filter(...)`, NOT IN THE ASSERTION, and that is worth saying
+     because it is the opposite of where a reader looks. This used to pin
+     `names.filter((n) => golden.includes(n))`, so the golden only ever held the intersection of
+     the panel and the list MR1 measured, and `pin` compared that filtered list to itself.
+     `pin` has ALWAYS been an ordered deep equality (see its body above); the filter is what
+     emptied it of meaning. Dropping the filter is therefore the whole strengthening, and it also
+     repairs a trap: regenerating the old form under MR_PINS_REGENERATE would have written
+     `page INTERSECT old golden`, which for this round is the twelve survivors, silently leaving
+     the panel's four newest sentences pinned by nothing at all.
+
+     THE EXPLICIT EQUALITY BELOW IS FOR THE MESSAGE, not for the claim. `pin` already fails on any
+     difference, but it says "legend/names moved; regenerate the golden and say why", which does
+     not name the sentence that left. This one does, and mutation M61 records that `pin` alone
+     catches a reordered row even with this line reverted.
+
+     WHAT AN EQUALITY BUYS over the superset: a row removed AND replaced by a new one used to pass
+     (the count was A1x's problem and the name was nobody's), a row quietly reworded used to pass
+     as an addition, and two rows swapping places used to pass. A superset could only ever catch a
+     row that left without a successor. */
   await boot(page);
   const names = await accessibleNames(page, "#legend .legend-row, #legend .legend-note");
-  pin("legend/names", names.filter((name) => (readGolden().legend?.names ?? names).includes(name)));
-  const missing = (readGolden().legend?.names ?? []).filter((name) => !names.includes(name));
-  expect(missing, "the Key panel lost a sentence the legend used to say").toEqual([]);
+  pin("legend/names", names);
+  const golden = readGolden().legend?.names ?? null;
+  if (golden) {
+    expect(names, "the Key panel's rows are this list, in this order, and nothing else").toEqual(golden);
+  }
 });
 
 /* ---------------- P1f through P1n: markers and popups, per system ---------------- */
@@ -772,4 +798,255 @@ test("P3d. the F01 world's ladder: how many trains are in each state, and what e
     // trains the ladder drew nothing for.
     statusTail: await statusTail(page),
   });
+});
+
+/* ---------------- P4: what stage MR4 is not allowed to change ----------------
+
+   MR4 restyles the four families that are left: PATH (lines, station dots, the diamond),
+   the ferry (dashed routes, dock dots, the hull), AirTrain (the gray dashed guideway and
+   the commuter square) and the buses (the arrow and the dot at a muted hue). Then it
+   releases the dark theme: `#theme-toggle` loses its `hidden` attribute and every canvas
+   mark drawn from a RESOLVED token gets restyled in place on a swap.
+
+   WHAT IS ALREADY PINNED AND STAYS PINNED, held by the pins above rather than repeated
+   here, because a second copy of a golden is a second thing to keep true:
+
+     every popup's HTML, all eight systems   P1f through P1n, the `popups/*` keys
+     the subway and rail marker HTML          P1f, P1h, P1i, P1j, P1k, the `markers/*` keys
+     the F01 world's counts and words         P1b (the status clause) and P3d (the ladder)
+     the C6-series dimming, PATH              tests/contract/staleness.contract.spec.js C6e3
+
+   THE POPUPS ARE THE SHARP ONE. MR4 changes the MARK of four families and none of their
+   popups, which are stage MR5's; `markPin` already writes `markers/<system>` and
+   `popups/<system>` as separate golden keys, so the four mark goldens are deliberately
+   regenerated by this stage and all eight popup goldens must not move. A regeneration that
+   takes the popups with it would be MR4 quietly doing MR5's work, and the split is what
+   makes that visible in the diff.
+
+   WHAT IS NEW HERE, because nothing held it before:
+
+     P4a  the census: every class a sentinel counts, and what it counts TODAY.
+     P4b  the ferry's docked-and-dimmed compound, read off the drawn element.
+
+   P4a EXISTS BECAUSE MR3 PAID FOR IT TWICE. That stage put ~300 markers and ~300 labels
+   into classes other code was counting, and two sentinels silently changed meaning:
+   `paintZoomBand` counted the new rail labels as subway ones (caught by a spec written for
+   it), and six e2e specs counted the new rail STATION markers as vehicles (caught by CI,
+   after the push, on a premise assertion that had nothing to do with the cross-link it was
+   in). Both were the same defect: a count over a class the stage had widened. MR4 widens
+   more of them, so the counts are written down BEFORE rather than reconstructed after. */
+
+// EVERY SELECTOR A SENTINEL USES, AND THE FAMILY SPLIT UNDER IT. The counts alone would say
+// a number moved; the split says which family moved it, which is the question the sentinel
+// was actually asking. Canvas populations are counted through their layer groups, because a
+// circleMarker has no element to select.
+const classCensus = (page) =>
+  page.evaluate(() => {
+    const n = (sel) => document.querySelectorAll(sel).length;
+    const group = (fn) => {
+      try {
+        const g = fn();
+        return g && g.getLayers ? g.getLayers().length : null;
+      } catch {
+        return null;
+      }
+    };
+    // The class each marker element actually carries, tallied, so a family arriving in or
+    // leaving a shared class is one diff line rather than an arithmetic puzzle.
+    const byClass = {};
+    for (const el of document.querySelectorAll(".leaflet-marker-icon")) {
+      const key = [...el.classList].filter((c) => c !== "leaflet-marker-icon" && c !== "leaflet-zoom-animated")
+        .sort()
+        .join(" ") || "(none)";
+      byClass[key] = (byClass[key] ?? 0) + 1;
+    }
+    return {
+      // The six specs' vehicle sentinel and the two halves it is made of.
+      markerIcons: n(".leaflet-marker-icon"),
+      vehicleSentinel: n(".leaflet-marker-icon:not(.rail-stn-marker)"),
+      railStationMarkers: n(".rail-stn-marker"),
+      markerIconsByClass: byClass,
+      // paintZoomBand's two counts, and the rail band beside them.
+      stnLabels: n(".stn-label"),
+      stnLabelsSubway: n(".stn-label.subway"),
+      stnLabelsRail: n(".stn-label.rail"),
+      stnLabelsHub: n(".stn-label.hub"),
+      stnLabelsHubSubway: n(".stn-label.subway.hub"),
+      // The per-family marker classes specs reach for by name.
+      trainMarkers: n(".train-marker"),
+      busMarkers: n(".bus-marker"),
+      pathMarkers: n(".path-marker"),
+      ferryMarkers: n(".ferry-marker"),
+      // MR4 moved AirTrain's stations onto the commuter square, so the family left
+      // `.airtrain-marker` for `rail-stn-marker rail-airtrain-stn`. BOTH are counted: the old
+      // class must read zero rather than simply stop being asked, because a selector that
+      // quietly matches nothing is how a count over a widened class goes wrong in the first
+      // place (smoke.spec.js had a toHaveCount(0) here that would have passed vacuously).
+      airtrainMarkers: n(".airtrain-marker"),
+      airtrainStationMarkers: n(".rail-airtrain-stn"),
+      // The canvas populations, which carry no element at all.
+      canvas: {
+        subwayStations: group(() => stationLayer),
+        pathStations: group(() => pathStations),
+        ferryDocks: group(() => ferryDocks),
+        pathRouteLines: group(() => pathRouteLines),
+        ferryRouteLines: group(() => ferryRouteLines),
+        airtrainRouteLines: group(() => airtrainRouteLinesLayer),
+        subwayRibbons: (() => {
+          try {
+            return subwayRibbons.length;
+          } catch {
+            return null;
+          }
+        })(),
+      },
+    };
+  });
+
+test("P4a. the census: every class a sentinel counts, and what it counts today", async ({ page }) => {
+  await boot(page);
+  pin("census/stock", await classCensus(page));
+});
+
+/* THE FERRY'S COMPOUND, WHICH IS TWO RULES MULTIPLIED AND NOT ONE STATE.
+
+   A docked boat rides at FERRY_DOCKED_OPACITY (0.55) to read as parked, and the freshness
+   contract dims a stale marker to STALE_MARKER_OPACITY (0.45). They COMPOUND: dimMarker
+   takes the docked value as its `base` and markerOpacity multiplies, so a docked boat on a
+   stale feed draws at 0.2475 and not at either number alone. The design's ferry paragraph
+   says "docked boats opacity 0.55 (existing rule)", which is an instruction to keep the
+   rule rather than to restate it, and MR4 rewrites the hull that rule is applied to.
+
+   READ OFF THE ELEMENT, not off `marker.options.opacity`. The option is what the app
+   intended and the inline style is what a rider sees, and the two are only the same while
+   dimMarker is wired; MR3 learned that distinction the hard way in D3b. Both are captured
+   so a divergence between them is a diff rather than a silence.
+
+   THE FIXTURE ALREADY HAS ONE OF EACH: H2 is STOPPED_AT and H1 is under way, which is what
+   makes "docked dims and under-way does not" assertable in the same breath as the compound. */
+test("P4b. the ferry's docked-and-dimmed compound on a healthy feed", async ({ page }) => {
+  await boot(page);
+  const read = () =>
+    page.evaluate(() =>
+      Object.fromEntries(
+        [...ferryBoatRecords.entries()].map(([id, record]) => {
+          const el = record.marker.getElement();
+          return [
+            id,
+            {
+              status: record.latest.status ?? null,
+              docked: (record.marker.getIcon().options.className ?? "").includes("ferry-docked"),
+              option: record.marker.options.opacity ?? 1,
+              drawn: el && el.style.opacity !== "" ? Number(el.style.opacity) : 1,
+            },
+          ];
+        }),
+      ),
+    );
+  const healthy = await read();
+  // A PREMISE, because the whole pin turns on it: the fixture really does serve one docked
+  // boat and two under way, so "docked rides lower" is a comparison and not a tautology.
+  expect(Object.values(healthy).filter((b) => b.docked)).toHaveLength(1);
+  expect(Object.values(healthy).filter((b) => !b.docked).length).toBeGreaterThan(0);
+  pin("ferry/compound-healthy", healthy);
+});
+
+test("P4b2. the ferry's compound on a stale feed, which is where the two rules multiply", async ({ page }) => {
+  /* A SECOND BOOT RATHER THAN A MUTATED PAGE, and that is round 4 of MR3's lesson applied
+     before it could cost anything. The first draft of this pin reached into `sources.ferry`
+     and moved `fetchedAt` back by ten minutes, then called refreshAll(); the next poll
+     answered with the stock envelope and overwrote it, so the "stale" half came back byte
+     for byte identical to the healthy half. A pin whose two halves cannot differ is a pin
+     that cannot fail, which is one of the four defect shapes this phase is watching for, and
+     it was caught only because the golden was READ after it was written.
+
+     So the world is stale from the first byte: the envelope's own fetched_at is 200 s behind
+     its served_at, which is the shape smoke.spec.js already uses to age a feed, and every
+     source is aged together because a lone stale ferry would also change the status line. */
+  const stale = (data, key) => ({
+    fetched_at: fx.FROZEN_S - 200,
+    feed_timestamp: fx.FROZEN_S - 205,
+    served_at: fx.FROZEN_S,
+    [key]: data,
+  });
+  await boot(page, (c) => {
+    c.overrides.ferry = (route) => json(route, stale(fx.ferry().boats, "boats"));
+  });
+  const read = () =>
+    page.evaluate(() =>
+      Object.fromEntries(
+        [...ferryBoatRecords.entries()].map(([id, record]) => {
+          const el = record.marker.getElement();
+          return [
+            id,
+            {
+              status: record.latest.status ?? null,
+              docked: (record.marker.getIcon().options.className ?? "").includes("ferry-docked"),
+              option: record.marker.options.opacity ?? 1,
+              drawn: el && el.style.opacity !== "" ? Number(el.style.opacity) : 1,
+            },
+          ];
+        }),
+      ),
+    );
+  const measured = await read();
+  /* THE COMPOUND ITSELF, ASSERTED AND NOT ONLY RECORDED. A golden says "this is what it
+     was"; these two lines say what it MEANS, so a future reader does not have to multiply
+     0.55 by 0.45 to see that the docked boat is carrying both rules and the under-way boat
+     only one. This is the half that dies if MR4 lets the docked rule fall out. */
+  const docked = Object.values(measured).find((b) => b.docked);
+  const underWay = Object.values(measured).find((b) => !b.docked);
+  expect(docked, "the fixture must serve a docked boat").toBeDefined();
+  expect(docked.drawn, "docked AND stale is both rules multiplied").toBeCloseTo(0.55 * 0.45, 5);
+  expect(underWay.drawn, "under way AND stale is the contract's dimming alone").toBeCloseTo(0.45, 5);
+  pin("ferry/compound-stale", measured);
+});
+
+/* ---------------- P4c: what every mark reads in the dark theme ---------------- */
+
+test("P4c. every marker family's contrast in BOTH themes, paint by paint", async ({ page }) => {
+  /* THE NUMBER LEDGER FINDING G15 ASKED FOR, RECORDED RATHER THAN SUMMARISED. G15 measured the
+     Key panel's glyphs in the dark theme at 1.11 to 2.63 against the surface and is the reason
+     `#theme-toggle` shipped hidden; MR4 releases it, so the same arithmetic has to be run on the
+     MAP's marks, and this is where its answers live.
+
+     A GOLDEN AND NOT ONLY A FLOOR. tests/e2e/theme.spec.js D5d asserts the floor: every family
+     clears 3:1 on the best paint it has. What a floor cannot say is WHICH paint is carrying a
+     family, and that is the interesting half, because two families clear it on their type or
+     their outline rather than on their fill:
+
+       - a subway train's route square reads 2.73 against the dark paper for the A trunk, and the
+         mark is carried by the white letter printed on it;
+       - a rail tag's body is the agency's own branch colour, and the darkest of them are carried
+         by the type and the outline the same way.
+
+     Neither is a defect of this stage and neither is this stage's to fix: those fills are
+     published colours, and MR3's finding N1 already set the principle that the feed's colour is
+     preferred and moved only where nothing else can work. What they ARE is a sentence a later
+     stage could change without noticing, so the numbers are a golden. A stage that moves a
+     published fill, or that changes which paint carries a mark, moves a row here and has to say
+     why.
+
+     BOTH THEMES, because the light theme's numbers are the control: a change that improved dark
+     by ruining light would move a row here rather than pass a dark-only floor.
+
+     THE MEASUREMENT IS tests/e2e/contrast.js, which states its own definition: the surface is
+     the theme's `--paper` (a tile is an image and no mark clears 3:1 against every possible
+     pixel), and a family is reported at its WORST mark rather than its average. */
+  await boot(page);
+  const measured = {};
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate((want) => applyTheme(want), theme);
+    await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+    const run = await measureMarkContrast(page);
+    // THE PREMISES, or this pin records an empty table: the surfaces are the theme's and every
+    // family is on the page.
+    expect(run.paper, `${theme}: the paper token`).toBe(
+      theme === "dark" ? "rgb(32, 30, 29)" : "rgb(243, 242, 242)",
+    );
+    const best = bestPerFamily(run);
+    expect(Object.keys(best).length, `${theme}: every family is measured`).toBe(10);
+    measured[theme] = best;
+  }
+  pin("contrast/marks", measured);
 });

@@ -103,6 +103,30 @@ async function loadRailroadRoutes() {
    line pane and erase an LIRR line at Penn. njt.js calls this with its own layer resolver, and
    the group a mark is added to still owns whether it SHOWS, so the two feeds toggle separately
    exactly as MR1 split them. */
+/* MR4: THE DEBT MR3 NAMED, PAID. The three rail families' 5px casings are drawn from
+   paperColor() resolved once per draw, so they keep the theme they were drawn under until
+   something restyles them. This is that something, and it is registered beside the draw so
+   the two cannot drift.
+
+   FILTERED BY RENDERER, NOT SWEPT OVER THE GROUP, and that is the whole care of this entry.
+   Each family's layer group holds the casing AND the branch line together, so a blind
+   `group.eachLayer(l => l.setStyle({ color: paper }))` would paint every 2.5px branch line in
+   paper as well and erase the agency's published colours, which are the entire subject of
+   MR3. MR3 put the casings on their own renderer (railroadCasingRenderer, pane 394) for the
+   drawing order, and that same split is what makes them identifiable here: a layer is a
+   casing if and only if it is on the casing canvas.
+
+   COLOUR ONLY, NEVER OPACITY. The one other setStyle in this app is route focus, which owns
+   opacity and guards on it; a swap that passed opacity would overwrite a rider's focus with
+   the casing's resting 0.9 the moment they changed theme. */
+registerCanvasFamily("rail casings", ({ paper }) => {
+  for (const group of [lirrRouteLinesLayer, mnrRouteLinesLayer, njtRouteLines]) {
+    for (const layer of group.getLayers()) {
+      if (layer.options.renderer === railroadCasingRenderer) layer.setStyle({ color: paper });
+    }
+  }
+});
+
 function railDrawRibbons(ribbons, layerFor) {
   const paper = paperColor();
   for (const ribbon of ribbons) {

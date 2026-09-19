@@ -868,7 +868,7 @@ test("D2z. a network with no interchange anywhere shows every name from 13, not 
   // reads their five names here and calls a hubless SUBWAY network broken.
   const painted = () =>
     page.evaluate(() =>
-      [...document.querySelectorAll(".stn-label:not(.rail)")]
+      [...document.querySelectorAll(".stn-label.subway")]
         .filter((el) => getComputedStyle(el).display !== "none")
         .map((el) => el.textContent)
         .sort(),
@@ -882,7 +882,7 @@ test("D2z. a network with no interchange anywhere shows every name from 13, not 
     "this world has no interchange, which is the premise",
   ).toBe(0);
   expect(
-    await page.evaluate(() => document.querySelectorAll(".stn-label:not(.rail)").length),
+    await page.evaluate(() => document.querySelectorAll(".stn-label.subway").length),
     "and it does have SUBWAY station labels, which is what a hubless subway network means",
   ).toBeGreaterThan(0);
 
@@ -908,6 +908,82 @@ test("D2z. a network with no interchange anywhere shows every name from 13, not 
   await expect(page.locator("#names-toggle")).toHaveAttribute("title", "");
 
   await expect(page.locator("#names-toggle")).toHaveAttribute("aria-pressed", "true");
+});
+
+test("D2z2. a subway layer a rider turned OFF is not a subway with no interchange", async ({
+  page,
+}) => {
+  /* ROUND 1'S REVIEW FOUND THIS, and MEASURING IT CORRECTED THE REASON, which is worth keeping
+     because the correction is the interesting half.
+
+     The band asks two things: has the subway loaded, and does it publish any interchange. The
+     review's finding was that MR4's move from a DOM count to a registry query dropped the
+     first, on the grounds that "a tooltip on a removed layer is not in the document". Measured
+     here: it is. Leaflet leaves a permanent tooltip's ELEMENT in the label pane when the layer
+     that owns it is removed from the map, so a count of `.stn-label.subway` reads the same
+     with the Subway feed on and off, and the DOM could never have answered this either. The
+     defect is real and it is OLDER than this diff: the old count and the first registry query
+     both read "stations exist, zero hubs" for a subway that is not on screen at all, which is
+     LABEL_NO_HUB_ZOOM's DEGRADED band (every name from 13).
+
+     AND SINCE MR4 THAT BAND BELONGS TO MORE THAN THE SUBWAY. `data-label-band` is what the
+     ferry's dock names hang on too, so the degraded reading would pull ANOTHER family's labels
+     onto the screen three zooms early because the subway was hidden. That is the carry-forward
+     this stage exists to stop paying, arriving through the attribute instead of the class.
+
+     THE WORLD IS BOTH CONDITIONS AT ONCE, because either alone gives the same answer both ways:
+     a backend that serves no routes (which helpers.js documents as a real state) AND the layer
+     pressed off. `map.hasLayer` is what the DOM was answering, asked of the data. */
+  await open(page, (ctx) => {
+    ctx.overrides.subwayStops = (route, fixtures) =>
+      json(route, fixtures.subwayStops().map((stop) => ({ ...stop, routes: [] })));
+  });
+
+  // THE PREMISES, or this spec asserts nothing: stations are registered, none of them lists a
+  // route, and the ferry has dock names on the same band waiting to be revealed.
+  const counts = () =>
+    page.evaluate(() => ({
+      registered: stationRegistry.filter((e) => e.kind === "subway").length,
+      withRoutes: stationRegistry.filter((e) => e.kind === "subway" && (e.routes ?? []).length).length,
+      inDom: document.querySelectorAll(".stn-label.subway").length,
+      onMap: stationRegistry.filter((e) => e.kind === "subway" && map.hasLayer(e.marker)).length,
+      docks: [...document.querySelectorAll(".stn-label.ferry")].filter(
+        (el) => getComputedStyle(el).display !== "none",
+      ).length,
+    }));
+  const before = await counts();
+  expect(before.registered, "subway stations are registered").toBeGreaterThan(0);
+  expect(before.withRoutes, "and none of them lists a route, which is the degraded state").toBe(0);
+
+  await page.locator("#toggle-subway").click();
+  await expect(page.locator("#toggle-subway")).toHaveAttribute("aria-pressed", "false");
+  const off = await counts();
+  expect(off.registered, "the registry still holds them, which is one half of the trap").toBe(
+    before.registered,
+  );
+  /* AND SO DOES THE DOM, WHICH IS THE OTHER HALF AND THE MEASUREMENT. A permanent tooltip's
+     element survives its layer being removed from the map, so a count of `.stn-label.subway`
+     reads the same with the feed on and off: that is why this question cannot be asked of the
+     document at all, in either direction. */
+  expect(off.inDom, "the label elements survive the layer being removed").toBe(before.inDom);
+  expect(off.onMap, "but not one of those stations is on the map").toBe(0);
+
+  await page.evaluate(() => map.setZoom(13, { animate: false }));
+  await expect(page.locator("html")).toHaveAttribute("data-zoom", "13");
+  /* "hubs", NOT "all". A hidden subway has nothing on screen to judge, so the band stays the
+     ordinary one. THIS IS THE MUTATION: drop `map.hasLayer` from paintZoomBand's query. */
+  await expect(page.locator("html")).toHaveAttribute("data-label-band", "hubs");
+  /* AND NO DOCK NAME IS PULLED ONTO THE SCREEN, which is belt and braces since the same round
+     gave the ferry `data-ferry-label-band` of its own: this attribute cannot reach them any
+     more. Kept because it is the assertion that would catch someone pointing the ferry's rule
+     back at the subway's band, which is where this stage started. */
+  expect((await counts()).docks, "no dock name rides the subway's band").toBe(0);
+
+  // AND IT COMES BACK: pressing the feed on restores the degraded reading, which is the right
+  // answer for a subway that IS on screen and publishes no interchange anywhere.
+  await page.locator("#toggle-subway").click();
+  await expect(page.locator("#toggle-subway")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("html")).toHaveAttribute("data-label-band", "all");
 });
 
 test("D2z1. when no station lists its routes at all, the toggle's tooltip says why", async ({ page }) => {
@@ -1559,15 +1635,22 @@ test("D2j. station names appear at the right zooms, hubs first, and the Names to
      attribute written correctly and a rule that never matched would pass an attribute check
      and show every name in the city at zoom 3. */
   await open(page, withLocalStation, { stations: 18 });
-  /* THE SUBWAY'S NAMES ONLY, which is what this spec is about. MR3 put the commuter rail
-     families on the same label pane with their OWN band (from zoom 11) and their own pair of
-     rules, so an unscoped count reads five rail names at zoom 11 and calls the subway's band
-     broken. `:not(.rail)` is the scope, and tests/e2e/rail.spec.js is where the rail band's own
-     numbers are held; the two bands overlap on purpose and neither one may be asserted through
-     the other. */
+  /* THE SUBWAY'S NAMES ONLY, ASKED FOR POSITIVELY, and the history is the point. MR3 put the
+     commuter rail families on this label pane with their OWN band (from zoom 11), so an
+     unscoped count read five rail names at zoom 11 and called the subway's band broken; the
+     scope written then was `:not(.rail)`. MR4 gave the ferry's docks their names, on the same
+     pane, in `.stn-label ferry`, and `:not(.rail)` counted both docks as subway stations: at
+     zoom 14 this assertion gained "South Williamsburg" and "Wall St/Pier 11" and went red.
+
+     THAT IS THE CARRY-FORWARD THIS PHASE KEEPS PAYING: a count over a class a later stage
+     widens. The repair is structural rather than another exclusion, because the next family to
+     join would break an exclusion list again. Subway labels now carry a positive `subway`
+     class and this asks for it by name; tests/e2e/rail.spec.js holds the rail band's numbers
+     and tests/e2e/families.spec.js holds the ferry's. The bands overlap on purpose and none of
+     them may be asserted through another. */
   const painted = () =>
     page.evaluate(() =>
-      [...document.querySelectorAll(".leaflet-tooltip:not(.rail)")]
+      [...document.querySelectorAll(".leaflet-tooltip.subway")]
         .filter((el) => getComputedStyle(el).display !== "none")
         .map((el) => el.textContent)
         .sort(),
@@ -1789,11 +1872,19 @@ test("D2l. MR1's chrome and the status line are exactly where MR1 left them", as
   expect(chrome.note, "a healthy day still says nothing").toBe("");
   expect(chrome.noteIsError).toBe(false);
   expect(chrome.alertsFold, "the alerts strip still never folds").toBe(false);
-  expect(chrome.themeHidden, "the theme toggle is still hidden until MR4").toBe(true);
-  // Eighteen rows plus the one note is the nineteen a11y.spec.js A1x counts; MR2 restyled
-  // three of these rows' glyphs in place and added none, which is what keeps that literal
-  // and P1e's list of names both true without either one being edited.
-  expect(chrome.legendRows, "the Key panel's row count is unchanged: MR2 restyled three glyphs in place").toBe(18);
+  /* MR4 RELEASED IT, which is ruling R2's whole condition met: every mark on the map now
+     carries the paper casing or stroke the dark theme needs, so the toggle a rider can press
+     is the last piece. The assertion is INVERTED rather than deleted, because "the toggle is
+     reachable" is now the invariant and a future stage re-hiding it should fail here. */
+  expect(chrome.themeHidden, "MR4 released the theme toggle (ruling R2)").toBe(false);
+  /* SIXTEEN ROWS, AND THE THIRD PIN ON THIS PANEL. Sixteen plus the one note is the seventeen
+     a11y.spec.js A1x counts, and P1e holds the names. MR2 restyled three of these rows' glyphs in
+     place and added none; MR4 round 2 is the first stage to change the COUNT, merging three rail
+     station rows into one and three commuter train rows into two while splitting the subway
+     station row for finding F16. All three pins moved together, deliberately: the ruling asked
+     for them to be updated rather than relaxed, and a panel with three independent counts is
+     exactly how a row leaves quietly. */
+  expect(chrome.legendRows, "the Key panel has sixteen rows and one note").toBe(16);
   expect(chrome.keyExpanded).toBe("false");
   expect(chrome.stationsExpanded).toBe("true");
 

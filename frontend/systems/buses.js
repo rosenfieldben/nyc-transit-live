@@ -6,20 +6,39 @@
 
 /* ---------------- Buses ---------------- */
 
-// Arrow rotated to the bearing (GTFS bearing = degrees clockwise from north,
-// which matches CSS rotate with an up-pointing arrow). Dot when bearing is null.
+/* MR4: the design's arrow and dot, at the muted hue, in helpers.js so node can read both
+   states (README: "smallest marks on the map").
+
+   THE MUTED HUE IS A LEGIBILITY FIX AND NOT A TASTE, measured over all 360 hues with the
+   repo's own contrastRatio: against light paper, `hsl(h, 75%, 40%)` leaves 147 of 360 hues
+   under the 3:1 mark floor (worst 2.01), and `hsl(h, 45%, 38%)` leaves NONE (worst 3.16).
+   Since a bus route's colour is a hash of its id, the old hue meant whether a given route's
+   arrow was legible was luck. That is also why this matters for the stage that releases the
+   dark theme rather than for the one that drew the arrow.
+
+   busMarkColor AND NOT routeColor. routeColor is unchanged and still paints the bus POPUP's
+   route name and the clicked route's line, and the popups are stage MR5's, pinned byte for
+   byte by P1g. Muting it in place would have moved a popup this stage may not touch.
+
+   A HEADING IS A NUMBER OR IT IS NOTHING: busHasHeading decides, so a served null, an absent
+   field and a NaN all draw the dot. An arrow pointing somewhere is a claim, and a missing
+   field is not a direction. */
 function busIcon(bus) {
-  const color = routeColor(bus.route_id);
-  const html =
-    bus.bearing != null
-      ? `<svg viewBox="0 0 20 20" style="transform: rotate(${Number(bus.bearing)}deg)">
-           <path d="M10 2 L16 17 L10 13 L4 17 Z" fill="${color}" stroke="#fff" stroke-width="1.2"/>
-         </svg>`
-      : `<svg viewBox="0 0 20 20">
-           <circle cx="10" cy="10" r="5.5" fill="${color}" stroke="#fff" stroke-width="1.5"/>
-         </svg>`;
-  return L.divIcon({ className: "bus-marker", html, iconSize: [20, 20], iconAnchor: [10, 10] });
+  return busMarkIcon(busMarkColor(bus.route_id), busHasHeading(bus) ? bus.bearing : null);
 }
+
+/* MR4 ROUND 1: the clicked route line is the seventh canvas family, and the only one whose
+   colour depends on something besides the theme. The route id was written onto each layer at
+   draw for exactly this: the painter recomputes per route rather than per family.
+
+   COLOUR ONLY. The line's 0.65 opacity is the design's constant and belongs to nothing else,
+   but it is not passed, because there is no reason to write it twice. */
+registerCanvasFamily("bus route lines", ({ busLightness }) => {
+  for (const layer of busRouteLayer.getLayers()) {
+    if (!layer.options.routeId || !layer.setStyle) continue;
+    layer.setStyle({ color: busMarkColorAt(layer.options.routeId, busLightness) });
+  }
+});
 
 function busPopup(record) {
   const b = record.latest;
@@ -227,7 +246,19 @@ async function showBusRoute(bus) {
 
   for (const points of geometry.directions ?? []) {
     L.polyline(points, {
-      color: routeColor(bus.route_id),
+      /* MR4 ROUND 1: THE SAME WHEEL THE ARROW IS DRAWN FROM. This was routeColor's raw
+         hsl(h, 75%, 40%) while the mark beside it had been muted and tokenised, so clicking a
+         bus drew a line in a different colour from the arrow that was clicked. It is also the
+         colour helpers.js says out loud owes 3:1 BECAUSE it is a polyline colour, and in the
+         dark theme the raw wheel leaves 169 of 360 hues under that floor (worst 1.45), 217 of
+         them once this line's own 0.65 opacity is composited.
+
+         RESOLVED AT DRAW AND REGISTERED BELOW, because a canvas cannot read the token the mark
+         uses. THE ROUTE ID RIDES ON THE LAYER so the repaint can recompute per route: the
+         colour depends on the route as well as the theme, which is what makes this family
+         different from the other six. */
+      routeId: bus.route_id,
+      color: busMarkColorAt(bus.route_id, busMarkLightness()),
       weight: 3.5,
       opacity: 0.65,
       interactive: false,
@@ -300,9 +331,18 @@ function applyBuses(data) {
       if (record.routeId !== bus.route_id && busRouteOwnedBy(bus.id)) {
         clearBusRoute();
       }
+      /* MR4: THE GATE ASKS THE SAME PREDICATE THE ICON DOES. It compared `bearing == null`,
+         which agrees with busHasHeading on null and undefined and disagrees on a NaN: a bus
+         whose served bearing went from a number to NaN would keep its arrow, now pointing at
+         rotate(NaN) rather than swapping to the dot. One predicate, so the gate and the glyph
+         cannot disagree about whether this bus is pointed anywhere.
+
+         ASKED OF record.bearing, WHICH IS THE PREVIOUS POLL'S VALUE at this point in the
+         block: record.latest is not reassigned until the bottom, so reading it here would
+         compare this poll against itself and the gate would never fire. */
       const shapeChanged =
         record.routeId !== bus.route_id ||
-        (record.bearing == null) !== (bus.bearing == null);
+        busHasHeading({ bearing: record.bearing }) !== busHasHeading(bus);
       if (shapeChanged) {
         record.marker.setIcon(busIcon(bus));
       } else if (record.bearing !== bus.bearing && bus.bearing != null) {

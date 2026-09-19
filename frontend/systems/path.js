@@ -47,10 +47,17 @@ async function loadPathRoutes() {
     // usually two per route); non-interactive like the AirTrain guideways so
     // clicks fall through to the station dots.
     for (const points of route.shape) {
+      /* MR4: the design's weight 3.5 at full opacity, round caps, NO CASING (README). PATH
+         is the one family the design gives no paper casing, which is why it needs no theme
+         registry entry for its lines: the colour is the feed's own and a theme swap does not
+         move it. The caps are stated rather than left to Leaflet's default, which happens to
+         be round, so the drawn mark and the written design say the same thing. */
       L.polyline(points, {
         color,
-        weight: 2.5,
-        opacity: 0.5,
+        weight: 3.5,
+        opacity: 1,
+        lineCap: "round",
+        lineJoin: "round",
         interactive: false,
         renderer: lineRenderer,
       }).addTo(pathRouteLines);
@@ -70,20 +77,29 @@ async function loadPathStops() {
   }
   if (!stations.length) return false; // failed-warmup []: retry until the backend heals
   for (const station of stations) {
-    // Same pane/renderer as the other station dots (click priority + cheap
-    // canvas), but INVERTED fill: a solid slate-blue dot under a white ring,
-    // where subway and railroad stations are both white-filled rings. PATH
-    // stations sit directly among subway stations in Manhattan (33rd St, WTC),
-    // so a third white-filled ring variant would be indistinguishable at a
-    // glance; flipping the fill makes the mode legible the way the AirTrain
-    // square does by shape. The slate-blue belongs to neither the subway nor
-    // the railroad palette nor any real PATH route color.
+    /* MR4: THE SUBWAY'S LOCAL DOT, which is the operator's ruling and the design's word
+       ("Stations: subway 'local' dot style"), drawn through stationMarkStyle so there is one
+       expression of what a local dot is rather than a second copy of its radius and fill.
+       PATH is a subway-style system and keeps a circle; the square still means regional rail.
+
+       WHAT THIS REPLACES, AND THE COST, recorded rather than quietly dropped. The mark was a
+       slate-blue disc under a white ring, and the paragraph that stood here argued for it:
+       PATH stations sit among subway stations in Manhattan (33rd St, WTC, 14th St), so an
+       identical mark makes the mode illegible at a glance where the two coincide. That cost
+       is real and is now paid: a PATH local dot and a subway local dot are the same mark.
+       The station's IDENTITY is still reachable (its popup, its panel entry and its accessible
+       name all say PATH), and the design's answer to "which mode is this" on this map is the
+       LINE under the dot rather than the dot itself. Carried to the operator as a finding.
+
+       ROUTES: [] ON PURPOSE, so stationMarkStyle gives the LOCAL form. A PATH station is not
+       a subway transfer station and must never take the hub ring, which isTransferStation
+       decides from subway trunks it has no business being asked about.
+
+       AND THE FILL IS A TOKEN NOW, so this dot joins the canvas families the theme swap has
+       to reach (registerCanvasFamily below). That is the trade the local dot makes: it loses
+       a literal that was theme-blind and gains one that is not. */
     const marker = L.circleMarker([station.lat, station.lon], {
-      radius: 4,
-      color: "#fff",
-      weight: 1.5,
-      fillColor: "#3d5a80",
-      fillOpacity: 1,
+      ...stationMarkStyle([], inkColor(), paperColor()),
       renderer: stationRenderer,
     });
     // Built once, used by the popup descriptor and the A1 registry alike.
@@ -143,18 +159,24 @@ async function loadPathStops() {
 // keeps BOTH click targets alive: the dot for arrivals, the diamond for the
 // train. popupAnchor lifts the train popup to the diamond rather than the
 // station point beneath it.
+/* MR4: PATH's station dots are the family's one canvas mark drawn from a token, so they are
+   the family's one theme registry entry. The lines are not here on purpose: they take the
+   feed's own route colour and the design gives them no casing, so a theme swap does not move
+   them.
+
+   THE DRAW PATH AND THE REPAINT CALL THE SAME FUNCTION. stationMarkStyle([], ink, paper) is
+   what loadPathStops drew with and what this hands to setStyle, so "what colour is a PATH
+   dot" has one expression rather than two that can drift. */
+registerCanvasFamily("path stations", ({ paper, ink }) => {
+  const style = stationMarkStyle([], ink, paper);
+  for (const layer of pathStations.getLayers()) layer.setStyle(style);
+});
+
 function pathIcon(train) {
-  const color = pathRouteColors.get(train.route_id) ?? PATH_FALLBACK_COLOR;
-  const html =
-    `<svg viewBox="0 0 16 16"><path d="M8 1.5 L14.5 8 L8 14.5 L1.5 8 Z" ` +
-    `fill="${color}" stroke="#fff" stroke-width="1.5"/></svg>`;
-  return L.divIcon({
-    className: "path-marker",
-    html,
-    iconSize: [16, 16],
-    iconAnchor: [8, 20],
-    popupAnchor: [0, -20],
-  });
+  // MR4: the design's diamond, built in helpers.js so node can read it, and wrapped in
+  // shared.js beside the other three families' wrappers. The anchor and the box are
+  // unchanged; what changed is the path, the stroke width and the stroke becoming a token.
+  return pathTrainIcon(pathRouteColors.get(train.route_id) ?? PATH_FALLBACK_COLOR);
 }
 
 function pathTrainPopup(record) {

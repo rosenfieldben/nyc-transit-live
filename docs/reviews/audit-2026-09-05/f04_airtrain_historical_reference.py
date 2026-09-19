@@ -282,6 +282,23 @@ const sandbox = {
     return marker;
   },
   registerStation: (entry) => { captured.stations.push(entry); },
+  /* MR4 GAVE systems/airtrain.js THREE MORE systems/shared.js DEPENDENCIES, and this driver
+     loads that file without shared.js exactly as it already stands in for labeledMarker and
+     registerStation above. None of the three is this record's subject, which is the station's
+     registration, its popup and the scheduled band, so each is the smallest honest stand-in:
+
+     registerCanvasFamily: the canvas-theme registry the gray guideway joins at load, so a
+       theme swap can repaint a colour a canvas resolved to a string. Nothing here swaps a
+       theme; recording the call and handing back the painter is the whole behaviour.
+     scheduledColor: the `--scheduled` token a polyline cannot resolve for itself. The light
+       theme's value, because there is no stylesheet in this context to read one from.
+     railStationIcon: the commuter square AirTrain's stations draw from MR4 on. The glyph is
+       tests/e2e/rail.spec.js D3c's subject rather than this record's, and nothing below reads
+       it: what this driver asks of a station is where it is, what it is called, what its popup
+       says and whether it reached the panel. */
+  registerCanvasFamily: (_name, paint) => paint,
+  scheduledColor: () => "#6d6e71",
+  railStationIcon: (system) => ({ __icon: true, opts: { className: `rail-stn-marker rail-${system}-stn` } }),
 };
 sandbox.globalThis = sandbox;
 sandbox.window = sandbox;

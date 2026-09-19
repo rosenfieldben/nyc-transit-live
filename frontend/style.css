@@ -118,6 +118,11 @@ main {
   --shadow: 0 3px 10px rgba(45, 43, 43, 0.16);
   --live: #00933c;
   --scheduled: #6d6e71;
+  /* MR4: THE BUS MARK'S LIGHTNESS, and it is a token because a bus route's colour is a HASH
+     of its id, so its legibility is a claim about all 360 hues rather than about one colour.
+     The README's value, and the measurement is in helpers.js beside busMarkColor: at 38% on
+     this theme's paper every one of the 360 hues clears the 3:1 a mark owes (worst 3.16). */
+  --bus-mark-lightness: 38%;
   --chrome-font: "Archivo", system-ui, sans-serif;
   /* The paper the Key panel's glyphs are drawn on, and it is the SAME in both themes on
       purpose: see .legend-row svg. */
@@ -144,6 +149,12 @@ main {
   --shadow: 0 3px 10px rgba(0, 0, 0, 0.5);
   --live: #00933c;
   --scheduled: #9a9a9a;
+  /* The other end, and the reason the lightness is a token at all: 38% against this theme's
+     paper leaves 188 of the 360 hues under 3:1 (worst 1.62), because a mid-dark fill on a dark
+     surface is ledger finding G15's arithmetic again. At 60% none of them is under, on --paper
+     (worst 3.60) or on --surface (worst 3.05). The hue is still the route's; only this moves,
+     and it moves through the cascade with no rebuild. */
+  --bus-mark-lightness: 60%;
   /* #b0b0b0 carries dark ink at 8.03 and reads 6.49 against the dark --surface. One grey
      cannot clear 3:1 against both surfaces, because they sit either side of mid grey, so this
      is a token per theme rather than one colour computed from the route. */
@@ -483,8 +494,10 @@ body,
 
 /* The two text actions and the one filled action. All three are 30px tall, which clears the
    24px target floor layout.spec.js enforces without needing a pseudo-element. */
-/* Hidden until MR4 by ruling (index.html says why), and `hidden` has to beat the author
-   display below, which is the same trap #route-banner and the fold elements carry. */
+/* MR4 RELEASED THE TOGGLE and this rule stays, deliberately. `hidden` has to beat the author
+   `display` below (the same trap #route-banner and the fold elements carry), so the rule is
+   what makes the attribute mean anything at all; removing it with the attribute would leave a
+   future `hidden` on this button silently inert. Nothing sets the attribute today. */
 #theme-toggle[hidden] {
   display: none;
 }
@@ -751,7 +764,7 @@ body,
 
 /* ----- The Key panel -------------------------------------------------------------------
    Two columns, hairline-free, and SCROLLABLE, which is the second half of the old #panel
-   rule's bound: eighteen rows do not fit a 320x640 screen and the rows that fell off the
+   rule's bound: the panel's rows do not fit a 320x640 screen and the rows that fell off the
    end used to be unreachable. 52vh leaves the alerts row and both header rows in view at
    the smallest width the axe specs run at. */
 #legend {
@@ -805,6 +818,28 @@ body,
   background: var(--glyph-plate);
 }
 
+/* MR4 ROUND 2: THE TWO COMMUTER TRAIN ROWS ARE THE ONLY GLYPHS IN THIS PANEL THAT CARRY TYPE,
+   and type does not survive being scaled. At the shared 16px cell the rail tag's own viewBox
+   (35 to 45 wide by 30 tall) scales to 0.457 and its 8px Archivo renders at 3.66px. Widening
+   alone would buy almost nothing while the viewBox stayed 30 tall, because the box is then
+   height-constrained by the air the stem and head hang in. So those two glyphs crop their
+   viewBox to the TAG and this rule lets the CELL adapt to the mark: viewBox 42x16 in a 42x16
+   box is a scale of exactly 1.00, and the type is the map's own 8px.
+
+   42 IS NOT A TASTE, it is railTagGeometry("NJT", "NEC").width + 2. NJ Transit's 16px agency
+   block sets the floor and the two spare units keep the solid body's x -0.5 paper plate off the
+   edge, since the `overflow: visible` that saves it on the map is scoped to .rail-tag-marker and
+   does not reach here. If either row's branch code changes, this number moves with it.
+
+   HEIGHT IS INHERITED at 16px, so the plate is 44x18 against 18x18 for every other row and the
+   ROW HEIGHTS DO NOT CHANGE: only the glyph column widens. (0,2,1) out-specifies the (0,1,1)
+   rule above it. tests/e2e/a11y.spec.js A1x2 measures the rendered type size, because a
+   mutation that deleted this rule would scale the type back to 3.66px and leave colour,
+   contrast and every row count exactly as they are. */
+.legend-row svg.key-rail-tag {
+  width: 42px;
+}
+
 .legend-note {
   grid-column: 1 / -1;
   color: var(--muted);
@@ -812,9 +847,13 @@ body,
 }
 
 /* Rotating bus markers */
+/* MR4: 14px, which is the design's box for the arrow AND for the dot. The SVG carries no
+   width or height attributes, so THIS rule is the mark's real size: an iconSize of 14 with a
+   20px rule here would scale a 14-unit viewBox up to 20 CSS px inside a 14px box and the
+   arrow would overflow its own marker. The two move together or neither does. */
 .bus-marker svg {
-  width: 20px;
-  height: 20px;
+  width: 14px;
+  height: 14px;
   transition: transform 0.5s ease; /* smooth turn between polls */
 }
 
@@ -860,21 +899,11 @@ body,
   pointer-events: none;
 }
 
-/* Square railroad (LIRR / MNR) markers.
-   MR3 REPLACED THE 16px SQUARE WITH railTag, so this rule is now dead for LIRR and
-   Metro-North trains. It is kept because AirTrain's station square is still 14px and PATH's
-   diamond still 16, and MR4 is the stage that brings those to this family's shape; deleting
-   it now would leave the next stage guessing what the old sizes were. */
-.railroad-marker svg {
-  width: 16px;
-  height: 16px;
-}
-
-/* Square AirTrain JFK station markers */
-.airtrain-marker svg {
-  width: 14px;
-  height: 14px;
-}
+/* MR3 replaced the 16px railroad square with railTag and MR4 has now brought AirTrain's
+   station to the same 20px commuter square, so `.railroad-marker` and `.airtrain-marker` are
+   both gone rather than kept as a note to a future stage. What the next stage needs to know
+   about the old sizes is in the ledger, which is where a history belongs; a dead selector in
+   a stylesheet is a thing that looks live. */
 
 /* Diamond PATH train markers */
 .path-marker svg {
@@ -882,19 +911,12 @@ body,
   height: 16px;
 }
 
-/* Hollow square NJ Transit train markers, and the smaller filled square its
-   stations use. Two classes rather than one because they are different sizes and
-   the e2e suite reads each on its own; the shapes and fills are argued in
-   systems/njt.js. */
-.njt-marker svg {
-  width: 16px;
-  height: 16px;
-}
-
-.njt-station-marker svg {
-  width: 12px;
-  height: 12px;
-}
+/* MR3 gave NJ Transit the rail tag and the commuter square, the same two marks LIRR and
+   Metro-North draw, and left `.njt-marker` and `.njt-station-marker` behind: no element on the
+   page has carried either class since, which the P4a census confirms by listing every class
+   that is drawn. MR4 found them while measuring every family in the dark theme and selecting
+   nothing, and deletes them for the reason written six lines above about the railroad's and
+   AirTrain's own dead selectors: a dead selector is a thing that looks live. */
 
 /* NYC Ferry boat markers: a horizontal hull shape. Boats snap to their reported
    GPS position each poll (the railroad GPS precedent), the same way the bus
@@ -1511,21 +1533,30 @@ body,
    answer and is what these selectors read. The band has three values, is decided in one
    node-tested function, and cannot run out of range.
 
-   The Names toggle comes LAST and at matching specificity rather than with !important: the
-   hub rule above is (0,4,0), so the off rule is written twice to reach it, and source order
-   does the rest. */
+   THE NAMES TOGGLE IS ONE RULE, LAST, AND EVERY BAND RULE IS THE SAME SPECIFICITY, which is
+   MR4's repair of a rule that used to be arithmetic. It read "the off rule is written twice
+   to reach the hub rule's (0,4,0)", and that only held while there was one family: scoping
+   the subway's band to `.stn-label.subway` (0,4,0) and its hub band to `.stn-label.subway.hub`
+   (0,5,0) put both show rules above the off rule, and the Names toggle stopped hiding subway
+   names. The suite caught it, D2j by name.
+
+   SO THE FAMILY CLASS IS MATCHED INSIDE :where(), which selects the family and adds NOTHING to
+   specificity. Every show rule in this section is exactly (0,3,0), the single off rule below
+   is (0,3,0), it comes last, and source order decides. A family added in a later stage writes
+   its band rule in the same shape and is hideable by construction rather than by someone
+   recomputing four numbers. */
 .stn-label {
   display: none;
 }
 
-:root[data-label-band="hubs"] .stn-label.hub,
-:root[data-label-band="all"] .stn-label {
+/* MR4 SCOPED THESE TO `.subway`, and the bug it fixes was live. `[data-label-band="all"]
+   .stn-label` matched EVERY family's label, so at zoom 14 the subway's band was also what
+   revealed a ferry dock's name: one family's zoom rule silently governing another's. Each
+   family's band is its own rule now, keyed on its own class, so a family added later shows
+   nothing until someone writes the rule that shows it. */
+:root[data-label-band="hubs"] .stn-label:where(.subway.hub),
+:root[data-label-band="all"] .stn-label:where(.subway) {
   display: block;
-}
-
-:root[data-labels="off"] .stn-label,
-:root[data-labels="off"] .stn-label.hub {
-  display: none;
 }
 
 /* ----- MR3: the commuter rail names, from zoom 11 ----------------------------------------
@@ -1543,14 +1574,44 @@ body,
    middle band is what reveals it; a rail station is not one and has no middle step, which is
    why this is a pair of rules and not a trio.
 
-   THE NAMES TOGGLE COMES LAST AND AT MATCHING SPECIFICITY, exactly as the subway's pair
-   above: both selectors are (0,4,0) and source order does the rest. Put the off rule first
-   and a rail name would be unhideable. */
-:root[data-rail-label-band="all"] .stn-label.rail {
+   THE NAMES TOGGLE IS THE ONE RULE AT THE END of this section and no longer a per-family
+   pair: the family is matched inside :where() so this rule is (0,3,0) like every other band
+   rule, and the off rule reaches it by source order. */
+:root[data-rail-label-band="all"] .stn-label:where(.rail) {
   display: block;
 }
 
-:root[data-labels="off"] .stn-label.rail {
+/* ----- MR4: the ferry's dock names, on their OWN band -------------------------------------
+
+   The design puts dock names at the same zoom as subway station names ("subway/PATH/ferry
+   station groups added at zoom >= 12 (names from 14 ...)"), and the first draft of this rule
+   therefore hung them on `data-label-band` and said so. Round 1's review measured the cost:
+   that attribute carries the subway's DEGRADED answer as well as its ordinary one. When no
+   subway station lists a route (a documented backend state), the subway's band reads "all"
+   from zoom 13, and every dock name came on with it, one zoom early, for a reason that has
+   nothing to do with the ferry.
+
+   SO IT IS `data-ferry-label-band`, which is MR3's own sentence about the rail names applied
+   again: the two bands overlap and one attribute cannot hold two answers. A dock's answer is
+   the zoom and nothing else, because a dock has no interchange to reveal and no degraded
+   state to fall back to.
+
+   NEVER .hub, for the rail rule's reason: a hub is a subway transfer station by one predicate
+   and a dock is not one. */
+:root[data-ferry-label-band="all"] .stn-label:where(.ferry) {
+  display: block;
+}
+
+/* ----- the Names toggle, over every band above -------------------------------------------
+
+   ONE RULE FOR EVERY FAMILY, LAST IN THE SECTION. It is (0,3,0), every show rule above is
+   (0,3,0) because each states its family inside :where(), and source order does the rest, so
+   a rider's preference beats every band without an !important and without a per-family copy
+   that a new family would have to remember to add. Move this above any band rule and that
+   family's names become unhideable, which is what the three tests named here would catch:
+   tests/e2e/subway.spec.js D2j, tests/e2e/rail.spec.js D3d and tests/e2e/families.spec.js
+   D4d each press the toggle and ask for nothing. */
+:root[data-labels="off"] .stn-label {
   display: none;
 }
 

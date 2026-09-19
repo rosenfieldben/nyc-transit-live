@@ -500,3 +500,162 @@ test("C6e4. NJT down: its markers dim, the railroads' do not", async ({ page, re
   await expect(page.locator("#status")).toContainText(/NJ Transit: /, { timeout: DIM_TIMEOUT_MS });
   await expect(page.locator("#status")).toHaveClass(/error/);
 });
+
+test("C6e5. the ferry: a docked boat carries BOTH rules, against a real backend", async ({
+  page,
+  request,
+}) => {
+  /* Hermetic counterparts: tests/e2e/pins.spec.js P4b and P4b2, which pin the same two
+     numbers over a stubbed /api/ferry. What only this tier shows is that a REAL backend,
+     polling two REAL sockets, produces the envelope that makes the compound happen.
+
+     WHY THE FERRY IS THE FAMILY WORTH BRINGING HERE. It is the only one with TWO opacity
+     rules, and they multiply rather than replace: a STOPPED_AT boat is drawn at
+     FERRY_DOCKED_OPACITY (0.55) because it is parked, and any boat on a stale feed is drawn at
+     STALE_MARKER_OPACITY (0.45) because the app does not know where it is. A docked boat on a
+     dead feed is 0.2475, and the two ways to get that wrong are opposite: a rule written as an
+     assignment rather than a product loses whichever it applies second, so the boat reads
+     either "parked" on a feed that is dead or "unknown" while parked at a dock it is plainly
+     at. THIS IS THE MUTATION the operator named for this family.
+
+     TWO FEED KEYS, AND ONLY ONE OF THEM IS TOUCHED. The simulator serves ferry:vehicle and
+     ferry:tripupdate separately, which is the real backend's shape: the positions come from the
+     vehicle feed and the dock boards from the trip updates. The dimming is about POSITIONS, so
+     this kills the vehicle feed and leaves the trip updates alone, which is also the sharper
+     test: a frontend that dimmed the boats when any ferry feed went quiet would pass a
+     both-feeds-down version of this spec and fail here.
+
+     PER MARKER RATHER THAN OVER ALL OF THEM, for C6e3's reason in the ferry's numbers: each
+     boat is dated by its own observation (section 3.3), the committed capture's vehicles carry
+     a spread of ages, and this tier's threshold is 25 s, so "every boat is bright" is false on
+     a perfectly healthy ferry. The claim is one per marker and both halves come off ONE
+     snapshot, so an opacity and the age it is judged against cannot straddle a tick. */
+  const DOCKED = 0.55;
+  const DIM = 0.45;
+  await openMap(page);
+
+  const boats = () =>
+    page.evaluate(() => {
+      const now = Date.now() / 1000 - (minClockOffset ?? 0);
+      const servedAt = sources.ferry.servedAt;
+      return [...ferryBoatRecords.values()].map((record) => {
+        const at = record.latest.observed_at;
+        return {
+          docked: (record.marker.getIcon().options.className ?? "").includes("ferry-docked"),
+          // The option, and the drawn value beside it, because the two are only the same
+          // while dimMarker is wired and this tier is where a real page is watched.
+          opacity: record.marker.options.opacity ?? 1,
+          drawn: (() => {
+            const el = record.marker.getElement();
+            return el && el.style.opacity !== "" ? Number(el.style.opacity) : 1;
+          })(),
+          age: typeof at === "number" ? servedAt - at + Math.max(now - servedAt, 0) : null,
+        };
+      });
+    });
+
+  await expect.poll(async () => (await boats()).length, { timeout: 60_000 }).toBeGreaterThan(0);
+
+  /* THE BASELINE, AND IT NAMES WHAT THE CAPTURE HAS TO CARRY. A spec about the compound is
+     worth nothing over a world with no docked boat in it, so the premise is asserted rather
+     than hoped for: the committed ferry capture carries STOPPED_AT vehicles, and if a future
+     capture stops carrying one this fails here rather than passing vacuously below. */
+  await expect
+    .poll(
+      async () => {
+        const rows = await boats();
+        const { fresh } = agePopulations(rows);
+        return {
+          someFreshDocked: fresh.some((b) => b.docked),
+          someFreshUnderWay: fresh.some((b) => !b.docked),
+          freshDockedAreParked: fresh
+            .filter((b) => b.docked)
+            .every((b) => Math.abs(b.drawn - DOCKED) < 0.001),
+          freshUnderWayAreLive: fresh.filter((b) => !b.docked).every((b) => b.drawn === 1),
+        };
+      },
+      {
+        message: "a healthy ferry: a fresh docked boat is parked, a fresh under-way boat is live",
+        timeout: DIM_TIMEOUT_MS,
+      },
+    )
+    .toEqual({
+      someFreshDocked: true,
+      someFreshUnderWay: true,
+      freshDockedAreParked: true,
+      freshUnderWayAreLive: true,
+    });
+
+  await control(request, { key: "ferry:vehicle", mode: "error" });
+  await awaitPolls(request, "ferry:vehicle", 2);
+
+  /* AND NOW BOTH RULES AT ONCE. Every boat is dimmed, whatever its own observation said,
+     because the SYSTEM is stale; and the docked one is dimmed ON TOP OF being parked, which is
+     the product this spec exists for. The non-empty guard is the same one C6e1 states: an empty
+     set satisfies every predicate, so a recovery that swept the boats off the map would read as
+     a pass without it. */
+  await expect
+    .poll(
+      async () => {
+        const rows = await boats();
+        const docked = rows.filter((b) => b.docked);
+        const underWay = rows.filter((b) => !b.docked);
+        return {
+          someBoats: rows.length > 0,
+          someDocked: docked.length > 0,
+          dockedCarryBoth: docked.every((b) => Math.abs(b.drawn - DOCKED * DIM) < 0.001),
+          underWayCarryOne: underWay.every((b) => Math.abs(b.drawn - DIM) < 0.001),
+          // AND THE MODEL AGREES WITH THE DRAWN PAGE, which is the other half: one of the four
+          // defect shapes this phase produced was believing the option over the element.
+          optionsAgree: rows.every((b) => Math.abs(b.opacity - b.drawn) < 0.001),
+        };
+      },
+      {
+        message: "a dead ferry vehicle feed: docked is 0.55 * 0.45, under way is 0.45",
+        timeout: DIM_TIMEOUT_MS,
+      },
+    )
+    .toEqual({
+      someBoats: true,
+      someDocked: true,
+      dockedCarryBoth: true,
+      underWayCarryOne: true,
+      optionsAgree: true,
+    });
+
+  /* And the status line names the ferry rather than going generically red, which is the
+     granularity half every other spec in this series makes for its own family. MEASURED RATHER
+     THAN GUESSED: the line reads "ferries: as of 105s ago", because staleness() takes the
+     source's plural label and a single-feed source's clause carries the colon and the "ago"
+     that the railroads' per-system clause ("MNR as of 30s") does not. The first draft of this
+     line asked for the railroad's shape and failed against a page that was behaving correctly,
+     which is the right way round for a spec to be wrong. */
+  await expect(page.locator("#status")).toContainText(/ferries: as of \d+[smh] ago/, {
+    timeout: DIM_TIMEOUT_MS,
+  });
+
+  /* AND IT CLEARS, both rules independently: the dimming is driven by the age of the last good
+     poll, so one successful fetch undoes it, and the docked rule is NOT a dimming and must
+     survive that recovery. A frontend that dimmed permanently on the first failure fails the
+     under-way half; one that lost the docked rule while dimming fails the docked half. */
+  await control(request, { key: "ferry:vehicle", mode: "live" });
+  await expect
+    .poll(
+      async () => {
+        const { fresh } = agePopulations(await boats());
+        return {
+          someFreshDocked: fresh.some((b) => b.docked),
+          freshDockedAreParkedAgain: fresh
+            .filter((b) => b.docked)
+            .every((b) => Math.abs(b.drawn - DOCKED) < 0.001),
+          freshUnderWayAreLiveAgain: fresh.filter((b) => !b.docked).every((b) => b.drawn === 1),
+        };
+      },
+      { message: "the ferry recovers and the docked rule survives it", timeout: DIM_TIMEOUT_MS },
+    )
+    .toEqual({
+      someFreshDocked: true,
+      freshDockedAreParkedAgain: true,
+      freshUnderWayAreLiveAgain: true,
+    });
+});

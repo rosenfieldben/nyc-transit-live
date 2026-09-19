@@ -132,7 +132,7 @@ written by hand**.
 | P1b | The status line's words in the **F01 world**: the committed capture with Metro-North's own poll aged six minutes, which is the one world where all three clauses arrive together. | `railroad: MNR as of 6m ago; LIRR 24 trains not shown, last seen over 10m ago; MNR position age unavailable` |
 | P1c | A **healthy day says nothing** and is not painted as an error. | `` (empty) |
 | P1d | The **alert banner's subtree**, byte for byte, plus its rows' text in order. | `.alert-banner-strip` / `.alert-banner-rows` / `.alert-banner-row` / `#alert-banner-dismiss` unchanged |
-| P1e | Every **accessible name the legend says**, with the `aria-hidden` glyphs removed, so the Key panel is checked against the list rather than against a memory of it. | 17 rows plus the note |
+| P1e | Every **accessible name the legend says**, with the `aria-hidden` glyphs removed, so the Key panel is checked against the list rather than against a memory of it. | 17 rows plus the note as MR1 measured it; a SUPERSET check, so a stage could add but never remove. **MR4 round 2 made it an ordered equality over the 16 rows plus the note the panel has now**, by ruling, and recorded the 18 names it replaced. The superset is what let six stale rail rows sit for two stages: it made replacing a row the one thing a stage could not do |
 | P1f to P1n | Per system, every **mark's HTML** (divIcons) or **renderer options** (canvas circleMarkers) with its anchors and its per-observation opacity, and its **popup HTML** as a rider sees it, read through the marker that owns it. Screenshot-free: the assertion is on the DOM and on Leaflet's options, never on pixels. | 9 families, 14 popups |
 
 Two things the pins had to be written around, both measured rather than guessed:
@@ -592,7 +592,7 @@ nothing.
 | **F5**, **F11**, **F12**, **F13** | **Four guards and assertions that measured nothing**, each confirmed by a mutation the whole suite survived. F5: nothing shrank the bullet universe while a route was focused, so the rebuild's focus-clearing branch was untested and deleting it left the map permanently dimmed with no pressed control. F11: nothing advanced a poll with focus inside the toolbar, so the signature guard's own claim was unmeasured. F12: `paperColor`'s fallback is the light theme's `--paper` byte for byte and every spec runs in the light theme, so `D2h`'s token assertion held whether or not a token was ever read. F13: `D2q` put the dark bullet at index 3 of 9, where the roving stop and the arrow wrap give identical answers with and without the guard. | **All four fixed as tests.** `D2s` shrinks the universe under a focus; `D2t` advances two polls with focus in the toolbar and also asserts the legitimate rebuild still happens; `D2h` moves the tokens and asks the resolvers again; `D2q` presses the two keys either side of the dark bullet. |
 | **F14** | **Leaflet's Tooltip defaults to `opacity: 0.9` and writes it as an INLINE style**, which no stylesheet rule can reach, so every station name drew at 90% group alpha while `A1z3` measured its ink at 100% and reported a ratio about 23% better than the drawn one. The `.stn-label` rule enumerates five tooltip defaults it takes back off; this was the sixth. | **Fixed** with `opacity: 1` in the `bindTooltip` options, because it is not a rule. `D2x` holds it beside the pane, since both are properties of that one call. |
 | **F8** | **Partly refuted, and this is why findings get verified.** The claim was that `stationMarkStyle`'s local branch dropped a hit-radius invariant: 4.75px before, 3.5px after. The arithmetic is right and the framing is not. In the vendored Leaflet, `_containsPoint` is `radius + (stroke ? weight/2 : 0) + renderer.tolerance`, which is **also the drawn outer radius**, so the hit radius has always equalled the drawn one and there was no separate invariant to re-establish. The local dot is smaller because the design specifies a smaller dot. The proposed remedy, a `tolerance` on the renderer, would have silently grown the hit radius of PATH, railroad and ferry stations, three systems this stage's pins exist to hold still. | **Not changed.** The residue worth recording: tapping a local station is harder than before, by the design's own call, and the A2 footnote's marker-versus-panel equivalence already covers the target-size question for every mark on this map. |
-| **F16** | **The Key panel's station row draws two marks and its caption describes one thing**, so a rider sees the difference and does not learn what it means. Real, and not fixable here: a second row moves `A1x`'s pinned row count, and rewording the caption drops an exact sentence, which is precisely what `P1e` forbids ("no stage takes a sentence away from this panel, additions only"). Tried both, put both back. | **Recorded for the stage that owns the Key panel**, with the reason written at the markup. The same discipline as the "ALL LINES" button. |
+| **F16** | **The Key panel's station row draws two marks and its caption describes one thing**, so a rider sees the difference and does not learn what it means. Real, and not fixable here: a second row moves `A1x`'s pinned row count, and rewording the caption drops an exact sentence, which is precisely what `P1e` forbids ("no stage takes a sentence away from this panel, additions only"). Tried both, put both back. | **Recorded for the stage that owns the Key panel**, with the reason written at the markup. The same discipline as the "ALL LINES" button. **CLOSED in MR4 round 2**, by the ruling that owns the panel: the row is split, the dot keeps its caption byte for byte, and the ring gets the name this finding asked for. Both obstacles were moved rather than worked around, `A1x` to 17 and `P1e` to an ordered equality. |
 
 **Round 3's own fixes went in half guarded, and the mutation run is what said so.** Three of
 them survived their first mutation: the label pane (**M9**), the 6px gap (**M10**) and the
@@ -948,20 +948,466 @@ the two runs differ only by the tree they ran in.
 | before | `before-desktop.png` | `before-375.png` |
 | after | `after-desktop.png` | `after-375.png` |
 
-## Stage MR4: the other families
+## Stage MR4: the other families, and the dark theme's release
 
-*Not started.* Carries round 3's R2: when the last family on the map has its paper
-casing, `#theme-toggle` loses its `hidden` attribute and the dark theme is offered.
-Everything else it needs already ships in MR1 and is tested there.
+PATH, the ferry, AirTrain and the buses, and then ruling R2 met: when the last family on
+the map has its paper casing or stroke, `#theme-toggle` loses its `hidden` attribute and
+the dark theme is offered. Four families and one release, and the release is what the other
+four are for.
 
-**And it inherits a third population for the theme swap, from MR3.** The `setStyle` MR4
-does over the subway ribbons and the station circles has to reach the three commuter rail
-families' 5px paper casings as well: `railDrawRibbons` resolves `paperColor()` once per
-draw, exactly as `drawRibbons` does, so a casing drawn under the light theme keeps its
-light paper until something restyles it. They live on their own pane
-(`railroadCasingPane`) and in each family's own layer group, so they are reachable; what
-MR4 owes is to reach them. Named in `systems/shared.js` beside `rootToken` rather than
-left to be discovered.
+It carried two debts into the stage, both named by MR3 rather than discovered here.
+
+**A third population for the theme swap.** The `setStyle` this stage does over the subway
+ribbons and the station circles has to reach the three commuter rail families' 5px paper
+casings as well: `railDrawRibbons` resolves `paperColor()` once per draw, exactly as
+`drawRibbons` does, so a casing drawn under the light theme keeps its light paper until
+something restyles it. They live on their own pane (`railroadCasingPane`) and in each
+family's own layer group, so they are reachable; what MR4 owed was to reach them.
+
+**And every count over a class this phase widens.** MR3 put ~300 commuter rail names in
+`.stn-label` and six specs' vehicle sentinel counted five rail STATIONS as vehicles; the
+repair then was `:not(.rail)`, an exclusion. MR4 widens three more classes (the ferry's
+dock names join `.stn-label`, AirTrain's stations join `.rail-stn-marker`, and the ferry's
+docks join the station label pane), so every one of those exclusions was wrong again the
+moment this stage drew a dock. That is recorded under the findings below as the stage's own
+carry-forward, and it is paid structurally rather than with a fourth exclusion.
+
+### The pins, and why two of them are new
+
+P1f, P1g, P1h and P1j already held the bus, PATH and ferry marks byte for byte, and MR4 is
+the stage that deliberately moves four of those halves. Their POPUP halves are NOT
+regenerated, for the reason MR2 and MR3 both give about their own: the popups are stage
+MR5, so a popup that moves here is a defect and that claim stays an assertion. It held:
+regenerating the golden moved `census/stock` and `markers/airtrain`, `markers/buses`,
+`markers/ferry` and `markers/path`, and not one `popups/*` key.
+
+| Pin | What it holds |
+| --- | --- |
+| **P4a** | The census of every marker class and every canvas group on the stock world, by class rather than by total: `markerIcons`, the vehicle sentinel, `railStationMarkers`, a per-class tally, and the four label counts as POSITIVE classes. This is the pin that exists because of MR3's carry-forward, and it earned itself on its first outing (below). |
+| **P4b** | The ferry's docked-boat opacity in a healthy world, and **P4b2** the compound on a stale one: 0.55 for docked, 0.45 for a stale under-way boat, and 0.2475 for a boat that is both. The compound is asserted as arithmetic as well as recorded as a golden, so a reader does not have to multiply to see which rule is which. |
+
+**P4b's first draft was a pin that could not fail, and reading the golden after writing it
+is what caught it.** It aged `sources.ferry.fetchedAt` on a loaded page and called
+`refreshAll()`; the next poll answered with the stock envelope and overwrote the edit, so
+the "stale" half came back byte for byte identical to the healthy half. It is two pins now
+and the stale one boots into a world whose envelope is old from its first byte.
+
+### What the marks were, and what they are
+
+The before is the golden as `origin/main` served it; the after is what this branch
+regenerated.
+
+| | before | after |
+| --- | --- | --- |
+| PATH train | a 16x16 diamond, `<path d="M8 1.5 L14.5 8 L8 14.5 L1.5 8 Z" fill=#d93a30 stroke="#fff" stroke-width=1.5>` | the design's diamond, `d="M8 1 L15 8 L8 15 L1 8 Z"` at `stroke-width 1.2`, the fill and the stroke both in an inline STYLE so the stroke can be `var(--paper)`, same 16x16 box and same `[8, 20]` lift |
+| PATH line | one polyline per shape, `weight 2.5 opacity 0.5` | `weight 3.5 opacity 1`, round caps and joins stated rather than inherited, no casing (the one family the design gives none) |
+| PATH station | a canvas `circleMarker` `radius 4 color #fff weight 1.5 fillColor #3d5a80`: an INVERTED fill, chosen so PATH would not be mistaken for a subway station where the two coincide | the subway's LOCAL dot through `stationMarkStyle([], ink, paper)`: `radius 3.5 fillColor var(--ink) stroke false`, and in the canvas theme registry because that fill is a token |
+| ferry boat | a rounded rectangle, `<rect x=1 y=3 width=20 height=8 rx=4 stroke="#fff" stroke-width=1.5>` | a hull, `<path d="M1 3 H21 L17.5 11 H4.5 Z" stroke-width=1>`: a flat deck wider than the keel, which is what the file's own comment had argued for since it was written |
+| ferry route | `weight 2.5 opacity 0.5`, solid | `weight 2 opacity 0.9 dashArray "6 5"`: the dash is the family's signature, and says the service crosses water on no fixed way |
+| ferry dock | `radius 4.5 color #fff weight 1.5 fillColor #0e7490` | `radius 4 color <paper> weight 1.5 fillColor #00839c`, and a permanent name label in `stn-label ferry`: the cyan settles a disagreement the app already had (the feed strip's ferry tick has been `#00839c` since MR1 while the Key's dock glyph was `#0e7490`) |
+| AirTrain station | a 14x14 magenta square, `<rect x=1.5 y=1.5 width=11 height=11 rx=2 fill=#fff stroke=#b5179e stroke-width=2.5>`, class `airtrain-marker` | the commuter square, byte for byte the one the three rail families draw, class `rail-stn-marker rail-airtrain-stn` |
+| AirTrain guideway | `#b5179e`, `weight 3 opacity 0.85`, solid | `var(--scheduled)` resolved at draw (`#6d6e71` light, `#9a9a9a` dark), `weight 3`, `dashArray "8 5"`, and in the theme registry because the colour is the app's rather than a feed's |
+| bus | a 20x20 box: an arrow `d="M10 2 L16 17 L10 13 L4 17 Z"` at `stroke-width 1.2` or a `circle r 5.5`, filled from `routeColor` at `hsl(h, 75%, 40%)` | a 14x14 box for both states: the arrow `d="M7 1 L12 13 L7 10 L2 13 Z"` or a `circle r 3.5`, filled from `busMarkColor` at `hsl(h, 45%, 38%)`, stroked in `var(--paper)` |
+
+And the census, which is the same table read as counts:
+
+| | before | after | why |
+| --- | --- | --- | --- |
+| `markerIcons` | 23 | 23 | no family gained or lost a mark |
+| `vehicleSentinel` | 18 | 15 | AirTrain's three stations stopped being counted as vehicles |
+| `railStationMarkers` | 5 | 8 | the same three, counted as the stations they always were |
+| `stnLabels` | 7 | 9 | the ferry's two dock names, which the design asks for and no dock has ever had |
+| `stnLabelsSubway` | 2 | 2 | **this is the one that caught the carry-forward**: read as `:not(.rail)` it was 4 |
+
+### What the theme swap reaches, and what it must not
+
+Six families register a painter; the draw path and the repaint call the same function, so
+"what colour is this mark" and "what colour does it become" are one expression each.
+
+| Family | Registered in | Paints | Must not touch |
+| --- | --- | --- | --- |
+| subway ribbons | `systems/subway.js` | the CASING half's colour, found by `ribbon.part` | the line half's trunk colour; any opacity, which route focus owns and guards on |
+| subway stations | `systems/subway.js` | `stationMarkStyle(routes, ink, paper)` per registry entry | the routes that decide dot or ring, which are read back off the registry |
+| rail casings | `systems/railroad.js` | the casing's colour, found by `railroadCasingRenderer` | every branch line in the same layer groups, which carry the agencies' published colours |
+| PATH stations | `systems/path.js` | `stationMarkStyle([], ink, paper)` | the lines, which take the feed's colour and have no casing |
+| ferry docks | `systems/ferry.js` | `ferryDockStyle(paper)` | the dock's own cyan, and the dashed routes' feed colours |
+| AirTrain lines | `systems/airtrain.js` | `airtrainLineStyle(scheduled)` | nothing else: the station squares are divIcons and follow the cascade |
+
+Everything else on the map is a divIcon whose theme-dependent paint is `var(--paper)` or
+`var(--ink)` in an inline STYLE, so it follows a swap through the cascade at no cost and is
+deliberately NOT in the registry. `theme.spec.js` D5c asserts that population from the computed
+style at both ends and in both directions, because what a rider sees is the resolved colour and
+not the expression that produced it.
+
+### The findings
+
+| # | Finding | Disposition |
+| --- | --- | --- |
+| **Q1** | **The 3:1 floor a mark owes cannot be met by a fill that is an agency's published colour, at either end of the theme.** Measured on this branch against the theme's own paper: the subway's A trunk `#1f5fbf` reads **2.73** against the dark paper, J `#7d5a3c` 2.69, 7 `#8e44ad` 2.83, S `#566573` 2.77; of the 19 pairs the two MTA railroad feeds publish, Port Washington `#6E3219` reads **1.69**, MTA blue `#0039A6` 1.69 and `#4D5357` 2.13. And it is not a dark-theme problem: the ferry's own South Brooklyn yellow `#ffd100` reads **1.31** against the LIGHT paper, and has since before this phase. The design's answer (a paper casing) does not change this arithmetic, because in either theme the paper IS approximately the surface. | **Measured, recorded as a golden, and NOT fixed here, because every remedy is either out of this stage's scope or a design change.** `theme.spec.js` D5d asserts the floor on the best paint each family has, which every family clears: the subway's square is carried by the white letter on it at 16.6, the rail tags by their type and outline at 14.86. `pins.spec.js` P4c records every family's paints in BOTH themes, so which paint carries which family is a golden rather than a sentence. The remedies, for the operator: (a) keep the floor defined as it is here, on the strongest paint, and leave published fills alone, which is MR3's N1 principle ("the feed's colour is preferred and moved only where nothing else can work"); (b) apply N1's hue-preserving scaling to any mark FILL under 3:1 against the current paper, which makes those fills theme-dependent and reaches MR2's subway square and MR3's rail tag, both out of this stage; (c) draw the mark PLATE in `--ink` in the dark theme so every published fill keeps its light-theme arithmetic, at the cost of a bright plate around every mark on a dark map. **A ruling is wanted before any of them.** |
+| **Q2** | **One lightness cannot serve both themes for the bus mark, and the README names one.** A bus route's colour is a HASH of its id, so its legibility is a claim about all 360 hues. The README's `hsl(h, 45%, 38%)` clears 3:1 for every one of them against the light paper (worst 3.16) and leaves **188 of 360 under** against the dark paper (worst 1.62). No fixed lightness clears both: 60% is perfect in dark (worst 3.60 on `--paper`, 3.05 on `--surface`) and leaves 219 under in light. | **The lightness is a token and the hue is still the route's.** `busMarkColor` emits `hsl(h, 45%, var(--bus-mark-lightness, 38%))`; a custom property is substituted before the value is parsed, so one string is a real colour in either theme and follows a swap through the cascade with NO rebuild, exactly as the `var(--paper)` stroke beside it does. The README's 38% is unchanged: it is what the token resolves to in the light theme, and it is the var's fallback so a context with no stylesheet still gets a colour. `families.test.js` sweeps all 360 hues at both ends against both papers, and asserts that NEITHER end alone would do. |
+| **Q3** | **PATH stations and subway stations are now the same mark**, which is the cost of the operator's ruling and the design's word ("Stations: subway 'local' dot style"). They coincide at 33rd St, WTC and 14th St, and the paragraph this replaced argued for the inverted slate-blue fill on exactly those grounds. The dot also shrinks from `radius 4 + weight 1.5` to `radius 3.5, no stroke`. | **Built as ruled, and the cost recorded rather than quietly dropped.** A PATH station's identity is still reachable everywhere except the glyph (its popup, its panel entry and its accessible name all say PATH), and the design's answer to "which mode is this" on this map is the LINE under the dot. The shrink stays inside an exception ACCESSIBILITY.md already carries: a canvas-drawn station dot has no DOM node for any test to measure and relies on the panel's 24px rows as the equivalent control, which is the same statement the subway's identical dot has lived under since MR2. |
+| **Q4** | **"A square always means regional rail" becomes "regional rail or AirTrain."** Jamaica has an LIRR station and an AirTrain station, and after this stage they are the same 20x20 square on the same map. | **The design's instruction, carried out and re-measured rather than softened.** `rail.spec.js` D3c is rewritten around the wider sentence, asserts the four square families and the three circle families, and asserts that the set of station kinds on the page is exactly the seven it knows, so a fifth station family fails there until someone says which grammar it draws. It also measures the Jamaica collision itself: two registry entries, two system labels, one glyph. |
+| **Q5** | **Section 3.3's "absent when withheld" cannot be built for PATH, the ferry or the buses**, which is worth naming in the stage that drew all three. Only `backend/feeds/railroad.py` implements the withholding ladder, so those three families have no withheld state to draw and their marks cannot say anything about one. | **Not in this stage and not attempted.** The marks this stage drew are complete against what their feeds serve. A backend that grows the ladder for those sources is the change that would make a withheld PATH train a thing this map could draw, and MR3's N3 is the precedent for how such a row gets drawn once it exists. |
+| **Q6** | **Scoping the subway's label band to its own class raised it above the Names toggle.** MR4 gave each family's label band its own rule, so `:root[data-label-band="all"] .stn-label.subway` became (0,4,0) while the Names-off rule was (0,3,0): Names off stopped hiding subway names at zoom 14, and the hub band at zoom 12 would have been unhideable too. `subway.spec.js` D2j caught it on the first run after the change. | **Repaired structurally rather than by another exclusion.** Every band rule now states its family inside `:where()`, which selects the family and adds nothing to specificity, so all of them are (0,3,0) and ONE Names-off rule at the end of the section reaches every family by source order. The three per-family off rules MR2 and MR3 accumulated are gone. A family added in a later stage is hideable by construction rather than by someone recomputing four numbers, and D2j, D3d and D4d each press the toggle and ask for nothing. |
+| **Q7** | **Two dead CSS selectors, found by measuring.** `.njt-marker` and `.njt-station-marker` have matched nothing since MR3 gave NJ Transit the rail tag and the commuter square; the dark-theme measurement selected zero elements through them. | **Deleted, for the reason the comment six lines above them already gives** about the railroad's and AirTrain's own dead selectors: a dead selector is a thing that looks live. The P4a census is the standing proof, since it lists every class that is actually drawn. |
+| **Q8** | **A claim this codebase repeats in four places is false, and its own ledger already said so.** Three source comments and two specs asserted that `fill="var(--paper)"` as an SVG presentation attribute "is not a paint value and does not resolve", and one of them used that as the reason a test exists. **Measured on this branch**: `stroke="var(--paper)"` on a presentation attribute computes to `rgb(243, 242, 242)`, byte for byte what the inline-style form computes to; a presentation attribute is mapped into the cascade as a declaration, so the token resolves. An UNKNOWN token (`var(--nope)`) is where black comes from, and it does that in EITHER form. MR2's finding **H2** measured this correctly and wrote "works in a Chromium presentation attribute"; the sentence got stronger every time it was copied, and MR3 and MR4 both copied the strong version. | **Every site corrected to the measured truth, and the house rule kept on its real grounds.** A presentation attribute is the lowest-priority author declaration there is, so any stylesheet rule beats the mark's own paint silently, and the style form also works where attributes are not mapped at all. That is a weaker reason and still decisive, so `families.test.js` keeps asserting the style form and now says what it is asserting. **It is also why mutation M30 is recorded as surviving every browser gate**: the two forms draw the same pixels in this browser, so a mutation that swaps them can only die at the node tier, and a reader who found the e2e green would otherwise have concluded the guard was asleep. |
+
+| **Q9** | **Seven of the Key panel's eighteen rows describe marks that no longer exist, and they have since MR3.** That stage gave LIRR, Metro-North and NJ Transit one grammar (the rail tag, the commuter square, a casing under the agency's own colour) and updated none of the legend's rail rows. Measured from `index.html` on this branch: rows 6 and 7 draw an LIRR/Metro-North train as a 16x16 purple rounded square, row 8 its route line as a flat `#7b1fa2` 2.5px line, row 9 its station as a white ring stroked `#334155`, and rows 15, 16 and 17 do the same three things for NJ Transit in `#075AAA`. Every one of those is a mark this map stopped drawing in MR3. | **Recorded and NOT fixed, and it wants a ruling because the repo's own principle cuts the other way.** MR1's G15 disposition says it out loud: "a key whose glyphs did not match the map would be worse than a dim one", which is why MR2 updated the subway's three rows with the subway's marks and why MR4 updated the four rows for the families it redrew (the bus arrow and dot, the AirTrain guideway and square, the PATH dot, the ferry hull and dock). The rail rows are not this stage's marks: the operator scoped the rail marks out of MR4 and asked for the Key's glyphs to be left unchanged on their plate, and drawing a 35-to-45px two-block tag at legend scale is a design decision rather than a mechanical swap. So it is named here with its measurement. **MR5 or a stage of its own is the natural home**; the row LABELS are already right, so nothing a rider reads is wrong, only every glyph beside them. **RULED ON AND CLOSED in MR4 round 2** (see that section): the round was granted, seven rows changed, five sentences left and are recorded there. One measurement above is wrong and is corrected there too: row 17 draws its NJ Transit station as a filled slate `#334155` square, not the `#075AAA` this row says. |
+
+### Every sentinel over a class this stage widened, re-read
+
+The operator bound this stage to re-read every count over a class it widens, and MR4 widens
+three: `.stn-label` gains the ferry's two dock names, `.rail-stn-marker` gains AirTrain's three
+station squares, and `stationLabelPane` gains a fourth family's labels. This is the audit, and
+the counts are the stock fixture world's (P4a's census is the standing version of it).
+
+| Sentinel | Where | Before | After | Verdict |
+| --- | --- | --- | --- | --- |
+| `.leaflet-marker-icon:not(.rail-stn-marker)` > 5, "the vehicles have landed" | `announce`, `busroute`, `crosslink`, `layout`, `mobile`, `motion` | 18 | **15** | **More correct, not less.** AirTrain's three stations were counted as vehicles by every one of these; they are stations and now they are excluded. The margin over the threshold falls from 13 to 10, and in a world where ONLY AirTrain had loaded the count is now 0 rather than 3, which is the direction that cannot produce a false pass. |
+| `.leaflet-marker-icon`, total | P4a's census, `theme.spec.js` D5b's no-rebuild probe | 23 | 23 | Unchanged, and that is the claim: no family gained or lost a mark. D5b tags all 23 elements before a theme swap and requires the same 23 after it. |
+| `.rail-stn-marker` | P4a, `families.spec.js` D4e | 5 | **8** | Deliberate: the three AirTrain squares joined the class whose members are rail-grammar STATIONS, which is what they are. |
+| `.airtrain-marker` | P4a, D4e | 3 | **0** | The old class is retired, and BOTH counts are kept so the retirement is asserted rather than assumed. |
+| `.stn-label` (unqualified) | `paintZoomBand`'s band sentinel | 7 | **not counted at all** | The band asks `stationRegistry` by `kind` now. This is the repair: `:not(.rail)` was MR3's patch and MR4 would have needed `:not(.rail):not(.ferry)`, which is a list that is wrong once per stage. |
+| `.stn-label:not(.rail)` | `subway.spec.js` D2j, `rail.spec.js` D3g | 2 | **would have been 4** | The defect, caught by P4a's census on its first outing. Both now ask `.stn-label.subway`, a positive class no other family can join. |
+| `.stn-label.subway` / `.rail` / `.ferry` | P4a, D2j, D3d, D3g, D4d | (new) | 2 / 5 / 2 | Positive per family, so the next family to join this pane changes one number rather than inflating someone else's. |
+| `.leaflet-tooltip`, total | `a11y.spec.js` A1z3 | 7 | **9** | The two dock names. A1z3 also asserts the three per-family counts, and measures every one of the nine by the same loop rather than excusing the new family from it. |
+| `markerIconsByClass` | P4a | 12 keys | 12 keys | One key changed name (`airtrain-marker` to `rail-airtrain-stn rail-stn-marker`), which is the per-class tally doing its job: a family that changes class moves a key rather than a total. |
+
+### The tests, and what each tier is for
+
+**Node, `frontend/families.test.js`, 11 tests.** Every mark as a function of its inputs, one
+state at a time, for the reason MR3's `railtag.test.js` gives: a mark built as a STRING can be
+asked, and a mark built inside an `L.divIcon` can only be photographed. The diamond, the hull,
+the arrow and the dot as geometry; the dock's and the guideway's options with the token as a
+parameter; the bus hue swept over all 360 hues at both theme ends against both papers; and the
+predicate table for "is this bus pointed anywhere" (a served null, an absent field, a NaN, a
+string, and zero, which is a heading and which a truthiness test would have lost).
+
+**And the theme registry asserted against the SOURCE rather than against a list**, which is what
+the operator asked for: a node test naming the six families would be a second copy of the
+registry and would agree with itself forever. The scrape reads every file in `systems/` that
+resolves `paperColor()`, `inkColor()` or `scheduledColor()` and requires each one to register a
+family. It cost two corrections on the way, both of them the same lesson:
+
+- It went red on `njt.js`, whose only mention of `paperColor()` is a SENTENCE in the MR3 comment
+  explaining that `railDrawRibbons` "gets `paperColor()` for free". The match was prose. So the
+  scrape strips comments first, which is asking the question of the program rather than of the
+  file.
+- And a stripper that ate a string or a regex would hide a real call site and leave the test
+  passing over nothing, which is one of the four defect shapes this phase keeps producing. So
+  the stripped file is COMPILED (`new vm.Script`, which parses without running) before it is
+  scraped, and the stripper itself is unit-tested on prose, a string and a division.
+
+**Hermetic e2e, `tests/e2e/families.spec.js`, D4a to D4g.** Each family's mark and its dimmed
+state on the drawn page; the ferry's docked rule alone in a healthy world, which is the half P4b2
+cannot show because there every boat is dimmed by the feed as well; the dock labels' band and the
+Names toggle; and the two counts this stage widened. Paints are read as COMPUTED STYLE and
+opacity as `el.style.opacity`, never as the option that asked for it.
+
+**Hermetic e2e, `tests/e2e/theme.spec.js`, D5a to D5d.** The control's release and G7's name rule
+at both states; the swap reaching all six canvas families while rebuilding nothing (every marker
+element tagged before the swap and found after it, a popup held open across it, the canvas
+layers' Leaflet ids compared); the divIcon population following the cascade at both ends; and
+G15's floor on the drawn page.
+
+**Contract browser tier, C6e5.** The ferry is the family worth bringing to a real backend because
+it is the only one with TWO opacity rules, and they multiply rather than replace. With
+`ferry:vehicle` killed and `ferry:tripupdate` left alive (the dimming is about POSITIONS, which
+is also the sharper test), a docked boat draws at 0.55 * 0.45 and an under-way one at 0.45, the
+option agrees with the drawn page, and both clear on recovery.
+
+**Two flakes, recorded rather than smoothed over.** `smoke.spec.js` 21 (a boat moves between
+polls without churn) failed once in a three-file parallel run and passed alone at the same sha;
+P1k failed once inside a mutation run that cannot reach anything NJ Transit draws, and passed on
+an isolated re-run. Both are timing-sensitive under load. Neither failed in any full-suite run.
+
+### Round 1: the adversarial pass over the written diff
+
+Five finder dimensions over the production diff at `27d857f`, each in its own worktree
+detached at that sha (RULE 0 and RULE 0b). The reviewers were pointed at the four shapes this
+phase's defects have actually taken: a markup read where the drawn page is what matters, the
+model believed over the page, a test that cannot fail, and a count over a class a later stage
+widened. **Fourteen findings, every one CONFIRMED by the verify phase and none refuted. One wants a
+ruling and is not fixed; thirteen are repaired here, and six of them are that third shape
+inside the tests this stage wrote to catch the others.**
+
+| # | Finding | Disposition |
+| --- | --- | --- |
+| **R1** | **The contrast measurement counted paints that do not exist, and the golden recorded two of them.** `resolve()` hands a paint through a probe's `color` to get one notation, and CSSOM DROPS an assignment it cannot parse: `none`, which is the computed `stroke` of every shape that sets no stroke, left the probe's INHERITED colour to be measured as the mark's. P4c recorded "subway train" and "rail tag" in the light theme as carrying `rgb(0, 0, 0)` at 18.79, and no mark on this map paints black. D5d's floor is a MAXIMUM over a mark's paints, so a phantom at 18.79 would have carried any mark past it. | **Fixed with `CSS.supports("color", value)`, which asks the browser what it will take as a colour rather than re-implementing a parser.** And READING THE GOLDEN AFTER REGENERATING IT found the second half: a `<line>` has no area, so it paints its stroke and nothing else, but its computed FILL is the initial value, a real black that the first guard admits. The rail tag's divider line was carrying that family at 18.79. Paints are enumerated per element kind now, and every row of P4c is a colour a mark actually carries. |
+| **R2** | **D5b's no-rebuild probe had no subject for the rail casings**: `railCasing: null` is the same literal on both sides of `expect(after.ids).toEqual(before.ids)`, so the one family the test names as its mutation target was the one family whose identity was never compared. A painter rewritten to remove and redraw would have passed every assertion in it. | **Fixed**: the casing layers' `_leaflet_id`s are collected in the loop that already walks them, and a premise loop asserts every id in the probe is non-null, so a null on both sides cannot happen again in any family. |
+| **R3** | **The band's sentinel lost the "only judge labels that are actually painted" half** when it moved from a DOM count to a registry query, so a subway a rider pressed OFF reads as "stations exist, zero hubs", which is the DEGRADED band. | **Fixed with `map.hasLayer`, and the review's REASON was corrected by measuring it.** The finding said the DOM count answered this by construction because "a tooltip on a removed layer is not in the document". It is: Leaflet leaves a permanent tooltip's element in the pane when its layer is removed, measured on the page, so the DOM count read the same number with the feed on and off and the defect is OLDER than this diff. The fix is also incomplete without a second half the finding did not name: the band was only recomputed on `zoomend`, so `applyFeedVisibility` now repaints it. `subway.spec.js` **D2z2** is the new spec, and it asserts the measurement (the elements survive) as well as the behaviour. |
+| **R4** | **`repaintCanvasFamilies` swallowed every paint error with no signal, and the comment promised a recovery that does not exist.** It said "the next draw reads the live token anyway, so a miss here is repainted by the load that follows it"; after load there is no next draw, because every loader draws once per page. A family whose paint threw would keep the previous theme's colours forever while the page reported the new one. | **Fixed by recording rather than recovering**, because there is nothing here that could recover it. The catch stays (one family may not take the swap down with it), the comment now says what is true, and each failure lands in `canvasThemeFailures`, which D5b asserts is empty after a swap. A rider is still told nothing: there is no action for them in it. |
+| **R5** | **The ferry's dock names rode the SUBWAY's band, including its degraded value.** `data-label-band` reads "all" from zoom 13 when no subway station lists a route, so every dock name came on one zoom early, against the design's "names from 14", for a reason that has nothing to do with the ferry. | **Fixed with `data-ferry-label-band`**, which is MR3's own sentence about the rail names applied again: the two bands overlap and one attribute cannot hold two answers. A dock's answer is the zoom and nothing else, because a dock has no interchange to reveal and no degraded state to fall back to. D4d asserts the attribute at 13 and at 14. |
+| **R6** | **The Key's bus swatch was a colour no bus mark can be.** The three bus glyphs took the design's 14px box, arrow path and paper stroke in this stage and kept `#1d4ed8`, which is `hsl(224, 76%, 48%)`: the unmuted family finding Q2 measured as leaving 147 of 360 hashed hues under the floor. The row's caption says "Color indicates route". | **Fixed to `#354d8d`**, the same hue at the muted saturation and at the LIGHT theme's lightness, which is the right end for a plate that is `#f3f2f2` in both themes by ruling H3. Measured on that plate: 7.24, against the 6.00 it replaces. A literal rather than the token, for H3's reason. |
+| **R7** | **"Colour only, never opacity" was enforced on two of the six registry entries**, and they are exactly the two that keep it. The other four hand a whole style object to `setStyle`, opacity and all. | **The rule is restated as what it actually is, per family, and the split is not arbitrary: an entry may not write an opacity that something ELSE owns.** Ribbons and casings may not (route focus reads theirs back and guards on it); a station dot, a dock and a guideway may, because nothing else writes theirs and what they pass is a CONSTANT of the design, which the test asserts directly by asking the builders for two token sets. The six are asserted to be all of them, so a seventh has to declare its side. |
+| **R8** | **The registry-coverage scrape was file-granular**: it asked whether a file contains a `registerCanvasFamily` call at all. `subway.js` draws from tokens at two independent sites and registers two families, and the check passed with either registration deleted, or with a third uncovered draw added. | **Fixed by counting DRAW SITES rather than files or calls.** One draw resolves as many tokens as its style needs (`loadSubwayStations` takes ink and paper on consecutive lines), so a maximal run of consecutive resolver lines is one site: it merges one draw's several tokens and separates two draws. Registrations must be at least sites, per file, and the site map itself is asserted so a scrape that silently found nothing fails. |
+| **R9** | **D4e computed the vehicle sentinel and never asserted it.** The value six specs share, the one the ledger records moving 18 to 15, was read into a variable and dropped, in the spec written to close exactly that carry-forward. | **Fixed**: the count is asserted at 15 AND the set of classes in that bucket is asserted by name, so a family that joins the marker pane without joining `rail-stn-marker` while not being a vehicle fails by name rather than by inflating a number nobody reads. |
+| **R10** | **Seven of the Key panel's rows contradict the map, and MR4 sharpened one of them into a reversal.** The Key now says a square is "AirTrain JFK station" and a circle is "LIRR / Metro-North station"; on the map both families draw the identical square, and at Jamaica they are 100m apart. | **This is finding Q9, and round 2 fixed it.** It wanted a ruling and got one. The design decision it names is answered in the round's section: the tag is drawn at MAP scale in a cell that adapts to it, because it is the one glyph in this panel that carries type. The reversal this row reports is gone with the three station rows that caused it: one square, one row, four families named. What MR4 changed before that is still worth keeping: before this stage the square in the Key was AirTrain's magenta one and no rail family drew a square at all. |
+
+| **R11** | **The station panel's AirTrain route chip kept the magenta the map deleted.** `stations.js` returned `#b5179e` for an AirTrain chip, which is the guideway colour this stage replaced with `--scheduled`, so the chip keyed to a colour a rider can no longer see anywhere on the map. | **Fixed to the same gray the guideway is drawn in, read LIVE** (`scheduledColor()` at render), so the chip and the line agree in whichever theme is current; the panel re-renders on every poll, so a swap with it open heals on the next one. It is the one chip that can be a token at all: the others are feed colours and fixed palettes. |
+| **R12** | **D4e's "the magenta is gone" could not fail.** It asked `/magenta\|#e\|#f0f/i`, and `#b5179e`, the only magenta this stage removed, matches none of those. | **Fixed by naming the colour**, and asked of both surfaces that carried it: the guideway's options, a sweep of the whole document, and the panel's chip through the function that builds it (a rendered row exists only while an AirTrain station is selected, so a document sweep alone would pass over a page that has none). |
+| **R13** | **The clicked bus ROUTE LINE was still the raw hashed hue**, `routeColor` at `hsl(h, 75%, 40%)`, theme-blind and outside the canvas registry, in the stage that made the bus MARK's lightness a token for exactly that reason. Measured against the dark paper: **169 of 360 hues under 3:1, worst 1.45**, and **217 under once the line's own 0.65 opacity is composited** (worst 1.19). | **FIXED, and the verifier's evidence is what changed the answer.** This was first recorded here as wanting a ruling, on the grounds that the line is a surface the stage's scope names only for its ownership rule. Two things in the verifier's report settle it the other way. The invariant is the REPO'S OWN, written at `routeColor` itself: "it is a polyline colour and a heading colour ... so this wheel owes 3:1 as a non-text indicator". The heading half was tokenised this stage and the polyline half was not. And the consequence is not subtle: a rider who clicked a bus got a line in a DIFFERENT COLOUR from the arrow they clicked, in both themes. So the line takes `busMarkColorAt` with the lightness resolved at draw, and it is the **seventh canvas family**, and the only one whose colour depends on something besides the theme: the route id rides on each layer so the painter can recompute per route. `busMarkLightness()` is the fourth token resolver and the scrape knows it. D5b draws a route and asserts the line and its own arrow are ONE COLOUR, compared to each other rather than to a literal. |
+| **R14** | **D4f's token assertion could not detect a missing token.** It compared the drawn fill against `busMarkColorAt(route, 38)`, and the var's FALLBACK is the same 38%, deliberately, so a stylesheet that never declared `--bus-mark-lightness` would resolve to the identical rgb and pass. | **Fixed by asking the root directly** for the declared value. theme.spec.js D5c is the other half and always was: with no token declared, both themes would draw the fallback and its "the two themes draw them at different lightnesses" would fail. |
+| **R15** | **The contrast measurement's alpha branch was unreachable**, so the file's stated guarantee ("an alpha is composited rather than ignored") was half false: it composited an rgba() COLOUR's alpha, which no mark here has, and ignored the one alpha that is actually on this map, the subway plate's `opacity="0.95"` ELEMENT attribute. | **Fixed: a paint's effective alpha is its colour's alpha times the element's `opacity` and its `fill-opacity` or `stroke-opacity`, composited over the surface before the ratio. And it is recorded as UNGUARDED**, which is the honest half: it changes no number today, because the plate's paint IS the surface colour and compositing it over the surface returns the surface. Mutation M47 reverts it and SURVIVES, for that reason rather than because a guard is asleep. |
+
+**24 candidates from five dimensions, 11 merged away in triage, 14 confirmed and none refuted
+or unverified.** Three findings came back from three different lenses each with the same file
+and line (the phantom `none`, the null identity, and the vacuous magenta regex), which is the
+part of a fan-out that is cheap to verify. The panel's verdicts are worth keeping for one
+reason beyond the findings themselves: **the bus route line was recorded here as wanting a
+ruling and the verifier's evidence overturned that**, by quoting the invariant the repository
+writes at `routeColor` and by measuring the line at the opacity it is actually stroked with.
+
+### The mutations
+
+Each one in a `git worktree` **detached at the commit under test**, with the worktree's sha
+echoed before the run and compared against the commit's, so a run against the wrong tree is
+visible rather than silent. **Every one of them was re-run at the round-1 tip (`3fdc074`)** and
+the results below are that run; M22 through M33 were first run at `65193fd` and killed there
+too. That is review-workflow RULE 0b applied to the
+mutation harness, which is where MR3 learned it: its M9 came back green twice because the
+mutated worktree was being served the main checkout's frontend. The driver kills the static
+server **by port** and sets `CI=1` so Playwright refuses to reuse one, and it refuses to run a
+browser gate at all while the port is still held.
+
+| # | Guard reverted | Result | Killed by |
+| --- | --- | --- | --- |
+| **M22** | the rail casings left out of the theme restyle | **killed**, node and e2e | `families.test.js`'s registry-against-the-source scrape and its casings-by-renderer test, and `theme.spec.js` D5b, which asserts the dark paper reached them |
+| **M23** | the toggle released with G7's name defect reintroduced (`aria-pressed` back on the button) | **killed**, 2 e2e | `theme.spec.js` D5a, which asks both halves at both states, and `chrome.spec.js` D1g |
+| **M24** | the ferry compound lost: the docked base dropped from the stale sweep, so the two rules assign instead of multiplying | **killed**, 3 e2e | P4b, P4b2 and P1m |
+| **M25** | a family's dimmed state drawn at full opacity (PATH's sweep stops asking the observation's age) | **killed**, node and e2e | `positions.test.js`'s every-sweep scrape, which reads the call sites out of `systems/`, and `families.spec.js` D4b |
+| **M26** | the bus arrow drawn when no heading is served | **killed**, node and 4 e2e | `families.test.js`'s predicate table (a served null, an absent field, a NaN, a string), D4f, D4g, P1g and P4c |
+| **M27** | a circle drawn for an AirTrain station | **killed**, 4 e2e | `rail.spec.js` D3c (the census, both ways), `families.spec.js` D4e, P1n and P4c |
+| **M28** | the muted hue replaced by the raw hashed hue | **killed**, node and 5 e2e | `families.test.js`, D4f, P1g, P4c, D5c and **D5d, which is the one that matters**: the raw hue reads 1.62 against the dark paper |
+| **M29** | one lightness for both themes: the token replaced by the README's literal 38% | **killed**, node and 4 e2e | the token assertion in `families.test.js`, P1g, P4c, D5c ("the two themes draw them at different lightnesses") and D5d |
+| **M30** | the PATH diamond's paper stroke as an SVG presentation attribute instead of an inline style | **killed at the NODE tier only. Every browser gate stayed GREEN, and that is finding Q8**: measured, a presentation attribute DOES resolve a custom property in Chromium and computes to the same rgb, so the two forms draw the same pixels and no page test can tell them apart. The comments that claimed otherwise are corrected; the node guard stays, on the cascade's grounds. |
+| **M31** | the label band's `:where()` removed, so the family scope out-specifies the Names toggle again | **killed** | `subway.spec.js` D2j, which is the spec that caught the defect when it was real |
+| **M32** | `paintZoomBand`'s sentinel counts the DOM again, in exactly the `:not(.rail)` shape MR3 left it | **killed** | `rail.spec.js` D3g. **Restated once**: the first draft also deleted the registry query the Names toggle's title is built from, so the page died on a ReferenceError and 24 specs went red, which proves nothing about this guard. A mutation reverts one decision. |
+| **M33** | the ferry dock's ring back to a literal white, which is a light halo on a dark map (G15 measured that mark at 2.63) | **killed**, node and 3 e2e | `families.test.js`'s the-ring-is-the-caller's test, `families.spec.js` D4c, `theme.spec.js` D5b and D5d, and P1m and P4c |
+
+**One flake, recorded rather than smoothed over.** In the three-file run of M33, P1k (the NJ
+Transit marks) also failed; on an isolated re-run of the same mutation against the same sha it
+passed, and the mutation reaches nothing NJ Transit draws. The kill above is the isolated run.
+
+**And one per guard the round repaired**, which is the operator's rule applied to the review's
+own findings rather than only to the stage's. **Twenty-six in total: twenty-five die and one
+survives for a reason that is written down.**
+
+| # | Guard reverted | Result | Killed by |
+| --- | --- | --- | --- |
+| **M34** | the colour guard dropped from the contrast measurement, so `none` is resolved to the probe's inherited colour again | **killed** | P4c, on the numbers: two families come back carrying `rgb(0, 0, 0)` |
+| **M35** | a `<line>`'s phantom fill counted again | **killed** | P4c, on the rail tag's row |
+| **M36** | the rail casing's identity back to a literal `null` on both sides | **killed** | D5b's premise loop, which asserts every id in the probe is non-null |
+| **M37** | `paintZoomBand` counts registry entries that are not on the map again | **killed** | `subway.spec.js` D2z2 |
+| **M38** | the band no longer repainted when a feed's visibility changes | **killed** | D2z2's other half, the press that puts the layer back |
+| **M39** | a family's painter throws (the ferry docks call a function that does not exist) | **killed**, 2 e2e | D5b's `failures` assertion AND D5d, which finds the dock still wearing the light theme's ring. **This is the mutation that proves the catch records instead of swallowing**: before the round, both of those passed. |
+| **M40** | one of `subway.js`'s two registrations deleted, which the file-granular scrape allowed | **killed**, node and e2e | the site-count assertion, the six-families list, and D5b and D5d on the page |
+| **M41** | a focus-owning entry passes opacity, which is the rule the per-entry guard states | **killed**, 2 node | the per-entry opacity test and the casings-by-renderer test |
+| **M42** | the ferry's dock names back on the subway's band, degraded value and all | **killed** | D4d, on `data-ferry-label-band` at 13 and at 14 |
+| **M43** | the station panel's AirTrain chip back to the magenta the map no longer paints | **killed** | D4e, through the function the panel builds the chip with |
+| **M44** | the AirTrain guideway back to the magenta literal | **killed**, node and e2e | the registry scrape and D4e, which names the colour now instead of asking a regex that could not match it |
+| **M45** | the clicked bus route line back to `routeColor`'s raw wheel | **killed after the guard was strengthened.** It first survived the page tier, and the reason is the repair itself: the painter runs on every theme press, so a line DRAWN from the wrong wheel is corrected by the first press and every comparison made after it passes. D5b takes its reading before the theme is touched at all now, and the node scrape catches the lost resolver either way. The same shape as MR3's M9 and this stage's own P4b |
+| **M46** | `--bus-mark-lightness` deleted from the light theme, so the var falls back | **killed** | D4f, which asks the root for the declared value rather than comparing the token against its own fallback |
+| **M47** | the element's alpha not composited in the contrast measurement | **SURVIVES, and it is recorded as surviving.** The only element on this map with an opacity is the subway's plate, whose paint IS the surface colour, so compositing it over the surface returns the surface and no number moves. The repair is correct for the case it will meet and there is nothing today for a guard to see; saying so is the honest version of a green run |
+
+
+### Round 2: the operator's two rulings, and the Key panel paid
+
+Two rulings arrived on the round 1 findings that were referred up. **Q1 is answered in the
+accessibility statement and Q9 is the Key panel round.** Nothing on the map changed: every marker
+this stage drew is byte for byte what round 1 pushed, which the pins confirm (`mr_pins.json` moved
+in exactly one block, `legend/names`, and no `markers`, `popups`, `census` or `contrast` entry
+moved with it).
+
+#### Ruling Q1a, and the one paint it cannot promise
+
+> *Fills stay the agency's published colors; each family's identifying paint (letter, stroke, or
+> casing) meets 3:1 on the drawn page in both themes, named per family, with P4c as the witness.*
+
+`theme.spec.js D5d` was rewritten around a table that names the carrying paint per family and per
+theme, and says for each whether the APP chose that colour or an AGENCY published it. Where the app
+chose it, the spec asserts 3:1 or better. Where an agency published it, the value is read and
+reported and no floor is claimed. Two statements went into `ACCESSIBILITY.md`, the second of which
+is the ruling's one gap, stated rather than smoothed:
+
+| family | light theme | dark theme | chosen by |
+| --- | --- | --- | --- |
+| subway train | route square, **4.87** at worst of two | white letter, **16.60** | published (light), app (dark) |
+| subway station dot | ink fill, **14.86** | ink fill, **14.86** | app |
+| PATH station dot | ink fill, **14.86** | ink fill, **14.86** | app |
+| rail station square | ink stroke, **14.86** | ink stroke, **14.86** | app |
+| AirTrain station square | ink stroke, **14.86** | ink stroke, **14.86** | app |
+| rail tag | ink box, **14.86** at worst of six | **14.86** | app |
+| bus | muted wheel, **6.65** at worst of two | **4.75** | app |
+| ferry dock | `#00839c`, **3.98** | **3.74** | app |
+| PATH train | published red, **4.09** | **3.64** | published |
+| **ferry boat** | **1.31** | **3.74** | published |
+
+**The ferry boat's hull in the light theme is the one paint under the floor, and it is the only
+one.** A boat is filled with the colour NYC Ferry publishes for its route and South Brooklyn's
+`#ffd100` is that colour; the hull's only other paint is the paper casing, which cannot raise a
+fill's ratio against paper. So the statement reports that number rather than promising the floor
+for it, and `D5d` asserts the exemption BY MEASUREMENT (`bestOf("light", "ferry boat") < 3`), which
+means the day a stage gives the hull an ink edge the spec fails and the paragraph can be
+strengthened. **The minimal change that would let the statement promise the floor for all ten
+families, without moving a single published fill, is an ink edge inside the ferry hull's and the
+PATH diamond's paper casing.** That alters two marks and therefore the captures, which is why it is
+recorded here for a ruling rather than taken.
+
+*One correction to round 1's own report, since it was read off a throwaway probe and not off the
+drawn page:* PATH's diamond was reported at 2.76 in the light theme. That was route 859's blue,
+which this app serves but does not draw. On the drawn page the diamond is the published red at
+**4.09** light and **3.64** dark, so PATH clears in both themes and the ferry boat stands alone.
+
+#### Ruling Q9, and the five sentences that left
+
+> *Fix the Key now, as a round. The square row reads regional rail station and names LIRR,
+> Metro-North, NJ Transit and AirTrain; the commuter train row shows the two-part tag at legend
+> scale in both body states as the states study drew it; the transfer ring gets its name (F16).*
+
+**The Key's eighteen accessible names before this round**, which is the before the ruling asked to
+be recorded. Five of them leave; a row's departure is marked, and every other string is byte for
+byte what it was:
+
+| # | name before | after this round |
+| --- | --- | --- |
+| 1 | Bus (arrow points where it's heading) | unchanged |
+| 2 | Bus, heading unknown | unchanged |
+| 3 | Subway train, at/approaching the stop shown | unchanged |
+| 4 | Subway route line | unchanged |
+| 5 | Subway station (click for arrivals) | **unchanged, and its glyph now draws one mark** |
+| 6 | LIRR / Metro-North train (live GPS) | **GONE**, into the solid tag row |
+| 7 | LIRR / Metro-North train (scheduled or estimated, no GPS) | **GONE**, into the outlined tag row |
+| 8 | LIRR / Metro-North route line | unchanged, glyph redrawn |
+| 9 | LIRR / Metro-North station (click for arrivals) | **GONE**, into the commuter square row |
+| 10 | AirTrain JFK route line (scheduled service, no live tracking) | unchanged, and its glyph was already right |
+| 11 | AirTrain JFK station (click for scheduled headways) | **GONE**, into the commuter square row |
+| 12 | PATH station (click for arrivals); trains are diamonds | unchanged |
+| 13 | NYC Ferry boat (live GPS); dimmed when at a dock | unchanged |
+| 14 | Ferry dock (click for arrivals) | unchanged |
+| 15 | NJ Transit route line | unchanged, glyph redrawn |
+| 16 | NJ Transit train (scheduled or estimated, no GPS) | **GONE**, into the outlined tag row |
+| 17 | NJ Transit station (click for departures) | **GONE**, into the commuter square row |
+| 18 | Color indicates route / click a bus to draw its route | unchanged (the note) |
+
+And the three names that arrive: **Subway transfer station: two or more route lines meet (click for
+arrivals)**, **LIRR / Metro-North / NJ Transit train (live GPS)** and **LIRR / Metro-North / NJ
+Transit train (scheduled or estimated, no GPS); NJ Transit is always this**, plus the merged
+**Regional rail station: LIRR, Metro-North, NJ Transit, AirTrain JFK (click for arrivals or
+departures; AirTrain is scheduled only)**.
+
+**The arithmetic: 18 rows, minus 2 for the station merge, minus 1 for the train merge, plus 1 for
+the F16 split, is 16, and 16 plus the one note is 17.**
+
+#### The three row counts, all moved rather than relaxed
+
+The ruling named two. **There is a third**, and finding it is round 2's own first result: a panel
+with three independent counts is exactly how a row leaves quietly.
+
+| pin | was | is | what it counts |
+| --- | --- | --- | --- |
+| `a11y.spec.js` **A1x** | 19 | **17** | `.legend-row` plus `.legend-note`, at three widths in both themes |
+| `subway.spec.js` **D2l** | 18 | **16** | `.legend-row` alone, and **the count the ruling did not name** |
+| `pins.spec.js` **P1e** | superset of 18 | **ordered equality on 17** | the accessible names themselves |
+
+**P1e was strengthened, not regenerated quietly.** It had been a SUPERSET for four stages, and that
+asymmetry is what let Q9 sit for two of them: "additions only" made REPLACING a stale row the one
+thing a stage could not do, so nothing did. An equality in order now fails for three things a
+superset could never see: a row removed and replaced in the same commit, a sentence quietly
+reworded, and two rows swapping places.
+
+#### What each changed row draws now, against what the map draws
+
+| row | before | after | the map's own source |
+| --- | --- | --- | --- |
+| subway station | one glyph drawing BOTH a dot and a ring, caption describing one thing (F16) | the dot alone, caption byte for byte unchanged | `stationMarkStyle`, local branch: r 3.5, ink fill, no stroke |
+| subway transfer (**new**) | nothing in the panel named the ring | r 4.5 paper fill in a 2-unit ink stroke | `stationMarkStyle`, transfer branch, at 1:1 |
+| commuter train, solid | a 13x13 `#7b1fa2` rounded square | the LIRR tag's body at scale **1.00**: ink agency block, paper `L`, Babylon `#00985F` block, `BAB` in `#1a1a1a` | `railTagSvg`, `body === "solid"` |
+| commuter train, outlined | two rows, a `#7b1fa2` and a `#075AAA` hollow square | the NJ Transit tag's body at scale **1.00**: paper box in a 1.2 ink stroke, divider at x 16, NEC's `#DD3439` stripe | `railTagSvg`, else branch |
+| LIRR / Metro-North route line | a flat `#7b1fa2` 2.5px line at opacity **0.6**, no cap | paper casing weight 5 at 0.9, then `#00985F` at weight 2.5 and opacity 1, round caps | `railDrawRibbons` |
+| NJ Transit route line | the same three defects in `#075AAA` | the same casing; **the colour is kept**, because `#075AAA` IS a published NJ Transit route colour (the Atlantic City Rail Line's) and this row's defect was the flat line | `railDrawRibbons` |
+| regional rail station | three rows: a white ring stroked `#334155`, a filled slate `#334155` square, and AirTrain's correct one | one row, and its glyph is `railStationSvg`'s output with the tokens resolved: an 8x8 paper rect at 6,6 in a 1.6 ink stroke | `railStationSvg`, one builder for all four families |
+
+**Two of those rows are beyond the ruling's three named items and are flagged as such**: the LIRR /
+Metro-North and NJ Transit route line glyphs. They are the same defect in the same panel, recorded
+in Q9's own measurement ("row 8 its route line as a flat `#7b1fa2` 2.5px line"), and leaving two
+knowingly false glyphs in a panel whose round exists to stop it lying would have been the worse
+call. Neither row's accessible name moves, so neither costs a sentence.
+
+#### "At legend scale", which was the one real design decision
+
+`.legend-row svg` is a fixed 16px box, so a glyph's viewBox alone decides its apparent size. Every
+other glyph in this panel is a SHAPE and a shape survives being scaled. The rail tag carries TYPE,
+and type does not. Measured, three ways:
+
+| what | scale | the tag's 8px Archivo renders at |
+| --- | --- | --- |
+| the tag's native `viewBox 0 0 35 30` in the 16x16 cell | 0.457 | **3.66px** |
+| the widest tag, `0 0 45 30`, same cell | 0.356 | **2.84px** |
+| widening the cell to 40x16 while the viewBox stays 30 tall | 0.533 | **4.27px** |
+
+**The third row is the trap worth recording: widening the cell buys almost nothing while the
+viewBox is 30 tall**, because the box is then height-constrained by the air the stem and the head
+hang in. So the viewBox is cropped to the TAG (y 0 to 13, padded to 16) and the CELL adapts to the
+mark: `viewBox 42x16` in a 42x16 box is a scale of exactly **1.00** and type at the map's own 8px.
+**"At legend scale" therefore resolves to "at map scale"**, which is the states study's own left
+column: it magnifies a mark beside the map, it never shrinks one to fit a cell. 42 is
+`railTagGeometry("NJT", "NEC").width + 2`, and the height stays 16, so the plate is 44x18 against
+18x18 elsewhere and **no row's height changes**.
+
+**No stem and no head, and that is F16's lesson applied rather than an economy.** These two
+captions name the BODY state, which is where the position came from. The head is the other axis
+entirely. A glyph drawing a mark its caption never explains is precisely the gap F16 recorded, and
+repeating it in a row added by the round that fixes F16 would be perverse. **The chevron against
+the dot is therefore a new finding (F17) and not a corner of this one.**
+
+#### F17, and the one claim no existing gate could see
+
+| # | Finding | Disposition |
+| --- | --- | --- |
+| **F17** | **Nothing in the Key explains the chevron against the dot**, before this round or after it. The tag's head carries whether a heading is trusted, which is one of the two axes the states study exists to make visible, and the panel is silent on it. | **Recorded, not fixed.** It is a new row with a new sentence, which is a ruling this round does not have. The two rows added here are the body axis, and adding the head axis to their glyphs would have been F16 again. |
+| **F19** | **A mutation whose anchor has gone stale is a mutation that never ran, and one had.** Re-running the stage's whole table at this round's tip, which the ruling asked for, is what found it: **M35** (the `<line>` phantom-fill guard reverted) reported `anchor in tests/e2e/contrast.js matched 0 times` and exited without testing anything. Round 1 turned the line it anchors on into a block when it added alpha compositing, and the table was never re-anchored, so between round 1 and here this repo carried a guard whose only evidence was a mutation that had stopped executing. | **Fixed and re-run.** M35 is re-anchored against the source as it now stands and dies on `P4c`, which is what it recorded before. The lesson is the one round 4 already learned about its `dim` column: a mutation table is code and rots exactly the way an unread field does. The runner had been printing `ANCHOR MISS` and exiting non-zero all along; what was missing was anyone running it again. |
+| **F18** | **"At legend scale" is a claim about SIZE and nothing in the suite measured size.** Measured: deleting `width: 42px` scales the type to 3.05px, an illegible smudge, and every gate stays green. The colours do not move (A1z reads computed fill, which is scale-invariant), the row counts do not move, the accessible names do not move (P1e strips the glyph, precisely because it is decorative), axe sees an `aria-hidden` subtree, and no capture is diffed byte for byte. | **Fixed in the round.** `a11y.spec.js` **A1x2** reads `getScreenCTM()` on each tag's two text nodes and asserts the scale is 1, the declared size is the map's 8 user units, the rendered size is at least 8px, the weight is 800, the cell equals the viewBox, and the class is `key-rail-tag` and not `rail-tag`. A CTM rather than a bounding box because a text element's box is its INK: "BAB" and "NEC" would answer one question two ways. |
+
+
+#### The mutations, round 2, and the whole table re-run
+
+**One per changed row, as the ruling asked, plus one per guard the round moved or added.** Every
+one run in a worktree detached at the round's tip, sha echoed and compared, the server killed by
+PORT and `CI=1` so Playwright refuses to reuse one. **Seventeen, and all seventeen die.**
+
+**And the stage's earlier twenty-six re-run at the same sha, which the ruling also asked for.**
+Twenty-five die exactly as recorded and **M47 survives, exactly as recorded**. One did not run at
+all, and that is finding **F19**: M35's anchor had gone stale in round 1 and the table was never
+re-anchored, so it had been reporting `ANCHOR MISS` instead of testing anything. Re-anchored here,
+it dies on `P4c`. **Forty-three mutations in total: forty-two die and one survives for a reason
+that is written down.**
+
+*On the sha: every mutation ran at `3198450`. The commits after it change the ledger, the PR body
+and one comment block in `pins.spec.js` and nothing else, so `git diff 3198450 HEAD` over the
+executable files is comment text only and no outcome here can differ at the tip.*
+
+| # | Row or guard reverted | Result | Killed by |
+| --- | --- | --- | --- |
+| **M48** | the subway station row draws BOTH marks again, with the transfer row still there | **killed**, node | `keyglyphs` 7 (one mark per row) and 7b, which notices PATH's dot is no longer the same glyph |
+| **M49** | the transfer row deleted, which is F16 un-paid | **killed**, node and 3 e2e | `keyglyphs` 7, then `A1x` (16 not 17), `P1e` and `D2l`. The row that all four counts agree about |
+| **M50** | the transfer row kept and its name reworded | **killed**, node | `keyglyphs` 7, which looks the row up BY NAME. Under the superset `P1e` this was an addition and passed |
+| **M51** | the solid tag row back to MR3's purple rounded square | **killed**, node and e2e | `keyglyphs` 8 (solid) and `A1x2`, which now finds one tag where the pair is the claim |
+| **M52** | the outlined tag's divider left at LIRR's 11 when the tag is NJ Transit's | **killed**, node | `keyglyphs` 8 (outlined), against `railTagGeometry`'s own agency width |
+| **M53** | the LIRR / Metro-North route line's casing dropped, so a ribbon is a hairline | **killed, node ONLY. Every browser gate stayed green**, and that is why `frontend/keyglyphs.test.js` exists: `A1x` measures a row's ink, `A1z` measures a glyph's type, `P1e` reads the names and strips the glyph on purpose. Nothing in the browser looks at what a Key glyph DRAWS | `keyglyphs` 4 |
+| **M54** | the casing kept and the line back to `opacity="0.6"` | **killed**, node | `keyglyphs` 4, on the half a casing check alone would miss |
+| **M55** | the merged square row back to one agency's white ring, name and all | **killed**, node and e2e | `keyglyphs` 2 and 3, then `P1e`. **Not `A1x` and not `D2l`**: a one-for-one replacement moves no count, which is the reversal the row counts cannot see |
+| **M56** | the row and its name kept, and only the square's stroke moved off `railStationSvg`'s 1.6 | **killed**, node | `keyglyphs` 2, against the builder's own output |
+| **M57** | the NJ Transit casing given the SUBWAY's 6.5 | **killed**, node | `keyglyphs` 4, and 5 is the control that says a rail ribbon reads thinner than a trunk |
+| **M58** | the `width: 42px` cell deleted, so "at legend scale" silently becomes 3.05px type | **killed**, node and e2e | `A1x2`, which is the assertion finding F18 asked for, and `keyglyphs` 8 on both rows through the CSS it reads |
+| **M59** | the Key's tag takes the map's own `rail-tag` class | **killed**, node and 2 e2e | `keyglyphs` 9, `A1x2` and **`A1z4`**, which is the closure `ACCESSIBILITY.md` states: every `svg.rail-tag` belongs to a rail tag marker |
+| **M60** | the inline font dropped, on the theory that a stylesheet supplies it | **killed**, node and e2e | `keyglyphs` 8 and `A1x2`. It does not: `.rail-tag-marker svg text` is scoped to the MARKER |
+| **M61** | `P1e`'s explicit equality reverted to the superset, AND the transfer row moved to the bottom | **killed**, e2e. **And it corrected the round's own account of what it had changed**: `pin()` has always been an ordered deep equality, so the superset lived in the `.filter(...)` this round removed, not in the assertion it added. The explicit `toEqual` is for the failure MESSAGE. That is now written at `P1e` rather than implied | `P1e`, through `pin` |
+| **M64** | the same reorder with every guard INTACT, which is M61's other half | **killed**, e2e | `P1e`, on the ORDER. No name left, no count moved, and the node oracle passes because it looks a row up BY NAME: the ordered equality is the only thing on this repo that sees a reordered row |
+| **M62** | `A1x` updated to 17 as the ruling named, and the third count left at 18: the caller who read the ruling literally | **killed**, e2e | `D2l`. Nothing about the panel is wrong in this mutation; the gate is, and that is the finding |
+| **M63** | the Q1 exemption asserted as a comment rather than as a measurement: `D5d` claims the ferry boat clears in the light theme | **killed**, e2e | `D5d` itself, at 1.31 against a floor of 3. Which is the point: the exemption in `ACCESSIBILITY.md` is held by a measurement that fails the day the hull gains an ink edge, not by a sentence |
+
+
 
 ## Stage MR5: popups
 

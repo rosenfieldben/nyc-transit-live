@@ -166,21 +166,24 @@
            here, because a hard-coded key and the network disagreed in both directions. -->
       <div id="subway-key" class="hdr-fold" role="toolbar" aria-orientation="horizontal" aria-label="Focus a subway route"></div>
       <div id="hdr-actions">
-        <!-- THE THEME TOGGLE IS HIDDEN UNTIL MR4, BY RULING, and it is hidden rather than
-             deleted because everything behind it ships now and works.
-             WHY. The dark theme is chrome and tokens, which is MR1; the MARKS it has to sit
-             behind are MR2 through MR4. Measured on this branch: in the dark theme every Key
-             panel glyph reads between 1.11 and 2.63 against the surface, against the 3:1 a
-             mark owes, because those glyphs carry the map's own marker colours and were drawn
-             for an opaque white panel. The same arithmetic holds ON THE MAP, where the dark
-             basemap filter is MR1's and the markers are not: a rider who chose dark today
-             would get a map whose every mark reads at those ratios. The design's answer is
-             the paper casing and stroke it gives every mark, and that arrives with the marks.
-             WHAT STILL SHIPS: the token set, the tile filter, the persistence, and every test
-             of all three. The specs drive applyTheme() directly rather than this control, so
-             the machinery stays honest while the control stays out of a rider's reach.
-             MR4 deletes the `hidden` attribute and nothing else. -->
-        <button type="button" id="theme-toggle" hidden>Dark</button>
+        <!-- THE THEME TOGGLE IS RELEASED HERE, IN MR4, WHICH IS THE STAGE RULING R2 NAMED.
+             It shipped hidden in MR1 and the reason was measured, not cautious: in the dark
+             theme every Key panel glyph read between 1.11 and 2.63 against the surface where a
+             mark owes 3:1, because those glyphs carry the map's own marker colours and were
+             drawn for an opaque white panel, and THE SAME ARITHMETIC HELD ON THE MAP, whose
+             dark basemap filter was MR1's while the markers were not. Shipping the toggle then
+             would have handed a rider a theme that was legal in the chrome and illegal
+             everywhere else. The design's answer is the paper casing and stroke it gives every
+             mark, and MR2, MR3 and MR4 are the stages that give it: the subway's casing and
+             halo, the three rail families' casings and squares, and now PATH's diamond, the
+             ferry's hull and dock ring, AirTrain's square and the bus arrow and dot, every one
+             of them stroked in `var(--paper)` or repainted from it by the canvas registry.
+             So the attribute goes and nothing else does. What was already true stays true: the
+             label is the ACTION ("Dark" / "Light") and carries no aria-pressed, because a
+             toggle whose label moves with its state cannot also claim that state without
+             contradicting itself, which is ledger finding G7 and the reason D1g asserts the
+             ABSENCE of that attribute. -->
+        <button type="button" id="theme-toggle">Dark</button>
         <!-- A3, EXTENDED. This was the "Legend" button and it is now "Key", and it keeps
              its id, its aria-controls and its disclosure contract because three suites pin
              them. What MR1 extends: it is present at every width now (the design's row 1
@@ -245,7 +248,17 @@
          grid, and each stage that changes a marker brings its own row with it. P1e is the
          pin that says nothing was lost. The design's two explanatory notes (the zoom
          thresholds and the agency-glyph table) arrive with MR2 and MR3, which is where the
-         things they explain arrive. -->
+         things they explain arrive.
+
+         MR4 ROUND 2 IS THE FIRST STAGE TO TAKE A SENTENCE AWAY, and it took five, by ruling
+         rather than by drift. "Additions only" held for four stages and then held too well:
+         MR3 gave three railroads ONE tag and ONE square, so six rail rows described marks
+         the app had stopped drawing, and a rule that forbade replacing them was protecting
+         the wrong thing. Three station rows became one commuter square and three train rows
+         became two tag bodies; the transfer ring gained the name finding F16 asked for. The
+         five sentences that left are recorded in the ledger as this round's before, and P1e
+         is now an EQUALITY against the list rather than a superset of it, so the next stage
+         to drop a row fails whether or not it also adds one. -->
       <!-- tabindex AND A NAME, because this panel SCROLLS. axe's scrollable-region-focusable
          rule is a real requirement rather than a formality: a region with its own overflow
          that no keyboard can reach has content only a mouse can see, and at 375 and 320 the
@@ -254,12 +267,22 @@
          one. "Map key" rather than "Key" so it does not share an accessible name with the
          button that opens it, which is the same rule #toggle-stations used to need. -->
     <div id="legend" tabindex="0" role="group" aria-label="Map key">
+      <!-- MR4 ROUND 1: THE SWATCH IS A COLOUR A BUS CAN ACTUALLY BE. This row's glyph took the
+           design's 14px box, arrow path and paper stroke in this stage and kept #1d4ed8, which
+           is hsl(224, 76%, 48%): the unmuted family finding Q2 measured as leaving 147 of 360
+           hashed hues under the 3:1 a mark owes. The caption says "Color indicates route", so
+           the swatch stands for a route colour and had to be one. #354d8d is hsl(224, 45%, 38%),
+           the same hue at the muted saturation and at the LIGHT theme's lightness, which is the
+           right end for a plate that is #f3f2f2 in both themes by ruling H3. Measured on that
+           plate: 7.24, against the 6.00 it replaces. A literal rather than the token for H3's
+           reason: `var(--bus-mark-lightness)` would resolve to the DARK end on a light plate
+           the moment a rider changed theme. -->
       <div class="legend-row">
-        <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M10 2 L16 17 L10 13 L4 17 Z" fill="#1d4ed8" stroke="#fff" stroke-width="1.2"/></svg>
+        <svg aria-hidden="true" viewBox="0 0 14 14"><path d="M7 1 L12 13 L7 10 L2 13 Z" fill="#354d8d" stroke="#f3f2f2" stroke-width="0.8"/></svg>
         Bus (arrow points where it's heading)
       </div>
       <div class="legend-row">
-        <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="10" cy="10" r="5.5" fill="#1d4ed8" stroke="#fff" stroke-width="1.5"/></svg>
+        <svg aria-hidden="true" viewBox="0 0 14 14"><circle cx="7" cy="7" r="3.5" fill="#354d8d" stroke="#f3f2f2" stroke-width="1"/></svg>
         Bus, heading unknown
       </div>
       <div class="legend-row">
@@ -280,85 +303,178 @@
         Subway route line
       </div>
       <div class="legend-row">
-        <!-- MR2: BOTH marks in one glyph rather than a second row. The map now draws two
-             kinds of subway station, a filled dot where one TRUNK calls and a ring where two
-             or more do, and a key that showed only one of them would be a false description.
-             THE WORDS DO NOT NAME THE RING, and round 3 tried to and put it back (F16). The
-             glyph draws two marks while the caption describes one thing, which is a real gap:
-             a rider sees the difference and does not learn what it means. Both ways of closing
-             it break a promise this stage made and pinned. A second row moves A1x's row count.
-             Rewording this caption drops an exact sentence, and P1e's rule is that no stage may
-             take a sentence away from this panel, additions only. So it is a KEY PANEL change
-             rather than a subway one, and it is recorded in the ledger for the stage that owns
-             this panel rather than taken here.
-             One row rather than two keeps every accessible name in this panel exactly as it
-             was (P1e) and keeps A1x's row count honest without moving a literal. -->
-        <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="5.5" cy="10" r="3.5" fill="#201e1d"/><circle cx="14.5" cy="10" r="4.5" fill="#f3f2f2" stroke="#201e1d" stroke-width="2"/></svg>
+        <!-- THE LOCAL DOT, ALONE. The map draws two kinds of subway station, a filled dot
+             where one TRUNK calls and a ring where two or more do, and this row is the first
+             of them.
+             WHAT STOOD HERE FOR TWO STAGES, because the history is the reason the row below
+             it exists. MR2 drew BOTH marks in this one glyph rather than adding a second row,
+             and its words named neither: round 3 tried to name the ring and put it back
+             (F16). A glyph drawing two marks beside a caption describing one thing is a real
+             gap, and both ways of closing it broke a promise MR2 had made and pinned. A
+             second row moved A1x's row count. Rewording this caption dropped an exact
+             sentence, and P1e's rule was that no stage may take a sentence away from this
+             panel, additions only. So it was recorded in the ledger for the stage that owns
+             this panel rather than taken there.
+             MR4 ROUND 2 SPLIT IT, which is finding F16 paid rather than carried. The ruling
+             that owns this panel says the transfer ring gets its name, so the one glyph that
+             drew two marks is now two rows that each draw one, and the caption above is
+             UNCHANGED to the byte: P1e still holds it, and the ring's row is an addition.
+             The radii and the weight are the map's own (STATION_LOCAL_RADIUS 3.5,
+             STATION_TRANSFER_RADIUS 4.5, STATION_TRANSFER_WEIGHT 2 in helpers.js), so the two
+             rows are the two branches of stationMarkStyle drawn at 1:1. -->
+        <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="10" cy="10" r="3.5" fill="#201e1d"/></svg>
         Subway station (click for arrivals)
       </div>
+      <!-- THE RING, AND ITS NAME (finding F16). The map has drawn a ring since MR2 wherever two
+           or more TRUNKS call, and nothing in this panel said so: a rider saw the difference and
+           did not learn what it means. "Route lines" rather than "lines" is this panel's own noun
+           (two rows above it) and it is also the exact rule: isTransferStation counts distinct
+           lineColor() answers, so the J and the Z are one route line taking turns and do not earn
+           a ring. "Lines" alone would have promised a ring at Broad Street, where there is none. -->
       <div class="legend-row">
-        <svg aria-hidden="true" viewBox="0 0 16 16"><rect x="1.5" y="1.5" width="13" height="13" rx="1.5" fill="#7b1fa2" stroke="#fff" stroke-width="1.5"/></svg>
-        LIRR / Metro-North train (live GPS)
+        <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="10" cy="10" r="4.5" fill="#f3f2f2" stroke="#201e1d" stroke-width="2"/></svg>
+        Subway transfer station: two or more route lines meet (click for arrivals)
+      </div>
+      <!-- MR4 ROUND 2 (the ruling that owns this panel): THE TWO-PART TAG, AT MAP SCALE, IN BOTH
+           BODY STATES. Three rows became two. MR3 gave LIRR, Metro-North and NJ Transit ONE
+           grammar, so "LIRR / Metro-North train (scheduled...)" and "NJ Transit train
+           (scheduled...)" had been the same row drawn twice ever since, and the design of record
+           asks for exactly two rail train rows ("live commuter tag, scheduled commuter tag",
+           README). The three names these two replace are the ledger's before.
+
+           THE CELL IS 42px WIDE AND THAT IS THE WHOLE DESIGN DECISION. Every other glyph in this
+           panel is a SHAPE, and a shape survives being scaled into the shared 16px box. This one
+           carries TYPE, and type does not: measured, the tag's own viewBox (35 to 45 wide by 30
+           tall) scales to 0.457 in a 16px box and its 8px Archivo lands at 3.66px, which is a
+           smudge rather than a glyph. Widening the box alone buys almost nothing while the
+           viewBox is 30 tall, because the box is then HEIGHT-constrained by the air the stem and
+           head hang in: a 40x16 cell still only reaches 0.533, or 4.27px. So the viewBox is
+           cropped to the TAG (y 0 to 13, padded to 16) and the CELL adapts to the mark instead:
+           viewBox 42x16 inside a 42x16 box is a scale of exactly 1.00 and type at the map's own
+           8px. That is what the marker study means by drawing a mark at 1x beside the map; it
+           magnifies a mark, it never shrinks one to fit a cell. The 42 lives in style.css beside
+           the rule, and it is railTagGeometry("NJT", "NEC").width + 2 rather than a taste.
+
+           NO STEM AND NO HEAD, and that is F16's lesson applied rather than an economy. These two
+           captions name the BODY state, which is where the position came from; the head is the
+           OTHER axis (the brief: "the body carries source", the chevron carries whether the
+           heading is trusted). A glyph that drew a mark its caption never explains is exactly the
+           gap F16 recorded, and repeating it in a row added in the round that fixes F16 would be
+           perverse. The chevron against the dot wants a row of its own, which is a finding in the
+           ledger rather than a corner of this one.
+
+           THE COLOURS ARE LITERALS, ruling H3, for the reason the subway rows say: --glyph-plate
+           is #f3f2f2 in BOTH themes, so these are the light theme's --ink and --paper frozen, and
+           a glyph in var(--paper) would be a dark plate on a light one the moment a rider chose
+           dark. THE FONT IS INLINE because .rail-tag-marker svg text is scoped to the MARKER: a
+           tag drawn in .legend-row inherits no font at all and would draw its type at the SVG
+           default 16px, bursting a 13px block. Inline also means a stylesheet rule going missing
+           cannot break it silently, since A1z measures colour and not size.
+           THE CLASS IS key-rail-tag AND NOT rail-tag: a11y.spec.js A1z4 counts svg.rail-tag and
+           asserts every one belongs to a .rail-tag-marker, so a second surface taking that class
+           would fail there rather than widen an exception quietly.
+
+           MEASURED on the #f3f2f2 plate, against the 4.5 A1z asks of type: the agency glyph
+           #f3f2f2 on #201e1d reads 14.86, "BAB" in #1a1a1a on Babylon's published #00985F reads
+           4.69 (the feed publishes white, which reads 3.71 there, and railBranchPaint is what
+           recomputes it; A1z4 asserts the same pair on the drawn page), and both of the outlined
+           tag's glyphs read 14.86 on paper. The outlined row's colour stripe is NOT a backing for
+           its type and A1z will not read it as one: the stripe spans y 9.9 to 12.4 and the type's
+           box centres at y 6.66, so the containment test picks the box, which is the same
+           exclusion A1z4 makes explicitly with its rh >= 10 rule.
+
+           SOLID IS AN LIRR TAG AND OUTLINED IS AN NJ TRANSIT ONE, because that is what the map
+           draws. NJ Transit is schedule-derived by construction and can never reach a solid body
+           (njtTagState says so at length), so a solid NJ tag would be a mark this app never
+           paints, which is G15's defect in a new place. Between them the two rows also show both
+           agency-block widths, 11 for a one-character glyph and 16 for NJ. -->
+      <div class="legend-row">
+        <svg aria-hidden="true" class="key-rail-tag" viewBox="-3.5 -1.5 42 16"><rect x="-0.5" y="-0.5" width="36" height="14" fill="#f3f2f2" opacity="0.9"/><rect x="0" y="0" width="11" height="13" fill="#201e1d"/><rect x="11" y="0" width="24" height="13" fill="#00985F"/><text font-family="Archivo, system-ui, sans-serif" font-size="8" font-weight="800" x="5.5" y="8.9" text-anchor="middle" fill="#f3f2f2">L</text><text font-family="Archivo, system-ui, sans-serif" font-size="8" font-weight="800" x="23" y="8.9" text-anchor="middle" fill="#1a1a1a">BAB</text></svg>
+        LIRR / Metro-North / NJ Transit train (live GPS)
       </div>
       <div class="legend-row">
-        <svg aria-hidden="true" viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="12" rx="1.5" fill="#fff" stroke="#7b1fa2" stroke-width="2.5"/></svg>
-        LIRR / Metro-North train (scheduled or estimated, no GPS)
+        <svg aria-hidden="true" class="key-rail-tag" viewBox="-1 -1.5 42 16"><rect x="0.6" y="0.6" width="38.8" height="11.8" fill="#f3f2f2" stroke="#201e1d" stroke-width="1.2"/><line x1="16" y1="0.6" x2="16" y2="12.4" stroke="#201e1d" stroke-width="1.2"/><rect x="16.6" y="9.9" width="22.8" height="2.5" fill="#DD3439"/><text font-family="Archivo, system-ui, sans-serif" font-size="8" font-weight="800" x="8" y="8.9" text-anchor="middle" fill="#201e1d">NJ</text><text font-family="Archivo, system-ui, sans-serif" font-size="8" font-weight="800" x="28" y="8.9" text-anchor="middle" fill="#201e1d">NEC</text></svg>
+        LIRR / Metro-North / NJ Transit train (scheduled or estimated, no GPS); NJ Transit is always this
       </div>
+      <!-- MR4 ROUND 2: A CASING AND A LINE, WHICH IS WHAT railDrawRibbons DRAWS. Three defects
+           in one glyph, all of them since MR3: no casing at all, an opacity of 0.6 that the map
+           has never drawn for a rail line, and no round cap. The map strokes paper at weight 5
+           and opacity 0.9, then the agency's own colour at weight 2.5 and opacity 1, both with
+           round caps (railroad.js railDrawRibbons; the README states the same numbers), and
+           those are the numbers here at 1:1. Rendered in the 16px cell the casing is 4px and
+           the line 2px, against the subway row's 5.2 and 3.2, which is the rail ribbon reading
+           thinner than a subway trunk exactly as the map draws it. The curve, viewBox and cap
+           are the subway row's, so the three route line rows are one shape in three paints. -->
+      <!-- #00985F IS LIRR's PUBLISHED BABYLON GREEN, and the #7b1fa2 it replaces was the app's
+           own pre-MR3 purple, which neither railroad publishes for anything. One glyph cannot be
+           two agencies' colours, so it is one of theirs rather than none: the same branch the tag
+           row above draws, and the one LIRR triple (name, colour, ink) this repo states with
+           evidence in three places. -->
       <div class="legend-row">
-        <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M2 15 C9 15 9 5 18 5" stroke="#7b1fa2" stroke-width="2.5" fill="none" opacity="0.6"/></svg>
+        <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M2 15 C9 15 9 5 18 5" stroke="#f3f2f2" stroke-width="5" stroke-opacity="0.9" fill="none" stroke-linecap="round"/><path d="M2 15 C9 15 9 5 18 5" stroke="#00985F" stroke-width="2.5" fill="none" stroke-linecap="round"/></svg>
         LIRR / Metro-North route line
       </div>
+      <!-- MR4 ROUND 2 (the ruling that owns this panel): ONE SQUARE FOR EVERY REGIONAL RAILROAD,
+           WHICH IS THE ONE MARK THE MAP DRAWS. Three rows became one. MR3 brought LIRR,
+           Metro-North and NJ Transit to a single commuter square and MR4 brought AirTrain to the
+           same one, and all three of this panel's station rows went on drawing what came before:
+           a white ring stroked #334155 for the railroads, a filled slate square for NJ Transit,
+           and only AirTrain's row was already right. The map has exactly one builder for all four
+           (railStationSvg in helpers.js) and now this panel has exactly one row. The three names
+           these replace are the ledger's before.
+
+           THE GLYPH IS railStationSvg's OUTPUT with the tokens resolved, not a new drawing:
+           RAIL_STATION_BOX 20, RAIL_STATION_SQUARE 10, so an 8x8 rect at 6,6 in a 1.6 stroke, and
+           the literals are H3's light-theme --paper and --ink for the reason every glyph here
+           gives. On this plate the paper FILL is invisible by construction (1.00 against
+           #f3f2f2) and what a rider sees is the 1.6px ink outline, which reads 14.86. That is the
+           unavoidable consequence of a plate that does not move, and it is why the outline rather
+           than the fill is what this glyph is.
+
+           THE CAPTION KEEPS EVERY PROMISE THE THREE MADE AND INVENTS NONE, checked against what
+           each click actually does: a railroad square opens /api/railroad-arrivals, NJ Transit's
+           opens /api/njt-arrivals under the app's own "Departures" heading, and AirTrain has
+           arrivalsUrl null and no realtime feed at all, so its popup can only ever say "every ~N
+           min (scheduled)". That last clause is the load-bearing one: "click for arrivals" over
+           an AirTrain square would be a promise this app cannot keep. -->
       <div class="legend-row">
-        <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="10" cy="10" r="4" fill="#fff" stroke="#334155" stroke-width="2.5"/></svg>
-        LIRR / Metro-North station (click for arrivals)
+        <svg aria-hidden="true" viewBox="0 0 20 20"><rect x="6" y="6" width="8" height="8" fill="#f3f2f2" stroke="#201e1d" stroke-width="1.6"/></svg>
+        Regional rail station: LIRR, Metro-North, NJ Transit, AirTrain JFK (click for arrivals or departures; AirTrain is scheduled only)
       </div>
       <div class="legend-row">
-        <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M2 15 C9 15 9 5 18 5" stroke="#b5179e" stroke-width="2.5" fill="none" opacity="0.6"/></svg>
+        <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M2 15 C9 15 9 5 18 5" stroke="#6d6e71" stroke-width="3" stroke-dasharray="8 5" fill="none" opacity="0.9"/></svg>
         AirTrain JFK route line (scheduled service, no live tracking)
       </div>
       <div class="legend-row">
-        <svg aria-hidden="true" viewBox="0 0 14 14"><rect x="1.5" y="1.5" width="11" height="11" rx="2" fill="#fff" stroke="#b5179e" stroke-width="2.5"/></svg>
-        AirTrain JFK station (click for scheduled headways)
-      </div>
-      <div class="legend-row">
-        <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="10" cy="10" r="4.5" fill="#3d5a80" stroke="#fff" stroke-width="1.5"/></svg>
+        <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="10" cy="10" r="3.5" fill="#201e1d"/></svg>
         PATH station (click for arrivals); trains are diamonds
       </div>
       <div class="legend-row">
-        <svg aria-hidden="true" viewBox="0 0 22 14"><rect x="1" y="3" width="20" height="8" rx="4" fill="#00839c" stroke="#fff" stroke-width="1.5"/></svg>
+        <svg aria-hidden="true" viewBox="0 0 22 14"><path d="M1 3 H21 L17.5 11 H4.5 Z" fill="#00839c" stroke="#f3f2f2" stroke-width="1"/></svg>
         NYC Ferry boat (live GPS); dimmed when at a dock
       </div>
       <div class="legend-row">
-        <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="10" cy="10" r="4.5" fill="#0e7490" stroke="#fff" stroke-width="1.5"/></svg>
+        <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="10" cy="10" r="4" fill="#00839c" stroke="#f3f2f2" stroke-width="1.5"/></svg>
         Ferry dock (click for arrivals)
       </div>
+      <!-- The casing and the weights the row nine above it explains; #075AAA is kept exactly as
+           it was, because it IS a published NJ Transit route colour (the Atlantic City Rail
+           Line's, in the brief's own table) and this row's defect was the flat line, not the
+           paint. -->
       <div class="legend-row">
-        <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M2 15 C9 15 9 5 18 5" stroke="#075AAA" stroke-width="2.5" fill="none" opacity="0.6"/></svg>
+        <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M2 15 C9 15 9 5 18 5" stroke="#f3f2f2" stroke-width="5" stroke-opacity="0.9" fill="none" stroke-linecap="round"/><path d="M2 15 C9 15 9 5 18 5" stroke="#075AAA" stroke-width="2.5" fill="none" stroke-linecap="round"/></svg>
         NJ Transit route line
-      </div>
-      <div class="legend-row">
-        <svg aria-hidden="true" viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="12" rx="1.5" fill="#fff" stroke="#075AAA" stroke-width="2.5"/></svg>
-        NJ Transit train (scheduled or estimated, no GPS)
-      </div>
-      <div class="legend-row">
-        <!-- viewBox 16, matching the train row above it. .legend-row svg is a fixed 16px
-             box, so the viewBox alone decides a swatch's apparent size: at viewBox 12
-             this 10-unit square scaled UP to 13.3px and read LARGER than the 12px train
-             square, which is the reverse of what the map draws and of what this file and
-             systems/njt.js both say about it. -->
-        <svg aria-hidden="true" viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="10" rx="1.5" fill="#334155" stroke="#fff" stroke-width="1.5"/></svg>
-        NJ Transit station (click for departures)
       </div>
       <!-- MR1 ADDS THIS ROW, and it is the one addition rather than a carry-forward.
            The freshness contract draws a vehicle dimmed when its own observation is older
            than the app will vouch for, per observation rather than per feed, so a dimmed
            train can sit beside a bright one inside a healthy system. That was already true
-           on the map and explained NOWHERE in the legend: measured, the seventeen rows here
-           mention dimming exactly once, in "dimmed when at a dock", which is a docked boat
+           on the map and explained NOWHERE in the legend: measured, the seventeen rows this
+           panel had then mentioned dimming exactly once, in "dimmed when at a dock", a docked boat
            and a different rule entirely. The glyph is the bus arrow at the contract's own
            marker opacity so the row shows the treatment rather than describing it. -->
       <div class="legend-row">
-        <svg aria-hidden="true" viewBox="0 0 20 20" opacity="0.45"><path d="M10 2 L16 17 L10 13 L4 17 Z" fill="#1d4ed8" stroke="#fff" stroke-width="1.2"/></svg>
+        <svg aria-hidden="true" viewBox="0 0 14 14" opacity="0.45"><path d="M7 1 L12 13 L7 10 L2 13 Z" fill="#354d8d" stroke="#f3f2f2" stroke-width="0.8"/></svg>
         Dimmed vehicle: its position is older than a live fix; the popup says how old
       </div>
       <div class="legend-note">Color indicates route &middot; click a bus to draw its route</div>

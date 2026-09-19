@@ -223,6 +223,83 @@ const storedTheme = () => {
   }
 };
 
+/* ----- MR4: the canvas families, and the swap that reaches them -------------------------
+
+   THE ONE POPULATION A THEME CHANGE CANNOT REACH BY ITSELF. A divIcon is HTML, so a mark
+   that says `style="fill: var(--paper)"` follows a theme swap through the cascade for free
+   and needs nothing here; every MR4 vehicle mark is built that way on purpose. A canvas
+   layer cannot: Leaflet hands a colour STRING to the 2D context, so a polyline or a
+   circleMarker drawn from paperColor() or inkColor() keeps the colour it was drawn with
+   until something sets it again. That is what this registry is for, and it is the debt MR3
+   named beside rootToken rather than left for this stage to discover.
+
+   A REGISTRY AND NOT A LIST OF CALLS, because a list is a thing to forget. Each family
+   registers the function that PAINTS it, the draw path calls that same function, and
+   applyTheme calls all of them; so "what colour is this mark" and "what colour does it
+   become" are one expression per family rather than two that can drift. A family added in a
+   later stage that forgets to register is caught by frontend/families.test.js, which scrapes
+   every token-reading canvas style site out of systems/ and asserts each one's family is
+   here: the assertion is against the SOURCE rather than against a list written by hand,
+   which is what the operator asked for and what stops the test being a second copy of the
+   registry.
+
+   setStyle AND NEVER A REBUILD. The layers keep their geometry, their renderer, their
+   identity and their place in their layer group; one number per option changes. The
+   prototype tears the map down and rebuilds it at the same view, which would re-fetch
+   nothing but would destroy every popup a rider is holding open, drop every marker's
+   accessible name and reset the glide. The e2e counts markers either side of a swap for
+   exactly that reason. */
+const canvasThemeFamilies = [];
+
+// `paint` takes { paper, ink } and restyles its family in place. The return value is the
+// function itself so a caller can register and keep one reference in a single expression.
+function registerCanvasFamily(name, paint) {
+  canvasThemeFamilies.push({ name, paint });
+  return paint;
+}
+
+// The tokens every canvas family is drawn from, read once per swap rather than once per
+// layer: getComputedStyle is the expensive half and the answer cannot change mid-sweep.
+function canvasThemeTokens() {
+  return {
+    paper: paperColor(),
+    ink: inkColor(),
+    scheduled: scheduledColor(),
+    busLightness: busMarkLightness(),
+  };
+}
+
+/* Every family whose paint threw on the last swap, newest run only. A rider is told nothing:
+   there is no action for them in it, and a theme press that half-worked is still better than
+   one that threw. A TEST is told, which is the point: theme.spec.js asserts this is empty after
+   a swap, so a family that quietly keeps the previous theme's colours fails a gate instead of
+   shipping. */
+const canvasThemeFailures = [];
+
+function repaintCanvasFamilies() {
+  const tokens = canvasThemeTokens();
+  canvasThemeFailures.length = 0;
+  for (const family of canvasThemeFamilies) {
+    try {
+      family.paint(tokens);
+    } catch (err) {
+      /* ONE FAMILY MAY NOT TAKE THE SWAP DOWN WITH IT, which is why this is caught at all: a
+         loader still in flight on a cold start, or a layer whose renderer was torn down, would
+         otherwise leave every family after it in the previous theme.
+
+         AND THE COMMENT THAT USED TO BE HERE WAS FALSE, which the round 1 review found: it said
+         "the next draw reads the live token anyway, so a miss here is repainted by the load
+         that follows it". After load there IS no next draw. loadSubwayStations, drawRibbons,
+         railDrawRibbons, loadPathStops, loadFerryStops and loadAirtrain each draw once per page
+         and never redraw, so a family that throws here keeps the theme it was drawn under until
+         the page is reloaded, which is the 1.11-to-2.63-against-dark-paper state ruling R2 held
+         the toggle back for. Recorded rather than recovered, because there is nothing here that
+         could recover it. */
+      canvasThemeFailures.push({ name: family.name, message: String(err && err.message) });
+    }
+  }
+}
+
 function applyTheme(theme) {
   document.documentElement.setAttribute("data-theme", theme);
   if (themeToggleEl) {
@@ -238,6 +315,19 @@ function applyTheme(theme) {
     themeToggleEl.textContent = theme === "dark" ? "Light" : "Dark";
     themeToggleEl.removeAttribute("aria-pressed");
   }
+  /* AND EVERY CANVAS MARK IS REPAINTED, which is MR4's half of the theme. The attribute
+     above swaps the tokens for everything that reads them through the cascade; this reaches
+     the marks that resolved a token to a string when they were drawn. It runs AFTER the
+     attribute, because the repaint reads the tokens the attribute just chose.
+
+     THE REGISTRY IS DECLARED ABOVE applyTheme AND NOT BELOW IT, which is not tidiness: this
+     block ends by CALLING applyTheme to apply the stored preference, and a module-scope const
+     is in the temporal dead zone until its own line runs, so a registry declared after that
+     call would throw on page load and take every script after this one with it. This file has
+     already lost the whole page that way once, which is why the same sentence is written
+     above namesToggleEl. On that first call the array exists and is empty, so nothing is
+     repainted, which is correct: no system file has drawn anything yet. */
+  repaintCanvasFamilies();
 }
 
 applyTheme(themeChoice(storedTheme(), document.documentElement.getAttribute("data-theme")));
@@ -280,6 +370,27 @@ function paperColor() {
 function inkColor() {
   return rootToken("--ink", "#201e1d");
 }
+
+/* MR4: the third token a canvas has to be told. The design gives the AirTrain guideway a gray
+   that MOVES with the theme (`#6d6e71` light, `#9a9a9a` dark), and style.css has carried both
+   values as `--scheduled` since MR1 with no canvas reader. A polyline cannot resolve it, so
+   it is resolved here beside paper and ink and handed to the registry with them. */
+function scheduledColor() {
+  return rootToken("--scheduled", "#6d6e71");
+}
+
+/* MR4 ROUND 1: THE BUS WHEEL'S LIGHTNESS AS A NUMBER, for the one bus colour a cascade cannot
+   reach. The MARK is HTML and takes `var(--bus-mark-lightness)` in an inline style; the clicked
+   route LINE is a canvas polyline, so Leaflet hands its colour to the 2D context as a string and
+   a custom property is not one. Same token, read here and resolved at draw, so the arrow and the
+   line a rider draws by clicking it are the same colour in either theme. The fallback is the
+   README's light value, as the token's own is. */
+function busMarkLightness() {
+  const raw = rootToken("--bus-mark-lightness", `${BUS_MARK_LIGHTNESS}%`);
+  const parsed = Number.parseFloat(String(raw));
+  return Number.isFinite(parsed) ? parsed : BUS_MARK_LIGHTNESS;
+}
+
 
 if (themeToggleEl) {
   themeToggleEl.addEventListener("click", () => {
@@ -590,26 +701,63 @@ const namesToggleEl = document.getElementById("names-toggle");
 
 function paintZoomBand() {
   const zoom = Math.round(map.getZoom());
-  /* THE HUB COUNT IS READ OFF THE DOM rather than recomputed: "is there a hub label to
-     reveal" is exactly the question the band is about to be asked, and the labels are the
-     thing that answers it. Zero hubs with labels present is the degraded backend state
-     helpers.js describes at LABEL_NO_HUB_ZOOM, where the band shows every name from 13
-     instead of showing nothing from 12. Before any station has loaded there are no labels
-     either way, so the first paint is unaffected and loadStations calls this again when they
-     arrive. */
-  /* :not(.rail) ON BOTH COUNTS (MR3 round 4). The sentinel asks "has the SUBWAY loaded, and
-     does it publish any interchange", and MR3 put ~300 commuter-rail labels in the same class.
-     Counted together, a page with rail labels and no subway labels reads as "subway loaded,
-     zero hubs", which is LABEL_NO_HUB_ZOOM's degraded band: every subway name from 13 instead
-     of hubs from 12, on a map whose subway index is merely still in flight. The rail labels
-     cannot answer a question about the subway, so they are not asked. */
-  const labels = document.querySelectorAll(".stn-label:not(.rail)").length;
-  const hubs = document.querySelectorAll(".stn-label.hub:not(.rail)").length;
+  /* Zero hubs with stations present is the degraded backend state helpers.js describes at
+     LABEL_NO_HUB_ZOOM, where the band shows every name from 13 instead of showing nothing
+     from 12. Before any station has loaded there are none either way, so the first paint is
+     unaffected and loadStations calls this again when they arrive. */
+  /* THE REGISTRY, NOT THE DOM, AND THAT IS MR4 PAYING MR3's CARRY-FORWARD RATHER THAN
+     PATCHING IT AGAIN.
+
+     The two numbers below answer one question: has the SUBWAY loaded, and does it publish any
+     interchange. For three stages they were read off the document by counting `.stn-label`,
+     which was true only while the subway was the sole family in that class. MR3 put ~300
+     commuter-rail labels into it and the count silently changed meaning: a page with rail
+     labels and no subway labels read as "subway loaded, zero hubs", which is
+     LABEL_NO_HUB_ZOOM's DEGRADED band (every subway name from 13 instead of hubs from 12) on a
+     map whose subway index was merely still in flight. MR3 patched it with `:not(.rail)`, and
+     MR4 was about to widen the class a third time with the ferry's dock names.
+
+     A `:not()` list that grows with every family is a sentinel that will be wrong again, so
+     the question is asked of the thing that actually knows: stationRegistry carries `kind` and
+     `routes` per station, `isTransferStation` is the same predicate the hub CLASS is drawn
+     from, and neither can be changed by a family joining a CSS class. No count here can be
+     corrupted by any later stage's markup.
+
+     try/catch AND NOT typeof, which is the trap this file has fallen into before:
+     stationRegistry is a module-scope const in stations.js, which loads AFTER this file, and
+     `typeof` on a binding in its temporal dead zone THROWS rather than returning "undefined".
+     The first paint runs before stations.js has, and an empty list is the right answer then.
+
+     AND ON THE MAP, WHICH IS THE HALF THE FIRST DRAFT DROPPED. The question is about labels a
+     rider can see, and the DOM count this replaced answered it by construction: a tooltip on a
+     removed layer is not in the document. A registry query is not on the map by construction,
+     so it has to ask. The state that separates them is reachable and was found by the round 1
+     review: serve `routes: []` for every subway station (which helpers.js documents as a real
+     backend state) and press the Subway feed button OFF. The registry still holds 496 stations
+     with no routes between them, so `labels` reads 496 and `hubs` reads 0, which is
+     LABEL_NO_HUB_ZOOM's DEGRADED band; the DOM count read 0, so `!labels` kept the ordinary
+     one. At zoom 13 those are different answers, and since MR4 the degraded one also reveals
+     the ferry's dock names, so a hidden subway layer would have pulled another family's labels
+     onto the screen. `map.hasLayer` is the same question the DOM was answering. */
+  let subwayStations = [];
+  try {
+    subwayStations = stationRegistry.filter(
+      (entry) => entry.kind === "subway" && map.hasLayer(entry.marker),
+    );
+  } catch {
+    subwayStations = [];
+  }
+  const labels = subwayStations.length;
+  const hubs = subwayStations.filter((entry) => isTransferStation(entry.routes ?? [])).length;
   document.documentElement.setAttribute("data-zoom", String(zoom));
   document.documentElement.setAttribute("data-label-band", labelZoomBand(zoom, !labels || hubs > 0));
   // MR3's rail names, on their own attribute because the two bands overlap and one attribute
   // cannot hold two answers. No hub term: a rail station is never a subway transfer station.
   document.documentElement.setAttribute("data-rail-label-band", railLabelBand(zoom));
+  // MR4's dock names, on the same principle and for a reason round 1 measured: they show at
+  // the same zoom the subway's names do, but they must not inherit the subway's DEGRADED band,
+  // which arrives one zoom early and for a reason that has nothing to do with the ferry.
+  document.documentElement.setAttribute("data-ferry-label-band", ferryLabelBand(zoom));
   /* THE TOOLTIP IS KEYED ON THE DATA, NOT ON THE HUB COUNT, which is a distinction D2z had to
      teach me: a network can have no interchange while every station lists its routes, and over
      that map the sentence "no station lists the routes that call there" is simply false. So the
@@ -621,15 +769,11 @@ function paintZoomBand() {
        file, and `typeof` on a binding in its temporal dead zone THROWS rather than returning
        "undefined": it only answers "undefined" for a name that was never declared at all. The
        first paint runs before stations.js has, so this has to survive that. */
-    let subway = [];
-    try {
-      subway = stationRegistry.filter((entry) => entry.kind === "subway");
-    } catch {
-      subway = [];
-    }
+    // The same list the band above was decided from, so the sentence and the band cannot
+    // disagree about how many subway stations there are or what they publish.
     namesToggleEl.title = namesToggleTitle(
-      subway.filter((entry) => (entry.routes ?? []).length > 0).length,
-      subway.length,
+      subwayStations.filter((entry) => (entry.routes ?? []).length > 0).length,
+      subwayStations.length,
     );
   }
 }
@@ -1283,6 +1427,13 @@ function applyFeedVisibility(key) {
     if (hidden) map.removeLayer(layer);
     else map.addLayer(layer);
   }
+  /* AND THE LABEL BAND IS REPAINTED, because MR4 made it depend on what is ON THE MAP rather
+     than on what the registry holds. The band asks whether the subway has anything on screen to
+     judge; pressing a feed off is one of the two ways that answer changes (the other is a
+     station load, which calls this too), and before this line it was only recomputed on
+     `zoomend`, so a rider who toggled the subway at a fixed zoom kept whichever answer the last
+     zoom had left. Cheap and idempotent: it writes three attributes from the live state. */
+  paintZoomBand();
 }
 
 // Write one model onto the buttons. THE ONE WRITER of aria-pressed and of the off
@@ -1877,6 +2028,92 @@ function railStationIcon(system = null) {
     iconSize: [RAIL_STATION_BOX, RAIL_STATION_BOX],
     iconAnchor: [RAIL_STATION_BOX / 2, RAIL_STATION_BOX / 2],
     popupAnchor: [0, 0],
+  });
+}
+
+/* ---------------- MR4: the other four families' icons, one wrapper each ----------------
+
+   THE SAME SEAM AS MR3's TWO RAIL ICONS: the markup is a pure string in helpers.js and only
+   the L.divIcon that needs a browser is here. Four wrappers rather than four inline builders
+   is what lets a node test ask each family's markup one state at a time.
+
+   NONE OF THESE FOUR NEEDS A THEME REGISTRY ENTRY, and that is the point of building them
+   this way. Their strokes are `style="stroke: var(--paper)"`, so the cascade repaints them on
+   a theme change with no sweep, no setIcon and no rebuild: a rider holding a popup open keeps
+   it. Only the canvas marks (the lines and the station circles) need registerCanvasFamily. */
+
+// PATH's train. THE ANCHOR AND THE BOX ARE UNCHANGED FROM BEFORE MR4 and that is deliberate:
+// [8, 20] on a 16px box floats the diamond's tip at the station dot beneath it, which is what
+// keeps BOTH click targets alive (the dot for arrivals, the diamond for the train), and
+// layout.spec.js A4c asserts the 4px of clearance that difference is. The design calls the
+// mark "lifted (`v-lift`)"; this app has always spelled that as an anchor plus the
+// bottom-aligned hit halo in style.css, which is the same lift in the app's own idiom.
+function pathTrainIcon(color) {
+  return L.divIcon({
+    className: "path-marker",
+    html: pathDiamondSvg(color),
+    iconSize: [PATH_DIAMOND_BOX, PATH_DIAMOND_BOX],
+    iconAnchor: [PATH_DIAMOND_BOX / 2, 20],
+    popupAnchor: [0, -20],
+  });
+}
+
+// A ferry boat. The docked/under-way state rides on the CLASS, not on the markup: the class
+// is what style.css and the specs read, and the opacity that goes with it is a marker
+// opacity (ferryBaseOpacity) so it compounds with the freshness contract's dimming instead of
+// being overridden by it. P4b2 pins that compound at 0.55 * 0.45.
+function ferryBoatIconFor(color, state) {
+  return L.divIcon({
+    className: `ferry-marker ferry-${state}`,
+    html: ferryHullSvg(color),
+    iconSize: FERRY_HULL_BOX,
+    iconAnchor: [FERRY_HULL_BOX[0] / 2, FERRY_HULL_BOX[1] / 2],
+  });
+}
+
+// A bus. One box for the arrow and the dot (helpers.js says why), so a bus gaining or losing
+// a heading swaps its glyph without moving its anchor under the rider's pointer.
+function busMarkIcon(color, bearing) {
+  return L.divIcon({
+    className: "bus-marker",
+    html: busMarkSvg(color, bearing),
+    iconSize: [BUS_MARK_BOX, BUS_MARK_BOX],
+    iconAnchor: [BUS_MARK_BOX / 2, BUS_MARK_BOX / 2],
+  });
+}
+
+/* A FERRY DOCK'S NAME, which the design asks for ("Docks: ... names shown") and which no
+   dock has ever had.
+
+   IT SHARES THE RAIL BINDER'S BODY AND CARRIES ITS OWN CLASS, `stn-label ferry`. The six
+   tooltip defaults that binder takes back off (the 0.9 inline opacity Leaflet writes in
+   onAdd, the pane, the interactive flag among them) are invisible in a diff and MR2 paid for
+   each of them once; copying the call rather than the reasoning is how a third family would
+   pay again.
+
+   NEVER `hub`, for the rail binder's reason: a hub is a SUBWAY transfer station by one
+   predicate in helpers.js, and a dock is not one.
+
+   AND THE CLASS IS WHY paintZoomBand STOPPED COUNTING THE DOM. A dock label joins `.stn-label`
+   exactly as a rail label did in MR3, and MR3's sentinel asked the DOM "how many subway
+   labels are there" by counting `.stn-label:not(.rail)`, which this family would have
+   silently joined. The band asks the station REGISTRY now, by kind, so no family arriving in
+   this class can change the subway's answer again. That is the carry-forward, paid rather
+   than patched. */
+function bindFerryDockLabel(marker, text) {
+  marker.on("tooltipopen", (event) => {
+    const el = event.tooltip?.getElement?.();
+    if (el) el.setAttribute("aria-hidden", "true");
+  });
+  marker.bindTooltip(text, {
+    permanent: true,
+    direction: "right",
+    // Clear of a radius-4 dot in a 1.5 stroke, where the rail square's 9 clears a 10px box.
+    offset: [8, 0],
+    className: "stn-label ferry",
+    interactive: false,
+    pane: "stationLabelPane",
+    opacity: 1,
   });
 }
 

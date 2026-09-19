@@ -164,7 +164,7 @@ test("A2d. toggling a layer off and on does not leave its markers anonymous", as
 
   const namedAirtrain = () =>
     page.evaluate(() =>
-      [...document.querySelectorAll(".airtrain-marker")].map((el) => el.getAttribute("aria-label")),
+      [...document.querySelectorAll(".rail-airtrain-stn")].map((el) => el.getAttribute("aria-label")),
     );
   const before = await namedAirtrain();
   expect(before.length).toBeGreaterThan(0);
@@ -179,7 +179,7 @@ test("A2d. toggling a layer off and on does not leave its markers anonymous", as
   // from marker options rather than from the element.
   expect(
     await page.evaluate(() =>
-      [...document.querySelectorAll(".airtrain-marker")].every((el) => el.getAttribute("tabindex") === null),
+      [...document.querySelectorAll(".rail-airtrain-stn")].every((el) => el.getAttribute("tabindex") === null),
     ),
   ).toBe(true);
 });

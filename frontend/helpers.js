@@ -353,10 +353,21 @@ function stationMarkStyle(routes, ink, paper) {
     : { radius: STATION_LOCAL_RADIUS, fillColor: ink, fillOpacity: 1, color: ink, weight: 0, stroke: false };
 }
 
-// The tooltip class one station's name is drawn with. A hub is the same station a transfer
-// ring is, so the two read one predicate rather than two.
+/* The tooltip class one station's name is drawn with. A hub is the same station a transfer
+   ring is, so the two read one predicate rather than two.
+
+   `subway` IS A POSITIVE CLASS AND MR4 ADDED IT, which is the carry-forward paid at the
+   source. `.stn-label` began as the subway's alone, so a count of it meant "subway station
+   names". MR3 put ~300 commuter-rail names in the class and every sentinel became
+   `.stn-label:not(.rail)`; MR4 put the ferry's dock names in it and those sentinels were
+   wrong again, silently, because a dock is not `.rail` either. The census pin caught it on
+   its first outing (2 subway labels read as 4).
+
+   An exclusion list grows with every family and is wrong once per stage. A family's own
+   class cannot be widened by a family that does not carry it, so `.stn-label.subway` is the
+   last version of this selector anyone has to write. */
 function stationLabelClass(routes) {
-  return isTransferStation(routes) ? "stn-label hub" : "stn-label";
+  return isTransferStation(routes) ? "stn-label subway hub" : "stn-label subway";
 }
 
 /* THE ZOOM GATE, as a band rather than a number, because CSS cannot compare integers. The
@@ -410,6 +421,27 @@ const RAIL_LABEL_ZOOM = 11;
 function railLabelBand(zoom) {
   if (!Number.isFinite(zoom)) return "none";
   return zoom >= RAIL_LABEL_ZOOM ? "all" : "none";
+}
+
+/* THE FERRY'S DOCK NAMES, ON THEIR OWN ATTRIBUTE FOR MR3's REASON AND A SHARPER ONE.
+
+   The design puts dock names at the same zoom as subway station names ("names from 14"), so
+   MR4 first hung them on `data-label-band` and wrote down that they were riding the subway's
+   answer. Round 1's review measured what that costs: the subway's band has a DEGRADED value
+   the ferry has no business inheriting. When the backend serves no routes for any subway
+   station (a state helpers.js documents at LABEL_NO_HUB_ZOOM and D2z exercises), the subway's
+   band reads "all" from 13 instead of hubs from 12, and every dock name came on one zoom
+   early with it, for a reason that has nothing to do with the ferry.
+
+   SAME ZOOM, DIFFERENT QUESTION, which is exactly what MR3 said when it gave the rail names
+   `data-rail-label-band`: "the two bands overlap and one attribute cannot hold two answers".
+   The ferry's answer is the zoom and nothing else, because a dock has no interchange to
+   reveal and no degraded state to fall back to. */
+const FERRY_LABEL_ZOOM = LABEL_ALL_ZOOM;
+
+function ferryLabelBand(zoom) {
+  if (!Number.isFinite(zoom)) return "none";
+  return zoom >= FERRY_LABEL_ZOOM ? "all" : "none";
 }
 
 /* THE NAMES TOGGLE'S SENTENCE, round 3. The button flips a preference that outlives the
@@ -2328,9 +2360,22 @@ function railTagState(row, before = null, kind = null) {
    a rider reads the pair as one mark pointing somewhere.
 
    PAPER AND INK ARE THE THEME'S, as inline `style` rather than as SVG attributes, which is
-   what MR2's subway bullet already does (systems/subway.js:30) and is not a style choice: a
-   `fill="var(--paper)"` ATTRIBUTE is not a paint value in SVG 1.1 and does not resolve, so
-   the marker would draw black. The BRANCH ink is a literal instead, and deliberately: it
+   what MR2's subway bullet already does (systems/subway.js:30).
+
+   AND THE REASON IS THE CASCADE, NOT A RESOLUTION FAILURE, which is a correction MR4 measured:
+   the sentence here used to say a `fill="var(--paper)"` attribute "is not a paint value in SVG
+   1.1 and does not resolve, so the marker would draw black". That is not what Chromium does.
+   A presentation attribute is mapped into the cascade as a declaration, so the token resolves:
+   measured on this branch, `stroke="var(--paper)"` computes to rgb(243, 242, 242), byte for
+   byte what the style form computes to, and ledger finding H2 measured the same thing in MR2
+   and wrote it down correctly ("works in a Chromium presentation attribute"). What is true is
+   weaker and still decisive: a presentation attribute sits at the BOTTOM of the cascade, so any
+   stylesheet rule beats it and a later `.rail-tag rect { fill: ... }` would silently win over
+   the mark's own paint, and the style form also works in a browser that maps no attributes at
+   all. An UNKNOWN token is where black comes from: `var(--nope)` falls back to the property's
+   initial value, which is black for fill and none for stroke, in either form.
+
+   The BRANCH ink is a literal instead, and deliberately: it
    depends on the branch colour, not on the theme, and it comes either from the feed's own
    route_text_color or from readableTextOn. A token there would have made a rider's ink
    follow the page's theme instead of the line it is printed on.
@@ -2468,6 +2513,216 @@ function railStationSvg() {
     `<rect x="${pad + 1}" y="${pad + 1}" width="8" height="8" style="fill: var(--paper); stroke: var(--ink)" stroke-width="1.6"/>` +
     `</svg>`
   );
+}
+
+/* ===== MR4: THE OTHER FOUR FAMILIES' MARKS, AS STRINGS ================================
+
+   PATH's diamond, the ferry's hull, the bus arrow and the bus dot. Here rather than in the
+   system files for the reason the rail tag is here: helpers.js is loaded by node with no `L`
+   and no document, so a builder that returns a STRING can be asked one state at a time by a
+   node test, and only the L.divIcon wrapper needs a browser. MR3's mutation table is the
+   argument rather than the taste: M1, M2, M5 and M19 were all killed by node tests reading
+   railTagSvg's markup directly, and none of them would have had anything to read if the
+   markup had stayed inside a Leaflet call.
+
+   EVERY STROKE IS `style="stroke: var(--paper)"`, NOT A LITERAL, and that is the whole
+   mechanism of this stage's theme swap. A divIcon is HTML, so a custom property in an inline
+   STYLE resolves through the cascade and follows a theme change at no cost: these four marks
+   need no rebuild and no restyle sweep, they simply are the right colour. A canvas mark
+   cannot do that (Leaflet hands a colour STRING to the 2D context and `var(--paper)` is not
+   one), which is why the lines and the station circles are a registry and these are not.
+
+   AND `style=` RATHER THAN THE `stroke=` ATTRIBUTE, on the cascade's grounds rather than on a
+   resolution failure. MR4 measured what MR3 and this comment both used to assert: a
+   presentation attribute DOES resolve a custom property in Chromium, and
+   `stroke="var(--paper)"` computes to the same rgb the style form does. Ledger finding H2 had
+   it right in MR2 and the sentence got stronger each time it was copied. The real reason to
+   prefer the style form is that a presentation attribute is the lowest-priority author
+   declaration there is, so any stylesheet rule beats it silently; the argument is written out
+   above railTagSvg and is not repeated per builder. The rule is still enforced by
+   frontend/families.test.js, on those grounds. */
+
+/* THE MUTED HASHED HUE (README: "Route colour is the existing hashed hue but muted:
+   hsl(h, 45%, 38%)"), AND ITS LIGHTNESS IS A TOKEN BECAUSE A DARK MAP NEEDS THE OTHER END.
+
+   THE HUE IS routeColor's, UNCHANGED, and only the saturation and lightness move. That is
+   what "the existing hashed hue" means and it is the property that matters: two buses on one
+   route are one colour and two routes are two, whichever of the two functions asks.
+
+   A SECOND FUNCTION RATHER THAN A CHANGE TO routeColor, because routeColor is ALSO what the
+   bus POPUP prints its route name in (systems/buses.js) and the popups are stage MR5's,
+   pinned byte for byte by P1g. Muting routeColor itself would have moved a popup this stage
+   is not allowed to touch, which is exactly the kind of quiet reach the pins exist to catch.
+
+   WHY THE LIGHTNESS IS `var(--bus-mark-lightness)` AND NOT THE README'S 38%, MEASURED. A bus
+   route's colour is a HASH of its id, so "is this route's arrow legible" is not a question
+   about one colour, it is a question about all 360 hues. Against the light theme's paper
+   (#f3f2f2) the README's 38% is exactly right: every hue clears the 3:1 a mark owes, worst
+   3.16, where the 75%/40% it replaces leaves 147 of 360 under (worst 2.01). Against the DARK
+   theme's paper (#201e1d) the same 38% leaves 188 of 360 under 3:1, worst 1.62, because a
+   mid-dark fill on a dark surface is the G15 arithmetic all over again. And no single
+   lightness fixes both: 38% is perfect in light and worst in dark, 60% is perfect in dark
+   (worst 3.60 on --paper, 3.05 on --surface, zero hues under either) and leaves 219 of 360
+   under in light. The two ends are what the theme is for.
+
+   SO THE LIGHTNESS IS THE TOKEN AND THE HUE STAYS THE ROUTE'S. A custom property is
+   substituted before the value is parsed, so `hsl(329, 45%, var(--bus-mark-lightness))` is a
+   real colour in either theme and follows a swap through the cascade with NO rebuild, exactly
+   as the `var(--paper)` stroke beside it does. The README's 38% is unchanged: it is what
+   `--bus-mark-lightness` resolves to in the light theme, and it is written here as the var's
+   fallback so a context with no stylesheet (node, boards.test.js) still gets a real colour.
+
+   busMarkColorAt IS THE SAME FUNCTION WITH THE TOKEN RESOLVED, and it exists so the
+   measurement above can be RUN rather than quoted: frontend/families.test.js sweeps all 360
+   hues at both ends against both papers. Nothing in the app calls it. */
+const BUS_MARK_SATURATION = 45;
+const BUS_MARK_LIGHTNESS = 38;
+const BUS_MARK_LIGHTNESS_DARK = 60;
+const BUS_MARK_LIGHTNESS_TOKEN = `var(--bus-mark-lightness, ${BUS_MARK_LIGHTNESS}%)`;
+
+function busMarkHue(routeId) {
+  const hue = /^hsl\((\d+),/.exec(routeColor(routeId));
+  return hue ? Number(hue[1]) : null;
+}
+
+function busMarkColor(routeId) {
+  const hue = busMarkHue(routeId);
+  // A route with no id gets routeColor's flat grey, which has no hue to mute.
+  return hue == null
+    ? routeColor(routeId)
+    : `hsl(${hue}, ${BUS_MARK_SATURATION}%, ${BUS_MARK_LIGHTNESS_TOKEN})`;
+}
+
+/* The same colour with the token resolved, for the two callers that cannot read a custom
+   property: the measurement, and the CANVAS. A clicked bus's route line is a polyline, so
+   Leaflet hands its colour to the 2D context as a STRING and `var(--bus-mark-lightness)` is not
+   one; the mark beside it is HTML and takes the token directly. Round 1 is why this has a
+   second caller at all: the stage tokenised the mark's lightness and left the route line at
+   routeColor's raw wheel, so a rider clicking a bus got a line in a different colour from the
+   arrow they clicked, and in the dark theme 169 of the 360 hashed hues read under 3:1 against
+   the paper (worst 1.45), 217 of them once the line's own 0.65 opacity is composited. */
+function busMarkColorAt(routeId, lightness) {
+  const hue = busMarkHue(routeId);
+  return hue == null ? routeColor(routeId) : `hsl(${hue}, ${BUS_MARK_SATURATION}%, ${lightness}%)`;
+}
+
+/* THE AIRTRAIN GUIDEWAY'S LINE, as options, for ferryDockStyle's reason: a polyline has no
+   element either, and the draw and the theme repaint must be one expression. The gray is the
+   caller's, resolved from `--scheduled` at draw time, because it has two values and a canvas
+   can read neither. */
+const AIRTRAIN_LINE_DASH = "8 5";
+const AIRTRAIN_LINE_WEIGHT = 3;
+
+function airtrainLineStyle(gray) {
+  return { color: gray, weight: AIRTRAIN_LINE_WEIGHT, opacity: 0.9, dashArray: AIRTRAIN_LINE_DASH };
+}
+
+/* THE FERRY DOCK'S CIRCLE, as options rather than as markup, because a dock is a canvas
+   circleMarker and has no element: its identity IS the options its renderer draws from. Pure
+   and here so the one expression of "what a dock looks like" serves the draw, the theme
+   repaint and a node test alike, which is what stops the drawn dot and the repainted dot
+   drifting apart.
+
+   THE FILL IS THE DESIGN'S #00839c, which is also the colour the feed strip's ferry tick has
+   drawn since MR1. The STROKE is the caller's paper, resolved at draw time, because a canvas
+   context cannot read a custom property. */
+const FERRY_DOCK_COLOR = "#00839c";
+const FERRY_DOCK_RADIUS = 4;
+const FERRY_DOCK_STROKE = 1.5;
+
+function ferryDockStyle(paper) {
+  return {
+    radius: FERRY_DOCK_RADIUS,
+    fillColor: FERRY_DOCK_COLOR,
+    fillOpacity: 1,
+    color: paper,
+    weight: FERRY_DOCK_STROKE,
+    stroke: true,
+  };
+}
+
+// PATH's diamond (README: 16x16, route fill, paper stroke 1.2). The vertices sit on the box
+// edges and the 1.2 stroke spreads 0.6 either side, so the drawn mark reaches 0.4 to 15.6
+// and nothing is clipped by the viewBox.
+const PATH_DIAMOND_BOX = 16;
+const PATH_DIAMOND_PATH = "M8 1 L15 8 L8 15 L1 8 Z";
+
+function pathDiamondSvg(color) {
+  return (
+    `<svg viewBox="0 0 ${PATH_DIAMOND_BOX} ${PATH_DIAMOND_BOX}" class="path-diamond"` +
+    ` aria-hidden="true" focusable="false">` +
+    `<path d="${PATH_DIAMOND_PATH}" style="fill: ${color}; stroke: var(--paper)" stroke-width="1.2"/>` +
+    `</svg>`
+  );
+}
+
+/* The ferry's hull (README: 22x14, `M1 3 H21 L17.5 11 H4.5 Z`, route fill, paper stroke 1).
+
+   A HULL AND NOT A ROUNDED RECT, which is the point of the shape. The file this replaces
+   already argued that a boat should read as a boat beside a subway square, a railroad square,
+   a PATH diamond and a bus arrow, and then drew a rounded rectangle; the design's path is a
+   trapezoid with a flat deck and a tapered bottom, which is the argument actually carried
+   out. */
+const FERRY_HULL_BOX = [22, 14];
+const FERRY_HULL_PATH = "M1 3 H21 L17.5 11 H4.5 Z";
+
+function ferryHullSvg(color) {
+  return (
+    `<svg viewBox="0 0 ${FERRY_HULL_BOX[0]} ${FERRY_HULL_BOX[1]}" class="ferry-hull"` +
+    ` aria-hidden="true" focusable="false">` +
+    `<path d="${FERRY_HULL_PATH}" style="fill: ${color}; stroke: var(--paper)" stroke-width="1"/>` +
+    `</svg>`
+  );
+}
+
+/* The bus mark, which is TWO marks and one box (README: "Heading known: 14x14 arrow
+   `M7 1 L12 13 L7 10 L2 13 Z` rotated to bearing, fill = route colour, paper stroke 0.8.
+   Heading unknown: 12x12 dot `r 3.5`, paper stroke 1").
+
+   ONE 14x14 BOX FOR BOTH STATES, although the design gives the dot a 12x12 one. The DRAWN
+   dot is r 3.5 either way, so the box size changes nothing a rider sees; what it would change
+   is the marker's iconSize, and a marker whose box grows and shrinks as its feed gains and
+   loses a heading is a marker whose anchor moves under the rider's pointer between polls. The
+   two states already swap through one re-skin gate in systems/buses.js and keeping the box
+   constant is what lets that gate stay a swap rather than a reposition.
+
+   THE ROTATION IS ON THE `<svg>`, not on the path, and that is load-bearing: systems/buses.js
+   animates a heading change by writing `svg.style.transform` on the existing element rather
+   than re-iconing, so the CSS transition can run. A transform on an inner path would leave
+   that write pointing at the wrong node and the arrow would snap.
+
+   GTFS bearing is degrees clockwise from north and the arrow points north before rotation,
+   which is what makes the rotation a straight pass-through with no offset. */
+const BUS_MARK_BOX = 14;
+const BUS_ARROW_PATH = "M7 1 L12 13 L7 10 L2 13 Z";
+const BUS_DOT_R = 3.5;
+
+function busMarkSvg(color, bearing = null) {
+  const open =
+    `<svg viewBox="0 0 ${BUS_MARK_BOX} ${BUS_MARK_BOX}" class="bus-mark" aria-hidden="true" focusable="false"`;
+  if (Number.isFinite(bearing)) {
+    const deg = ((Number(bearing) % 360) + 360) % 360;
+    return (
+      `${open} style="transform: rotate(${deg}deg)">` +
+      `<path d="${BUS_ARROW_PATH}" style="fill: ${color}; stroke: var(--paper)" stroke-width="0.8"/>` +
+      `</svg>`
+    );
+  }
+  const c = BUS_MARK_BOX / 2;
+  return (
+    `${open}>` +
+    `<circle cx="${c}" cy="${c}" r="${BUS_DOT_R}" style="fill: ${color}; stroke: var(--paper)" stroke-width="1"/>` +
+    `</svg>`
+  );
+}
+
+/* AND WHICH OF THE TWO A ROW EARNS, as its own predicate so the question "is this bus
+   pointed anywhere" has one answer. A bearing is a number or it is nothing: a served null, an
+   absent field and a NaN are all "we are not telling you which way this is going", and the
+   dot says so. The mutation this kills is the arrow drawn when no heading is served, which
+   would be a direction invented out of a missing field. */
+function busHasHeading(bus) {
+  return Number.isFinite(bus && bus.bearing);
 }
 
 /* ===== BEARING ALONG THE BRANCH =======================================================
@@ -4798,7 +5053,16 @@ if (typeof module !== "undefined" && module.exports) {
     RAIL_TAG_HEIGHT, railTagGeometry, railTagState,
     segmentBearing, railTrainBearing, RAIL_HEX,
     railTagSvg, railTagChevronPath, railStationSvg, RAIL_STATION_BOX, RAIL_STATION_SQUARE,
-    railLabelBand, RAIL_LABEL_ZOOM, railroadStationName, railFamilyClass,
+    // MR4: the other four families' marks, pure so each state can be asked in node.
+    busMarkColor, busMarkColorAt, busMarkHue, BUS_MARK_SATURATION,
+    BUS_MARK_LIGHTNESS, BUS_MARK_LIGHTNESS_DARK, BUS_MARK_LIGHTNESS_TOKEN,
+    pathDiamondSvg, PATH_DIAMOND_BOX, PATH_DIAMOND_PATH,
+    ferryHullSvg, FERRY_HULL_BOX, FERRY_HULL_PATH,
+    ferryDockStyle, FERRY_DOCK_COLOR, FERRY_DOCK_RADIUS, FERRY_DOCK_STROKE,
+    airtrainLineStyle, AIRTRAIN_LINE_DASH, AIRTRAIN_LINE_WEIGHT,
+    busMarkSvg, busHasHeading, BUS_MARK_BOX, BUS_ARROW_PATH, BUS_DOT_R,
+    railLabelBand, RAIL_LABEL_ZOOM, ferryLabelBand, FERRY_LABEL_ZOOM,
+    railroadStationName, railFamilyClass,
     AGE_UNKNOWN, observationDimAge, observationGated, OBSERVATION_GATED,
     vehicleStaleLine, composeAnnouncements, withheldTrains, withheldClause,
     thresholdOverrides, CONTRACT_FLAG_PARAM,

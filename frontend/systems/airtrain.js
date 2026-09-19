@@ -3,19 +3,42 @@
 
 /* ---------------- AirTrain JFK (static-only) ---------------- */
 
-// One distinct color for the whole AirTrain system, deliberately OUTSIDE the
-// subway (lineColor) and railroad (railroadColor) palettes so the guideway reads
-// as its own mode. AirTrain is geographically isolated at JFK, so it never sits
-// beside the lines it must be told apart from.
-const AIRTRAIN_COLOR = "#b5179e";
+/* MR4: THE GUIDEWAY IS GRAY AND DASHED, and the magenta is gone.
 
-// Square marker, a different SHAPE from the round subway/rail station dots, so the
-// AirTrain mode is legible at a glance even where colors are close.
+   The design gives AirTrain `#6d6e71` light / `#9a9a9a` dark, weight 3, dashArray "8 5". The
+   magenta it replaces was chosen to read as its own mode where nothing else on the map is
+   magenta, and it did that; what it could not do is move with the theme, and it said "this
+   is a mode with its own identity" where the design says something more useful: a DASH means
+   a service that is not heavy rail, which the ferry's dashed routes say too, and the GRAY is
+   the same `--scheduled` token the app already uses for "scheduled, no live feed", which is
+   exactly what AirTrain is (it has no realtime feed at all and its popups say so).
+
+   THE COLOUR IS NOT A CONSTANT ANY MORE, because it has two values. It is read through the
+   registry's tokens at draw time and re-read on a theme swap; `--scheduled` has carried both
+   since MR1 with no canvas able to read it until now. */
+/* THE COMMUTER SQUARE, which is the design's word ("Stations use the commuter square") and
+   makes AirTrain the fourth family to draw it.
+
+   "A SQUARE ALWAYS MEANS REGIONAL RAIL" BECOMES "REGIONAL RAIL OR AIRTRAIN", and the map has
+   the collision to prove it: Jamaica has an AirTrain station and an LIRR station, and after
+   this they are the same mark. That is the design's instruction and it is recorded rather
+   than softened; what still tells them apart is everything except the glyph (the popup, the
+   panel entry, the accessible name, and the line each one sits on).
+
+   IT JOINS `rail-stn-marker` DELIBERATELY, which is the class six e2e specs count as NOT a
+   vehicle. An AirTrain station has never been a vehicle and was counted as one by every
+   sentinel that said `.leaflet-marker-icon:not(.rail-stn-marker)`; joining the class makes
+   those counts more correct, not less, and the P4a census records the move. */
+/* MR4: the guideway is AirTrain's one canvas mark and its one registry entry. The station
+   squares are divIcons whose paper and ink are `var()` in an inline style, so they follow a
+   theme change through the cascade and need nothing here. */
+registerCanvasFamily("airtrain lines", ({ scheduled }) => {
+  const style = airtrainLineStyle(scheduled);
+  for (const layer of airtrainRouteLinesLayer.getLayers()) layer.setStyle(style);
+});
+
 function airtrainIcon() {
-  const html =
-    `<svg viewBox="0 0 14 14"><rect x="1.5" y="1.5" width="11" height="11" rx="2" ` +
-    `fill="#fff" stroke="${AIRTRAIN_COLOR}" stroke-width="2.5"/></svg>`;
-  return L.divIcon({ className: "airtrain-marker", html, iconSize: [14, 14], iconAnchor: [7, 7] });
+  return railStationIcon("airtrain");
 }
 
 // Minutes since midnight in America/New_York, derived HERE (the caller) and passed
@@ -54,9 +77,7 @@ async function loadAirtrain() {
   for (const route of routes) {
     if (!route.polyline?.length) continue;
     L.polyline(route.polyline, {
-      color: AIRTRAIN_COLOR,
-      weight: 3,
-      opacity: 0.85,
+      ...airtrainLineStyle(scheduledColor()),
       interactive: false,
       renderer: lineRenderer,
     }).addTo(airtrainRouteLinesLayer);

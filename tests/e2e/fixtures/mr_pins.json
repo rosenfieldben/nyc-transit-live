@@ -46,6 +46,217 @@
    "popup": "<b>Prospect Av</b><div class=\"arr-dir\">Northbound</div><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 2 min <span class=\"arr-qualifier\">as of 10m ago</span><br><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span> 3 min <span class=\"arr-qualifier\">as of 10m ago</span><br><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 3 min<br><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span> 5 min<br><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 10 min <span class=\"arr-qualifier\">as of 10m ago</span><br><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 12 min<div class=\"arr-dir\">Southbound</div><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span> now <span class=\"arr-qualifier\">as of 10m ago</span><br><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 3 min <span class=\"arr-qualifier\">as of 10m ago</span><br><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 3 min<br><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span> 9 min<br><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span> 9 min <span class=\"arr-qualifier\">as of 10m ago</span><br><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 12 min"
   }
  },
+ "census": {
+  "stock": {
+   "markerIcons": 23,
+   "vehicleSentinel": 15,
+   "railStationMarkers": 8,
+   "markerIconsByClass": {
+    "bus-marker leaflet-interactive": 2,
+    "leaflet-interactive train-marker": 2,
+    "leaflet-interactive rail-mnr rail-tag-marker rail-tag-solid": 1,
+    "leaflet-interactive rail-lirr rail-tag-marker rail-tag-outlined": 1,
+    "leaflet-interactive path-marker": 2,
+    "ferry-active ferry-marker leaflet-interactive": 2,
+    "ferry-docked ferry-marker leaflet-interactive": 1,
+    "leaflet-interactive rail-njt rail-tag-marker rail-tag-outlined": 4,
+    "leaflet-interactive rail-lirr-stn rail-stn-marker": 1,
+    "leaflet-interactive rail-mnr-stn rail-stn-marker": 1,
+    "leaflet-interactive rail-airtrain-stn rail-stn-marker": 3,
+    "leaflet-interactive rail-njt-stn rail-stn-marker": 3
+   },
+   "stnLabels": 9,
+   "stnLabelsSubway": 2,
+   "stnLabelsRail": 5,
+   "stnLabelsHub": 0,
+   "stnLabelsHubSubway": 0,
+   "trainMarkers": 2,
+   "busMarkers": 2,
+   "pathMarkers": 2,
+   "ferryMarkers": 3,
+   "airtrainMarkers": 0,
+   "airtrainStationMarkers": 3,
+   "canvas": {
+    "subwayStations": 2,
+    "pathStations": 2,
+    "ferryDocks": 2,
+    "pathRouteLines": 4,
+    "ferryRouteLines": 2,
+    "airtrainRouteLines": 2,
+    "subwayRibbons": 4
+   }
+  }
+ },
+ "contrast": {
+  "marks": {
+   "light": {
+    "subway train": {
+     "paint": "rect fill",
+     "colour": "rgb(192, 57, 43)",
+     "onPaper": 4.87,
+     "onSurface": 4.49
+    },
+    "bus": {
+     "paint": "circle fill",
+     "colour": "rgb(129, 53, 141)",
+     "onPaper": 6.65,
+     "onSurface": 6.13
+    },
+    "PATH train": {
+     "paint": "path fill",
+     "colour": "rgb(217, 58, 48)",
+     "onPaper": 4.09,
+     "onSurface": 3.77
+    },
+    "ferry boat": {
+     "paint": "path fill",
+     "colour": "rgb(255, 209, 0)",
+     "onPaper": 1.31,
+     "onSurface": 1.21
+    },
+    "rail tag": {
+     "paint": "rect stroke",
+     "colour": "rgb(32, 30, 29)",
+     "onPaper": 14.86,
+     "onSurface": 13.7
+    },
+    "rail station square": {
+     "paint": "rect stroke",
+     "colour": "rgb(32, 30, 29)",
+     "onPaper": 14.86,
+     "onSurface": 13.7
+    },
+    "AirTrain station square": {
+     "paint": "rect stroke",
+     "colour": "rgb(32, 30, 29)",
+     "onPaper": 14.86,
+     "onSurface": 13.7
+    },
+    "subway station dot": {
+     "paint": "fill",
+     "colour": "rgb(32, 30, 29)",
+     "onPaper": 14.86,
+     "onSurface": 13.7
+    },
+    "PATH station dot": {
+     "paint": "fill",
+     "colour": "rgb(32, 30, 29)",
+     "onPaper": 14.86,
+     "onSurface": 13.7
+    },
+    "ferry dock": {
+     "paint": "fill",
+     "colour": "rgb(0, 131, 156)",
+     "onPaper": 3.98,
+     "onSurface": 3.67
+    }
+   },
+   "dark": {
+    "subway train": {
+     "paint": "text fill",
+     "colour": "rgb(255, 255, 255)",
+     "onPaper": 16.6,
+     "onSurface": 14.07
+    },
+    "bus": {
+     "paint": "path fill",
+     "colour": "rgb(199, 107, 155)",
+     "onPaper": 4.75,
+     "onSurface": 4.02
+    },
+    "PATH train": {
+     "paint": "path fill",
+     "colour": "rgb(217, 58, 48)",
+     "onPaper": 3.64,
+     "onSurface": 3.08
+    },
+    "ferry boat": {
+     "paint": "path fill",
+     "colour": "rgb(0, 131, 156)",
+     "onPaper": 3.74,
+     "onSurface": 3.17
+    },
+    "rail tag": {
+     "paint": "rect stroke",
+     "colour": "rgb(243, 242, 242)",
+     "onPaper": 14.86,
+     "onSurface": 12.6
+    },
+    "rail station square": {
+     "paint": "rect stroke",
+     "colour": "rgb(243, 242, 242)",
+     "onPaper": 14.86,
+     "onSurface": 12.6
+    },
+    "AirTrain station square": {
+     "paint": "rect stroke",
+     "colour": "rgb(243, 242, 242)",
+     "onPaper": 14.86,
+     "onSurface": 12.6
+    },
+    "subway station dot": {
+     "paint": "fill",
+     "colour": "rgb(243, 242, 242)",
+     "onPaper": 14.86,
+     "onSurface": 12.6
+    },
+    "PATH station dot": {
+     "paint": "fill",
+     "colour": "rgb(243, 242, 242)",
+     "onPaper": 14.86,
+     "onSurface": 12.6
+    },
+    "ferry dock": {
+     "paint": "fill",
+     "colour": "rgb(0, 131, 156)",
+     "onPaper": 3.74,
+     "onSurface": 3.17
+    }
+   }
+  }
+ },
+ "ferry": {
+  "compound-healthy": {
+   "H1": {
+    "status": "IN_TRANSIT_TO",
+    "docked": false,
+    "option": 1,
+    "drawn": 1
+   },
+   "H2": {
+    "status": "STOPPED_AT",
+    "docked": true,
+    "option": 0.55,
+    "drawn": 0.55
+   },
+   "H3": {
+    "status": "IN_TRANSIT_TO",
+    "docked": false,
+    "option": 1,
+    "drawn": 1
+   }
+  },
+  "compound-stale": {
+   "H1": {
+    "status": "IN_TRANSIT_TO",
+    "docked": false,
+    "option": 0.45,
+    "drawn": 0.45
+   },
+   "H2": {
+    "status": "STOPPED_AT",
+    "docked": true,
+    "option": 0.24750000000000003,
+    "drawn": 0.2475
+   },
+   "H3": {
+    "status": "IN_TRANSIT_TO",
+    "docked": false,
+    "option": 0.45,
+    "drawn": 0.45
+   }
+  }
+ },
  "ladder": {
   "f01": {
    "drawn": 136,
@@ -135,18 +346,17 @@
    "Subway train, at/approaching the stop shown",
    "Subway route line",
    "Subway station (click for arrivals)",
-   "LIRR / Metro-North train (live GPS)",
-   "LIRR / Metro-North train (scheduled or estimated, no GPS)",
+   "Subway transfer station: two or more route lines meet (click for arrivals)",
+   "LIRR / Metro-North / NJ Transit train (live GPS)",
+   "LIRR / Metro-North / NJ Transit train (scheduled or estimated, no GPS); NJ Transit is always this",
    "LIRR / Metro-North route line",
-   "LIRR / Metro-North station (click for arrivals)",
+   "Regional rail station: LIRR, Metro-North, NJ Transit, AirTrain JFK (click for arrivals or departures; AirTrain is scheduled only)",
    "AirTrain JFK route line (scheduled service, no live tracking)",
-   "AirTrain JFK station (click for scheduled headways)",
    "PATH station (click for arrivals); trains are diamonds",
    "NYC Ferry boat (live GPS); dimmed when at a dock",
    "Ferry dock (click for arrivals)",
    "NJ Transit route line",
-   "NJ Transit train (scheduled or estimated, no GPS)",
-   "NJ Transit station (click for departures)",
+   "Dimmed vehicle: its position is older than a live fix; the popup says how old",
    "Color indicates route · click a bus to draw its route"
   ]
  },
@@ -154,15 +364,15 @@
   "airtrain": {
    "airtrainStations": [
     {
-     "html": "<svg viewBox=\"0 0 14 14\"><rect x=\"1.5\" y=\"1.5\" width=\"11\" height=\"11\" rx=\"2\" fill=\"#fff\" stroke=\"#b5179e\" stroke-width=\"2.5\"/></svg>",
-     "className": "airtrain-marker",
+     "html": "<svg viewBox=\"0 0 20 20\" width=\"20\" height=\"20\" class=\"rail-stn\" aria-hidden=\"true\" focusable=\"false\"><rect x=\"6\" y=\"6\" width=\"8\" height=\"8\" style=\"fill: var(--paper); stroke: var(--ink)\" stroke-width=\"1.6\"/></svg>",
+     "className": "rail-stn-marker rail-airtrain-stn",
      "size": [
-      14,
-      14
+      20,
+      20
      ],
      "anchor": [
-      7,
-      7
+      10,
+      10
      ],
      "popupAnchor": [
       0,
@@ -171,15 +381,15 @@
      "opacity": 1
     },
     {
-     "html": "<svg viewBox=\"0 0 14 14\"><rect x=\"1.5\" y=\"1.5\" width=\"11\" height=\"11\" rx=\"2\" fill=\"#fff\" stroke=\"#b5179e\" stroke-width=\"2.5\"/></svg>",
-     "className": "airtrain-marker",
+     "html": "<svg viewBox=\"0 0 20 20\" width=\"20\" height=\"20\" class=\"rail-stn\" aria-hidden=\"true\" focusable=\"false\"><rect x=\"6\" y=\"6\" width=\"8\" height=\"8\" style=\"fill: var(--paper); stroke: var(--ink)\" stroke-width=\"1.6\"/></svg>",
+     "className": "rail-stn-marker rail-airtrain-stn",
      "size": [
-      14,
-      14
+      20,
+      20
      ],
      "anchor": [
-      7,
-      7
+      10,
+      10
      ],
      "popupAnchor": [
       0,
@@ -188,15 +398,15 @@
      "opacity": 1
     },
     {
-     "html": "<svg viewBox=\"0 0 14 14\"><rect x=\"1.5\" y=\"1.5\" width=\"11\" height=\"11\" rx=\"2\" fill=\"#fff\" stroke=\"#b5179e\" stroke-width=\"2.5\"/></svg>",
-     "className": "airtrain-marker",
+     "html": "<svg viewBox=\"0 0 20 20\" width=\"20\" height=\"20\" class=\"rail-stn\" aria-hidden=\"true\" focusable=\"false\"><rect x=\"6\" y=\"6\" width=\"8\" height=\"8\" style=\"fill: var(--paper); stroke: var(--ink)\" stroke-width=\"1.6\"/></svg>",
+     "className": "rail-stn-marker rail-airtrain-stn",
      "size": [
-      14,
-      14
+      20,
+      20
      ],
      "anchor": [
-      7,
-      7
+      10,
+      10
      ],
      "popupAnchor": [
       0,
@@ -209,15 +419,15 @@
   "buses": {
    "buses": [
     {
-     "html": "<svg viewBox=\"0 0 20 20\" style=\"transform: rotate(90deg)\">\n           <path d=\"M10 2 L16 17 L10 13 L4 17 Z\" fill=\"hsl(329, 75%, 40%)\" stroke=\"#fff\" stroke-width=\"1.2\"/>\n         </svg>",
+     "html": "<svg viewBox=\"0 0 14 14\" class=\"bus-mark\" aria-hidden=\"true\" focusable=\"false\" style=\"transform: rotate(90deg)\"><path d=\"M7 1 L12 13 L7 10 L2 13 Z\" style=\"fill: hsl(329, 45%, var(--bus-mark-lightness, 38%)); stroke: var(--paper)\" stroke-width=\"0.8\"/></svg>",
      "className": "bus-marker",
      "size": [
-      20,
-      20
+      14,
+      14
      ],
      "anchor": [
-      10,
-      10
+      7,
+      7
      ],
      "popupAnchor": [
       0,
@@ -226,15 +436,15 @@
      "opacity": 1
     },
     {
-     "html": "<svg viewBox=\"0 0 20 20\">\n           <circle cx=\"10\" cy=\"10\" r=\"5.5\" fill=\"hsl(292, 75%, 40%)\" stroke=\"#fff\" stroke-width=\"1.5\"/>\n         </svg>",
+     "html": "<svg viewBox=\"0 0 14 14\" class=\"bus-mark\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"7\" cy=\"7\" r=\"3.5\" style=\"fill: hsl(292, 45%, var(--bus-mark-lightness, 38%)); stroke: var(--paper)\" stroke-width=\"1\"/></svg>",
      "className": "bus-marker",
      "size": [
-      20,
-      20
+      14,
+      14
      ],
      "anchor": [
-      10,
-      10
+      7,
+      7
      ],
      "popupAnchor": [
       0,
@@ -247,7 +457,7 @@
   "ferry": {
    "ferryBoats": [
     {
-     "html": "<svg viewBox=\"0 0 22 14\"><rect x=\"1\" y=\"3\" width=\"20\" height=\"8\" rx=\"4\" fill=\"#00839c\" stroke=\"#fff\" stroke-width=\"1.5\"/></svg>",
+     "html": "<svg viewBox=\"0 0 22 14\" class=\"ferry-hull\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M1 3 H21 L17.5 11 H4.5 Z\" style=\"fill: #00839c; stroke: var(--paper)\" stroke-width=\"1\"/></svg>",
      "className": "ferry-marker ferry-active",
      "size": [
       22,
@@ -264,7 +474,7 @@
      "opacity": 1
     },
     {
-     "html": "<svg viewBox=\"0 0 22 14\"><rect x=\"1\" y=\"3\" width=\"20\" height=\"8\" rx=\"4\" fill=\"#ffd100\" stroke=\"#fff\" stroke-width=\"1.5\"/></svg>",
+     "html": "<svg viewBox=\"0 0 22 14\" class=\"ferry-hull\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M1 3 H21 L17.5 11 H4.5 Z\" style=\"fill: #ffd100; stroke: var(--paper)\" stroke-width=\"1\"/></svg>",
      "className": "ferry-marker ferry-docked",
      "size": [
       22,
@@ -281,7 +491,7 @@
      "opacity": 0.55
     },
     {
-     "html": "<svg viewBox=\"0 0 22 14\"><rect x=\"1\" y=\"3\" width=\"20\" height=\"8\" rx=\"4\" fill=\"#78909c\" stroke=\"#fff\" stroke-width=\"1.5\"/></svg>",
+     "html": "<svg viewBox=\"0 0 22 14\" class=\"ferry-hull\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M1 3 H21 L17.5 11 H4.5 Z\" style=\"fill: #78909c; stroke: var(--paper)\" stroke-width=\"1\"/></svg>",
      "className": "ferry-marker ferry-active",
      "size": [
       22,
@@ -300,19 +510,19 @@
    ],
    "ferryDocks": [
     {
-     "radius": 4.5,
-     "color": "#fff",
+     "radius": 4,
+     "color": "#f3f2f2",
      "weight": 1.5,
-     "fillColor": "#0e7490",
+     "fillColor": "#00839c",
      "fillOpacity": 1,
      "pane": "overlayPane",
      "opacity": 1
     },
     {
-     "radius": 4.5,
-     "color": "#fff",
+     "radius": 4,
+     "color": "#f3f2f2",
      "weight": 1.5,
-     "fillColor": "#0e7490",
+     "fillColor": "#00839c",
      "fillOpacity": 1,
      "pane": "overlayPane",
      "opacity": 1
@@ -495,7 +705,7 @@
   "path": {
    "pathTrains": [
     {
-     "html": "<svg viewBox=\"0 0 16 16\"><path d=\"M8 1.5 L14.5 8 L8 14.5 L1.5 8 Z\" fill=\"#d93a30\" stroke=\"#fff\" stroke-width=\"1.5\"/></svg>",
+     "html": "<svg viewBox=\"0 0 16 16\" class=\"path-diamond\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M8 1 L15 8 L8 15 L1 8 Z\" style=\"fill: #d93a30; stroke: var(--paper)\" stroke-width=\"1.2\"/></svg>",
      "className": "path-marker",
      "size": [
       16,
@@ -512,7 +722,7 @@
      "opacity": 1
     },
     {
-     "html": "<svg viewBox=\"0 0 16 16\"><path d=\"M8 1.5 L14.5 8 L8 14.5 L1.5 8 Z\" fill=\"#d93a30\" stroke=\"#fff\" stroke-width=\"1.5\"/></svg>",
+     "html": "<svg viewBox=\"0 0 16 16\" class=\"path-diamond\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M8 1 L15 8 L8 15 L1 8 Z\" style=\"fill: #d93a30; stroke: var(--paper)\" stroke-width=\"1.2\"/></svg>",
      "className": "path-marker",
      "size": [
       16,
@@ -531,19 +741,19 @@
    ],
    "pathStations": [
     {
-     "radius": 4,
-     "color": "#fff",
-     "weight": 1.5,
-     "fillColor": "#3d5a80",
+     "radius": 3.5,
+     "color": "#201e1d",
+     "weight": 0,
+     "fillColor": "#201e1d",
      "fillOpacity": 1,
      "pane": "overlayPane",
      "opacity": 1
     },
     {
-     "radius": 4,
-     "color": "#fff",
-     "weight": 1.5,
-     "fillColor": "#3d5a80",
+     "radius": 3.5,
+     "color": "#201e1d",
+     "weight": 0,
+     "fillColor": "#201e1d",
      "fillOpacity": 1,
      "pane": "overlayPane",
      "opacity": 1

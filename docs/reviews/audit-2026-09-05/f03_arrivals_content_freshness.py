@@ -224,6 +224,9 @@ const sandbox = {
   document: { getElementById: byId, createElement: makeEl, body: makeEl("body"), activeElement: null },
   L: { canvas: () => ({}) },
   staleTreatments: [],
+  // MR4's canvas-theme registry, which systems/subway.js joins at load (defined in
+  // systems/shared.js, which this harness does not load). No theme is swapped here.
+  registerCanvasFamily: (_name, paint) => paint,
   // An empty, current alert store: this measures the board, not the alert join.
   alertsSystems: {}, alertsFetchedAt: null, alertsFirstAttemptAt: null,
   alertsClockNow: () => sandbox.__nowMs / 1000,

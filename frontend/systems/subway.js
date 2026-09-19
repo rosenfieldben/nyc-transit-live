@@ -337,6 +337,35 @@ function paintSubwayFocusReach(record) {
   el.style.pointerEvents = "";
 }
 
+/* MR4: THE SUBWAY'S TWO CANVAS FAMILIES, which are the populations the MR2 comment beside
+   rootToken has named since it was written.
+
+   THE RIBBON CASINGS, AND ONLY THE CASINGS. subwayRibbons carries every drawn polyline with
+   the `part` it was drawn as, so the casing half is identifiable without touching the line
+   half, whose colour is lineColor()'s fixed palette and has nothing to do with the theme.
+
+   COLOUR ONLY, NEVER OPACITY, and that is the sharp edge here rather than anywhere else:
+   applySubwayFocus below owns every ribbon's opacity and guards on it, so a swap that passed
+   opacity would silently undo a rider's route focus the moment they changed theme. The two
+   setStyle calls in this file touch disjoint options on purpose.
+
+   THE STATION CIRCLES go through stationMarkStyle, the same pure function loadSubwayStations
+   draws them with, so the drawn dot and the repainted dot are one expression. A station's
+   ROUTES decide dot-or-ring, and they are read back off the registry rather than remembered
+   here, because the registry is what the draw used too. */
+registerCanvasFamily("subway ribbons", ({ paper }) => {
+  for (const ribbon of subwayRibbons) {
+    if (ribbon.part === "casing") ribbon.layer.setStyle({ color: paper });
+  }
+});
+
+registerCanvasFamily("subway stations", ({ paper, ink }) => {
+  for (const entry of stationRegistry) {
+    if (entry.kind !== "subway" || !entry.marker || !entry.marker.setStyle) continue;
+    entry.marker.setStyle(stationMarkStyle(entry.routes ?? [], ink, paper));
+  }
+});
+
 function applySubwayFocus() {
   const focused = currentFocusRoutes();
   for (const ribbon of subwayRibbons) {

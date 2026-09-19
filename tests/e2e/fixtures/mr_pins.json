@@ -1,6 +1,6 @@
 {
  "alertBanner": {
-  "html": "<div class=\"alert-banner-strip\"><div class=\"alert-banner-rows\"><div class=\"alert-banner-row\">Reduced service systemwide while crews clear a disabled train</div><div class=\"alert-banner-row\">Some elevators are out of service across the system</div></div><button type=\"button\" id=\"alert-banner-dismiss\" title=\"Dismiss\">\u00d7</button></div>",
+  "html": "<div class=\"alert-banner-strip\"><div class=\"alert-banner-rows\"><div class=\"alert-banner-row\">Reduced service systemwide while crews clear a disabled train</div><div class=\"alert-banner-row\">Some elevators are out of service across the system</div></div><button type=\"button\" id=\"alert-banner-dismiss\" title=\"Dismiss\">×</button></div>",
   "rows": [
    "Reduced service systemwide while crews clear a disabled train",
    "Some elevators are out of service across the system"
@@ -49,8 +49,8 @@
  "census": {
   "stock": {
    "markerIcons": 23,
-   "vehicleSentinel": 18,
-   "railStationMarkers": 5,
+   "vehicleSentinel": 15,
+   "railStationMarkers": 8,
    "markerIconsByClass": {
     "bus-marker leaflet-interactive": 2,
     "leaflet-interactive train-marker": 2,
@@ -62,10 +62,10 @@
     "leaflet-interactive rail-njt rail-tag-marker rail-tag-outlined": 4,
     "leaflet-interactive rail-lirr-stn rail-stn-marker": 1,
     "leaflet-interactive rail-mnr-stn rail-stn-marker": 1,
-    "airtrain-marker leaflet-interactive": 3,
+    "leaflet-interactive rail-airtrain-stn rail-stn-marker": 3,
     "leaflet-interactive rail-njt-stn rail-stn-marker": 3
    },
-   "stnLabels": 7,
+   "stnLabels": 9,
    "stnLabelsSubway": 2,
    "stnLabelsRail": 5,
    "stnLabelsHub": 0,
@@ -74,7 +74,8 @@
    "busMarkers": 2,
    "pathMarkers": 2,
    "ferryMarkers": 3,
-   "airtrainMarkers": 3,
+   "airtrainMarkers": 0,
+   "airtrainStationMarkers": 3,
    "canvas": {
     "subwayStations": 2,
     "pathStations": 2,
@@ -229,22 +230,22 @@
    "NJ Transit route line",
    "NJ Transit train (scheduled or estimated, no GPS)",
    "NJ Transit station (click for departures)",
-   "Color indicates route \u00b7 click a bus to draw its route"
+   "Color indicates route · click a bus to draw its route"
   ]
  },
  "markers": {
   "airtrain": {
    "airtrainStations": [
     {
-     "html": "<svg viewBox=\"0 0 14 14\"><rect x=\"1.5\" y=\"1.5\" width=\"11\" height=\"11\" rx=\"2\" fill=\"#fff\" stroke=\"#b5179e\" stroke-width=\"2.5\"/></svg>",
-     "className": "airtrain-marker",
+     "html": "<svg viewBox=\"0 0 20 20\" width=\"20\" height=\"20\" class=\"rail-stn\" aria-hidden=\"true\" focusable=\"false\"><rect x=\"6\" y=\"6\" width=\"8\" height=\"8\" style=\"fill: var(--paper); stroke: var(--ink)\" stroke-width=\"1.6\"/></svg>",
+     "className": "rail-stn-marker rail-airtrain-stn",
      "size": [
-      14,
-      14
+      20,
+      20
      ],
      "anchor": [
-      7,
-      7
+      10,
+      10
      ],
      "popupAnchor": [
       0,
@@ -253,15 +254,15 @@
      "opacity": 1
     },
     {
-     "html": "<svg viewBox=\"0 0 14 14\"><rect x=\"1.5\" y=\"1.5\" width=\"11\" height=\"11\" rx=\"2\" fill=\"#fff\" stroke=\"#b5179e\" stroke-width=\"2.5\"/></svg>",
-     "className": "airtrain-marker",
+     "html": "<svg viewBox=\"0 0 20 20\" width=\"20\" height=\"20\" class=\"rail-stn\" aria-hidden=\"true\" focusable=\"false\"><rect x=\"6\" y=\"6\" width=\"8\" height=\"8\" style=\"fill: var(--paper); stroke: var(--ink)\" stroke-width=\"1.6\"/></svg>",
+     "className": "rail-stn-marker rail-airtrain-stn",
      "size": [
-      14,
-      14
+      20,
+      20
      ],
      "anchor": [
-      7,
-      7
+      10,
+      10
      ],
      "popupAnchor": [
       0,
@@ -270,15 +271,15 @@
      "opacity": 1
     },
     {
-     "html": "<svg viewBox=\"0 0 14 14\"><rect x=\"1.5\" y=\"1.5\" width=\"11\" height=\"11\" rx=\"2\" fill=\"#fff\" stroke=\"#b5179e\" stroke-width=\"2.5\"/></svg>",
-     "className": "airtrain-marker",
+     "html": "<svg viewBox=\"0 0 20 20\" width=\"20\" height=\"20\" class=\"rail-stn\" aria-hidden=\"true\" focusable=\"false\"><rect x=\"6\" y=\"6\" width=\"8\" height=\"8\" style=\"fill: var(--paper); stroke: var(--ink)\" stroke-width=\"1.6\"/></svg>",
+     "className": "rail-stn-marker rail-airtrain-stn",
      "size": [
-      14,
-      14
+      20,
+      20
      ],
      "anchor": [
-      7,
-      7
+      10,
+      10
      ],
      "popupAnchor": [
       0,
@@ -291,15 +292,15 @@
   "buses": {
    "buses": [
     {
-     "html": "<svg viewBox=\"0 0 20 20\" style=\"transform: rotate(90deg)\">\n           <path d=\"M10 2 L16 17 L10 13 L4 17 Z\" fill=\"hsl(329, 75%, 40%)\" stroke=\"#fff\" stroke-width=\"1.2\"/>\n         </svg>",
+     "html": "<svg viewBox=\"0 0 14 14\" class=\"bus-mark\" aria-hidden=\"true\" focusable=\"false\" style=\"transform: rotate(90deg)\"><path d=\"M7 1 L12 13 L7 10 L2 13 Z\" style=\"fill: hsl(329, 45%, 38%); stroke: var(--paper)\" stroke-width=\"0.8\"/></svg>",
      "className": "bus-marker",
      "size": [
-      20,
-      20
+      14,
+      14
      ],
      "anchor": [
-      10,
-      10
+      7,
+      7
      ],
      "popupAnchor": [
       0,
@@ -308,15 +309,15 @@
      "opacity": 1
     },
     {
-     "html": "<svg viewBox=\"0 0 20 20\">\n           <circle cx=\"10\" cy=\"10\" r=\"5.5\" fill=\"hsl(292, 75%, 40%)\" stroke=\"#fff\" stroke-width=\"1.5\"/>\n         </svg>",
+     "html": "<svg viewBox=\"0 0 14 14\" class=\"bus-mark\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"7\" cy=\"7\" r=\"3.5\" style=\"fill: hsl(292, 45%, 38%); stroke: var(--paper)\" stroke-width=\"1\"/></svg>",
      "className": "bus-marker",
      "size": [
-      20,
-      20
+      14,
+      14
      ],
      "anchor": [
-      10,
-      10
+      7,
+      7
      ],
      "popupAnchor": [
       0,
@@ -329,7 +330,7 @@
   "ferry": {
    "ferryBoats": [
     {
-     "html": "<svg viewBox=\"0 0 22 14\"><rect x=\"1\" y=\"3\" width=\"20\" height=\"8\" rx=\"4\" fill=\"#00839c\" stroke=\"#fff\" stroke-width=\"1.5\"/></svg>",
+     "html": "<svg viewBox=\"0 0 22 14\" class=\"ferry-hull\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M1 3 H21 L17.5 11 H4.5 Z\" style=\"fill: #00839c; stroke: var(--paper)\" stroke-width=\"1\"/></svg>",
      "className": "ferry-marker ferry-active",
      "size": [
       22,
@@ -346,7 +347,7 @@
      "opacity": 1
     },
     {
-     "html": "<svg viewBox=\"0 0 22 14\"><rect x=\"1\" y=\"3\" width=\"20\" height=\"8\" rx=\"4\" fill=\"#ffd100\" stroke=\"#fff\" stroke-width=\"1.5\"/></svg>",
+     "html": "<svg viewBox=\"0 0 22 14\" class=\"ferry-hull\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M1 3 H21 L17.5 11 H4.5 Z\" style=\"fill: #ffd100; stroke: var(--paper)\" stroke-width=\"1\"/></svg>",
      "className": "ferry-marker ferry-docked",
      "size": [
       22,
@@ -363,7 +364,7 @@
      "opacity": 0.55
     },
     {
-     "html": "<svg viewBox=\"0 0 22 14\"><rect x=\"1\" y=\"3\" width=\"20\" height=\"8\" rx=\"4\" fill=\"#78909c\" stroke=\"#fff\" stroke-width=\"1.5\"/></svg>",
+     "html": "<svg viewBox=\"0 0 22 14\" class=\"ferry-hull\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M1 3 H21 L17.5 11 H4.5 Z\" style=\"fill: #78909c; stroke: var(--paper)\" stroke-width=\"1\"/></svg>",
      "className": "ferry-marker ferry-active",
      "size": [
       22,
@@ -382,19 +383,19 @@
    ],
    "ferryDocks": [
     {
-     "radius": 4.5,
-     "color": "#fff",
+     "radius": 4,
+     "color": "#f3f2f2",
      "weight": 1.5,
-     "fillColor": "#0e7490",
+     "fillColor": "#00839c",
      "fillOpacity": 1,
      "pane": "overlayPane",
      "opacity": 1
     },
     {
-     "radius": 4.5,
-     "color": "#fff",
+     "radius": 4,
+     "color": "#f3f2f2",
      "weight": 1.5,
-     "fillColor": "#0e7490",
+     "fillColor": "#00839c",
      "fillOpacity": 1,
      "pane": "overlayPane",
      "opacity": 1
@@ -577,7 +578,7 @@
   "path": {
    "pathTrains": [
     {
-     "html": "<svg viewBox=\"0 0 16 16\"><path d=\"M8 1.5 L14.5 8 L8 14.5 L1.5 8 Z\" fill=\"#d93a30\" stroke=\"#fff\" stroke-width=\"1.5\"/></svg>",
+     "html": "<svg viewBox=\"0 0 16 16\" class=\"path-diamond\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M8 1 L15 8 L8 15 L1 8 Z\" style=\"fill: #d93a30; stroke: var(--paper)\" stroke-width=\"1.2\"/></svg>",
      "className": "path-marker",
      "size": [
       16,
@@ -594,7 +595,7 @@
      "opacity": 1
     },
     {
-     "html": "<svg viewBox=\"0 0 16 16\"><path d=\"M8 1.5 L14.5 8 L8 14.5 L1.5 8 Z\" fill=\"#d93a30\" stroke=\"#fff\" stroke-width=\"1.5\"/></svg>",
+     "html": "<svg viewBox=\"0 0 16 16\" class=\"path-diamond\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M8 1 L15 8 L8 15 L1 8 Z\" style=\"fill: #d93a30; stroke: var(--paper)\" stroke-width=\"1.2\"/></svg>",
      "className": "path-marker",
      "size": [
       16,
@@ -613,19 +614,19 @@
    ],
    "pathStations": [
     {
-     "radius": 4,
-     "color": "#fff",
-     "weight": 1.5,
-     "fillColor": "#3d5a80",
+     "radius": 3.5,
+     "color": "#201e1d",
+     "weight": 0,
+     "fillColor": "#201e1d",
      "fillOpacity": 1,
      "pane": "overlayPane",
      "opacity": 1
     },
     {
-     "radius": 4,
-     "color": "#fff",
-     "weight": 1.5,
-     "fillColor": "#3d5a80",
+     "radius": 3.5,
+     "color": "#201e1d",
+     "weight": 0,
+     "fillColor": "#201e1d",
      "fillOpacity": 1,
      "pane": "overlayPane",
      "opacity": 1
@@ -757,21 +758,21 @@
  },
  "popups": {
   "airtrain": {
-   "airtrain station": "<b>Terminal Alpha</b><div class=\"popup-sub\">AirTrain JFK \u00b7 scheduled service (no live tracking)</div><div>Jamaica: every ~7 min <span class=\"popup-sub\">(scheduled)</span></div><div>Howard Beach: every ~7 min <span class=\"popup-sub\">(scheduled)</span></div>"
+   "airtrain station": "<b>Terminal Alpha</b><div class=\"popup-sub\">AirTrain JFK · scheduled service (no live tracking)</div><div>Jamaica: every ~7 min <span class=\"popup-sub\">(scheduled)</span></div><div>Howard Beach: every ~7 min <span class=\"popup-sub\">(scheduled)</span></div>"
   },
   "buses": {
-   "bus": "<b style=\"color:hsl(329, 75%, 40%)\">M15</b><br>Bus MTA NYCT_101<br>Heading: 90\u00b0"
+   "bus": "<b style=\"color:hsl(329, 75%, 40%)\">M15</b><br>Bus MTA NYCT_101<br>Heading: 90°"
   },
   "ferry": {
    "ferry boat": "<b style=\"color:#007c94\">East River</b> <span class=\"popup-sub\">NYC Ferry</span><br>Boat H201<br>Under way<br>12.6 kn",
-   "ferry dock": "<b>Wall St/Pier 11</b> <span class=\"popup-sub\">NYC Ferry</span> <span class=\"popup-access\" title=\"Wheelchair accessible\">\u267f</span><div class=\"arr-dir\" style=\"color:#007c94\">East River</div>1 min<div class=\"arr-dir\" style=\"color:#8c7300\">South Brooklyn</div>departs 1 min"
+   "ferry dock": "<b>Wall St/Pier 11</b> <span class=\"popup-sub\">NYC Ferry</span> <span class=\"popup-access\" title=\"Wheelchair accessible\">♿</span><div class=\"arr-dir\" style=\"color:#007c94\">East River</div>1 min<div class=\"arr-dir\" style=\"color:#8c7300\">South Brooklyn</div>departs 1 min"
   },
   "lirr": {
-   "lirr train": "<b style=\"color:#5d4037\">LIRR \u00b7 Babylon Branch</b><br>Train 521<br>Next stop: Jamaica<br>Outbound<br><span class=\"popup-sub\">scheduled (no GPS)</span><button type=\"button\" class=\"popup-crosslink\" data-station-key=\"LIRR|12\">Also here: Jamaica</button>",
+   "lirr train": "<b style=\"color:#5d4037\">LIRR · Babylon Branch</b><br>Train 521<br>Next stop: Jamaica<br>Outbound<br><span class=\"popup-sub\">scheduled (no GPS)</span><button type=\"button\" class=\"popup-crosslink\" data-station-key=\"LIRR|12\">Also here: Jamaica</button>",
    "lirr station": "<b>Jamaica</b> <span class=\"popup-sub\">LIRR</span><div class=\"arr-dir\">Inbound</div><span class=\"arr-badge\" style=\"background:#5d4037;color:#ffffff\">1</span> Babylon Branch <span class=\"popup-sub\">#8412</span> 4 min<div class=\"arr-dir\">Outbound</div><span class=\"arr-badge\" style=\"background:#5d4037;color:#ffffff\">1</span> Babylon Branch <span class=\"popup-sub\">#8413</span> 7 min"
   },
   "mnr": {
-   "mnr train": "<b style=\"color:#5d4037\">MNR \u00b7 Hudson</b><br>Train 1797<br><span class=\"popup-sub\">live GPS</span>",
+   "mnr train": "<b style=\"color:#5d4037\">MNR · Hudson</b><br>Train 1797<br><span class=\"popup-sub\">live GPS</span>",
    "mnr station": "<b>Grand Central</b> <span class=\"popup-sub\">MNR</span><div class=\"arr-dir\">Inbound</div><span class=\"arr-badge\" style=\"background:#5d4037;color:#ffffff\">1</span> Hudson <span class=\"popup-sub\">#795</span> 4 min<div class=\"arr-dir\">Outbound</div><span class=\"arr-badge\" style=\"background:#5d4037;color:#ffffff\">1</span> Hudson <span class=\"popup-sub\">#812</span> 6 min"
   },
   "njt": {

@@ -156,7 +156,7 @@ test(`A4b. every interactive thing on the map surface meets the 24px floor at ${
        box, so it is the one most dependent on the shared halo and the one this gate most needs
        to name. A review round proved the omission mattered: shrinking both NJT halos to 10px
        passed the entire suite. */
-    for (const cls of ["bus-marker", "train-marker", "rail-tag-marker", "path-marker", "ferry-marker", "airtrain-marker", "rail-stn-marker"]) {
+    for (const cls of ["bus-marker", "train-marker", "rail-tag-marker", "path-marker", "ferry-marker", "rail-airtrain-stn", "rail-stn-marker"]) {
       const el = document.querySelector(`.${cls}`);
       if (!el) continue;
       const style = getComputedStyle(el, "::before");

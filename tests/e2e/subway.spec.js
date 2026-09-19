@@ -868,7 +868,7 @@ test("D2z. a network with no interchange anywhere shows every name from 13, not 
   // reads their five names here and calls a hubless SUBWAY network broken.
   const painted = () =>
     page.evaluate(() =>
-      [...document.querySelectorAll(".stn-label:not(.rail)")]
+      [...document.querySelectorAll(".stn-label.subway")]
         .filter((el) => getComputedStyle(el).display !== "none")
         .map((el) => el.textContent)
         .sort(),
@@ -882,7 +882,7 @@ test("D2z. a network with no interchange anywhere shows every name from 13, not 
     "this world has no interchange, which is the premise",
   ).toBe(0);
   expect(
-    await page.evaluate(() => document.querySelectorAll(".stn-label:not(.rail)").length),
+    await page.evaluate(() => document.querySelectorAll(".stn-label.subway").length),
     "and it does have SUBWAY station labels, which is what a hubless subway network means",
   ).toBeGreaterThan(0);
 
@@ -1559,15 +1559,22 @@ test("D2j. station names appear at the right zooms, hubs first, and the Names to
      attribute written correctly and a rule that never matched would pass an attribute check
      and show every name in the city at zoom 3. */
   await open(page, withLocalStation, { stations: 18 });
-  /* THE SUBWAY'S NAMES ONLY, which is what this spec is about. MR3 put the commuter rail
-     families on the same label pane with their OWN band (from zoom 11) and their own pair of
-     rules, so an unscoped count reads five rail names at zoom 11 and calls the subway's band
-     broken. `:not(.rail)` is the scope, and tests/e2e/rail.spec.js is where the rail band's own
-     numbers are held; the two bands overlap on purpose and neither one may be asserted through
-     the other. */
+  /* THE SUBWAY'S NAMES ONLY, ASKED FOR POSITIVELY, and the history is the point. MR3 put the
+     commuter rail families on this label pane with their OWN band (from zoom 11), so an
+     unscoped count read five rail names at zoom 11 and called the subway's band broken; the
+     scope written then was `:not(.rail)`. MR4 gave the ferry's docks their names, on the same
+     pane, in `.stn-label ferry`, and `:not(.rail)` counted both docks as subway stations: at
+     zoom 14 this assertion gained "South Williamsburg" and "Wall St/Pier 11" and went red.
+
+     THAT IS THE CARRY-FORWARD THIS PHASE KEEPS PAYING: a count over a class a later stage
+     widens. The repair is structural rather than another exclusion, because the next family to
+     join would break an exclusion list again. Subway labels now carry a positive `subway`
+     class and this asks for it by name; tests/e2e/rail.spec.js holds the rail band's numbers
+     and tests/e2e/families.spec.js holds the ferry's. The bands overlap on purpose and none of
+     them may be asserted through another. */
   const painted = () =>
     page.evaluate(() =>
-      [...document.querySelectorAll(".leaflet-tooltip:not(.rail)")]
+      [...document.querySelectorAll(".leaflet-tooltip.subway")]
         .filter((el) => getComputedStyle(el).display !== "none")
         .map((el) => el.textContent)
         .sort(),

@@ -353,10 +353,21 @@ function stationMarkStyle(routes, ink, paper) {
     : { radius: STATION_LOCAL_RADIUS, fillColor: ink, fillOpacity: 1, color: ink, weight: 0, stroke: false };
 }
 
-// The tooltip class one station's name is drawn with. A hub is the same station a transfer
-// ring is, so the two read one predicate rather than two.
+/* The tooltip class one station's name is drawn with. A hub is the same station a transfer
+   ring is, so the two read one predicate rather than two.
+
+   `subway` IS A POSITIVE CLASS AND MR4 ADDED IT, which is the carry-forward paid at the
+   source. `.stn-label` began as the subway's alone, so a count of it meant "subway station
+   names". MR3 put ~300 commuter-rail names in the class and every sentinel became
+   `.stn-label:not(.rail)`; MR4 put the ferry's dock names in it and those sentinels were
+   wrong again, silently, because a dock is not `.rail` either. The census pin caught it on
+   its first outing (2 subway labels read as 4).
+
+   An exclusion list grows with every family and is wrong once per stage. A family's own
+   class cannot be widened by a family that does not carry it, so `.stn-label.subway` is the
+   last version of this selector anyone has to write. */
 function stationLabelClass(routes) {
-  return isTransferStation(routes) ? "stn-label hub" : "stn-label";
+  return isTransferStation(routes) ? "stn-label subway hub" : "stn-label subway";
 }
 
 /* THE ZOOM GATE, as a band rather than a number, because CSS cannot compare integers. The
@@ -2512,6 +2523,41 @@ function busMarkColor(routeId) {
   const hue = /^hsl\((\d+),/.exec(base);
   // A route with no id gets routeColor's flat grey, which has no hue to mute.
   return hue ? `hsl(${hue[1]}, ${BUS_MARK_SATURATION}%, ${BUS_MARK_LIGHTNESS}%)` : base;
+}
+
+/* THE AIRTRAIN GUIDEWAY'S LINE, as options, for ferryDockStyle's reason: a polyline has no
+   element either, and the draw and the theme repaint must be one expression. The gray is the
+   caller's, resolved from `--scheduled` at draw time, because it has two values and a canvas
+   can read neither. */
+const AIRTRAIN_LINE_DASH = "8 5";
+const AIRTRAIN_LINE_WEIGHT = 3;
+
+function airtrainLineStyle(gray) {
+  return { color: gray, weight: AIRTRAIN_LINE_WEIGHT, opacity: 0.9, dashArray: AIRTRAIN_LINE_DASH };
+}
+
+/* THE FERRY DOCK'S CIRCLE, as options rather than as markup, because a dock is a canvas
+   circleMarker and has no element: its identity IS the options its renderer draws from. Pure
+   and here so the one expression of "what a dock looks like" serves the draw, the theme
+   repaint and a node test alike, which is what stops the drawn dot and the repainted dot
+   drifting apart.
+
+   THE FILL IS THE DESIGN'S #00839c, which is also the colour the feed strip's ferry tick has
+   drawn since MR1. The STROKE is the caller's paper, resolved at draw time, because a canvas
+   context cannot read a custom property. */
+const FERRY_DOCK_COLOR = "#00839c";
+const FERRY_DOCK_RADIUS = 4;
+const FERRY_DOCK_STROKE = 1.5;
+
+function ferryDockStyle(paper) {
+  return {
+    radius: FERRY_DOCK_RADIUS,
+    fillColor: FERRY_DOCK_COLOR,
+    fillOpacity: 1,
+    color: paper,
+    weight: FERRY_DOCK_STROKE,
+    stroke: true,
+  };
 }
 
 // PATH's diamond (README: 16x16, route fill, paper stroke 1.2). The vertices sit on the box
@@ -4930,6 +4976,8 @@ if (typeof module !== "undefined" && module.exports) {
     busMarkColor, BUS_MARK_SATURATION, BUS_MARK_LIGHTNESS,
     pathDiamondSvg, PATH_DIAMOND_BOX, PATH_DIAMOND_PATH,
     ferryHullSvg, FERRY_HULL_BOX, FERRY_HULL_PATH,
+    ferryDockStyle, FERRY_DOCK_COLOR, FERRY_DOCK_RADIUS, FERRY_DOCK_STROKE,
+    airtrainLineStyle, AIRTRAIN_LINE_DASH, AIRTRAIN_LINE_WEIGHT,
     busMarkSvg, busHasHeading, BUS_MARK_BOX, BUS_ARROW_PATH, BUS_DOT_R,
     railLabelBand, RAIL_LABEL_ZOOM, railroadStationName, railFamilyClass,
     AGE_UNKNOWN, observationDimAge, observationGated, OBSERVATION_GATED,

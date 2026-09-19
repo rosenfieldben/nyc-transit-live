@@ -842,16 +842,22 @@ const classCensus = (page) =>
       markerIconsByClass: byClass,
       // paintZoomBand's two counts, and the rail band beside them.
       stnLabels: n(".stn-label"),
-      stnLabelsSubway: n(".stn-label:not(.rail)"),
+      stnLabelsSubway: n(".stn-label.subway"),
       stnLabelsRail: n(".stn-label.rail"),
       stnLabelsHub: n(".stn-label.hub"),
-      stnLabelsHubSubway: n(".stn-label.hub:not(.rail)"),
+      stnLabelsHubSubway: n(".stn-label.subway.hub"),
       // The per-family marker classes specs reach for by name.
       trainMarkers: n(".train-marker"),
       busMarkers: n(".bus-marker"),
       pathMarkers: n(".path-marker"),
       ferryMarkers: n(".ferry-marker"),
+      // MR4 moved AirTrain's stations onto the commuter square, so the family left
+      // `.airtrain-marker` for `rail-stn-marker rail-airtrain-stn`. BOTH are counted: the old
+      // class must read zero rather than simply stop being asked, because a selector that
+      // quietly matches nothing is how a count over a widened class goes wrong in the first
+      // place (smoke.spec.js had a toHaveCount(0) here that would have passed vacuously).
       airtrainMarkers: n(".airtrain-marker"),
+      airtrainStationMarkers: n(".rail-airtrain-stn"),
       // The canvas populations, which carry no element at all.
       canvas: {
         subwayStations: group(() => stationLayer),

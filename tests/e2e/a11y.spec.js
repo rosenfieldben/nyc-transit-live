@@ -1020,15 +1020,25 @@ test("A1z3. the station name labels are legible over any tile, in both themes", 
      SUBWAY stations are drawn; asserted rather than assumed, because a spec measuring nothing
      passes.
 
-     SEVEN NOW, NOT TWO, AND FIVE OF THEM ARE MR3's. The commuter rail families joined this
-     pane in stage 3: two railroad stations (LIRR Jamaica, Metro-North Grand Central) and three
-     NJ Transit ones, gated from zoom 11 by their own band, so at 12 they are all on. They
-     carry `stn-label rail` and never `hub`, which is why allAreLabels below still holds and why
-     they are measured by the same loop rather than excused from it: a rail name is ink on a
-     tile exactly as a subway name is, and MR3 gave it no different treatment to be trusted
-     about. */
-  await expect(page.locator(".leaflet-tooltip")).toHaveCount(7);
+     NINE NOW: TWO SUBWAY, FIVE RAIL AND TWO FERRY DOCKS, and the count has grown once per
+     stage because each stage puts another family's names on this pane. MR3 added five (LIRR
+     Jamaica, Metro-North Grand Central and three NJ Transit stations, gated from zoom 11 by
+     their own band, so at 12 they are all on) and MR4 adds the ferry's two docks, which the
+     design asks for and which no dock has ever had.
+
+     EVERY FAMILY IS MEASURED BY THE SAME LOOP RATHER THAN EXCUSED FROM IT, because a dock's
+     name is ink on a tile exactly as a subway station's is and neither MR3 nor MR4 gave any of
+     them a different treatment to be trusted about. None carries `hub`: that is a subway
+     transfer station by one predicate, which is why allAreLabels below still holds.
+
+     THE THREE COUNTS ARE POSITIVE CLASSES AND THAT IS MR4's CARRY-FORWARD. This spec could
+     have asked for "seven, of which five are rail"; what it asks now is how many each family
+     has, so the next family to join this pane changes one number rather than silently
+     inflating someone else's. */
+  await expect(page.locator(".leaflet-tooltip")).toHaveCount(9);
+  await expect(page.locator(".leaflet-tooltip.subway")).toHaveCount(2);
   await expect(page.locator(".leaflet-tooltip.rail")).toHaveCount(5);
+  await expect(page.locator(".leaflet-tooltip.ferry")).toHaveCount(2);
 
   for (const theme of ["light", "dark"]) {
     if (theme !== "light") await setTheme(page, theme);

@@ -83,6 +83,11 @@ function loadFrontend() {
     // systems/subway.js makes a canvas renderer and registers a dimming sweep at load.
     L: { canvas: () => ({}) },
     staleTreatments: [],
+    // MR4: systems/shared.js's canvas-theme registry, which systems/subway.js joins at
+    // load so a theme swap can repaint the ribbons and the station circles. It belongs
+    // beside staleTreatments for the same reason: a load-time hook this harness does not
+    // exercise, stubbed to the real signature (the real one returns the painter).
+    registerCanvasFamily: (_name, paint) => paint,
     // What systems/shared.js would otherwise supply to the panel's alert block: an empty
     // store whose source is current, so the block renders nothing and says nothing.
     alertsSystems: {},

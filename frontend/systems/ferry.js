@@ -39,10 +39,16 @@ async function loadFerryRoutes() {
     // non-interactive like the PATH/AirTrain guideways so clicks fall through to
     // the dock dots that sit on the station pane above these lines.
     for (const points of route.shape) {
+      /* MR4: DASHED, which is the ferry's whole signature on this map (README: "routes dashed
+         weight 2; opacity .9; dashArray '6 5'", and the Key panel's own row is literally
+         called "dashed ferry route"). A ferry route is not track: the dash says the service
+         crosses water on no fixed way, which is the one thing a solid line of any colour
+         cannot. The colour stays the feed's, so these lines need no theme registry entry. */
       L.polyline(points, {
         color,
-        weight: 2.5,
-        opacity: 0.5,
+        weight: 2,
+        opacity: 0.9,
+        dashArray: "6 5",
         interactive: false,
         renderer: lineRenderer,
       }).addTo(ferryRouteLines);
@@ -62,21 +68,28 @@ async function loadFerryStops() {
   }
   if (!stops.length) return false; // failed-warmup []: retry until the backend heals
   for (const stop of stops) {
-    // Deep-cyan solid dot under a white ring, on the shared station pane/renderer
-    // (click priority + cheap canvas). WHY this styling: ferry docks sit on the
-    // water, but the Rockaway and Soundview docks neighbor subway/railroad stops,
-    // and the subway/railroad dots are white-filled rings while PATH is a slate
-    // solid, so a fourth dot needs its own read. Deep cyan belongs to no rail
-    // palette and evokes water, making a dock legible at a glance, the same
-    // shape-or-fill distinction the AirTrain square and the PATH inverted fill use.
+    /* MR4: the design's dock (README: "circleMarker radius 4, fill #00839c, paper stroke
+       1.5"). Deep cyan under a paper ring, on the shared station pane and renderer for click
+       priority and a cheap canvas, which is unchanged.
+
+       THE CYAN MOVES FROM #0e7490 TO #00839c AND THAT SETTLES A DISAGREEMENT rather than
+       starting one. The ferry was already two cyans: the feed strip's tick has been #00839c
+       since MR1 (helpers.js FEEDS) and the Key panel's dock glyph was #0e7490, so the strip
+       and the legend pointed at different colours for one family. The design names #00839c,
+       the strip already draws it, and the dock and the Key glyph now join them.
+
+       AND THE RING IS A TOKEN, which is what puts this dot in the theme registry below. A
+       white ring is a light halo on a dark map: this is one of the two marks ledger finding
+       G15 measured at 2.63 against the dark surface, and paper resolves to the dark theme's
+       own surface colour instead. That is the whole reason R2 held the toggle back until the
+       marks had their casings, and the dock is one of the last of them. */
     const marker = L.circleMarker([stop.lat, stop.lon], {
-      radius: 4.5,
-      color: "#fff",
-      weight: 1.5,
-      fillColor: "#0e7490",
-      fillOpacity: 1,
+      ...ferryDockStyle(paperColor()),
       renderer: stationRenderer,
     });
+    // The dock's name, which the design asks for and no dock has ever had. Its own class, so
+    // no count over `.stn-label` can mistake a dock for a subway station (shared.js says why).
+    bindFerryDockLabel(marker, stop.name ?? stop.id);
     // Built once, used by the popup descriptor and the A1 registry alike.
     const arrivalsUrl = `/api/ferry-arrivals/${encodeURIComponent(stop.id)}`;
     bindStationPopup(marker, (m) => ({
@@ -140,17 +153,20 @@ async function loadFerryStops() {
 // somewhere. The docked/active state rides on a css class as a state MARKER, while
 // the dimming that goes with it is a marker opacity (ferryBaseOpacity): a STOPPED_AT
 // boat reads as parked, an under-way boat is full opacity.
+/* MR4: the dock dots are the ferry's one canvas mark drawn from a token, so they are the
+   family's one registry entry. The dashed route lines take the feed's own colour and are not
+   here; the hulls are divIcons whose stroke is `var(--paper)` and follow the cascade. */
+registerCanvasFamily("ferry docks", ({ paper }) => {
+  const style = ferryDockStyle(paper);
+  for (const layer of ferryDocks.getLayers()) layer.setStyle(style);
+});
+
 function ferryBoatIcon(boat, color) {
-  const state = ferryBoatIconState(boat.status);
-  const html =
-    `<svg viewBox="0 0 22 14"><rect x="1" y="3" width="20" height="8" rx="4" ` +
-    `fill="${color}" stroke="#fff" stroke-width="1.5"/></svg>`;
-  return L.divIcon({
-    className: `ferry-marker ferry-${state}`,
-    html,
-    iconSize: [22, 14],
-    iconAnchor: [11, 7],
-  });
+  /* MR4: A HULL, AND THE PARAGRAPH ABOVE FINALLY MEANS IT. This file has always argued that
+     a boat should read as a boat beside a subway square, a railroad square, a PATH diamond
+     and a bus arrow, and then drew a rounded rectangle. The design's path is a trapezoid
+     with a flat deck and a tapered bottom, which is that argument carried out. */
+  return ferryBoatIconFor(color, ferryBoatIconState(boat.status));
 }
 
 // A2 FOLLOWUP, DELIBERATELY NOT DONE HERE: a docked boat gets no "Also here" link.

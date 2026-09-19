@@ -260,9 +260,21 @@ test("D3b. a retained train is drawn as the state it was in, dimmed, and MR3 did
   }
 });
 
-test("D3c. a square always means regional rail and a circle always means subway", async ({ page }) => {
+test("D3c. a square means regional rail or AirTrain, and every other family is a circle", async ({ page }) => {
   await open(page);
-  /* THE COUNT BOTH WAYS, which is what makes this a claim rather than a slogan. Before MR3 the
+  /* THE CENSUS, AND MR4 WIDENED WHAT IT COUNTS. MR3 wrote this as "a square always means
+     regional rail and a circle always means subway", and it was true of a map with four
+     station families. MR4 gives AirTrain the commuter square and PATH the subway's local dot,
+     so the sentence moves: a SQUARE now means regional rail or AirTrain, and the families that
+     are not square are all circles on the shared canvas.
+
+     THE COLLISION IS RECORDED RATHER THAN SOFTENED, and it is in this world: Jamaica has an
+     LIRR station and an AirTrain station, and after MR4 they are the same mark on the same map.
+     That is the design's instruction ("Stations use the commuter square"), and what still tells
+     them apart is everything except the glyph: the popup, the panel entry, the accessible name,
+     and the line each one sits on. Carried to the operator as a finding.
+
+     THE COUNT BOTH WAYS, which is what makes this a claim rather than a slogan. Before MR3 the
      three rail families drew three different station marks: LIRR and Metro-North a 3.5px white
      circle, NJ Transit a 12px filled slate square, and the sentence was not true of any of
      them. */
@@ -280,28 +292,55 @@ test("D3c. a square always means regional rail and a circle always means subway"
     return kinds;
   });
 
-  // EVERY RAIL STATION IS A SQUARE, all three agencies, with none left over.
-  for (const kind of ["railroad", "njt"]) {
+  /* EVERY FAMILY IS CLASSIFIED AND NONE IS SKIPPED, which is the assertion that keeps this
+     census honest as families arrive. A loop over a list of kinds says nothing about a kind
+     that is not in the list: MR4 added AirTrain squares and PATH and ferry circles to a page
+     whose census asked about three kinds, and a census that only asks about what it already
+     knows is the shape of test this phase keeps catching. So the set of kinds on the page is
+     asserted first, and a fifth station family fails here until someone says which grammar it
+     draws. */
+  expect(Object.keys(shapes).sort()).toEqual(["airtrain", "ferry", "njt", "path", "railroad", "subway"]);
+
+  // EVERY SQUARE FAMILY IS ALL SQUARES, with none left over and no circle among them.
+  for (const kind of ["railroad", "njt", "airtrain"]) {
     expect(shapes[kind], `${kind} stations exist in this world`).toBeTruthy();
     expect(shapes[kind].square, `every ${kind} station is a square`).toBe(shapes[kind].total);
     expect(shapes[kind].circle, `no ${kind} station is a circle`).toBe(0);
   }
-  // AND NO SUBWAY STATION IS ONE. A subway station is a canvas circleMarker with no element at
-  // all, which is the other half: it cannot be a square, and a change that gave it a divIcon
-  // would show up here as a square rather than as nothing.
-  expect(shapes.subway.square, "no subway station is a square").toBe(0);
-  expect(shapes.subway.canvas, "subway stations are drawn on the shared canvas").toBe(shapes.subway.total);
+  /* AND NO OTHER FAMILY IS ONE. A subway, PATH or ferry station is a canvas circleMarker with
+     no element at all, which is the other half: it cannot be a square, and a change that gave
+     one a divIcon would show up here as a square rather than as nothing. */
+  for (const kind of ["subway", "path", "ferry"]) {
+    expect(shapes[kind], `${kind} stations exist in this world`).toBeTruthy();
+    expect(shapes[kind].square, `no ${kind} station is a square`).toBe(0);
+    expect(shapes[kind].canvas, `${kind} stations are drawn on the shared canvas`).toBe(
+      shapes[kind].total,
+    );
+  }
 
-  /* THE ONE SHAPE IS ONE SHAPE, byte for byte across the three agencies. Three families drawing
-     one grammar is this stage's claim, and it is only true if they call one builder. */
+  /* THE ONE SHAPE IS ONE SHAPE, byte for byte across all four square families. Four families
+     drawing one grammar is only true if they call one builder, and AirTrain joining them is
+     what makes this four rather than three. */
   const htmls = await page.evaluate(() =>
     [...new Set(
       stationRegistry
-        .filter((e) => e.kind === "railroad" || e.kind === "njt")
+        .filter((e) => e.kind === "railroad" || e.kind === "njt" || e.kind === "airtrain")
         .map((e) => e.marker.getIcon().options.html),
     )],
   );
-  expect(htmls, "all three rail agencies draw the identical square").toHaveLength(1);
+  expect(htmls, "all four square families draw the identical square").toHaveLength(1);
+
+  /* JAMAICA, BOTH OF THEM, which is the collision named above measured rather than asserted in
+     prose. Two registry entries, two systems, one mark. */
+  const jamaica = await page.evaluate(() =>
+    stationRegistry
+      .filter((e) => (e.name ?? "").startsWith("Jamaica"))
+      .map((e) => ({ kind: e.kind, system: e.systemLabel, html: e.marker.getIcon().options.html }))
+      .sort((a, b) => a.kind.localeCompare(b.kind)),
+  );
+  expect(jamaica.map((j) => j.kind)).toEqual(["airtrain", "railroad"]);
+  expect(jamaica[0].html, "one station name, two systems, one glyph").toBe(jamaica[1].html);
+  expect(jamaica[0].system).not.toBe(jamaica[1].system);
 });
 
 test("D3d. rail station names show from zoom 11, never with the hub class, and the Names toggle hides them", async ({
@@ -371,15 +410,20 @@ test("D3g. rail labels cannot answer a question about the subway's band", async 
      mutated reading is "a whole network with no interchange". At zoom 13 those are different
      answers, "hubs" against "all", so one attribute settles it.
 
-     THIS IS THE MUTATION: drop `:not(.rail)` from either count in paintZoomBand. */
+     THIS IS THE MUTATION: have paintZoomBand count labels off the DOM again, or drop the
+     `kind === "subway"` filter from the registry query it asks instead. MR4 rewrote that
+     sentinel to ask stationRegistry for subway stations rather than to count `.stn-label`
+     elements, because the DOM class is shared and every stage so far has widened it: MR3 added
+     the rail names, MR4 the ferry's docks. The registry knows each station's kind, so the
+     question is asked of the data rather than of a selector that keeps meaning more. */
   await open(page, (ctx) => {
     ctx.overrides.subwayStops = (route) => json(route, []);
   }, { stations: 12 });
 
   const counts = await page.evaluate(() => ({
     all: document.querySelectorAll(".stn-label").length,
-    subway: document.querySelectorAll(".stn-label:not(.rail)").length,
-    hubs: document.querySelectorAll(".stn-label.hub:not(.rail)").length,
+    subway: document.querySelectorAll(".stn-label.subway").length,
+    hubs: document.querySelectorAll(".stn-label.subway.hub").length,
   }));
   // THE PREMISES, both of them, or this spec asserts nothing: there are rail labels on the page
   // and there are no subway labels for them to be mistaken for.

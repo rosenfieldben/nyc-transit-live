@@ -201,14 +201,14 @@ test("MR2 F9: a skip-stop pair and a local/express pair are ONE trunk, so they a
      which ids are one line, because sharing a colour is what that means. */
   for (const pair of [["J", "Z"], ["A", "C"], ["A", "C", "E"], ["4", "5"], ["4", "5", "6"], ["N", "Q", "R", "W"]]) {
     assert.equal(isTransferStation(pair), false, pair.join("/"));
-    assert.equal(stationLabelClass(pair), "stn-label", pair.join("/"));
+    assert.equal(stationLabelClass(pair), "stn-label subway", pair.join("/"));
     assert.equal(stationMarkStyle(pair, INK, PAPER).stroke, false, pair.join("/"));
     assert.equal(stationTrunks(pair).size, 1, pair.join("/"));
   }
   // A real interchange still is one: two trunks, whatever the id count.
   for (const real of [["J", "L"], ["A", "1"], ["4", "6", "N"], ["GS", "7"]]) {
     assert.equal(isTransferStation(real), true, real.join("/"));
-    assert.equal(stationLabelClass(real), "stn-label hub", real.join("/"));
+    assert.equal(stationLabelClass(real), "stn-label subway hub", real.join("/"));
   }
   // Two ids lineColor cannot place collapse into one trunk rather than inventing a transfer:
   // an unknown id must not make a claim about the network.
@@ -228,7 +228,7 @@ test("MR2: a station with no routes is a local dot, which is the direction that 
     assert.equal(isTransferStation(missing), false, JSON.stringify(missing));
     assert.equal(stationMarkStyle(missing, INK, PAPER).radius, STATION_LOCAL_RADIUS, JSON.stringify(missing));
     assert.equal(stationMarkStyle(missing, INK, PAPER).stroke, false, JSON.stringify(missing));
-    assert.equal(stationLabelClass(missing), "stn-label", JSON.stringify(missing));
+    assert.equal(stationLabelClass(missing), "stn-label subway", JSON.stringify(missing));
   }
 });
 
@@ -243,10 +243,16 @@ test("MR2: the two theme colours are the caller's, so a theme swap is a setStyle
 /* ---------------- labels ---------------- */
 
 test("MR2: a hub label is the same station a transfer ring is", () => {
-  assert.equal(stationLabelClass(["1"]), "stn-label");
-  assert.equal(stationLabelClass(["1", "A"]), "stn-label hub");
-  assert.equal(stationLabelClass([]), "stn-label");
-  assert.equal(stationLabelClass(undefined), "stn-label");
+  /* MR4 ADDED `subway`, which is a positive class and is the point. `.stn-label` began as the
+     subway's alone, so counting it meant "subway station names"; MR3 put the rail families in
+     it and MR4 the ferry's docks, and every sentinel that had been written as
+     `.stn-label:not(.rail)` was silently wrong the moment a family arrived that was not rail.
+     A class a family carries cannot be widened by a family that does not, so these four
+     assertions are what stop the qualifier being dropped again. */
+  assert.equal(stationLabelClass(["1"]), "stn-label subway");
+  assert.equal(stationLabelClass(["1", "A"]), "stn-label subway hub");
+  assert.equal(stationLabelClass([]), "stn-label subway");
+  assert.equal(stationLabelClass(undefined), "stn-label subway");
   // One predicate behind both, so a station cannot draw a ring and label itself local.
   for (const routes of [[], ["1"], ["J", "Z"], ["1", "A"], ["1", "A", "L"], ["4", "5", "6", "N", "Q"]]) {
     assert.equal(

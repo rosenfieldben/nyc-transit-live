@@ -948,20 +948,76 @@ the two runs differ only by the tree they ran in.
 | before | `before-desktop.png` | `before-375.png` |
 | after | `after-desktop.png` | `after-375.png` |
 
-## Stage MR4: the other families
+## Stage MR4: the other families, and the dark theme's release
 
-*Not started.* Carries round 3's R2: when the last family on the map has its paper
-casing, `#theme-toggle` loses its `hidden` attribute and the dark theme is offered.
-Everything else it needs already ships in MR1 and is tested there.
+PATH, the ferry, AirTrain and the buses, and then ruling R2 met: when the last family on
+the map has its paper casing or stroke, `#theme-toggle` loses its `hidden` attribute and
+the dark theme is offered. Four families and one release, and the release is what the other
+four are for.
 
-**And it inherits a third population for the theme swap, from MR3.** The `setStyle` MR4
-does over the subway ribbons and the station circles has to reach the three commuter rail
-families' 5px paper casings as well: `railDrawRibbons` resolves `paperColor()` once per
-draw, exactly as `drawRibbons` does, so a casing drawn under the light theme keeps its
-light paper until something restyles it. They live on their own pane
-(`railroadCasingPane`) and in each family's own layer group, so they are reachable; what
-MR4 owes is to reach them. Named in `systems/shared.js` beside `rootToken` rather than
-left to be discovered.
+It carried two debts into the stage, both named by MR3 rather than discovered here.
+
+**A third population for the theme swap.** The `setStyle` this stage does over the subway
+ribbons and the station circles has to reach the three commuter rail families' 5px paper
+casings as well: `railDrawRibbons` resolves `paperColor()` once per draw, exactly as
+`drawRibbons` does, so a casing drawn under the light theme keeps its light paper until
+something restyles it. They live on their own pane (`railroadCasingPane`) and in each
+family's own layer group, so they are reachable; what MR4 owed was to reach them.
+
+**And every count over a class this phase widens.** MR3 put ~300 commuter rail names in
+`.stn-label` and six specs' vehicle sentinel counted five rail STATIONS as vehicles; the
+repair then was `:not(.rail)`, an exclusion. MR4 widens three more classes (the ferry's
+dock names join `.stn-label`, AirTrain's stations join `.rail-stn-marker`, and the ferry's
+docks join the station label pane), so every one of those exclusions was wrong again the
+moment this stage drew a dock. That is recorded under the findings below as the stage's own
+carry-forward, and it is paid structurally rather than with a fourth exclusion.
+
+### The pins, and why two of them are new
+
+P1f, P1g, P1h and P1j already held the bus, PATH and ferry marks byte for byte, and MR4 is
+the stage that deliberately moves four of those halves. Their POPUP halves are NOT
+regenerated, for the reason MR2 and MR3 both give about their own: the popups are stage
+MR5, so a popup that moves here is a defect and that claim stays an assertion. It held:
+regenerating the golden moved `census/stock` and `markers/airtrain`, `markers/buses`,
+`markers/ferry` and `markers/path`, and not one `popups/*` key.
+
+| Pin | What it holds |
+| --- | --- |
+| **P4a** | The census of every marker class and every canvas group on the stock world, by class rather than by total: `markerIcons`, the vehicle sentinel, `railStationMarkers`, a per-class tally, and the four label counts as POSITIVE classes. This is the pin that exists because of MR3's carry-forward, and it earned itself on its first outing (below). |
+| **P4b** | The ferry's docked-boat opacity in a healthy world, and **P4b2** the compound on a stale one: 0.55 for docked, 0.45 for a stale under-way boat, and 0.2475 for a boat that is both. The compound is asserted as arithmetic as well as recorded as a golden, so a reader does not have to multiply to see which rule is which. |
+
+**P4b's first draft was a pin that could not fail, and reading the golden after writing it
+is what caught it.** It aged `sources.ferry.fetchedAt` on a loaded page and called
+`refreshAll()`; the next poll answered with the stock envelope and overwrote the edit, so
+the "stale" half came back byte for byte identical to the healthy half. It is two pins now
+and the stale one boots into a world whose envelope is old from its first byte.
+
+### What the marks were, and what they are
+
+The before is the golden as `origin/main` served it; the after is what this branch
+regenerated.
+
+| | before | after |
+| --- | --- | --- |
+| PATH train | a 16x16 diamond, `<path d="M8 1.5 L14.5 8 L8 14.5 L1.5 8 Z" fill=#d93a30 stroke="#fff" stroke-width=1.5>` | the design's diamond, `d="M8 1 L15 8 L8 15 L1 8 Z"` at `stroke-width 1.2`, the fill and the stroke both in an inline STYLE so the stroke can be `var(--paper)`, same 16x16 box and same `[8, 20]` lift |
+| PATH line | one polyline per shape, `weight 2.5 opacity 0.5` | `weight 3.5 opacity 1`, round caps and joins stated rather than inherited, no casing (the one family the design gives none) |
+| PATH station | a canvas `circleMarker` `radius 4 color #fff weight 1.5 fillColor #3d5a80`: an INVERTED fill, chosen so PATH would not be mistaken for a subway station where the two coincide | the subway's LOCAL dot through `stationMarkStyle([], ink, paper)`: `radius 3.5 fillColor var(--ink) stroke false`, and in the canvas theme registry because that fill is a token |
+| ferry boat | a rounded rectangle, `<rect x=1 y=3 width=20 height=8 rx=4 stroke="#fff" stroke-width=1.5>` | a hull, `<path d="M1 3 H21 L17.5 11 H4.5 Z" stroke-width=1>`: a flat deck wider than the keel, which is what the file's own comment had argued for since it was written |
+| ferry route | `weight 2.5 opacity 0.5`, solid | `weight 2 opacity 0.9 dashArray "6 5"`: the dash is the family's signature, and says the service crosses water on no fixed way |
+| ferry dock | `radius 4.5 color #fff weight 1.5 fillColor #0e7490` | `radius 4 color <paper> weight 1.5 fillColor #00839c`, and a permanent name label in `stn-label ferry`: the cyan settles a disagreement the app already had (the feed strip's ferry tick has been `#00839c` since MR1 while the Key's dock glyph was `#0e7490`) |
+| AirTrain station | a 14x14 magenta square, `<rect x=1.5 y=1.5 width=11 height=11 rx=2 fill=#fff stroke=#b5179e stroke-width=2.5>`, class `airtrain-marker` | the commuter square, byte for byte the one the three rail families draw, class `rail-stn-marker rail-airtrain-stn` |
+| AirTrain guideway | `#b5179e`, `weight 3 opacity 0.85`, solid | `var(--scheduled)` resolved at draw (`#6d6e71` light, `#9a9a9a` dark), `weight 3`, `dashArray "8 5"`, and in the theme registry because the colour is the app's rather than a feed's |
+| bus | a 20x20 box: an arrow `d="M10 2 L16 17 L10 13 L4 17 Z"` at `stroke-width 1.2` or a `circle r 5.5`, filled from `routeColor` at `hsl(h, 75%, 40%)` | a 14x14 box for both states: the arrow `d="M7 1 L12 13 L7 10 L2 13 Z"` or a `circle r 3.5`, filled from `busMarkColor` at `hsl(h, 45%, 38%)`, stroked in `var(--paper)` |
+
+And the census, which is the same table read as counts:
+
+| | before | after | why |
+| --- | --- | --- | --- |
+| `markerIcons` | 23 | 23 | no family gained or lost a mark |
+| `vehicleSentinel` | 18 | 15 | AirTrain's three stations stopped being counted as vehicles |
+| `railStationMarkers` | 5 | 8 | the same three, counted as the stations they always were |
+| `stnLabels` | 7 | 9 | the ferry's two dock names, which the design asks for and no dock has ever had |
+| `stnLabelsSubway` | 2 | 2 | **this is the one that caught the carry-forward**: read as `:not(.rail)` it was 4 |
 
 ## Stage MR5: popups
 

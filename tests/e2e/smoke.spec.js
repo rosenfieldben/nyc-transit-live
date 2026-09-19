@@ -302,7 +302,7 @@ test("8. AirTrain: static branches, scheduled popup (not live), toggle", async (
       airtrainStationLayer.getLayers().length === 3 &&
       airtrainRouteLinesLayer.getLayers().length === 2,
   );
-  await expect(page.locator(".airtrain-marker")).toHaveCount(3);
+  await expect(page.locator(".rail-airtrain-stn")).toHaveCount(3);
 
   // Open Federal Circle (fixture order A, B, C -> index 1), served by BOTH branches.
   // The frozen clock (12:00Z == 08:00 America/New_York in July) selects the 7-min band.
@@ -324,10 +324,10 @@ test("8. AirTrain: static branches, scheduled popup (not live), toggle", async (
 
   // Toggle hides then restores the AirTrain layers (square markers + route lines).
   await page.locator("#toggle-airtrain").click();
-  await expect(page.locator(".airtrain-marker")).toHaveCount(0);
+  await expect(page.locator(".rail-airtrain-stn")).toHaveCount(0);
   expect(await page.evaluate(() => map.hasLayer(airtrainRouteLinesLayer))).toBe(false);
   await page.locator("#toggle-airtrain").click();
-  await expect(page.locator(".airtrain-marker")).toHaveCount(3);
+  await expect(page.locator(".rail-airtrain-stn")).toHaveCount(3);
   expect(await page.evaluate(() => map.hasLayer(airtrainRouteLinesLayer))).toBe(true);
 });
 
@@ -971,12 +971,21 @@ test("25. Ferry boat color self-heals once routes load after the boat is first s
 
   // Boats render before the routes: H1 (route ER) wears the neutral fallback color.
   await expect(ferryMarkers(page)).toHaveCount(3);
+  /* THE DRAWN FILL, NOT THE MARKUP, and MR4 is why. The boat used to be a <rect fill="...">
+     and is now a hull <path style="fill: ...; stroke: var(--paper)">, so this reads the
+     COMPUTED fill: an inline style that the browser rejected (an SVG 1.1 presentation
+     attribute carrying a custom property is a silent no-op, which is the defect MR3 measured)
+     would still be there for a markup read to find and would draw nothing. Computed style
+     answers what the rider sees. The hexes are in the comments; getComputedStyle serves rgb. */
   const fillOf = (id) =>
     page.evaluate(
-      (bid) => ferryBoatRecords.get(bid).marker.getElement().querySelector("rect").getAttribute("fill"),
+      (bid) =>
+        getComputedStyle(
+          ferryBoatRecords.get(bid).marker.getElement().querySelector("path"),
+        ).fill,
       id,
     );
-  await expect.poll(() => fillOf("H1")).toBe("#78909c"); // FERRY_FALLBACK_COLOR, routes not loaded
+  await expect.poll(() => fillOf("H1")).toBe("rgb(120, 144, 156)"); // #78909c, routes not loaded
 
   // Let the ferry-routes retry backoff heal exactly as the cold-start spec (test 23)
   // does: attempt 2 at +base (still 503), attempt 3 at +2*base serves the fixture.
@@ -989,7 +998,7 @@ test("25. Ferry boat color self-heals once routes load after the boat is first s
 
   // Same boat, same route_id "ER" the whole time, but it recolored to the real ER
   // color: the guard keyed on the resolved color, not the unchanged id.
-  await expect.poll(() => fillOf("H1")).toBe("#00839c"); // ER route_color, self-healed
+  await expect.poll(() => fillOf("H1")).toBe("rgb(0, 131, 156)"); // #00839c ER, self-healed
   expect(routeCalls).toBe(3); // two 503s then one healed load, then the loader stopped
 });
 

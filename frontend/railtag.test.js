@@ -27,6 +27,8 @@ const {
   positionQualifier,
   markerOpacity,
   staleAge,
+  observationDimAge,
+  AGE_UNKNOWN,
   readableTextOn,
   contrastRatio,
   FEED_STALE_AFTER_S,
@@ -53,7 +55,12 @@ const board = (system, { gated = !UNDATED_SYSTEMS.has(system), pollAge = 0 } = {
 function draw(row, { system = "LIRR", before = null, pollAge = 0 } = {}) {
   const b = board(system, { pollAge });
   const position = positionQualifier(row, b);
-  const age = row.observed_at == null ? (row.provenance === "retained" ? b.pollAge : null) : NOW - row.observed_at;
+  const own = row.observed_at == null ? (row.provenance === "retained" ? b.pollAge : null) : NOW - row.observed_at;
+  // THROUGH THE PRODUCTION RULE, not through a copy of it: observationDimAge is what
+  // vehicleMarkerAge applies for every system, and a test that computed the age itself would
+  // pass while the page dimmed differently. This is what makes the dim column below an oracle
+  // for what a rider sees rather than for what this file believes.
+  const age = observationDimAge(row, own, b.gated);
   return { kind: position.kind, words: position.words, state: railTagState(row, before, position.kind, age), age };
 }
 
@@ -137,7 +144,7 @@ test("MR3 3.1 row 6: an age-gated row with no clock draws an outlined body and r
   // LIRR dates every fix (the freshness contract's 3.3 table), so a reported LIRR row with
   // no observed_at is an ANOMALY in the contract's own words, and clause (c) says it out
   // loud. The tag says it too.
-  const { kind, words, state } = draw({ provenance: "reported", observed_at: null }, { system: "LIRR" });
+  const { kind, words, state, age } = draw({ provenance: "reported", observed_at: null }, { system: "LIRR" });
   assert.equal(kind, "unknown");
   assert.equal(words, "live GPS, age unknown");
   assert.equal(state.body, "outlined");
@@ -147,15 +154,25 @@ test("MR3 3.1 row 6: an age-gated row with no clock draws an outlined body and r
   assert.equal(state.headingTrusted, false);
   assert.match(railTagSvg({ system: "LIRR", code: "BAB", color: "00985F", state, bearing: 42 }), /<circle /);
 
-  /* THE ONE DEVIATION FROM THE TABLE, and it is in the opacity column only. The table says
-     dimmed; this is not, because dimming is markerOpacity's and markerOpacity reads an age,
-     and the whole content of this row is that there is no age. staleAge(null) is false, so
-     dimming here would tell a rider "this is old" about a train whose age the same tag has
-     just said is unknown. The pessimism the row is for is carried by the body and the head
-     instead, which is the stronger statement anyway: outlined and a dot. Asserted rather
-     than left implicit, so that a later stage that decides to dim it has to come here. */
-  assert.equal(state.dim, false);
-  assert.equal(markerOpacity(null), 1);
+  /* AND IT DIMS, which is the operator's ruling on finding N3 and the 6.3 erratum dated
+     2026-09-19 in docs/design/freshness-contract.md. The table said dimmed; the code had fallen
+     into drawing it bright, because staleAge read an age and there was none, so a row the
+     contract itself calls an anomaly rendered exactly like a fix five seconds old.
+
+     DIMMING CARRIES NOT-FRESH, NOT AN AGE. AGE_UNKNOWN is the absence of a clock rather than a
+     large number, and the three assertions below are the whole rule: the row takes that value,
+     staleAge names it stale, and the opacity a rider sees is the contract's 0.45. THE MUTATION
+     IS THE NULL CASE REVERTED, and it kills this. */
+  assert.equal(age, AGE_UNKNOWN);
+  assert.equal(state.dim, true);
+  assert.equal(markerOpacity(age), 0.45);
+  // AND ONLY FOR A ROW THAT WAS OWED A CLOCK. A row with no stamp on a system that dates
+  // nothing keeps its null, which is row 7 and is asserted there too.
+  assert.equal(observationDimAge({ observed_at: null }, null, false), null);
+  // A row that HAS a clock the page could not measure against keeps its null as well: that is a
+  // gap in the page, not an anomaly in the row, and dimming the whole map for it would be the
+  // opposite of honest.
+  assert.equal(observationDimAge({ observed_at: 123 }, null, true), null);
 });
 
 test("MR3 3.1 row 7: an undated Metro-North fix draws solid and live, by policy", () => {

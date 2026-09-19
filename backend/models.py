@@ -574,8 +574,18 @@ class NjtRoute(BaseModel):
 
     WHERE NJ TRANSIT REALLY DOES DIFFER is route_text_color, and in the opposite
     direction from what the old sentence implied: it is empty on all twelve NJT
-    routes, while LIRR and Metro-North fill it on every route. So a renderer can
-    trust a railroad text_color and must compute its own for NJ Transit.
+    routes, while LIRR and Metro-North fill it on every route. So a renderer should
+    PREFER a railroad text_color and must compute its own for NJ Transit.
+
+    MEASURED 2026-09-19, AND "TRUST" WAS TOO STRONG (map redesign stage MR3, finding N1):
+    of the 19 (route_color, route_text_color) pairs the two railroad feeds publish, only
+    ELEVEN carry 4.5:1. Four are a readable fill under an unreadable ink (Babylon 3.71,
+    Oyster Bay 2.92, Long Beach 2.98, Hudson 3.65, all white on a mid-tone) and four are
+    the New Haven family's shared EE0034, which NO ink clears (white 4.48, dark 3.88).
+    So a renderer should PREFER the agency's ink and verify it, which is what the map's
+    railBranchPaint does: it keeps the published ink where it clears, recomputes one where
+    the fill is readable and the ink is not, and moves the FILL one percent only where
+    neither ink can work.
     """
 
     route: str

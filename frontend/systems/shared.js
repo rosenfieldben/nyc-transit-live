@@ -719,7 +719,8 @@ paintViewPresets();
 
      200  tilePane            the basemap
      390  subwayLinePane      OURS. Subway ribbons, and nothing else.
-     400  overlayPane         every other family's route lines, on one shared canvas
+     395  railroadLinePane    OURS. LIRR, Metro-North and NJ Transit branch lines.
+     400  overlayPane         every remaining family's route lines, on one shared canvas
      450  stationPane         OURS. Every family's station dots, on one shared canvas.
      460  stationLabelPane    OURS. Subway station name labels.
      500  shadowPane          Leaflet's marker shadows (unused here)
@@ -743,6 +744,19 @@ paintViewPresets();
    subway is the base network on this map, so its ribbons go under everything, and no fetch
    order can change it. Nothing else moves, which is what MR2's pins require.
 
+   AND MR3 BROUGHT THE SAME DEFECT BACK, WHICH IS WHY THERE IS A SECOND ONE (finding N2). Stage
+   3 gave the three commuter rail families a 5px casing in --paper at 0.9, drawn on the shared
+   canvas, and that is the same shape of mark that made the subway's pane necessary: PATH's
+   33rd St line is weight 3.5, the AirTrain at Howard Beach is 3 and the ferry's routes are 2,
+   all of them thinner than the casing and all of them on one canvas with it. NJ Transit runs
+   into Newark Penn and Hoboken where PATH does, so the overlap is real rather than theoretical,
+   and the arrival order is the same race it always was.
+
+   So the railroads get railroadLinePane at 395: ABOVE the subway, which is still the base
+   network under everything, and BELOW the four families whose lines a 5px casing could erase.
+   The number is between the two rather than at either end because the ordering is a three-way
+   one now, and a pane cannot be shared by families that must not paint over each other.
+
    Station dots sit between the route lines and the vehicles so the station canvas, not the
    route-line canvas it overlaps, receives clicks. Station name labels sit just above the
    dots: a name may cover the dot it names, which is its own station, and may never cover a
@@ -751,6 +765,13 @@ paintViewPresets();
    route-coloured pixels, letter and all. */
 map.createPane("subwayLinePane");
 map.getPane("subwayLinePane").style.zIndex = 390;
+
+// The rail families' own pane, per the order above and finding N2. One canvas for all three,
+// because they draw one grammar and a casing of theirs landing over a sibling's line is the
+// same mark at the same weight: within the pane each branch's casing and line are added back
+// to back, so a branch cannot erase itself either.
+map.createPane("railroadLinePane");
+map.getPane("railroadLinePane").style.zIndex = 395;
 
 map.createPane("stationPane");
 map.getPane("stationPane").style.zIndex = 450;
@@ -1612,7 +1633,14 @@ let nextObservationCrossing = null;
 // the note of when that observation will cross if it has not yet.
 function vehicleMarkerAge(sourceKey, systemAge, row, now = correctedNow()) {
   const source = sourceDescriptor(sourceKey);
-  const own = observationAge(row, source ? source.servedAt : null, now);
+  /* THE 6.3 ERRATUM IS APPLIED HERE, at the one composition every system's dimming goes
+     through, so the rule has one home for all six of them rather than a copy per file. `gated`
+     is read from UNDATED_SYSTEMS through the row's own system, never from its name, which is
+     the same lookup positionQualifier's board makes for the WORDS: the marker and the sentence
+     beside it cannot disagree about whether a clock was owed. A row with no `system` field
+     belongs to a single-feed source and is gated, which is what every one of them is. */
+  const gated = !UNDATED_SYSTEMS.has(row ? row.system : undefined);
+  const own = observationDimAge(row, observationAge(row, source ? source.servedAt : null, now), gated);
   if (own != null && !staleAge(own)) {
     const at = observationStaleAt(row);
     if (at != null && (nextObservationCrossing == null || at < nextObservationCrossing)) {

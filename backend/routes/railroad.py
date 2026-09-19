@@ -54,9 +54,16 @@ async def get_railroad_routes(request: Request, response: Response) -> list[dict
     THE TWO COLOURS ARE THE AGENCY'S OWN, from routes.txt's route_color and
     route_text_color, hex with no leading "#" and null when the feed leaves the
     column blank. Both feeds fill both on every route today, so unlike
-    /api/njt-routes a client here can trust text_color rather than computing its
+    /api/njt-routes a client here should PREFER text_color rather than computing its
     own ink; null still has to be handled, because a future publication may blank
-    a column and the field is not defaulted. ADDITIVE SINCE
+    a column and the field is not defaulted.
+
+    PREFER, NOT TRUST, and that word was corrected rather than left (map redesign
+    stage MR3, finding N1). Measured 2026-09-19: only 11 of the 19 published
+    (colour, ink) pairs carry 4.5:1. Four publish an ink no rider can read on their
+    own colour (Babylon 3.71, Oyster Bay 2.92, Long Beach 2.98, Hudson 3.65) and the
+    New Haven family's shared EE0034 clears with neither white nor dark. A client
+    printing on these has to verify the pair it was given. ADDITIVE SINCE
     claude/railroad-route-colors: a client that predates the two fields is
     unaffected, which matters because this answer is cacheable for an hour.
 

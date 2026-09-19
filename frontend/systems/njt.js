@@ -92,7 +92,7 @@ async function loadNjtRoutes() {
         opacity: 0.9,
         lineCap: "round",
         interactive: false,
-        renderer: lineRenderer,
+        renderer: railroadLineRenderer,
       }).addTo(njtRouteLines);
       L.polyline(points, {
         color,
@@ -100,7 +100,7 @@ async function loadNjtRoutes() {
         opacity: 1,
         lineCap: "round",
         interactive: false,
-        renderer: lineRenderer,
+        renderer: railroadLineRenderer,
       }).addTo(njtRouteLines);
     }
   }

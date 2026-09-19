@@ -1200,8 +1200,55 @@ function systemAges(source, now = Date.now() / 1000) {
 
 // Is this age stale? One predicate so the marker dimming, the popup age line, the
 // glide freeze and the status line can never disagree about the boundary.
+/* 6.3 ERRATUM (MR3, the operator's ruling on finding N3): AN OBSERVATION THAT SHOULD CARRY A
+   CLOCK AND DOES NOT IS NOT FRESH.
+
+   The contract's 3.2 clause (c) already makes a null `observed_at` on an age-gated row SAYABLE
+   ("age unknown"), and calls it an anomaly: "The provider normally dates this and did not." It
+   did not say what such a row is DRAWN as, and the answer the code fell into was "bright",
+   because staleAge read an age and there was none. That made the brief's 3.1 row 6 undrawable
+   and, worse, made a row the contract calls an anomaly render exactly like a fix five seconds
+   old.
+
+   THE RULE IS THAT DIMMING CARRIES NOT-FRESH, NOT AN AGE. A dimmed marker has never meant "this
+   is N seconds old"; it has meant "do not read this as current", which is precisely what an
+   observation with no clock earns on a row whose provider normally sends one. So AGE_UNKNOWN is
+   not a large age, it is the ABSENCE of one, and it is stale by this rule rather than by
+   arithmetic. It is written as its own clause below rather than left to `Infinity >= 90` being
+   true, so the rule is greppable and a reader meets it instead of inferring it.
+
+   WHAT THIS DOES NOT TOUCH. The WORDS are unchanged: positionQualifier already said "age
+   unknown" and still does, and no surface gains or loses a sentence. The position ladder's five
+   states are unchanged, since a step is decided in the backend from the served row and nothing
+   here reaches it (the F01 world's 60/11/6/59/24 are the same before and after). The glide
+   freeze is unchanged: observationStaleAt still returns null for a clockless row, so such a
+   marker freezes on its SYSTEM's deadline exactly as before. This is opacity, and only opacity.
+
+   AND IT DOES NOT REACH A SYSTEM THAT DATES NOTHING. Metro-North's rows are not age-gated, by
+   the 3.3 policy table, so they never take this value: a qualifier a rider sees on all 33
+   Metro-North markers always is one they stop reading, which is the same argument clause (c) is
+   narrow for. `gated` is the caller's, read from UNDATED_SYSTEMS and never from a system's name. */
+const AGE_UNKNOWN = Infinity;
+
 function staleAge(age) {
+  if (age === AGE_UNKNOWN) return true;
   return age != null && age >= FEED_STALE_AFTER_S;
+}
+
+/* The age DIMMING reads, which is the observation's own age or, for the anomaly above,
+   AGE_UNKNOWN. Pure and separate from vehicleMarkerAge (which needs the page's envelope) so the
+   erratum's one rule can be asked directly by a node test.
+
+   IT KEYS ON THE ROW'S OWN STAMP, not on the derived age being null, and the distinction is the
+   point: observationAge also returns null when the page has no envelope to measure against,
+   which is a gap in the PAGE rather than an anomaly in the ROW, and dimming every marker on the
+   map for it would be the opposite of honest. So a row that carries a clock keeps whatever age
+   was computed from it, including none. */
+function observationDimAge(row, observationAge, gated) {
+  if (observationAge != null) return observationAge;
+  const stamp = row ? row.observed_at : null;
+  const dated = typeof stamp === "number" && Number.isFinite(stamp);
+  return !dated && gated ? AGE_UNKNOWN : observationAge;
 }
 
 // The marker opacity a system's age earns: dimmed once stale, otherwise fully
@@ -1215,6 +1262,8 @@ function staleAge(age) {
 // to come from a css class, and an inline opacity written for staleness would have
 // silently overridden it, un-dimming every docked boat the moment C2 started
 // setting opacities.
+// `age` may be AGE_UNKNOWN, which is not an age but the 6.3 erratum's answer for an
+// observation that should have carried a clock and did not; staleAge says why it is stale.
 function markerOpacity(age, base = 1) {
   return base * (staleAge(age) ? STALE_MARKER_OPACITY : 1);
 }
@@ -4627,6 +4676,7 @@ if (typeof module !== "undefined" && module.exports) {
     segmentBearing, railDirectionReverses, railTrainBearing,
     railTagSvg, railTagChevronPath, railStationSvg, RAIL_STATION_BOX, RAIL_STATION_SQUARE,
     railLabelBand, RAIL_LABEL_ZOOM, railroadStationName, railFamilyClass,
+    AGE_UNKNOWN, observationDimAge,
     vehicleStaleLine, composeAnnouncements, withheldTrains, withheldClause,
     thresholdOverrides, CONTRACT_FLAG_PARAM,
     stalePopupLine, STALE_MARKER_OPACITY, FERRY_DOCKED_OPACITY,

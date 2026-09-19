@@ -65,20 +65,21 @@ async function loadRailroadRoutes() {
          so that on the shared canvas, which draws in INSERTION order, a branch's own casing
          can never land after its own line and erase it.
 
-         ON THE SHARED lineRenderer, WHICH IS WHAT THE OPERATOR SPECIFIED for this stage, and
-         it is worth naming what that costs: MR2's F6 found that a 6.5px paper casing drawn
-         after a thin line ERASES it, which is why the subway got a pane of its own. This 5px
-         casing is on the same canvas as PATH's 3.5px line, the AirTrain's 3px and the ferry's
-         2px, and the loaders race, so a rail casing CAN land after one of those and cover it
-         where they overlap. D2u now measures that rather than leaving it to be discovered,
-         and the ledger's round entry states it as a finding with the measurement. */
+         ON railroadLinePane AT 395, which is the operator's ruling on finding N2 and not the
+         shared canvas this was first built on. MR2's F6 found that a 6.5px paper casing drawn
+         after a thin line ERASES it, which is why the subway got a pane of its own; a 5px
+         casing is the same mark one weight down, and PATH's 3.5px line, the AirTrain's 3px and
+         the ferry's 2px are all thinner than it and all on the canvas at 400. NJ Transit runs
+         into Newark Penn and Hoboken where PATH does, so the overlap was real rather than
+         theoretical, and the static loaders land in a race. The pane makes the answer the same
+         in every arrival order; the shared.js pane block carries the whole argument. */
       L.polyline(points, {
         color: "var(--paper)",
         weight: 5,
         opacity: 0.9,
         lineCap: "round",
         interactive: false,
-        renderer: lineRenderer,
+        renderer: railroadLineRenderer,
       }).addTo(railroadLineLayer(route.system));
       L.polyline(points, {
         color: branch,
@@ -86,7 +87,7 @@ async function loadRailroadRoutes() {
         opacity: 1,
         lineCap: "round",
         interactive: false,
-        renderer: lineRenderer,
+        renderer: railroadLineRenderer,
       }).addTo(railroadLineLayer(route.system));
     }
   }

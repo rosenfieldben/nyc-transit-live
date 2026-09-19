@@ -1160,6 +1160,7 @@ test("D2u. the subway's ribbons draw under every other family's lines, whatever 
       counts: Object.fromEntries(Object.entries(families).map(([k, v]) => [k, v.length])),
       zIndex: {
         subwayLinePane: z("subwayLinePane"),
+        railroadLinePane: z("railroadLinePane"),
         overlayPane: z("overlayPane"),
         stationPane: z("stationPane"),
         stationLabelPane: z("stationLabelPane"),
@@ -1181,14 +1182,34 @@ test("D2u. the subway's ribbons draw under every other family's lines, whatever 
   // And every subway ribbon is on that pane while no other family is.
   expect(order.panes.subway).toEqual(["subwayLinePane"]);
   expect(order.counts.subway).toBe(18);
-  /* AT LEAST ONE OTHER FAMILY HAS TO HAVE DRAWN, or the comparison below is a claim about an
-     empty list. The fixture world serves LIRR and Metro-North branches and PATH and ferry
-     routes, so this is a premise assertion rather than a hope; it fails loudly if a future
-     fixture stops serving them and quietly turns this spec into nothing. */
-  const others = ["lirr", "mnr", "njt", "path", "ferry", "airtrain"].filter((f) => order.counts[f] > 0);
-  expect(others.length, `no other family drew a line: ${JSON.stringify(order.counts)}`).toBeGreaterThan(0);
+  /* THREE TIERS NOW, NOT TWO (MR3, the operator's ruling on finding N2). The subway is under
+     everything at 390, the three commuter rail families are at 395, and the families whose thin
+     lines a 5px casing could erase are on the shared canvas at 400. The ordering became a
+     three-way one when MR3 gave the railroads a casing: PATH's line is 3.5px, the AirTrain's 3
+     and the ferry's 2, and NJ Transit runs into Newark Penn and Hoboken where PATH does, so the
+     overlap is real rather than theoretical. */
+  expect(order.zIndex.subwayLinePane).toBeLessThan(order.zIndex.railroadLinePane);
+  expect(order.zIndex.railroadLinePane).toBeLessThan(order.zIndex.overlayPane);
+
+  /* AT LEAST ONE FAMILY IN EACH TIER HAS TO HAVE DRAWN, or the comparisons are claims about
+     empty lists. The fixture world serves LIRR, Metro-North and NJ Transit branches and PATH
+     and ferry routes, so these are premise assertions rather than hopes; they fail loudly if a
+     future fixture stops serving them and quietly turns this spec into nothing.
+
+     NJ TRANSIT WAS MISSING FROM THIS LIST ENTIRELY before MR3, which is worth recording: the
+     `group()` helper reads an undefined layer group as an empty list, so its absence was
+     invisible and it asserted nothing about the one family whose lines run alongside PATH's. */
+  const rail = ["lirr", "mnr", "njt"].filter((f) => order.counts[f] > 0);
+  expect(rail, `a rail family drew no line: ${JSON.stringify(order.counts)}`).toEqual(["lirr", "mnr", "njt"]);
+  for (const family of rail) {
+    expect(order.panes[family], `${family} is on the rail pane`).toEqual(["railroadLinePane"]);
+  }
+
+  const others = ["path", "ferry", "airtrain"].filter((f) => order.counts[f] > 0);
+  expect(others.length, `no thin family drew a line: ${JSON.stringify(order.counts)}`).toBeGreaterThan(0);
   for (const family of others) {
     expect(order.panes[family], `${family} keeps the shared canvas`).not.toContain("subwayLinePane");
+    expect(order.panes[family], `${family} keeps the shared canvas`).not.toContain("railroadLinePane");
     expect(order.panes[family], `${family} is on the shared canvas`).toEqual(["overlayPane"]);
   }
 
@@ -1249,31 +1270,29 @@ test("D2u. the subway's ribbons draw under every other family's lines, whatever 
   // And the shuffle really did shuffle, so this is a claim about order rather than one order.
   expect(new Set(shuffles.map((r) => r.order)).size, "the orders must actually differ").toBeGreaterThan(1);
 
-  /* AND THE ONE THING THIS PIN NOW SHOWS RATHER THAN GUARANTEES. MR3 put a 5px paper casing on
-     the SHARED canvas for the three rail families, which the operator specified ("casing and
-     line per branch on the existing canvas"). The subway's pane makes the subway's casing safe
-     in every permutation, and nothing makes the rail casing safe against PATH's 3.5px line, the
-     AirTrain's 3px or the ferry's 2px: on one canvas the later arrival wins, and the eleven
-     static loaders land in whatever order their responses do. So the relation is asserted as
-     what it is, all four non-subway families on one pane, and the exposure is written down in
-     docs/reviews/map-redesign-rounds.md as a finding with the measurement rather than left for
-     someone to meet on a map. A pane for the rail families, at 395, would close it in one line
-     if the operator wants it closed. */
-  const sharing = await page.evaluate(() => {
+  /* AND THE ARITHMETIC THE THIRD PANE EXISTS FOR, stated rather than implied: there really is a
+     casing wider than a line it shares the map with, and the two are now on different panes. A
+     test that only asserted the panes would still pass if the casing were dropped to 2px and
+     the whole question went away, which is why the weights are read too. */
+  const weights = await page.evaluate(() => {
     const paneOf = (layer) => layer.options.renderer?.options.pane ?? "overlayPane";
-    const rail = [...railroadLineLayer("LIRR").getLayers(), ...railroadLineLayer("MNR").getLayers()];
+    const rail = [
+      ...railroadLineLayer("LIRR").getLayers(),
+      ...railroadLineLayer("MNR").getLayers(),
+      ...njtRouteLines.getLayers(),
+    ];
     const thin = [...pathRouteLines.getLayers(), ...ferryRouteLines.getLayers()];
     return {
       railPanes: [...new Set(rail.map(paneOf))],
       thinPanes: [...new Set(thin.map(paneOf))],
-      railCasings: rail.filter((l) => l.options.weight === 5).length,
+      casings: rail.filter((l) => l.options.weight === 5).length,
       thinnest: Math.min(...thin.map((l) => l.options.weight)),
     };
   });
-  expect(sharing.railCasings, "the rail families draw a casing per branch").toBeGreaterThan(0);
-  expect(sharing.railPanes, "on the shared canvas, as specified").toEqual(["overlayPane"]);
-  expect(sharing.thinPanes, "and so do the thin families").toEqual(["overlayPane"]);
-  expect(sharing.thinnest, "which are thinner than the casing over them").toBeLessThan(5);
+  expect(weights.casings, "the rail families draw a casing per branch").toBeGreaterThan(0);
+  expect(weights.thinnest, "which is wider than a line it shares the map with").toBeLessThan(5);
+  expect(weights.railPanes, "so the casings are on their own pane").toEqual(["railroadLinePane"]);
+  expect(weights.thinPanes, "and cannot reach the lines they would erase").toEqual(["overlayPane"]);
 });
 
 /* ---------------- the ribbons ---------------- */

@@ -194,6 +194,14 @@ const lineRenderer = L.canvas({ padding: 0.3 });
    is the whole reason: one canvas draws its layers in insertion order, the static fetches
    land in a race, and a 6.5px paper casing arriving last erases a 2.5px line beside it. */
 const subwayLineRenderer = L.canvas({ padding: 0.3, pane: "subwayLinePane" });
+
+/* AND THE THREE COMMUTER RAIL FAMILIES DRAW ON THEIRS, at 395, for the same reason one zoom
+   further down the stack: MR3's branch casing is 5px in --paper at 0.9, which is thicker than
+   PATH's 3.5, the AirTrain's 3 and the ferry's 2, and those three share the canvas at 400.
+   Declared here beside its two siblings rather than in systems/railroad.js, because the three
+   renderers are one decision and a reader looking for "which canvas does this family use"
+   should find all of them in one place. Used by systems/railroad.js and systems/njt.js. */
+const railroadLineRenderer = L.canvas({ padding: 0.3, pane: "railroadLinePane" });
 const routeIndex = new Map(); // route_id -> [{ points, cum }] for interpolation
 
 // Every system's static loader (this one and its siblings in the other system

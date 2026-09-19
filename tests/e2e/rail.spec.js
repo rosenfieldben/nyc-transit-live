@@ -139,9 +139,12 @@ test("D3a. each row of the brief's 3.1 table renders the mark the table says", a
     "row2-reported-aged": { body: "solid", head: "filled", shape: "chevron", opacity: 0.45 },
     "row3-estimated": { body: "outlined", head: "filled", shape: "chevron", opacity: 1 },
     "row4-placed": { body: "outlined", head: "outlined", shape: "chevron", opacity: 1 },
-    // ROW 6 REFUSES THE HEADING it could have drawn: this row carries the same anchors as the
-    // five above, so the chevron was available and the table declines it.
-    "row6-unknown-gated": { body: "outlined", head: "outlined", shape: "dot", opacity: 1 },
+    /* ROW 6 REFUSES THE HEADING it could have drawn: this row carries the same anchors as the
+       five above, so the chevron was available and the table declines it. AND IT DIMS, which is
+       the operator's ruling on finding N3 and the 6.3 erratum: an observation that should have
+       carried a clock and did not is not fresh, so dimming carries not-fresh rather than an
+       age. This is the row the whole erratum is about, on the page. */
+    "row6-unknown-gated": { body: "outlined", head: "outlined", shape: "dot", opacity: 0.45 },
     "row7-mnr-undated": { body: "solid", head: "filled", shape: "chevron", opacity: 1 },
   };
   for (const [trip, want] of Object.entries(expected)) {
@@ -333,10 +336,20 @@ test("D3e. every branch line is a casing and a line, in the feed's own colour", 
   // are two different greens and were one hash of a route id before MR3.
   expect(lines.filter((l) => l.weight === 2.5).map((l) => l.color)).toEqual(["#00985F", "#009B3A"]);
   expect(lines.every((l) => l.cap === "round")).toBe(true);
-  /* AND THEY ARE ON THE SHARED CANVAS, ABOVE THE SUBWAY'S PANE, which is the pane order MR2
-     fixed and MR3 does not change. D2u is where the order itself is held across a shuffled
-     insertion sequence; this is the rail families' own row in it. */
-  expect(lines.every((l) => l.pane === "overlayPane")).toBe(true);
+  /* AND THEY ARE ON railroadLinePane, above the subway's 390 and below the shared canvas at
+     400, which is the operator's ruling on finding N2: a 5px casing is thicker than PATH's
+     3.5px line, the AirTrain's 3px and the ferry's 2px, and on one canvas the later arrival
+     wins. D2u holds the ORDER across a shuffled insertion sequence; this is the rail families'
+     own row in it, read off the layers this page actually built. */
+  expect(lines.every((l) => l.pane === "railroadLinePane")).toBe(true);
+  const z = await page.evaluate(() => ({
+    subway: Number(getComputedStyle(map.getPane("subwayLinePane")).zIndex),
+    rail: Number(getComputedStyle(map.getPane("railroadLinePane")).zIndex),
+    overlay: Number(getComputedStyle(map.getPane("overlayPane")).zIndex),
+  }));
+  expect(z.rail).toBe(395);
+  expect(z.subway).toBeLessThan(z.rail);
+  expect(z.rail).toBeLessThan(z.overlay);
 });
 
 test("D3f. Metro-North draws solid and live, and its undated policy is said once on the status line", async ({

@@ -635,6 +635,27 @@ age formatter so the map, the popup, the panel and the live region cannot word t
 differently, which is the discipline `stalePopupLine` was written to enforce and which this
 extends rather than replaces.
 
+**ERRATUM, 2026-09-19 (map redesign stage MR3, the operator's ruling on that stage's finding
+N3): a row that clause (c) applies to is DRAWN as not-fresh, not as fresh.** Clause (c) made an
+undated observation on an age-gated row SAYABLE and did not say what it is drawn as, and the
+answer the code had fallen into was "at full opacity", because `markerOpacity` read an age and
+there was none. So a row this section calls an anomaly rendered exactly like a fix five seconds
+old, and the map redesign's own marker table (brief 3.1, row 6) could not be drawn at all.
+
+**The rule is that dimming carries NOT-FRESH, not an age.** A dimmed marker has never meant
+"this is N seconds old"; it has meant "do not read this as current", which is what an
+observation with no clock earns on a row whose provider normally sends one. `helpers.js`
+`AGE_UNKNOWN` is that value and `staleAge` names it as its own clause rather than leaving it to
+arithmetic; `observationDimAge` decides it, from the ROW's own stamp and its row's `gated` flag.
+
+**What the erratum does not change.** The words: `positionQualifier` said "age unknown" before
+and says it now, and no surface gains or loses a sentence. The position ladder: a step is
+decided in the backend from the served row and nothing here reaches it, so the F01 world's
+counts are the same on both sides of this change. The glide freeze: `observationStaleAt` still
+returns null for a clockless row, so such a marker freezes on its system's deadline exactly as
+before. It is opacity, and only opacity. And it does not reach a non-gated row, so Metro-North's
+33 markers stay bright, for the same reason clause (c) is narrow.
+
 **Clause (c) is narrow on purpose, and this is the amendment Q5 settled.** A provider that
 never dates its observations is not an anomaly, it is a property of the provider, and
 stamping "age unknown" on all 33 Metro-North markers and on its 926 arrival rows would put

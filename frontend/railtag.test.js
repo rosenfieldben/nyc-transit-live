@@ -22,12 +22,16 @@ const {
   railTagChevronPath,
   railStationSvg,
   segmentBearing,
-  railDirectionReverses,
   railTrainBearing,
+  polylineCumLengths,
+  staticPayloadHasField,
   positionQualifier,
   markerOpacity,
+  STALE_MARKER_OPACITY,
   staleAge,
   observationDimAge,
+  observationGated,
+  OBSERVATION_GATED,
   AGE_UNKNOWN,
   readableTextOn,
   contrastRatio,
@@ -61,54 +65,65 @@ function draw(row, { system = "LIRR", before = null, pollAge = 0 } = {}) {
   // pass while the page dimmed differently. This is what makes the dim column below an oracle
   // for what a rider sees rather than for what this file believes.
   const age = observationDimAge(row, own, b.gated);
-  return { kind: position.kind, words: position.words, state: railTagState(row, before, position.kind, age), age };
+  /* `dimmed` IS markerOpacity's ANSWER, NOT A FIELD ON THE STATE (round 4). railTagState used to
+     return a `dim` field and nothing in the app read it: every rail marker's opacity comes from
+     markerOpacity(vehicleMarkerAge(...)) applied to the marker itself. Asserting the table's
+     opacity column against the function that actually dims the marker is the oracle; asserting
+     it against a second copy of staleAge inside the table was a tautology. */
+  return {
+    kind: position.kind,
+    words: position.words,
+    state: railTagState(row, before, position.kind),
+    age,
+    dimmed: markerOpacity(age) < 1,
+  };
 }
 
 /* ---------------- THE STATE TABLE, ONE CASE PER ROW ---------------- */
 
 /* The seven rows of section 3.1 of docs/design/map-redesign/map-redesign-v3-brief.md.
-   Each case names the row, the served row that reaches it, and all four columns. The
-   `dim` column is asserted against markerOpacity as well as against the literal, because
-   dimming is the freshness contract's and this stage may not grow a second dimming rule:
-   the tie below is what kills a tag that dims on its own terms. */
+   Each case names the row, the served row that reaches it, and all four columns. The opacity
+   column is asked of markerOpacity through the `dimmed` field draw() computes, because dimming
+   is the freshness contract's and this stage may not grow a second dimming rule: what the rows
+   below assert is what a rider's marker is actually drawn at. */
 
 test("MR3 3.1 row 1: reported and unqualified draws a solid body, a filled head, and is not dimmed", () => {
-  const { kind, state } = draw({ provenance: "reported", observed_at: NOW - 5 });
+  const { kind, state, dimmed } = draw({ provenance: "reported", observed_at: NOW - 5 });
   assert.equal(kind, ""); // the app's word for "nothing to say", which is row 1
   assert.equal(state.body, "solid");
   assert.equal(state.head, "filled");
   assert.equal(state.headingTrusted, true);
-  assert.equal(state.dim, false);
+  assert.equal(dimmed, false);
   assert.equal(state.row, "reported-unqualified");
 });
 
 test("MR3 3.1 row 2: reported and qualified keeps the solid body and the filled head, and IS dimmed", () => {
-  const { kind, state, age } = draw({ provenance: "reported", observed_at: NOW - 300 });
+  const { kind, state, age, dimmed } = draw({ provenance: "reported", observed_at: NOW - 300 });
   assert.equal(kind, "aged");
   assert.equal(state.body, "solid");
   assert.equal(state.head, "filled");
-  assert.equal(state.dim, true);
-  // The tie: the table's opacity column and the contract's dimming are one rule.
-  assert.equal(state.dim, markerOpacity(age) < 1);
+  assert.equal(dimmed, true);
+  // The tie: the table's opacity column IS the contract's dimming, at the value a rider sees.
+  assert.equal(markerOpacity(age), STALE_MARKER_OPACITY);
 });
 
 test("MR3 3.1 row 3: estimated draws an OUTLINED body and a FILLED head, which is the row the table exists for", () => {
-  const { kind, state } = draw({ provenance: "estimated", observed_at: NOW - 5 });
+  const { kind, state, dimmed } = draw({ provenance: "estimated", observed_at: NOW - 5 });
   assert.equal(kind, "estimated");
   // "we know where it is going but not exactly where it is" (brief 3.1).
   assert.equal(state.body, "outlined");
   assert.equal(state.head, "filled");
   assert.equal(state.headingTrusted, true);
-  assert.equal(state.dim, false);
+  assert.equal(dimmed, false);
 });
 
 test("MR3 3.1 row 4: placed draws an outlined body AND an outlined head", () => {
-  const { kind, state } = draw({ provenance: "placed", observed_at: NOW - 5 });
+  const { kind, state, dimmed } = draw({ provenance: "placed", observed_at: NOW - 5 });
   assert.equal(kind, "placed");
   assert.equal(state.body, "outlined");
   assert.equal(state.head, "outlined");
   assert.equal(state.headingTrusted, true);
-  assert.equal(state.dim, false);
+  assert.equal(dimmed, false);
 });
 
 test("MR3 3.1 row 5: retained wears whatever the last state was, dimmed", () => {
@@ -118,13 +133,13 @@ test("MR3 3.1 row 5: retained wears whatever the last state was, dimmed", () => 
   assert.equal(wasReported.kind, "retained");
   assert.equal(wasReported.state.body, "solid");
   assert.equal(wasReported.state.head, "filled");
-  assert.equal(wasReported.state.dim, true);
+  assert.equal(wasReported.dimmed, true);
 
   // Retained after a placement: outlined and outlined, as it was drawn.
   const wasPlaced = draw(row, { before: "placed", pollAge: 300 });
   assert.equal(wasPlaced.state.body, "outlined");
   assert.equal(wasPlaced.state.head, "outlined");
-  assert.equal(wasPlaced.state.dim, true);
+  assert.equal(wasPlaced.dimmed, true);
 
   // Retained after an estimate keeps the estimate's disagreeing pair.
   const wasEstimated = draw(row, { before: "estimated", pollAge: 300 });
@@ -144,7 +159,7 @@ test("MR3 3.1 row 6: an age-gated row with no clock draws an outlined body and r
   // LIRR dates every fix (the freshness contract's 3.3 table), so a reported LIRR row with
   // no observed_at is an ANOMALY in the contract's own words, and clause (c) says it out
   // loud. The tag says it too.
-  const { kind, words, state, age } = draw({ provenance: "reported", observed_at: null }, { system: "LIRR" });
+  const { kind, words, state, age, dimmed } = draw({ provenance: "reported", observed_at: null }, { system: "LIRR" });
   assert.equal(kind, "unknown");
   assert.equal(words, "live GPS, age unknown");
   assert.equal(state.body, "outlined");
@@ -164,7 +179,9 @@ test("MR3 3.1 row 6: an age-gated row with no clock draws an outlined body and r
      staleAge names it stale, and the opacity a rider sees is the contract's 0.45. THE MUTATION
      IS THE NULL CASE REVERTED, and it kills this. */
   assert.equal(age, AGE_UNKNOWN);
-  assert.equal(state.dim, true);
+  assert.equal(staleAge(age), true);
+  assert.equal(dimmed, true);
+  assert.equal(markerOpacity(age), STALE_MARKER_OPACITY);
   assert.equal(markerOpacity(age), 0.45);
   // AND ONLY FOR A ROW THAT WAS OWED A CLOCK. A row with no stamp on a system that dates
   // nothing keeps its null, which is row 7 and is asserted there too.
@@ -181,23 +198,33 @@ test("MR3 3.1 row 7: an undated Metro-North fix draws solid and live, by policy"
   // row that is row 6 on the LIRR is row 1 on Metro-North. Asked as its own case because it
   // is a policy, and a change that left rows 1 through 6 alone could still break it.
   assert.equal(UNDATED_SYSTEMS.has("MNR"), true);
-  const { kind, words, state } = draw({ provenance: "reported", observed_at: null }, { system: "MNR" });
+  const { kind, words, state, dimmed } = draw({ provenance: "reported", observed_at: null }, { system: "MNR" });
   assert.equal(kind, "");
   assert.equal(words, "live GPS");
   assert.equal(state.body, "solid");
   assert.equal(state.head, "filled");
   assert.equal(state.headingTrusted, true);
-  assert.equal(state.dim, false);
+  assert.equal(dimmed, false);
 });
 
-test("MR3 3.1: the table's dim column is the freshness contract's, at the threshold and on both sides of it", () => {
-  // Not a row of the table but the rule under its opacity column, asked where it turns over.
-  // A second dimming rule inside the tag would pass every row above and fail here.
+test("MR3 3.1: the opacity column is the freshness contract's, at the threshold and on both sides", () => {
+  /* Not a row of the table but the rule under its opacity column, asked where it turns over,
+     and asked of the ONE function that dims a marker. The table holds no opacity of its own
+     (round 4): railTagState returns no dim field, so there is no second rule to drift. The
+     assertion that a tag cannot dim on its own terms is therefore structural rather than
+     numeric, and it is the one below about the returned keys. */
   for (const age of [0, 1, FEED_STALE_AFTER_S - 1, FEED_STALE_AFTER_S, FEED_STALE_AFTER_S + 1, 10_000]) {
-    const state = railTagState({ provenance: "reported" }, null, staleAge(age) ? "aged" : "", age);
-    assert.equal(state.dim, staleAge(age), `age ${age}`);
-    assert.equal(state.dim, markerOpacity(age) < 1, `age ${age} disagrees with markerOpacity`);
+    assert.equal(markerOpacity(age) < 1, staleAge(age), `age ${age}`);
+    assert.equal(markerOpacity(age), staleAge(age) ? STALE_MARKER_OPACITY : 1, `age ${age}`);
   }
+  /* THE TABLE CARRIES NO OPACITY AND NO AGE, asserted on the keys themselves. This is the
+     mutation "put dim back": a field here is a second dimming rule, and the three commits it
+     lived for are how the row 6 argument in helpers.js came to contradict the operator's own
+     ruling on N3. railTagState's arity is asserted too, so an age parameter cannot return
+     silently and go unread. */
+  const keys = Object.keys(railTagState({ provenance: "reported" }, null, "")).sort();
+  assert.deepEqual(keys, ["body", "head", "headingTrusted", "row"]);
+  assert.equal(railTagState.length, 1);
 });
 
 test("MR3 3.1: the body is railroadHollow's answer, and row 6 is the only place it is not", () => {
@@ -213,7 +240,7 @@ test("MR3 3.1: the body is railroadHollow's answer, and row 6 is the only place 
     for (const before of BEFORES) {
       for (const kind of ["", "aged", "estimated", "placed", "retained", "unknown"]) {
         const row = { provenance };
-        const state = railTagState(row, before, kind, 5);
+        const state = railTagState(row, before, kind);
         const hollow = railroadHollow(row, before);
         if (kind === "unknown" && !hollow) {
           // ROW 6: railroadHollow says solid (the provenance is `reported`) and the table says
@@ -231,14 +258,56 @@ test("MR3 3.1: the body is railroadHollow's answer, and row 6 is the only place 
   assert.equal(exceptions, 5);
 });
 
+/* ---------------- R-d: the deploy boundary on a cached static payload ---------------- */
+
+test("MR3 R-d: a routes payload is re-read once when the field this stage needs is absent from all of it", () => {
+  /* THE PREDICATE THAT DECIDES THE RE-READ. systems/shared.js's fetchRoutesPayload does the
+     fetching and cannot be asked in node; this is the judgement it makes, and it is the part that
+     can be wrong. /api/njt-routes is static-derived under an hour-long cache, so on the deploy
+     that adds route_short_name a browser can hold a well formed payload without it and every NJ
+     Transit tag prints "9" instead of "NEC" for up to an hour. */
+  const withField = [{ route: "9", short_name: "NEC" }, { route: "17" }];
+  const withoutField = [{ route: "9" }, { route: "17" }];
+  assert.equal(staticPayloadHasField(withField, "short_name"), true);
+  assert.equal(staticPayloadHasField(withoutField, "short_name"), false);
+
+  /* SOME, NOT EVERY, and this is the assertion that keeps the re-read from being permanent.
+     Route 17 is the event-only Meadowlands line: it has no trips in an ordinary publication, so
+     it never reaches this endpoint with a short name, and a predicate keyed on EVERY entry would
+     re-read past the cache on every single load forever. `withField` above is exactly that shape
+     and must read true. THIS IS THE MUTATION: some -> every. */
+  assert.equal(staticPayloadHasField([{ short_name: "NEC" }, {}, {}], "short_name"), true);
+
+  // A NULL VALUE IS ABSENT. A backend that knows a nullable column and has nothing to put in it
+  // serves null, which is indistinguishable here from one that never heard of the field, and the
+  // pessimistic reading costs one request where the optimistic one would skip the re-read on the
+  // exact shape a half-rolled deploy of a nullable column takes.
+  assert.equal(staticPayloadHasField([{ color: null }, { color: null }], "color"), false);
+  assert.equal(staticPayloadHasField([{ color: null }, { color: "00985F" }], "color"), true);
+
+  // AND NOTHING IS NOT A PAYLOAD. An empty array is the warming state the loaders already retry
+  // on and a null is a failed read: neither is a payload missing a field, and re-reading either
+  // past the cache would be a request spent on a question that is not being asked.
+  assert.equal(staticPayloadHasField([], "color"), false);
+  assert.equal(staticPayloadHasField(null, "color"), false);
+  assert.equal(staticPayloadHasField(undefined, "color"), false);
+  assert.equal(staticPayloadHasField([null, undefined], "color"), false);
+  // No field named means nothing to check, which is how a caller that needs no new field opts out.
+  assert.equal(staticPayloadHasField([{ a: 1 }], ""), false);
+});
+
 /* ---------------- the code table ---------------- */
 
 test("MR3 codes: the LIRR and Metro-North tables are keyed by NAME and cover every route the feeds serve", () => {
-  // Twelve LIRR branches and six Metro-North lines (brief 6.1 and 6.2), which is what the
-  // live feeds carry. The count is asserted so a row cannot be dropped silently.
-  assert.equal(Object.keys(RAIL_BRANCH_CODES.LIRR).length, 12);
+  /* THIRTEEN LIRR branches and six Metro-North lines. The brief's 6.1 lists twelve and says
+     "There is no route 11"; the live feed serves route 11, Belmont Park, colour 60269E, which
+     the operator's ruling R-c settles as BEL. docs/design/map-redesign/map-redesign-v3-brief.md
+     carries a dated note saying so rather than having the claim edited away. The count is
+     asserted so a row cannot be dropped silently, and it is what caught this. */
+  assert.equal(Object.keys(RAIL_BRANCH_CODES.LIRR).length, 13);
   assert.equal(Object.keys(RAIL_BRANCH_CODES.MNR).length, 6);
   assert.equal(railBranchCode("LIRR", "1", "Babylon Branch"), "BAB");
+  assert.equal(railBranchCode("LIRR", "11", "Belmont Park"), "BEL");
   assert.equal(railBranchCode("LIRR", "12", "City Terminal Zone"), "CTZ");
   assert.equal(railBranchCode("LIRR", "13", "Greenport Service"), "GRN");
   assert.equal(railBranchCode("MNR", "3", "New Haven"), "NH");
@@ -380,7 +449,7 @@ test("MR3 tag width: the agency block is the agency's and the branch block is th
 test("MR3 tag markup: the body, the head and the box say what the state said", () => {
   const solidFilled = railTagSvg({
     system: "LIRR", code: "BAB", color: "00985F", textColor: "FFFFFF",
-    state: railTagState({ provenance: "reported" }, null, "", 5), bearing: 90,
+    state: railTagState({ provenance: "reported" }, null, ""), bearing: 90,
   });
   // The box is 30 tall and the head is centred on y 21, which is what puts it on the track.
   assert.match(solidFilled, /viewBox="0 0 35 30"/);
@@ -399,7 +468,7 @@ test("MR3 tag markup: the body, the head and the box say what the state said", (
 
   const outlinedFilled = railTagSvg({
     system: "NJT", code: "NEC", color: "DD3439",
-    state: railTagState({ provenance: "estimated" }, null, "estimated", 5), bearing: 180,
+    state: railTagState({ provenance: "estimated" }, null, "estimated"), bearing: 180,
   });
   assert.match(outlinedFilled, /class="rail-tag rail-tag-outlined rail-head-filled"/);
   assert.match(outlinedFilled, /stroke-width="1\.2"/); // the outlined box's stroke
@@ -410,7 +479,7 @@ test("MR3 tag markup: the body, the head and the box say what the state said", (
   // angle would be a heading we do not have.
   const noHeading = railTagSvg({
     system: "MNR", code: "HUD", color: "009B3A",
-    state: railTagState({ provenance: "reported" }, null, "", 5), bearing: null,
+    state: railTagState({ provenance: "reported" }, null, ""), bearing: null,
   });
   assert.match(noHeading, /<circle /);
   assert.doesNotMatch(noHeading, /<path /);
@@ -451,42 +520,57 @@ test("MR3 bearing: a segment's azimuth is degrees clockwise from north", () => {
   assert.ok(diagonal > 30 && diagonal < 45, `equal deltas read ${diagonal}`);
 });
 
-test("MR3 bearing: the SERVED direction decides the sign, and only 'Inbound' reverses", () => {
-  assert.equal(railDirectionReverses("Inbound"), true);
-  assert.equal(railDirectionReverses("inbound"), true);
-  assert.equal(railDirectionReverses(" Inbound "), true);
-  assert.equal(railDirectionReverses("Outbound"), false);
-  assert.equal(railDirectionReverses(null), false);
-  assert.equal(railDirectionReverses(undefined), false);
-  // NOT A HEADSIGN. v3.1 overrules v2's `headsign === "New York"` in as many words, and NJ
-  // Transit serves no direction field at all, so a headsign must never reach this.
-  assert.equal(railDirectionReverses("New York"), false);
-  assert.equal(railDirectionReverses("New York Penn Station"), false);
-});
+/* A REAL SLICE, built the way computeRouteSlice returns one: the WHOLE branch polyline, its
+   cumulative lengths, and the interval [s0, s1] the train is travelling along. `points` is NOT
+   the two-point chord the train sits on, which is the shape the first draft of these tests used
+   and the reason a defect survived them (see the ledger's round 4 entry). */
+function slice(points, from = 0, to = null) {
+  const cum = polylineCumLengths(points);
+  return { points, cum, s0: from, s1: to == null ? cum[cum.length - 1] : to };
+}
 
-test("MR3 bearing: a slice is already prev-to-next, and Inbound turns it around", () => {
-  const northbound = { points: [[40.70, -74.0], [40.80, -74.0]] };
-  // Outbound: the slice's own direction, untouched.
-  assert.equal(
-    Math.round(railTrainBearing({ _route: northbound, direction: "Outbound", latitude: 40.75, longitude: -74.0 })),
-    0,
-  );
-  // Inbound: the same slice, reversed. THIS IS THE SIGN TEST, and the mutation it kills is
-  // dropping the reversal.
-  assert.equal(
-    Math.round(railTrainBearing({ _route: northbound, direction: "Inbound", latitude: 40.75, longitude: -74.0 })),
-    180,
-  );
-  // The two differ by exactly half a turn, which is the property, not the two numbers.
-  const out = railTrainBearing({ _route: northbound, direction: "Outbound" });
-  const inb = railTrainBearing({ _route: northbound, direction: "Inbound" });
-  assert.equal((inb - out + 360) % 360, 180);
+test("MR3 bearing: s0 to s1 IS the direction of travel, and the direction WORD does not turn it", () => {
+  /* THE OPERATOR'S RULING R-a, and the defect it repairs. computeRouteSlice hands back the
+     whole branch polyline plus the interval the train occupies, and trainLatLng interpolates
+     s0 + (s1 - s0) * f: s0 -> s1 is therefore the way the train is MOVING by construction,
+     whichever way the agency happened to wind that branch's shape. Reversing it on the served
+     direction word turned every inbound train around, because the word had already been spent
+     when the interval was built. */
+  const north = slice([[40.70, -74.0], [40.80, -74.0]]);
+  const south = slice([[40.80, -74.0], [40.70, -74.0]]);
+  for (const direction of ["Outbound", "Inbound", "inbound", " Inbound ", null, undefined]) {
+    assert.equal(
+      Math.round(railTrainBearing({ _route: north, direction, latitude: 40.75, longitude: -74.0 })),
+      0,
+      `north slice, direction ${String(direction)}`,
+    );
+    assert.equal(
+      Math.round(railTrainBearing({ _route: south, direction, latitude: 40.75, longitude: -74.0 })),
+      180,
+      `south slice, direction ${String(direction)}`,
+    );
+  }
+  // NOT A HEADSIGN EITHER. v3.1 overrules v2's `headsign === "New York"` in as many words, and
+  // NJ Transit serves no direction field at all, so no word of any kind may reach the geometry.
+  assert.equal(Math.round(railTrainBearing({ _route: north, direction: "New York" })), 0);
+
+  /* THE INTERVAL IS READ, NOT THE WHOLE LINE. A branch that turns has a different azimuth on
+     each leg, so a train on the second leg must take the second leg's. This is the assertion
+     that fails if railTrainBearing goes back to points[0] -> points[points.length - 1]. */
+  const bend = [[40.70, -74.0], [40.80, -74.0], [40.80, -73.9]];
+  const cum = polylineCumLengths(bend);
+  const onFirstLeg = railTrainBearing({ _route: slice(bend, 0, cum[1]) });
+  const onSecondLeg = railTrainBearing({ _route: slice(bend, cum[1], cum[2]) });
+  assert.equal(Math.round(onFirstLeg), 0);
+  assert.equal(Math.round(onSecondLeg), 90);
+  const endToEnd = railTrainBearing({ _route: slice(bend) });
+  assert.ok(Math.round(endToEnd) > 0 && Math.round(endToEnd) < 90, `end to end reads ${endToEnd}`);
 });
 
 test("MR3 bearing: the served bearing wins, the anchors are next, and nothing left is a dot", () => {
   // 1. A GPS train that sent a bearing: used as served, and NEVER reversed, because a served
   // bearing is already the way the train points and reversing it turns the train around.
-  const served = { bearing: 45, direction: "Inbound", _route: { points: [[40.7, -74.0], [40.8, -74.0]] } };
+  const served = { bearing: 45, direction: "Inbound", _route: slice([[40.7, -74.0], [40.8, -74.0]]) };
   assert.equal(railTrainBearing(served), 45);
   assert.equal(railTrainBearing({ bearing: 370 }), 10); // normalised into [0, 360)
   assert.equal(railTrainBearing({ bearing: -90 }), 270);
@@ -494,12 +578,21 @@ test("MR3 bearing: the served bearing wins, the anchors are next, and nothing le
   // which serves no direction word at all, so the anchors ARE the served direction.
   const anchored = { prev_lat: 40.70, prev_lon: -74.0, latitude: 40.80, longitude: -74.0 };
   assert.equal(Math.round(railTrainBearing(anchored)), 0);
-  assert.equal(Math.round(railTrainBearing({ ...anchored, direction: "Inbound" })), 180);
+  /* AND "Inbound" DOES NOT TURN IT EITHER, which is the correction R-a orders and the line
+     this file had asserting 180 over a pair whose true azimuth is 0. prev_lat/prev_lon is
+     where the train WAS and latitude/longitude is where it IS, so the pair is travel-directed
+     the same way the slice's interval is, and reversing it pointed every inbound NJ Transit
+     train backwards. A test that asserts the defect is worse than no test: it makes the bug
+     load-bearing. Recorded as such in docs/reviews/map-redesign-rounds.md. */
+  assert.equal(Math.round(railTrainBearing({ ...anchored, direction: "Inbound" })), 0);
   // 3. Nothing to say: a reported fix with no bearing, no slice and no anchors.
   assert.equal(railTrainBearing({ provenance: "reported", latitude: 40.7, longitude: -74.0 }), null);
   assert.equal(railTrainBearing({}), null);
   assert.equal(railTrainBearing(null), null);
   // A one-point slice is not a direction, and falls through to the anchors rather than
   // reading points[0] twice.
-  assert.equal(railTrainBearing({ _route: { points: [[40.7, -74.0]] }, ...anchored }), 0);
+  assert.equal(railTrainBearing({ _route: slice([[40.7, -74.0]]), ...anchored }), 0);
+  // A slice with no measured interval is not a direction either: s0 and s1 are what make it
+  // travel-directed, so without them there is nothing to read and the anchors answer.
+  assert.equal(railTrainBearing({ _route: { points: [[40.7, -74.0], [40.6, -74.0]] }, ...anchored }), 0);
 });

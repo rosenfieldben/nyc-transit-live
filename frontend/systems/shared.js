@@ -590,8 +590,14 @@ function paintZoomBand() {
      instead of showing nothing from 12. Before any station has loaded there are no labels
      either way, so the first paint is unaffected and loadStations calls this again when they
      arrive. */
-  const labels = document.querySelectorAll(".stn-label").length;
-  const hubs = document.querySelectorAll(".stn-label.hub").length;
+  /* :not(.rail) ON BOTH COUNTS (MR3 round 4). The sentinel asks "has the SUBWAY loaded, and
+     does it publish any interchange", and MR3 put ~300 commuter-rail labels in the same class.
+     Counted together, a page with rail labels and no subway labels reads as "subway loaded,
+     zero hubs", which is LABEL_NO_HUB_ZOOM's degraded band: every subway name from 13 instead
+     of hubs from 12, on a map whose subway index is merely still in flight. The rail labels
+     cannot answer a question about the subway, so they are not asked. */
+  const labels = document.querySelectorAll(".stn-label:not(.rail)").length;
+  const hubs = document.querySelectorAll(".stn-label.hub:not(.rail)").length;
   document.documentElement.setAttribute("data-zoom", String(zoom));
   document.documentElement.setAttribute("data-label-band", labelZoomBand(zoom, !labels || hubs > 0));
   // MR3's rail names, on their own attribute because the two bands overlap and one attribute
@@ -631,7 +637,16 @@ if (namesToggleEl) {
        this control did not. The labels are aria-hidden by design, so for a screen reader this
        sentence is the ONLY evidence the press did anything; and at a zoom where no name can
        show, it is the only thing that stops the button claiming an effect it does not have. */
-    announcePage(namesToggleAnnouncement(!on, document.documentElement.getAttribute("data-label-band")));
+    /* BOTH BANDS (MR3 round 4): rail names show from zoom 11 and are hidden by this same
+       press, so the subway's band alone would have the sentence say "none at this zoom" over a
+       screen full of commuter-rail names it had just switched off. */
+    announcePage(
+      namesToggleAnnouncement(
+        !on,
+        document.documentElement.getAttribute("data-label-band"),
+        document.documentElement.getAttribute("data-rail-label-band"),
+      ),
+    );
   });
 }
 paintZoomBand();
@@ -719,6 +734,7 @@ paintViewPresets();
 
      200  tilePane            the basemap
      390  subwayLinePane      OURS. Subway ribbons, and nothing else.
+     394  railroadCasingPane  OURS. The three rail families' paper casings, and nothing else.
      395  railroadLinePane    OURS. LIRR, Metro-North and NJ Transit branch lines.
      400  overlayPane         every remaining family's route lines, on one shared canvas
      450  stationPane         OURS. Every family's station dots, on one shared canvas.
@@ -757,6 +773,25 @@ paintViewPresets();
    The number is between the two rather than at either end because the ordering is a three-way
    one now, and a pane cannot be shared by families that must not paint over each other.
 
+   AND A SECOND RAIL PANE AT 394, BECAUSE ONE WAS NOT ENOUGH (round 4). Putting all three rail
+   families on ONE canvas closed the defect against PATH, the AirTrain and the ferry and reopened
+   it INSIDE the pane. subway.js's answer to this is two passes over one payload, every casing
+   then every line, and that works there because the subway's geometry arrives in a SINGLE
+   response. The rail families' does not: /api/railroad-routes and /api/njt-routes are two
+   endpoints, kicked off together, landing in a race, and each one can only order its own lines.
+   Measured on the hermetic world: the draw chain came out [5, 5, 2.5, 2.5, 5, 5, 5, 2.5, 2.5,
+   2.5], so all three NJ Transit casings were stroked after both railroad lines, and an NJT casing
+   crossing an LIRR line at Penn erased it. Two passes per loader cannot fix that, because neither
+   loader knows whether the other has run.
+
+   A SECOND PANE CAN, and it is the same remedy one number down: every casing on 394 and every
+   line on 395, so the relation holds in EVERY arrival order rather than in the order that
+   happened. Nothing is lost by splitting them. A casing landing over another casing is invisible
+   (one weight, one paper colour, one opacity), and the pane a mark belongs to is not the layer
+   group that toggles it, so LIRR, Metro-North and NJ Transit each still show and hide their
+   casing and their line together. Two adjacent panes for one drawing is the cost, and it is the
+   only structure here that does not depend on which response arrives first.
+
    Station dots sit between the route lines and the vehicles so the station canvas, not the
    route-line canvas it overlaps, receives clicks. Station name labels sit just above the
    dots: a name may cover the dot it names, which is its own station, and may never cover a
@@ -766,10 +801,15 @@ paintViewPresets();
 map.createPane("subwayLinePane");
 map.getPane("subwayLinePane").style.zIndex = 390;
 
-// The rail families' own pane, per the order above and finding N2. One canvas for all three,
-// because they draw one grammar and a casing of theirs landing over a sibling's line is the
-// same mark at the same weight: within the pane each branch's casing and line are added back
-// to back, so a branch cannot erase itself either.
+/* The rail families' two panes, per the order above: finding N2 put them above the subway and
+   below the thin families, and round 4 split the casing off the line. ONE PAIR FOR ALL THREE
+   FAMILIES, because they draw one grammar, and the split is what makes the answer independent of
+   which of the two route endpoints answers first. The casing pane holds nothing but 5px paper at
+   0.9, so order within it cannot matter; the line pane holds nothing but 2.5px branch colours, so
+   no casing can be on the wrong side of a line anywhere. */
+map.createPane("railroadCasingPane");
+map.getPane("railroadCasingPane").style.zIndex = 394;
+
 map.createPane("railroadLinePane");
 map.getPane("railroadLinePane").style.zIndex = 395;
 
@@ -1635,11 +1675,11 @@ function vehicleMarkerAge(sourceKey, systemAge, row, now = correctedNow()) {
   const source = sourceDescriptor(sourceKey);
   /* THE 6.3 ERRATUM IS APPLIED HERE, at the one composition every system's dimming goes
      through, so the rule has one home for all six of them rather than a copy per file. `gated`
-     is read from UNDATED_SYSTEMS through the row's own system, never from its name, which is
-     the same lookup positionQualifier's board makes for the WORDS: the marker and the sentence
-     beside it cannot disagree about whether a clock was owed. A row with no `system` field
-     belongs to a single-feed source and is gated, which is what every one of them is. */
-  const gated = !UNDATED_SYSTEMS.has(row ? row.system : undefined);
+     comes from OBSERVATION_GATED, the contract's 3.3 table transcribed and keyed by the family
+     this layer already names, so the answer is a decision rather than a side effect of which
+     models happen to carry a `system` field (which is what the first cut of this line read, and
+     it was right by accident). helpers.js carries the table and the argument. */
+  const gated = observationGated(sourceKey, row);
   const own = observationDimAge(row, observationAge(row, source ? source.servedAt : null, now), gated);
   if (own != null && !staleAge(own)) {
     const at = observationStaleAt(row);
@@ -1653,6 +1693,64 @@ function vehicleMarkerAge(sourceKey, systemAge, row, now = correctedNow()) {
 // Has an observation crossed since the sweeps last ran? The animation tick's question.
 function observationCrossed(now) {
   return nextObservationCrossing != null && now >= nextObservationCrossing;
+}
+
+/* ---------------- MR3 (R-d): ONE RE-READ OF A STATIC PAYLOAD THAT IS MISSING A FIELD -------
+
+   THE PROBLEM, which is a deploy problem rather than a code one. /api/railroad-routes and
+   /api/njt-routes are static-derived and served under an hour-long cache. A release that adds a
+   FIELD to one of them (this stage needs route_short_name on the NJT payload; the branch before
+   it added color and text_color to the railroad one) ships a frontend that reads the new field
+   against a response the browser or an intermediary may hold from before the backend rolled. The
+   payload is well formed and the field is simply absent, so nothing errors: every NJ Transit tag
+   silently prints a route id where it should print NEC, for up to an hour, on exactly the deploy
+   the feature ships in.
+
+   THE ANSWER THE OPERATOR RULED (R-d): re-read the payload ONCE with cache "reload", which
+   bypasses the HTTP cache for that one request, and then fall back to the id if the field is
+   still absent. Not a poll and not a retry loop: "reload" either reaches a backend that has the
+   field or reaches one that does not, and a second attempt cannot change which. The fallback is
+   already correct on its own terms (railBranchCode returns the id for a route it cannot name),
+   so this buys correctness on the deploy boundary and costs one extra request there.
+
+   ONCE, AND ONLY WHEN THE FIELD IS ABSENT FROM EVERY ENTRY. A payload where SOME entries carry
+   it is a payload from a backend that knows the field, and the entries without it are the feed's
+   own gaps: NJ Transit's route 17 has no trips in an ordinary publication and the railroads
+   publish no colour for some routes. Re-reading for those would re-read forever.
+
+   A FOLLOW-UP, NOT A FIX: a version stamp on the static-derived endpoints would let the frontend
+   ASK whether the payload predates the field instead of inferring it from absence. Recorded as
+   such in docs/reviews/map-redesign-rounds.md under Stage MR3. */
+// The predicate is in helpers.js (staticPayloadHasField), because it is pure and node asks it
+// directly; only the fetch, which needs the page, is here.
+
+// The routes payload, re-read once past the HTTP cache when `field` is absent from every entry.
+// Returns null for a state the caller should retry (a warming 503, a network error, an empty
+// payload is the caller's own judgement), and the parsed payload otherwise.
+async function fetchRoutesPayload(url, field) {
+  const read = async (init) => {
+    const res = await fetch(url, { ...init, signal: AbortSignal.timeout(FETCH_DEADLINE_MS) });
+    if (!res.ok) return null; // warming 503 (or transient error): the caller retries
+    return res.json();
+  };
+  let routes;
+  try {
+    routes = await read({});
+  } catch {
+    return null;
+  }
+  if (routes == null) return null;
+  if (!field || staticPayloadHasField(routes, field)) return routes;
+  /* THE ONE RE-READ. A failure here keeps the payload we already have rather than discarding it:
+     a cached response missing one field still draws every line, every colour and every station,
+     and throwing it away to retry the whole loader would trade a fallback code for no map. */
+  try {
+    const fresh = await read({ cache: "reload" });
+    if (fresh != null) return fresh;
+  } catch {
+    /* keep what we have */
+  }
+  return routes;
 }
 
 /* ---------------- A2: the one place a map marker is born ---------------- */

@@ -427,9 +427,21 @@ function railLabelBand(zoom) {
    silence, so the toggle says which of the three it is. THE BACKEND HALF IS NOT THIS
    BRANCH'S: the railroad warmup gates its ready on a non-empty index and the subway warmup
    does not, and that is one line in a file this stage does not touch. */
-function namesToggleAnnouncement(on, band) {
+/* MR3 round 4: EVERY BAND IT IS GIVEN, not the subway's alone. The toggle hides commuter-rail
+   names too (style.css's `:root[data-labels="off"] .stn-label.rail`), and the two bands do not
+   agree: rail names show from zoom 11 and the subway's first band opens at 12. Reading only the
+   subway's, the sentence said "none at this zoom, zoom in to see them" at zoom 11 while the
+   press had just hidden or revealed every rail name on screen, which is the one thing this
+   sentence exists to prevent. Variadic rather than a second named parameter so that stage 4's
+   families can be added at the call site without touching the grammar.
+
+   NO BANDS AT ALL IS "ON", NOT "NONE". [].every() is vacuously true, so the obvious spelling
+   would make a caller that passes nothing claim the zoom shows no names. A caller that names no
+   band has told us nothing about the zoom, and the unqualified sentence is the honest answer. */
+function namesToggleAnnouncement(on, ...bands) {
   if (!on) return "Station names off.";
-  if (band === "none") return "Station names on; none at this zoom, zoom in to see them.";
+  const shown = bands.filter((band) => band !== "none");
+  if (bands.length && !shown.length) return "Station names on; none at this zoom, zoom in to see them.";
   return "Station names on.";
 }
 
@@ -909,6 +921,29 @@ const FEED_STALE_AFTER_S = THRESHOLD_OVERRIDES.feed ?? PRODUCTION_FEED_STALE_AFT
 // in map.js would not be a binding those earlier files can see).
 const FETCH_DEADLINE_MS = 15000;
 
+/* MR3 (R-d): DOES THIS STATIC PAYLOAD KNOW THE FIELD WE ARE ABOUT TO READ?
+
+   The deploy hazard systems/shared.js's fetchRoutesPayload exists for, as a pure predicate so it
+   can be asked here rather than in a browser. /api/railroad-routes and /api/njt-routes are
+   static-derived and served under an hour-long cache, so a release that ADDS a field to one of
+   them ships a frontend reading that field against a response held from before the backend
+   rolled. Absent, not malformed: nothing errors, and every tag silently prints a fallback.
+
+   "SOME ENTRY CARRIES IT", NOT "EVERY ENTRY DOES", and that is the whole subtlety. A payload
+   where some entries have the field came from a backend that knows it, and the entries without
+   it are the FEED's own gaps, which are real and permanent: NJ Transit's route 17 has no trips in
+   an ordinary publication, and the railroads publish no colour for some routes. Keyed on "every"
+   this would re-read on every load forever and never stop.
+
+   null AND undefined BOTH COUNT AS ABSENT (`!= null`), because a backend that knows the field and
+   has nothing to put in it serves null, and that is indistinguishable here from a backend that
+   has never heard of it. The pessimistic reading costs one request; the optimistic one would skip
+   the re-read for a payload where every entry's value is null, which is the exact shape a
+   half-rolled deploy of a nullable column takes. */
+function staticPayloadHasField(routes, field) {
+  return Array.isArray(routes) && routes.some((route) => route && route[field] != null);
+}
+
 // Longitude is compressed by latitude; scale lon deltas so planar distances are
 // roughly isotropic across NYC. We only need internally consistent arc-length,
 // not true meters, so a single fixed factor at the city's latitude is plenty.
@@ -1244,6 +1279,48 @@ function staleAge(age) {
    which is a gap in the PAGE rather than an anomaly in the ROW, and dimming every marker on the
    map for it would be the opposite of honest. So a row that carries a clock keeps whatever age
    was computed from it, including none. */
+/* WHICH FAMILIES OWE AN OBSERVATION CLOCK, AS A TABLE (the operator's ruling on R-b).
+
+   The first cut read `!UNDATED_SYSTEMS.has(row.system)`, and that was wrong in a way that only
+   showed up one layer out: bus, subway, PATH and ferry rows carry NO `system` field at all, so
+   `has(undefined)` was false and every one of them was gated by accident rather than by a
+   decision. The answer happened to be right and the reasoning was not, which is the shape that
+   survives a review and breaks on the next system added.
+
+   SO IT IS THE CONTRACT'S 3.3 TABLE, TRANSCRIBED, keyed by the family name each layer already
+   passes to vehicleMarkerAge, plus the two railroad systems, which are the one source whose two
+   halves differ. Every row here has a row there:
+
+     subways  gated   vehicle.timestamp, else the contributing group header
+     buses    gated   vehicle.timestamp, 2136 of 2136 self-dated
+     path     gated   trip_update.timestamp, 53 of 53 and 55 of 55
+     ferry    gated   vehicle.timestamp (served as updated_at), 28 of 28
+     njt      gated   the TripUpdates header, lag 9s to 23s at peak
+     LIRR     gated   vehicle.timestamp, 69 of 69 independent
+     MNR      NOT     "The stamp is a copy of a header that lags 2 to 4 minutes.
+                       Gating on it would mark a live fleet stale."
+
+   AN UNLISTED FAMILY IS GATED, which is the pessimistic answer and the one that matches what
+   every listed family but Metro-North says; a node test enumerates the call sites so a new
+   family cannot arrive unlisted without failing. */
+const OBSERVATION_GATED = {
+  subways: true,
+  buses: true,
+  path: true,
+  ferry: true,
+  njt: true,
+  LIRR: true,
+  MNR: false,
+};
+
+// `family` is the row's own system where it has one (the railroads are two systems under one
+// source and they differ), else the source key its layer passes.
+function observationGated(sourceKey, row) {
+  const family = (row && row.system) || sourceKey;
+  const gated = OBSERVATION_GATED[family];
+  return gated === undefined ? true : gated;
+}
+
 function observationDimAge(row, observationAge, gated) {
   if (observationAge != null) return observationAge;
   const stamp = row ? row.observed_at : null;
@@ -1831,9 +1908,16 @@ function positionBoard(source, names, now) {
 // half is the reason: "a surface that cannot show the word must not show the
 // observation", and a dot with no popup open cannot say "as of 6m ago", so before 6.3 an
 // eight minute old LIRR fix inside a healthy feed sat at full opacity beside the live
-// ones, which is F01 on the map itself. An unknown observation age dims nothing on its
-// own, because positionQualifier says it in words instead; with neither age a marker has
-// nothing to be dimmed by, exactly as before.
+// ones, which is F01 on the map itself. With neither age a marker has nothing to be dimmed
+// by, exactly as before.
+//
+// AN UNKNOWN OBSERVATION AGE IS NOT "NO AGE" (the 6.3 erratum, MR3 round 4 correcting this
+// paragraph). This used to read "an unknown observation age dims nothing on its own, because
+// positionQualifier says it in words instead", and the operator's ruling on finding N3 reversed
+// exactly that: a row whose family owes a clock and sent none arrives here as AGE_UNKNOWN, not
+// as null, and Math.max carries it through, so the marker dims. The words are still said; they
+// are no longer said INSTEAD. A row whose family owes no clock (Metro-North) still arrives null
+// and still dims nothing, which is the same sentence this paragraph used to make for everyone.
 function markerAge(systemAge, observationAge) {
   if (observationAge == null) return systemAge ?? null;
   if (systemAge == null) return observationAge;
@@ -1932,7 +2016,8 @@ function railroadAtItsStation(row, at = null, before = null) {
    written. */
 
 // THE BRANCH CODES, keyed by the name /api/railroad-routes serves (brief 6.1 and 6.2).
-// Twelve LIRR branches and six Metro-North lines, which is what the live feeds carry.
+// THIRTEEN LIRR branches and six Metro-North lines, which is what the live feeds carry: the
+// brief proposed twelve because it believed there was no route 11, and there is.
 const RAIL_BRANCH_CODES = {
   LIRR: {
     "Babylon Branch": "BAB",
@@ -1947,6 +2032,10 @@ const RAIL_BRANCH_CODES = {
     "Port Jefferson Branch": "PJ",
     "City Terminal Zone": "CTZ",
     "Greenport Service": "GRN",
+    // BELMONT PARK, which the brief said did not exist ("There is no route 11") and which the
+    // live feed publishes as route 11 in 60269E. Probed 2026-09-19; the brief carries a dated
+    // note saying so rather than having the claim edited away. Code BEL, the operator's.
+    "Belmont Park": "BEL",
   },
   MNR: {
     Hudson: "HUD",
@@ -1999,9 +2088,16 @@ function railBranchCode(system, routeId, routeName = null, shortName = null) {
    missing colour is the neutral, never a guess: three of NJ Transit's routes share one
    yellow and two of the LIRR's share one purple, so a hash of the id would be a colour the
    agency does not use, drawn as if it did. */
+/* VALIDATED BEFORE PREFIXING, which njtColor's own guard does and which this dropped: the value
+   is a FEED's, it is interpolated into marker markup that reaches innerHTML through L.divIcon,
+   and what it replaced (railroadColor, a hash) could only ever produce #rrggbb. A publication
+   whose route_color is empty, a word, or anything with a quote or an angle bracket in it now
+   takes the neutral rather than becoming part of the tag's markup. */
+const RAIL_HEX = /^#?[0-9a-fA-F]{6}$/;
+
 function railBranchColor(color) {
   const hex = (color ?? "").trim();
-  if (!hex) return RAIL_NEUTRAL_COLOR;
+  if (!RAIL_HEX.test(hex)) return RAIL_NEUTRAL_COLOR;
   return hex.startsWith("#") ? hex : `#${hex}`;
 }
 
@@ -2042,8 +2138,14 @@ const RAIL_INK_TARGET = 4.5;
 
 function railBranchPaint(color, textColor = null) {
   const published = railBranchColor(color);
+  // The published ink is validated exactly as the colour is, and for the same reason: it is
+  // printed into the same markup.
   const given = (textColor ?? "").trim();
-  const preferred = given ? (given.startsWith("#") ? given : `#${given}`) : readableTextOn(published);
+  const preferred = RAIL_HEX.test(given)
+    ? given.startsWith("#")
+      ? given
+      : `#${given}`
+    : readableTextOn(published);
   if ((contrastRatio(preferred, published) ?? 0) >= RAIL_INK_TARGET) {
     return { fill: published, ink: preferred, moved: false };
   }
@@ -2140,25 +2242,25 @@ function railTagGeometry(system, code) {
    node test asks it as its own row anyway, because it is a policy that could be broken by
    a change that left rows 1 through 6 alone.
 
-   ROW 6 IS THE ONE DEVIATION FROM THE TABLE, and only in its opacity column. The table
-   says dimmed; this returns dim = false, because dimming is markerOpacity's and
-   markerOpacity reads an age. Clause (c) of the contract's rule is an anomaly by the
-   contract's own words ("The provider normally dates this and did not. An anomaly, so it
-   is said at the observation"), and what is anomalous is that there is NO age: staleAge
-   (null) is false, so there is nothing for dimming to carry and dimming it would tell a
-   rider "this is old" about a train whose age we have just said we do not know. The
-   pessimism the row is for is carried where it belongs, by the body and the head: outlined
-   and a dot, which is the strongest "do not trust this" the tag can draw. The body half of
-   row 6 IS obeyed, and it is the one place this goes past railroadHollow, which calls a
-   `reported` row solid whatever its clock says. */
+   THE TABLE'S OPACITY COLUMN IS NOT HERE, and that is round 4's correction rather than an
+   omission. This returned a `dim` field for three commits; nothing in the app ever read it.
+   Every rail marker's opacity comes from markerOpacity(vehicleMarkerAge(...)) applied to the
+   marker itself (railroad.js and njt.js each call dimMarker on the apply path, the stale sweep
+   and at creation), so `dim` was a SECOND expression of the freshness contract's rule sitting
+   in a table nothing drew from, and it rotted exactly the way an unread field does: the row 6
+   paragraph that used to stand here argued at length for dim = false, and the operator's ruling
+   on finding N3 made row 6 dim. The column survives as a test column, asserted in
+   railtag.test.js against markerOpacity itself, which is stronger than asserting it against a
+   copy: the oracle is now the function that actually dims the marker.
 
-// Whether the tag's head may be a chevron at all. A dot is not a weaker chevron, it is the
-// absence of a heading: row 6 refuses a heading even where the geometry could produce one.
-function railTagHeadingTrusted(kind) {
-  return kind !== "unknown";
-}
+   WHAT ROW 6 STILL OWNS HERE IS ITS BODY, and it is the one place this goes past
+   railroadHollow, which calls a `reported` row solid whatever its clock says. Clause (c) of the
+   contract is an anomaly in the contract's own words ("The provider normally dates this and did
+   not. An anomaly, so it is said at the observation"), so a GPS claim that cannot be dated is
+   not one to draw solid. Outlined body and a dot head is the strongest "do not trust this" the
+   tag can draw, and the dimming now arrives too, through AGE_UNKNOWN and staleAge. */
 
-function railTagState(row, before = null, kind = null, age = null) {
+function railTagState(row, before = null, kind = null) {
   const provenance = row ? row.provenance : null;
 
   /* THE BODY IS railroadHollow's ANSWER, CALLED rather than restated, which is the whole
@@ -2177,7 +2279,6 @@ function railTagState(row, before = null, kind = null, age = null) {
      cannot read. */
   const hollow = railroadHollow(row, before) || kind === "unknown";
   const body = hollow ? "outlined" : "solid";
-  const dim = staleAge(age);
 
   // A retained row wears what it wore. `before` is drawnFromPrediction's argument: the
   // provenance the train was last SERVED with, because retention stamps over it.
@@ -2188,28 +2289,27 @@ function railTagState(row, before = null, kind = null, age = null) {
       // placement's was not. A row with no remembered provenance has no heading to keep.
       head: before === "reported" || before === "estimated" ? "filled" : "outlined",
       headingTrusted: before != null,
-      dim,
       row: "retained",
     };
   }
   if (kind === "estimated") {
     // THE ONE ROW WHERE BODY AND HEAD DISAGREE, and the whole table exists to draw it: the
     // position is inferred and the heading is not.
-    return { body, head: "filled", headingTrusted: true, dim, row: "estimated" };
+    return { body, head: "filled", headingTrusted: true, row: "estimated" };
   }
   if (kind === "placed") {
-    return { body, head: "outlined", headingTrusted: true, dim, row: "placed" };
+    return { body, head: "outlined", headingTrusted: true, row: "placed" };
   }
   if (kind === "unknown") {
-    return { body, head: "outlined", headingTrusted: false, dim, row: "unknown" };
+    return { body, head: "outlined", headingTrusted: false, row: "unknown" };
   }
-  // kind "" (fresh) and "aged" (stale): a reported fix, solid and headed, dimmed by its
-  // age alone. Row 7 arrives here too, with a null age on a system that is not gated.
+  // kind "" (fresh) and "aged" (stale): a reported fix, solid and headed. Its opacity is its
+  // age's and markerOpacity's, not this table's. Row 7 arrives here too, on a system whose
+  // positions are not age-gated at all, which is why an undated fix reaches kind "".
   return {
     body,
     head: "filled",
     headingTrusted: true,
-    dim,
     row: kind === "aged" ? "reported-qualified" : "reported-unqualified",
   };
 }
@@ -2422,37 +2522,60 @@ function segmentBearing(from, to) {
   return (deg + 360) % 360;
 }
 
-// Whether a served direction runs against the stored polyline. "Inbound" is the only value
-// that reverses; "Outbound", a missing direction and any word neither of those leave the
-// slice's own orientation alone, because a slice built prev-to-next is already travelling
-// the way the train is and only a polyline stored city-outward needs flipping.
-function railDirectionReverses(direction) {
-  return typeof direction === "string" && direction.trim().toLowerCase() === "inbound";
-}
+/* NOTHING IS REVERSED, AND railDirectionReverses IS GONE (the operator's ruling on the
+   adversarial round's R-a). It read: "Inbound is the only value that reverses ... a slice built
+   prev-to-next is already travelling the way the train is and only a polyline stored
+   city-outward needs flipping." The first half of that sentence was right and refuted the
+   second: BOTH geometry sources below are travel-directed by construction, so there was
+   nothing left for `direction` to correct and applying it turned correct headings around.
+
+   MEASURED, on the F01 capture's own rows rather than on a hypothetical: GO201_26_6187_1 is an
+   Inbound estimated LIRR train whose anchors run from [40.65746, -73.58232] to [40.69961,
+   -73.80853], a true heading of 283.8 degrees, and the reversal drew it at 103.8. Three such
+   rows are in every capture. The slice branch was wrong a second way and is fixed below.
+
+   THE SERVED `bearing` IS STILL NEVER REVERSED, which was always right: a bearing the vehicle
+   sent is already the way it points, and turning it around would turn the train around. */
 
 /* THE HEADING FOR ONE TRAIN, or null when nothing on the row can say.
 
-   Four sources, first that answers:
+   Three sources, first that answers:
      1. the feed's own `bearing`, for a GPS train that sent one;
-     2. the slice the glide is already riding (`_route`), whose direction is the
-        direction of travel;
-     3. the served anchors, prev to next, for a train with anchors and no slice;
-     4. nothing.
-   `direction` reverses 2 and 3, never 1: a served bearing is already the way the train
-   points and reversing it would turn a train around. */
+     2. the SLICE INTERVAL the glide is already riding, s0 to s1;
+     3. the served anchors, prev station to drawn position.
+   Nothing is reversed. Sources 2 and 3 are both directions of travel already; see the note
+   above railFamilyClass's neighbours for what reversing them cost.
+
+   SOURCE 2 READS s0 AND s1, NOT points[0] AND points[last], and that distinction is the whole
+   defect the adversarial round found. computeRouteSlice returns `{points: poly.points, cum:
+   poly.cum, s0, s1}`: `points` is the WHOLE stored branch polyline and the train's travel is
+   the INTERVAL s0 to s1, which is exactly what trainLatLng interpolates (`s0 + (s1 - s0) * f`).
+   Reading the endpoints instead gave the branch's end-to-end chord: one heading for every
+   train on that branch, the same whichever way it was going and wherever it was. Measured: on
+   a branch stored west to east it agreed with the truth, and on one stored east to west it was
+   180 degrees out, so which trains were right depended on how the MTA happened to store each
+   shape. A slice whose two offsets coincide (a train sitting at its previous station) yields no
+   direction and falls through to the anchors rather than to a fabricated one. */
 function railTrainBearing(row) {
   const t = row || {};
   if (Number.isFinite(t.bearing)) return ((t.bearing % 360) + 360) % 360;
   const slice = t._route;
-  const points = slice && Array.isArray(slice.points) ? slice.points : null;
-  let heading = null;
-  if (points && points.length >= 2) {
-    heading = segmentBearing(points[0], points[points.length - 1]);
-  } else if (Number.isFinite(t.prev_lat) && Number.isFinite(t.prev_lon)) {
-    heading = segmentBearing([t.prev_lat, t.prev_lon], [t.latitude, t.longitude]);
+  if (
+    slice &&
+    Array.isArray(slice.points) &&
+    slice.points.length >= 2 &&
+    Number.isFinite(slice.s0) &&
+    Number.isFinite(slice.s1)
+  ) {
+    const from = pointAtArcLength(slice.points, slice.cum, slice.s0);
+    const to = pointAtArcLength(slice.points, slice.cum, slice.s1);
+    const along = segmentBearing(from, to);
+    if (along != null) return along;
   }
-  if (heading == null) return null;
-  return railDirectionReverses(t.direction) ? (heading + 180) % 360 : heading;
+  if (Number.isFinite(t.prev_lat) && Number.isFinite(t.prev_lon)) {
+    return segmentBearing([t.prev_lat, t.prev_lon], [t.latitude, t.longitude]);
+  }
+  return null;
 }
 
 // WHY A RAILROAD TRAIN LEFT THE MAP, when the served data can say: "withheld" for a fix
@@ -4640,7 +4763,7 @@ if (typeof module !== "undefined" && module.exports) {
     indexAlerts, matchStationAlerts, matchRouteAlerts, bannerAlerts, alertsBlockHtml,
     hashString, bannerRenderKey,
     RAILROAD_ROUTE_MAX_SLICE, RAILROAD_ROUTE_ACCEPT_DIST, RAILROAD_BUCKET_ORDER,
-    LINE_COLORS, FEED_STALE_AFTER_S, FETCH_DEADLINE_MS, shouldRefresh,
+    LINE_COLORS, FEED_STALE_AFTER_S, FETCH_DEADLINE_MS, staticPayloadHasField, shouldRefresh,
     // MR2: the subway's drawing decisions, pure so the map and the Key read one answer.
     YELLOW_TRUNK_ROUTES, isYellowTrunk, trunkDrawOrder,
     RIBBON_CASING_WEIGHT, RIBBON_CASING_OPACITY, RIBBON_LINE_WEIGHT, RIBBON_LINE_OPACITY,
@@ -4672,11 +4795,11 @@ if (typeof module !== "undefined" && module.exports) {
     // MR3: the commuter rail grammar. Pure, so the state table can be asked one row at a
     // time and the tag's markup read as a string rather than off a screenshot.
     RAIL_BRANCH_CODES, RAIL_NEUTRAL_COLOR, RAIL_AGENCY, railBranchCode, railBranchColor, railBranchInk, railBranchPaint, RAIL_INK_TARGET,
-    RAIL_TAG_HEIGHT, railTagGeometry, railTagState, railTagHeadingTrusted,
-    segmentBearing, railDirectionReverses, railTrainBearing,
+    RAIL_TAG_HEIGHT, railTagGeometry, railTagState,
+    segmentBearing, railTrainBearing, RAIL_HEX,
     railTagSvg, railTagChevronPath, railStationSvg, RAIL_STATION_BOX, RAIL_STATION_SQUARE,
     railLabelBand, RAIL_LABEL_ZOOM, railroadStationName, railFamilyClass,
-    AGE_UNKNOWN, observationDimAge,
+    AGE_UNKNOWN, observationDimAge, observationGated, OBSERVATION_GATED,
     vehicleStaleLine, composeAnnouncements, withheldTrains, withheldClause,
     thresholdOverrides, CONTRACT_FLAG_PARAM,
     stalePopupLine, STALE_MARKER_OPACITY, FERRY_DOCKED_OPACITY,

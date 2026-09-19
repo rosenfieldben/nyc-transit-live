@@ -119,6 +119,11 @@ const tags = (page) =>
         shape: head.tagName.toLowerCase() === "path" ? "chevron" : "dot",
         rotation: head.getAttribute("transform"),
         opacity: record.marker.options.opacity ?? 1,
+        // AND WHAT THE PAGE IS ACTUALLY DRAWN AT, off the element's inline style, which is where
+        // Leaflet's setOpacity writes. The option above is what the app INTENDED; this is what a
+        // rider sees, and the two are only the same while dimMarker is wired. One of the three
+        // shapes this phase's defects took was believing the model over the drawn page.
+        drawn: el.style.opacity === "" ? 1 : Number(el.style.opacity),
         code: [...svg.querySelectorAll("text")].map((t) => t.textContent),
       };
     }),
@@ -195,12 +200,32 @@ test("D3b. a retained train is drawn as the state it was in, dimmed, and MR3 did
   const before = byTrip(await tags(page), "row3-estimated");
   expect([before.body, before.head], "the before: an estimate").toEqual(["outlined", "filled"]);
 
-  // The same rows, now served retained, with LIRR's block carried forward.
-  ctx.overrides.railroads = (route) =>
-    json(route, {
-      ...railWorld(ROWS.map((r) => ({ ...r, provenance: "retained" }))),
-      systems: railWorld().systems,
+  /* THE SAME ROWS, NOW SERVED RETAINED, AND THE SYSTEM BLOCKS RETAINED WITH THEM, which is the
+     shape the backend actually serves and is round 4's correction to this world. It used to carry
+     `systems: railWorld().systems`, the FRESH blocks, beside rows stamped `retained`: a payload
+     saying at once "this generation could not be refreshed" and "the last successful poll was a
+     moment ago". Under that world nothing could dim, which is why the dimming half of this spec's
+     own title went unheld for three commits.
+
+     RETENTION AGES THE BLOCK because `fetched_at` is the last SUCCESSFUL poll: a system retained
+     for five minutes has been failing for five minutes. So `retained_since` and the block's clock
+     move together, and the dimming here is the SYSTEM's age doing its ordinary job rather than a
+     rule about retention (helpers.js's systemStaleAts says why opacity is deliberately not moved
+     to retention itself). Five minutes is past FEED_STALE_AFTER_S and inside OBS_MAX_S. */
+  const RETAINED_SINCE = fx.FROZEN_S - 300;
+  const retainedRows = ROWS.map((r) => ({ ...r, provenance: "retained" }));
+  ctx.overrides.railroads = (route) => {
+    const world = fx.railroadsWithSystems({
+      data: retainedRows.map(railRow),
+      lirrAt: RETAINED_SINCE,
+      lirrRetainedSince: RETAINED_SINCE,
+      mnrAt: RETAINED_SINCE,
+      mnrRetainedSince: RETAINED_SINCE,
     });
+    // stampObserved would flatten rows 1 and 2 into one another, exactly as railWorld guards.
+    world.data = retainedRows.map(railRow);
+    return json(route, world);
+  };
   await page.evaluate(() => refreshAll && refreshAll());
   await page.clock.runFor(2000);
 
@@ -209,6 +234,30 @@ test("D3b. a retained train is drawn as the state it was in, dimmed, and MR3 did
   // would be claiming less than the page knows, and one that gained a solid body would be
   // claiming more.
   expect([after.body, after.head], "drawn as the estimate it was").toEqual(["outlined", "filled"]);
+
+  /* AND DIMMED, which this spec's own title promised and its body did not check (round 4). The
+     word "dimmed" was in the title through three commits over a test that asserted only the two
+     shapes, so the whole retained half of the opacity contract was unheld here: a retained train
+     drawn at full opacity would have passed.
+
+     0.45 IS STALE_MARKER_OPACITY and the number is asserted rather than `< 1`, because the value
+     is the contract's (docs/design/freshness-contract.md) and a marker at 0.9 is not dimmed, it
+     is slightly wrong. Read off the ELEMENT's inline style, not off the marker's option: the
+     option is what the app meant and the style is what the rider sees.
+
+     THE BEFORE IS ASSERTED TOO, so this cannot pass on a page that was dim all along. */
+  expect(before.drawn, "the before, on a fresh estimate, is not dimmed").toBe(1);
+  expect(after.drawn, "a retained train is drawn dim").toBeCloseTo(0.45, 5);
+  expect(after.opacity, "and the option agrees with the drawn page").toBeCloseTo(0.45, 5);
+
+  /* EVERY retained row, not only the estimate: retention is a property of the payload, so a page
+     that dimmed one train and left five bright would be a worse failure than one that dimmed
+     none. Row 7 included, and that is the interesting one: Metro-North's positions are not
+     age-gated, but RETENTION is not an observation age. The backend is serving a generation it
+     could not refresh, which is the system's own staleness, and every system dims for it. */
+  for (const row of await tags(page)) {
+    expect(row.drawn, `${row.key} is retained and must be dim`).toBeCloseTo(0.45, 5);
+  }
 });
 
 test("D3c. a square always means regional rail and a circle always means subway", async ({ page }) => {
@@ -306,9 +355,57 @@ test("D3d. rail station names show from zoom 11, never with the hub class, and t
   expect(await painted(), "and restores them").toHaveLength(5);
 });
 
+test("D3g. rail labels cannot answer a question about the subway's band", async ({ page }) => {
+  /* MR3 ROUND 4. `paintZoomBand`'s sentinel asks two things off the DOM: has the subway loaded,
+     and does it publish any interchange. MR3 put about 300 commuter-rail labels in the same
+     `.stn-label` class, and the sentinel counted them.
+
+     WHAT THAT COSTS, exactly. With rail labels present and subway labels not yet, the counts read
+     "labels: many, hubs: zero", which is `LABEL_NO_HUB_ZOOM`'s DEGRADED band: every subway name
+     from 13 instead of hubs from 12. That is the right answer to a subway whose route index came
+     back empty and the wrong answer to a subway whose stations are merely still in flight, and
+     the two are indistinguishable once the rail labels are in the count.
+
+     THE WORLD IS A SUBWAY WITH NO STATIONS AT ALL, which is the shape that separates them: the
+     honest reading of zero subway labels is "nothing to judge yet, keep the normal band", and the
+     mutated reading is "a whole network with no interchange". At zoom 13 those are different
+     answers, "hubs" against "all", so one attribute settles it.
+
+     THIS IS THE MUTATION: drop `:not(.rail)` from either count in paintZoomBand. */
+  await open(page, (ctx) => {
+    ctx.overrides.subwayStops = (route) => json(route, []);
+  }, { stations: 12 });
+
+  const counts = await page.evaluate(() => ({
+    all: document.querySelectorAll(".stn-label").length,
+    subway: document.querySelectorAll(".stn-label:not(.rail)").length,
+    hubs: document.querySelectorAll(".stn-label.hub:not(.rail)").length,
+  }));
+  // THE PREMISES, both of them, or this spec asserts nothing: there are rail labels on the page
+  // and there are no subway labels for them to be mistaken for.
+  expect(counts.all, "rail labels are on the page").toBeGreaterThan(0);
+  expect(counts.subway, "and no subway label is").toBe(0);
+  expect(counts.hubs).toBe(0);
+
+  await page.evaluate(() => map.setZoom(13, { animate: false }));
+  await expect(page.locator("html")).toHaveAttribute("data-zoom", "13");
+  /* "hubs", NOT "all". The subway has nothing on screen to judge, so the band stays the ordinary
+     one; counting the rail labels would make this "all", the degraded band for a network that
+     published no interchange at all. The rail band is unaffected either way, which is the other
+     half of "two bands, two attributes". */
+  await expect(page.locator("html")).toHaveAttribute("data-label-band", "hubs");
+  await expect(page.locator("html")).toHaveAttribute("data-rail-label-band", "all");
+
+  // And at 12, where the degraded band says "none" and the ordinary one says "hubs", so the two
+  // differ in the other direction and neither assertion can be passing by coincidence.
+  await page.evaluate(() => map.setZoom(12, { animate: false }));
+  await expect(page.locator("html")).toHaveAttribute("data-zoom", "12");
+  await expect(page.locator("html")).toHaveAttribute("data-label-band", "hubs");
+});
+
 test("D3e. every branch line is a casing and a line, in the feed's own colour", async ({ page }) => {
   await open(page);
-  const lines = await page.evaluate(() => {
+  const probe = await page.evaluate(() => {
     const out = [];
     for (const system of ["LIRR", "MNR"]) {
       for (const layer of railroadLineLayer(system).getLayers()) {
@@ -322,33 +419,100 @@ test("D3e. every branch line is a casing and a line, in the feed's own colour", 
         });
       }
     }
-    return out;
-  });
+    /* AND WHAT EACH CANVAS ACTUALLY HOLDS, walked off the renderers' own lists rather than inferred
+       from the layer groups. Leaflet's Canvas keeps an ordered chain (_drawFirst through .next) and
+       redraws it in that order; a LayerGroup is a bookkeeping device the renderer never consults,
+       which is the whole reason MR2's F6 happened. So the groups above say what each branch asked
+       for and this says what the browser paints, and on which canvas.
 
-  // TWO LAYERS PER BRANCH, the casing first and the line second, added as a pair so a branch's
-  // own casing can never land after its own line on the shared canvas and erase it.
+       BOTH RAIL FAMILIES AND NJ TRANSIT ARE ON THESE TWO, so the chains below are every rail mark
+       the page drew and not only the two branches the groups above read. */
+    const chain = (renderer) => {
+      const out2 = [];
+      for (let node = renderer._drawFirst; node; node = node.next) out2.push(node.layer.options.weight);
+      return out2;
+    };
+    return {
+      lines: out,
+      casingChain: chain(railroadCasingRenderer),
+      lineChain: chain(railroadLineRenderer),
+      paper: paperColor(),
+      panes: {
+        casing: Number(getComputedStyle(map.getPane("railroadCasingPane")).zIndex),
+        line: Number(getComputedStyle(map.getPane("railroadLinePane")).zIndex),
+      },
+    };
+  });
+  const lines = probe.lines;
+
+  // TWO LAYERS PER BRANCH, the casing and the line.
   expect(lines).toHaveLength(4);
   expect(lines.map((l) => l.weight)).toEqual([5, 2.5, 5, 2.5]);
-  expect(lines.filter((l) => l.weight === 5).map((l) => l.color)).toEqual(["var(--paper)", "var(--paper)"]);
-  expect(lines.filter((l) => l.weight === 5).map((l) => l.opacity)).toEqual([0.9, 0.9]);
+
+  /* THE CASING IS THE RESOLVED PAPER, NOT THE CUSTOM PROPERTY, and this is the assertion that was
+     inverted: it asserted "var(--paper)" and therefore asserted the DEFECT. Canvas2D resolves no
+     custom properties. `ctx.strokeStyle = "var(--paper)"` is not an error and not a fallback: the
+     assignment is a SILENT no-op that leaves the context holding whatever colour it stroked last,
+     so every rail casing was drawn in the previous branch's ink. Measured in-page, which is how
+     it was found. shared.js's paperColor() reads the computed token once per draw and is the
+     repo's answer to exactly this; subway.js has used it since MR2.
+
+     ASSERTED THREE WAYS, because "not the literal string" alone would pass for any garbage: it
+     matches paperColor()'s live answer, it is a real hex, and it contains no "var(". */
+  const casings = lines.filter((l) => l.weight === 5);
+  expect(casings.map((l) => l.color)).toEqual([probe.paper, probe.paper]);
+  for (const casing of casings) {
+    expect(casing.color, "a canvas stroke cannot be a custom property").not.toContain("var(");
+    expect(casing.color).toMatch(/^#[0-9a-fA-F]{6}$/);
+  }
+  expect(casings.map((l) => l.opacity)).toEqual([0.9, 0.9]);
+
+  /* EVERY CASING ON ITS OWN CANVAS, BELOW EVERY LINE, read off the two renderers' draw chains.
+
+     Two layers per branch added as a PAIR is enough only within a branch: where the Babylon and
+     Montauk branches share the rails out of Jamaica, Montauk's 5px casing is inserted after
+     Babylon's 2.5px line and erases it, which is F6 reopened one pane down. Two passes over one
+     payload is not enough EITHER, and that is what the chains hold: the railroads and NJ Transit
+     arrive from two endpoints in a race, so with one renderer the chain came out
+     [5, 5, 2.5, 2.5, 5, 5, 5, 2.5, 2.5, 2.5] and all three NJT casings were stroked after both
+     railroad lines. A pane per tier is the only ordering that cannot depend on arrival order.
+
+     ASSERTED AS A PARTITION, not as a sequence: every weight on the casing canvas is 5 and every
+     weight on the line canvas is 2.5, so there is no order within either chain that could be
+     wrong. THIS IS THE MUTATION: give the casing railroadLineRenderer. Then the casing chain
+     empties, the line chain carries both weights, and both assertions below fail. */
+  expect(probe.casingChain.length, "no rail casing reached the casing canvas").toBeGreaterThan(0);
+  expect(probe.lineChain.length, "no rail line reached the line canvas").toBeGreaterThan(0);
+  expect([...new Set(probe.casingChain)], "the casing canvas holds only casings").toEqual([5]);
+  expect([...new Set(probe.lineChain)], "the line canvas holds only lines").toEqual([2.5]);
+  // The two chains together are every rail mark on the page: two branches here plus NJ Transit's.
+  expect(probe.casingChain.length, "one casing per line, always a pair").toBe(probe.lineChain.length);
+  // AND THE CASING CANVAS IS UNDER THE LINE CANVAS, which is what makes the partition an ordering.
+  expect(probe.panes.casing).toBe(394);
+  expect(probe.panes.line).toBe(395);
+  expect(probe.panes.casing).toBeLessThan(probe.panes.line);
   // THE LINE TAKES THE AGENCY'S OWN COLOUR, verbatim, with the "#" added where the value
   // becomes a paint instruction: the LIRR's Babylon green and Metro-North's Hudson green, which
   // are two different greens and were one hash of a route id before MR3.
   expect(lines.filter((l) => l.weight === 2.5).map((l) => l.color)).toEqual(["#00985F", "#009B3A"]);
   expect(lines.every((l) => l.cap === "round")).toBe(true);
-  /* AND THEY ARE ON railroadLinePane, above the subway's 390 and below the shared canvas at
+  /* AND THEY ARE ON THE TWO RAIL PANES, above the subway's 390 and below the shared canvas at
      400, which is the operator's ruling on finding N2: a 5px casing is thicker than PATH's
      3.5px line, the AirTrain's 3px and the ferry's 2px, and on one canvas the later arrival
      wins. D2u holds the ORDER across a shuffled insertion sequence; this is the rail families'
      own row in it, read off the layers this page actually built. */
-  expect(lines.every((l) => l.pane === "railroadLinePane")).toBe(true);
+  expect(casings.every((l) => l.pane === "railroadCasingPane")).toBe(true);
+  expect(lines.filter((l) => l.weight === 2.5).every((l) => l.pane === "railroadLinePane")).toBe(true);
   const z = await page.evaluate(() => ({
     subway: Number(getComputedStyle(map.getPane("subwayLinePane")).zIndex),
+    casing: Number(getComputedStyle(map.getPane("railroadCasingPane")).zIndex),
     rail: Number(getComputedStyle(map.getPane("railroadLinePane")).zIndex),
     overlay: Number(getComputedStyle(map.getPane("overlayPane")).zIndex),
   }));
   expect(z.rail).toBe(395);
-  expect(z.subway).toBeLessThan(z.rail);
+  expect(z.casing).toBe(394);
+  expect(z.subway).toBeLessThan(z.casing);
+  expect(z.casing).toBeLessThan(z.rail);
   expect(z.rail).toBeLessThan(z.overlay);
 });
 

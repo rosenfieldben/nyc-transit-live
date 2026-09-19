@@ -22,14 +22,13 @@ const railroadRouteNames = new Map();
 const railroadRouteColors = new Map();
 
 async function loadRailroadRoutes() {
-  let routes;
-  try {
-    const res = await fetch("/api/railroad-routes", { signal: AbortSignal.timeout(FETCH_DEADLINE_MS) });
-    if (!res.ok) return false; // warming 503 (or transient error): retry
-    routes = await res.json();
-  } catch {
-    return false;
-  }
+  /* THROUGH fetchRoutesPayload FOR THE FIELD THIS LAYER NEEDS (R-d, shared.js carries the whole
+     argument): `color` arrived on this endpoint one branch ago and MR3 draws every branch line
+     and every tag from it, so a response cached from before that deploy would paint the entire
+     commuter railroad in the neutral grey for up to an hour. One re-read past the HTTP cache,
+     then the neutral, which is what railBranchColor returns for a route with no colour anyway. */
+  const routes = await fetchRoutesPayload("/api/railroad-routes", "color");
+  if (routes == null) return false; // warming 503, or a network error: retry
   // RAILROAD NUANCE: the backend's railroad warmup is lenient PER SYSTEM. It
   // settles "ready" even when one system's static failed to load, and this
   // endpoint then serves only the loaded system's entries under the normal
@@ -38,6 +37,8 @@ async function loadRailroadRoutes() {
   // correct: further frontend retries would just re-read the same cached partial,
   // never a fuller one. Only a fully empty payload means "ask again later".
   if (!routes.length) return false;
+  // { system, points, branch } per polyline, drawn by railDrawRibbons below.
+  const ribbons = [];
   for (const route of routes) {
     const key = `${route.system}|${route.route}`;
     // Key by (system, route): LIRR and MNR route ids collide, so route_id alone
@@ -58,40 +59,71 @@ async function loadRailroadRoutes() {
     // The agency's own colours, for every route including a nameless one.
     railroadRouteColors.set(key, { color: route.color ?? null, textColor: route.text_color ?? null });
     const branch = railBranchColor(route.color);
-    for (const points of route.polylines) {
-      /* CASING THEN LINE, IN THAT ORDER AND AS ONE PAIR (README: "casing paper weight 5
-         opacity .9 plus line weight 2.5 opacity 1, round caps"). The casing is what makes a
-         branch readable where it runs beside another one, and the pair is added back to back
-         so that on the shared canvas, which draws in INSERTION order, a branch's own casing
-         can never land after its own line and erase it.
-
-         ON railroadLinePane AT 395, which is the operator's ruling on finding N2 and not the
-         shared canvas this was first built on. MR2's F6 found that a 6.5px paper casing drawn
-         after a thin line ERASES it, which is why the subway got a pane of its own; a 5px
-         casing is the same mark one weight down, and PATH's 3.5px line, the AirTrain's 3px and
-         the ferry's 2px are all thinner than it and all on the canvas at 400. NJ Transit runs
-         into Newark Penn and Hoboken where PATH does, so the overlap was real rather than
-         theoretical, and the static loaders land in a race. The pane makes the answer the same
-         in every arrival order; the shared.js pane block carries the whole argument. */
-      L.polyline(points, {
-        color: "var(--paper)",
-        weight: 5,
-        opacity: 0.9,
-        lineCap: "round",
-        interactive: false,
-        renderer: railroadLineRenderer,
-      }).addTo(railroadLineLayer(route.system));
-      L.polyline(points, {
-        color: branch,
-        weight: 2.5,
-        opacity: 1,
-        lineCap: "round",
-        interactive: false,
-        renderer: railroadLineRenderer,
-      }).addTo(railroadLineLayer(route.system));
-    }
+    // Collected rather than drawn here, so ONE function owns which renderer each mark lands on
+    // for all three rail families (railDrawRibbons, below, and njt.js calls the same one).
+    for (const points of route.polylines) ribbons.push({ system: route.system, points, branch });
   }
+  railDrawRibbons(ribbons, railroadLineLayer);
   return true;
+}
+
+/* THE CASING AND THE LINE, ON TWO PANES (round 4, the panel's finding on N2), which is the only
+   ordering that survives two branches sharing track AND two endpoints landing in a race.
+
+   README's mark is "casing paper weight 5 opacity .9 plus line weight 2.5 opacity 1, round
+   caps": a wide paper stroke under a thin coloured one. MR2's F6 measured what happens when a
+   wide paper stroke lands AFTER a thin line on a canvas renderer, which draws in INSERTION order
+   and knows nothing of LayerGroups: it ERASES it. Drawing each branch as a back-to-back pair
+   fixes that only WITHIN a branch. Where the Babylon and Montauk branches run the same rails out
+   of Jamaica, Montauk's casing is inserted after Babylon's line and wipes it, which is F6
+   reopened one pane down.
+
+   AND TWO PASSES OVER ONE PAYLOAD IS NOT ENOUGH EITHER, which is the measurement that settled
+   this. subway.js's drawRibbons draws every casing then every line, and that works there because
+   the subway's geometry arrives in ONE response. Three rail families arrive in TWO:
+   /api/railroad-routes and /api/njt-routes are separate fetches kicked off together, and on the
+   hermetic world the one-renderer draw chain came out [5, 5, 2.5, 2.5, 5, 5, 5, 2.5, 2.5, 2.5],
+   with all three NJ Transit casings stroked after both railroad lines. Neither loader can order
+   the other's marks, so no per-loader pass can close it.
+
+   SO THE TIER IS THE PANE: railroadCasingPane at 394 for every casing and railroadLinePane at
+   395 for every line. The relation then holds in every arrival order rather than in the order
+   that happened, which is the same standard finding N2 was settled to. shared.js's pane block
+   carries the whole argument and the numbers.
+
+   PAPER COMES FROM paperColor(), NOT FROM "var(--paper)". Canvas2D resolves no custom properties:
+   `ctx.strokeStyle = "var(--paper)"` is not an error, it is a SILENT no-op that leaves the context
+   holding whatever colour it last had, so the casing strokes in the previous branch's ink.
+   Measured in-page on this branch, which is how the defect was found. shared.js's paperColor
+   reads the computed value once per draw and is the repo's answer to exactly this; subway.js has
+   used it since MR2.
+
+   ONE FUNCTION FOR BOTH RAIL FILES, because the panes only help if every family uses them: NJ
+   Transit passing railroadLineRenderer for its casing would put a 5px paper stroke back on the
+   line pane and erase an LIRR line at Penn. njt.js calls this with its own layer resolver, and
+   the group a mark is added to still owns whether it SHOWS, so the two feeds toggle separately
+   exactly as MR1 split them. */
+function railDrawRibbons(ribbons, layerFor) {
+  const paper = paperColor();
+  for (const ribbon of ribbons) {
+    const group = layerFor(ribbon.system);
+    L.polyline(ribbon.points, {
+      color: paper,
+      weight: 5,
+      opacity: 0.9,
+      lineCap: "round",
+      interactive: false,
+      renderer: railroadCasingRenderer,
+    }).addTo(group);
+    L.polyline(ribbon.points, {
+      color: ribbon.branch,
+      weight: 2.5,
+      opacity: 1,
+      lineCap: "round",
+      interactive: false,
+      renderer: railroadLineRenderer,
+    }).addTo(group);
+  }
 }
 
 // A branch's code and paint, from what /api/railroad-routes served for it. One lookup, so the
@@ -234,8 +266,10 @@ async function loadRailroadStations() {
    served direction. Nothing here reads the shape of a field. */
 function railroadTagState(train, before = null, now = correctedNow()) {
   const position = railroadPosition(train, now);
-  const age = vehicleMarkerAge("railroads", systemAgeOf("railroads", train.system), train, now);
-  return railTagState(train, before, position.kind, age);
+  // NO AGE ARGUMENT (round 4). The table returned a `dim` field nothing read; the opacity a
+  // rider sees is markerOpacity(vehicleMarkerAge(...)) applied to the marker, on the apply
+  // path, the stale sweep and at creation. One dimming rule, and it is the contract's.
+  return railTagState(train, before, position.kind);
 }
 
 function railroadIcon(train, before = null, now = correctedNow()) {

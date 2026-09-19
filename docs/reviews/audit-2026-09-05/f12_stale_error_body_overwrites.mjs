@@ -179,7 +179,24 @@ function fixtureRowCount(stopId) {
    buildFeedStrip created and appended itself, so the tree under test is the real one.
    BOTH class channels are read, because the production code uses both: `el.className = ...`
    on creation and `classList.add` later. */
-const SELECTOR_FORM = /^(?:#[\w-]+|(?:\.[\w-]+)+|[a-zA-Z][\w-]*)$/;
+/* MR3 TAUGHT IT `:not(.class)`, one trailing negation on a class chain, which is what the stub's
+   own error message asks for rather than letting it answer null. `paintZoomBand` counts
+   `.stn-label:not(.rail)` since MR3: the commuter rail put about 300 labels in the same class as
+   the subway's, and the band's sentinel asks a question about the SUBWAY, so it cannot count them.
+
+   ONE NEGATION, NOT A SELECTOR ENGINE. The form is a class chain followed by at most one
+   `:not(.class-chain)`, which is exactly what the loaded production files use, measured rather
+   than guessed. Anything else still raises, naming itself, so the next shape the frontend adopts
+   fails here instead of being discovered as a null dereference three frames away. */
+const SELECTOR_FORM = /^(?:#[\w-]+|(?:\.[\w-]+)+(?::not\((?:\.[\w-]+)+\))?|[a-zA-Z][\w-]*)$/;
+const NOT_SUFFIX = /:not\(((?:\.[\w-]+)+)\)$/;
+
+// Splits "a:not(b)" into its positive part and the classes that must be ABSENT.
+function splitNegation(sel) {
+  const m = sel.match(NOT_SUFFIX);
+  if (!m) return { positive: sel, absent: [] };
+  return { positive: sel.slice(0, m.index), absent: m[1].slice(1).split(".") };
+}
 
 function stubClasses(el) {
   return new Set([
@@ -200,7 +217,9 @@ function stubMatches(el, selector) {
   if (sel.startsWith("#")) return el.id === sel.slice(1);
   if (sel.startsWith(".")) {
     const have = stubClasses(el);
-    return sel.slice(1).split(".").every((cls) => have.has(cls));
+    const { positive, absent } = splitNegation(sel);
+    if (absent.some((cls) => have.has(cls))) return false;
+    return positive.slice(1).split(".").every((cls) => have.has(cls));
   }
   return String(el.tagName ?? "").toUpperCase() === sel.toUpperCase();
 }

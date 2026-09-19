@@ -51,14 +51,13 @@ const njtStopCoords = new Map();
 const NJT_SLICE_OPTS = { maxSlice: RAILROAD_ROUTE_MAX_SLICE, acceptDist: RAILROAD_ROUTE_ACCEPT_DIST };
 
 async function loadNjtRoutes() {
-  let routes;
-  try {
-    const res = await fetch("/api/njt-routes", { signal: AbortSignal.timeout(FETCH_DEADLINE_MS) });
-    if (!res.ok) return false; // warming 503 (or transient error): retry
-    routes = await res.json();
-  } catch {
-    return false;
-  }
+  /* THROUGH fetchRoutesPayload FOR short_name (R-d, shared.js carries the whole argument). It is
+     the field this stage's tag PRINTS for this agency, and it began being served on this branch,
+     so a response cached from before the backend rolled would make all twelve tags read "9",
+     "10", "11" instead of NEC, NJCL, RARV. One re-read past the HTTP cache, then the route id,
+     which is what railBranchCode falls back to for a route it cannot name. */
+  const routes = await fetchRoutesPayload("/api/njt-routes", "short_name");
+  if (routes == null) return false; // warming 503, or a network error: retry
   // AN EMPTY PAYLOAD IS AMBIGUOUS HERE IN A WAY IT IS NOT ELSEWHERE, and the
   // resolution is to retry. /api/njt-routes serves [] for three states: a failed
   // (and retrying) load, a deployment with no NJT credentials, and a READY load
@@ -76,6 +75,15 @@ async function loadNjtRoutes() {
   njtRouteShortNames = tables.shortNames;
   njtRouteNames = tables.names;
   njtRouteIndex = tables.index;
+  /* MR3, round 4: THROUGH railroad.js's railDrawRibbons rather than a pair of polylines here.
+     The argument and the measurement are in the comment on that function; what matters at this
+     call site is that NJ Transit's casings and the LIRR's lines used to reach ONE canvas, where
+     insertion order decided which survived, and the two route endpoints land in a race. The
+     shared function puts every rail casing on railroadCasingPane at 394 and every rail line on
+     railroadLinePane at 395, so NJT can no longer erase an LIRR line at Penn in any arrival
+     order. It also gets paperColor() for free, which is the other half of the defect:
+     "var(--paper)" is a silent no-op on a canvas context. */
+  const ribbons = [];
   for (const route of routes) {
     const color = njtRouteColor(route.route, njtRouteColors);
     // Every kept variant draws (the backend's dedup already collapsed the
@@ -83,27 +91,10 @@ async function loadNjtRoutes() {
     // branches: North Jersey Coast to Long Branch AND to Bay Head).
     // Non-interactive like every other route line, so clicks fall through to the
     // station squares and the train markers above them.
-    for (const points of route.polylines || []) {
-      // MR3: CASING THEN LINE, the same pair railroad.js draws and for the same reasons (the
-      // comment there carries the argument and the cost of the shared canvas).
-      L.polyline(points, {
-        color: "var(--paper)",
-        weight: 5,
-        opacity: 0.9,
-        lineCap: "round",
-        interactive: false,
-        renderer: railroadLineRenderer,
-      }).addTo(njtRouteLines);
-      L.polyline(points, {
-        color,
-        weight: 2.5,
-        opacity: 1,
-        lineCap: "round",
-        interactive: false,
-        renderer: railroadLineRenderer,
-      }).addTo(njtRouteLines);
-    }
+    for (const points of route.polylines || []) ribbons.push({ points, branch: color });
   }
+  // One group for the whole layer, so the resolver ignores the (absent) system key.
+  railDrawRibbons(ribbons, () => njtRouteLines);
   return true;
 }
 
@@ -260,13 +251,15 @@ async function loadNjtStops() {
    earn the solid body, and the brief's row 1 is unreachable here by construction rather than
    by omission. */
 function njtTagState(train, now = correctedNow()) {
-  const position = njtPosition(train);
-  // njtSystemAge is declared below and is a function declaration, so it hoists; using it
-  // rather than systemAgeOf("njt", "njt") inline keeps one expression of that lookup.
-  const age = vehicleMarkerAge("njt", njtSystemAge(), train, now);
+  // `now` THREADED, not dropped (round 4). It used to reach only the age term, so with the age
+  // term gone the parameter would have gone unread while the stale sweep passed a pinned clock
+  // and got the live one back. njtPosition's words and the tag's body have to be one answer
+  // about one instant; railroad.js's railroadPosition(train, now) has always been threaded.
+  const position = njtPosition(train, now);
   // No `before`: this layer keeps no drawnFrom, because retention cannot change a body that
-  // is outlined for every provenance the feed serves.
-  return railTagState(train, null, position.kind, age);
+  // is outlined for every provenance the feed serves. And no age: the tag's opacity is
+  // markerOpacity's, applied to the marker (round 4; the comment in railroad.js says why).
+  return railTagState(train, null, position.kind);
 }
 
 function njtBranch(train) {

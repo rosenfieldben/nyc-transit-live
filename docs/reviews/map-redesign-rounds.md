@@ -746,6 +746,106 @@ that function calls `railroadHollow`, and the guard follows the chain now and as
 checkable rather than asserted. `statement.test.js` caught N4's exception missing from
 ACCESSIBILITY.md.
 
+### Round 4: the multi-agent adversarial pass, and what it cost to read it
+
+Five finder dimensions over the written production diff (frontend and backend), triage, then
+verifiers, every agent in its own worktree under the standing rules. **It found two criticals
+that had shipped into the written diff**, and both are the shapes this phase was told to look
+for.
+
+| # | Confirmed | What was wrong | The fix |
+| --- | --- | --- | --- |
+| **#11** | **the branch casing passed the literal string `"var(--paper)"` to a CANVAS renderer** | Canvas2D resolves no custom properties. `ctx.strokeStyle = "var(--paper)"` is not an error and not a fallback: the assignment is a SILENT no-op that leaves the context holding whatever colour it stroked last, so every rail casing drew in the previous branch's ink. Proved by executing the assignment in-page on a context primed with `#123456`: the value stayed `#123456`, while the subway's casing correctly passed `#f3f2f2`. `shared.js` has carried `paperColor()` since MR2 for exactly this, with the reason written above it, and MR3 walked past it in two files. | `paperColor()` in both rail loaders. `rail.spec.js` D3e asserted the DEFECT (`toEqual(["var(--paper)", "var(--paper)"])`) and now asserts the resolved hex three ways: equal to `paperColor()`'s live answer, matching `/^#[0-9a-f]{6}$/`, and containing no `var(`. |
+| **#3** | **`railroadLinePane` at 395 closed N2 against PATH and reopened MR2's F6 INSIDE the new pane** | All three rail families shared one canvas renderer, and a canvas draws in insertion order. Where two branches share track, the later branch's 5px casing lands after the earlier branch's 2.5px line and erases it. | Two passes per loader was the first fix and **it was not enough**, which the draw chain said out loud: with one renderer the hermetic world produced `[5, 5, 2.5, 2.5, 5, 5, 5, 2.5, 2.5, 2.5]`, so all three NJ Transit casings stroked after both railroad lines. `/api/railroad-routes` and `/api/njt-routes` are two endpoints landing in a race and neither loader can order the other's marks. **So the tier is the pane:** `railroadCasingPane` at 394 for every casing, `railroadLinePane` at 395 for every line, one `railDrawRibbons` for all three families. D3e reads both renderers' draw chains and asserts each holds one weight; D2u's four tiers hold the pane relation across a shuffled insertion order. |
+
+**Two of the panel's refutations were invalid, and the reason is a defect in the review tool
+rather than in the reviewers.** Both verifier worktrees were at `origin/main`, where this
+branch does not exist, so their evidence read "the diff is empty" and "`bindRailStationLabel`
+does not exist" and both findings came back confident **REFUTED**. Both were re-verified by
+hand and both were real: they are #11 and #3 above, the two criticals of this round. The only
+reason they were not lost is that a refutation of that shape looked wrong; a refutation that
+reads *the code you describe is not there* is indistinguishable from a correct refutation of a
+hallucinated finding, which makes it the worst output a review tool can produce. It deletes a
+real defect and looks like diligence doing it.
+
+**Fixed structurally, as RULE 0b of `.claude/workflows/adversarial-review.js`.** A worktree is
+created at the default branch unless something puts it elsewhere, and nothing did. Now the
+caller passes `{commit, branch}`; every agent's prompt opens with a preflight that runs
+`git rev-parse HEAD`, `git checkout --detach <sha>` if it does not match, and
+`git diff --stat <range>` to prove the diff is non-empty; every schema REQUIRES the agent to
+echo back the sha it read and the file count it saw; and the script discards the output of any
+agent whose sha does not match. A discarded verdict set makes its findings **UNVERIFIED**,
+never refuted. A discarded finder dimension is logged as lost coverage, and a triage read from
+the wrong tree is thrown away with every candidate going forward unmerged, because triage
+re-reads the code to correct each finding's location and a triage on the wrong branch would
+"correct" every real finding into a drop. `.claude/workflows/README.md` carries the rule for
+every review and probe workflow in the repository.
+
+**And a test in this stage's own diff asserted a defect.** `railtag.test.js` held
+`assert.equal(Math.round(railTrainBearing({ ...anchored, direction: "Inbound" })), 180)` over an
+anchor pair whose true azimuth is 0: `prev_lat`/`prev_lon` is where the train WAS and
+`latitude`/`longitude` is where it IS, so the pair is already travel-directed and reversing it
+pointed every inbound NJ Transit train backwards. A test that asserts a defect is worse than no
+test, because it makes the bug load-bearing: the fix now fails the suite and the suite reads
+like the authority. It is recorded here rather than quietly corrected. The same file's slices
+were two-point chords rather than the `{points, cum, s0, s1}` shape `computeRouteSlice` returns,
+which is how the geometry half of the same defect got past them.
+
+### Round 4: the operator's rulings
+
+| | Ruling | What it changed |
+| --- | --- | --- |
+| **R-a** | **Drop `railDirectionReverses` from both geometry paths.** `s0` to `s1` and the served anchor pair are travel-directed by construction. The served bearing stays. Correct `railtag.test.js:497` to the true value and record that a test asserted the defect. | The function and its export are gone. `railTrainBearing` reads `pointAtArcLength(slice.points, slice.cum, slice.s0)` to the same at `s1`, which is the INTERVAL the train occupies rather than the whole branch: verified on a bending polyline that the two legs give 0 and 90 and the end-to-end chord gives neither. On the real F01 capture the three inbound anchored rows moved from 104/78/32 to 284/258/212. The corrected test asserts 0 and says in place why the 180 was wrong. |
+| **R-b** | **Keep N3 general; replace the absent-field gate with an explicit table matching contract 3.3.** LIRR, subway, PATH, ferry, buses and NJT gated, Metro-North not, keyed by the family each layer knows, with a test that every family is listed. The header-less subway case is intended: assert it, and say in the erratum that `/healthz` keeps the operator rule while the rider sees "age unknown" and dimmed. | The first cut read `!UNDATED_SYSTEMS.has(row.system)` and was **right by accident**: bus, subway, PATH and ferry rows carry no `system` field at all, so `has(undefined)` was false and four families were gated as a side effect rather than by a decision. `OBSERVATION_GATED` is the 3.3 table transcribed; `observationGated` reads the row's own system first, which is why "railroads" has no row of its own and its two systems disagree. `positions.test.js` scrapes every `vehicleMarkerAge("<key>"` call site from `systems/` and asserts the set is exactly the six sources and that every family one of them can name has a row, in both directions against `UNDATED_SYSTEMS`. The header-less subway row is asserted as intended, and the erratum says why the two surfaces disagree on purpose. |
+| **R-c** | **Belmont Park is BEL.** Add it, and correct the brief with a dated note rather than editing the claim away. | The live feed serves LIRR route 11, Belmont Park, colour `60269E`, against the brief's "There is no route 11". Thirteen LIRR branches now, and the count assertion in `railtag.test.js` is what caught it. The brief keeps its sentence and carries a dated erratum under it. |
+| **R-d** | **The frontend refetches a routes payload once with cache "reload" when the field it needs is missing, then falls back to the id.** Record a version stamp on static-derived endpoints as a follow-up. | `fetchRoutesPayload(url, field)` in `shared.js`, with the pure predicate `staticPayloadHasField` in `helpers.js` so node can ask it. Both static route endpoints are served under an hour-long cache, so the deploy that adds a field ships a frontend reading it against a response from before the backend rolled: well formed, field absent, nothing errors, and every NJ Transit tag prints "9" for up to an hour. The predicate is keyed on **some** entry carrying the field rather than every entry, which is the whole subtlety: route 17 (Meadowlands, event-only) never reaches the endpoint with a short name, so "every" would re-read past the cache forever. A null value counts as absent, because a half-rolled nullable column looks exactly like an unknown field. |
+| | **The follow-up R-d asks for** | A version stamp on the static-derived endpoints, so the frontend can ASK whether a payload predates a field instead of inferring it from absence. Not this stage's: it is a backend change plus a frontend read, and the refetch is correct without it. |
+
+**Six more repairs in the same round**, each with a mutation below.
+
+- **The Names toggle's sentence read only the subway's band.** The toggle hides commuter-rail
+  names too (`:root[data-labels="off"] .stn-label.rail`), and the two bands disagree: rail names
+  show from zoom 11 and the subway's first band opens at 12. At zoom 11 the button said "none at
+  this zoom, zoom in to see them" while the press had just switched off every rail name on
+  screen, which is the one thing that sentence exists to prevent. `namesToggleAnnouncement` is
+  variadic now, and no bands at all reads as "on" rather than "none", because `[].every()` is
+  vacuously true and the obvious spelling would have a caller that passes nothing claim the zoom
+  shows no names.
+- **`paintZoomBand`'s sentinel counted rail labels as subway ones.** It asks "has the subway
+  loaded, and does it publish any interchange", and MR3 put about 300 commuter-rail labels in the
+  same `.stn-label` class. Counted together, a page with rail labels and no subway labels reads
+  as "subway loaded, zero hubs", which is `LABEL_NO_HUB_ZOOM`'s degraded band: every subway name
+  from 13 instead of hubs from 12, on a map whose subway index is merely still in flight.
+  `:not(.rail)` on both counts.
+- **`railTagState.dim` was a second expression of the dimming rule that nothing read.** Every
+  rail marker's opacity comes from `markerOpacity(vehicleMarkerAge(...))` applied to the marker
+  itself, on the apply path, the stale sweep and at creation. `dim` rotted the way an unread
+  field does: the paragraph above it argued at length for `dim = false` on row 6, and R-b's
+  predecessor ruling made row 6 dim. The field and the `age` parameter are gone; the table's
+  opacity column is asserted in `railtag.test.js` against `markerOpacity` itself, which is
+  stronger, and the returned keys are asserted so the field cannot come back silently.
+- **`railTagHeadingTrusted` was dead AND wrong.** Exported, never called, and its rule
+  (`kind !== "unknown"`) disagrees with what `railTagState` actually does for a retained row
+  (`before != null`). Deleted.
+- **`markerAge`'s docstring contradicted the code.** It said "an unknown observation age dims
+  nothing on its own, because positionQualifier says it in words instead", which is exactly what
+  the N3 ruling reversed.
+- **`njtTagState` dropped the `now` it was passed.** It reached only the age term, so with the
+  age term gone the parameter would have been unread while the stale sweep passed a pinned clock
+  and got the live one back. Threaded into `njtPosition`, as `railroadPosition(train, now)`
+  always was.
+
+**And two specs in this stage's diff were weaker than their titles.** `rail.spec.js` D3b is
+titled "a retained train is drawn as the state it was in, **dimmed**" and asserted only the two
+shapes; worse, its world could not have dimmed, because it carried `systems: railWorld().systems`
+(the FRESH blocks) beside rows stamped `retained`, a payload saying at once "this generation
+could not be refreshed" and "the last successful poll was a moment ago". The world now ages the
+blocks with the retention, which is what the backend serves, and the spec asserts 0.45 off the
+element's inline style for every retained row and 1 for the before. `subway.spec.js` D2u's
+shuffle probe drew the rail families on `lineRenderer`, which is not the renderer production
+uses, and its comment called the resulting overlap an accepted cost; it also used the literal
+`"var(--paper)"` as a canvas colour, the very defect of #11.
+
 ### The mutations
 
 Each in its own worktree detached at the commit under test, applied alone, with the main

@@ -656,6 +656,22 @@ returns null for a clockless row, so such a marker freezes on its system's deadl
 before. It is opacity, and only opacity. And it does not reach a non-gated row, so Metro-North's
 33 markers stay bright, for the same reason clause (c) is narrow.
 
+**`/healthz` KEEPS THE OPERATOR'S RULE WHILE THE RIDER SEES "age unknown" AND A DIMMED MARKER,
+and the two disagreeing is the decision rather than an oversight** (the operator's ruling R-b,
+2026-09-19). The subway is the one age-gated family whose 3.3 row has a fallback: its clock is
+`vehicle.timestamp`, *else the contributing group header*. So a subway row the backend could date
+only from a header reaches the page with a null `observed_at` while the feed is, for the
+operator's purposes, a dated feed that is being read correctly: `/healthz` must not go yellow for
+it, because nothing is wrong upstream and an alert nobody can act on is worse than no alert.
+
+The rider's question is a different question. It is not "does this feed date its rows" but "can
+this train's position be dated", and for that row the answer is no. So the rider gets clause
+(c)'s sentence, "live GPS, age unknown", and a marker at `STALE_MARKER_OPACITY`. A single answer
+would have to be wrong for one of them: made an operator answer it hides a real gap from the
+rider, and made a rider answer it raises a false alarm for the operator. `frontend/positions.test.js`
+asserts the header-less subway case as intended behaviour, so it cannot be mistaken later for the
+bug it looks like.
+
 **Clause (c) is narrow on purpose, and this is the amendment Q5 settled.** A provider that
 never dates its observations is not an anomaly, it is a property of the provider, and
 stamping "age unknown" on all 33 Metro-North markers and on its 926 arrival rows would put

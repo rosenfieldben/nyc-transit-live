@@ -17,9 +17,14 @@ clock in the header and every age in a popup constant between the two runs.
 
 ## Taking it again
 
-    # after, from the branch
-    npx playwright test --config tests/e2e/playwright.config.js \
-      docs/reviews/map-redesign/mr3/capture.spec.js
+    # after, from the branch. The config's testDir is tests/e2e, and this spec requires
+    # ./mock and ./fixtures/api relative to itself, so it is COPIED IN and removed again
+    # rather than run from here. Round 4 corrected this line: run as written above it
+    # reported "No tests found" and silently changed nothing, which on a stage whose
+    # drawing had changed would have shipped the previous run's pair as the new one.
+    cp docs/reviews/map-redesign/mr3/capture.spec.js tests/e2e/mr3capture.spec.js
+    npx playwright test --config tests/e2e/playwright.config.js tests/e2e/mr3capture.spec.js
+    rm tests/e2e/mr3capture.spec.js
 
     # before, from a worktree at the commit the branch forked from
     git worktree add --detach /tmp/before 49c5956

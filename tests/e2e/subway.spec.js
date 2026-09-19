@@ -1153,13 +1153,14 @@ test("D2u. the subway's ribbons draw under every other family's lines, whatever 
     };
     const panes = {};
     for (const [name, layers] of Object.entries(families)) {
-      panes[name] = [...new Set(layers.map(paneOf))];
+      panes[name] = [...new Set(layers.map(paneOf))].sort();
     }
     return {
       panes,
       counts: Object.fromEntries(Object.entries(families).map(([k, v]) => [k, v.length])),
       zIndex: {
         subwayLinePane: z("subwayLinePane"),
+        railroadCasingPane: z("railroadCasingPane"),
         railroadLinePane: z("railroadLinePane"),
         overlayPane: z("overlayPane"),
         stationPane: z("stationPane"),
@@ -1182,13 +1183,19 @@ test("D2u. the subway's ribbons draw under every other family's lines, whatever 
   // And every subway ribbon is on that pane while no other family is.
   expect(order.panes.subway).toEqual(["subwayLinePane"]);
   expect(order.counts.subway).toBe(18);
-  /* THREE TIERS NOW, NOT TWO (MR3, the operator's ruling on finding N2). The subway is under
-     everything at 390, the three commuter rail families are at 395, and the families whose thin
-     lines a 5px casing could erase are on the shared canvas at 400. The ordering became a
-     three-way one when MR3 gave the railroads a casing: PATH's line is 3.5px, the AirTrain's 3
-     and the ferry's 2, and NJ Transit runs into Newark Penn and Hoboken where PATH does, so the
-     overlap is real rather than theoretical. */
-  expect(order.zIndex.subwayLinePane).toBeLessThan(order.zIndex.railroadLinePane);
+  /* FOUR TIERS NOW, NOT TWO (MR3, the operator's ruling on finding N2 and round 4's correction to
+     it). The subway is under everything at 390, the three commuter rail families' casings are at
+     394 and their lines at 395, and the families whose thin lines a 5px casing could erase are on
+     the shared canvas at 400. The ordering became a multi-way one when MR3 gave the railroads a
+     casing: PATH's line is 3.5px, the AirTrain's 3 and the ferry's 2, and NJ Transit runs into
+     Newark Penn and Hoboken where PATH does, so the overlap is real rather than theoretical.
+
+     THE CASING PANE IS THE PART ONE PANE COULD NOT DO. With all three rail families on one canvas
+     the ordering inside it was an arrival race between two route endpoints, measured as
+     [5, 5, 2.5, 2.5, 5, 5, 5, 2.5, 2.5, 2.5], so every NJ Transit casing stroked after both
+     railroad lines. rail.spec.js D3e reads the two chains; this holds the pane relation. */
+  expect(order.zIndex.subwayLinePane).toBeLessThan(order.zIndex.railroadCasingPane);
+  expect(order.zIndex.railroadCasingPane).toBeLessThan(order.zIndex.railroadLinePane);
   expect(order.zIndex.railroadLinePane).toBeLessThan(order.zIndex.overlayPane);
 
   /* AT LEAST ONE FAMILY IN EACH TIER HAS TO HAVE DRAWN, or the comparisons are claims about
@@ -1202,13 +1209,20 @@ test("D2u. the subway's ribbons draw under every other family's lines, whatever 
   const rail = ["lirr", "mnr", "njt"].filter((f) => order.counts[f] > 0);
   expect(rail, `a rail family drew no line: ${JSON.stringify(order.counts)}`).toEqual(["lirr", "mnr", "njt"]);
   for (const family of rail) {
-    expect(order.panes[family], `${family} is on the rail pane`).toEqual(["railroadLinePane"]);
+    // BOTH RAIL PANES AND NOTHING ELSE: the casing on 394 and the line on 395, which is what makes
+    // the tier relation above an ordering rather than two unrelated numbers. Sorted, so this is a
+    // claim about the SET each family uses and not about which mark a group happens to list first.
+    expect(order.panes[family], `${family} is on the rail panes`).toEqual([
+      "railroadCasingPane",
+      "railroadLinePane",
+    ]);
   }
 
   const others = ["path", "ferry", "airtrain"].filter((f) => order.counts[f] > 0);
   expect(others.length, `no thin family drew a line: ${JSON.stringify(order.counts)}`).toBeGreaterThan(0);
   for (const family of others) {
     expect(order.panes[family], `${family} keeps the shared canvas`).not.toContain("subwayLinePane");
+    expect(order.panes[family], `${family} keeps the shared canvas`).not.toContain("railroadCasingPane");
     expect(order.panes[family], `${family} keeps the shared canvas`).not.toContain("railroadLinePane");
     expect(order.panes[family], `${family} is on the shared canvas`).toEqual(["overlayPane"]);
   }
@@ -1233,29 +1247,52 @@ test("D2u. the subway's ribbons draw under every other family's lines, whatever 
       const built = [];
       for (const family of families) {
         /* THE CASING IS PART OF THE PROBE SINCE MR3, because it is the thing that erases. The
-           subway's is 6.5px and the three rail families' is 5px, drawn in --paper at 0.9 ahead
-           of each own line, and on one canvas a casing that wide arriving after a thin line
-           covers it. So each family is drawn the way it really is: subway and rail as a pair,
-           the thin families as one line. What this asserts is unchanged, that the subway is on
-           the lower pane whatever the order; what it now also shows is that the rail casings
-           and the thin families share ONE pane, which is the cost D3e and the ledger record. */
+           subway's is 6.5px and the three rail families' is 5px, drawn in --paper at 0.9 ahead of
+           each own line, and on one canvas a casing that wide arriving after a thin line covers
+           it. So each family is drawn the way it really is: the subway's pair on ONE renderer,
+           because drawRibbons orders its whole payload in one pass; rail's casing and line on the
+           TWO rail renderers, because rail's geometry arrives from two endpoints in a race and no
+           pass can order across them; the thin families as one line on the shared canvas.
+
+           ROUND 4 CORRECTED THIS PROBE. It drew rail on `lineRenderer`, which is not what
+           production does, and the comment here claimed that showed "the rail casings and the thin
+           families share ONE pane" as an accepted cost. They never did share it after N2, and
+           drawing the probe that way meant the shuffle asserted nothing about the pane the rail
+           families actually use. It also used the literal "var(--paper)" as a canvas colour, which
+           is the silent no-op this stage's first critical was: paperColor() is the repo's answer. */
         const casing = family === "subway" ? 6.5 : family === "rail" ? 5 : null;
-        const renderer = family === "subway" ? subwayLineRenderer : lineRenderer;
+        const renderer =
+          family === "subway" ? subwayLineRenderer : family === "rail" ? railroadLineRenderer : lineRenderer;
+        const casingRenderer = family === "rail" ? railroadCasingRenderer : renderer;
         const at = [
           [40.75, -73.99],
           [40.76, -73.98],
         ];
-        if (casing) L.polyline(at, { weight: casing, color: "var(--paper)", opacity: 0.9, renderer }).addTo(probe);
+        let casingPane = null;
+        if (casing) {
+          const cased = L.polyline(at, {
+            weight: casing,
+            color: paperColor(),
+            opacity: 0.9,
+            renderer: casingRenderer,
+          });
+          cased.addTo(probe);
+          casingPane = cased.options.renderer.options.pane ?? "overlayPane";
+        }
         const line = L.polyline(at, { weight: 2.5, renderer });
         line.addTo(probe);
-        built.push({ family, pane: line.options.renderer.options.pane ?? "overlayPane", casing });
+        built.push({ family, pane: line.options.renderer.options.pane ?? "overlayPane", casing, casingPane });
       }
-      // The subway's line is on the lower pane no matter where in the order it was added.
+      // The subway's line is on the lower pane no matter where in the order it was added, and the
+      // rail tier's two panes are the same two whatever the order as well.
       const subway = built.find((b) => b.family === "subway");
+      const rail = built.find((b) => b.family === "rail");
       results.push({
         order: families.join(">"),
         subwayPane: subway.pane,
-        othersPane: [...new Set(built.filter((b) => b.family !== "subway").map((b) => b.pane))],
+        railPane: rail.pane,
+        railCasingPane: rail.casingPane,
+        thinPanes: [...new Set(built.filter((b) => b.family !== "subway" && b.family !== "rail").map((b) => b.pane))],
       });
     }
     probe.remove();
@@ -1265,7 +1302,11 @@ test("D2u. the subway's ribbons draw under every other family's lines, whatever 
   expect(shuffles.length).toBe(8);
   for (const run of shuffles) {
     expect(run.subwayPane, `order ${run.order}`).toBe("subwayLinePane");
-    expect(run.othersPane, `order ${run.order}`).toEqual(["overlayPane"]);
+    // THE RAIL TIER, IN EVERY PERMUTATION: its casing on 394 and its line on 395, so a rail casing
+    // is never on the same canvas as a rail line and never on the thin families' canvas at all.
+    expect(run.railCasingPane, `order ${run.order}`).toBe("railroadCasingPane");
+    expect(run.railPane, `order ${run.order}`).toBe("railroadLinePane");
+    expect(run.thinPanes, `order ${run.order}`).toEqual(["overlayPane"]);
   }
   // And the shuffle really did shuffle, so this is a claim about order rather than one order.
   expect(new Set(shuffles.map((r) => r.order)).size, "the orders must actually differ").toBeGreaterThan(1);
@@ -1283,15 +1324,26 @@ test("D2u. the subway's ribbons draw under every other family's lines, whatever 
     ];
     const thin = [...pathRouteLines.getLayers(), ...ferryRouteLines.getLayers()];
     return {
-      railPanes: [...new Set(rail.map(paneOf))],
+      railPanes: [...new Set(rail.map(paneOf))].sort(),
       thinPanes: [...new Set(thin.map(paneOf))],
       casings: rail.filter((l) => l.options.weight === 5).length,
+      // EVERY CASING'S PANE, so "a pane per tier" is read off the marks and not off the families.
+      casingPanes: [...new Set(rail.filter((l) => l.options.weight === 5).map(paneOf))],
+      linePanes: [...new Set(rail.filter((l) => l.options.weight === 2.5).map(paneOf))],
       thinnest: Math.min(...thin.map((l) => l.options.weight)),
     };
   });
   expect(weights.casings, "the rail families draw a casing per branch").toBeGreaterThan(0);
   expect(weights.thinnest, "which is wider than a line it shares the map with").toBeLessThan(5);
-  expect(weights.railPanes, "so the casings are on their own pane").toEqual(["railroadLinePane"]);
+  expect(weights.railPanes, "so the rail tier is its own two panes").toEqual([
+    "railroadCasingPane",
+    "railroadLinePane",
+  ]);
+  /* AND THE SPLIT IS BY WEIGHT, which is the whole point of the second pane: every 5px casing on
+     394 and every 2.5px line on 395, so no rail casing can be on the same canvas as any rail line
+     whichever of the two route endpoints answered first. */
+  expect(weights.casingPanes, "every casing is on the casing pane").toEqual(["railroadCasingPane"]);
+  expect(weights.linePanes, "every line is on the line pane").toEqual(["railroadLinePane"]);
   expect(weights.thinPanes, "and cannot reach the lines they would erase").toEqual(["overlayPane"]);
 });
 
@@ -1592,7 +1644,27 @@ test("D2j. station names appear at the right zooms, hubs first, and the Names to
   await expect(page.locator("#page-announce")).toHaveText("Station names off.");
   await page.locator("#names-toggle").click();
   await expect(page.locator("#page-announce")).toHaveText("Station names on.");
+  /* AND MR3 MOVED THE ZOOM THIS SENTENCE IS TRUE AT, which is round 4's correction to this
+     spec. It asserted the qualified sentence at zoom 11, and at zoom 11 the COMMUTER RAIL shows
+     every one of its names: that band opens at 11 and the subway's first band opens at 12. So
+     from MR3 onward "none at this zoom, zoom in to see them" at zoom 11 is a false statement
+     about a screen with rail names on it, and this spec was asserting it. The press hides and
+     shows them too, because the toggle is a preference over both bands.
+
+     ZOOM 10 IS WHERE BOTH BANDS ARE "none" and the sentence is true, so the claim moves there
+     and zoom 11 gets the plain sentence with a premise under it. */
   await setZoom(11);
+  const railAt11 = await page.evaluate(() =>
+    [...document.querySelectorAll(".stn-label.rail")].filter((el) => getComputedStyle(el).display !== "none").length,
+  );
+  expect(railAt11, "rail names are on screen at 11, which is why the sentence is not 'none'").toBeGreaterThan(0);
+  await page.locator("#names-toggle").click();
+  await page.locator("#names-toggle").click();
+  await expect(page.locator("#page-announce")).toHaveText("Station names on.");
+
+  await setZoom(10);
+  await expect(page.locator("html")).toHaveAttribute("data-label-band", "none");
+  await expect(page.locator("html")).toHaveAttribute("data-rail-label-band", "none");
   await page.locator("#names-toggle").click();
   await page.locator("#names-toggle").click();
   await expect(page.locator("#page-announce")).toHaveText(

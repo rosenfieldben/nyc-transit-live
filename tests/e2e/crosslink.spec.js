@@ -23,11 +23,34 @@ async function open(page) {
   await page.clock.install({ time: new Date(fx.FROZEN_MS) });
   await page.clock.pauseAt(new Date(fx.FROZEN_MS));
   await page.goto("/");
+  /* VEHICLES, NOT EVERY MARKER ICON (MR3 round 4). This counted `.leaflet-marker-icon` and
+     every spec that calls it then reads a VEHICLE registry, so the count is standing in for
+     "the vehicles have landed". MR3 broke that stand-in: it turned the LIRR, Metro-North and
+     NJ Transit STATIONS into markers, so five station icons now exist before any vehicle poll
+     has answered and `> 5` can be satisfied with a single vehicle of any kind on the page.
+     crosslink.spec.js A3a went red in CI on exactly that, with "the fixture must contain a
+     placed railroad train" over an empty `railroads`. `:not(.rail-stn-marker)` is the class
+     every rail station icon carries and no vehicle does, so the sentinel means again what it
+     was written to mean, and slightly more than it did: three NJ Transit station squares had
+     been counted as vehicles since 15c. */
   await expect
-    .poll(async () => page.evaluate(() => document.querySelectorAll(".leaflet-marker-icon").length), {
+    .poll(
+      async () =>
+        page.evaluate(() => document.querySelectorAll(".leaflet-marker-icon:not(.rail-stn-marker)").length),
+      { timeout: 15_000 },
+    )
+    .toBeGreaterThan(5);
+  /* AND THE TWO REGISTRIES THIS FILE READS, by name (MR3 round 4). Every spec below reaches
+     into `railroads` or `trains` on the very next line, so "some vehicles have landed" is not
+     the premise any of them needs: a page with six buses and no railroad satisfies the count
+     above and then fails on an empty map of railroad trains, which is what CI saw. Waiting for
+     the thing the spec is about turns a premise assertion into a wait, which is the honest
+     shape: the assertion was never testing anything, it was reporting a race. */
+  await expect
+    .poll(async () => page.evaluate(() => (railroads.size > 0 && trains.size > 0 ? "both" : "waiting")), {
       timeout: 15_000,
     })
-    .toBeGreaterThan(5);
+    .toBe("both");
 }
 
 // The OPEN popup's text, read through Leaflet rather than by querying the document.

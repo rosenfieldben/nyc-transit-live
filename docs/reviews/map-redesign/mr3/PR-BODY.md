@@ -1,6 +1,6 @@
 # Phase MR, stage 3 of 5: the commuter-rail grammar
 
-Twelve commits off `origin/main` (`49c5956`): the pins, the grammar as pure arithmetic with
+Thirteen commits off `origin/main` (`49c5956`): the pins, the grammar as pure arithmetic with
 the brief's 3.1 table as its oracle, the wiring, the round entries and the captures, your
 rulings on N1 through N5, and round 4 (the adversarial panel's two criticals plus your
 rulings R-a through R-d). LIRR, Metro-North and NJ Transit draw **one grammar** for the
@@ -87,6 +87,29 @@ families on `lineRenderer`, which is not the renderer production uses, and used 
 MR3 made false; the claim moves to zoom 10, where both bands are "none".
 
 The two audit-record DOM stubs learned `:not(.class)`, which their own error message asked for.
+
+### And CI found a fourth, after the push
+
+`crosslink.spec.js` **A3a** went red on a **premise assertion**: *"the fixture must contain a
+placed railroad train"*, over an empty `railroads`. Not a claim about the cross-link at all.
+
+Six specs open the page by polling until `.leaflet-marker-icon` exceeds 5, and each one then
+reads a **vehicle** registry on the next line, so the count was standing in for "the vehicles
+have landed". **MR3 broke that stand-in** by making the three rail families' stations markers.
+Measured on the fixture world: 23 marker icons, **5 of them rail stations**, so `> 5` is now
+satisfied by the stations plus one vehicle of any kind. The margin went from six vehicles to
+one, and my full local run won the race every time.
+
+Fixed at the root in all six: the sentinel counts
+`.leaflet-marker-icon:not(.rail-stn-marker)`, the class every rail station icon carries and no
+vehicle does. `crosslink.spec.js`'s `open()` additionally waits for `railroads.size > 0 &&
+trains.size > 0`, the two registries its specs read, because a premise assertion that can fail
+on a race was never testing anything.
+
+**It is the same shape as `paintZoomBand`'s sentinel above**, and that is the carry-forward for
+MR4: MR3 put ~300 markers and ~300 labels into classes existing code was counting, so every
+count over a class this stage widened has to be re-read. Neither instance was found by the
+adversarial panel.
 
 ## What the three families drew before
 

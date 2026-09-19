@@ -877,6 +877,35 @@ each is also asked whether an age handed to it changes its answer, because `rail
 is 1 (parameters after the first default do not count) and arity alone cannot catch a fourth
 parameter being read.
 
+### Round 4, after the push: the sentinel six specs share
+
+**CI found one this branch's own full local run did not, and it is MR3's.**
+`crosslink.spec.js` A3a went red with *"the fixture must contain a placed railroad train"*
+over an empty `railroads` map: a premise assertion, not a claim about the cross-link.
+
+Six specs open the page the same way, by polling until
+`document.querySelectorAll(".leaflet-marker-icon").length > 5`, and every one of them then
+reads a VEHICLE registry on the next line. The count was standing in for "the vehicles have
+landed". **MR3 broke the stand-in** by turning the LIRR, Metro-North and NJ Transit stations
+into markers: measured on the fixture world, 23 marker icons, **5 of them rail stations**, so
+`> 5` is now satisfied by the stations plus a single vehicle of any kind. A page with six
+buses and no railroad passes the gate and then fails on an empty `railroads`. The margin went
+from six vehicles to one, and the local suite happened to win the race every time.
+
+Two fixes, both minimal and both at the root. The sentinel counts
+`.leaflet-marker-icon:not(.rail-stn-marker)` in all six specs, which is the class every rail
+station icon carries and no vehicle does; it now means what it was written to mean and
+slightly more, since three NJ Transit station squares had been counted as vehicles since 15c.
+And `crosslink.spec.js`'s own `open()` additionally waits for `railroads.size > 0 && trains.size
+> 0`, the two registries its specs actually read: a premise assertion that can fail on a race
+was never testing anything, it was reporting one, so it becomes a wait.
+
+**This is the same shape as `paintZoomBand`'s sentinel earlier in this round**, and that is the
+lesson worth carrying into stage MR4: MR3 put about 300 new markers and 300 new labels into
+classes that existing code was counting, and every count over a class MR3 widened has to be
+re-read. Two were found by different means, one by a node-adjacent browser spec and one by CI,
+and neither by the adversarial panel.
+
 ### The mutations, round 4
 
 | # | Guard reverted | Result | Killed by |

@@ -6,6 +6,24 @@
    "Some elevators are out of service across the system"
   ]
  },
+ "alerts": {
+  "lirr": {
+   "panelAlerts": [
+    "[1] Babylon Branch is single-tracking",
+    "Jamaica platforms C and D are closed"
+   ],
+   "panelArrivals": [
+    "Babylon Branch train in 4 minutes, 8:04 AM arrival, train 8412",
+    "Babylon Branch train in 7 minutes, 8:07 AM arrival, train 8413"
+   ],
+   "spoken": "New service alert for this station. Jamaica, LIRR. Inbound: Babylon Branch train in 4 minutes, 8:04 AM arrival, train 8412. Outbound: Babylon Branch train in 7 minutes, 8:07 AM arrival, train 8413",
+   "popupAlerts": [
+    "[1] Babylon Branch is single-tracking",
+    "Jamaica platforms C and D are closed"
+   ],
+   "popup": "<div class=\"alert-block\"><div class=\"alert-row\">[1] Babylon Branch is single-tracking</div><div class=\"alert-row\">Jamaica platforms C and D are closed</div></div><b>Jamaica</b> <span class=\"popup-sub\">LIRR</span><div class=\"arr-dir\">Inbound</div><span class=\"arr-badge\" style=\"background:#5d4037;color:#ffffff\">1</span> Babylon Branch <span class=\"popup-sub\">#8412</span> 4 min<div class=\"arr-dir\">Outbound</div><span class=\"arr-badge\" style=\"background:#5d4037;color:#ffffff\">1</span> Babylon Branch <span class=\"popup-sub\">#8413</span> 7 min"
+  }
+ },
  "board": {
   "f03": {
    "arrivals": [
@@ -26,6 +44,88 @@
    "panelStaleLines": 0,
    "qualifiersInPopup": 6,
    "popup": "<b>Prospect Av</b><div class=\"arr-dir\">Northbound</div><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 2 min <span class=\"arr-qualifier\">as of 10m ago</span><br><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span> 3 min <span class=\"arr-qualifier\">as of 10m ago</span><br><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 3 min<br><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span> 5 min<br><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 10 min <span class=\"arr-qualifier\">as of 10m ago</span><br><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 12 min<div class=\"arr-dir\">Southbound</div><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span> now <span class=\"arr-qualifier\">as of 10m ago</span><br><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 3 min <span class=\"arr-qualifier\">as of 10m ago</span><br><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 3 min<br><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span> 9 min<br><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span> 9 min <span class=\"arr-qualifier\">as of 10m ago</span><br><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span> 12 min"
+  }
+ },
+ "ladder": {
+  "f01": {
+   "drawn": 136,
+   "states": {
+    "estimated/estimated": {
+     "count": 6,
+     "words": [
+      "estimated from a prediction"
+     ],
+     "systems": [
+      "LIRR"
+     ]
+    },
+    "placed/placed": {
+     "count": 59,
+     "words": [
+      "scheduled position (no GPS)",
+      "scheduled position (no GPS), as of 12m ago",
+      "scheduled position (no GPS), as of 14m ago",
+      "scheduled position (no GPS), as of 15m ago",
+      "scheduled position (no GPS), as of 20m ago",
+      "scheduled position (no GPS), as of 21m ago",
+      "scheduled position (no GPS), as of 24m ago",
+      "scheduled position (no GPS), as of 25m ago",
+      "scheduled position (no GPS), as of 28m ago",
+      "scheduled position (no GPS), as of 29m ago",
+      "scheduled position (no GPS), as of 2h 1m ago",
+      "scheduled position (no GPS), as of 30m ago",
+      "scheduled position (no GPS), as of 31m ago",
+      "scheduled position (no GPS), as of 32m ago",
+      "scheduled position (no GPS), as of 34m ago",
+      "scheduled position (no GPS), as of 35m ago",
+      "scheduled position (no GPS), as of 40m ago",
+      "scheduled position (no GPS), as of 44m ago",
+      "scheduled position (no GPS), as of 45m ago",
+      "scheduled position (no GPS), as of 49m ago",
+      "scheduled position (no GPS), as of 4m ago",
+      "scheduled position (no GPS), as of 50m ago",
+      "scheduled position (no GPS), as of 55m ago",
+      "scheduled position (no GPS), as of 63m ago",
+      "scheduled position (no GPS), as of 6m ago",
+      "scheduled position (no GPS), as of 75m ago",
+      "scheduled position (no GPS), as of 76m ago",
+      "scheduled position (no GPS), as of 90m ago",
+      "scheduled position (no GPS), as of 93m ago",
+      "scheduled position (no GPS), as of 94m ago",
+      "scheduled position (no GPS), as of 95m ago"
+     ],
+     "systems": [
+      "LIRR",
+      "MNR"
+     ]
+    },
+    "reported/aged": {
+     "count": 11,
+     "words": [
+      "live GPS, as of 10m ago",
+      "live GPS, as of 2m ago",
+      "live GPS, as of 3m ago",
+      "live GPS, as of 5m ago",
+      "live GPS, as of 7m ago",
+      "live GPS, as of 8m ago",
+      "live GPS, as of 9m ago"
+     ],
+     "systems": [
+      "LIRR"
+     ]
+    },
+    "reported/unqualified": {
+     "count": 60,
+     "words": [
+      "live GPS"
+     ],
+     "systems": [
+      "LIRR",
+      "MNR"
+     ]
+    }
+   },
+   "statusTail": "railroad: MNR as of 6m ago; LIRR 24 trains not shown, last seen over 10m ago; MNR position age unavailable"
   }
  },
  "legend": {
@@ -532,6 +632,18 @@
   }
  },
  "panel": {
+  "lirr": {
+   "results": [
+    "JamaicaAirTrainR1",
+    "JamaicaLIRR"
+   ],
+   "detailHeading": "Jamaica (LIRR)",
+   "arrivals": [
+    "Babylon Branch train in 4 minutes, 8:04 AM arrival, train 8412",
+    "Babylon Branch train in 7 minutes, 8:07 AM arrival, train 8413"
+   ],
+   "spoken": "Jamaica, LIRR. Inbound: Babylon Branch train in 4 minutes, 8:04 AM arrival, train 8412. Outbound: Babylon Branch train in 7 minutes, 8:07 AM arrival, train 8413"
+  },
   "subway": {
    "results": [
     "Times Sq-42 StSubway123"
@@ -578,6 +690,62 @@
   }
  },
  "registry": {
+  "lirr": {
+   "key": "LIRR|12",
+   "kind": "railroad",
+   "systemLabel": "LIRR",
+   "noun": "train",
+   "id": "12",
+   "system": "LIRR",
+   "name": "Jamaica",
+   "lat": 40.7005,
+   "lon": -73.8095,
+   "routes": [],
+   "wheelchair": false,
+   "arrivalsUrl": "/api/railroad-arrivals/LIRR/12",
+   "nameForFirstRoute": "Babylon Branch",
+   "hasPopup": true,
+   "markerInItsLayer": true,
+   "drawnOnPane": "stationPane"
+  },
+  "mnr": {
+   "key": "MNR|1",
+   "kind": "railroad",
+   "systemLabel": "Metro-North",
+   "noun": "train",
+   "id": "1",
+   "system": "MNR",
+   "name": "Grand Central",
+   "lat": 40.7527,
+   "lon": -73.9772,
+   "routes": [],
+   "wheelchair": false,
+   "arrivalsUrl": "/api/railroad-arrivals/MNR/1",
+   "nameForFirstRoute": "Hudson",
+   "hasPopup": true,
+   "markerInItsLayer": true,
+   "drawnOnPane": "stationPane"
+  },
+  "njt": {
+   "key": "NJT|109",
+   "kind": "njt",
+   "systemLabel": "NJ Transit",
+   "noun": "train",
+   "id": "109",
+   "name": "New York Penn Station",
+   "lat": 40.750568,
+   "lon": -73.993519,
+   "routes": [
+    "9",
+    "2"
+   ],
+   "wheelchair": false,
+   "arrivalsUrl": "/api/njt-arrivals/109",
+   "nameForFirstRoute": "Northeast Corridor",
+   "hasPopup": true,
+   "markerInItsLayer": true,
+   "drawnOnPane": "stationPane"
+  },
   "subway": {
    "key": "subway|127",
    "kind": "subway",

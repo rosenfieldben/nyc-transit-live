@@ -167,7 +167,7 @@ test("P1c. a healthy day says nothing and is not painted as an error", async ({ 
   await expect(page.locator("#status")).not.toHaveClass(/error/);
 });
 
-/* ---------------- P3: the alert banner's rows ---------------- */
+/* ---------------- P1d: the alert banner's rows ---------------- */
 
 test("P1d. the alert banner's rows, byte for byte", async ({ page }) => {
   // MR1 moves this strip inside the header as a full-width row and restyles it. It does
@@ -239,7 +239,7 @@ test("P1e. every name the legend says today", async ({ page }) => {
   expect(missing, "the Key panel lost a sentence the legend used to say").toEqual([]);
 });
 
-/* ---------------- P5 and P6: markers and popups, per system ---------------- */
+/* ---------------- P1f through P1n: markers and popups, per system ---------------- */
 
 /* Every vehicle and station mark on the map, and one popup per surface, read from the
    live page. Stage MR1 changes none of it.
@@ -514,9 +514,17 @@ const panelState = (page) =>
     };
   });
 
-async function selectStation(page, query) {
+async function selectStation(page, query, rowText = null) {
   await page.locator("#stations-search").fill(query);
-  await page.locator("#stations-results button.station-row").first().click();
+  // WHICH ROW, NAMED, when a query matches more than one station. "jamaica" matches the
+  // AirTrain's Jamaica and the LIRR's, and the AirTrain row sorts first: taking .first()
+  // pinned "Jamaica (AirTrain)" under the key panel/lirr, a pin that would have survived
+  // any change to the surface it exists to watch. Measured before it was fixed, which is
+  // the only reason this argument exists.
+  const rows = page.locator("#stations-results button.station-row");
+  const wanted = rowText ? rows.filter({ hasText: rowText }) : rows;
+  await expect(wanted.first(), `no station row matching ${rowText ?? query}`).toBeVisible();
+  await wanted.first().click();
   // The board is fetched, so the rows arrive a round trip later; the clock is paused, so
   // the driver's side is what advances it (the note at popupHtml says why).
   for (let i = 0; i < 80; i++) {
@@ -563,5 +571,205 @@ test("P2c. F03's board qualifiers, on the panel and in the popup", async ({ page
     panelStaleLines: await page.locator(".station-detail-stale").count(),
     qualifiersInPopup: await page.locator(".leaflet-popup-content .arr-qualifier").count(),
     popup: await page.locator(".leaflet-popup-content").innerHTML(),
+  });
+});
+
+/* ---------------- P3: what stage MR3 is not allowed to change ----------------
+
+   MR3 restyles the COMMUTER RAIL: casing plus line per branch in the feeds' own colours,
+   the 10x10 paper square in place of the white circle, names from zoom 11, and railTag
+   with the brief's 3.1 provenance states in place of the flat 16x16 rounded square. Three
+   things sit right beside all of that and are NOT its to move, so they are written down
+   here before a line of it is written.
+
+   WHY THESE THREE AND NOT THE MARKS THEMSELVES, the same reason P2 gives: P1h, P1i, P1j
+   and P1k already hold every rail mark byte for byte, and MR3 is the stage that
+   deliberately moves them. Those goldens are regenerated and the before-and-after is
+   recorded in docs/reviews/map-redesign-rounds.md, which is what "measured" means for a
+   mark a stage exists to change. THE POPUP HALVES OF P1h, P1i AND P1k ARE NOT
+   REGENERATED: the popups are stage MR5, so a rail popup that changes in MR3 is a defect,
+   and that claim stays an assertion.
+
+   What may not move is everything the restyle touches on its way past: the registry entry
+   a rail station's identity lives in, the panel that reads it, the alerts that join to it,
+   and the position ladder's five states in the F01 world. A divIcon's HTML and a
+   circleMarker's options are what MR3 rewrites, and all four of those surfaces read the
+   registry entry and the served row instead. */
+
+// The registry entry a RAIL station's identity lives in. Shaped like P2a's but pinning the
+// pane as DRAWN rather than as configured, because that is the invariant and the
+// configuration is the thing MR3 changes: today the marker is a canvas circleMarker whose
+// options.pane is Leaflet's overlayPane default and whose RENDERER puts it on stationPane;
+// MR3 makes it an L.marker with pane "stationPane" and no renderer. Either way the station
+// draws on stationPane, which is what the click order and the z-index depend on, so the
+// pin holds the answer and not the route to it. The marker's CLASS is deliberately not
+// pinned here: circleMarker to Marker is the restyle itself, and a pin on it would be a
+// pin on the thing being changed (P2a could pin it because MR2 kept the subway a
+// circleMarker).
+const railRegistryEntry = (page, key) =>
+  page.evaluate((k) => {
+    const entry = stationRegistry.find((row) => row.key === k);
+    if (!entry) return null;
+    const { marker, layer, nameFor, ...rest } = entry;
+    return {
+      ...rest,
+      // nameFor is a closure over the route-name index; what is pinned is the answer it
+      // gives, because the panel's sentences are built from that and not from the function.
+      nameForFirstRoute: typeof nameFor === "function" ? (nameFor((entry.routes ?? [])[0] ?? "1") ?? null) : null,
+      hasPopup: !!marker.getPopup(),
+      markerInItsLayer: !!layer && layer.hasLayer(marker),
+      drawnOnPane: marker.options.renderer?.options?.pane ?? marker.options.pane ?? "overlayPane",
+    };
+  }, key);
+
+test("P3a. a railroad station's registry entry, field by field", async ({ page }) => {
+  await boot(page);
+  // One per rail family, because the three reach registerStation from two different files
+  // and MR3 rewrites both: LIRR and Metro-North from systems/railroad.js, NJ Transit from
+  // systems/njt.js. Metro-North is in with LIRR to hold the systemLabel that spells the
+  // agency out ("Metro-North", not "MNR"), which the panel says aloud.
+  pin("registry/lirr", await railRegistryEntry(page, "LIRR|12"));
+  pin("registry/mnr", await railRegistryEntry(page, "MNR|1"));
+  pin("registry/njt", await railRegistryEntry(page, "NJT|109"));
+});
+
+test("P3b. the station panel for a railroad station, as a rider reaches it", async ({ page }) => {
+  await boot(page);
+  // The LIRR's Jamaica, named: the AirTrain has one too and its row comes first.
+  await selectStation(page, "jamaica", "LIRR");
+  const state = await panelState(page);
+  // A PREMISE ASSERTION, because this pin is only about a rail station if it is a rail
+  // station: the golden's own heading would read "(AirTrain)" otherwise and still look
+  // like a filled-in pin.
+  expect(state.detailHeading).toContain("LIRR");
+  pin("panel/lirr", state);
+});
+
+/* THE ALERTS JOIN FOR A RAIL STATION, on both surfaces, in one pin.
+
+   F11's rule is that a route-scoped alert reaches a station through the routes that call
+   there, and that the map popup and the station panel say the SAME thing about the same
+   station. Both halves are pinned here for LIRR Jamaica, with its own alert list rather
+   than the shared stationAlertList (which many specs read and none of them expect to
+   grow). Two alerts, one per path into the join:
+
+     the STOP-scoped one reaches Jamaica directly, by its own id in the LIRR id space;
+     the ROUTE-scoped one reaches it only through route 1, which no static routes list on
+     this fixture carries (railroadStops serves no routes field at all, so the station's
+     routes are []) and which railroadArrivalsLirr's board does carry. So it can arrive
+     only through the arrivals side of F11's union, which is the half a restyle of the
+     station MARKER could plausibly break by rebuilding the descriptor around it.
+
+   A third alert on a route that does NOT serve Jamaica is in the list as the negative:
+   the join has to leave it out, and a pin that only ever saw alerts it wanted would not
+   notice a join that had started matching everything. */
+const LIRR_STATION_ALERTS = [
+  { id: "lirr-stop", system: "LIRR", header: "Jamaica platforms C and D are closed", description: null,
+    effect: "NO_SERVICE", cause: "MAINTENANCE", routes: [], stops: ["12"],
+    starts_at: fx.FROZEN_S - 600, ends_at: null },
+  { id: "lirr-route-1", system: "LIRR", header: "[1] Babylon Branch is single-tracking", description: null,
+    effect: "SIGNIFICANT_DELAYS", cause: "MAINTENANCE", routes: ["1"], stops: [],
+    starts_at: fx.FROZEN_S - 600, ends_at: null },
+  { id: "lirr-route-9", system: "LIRR", header: "[9] Port Washington is suspended", description: null,
+    effect: "NO_SERVICE", cause: "MAINTENANCE", routes: ["9"], stops: [],
+    starts_at: fx.FROZEN_S - 600, ends_at: null },
+];
+
+test("P3c. the alerts join for a railroad station, on the panel and in the popup", async ({ page }) => {
+  await boot(page, (ctx) => {
+    ctx.overrides.alerts = (route, fixtures) =>
+      json(route, { ...fixtures.alerts(), alerts: LIRR_STATION_ALERTS });
+  });
+  await selectStation(page, "jamaica", "LIRR");
+  const state = await panelState(page);
+  expect(state.detailHeading).toContain("LIRR"); // the same premise P3b states
+  const popup = await popupHtml(page, "lirr station");
+  const measured = {
+    // The panel writes its alerts as ELEMENTS (stations.js), the popup as HTML
+    // (alertsBlockHtml), so the two selectors differ and both are read: F11's claim is
+    // that the two surfaces say the same thing, and a pin on one of them could not see
+    // the other stop saying it.
+    panelAlerts: await page.locator("#stations-detail ul.station-alerts li").allInnerTexts(),
+    panelArrivals: state.arrivals,
+    spoken: state.spoken,
+    popupAlerts: await page.locator(".leaflet-popup-content .alert-block .alert-row").allInnerTexts(),
+    popup,
+  };
+  // PREMISE ASSERTIONS. Both alerts must be there and the third must not, or this pin is
+  // measuring a join that matched nothing (or everything) and would hold either way.
+  expect(measured.panelAlerts).toHaveLength(2);
+  expect(measured.panelAlerts.join(" ")).toContain("platforms C and D");
+  expect(measured.panelAlerts.join(" ")).toContain("single-tracking");
+  expect(measured.panelAlerts.join(" ")).not.toContain("Port Washington");
+  pin("alerts/lirr", measured);
+});
+
+/* THE POSITION LADDER'S FIVE STATES IN THE F01 WORLD, by count and by words.
+
+   The ladder is the backend's (feeds/railroad._position_ladder, five steps: reported
+   unqualified, estimated, reported qualified, placed, and nothing at all), and every step
+   above the fifth arrives on this page as a marker whose words positionQualifier chooses.
+   MR3 redraws every one of those markers. What it may not do is change how MANY trains
+   are in each state, or what any of them SAYS, and the two are pinned together because a
+   restyle that broke the reading of `provenance` could keep the counts and change the
+   words, or keep the words and move a train between states.
+
+   THE WORDS ARE COLLECTED AS A SET PER STATE, not per train: the ages inside them are the
+   capture's own and there are many, so the set is what is invariant and the pin stays
+   readable. The fifth state has no marker to read, so it is pinned as the count the status
+   line reports, which is the only place it exists on this page (24, from the capture's own
+   LIRR block).
+
+   This is a SECOND WITNESS beside smoke.spec.js's C2j, and of a different kind, exactly as
+   P2c is beside C2i: C2j asserts the acceptance and would have to be edited to accept a
+   change, this says what the world DID read before MR3 and fails without anyone editing
+   anything. */
+const f01Ladder = (page) =>
+  page.evaluate(() => {
+    const now = Date.now() / 1000 - (minClockOffset ?? 0);
+    const byKind = {};
+    for (const record of railroads.values()) {
+      const t = record.latest;
+      const position = railroadPosition(t, now);
+      // The ladder's own vocabulary, keyed by the kind positionQualifier answers with
+      // ("" for an unqualified reported fix) plus the provenance that reached it, so a
+      // train that changed step would land in a different bucket rather than blend in.
+      const key = `${t.provenance}/${position.kind || "unqualified"}`;
+      (byKind[key] ??= { count: 0, words: new Set(), systems: new Set() });
+      byKind[key].count += 1;
+      byKind[key].words.add(position.words);
+      byKind[key].systems.add(t.system);
+    }
+    return Object.fromEntries(
+      Object.keys(byKind)
+        .sort()
+        .map((k) => [
+          k,
+          {
+            count: byKind[k].count,
+            words: [...byKind[k].words].sort(),
+            systems: [...byKind[k].systems].sort(),
+          },
+        ]),
+    );
+  });
+
+test("P3d. the F01 world's ladder: how many trains are in each state, and what each one says", async ({ page }) => {
+  await boot(page, (c) => {
+    c.overrides.railroads = (route) => {
+      const body = JSON.parse(JSON.stringify(require("./fixtures/f01_railroads.json")));
+      // Metro-North's own poll aged six minutes, the same world P1b pins the status line
+      // in: it is the one world where the withheld count and the undated clause are both
+      // on the line, so the fifth state's count can be read off it.
+      body.systems.MNR.fetched_at = fx.FROZEN_S - 360;
+      return json(route, body);
+    };
+  }, { railroadCount: 136 });
+  pin("ladder/f01", {
+    drawn: await page.evaluate(() => railroads.size),
+    states: await f01Ladder(page),
+    // The fifth state, which has no marker: the count the status line carries for the
+    // trains the ladder drew nothing for.
+    statusTail: await statusTail(page),
   });
 });

@@ -1190,7 +1190,8 @@ Transit marks) also failed; on an isolated re-run of the same mutation against t
 passed, and the mutation reaches nothing NJ Transit draws. The kill above is the isolated run.
 
 **And one per guard the round repaired**, which is the operator's rule applied to the review's
-own findings rather than only to the stage's.
+own findings rather than only to the stage's. **Twenty-six in total: twenty-five die and one
+survives for a reason that is written down.**
 
 | # | Guard reverted | Result | Killed by |
 | --- | --- | --- | --- |
@@ -1203,6 +1204,11 @@ own findings rather than only to the stage's.
 | **M40** | one of `subway.js`'s two registrations deleted, which the file-granular scrape allowed | **killed**, node and e2e | the site-count assertion, the six-families list, and D5b and D5d on the page |
 | **M41** | a focus-owning entry passes opacity, which is the rule the per-entry guard states | **killed**, 2 node | the per-entry opacity test and the casings-by-renderer test |
 | **M42** | the ferry's dock names back on the subway's band, degraded value and all | **killed** | D4d, on `data-ferry-label-band` at 13 and at 14 |
+| **M43** | the station panel's AirTrain chip back to the magenta the map no longer paints | **killed** | D4e, through the function the panel builds the chip with |
+| **M44** | the AirTrain guideway back to the magenta literal | **killed**, node and e2e | the registry scrape and D4e, which names the colour now instead of asking a regex that could not match it |
+| **M45** | the clicked bus route line back to `routeColor`'s raw wheel | **killed after the guard was strengthened.** It first survived the page tier, and the reason is the repair itself: the painter runs on every theme press, so a line DRAWN from the wrong wheel is corrected by the first press and every comparison made after it passes. D5b takes its reading before the theme is touched at all now, and the node scrape catches the lost resolver either way. The same shape as MR3's M9 and this stage's own P4b |
+| **M46** | `--bus-mark-lightness` deleted from the light theme, so the var falls back | **killed** | D4f, which asks the root for the declared value rather than comparing the token against its own fallback |
+| **M47** | the element's alpha not composited in the contrast measurement | **SURVIVES, and it is recorded as surviving.** The only element on this map with an opacity is the subway's plate, whose paint IS the surface colour, so compositing it over the surface returns the surface and no number moves. The repair is correct for the case it will meet and there is nothing today for a guard to see; saying so is the honest version of a green run |
 
 
 ## Stage MR5: popups

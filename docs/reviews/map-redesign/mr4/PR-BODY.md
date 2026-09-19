@@ -243,11 +243,11 @@ a defect and that claim stays an assertion. It held: regenerating moved `census/
 
 ## Mutations, each in a worktree detached at the commit
 
-**Twenty-one**: twelve for the stage and nine more for the guards round 1 repaired, every one of
-them re-run at the round-1 tip, with the worktree's sha echoed and compared before every run, the
+**Twenty-six**: twelve for the stage and fourteen more for the guards round 1 repaired, every one
+of them re-run at the tip, with the worktree's sha echoed and compared before every run, the
 server killed by PORT rather than by command text, and `CI=1` so Playwright cannot serve the
-unmutated tree. The full table with what killed each one is in the ledger. Three are worth naming
-here:
+unmutated tree. **Twenty-five die and one survives for a reason that is written down.** The full
+table is in the ledger. Four are worth naming here:
 
 - **M30** (the diamond's stroke as a presentation attribute) is **killed at the node tier only,
   with every browser gate green**, and that is finding Q8 rather than a sleeping guard.
@@ -256,6 +256,14 @@ here:
   proves nothing about the guard under test. A mutation reverts one decision.
 - **M39** makes a family's painter throw, and it is the one that proves round 1's repair: before
   it, D5b and D5d both passed with a family left wearing the previous theme.
+- **M45** (the clicked route line back to the raw wheel) **first survived the page tier**, and the
+  reason is the repair itself: the painter runs on every theme press, so a line drawn from the
+  wrong wheel is corrected by the first press and every comparison made after it passes. D5b takes
+  its reading before the theme is touched at all now. The same shape as MR3's M9.
+- **M47** (the element's alpha not composited) **survives, and is recorded as surviving**: the
+  only element on this map with an opacity is the subway's plate, whose paint IS the surface
+  colour, so no number moves. There is nothing for a guard to see, and saying so is the honest
+  version of a green run.
 
 ## Gates
 

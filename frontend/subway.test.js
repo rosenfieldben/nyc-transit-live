@@ -339,6 +339,28 @@ test("MR2 F7: the Names toggle says what happened, and says why when there is no
   // The one state a rider cannot work out from the screen: on, and nothing can show.
   assert.match(namesToggleAnnouncement(true, "none"), /^Station names on; none at this zoom/);
 
+  /* EVERY BAND IT IS GIVEN, NOT THE FIRST (MR3 round 4). The toggle hides commuter-rail names as
+     well (style.css's `:root[data-labels="off"] .stn-label.rail`), and the two bands disagree by
+     design: rail names show from zoom 11 and the subway's first band opens at 12. Reading the
+     subway's alone, the press at zoom 11 said "none at this zoom, zoom in to see them" while it
+     had just switched off every rail name on screen, which is the one thing this sentence exists
+     to prevent. THE MUTATION IS READING ONLY THE FIRST BAND, and these four kill it. */
+  assert.equal(namesToggleAnnouncement(true, "none", "all"), "Station names on.");
+  assert.equal(namesToggleAnnouncement(true, "all", "none"), "Station names on.");
+  assert.equal(namesToggleAnnouncement(true, "hubs", "none"), "Station names on.");
+  assert.match(namesToggleAnnouncement(true, "none", "none"), /^Station names on; none at this zoom/);
+  // Off is off whatever the bands say, because nothing is shown either way.
+  assert.equal(namesToggleAnnouncement(false, "none", "all"), "Station names off.");
+
+  /* AND NO BANDS AT ALL IS "ON", NOT "NONE". `[].every(...)` is vacuously true, so the obvious
+     spelling of "every band is none" would make a caller that names no band claim the zoom shows
+     no names. A caller that names none has told us nothing about the zoom, and the unqualified
+     sentence is the honest answer. Asserted because it is a trap a later stage will walk into
+     while adding its own families to the call. */
+  assert.equal(namesToggleAnnouncement(true), "Station names on.");
+  // A band the root has not been given yet reads null, which is not "none" and must not become it.
+  assert.equal(namesToggleAnnouncement(true, "none", null), "Station names on.");
+
   /* The tooltip carries the other one, which is the degraded backend rather than the zoom, and
      it is keyed on HOW MANY STATIONS LIST ROUTES rather than on how many are hubs. A network
      with no interchange and a full route index is a legitimate network, and over that map this

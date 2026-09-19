@@ -255,6 +255,13 @@ applyTheme(themeChoice(storedTheme(), document.documentElement.getAttribute("dat
    where the stylesheet has not applied yet (a test that renders the markers with no
    document styles, which frontend/boards.test.js does).
 
+   MR3 ADDED A THIRD POPULATION TO THAT SWAP: the three commuter rail families' 5px paper
+   casings, on railroadCasingPane. railDrawRibbons resolves paperColor() once per draw, the
+   same way drawRibbons does, so a casing drawn under the light theme keeps its light paper
+   until something restyles it. That is not a defect in this stage, because the theme toggle
+   is still `hidden` until MR4 unhides it (round 3's R2), and it IS one more layer group MR4's
+   swap has to reach. Named here rather than left for MR4 to discover.
+
    Read live rather than cached, because a cache would be a second copy of the theme and the
    whole point of a token is that there is one. */
 function rootToken(name, fallback) {
@@ -590,10 +597,19 @@ function paintZoomBand() {
      instead of showing nothing from 12. Before any station has loaded there are no labels
      either way, so the first paint is unaffected and loadStations calls this again when they
      arrive. */
-  const labels = document.querySelectorAll(".stn-label").length;
-  const hubs = document.querySelectorAll(".stn-label.hub").length;
+  /* :not(.rail) ON BOTH COUNTS (MR3 round 4). The sentinel asks "has the SUBWAY loaded, and
+     does it publish any interchange", and MR3 put ~300 commuter-rail labels in the same class.
+     Counted together, a page with rail labels and no subway labels reads as "subway loaded,
+     zero hubs", which is LABEL_NO_HUB_ZOOM's degraded band: every subway name from 13 instead
+     of hubs from 12, on a map whose subway index is merely still in flight. The rail labels
+     cannot answer a question about the subway, so they are not asked. */
+  const labels = document.querySelectorAll(".stn-label:not(.rail)").length;
+  const hubs = document.querySelectorAll(".stn-label.hub:not(.rail)").length;
   document.documentElement.setAttribute("data-zoom", String(zoom));
   document.documentElement.setAttribute("data-label-band", labelZoomBand(zoom, !labels || hubs > 0));
+  // MR3's rail names, on their own attribute because the two bands overlap and one attribute
+  // cannot hold two answers. No hub term: a rail station is never a subway transfer station.
+  document.documentElement.setAttribute("data-rail-label-band", railLabelBand(zoom));
   /* THE TOOLTIP IS KEYED ON THE DATA, NOT ON THE HUB COUNT, which is a distinction D2z had to
      teach me: a network can have no interchange while every station lists its routes, and over
      that map the sentence "no station lists the routes that call there" is simply false. So the
@@ -628,7 +644,16 @@ if (namesToggleEl) {
        this control did not. The labels are aria-hidden by design, so for a screen reader this
        sentence is the ONLY evidence the press did anything; and at a zoom where no name can
        show, it is the only thing that stops the button claiming an effect it does not have. */
-    announcePage(namesToggleAnnouncement(!on, document.documentElement.getAttribute("data-label-band")));
+    /* BOTH BANDS (MR3 round 4): rail names show from zoom 11 and are hidden by this same
+       press, so the subway's band alone would have the sentence say "none at this zoom" over a
+       screen full of commuter-rail names it had just switched off. */
+    announcePage(
+      namesToggleAnnouncement(
+        !on,
+        document.documentElement.getAttribute("data-label-band"),
+        document.documentElement.getAttribute("data-rail-label-band"),
+      ),
+    );
   });
 }
 paintZoomBand();
@@ -716,7 +741,9 @@ paintViewPresets();
 
      200  tilePane            the basemap
      390  subwayLinePane      OURS. Subway ribbons, and nothing else.
-     400  overlayPane         every other family's route lines, on one shared canvas
+     394  railroadCasingPane  OURS. The three rail families' paper casings, and nothing else.
+     395  railroadLinePane    OURS. LIRR, Metro-North and NJ Transit branch lines.
+     400  overlayPane         every remaining family's route lines, on one shared canvas
      450  stationPane         OURS. Every family's station dots, on one shared canvas.
      460  stationLabelPane    OURS. Subway station name labels.
      500  shadowPane          Leaflet's marker shadows (unused here)
@@ -740,6 +767,38 @@ paintViewPresets();
    subway is the base network on this map, so its ribbons go under everything, and no fetch
    order can change it. Nothing else moves, which is what MR2's pins require.
 
+   AND MR3 BROUGHT THE SAME DEFECT BACK, WHICH IS WHY THERE IS A SECOND ONE (finding N2). Stage
+   3 gave the three commuter rail families a 5px casing in --paper at 0.9, drawn on the shared
+   canvas, and that is the same shape of mark that made the subway's pane necessary: PATH's
+   33rd St line is weight 3.5, the AirTrain at Howard Beach is 3 and the ferry's routes are 2,
+   all of them thinner than the casing and all of them on one canvas with it. NJ Transit runs
+   into Newark Penn and Hoboken where PATH does, so the overlap is real rather than theoretical,
+   and the arrival order is the same race it always was.
+
+   So the railroads get railroadLinePane at 395: ABOVE the subway, which is still the base
+   network under everything, and BELOW the four families whose lines a 5px casing could erase.
+   The number is between the two rather than at either end because the ordering is a three-way
+   one now, and a pane cannot be shared by families that must not paint over each other.
+
+   AND A SECOND RAIL PANE AT 394, BECAUSE ONE WAS NOT ENOUGH (round 4). Putting all three rail
+   families on ONE canvas closed the defect against PATH, the AirTrain and the ferry and reopened
+   it INSIDE the pane. subway.js's answer to this is two passes over one payload, every casing
+   then every line, and that works there because the subway's geometry arrives in a SINGLE
+   response. The rail families' does not: /api/railroad-routes and /api/njt-routes are two
+   endpoints, kicked off together, landing in a race, and each one can only order its own lines.
+   Measured on the hermetic world: the draw chain came out [5, 5, 2.5, 2.5, 5, 5, 5, 2.5, 2.5,
+   2.5], so all three NJ Transit casings were stroked after both railroad lines, and an NJT casing
+   crossing an LIRR line at Penn erased it. Two passes per loader cannot fix that, because neither
+   loader knows whether the other has run.
+
+   A SECOND PANE CAN, and it is the same remedy one number down: every casing on 394 and every
+   line on 395, so the relation holds in EVERY arrival order rather than in the order that
+   happened. Nothing is lost by splitting them. A casing landing over another casing is invisible
+   (one weight, one paper colour, one opacity), and the pane a mark belongs to is not the layer
+   group that toggles it, so LIRR, Metro-North and NJ Transit each still show and hide their
+   casing and their line together. Two adjacent panes for one drawing is the cost, and it is the
+   only structure here that does not depend on which response arrives first.
+
    Station dots sit between the route lines and the vehicles so the station canvas, not the
    route-line canvas it overlaps, receives clicks. Station name labels sit just above the
    dots: a name may cover the dot it names, which is its own station, and may never cover a
@@ -748,6 +807,18 @@ paintViewPresets();
    route-coloured pixels, letter and all. */
 map.createPane("subwayLinePane");
 map.getPane("subwayLinePane").style.zIndex = 390;
+
+/* The rail families' two panes, per the order above: finding N2 put them above the subway and
+   below the thin families, and round 4 split the casing off the line. ONE PAIR FOR ALL THREE
+   FAMILIES, because they draw one grammar, and the split is what makes the answer independent of
+   which of the two route endpoints answers first. The casing pane holds nothing but 5px paper at
+   0.9, so order within it cannot matter; the line pane holds nothing but 2.5px branch colours, so
+   no casing can be on the wrong side of a line anywhere. */
+map.createPane("railroadCasingPane");
+map.getPane("railroadCasingPane").style.zIndex = 394;
+
+map.createPane("railroadLinePane");
+map.getPane("railroadLinePane").style.zIndex = 395;
 
 map.createPane("stationPane");
 map.getPane("stationPane").style.zIndex = 450;
@@ -1609,7 +1680,14 @@ let nextObservationCrossing = null;
 // the note of when that observation will cross if it has not yet.
 function vehicleMarkerAge(sourceKey, systemAge, row, now = correctedNow()) {
   const source = sourceDescriptor(sourceKey);
-  const own = observationAge(row, source ? source.servedAt : null, now);
+  /* THE 6.3 ERRATUM IS APPLIED HERE, at the one composition every system's dimming goes
+     through, so the rule has one home for all six of them rather than a copy per file. `gated`
+     comes from OBSERVATION_GATED, the contract's 3.3 table transcribed and keyed by the family
+     this layer already names, so the answer is a decision rather than a side effect of which
+     models happen to carry a `system` field (which is what the first cut of this line read, and
+     it was right by accident). helpers.js carries the table and the argument. */
+  const gated = observationGated(sourceKey, row);
+  const own = observationDimAge(row, observationAge(row, source ? source.servedAt : null, now), gated);
   if (own != null && !staleAge(own)) {
     const at = observationStaleAt(row);
     if (at != null && (nextObservationCrossing == null || at < nextObservationCrossing)) {
@@ -1622,6 +1700,64 @@ function vehicleMarkerAge(sourceKey, systemAge, row, now = correctedNow()) {
 // Has an observation crossed since the sweeps last ran? The animation tick's question.
 function observationCrossed(now) {
   return nextObservationCrossing != null && now >= nextObservationCrossing;
+}
+
+/* ---------------- MR3 (R-d): ONE RE-READ OF A STATIC PAYLOAD THAT IS MISSING A FIELD -------
+
+   THE PROBLEM, which is a deploy problem rather than a code one. /api/railroad-routes and
+   /api/njt-routes are static-derived and served under an hour-long cache. A release that adds a
+   FIELD to one of them (this stage needs route_short_name on the NJT payload; the branch before
+   it added color and text_color to the railroad one) ships a frontend that reads the new field
+   against a response the browser or an intermediary may hold from before the backend rolled. The
+   payload is well formed and the field is simply absent, so nothing errors: every NJ Transit tag
+   silently prints a route id where it should print NEC, for up to an hour, on exactly the deploy
+   the feature ships in.
+
+   THE ANSWER THE OPERATOR RULED (R-d): re-read the payload ONCE with cache "reload", which
+   bypasses the HTTP cache for that one request, and then fall back to the id if the field is
+   still absent. Not a poll and not a retry loop: "reload" either reaches a backend that has the
+   field or reaches one that does not, and a second attempt cannot change which. The fallback is
+   already correct on its own terms (railBranchCode returns the id for a route it cannot name),
+   so this buys correctness on the deploy boundary and costs one extra request there.
+
+   ONCE, AND ONLY WHEN THE FIELD IS ABSENT FROM EVERY ENTRY. A payload where SOME entries carry
+   it is a payload from a backend that knows the field, and the entries without it are the feed's
+   own gaps: NJ Transit's route 17 has no trips in an ordinary publication and the railroads
+   publish no colour for some routes. Re-reading for those would re-read forever.
+
+   A FOLLOW-UP, NOT A FIX: a version stamp on the static-derived endpoints would let the frontend
+   ASK whether the payload predates the field instead of inferring it from absence. Recorded as
+   such in docs/reviews/map-redesign-rounds.md under Stage MR3. */
+// The predicate is in helpers.js (staticPayloadHasField), because it is pure and node asks it
+// directly; only the fetch, which needs the page, is here.
+
+// The routes payload, re-read once past the HTTP cache when `field` is absent from every entry.
+// Returns null for a state the caller should retry (a warming 503, a network error, an empty
+// payload is the caller's own judgement), and the parsed payload otherwise.
+async function fetchRoutesPayload(url, field) {
+  const read = async (init) => {
+    const res = await fetch(url, { ...init, signal: AbortSignal.timeout(FETCH_DEADLINE_MS) });
+    if (!res.ok) return null; // warming 503 (or transient error): the caller retries
+    return res.json();
+  };
+  let routes;
+  try {
+    routes = await read({});
+  } catch {
+    return null;
+  }
+  if (routes == null) return null;
+  if (!field || staticPayloadHasField(routes, field)) return routes;
+  /* THE ONE RE-READ. A failure here keeps the payload we already have rather than discarding it:
+     a cached response missing one field still draws every line, every colour and every station,
+     and throwing it away to retry the whole loader would trade a fallback code for no map. */
+  try {
+    const fresh = await read({ cache: "reload" });
+    if (fresh != null) return fresh;
+  } catch {
+    /* keep what we have */
+  }
+  return routes;
 }
 
 /* ---------------- A2: the one place a map marker is born ---------------- */
@@ -1697,6 +1833,83 @@ function applyVanishingFocus(plan) {
 
 function rescueVanishingFocus(subtree, options = {}) {
   return applyVanishingFocus(planVanishingFocus(subtree, options));
+}
+
+/* ---------------- MR3: the two rail icons, one shape each for three families ----------------
+
+   THE MARKUP IS IN helpers.js AND ONLY THE WRAPPER IS HERE, which is the seam the rest of
+   this file already keeps: helpers.js never touches Leaflet (it is loaded by node with no L
+   at all), so the string is pure and testable and the four lines that need a browser are
+   these. That is why railTagSvg exists as a string builder rather than as an L.divIcon.
+
+   ONE BUILDER FOR LIRR, METRO-NORTH AND NJ TRANSIT, where before MR3 there were two: the
+   hollow rect in systems/railroad.js and a byte-identical copy of it in systems/njt.js, with
+   no shared helper between them, so changing one did not change the other. Three families
+   drawing one grammar is the whole claim of this stage, and it is only true if they call one
+   function. */
+
+// A rail train's tag. `state` is railTagState's answer and `bearing` railTrainBearing's.
+//
+// iconAnchor IS [w/2, 21] AND THAT IS THE WHOLE GEOMETRY: the glyph box is 30 tall, the tag
+// hangs in y 0 to 13, and the head is centred on y 21, so anchoring at 21 puts the head on
+// the rail and lifts the tag clear of it. iconSize is the box, which is also the click box.
+function railTagIcon({ system, code, color, textColor = null, state, bearing = null }) {
+  const geom = railTagGeometry(system, code);
+  return L.divIcon({
+    className: `rail-tag-marker ${railFamilyClass(system)} rail-tag-${state.body}`,
+    html: railTagSvg({ system, code, color, textColor, state, bearing }),
+    iconSize: [geom.width, 30],
+    iconAnchor: [geom.width / 2, 21],
+    // The popup opens off the TAG, not off the head: a popup tipped at the rail would cover
+    // the track the rider is reading. Negative y is up from the anchor, and 21 is the head's
+    // offset from the tag's own top.
+    popupAnchor: [0, -21],
+  });
+}
+
+// A rail STATION. The drawn square is 10x10 and the icon is 20x20, so the click box clears
+// WCAG 2.2's 24px floor together with the map's own padding rule (style.css says how) while
+// the mark on screen stays a 10px square rather than becoming a blob at city zoom.
+function railStationIcon(system = null) {
+  return L.divIcon({
+    className: `rail-stn-marker ${railFamilyClass(system)}-stn`,
+    html: railStationSvg(),
+    iconSize: [RAIL_STATION_BOX, RAIL_STATION_BOX],
+    iconAnchor: [RAIL_STATION_BOX / 2, RAIL_STATION_BOX / 2],
+    popupAnchor: [0, 0],
+  });
+}
+
+/* A RAIL STATION'S NAME, on the label pane the subway's names already use, with the SAME
+   permanent tooltip, the same aria-hidden and the same full opacity, and NEVER the hub class.
+
+   WHY IT SHARES subway.js's PATH RATHER THAN COPYING IT. Three of the six tooltip defaults
+   that rule takes back off are invisible in a diff (the 0.9 inline opacity Leaflet writes in
+   onAdd, the pane, and the interactive flag), and MR2 paid for each one once already. The
+   only differences here are the class, which adds `rail` so the zoom band can gate rail
+   names from 11 while the subway's start at 12, and the absence of `hub`: a hub is a subway
+   transfer station by one predicate in helpers.js, and a rail station is never one of those.
+
+   ARIA-HIDDEN FOR THE SAME REASON MR2 GAVE: a label is the first DOM these stations have
+   ever had, and 300 bare place names in the reading order whose only information is WHERE
+   they are would say nothing a screen reader can use. The station panel is the text surface
+   and it is one Tab away. a11y.spec.js measures the ink against the halo directly, because
+   axe cannot see an aria-hidden node. */
+function bindRailStationLabel(marker, text) {
+  marker.on("tooltipopen", (event) => {
+    const el = event.tooltip?.getElement?.();
+    if (el) el.setAttribute("aria-hidden", "true");
+  });
+  marker.bindTooltip(text, {
+    permanent: true,
+    direction: "right",
+    // Clear of the 10px square plus its stroke, where the subway's 7 clears a 5px dot.
+    offset: [9, 0],
+    className: "stn-label rail",
+    interactive: false,
+    pane: "stationLabelPane",
+    opacity: 1,
+  });
 }
 
 function labeledMarker(latlng, options, name) {

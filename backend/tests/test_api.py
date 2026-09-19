@@ -5080,6 +5080,11 @@ NJT_ROUTES = [
     {
         "route": "1",
         "name": "Northeast Corridor",
+        # THE SHORT NAME arrived on claude/mr3-rail: the map's commuter rail tag prints a
+        # short branch code and the brief says NJ Transit's comes from this column, not from a
+        # hand-written table. Updated here rather than relaxed, which is what these exact-dict
+        # guards are for.
+        "short_name": "NEC",
         "color": "EF3E42",
         "text_color": None,
         "polylines": [[[40.7, -74.0], [40.71, -74.01]]],
@@ -5087,6 +5092,7 @@ NJT_ROUTES = [
     {
         "route": "10",
         "name": "North Jersey Coast Line",
+        "short_name": "NJCL",
         "color": "03A3DF",
         # Two polylines: the Long Branch and Bay Head legs, which the dedup keeps
         # apart. A client draws both or the line stops short of a real terminus.
@@ -5113,6 +5119,12 @@ async def test_njt_routes_served_with_max_age_when_ready(client):
     # NO system KEY, unlike /api/railroad-routes: LIRR and MNR route ids collide
     # with each other and NJ Transit's do not collide with themselves.
     assert "system" not in res.json()[0]
+    # THE SHORT NAME IS SERVED AND IS ADDITIVE. A payload built before the field existed still
+    # validates and reads None, which matters because this answer is client-cached for an hour:
+    # a browser holding yesterday's copy must not start failing on a field just added.
+    assert [row["short_name"] for row in res.json()] == ["NEC", "NJCL"]
+    before = {k: v for k, v in NJT_ROUTES[0].items() if k != "short_name"}
+    assert models.NjtRoute.model_validate(before).short_name is None
     # text_color survives as null rather than being filled in on the way out: this
     # feed publishes it empty on every route and the client computes its own ink.
     assert res.json()[0]["text_color"] is None
@@ -5212,6 +5224,10 @@ async def test_njt_static_warmup_builds_route_lines_when_the_publication_has_sha
         {
             "route": "1",
             "name": "Northeast Corridor",
+            # The builder carries route_short_name on its own, because `name` above is
+            # long-name-else-short-name and can never be the short one while a long name
+            # exists (it does on all twelve routes).
+            "short_name": "NEC",
             "color": "EF3E42",
             "text_color": None,
             "polylines": [[[40.7, -74.0], [40.71, -74.05], [40.72, -74.02]]],

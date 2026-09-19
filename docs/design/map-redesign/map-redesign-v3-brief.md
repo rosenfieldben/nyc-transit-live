@@ -117,6 +117,8 @@ v2's branch table is not the feed's. The app already serves the real ids and nam
 
 There is no route 11. Route 12 (City Terminal Zone) and 13 (Greenport) appear in live feeds and need a code and a color. Proposed codes, keyed by name: BAB, HEM, OB, RON, MTK, LB, FR, WH, PW, PJ, CTZ, GRN.
 
+> **ERRATUM, 2026-09-19 (stage MR3, the operator's ruling R-c).** There IS a route 11: **Belmont Park**, published with colour `60269E`, confirmed present in the live `/api/railroad-routes` payload while stage 3 was being built. The sentence above stands as written because it is what the brief claimed and the record of a claim is worth more than a clean page; what is corrected is the table, not the history. The LIRR code table in `frontend/helpers.js` carries thirteen branches, not twelve, and route 11's code is **BEL**. `frontend/railtag.test.js` asserts the count, which is what caught this: a table sized to the brief fails the moment the feed disagrees with it.
+
 ### 6.2 Metro-North, as served today (id, name)
 
 ```

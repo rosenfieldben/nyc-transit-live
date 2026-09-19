@@ -27,6 +27,52 @@ dies. A read-only fan-out that only greps and reads does not need it, but a scri
 promise its agents will stay read-only, so the default is isolation and the exception has
 to be argued in the script.
 
+## And the worktree must be at the commit under review
+
+**A worktree is created at the repository default branch. Put it at the commit under review
+and make every agent prove it.**
+
+The isolation rule above says where an agent may write. It says nothing about what an agent
+reads, and the default answer is the wrong thing: a fresh worktree lands on the default
+branch, where the branch under review does not exist.
+
+This is not hypothetical either. On stage MR3 of the map redesign, two verifiers read
+`origin/main` and returned two real critical defects as REFUTED, with "the diff is empty"
+and "`bindRailStationLabel` does not exist" as their evidence. One of the defects was a
+canvas casing stroked with the literal string `var(--paper)`, which Canvas2D ignores
+silently, leaving the previous branch's colour on the context; the other was a train
+bearing computed from the wrong pair of points. Both were re-verified by hand and both were
+real. `docs/reviews/map-redesign-rounds.md` records it under stage MR3's round 4.
+
+A refutation that reads "the code you describe is not there" is indistinguishable from a
+correct refutation of a hallucinated finding, which is what makes this the worst output a
+review tool can produce: it deletes a real defect and looks like diligence doing it.
+
+So a review workflow takes the sha of the tip under review, tells every agent to
+`git checkout --detach <sha>` if it is not already there (detached, because N worktrees
+share one object store and a branch checkout either fails or moves the caller's ref),
+requires each agent to echo back the sha it actually read, and discards the output of any
+agent whose sha does not match. A discarded verdict makes its finding **unverified**, never
+refuted. `adversarial-review.js` implements this as its RULE 0b, and callers pass
+`{commit: "<full sha>", branch: "<branch>"}` in `args`.
+
+## And a worktree does not get the caller's dev server
+
+**A background service the caller left running is shared with every worktree, and a worktree's
+run may silently use it instead of its own.**
+
+Measured on stage MR3 of the map redesign. `tests/e2e/playwright.config.js` sets
+`reuseExistingServer: !process.env.CI` and `tests/e2e/serve.js` resolves its document root from
+its own `__dirname`. Both are reasonable alone. Together they mean a static server left up from
+the MAIN checkout is reused by a worktree's Playwright run, and every browser assertion in that
+worktree reads the **unmutated** frontend. A mutation that reverted a confirmed critical came
+back green.
+
+So a worktree that runs browser gates kills whatever holds the port first (**by port, not by
+command text**: a `pkill` on the server's path also matches the shell running the driver), sets
+`CI=1` so nothing is reused, and refuses to run at all while the port is still held. The same
+applies to any other shared background service a workflow's agents might inherit.
+
 ## And the caller owes one check back
 
 Isolation makes the race impossible for agents a script spawns. It cannot make it

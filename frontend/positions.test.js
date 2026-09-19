@@ -43,6 +43,11 @@ const {
   positionBoard,
   markerAge,
   glideDeadline,
+  observationGated,
+  OBSERVATION_GATED,
+  observationDimAge,
+  AGE_UNKNOWN,
+  staleAge,
   drawnFromPrediction,
   railroadHollow,
   railroadAtItsStation,
@@ -714,11 +719,30 @@ test("6.3 isPlacedRailroad is gone, every sweep dims by the observation too, and
     assert.doesNotMatch(readFileSync(join(__dirname, name), "utf8"), called, name);
   }
   for (const name of files) assert.doesNotMatch(src(name), called, name);
-  // The railroad's glyph, glide, words and cross-link come from the served provenance.
+  /* The railroad's glyph, glide, words and cross-link come from the served provenance.
+
+     THE GLYPH'S CALL MOVED IN MR3 AND THE RULE DID NOT, so this follows the chain rather than
+     dropping the claim. railroadHollow used to be called from railroad.js directly, for a
+     16x16 square whose only variable was filled-or-hollow. The tag needs three decisions, so
+     railroad.js asks railTagState, and railTagState is what calls railroadHollow, keeping ONE
+     expression of "did this train report this position". Both links are asserted: railroad.js
+     must reach the table, and the table must still ask that helper. A copy of the rule inside
+     railTagState would pass the first and fail the second. */
   const railroad = src("railroad.js");
-  for (const call of ["railroadHollow(", "drawnFromPrediction(", "railroadAtItsStation(", "railroadPosition("]) {
+  for (const call of ["railTagState(", "drawnFromPrediction(", "railroadAtItsStation(", "railroadPosition("]) {
     assert.ok(railroad.includes(call), `railroad.js no longer calls ${call}`);
   }
+  const helpers = readFileSync(join(__dirname, "helpers.js"), "utf8");
+  const table = helpers.slice(helpers.indexOf("function railTagState("));
+  assert.match(
+    table.slice(0, table.indexOf("\n}\n")),
+    /railroadHollow\(/,
+    "railTagState no longer asks railroadHollow, so the body rule has a second home",
+  );
+  // AND NJ TRANSIT REACHES THE SAME TABLE. Its icon was a byte-for-byte copy of the
+  // railroad's hollow rect with no shared helper, so "one grammar for three families" is only
+  // true while this holds.
+  assert.ok(src("njt.js").includes("railTagState("), "njt.js draws its own glyph again");
   // EVERY STALE SWEEP DIMS BY THE OBSERVATION TOO, which is the site the animation tick
   // wakes when one observation crosses between polls: a sweep that dimmed by its
   // system's age alone would leave that marker bright.
@@ -739,6 +763,147 @@ test("6.3 isPlacedRailroad is gone, every sweep dims by the observation too, and
   for (const name of files) {
     for (const match of src(name).matchAll(/glideClock\(\s*now\s*,\s*([A-Za-z]+)/g)) {
       assert.equal(match[1], "glideDeadline", `${name}: glideClock(now, ${match[1]}...)`);
+    }
+  }
+});
+
+test("6.3 erratum: every family that dims through vehicleMarkerAge has a row in the 3.3 gating table", () => {
+  /* THE OPERATOR'S RULING R-b, held by a test rather than by the table's own comment.
+
+     The first cut of the gate read `!UNDATED_SYSTEMS.has(row.system)`, which was right for the
+     wrong reason: bus, subway, PATH and ferry rows carry no `system` field at all, so
+     `has(undefined)` came back false and those four families were gated by ACCIDENT. A table
+     replaces it, and a table is only as good as the guarantee that nothing reaches it unlisted.
+     So the call sites are enumerated from the source and every family one of them can name must
+     have a row. A seventh system added in stage 4 fails here until it is listed. */
+  const systems = join(__dirname, "systems");
+  const files = readdirSync(systems).filter((name) => name.endsWith(".js"));
+  const keys = new Set();
+  for (const name of files) {
+    for (const m of readFileSync(join(systems, name), "utf8").matchAll(/vehicleMarkerAge\(\s*"([a-z]+)"/g)) {
+      keys.add(m[1]);
+    }
+  }
+  // The six sources that dim a vehicle. AirTrain is absent because it has no vehicles at all
+  // (its layer is stations and lines), which is why this is asserted as a set and not a floor:
+  // a source that stops dimming is as much a change as one that starts.
+  assert.deepEqual([...keys].sort(), ["buses", "ferry", "njt", "path", "railroads", "subways"]);
+
+  /* "railroads" IS THE ONE SOURCE WITH NO ROW, and that is the table working rather than a gap:
+     it is the only source whose two halves DIFFER, so the answer cannot be a property of the
+     source. Every railroad row carries a `system` ("LIRR" or "MNR") and observationGated reads
+     the row's own system first, so the source key is never consulted. Both systems are listed,
+     and they disagree, which is the whole reason the table is keyed this way. */
+  for (const key of keys) {
+    if (key === "railroads") {
+      assert.equal(OBSERVATION_GATED.railroads, undefined);
+      continue;
+    }
+    assert.equal(typeof OBSERVATION_GATED[key], "boolean", `${key} has no row in OBSERVATION_GATED`);
+  }
+  assert.equal(observationGated("railroads", { system: "LIRR" }), true);
+  assert.equal(observationGated("railroads", { system: "MNR" }), false);
+
+  // EVERY UNDATED SYSTEM IS LISTED AS NOT GATED, in both directions: the two tables are one
+  // policy and a system in UNDATED_SYSTEMS that this one gated would dim a live fleet.
+  for (const name of UNDATED_SYSTEMS) {
+    assert.equal(OBSERVATION_GATED[name], false, `${name} is undated but gated`);
+  }
+  for (const [name, gated] of Object.entries(OBSERVATION_GATED)) {
+    assert.equal(gated, !UNDATED_SYSTEMS.has(name), `${name} disagrees with UNDATED_SYSTEMS`);
+  }
+
+  // AN UNLISTED FAMILY IS GATED, which is the pessimistic answer. The test above is what stops
+  // that fallback being reached in practice; this is what it does when it is.
+  assert.equal(observationGated("amtrak", null), true);
+  assert.equal(observationGated("subways", {}), true);
+});
+
+test("6.3 erratum: a header-dated subway row with no vehicle.timestamp dims and says age unknown", () => {
+  /* THE INTENDED CASE, ASSERTED (the operator's ruling R-b). The subway is the one gated family
+     whose 3.3 row has a fallback: "vehicle.timestamp, else the contributing group header". So a
+     subway row the backend could date only from a header reaches the page with observed_at null
+     while /healthz still counts the feed as dated, and the rider is shown the pessimistic answer
+     the erratum settles: dimmed, with "age unknown" in the words.
+
+     THE TWO SURFACES DISAGREE ON PURPOSE, and the erratum in docs/design/freshness-contract.md
+     says so: the OPERATOR's rule is about whether the feed dates its rows, which it does, and
+     the RIDER's is about whether THIS row's position can be dated, which it cannot. A single
+     answer would either hide a real anomaly from the rider or raise a false one for the
+     operator. */
+  const row = { provenance: "reported", observed_at: null };
+  assert.equal(observationGated("subways", row), true);
+  const age = observationDimAge(row, null, observationGated("subways", row));
+  assert.equal(age, AGE_UNKNOWN);
+  assert.equal(staleAge(age), true);
+  assert.equal(markerOpacity(age), STALE_MARKER_OPACITY);
+  assert.equal(markerAge(null, age), AGE_UNKNOWN);
+  // And the words, from the same row read against a subway board. "live GPS, age unknown" is
+  // clause (c)'s sentence and it is unchanged by the erratum: what changed is the opacity.
+  assert.equal(positionQualifier(row, positionBoard({ servedAt: 1_800_000_000, systems: {} }, [], 1_800_000_000)).words, "live GPS, age unknown");
+});
+
+test("MR3: the re-skin gate covers every variable the tag is drawn from, in both rail files", () => {
+  /* THE GATE HAD NO TEST AT ALL, which is how it came to be written twice. railroad.js and
+     njt.js each build a skin key and compare it against the one the record is wearing; if a
+     variable the icon is drawn from is missing from that string, a train that changes it keeps
+     the icon it was born with, silently and forever. The old gate was `record.hollow !== hollow`,
+     enough for a square whose only variable was filled-or-hollow, and the tag has six.
+
+     SO THE INPUTS ARE READ OFF railTagIcon ITSELF rather than listed here. Add a seventh
+     parameter to the icon and this fails until both keys carry it, which is exactly the failure
+     that was missing. */
+  const systems = join(__dirname, "systems");
+  const src = (name) => readFileSync(join(systems, name), "utf8");
+  const shared = src("shared.js");
+  const signature = shared.slice(shared.indexOf("function railTagIcon("));
+  const params = signature.slice(signature.indexOf("{") + 1, signature.indexOf("}"));
+  const inputs = params.split(",").map((part) => part.split("=")[0].trim()).filter(Boolean);
+  assert.deepEqual(inputs.sort(), ["bearing", "code", "color", "state", "system", "textColor"]);
+
+  /* AND THE CLOCK REACHES THE WORDS AS WELL AS THE MARK (round 4). Both tag-state functions take
+     a `now`, because the stale sweep pins one, and njtTagState used to spend it on the age term
+     alone and call `njtPosition(train)` with none, so the sweep's pinned clock produced the live
+     clock's words. With the age term gone the parameter would have been unread entirely. Asserted
+     on the source rather than by behaviour, because "the parameter is threaded" is a structural
+     claim and a behavioural one would need a fixture per surface. */
+  for (const [file, fn, call] of [
+    ["railroad.js", "railroadTagState", "railroadPosition(train, now)"],
+    ["njt.js", "njtTagState", "njtPosition(train, now)"],
+  ]) {
+    const body = src(file);
+    const at = body.indexOf(`function ${fn}(`);
+    assert.ok(at >= 0, `${file} has no ${fn}`);
+    const state = body.slice(at, body.indexOf("\n}\n", at));
+    assert.match(state, /now = correctedNow\(\)/, `${fn} takes no clock`);
+    assert.ok(state.includes(call), `${fn} answers at the live clock instead of the one it was passed`);
+  }
+
+  for (const [file, key] of [["railroad.js", "railroadSkinKey"], ["njt.js", "njtSkinKey"]]) {
+    const body = src(file);
+    const at = body.indexOf(`function ${key}(`);
+    assert.ok(at >= 0, `${file} has no ${key}`);
+    const fn = body.slice(at, body.indexOf("\n}\n", at));
+    /* code, color and textColor come off the branch lookup; body and head off the state; the
+       bearing is rounded to a degree so a train wandering by hundredths does not rebuild its
+       icon every poll, and headingTrusted is in the key because a row that refuses a heading
+       draws a dot where the same bearing would otherwise draw a chevron (row 6 of the table). */
+    for (const part of ["branch.code", "branch.color", "branch.textColor", "state.body", "state.head", "state.headingTrusted", "Math.round(bearing)"]) {
+      assert.ok(fn.includes(part), `${key} does not compare ${part}`);
+    }
+    /* `system` IS THE ONE INPUT WITH NO COMPONENT OF ITS OWN, and it is pinned instead by the
+       RECORD key: railroadKey is `${train.system}|${train.trip_id}`, so a record's system is
+       fixed for its whole life and a train cannot change family without becoming a different
+       record and a different marker. The NJT layer has one system by construction. Asserted
+       rather than assumed, because the day the record key drops the system is the day this
+       exception stops holding and a Metro-North tag could keep an LIRR train's glyph.
+
+       IT IS STILL READ, as the first half of the branch lookup: LIRR and MNR route ids collide,
+       so railroadBranch needs both to resolve a code and a colour at all. Reading it and
+       comparing it are different things, and this is the reading. */
+    if (file === "railroad.js") {
+      assert.match(body, /function railroadKey\(train\) \{\s*return `\$\{train\.system\}\|/);
+      assert.match(fn, /railroadBranch\(train\.system, train\.route_id\)/);
     }
   }
 });

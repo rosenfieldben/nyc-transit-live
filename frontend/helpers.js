@@ -391,6 +391,27 @@ function labelZoomBand(zoom, hasHubs = true) {
   return zoom >= LABEL_ALL_ZOOM ? "all" : "hubs";
 }
 
+/* AND THE RAIL BAND, WHICH IS ITS OWN NUMBER AND ITS OWN ATTRIBUTE (MR3). A commuter rail
+   station shows its name from zoom 11, three zooms before the subway shows all of its and one
+   before the subway shows any, and the reason is density rather than importance: there are
+   about 300 rail stations across the whole region against 496 subway stations inside the city,
+   so at 11 the rail names are readable where the subway's would be a wall. That is the zoom
+   the design gives ("Shown from zoom 11") and it is one number, not a band of three, because
+   a rail station is never a hub: isTransferStation is a subway predicate over subway trunks,
+   and the hub class is what the middle band reveals. So there is nothing for a middle step to
+   do here and two values are the honest shape.
+
+   ITS OWN ROOT ATTRIBUTE, data-rail-label-band, rather than a third value on data-label-band:
+   the two bands overlap (at zoom 14 both say "all") and one attribute cannot hold two answers.
+   Written by the same paintZoomBand call, read by its own pair of rules in style.css, and
+   gated by the same Names toggle, which is a preference over both. */
+const RAIL_LABEL_ZOOM = 11;
+
+function railLabelBand(zoom) {
+  if (!Number.isFinite(zoom)) return "none";
+  return zoom >= RAIL_LABEL_ZOOM ? "all" : "none";
+}
+
 /* THE NAMES TOGGLE'S SENTENCE, round 3. The button flips a preference that outlives the
    zoom, so it stays operable everywhere; what it must not do is claim an effect it does not
    have. Below zoom 12 the band is "none" and no name can show whatever the preference says.
@@ -406,9 +427,21 @@ function labelZoomBand(zoom, hasHubs = true) {
    silence, so the toggle says which of the three it is. THE BACKEND HALF IS NOT THIS
    BRANCH'S: the railroad warmup gates its ready on a non-empty index and the subway warmup
    does not, and that is one line in a file this stage does not touch. */
-function namesToggleAnnouncement(on, band) {
+/* MR3 round 4: EVERY BAND IT IS GIVEN, not the subway's alone. The toggle hides commuter-rail
+   names too (style.css's `:root[data-labels="off"] .stn-label.rail`), and the two bands do not
+   agree: rail names show from zoom 11 and the subway's first band opens at 12. Reading only the
+   subway's, the sentence said "none at this zoom, zoom in to see them" at zoom 11 while the
+   press had just hidden or revealed every rail name on screen, which is the one thing this
+   sentence exists to prevent. Variadic rather than a second named parameter so that stage 4's
+   families can be added at the call site without touching the grammar.
+
+   NO BANDS AT ALL IS "ON", NOT "NONE". [].every() is vacuously true, so the obvious spelling
+   would make a caller that passes nothing claim the zoom shows no names. A caller that names no
+   band has told us nothing about the zoom, and the unqualified sentence is the honest answer. */
+function namesToggleAnnouncement(on, ...bands) {
   if (!on) return "Station names off.";
-  if (band === "none") return "Station names on; none at this zoom, zoom in to see them.";
+  const shown = bands.filter((band) => band !== "none");
+  if (bands.length && !shown.length) return "Station names on; none at this zoom, zoom in to see them.";
   return "Station names on.";
 }
 
@@ -888,6 +921,29 @@ const FEED_STALE_AFTER_S = THRESHOLD_OVERRIDES.feed ?? PRODUCTION_FEED_STALE_AFT
 // in map.js would not be a binding those earlier files can see).
 const FETCH_DEADLINE_MS = 15000;
 
+/* MR3 (R-d): DOES THIS STATIC PAYLOAD KNOW THE FIELD WE ARE ABOUT TO READ?
+
+   The deploy hazard systems/shared.js's fetchRoutesPayload exists for, as a pure predicate so it
+   can be asked here rather than in a browser. /api/railroad-routes and /api/njt-routes are
+   static-derived and served under an hour-long cache, so a release that ADDS a field to one of
+   them ships a frontend reading that field against a response held from before the backend
+   rolled. Absent, not malformed: nothing errors, and every tag silently prints a fallback.
+
+   "SOME ENTRY CARRIES IT", NOT "EVERY ENTRY DOES", and that is the whole subtlety. A payload
+   where some entries have the field came from a backend that knows it, and the entries without
+   it are the FEED's own gaps, which are real and permanent: NJ Transit's route 17 has no trips in
+   an ordinary publication, and the railroads publish no colour for some routes. Keyed on "every"
+   this would re-read on every load forever and never stop.
+
+   null AND undefined BOTH COUNT AS ABSENT (`!= null`), because a backend that knows the field and
+   has nothing to put in it serves null, and that is indistinguishable here from a backend that
+   has never heard of it. The pessimistic reading costs one request; the optimistic one would skip
+   the re-read for a payload where every entry's value is null, which is the exact shape a
+   half-rolled deploy of a nullable column takes. */
+function staticPayloadHasField(routes, field) {
+  return Array.isArray(routes) && routes.some((route) => route && route[field] != null);
+}
+
 // Longitude is compressed by latitude; scale lon deltas so planar distances are
 // roughly isotropic across NYC. We only need internally consistent arc-length,
 // not true meters, so a single fixed factor at the city's latitude is plenty.
@@ -1179,8 +1235,97 @@ function systemAges(source, now = Date.now() / 1000) {
 
 // Is this age stale? One predicate so the marker dimming, the popup age line, the
 // glide freeze and the status line can never disagree about the boundary.
+/* 6.3 ERRATUM (MR3, the operator's ruling on finding N3): AN OBSERVATION THAT SHOULD CARRY A
+   CLOCK AND DOES NOT IS NOT FRESH.
+
+   The contract's 3.2 clause (c) already makes a null `observed_at` on an age-gated row SAYABLE
+   ("age unknown"), and calls it an anomaly: "The provider normally dates this and did not." It
+   did not say what such a row is DRAWN as, and the answer the code fell into was "bright",
+   because staleAge read an age and there was none. That made the brief's 3.1 row 6 undrawable
+   and, worse, made a row the contract calls an anomaly render exactly like a fix five seconds
+   old.
+
+   THE RULE IS THAT DIMMING CARRIES NOT-FRESH, NOT AN AGE. A dimmed marker has never meant "this
+   is N seconds old"; it has meant "do not read this as current", which is precisely what an
+   observation with no clock earns on a row whose provider normally sends one. So AGE_UNKNOWN is
+   not a large age, it is the ABSENCE of one, and it is stale by this rule rather than by
+   arithmetic. It is written as its own clause below rather than left to `Infinity >= 90` being
+   true, so the rule is greppable and a reader meets it instead of inferring it.
+
+   WHAT THIS DOES NOT TOUCH. The WORDS are unchanged: positionQualifier already said "age
+   unknown" and still does, and no surface gains or loses a sentence. The position ladder's five
+   states are unchanged, since a step is decided in the backend from the served row and nothing
+   here reaches it (the F01 world's 60/11/6/59/24 are the same before and after). The glide
+   freeze is unchanged: observationStaleAt still returns null for a clockless row, so such a
+   marker freezes on its SYSTEM's deadline exactly as before. This is opacity, and only opacity.
+
+   AND IT DOES NOT REACH A SYSTEM THAT DATES NOTHING. Metro-North's rows are not age-gated, by
+   the 3.3 policy table, so they never take this value: a qualifier a rider sees on all 33
+   Metro-North markers always is one they stop reading, which is the same argument clause (c) is
+   narrow for. `gated` is the caller's, read from UNDATED_SYSTEMS and never from a system's name. */
+const AGE_UNKNOWN = Infinity;
+
 function staleAge(age) {
+  if (age === AGE_UNKNOWN) return true;
   return age != null && age >= FEED_STALE_AFTER_S;
+}
+
+/* The age DIMMING reads, which is the observation's own age or, for the anomaly above,
+   AGE_UNKNOWN. Pure and separate from vehicleMarkerAge (which needs the page's envelope) so the
+   erratum's one rule can be asked directly by a node test.
+
+   IT KEYS ON THE ROW'S OWN STAMP, not on the derived age being null, and the distinction is the
+   point: observationAge also returns null when the page has no envelope to measure against,
+   which is a gap in the PAGE rather than an anomaly in the ROW, and dimming every marker on the
+   map for it would be the opposite of honest. So a row that carries a clock keeps whatever age
+   was computed from it, including none. */
+/* WHICH FAMILIES OWE AN OBSERVATION CLOCK, AS A TABLE (the operator's ruling on R-b).
+
+   The first cut read `!UNDATED_SYSTEMS.has(row.system)`, and that was wrong in a way that only
+   showed up one layer out: bus, subway, PATH and ferry rows carry NO `system` field at all, so
+   `has(undefined)` was false and every one of them was gated by accident rather than by a
+   decision. The answer happened to be right and the reasoning was not, which is the shape that
+   survives a review and breaks on the next system added.
+
+   SO IT IS THE CONTRACT'S 3.3 TABLE, TRANSCRIBED, keyed by the family name each layer already
+   passes to vehicleMarkerAge, plus the two railroad systems, which are the one source whose two
+   halves differ. Every row here has a row there:
+
+     subways  gated   vehicle.timestamp, else the contributing group header
+     buses    gated   vehicle.timestamp, 2136 of 2136 self-dated
+     path     gated   trip_update.timestamp, 53 of 53 and 55 of 55
+     ferry    gated   vehicle.timestamp (served as updated_at), 28 of 28
+     njt      gated   the TripUpdates header, lag 9s to 23s at peak
+     LIRR     gated   vehicle.timestamp, 69 of 69 independent
+     MNR      NOT     "The stamp is a copy of a header that lags 2 to 4 minutes.
+                       Gating on it would mark a live fleet stale."
+
+   AN UNLISTED FAMILY IS GATED, which is the pessimistic answer and the one that matches what
+   every listed family but Metro-North says; a node test enumerates the call sites so a new
+   family cannot arrive unlisted without failing. */
+const OBSERVATION_GATED = {
+  subways: true,
+  buses: true,
+  path: true,
+  ferry: true,
+  njt: true,
+  LIRR: true,
+  MNR: false,
+};
+
+// `family` is the row's own system where it has one (the railroads are two systems under one
+// source and they differ), else the source key its layer passes.
+function observationGated(sourceKey, row) {
+  const family = (row && row.system) || sourceKey;
+  const gated = OBSERVATION_GATED[family];
+  return gated === undefined ? true : gated;
+}
+
+function observationDimAge(row, observationAge, gated) {
+  if (observationAge != null) return observationAge;
+  const stamp = row ? row.observed_at : null;
+  const dated = typeof stamp === "number" && Number.isFinite(stamp);
+  return !dated && gated ? AGE_UNKNOWN : observationAge;
 }
 
 // The marker opacity a system's age earns: dimmed once stale, otherwise fully
@@ -1194,6 +1339,8 @@ function staleAge(age) {
 // to come from a css class, and an inline opacity written for staleness would have
 // silently overridden it, un-dimming every docked boat the moment C2 started
 // setting opacities.
+// `age` may be AGE_UNKNOWN, which is not an age but the 6.3 erratum's answer for an
+// observation that should have carried a clock and did not; staleAge says why it is stale.
 function markerOpacity(age, base = 1) {
   return base * (staleAge(age) ? STALE_MARKER_OPACITY : 1);
 }
@@ -1761,9 +1908,16 @@ function positionBoard(source, names, now) {
 // half is the reason: "a surface that cannot show the word must not show the
 // observation", and a dot with no popup open cannot say "as of 6m ago", so before 6.3 an
 // eight minute old LIRR fix inside a healthy feed sat at full opacity beside the live
-// ones, which is F01 on the map itself. An unknown observation age dims nothing on its
-// own, because positionQualifier says it in words instead; with neither age a marker has
-// nothing to be dimmed by, exactly as before.
+// ones, which is F01 on the map itself. With neither age a marker has nothing to be dimmed
+// by, exactly as before.
+//
+// AN UNKNOWN OBSERVATION AGE IS NOT "NO AGE" (the 6.3 erratum, MR3 round 4 correcting this
+// paragraph). This used to read "an unknown observation age dims nothing on its own, because
+// positionQualifier says it in words instead", and the operator's ruling on finding N3 reversed
+// exactly that: a row whose family owes a clock and sent none arrives here as AGE_UNKNOWN, not
+// as null, and Math.max carries it through, so the marker dims. The words are still said; they
+// are no longer said INSTEAD. A row whose family owes no clock (Metro-North) still arrives null
+// and still dims nothing, which is the same sentence this paragraph used to make for everyone.
 function markerAge(systemAge, observationAge) {
   if (observationAge == null) return systemAge ?? null;
   if (systemAge == null) return observationAge;
@@ -1840,6 +1994,588 @@ function railroadAtItsStation(row, at = null, before = null) {
   if (t.stop_id == null) return false;
   if (!drawnFromPrediction(t, before) || !glideAnchored(t)) return true;
   return typeof at === "number" && at >= t.next_time;
+}
+
+/* ===== MR3: THE COMMUTER RAIL GRAMMAR =================================================
+
+   Stage 3 of the map redesign draws LIRR, Metro-North and NJ Transit as one family: a
+   branch line in the agency's own colour, a paper square for a station, and a two-part tag
+   for a train whose body and head say where its position came from. Everything in this
+   block is PURE, so the table that decides a mark can be asked one row at a time by a node
+   test rather than measured off a screenshot.
+
+   THE ROUTE TABLES ARE NOT WRITTEN DOWN HERE, and that is the point of section 6 of the
+   brief: "v2's branch table is not the feed's ... Build from these; do not hand-table." The
+   names, the colours and the text colours all arrive from /api/railroad-routes and
+   /api/njt-routes. What IS written down is the one thing no feed publishes, the short code
+   a 5.6px-per-character block can hold, and it is keyed by NAME rather than by route id
+   for a measured reason: the brief found the ids in the v2 table were sample data (there is
+   no LIRR route 11; routes 12 and 13 are real and were missing; Metro-North has six routes
+   and the table had three), while the names are what the feeds actually serve and what a
+   rider reads. An id table would have been wrong on nine of eighteen rows the day it was
+   written. */
+
+// THE BRANCH CODES, keyed by the name /api/railroad-routes serves (brief 6.1 and 6.2).
+// THIRTEEN LIRR branches and six Metro-North lines, which is what the live feeds carry: the
+// brief proposed twelve because it believed there was no route 11, and there is.
+const RAIL_BRANCH_CODES = {
+  LIRR: {
+    "Babylon Branch": "BAB",
+    "Hempstead Branch": "HEM",
+    "Oyster Bay Branch": "OB",
+    "Ronkonkoma Branch": "RON",
+    "Montauk Branch": "MTK",
+    "Long Beach Branch": "LB",
+    "Far Rockaway Branch": "FR",
+    "West Hempstead Branch": "WH",
+    "Port Washington Branch": "PW",
+    "Port Jefferson Branch": "PJ",
+    "City Terminal Zone": "CTZ",
+    "Greenport Service": "GRN",
+    // BELMONT PARK, which the brief said did not exist ("There is no route 11") and which the
+    // live feed publishes as route 11 in 60269E. Probed 2026-09-19; the brief carries a dated
+    // note saying so rather than having the claim edited away. Code BEL, the operator's.
+    "Belmont Park": "BEL",
+  },
+  MNR: {
+    Hudson: "HUD",
+    Harlem: "HAR",
+    "New Haven": "NH",
+    "New Canaan": "NC",
+    Danbury: "DAN",
+    Waterbury: "WAT",
+  },
+};
+
+// The neutral a route nothing names or colours falls back to (README: "Unknown route ->
+// code = route id, colour #6d6e71"). It takes white ink at 4.83 and dark ink at 4.35, so
+// readableTextOn's answer on it clears 4.5, which is why this hue and not v2's #607d8b
+// (the note at railroadColor says what that one cost).
+const RAIL_NEUTRAL_COLOR = "#6d6e71";
+
+// The agency glyph and its block width (README: 11px for "L" and "M", 16px for "NJ").
+const RAIL_AGENCY = {
+  LIRR: { glyph: "L", width: 11 },
+  MNR: { glyph: "M", width: 11 },
+  NJT: { glyph: "NJ", width: 16 },
+};
+
+/* A BRANCH'S SHORT CODE, from whatever the feed gave us, with the id as the last resort.
+
+   Three sources in one order, and the order is the brief's:
+     1. NJ Transit's own route_short_name, which that feed publishes ("NEC", "NJCL") and
+        which is already exactly this kind of code, so hand-tabling it would be inventing a
+        second answer to a question the feed answers.
+     2. The name-keyed table above, for LIRR and Metro-North, whose feeds publish no short
+        name at all (the LIRR's routes.txt has no route_short_name COLUMN).
+     3. The route id, which is the README's stated fallback and is never empty on a drawn
+        train.
+
+   A code the tables do not know is NOT an error and must not blank the tag: a branch the
+   agency adds tomorrow draws as its id in the neutral colour until someone adds a row. */
+function railBranchCode(system, routeId, routeName = null, shortName = null) {
+  const short = (shortName ?? "").trim();
+  if (short) return short;
+  const table = RAIL_BRANCH_CODES[system];
+  const named = table && routeName ? table[routeName.trim()] : null;
+  if (named) return named;
+  return routeId == null ? "" : String(routeId);
+}
+
+/* A FEED COLOUR AS A CSS COLOUR. routes.txt publishes hex with NO leading "#" and the
+   backend carries it verbatim (that is the whole claim of claude/railroad-route-colors), so
+   the "#" is added at the one place the value becomes a paint instruction. A blank or
+   missing colour is the neutral, never a guess: three of NJ Transit's routes share one
+   yellow and two of the LIRR's share one purple, so a hash of the id would be a colour the
+   agency does not use, drawn as if it did. */
+/* VALIDATED BEFORE PREFIXING, which njtColor's own guard does and which this dropped: the value
+   is a FEED's, it is interpolated into marker markup that reaches innerHTML through L.divIcon,
+   and what it replaced (railroadColor, a hash) could only ever produce #rrggbb. A publication
+   whose route_color is empty, a word, or anything with a quote or an angle bracket in it now
+   takes the neutral rather than becoming part of the tag's markup. */
+const RAIL_HEX = /^#?[0-9a-fA-F]{6}$/;
+
+function railBranchColor(color) {
+  const hex = (color ?? "").trim();
+  if (!RAIL_HEX.test(hex)) return RAIL_NEUTRAL_COLOR;
+  return hex.startsWith("#") ? hex : `#${hex}`;
+}
+
+/* THE BRANCH BLOCK'S PAINT: its fill and the ink printed on it, decided together.
+
+   THE FEED'S OWN INK IS PREFERRED, and both branches are live. Measured on the live feeds:
+   LIRR and Metro-North fill route_text_color on every route (13 of 13 and 6 of 6) and NJ
+   Transit leaves it EMPTY on all twelve. So the railroads take the agency's chosen ink and
+   NJ Transit computes one, and the same tag code serves both. Computing one for a feed that
+   supplied it would throw away the agency's own answer; trusting one that is absent would
+   print black on a dark line.
+
+   AND ONE PUBLISHED COLOUR TODAY IS A FILL NEITHER INK CAN RESCUE, which is why this
+   returns a pair rather than an ink. Measured 2026-09-19 over all 26 colours the three
+   feeds publish:
+
+     EE0034, Metro-North's New Haven red, takes white at 4.48 and dark at 3.88.
+
+   Nothing clears 4.5 on it. That colour is shared by FOUR of Metro-North's six routes (New
+   Haven, New Canaan, Danbury and Waterbury), and Metro-North's positions are not age-gated,
+   so those trains draw with a SOLID body and their code printed on that block: it is the
+   common case on that railroad, not a corner. The other 25 colours clear, the worst of them
+   at 4.69.
+
+   SO THE FILL MOVES, WHICH IS THIS REPOSITORY'S OWN REMEDY for exactly this class. The note
+   at railroadColor says it in as many words about v2's #607d8b: "That is a fill that has to
+   move rather than an ink that has to be chosen, which is the one case readableTextOn cannot
+   rescue". The move is the same scaling readableInk uses for text, so it preserves the hue,
+   and it is taken in 1% steps and stopped at the first that clears: EE0034 becomes #ec0033,
+   a two-unit change in one channel, and white goes from 4.48 to 4.55.
+
+   THE ROUTE LINE IS NOT TOUCHED. railBranchColor is what the polyline draws with, and it
+   returns the published colour always. Only the 24-by-13 block with 8px type on it moves,
+   and only when the type on it would otherwise be illegal, which is the narrowest place to
+   pay for this and the only place the shortfall does any harm. A rider comparing the tag to
+   the line on the New Haven family sees the same red; a meter does not. */
+const RAIL_INK_TARGET = 4.5;
+
+function railBranchPaint(color, textColor = null) {
+  const published = railBranchColor(color);
+  // The published ink is validated exactly as the colour is, and for the same reason: it is
+  // printed into the same markup.
+  const given = (textColor ?? "").trim();
+  const preferred = RAIL_HEX.test(given)
+    ? given.startsWith("#")
+      ? given
+      : `#${given}`
+    : readableTextOn(published);
+  if ((contrastRatio(preferred, published) ?? 0) >= RAIL_INK_TARGET) {
+    return { fill: published, ink: preferred, moved: false };
+  }
+  // The feed's ink failed. Try the better of the two computed inks before moving the fill,
+  // because an agency that published an unreadable ink over a readable fill is a wrong ink,
+  // not a wrong colour.
+  const computed = readableTextOn(published);
+  if ((contrastRatio(computed, published) ?? 0) >= RAIL_INK_TARGET) {
+    return { fill: published, ink: computed, moved: false };
+  }
+  // Neither ink clears the published fill, so the fill moves, as little as it can. Toward
+  // black for white type and toward white for dark type, because those are the directions
+  // that help; 1% steps, first that clears.
+  const rgb = parseColor(published);
+  if (!rgb) return { fill: published, ink: computed, moved: false };
+  const toWhite = computed === INK_LIGHT;
+  for (let step = 1; step <= 100; step++) {
+    const f = step / 100;
+    const moved = rgb.map((c) => Math.round(toWhite ? c * (1 - f) : c + (255 - c) * f));
+    const hex = `#${moved.map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+    if ((contrastRatio(computed, hex) ?? 0) >= RAIL_INK_TARGET) {
+      return { fill: hex, ink: computed, moved: true };
+    }
+  }
+  // Unreachable on any real colour (black takes white at 21 and white takes dark at 18.6),
+  // and it returns the extreme rather than the unreadable pair if it ever is reached.
+  return { fill: toWhite ? "#000000" : "#ffffff", ink: computed, moved: true };
+}
+
+// The ink alone, for a caller that has already decided its fill.
+function railBranchInk(color, textColor = null) {
+  return railBranchPaint(color, textColor).ink;
+}
+
+/* THE TAG'S WIDTH, which is arithmetic and therefore testable (README: "Agency block width
+   11px (L, M) or 16px (NJ); branch block width code.length x 5.6 + 7").
+
+   Rounded to a whole pixel at the END, once, rather than per block: 5.6 per character is
+   not an integer and a tag whose two blocks were each rounded would not be as wide as the
+   sum of its parts, which shows up as a one-pixel seam between two filled rects. The
+   chevron's centre is the whole tag's centre, so an odd total width is what puts the head
+   half a pixel off the line; iconAnchor takes w/2 unrounded for that reason. */
+const RAIL_TAG_HEIGHT = 13;
+const RAIL_TAG_CODE_PER_CHAR = 5.6;
+const RAIL_TAG_CODE_PAD = 7;
+
+function railTagGeometry(system, code) {
+  const agency = RAIL_AGENCY[system] ?? RAIL_AGENCY.NJT;
+  const codeWidth = Math.round(String(code ?? "").length * RAIL_TAG_CODE_PER_CHAR + RAIL_TAG_CODE_PAD);
+  const width = agency.width + codeWidth;
+  return {
+    glyph: agency.glyph,
+    agencyWidth: agency.width,
+    codeWidth,
+    width,
+    height: RAIL_TAG_HEIGHT,
+    // The glyph box is 30 tall and the chevron's centre sits at y 21, which is what puts
+    // it on the track (README: "iconAnchor: [w/2, 21]").
+    centre: width / 2,
+  };
+}
+
+/* ===== THE STATE TABLE (brief 3.1), AS A FUNCTION, ONE CASE PER ROW ====================
+
+   The deliverable of stage 3. Seven rows, three drawing decisions and the dimming rule:
+
+     reported, unqualified   solid body     filled head      not dimmed
+     reported, qualified     solid body     filled head      DIMMED
+     estimated               OUTLINED body  FILLED head      not dimmed
+     placed                  outlined body  OUTLINED head    not dimmed
+     retained                the last state as last state    DIMMED
+     unknown, age-gated      outlined body  outlined DOT     (see below)
+     unknown, Metro-North    solid body     filled head      not dimmed
+
+   WHAT EACH COLUMN MEANS, in the brief's own words: "solid versus outlined body (position
+   from GPS versus from a prediction), and filled versus outlined chevron (heading trusted
+   or not). Dimming carries age; the body carries source. A rider should be able to read
+   'outlined body, filled chevron' as 'we know where it is going but not exactly where it
+   is.'"
+
+   IT IS KEYED ON positionQualifier's `kind`, NOT ON provenance ALONE, because two of the
+   seven rows are the same provenance and the app already has a vocabulary that separates
+   them: a `reported` fix is row 1 when fresh, row 2 when aged and row 6 when the provider
+   sent no clock at all on a system that normally does. That is one function's answer
+   (positionQualifier) rather than three re-derivations of it, which is the same discipline
+   v3.1 states for the words: "the implementation calls positionQualifier() ... never
+   re-derives it. Only the mapping of provenance + age to tag body, chevron and dimming is
+   taken from posState()."
+
+   ROW 7 IS ROW 1's CODE PATH, and that is the policy working rather than a special case.
+   Metro-North's positions are not age-gated (the freshness contract's 3.3 table: "The
+   stamp is a copy of a header that lags 2 to 4 minutes. Gating on it would mark a live
+   fleet stale"), so an undated Metro-North fix has kind "" and draws solid and live. The
+   node test asks it as its own row anyway, because it is a policy that could be broken by
+   a change that left rows 1 through 6 alone.
+
+   THE TABLE'S OPACITY COLUMN IS NOT HERE, and that is round 4's correction rather than an
+   omission. This returned a `dim` field for three commits; nothing in the app ever read it.
+   Every rail marker's opacity comes from markerOpacity(vehicleMarkerAge(...)) applied to the
+   marker itself (railroad.js and njt.js each call dimMarker on the apply path, the stale sweep
+   and at creation), so `dim` was a SECOND expression of the freshness contract's rule sitting
+   in a table nothing drew from, and it rotted exactly the way an unread field does: the row 6
+   paragraph that used to stand here argued at length for dim = false, and the operator's ruling
+   on finding N3 made row 6 dim. The column survives as a test column, asserted in
+   railtag.test.js against markerOpacity itself, which is stronger than asserting it against a
+   copy: the oracle is now the function that actually dims the marker.
+
+   WHAT ROW 6 STILL OWNS HERE IS ITS BODY, and it is the one place this goes past
+   railroadHollow, which calls a `reported` row solid whatever its clock says. Clause (c) of the
+   contract is an anomaly in the contract's own words ("The provider normally dates this and did
+   not. An anomaly, so it is said at the observation"), so a GPS claim that cannot be dated is
+   not one to draw solid. Outlined body and a dot head is the strongest "do not trust this" the
+   tag can draw, and the dimming now arrives too, through AGE_UNKNOWN and staleAge. */
+
+function railTagState(row, before = null, kind = null) {
+  const provenance = row ? row.provenance : null;
+
+  /* THE BODY IS railroadHollow's ANSWER, CALLED rather than restated, which is the whole
+     reason this reads as one line. That helper already decides "did this train report this
+     position": `reported` and a retained row that was reported are solid, and placed,
+     estimated, unknown, missing and a retained row the page never saw are hollow, each for a
+     reason its own comment gives. Writing the same rule again here would be a second
+     expression of it, and the two would drift the first time either changed.
+
+     PLUS THE ONE EXTENSION ROW 6 ASKS FOR, and it is the only place this goes past that
+     helper: a `reported` row with no clock on a system that normally sends one. railroadHollow
+     calls that solid, because its question is about provenance and the provenance says GPS.
+     The table calls it outlined, and the freshness contract is why: clause (c) is an anomaly
+     in the contract's own words, so a GPS claim we cannot date is not a GPS claim we can stand
+     behind, which is the same pessimism railroadHollow already applies to a provenance it
+     cannot read. */
+  const hollow = railroadHollow(row, before) || kind === "unknown";
+  const body = hollow ? "outlined" : "solid";
+
+  // A retained row wears what it wore. `before` is drawnFromPrediction's argument: the
+  // provenance the train was last SERVED with, because retention stamps over it.
+  if (provenance === "retained" || kind === "retained") {
+    return {
+      body,
+      // An estimate's heading was real, so a retained estimate keeps a filled head; a
+      // placement's was not. A row with no remembered provenance has no heading to keep.
+      head: before === "reported" || before === "estimated" ? "filled" : "outlined",
+      headingTrusted: before != null,
+      row: "retained",
+    };
+  }
+  if (kind === "estimated") {
+    // THE ONE ROW WHERE BODY AND HEAD DISAGREE, and the whole table exists to draw it: the
+    // position is inferred and the heading is not.
+    return { body, head: "filled", headingTrusted: true, row: "estimated" };
+  }
+  if (kind === "placed") {
+    return { body, head: "outlined", headingTrusted: true, row: "placed" };
+  }
+  if (kind === "unknown") {
+    return { body, head: "outlined", headingTrusted: false, row: "unknown" };
+  }
+  // kind "" (fresh) and "aged" (stale): a reported fix, solid and headed. Its opacity is its
+  // age's and markerOpacity's, not this table's. Row 7 arrives here too, on a system whose
+  // positions are not age-gated at all, which is why an undated fix reaches kind "".
+  return {
+    body,
+    head: "filled",
+    headingTrusted: true,
+    row: kind === "aged" ? "reported-qualified" : "reported-unqualified",
+  };
+}
+
+/* ===== THE TAG'S MARKUP, AS A STRING ==================================================
+
+   The SVG a rail train wears, built here rather than in a system file so node can ask for
+   it. That split is the whole reason this is a string and not an L.divIcon: the divIcon
+   wrapper is four lines in systems/shared.js and needs a browser, while the markup is where
+   every decision the state table made becomes visible, and a browser test that has to find
+   a shape by screenshot is a test nobody will keep.
+
+   THE BOX IS 30 TALL AND THE TRACK IS AT y 21 (README): the tag occupies y 0 to 13, a 1px
+   stem runs from 13 to 16.5, and the head is centred on 21, which is what iconAnchor's
+   [w/2, 21] puts on the line. So the tag hangs ABOVE the rail and the head sits ON it, and
+   a rider reads the pair as one mark pointing somewhere.
+
+   PAPER AND INK ARE THE THEME'S, as inline `style` rather than as SVG attributes, which is
+   what MR2's subway bullet already does (systems/subway.js:30) and is not a style choice: a
+   `fill="var(--paper)"` ATTRIBUTE is not a paint value in SVG 1.1 and does not resolve, so
+   the marker would draw black. The BRANCH ink is a literal instead, and deliberately: it
+   depends on the branch colour, not on the theme, and it comes either from the feed's own
+   route_text_color or from readableTextOn. A token there would have made a rider's ink
+   follow the page's theme instead of the line it is printed on.
+
+   THE SVG IS aria-hidden AND ITS INK IS MEASURED ELSEWHERE, which is MR2's ruling for the
+   station labels applied to the one other mark that carries type. Two reasons, and the second
+   is the one that made it necessary rather than merely correct:
+
+     labeledMarker already puts the whole train's accessible name on the marker div as
+       role="img" plus aria-label, so the two glyphs inside are a PICTURE of the branch code, a
+       second copy of information a screen reader has already been given better;
+     axe cannot resolve this text's background. Measured: with the tags on the map its
+       color-contrast rule reported 37 findings at 1280 and 17 at 375, every one of them
+       "Element's background color could not be determined because it is overlapped by another
+       element". A rail tag is 35 to 45px wide where the old square was 16, so at regional zoom
+       the tags overlap each other, and an overlapped node is one axe declines to judge rather
+       than one it fails. Thirty-seven undecidable findings is not a measurement, and A1w's own
+       rule is that an undecidable finding is never an exception on its own.
+
+   SO THE RATIO IS MEASURED DIRECTLY, in node, over every colour the three feeds publish, which
+   is a stronger check than axe could have made here: railtag.test.js asserts the ink actually
+   printed against the fill actually painted for all 31 published pairs, and it is what found
+   that eight of them do not clear 4.5 as published. ACCESSIBILITY.md carries both statements,
+   as it does for the labels.
+
+   WHY THE TEXT IS NOT CENTRED WITH text-anchor ALONE. It is, but the y is the baseline and
+   Archivo 800 at 8px sits about 2.8px above it, so the constant below is measured from the
+   block rather than derived: 8.9 is the baseline that puts the cap-height's centre on the
+   13px block's centre. */
+const RAIL_TAG_TEXT_BASELINE = 8.9;
+const RAIL_TAG_BOX_HEIGHT = 30;
+const RAIL_TAG_TRACK_Y = 21;
+const RAIL_TAG_STEM_END = 16.5;
+const RAIL_TAG_STRIPE = 2.5; // the branch colour's stripe on an outlined body
+const RAIL_TAG_DOT_R = 3;
+
+/* THE PER-FAMILY CLASS, decided in one place. One builder draws three agencies, which is the
+   claim of this stage, and that makes the family class the only way anything downstream can
+   still address ONE of them: style.css to give an agency its own rule, and the e2e suite to
+   count the two railroads apart from NJ Transit, which it must, because they are two feeds
+   with two freshness states and several specs turn on exactly that difference.
+
+   LOWERCASED, because a class is a css identifier and `LIRR` beside `lirr` in two files is a
+   bug that only shows up in one of them. */
+function railFamilyClass(system) {
+  return `rail-${String(system ?? "").toLowerCase() || "unknown"}`;
+}
+
+// The chevron, pointing north before rotation (README's path, written from the centre so
+// one expression serves any tag width).
+function railTagChevronPath(cx) {
+  const n = (v) => Number(v.toFixed(2));
+  return `M ${n(cx)} 15.5 L ${n(cx + 5)} 24.5 L ${n(cx)} 22 L ${n(cx - 5)} 24.5 Z`;
+}
+
+/* THE WHOLE MARK. `state` is railTagState's answer, `bearing` is railTrainBearing's (null
+   when nothing on the row can say), and the two together decide the head: a chevron rotated
+   to the bearing when the state trusts a heading AND there is one, a dot otherwise.
+
+   A DOT IS NOT A FALLBACK, IT IS A STATEMENT, which is why both ways of reaching it draw
+   the same shape: the row that has no heading to give and the row whose heading the table
+   refuses to trust (kind "unknown") are both "we are not telling you which way this is
+   going", and drawing a chevron at an arbitrary angle for either would be worse than
+   drawing none. */
+function railTagSvg({ system, code, color, textColor = null, state, bearing = null } = {}) {
+  const geom = railTagGeometry(system, code);
+  const { width: w, agencyWidth: aw, codeWidth: cw, glyph, centre: cx } = geom;
+  // THE BLOCK'S paint, which may have moved off the published colour so its 8px type is
+  // legible (railBranchPaint says which colour and why). The STRIPE on an outlined body
+  // carries no type, so it takes the published colour: nothing is printed on it to rescue.
+  const paint = railBranchPaint(color, textColor);
+  const branch = paint.fill;
+  const branchInk = paint.ink;
+  const stripe = railBranchColor(color);
+  const solid = state.body === "solid";
+  const headFilled = state.head === "filled";
+  const showChevron = state.headingTrusted && bearing != null;
+
+  const body = solid
+    ? // A paper backing 1px larger at 0.9, so the tag reads against any tile, then the two
+      // blocks: the agency in ink with a paper glyph, the branch in its own colour.
+      `<rect x="-0.5" y="-0.5" width="${w + 1}" height="14" style="fill: var(--paper)" opacity="0.9"/>` +
+      `<rect x="0" y="0" width="${aw}" height="${RAIL_TAG_HEIGHT}" style="fill: var(--ink)"/>` +
+      `<rect x="${aw}" y="0" width="${cw}" height="${RAIL_TAG_HEIGHT}" fill="${branch}"/>` +
+      `<text x="${aw / 2}" y="${RAIL_TAG_TEXT_BASELINE}" text-anchor="middle" style="fill: var(--paper)">${esc(glyph)}</text>` +
+      `<text x="${aw + cw / 2}" y="${RAIL_TAG_TEXT_BASELINE}" text-anchor="middle" fill="${branchInk}">${esc(code)}</text>`
+    : // Outlined: one paper box in an ink stroke, a divider at the block edge, both texts in
+      // ink, and the branch colour reduced to a stripe along the bottom of its own block.
+      // The stroke is 1.2 and centred on the path, so the box is inset 0.6 to stay inside
+      // the 13px it is allowed.
+      `<rect x="0.6" y="0.6" width="${w - 1.2}" height="${RAIL_TAG_HEIGHT - 1.2}" style="fill: var(--paper); stroke: var(--ink)" stroke-width="1.2"/>` +
+      `<line x1="${aw}" y1="0.6" x2="${aw}" y2="${RAIL_TAG_HEIGHT - 0.6}" style="stroke: var(--ink)" stroke-width="1.2"/>` +
+      `<rect x="${aw + 0.6}" y="${RAIL_TAG_HEIGHT - 0.6 - RAIL_TAG_STRIPE}" width="${cw - 1.2}" height="${RAIL_TAG_STRIPE}" fill="${stripe}"/>` +
+      `<text x="${aw / 2}" y="${RAIL_TAG_TEXT_BASELINE}" text-anchor="middle" style="fill: var(--ink)">${esc(glyph)}</text>` +
+      `<text x="${aw + cw / 2}" y="${RAIL_TAG_TEXT_BASELINE}" text-anchor="middle" style="fill: var(--ink)">${esc(code)}</text>`;
+
+  const stem =
+    `<line x1="${cx}" y1="${RAIL_TAG_HEIGHT}" x2="${cx}" y2="${RAIL_TAG_STEM_END}"` +
+    ` style="stroke: var(--ink)" stroke-width="1"/>`;
+
+  // Filled: ink with a 1px paper stroke, so it reads on a dark tile. Outlined: paper with a
+  // 1.4px ink stroke, which is the heavier stroke the README asks for because a hollow shape
+  // this small needs more edge to stay a shape.
+  const headPaint = headFilled
+    ? `style="fill: var(--ink); stroke: var(--paper)" stroke-width="1"`
+    : `style="fill: var(--paper); stroke: var(--ink)" stroke-width="1.4"`;
+  const head = showChevron
+    ? `<path d="${railTagChevronPath(cx)}" ${headPaint} transform="rotate(${Number(bearing.toFixed(1))} ${cx} ${RAIL_TAG_TRACK_Y})"/>`
+    : `<circle cx="${cx}" cy="${RAIL_TAG_TRACK_Y}" r="${RAIL_TAG_DOT_R}" ${headPaint}/>`;
+
+  return (
+    `<svg viewBox="0 0 ${w} ${RAIL_TAG_BOX_HEIGHT}" width="${w}" height="${RAIL_TAG_BOX_HEIGHT}"` +
+    ` class="rail-tag rail-tag-${state.body} rail-head-${state.head}" aria-hidden="true"` +
+    ` focusable="false">${body}${stem}${head}</svg>`
+  );
+}
+
+/* THE RAIL STATION SQUARE (README: "squares, so a square always means regional rail and a
+   circle always means subway"). 10x10 box, an 8x8 paper rect in a 1.6 ink stroke, and the
+   20x20 hit target is the icon's SIZE while the drawn square stays 10: a divIcon's size is
+   its click box, so growing the box and centring the square inside it is how a 10px mark
+   gets a 20px target without becoming a 20px blob at city zoom.
+
+   A STRING HERE FOR THE SAME REASON THE TAG IS, and one shape for all three families, which
+   is what makes "a square always means regional rail" a claim a test can count rather than a
+   sentence in a design note. */
+const RAIL_STATION_BOX = 20;
+const RAIL_STATION_SQUARE = 10;
+
+function railStationSvg() {
+  const pad = (RAIL_STATION_BOX - RAIL_STATION_SQUARE) / 2;
+  return (
+    `<svg viewBox="0 0 ${RAIL_STATION_BOX} ${RAIL_STATION_BOX}" width="${RAIL_STATION_BOX}"` +
+    ` height="${RAIL_STATION_BOX}" class="rail-stn" aria-hidden="true" focusable="false">` +
+    `<rect x="${pad + 1}" y="${pad + 1}" width="8" height="8" style="fill: var(--paper); stroke: var(--ink)" stroke-width="1.6"/>` +
+    `</svg>`
+  );
+}
+
+/* ===== BEARING ALONG THE BRANCH =======================================================
+
+   The heading the chevron is rotated to: the direction of travel along the branch the
+   train is on, at the point it is drawn.
+
+   IT REUSES THE PROJECTION THE PAGE ALREADY DID rather than doing a second one. Every
+   gliding rail train already carries `_route`, the slice computeRouteSlice built for it
+   (its points, its cumulative lengths and the polyline it was taken from), and that slice
+   is by construction oriented prev-station-to-next-station: computeRouteSlice walks from
+   the projection of `prev` to the projection of `next`. So the slice's own direction IS
+   the direction of travel, and the bearing is the azimuth of the segment the train sits
+   on. A second projectOntoRoute call here would be a second answer to a question already
+   answered, and the two would disagree at exactly the places that matter, where two
+   branches share track.
+
+   AND IT TAKES THE SERVED DIRECTION, NOT A HEADSIGN. v3.1 overrules v2 on this in as many
+   words: "NJ Transit heading comes from the served direction passed to bearingAlong; there
+   is no headsign rule." v2 had `headsign === "New York"` as inbound, which is a string
+   match on a rider-facing label: the same trip reads "New York Penn Station" on NJ Transit
+   and "Penn Station" on the LIRR, an added trip's headsign is synthesized from the route
+   and the train number, and a branch that terminates short of the city has no such
+   headsign at all. What the railroads DO serve is `direction`, "Inbound" or "Outbound"
+   from direction_id (backend/feeds/railroad.py's _RAILROAD_DIRECTION), and what NJ Transit
+   serves is the anchor pair itself, prev and next, which is a direction of travel without
+   needing a word for it. So:
+
+     a slice, which is already prev-to-next, gives the heading directly;
+     `direction` is read only to REVERSE it, and only when the row says "Inbound",
+       because a branch polyline is stored in one direction and an inbound train runs
+       against it;
+     no slice and no anchors is no heading at all, which the tag draws as a dot.
+
+   A GPS train is the one case with a better answer than any of this, and it is used when
+   the feed gives it: RailroadTrain carries `bearing` from the vehicle itself. Reading a
+   polyline for a train that just told us where it is pointing would be re-deriving a
+   served fact, which is the mistake 6.3 exists to stop. */
+
+// The compass azimuth from one [lat, lon] to another, in degrees clockwise from north.
+// Flat-earth over a segment a few hundred metres long, with the longitude scaled by the
+// latitude's cosine so a segment does not read as more east-west than it is.
+function segmentBearing(from, to) {
+  if (!Array.isArray(from) || !Array.isArray(to)) return null;
+  const [lat1, lon1] = from;
+  const [lat2, lon2] = to;
+  if (![lat1, lon1, lat2, lon2].every((n) => Number.isFinite(n))) return null;
+  const dy = lat2 - lat1;
+  const dx = (lon2 - lon1) * Math.cos(((lat1 + lat2) / 2) * (Math.PI / 180));
+  if (dx === 0 && dy === 0) return null; // a degenerate segment points nowhere
+  const deg = (Math.atan2(dx, dy) * 180) / Math.PI;
+  return (deg + 360) % 360;
+}
+
+/* NOTHING IS REVERSED, AND railDirectionReverses IS GONE (the operator's ruling on the
+   adversarial round's R-a). It read: "Inbound is the only value that reverses ... a slice built
+   prev-to-next is already travelling the way the train is and only a polyline stored
+   city-outward needs flipping." The first half of that sentence was right and refuted the
+   second: BOTH geometry sources below are travel-directed by construction, so there was
+   nothing left for `direction` to correct and applying it turned correct headings around.
+
+   MEASURED, on the F01 capture's own rows rather than on a hypothetical: GO201_26_6187_1 is an
+   Inbound estimated LIRR train whose anchors run from [40.65746, -73.58232] to [40.69961,
+   -73.80853], a true heading of 283.8 degrees, and the reversal drew it at 103.8. Three such
+   rows are in every capture. The slice branch was wrong a second way and is fixed below.
+
+   THE SERVED `bearing` IS STILL NEVER REVERSED, which was always right: a bearing the vehicle
+   sent is already the way it points, and turning it around would turn the train around. */
+
+/* THE HEADING FOR ONE TRAIN, or null when nothing on the row can say.
+
+   Three sources, first that answers:
+     1. the feed's own `bearing`, for a GPS train that sent one;
+     2. the SLICE INTERVAL the glide is already riding, s0 to s1;
+     3. the served anchors, prev station to drawn position.
+   Nothing is reversed. Sources 2 and 3 are both directions of travel already; see the note
+   above railFamilyClass's neighbours for what reversing them cost.
+
+   SOURCE 2 READS s0 AND s1, NOT points[0] AND points[last], and that distinction is the whole
+   defect the adversarial round found. computeRouteSlice returns `{points: poly.points, cum:
+   poly.cum, s0, s1}`: `points` is the WHOLE stored branch polyline and the train's travel is
+   the INTERVAL s0 to s1, which is exactly what trainLatLng interpolates (`s0 + (s1 - s0) * f`).
+   Reading the endpoints instead gave the branch's end-to-end chord: one heading for every
+   train on that branch, the same whichever way it was going and wherever it was. Measured: on
+   a branch stored west to east it agreed with the truth, and on one stored east to west it was
+   180 degrees out, so which trains were right depended on how the MTA happened to store each
+   shape. A slice whose two offsets coincide (a train sitting at its previous station) yields no
+   direction and falls through to the anchors rather than to a fabricated one. */
+function railTrainBearing(row) {
+  const t = row || {};
+  if (Number.isFinite(t.bearing)) return ((t.bearing % 360) + 360) % 360;
+  const slice = t._route;
+  if (
+    slice &&
+    Array.isArray(slice.points) &&
+    slice.points.length >= 2 &&
+    Number.isFinite(slice.s0) &&
+    Number.isFinite(slice.s1)
+  ) {
+    const from = pointAtArcLength(slice.points, slice.cum, slice.s0);
+    const to = pointAtArcLength(slice.points, slice.cum, slice.s1);
+    const along = segmentBearing(from, to);
+    if (along != null) return along;
+  }
+  if (Number.isFinite(t.prev_lat) && Number.isFinite(t.prev_lon)) {
+    return segmentBearing([t.prev_lat, t.prev_lon], [t.latitude, t.longitude]);
+  }
+  return null;
 }
 
 // WHY A RAILROAD TRAIN LEFT THE MAP, when the served data can say: "withheld" for a fix
@@ -2613,18 +3349,32 @@ function formatNjtHead(routeId, name) {
 function njtRouteTables(routes, cumLengths = polylineCumLengths) {
   const names = new Map();
   const colors = new Map();
+  const shortNames = new Map();
+  const paints = new Map();
   const index = new Map();
   for (const route of routes || []) {
     const id = route.route;
     if (id == null) continue;
     if (route.name) names.set(id, route.name);
     colors.set(id, njtColor(route.color));
+    /* MR3 ADDED THE LAST TWO. `paints` is the feed's RAW pair, hex with no "#" and null for a
+       blank column, because railBranchPaint has to see what the feed actually published: it
+       prefers route_text_color where that ink is legible and recomputes one where it is not,
+       and njtColor has already folded a missing colour into a css fallback by the time
+       `colors` is built. `shortNames` is route_short_name, which is the code the tag prints
+       for this agency (the brief's section 6: NJ Transit publishes one and the railroads do
+       not, so hand-tabling it would answer a question the feed answers).
+
+       `colors` STAYS AS IT WAS and is still what the popup head and the arrivals badge read,
+       so nothing that already worked is re-routed through the new pair. */
+    if (route.short_name) shortNames.set(id, route.short_name);
+    paints.set(id, { color: route.color ?? null, textColor: route.text_color ?? null });
     const polylines = route.polylines || [];
     if (polylines.length) {
       index.set(id, polylines.map((points) => ({ points, cum: cumLengths(points) })));
     }
   }
-  return { names, colors, index };
+  return { names, colors, shortNames, paints, index };
 }
 
 // NJT train popup HTML. `name` is the rider-facing route name (null when the
@@ -2677,6 +3427,23 @@ function njtDelayText(delaySeconds) {
 function njtDelayLine(delaySeconds) {
   const text = njtDelayText(delaySeconds);
   return text ? `<br>${esc(text)}` : "";
+}
+
+/* "Jamaica, LIRR, station" and "Grand Central, Metro-North, station". MR3 needed one: the rail
+   station was a canvas circleMarker with no element and therefore no accessible name, and the
+   paper square is an L.marker, so it has DOM and goes through labeledMarker like every other
+   marker in this app. A named div is not a new surface a rider has to wade through, because
+   labeledMarker owns keyboard:false: these are not tab stops, exactly as NJ Transit's three
+   station squares have not been since 15c.
+
+   THE SYSTEM WORD IS THE POINT, and njtStationName's comment already names the case this
+   answers: at New York Penn Station an LIRR station and an NJ Transit one sit on the same
+   pixel, and Jamaica has an AirTrain station beside the LIRR's. The agency is what tells a
+   screen-reader user which platform they have landed on. railroadSystemLabel spells MNR out,
+   because "Metro-North" is what a rider calls it and "MNR" is a feed key. */
+function railroadStationName(station) {
+  const s = station || {};
+  return joinName([s.name || s.id || "Railroad", railroadSystemLabel(s.system), "station"]);
 }
 
 // "Newark Penn Station, NJ Transit, station". A builder rather than a literal at
@@ -3996,7 +4763,7 @@ if (typeof module !== "undefined" && module.exports) {
     indexAlerts, matchStationAlerts, matchRouteAlerts, bannerAlerts, alertsBlockHtml,
     hashString, bannerRenderKey,
     RAILROAD_ROUTE_MAX_SLICE, RAILROAD_ROUTE_ACCEPT_DIST, RAILROAD_BUCKET_ORDER,
-    LINE_COLORS, FEED_STALE_AFTER_S, FETCH_DEADLINE_MS, shouldRefresh,
+    LINE_COLORS, FEED_STALE_AFTER_S, FETCH_DEADLINE_MS, staticPayloadHasField, shouldRefresh,
     // MR2: the subway's drawing decisions, pure so the map and the Key read one answer.
     YELLOW_TRUNK_ROUTES, isYellowTrunk, trunkDrawOrder,
     RIBBON_CASING_WEIGHT, RIBBON_CASING_OPACITY, RIBBON_LINE_WEIGHT, RIBBON_LINE_OPACITY,
@@ -4025,6 +4792,14 @@ if (typeof module !== "undefined" && module.exports) {
     OBS_MAX_S, observationAge, observationStaleAt, positionQualifier,
     POSITION_STEP_KEYS, positionSteps, positionBoard, markerAge, glideDeadline, glideAnchored,
     drawnFromPrediction, railroadHollow, railroadAtItsStation, withheldFix, positionLineHtml, positionClause,
+    // MR3: the commuter rail grammar. Pure, so the state table can be asked one row at a
+    // time and the tag's markup read as a string rather than off a screenshot.
+    RAIL_BRANCH_CODES, RAIL_NEUTRAL_COLOR, RAIL_AGENCY, railBranchCode, railBranchColor, railBranchInk, railBranchPaint, RAIL_INK_TARGET,
+    RAIL_TAG_HEIGHT, railTagGeometry, railTagState,
+    segmentBearing, railTrainBearing, RAIL_HEX,
+    railTagSvg, railTagChevronPath, railStationSvg, RAIL_STATION_BOX, RAIL_STATION_SQUARE,
+    railLabelBand, RAIL_LABEL_ZOOM, railroadStationName, railFamilyClass,
+    AGE_UNKNOWN, observationDimAge, observationGated, OBSERVATION_GATED,
     vehicleStaleLine, composeAnnouncements, withheldTrains, withheldClause,
     thresholdOverrides, CONTRACT_FLAG_PARAM,
     stalePopupLine, STALE_MARKER_OPACITY, FERRY_DOCKED_OPACITY,

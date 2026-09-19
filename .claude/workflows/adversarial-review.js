@@ -45,6 +45,28 @@ export const meta = {
    this one. .claude/workflows/README.md says so in one place; this file is where it is
    enforced. */
 
+/* RULE 0b: AND THE WORKTREE MUST BE AT THE COMMIT UNDER REVIEW, ASSERTED BY EVERY AGENT.
+   This half was missing and it cost two false refutations on stage MR3 of the map redesign.
+
+   WHAT HAPPENED. A worktree is created at the repository's default branch unless something
+   puts it somewhere else, and nothing here did. Two verifiers on MR3 therefore read
+   origin/main, where the branch under review does not exist, and returned evidence of the
+   form "the diff is empty" and "bindRailStationLabel does not exist" as REFUTATIONS. Both
+   findings were real: one was a canvas casing stroked with the literal string "var(--paper)",
+   a silent no-op that draws in whatever colour the 2D context held last, and the other was a
+   bearing computed from the wrong pair of points. Both were re-verified by hand and both were
+   confirmed. The only reason they were not lost is that the caller distrusted the shape of the
+   evidence; a refutation that reads "the code you describe is not there" is indistinguishable
+   from a correct refutation of a hallucinated finding, and that is the whole danger.
+
+   SO A REFUTATION IS ONLY ADMISSIBLE FROM THE RIGHT COMMIT. Every agent is told the sha, told
+   to detach its worktree at it if it is not already there, told to prove the diff is non-empty,
+   and REQUIRED BY ITS SCHEMA to echo back the sha it actually read. The script compares that
+   echo against the expected sha, and a mismatch makes the finding UNVERIFIED rather than
+   refuted: an agent that read the wrong tree has produced no evidence about this one, in either
+   direction. A "REFUTED from the wrong commit" is the single worst output this tool can
+   produce, because it deletes a real defect and looks like diligence doing it. */
+
 // RULE 3: SIZE TO THE DIFF. One finder dimension per 150 changed lines, floor 2,
 // cap 5. A 130-line monitor change does not need six independent lenses; a
 // 2000-line refactor does not get twelve.
@@ -86,6 +108,19 @@ const input = resolveArgs(args)
 const range = input.range || 'main...HEAD'
 const changedLines = input.changedLines || 300
 const focus = input.focus || ''
+/* THE COMMIT UNDER REVIEW (RULE 0b). The caller passes the full sha of the tip it wants
+   reviewed: `git rev-parse HEAD` on the branch, taken AFTER the last commit the caller made and
+   BEFORE the review is launched. Without it every agent's worktree lands wherever the harness
+   puts it, which on this repository is the default branch, and a review of the default branch
+   refutes every finding about the branch under review.
+
+   NOT OPTIONAL, AND THE FALLBACK SAYS SO RATHER THAN GUESSING. A caller who omits it gets a
+   review that still runs (refusing outright would make the tool unusable from a context that
+   cannot shell out) but every agent is told to derive the sha from the range and to report what
+   it found, and the script logs the omission at the top of the run so a thin review is traceable
+   to it instead of being read as a clean one. */
+const commit = typeof input.commit === 'string' ? input.commit.trim() : ''
+const branch = typeof input.branch === 'string' ? input.branch.trim() : ''
 
 const DIMENSION_CATALOG = [
   {
@@ -132,6 +167,15 @@ log(
 // Say out loud whether the focus arrived, so a dropped or mistyped args field is
 // visible in the run rather than inferred later from thin findings.
 log(focus ? 'focus: ' + focus : 'focus: (none supplied)')
+if (commit) {
+  log('commit under review: ' + commit + (branch ? ' (' + branch + ')' : ''))
+} else {
+  log(
+    'WARNING: no commit sha supplied (RULE 0b). Every worktree defaults to the repository default ' +
+      'branch, which is how stage MR3 got two false refutations. Agents will report the sha they ' +
+      'actually read and mismatches will be surfaced, but pass {commit: "<full sha>"} next time.'
+  )
+}
 
 const FINDINGS_SCHEMA = {
   type: 'object',
@@ -150,8 +194,12 @@ const FINDINGS_SCHEMA = {
         required: ['file', 'summary', 'failure_scenario', 'severity'],
       },
     },
+    // RULE 0b: the sha this agent's worktree was actually at when it read the code, from
+    // `git rev-parse HEAD`. Required, so it cannot be omitted by an agent that did not check.
+    head_commit: { type: 'string' },
+    diff_files: { type: 'integer' },
   },
-  required: ['findings'],
+  required: ['findings', 'head_commit', 'diff_files'],
 }
 
 const TRIAGE_SCHEMA = {
@@ -184,8 +232,10 @@ const TRIAGE_SCHEMA = {
         required: ['summary', 'reason'],
       },
     },
+    head_commit: { type: 'string' },
+    diff_files: { type: 'integer' },
   },
-  required: ['survivors', 'dropped'],
+  required: ['survivors', 'dropped', 'head_commit', 'diff_files'],
 }
 
 const VERDICT_SCHEMA = {
@@ -208,8 +258,15 @@ const VERDICT_SCHEMA = {
         required: ['finding_id', 'summary', 'real', 'verdict', 'evidence'],
       },
     },
+    /* RULE 0b, AND ON THIS SCHEMA IT IS LOAD-BEARING RATHER THAN INFORMATIONAL. A verdict set
+       whose head_commit is not the commit under review is discarded whole: its findings become
+       UNVERIFIED, never refuted. An agent that read the default branch has produced no evidence
+       about this branch in either direction, and the two false refutations on stage MR3 both
+       arrived as confident REFUTED with evidence that the code "does not exist". */
+    head_commit: { type: 'string' },
+    diff_files: { type: 'integer' },
   },
-  required: ['verdicts'],
+  required: ['verdicts', 'head_commit', 'diff_files'],
 }
 
 // Every agent that touches the tree gets this. Two review agents in the R4 run
@@ -221,7 +278,45 @@ const RESTORE =
   'nothing behind: git status must be clean of your edits. A mutation left in the ' +
   'tree is a worse outcome than an unverified finding.'
 
+/* RULE 0b's PREFLIGHT, prepended to EVERY agent's prompt. First three commands, before reading
+   any code: put the worktree at the commit under review, prove it, and prove the diff is there.
+
+   DETACHED, NOT A BRANCH CHECKOUT. Several agents share one repository's object store and each
+   has its own worktree; `git checkout <branch>` from two of them at once fails, and one that
+   succeeded would move the branch ref the caller is committing to. `--detach` at a sha is the
+   one form that is safe to run from N worktrees simultaneously and cannot move any ref.
+
+   AND THE DIFF IS COUNTED, because "I checked out the right sha" and "I am looking at the change"
+   are different claims. A sha that exists but whose merge base with main is itself gives an empty
+   diff, and an empty diff is exactly the state that produced MR3's two false refutations. */
+const PREFLIGHT =
+  'PREFLIGHT, BEFORE YOU READ ANY CODE. You are in your own git worktree, and it does NOT ' +
+  'start at the commit under review: it starts at the repository default branch, which is how ' +
+  'two verifiers on a previous review "refuted" two real defects with the evidence that the ' +
+  'code did not exist. So: ' +
+  (commit
+    ? '(1) run `git rev-parse HEAD`. If it is not ' +
+      commit +
+      ', run `git fetch origin ' +
+      (branch || '--all') +
+      ' || true` and then `git checkout --detach ' +
+      commit +
+      '`, and run `git rev-parse HEAD` again. It MUST print ' +
+      commit +
+      ' exactly. Use --detach and never `git checkout <branch>`: other agents share this ' +
+      'repository and a branch checkout either fails or moves the ref the caller is committing to. '
+    : '(1) run `git rev-parse HEAD` and record it. No sha was supplied for this run, so you ' +
+      'cannot correct your position; report what you actually read and say so in your findings. ') +
+  '(2) run `git diff --stat ' +
+  range +
+  '` and count the files it lists. If it lists ZERO files you are NOT looking at the change: say ' +
+  'so, report no findings and no verdicts, and stop. An empty diff is never evidence that a ' +
+  'finding is wrong. (3) Report the sha from step 1 in head_commit and the file count from step 2 ' +
+  'in diff_files, both verbatim and both required by your schema. A judgement reached from the ' +
+  'wrong tree is discarded, so guessing these fields loses your whole contribution.\n\n'
+
 const scope =
+  PREFLIGHT +
   'Review the diff for ' +
   range +
   '. Read the enclosing function for every hunk: defects in unchanged lines of a touched function are in scope. ' +
@@ -246,11 +341,50 @@ const found = await parallel(
   )
 )
 
-const candidates = found.filter(Boolean).flatMap((r) => r.findings || [])
-log(candidates.length + ' candidates from ' + dimensions.length + ' dimensions')
+/* RULE 0b, ENFORCED ON THE FIND PHASE. A finder that read the wrong tree found nothing about
+   this change, and its "nothing" would otherwise read as a clean dimension. So its whole
+   contribution is dropped and the drop is logged with the sha it actually read. */
+function atRightCommit(result, label) {
+  if (!result) return false
+  const seen = typeof result.head_commit === 'string' ? result.head_commit.trim() : ''
+  if (commit && seen !== commit) {
+    log('RULE 0b: ' + label + ' read ' + (seen || '(no sha)') + ', not ' + commit + '; its output is discarded')
+    return false
+  }
+  if (!result.diff_files) {
+    log('RULE 0b: ' + label + ' reported an EMPTY diff for ' + range + '; its output is discarded')
+    return false
+  }
+  return true
+}
+
+const usableFinds = found.filter((r, i) => atRightCommit(r, 'find:' + (dimensions[i] ? dimensions[i].key : i)))
+const lostDimensions = dimensions.length - usableFinds.length
+if (lostDimensions > 0) {
+  log(
+    'WARNING: ' +
+      lostDimensions +
+      ' of ' +
+      dimensions.length +
+      ' finder dimensions produced nothing usable (wrong commit or empty diff). This review is ' +
+      'NOT full coverage.'
+  )
+}
+const candidates = usableFinds.flatMap((r) => r.findings || [])
+log(candidates.length + ' candidates from ' + usableFinds.length + ' usable dimensions')
 
 if (!candidates.length) {
-  return { confirmed: [], dropped: [], note: 'no candidates surfaced' }
+  // AND IT SAYS WHICH KIND OF NOTHING THIS IS. "No candidates" from agents that read the right
+  // tree is a clean review; "no candidates" from agents that read the default branch is a broken
+  // run, and the two used to be the same sentence.
+  return {
+    confirmed: [],
+    dropped: [],
+    note: lostDimensions
+      ? 'BROKEN RUN: no usable dimensions (' + lostDimensions + ' discarded for wrong commit or empty diff)'
+      : 'no candidates surfaced',
+    lost_dimensions: lostDimensions,
+  }
 }
 
 // RULE 1: TRIAGE BEFORE FAN-OUT. One agent reads every candidate together, which
@@ -261,7 +395,8 @@ if (!candidates.length) {
 phase('Triage')
 
 const triage = await agent(
-  'You are triaging candidate review findings for ' +
+  PREFLIGHT +
+    'You are triaging candidate review findings for ' +
     range +
     ' before expensive verification. Here they are as JSON:\n' +
     JSON.stringify(candidates, null, 2) +
@@ -276,8 +411,17 @@ const triage = await agent(
   { label: 'triage', phase: 'Triage', schema: TRIAGE_SCHEMA, isolation: 'worktree' }
 )
 
-const survivors = (triage && triage.survivors) || []
-const triageDropped = (triage && triage.dropped) || []
+/* AND ON TRIAGE, WHERE A WRONG-TREE READ IS WORSE THAN ANYWHERE ELSE: step (3) of the triage
+   prompt has it re-read the code and CORRECT each survivor's file and line, so an agent on the
+   default branch would "correct" every real finding into a drop. A triage that cannot be trusted
+   is discarded and the candidates go forward unmerged, which costs verifier agents and loses no
+   finding; the reverse trade is not available. */
+const triageUsable = atRightCommit(triage, 'triage')
+if (!triageUsable) {
+  log('RULE 0b: triage is discarded; every candidate goes to verification unmerged and unranked')
+}
+const survivors = (triageUsable && triage.survivors) || candidates.map((c) => ({ ...c, needs_own_verifier: false }))
+const triageDropped = (triageUsable && triage.dropped) || []
 log(survivors.length + ' survivors, ' + triageDropped.length + ' dropped in triage')
 for (const d of triageDropped) log('  dropped: ' + d.summary + ' (' + d.reason + ')')
 
@@ -317,6 +461,7 @@ for (let i = 0; i < batched.length; i += BATCH_SIZE) {
 }
 
 const verifyPreamble =
+  PREFLIGHT +
   'You are an adversarial verifier for the diff at ' +
   range +
   '. Your job is to REFUTE, not to agree. For each finding: read the real code, ' +
@@ -364,7 +509,22 @@ const verdictSets = await parallel(
   ]
 )
 
-const verdicts = verdictSets.filter(Boolean).flatMap((v) => v.verdicts || [])
+/* RULE 0b, ON THE VERDICTS, WHICH IS THE ONE THAT COST US. A verdict set from the wrong tree is
+   thrown away WHOLE rather than per verdict: the agent's reading of every finding in its batch
+   came from the same wrong files. The findings it judged fall through to UNVERIFIED below, which
+   is the honest bucket for them, and never to refuted. On stage MR3 two such sets came back as
+   confident REFUTED on two real critical defects, with "the diff is empty" and "this function
+   does not exist" as their evidence. */
+const usableVerdictSets = verdictSets.filter((v, i) => atRightCommit(v, 'verify#' + (i + 1)))
+const discardedSets = verdictSets.filter(Boolean).length - usableVerdictSets.length
+if (discardedSets > 0) {
+  log(
+    'RULE 0b: ' +
+      discardedSets +
+      ' verdict set(s) discarded for reading the wrong commit or an empty diff; their findings are UNVERIFIED, not refuted'
+  )
+}
+const verdicts = usableVerdictSets.flatMap((v) => v.verdicts || [])
 const byId = new Map(verdicts.filter((v) => v.finding_id).map((v) => [v.finding_id, v]))
 const unmatched = verdicts.length - byId.size
 if (unmatched > 0) {
@@ -384,7 +544,13 @@ for (const s of withIds) {
     // PLAUSIBLE label, so when the id matching broke, a whole review of unjudged
     // findings read exactly like a review of confirmed ones and the breakage was
     // invisible in the result. A separate bucket makes that impossible to miss.
-    unverified.push({ ...s, verdict: 'UNVERIFIED', evidence: 'verifier returned no verdict' })
+    unverified.push({
+      ...s,
+      verdict: 'UNVERIFIED',
+      evidence: discardedSets
+        ? 'verifier returned no usable verdict (a verdict set was discarded for reading the wrong commit)'
+        : 'verifier returned no verdict',
+    })
   } else if (v.real) {
     confirmed.push({ ...s, verdict: v.verdict, evidence: v.evidence })
   } else {
@@ -424,6 +590,12 @@ return {
     batched_verifiers: batches.length,
     verdicts_returned: verdicts.length,
     verdicts_unmatched: unmatched,
+    // RULE 0b's counters, in the result rather than only in the log, so a caller reading the
+    // return value alone can tell a clean review from a partly blind one.
+    commit_under_review: commit || null,
+    lost_dimensions: lostDimensions,
+    triage_discarded: !triageUsable,
+    verdict_sets_discarded: discardedSets,
     agents_total: dimensions.length + 1 + solo.length + batches.length,
   },
 }

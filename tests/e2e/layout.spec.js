@@ -29,10 +29,22 @@ async function open(page, ctx) {
   await page.clock.install({ time: new Date(fx.FROZEN_MS) });
   await page.clock.pauseAt(new Date(fx.FROZEN_MS));
   await page.goto("/");
+  /* VEHICLES, NOT EVERY MARKER ICON (MR3 round 4). This counted `.leaflet-marker-icon` and
+     every spec that calls it then reads a VEHICLE registry, so the count is standing in for
+     "the vehicles have landed". MR3 broke that stand-in: it turned the LIRR, Metro-North and
+     NJ Transit STATIONS into markers, so five station icons now exist before any vehicle poll
+     has answered and `> 5` can be satisfied with a single vehicle of any kind on the page.
+     crosslink.spec.js A3a went red in CI on exactly that, with "the fixture must contain a
+     placed railroad train" over an empty `railroads`. `:not(.rail-stn-marker)` is the class
+     every rail station icon carries and no vehicle does, so the sentinel means again what it
+     was written to mean, and slightly more than it did: three NJ Transit station squares had
+     been counted as vehicles since 15c. */
   await expect
-    .poll(async () => page.evaluate(() => document.querySelectorAll(".leaflet-marker-icon").length), {
-      timeout: 15_000,
-    })
+    .poll(
+      async () =>
+        page.evaluate(() => document.querySelectorAll(".leaflet-marker-icon:not(.rail-stn-marker)").length),
+      { timeout: 15_000 },
+    )
     .toBeGreaterThan(5);
   return ctx;
 }
@@ -137,11 +149,14 @@ test(`A4b. every interactive thing on the map surface meets the 24px floor at ${
   // naming them individually says which system regressed.
   const markers = await page.evaluate((floor) => {
     const out = {};
-    // njt-station-marker is the smallest interactive icon on the map (a 12px square),
-    // so it is the one most dependent on the shared halo and the one this gate most
-    // needs to name. A review round proved the omission mattered: shrinking both NJT
-    // halos to 10px passed the entire suite.
-    for (const cls of ["bus-marker", "train-marker", "railroad-marker", "path-marker", "ferry-marker", "airtrain-marker", "njt-marker", "njt-station-marker"]) {
+    /* MR3 folded the rail families into two shapes: rail-tag-marker is the train tag for all
+       three agencies (LIRR, Metro-North and NJ Transit) and rail-stn-marker the 10x10 station
+       square for all three, so this list is two entries shorter and covers the same markers.
+       rail-stn-marker is now the smallest interactive icon on the map, a 10px square in a 20px
+       box, so it is the one most dependent on the shared halo and the one this gate most needs
+       to name. A review round proved the omission mattered: shrinking both NJT halos to 10px
+       passed the entire suite. */
+    for (const cls of ["bus-marker", "train-marker", "rail-tag-marker", "path-marker", "ferry-marker", "airtrain-marker", "rail-stn-marker"]) {
       const el = document.querySelector(`.${cls}`);
       if (!el) continue;
       const style = getComputedStyle(el, "::before");
@@ -158,9 +173,37 @@ test(`A4b. every interactive thing on the map surface meets the 24px floor at ${
     if (cls.startsWith("__")) continue;
     expect(sizes.hit[0], `${cls} hit width`).toBeGreaterThanOrEqual(HIT_FLOOR);
     expect(sizes.hit[1], `${cls} hit height`).toBeGreaterThanOrEqual(HIT_FLOOR);
-    // AND THE VISUAL SIZE IS UNCHANGED. The floor is met with transparent hit area, not
-    // by inflating the drawing: if a marker's own box grew to 24px this assertion fails
-    // and the fix went the wrong way.
+    /* AND THE VISUAL SIZE IS UNCHANGED. The floor is met with transparent hit area, not by
+       inflating the drawing: if a marker's own box grew to 24px this assertion fails and the
+       fix went the wrong way.
+
+       THE RAIL TAG IS MEASURED DIFFERENTLY AND NOT EXEMPTED, because its box is legitimately
+       30px tall and this assertion would read that as an inflation. It is a THREE-PART mark
+       spanning the track: a 13px tag lifted above the rail, a 3.5px stem, and a head centred
+       on the rail 21px down (README: "Total glyph 30px tall; iconAnchor: [w/2, 21]"). The box
+       is the extent of those three, not padding added to reach a floor, and every one of the
+       three is smaller than the floor. So the claim is made about the PARTS, read out of the
+       drawn SVG, which is a stricter statement than the box test it replaces: a tag whose type
+       block had been grown to 24px would fail it while a 30px box passes.
+
+       The SQUARE is not a special case: a 10px rect in a 20px box, so its own box is under the
+       floor and the shared halo does the reaching, exactly as the comment above describes. */
+    if (cls === "rail-tag-marker") {
+      const parts = await page.evaluate(() => {
+        const svg = document.querySelector(".rail-tag-marker svg.rail-tag");
+        const tag = [...svg.querySelectorAll("rect")].find((r) => Number(r.getAttribute("height")) >= 10);
+        const head = svg.querySelector("path, circle");
+        return {
+          tagHeight: Number(tag.getAttribute("height")),
+          headHeight: Math.round(head.getBBox().height),
+          boxHeight: Math.round(svg.getBoundingClientRect().height),
+        };
+      });
+      expect(parts.tagHeight, "the tag block is the design's 13px and was not grown").toBeLessThan(HIT_FLOOR);
+      expect(parts.headHeight, "the head was not grown").toBeLessThan(HIT_FLOOR);
+      expect(parts.boxHeight, "and the box is the glyph's 30px extent, not a 24px pad").toBe(30);
+      continue;
+    }
     expect(
       Math.min(sizes.icon[0], sizes.icon[1]),
       `${cls} must not have been visually inflated to meet the floor`,

@@ -574,12 +574,35 @@ class NjtRoute(BaseModel):
 
     WHERE NJ TRANSIT REALLY DOES DIFFER is route_text_color, and in the opposite
     direction from what the old sentence implied: it is empty on all twelve NJT
-    routes, while LIRR and Metro-North fill it on every route. So a renderer can
-    trust a railroad text_color and must compute its own for NJ Transit.
+    routes, while LIRR and Metro-North fill it on every route. So a renderer should
+    PREFER a railroad text_color and must compute its own for NJ Transit.
+
+    MEASURED 2026-09-19, AND "TRUST" WAS TOO STRONG (map redesign stage MR3, finding N1):
+    of the 19 (route_color, route_text_color) pairs the two railroad feeds publish, only
+    ELEVEN carry 4.5:1. Four are a readable fill under an unreadable ink (Babylon 3.71,
+    Oyster Bay 2.92, Long Beach 2.98, Hudson 3.65, all white on a mid-tone) and four are
+    the New Haven family's shared EE0034, which NO ink clears (white 4.48, dark 3.88).
+    So a renderer should PREFER the agency's ink and verify it, which is what the map's
+    railBranchPaint does: it keeps the published ink where it clears, recomputes one where
+    the fill is readable and the ink is not, and moves the FILL one percent only where
+    neither ink can work.
     """
 
     route: str
     name: str | None  # long_name, else short_name, else null (from routes.txt)
+    # THE FEED'S OWN route_short_name, carried verbatim, null when the column is blank.
+    # Added on claude/mr3-rail, which is the stage that needed it: the map's commuter rail
+    # tag prints a short branch code, the brief's section 6 says NJ Transit's comes from this
+    # column rather than from a hand-written table ("the app already serves the real ids and
+    # names ... Build from these; do not hand-table"), and the parser has read it since 15c
+    # while the builder dropped it. Without it the tag falls back to the route id, so a
+    # Northeast Corridor train reads "9" instead of "NEC".
+    #
+    # SEPARATE FROM `name`, which is long_name-else-short_name and therefore cannot answer
+    # this: on all twelve routes the long name is present, so `name` is never the short one.
+    # Optional with a None default, so the wire shape is additive exactly as the two colour
+    # fields are.
+    short_name: str | None = None
     # THE FEED'S OWN COLOURS, carried exactly as published. route_color is set on
     # all twelve routes; route_text_color is EMPTY on all twelve (probed
     # 2026-08-05), so text_color is null in practice and a renderer must compute a

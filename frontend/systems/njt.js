@@ -28,6 +28,14 @@
 let njtRouteColors = new Map();
 let njtRouteNames = new Map();
 let njtRouteIndex = new Map();
+/* MR3's two, reassigned wholesale with the rest (see the comment above: every read goes
+   through a helper that names the binding at call time, never a captured local).
+   `njtRoutePaints` is the feed's RAW pair, hex with no "#" and null for a blank column,
+   because railBranchPaint has to see what was published: njtRouteColors has already folded a
+   missing colour into a css fallback. `njtRouteShortNames` is route_short_name, which is the
+   code the tag prints for this agency and which the endpoint began serving on this branch. */
+let njtRoutePaints = new Map();
+let njtRouteShortNames = new Map();
 
 // stop_id -> [lat, lon], from /api/njt-stops. It exists for the glide rather than
 // for the markers: njtGlideTrain needs the coordinates of the stop a train is
@@ -43,14 +51,13 @@ const njtStopCoords = new Map();
 const NJT_SLICE_OPTS = { maxSlice: RAILROAD_ROUTE_MAX_SLICE, acceptDist: RAILROAD_ROUTE_ACCEPT_DIST };
 
 async function loadNjtRoutes() {
-  let routes;
-  try {
-    const res = await fetch("/api/njt-routes", { signal: AbortSignal.timeout(FETCH_DEADLINE_MS) });
-    if (!res.ok) return false; // warming 503 (or transient error): retry
-    routes = await res.json();
-  } catch {
-    return false;
-  }
+  /* THROUGH fetchRoutesPayload FOR short_name (R-d, shared.js carries the whole argument). It is
+     the field this stage's tag PRINTS for this agency, and it began being served on this branch,
+     so a response cached from before the backend rolled would make all twelve tags read "9",
+     "10", "11" instead of NEC, NJCL, RARV. One re-read past the HTTP cache, then the route id,
+     which is what railBranchCode falls back to for a route it cannot name. */
+  const routes = await fetchRoutesPayload("/api/njt-routes", "short_name");
+  if (routes == null) return false; // warming 503, or a network error: retry
   // AN EMPTY PAYLOAD IS AMBIGUOUS HERE IN A WAY IT IS NOT ELSEWHERE, and the
   // resolution is to retry. /api/njt-routes serves [] for three states: a failed
   // (and retrying) load, a deployment with no NJT credentials, and a READY load
@@ -64,8 +71,19 @@ async function loadNjtRoutes() {
   if (!routes.length) return false;
   const tables = njtRouteTables(routes, polylineCumLengths);
   njtRouteColors = tables.colors;
+  njtRoutePaints = tables.paints;
+  njtRouteShortNames = tables.shortNames;
   njtRouteNames = tables.names;
   njtRouteIndex = tables.index;
+  /* MR3, round 4: THROUGH railroad.js's railDrawRibbons rather than a pair of polylines here.
+     The argument and the measurement are in the comment on that function; what matters at this
+     call site is that NJ Transit's casings and the LIRR's lines used to reach ONE canvas, where
+     insertion order decided which survived, and the two route endpoints land in a race. The
+     shared function puts every rail casing on railroadCasingPane at 394 and every rail line on
+     railroadLinePane at 395, so NJT can no longer erase an LIRR line at Penn in any arrival
+     order. It also gets paperColor() for free, which is the other half of the defect:
+     "var(--paper)" is a silent no-op on a canvas context. */
+  const ribbons = [];
   for (const route of routes) {
     const color = njtRouteColor(route.route, njtRouteColors);
     // Every kept variant draws (the backend's dedup already collapsed the
@@ -73,16 +91,10 @@ async function loadNjtRoutes() {
     // branches: North Jersey Coast to Long Branch AND to Bay Head).
     // Non-interactive like every other route line, so clicks fall through to the
     // station squares and the train markers above them.
-    for (const points of route.polylines || []) {
-      L.polyline(points, {
-        color,
-        weight: 2.5,
-        opacity: 0.5,
-        interactive: false,
-        renderer: lineRenderer,
-      }).addTo(njtRouteLines);
-    }
+    for (const points of route.polylines || []) ribbons.push({ points, branch: color });
   }
+  // One group for the whole layer, so the resolver ignores the (absent) system key.
+  railDrawRibbons(ribbons, () => njtRouteLines);
   return true;
 }
 
@@ -105,13 +117,26 @@ async function loadNjtRoutes() {
 // The slate is the railroad station stroke inverted (white ring on #334155 rather
 // than #334155 ring on white), which keeps NJT inside the commuter-rail family a
 // rider already reads while making it its own member of it.
-const NJT_STATION_COLOR = "#334155";
+//
+/* MR3 REPLACED IT WITH THE FAMILY'S ONE SQUARE, and the reason the paragraph above gives for
+   filling it is exactly what went away. It read: "FILLED, because the TRAIN markers on this
+   layer are hollow squares ... a hollow station square underneath a hollow train square would
+   be two of the same shape in the same style at the same pixel." That was true while a train
+   was a square. A train is a TAG now, lifted above the track, so nothing on this layer is a
+   square except the station, and making NJ Transit's station its own member of the family no
+   longer buys a rider anything.
 
+   What it cost is the claim this stage exists for: "a square always means regional rail" is
+   only worth saying if it is ONE square. LIRR, Metro-North and NJ Transit all draw
+   railStationIcon now and a test counts all three, which a 12px filled slate beside a 10px
+   paper outline could never have passed.
+
+   NJT_STATION_COLOR WENT WITH IT. It had exactly one reader, this function, and a constant
+   nothing reads is the kind of thing that gets re-adopted later by something it was never
+   measured for. The paragraph above is kept because it is the record of a decision being
+   reversed, which is worth more than the eight characters. */
 function njtStationIcon() {
-  const html =
-    `<svg viewBox="0 0 12 12"><rect x="1" y="1" width="10" height="10" rx="1.5" ` +
-    `fill="${NJT_STATION_COLOR}" stroke="#fff" stroke-width="1.5"/></svg>`;
-  return L.divIcon({ className: "njt-station-marker", html, iconSize: [12, 12], iconAnchor: [6, 6] });
+  return railStationIcon("NJT");
 }
 
 async function loadNjtStops() {
@@ -135,6 +160,10 @@ async function loadNjtStops() {
       { icon: njtStationIcon(), pane: "stationPane" },
       njtStationName(station),
     );
+    // MR3: the name, on the label pane, from zoom 11, gated by the same Names toggle. One
+    // helper for all three rail families so the six tooltip defaults that rule takes back off
+    // are written once (shared.js says which and what each one cost).
+    bindRailStationLabel(marker, station.name ?? station.id);
     bindStationPopup(marker, (m) => ({
       station,
       marker: m,
@@ -205,12 +234,73 @@ async function loadNjtStops() {
 // vocabulary for the same fact. Both provenances this feed serves, `placed` and
 // `estimated`, wear that glyph on the railroad too (railroadHollow), so 6.3 adds no
 // branch here: the popup and the name say which of the two a train is.
-function njtIcon(train) {
-  const color = njtRouteColor(train.route_id, njtRouteColors);
-  const html =
-    `<svg viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="12" rx="1.5" ` +
-    `fill="#fff" stroke="${color}" stroke-width="2.5"/></svg>`;
-  return L.divIcon({ className: "njt-marker", html, iconSize: [16, 16], iconAnchor: [8, 8] });
+/* MR3: THE SAME TAG THE RAILROADS WEAR, from the same builder.
+
+   WHAT THIS LAYER HAD WAS NOT A DECISION, IT WAS THE ABSENCE OF ONE. njtIcon took one
+   argument and never read provenance, so both provenances this feed serves wore one glyph:
+   a `placed` train dwelling at a platform and an `estimated` one interpolated between two
+   stops were drawn identically, and the hollow rect was a byte-for-byte copy of
+   railroad.js's with no shared helper between them, so changing one did not change the
+   other. Three families drawing one grammar is this stage's claim and it is only true if
+   they call one function.
+
+   SO NJ TRANSIT GAINS THE BODY SPLIT IT NEVER HAD: `estimated` draws an outlined body with a
+   FILLED chevron (the position is inferred, the heading is real) and `placed` an outlined
+   body with an outlined head. Both stay outlined, which is correct and is not a
+   simplification: this feed has no vehicle positions at all, so no NJ Transit train can ever
+   earn the solid body, and the brief's row 1 is unreachable here by construction rather than
+   by omission. */
+function njtTagState(train, now = correctedNow()) {
+  // `now` THREADED, not dropped (round 4). It used to reach only the age term, so with the age
+  // term gone the parameter would have gone unread while the stale sweep passed a pinned clock
+  // and got the live one back. njtPosition's words and the tag's body have to be one answer
+  // about one instant; railroad.js's railroadPosition(train, now) has always been threaded.
+  const position = njtPosition(train, now);
+  // No `before`: this layer keeps no drawnFrom, because retention cannot change a body that
+  // is outlined for every provenance the feed serves. And no age: the tag's opacity is
+  // markerOpacity's, applied to the marker (round 4; the comment in railroad.js says why).
+  return railTagState(train, null, position.kind);
+}
+
+function njtBranch(train) {
+  return {
+    // route_short_name where the feed publishes one, which is all twelve routes, and the route
+    // id otherwise: route 17, the event-only Meadowlands line, never reaches /api/njt-routes
+    // at all, so a code from its id is the normal fallback on this layer and not an error.
+    code: railBranchCode("NJT", train.route_id, njtRouteNames.get(train.route_id) ?? null,
+      njtRouteShortNames.get(train.route_id) ?? null),
+    ...(njtRoutePaints.get(train.route_id) ?? { color: null, textColor: null }),
+  };
+}
+
+function njtIcon(train, now = correctedNow()) {
+  const branch = njtBranch(train);
+  return railTagIcon({
+    system: "NJT",
+    code: branch.code,
+    color: branch.color,
+    textColor: branch.textColor,
+    state: njtTagState(train, now),
+    bearing: railTrainBearing(train),
+  });
+}
+
+/* THE RE-SKIN GATE, widened from the resolved colour to the whole mark, for the reason
+   railroad.js's twin gives plus one this layer has on its own: /api/njt-trains answers on the
+   first poll while /api/njt-routes is still retrying, so on THIS layer a train drawn in the
+   neutral before its colour arrives is the likely case rather than the corner, and the old
+   gate was right about that one thing and blind to the other five. */
+function njtSkinKey(train, state, bearing) {
+  const branch = njtBranch(train);
+  return [
+    train.route_id,
+    branch.code,
+    branch.color,
+    branch.textColor,
+    state.body,
+    state.head,
+    state.headingTrusted && bearing != null ? Math.round(bearing) : "dot",
+  ].join("|");
 }
 
 function njtTrainPopup(record) {
@@ -359,28 +449,33 @@ function applyNjt(data) {
       // since 6.3 while its own observation is past OBS_FRESH_S (njtPointFor).
       record.marker.setLatLng(njtPointFor(record, now));
       dimMarker(record.marker, vehicleMarkerAge("njt", njtSystemAge(), train, now));
-      // RE-SKINNED ON THE COLOUR, NOT ON THE ROUTE ID, and that is a deliberate
-      // divergence from path.js and railroad.js rather than a copy that drifted.
-      // Both of those gate the re-icon on route_id changing, and the step-1
-      // inventory recorded what it costs there: a marker created before the static
-      // route table lands keeps the fallback colour PERMANENTLY, because route_id
-      // never changes afterwards. On this layer that is the likelier case rather
-      // than the corner, since /api/njt-trains answers on the first poll while
-      // /api/njt-routes is still retrying its way through a cold start, so every
-      // NJT train on screen would be neutral grey until it left the feed. Reading
-      // the resolved colour costs one Map lookup a poll and closes it. The route id
-      // is still tracked, because a mid-trip relabel is what re-projects the glide.
-      const color = njtRouteColor(train.route_id, njtRouteColors);
-      if (record.color !== color) {
-        record.marker.setIcon(njtIcon(train));
-        record.color = color;
+      /* RE-SKINNED ON THE WHOLE MARK, NOT ON THE ROUTE ID, and the reason this layer already
+         diverged from path.js and railroad.js is the reason the wider gate matters most here.
+         Both of those gated the re-icon on route_id changing, and the step-1 inventory
+         recorded what it costs: a marker created before the static route table lands keeps
+         the fallback colour PERMANENTLY, because route_id never changes afterwards. On this
+         layer that is the LIKELIER case rather than the corner, since /api/njt-trains answers
+         on the first poll while /api/njt-routes is still retrying its way through a cold
+         start, so every NJT train on screen would be neutral grey until it left the feed.
+
+         MR3 WIDENED IT because the colour is now one of six things the mark says: the branch
+         code and its ink arrive on the same late fetch as the colour, and the body, the head
+         and the heading move with the data every poll. Gating on colour alone would have
+         left a train that crossed from `placed` to `estimated` wearing the wrong head, which
+         is the distinction this stage exists to draw. njtSkinKey is the one string. */
+      const bearing = railTrainBearing(train);
+      const skin = njtSkinKey(train, njtTagState(train, now), bearing);
+      if (record.skin !== skin) {
+        record.marker.setIcon(njtIcon(train, now));
+        record.skin = skin;
       }
       if (record.marker.isPopupOpen()) updatePopupKeepingFocus(record.marker);
     } else {
       const newRecord = {
-        // The colour the icon was drawn with, so the re-skin above compares like
-        // with like rather than re-iconing every poll.
-        color: njtRouteColor(train.route_id, njtRouteColors),
+        // The whole mark the icon was drawn with, so the re-skin above compares like with
+        // like rather than re-iconing every poll. Seeded from the same two calls the gate
+        // uses, so a train's first poll and its second cannot disagree about what it wears.
+        skin: njtSkinKey(train, njtTagState(train, now), railTrainBearing(train)),
         latest: train,
         glide,
         fState: {},
@@ -391,7 +486,7 @@ function applyNjt(data) {
         njtPointFor(newRecord, now),
         // Dimmed at creation, like every other system: retained data, and since 6.3 an
         // old observation, must never render live, not even for one frame (the C2b spec).
-        { icon: njtIcon(train), opacity: markerOpacity(age) },
+        { icon: njtIcon(train, now), opacity: markerOpacity(age) },
         njtMarkerName(train, now),
       )
         .bindPopup(() => njtTrainPopup(newRecord))

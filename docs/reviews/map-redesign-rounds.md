@@ -80,7 +80,7 @@ future stage has to go looking for is a rule it will miss.
 | --- | --- | --- |
 | **MR1** | **Tokens and chrome.** The Modernist token set on the root with `data-theme`, self-hosted Archivo 400/600/800, the `.leaflet-tile-pane` filters for both themes, and a `localStorage`-persisted theme toggle, **built and tested and then hidden until MR4** (round 3, R2). The `<header>` replaces the right-hand `<aside>`: brand and blinking clock, the subway bullet key (display only, and in the app's own shape), the Key and Stations buttons, the feed strip, the Key panel, and the service alerts strip as a full-width row inside the header. The bottom-right control stack with the City/Rail/Region presets and the restyled zoom control. No marker, line, station, label, popup or route-table change: the pins prove it. | merged |
 | **MR2** | **Subway.** Trunk ribbons (casing plus line, yellow drawn last), the bullet train marker with its halo and lift, local dot versus transfer ring stations, the haloed permanent-tooltip labels with their zoom gating, the Names toggle, and route focus wired to the stage 1 bullets. Every ribbon takes its colour from `lineColor()` and every bullet keeps the app's own rounded rectangle, never the authority's palette or its roundel (round 3, R1). **And, on the operator's instruction after round 2**, the key is derived from the loaded route list rather than written down, every drawn polyline carries the set of routes that ride it, focus is membership in that set, and the key is an ARIA toolbar with one tab stop. **Round 3 adds**, on four more rulings: the subway's ribbons on their own pane below every other family's lines, the station labels on a pane below every vehicle, transfer counted by TRUNK rather than by route id, and an off-focus marker out of the accessibility tree and out of the click path while a route is focused. | merged |
-| **MR3** | **Commuter rail.** The real route tables (§6 of the brief: name-keyed codes for LIRR and Metro-North, the feed's `route_short_name` and `route_color` for NJ Transit, `route_color` added to `/api/railroad-routes`), the branch lines, the square stations, and `railTagIcon` with the §3.1 provenance states: solid versus outlined body, filled versus outlined chevron, dimming for age. | planned |
+| **MR3** | **Commuter rail.** The real route tables (§6 of the brief: name-keyed codes for LIRR and Metro-North, the feed's `route_short_name` and `route_color` for NJ Transit, `route_color` added to `/api/railroad-routes` by `claude/railroad-route-colors` and `route_short_name` by this stage), the branch lines with their casings, ONE square station for all three agencies, names from zoom 11, and `railTagIcon` with the §3.1 provenance states: solid versus outlined body, filled versus outlined chevron, dimming for age. Bearing reuses the slice the glide already built and takes the SERVED direction; there is no headsign rule (v3.1). | in review |
 | **MR4** | **The other families.** PATH diamonds and lines, ferry dashed routes, dock dots and hulls, AirTrain's gray dashed service, and the bus arrow and dot at the muted hashed hue. The §3.3 dimmed and absent states for each. **Also the dark theme's release**: MR1 built it and hid the toggle, and MR4 is the stage at which every mark on the map has the casing that makes it legal (round 3, R2). | planned |
 | **MR5** | **Popups.** The `.pk/.pt/.kv/.dir/.arr/.fresh/.alert/.xlink` vocabulary, the §4 words routed from `positionQualifier()` and the per-system freshness rather than re-derived, the arrivals qualifier column, and the autopan padding that clears the stage 1 chrome. | planned |
 
@@ -682,13 +682,286 @@ stands at full strength and every other trunk is at 0.18 with its casing gone.
 
 ## Stage MR3: commuter rail
 
-*Not started.*
+Branch lines in the agencies' own colours, one paper square for every rail station, and
+`railTag` with the brief's 3.1 provenance states, for LIRR, Metro-North and NJ Transit
+together. Three families, one grammar: before this stage they drew three different station
+marks and two byte-identical copies of one train glyph with no shared helper between them.
+
+### The pins, and why four of them are new
+
+P1h, P1i, P1j and P1k already held every rail mark byte for byte, and MR3 is the stage that
+deliberately moves them: their MARK halves are regenerated and the before and after are
+below. Their POPUP halves are NOT regenerated, for the reason MR2 gives about its own: the
+popups are stage MR5, so a rail popup that changes here is a defect and that claim stays an
+assertion.
+
+What MR3 reaches past on its way is the rest, and four pins landed first to say so.
+
+| Pin | What it holds |
+| --- | --- |
+| **P3a** | A rail station's registry entry, field by field, for all three agencies, because MR3 rewrites the two files they are registered from. It pins the pane as DRAWN rather than as configured, which is the opposite choice from P2a's and for the same reason: MR2 kept the subway a circleMarker, so its own `pane` option was the invariant; MR3 turns a canvas circleMarker whose renderer put it on `stationPane` into an `L.marker` whose own `pane` is `stationPane`, so what holds across the stage is the answer, not the route to it. The marker's CLASS is deliberately not pinned: that IS the restyle. |
+| **P3b** | The station panel for LIRR Jamaica, as a rider reaches it. Its arrivals read "Babylon Branch", which is `nameFor`'s answer reaching the panel, so it fails if the restyle rebuilds the station descriptor and loses the route-name resolution. |
+| **P3c** | The alerts join for that station, on BOTH surfaces, with its own alert list. Two alerts, one per path into F11's union: the stop-scoped one reaches Jamaica by its own id and the route-scoped one ONLY through the arrivals board, because `railroadStops` serves no routes field at all. A third alert on a route that does not serve Jamaica is the negative. |
+| **P3d** | The position ladder's five states in the F01 world, by count and by words: 60 reported unqualified, 11 reported qualified, 6 estimated, 59 placed, 136 drawn, and the fifth state as the 24 the status line reports, which is the only place a train with no marker exists on this page. |
+
+**P3b and P3c caught a pin measuring the wrong thing, before a line of the stage was
+written.** "jamaica" matches two stations on the fixture, the AirTrain's and the LIRR's, and
+the AirTrain row sorts first: `.first()` pinned "Jamaica (AirTrain)" under the key
+`panel/lirr`, with no alerts and a headway sentence, a filled-in golden that would have held
+through any change to the surface it exists to watch. The picker names the row it wants now
+and both specs assert the heading says LIRR before pinning anything.
+
+### What the marks were, and what they are
+
+The before is the golden as `origin/main` served it; the after is what this branch
+regenerated.
+
+| | before | after |
+| --- | --- | --- |
+| rail train | a 16x16 rounded square, `<rect x=2 y=2 w=12 h=12 rx=1.5 fill=#fff stroke=#5d4037 stroke-width=2.5>` when hollow, the fill and stroke swapped when filled, colour from a HASH of the route id | a two-part tag, 35 to 45px wide by 30 tall, anchored `[w/2, 21]` so its head sits on the rail: an agency block ("L", "M", "NJ") and a branch block ("BAB", "HUD", "NEC") in Archivo 800 8px, the body solid or outlined by provenance, the head a filled or outlined chevron rotated to the bearing, or a dot |
+| rail station | LIRR and Metro-North a canvas `circleMarker` `radius 3.5 color #334155 weight 2.5 fillColor #fff`; NJ Transit a 12x12 `<rect ... fill=#334155 stroke=#fff>` | all three an `L.marker` on `stationPane`, `<rect x=6 y=6 w=8 h=8 fill=var(--paper) stroke=var(--ink) stroke-width=1.6>` in a 20x20 box, identical byte for byte across the three agencies (D3c asserts that, not just that each is a square) |
+| branch line | one polyline, `weight 2.5 opacity 0.5`, colour from the same hash | a casing and a line per branch, `var(--paper)` at `weight 5 opacity 0.9` under the agency's own `route_color` at `weight 2.5 opacity 1`, round caps, added back to back |
+| rail station name | none: a canvas `circleMarker` has no element to hang a tooltip on | a permanent tooltip on `stationLabelPane`, class `stn-label rail`, from zoom 11, under MR2's Names toggle, never `hub` |
+
+### The findings
+
+| # | Finding | Disposition |
+| --- | --- | --- |
+| **N1** | **The agencies publish an ink that does not always work.** Of the 19 `(route_color, route_text_color)` pairs the two MTA railroad feeds publish, only ELEVEN carry 4.5:1 as published. Measured 2026-09-19 over the live archives: Babylon 3.71, Oyster Bay 2.92, Long Beach 2.98 and Hudson 3.65 are readable fills under an unreadable ink; the New Haven family's shared `EE0034` is a fill NO ink can rescue (white 4.48, dark 3.88), and it is four of Metro-North's six routes. Metro-North's positions are not age-gated, so those four draw with a SOLID body and their code on that block: the common case on that railroad, not a corner. | **The ink is preferred, not trusted, and the fill moves only where nothing else can work.** `railBranchPaint` returns the pair: the feed's ink where it clears, the computed one where a readable fill carries an unreadable ink, and where neither clears, the fill scales 1% toward black (`EE0034` to `#ec0033`, white 4.48 to 4.55), which is the same hue-preserving scaling `readableInk` already uses for text and the remedy the note at `railroadColor` already names for this class ("a fill that has to move rather than an ink that has to be chosen"). **THE ROUTE LINE IS NEVER MOVED**: only the 24-by-13 block with 8px type on it. The three counts are asserted, so a change that started moving every fill is visible. **IT ALSO QUALIFIES A SENTENCE** `claude/railroad-route-colors` put in two docstrings, that "a renderer can trust a railroad text_color": it can be preferred, and the four ratios are why it cannot be trusted. |
+| **N2** | **The 5px rail casing is on the SHARED canvas, which is MR2's F6 in a new costume.** Leaflet's canvas draws in insertion order, so a rail casing arriving after PATH's 3.5px line, the AirTrain's 3px or the ferry's 2px covers it where they overlap. The subway got its own pane for exactly this and nothing makes the rail casing safe against those three; the eleven static loaders land in whatever order their responses do. | **Built as specified ("casing and line per branch on the existing canvas") and the exposure written down rather than met on a map.** D2u gained NJ Transit, which was missing from its family list entirely, and its shuffle now draws each family's casing as well as its line; it asserts that all four non-subway families share one pane and that the thinnest of them is thinner than the casing over it. **A pane at 395, between `subwayLinePane` and `overlayPane`, closes it in one line** and is the operator's call, not this stage's. |
+| **N3** | **Row 6 of the 3.1 table cannot be drawn as written.** The table says an age-gated row with no clock is dimmed; dimming is `markerOpacity`'s, `markerOpacity` reads an age, and the whole content of that row is that there is no age. `staleAge(null)` is false. | **The body and head halves are obeyed and the opacity half is not, argued rather than dropped.** Dimming it would tell a rider "this is old" about a train whose age the same tag has just said is unknown. The pessimism the row exists for is carried where it belongs: an outlined body and an outlined dot, which is the strongest "do not trust this" the tag can draw. It is the one place the body goes past `railroadHollow`, and the freshness contract is why: clause (c) is an anomaly in the contract's own words. `railtag.test.js` asserts the deviation as a deviation, so a later stage that decides to dim it has to come here. |
+| **N4** | **axe cannot judge the tag's type.** With the tags on the map its color-contrast rule reported 37 findings at 1280 and 17 at 375, all "background color could not be determined because it is overlapped by another element": a tag is 35 to 45px wide where the square was 16, so at regional zoom the tags overlap each other. `aria-hidden` does not silence it and should not, because a sighted rider still sees the type. | **A named shape with a decider, which is A1w's own protocol.** `a11y.spec.js` **A1z4** reads each tag's printed ink and the fill of the block under it off the DRAWN page, in both themes, requires AA, and asserts that every `svg.rail-tag` belongs to a rail tag marker so the exception cannot widen. `railtag.test.js` measures the same pair in node over all 31 published colour pairs, which is what found N1. ACCESSIBILITY.md carries both statements and `statement.test.js` A4 caught the omission. |
+| **N5** | **`/api/njt-routes` did not serve `route_short_name`**, so the brief's stated source for NJ Transit's branch code ("the feed's `route_short_name`") was not reachable and every NJ Transit tag would have read its route id: "9" for the Northeast Corridor. `njt_static` has parsed the column since 15c and the builder dropped it. | **One additive backend change**, the same shape `claude/railroad-route-colors` used for the colours: `NjtRoute.short_name`, None default, carried by the builder and served by the endpoint. The two exact-dict guards in `test_api.py` are updated rather than relaxed, which is what they exist for. |
+| **N6** | **Two neutrals are on screen for an unknown route.** The tag and the line take the README's stated `#6d6e71`; `njtColor`'s older `#4a4e69` still reaches the NJ Transit popup head, which route 17 (the event-only Meadowlands line, never on `/api/njt-routes`) is the live example of. | **Left, deliberately, and named.** The popups are stage MR5 and P1k pins this one byte for byte, so changing `njtColor` here would break a pin that must hold. MR5 is where the two converge; the pin is what proves the popup did not move in the meantime. |
+
+**Three guards fired during the wiring and all three were right**, which is worth recording
+because each was a place the stage was about to diverge quietly. `markers.test.js` caught a
+raw `L.marker` for the station square, written on the subway's reasoning (a station carries
+no accessible name) which holds only because a canvas circleMarker has no element to name;
+NJ Transit's squares have gone through `labeledMarker` since 15c, and these do now, with
+`railroadStationName` added beside `njtStationName`. `positions.test.js` caught the glyph
+rule leaving `railroad.js`: the CALL moved into `railTagState` and the RULE did not, since
+that function calls `railroadHollow`, and the guard follows the chain now and asserts that
+`njt.js` reaches the same table, which is what makes "one grammar for three families"
+checkable rather than asserted. `statement.test.js` caught N4's exception missing from
+ACCESSIBILITY.md.
+
+### Round 4: the multi-agent adversarial pass, and what it cost to read it
+
+Five finder dimensions over the written production diff (frontend and backend), triage, then
+verifiers, every agent in its own worktree under the standing rules. **It found two criticals
+that had shipped into the written diff**, and both are the shapes this phase was told to look
+for.
+
+| # | Confirmed | What was wrong | The fix |
+| --- | --- | --- | --- |
+| **#11** | **the branch casing passed the literal string `"var(--paper)"` to a CANVAS renderer** | Canvas2D resolves no custom properties. `ctx.strokeStyle = "var(--paper)"` is not an error and not a fallback: the assignment is a SILENT no-op that leaves the context holding whatever colour it stroked last, so every rail casing drew in the previous branch's ink. Proved by executing the assignment in-page on a context primed with `#123456`: the value stayed `#123456`, while the subway's casing correctly passed `#f3f2f2`. `shared.js` has carried `paperColor()` since MR2 for exactly this, with the reason written above it, and MR3 walked past it in two files. | `paperColor()` in both rail loaders. `rail.spec.js` D3e asserted the DEFECT (`toEqual(["var(--paper)", "var(--paper)"])`) and now asserts the resolved hex three ways: equal to `paperColor()`'s live answer, matching `/^#[0-9a-f]{6}$/`, and containing no `var(`. |
+| **#3** | **`railroadLinePane` at 395 closed N2 against PATH and reopened MR2's F6 INSIDE the new pane** | All three rail families shared one canvas renderer, and a canvas draws in insertion order. Where two branches share track, the later branch's 5px casing lands after the earlier branch's 2.5px line and erases it. | Two passes per loader was the first fix and **it was not enough**, which the draw chain said out loud: with one renderer the hermetic world produced `[5, 5, 2.5, 2.5, 5, 5, 5, 2.5, 2.5, 2.5]`, so all three NJ Transit casings stroked after both railroad lines. `/api/railroad-routes` and `/api/njt-routes` are two endpoints landing in a race and neither loader can order the other's marks. **So the tier is the pane:** `railroadCasingPane` at 394 for every casing, `railroadLinePane` at 395 for every line, one `railDrawRibbons` for all three families. D3e reads both renderers' draw chains and asserts each holds one weight; D2u's four tiers hold the pane relation across a shuffled insertion order. |
+
+**Two of the panel's refutations were invalid, and the reason is a defect in the review tool
+rather than in the reviewers.** Both verifier worktrees were at `origin/main`, where this
+branch does not exist, so their evidence read "the diff is empty" and "`bindRailStationLabel`
+does not exist" and both findings came back confident **REFUTED**. Both were re-verified by
+hand and both were real: they are #11 and #3 above, the two criticals of this round. The only
+reason they were not lost is that a refutation of that shape looked wrong; a refutation that
+reads *the code you describe is not there* is indistinguishable from a correct refutation of a
+hallucinated finding, which makes it the worst output a review tool can produce. It deletes a
+real defect and looks like diligence doing it.
+
+**Fixed structurally, as RULE 0b of `.claude/workflows/adversarial-review.js`.** A worktree is
+created at the default branch unless something puts it elsewhere, and nothing did. Now the
+caller passes `{commit, branch}`; every agent's prompt opens with a preflight that runs
+`git rev-parse HEAD`, `git checkout --detach <sha>` if it does not match, and
+`git diff --stat <range>` to prove the diff is non-empty; every schema REQUIRES the agent to
+echo back the sha it read and the file count it saw; and the script discards the output of any
+agent whose sha does not match. A discarded verdict set makes its findings **UNVERIFIED**,
+never refuted. A discarded finder dimension is logged as lost coverage, and a triage read from
+the wrong tree is thrown away with every candidate going forward unmerged, because triage
+re-reads the code to correct each finding's location and a triage on the wrong branch would
+"correct" every real finding into a drop. `.claude/workflows/README.md` carries the rule for
+every review and probe workflow in the repository.
+
+**And a test in this stage's own diff asserted a defect.** `railtag.test.js` held
+`assert.equal(Math.round(railTrainBearing({ ...anchored, direction: "Inbound" })), 180)` over an
+anchor pair whose true azimuth is 0: `prev_lat`/`prev_lon` is where the train WAS and
+`latitude`/`longitude` is where it IS, so the pair is already travel-directed and reversing it
+pointed every inbound NJ Transit train backwards. A test that asserts a defect is worse than no
+test, because it makes the bug load-bearing: the fix now fails the suite and the suite reads
+like the authority. It is recorded here rather than quietly corrected. The same file's slices
+were two-point chords rather than the `{points, cum, s0, s1}` shape `computeRouteSlice` returns,
+which is how the geometry half of the same defect got past them.
+
+### Round 4: the operator's rulings
+
+| | Ruling | What it changed |
+| --- | --- | --- |
+| **R-a** | **Drop `railDirectionReverses` from both geometry paths.** `s0` to `s1` and the served anchor pair are travel-directed by construction. The served bearing stays. Correct `railtag.test.js:497` to the true value and record that a test asserted the defect. | The function and its export are gone. `railTrainBearing` reads `pointAtArcLength(slice.points, slice.cum, slice.s0)` to the same at `s1`, which is the INTERVAL the train occupies rather than the whole branch: verified on a bending polyline that the two legs give 0 and 90 and the end-to-end chord gives neither. On the real F01 capture the three inbound anchored rows moved from 104/78/32 to 284/258/212. The corrected test asserts 0 and says in place why the 180 was wrong. |
+| **R-b** | **Keep N3 general; replace the absent-field gate with an explicit table matching contract 3.3.** LIRR, subway, PATH, ferry, buses and NJT gated, Metro-North not, keyed by the family each layer knows, with a test that every family is listed. The header-less subway case is intended: assert it, and say in the erratum that `/healthz` keeps the operator rule while the rider sees "age unknown" and dimmed. | The first cut read `!UNDATED_SYSTEMS.has(row.system)` and was **right by accident**: bus, subway, PATH and ferry rows carry no `system` field at all, so `has(undefined)` was false and four families were gated as a side effect rather than by a decision. `OBSERVATION_GATED` is the 3.3 table transcribed; `observationGated` reads the row's own system first, which is why "railroads" has no row of its own and its two systems disagree. `positions.test.js` scrapes every `vehicleMarkerAge("<key>"` call site from `systems/` and asserts the set is exactly the six sources and that every family one of them can name has a row, in both directions against `UNDATED_SYSTEMS`. The header-less subway row is asserted as intended, and the erratum says why the two surfaces disagree on purpose. |
+| **R-c** | **Belmont Park is BEL.** Add it, and correct the brief with a dated note rather than editing the claim away. | The live feed serves LIRR route 11, Belmont Park, colour `60269E`, against the brief's "There is no route 11". Thirteen LIRR branches now, and the count assertion in `railtag.test.js` is what caught it. The brief keeps its sentence and carries a dated erratum under it. |
+| **R-d** | **The frontend refetches a routes payload once with cache "reload" when the field it needs is missing, then falls back to the id.** Record a version stamp on static-derived endpoints as a follow-up. | `fetchRoutesPayload(url, field)` in `shared.js`, with the pure predicate `staticPayloadHasField` in `helpers.js` so node can ask it. Both static route endpoints are served under an hour-long cache, so the deploy that adds a field ships a frontend reading it against a response from before the backend rolled: well formed, field absent, nothing errors, and every NJ Transit tag prints "9" for up to an hour. The predicate is keyed on **some** entry carrying the field rather than every entry, which is the whole subtlety: route 17 (Meadowlands, event-only) never reaches the endpoint with a short name, so "every" would re-read past the cache forever. A null value counts as absent, because a half-rolled nullable column looks exactly like an unknown field. |
+| | **The follow-up R-d asks for** | A version stamp on the static-derived endpoints, so the frontend can ASK whether a payload predates a field instead of inferring it from absence. Not this stage's: it is a backend change plus a frontend read, and the refetch is correct without it. |
+
+**Six more repairs in the same round**, each with a mutation below.
+
+- **The Names toggle's sentence read only the subway's band.** The toggle hides commuter-rail
+  names too (`:root[data-labels="off"] .stn-label.rail`), and the two bands disagree: rail names
+  show from zoom 11 and the subway's first band opens at 12. At zoom 11 the button said "none at
+  this zoom, zoom in to see them" while the press had just switched off every rail name on
+  screen, which is the one thing that sentence exists to prevent. `namesToggleAnnouncement` is
+  variadic now, and no bands at all reads as "on" rather than "none", because `[].every()` is
+  vacuously true and the obvious spelling would have a caller that passes nothing claim the zoom
+  shows no names.
+- **`paintZoomBand`'s sentinel counted rail labels as subway ones.** It asks "has the subway
+  loaded, and does it publish any interchange", and MR3 put about 300 commuter-rail labels in the
+  same `.stn-label` class. Counted together, a page with rail labels and no subway labels reads
+  as "subway loaded, zero hubs", which is `LABEL_NO_HUB_ZOOM`'s degraded band: every subway name
+  from 13 instead of hubs from 12, on a map whose subway index is merely still in flight.
+  `:not(.rail)` on both counts.
+- **`railTagState.dim` was a second expression of the dimming rule that nothing read.** Every
+  rail marker's opacity comes from `markerOpacity(vehicleMarkerAge(...))` applied to the marker
+  itself, on the apply path, the stale sweep and at creation. `dim` rotted the way an unread
+  field does: the paragraph above it argued at length for `dim = false` on row 6, and R-b's
+  predecessor ruling made row 6 dim. The field and the `age` parameter are gone; the table's
+  opacity column is asserted in `railtag.test.js` against `markerOpacity` itself, which is
+  stronger, and the returned keys are asserted so the field cannot come back silently.
+- **`railTagHeadingTrusted` was dead AND wrong.** Exported, never called, and its rule
+  (`kind !== "unknown"`) disagrees with what `railTagState` actually does for a retained row
+  (`before != null`). Deleted.
+- **`markerAge`'s docstring contradicted the code.** It said "an unknown observation age dims
+  nothing on its own, because positionQualifier says it in words instead", which is exactly what
+  the N3 ruling reversed.
+- **`njtTagState` dropped the `now` it was passed.** It reached only the age term, so with the
+  age term gone the parameter would have been unread while the stale sweep passed a pinned clock
+  and got the live one back. Threaded into `njtPosition`, as `railroadPosition(train, now)`
+  always was.
+
+**And two specs in this stage's diff were weaker than their titles.** `rail.spec.js` D3b is
+titled "a retained train is drawn as the state it was in, **dimmed**" and asserted only the two
+shapes; worse, its world could not have dimmed, because it carried `systems: railWorld().systems`
+(the FRESH blocks) beside rows stamped `retained`, a payload saying at once "this generation
+could not be refreshed" and "the last successful poll was a moment ago". The world now ages the
+blocks with the retention, which is what the backend serves, and the spec asserts 0.45 off the
+element's inline style for every retained row and 1 for the before. `subway.spec.js` D2u's
+shuffle probe drew the rail families on `lineRenderer`, which is not the renderer production
+uses, and its comment called the resulting overlap an accepted cost; it also used the literal
+`"var(--paper)"` as a canvas colour, the very defect of #11.
+
+### The mutations
+
+Each in its own worktree detached at the commit under test, applied alone, with the main
+tree verified clean before and after.
+
+**AND THE MUTATION HARNESS ITSELF WAS BROKEN, which round 4 found by having a mutation
+survive that could not have.** M9 puts the literal `"var(--paper)"` back on the casing, which
+`rail.spec.js` D3e asserts against three ways; it came back GREEN. The cause is two lines that
+are individually reasonable: `tests/e2e/playwright.config.js` sets
+`reuseExistingServer: !process.env.CI`, and `tests/e2e/serve.js` resolves its document root from
+its own `__dirname`. So a static server left running from the MAIN checkout is silently reused
+by a worktree's run, and every browser assertion then reads the **unmutated** frontend. A
+mutation that cannot die is the one failure mode mutation testing exists to catch, and this
+harness had it for every browser-tier mutation run from a worktree while a server happened to be
+up. The node tier was never affected, because it loads files from its own cwd.
+
+The driver now kills whatever holds the port **by port rather than by command text** (a `pkill`
+on the server's path also matches the shell running the driver, which is how the first fix
+killed itself), refuses to run a browser gate while the port is still held, and sets `CI=1` so
+the worktree starts its own server from its own tree. Every row below was re-run under the
+fixed driver. **M6 is retired rather than re-run**: it reverted the inbound reversal, and the
+operator's ruling R-a removed the reversal, so its replacements are M12 and M12b, which put it
+back on each of the two geometry paths.
+
+**M17 survived its first run too, and that was a real gap in the guard rather than the
+harness.** The keys assertion asked ONE row of the table, so a `dim` field restored on the
+estimated branch alone passed it. The table has five return sites; every one is asked now, and
+each is also asked whether an age handed to it changes its answer, because `railTagState.length`
+is 1 (parameters after the first default do not count) and arity alone cannot catch a fourth
+parameter being read.
+
+### Round 4, after the push: the sentinel six specs share
+
+**CI found one this branch's own full local run did not, and it is MR3's.**
+`crosslink.spec.js` A3a went red with *"the fixture must contain a placed railroad train"*
+over an empty `railroads` map: a premise assertion, not a claim about the cross-link.
+
+Six specs open the page the same way, by polling until
+`document.querySelectorAll(".leaflet-marker-icon").length > 5`, and every one of them then
+reads a VEHICLE registry on the next line. The count was standing in for "the vehicles have
+landed". **MR3 broke the stand-in** by turning the LIRR, Metro-North and NJ Transit stations
+into markers: measured on the fixture world, 23 marker icons, **5 of them rail stations**, so
+`> 5` is now satisfied by the stations plus a single vehicle of any kind. A page with six
+buses and no railroad passes the gate and then fails on an empty `railroads`. The margin went
+from six vehicles to one, and the local suite happened to win the race every time.
+
+Two fixes, both minimal and both at the root. The sentinel counts
+`.leaflet-marker-icon:not(.rail-stn-marker)` in all six specs, which is the class every rail
+station icon carries and no vehicle does; it now means what it was written to mean and
+slightly more, since three NJ Transit station squares had been counted as vehicles since 15c.
+And `crosslink.spec.js`'s own `open()` additionally waits for `railroads.size > 0 && trains.size
+> 0`, the two registries its specs actually read: a premise assertion that can fail on a race
+was never testing anything, it was reporting one, so it becomes a wait.
+
+**This is the same shape as `paintZoomBand`'s sentinel earlier in this round**, and that is the
+lesson worth carrying into stage MR4: MR3 put about 300 new markers and 300 new labels into
+classes that existing code was counting, and every count over a class MR3 widened has to be
+re-read. Two were found by different means, one by a node-adjacent browser spec and one by CI,
+and neither by the adversarial panel.
+
+### The mutations, round 4
+
+| # | Guard reverted | Result | Killed by |
+| --- | --- | --- | --- |
+| **M9** | the casing's colour back to the literal `"var(--paper)"` | **killed** | D3e's three-way assertion: equal to `paperColor()`'s live answer, matching a hex, containing no `var(`. **This is the one that exposed the harness**: it survived until the driver stopped reusing the main checkout's server |
+| **M10** | the casing back on `railroadLineRenderer` | **killed**, both specs | D3e ("no rail casing reached the casing canvas") and D2u ("lirr is on the rail panes") |
+| **M11** | the bearing read end to end over the whole branch instead of over `s0` to `s1` | **killed** | the bending-polyline case, where the two legs read 0 and 90 and the chord reads neither |
+| **M12** | the direction word turns the slice again | **killed** | the all-directions loop over a north and a south slice |
+| **M12b** | the direction word turns the served anchor pair again | **killed** | the corrected `railtag.test.js:497`, which is the line that used to assert this |
+| **M13** | one family dropped from `OBSERVATION_GATED` | **killed** | the every-family-listed test, which scrapes the call sites from `systems/` |
+| **M14** | `staticPayloadHasField` keyed on EVERY entry rather than some | **killed** | the route-17 case: a payload where one entry has no short name is a payload from a backend that knows the field |
+| **M15** | the Names sentence reads only the first band | **killed** | the four variadic cases in `subway.test.js` |
+| **M16** | `paintZoomBand`'s sentinel counts rail labels again | **killed** | D3g, on a world with rail stations and no subway ones: the band reads "all" instead of "hubs" at zoom 13 |
+| **M17** | the table grows a second dimming rule (`dim`) again | **killed after the guard was widened** | the per-row keys assertion and the "an age changes nothing" pair |
+| **M18** | `njtTagState` drops the clock it was passed | **killed** | the threading assertion in `positions.test.js` |
+| **M19** | the re-skin gate stops comparing `headingTrusted` | **killed** | the skin-key coverage test, which reads the icon's inputs off `railTagIcon` itself |
+| **M20** | Belmont Park removed from the code table | **killed** | the count assertion, which is what found it in the live feed |
+| **M21** | NJ Transit draws its own casing-and-line pair on the line renderer again | **killed**, both specs | D3e ("the line canvas holds only lines") and D2u ("njt is on the rail panes") |
+
+
+| # | Guard reverted | Result | Killed by |
+| --- | --- | --- | --- |
+| **M1** | the chevron filled for a placed train | **killed**, both tiers | `railtag.test.js` row 4, and `rail.spec.js` D3a on the page |
+| **M2** | the body solid for an estimated train | **killed**, 3 node failures | row 3, the body-is-railroadHollow's-answer tie, and the markup test |
+| **M3** | the 6.3 erratum reverted, so an undated age-gated row draws bright again (`staleAge` drops its `AGE_UNKNOWN` clause) | **killed**, 2 node and 2 e2e failures | the header-less subway case, row 6, D3a and D3b. **Restated in round 4**: it used to revert `dim = false` inside the table, and the table no longer carries an opacity column, so the mutation now reverts the rule itself |
+| **M4** | Metro-North gated like every other system | **killed**, node and e2e | row 7's policy case and D3f. **Restated in round 4**: it is now one row of `OBSERVATION_GATED`, so the every-family-listed test catches it as well, in both directions against `UNDATED_SYSTEMS` |
+| **M5** | a circle drawn for a rail station | **killed**, both tiers | the station-square markup test, and D3c's squares-and-circles count |
+| **M6** | *retired.* It reverted the inbound reversal, and the operator's ruling R-a removed the reversal: the slice's interval and the served anchor pair are travel-directed by construction. Its replacements are **M12** and **M12b**, which put the reversal back on each of the two geometry paths | | |
+| **M7** | the code table keyed by route id again | **killed** | the name-keyed test, on the two cases an id table cannot answer: a branch whose id moved, and a route with no name |
+| **M8** | the ink computed even where the feed supplies one | **killed**, 2 node failures, e2e GREEN | the two railroad ink tests. The e2e staying green is the signature, not an omission: NJ Transit publishes no `route_text_color` at all, so its half of the grammar cannot tell the difference, and the railroads' half can. |
+
+### The screenshots
+
+`docs/reviews/map-redesign/mr3/`, the Rail preset on the stock fixture world at the frozen
+clock. `MEASURING.md` says how to take them again and `capture.spec.js` is the harness;
+the two runs differ only by the tree they ran in.
+
+| | 1280 | 375 |
+| --- | --- | --- |
+| before | `before-desktop.png` | `before-375.png` |
+| after | `after-desktop.png` | `after-375.png` |
 
 ## Stage MR4: the other families
 
 *Not started.* Carries round 3's R2: when the last family on the map has its paper
 casing, `#theme-toggle` loses its `hidden` attribute and the dark theme is offered.
 Everything else it needs already ships in MR1 and is tested there.
+
+**And it inherits a third population for the theme swap, from MR3.** The `setStyle` MR4
+does over the subway ribbons and the station circles has to reach the three commuter rail
+families' 5px paper casings as well: `railDrawRibbons` resolves `paperColor()` once per
+draw, exactly as `drawRibbons` does, so a casing drawn under the light theme keeps its
+light paper until something restyles it. They live on their own pane
+(`railroadCasingPane`) and in each family's own layer group, so they are reachable; what
+MR4 owes is to reach them. Named in `systems/shared.js` beside `rootToken` rather than
+left to be discovered.
 
 ## Stage MR5: popups
 

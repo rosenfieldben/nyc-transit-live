@@ -80,7 +80,7 @@ future stage has to go looking for is a rule it will miss.
 | --- | --- | --- |
 | **MR1** | **Tokens and chrome.** The Modernist token set on the root with `data-theme`, self-hosted Archivo 400/600/800, the `.leaflet-tile-pane` filters for both themes, and a `localStorage`-persisted theme toggle, **built and tested and then hidden until MR4** (round 3, R2). The `<header>` replaces the right-hand `<aside>`: brand and blinking clock, the subway bullet key (display only, and in the app's own shape), the Key and Stations buttons, the feed strip, the Key panel, and the service alerts strip as a full-width row inside the header. The bottom-right control stack with the City/Rail/Region presets and the restyled zoom control. No marker, line, station, label, popup or route-table change: the pins prove it. | merged |
 | **MR2** | **Subway.** Trunk ribbons (casing plus line, yellow drawn last), the bullet train marker with its halo and lift, local dot versus transfer ring stations, the haloed permanent-tooltip labels with their zoom gating, the Names toggle, and route focus wired to the stage 1 bullets. Every ribbon takes its colour from `lineColor()` and every bullet keeps the app's own rounded rectangle, never the authority's palette or its roundel (round 3, R1). **And, on the operator's instruction after round 2**, the key is derived from the loaded route list rather than written down, every drawn polyline carries the set of routes that ride it, focus is membership in that set, and the key is an ARIA toolbar with one tab stop. **Round 3 adds**, on four more rulings: the subway's ribbons on their own pane below every other family's lines, the station labels on a pane below every vehicle, transfer counted by TRUNK rather than by route id, and an off-focus marker out of the accessibility tree and out of the click path while a route is focused. | merged |
-| **MR3** | **Commuter rail.** The real route tables (§6 of the brief: name-keyed codes for LIRR and Metro-North, the feed's `route_short_name` and `route_color` for NJ Transit, `route_color` added to `/api/railroad-routes`), the branch lines, the square stations, and `railTagIcon` with the §3.1 provenance states: solid versus outlined body, filled versus outlined chevron, dimming for age. | planned |
+| **MR3** | **Commuter rail.** The real route tables (§6 of the brief: name-keyed codes for LIRR and Metro-North, the feed's `route_short_name` and `route_color` for NJ Transit, `route_color` added to `/api/railroad-routes` by `claude/railroad-route-colors` and `route_short_name` by this stage), the branch lines with their casings, ONE square station for all three agencies, names from zoom 11, and `railTagIcon` with the §3.1 provenance states: solid versus outlined body, filled versus outlined chevron, dimming for age. Bearing reuses the slice the glide already built and takes the SERVED direction; there is no headsign rule (v3.1). | in review |
 | **MR4** | **The other families.** PATH diamonds and lines, ferry dashed routes, dock dots and hulls, AirTrain's gray dashed service, and the bus arrow and dot at the muted hashed hue. The §3.3 dimmed and absent states for each. **Also the dark theme's release**: MR1 built it and hid the toggle, and MR4 is the stage at which every mark on the map has the casing that makes it legal (round 3, R2). | planned |
 | **MR5** | **Popups.** The `.pk/.pt/.kv/.dir/.arr/.fresh/.alert/.xlink` vocabulary, the §4 words routed from `positionQualifier()` and the per-system freshness rather than re-derived, the arrivals qualifier column, and the autopan padding that clears the stage 1 chrome. | planned |
 
@@ -682,7 +682,96 @@ stands at full strength and every other trunk is at 0.18 with its casing gone.
 
 ## Stage MR3: commuter rail
 
-*Not started.*
+Branch lines in the agencies' own colours, one paper square for every rail station, and
+`railTag` with the brief's 3.1 provenance states, for LIRR, Metro-North and NJ Transit
+together. Three families, one grammar: before this stage they drew three different station
+marks and two byte-identical copies of one train glyph with no shared helper between them.
+
+### The pins, and why four of them are new
+
+P1h, P1i, P1j and P1k already held every rail mark byte for byte, and MR3 is the stage that
+deliberately moves them: their MARK halves are regenerated and the before and after are
+below. Their POPUP halves are NOT regenerated, for the reason MR2 gives about its own: the
+popups are stage MR5, so a rail popup that changes here is a defect and that claim stays an
+assertion.
+
+What MR3 reaches past on its way is the rest, and four pins landed first to say so.
+
+| Pin | What it holds |
+| --- | --- |
+| **P3a** | A rail station's registry entry, field by field, for all three agencies, because MR3 rewrites the two files they are registered from. It pins the pane as DRAWN rather than as configured, which is the opposite choice from P2a's and for the same reason: MR2 kept the subway a circleMarker, so its own `pane` option was the invariant; MR3 turns a canvas circleMarker whose renderer put it on `stationPane` into an `L.marker` whose own `pane` is `stationPane`, so what holds across the stage is the answer, not the route to it. The marker's CLASS is deliberately not pinned: that IS the restyle. |
+| **P3b** | The station panel for LIRR Jamaica, as a rider reaches it. Its arrivals read "Babylon Branch", which is `nameFor`'s answer reaching the panel, so it fails if the restyle rebuilds the station descriptor and loses the route-name resolution. |
+| **P3c** | The alerts join for that station, on BOTH surfaces, with its own alert list. Two alerts, one per path into F11's union: the stop-scoped one reaches Jamaica by its own id and the route-scoped one ONLY through the arrivals board, because `railroadStops` serves no routes field at all. A third alert on a route that does not serve Jamaica is the negative. |
+| **P3d** | The position ladder's five states in the F01 world, by count and by words: 60 reported unqualified, 11 reported qualified, 6 estimated, 59 placed, 136 drawn, and the fifth state as the 24 the status line reports, which is the only place a train with no marker exists on this page. |
+
+**P3b and P3c caught a pin measuring the wrong thing, before a line of the stage was
+written.** "jamaica" matches two stations on the fixture, the AirTrain's and the LIRR's, and
+the AirTrain row sorts first: `.first()` pinned "Jamaica (AirTrain)" under the key
+`panel/lirr`, with no alerts and a headway sentence, a filled-in golden that would have held
+through any change to the surface it exists to watch. The picker names the row it wants now
+and both specs assert the heading says LIRR before pinning anything.
+
+### What the marks were, and what they are
+
+The before is the golden as `origin/main` served it; the after is what this branch
+regenerated.
+
+| | before | after |
+| --- | --- | --- |
+| rail train | a 16x16 rounded square, `<rect x=2 y=2 w=12 h=12 rx=1.5 fill=#fff stroke=#5d4037 stroke-width=2.5>` when hollow, the fill and stroke swapped when filled, colour from a HASH of the route id | a two-part tag, 35 to 45px wide by 30 tall, anchored `[w/2, 21]` so its head sits on the rail: an agency block ("L", "M", "NJ") and a branch block ("BAB", "HUD", "NEC") in Archivo 800 8px, the body solid or outlined by provenance, the head a filled or outlined chevron rotated to the bearing, or a dot |
+| rail station | LIRR and Metro-North a canvas `circleMarker` `radius 3.5 color #334155 weight 2.5 fillColor #fff`; NJ Transit a 12x12 `<rect ... fill=#334155 stroke=#fff>` | all three an `L.marker` on `stationPane`, `<rect x=6 y=6 w=8 h=8 fill=var(--paper) stroke=var(--ink) stroke-width=1.6>` in a 20x20 box, identical byte for byte across the three agencies (D3c asserts that, not just that each is a square) |
+| branch line | one polyline, `weight 2.5 opacity 0.5`, colour from the same hash | a casing and a line per branch, `var(--paper)` at `weight 5 opacity 0.9` under the agency's own `route_color` at `weight 2.5 opacity 1`, round caps, added back to back |
+| rail station name | none: a canvas `circleMarker` has no element to hang a tooltip on | a permanent tooltip on `stationLabelPane`, class `stn-label rail`, from zoom 11, under MR2's Names toggle, never `hub` |
+
+### The findings
+
+| # | Finding | Disposition |
+| --- | --- | --- |
+| **N1** | **The agencies publish an ink that does not always work.** Of the 19 `(route_color, route_text_color)` pairs the two MTA railroad feeds publish, only ELEVEN carry 4.5:1 as published. Measured 2026-09-19 over the live archives: Babylon 3.71, Oyster Bay 2.92, Long Beach 2.98 and Hudson 3.65 are readable fills under an unreadable ink; the New Haven family's shared `EE0034` is a fill NO ink can rescue (white 4.48, dark 3.88), and it is four of Metro-North's six routes. Metro-North's positions are not age-gated, so those four draw with a SOLID body and their code on that block: the common case on that railroad, not a corner. | **The ink is preferred, not trusted, and the fill moves only where nothing else can work.** `railBranchPaint` returns the pair: the feed's ink where it clears, the computed one where a readable fill carries an unreadable ink, and where neither clears, the fill scales 1% toward black (`EE0034` to `#ec0033`, white 4.48 to 4.55), which is the same hue-preserving scaling `readableInk` already uses for text and the remedy the note at `railroadColor` already names for this class ("a fill that has to move rather than an ink that has to be chosen"). **THE ROUTE LINE IS NEVER MOVED**: only the 24-by-13 block with 8px type on it. The three counts are asserted, so a change that started moving every fill is visible. **IT ALSO QUALIFIES A SENTENCE** `claude/railroad-route-colors` put in two docstrings, that "a renderer can trust a railroad text_color": it can be preferred, and the four ratios are why it cannot be trusted. |
+| **N2** | **The 5px rail casing is on the SHARED canvas, which is MR2's F6 in a new costume.** Leaflet's canvas draws in insertion order, so a rail casing arriving after PATH's 3.5px line, the AirTrain's 3px or the ferry's 2px covers it where they overlap. The subway got its own pane for exactly this and nothing makes the rail casing safe against those three; the eleven static loaders land in whatever order their responses do. | **Built as specified ("casing and line per branch on the existing canvas") and the exposure written down rather than met on a map.** D2u gained NJ Transit, which was missing from its family list entirely, and its shuffle now draws each family's casing as well as its line; it asserts that all four non-subway families share one pane and that the thinnest of them is thinner than the casing over it. **A pane at 395, between `subwayLinePane` and `overlayPane`, closes it in one line** and is the operator's call, not this stage's. |
+| **N3** | **Row 6 of the 3.1 table cannot be drawn as written.** The table says an age-gated row with no clock is dimmed; dimming is `markerOpacity`'s, `markerOpacity` reads an age, and the whole content of that row is that there is no age. `staleAge(null)` is false. | **The body and head halves are obeyed and the opacity half is not, argued rather than dropped.** Dimming it would tell a rider "this is old" about a train whose age the same tag has just said is unknown. The pessimism the row exists for is carried where it belongs: an outlined body and an outlined dot, which is the strongest "do not trust this" the tag can draw. It is the one place the body goes past `railroadHollow`, and the freshness contract is why: clause (c) is an anomaly in the contract's own words. `railtag.test.js` asserts the deviation as a deviation, so a later stage that decides to dim it has to come here. |
+| **N4** | **axe cannot judge the tag's type.** With the tags on the map its color-contrast rule reported 37 findings at 1280 and 17 at 375, all "background color could not be determined because it is overlapped by another element": a tag is 35 to 45px wide where the square was 16, so at regional zoom the tags overlap each other. `aria-hidden` does not silence it and should not, because a sighted rider still sees the type. | **A named shape with a decider, which is A1w's own protocol.** `a11y.spec.js` **A1z4** reads each tag's printed ink and the fill of the block under it off the DRAWN page, in both themes, requires AA, and asserts that every `svg.rail-tag` belongs to a rail tag marker so the exception cannot widen. `railtag.test.js` measures the same pair in node over all 31 published colour pairs, which is what found N1. ACCESSIBILITY.md carries both statements and `statement.test.js` A4 caught the omission. |
+| **N5** | **`/api/njt-routes` did not serve `route_short_name`**, so the brief's stated source for NJ Transit's branch code ("the feed's `route_short_name`") was not reachable and every NJ Transit tag would have read its route id: "9" for the Northeast Corridor. `njt_static` has parsed the column since 15c and the builder dropped it. | **One additive backend change**, the same shape `claude/railroad-route-colors` used for the colours: `NjtRoute.short_name`, None default, carried by the builder and served by the endpoint. The two exact-dict guards in `test_api.py` are updated rather than relaxed, which is what they exist for. |
+| **N6** | **Two neutrals are on screen for an unknown route.** The tag and the line take the README's stated `#6d6e71`; `njtColor`'s older `#4a4e69` still reaches the NJ Transit popup head, which route 17 (the event-only Meadowlands line, never on `/api/njt-routes`) is the live example of. | **Left, deliberately, and named.** The popups are stage MR5 and P1k pins this one byte for byte, so changing `njtColor` here would break a pin that must hold. MR5 is where the two converge; the pin is what proves the popup did not move in the meantime. |
+
+**Three guards fired during the wiring and all three were right**, which is worth recording
+because each was a place the stage was about to diverge quietly. `markers.test.js` caught a
+raw `L.marker` for the station square, written on the subway's reasoning (a station carries
+no accessible name) which holds only because a canvas circleMarker has no element to name;
+NJ Transit's squares have gone through `labeledMarker` since 15c, and these do now, with
+`railroadStationName` added beside `njtStationName`. `positions.test.js` caught the glyph
+rule leaving `railroad.js`: the CALL moved into `railTagState` and the RULE did not, since
+that function calls `railroadHollow`, and the guard follows the chain now and asserts that
+`njt.js` reaches the same table, which is what makes "one grammar for three families"
+checkable rather than asserted. `statement.test.js` caught N4's exception missing from
+ACCESSIBILITY.md.
+
+### The mutations
+
+Each in its own worktree detached at the commit under test, applied alone, with the main
+tree verified clean before and after.
+
+| # | Guard reverted | Result | Killed by |
+| --- | --- | --- | --- |
+| **M1** | the chevron filled for a placed train | **killed**, both tiers | `railtag.test.js` row 4, and `rail.spec.js` D3a on the page |
+| **M2** | the body solid for an estimated train | **killed**, 3 node failures | row 3, the body-is-railroadHollow's-answer tie, and the markup test |
+| **M3** | the contract's dimming lost under the new tag (`dim = false`) | **killed**, 3 node failures | row 2, row 5, and the case that ties `dim` to `markerOpacity` at 0, 1, 89, 90, 91 and 10000 seconds |
+| **M4** | Metro-North gated like every other system | **killed**, 11 node and 2 e2e failures | row 7's policy case, D3f, and nine older specs across the 6.2 and 6.3 contracts |
+| **M5** | a circle drawn for a rail station | **killed**, both tiers | the station-square markup test, and D3c's squares-and-circles count |
+| **M6** | the bearing not reversed for inbound | **killed**, 2 node failures | the sign test, which asserts the two directions differ by exactly half a turn rather than asserting two numbers |
+| **M7** | the code table keyed by route id again | **killed** | the name-keyed test, on the two cases an id table cannot answer: a branch whose id moved, and a route with no name |
+| **M8** | the ink computed even where the feed supplies one | **killed**, 2 node failures, e2e GREEN | the two railroad ink tests. The e2e staying green is the signature, not an omission: NJ Transit publishes no `route_text_color` at all, so its half of the grammar cannot tell the difference, and the railroads' half can. |
+
+### The screenshots
+
+`docs/reviews/map-redesign/mr3/`, the Rail preset on the stock fixture world at the frozen
+clock. `MEASURING.md` says how to take them again and `capture.spec.js` is the harness;
+the two runs differ only by the tree they ran in.
+
+| | 1280 | 375 |
+| --- | --- | --- |
+| before | `before-desktop.png` | `before-375.png` |
+| after | `after-desktop.png` | `after-375.png` |
 
 ## Stage MR4: the other families
 

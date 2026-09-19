@@ -1,6 +1,6 @@
 # Phase MR, stage 3 of 5: the commuter-rail grammar
 
-Seven commits off `origin/main` (`49c5956`): the pins, the grammar as pure arithmetic with
+Nine commits off `origin/main` (`49c5956`): the pins, the grammar as pure arithmetic with
 the brief's 3.1 table as its oracle, the wiring, the round entries and the captures, your
 rulings on N1 through N5, and round 4 (the adversarial panel's two criticals plus your
 rulings R-a through R-d). LIRR, Metro-North and NJ Transit draw **one grammar** for the

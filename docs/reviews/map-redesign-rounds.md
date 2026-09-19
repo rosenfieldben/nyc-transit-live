@@ -1366,14 +1366,26 @@ the dot is therefore a new finding (F17) and not a corner of this one.**
 | # | Finding | Disposition |
 | --- | --- | --- |
 | **F17** | **Nothing in the Key explains the chevron against the dot**, before this round or after it. The tag's head carries whether a heading is trusted, which is one of the two axes the states study exists to make visible, and the panel is silent on it. | **Recorded, not fixed.** It is a new row with a new sentence, which is a ruling this round does not have. The two rows added here are the body axis, and adding the head axis to their glyphs would have been F16 again. |
+| **F19** | **A mutation whose anchor has gone stale is a mutation that never ran, and one had.** Re-running the stage's whole table at this round's tip, which the ruling asked for, is what found it: **M35** (the `<line>` phantom-fill guard reverted) reported `anchor in tests/e2e/contrast.js matched 0 times` and exited without testing anything. Round 1 turned the line it anchors on into a block when it added alpha compositing, and the table was never re-anchored, so between round 1 and here this repo carried a guard whose only evidence was a mutation that had stopped executing. | **Fixed and re-run.** M35 is re-anchored against the source as it now stands and dies on `P4c`, which is what it recorded before. The lesson is the one round 4 already learned about its `dim` column: a mutation table is code and rots exactly the way an unread field does. The runner had been printing `ANCHOR MISS` and exiting non-zero all along; what was missing was anyone running it again. |
 | **F18** | **"At legend scale" is a claim about SIZE and nothing in the suite measured size.** Measured: deleting `width: 42px` scales the type to 3.05px, an illegible smudge, and every gate stays green. The colours do not move (A1z reads computed fill, which is scale-invariant), the row counts do not move, the accessible names do not move (P1e strips the glyph, precisely because it is decorative), axe sees an `aria-hidden` subtree, and no capture is diffed byte for byte. | **Fixed in the round.** `a11y.spec.js` **A1x2** reads `getScreenCTM()` on each tag's two text nodes and asserts the scale is 1, the declared size is the map's 8 user units, the rendered size is at least 8px, the weight is 800, the cell equals the viewBox, and the class is `key-rail-tag` and not `rail-tag`. A CTM rather than a bounding box because a text element's box is its INK: "BAB" and "NEC" would answer one question two ways. |
 
 
-#### The mutations, round 2
+#### The mutations, round 2, and the whole table re-run
 
 **One per changed row, as the ruling asked, plus one per guard the round moved or added.** Every
 one run in a worktree detached at the round's tip, sha echoed and compared, the server killed by
 PORT and `CI=1` so Playwright refuses to reuse one. **Seventeen, and all seventeen die.**
+
+**And the stage's earlier twenty-six re-run at the same sha, which the ruling also asked for.**
+Twenty-five die exactly as recorded and **M47 survives, exactly as recorded**. One did not run at
+all, and that is finding **F19**: M35's anchor had gone stale in round 1 and the table was never
+re-anchored, so it had been reporting `ANCHOR MISS` instead of testing anything. Re-anchored here,
+it dies on `P4c`. **Forty-three mutations in total: forty-two die and one survives for a reason
+that is written down.**
+
+*On the sha: every mutation ran at `3198450`. The commits after it change the ledger, the PR body
+and one comment block in `pins.spec.js` and nothing else, so `git diff 3198450 HEAD` over the
+executable files is comment text only and no outcome here can differ at the tip.*
 
 | # | Row or guard reverted | Result | Killed by |
 | --- | --- | --- | --- |
@@ -1391,7 +1403,7 @@ PORT and `CI=1` so Playwright refuses to reuse one. **Seventeen, and all sevente
 | **M59** | the Key's tag takes the map's own `rail-tag` class | **killed**, node and 2 e2e | `keyglyphs` 9, `A1x2` and **`A1z4`**, which is the closure `ACCESSIBILITY.md` states: every `svg.rail-tag` belongs to a rail tag marker |
 | **M60** | the inline font dropped, on the theory that a stylesheet supplies it | **killed**, node and e2e | `keyglyphs` 8 and `A1x2`. It does not: `.rail-tag-marker svg text` is scoped to the MARKER |
 | **M61** | `P1e`'s explicit equality reverted to the superset, AND the transfer row moved to the bottom | **killed**, e2e. **And it corrected the round's own account of what it had changed**: `pin()` has always been an ordered deep equality, so the superset lived in the `.filter(...)` this round removed, not in the assertion it added. The explicit `toEqual` is for the failure MESSAGE. That is now written at `P1e` rather than implied | `P1e`, through `pin` |
-| **M64** | the same reorder with every guard INTACT, which is M61's other half | see below | `P1e` |
+| **M64** | the same reorder with every guard INTACT, which is M61's other half | **killed**, e2e | `P1e`, on the ORDER. No name left, no count moved, and the node oracle passes because it looks a row up BY NAME: the ordered equality is the only thing on this repo that sees a reordered row |
 | **M62** | `A1x` updated to 17 as the ruling named, and the third count left at 18: the caller who read the ruling literally | **killed**, e2e | `D2l`. Nothing about the panel is wrong in this mutation; the gate is, and that is the finding |
 | **M63** | the Q1 exemption asserted as a comment rather than as a measurement: `D5d` claims the ferry boat clears in the light theme | **killed**, e2e | `D5d` itself, at 1.31 against a floor of 3. Which is the point: the exemption in `ACCESSIBILITY.md` is held by a measurement that fails the day the hull gains an ink edge, not by a sentence |
 

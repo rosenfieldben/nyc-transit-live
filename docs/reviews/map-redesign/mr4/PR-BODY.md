@@ -226,6 +226,13 @@ is drawn at: deleting one CSS declaration scales it to 3.05px and every other ga
 (**F18**). A ninth undecidable shape was added for axe declining the tag's type as "overlapped by
 another element", with `A1z` as its decider, measured at 14.86, 4.69, 14.86 and 14.86.
 
+**Forty-three mutations, forty-two dead.** Seventeen new, one per changed row and one per guard
+this round moved, and the stage's earlier twenty-six re-run at the same tip. M47 survives exactly
+as it was recorded to. **One of the twenty-six had stopped running** and only the whole-table
+re-run found it (**F19**): M35's anchor went stale when round 1 turned the line it targets into a
+block, so it had been reporting `ANCHOR MISS` rather than testing the guard it names. Re-anchored,
+it dies on `P4c`.
+
 **The captures did not need regenerating and that was measured, not assumed:** the six frames are
 taken with the Key closed, and the tree before this round regenerates them identically. Since a
 reviewer of a Key round should be able to see the Key, **four new frames open it** (desktop and

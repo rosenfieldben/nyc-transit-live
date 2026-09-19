@@ -187,9 +187,9 @@ Three things stop that gate from being decoration:
   measured on the drawn page each one meets the 3:1 a mark owes, in the light
   theme and in the dark: the subway train's route square in light and its white
   letter in dark; the subway and PATH station dots' fill; the regional rail and
-  AirTrain station squares' stroke; the rail tag's body; the bus arrow and the
-  bus wheel's fill; the ferry dock's fill; and PATH's diamond, which is the
-  feed's own published red. `theme.spec.js D5d` measures them against the
+  AirTrain station squares' stroke; the rail tag's ink blocks; the bus mark's
+  own fill, taken from the muted wheel rather than the raw one; the ferry dock's
+  fill; and PATH's diamond, which is the feed's own published red. `theme.spec.js D5d` measures them against the
   theme's `--paper`, every mark of every family rather than one per family, and
   `pins.spec.js P4c` is the witness: it pins each number paint by paint, so a
   repaint that lowers one is a changed pin rather than a quiet pass.

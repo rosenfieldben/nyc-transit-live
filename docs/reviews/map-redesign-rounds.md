@@ -75,6 +75,16 @@ future stage has to go looking for is a rule it will miss.
 5. **A fix is finished when reverting it fails something**, not when it works. MR2 round 3 had
    three fixes survive their own mutation on the first run, each already verified by hand and
    commented.
+6. **A mutation whose anchor misses is a mutation that did not run**, so the WHOLE table is
+   re-run before every push and an `ANCHOR MISS` is a failure of the run rather than a
+   survivor. Added after MR4's finding **F19**: M35's anchor targeted a line that round 1 had
+   turned into a block, and for a whole round the runner printed `ANCHOR MISS`, exited
+   non-zero and tested nothing, so a guard this repo relies on had no evidence at all while
+   its table still read "killed". Two things follow from it and both are the rule rather than
+   advice. A mutation table is CODE and rots exactly the way an unread field does (round 4's
+   `dim` column is the same lesson in a different file), so it is re-anchored whenever the
+   code it targets is touched. And re-running only the NEW rows is what hides this: the old
+   rows are the ones whose anchors have had time to go stale.
 
 | Stage | Scope | State |
 | --- | --- | --- |

@@ -485,8 +485,11 @@ test("MR3 tag markup: the body, the head and the box say what the state said", (
   // green is 3.71, so the ink is recomputed while the colour is kept (railBranchPaint).
   assert.match(solidFilled, /fill="#1a1a1a"/);
   assert.match(solidFilled, /class="rail-tag rail-tag-solid rail-head-filled"/);
-  // PAPER AND INK AS INLINE STYLE, not as an SVG attribute: `fill="var(--paper)"` is not a
-  // paint value in SVG 1.1 and draws black.
+  // PAPER AND INK AS INLINE STYLE, not as an SVG attribute, and MR4 corrected the reason
+  // written here: the attribute form DOES resolve in Chromium (measured, identical computed
+  // rgb), so this is a cascade rule rather than a resolution one. A presentation attribute is
+  // the lowest-priority author declaration there is, so any stylesheet rule beats it silently.
+  // helpers.js says it in full above railTagSvg.
   assert.match(solidFilled, /style="fill: var\(--paper\)"/);
   assert.doesNotMatch(solidFilled, /fill="var\(--/);
 

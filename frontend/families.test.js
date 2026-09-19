@@ -60,10 +60,18 @@ test("MR4 PATH: the diamond is the design's path, route fill, paper stroke, and 
   assert.match(svg, /viewBox="0 0 16 16"/);
   assert.ok(svg.includes(PATH_DIAMOND_PATH));
   assert.ok(svg.includes("fill: #abc123"));
-  /* THE STROKE IS A CUSTOM PROPERTY IN AN INLINE STYLE, which is the whole theme mechanism
-     for this family and the one way of writing it that works. `stroke="var(--paper)"` as an
-     SVG 1.1 presentation attribute is not a paint value: it resolves to nothing and draws
-     nothing, silently. THIS IS THE MUTATION: move the paint to an attribute. */
+  /* THE STROKE IS A CUSTOM PROPERTY IN AN INLINE STYLE, which is the whole theme mechanism for
+     this family, and the rule is the CASCADE's rather than a resolution failure. MR4 measured
+     the claim this comment used to make: a presentation attribute DOES resolve a custom
+     property in Chromium, and `stroke="var(--paper)"` computes to the same rgb the style form
+     does, which is what ledger finding H2 recorded in MR2 before the sentence got stronger by
+     being copied. What is true is that a presentation attribute is the lowest-priority author
+     declaration there is, so any stylesheet rule beats the mark's own paint silently.
+
+     THIS IS STILL THE MUTATION (move the paint to an attribute) AND IT DIES HERE ONLY. It is
+     recorded in the ledger as surviving every browser gate, because the two forms genuinely
+     draw the same pixels in this browser: a reader who finds this assertion should know it
+     enforces a house rule about the cascade and not a defect they can photograph. */
   assert.ok(svg.includes("stroke: var(--paper)"), "the stroke must be a token in a style");
   assert.doesNotMatch(svg, /stroke="var\(/, "an SVG attribute cannot carry a custom property");
   assert.match(svg, /stroke-width="1\.2"/);

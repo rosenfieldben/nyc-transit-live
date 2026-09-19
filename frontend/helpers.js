@@ -2339,9 +2339,22 @@ function railTagState(row, before = null, kind = null) {
    a rider reads the pair as one mark pointing somewhere.
 
    PAPER AND INK ARE THE THEME'S, as inline `style` rather than as SVG attributes, which is
-   what MR2's subway bullet already does (systems/subway.js:30) and is not a style choice: a
-   `fill="var(--paper)"` ATTRIBUTE is not a paint value in SVG 1.1 and does not resolve, so
-   the marker would draw black. The BRANCH ink is a literal instead, and deliberately: it
+   what MR2's subway bullet already does (systems/subway.js:30).
+
+   AND THE REASON IS THE CASCADE, NOT A RESOLUTION FAILURE, which is a correction MR4 measured:
+   the sentence here used to say a `fill="var(--paper)"` attribute "is not a paint value in SVG
+   1.1 and does not resolve, so the marker would draw black". That is not what Chromium does.
+   A presentation attribute is mapped into the cascade as a declaration, so the token resolves:
+   measured on this branch, `stroke="var(--paper)"` computes to rgb(243, 242, 242), byte for
+   byte what the style form computes to, and ledger finding H2 measured the same thing in MR2
+   and wrote it down correctly ("works in a Chromium presentation attribute"). What is true is
+   weaker and still decisive: a presentation attribute sits at the BOTTOM of the cascade, so any
+   stylesheet rule beats it and a later `.rail-tag rect { fill: ... }` would silently win over
+   the mark's own paint, and the style form also works in a browser that maps no attributes at
+   all. An UNKNOWN token is where black comes from: `var(--nope)` falls back to the property's
+   initial value, which is black for fill and none for stroke, in either form.
+
+   The BRANCH ink is a literal instead, and deliberately: it
    depends on the branch colour, not on the theme, and it comes either from the feed's own
    route_text_color or from readableTextOn. A token there would have made a rider's ink
    follow the page's theme instead of the line it is printed on.
@@ -2498,11 +2511,15 @@ function railStationSvg() {
    cannot do that (Leaflet hands a colour STRING to the 2D context and `var(--paper)` is not
    one), which is why the lines and the station circles are a registry and these are not.
 
-   AND `style=` RATHER THAN THE `stroke=` ATTRIBUTE, which is not a preference: `stroke="var(--paper)"`
-   as an SVG 1.1 presentation attribute is not a paint value and does not resolve. The same
-   sentence is written above railTagSvg, and it is repeated here because this is the second
-   place in the codebase where getting it wrong would draw an invisible stroke rather than
-   raise anything. */
+   AND `style=` RATHER THAN THE `stroke=` ATTRIBUTE, on the cascade's grounds rather than on a
+   resolution failure. MR4 measured what MR3 and this comment both used to assert: a
+   presentation attribute DOES resolve a custom property in Chromium, and
+   `stroke="var(--paper)"` computes to the same rgb the style form does. Ledger finding H2 had
+   it right in MR2 and the sentence got stronger each time it was copied. The real reason to
+   prefer the style form is that a presentation attribute is the lowest-priority author
+   declaration there is, so any stylesheet rule beats it silently; the argument is written out
+   above railTagSvg and is not repeated per builder. The rule is still enforced by
+   frontend/families.test.js, on those grounds. */
 
 /* THE MUTED HASHED HUE (README: "Route colour is the existing hashed hue but muted:
    hsl(h, 45%, 38%)"), AND ITS LIGHTNESS IS A TOKEN BECAUSE A DARK MAP NEEDS THE OTHER END.

@@ -973,10 +973,10 @@ test("25. Ferry boat color self-heals once routes load after the boat is first s
   await expect(ferryMarkers(page)).toHaveCount(3);
   /* THE DRAWN FILL, NOT THE MARKUP, and MR4 is why. The boat used to be a <rect fill="...">
      and is now a hull <path style="fill: ...; stroke: var(--paper)">, so this reads the
-     COMPUTED fill: an inline style that the browser rejected (an SVG 1.1 presentation
-     attribute carrying a custom property is a silent no-op, which is the defect MR3 measured)
-     would still be there for a markup read to find and would draw nothing. Computed style
-     answers what the rider sees. The hexes are in the comments; getComputedStyle serves rgb. */
+     COMPUTED fill: a value the browser rejected is still in the markup for a markup read to
+     find, and this spec is about the colour the boat is DRAWN in healing itself once the routes
+     land. Computed style answers what the rider sees. The hexes are in the comments;
+     getComputedStyle serves rgb. */
   const fillOf = (id) =>
     page.evaluate(
       (bid) =>

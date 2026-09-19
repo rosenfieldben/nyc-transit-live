@@ -245,9 +245,10 @@ test("D5c. the divIcon marks follow the swap through the cascade, with no restyl
   /* THE OTHER POPULATION, AND IT IS OUT OF THE REGISTRY ON PURPOSE. Every MR2 to MR4 vehicle
      and station mark writes its theme-dependent paint as `var(--paper)` or `var(--ink)` inside
      an inline STYLE, so a swap moves it for free and nothing has to remember it exists. This
-     asserts that for real, off the COMPUTED style: the attribute form
-     (`stroke="var(--paper)"`) is not a paint value in SVG 1.1 and draws nothing, silently,
-     which is the defect MR3 measured and the one a markup read cannot see.
+     asserts that for real, off the COMPUTED style, which is the only form of the claim worth
+     making: what a rider sees is the resolved colour, and a token that failed to resolve (a
+     misspelled property, a stylesheet rule that beat the mark's own paint) is still in the
+     markup for a markup read to find.
 
      EACH FAMILY NAMES WHICH PAINT CARRIES WHICH TOKEN, because they are not all the same and a
      loop that assumed one shape would be asserting the wrong half. A PATH diamond, a ferry

@@ -1035,9 +1035,9 @@ Six families register a painter; the draw path and the repaint call the same fun
 
 Everything else on the map is a divIcon whose theme-dependent paint is `var(--paper)` or
 `var(--ink)` in an inline STYLE, so it follows a swap through the cascade at no cost and is
-deliberately NOT in the registry. `theme.spec.js` D5c asserts that population from the
-computed style at both ends, because the attribute form of the same thing
-(`stroke="var(--paper)"`) is not a paint value in SVG 1.1 and draws nothing, silently.
+deliberately NOT in the registry. `theme.spec.js` D5c asserts that population from the computed
+style at both ends and in both directions, because what a rider sees is the resolved colour and
+not the expression that produced it.
 
 ### The findings
 
@@ -1050,6 +1050,36 @@ computed style at both ends, because the attribute form of the same thing
 | **Q5** | **Section 3.3's "absent when withheld" cannot be built for PATH, the ferry or the buses**, which is worth naming in the stage that drew all three. Only `backend/feeds/railroad.py` implements the withholding ladder, so those three families have no withheld state to draw and their marks cannot say anything about one. | **Not in this stage and not attempted.** The marks this stage drew are complete against what their feeds serve. A backend that grows the ladder for those sources is the change that would make a withheld PATH train a thing this map could draw, and MR3's N3 is the precedent for how such a row gets drawn once it exists. |
 | **Q6** | **Scoping the subway's label band to its own class raised it above the Names toggle.** MR4 gave each family's label band its own rule, so `:root[data-label-band="all"] .stn-label.subway` became (0,4,0) while the Names-off rule was (0,3,0): Names off stopped hiding subway names at zoom 14, and the hub band at zoom 12 would have been unhideable too. `subway.spec.js` D2j caught it on the first run after the change. | **Repaired structurally rather than by another exclusion.** Every band rule now states its family inside `:where()`, which selects the family and adds nothing to specificity, so all of them are (0,3,0) and ONE Names-off rule at the end of the section reaches every family by source order. The three per-family off rules MR2 and MR3 accumulated are gone. A family added in a later stage is hideable by construction rather than by someone recomputing four numbers, and D2j, D3d and D4d each press the toggle and ask for nothing. |
 | **Q7** | **Two dead CSS selectors, found by measuring.** `.njt-marker` and `.njt-station-marker` have matched nothing since MR3 gave NJ Transit the rail tag and the commuter square; the dark-theme measurement selected zero elements through them. | **Deleted, for the reason the comment six lines above them already gives** about the railroad's and AirTrain's own dead selectors: a dead selector is a thing that looks live. The P4a census is the standing proof, since it lists every class that is actually drawn. |
+| **Q8** | **A claim this codebase repeats in four places is false, and its own ledger already said so.** Three source comments and two specs asserted that `fill="var(--paper)"` as an SVG presentation attribute "is not a paint value and does not resolve", and one of them used that as the reason a test exists. **Measured on this branch**: `stroke="var(--paper)"` on a presentation attribute computes to `rgb(243, 242, 242)`, byte for byte what the inline-style form computes to; a presentation attribute is mapped into the cascade as a declaration, so the token resolves. An UNKNOWN token (`var(--nope)`) is where black comes from, and it does that in EITHER form. MR2's finding **H2** measured this correctly and wrote "works in a Chromium presentation attribute"; the sentence got stronger every time it was copied, and MR3 and MR4 both copied the strong version. | **Every site corrected to the measured truth, and the house rule kept on its real grounds.** A presentation attribute is the lowest-priority author declaration there is, so any stylesheet rule beats the mark's own paint silently, and the style form also works where attributes are not mapped at all. That is a weaker reason and still decisive, so `families.test.js` keeps asserting the style form and now says what it is asserting. **It is also why mutation M30 is recorded as surviving every browser gate**: the two forms draw the same pixels in this browser, so a mutation that swaps them can only die at the node tier, and a reader who found the e2e green would otherwise have concluded the guard was asleep. |
+
+### The mutations
+
+Each one in a `git worktree` **detached at the commit under test** (`65193fd`), with the
+worktree's sha echoed before the run and compared against the commit's, so a run against the
+wrong tree is visible rather than silent. That is review-workflow RULE 0b applied to the
+mutation harness, which is where MR3 learned it: its M9 came back green twice because the
+mutated worktree was being served the main checkout's frontend. The driver kills the static
+server **by port** and sets `CI=1` so Playwright refuses to reuse one, and it refuses to run a
+browser gate at all while the port is still held.
+
+| # | Guard reverted | Result | Killed by |
+| --- | --- | --- | --- |
+| **M22** | the rail casings left out of the theme restyle | **killed**, node and e2e | `families.test.js`'s registry-against-the-source scrape and its casings-by-renderer test, and `theme.spec.js` D5b, which asserts the dark paper reached them |
+| **M23** | the toggle released with G7's name defect reintroduced (`aria-pressed` back on the button) | **killed**, 2 e2e | `theme.spec.js` D5a, which asks both halves at both states, and `chrome.spec.js` D1g |
+| **M24** | the ferry compound lost: the docked base dropped from the stale sweep, so the two rules assign instead of multiplying | **killed**, 3 e2e | P4b, P4b2 and P1m |
+| **M25** | a family's dimmed state drawn at full opacity (PATH's sweep stops asking the observation's age) | **killed**, node and e2e | `positions.test.js`'s every-sweep scrape, which reads the call sites out of `systems/`, and `families.spec.js` D4b |
+| **M26** | the bus arrow drawn when no heading is served | **killed**, node and 4 e2e | `families.test.js`'s predicate table (a served null, an absent field, a NaN, a string), D4f, D4g, P1g and P4c |
+| **M27** | a circle drawn for an AirTrain station | **killed**, 4 e2e | `rail.spec.js` D3c (the census, both ways), `families.spec.js` D4e, P1n and P4c |
+| **M28** | the muted hue replaced by the raw hashed hue | **killed**, node and 5 e2e | `families.test.js`, D4f, P1g, P4c, D5c and **D5d, which is the one that matters**: the raw hue reads 1.62 against the dark paper |
+| **M29** | one lightness for both themes: the token replaced by the README's literal 38% | **killed**, node and 4 e2e | the token assertion in `families.test.js`, P1g, P4c, D5c ("the two themes draw them at different lightnesses") and D5d |
+| **M30** | the PATH diamond's paper stroke as an SVG presentation attribute instead of an inline style | **killed at the NODE tier only. Every browser gate stayed GREEN, and that is finding Q8**: measured, a presentation attribute DOES resolve a custom property in Chromium and computes to the same rgb, so the two forms draw the same pixels and no page test can tell them apart. The comments that claimed otherwise are corrected; the node guard stays, on the cascade's grounds. |
+| **M31** | the label band's `:where()` removed, so the family scope out-specifies the Names toggle again | **killed** | `subway.spec.js` D2j, which is the spec that caught the defect when it was real |
+| **M32** | `paintZoomBand`'s sentinel counts the DOM again, in exactly the `:not(.rail)` shape MR3 left it | **killed** | `rail.spec.js` D3g. **Restated once**: the first draft also deleted the registry query the Names toggle's title is built from, so the page died on a ReferenceError and 24 specs went red, which proves nothing about this guard. A mutation reverts one decision. |
+| **M33** | the ferry dock's ring back to a literal white, which is a light halo on a dark map (G15 measured that mark at 2.63) | **killed**, node and 3 e2e | `families.test.js`'s the-ring-is-the-caller's test, `families.spec.js` D4c, `theme.spec.js` D5b and D5d, and P1m and P4c |
+
+**One flake, recorded rather than smoothed over.** In the three-file run of M33, P1k (the NJ
+Transit marks) also failed; on an isolated re-run of the same mutation against the same sha it
+passed, and the mutation reaches nothing NJ Transit draws. The kill above is the isolated run.
 
 ## Stage MR5: popups
 

@@ -19,10 +19,10 @@
    dock labels' own band, and the two counts this stage widened.
 
    HOW THESE READ A MARK, because the four defect shapes this phase keeps producing are all
-   about that choice. A vehicle is a divIcon, so its paint is read as COMPUTED STYLE: an
-   inline style the browser rejected is still in the markup for a markup read to find and
-   draws nothing (an SVG 1.1 presentation attribute carrying a custom property is exactly
-   that, and MR3 measured it). A station dot or a route line is a canvas layer with no element
+   about that choice. A vehicle is a divIcon, so its paint is read as COMPUTED STYLE: a value
+   the browser rejected is still in the markup for a markup read to find and draws nothing,
+   and an unresolvable token (`var(--nope)`, a misspelling) falls back to the property's
+   initial value, which is black for a fill. A station dot or a route line is a canvas layer with no element
    at all, so its options are read instead, and that is not the model standing in for the
    page: Leaflet hands those option values to the 2D context verbatim, so the option IS the
    paint. Opacity is always `el.style.opacity`, which is where setOpacity writes, and never
@@ -197,8 +197,9 @@ test("D4a. PATH draws the design's line, the subway's local dot and a lifted dia
 
   /* THE TRAINS. A 16x16 diamond in the route's colour with a paper stroke, lifted above the
      station point so the dot underneath keeps its own clicks. The stroke is the token, read
-     computed: this is the one paint on this mark a theme change has to move, and it moves
-     through the cascade because the mark is HTML. */
+     COMPUTED rather than off the markup: this is the one paint on this mark a theme change has
+     to move, it moves through the cascade because the mark is HTML, and what a rider sees is
+     the resolved colour rather than the expression that produced it. */
   const trains = await marks(page, "path");
   expect(trains).toHaveLength(2);
   for (const train of trains) {

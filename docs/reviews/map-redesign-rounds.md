@@ -925,6 +925,15 @@ the two runs differ only by the tree they ran in.
 casing, `#theme-toggle` loses its `hidden` attribute and the dark theme is offered.
 Everything else it needs already ships in MR1 and is tested there.
 
+**And it inherits a third population for the theme swap, from MR3.** The `setStyle` MR4
+does over the subway ribbons and the station circles has to reach the three commuter rail
+families' 5px paper casings as well: `railDrawRibbons` resolves `paperColor()` once per
+draw, exactly as `drawRibbons` does, so a casing drawn under the light theme keeps its
+light paper until something restyles it. They live on their own pane
+(`railroadCasingPane`) and in each family's own layer group, so they are reachable; what
+MR4 owes is to reach them. Named in `systems/shared.js` beside `rootToken` rather than
+left to be discovered.
+
 ## Stage MR5: popups
 
 *Not started.*

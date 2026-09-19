@@ -255,6 +255,13 @@ applyTheme(themeChoice(storedTheme(), document.documentElement.getAttribute("dat
    where the stylesheet has not applied yet (a test that renders the markers with no
    document styles, which frontend/boards.test.js does).
 
+   MR3 ADDED A THIRD POPULATION TO THAT SWAP: the three commuter rail families' 5px paper
+   casings, on railroadCasingPane. railDrawRibbons resolves paperColor() once per draw, the
+   same way drawRibbons does, so a casing drawn under the light theme keeps its light paper
+   until something restyles it. That is not a defect in this stage, because the theme toggle
+   is still `hidden` until MR4 unhides it (round 3's R2), and it IS one more layer group MR4's
+   swap has to reach. Named here rather than left for MR4 to discover.
+
    Read live rather than cached, because a cache would be a second copy of the theme and the
    whole point of a token is that there is one. */
 function rootToken(name, fallback) {

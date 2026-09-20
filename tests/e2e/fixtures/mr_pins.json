@@ -889,25 +889,29 @@
   "f01": {
    "aged": {
     "seen": "LIRR route 5 Train 514 live GPS, as of 5m ago",
-    "spoken": "LIRR route 5 Train 514 live GPS, as of 5m ago"
+    "spoken": "LIRR route 5 Train 514 live GPS, as of 5m ago Live · {n}s"
    },
    "estimated": {
     "seen": "LIRR route 9 Next stop: Port Washington Outbound estimated from a prediction",
-    "spoken": "LIRR route 9 Next stop: Port Washington Outbound estimated from a prediction"
+    "spoken": "LIRR route 9 Next stop: Port Washington Outbound estimated from a prediction Live · {n}s"
+   },
+   "mnr, stale feed": {
+    "seen": "MNR route 4 Train 1797 As of 6m ago",
+    "spoken": "MNR route 4 Train 1797 As of 6m ago"
    },
    "placed": {
     "seen": "LIRR · Babylon Branch Next stop: Grand Central Outbound scheduled position (no GPS), as of 29m ago",
-    "spoken": "LIRR · Babylon Branch Next stop: Grand Central Outbound scheduled position (no GPS), as of 29m ago"
+    "spoken": "LIRR · Babylon Branch Next stop: Grand Central Outbound scheduled position (no GPS), as of 29m ago Live · {n}s"
    },
    "unqualified": {
     "seen": "LIRR · Babylon Branch Train 7566",
-    "spoken": "LIRR · Babylon Branch Train 7566"
+    "spoken": "LIRR · Babylon Branch Train 7566 Live · {n}s"
    }
   },
   "stock": {
    "subway train": {
     "seen": "1 train Next stop: Times Sq-42 St Northbound scheduled position (no GPS) Trip sub-1",
-    "spoken": "1 train Next stop: Times Sq-42 St Northbound scheduled position (no GPS) Trip sub-1",
+    "spoken": "1 train Next stop: Times Sq-42 St Northbound scheduled position (no GPS) Trip sub-1 Live · {n}s",
     "labels": []
    },
    "subway station": {
@@ -917,12 +921,12 @@
    },
    "bus": {
     "seen": "M15 Bus MTA NYCT_101 Heading: 90°",
-    "spoken": "M15 Bus MTA NYCT_101 Heading: 90°",
+    "spoken": "M15 Bus MTA NYCT_101 Heading: 90° Live · {n}s",
     "labels": []
    },
    "lirr train": {
     "seen": "LIRR · Babylon Branch Train 521 Next stop: Jamaica Outbound scheduled position (no GPS) Also here: Jamaica",
-    "spoken": "LIRR · Babylon Branch Train 521 Next stop: Jamaica Outbound scheduled position (no GPS) Also here: Jamaica",
+    "spoken": "LIRR · Babylon Branch Train 521 Next stop: Jamaica Outbound scheduled position (no GPS) Also here: Jamaica Live · {n}s",
     "labels": []
    },
    "lirr station": {
@@ -932,7 +936,7 @@
    },
    "mnr train": {
     "seen": "MNR · Hudson Train 1797",
-    "spoken": "MNR · Hudson Train 1797",
+    "spoken": "MNR · Hudson Train 1797 Live · {n}s",
     "labels": []
    },
    "mnr station": {
@@ -942,7 +946,7 @@
    },
    "njt train": {
     "seen": "Northeast Corridor NJ Transit Train 3800 To New York Next stop: New York Penn Station 4 min late estimated from a prediction",
-    "spoken": "Northeast Corridor NJ Transit Train 3800 To New York Next stop: New York Penn Station 4 min late estimated from a prediction",
+    "spoken": "Northeast Corridor NJ Transit Train 3800 To New York Next stop: New York Penn Station 4 min late estimated from a prediction Live · {n}s",
     "labels": []
    },
    "njt station": {
@@ -952,7 +956,7 @@
    },
    "path train": {
     "seen": "Newark - World Trade Center PATH Next stop: World Trade Center To New York scheduled position (no GPS)",
-    "spoken": "Newark - World Trade Center PATH Next stop: World Trade Center To New York scheduled position (no GPS)",
+    "spoken": "Newark - World Trade Center PATH Next stop: World Trade Center To New York scheduled position (no GPS) Live · {n}s",
     "labels": []
    },
    "path station": {
@@ -962,7 +966,7 @@
    },
    "ferry boat": {
     "seen": "East River NYC Ferry Boat H201 Under way 12.6 kn",
-    "spoken": "East River NYC Ferry Boat H201 Under way 12.6 kn",
+    "spoken": "East River NYC Ferry Boat H201 Under way 12.6 kn Live · {n}s",
     "labels": []
    },
    "ferry dock": {

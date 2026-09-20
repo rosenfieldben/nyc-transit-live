@@ -56,10 +56,10 @@ function busPopup(record) {
     // OBS_FRESH_S says "live GPS, as of 2m ago" (positionLineHtml).
     positionLineHtml(position) +
     (showNote ? `<br><span class="popup-sub">${esc(note.message)}</span>` : "") +
-    // C2: buses are a single feed, so their system is the synthesized one named
-    // after the source. Same age line as every other vehicle popup, so the
-    // single-feed sources are not quietly exempt from the freshness rules.
-    vehicleStaleLine(systemAgeOf("buses", "buses"), position)
+    // C2 restyled as MR5's footer (ruling Q2): buses are a single feed, so their system is the
+    // synthesized one named after the source. Same freshness footer as every other vehicle popup,
+    // so the single-feed sources are not quietly exempt from the freshness rules.
+    popupFreshLine(systemAgeOf("buses", "buses"), position)
   );
 }
 

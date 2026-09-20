@@ -812,9 +812,10 @@ test("P3d. the F01 world's ladder: how many trains are in each state, and what e
    order gives an identical string; a lost, added or altered WORD does not.
 
    THREE VIEWS, because a popup says things in three ways:
-     seen    every text node, including a mark's decorative letter.
-     spoken  the same walk with aria-hidden subtrees removed, which is what a screen reader
-             gets. MR5 puts the map's own marks inside `.pt`, and railTagSvg carries
+     seen    every text node an EYE reads: the walk with `.visually-hidden` subtrees removed,
+             including a mark's decorative letter, which an eye does read.
+     spoken  every text node a SCREEN READER reads: the walk with aria-hidden subtrees removed
+             instead. MR5 puts the map's own marks inside `.pt`, and railTagSvg carries
              aria-hidden, so the two diverge in this stage and the divergence is the content.
      labels  text that exists ONLY in an attribute. Today that is exactly one string, the
              dock's title="Wheelchair accessible": the glyph is in `seen`, the WORDS are in
@@ -827,33 +828,69 @@ test("P3d. the F01 world's ladder: how many trains are in each state, and what e
    escape for the same reason (a regex on ", as of \d+s ago" rather than a literal), so the
    digits become {n} here and the SHAPE is asserted separately below. Minutes are left alone:
    they are stable under the frozen clock and they are most of the vocabulary. */
-const popupStrings = (page, name) =>
-  page.evaluate(
-    inPage(`
-      const popup = MARKERS[which]().getPopup(), el = popup && popup.getElement();
-      const content = el && el.querySelector(".leaflet-popup-content");
-      if (!content) return null;
-      const norm = (s) =>
-        String(s).replace(/[\\u00a0\\u202f]/g, " ").replace(/\\s+/g, " ").trim()
-          .replace(/\\b\\d+s\\b/g, "{n}s");
-      const walk = (root) => {
-        const out = [];
-        const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-        for (let n = w.nextNode(); n; n = w.nextNode()) {
-          const t = norm(n.nodeValue);
-          if (t) out.push(t);
-        }
-        return out.join(" ");
-      };
-      const quiet = content.cloneNode(true);
-      for (const h of quiet.querySelectorAll('[aria-hidden="true"]')) h.remove();
-      const labels = [...content.querySelectorAll("[title],[aria-label]")]
-        .map((e) => norm(e.getAttribute("title") ?? e.getAttribute("aria-label")))
-        .filter(Boolean);
-      return { seen: walk(content), spoken: walk(quiet), labels };
-    `),
-    name,
-  );
+/* THE READER ITSELF, AS ONE STRING WITH TWO LOCATORS IN FRONT OF IT.
+
+   IT WAS TWO IMPLEMENTATIONS AND THAT COST A WRONG GOLDEN. P5a reads a surface by its MARKERS name
+   and P5c reads a railroad by its registry key, so P5c had its own inlined copy of the walk, the
+   normaliser and the clones. When MR5 taught the reader to tell an eye's view from a screen reader's,
+   only one copy learned: P5c regenerated four goldens whose `seen` contained "Live · {n}s", a string
+   no rider sees, and it looked exactly like a real capture. One reader, two ways of finding its
+   `content`, and neither can drift from the other now.
+
+   `content` IS THE CONTRACT between the locator and the body: the locator declares it and returns
+   null if there is no popup, the body below reads it. */
+const POPUP_READER = `
+  const norm = (s) =>
+    String(s).replace(/[\\u00a0\\u202f]/g, " ").replace(/\\s+/g, " ").trim()
+      .replace(/\\b\\d+s\\b/g, "{n}s");
+  const walk = (root) => {
+    const out = [];
+    const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let n = w.nextNode(); n; n = w.nextNode()) {
+      const t = norm(n.nodeValue);
+      if (t) out.push(t);
+    }
+    return out.join(" ");
+  };
+  /* TWO CLONES, ONE PER READER, and MR5 is the stage that made the difference real. The seen view
+     used to be the raw walk, which was harmless while nothing in a popup was visually hidden. Ruling
+     Q2's freshness footer changes that on purpose: in the LIVE state it has no visible words and says
+     "Live, 12s" through A1's visually-hidden class, because this app has no word for live on any
+     surface (memo D9) and a screen reader still needs the state. A raw walk put that string in the
+     seen view, and the golden read as though a rider saw it, which is the one sentence memo D9
+     forbids recorded as though it shipped.
+     So each view removes what ITS reader cannot get: seen drops visually-hidden, spoken drops
+     aria-hidden, and the footer is the first thing in this app that lands in exactly one of them.
+     NO BACKTICKS IN HERE: this block is inside one, and a pair of them closed it early and broke the
+     file's parse while this very comment was being written. */
+  const visible = content.cloneNode(true);
+  for (const h of visible.querySelectorAll(".visually-hidden")) h.remove();
+  const quiet = content.cloneNode(true);
+  for (const h of quiet.querySelectorAll('[aria-hidden="true"]')) h.remove();
+  const labels = [...content.querySelectorAll("[title],[aria-label]")]
+    .map((e) => norm(e.getAttribute("title") ?? e.getAttribute("aria-label")))
+    .filter(Boolean);
+  return { seen: walk(visible), spoken: walk(quiet), labels };
+`;
+
+const CONTENT_OF_MARKER = `
+  const popup = MARKERS[which]().getPopup(), el = popup && popup.getElement();
+  const content = el && el.querySelector(".leaflet-popup-content");
+  if (!content) return null;
+`;
+
+const CONTENT_OF_RAILROAD = `
+  const popup = railroads.get(which).marker.getPopup(), el = popup && popup.getElement();
+  const content = el && el.querySelector(".leaflet-popup-content");
+  if (!content) return null;
+`;
+
+const popupStrings = (page, name) => page.evaluate(inPage(CONTENT_OF_MARKER + POPUP_READER), name);
+
+// The same reader, for a railroad read by its registry key: P5c's ladder world names its surfaces
+// by position KIND and looks each one up in `railroads`, because the F01 capture's ids are not
+// stable across states and MARKERS cannot hold them.
+const railroadStrings = (page, key) => page.evaluate(new Function("which", CONTENT_OF_RAILROAD + POPUP_READER), key);
 
 /* THE ROOTS OF THE POPUP CALL GRAPH, READ OFF LIVE OBJECTS rather than off a list.
 
@@ -964,6 +1001,22 @@ const f01Surfaces = (page) =>
       const kind = railroadPosition(record.latest, now).kind || "unqualified";
       if (!first[kind]) first[kind] = key;
     }
+    /* AND ONE MORE SURFACE, BY SYSTEM RATHER THAN BY KIND, which MR5 needed and P5b found. This
+       world already backdates Metro-North's fetched_at by six minutes, so MNR's FEED is stale in it
+       while LIRR's is live, and the roster above is LIRR-only by accident of iteration order: it
+       takes the first train of each position kind and LIRR's come first. Ruling Q2's footer prints
+       the feed's state, so without an MNR surface here no pinned world rendered a STALE footer at
+       all, and P5b reported "As of" as a rider-visible literal that no pin covered. Pinning a world
+       that renders it is the option that map's own instructions prefer over a waiver.
+       KEYED SEPARATELY, not folded into `first`, because it is a different axis: the four above
+       vary the POSITION's provenance on one live feed, and this one varies the FEED under an
+       otherwise ordinary train. Naming it for the axis keeps the golden readable. */
+    for (const [key, record] of railroads) {
+      if (record.latest.system === "MNR") {
+        first["mnr, stale feed"] = key;
+        break;
+      }
+    }
     return Object.fromEntries(Object.keys(first).sort().map((k) => [k, first[k]]));
   });
 
@@ -978,7 +1031,10 @@ test("P5c. the F01 ladder's popups, one per position state", async ({ page }) =>
 
   const roster = await f01Surfaces(page);
   expect(Object.keys(roster).length, "the ladder world must show more than one position state")
-    .toBeGreaterThanOrEqual(4);
+    .toBeGreaterThanOrEqual(5);
+  // AND THE SECOND AXIS IS REALLY IN IT, because a roster that silently lost the stale-feed surface
+  // would take "As of" out of the golden and P5b would report it uncovered again, one stage later.
+  expect(Object.keys(roster), "the stale-feed surface is what pins a stale footer").toContain("mnr, stale feed");
 
   const out = {};
   const roots = new Set();
@@ -988,22 +1044,10 @@ test("P5c. the F01 ladder's popups, one per position state", async ({ page }) =>
     let previous = null;
     let settled = null;
     for (let i = 0; i < 40; i++) {
-      const now = await page.evaluate((k) => {
-        const el = railroads.get(k).marker.getPopup()?.getElement();
-        const content = el && el.querySelector(".leaflet-popup-content");
-        if (!content) return null;
-        const norm = (t) => String(t).replace(/[\u00a0\u202f]/g, " ").replace(/\s+/g, " ").trim()
-          .replace(/\b\d+s\b/g, "{n}s");
-        const walk = (root) => {
-          const acc = [];
-          const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-          for (let n = w.nextNode(); n; n = w.nextNode()) { const t = norm(n.nodeValue); if (t) acc.push(t); }
-          return acc.join(" ");
-        };
-        const quiet = content.cloneNode(true);
-        for (const h of quiet.querySelectorAll('[aria-hidden="true"]')) h.remove();
-        return { seen: walk(content), spoken: walk(quiet) };
-      }, key);
+      // THE SHARED READER, not a second copy of it. This loop used to inline its own walk and its
+      // own normaliser, and when the reader learned to tell an eye's view from a screen reader's,
+      // only the other copy learned: four goldens here regenerated with a string no rider sees.
+      const now = await railroadStrings(page, key);
       const stamp = now && JSON.stringify(now);
       if (stamp && stamp === previous) { settled = now; break; }
       previous = stamp;
@@ -1081,6 +1125,17 @@ const UNREACHED_STATES = {
   "showing last known, as of": "a retained row, which the F01 ladder world does not currently draw",
   "alerts may be out of date": "the stale-alerts hedge; P3c pins the alerts join, not this hedge",
   "prediction age unavailable": "boardSystemLine's second clause, on an undated contributor",
+  /* MR5 (ruling Q2): the two footer states no pinned world reaches, and each for its own reason.
+     The other two ARE pinned: "Live" by every stock surface, and "As of {age} ago" by the ladder
+     world's "mnr, stale feed" surface, which exists because P5b reported that string uncovered. */
+  "Not reporting":
+    "the footer's state for a feed with no age at all, which is a feed that has never decoded. " +
+    "Every fixture feed decodes on its first poll, so no world here reaches it",
+  Scheduled:
+    "the footer's schedule-only state. The footer is a VEHICLE popup's line (it is " +
+    "vehicleStaleLine restyled) and the only schedule-only feed is AirTrain, which has no " +
+    "vehicles. A rider reads this word on the feed strip's tooltip, where chrome.spec.js D1a " +
+    "holds it; no popup can render it",
 };
 
 test("P5b. every rider-visible literal in the popup call graph is pinned, or has a reason", async ({ page }) => {

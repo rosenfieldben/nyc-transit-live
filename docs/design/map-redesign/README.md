@@ -110,9 +110,12 @@ Leaflet popup restyle (`.leaflet-popup-content-wrapper`, `.leaflet-popup-tip`): 
 > theme's real `color-contrast` violation on the popup head's ink and `.popup-sub` was reported
 > ONLY as undecidable, so the translucency hid a serious failure.** Opaque, axe names that
 > violation, which is how MR5 came to fix it. The undecidable inventory does not grow.
-> `backdrop-filter: blur(14px)` is kept by ruling and paints nothing at full opacity, which the
-> rule in `style.css` says in as many words. The ink edge, the radius, the shadow and the content
-> metrics are as drawn. Full measurements in `docs/reviews/map-redesign-rounds.md` under Stage MR5.
+> **`backdrop-filter: blur(14px)` goes with the alpha**, for the same reason and by the same
+> precedent: a backdrop filter filters what is behind the element and the element's own background
+> then paints over it, so at full opacity none of the filtered backdrop is ever visible. MR1 took
+> the filter off the header along with the header's 90%; this is that pair one surface out. The ink
+> edge, the radius, the shadow and the content metrics are as drawn. Full measurements in
+> `docs/reviews/map-redesign-rounds.md` under Stage MR5.
 
 Auto-pan must clear the page chrome: on `popupopen`, measure the rendered header + alert strip bottom edge and set `autoPanPaddingTopLeft = [24, bottom + 12]`, `autoPanPaddingBottomRight = [110, 40]`, then call `_adjustPan()`.
 

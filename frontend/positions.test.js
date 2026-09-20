@@ -36,7 +36,6 @@ const {
   servedAge,
   ingestSystems,
   staleness,
-  stalePopupLine,
   markerOpacity,
   glideClock,
   trainLatLng,
@@ -56,7 +55,9 @@ const {
   vanishingFocusPlan,
   positionLineHtml,
   positionClause,
-  vehicleStaleLine,
+  popupFreshHtml,
+  feedStateWords,
+  feedDotState,
   composeAnnouncements,
   railroadTrainName,
   subwayTrainName,
@@ -472,19 +473,47 @@ test("6.3 a popup's position line and a name's clause are one answer, and silent
   assert.equal(positionClause(null), null);
 });
 
-test("6.3 a vehicle popup's system line speaks only for what its position's words did not say", () => {
+/* MR5 (ruling Q2): THE SAME SEVEN CASES, ASKED OF THE FOOTER, because the footer took the line's
+   job. vehicleStaleLine is deleted; popupFreshHtml keeps its rule exactly and adds the two states it
+   never had. The cases below are 6.3's own, unchanged in what they assert and re-pointed at the
+   function that answers now, so the coverage this rule has always had survives the move rather than
+   being rewritten into something easier.
+
+   WHAT "SAID ONCE" LOOKS LIKE NOW is the one difference, and it is the ruling's: the line returned
+   the empty string, the footer returns its SQUARE with the words in a visually-hidden span. A rider
+   cannot tell "this feed is live" from "this popup forgot to say" unless the mark is always there.
+   So `spoken` below is the footer's form of "said once", and `shown` is its form of "says its own",
+   and both are asserted against the words the state actually has rather than against a literal. */
+test("6.3 / MR5 Q2: a vehicle's footer speaks only for what its position's words did not say", () => {
+  const footer = (age, position) => popupFreshHtml({ state: feedDotState({ age }), age, position });
+  const words = (age) => feedStateWords({ state: feedDotState({ age }), age });
+  const shown = (age) => footer(age, null).endsWith(`${words(age)}</div>`);
+  const spoken = (out, age) => out.includes(`<span class="visually-hidden">${words(age)}</span>`);
+  const square = (age) => `data-state="${feedDotState({ age })}"`;
+
   const undated = q(row(null, "reported"), mnr);
-  // Metro-North's undated fix states no age, so a stale MNR's line is the only age there is.
-  assert.equal(vehicleStaleLine(400, undated), stalePopupLine(400));
-  // A fix whose words state an age at least as old as its system's: said once.
-  assert.equal(vehicleStaleLine(400, q(row(NOW - 420, "reported"))), "");
-  assert.equal(vehicleStaleLine(30, q(row(NOW - 300, "reported"))), "");
-  assert.equal(vehicleStaleLine(null, q(row(NOW - 300, "reported"))), "");
-  // Words younger than the system's age leave the system's line to say its own.
-  assert.equal(vehicleStaleLine(400, q(row(NOW - 100, "reported"))), stalePopupLine(400));
-  // A fresh fix in a stale system, and nothing stale at all, exactly as C2 drew them.
-  assert.equal(vehicleStaleLine(400, q(row(NOW - 5, "reported"))), stalePopupLine(400));
-  assert.equal(vehicleStaleLine(30, q(row(NOW - 5, "reported"))), "");
+  // Metro-North's undated fix states no age, so a stale MNR's footer is the only age there is.
+  assert.ok(footer(400, undated).endsWith(`${words(400)}</div>`), "an undated fix leaves the footer to speak");
+  // A fix whose words state an age at least as old as the feed's: said once, and still marked.
+  for (const [age, pos] of [[400, q(row(NOW - 420, "reported"))], [30, q(row(NOW - 300, "reported"))], [null, q(row(NOW - 300, "reported"))]]) {
+    const out = footer(age, pos);
+    assert.ok(spoken(out, age), `age ${age}: the words are said once, not shown twice`);
+    assert.ok(out.includes(square(age)), `age ${age}: the square is never withheld`);
+  }
+  // Words younger than the feed's age leave the footer to say its own.
+  assert.ok(footer(400, q(row(NOW - 100, "reported"))).endsWith(`${words(400)}</div>`));
+  // A fresh fix in a stale feed, and nothing stale at all, exactly as C2 drew them.
+  assert.ok(footer(400, q(row(NOW - 5, "reported"))).endsWith(`${words(400)}</div>`));
+  assert.ok(shown(400), "a stale feed with no position shows its age");
+  /* AND THE LAST OF C2's CASES IS THE ONE THE FOOTER CHANGES ON PURPOSE. vehicleStaleLine rendered
+     NOTHING for a fresh system; the footer renders its square with "Live · 5s" in the tree, because
+     this app has no word for live on any surface (memo D9) and a rider still needs to see that the
+     feed is current. feedDotState is what decides that, and it is the strip's own judgment. */
+  const fresh = footer(30, q(row(NOW - 5, "reported")));
+  assert.equal(feedDotState({ age: 30 }), "live");
+  assert.ok(fresh.includes('data-state="live"'), "a fresh feed still draws its square");
+  assert.ok(spoken(fresh, 30), "and says Live in the tree, where an eye sees only the square");
+  assert.ok(!/>Live/.test(fresh.replace(/<span class="visually-hidden">[^<]*<\/span>/, "")), "and nowhere else");
 });
 
 test("6.3 one write per render: a poll's announcements compose into one sentence, in order", () => {

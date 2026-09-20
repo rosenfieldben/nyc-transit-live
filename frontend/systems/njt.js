@@ -340,9 +340,9 @@ function njtTrainPopup(record) {
     // station the vehicle is not at. "At" is still read from the payload rather
     // than from distance.
     (njtAtItsStation(t) ? crossLinkHtml(`NJT|${t.stop_id}`) : "") +
-    // C2: how old this train's data is when NJ Transit has gone dark, unless the
-    // position's own words already stated an age that old (vehicleStaleLine).
-    vehicleStaleLine(njtSystemAge(), position)
+    // C2 restyled as MR5's footer (ruling Q2): how old this train's data is when NJ Transit has
+    // gone dark, with the words withheld where the position's own already stated an age that old.
+    popupFreshLine(njtSystemAge(), position)
   );
 }
 

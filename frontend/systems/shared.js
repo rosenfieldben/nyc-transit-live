@@ -1600,6 +1600,34 @@ function feedAge(feed) {
   return feed.system ? systemAgeOf(feed.source, feed.system) : worstSystemFreshness(feed.source).age;
 }
 
+/* MR5 (ruling Q2): A VEHICLE POPUP'S FRESHNESS FOOTER, which is vehicleStaleLine restyled.
+
+   IT TAKES THE AGE THE POPUP ALREADY HAS rather than looking one up, and that is the whole design
+   of this function. The first draft resolved the feed out of FEEDS and used feedAge, which is what
+   the strip's dot does; measured against the call sites, that would have LOST precision on the
+   subway. A subway train's stale line is its own FEED GROUP's age (subwaySystemAge reads the groups
+   whose coverage lists its route), while the feed's age is the worst group in the whole source, so a
+   train on a healthy group would have reported a different group's outage. Every other caller has
+   the same shape: it already computes the age it means, and passing it keeps this a restyle rather
+   than a re-derivation.
+
+   THE STATE COMES FROM THAT AGE, through the same feedDotState the strip uses, so the two surfaces
+   cannot disagree about what an age means. A NULL age is "stale" and says "Not reporting", which is
+   feedDotState's own judgment and its comment's own reasoning: a feed that has never decoded has no
+   freshness to report and "live" would be the one answer that is a lie. That is a change from
+   vehicleStaleLine, which rendered nothing for a null age; the strip has always said it, and saying
+   it here is the ruling's "said one way on both surfaces".
+
+   NOT ON STATION POPUPS, and that is scope rather than oversight. A station board already carries
+   its own freshness line, boardLineHtml over boardSystemLine, which answers a different question
+   that building 6.2 owns: how old the ARRIVALS are, per board and per row. The ruling is that this
+   footer is vehicleStaleLine restyled, and vehicleStaleLine is a vehicle popup's line, so this goes
+   exactly where that went. Putting one on a station popup as well would be the third voice this
+   ruling exists to prevent. */
+function popupFreshLine(age, position = null) {
+  return popupFreshHtml({ state: feedDotState({ age }), age, position });
+}
+
 // The eight buttons live in their own wrapper, because the wrapper is what folds below
 // 700px and the note beside it does not (round 3, by ruling: index.html says why).
 const feedButtonsEl = document.getElementById("feed-buttons");

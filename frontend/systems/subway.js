@@ -64,10 +64,11 @@ function trainPopup(record) {
     // clock that dates it (the group header, or the joined vehicle's) is past OBS_FRESH_S.
     positionLineHtml(position) +
     `<br><span class="popup-sub">Trip ${esc(t.trip_id ?? "?")}</span>` +
-    // C2: how old this train's own feed group is, when that group has gone stale and
-    // the line above has not already said so. A dimmed marker says "not current"; this
-    // says how far from current.
-    vehicleStaleLine(subwaySystemAge(t), position)
+    // C2 restyled as MR5's footer (ruling Q2): how old this train's own FEED GROUP is, when that
+    // group has gone stale and the line above has not already said so. A dimmed marker says "not
+    // current"; this says how far from current. The group's age and not the source's, which is the
+    // measured reason popupFreshLine takes an age rather than resolving one.
+    popupFreshLine(subwaySystemAge(t), position)
   );
 }
 

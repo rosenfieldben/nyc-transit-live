@@ -1779,21 +1779,19 @@ body,
    so the translucency hid a serious failure rather than obscuring a safe one. Opaque, axe names
    that violation, which is how this stage came to fix it. Full numbers in the ledger.
 
-   THE BLUR IS KEPT BY RULING AND IT PAINTS NOTHING, which is worth saying in the rule rather than
-   leaving for a reader to discover. backdrop-filter filters what is BEHIND the element and the
-   element's own background then paints over it; at alpha 1 with no radius, none of the filtered
-   backdrop is ever visible. It is not quite without effect, because it still makes this a stacking
-   context and a containing block, and neither changes anything for a popup whose descendants are
-   all in normal flow. MR1 dropped the filter along with the translucency for this reason. It stays
-   here because the operator asked for it to, and because the day a decider spec makes a translucent
-   popup measurable again, the rule is already the design's.
+   AND THE BLUR GOES WITH THE TRANSLUCENCY, exactly as MR1's F1 took it off the header. A backdrop
+   filter filters what is BEHIND the element and the element's own background then paints over it,
+   so at alpha 1 with no radius none of the filtered backdrop is ever visible: the declaration
+   draws nothing. Keeping it and explaining that in a comment was the first draft of this rule, and
+   a rule measured to paint nothing is not kept with a test saying so. The day a decider spec makes
+   a translucent popup measurable again, the blur comes back with the alpha it belongs to; until
+   then the stylesheet says what the popup is rather than what it once was going to be.
 
    THE TWO PAINTS THAT PRINT ON IT, measured against this token: --ink reads 13.70 in the light
    theme and 12.60 in the dark, --muted 5.38 and 7.01. */
 .leaflet-popup-content-wrapper,
 .leaflet-popup-tip {
   background: var(--surface);
-  backdrop-filter: blur(14px);
   color: var(--ink);
   border-radius: 0;
   box-shadow: var(--shadow);
@@ -1831,6 +1829,60 @@ body,
 .leaflet-container a.leaflet-popup-close-button:hover,
 .leaflet-container a.leaflet-popup-close-button:focus {
   color: var(--ink);
+}
+
+/* MR5 (ruling Q2): the popup's freshness footer, section 5's `.fresh`.
+
+   A RULE ABOVE IT AND NOTHING ELSE, which is what makes it a footer rather than another row: the
+   --rule hairline separates it from the content the way .arr-dir's separates one board bucket from
+   the next, and both are the same token for the same reason (a fixed near-white line is invisible on
+   one of the two surfaces; see .arr-dir).
+
+   THE SQUARE IS 6x6 AND HAS NO SHAPE OF ITS OWN, because it is the feed strip's dot at the popup and
+   the strip's is a square too. Its colour comes from the state through a data attribute rather than
+   from a class per state, so the three rules below sit next to each other and a fourth state would
+   have to be added here rather than defaulting to whichever rule came last.
+
+   THE THREE PAINTS ARE THE STRIP'S OWN TOKENS, measured on the popup's surface: --live reads 3.31 in
+   the light theme and 3.51 in the dark, --scheduled 4.21 and 5.00, and the stale state takes
+   --accent at 3.47 and 4.46. Each is a GRAPHIC and owes 3:1 rather than 4.5, which all three clear.
+   The WORDS beside them take --muted (5.38 and 7.01) and not the state's colour, which is the one
+   decision here worth stating: --accent as TEXT reads 3.47 in the light theme, below the 4.5 a
+   string owes, and --accent-ink exists for exactly that case. But a stale footer that printed its
+   words in the accent would also be the only place in this app where an honesty line shouts, and
+   --muted is what every other one uses (.popup-stale, .arr-qualifier, .arr-none). So the square
+   carries the state's colour and the words carry the muted ink, and helpers.test.js's A3 sweep
+   measures both. */
+.fresh {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 6px;
+  border-top: 1px solid var(--rule);
+  font: 600 10px/1.3 var(--chrome-font);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.fresh-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  background: var(--scheduled);
+}
+
+.fresh-dot[data-state="live"] {
+  background: var(--live);
+}
+
+.fresh-dot[data-state="stale"] {
+  background: var(--accent);
+}
+
+.fresh-dot[data-state="scheduled"] {
+  background: var(--scheduled);
 }
 
 /* ==================================================================

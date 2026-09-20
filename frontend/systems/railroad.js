@@ -403,9 +403,11 @@ function railroadPopup(record) {
     (railroadAtItsStation(t, railroadGlideAt(t, now), record.drawnFrom)
       ? crossLinkHtml(`${t.system}|${t.stop_id}`)
       : "") +
-    // C2: how old this train's own SYSTEM is when LIRR or MNR has gone stale, unless the
-    // line above already said an age at least that old (vehicleStaleLine).
-    vehicleStaleLine(systemAgeOf("railroads", t.system), position)
+    // C2 restyled as MR5's footer (ruling Q2): how old this train's own SYSTEM is when LIRR or
+    // MNR has gone stale, with the words withheld where the line above already said an age at
+    // least that old. Scoped to the train's own system, which is why the age is passed rather
+    // than looked up: the two railroads are two feeds.
+    popupFreshLine(systemAgeOf("railroads", t.system), position)
   );
 }
 

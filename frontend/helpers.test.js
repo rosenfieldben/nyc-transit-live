@@ -111,7 +111,6 @@ const {
   staleAge,
   markerOpacity,
   glideClock,
-  stalePopupLine,
   STALE_MARKER_OPACITY,
   FERRY_DOCKED_OPACITY,
 } = require("./helpers.js");
@@ -2232,14 +2231,25 @@ test("C2 a lag-stale source freezes too: the regression the age-based freeze had
   assert.equal(glideClock(now + 300, at), now);
 });
 
-test("C2 stalePopupLine renders the shared age line only once stale", () => {
-  assert.equal(stalePopupLine(null), "");
-  assert.equal(stalePopupLine(10), "");
-  assert.equal(stalePopupLine(240), '<div class="popup-stale">as of 4m ago</div>');
-  // The same markup a stale board's system line renders into (6.2), so a stale board
-  // and a stale train cannot be worded or styled apart.
-  assert.equal(stalePopupLine(240), boardLineHtml("as of 4m ago"));
+test("C2 / MR5 Q2: a board's age line and a vehicle's footer are two surfaces, and the difference is pinned", () => {
+  /* THIS TEST CHANGED SHAPE BECAUSE THE APP DID. It used to assert that stalePopupLine and
+     boardLineHtml produced IDENTICAL markup, "so a stale board and a stale train cannot be worded or
+     styled apart". stalePopupLine is gone: vehicleStaleLine was its only caller and ruling Q2's
+     footer took that job. So the claim it made is no longer true, and pretending otherwise by
+     deleting the test would hide a rider-visible divergence rather than record it.
+
+     WHAT A RIDER SEES NOW. A station board's system line is 6.2's and is untouched: lowercase "as of
+     4m ago" in a .popup-stale div. A vehicle popup's footer says the FEED STRIP's words for the same
+     age, "As of 4m ago", because the ruling is that the footer says it the strip's way so that the
+     state is said one way on BOTH of those surfaces. The two are different facts from different
+     sources (a board's arrivals against a feed's poll), which is the argument for letting them read
+     differently; that they differ only in a capital letter is the argument against. Both forms are
+     pinned here so whichever way a later stage resolves it, it does so deliberately. */
+  assert.equal(boardLineHtml("as of 4m ago"), '<div class="popup-stale">as of 4m ago</div>');
   assert.equal(boardLineHtml(null), "");
+  assert.equal(feedStateWords({ state: "stale", age: 240 }), "As of 4m ago");
+  // The divergence, stated as an assertion so it cannot close silently either:
+  assert.notEqual(feedStateWords({ state: "stale", age: 240 }), "as of 4m ago");
 });
 
 test("C2 alertsFreshnessBasis is the WORST system's fetched_at (the F1 partial case)", () => {
@@ -3127,6 +3137,11 @@ test("A3: every muted ink in style.css clears AA on the surface it prints on", (
       [declared(".alert-block"), t.surface, "the popup's service alert text"],
       [declared(".popup-crosslink"), t.surface, "the cross-link button's label"],
       [declared(".leaflet-popup-content .alert-stale"), t.surface, "the popup's alerts-stale hedge"],
+      // MR5 (Q2): the footer's WORDS take --muted, not the state's colour. --accent as text reads
+      // 3.47 in the light theme, below the 4.5 a string owes, and every other honesty line in this
+      // app uses --muted; the state's colour goes on the square, which is measured below as a
+      // graphic. Read by selector so a later edit that "matches the words to the dot" fails here.
+      [declared(".fresh"), t.surface, "the popup freshness footer's words"],
     ]) {
       const paint = resolved(ink, t, `${theme}: ${what}`);
       const ratio = contrastRatio(paint, resolved(surface, t, `${theme}: ${what} surface`));
@@ -3140,9 +3155,15 @@ test("A3: every muted ink in style.css clears AA on the surface it prints on", (
     // none of them is text.
     for (const [mark, surface, what] of [
       [t.accent, t.surface, "the stale freshness dot"],
-      // MR5: the popup's alert rule and its accessibility glyph are graphics, not prose.
+      // MR5: the popup's alert rule, its accessibility glyph and the freshness footer's square are
+      // graphics, not prose, so each owes 3 rather than 4.5. The square is the feed strip's dot at
+      // the popup and carries the same three tokens, measured here on the POPUP's surface rather
+      // than the header's: a rider reads them in both places and only one was ever measured.
       [t.accent, t.surface, "the popup alert block's 3px accent rule"],
       [declared(".popup-access"), t.surface, "the dock popup's wheelchair glyph"],
+      [t.live, t.surface, "the popup footer's live square"],
+      [t.scheduled, t.surface, "the popup footer's schedule-only square"],
+      [t.accent, t.surface, "the popup footer's stale square"],
       [t.live, t.surface, "the live freshness dot"],
       [t.scheduled, t.surface, "the scheduled-only freshness dot"],
       [t.focus, t.surface, "the focus ring on the header surface"],
@@ -3173,11 +3194,12 @@ test("A3: every muted ink in style.css clears AA on the surface it prints on", (
      undecidable: the dark theme's REAL violation on the head's ink and .popup-sub was reported
      ONLY as incomplete, so it hid the failure this test now catches. frontend/tokens.test.js
      holds the rule itself; this holds the pairing, and the two together are why the entry above
-     stayed at one. The blur is kept there by ruling and paints nothing at full opacity, so unlike
-     the header this asserts the surface and not the filter. */
+     stayed at one. The blur went with the alpha, as it did on the header, so the two surfaces are
+     now asserted in exactly the same three ways. */
   const popupRule = css.match(/\.leaflet-popup-content-wrapper,\s*\.leaflet-popup-tip \{([\s\S]*?)\n\}/);
   assert.ok(popupRule, "the popup surface rule must still exist in style.css");
   assert.match(popupRule[1], /background: var\(--surface\);/, "the popup surface is a token");
+  assert.doesNotMatch(popupRule[1], /backdrop-filter/, "the popup must not blur its backdrop");
   assert.doesNotMatch(popupRule[1], /color-mix|rgba/, "the popup surface must not be translucent");
 });
 

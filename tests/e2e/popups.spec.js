@@ -180,14 +180,13 @@ for (const theme of ["light", "dark"]) {
       rgb(got.wrapper["background-color"]),
     );
 
-    /* THE BLUR IS DECLARED AND IT PAINTS NOTHING, asserted because it was RULED rather than
-       because it shows: backdrop-filter filters what is behind the element and the element's own
-       background then paints over it, so at alpha 1 with no radius none of the filtered backdrop
-       is ever visible. MR1 dropped the filter along with the header's translucency for exactly
-       this reason. frontend/tokens.test.js holds the sentence in style.css that says so, so the
-       declaration cannot quietly come to be read as doing something. */
-    expect(got.wrapper["backdrop-filter"], "section 5's blur, kept by ruling").toBe("blur(14px)");
-    expect(got.tip["backdrop-filter"], "on both surfaces, so the rule stays one rule").toBe("blur(14px)");
+    /* AND NO BLUR, which went with the translucency exactly as MR1's F1 took it off the header. A
+       backdrop filter filters what is behind the element and the element's own background then
+       paints over it, so at alpha 1 with no radius none of the filtered backdrop is ever visible.
+       Measured off the rendered element rather than the stylesheet, because that is what this file
+       is for: a declaration that reaches the element is shipped whatever the rule says. */
+    expect(got.wrapper["backdrop-filter"], "an opaque popup blurs a backdrop it hides").toBe("none");
+    expect(got.tip["backdrop-filter"], "on both surfaces, so the rule stays one rule").toBe("none");
     expect(got.wrapper["border-radius"], "section 5 has no radius").toBe("0px");
     /* THE SHADOW IS THE TOKEN, compared as its PARTS rather than as its text: a computed
        box-shadow is normalised to "colour x y blur spread", so `0 3px 10px rgba(...)` comes back

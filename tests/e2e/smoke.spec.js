@@ -1465,16 +1465,26 @@ test("C2a. railroad partial outage: MNR dims and ages while LIRR stays live (C2)
   await expect(status).toHaveClass(/error/);
   expect(await status.textContent()).not.toContain("LIRR");
 
-  // The MNR train's popup says how old its data is; the LIRR one says nothing.
+  /* The MNR train's popup says how old its data is; the LIRR one says nothing.
+     MR5 (ruling Q2) MOVED THIS INTO THE FOOTER and the claim is unchanged. vehicleStaleLine's
+     `<div class="popup-stale">as of 7m ago</div>` is now popupFreshHtml's `.fresh` footer, whose
+     words are the feed strip's own ("As of 7m ago", capitalised because the strip says it that
+     way and the footer says it the strip's way by ruling). The CSS uppercases them; the TEXT
+     node is what toContainText reads, so this is the string and not the rendering. */
   await page.evaluate(() => railroads.get("MNR|mnr-gps-1").marker.openPopup());
-  await expect(popup(page)).toContainText("as of 7m ago");
-  // The healthy system's popup carries no age line at all. Asserted on the rendered
-  // markup rather than by opening a second popup, which would race the first one's
-  // teardown in the DOM.
+  await expect(popup(page)).toContainText("As of 7m ago");
+  /* THE HEALTHY SYSTEM'S POPUP CARRIES NO AGE AN EYE CAN READ, which is the same claim in the
+     footer's terms rather than the line's. Both popups now have a footer, because the square is
+     present in all three states: a rider cannot tell "this feed is live" from "this popup forgot
+     to say" unless the mark is always there. What differs is the WORDS, so that is what is
+     asserted, on both sides. Asserted on the rendered markup rather than by opening a second
+     popup, which would race the first one's teardown in the DOM. */
   const lirrHtml = await page.evaluate(() => railroadPopup(railroads.get("LIRR|lirr-placed-1")));
-  expect(lirrHtml).not.toContain("popup-stale");
+  expect(lirrHtml, "a healthy feed still draws its square").toContain('data-state="live"');
+  expect(lirrHtml, "and says no age at all").not.toContain("As of");
   const mnrHtml = await page.evaluate(() => railroadPopup(railroads.get("MNR|mnr-gps-1")));
-  expect(mnrHtml).toContain("popup-stale");
+  expect(mnrHtml, "a stale feed's square says so").toContain('data-state="stale"');
+  expect(mnrHtml, "and its age is shown, not hidden").toMatch(/aria-hidden="true"><\/span>As of 7m ago/);
 
   // Past the backend's retention cap the MNR data GOES (the backend stops serving
   // it), and the status line must keep naming the outage so the disappearance is
@@ -1804,7 +1814,8 @@ test("C2e. PATH staleness: gliding halts and markers dim, then recovery resumes 
   // source words it exactly as it did pre-C2: no system name, because its one system
   // IS the source).
   await page.evaluate(() => pathTrainRecords.get("p-2").marker.openPopup());
-  await expect(popup(page)).toContainText("as of 3m ago");
+  // MR5 (Q2): the age is the footer's now, in the feed strip's own capitalisation.
+  await expect(popup(page)).toContainText("As of 3m ago");
   await expect(page.locator("#status")).toContainText("PATH: as of 3m ago");
 
   // Recovery: a fresh poll un-dims and the glide resumes. Its trains are dated by that
@@ -2117,9 +2128,13 @@ test("C2f. NJ Transit dims and ages on its own while the railroads stay live (C2
   );
   expect(live).not.toBe(frozen);
 
-  // And the popup says how old the data is.
+  /* And the popup says how old the data is, in its footer. MR5 (ruling Q2) moved that from
+     vehicleStaleLine into popupFreshHtml, which says it in the feed strip's own words, so the
+     capital is the strip's and not a typo. The age is asserted whole rather than as a bare "as of":
+     this was the third site in this file to assert the old form, and the other two named the age, so
+     a substring that matched either capitalisation would have hidden which one shipped. */
   await page.evaluate(() => njtTrainRecords.get("NJ_3800").marker.openPopup());
-  await expect(popup(page)).toContainText("as of");
+  await expect(popup(page)).toContainText("As of 7m ago");
 });
 
 test("C2g. NJ Transit dims with no poll landing at all, which is the sweep's own job", async ({

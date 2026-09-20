@@ -1829,22 +1829,28 @@ exclusion**, so four new entries would have been a policy act rather than an imp
 detail.
 
 **RULED: the popup ships at full `--surface` opacity, the way MR1 overruled the header's 90%, and
-the undecidable inventory does not grow.** The blur and the ink edge are kept. `tokens.test.js`
+the undecidable inventory does not grow.** The ink edge is kept; the blur is not (below).
+`tokens.test.js`
 holds the rule against both spellings of a return; `helpers.test.js`'s A3 sweep, whose popup half
 had measured three greys against a literal `#ffffff` since MR1 with the note "until MR5 restyles
 them", now resolves the popup's inks per theme beside the chrome's and asserts the popup surface
 is a token exactly as it already asserted the header's. An erratum sits beside section 5 in
 `docs/design/map-redesign/README.md`.
 
-**And one thing the ruling makes visible that is worth naming: at full opacity
-`backdrop-filter: blur(14px)` paints nothing.** A backdrop filter filters what is behind the
-element and the element's own background then paints over it, so with alpha 1 and no radius none of
-the filtered backdrop is ever visible. It is not wholly without effect (it still makes the element a
-stacking context and a containing block) and neither of those reaches anything in a popup, whose
-descendants are all in normal flow. MR1 dropped the filter along with the header's
-translucency for this reason. It is kept here by ruling, and the rule in `style.css` says in as
-many words that it draws nothing, with `tokens.test.js` holding that sentence in place so the
-declaration cannot come to be read as doing something.
+**And the blur went with the alpha, on a second ruling and by the same precedent.** At full opacity
+`backdrop-filter: blur(14px)` paints nothing: a backdrop filter filters what is behind the element
+and the element's own background then paints over it, so with alpha 1 and no radius none of the
+filtered backdrop is ever visible. MR1's F1 took the filter off the header along with the header's
+90%, and this is that pair one surface out.
+
+**The first draft kept it, with a comment and a test explaining that it was inert, and that was the
+wrong shape.** `tokens.test.js` asserted the declaration PRESENT and asserted that the sentence above
+it still read "PAINTS NOTHING", which is a guard on an explanation rather than on the page. The
+operator's ruling names the principle: **a rule measured to paint nothing is not kept with a test
+saying so.** The declaration is gone and the test is inverted, in the same words the A3 sweep already
+used for `#panel`, so the popup and the header are now asserted alike in all three ways: the surface
+is a token, there is no backdrop filter, and there is no alpha. The day a decider spec makes a
+translucent popup measurable again, the blur comes back with the alpha it belongs to.
 
 ### The mutations, and the one that survived long enough to find three things
 

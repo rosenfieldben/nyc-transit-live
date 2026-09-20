@@ -195,11 +195,11 @@ function pathTrainPopup(record) {
       // against it rather than against the white a Leaflet popup used to be.
       popupSurfaceColor(),
     ) +
-    // C2: PATH is single-feed, so its system is the synthesized one named after the
-    // source (ingestSystems). It gets the SAME age line as the aggregate systems
-    // rather than being exempt from staleness for lacking a systems block, unless the
-    // position's own words already stated an age that old.
-    vehicleStaleLine(pathSystemAge(), position)
+    // C2 restyled as MR5's footer (ruling Q2): PATH is single-feed, so its system is the
+    // synthesized one named after the source (ingestSystems). It gets the SAME footer as the
+    // aggregate systems rather than being exempt from staleness for lacking a systems block, with
+    // the words withheld where the position's own already stated an age that old.
+    popupFreshLine(pathSystemAge(), position)
   );
 }
 

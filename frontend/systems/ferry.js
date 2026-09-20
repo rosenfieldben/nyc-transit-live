@@ -208,9 +208,10 @@ function ferryBoatPopup(record) {
       position,
       popupSurfaceColor(),
     ) +
-    // C2: single-feed source, synthesized system, same age line as every other
-    // vehicle popup, unless the boat's own words already stated an age that old.
-    vehicleStaleLine(systemAgeOf("ferry", "ferry"), position)
+    // C2 restyled as MR5's footer (ruling Q2): single-feed source, synthesized system, same
+    // footer as every other vehicle popup, and its WORDS are withheld when the boat's own words
+    // already stated an age that old. The square is not.
+    popupFreshLine(systemAgeOf("ferry", "ferry"), position)
   );
 }
 

@@ -602,7 +602,7 @@ today:
 | `live GPS` | `helpers.js:2378`, `systems/railroad.js:158` | a real reported position |
 | `scheduled position (no GPS)` | `helpers.js:1092`, `:1464` | NJT and PATH popups |
 | `scheduled position, no GPS` | `helpers.js:1512`, `:2378`, `:2391` | accessible names |
-| `scheduled (no GPS)` | `systems/railroad.js:158` | the railroad popup's compact form |
+| `scheduled (no GPS)` | *no reader since MR5, see the note at the end* | the compact form, once the railroad popup's |
 | `as of {age} ago` | `helpers.js:701`, `:730`, `stations.js:666` | the staleness line, one renderer |
 | `{system} not reporting` | `helpers.js:703` | a system that has never decoded |
 | `feed empty, showing last known` | `helpers.js:751`, `:757` | a bounded empty run |
@@ -1495,6 +1495,41 @@ vocabulary a rider still reads when it appears, and the bet is that a word seen 
 believed and a word seen everywhere is not. If that bet is wrong it will show up as riders
 trusting an undated Metro-North marker exactly as much as a dated LIRR one, which is
 measurable and worth revisiting rather than arguing about in advance.
+
+---
+
+## For the next amendment: the compact form has no reader
+
+**Recorded rather than acted on**, because removing a form this contract defines is an amendment to
+the contract and not a stage's tidying.
+
+`positionQualifier` returns three renderings of one judgment: `.words` for a popup, `.spoken` for a
+marker's accessible name, and `.compact`. The three differ in exactly one family, `placed`, where
+`.words` and `.spoken` say "scheduled position (no GPS)" and "scheduled position, no GPS" and
+`.compact` says "scheduled (no GPS)".
+
+**`.compact` existed for one caller and that caller is gone.** The railroad popup rendered it
+directly, from a line in `systems/railroad.js`, and it was the only surface in the app that chose
+between the forms rather than going through `positionLineHtml`. Map redesign stage MR5, ruling Q1,
+unified every popup on `.words`, which changed two strings a rider reads (a `placed` railroad train
+gained "position", and a FRESH reported fix went silent, because silence means current and this popup
+was the one place that broke that). **Since then nothing in the frontend reads `.compact` at all.**
+
+It was found by measurement rather than by reading: `pins.spec.js` P5b, the popup coverage test,
+reported `"scheduled (no GPS)"` as a rider-visible literal in the popup call graph that no pin
+covered, on the very commit that unified the call site. It is waived there in `NOT_RIDER_TEXT`, with
+the reason, rather than in `UNREACHED_STATES`, because that second map is for text a rider WOULD read
+in a state no world reaches and there is no such state left for this one.
+
+**What the next amendment has to decide** is whether a contract that defines three forms should keep
+one no surface renders. Two things are worth weighing and neither is obvious. Against keeping it: an
+unread form is a third spelling of one judgment that a future surface could pick up by accident,
+which is how two neutrals ended up on screen for one NJ Transit route (MR3's finding N6). For
+keeping it: the compact form is shorter, a surface tighter than a popup may yet want it, and
+`positions.test.js` still pins the difference so it cannot drift while it waits.
+
+Nothing else in the contract changes either way: `.words` and `.spoken` are unaffected, section 3.2's
+rider-word table is unaffected, and no provenance, age policy or silence rule moves.
 
 ---
 

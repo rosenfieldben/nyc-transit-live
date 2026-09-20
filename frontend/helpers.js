@@ -711,15 +711,22 @@ function feedTooltip({ name, state, age = null, hidden = false } = {}) {
    it would be a claim.
 
    AND IT IS vehicleStaleLine RESTYLED, NOT A SECOND VOICE, which is the one thing a footer added
-   naively would have got wrong. Every vehicle popup already ends in vehicleStaleLine, which prints
-   "as of 5m ago" when the vehicle's SYSTEM has gone stale, and a footer that also said "As of 6m
-   ago" would put the same fact on screen twice in two capitalisations. So this takes that line's
-   job, and with it that line's rule: `position` is the vehicle's own position, and where its words
-   already state an age at least as old as the feed's, the footer shows the SQUARE and withholds the
-   WORDS. vehicleStaleLine's comment is where the reason is written down and it has not changed: an
-   observation's age and a feed's differ by the provider's lag, so saying both is saying two ages
-   about one train. What the footer adds is the two states that line never had, live and
-   schedule-only, and the square that makes "live" visible at all.
+   naively would have got wrong. Every vehicle popup used to end in vehicleStaleLine, which printed
+   "as of 5m ago" when the vehicle's SYSTEM had gone stale; a footer that also said "As of 6m ago"
+   would have put one fact on screen twice in two capitalisations. So this takes that line's job and
+   its rule, and THE RULE'S REASON MOVED HERE WITH IT, because that function is gone and a rule whose
+   explanation lives in a deleted comment is a rule nobody can check:
+
+     A vehicle's footer speaks only for what its position's words did not say. A position whose
+     words already state an age at least as old as the feed's has said it, and saying it again would
+     say it twice, or, since an observation's age and a feed's differ by the provider's lag, say two
+     ages about one train. A position whose words state no age at all (Metro-North's undated fixes,
+     and every fresh one) leaves the footer to say the only age there is, exactly as C2 drew it.
+
+   THE ONE DIFFERENCE FROM THAT LINE is the square, and it follows from the ruling: the words are
+   withheld, the square never is, because a rider cannot tell "this feed is live" from "this popup
+   forgot to say" unless the mark is always there. What the footer ADDS is the two states that line
+   never had, live and schedule-only.
 
    THE SQUARE IS NEVER WITHHELD, because the ruling is that it is present in all three states: a
    rider cannot tell "this feed is live" from "this popup forgot to say" unless the mark is always
@@ -1851,10 +1858,16 @@ function humanizeAge(age) {
 // staleness comes from a system block's age (already carrying the server cache-age and
 // skew terms). The station boards render their system line into the same markup
 // (boardLineHtml), so a stale board and a stale train cannot be styled or worded apart.
-function stalePopupLine(age) {
-  if (!staleAge(age)) return "";
-  return `<div class="popup-stale">as of ${humanizeAge(age)} ago</div>`;
-}
+/* MR5 (ruling Q2): stalePopupLine WAS HERE and is gone with its one caller. It rendered the age
+   line gated on staleness, and vehicleStaleLine was the only thing that called it; the popup footer
+   took that job and gates on feedDotState instead. boardLineHtml still renders the same `.popup-stale`
+   element for a station board's system line, which is 6.2's and is untouched, so the string and the
+   class both survive with one renderer rather than two.
+   THE TWO SURFACES NOW WORD THE AGE DIFFERENTLY and that is a consequence of the ruling rather than
+   an oversight: a board says the contract's "as of 4m ago" and a vehicle's footer says the feed
+   strip's "As of 4m ago", because the ruling is that the footer says it the strip's way so the state
+   is said one way on BOTH of those surfaces. helpers.test.js pins both forms side by side so the
+   difference is a record rather than a surprise. */
 
 // ---- 6.2: a board's rows, each qualified by its own age ----
 //
@@ -2082,7 +2095,7 @@ function observationStaleAt(row) {
 //            otherwise the words
 // `age` is the age those words STATE, or null when they state none (a fresh position,
 // an undated one, a row with no provenance): what a popup reads to decide whether its
-// system's age line would only say the same thing twice (vehicleStaleLine).
+// feed's age line would only say the same thing twice (popupFreshHtml's suppression rule).
 function positionQualifier(row, board) {
   const r = row || {};
   const b = board || {};
@@ -2121,11 +2134,12 @@ function positionQualifier(row, board) {
   // THE FAIL-SAFE BRANCH STATES NO AGE, so it must report none. `answer`'s default is
   // `stated = stale ? age : null`, which on a row with a stale clock and no usable
   // provenance would hand back age 400 beside the words "age unknown": the contract
-  // above says `age` is the age the WORDS state, and vehicleStaleLine reads it to decide
-  // whether the system's own age line would repeat the position's. A non-null age there
-  // deleted the one age the popup actually knew, so the pessimistic branch lost
-  // information instead of adding it. REVIEW FIX; positions.test.js covers it with a
-  // stale clock now, where it only ever passed a fresh one.
+  // above says `age` is the age the WORDS state, and popupFreshHtml reads it to
+  // decide whether the footer's own age would repeat the position's (MR5; before
+  // that it was vehicleStaleLine). A non-null age there deleted the one age the
+  // popup actually knew, so the pessimistic branch lost information instead of
+  // adding it. REVIEW FIX; positions.test.js covers it with a stale clock now,
+  // where it only ever passed a fresh one.
   return answer("unknown", "age unknown", { stated: null });
 }
 
@@ -3139,17 +3153,13 @@ function positionClause(position) {
   return position && position.kind ? position.spoken : null;
 }
 
-// A VEHICLE POPUP'S SYSTEM AGE LINE, which speaks only for what the position's words
-// cannot: the rule boardSystemLine keeps for a station board, one row at a time. A row
-// whose words already state an age at least as old as its system's has said it, and a
-// second line would say it twice, or, since an observation's age and a system's differ
-// by the provider's lag, say two ages about one train. A row whose words state no age
-// (Metro-North's undated positions, a fresh one) keeps the line exactly as C2 drew it.
-function vehicleStaleLine(systemAge, position) {
-  const said = position ? position.age : null;
-  if (said != null && (systemAge == null || said >= systemAge)) return "";
-  return stalePopupLine(systemAge);
-}
+/* MR5 (ruling Q2): vehicleStaleLine WAS HERE and is gone, because the popup footer took its job.
+   It rendered a vehicle popup's system age line and withheld itself where the position's words had
+   already stated an age at least that old. popupFreshHtml keeps that rule exactly, keeps its
+   reasoning (copied there rather than cited, so it cannot outlive this comment), and adds the two
+   states the line never had. It was the function's only caller in either direction: nothing in the
+   freshness contract names it, unlike positionQualifier's `.compact`, which is why this is deleted
+   where that is recorded and kept. */
 
 // ONE WRITE PER RENDER, AS ONE STRING (memo D11). The page's live region is atomic and
 // polite, so two writes before a screen reader reads it are one sentence lost: the second
@@ -5341,9 +5351,9 @@ if (typeof module !== "undefined" && module.exports) {
     railLabelBand, RAIL_LABEL_ZOOM, ferryLabelBand, FERRY_LABEL_ZOOM,
     railroadStationName, railFamilyClass,
     AGE_UNKNOWN, observationDimAge, observationGated, OBSERVATION_GATED,
-    vehicleStaleLine, composeAnnouncements, withheldTrains, withheldClause,
+    composeAnnouncements, withheldTrains, withheldClause,
     thresholdOverrides, CONTRACT_FLAG_PARAM,
-    stalePopupLine, STALE_MARKER_OPACITY, FERRY_DOCKED_OPACITY,
+    STALE_MARKER_OPACITY, FERRY_DOCKED_OPACITY,
     selectHeadwayBand, airtrainStationPopupHtml, retryUntil,
     PATH_BUCKET_ORDER, PATH_FALLBACK_COLOR, orderedPathBuckets, pathColor,
     formatPathHead, pathTrainPopupHtml, pathArrivalsHtml,

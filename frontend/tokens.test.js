@@ -85,23 +85,22 @@ test("MR5: the design's translucency cannot come back by either spelling", () =>
   assert.doesNotMatch(body, /opacity:/, "and so does an opacity on the box");
 });
 
-test("MR5: the blur is still declared, and the rule says it paints nothing", () => {
-  /* KEPT BY RULING, AND THE COMMENT IS PART OF THE CLAIM. backdrop-filter filters what is behind
-     the element and the element's own background then paints over it, so at alpha 1 with no radius
-     none of the filtered backdrop is ever visible and the blur DRAWS nothing. Not quite "has no
-     effect": it still makes the element a stacking context and a containing block, which changes
-     nothing here because no descendant of a popup is fixed or absolutely positioned outside it.
-     MR1 dropped the filter along with the header's translucency for this reason. It stays here
-     because the operator asked for it, and this test exists so it cannot be quietly read as doing
-     something: if the declaration survives, the sentence saying it draws nothing survives too. */
-  const body = popupSurfaceRule();
-  assert.match(body, /backdrop-filter:\s*blur\(14px\);/, "section 5's blur, as ruled");
-  const rule = CSS.slice(0, CSS.indexOf(body));
-  assert.match(
-    rule.slice(-2600),
-    /PAINTS NOTHING/,
-    "the comment above the rule still says the blur is inert at full opacity",
-  );
+test("MR5: the blur went with the translucency, as MR1's F1 took it off the header", () => {
+  /* A RULE MEASURED TO PAINT NOTHING IS NOT KEPT WITH A TEST SAYING SO, which is the operator's
+     ruling and the correction of this test's own first draft: it used to assert the blur PRESENT
+     and assert that the comment above it explained why it was inert. That is a guard on an
+     explanation rather than on the page.
+
+     THE MEASUREMENT IS UNCHANGED. backdrop-filter filters what is behind the element and the
+     element's own background then paints over it, so at alpha 1 with no radius none of the filtered
+     backdrop is ever visible. MR1's finding F1 took the filter off the header along with the
+     header's 90%, and this is the same pair one surface out. Asserted as an ABSENCE, in the same
+     words helpers.test.js's A3 sweep uses for #panel, so the two surfaces read alike. */
+  assert.doesNotMatch(popupSurfaceRule(), /backdrop-filter/, "the popup must not blur a backdrop it hides");
+  // And the header's, unchanged since MR1, so this is one rule for both and not a popup exception.
+  const headerRule = /#panel \{([\s\S]*?)\n\}/.exec(CSS);
+  assert.ok(headerRule, "#panel must still exist in style.css");
+  assert.doesNotMatch(headerRule[1], /backdrop-filter/, "the header must not blur its backdrop either");
 });
 
 test("MR5: the ink edge is on the wrapper alone, never on the rotated tip", () => {

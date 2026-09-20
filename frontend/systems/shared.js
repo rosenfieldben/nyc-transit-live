@@ -392,19 +392,21 @@ function scheduledColor() {
    Six popup heads print a route's colour as TEXT, through readableInk, which walks the colour
    toward legibility until it clears 4.5:1 against the background it is given. That background
    has always been readableInk's default, `#ffffff`, and until this stage the assumption behind
-   it was true: a Leaflet popup is white. Section 5 makes it --surface at 94%, so it is not, and
-   in the DARK theme it never was.
+   it was true: a Leaflet popup is white. Section 5 makes it --surface, so it is not, and in the
+   DARK theme it never was. (Section 5 asks for that surface at 94%; the erratum beside it records
+   why the popup ships opaque, and the arithmetic below is written for the surface either way.)
 
    MEASURED, WHICH IS WHY THIS EXISTS AT ALL. layout.spec.js A4g renders the N train, whose
    #FCCC0A the helper walks to rgb(138, 110, 0): against white that clears, against this popup's
    surface it reads 4.02 and against the composite it reads 4.05. A4g caught it on the commit
    that changed the surface, which is the gate doing its job.
 
-   --surface RATHER THAN THE COMPOSITE, and that is the pessimistic end in both themes. The popup
-   is 94% of --surface over --bg; in the light theme --surface (#eae9e9) is the DARKER of the two
-   and in the dark theme it is the LIGHTER, so in either case it is the end that gives dark ink
-   and light ink respectively the least to work with. Ink that clears 4.5 here clears it on the
-   real composite.
+   --surface, WHICH IS NOW THE WHOLE ANSWER AND WAS ALWAYS THE PESSIMISTIC END. The popup ships
+   opaque, so the surface IS what the ink is printed on and there is no composite left to reason
+   about. It was the right background before that too: at the design's 94% the popup was
+   --surface over --bg, and --surface is the darker of the two in the light theme and the lighter
+   in the dark one, so in either case it gives dark ink and light ink respectively the least to
+   work with. Ink that clears 4.5 against it cleared the composite as well.
 
    AND AN OPEN POPUP IS RE-RENDERED WHEN THE THEME CHANGES, in applyTheme below, for the same
    reason the canvas families are repainted there: this resolves a token to a STRING at build

@@ -285,8 +285,8 @@ test("pathTrainPopupHtml shows placement fields, never the unstable trip id", ()
   /* MR5: THE HEAD'S INK IS THE ROUTE COLOUR WALKED AGAINST THE POPUP'S OWN SURFACE, not the
      published colour and not the colour walked against white. This used to assert the raw
      `#d93a30`, which passed because PATH's red happens to clear 4.5 on white and readableInk
-     returned it untouched. Section 5 makes the popup --surface at 94%, so it no longer does:
-     measured, #d93a30 reads 4.57 on white and is walked to #c3342b for 4.51 here.
+     returned it untouched. MR5 makes the popup --surface, so it no longer does: measured,
+     #d93a30 reads 4.57 on white and is walked to #c3342b for 4.51 here.
      ASSERTED AS THE HELPER'S OWN OUTPUT rather than as the new hex, so this is not a second
      copy of readableInk's arithmetic, and asserted AGAINST the white form too: those two
      differ, so a builder that went back to the default fails on the second line. */
@@ -1521,10 +1521,10 @@ test("ferryBoatPopupHtml shows label, route name, status, and under-way speed in
      darkens; the old assertion pinned the literal #00839c and was therefore pinning an
      unreadable value. Asserting the obligation instead survives any future change to how far
      readableInk goes.
-     MR5 MOVED THE BACKGROUND, NOT THE OBLIGATION. Section 5 makes the popup --surface at 94%
-     rather than white, so the obligation is now against that: measured, #00839c is walked to
-     #007c94 for 4.87 on white and to #006f85 for 4.80 here. The white form is excluded too,
-     because the two differ and that is the only way this can tell which one shipped. */
+     MR5 MOVED THE BACKGROUND, NOT THE OBLIGATION. The popup is --surface rather than white, so
+     the obligation is now against that: measured, #00839c is walked to #007c94 for 4.87 on white
+     and to #006f85 for 4.80 here. The white form is excluded too, because the two differ and that
+     is the only way this can tell which one shipped. */
   assert.ok(html.includes(readableInk("#00839c", POPUP_SURFACE_FALLBACK)));
   assert.ok(contrastRatio(readableInk("#00839c", POPUP_SURFACE_FALLBACK), POPUP_SURFACE_FALLBACK) >= 4.5);
   assert.ok(!html.includes(`color:${readableInk("#00839c")}"`), "the head must not be inked against white");
@@ -1588,7 +1588,7 @@ test("ferryArrivalsHtml buckets by route name with arriving/departing countdowns
   assert.ok(html.indexOf("East River") < html.indexOf("South Brooklyn")); // alphabetical
   // Route-coloured headings, each darkened to clear AA on the popup. #ffd100 is the sharper
   // case: bright yellow measures 1.51 on white, which is not text. MR5: the popup is --surface
-  // at 94% rather than white, so the background the walk targets is the token's own value.
+  // rather than white, so the background the walk targets is the token's own value.
   assert.ok(
     html.includes(readableInk("#00839c", POPUP_SURFACE_FALLBACK)) &&
       html.includes(readableInk("#ffd100", POPUP_SURFACE_FALLBACK)),
@@ -3199,8 +3199,8 @@ test("A3: every muted ink in style.css clears AA on the surface it prints on", (
   assert.doesNotMatch(headerRule[1], /backdrop-filter/, "the header must not blur its backdrop");
   assert.doesNotMatch(headerRule[1], /color-mix|rgba/, "the header surface must not be translucent");
 
-  /* AND MR5's POPUP IS THE SAME RULING ON THE SAME GROUNDS. Section 5 draws it at 94% over the
-     same blurred tiles. Measured on this branch, the translucency did worse than make the popup
+  /* AND MR5's POPUP IS THE SAME RULING ON THE SAME GROUNDS. Section 5 asks for it at 94% over the
+     same blurred tiles. Measured on this branch, that translucency did worse than make the popup
      undecidable: the dark theme's REAL violation on the head's ink and .popup-sub was reported
      ONLY as incomplete, so it hid the failure this test now catches. frontend/tokens.test.js
      holds the rule itself; this holds the pairing, and the two together are why the entry above

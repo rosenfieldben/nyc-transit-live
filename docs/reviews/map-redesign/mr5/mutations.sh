@@ -75,13 +75,20 @@ R
 run M63 frontend/helpers.js "$NODE_ALL" "$PW a11y.spec.js --grep 'A1w'"
 
 # ---- M64: the popup surface goes back to the design's 94% ----
+# RE-ANCHORED AT THE VOCABULARY's TIP, and standing rule 6 is why this was found rather than
+# reported as a survivor: the anchor named `backdrop-filter: blur(14px)` on the line after the
+# background, and the footer commit DROPPED that declaration (a rule measured to paint nothing is not
+# kept with a test saying so). So the anchor matched 0 times and the row ran nothing, which is
+# exactly MR4's F19 one stage later. The anchor is now the three lines the rule still has.
 cat > "$WORK/a" <<'A'
   background: var(--surface);
-  backdrop-filter: blur(14px);
+  color: var(--ink);
+  border-radius: 0;
 A
 cat > "$WORK/r" <<'R'
   background: color-mix(in srgb, var(--surface) 94%, transparent);
-  backdrop-filter: blur(14px);
+  color: var(--ink);
+  border-radius: 0;
 R
 run M64 frontend/style.css "$NODE_ALL" "$PW a11y.spec.js --grep 'A1w'"
 
@@ -97,16 +104,18 @@ R
 run M65 frontend/style.css "$NODE_ALL" "$PW a11y.spec.js --grep 'A1w'"
 
 # ---- M66: the ferry popup head loses the surface, so it inks against the light fallback ----
+# RE-ANCHORED TOO, for the same reason and found the same way: the vocabulary commit put the mark
+# argument after the surface, so the four-line anchor matched 0 times. The replacement drops the
+# surface and keeps the mark, which is the defect this row is about.
 cat > "$WORK/a" <<'A'
-      ferryColorFor(b.route_id),
-      position,
       popupSurfaceColor(),
-    ) +
+      // And the hull this boat is drawn with, off its own marker, at the title's size.
+      popupMarkHtml(markerMarkHtml(record.marker)),
 A
 cat > "$WORK/r" <<'R'
-      ferryColorFor(b.route_id),
-      position,
-    ) +
+      undefined,
+      // And the hull this boat is drawn with, off its own marker, at the title's size.
+      popupMarkHtml(markerMarkHtml(record.marker)),
 R
 # M66 SURVIVED its first run, against a11y.spec.js A1w alone, and the survivor is what found D6i:
 # A1w's popup states open a SUBWAY train popup, so five of the six route-coloured heads were never
@@ -194,6 +203,13 @@ R
 run M74 frontend/helpers.js "$NODE_ALL"
 
 # ---- M75: a popup prints text in no named slot at all, which is P5d's whole subject ----
+# M75 SURVIVED at this tip and the reason is recorded rather than smoothed over: the bus's route
+# note renders only while busRouteNotes holds an entry inside NOTE_TTL_MS, and no pinned world has
+# one, so the mutated div is never drawn. It is an equivalent mutant in every world this suite
+# boots, and it is outside BOTH directions of the coverage test: direction A (P5d) cannot see a
+# string that is not rendered, and direction B (P5b) reads LITERALS rather than classes, so a class
+# removed from a literal nobody disputes is invisible to it. M77 below is the same defect in a state
+# the stock world does render.
 cat > "$WORK/a" <<'A'
     (showNote ? `<div class="popup-sub">${esc(note.message)}</div>\n` : "") +
 A
@@ -213,6 +229,15 @@ cat > "$WORK/r" <<'R'
         return 1;
 R
 run M76 tests/e2e/contrast.js "$PW pins.spec.js --grep P4d"
+
+# ---- M77: the same defect where a fixture actually renders it (the AirTrain sub-line) ----
+cat > "$WORK/a" <<'A'
+    `<div class="popup-sub">scheduled service (no live tracking)</div>\n`;
+A
+cat > "$WORK/r" <<'R'
+    `<div>scheduled service (no live tracking)</div>\n`;
+R
+run M77 frontend/helpers.js "$PW pins.spec.js --grep P5d"
 
 echo "================================================================"
 echo "died: $died   survived: $survived   run failed: $broke"

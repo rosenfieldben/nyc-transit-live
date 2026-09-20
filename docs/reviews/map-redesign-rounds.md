@@ -2522,8 +2522,11 @@ further than the ledger did by identifying which premise kills the revert.
 Round 2 changed no popup, so the eighteen rows above are unchanged; seven more are the defects the
 repaired guards could not see, each measured by hand when its repair landed and now in
 `mutations.sh` so they can be re-run. **Re-run whole at `8fb99b5`: twenty-four died, one survived,
-none failed to run, and every anchor matched exactly once.** The survivor is M75, whose reason is
-recorded above and whose defect dies at M77.
+none failed to run, and every anchor matched exactly once.** Re-run whole again at `21343a4`, the
+commit that recorded this round, with the same result. Every commit after that one is documentation
+and no row anchors in a documentation file, which is how this record stays true without a new sha for
+every re-run; a commit that touches a mutated file re-runs the table. The survivor is M75, whose
+reason is recorded above and whose defect dies at M77.
 
 Gates at the same tip: `ruff`, `ruff format`, `mypy`, 1738 pytest; the contract-tier lint; 392 node
 tests; 317 playwright; 15 audit records. One flake is in the list above with a gap in it.

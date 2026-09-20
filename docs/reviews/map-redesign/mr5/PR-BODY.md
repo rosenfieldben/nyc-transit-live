@@ -103,7 +103,9 @@ popup.
 ## The mutation table, re-run whole at the tip
 
 **Twenty-five rows at `8fb99b5`: twenty-four died, one survived, none failed to run, and every
-anchor matched exactly once.** Two rows had gone stale since they were written (M64 named the
+anchor matched exactly once**, and again at `21343a4`, the commit that recorded the round. Every
+commit after that one is documentation and no row anchors in a documentation file, so the numbers
+above are this branch's numbers rather than a snapshot of an older sha. Two rows had gone stale since they were written (M64 named the
 `backdrop-filter` the footer commit dropped, M66 named an argument list the vocabulary commit added
 to) and standing rule 6 is what turned that into a re-anchoring rather than into two survivors: an
 ANCHOR MISS is a failure of the run. The table is `docs/reviews/map-redesign/mr5/mutations.sh`, so it

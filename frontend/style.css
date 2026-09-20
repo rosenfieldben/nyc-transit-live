@@ -976,18 +976,16 @@ body,
   color: var(--focus);
 }
 
-/* Station arrivals popup. MR5: the divider is --rule rather than #eee, and #eee was wrong in BOTH
-   themes in opposite directions, which is what a fixed near-white hairline does. MEASURED: 1.04
-   against the light surface #eae9e9, so this board has had no visible row separators at all since
-   the popup stopped being white; 12.13 against the dark #2d2b2b, a white line louder than the text
-   it separates. --rule is a 15% ink wash in the light theme and a 14% paper wash in the dark, so it
-   reads as a hairline on whichever surface it is drawn on. */
-.arr-dir {
-  font-weight: 600;
-  margin-top: 6px;
-  padding-top: 4px;
-  border-top: 1px solid var(--rule);
-}
+/* .arr-dir WAS HERE, and `.dir` in the MR5 vocabulary block below replaced it: section 5 names the
+   class and draws the heading with a bottom rule in --divider rather than a top rule in --rule.
+   Nothing emits .arr-dir any more (popupDirHtml is the one builder), so the rule goes with it.
+
+   THE MEASUREMENT IT CARRIED IS KEPT, because it is the reason both classes use a TOKEN for their
+   hairline rather than the #eee this one used to have: measured, #eee reads 1.04 against the light
+   surface #eae9e9, so the board had no visible row separators at all once the popup stopped being
+   white, and 12.13 against the dark #2d2b2b, a white line louder than the text it separated. --rule
+   is a 15% ink wash in the light theme and a 14% paper wash in the dark, and --divider is the same
+   idea at 40% and 35%; both read as a line on whichever surface they are drawn on. */
 
 .arr-none {
   color: var(--muted);
@@ -1834,9 +1832,9 @@ body,
 /* MR5 (ruling Q2): the popup's freshness footer, section 5's `.fresh`.
 
    A RULE ABOVE IT AND NOTHING ELSE, which is what makes it a footer rather than another row: the
-   --rule hairline separates it from the content the way .arr-dir's separates one board bucket from
+   --rule hairline separates it from the content the way .arr's row rules separate one arrival from
    the next, and both are the same token for the same reason (a fixed near-white line is invisible on
-   one of the two surfaces; see .arr-dir).
+   one of the two surfaces; the note where .arr-dir used to be has the measurement).
 
    THE SQUARE IS 6x6 AND HAS NO SHAPE OF ITS OWN, because it is the feed strip's dot at the popup and
    the strip's is a square too. Its colour comes from the state through a data attribute rather than
@@ -1883,6 +1881,137 @@ body,
 
 .fresh-dot[data-state="scheduled"] {
   background: var(--scheduled);
+}
+
+/* ==================================================================
+   MR5: the popup's shared vocabulary (README section 5)
+   ==================================================================
+
+   FIVE CLASSES AND ONE WRAPPER, in the design's own names, for the grammar every popup in this
+   app now prints: `.pk` the kicker, `.pt` the title, `.kv` the label/value grid a vehicle's
+   facts sit in, `.dir` an arrivals bucket's heading, `.arr` its rows, and `.pmark` around the
+   map's own mark where a title or a row borrows it. The markup is built by pure functions in
+   helpers.js (the MR5 vocabulary section) and pinned by frontend/popupvocab.test.js.
+
+   UNSCOPED, LIKE `.fresh` ABOVE, because these classes exist on one surface and naming them
+   twice (`.leaflet-popup-content .pk`) would buy nothing but specificity. The one rule that
+   does need the popup's scope carries it: `.alert-stale` further up, which had to beat the
+   banner's copy of itself.
+
+   THE FONT IS var(--chrome-font) WHERE THE DESIGN WRITES "Archivo", which is how every rule in
+   this stylesheet spells it: the token is the family plus its fallbacks, so a page that never
+   loaded the webfont still gets the right metrics. */
+
+/* The kicker: the surface's system word on the left, the small marks it carries on the right.
+   Muted 10px caps, measured at 5.38 on the light surface and 7.01 on the dark. */
+.pk {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  font: 600 10px/1.3 var(--chrome-font);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* The title: the family's mark, then the head the surface has always printed. The row's ink is
+   the token; a route-coloured head overrides it on the TEXT SPAN alone (popupTitleHtml says
+   why), so the mark keeps its own paints. */
+.pt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 8px;
+  font: 800 17px/1.15 var(--chrome-font);
+  letter-spacing: -0.015em;
+  color: var(--ink);
+}
+
+/* The mark's wrapper. `flex: none` so a long title cannot squeeze the mark, and `display: block`
+   on the svg so it sits on the text's baseline box rather than on its line box, which is what
+   leaves a 24px mark beside 17px type without a stray gap under it. The svg carries its own
+   width and height from popupMarkHtml; nothing here resizes it. */
+.pmark {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+
+.pmark svg {
+  display: block;
+}
+
+/* The vehicle popup's facts. Labels are muted 11px caps in the auto column, values are 600 and
+   tabular in the 1fr column and right-aligned, so two rows of digits line up under each other.
+   The hairlines are --rule for the reason given where .arr-dir used to be: a fixed near-white line
+   is invisible on one of the two surfaces. */
+.kv {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0 14px;
+  border-top: 1px solid var(--rule);
+}
+
+.kv > div {
+  padding: 5px 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.kv .k {
+  padding-top: 7px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.kv .v {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* An arrivals bucket's heading, and the rows under it. */
+.dir {
+  margin-top: 10px;
+  padding-bottom: 4px;
+  border-bottom: 2px solid var(--divider);
+  font: 800 11px/1.3 var(--chrome-font);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+.arr {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0 10px;
+  align-items: center;
+}
+
+.arr > span {
+  display: flex;
+  align-items: center;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.arr .n {
+  justify-content: flex-end;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* THE ACCENT ON A ROW THAT READS "now" IS --accent-ink AND NOT --accent, which is the same
+   correction the footer's comment makes one surface up: section 5 says the countdown reads "in
+   the accent", and --accent as TEXT measures 3.47 against the light surface, below the 4.5 a
+   string owes. --accent-ink is the token that exists for that case and it measures 5.03 light and
+   5.44 dark on this surface. The hue is the accent's; the lightness is the one a rider can read.
+   helpers.test.js's A3 sweep measures it with the rest of the popup's inks. */
+.arr .now {
+  color: var(--accent-ink);
 }
 
 /* ==================================================================

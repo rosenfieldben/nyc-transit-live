@@ -219,7 +219,7 @@ const UNDECIDABLE_SHAPES = [
     // "parent then child" pattern would miss for no good reason.
     where: (id) => /svg[^ ]* text/.test(id),
     // ROUND 2 CORRECTED THIS DECIDER. It used to name layout.spec.js A4g, which samples
-    // .arr-badge, .station-chip, .leaflet-popup-content b and .arr-dir, and touches no SVG
+    // .arr-badge, .station-chip, a popup's .pt title and .dir headings, and touches no SVG
     // text node anywhere. The exception therefore pointed at a spec that decided a different
     // surface, which is the exact "suppression with a sentence attached" the pairing rule
     // exists to prevent. A1z below now measures these glyphs against their own backing

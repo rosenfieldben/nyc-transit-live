@@ -226,6 +226,8 @@ async function loadRailroadStations() {
           b,
           Date.now() / 1000 - (minClockOffset ?? 0),
           (routeId) => railroadRouteNames.get(`${s.system}|${routeId}`) || null,
+          // MR5: the paper square this station is drawn as, at the title's size.
+          popupMarkHtml(markerMarkHtml(m)),
         ),
     })).addTo(railroadStopLayer(station.system));
     registerStation({
@@ -369,27 +371,47 @@ function railroadPopup(record) {
   const t = record.latest;
   const now = correctedNow();
   const position = railroadPosition(t, now);
-  const head = formatRailroadHead(t.system, t.route_id, railroadRouteNames.get(`${t.system}|${t.route_id}`));
+  const head = railroadHeadParts(t.system, t.route_id, railroadRouteNames.get(`${t.system}|${t.route_id}`));
   return (
     // Scoped to the train's OWN system (LIRR/MNR) so a numeric route id shared with
     // another mode never leaks in.
     routeAlertsBlock(t.system, t.route_id) +
-    `<b style="color:${readableInk(railroadColor(t.route_id), popupSurfaceColor())}">${esc(head)}</b>` +
-    (t.train_num ? `<br>Train ${esc(t.train_num)}` : "") +
-    // A train drawn from a prediction names the stop it is at or heading for; a GPS fix
-    // names none, so the line is there exactly when the field is.
-    (t.stop_name ? `<br>Next stop: ${esc(t.stop_name)}` : "") +
-    (t.direction ? `<br>${esc(t.direction)}` : "") +
-    /* HOW THIS POSITION WAS OBTAINED, AND HOW OLD IT IS. Before 6.3 this line said "live GPS" of a
-       fix fifteen hours old, which is F01.
-       MR5 (ruling Q1): THROUGH positionLineHtml, LIKE EVERY OTHER POPUP. This was the app's one
-       surface that rendered `position.compact` itself, from a line written here, and it did so
-       UNCONDITIONALLY. Two things follow and both are rider-visible. A `placed` train said
-       "scheduled (no GPS)" and now says the contract's "scheduled position (no GPS)". And a FRESH
-       GPS fix said "live GPS" and now says nothing, because silence means current (memo D9) and
-       this popup was the only place in the app that broke that rule. An aged fix still speaks.
-       The before is pinned in the ledger; the pins were retaken after. */
-    positionLineHtml(position) +
+    /* MR5: the head this popup has printed since phase 9, as section 5's kicker and title. The
+       words are unchanged and the middot is gone with the joining: the agency is the kicker, the
+       branch (or "route 5", or nothing) is the title, and a train whose feed named neither still
+       gets its agency as the title so the popup is never headless.
+
+       THE KICKER IS THE SERVED `system` FIELD, which is the feed's code: "MNR" here where every
+       spoken surface in this app says railroadSystemLabel's "Metro-North". That divergence is
+       older than this stage and it is recorded as an MR5 finding rather than reworded in passing.
+
+       THE MARK IS THE TAG THIS TRAIN IS WEARING, taken off its own marker: the branch code, the
+       body, and the chevron at the bearing it is drawn at. Rebuilding it here would need the
+       train, its previous row and the clock a second time, and the two would disagree on exactly
+       the trains whose state is worth looking at. */
+    popupKickerHtml({ left: head.agency }) +
+    popupTitleHtml({
+      markHtml: popupMarkHtml(markerMarkHtml(record.marker)),
+      text: head.line || head.agency,
+      color: readableInk(railroadColor(t.route_id), popupSurfaceColor()),
+    }) +
+    popupRowsHtml([
+      { k: "Train", v: t.train_num ?? "" },
+      // A train drawn from a prediction names the stop it is at or heading for; a GPS fix
+      // names none, so the row is there exactly when the field is.
+      { k: "Next stop", v: t.stop_name ?? "" },
+      { k: "Direction", v: t.direction ?? "" },
+      /* HOW THIS POSITION WAS OBTAINED, AND HOW OLD IT IS. Before 6.3 this line said "live GPS"
+         of a fix fifteen hours old, which is F01.
+         MR5 (ruling Q1): THROUGH positionWords, LIKE EVERY OTHER POPUP. This was the app's one
+         surface that rendered `position.compact` itself, from a line written here, and it did so
+         UNCONDITIONALLY. Two things follow and both are rider-visible. A `placed` train said
+         "scheduled (no GPS)" and now says the contract's "scheduled position (no GPS)". And a
+         FRESH GPS fix said "live GPS" and now says nothing, because silence means current (memo
+         D9) and this popup was the only place in the app that broke that rule. An aged fix still
+         speaks. The before is pinned in the ledger; the pins were retaken after. */
+      { k: "Position", v: positionWords(position) },
+    ]) +
     // A2: the station this train is sitting on, reachable. A train drawn AT its
     // station's coordinates covers the dot entirely, so without this the arrivals a
     // rider came for are unreachable at that pixel. "At" is railroadAtItsStation, read

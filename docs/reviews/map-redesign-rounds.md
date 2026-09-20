@@ -2066,3 +2066,223 @@ it one level down: finding N6 was two answers to one question in the app, and th
 to one question in the tests. **The repair is the same repair.** One `POPUP_READER` string with
 two locators in front of it, `content` as the contract between them, and the reason written above
 it so the next stage that needs a third way to find a popup adds a locator rather than a reader.
+
+### The vocabulary: five classes, twelve popups, and one mark per family
+
+Section 5 gives every popup one grammar and this is the stage that builds it. `.pk` the kicker,
+`.pt` the title with its family's mark, `.kv` the label/value grid a vehicle's facts sit in, `.dir`
+an arrivals bucket's heading and `.arr` its rows, with `.fresh` already landed under ruling Q2 and
+`.alert` and `.xlink` where their own callers are. **Five builders in `helpers.js`, one CSS block,
+and all twelve popups rebuilt in them: six vehicles and six stations.**
+
+**Every builder is a pure string function, which is the seam this file already keeps.** Nothing in
+the vocabulary touches Leaflet, so `frontend/popupvocab.test.js` asks each one under `node --test`
+and `tests/e2e/popups.spec.js` measures what the rules draw. The escaping is in the builders, once:
+every text parameter goes through `esc()` there, so no caller composes markup out of feed text, and
+the three parameters that DO take markup say so in their names. That change caught its own first
+bug: `njtRowLabel` used to return pre-escaped text with a leading space, and passing it into a
+builder that escapes would have printed `&amp;amp;` for a headsign with an ampersand in it. It
+returns plain text now and helpers.test.js asserts the single escaping.
+
+**A popup's mark is the map's mark, taken off the marker rather than rebuilt.** `markerMarkHtml`
+(systems/shared.js) reads the icon the marker is wearing and `popupMarkHtml` re-wraps that string at
+the popup's size: the opening `<svg>` tag keeps its viewBox, class and style, its width and height
+are replaced, and every byte after it is copied. So a rail train's popup shows the tag with the
+branch code that train resolved to, the body its provenance earned and the chevron at the bearing it
+is drawn at, without reassembling any of it. Rebuilding would have meant re-deriving each family's
+arguments (`railroadIcon` alone takes a train, its previous row and a clock) and the two would have
+disagreed on exactly the trains whose state is worth looking at, which is finding N6 one surface out.
+
+**One clamp, stated as arithmetic**: a title mark is drawn at the larger of 24 (section 5's
+`.bul.lg`) and the mark's own box, so every family is enlarged except the rail tag, whose 30-unit box
+holds a 13-unit tag with a stem and a head below it. Scaling that box to 24 would draw the tag's two
+blocks at 10.4 units with 7px type, **smaller and thinner than the map draws them**, which is the one
+direction a popup mark must not go. A kicker's or a row's mark asks for 17 (`.bul.sm`) and gets it.
+
+**The subway's plate became a builder, which is the last mark in this app to do so.** It had lived
+inline in `trainIcon` since phase 1; it is `subwayPlateSvg` in helpers.js now, byte for byte (P1f
+pins the drawn markup and did not move), with the one-to-three-character label validation that used
+to sit beside it. The popup could not have drawn its own without being a second answer to "what does
+a subway train look like".
+
+**And the three canvas families get no title mark, which is the rule rather than an omission.** A
+subway station, a PATH station and a ferry dock are `circleMarker`s drawn on a shared canvas: they
+have no element, no icon and no string to borrow, so `markerMarkHtml` returns nothing and their
+titles carry words alone. The rail families' station squares are `L.marker`s and do get one.
+
+**The subway station's kicker carries the routes calling there**, which is what section 5 asks for
+in that slot ("right: route bullets"), drawn by the map's own plate builder at the small size and
+taken from the registry's own `station.routes`, the same list the dot-or-ring is drawn from.
+
+| Surface | kicker | title | rows |
+| --- | --- | --- | --- |
+| subway train | `Subway` | plate + `1 train` | Next stop, Direction, Position, Trip |
+| bus | `Buses` | arrow or dot + `M15` | Bus, Heading, Position |
+| LIRR / MNR train | the served system | tag + branch, or `route 5` | Train, Next stop, Direction, Position |
+| NJ Transit train | `NJ Transit` | tag + route name | Train, To, Next stop, Delay, Position |
+| PATH train | `PATH` | diamond + route name | Next stop, Direction, Position |
+| ferry boat | `NYC Ferry` | hull + route name | Boat, Status, Speed, Position |
+| subway station | `Subway` + its route plates | station name | `.dir` per direction, `.arr` rows |
+| LIRR / MNR station | the served system | square + station name | as above |
+| NJ Transit station | `NJ Transit` | square + station name | one flat `.arr` |
+| PATH station | `PATH` | station name | `.dir` per direction |
+| ferry dock | `NYC Ferry` + its access glyph | dock name | `.dir` per route |
+| AirTrain station | `AirTrain JFK` | square + station name | `.kv`: a branch and its headway |
+
+**No word is coined.** The six system words are `POPUP_SYSTEM_WORDS`, and popupvocab.test.js asserts
+each against the surface it came from: `Subway`, `Buses`, `NJ Transit` and `PATH` are the feed
+strip's own names, `NYC Ferry` is what `ferryBoatName` and the ferry popups already said, and
+`AirTrain JFK` is `airtrainStationName`'s. The railroad's kicker is the train's served `system`
+field, unchanged, which is finding MR5-F20 below. The labels the grid needed beyond the design's
+five rows (Direction, Status, Speed, To, Heading, Bus, Boat) each name a field the popup already
+printed bare, and the five the design names (Train, Next stop, Delay, Position, Trip) are section
+5's own.
+
+**The silence rule generalises from one row to the grid.** `positionLineHtml` became
+`positionWords`, which returns the words a position gets to say and nothing for a fresh reported fix
+(memo D9, ruling Q1), and `popupRowsHtml` drops a row whose value is empty. So the two rules compose
+rather than being written twice: one says when a fact has nothing to say, the other says what a row
+with nothing to say looks like. A ferry with no status, a train running to schedule and a fresh GPS
+fix are all silences now, and each is silent for a reason stated where the reason lives.
+
+**Three helpers ended with no caller and were disposed of the way this stage has disposed of the
+others.** `formatRailroadHead` (the popup's joined head: the kicker and the title want the parts, so
+`railroadHeadParts` returns them and its three cases are pinned against the three strings the
+formatter used to return), `njtDelayLine` (a `<br>` and an escape around `njtDelayText`, both of
+which the grid does) and the `.arr-dir` CSS class (section 5 names `.dir` and draws it differently).
+Each leaves a comment where it was, and the measurement `.arr-dir`'s comment carried, about a
+near-white hairline being invisible on one surface and shouting on the other, moved with it.
+
+**A newline between every cell, which is not formatting.** Adjacent grid cells with no whitespace
+between them concatenate in `textContent`: measured, `crosslink.spec.js` A3c read the Metro-North
+popup as `MNRMHUDHudsonTrain1797`. CSS ignores a whitespace-only text node in a grid or a flex
+container, so a `\n` between cells costs nothing on screen, the pins' reader normalises it away, and
+every assertion that reads a popup as words reads it as words again.
+
+### What the coverage test found once its reader could read the code
+
+P5b's job is "every rider-visible literal in the popup call graph is pinned or has a reason", and
+**its extractor could not read the code this stage wrote.** It was a comment stripper plus a regex
+over the stripped source, and two constructs in the vocabulary broke it, both measured on the first
+run after the builders landed:
+
+- **A template literal nested inside another template's `${...}`.** `popupTitleHtml` returns
+  `` `<div class="pt">${markHtml}${text ? `<span…` : ""}</div>` ``, and the outer match ended at the
+  INNER opening backtick, so the fragment `"${text ?"` was reported as rider prose.
+- **A regex literal carrying a quote.** `popupMarkHtml` strips dimensions with
+  `/\s(?:width|height)="[^"]*"/g`, and the quote inside it opened a string that ran to the next
+  quote in the file, reporting `"); return <span class="` as prose.
+
+Both are the shape that comment stripper was written for in the first place (the apostrophe in
+`railroadPopup`'s own comment, "station's"), which is the argument against a third special case:
+**a regex over a stripped string will always be one construct behind the code.** So the extraction
+is one scanner that tracks its mode, emits one entry per string or template literal with `\u0001`
+where an interpolation was, and scans an interpolation's contents as CODE. It carries the standard
+regex-or-division heuristic and says so; this call graph has no division in it at all.
+
+**And scanning interpolations is what found something real.** The old extractor stopped at every
+`${`, so a literal inside one was invisible, and the first thing the new one reported was
+`"Unknown route"` (from `busPopup`): the title a bus gets when the feed serves no `route_id`. **It is
+rider-visible, it has been in the app since phase 2, and no pin in six stages has ever covered it**,
+because every bus in every fixture carries a route. It is in `UNREACHED_STATES` now with that reason,
+beside the observation that `busName`'s bare "Bus" has the same gap.
+
+**One filter was added and one waiver taken.** A piece containing `="` is an attribute fragment and
+never rider prose: the tag split cannot remove a tag whose own opening arrives as an interpolation,
+which is exactly what `popupMarkHtml` writes, so `" height="` survived with a space in it and read as
+two words. And `"n now"`, the countdown cell's class when a row reads "now", is waived as what it is:
+a class attribute. The alternative was spelling the class as `` `n${… " now" : ""}` ``, which the
+prose filter would drop for having no space, and **hiding a string from the inventory by formatting
+it differently is not the same as declaring it.**
+
+### A4j re-staged, and the geometry that re-staged it
+
+`layout.spec.js` A4j asserts that a popup the rider has dragged is left alone, and its premise is
+that a clearing move EXISTED and was declined. **The premise failed, and the measurement is worth
+keeping**: at 375 after the spec's first growth the popup is 293 wide at x 0..293 and 350 tall at
+y 17..367; the header's bottom edge is 57 and the bottom-right control stack occupies y 453..575 at
+x 289..363. The popup's own right edge overlaps the stack's left edge by four pixels, so a downward
+move is refused the moment the popup's bottom reaches 453. The spec's second growth of 40px put the
+popup at y -23..367, needing an 88px move that lands its bottom at 455: two pixels into the stack,
+with no sideways escape at a width where the popup is 293 of 375. `popupClearingShift` returned null,
+the app declined a move that does not exist, and the spec's own premise assertion said so.
+
+**Re-staged rather than relaxed**, which is what this phase does with a broken premise: the second
+growth is 4px (the popup is already under the chrome after the first, so the second one's whole job is
+to BE a resize the app must decline), the move exists again at 52px, and the two premises are still
+what would catch the next chrome that outgrows this. The number is not written down: it is an overlap
+passed to the same measured helper.
+
+**And it is a finding about the app, recorded rather than fixed**: section 5's 220px content floor
+makes a popup 293 wide at 375, and a popup that tall near the map's left edge has no position that
+clears both the header and the control stack. A twelve-row arrivals board reaches that height without
+any help from a spec. The app's answer today is the clamped autopan of ruling S3, which pans the map
+rather than moving the popup; whether the control stack should be an obstacle the correction is
+allowed to overlap is a question for the operator, not for this stage.
+
+### Two findings for the operator, both about one word per system
+
+Neither is fixed here, because both change a string a rider reads and this stage's own rule is that
+the words are the app's. Both are measured.
+
+| # | Finding | What MR5 did |
+| --- | --- | --- |
+| **F20** | **A popup says the feed's code for an agency where every other surface says the agency's name.** A Metro-North train's popup head has printed the served `system` field since phase 9: "MNR". `railroadSystemLabel` maps that to "Metro-North", and it is what the marker's accessible name says (`railroadTrainName`), what the station panel's row says (`systemLabel` in the registry), and what the feed strip's button says (`FEEDS`). So the same agency is "MNR" in a popup and "Metro-North" in the three places beside it, and MR5's kicker inherits the popup's word because moving a word is not rewording it. **The ferry is the same shape from the other side**: its popups say "NYC Ferry" where the strip and the panel say "Ferry". | **Recorded, not changed.** The fix is one line in each of two builders (`railroadHeadParts` taking `railroadSystemLabel`, and `POPUP_SYSTEM_WORDS.ferry` taking FEEDS' name), and it moves two rider-visible strings, so it wants a ruling: one word per system everywhere, or the popup keeps the agency's own branding while the chrome keeps the short form. |
+| **F21** | **A subway train's popup now says its route twice**, once as the plate the map draws and once in the title's words ("1 train"). The mark is `aria-hidden`, so a screen reader hears it once; an eye reads it twice. | **Recorded, not changed**, because every alternative changes something this stage was told not to: dropping the mark leaves the one family whose popup does not show what the rider clicked, and dropping the word leaves a title that is a bare route id. The rail families do not have this (their tag carries an agency glyph and a branch code, and their title carries the branch NAME), and the bus does not (its mark is an arrow). |
+
+### The mark a popup wears, and the two things measuring it cost
+
+**`markerMarkHtml` reads the marker's icon rather than rebuilding it, and that is the whole of it**:
+four lines in systems/shared.js, one helper for six families, because every vehicle in this app is an
+`L.divIcon` whose html is a string from helpers.js. That is the seam MR3 and MR4 built and this is
+the first stage to read it back.
+
+**`popupMarkHtml` is a re-wrap and not a parse.** It takes the opening `<svg>` tag up to its first
+`>`, strips any width and height (the rail families carry them, the other three take their size from
+the divIcon's box), writes the popup's, and copies every byte after that tag. Width follows the
+viewBox so a mark that is not square keeps its ratio: the ferry's 22x14 hull is 37.71 wide at a
+title's 24. `popupvocab.test.js` asserts the body byte-for-byte across all six builders, that every
+other attribute survives (the bus arrow's `transform: rotate`, the classes the specs read), and that
+neither dimension is written twice.
+
+**The wrapper carries `aria-hidden`, and the subway's plate is why.** Five of the six builders hide
+themselves already; the plate does not, and it carries its route letter as SVG TEXT. Without the
+attribute a screen reader would read "1" before the title says "1 train". Measured in the pins: the
+plate's letter is in every subway surface's `seen` and in none of their `spoken`.
+
+**Two measurements it cost.** The first is the newline separator above. The second is that a popup's
+`textContent` and a rider's reading of it are not the same string, and the pins' reader was already
+right about that: it walks text nodes and joins them with a space, which is why the goldens read as
+sentences while `toContainText` read "MNRMHUDHudsonTrain1797". The specs that read popups as words now
+read them as words because the markup separates its blocks, not because each spec normalises.
+
+### Direction A of the coverage claim, which the vocabulary is what made possible
+
+The stage brief asks the coverage test for two directions, because either alone is circular. P5b is
+direction B (every literal in the popup call graph is pinned or declared). **P5d is direction A: every
+word a rider reads in a popup belongs to a NAMED SLOT.**
+
+`seen` is the universe, a tree walk that knows no class and no list. The slots are a partition read
+through named selectors: the kicker's two sides, the title, a label, a value, a bucket heading, a row
+cell, the footer, an alerts block, a cross-link, a board line, a muted note, an empty-board notice.
+**The assertion is that the partition is total**, so a string rendered into a popup that no slot
+claims comes back as residue. It cannot be satisfied by regenerating a golden, because nothing here is
+pinned.
+
+**Before this stage the test could not have been written.** A popup was a run of `<br>`-joined
+sentences with three classes among them, so "which slot is this word in" had no answer for most of the
+text. It has one for all of it now, and a thirteenth kind of text is something this test reports
+rather than something a reader has to notice.
+
+**Three things it is measured against, because fourteen empty residues read exactly like fourteen
+readers that missed.** The comparator is asserted on its own (an injected word must come back, and a
+word read twice needs two claims); each surface must fill at least two slots; and one unclaimed string
+is INJECTED into a rendered popup through the DOM, with the residue required to name it.
+
+**And writing it found two defects in itself, both of shapes this phase has already paid for.**
+`\s` in a reader interpolated through `inPage` arrives in the page as a bare `s`, so the first draft
+read "Next stop" as "Next  top" and "Position" as "Po ition": the same defect as popups.spec.js D6i's
+first draft, which split colours on "s" and compared NaN to 4.5. And a slot's `textContent` glues
+adjacent text nodes, so the rail tag's agency glyph and branch code read as "LBAB" where the universe
+reads "L" and "BAB": the slots walk text nodes now, the same way the universe does, and differ only in
+which nodes they take. The residue report is what surfaced both.

@@ -247,16 +247,28 @@ for (const rel of ["helpers.js", "systems/subway.js", "stations.js"]) {
 }
 vm.runInContext("var alertsIndex = indexAlerts([]);", sandbox);
 
-// The popup's rows, per direction, as {text, qualifier}: subwayArrivalsHtml writes a
-// direction heading and then its rows joined by <br>.
+/* The popup's rows, per direction, as {html, qualifier}.
+
+   MAP REDESIGN STAGE MR5 CHANGED THE MARKUP THIS READS, and the record it belongs to is
+   unchanged: a lagging contributor's rows still say how old they are and a current one's still say
+   nothing. What moved is where the words sit. subwayArrivalsHtml used to write a heading in
+   `.arr-dir` and then its rows joined by `<br>`; it writes section 5's vocabulary now, a heading in
+   `.dir` and a `.arr` grid of three `<span>` cells per row. So a direction's rows are the cells of
+   the `.arr` that follows its heading, taken three at a time, and the qualifier is still read by
+   its own class. */
 function popupRows(html) {
   const out = {};
-  for (const section of html.split('<div class="arr-dir">').slice(1)) {
+  for (const section of html.split('<div class="dir">').slice(1)) {
     const [name, rest] = section.split("</div>");
-    out[name] = rest.split("<br>").map((row) => {
+    const grid = rest.slice(rest.indexOf('<div class="arr">'));
+    const cells = grid.split("\n").filter((cell) => cell.includes("<span"));
+    const rows = [];
+    for (let i = 0; i < cells.length; i += 3) {
+      const row = cells.slice(i, i + 3).join(" ");
       const m = row.match(/<span class="arr-qualifier">([^<]*)<\/span>/);
-      return { html: row, qualifier: m ? m[1] : "" };
-    });
+      rows.push({ html: row, qualifier: m ? m[1] : "" });
+    }
+    out[name] = rows;
   }
   return out;
 }

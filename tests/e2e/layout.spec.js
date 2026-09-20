@@ -618,7 +618,12 @@ test("A4g. every rendered route colour meets AA where it carries or is text", as
       });
     };
     for (const el of document.querySelectorAll(".arr-badge, .station-chip")) sample(el, "fill");
-    for (const el of document.querySelectorAll(".leaflet-popup-content b, .arr-dir")) sample(el, "ink");
+    /* MR5: A POPUP'S ROUTE-COLOURED INK IS ITS TITLE'S WORDS AND ITS BUCKET HEADINGS. The head
+       was a `<b>` until section 5's vocabulary landed; it is `.pt span` now, and the heading's
+       class is `.dir`. Both spellings of the OLD names are gone from the app, so naming them
+       here would sample nothing and this spec's own non-vacuity premise (an N heading must be in
+       the sample) is what caught that: it reported one ink node where there had been several. */
+    for (const el of document.querySelectorAll(".leaflet-popup-content .pt span, .dir")) sample(el, "ink");
     return out;
   });
 
@@ -968,7 +973,24 @@ test("A4j. once the rider moves the map, the popup correction stands down", asyn
      seconds later throws their position away exactly as before.
      The takeover is a property of the rider's ownership of THIS popup, and it ends when the
      popup does (popupopen resets it), so it must survive every resize in between. */
-  const again = await growAndSettle(page, await growthThatReachesTheChrome(page));
+  /* AND THE SECOND GROWTH IS SMALL, WHICH MR5 MEASURED THE HARD WAY. The popup is already under
+     the chrome after the first growth, so the second one's whole job is to BE a resize the app has
+     to decline; how far it grows only decides whether the premise below can still hold.
+
+     THE MEASUREMENT, at 375 after the first growth: the popup is 293 wide at x 0..293, 350 tall at
+     y 17..367, the header's bottom edge is 57 and the bottom-right control stack occupies
+     y 453..575 at x 289..363. A downward clearing move has to clear the header by the 8px gap, so
+     it is 48px from there; the popup's own right edge overlaps the stack's left edge by four
+     pixels, so the move is refused the moment the popup's bottom reaches 453. Growing by the
+     default 40 put the popup at y -23..367, needing a 88px move that lands its bottom at 455: two
+     pixels into the stack, with no sideways escape at this width (the popup is 293 of 375). So
+     popupClearingShift correctly returned null, the app correctly declined a move that does not
+     exist, and this spec's own premise correctly failed. Four pixels leaves the move at 52 and the
+     bottom at 419, well clear.
+
+     THE NUMBER IS STILL NOT WRITTEN DOWN: it is an overlap passed to the same measured helper, and
+     the two premises below are what would catch a chrome or a popup that outgrows it again. */
+  const again = await growAndSettle(page, await growthThatReachesTheChrome(page, 4));
   expect(again.underTheLegend, "and it must still be declined on the NEXT refresh, and every one after").toBe(true);
   expect(again.clearingMoveExists, "with a clearing move still available the second time").toBe(true);
 });

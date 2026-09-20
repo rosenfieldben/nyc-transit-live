@@ -53,7 +53,7 @@ const {
   withheldFix,
   vanishingFocusMessage,
   vanishingFocusPlan,
-  positionLineHtml,
+  positionWords,
   positionClause,
   popupFreshHtml,
   feedStateWords,
@@ -459,14 +459,17 @@ test("6.3 railroadAtItsStation: a train names its station AND is drawn on it, or
   assert.equal(railroadAtItsStation(null), false);
 });
 
-test("6.3 a popup's position line and a name's clause are one answer, and silent for a fresh fix", () => {
+test("6.3 a popup's position row and a name's clause are one answer, and silent for a fresh fix", () => {
   const fresh = q(row(NOW - 5, "reported"));
   const aged = q(row(NOW - 300, "reported"));
   const sched = q(row(NOW - 5, "placed"));
-  assert.equal(positionLineHtml(fresh), "");
-  assert.equal(positionLineHtml(aged), '<br><span class="popup-sub">live GPS, as of 5m ago</span>');
-  assert.equal(positionLineHtml(sched), '<br><span class="popup-sub">scheduled position (no GPS)</span>');
-  assert.equal(positionLineHtml(null), "");
+  // MR5: positionWords replaces positionLineHtml and returns the WORDS. The markup around them is
+  // section 5's grid now (popupRowsHtml), which drops a row whose value is empty, so the silence
+  // this asserts is the same silence: no words, no row.
+  assert.equal(positionWords(fresh), "");
+  assert.equal(positionWords(aged), "live GPS, as of 5m ago");
+  assert.equal(positionWords(sched), "scheduled position (no GPS)");
+  assert.equal(positionWords(null), "");
   assert.equal(positionClause(fresh), null);
   assert.equal(positionClause(aged), "live GPS, as of 5m ago");
   assert.equal(positionClause(sched), "scheduled position, no GPS");
@@ -700,14 +703,15 @@ test("6.3 every vehicle surface says its position from one answer: the popup's w
     subwayTrainName({ route_id: "1", stop_name: "Times Sq-42 St", direction: "Northbound" }, sched),
     "1 train, next stop Times Sq-42 St, Northbound, scheduled position, no GPS",
   );
+  // MR5: the popup's position is the last ROW of section 5's grid rather than a trailing line.
   assert.match(
     pathTrainPopupHtml({ route_id: "862" }, null, "#d93a30", sched),
-    /<span class="popup-sub">scheduled position \(no GPS\)<\/span>$/,
+    /<div class="k">Position<\/div>\n<div class="v">scheduled position \(no GPS\)<\/div><\/div>\n$/,
   );
   assert.equal(pathTrainName({ route_id: "862" }, null, sched), "PATH route 862, PATH, scheduled position, no GPS");
   assert.match(
     njtTrainPopupHtml({ route_id: "9" }, "Northeast Corridor", "#DD3439", estimate),
-    /<span class="popup-sub">estimated from a prediction<\/span>$/,
+    /<div class="k">Position<\/div>\n<div class="v">estimated from a prediction<\/div><\/div>\n$/,
   );
   assert.equal(
     njtTrainName({ route_id: "9", train_num: "3800" }, "Northeast Corridor", estimate),
@@ -956,7 +960,7 @@ test("6.3 a no-times Metro-North placement is still a placement: the provenance 
   assert.equal(q(train, mnr).compact, "scheduled (no GPS)");
 });
 
-/* ===== MR5, ruling Q1: every popup's position line is positionLineHtml's ==================
+/* ===== MR5, ruling Q1: every popup's position row is positionWords' ======================
 
    THE ONE SURFACE THAT DID NOT USE IT, and the reason this needs a test in this file at all.
    systems/railroad.js's popup rendered `position.compact` from a line of its own,
@@ -981,17 +985,17 @@ test("6.3 a no-times Metro-North placement is still a placement: the provenance 
    comment cannot end it early. */
 const withoutComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
 
-test("MR5 Q1: the railroad popup takes its position line from positionLineHtml, not position.compact", () => {
+test("MR5 Q1: the railroad popup takes its position row from positionWords, not position.compact", () => {
   const src = withoutComments(readFileSync(join(__dirname, "systems", "railroad.js"), "utf8"));
   const body = src.slice(src.indexOf("function railroadPopup("));
   const fn = body.slice(0, body.indexOf("\n}"));
 
-  assert.match(fn, /positionLineHtml\(position\)/, "the railroad popup must render through positionLineHtml");
+  assert.match(fn, /positionWords\(position\)/, "the railroad popup must render through positionWords");
   assert.ok(
     !/position\.compact/.test(fn),
     "the railroad popup still reads position.compact, which is the one surface that chose its own form",
   );
-  // And nowhere else in the app does either: positionLineHtml is the only popup reader of a
+  // And nowhere else in the app does either: positionWords is the only popup reader of a
   // position's words now, and .compact has no popup caller at all.
   for (const rel of ["systems/subway.js", "systems/buses.js", "systems/njt.js", "systems/path.js", "systems/ferry.js"]) {
     const other = withoutComments(readFileSync(join(__dirname, rel), "utf8"));
@@ -1005,7 +1009,7 @@ test("MR5 Q1: the railroad popup takes its position line from positionLineHtml, 
 
 test("MR5 Q1: the two strings the unification changes, and the two it does not", () => {
   const board = { now: 1000, servedAt: 1000, system: "LIRR" };
-  const line = (row, b = board) => positionLineHtml(positionQualifier(row, b));
+  const line = (row, b = board) => positionWords(positionQualifier(row, b));
 
   // ONE: a placed train gains the contract's own word. `.compact` is what the railroad popup used
   // to print and it still exists, so the difference is asserted rather than described.
@@ -1028,7 +1032,7 @@ test("MR5 Q1: the two strings the unification changes, and the two it does not",
 
   // The empty-words guard the ruling asked for, which positionQualifier cannot currently trigger:
   // asserted against a hand-made position so the guard is exercised rather than merely present.
-  assert.equal(positionLineHtml({ kind: "placed", words: "" }), "");
-  assert.equal(positionLineHtml({ kind: "", words: "live GPS" }), "");
-  assert.equal(positionLineHtml(null), "");
+  assert.equal(positionWords({ kind: "placed", words: "" }), "");
+  assert.equal(positionWords({ kind: "", words: "live GPS" }), "");
+  assert.equal(positionWords(null), "");
 });

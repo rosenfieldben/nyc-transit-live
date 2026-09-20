@@ -146,6 +146,32 @@ Shared vocabulary (classes in `reference/map-redesign-v2.css`):
 - `.xlink` cross-link button ("Also here: Jamaica →"): 600 11px, `border 1px --divider`, transparent.
 - `.fresh` footer: `border-top 1px --rule; margin-top 10px; 600 10px uppercase --muted` with a 6×6 square: green `#00933c` "LIVE · UPDATED 12S AGO"; stale → accent text and square, "AS OF 6M AGO · FEED STALE"; schedule-only → gray square, "SCHEDULED HEADWAYS · NO LIVE FEED".
 
+> **Erratum, MR5 (2026-09-20): the vocabulary ships in these class names, with three deviations,
+> each measured.**
+>
+> 1. **A popup's route mark is the MAP's mark, not `.bul.lg` / `.sq` / `.rtag`.** The three DOM
+>    forms above would be a second drawing of a mark this app already builds (the subway's plate,
+>    the rail tag, the bus arrow or dot, the PATH diamond, the ferry hull), and two drawings of one
+>    thing drift the first time either is edited, which is this phase's finding N6 one surface out.
+>    So `popupMarkHtml` re-wraps the string the marker's own icon is wearing, at the size this list
+>    gives (`.bul.lg` 24 in a title, `.bul.sm` 17 in a kicker or a row), with the mark's body copied
+>    byte for byte. The rail tag is drawn at its own 30-unit box instead of 24, because scaling that
+>    box down would draw its blocks at 10.4 units with 7px type, smaller than the map draws them.
+>    A subway station, a PATH station and a ferry dock are canvas circles with no string to borrow,
+>    so their titles carry words alone.
+> 2. **`.arr .now` is `--accent-ink`, not `--accent`.** Measured on the popup's surface, `--accent`
+>    reads 3.47 in the light theme, below the 4.5 a string owes; `--accent-ink` is the token that
+>    exists for that case and reads 5.03 light and 5.44 dark. Same hue, readable lightness. This is
+>    the same correction the `.fresh` footer's words took under ruling Q2.
+> 3. **The footer's three sentences are not typed anywhere** (ruling Q2): "LIVE · UPDATED 12S AGO"
+>    is the sentence memo D9 forbids, so the live state shows its square and says its words only to
+>    a screen reader, and the stale and schedule-only states take the feed strip's own strings from
+>    `feedStateWords`. The square, the rule above it and the metrics are as drawn.
+>
+> The `.kv` row list is as given, plus four labels the app's own fields needed (Direction, Status,
+> Speed, To) and two nouns it already printed (Bus, Boat). Full measurements in
+> `docs/reviews/map-redesign-rounds.md` under Stage MR5.
+
 ---
 
 ## Interactions & behaviour

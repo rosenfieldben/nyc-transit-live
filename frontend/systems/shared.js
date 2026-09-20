@@ -2297,6 +2297,31 @@ function busMarkIcon(color, bearing) {
   });
 }
 
+/* ---------------- MR5: the mark a popup's title wears ----------------
+
+   THE MARKER'S OWN ICON, NOT A SECOND CALL TO THE BUILDER THAT MADE IT. Section 5 draws a
+   route mark before a popup's title, and the strongest form of "the popup shows what the rider
+   clicked" is the markup that marker is wearing right now: the tag with the branch code this
+   train actually has, the chevron at the bearing it is actually drawn at, the hull in the
+   colour its route resolved to. Rebuilding it here would mean reassembling each family's
+   arguments a second time (railroadIcon alone takes a train, its previous row and a clock) and
+   the two would disagree exactly where it matters, on the trains whose state is interesting.
+
+   ONE HELPER FOR SIX FAMILIES, and it is short because every vehicle in this app is an
+   L.divIcon whose html is a string from helpers.js. That is the seam MR3 and MR4 built: the
+   markup is pure, the wrapper is here.
+
+   AND THE THREE CANVAS FAMILIES GET NOTHING, which is the rule rather than an omission: a
+   subway station, a PATH station and a ferry dock are circleMarkers drawn on a shared canvas,
+   they have no element and no icon, and there is no string to borrow. getIcon() on one throws
+   nothing and returns undefined, so those popups print a title with no mark, which is what
+   "the popup's mark is the map's mark" means when the map's mark is a painted circle. */
+function markerMarkHtml(marker) {
+  const icon = marker && typeof marker.getIcon === "function" ? marker.getIcon() : null;
+  const html = icon && icon.options ? icon.options.html : null;
+  return typeof html === "string" ? html : "";
+}
+
 /* A FERRY DOCK'S NAME, which the design asks for ("Docks: ... names shown") and which no
    dock has ever had.
 
@@ -2491,7 +2516,7 @@ function crossLinkHtml(stationKey) {
   // name is IN the accessible name, so "Also here" is never announced on its own.
   return (
     `<button type="button" class="${CROSSLINK_CLASS}" data-station-key="${esc(entry.key)}">` +
-    `Also here: ${esc(entry.name)}</button>`
+    `Also here: ${esc(entry.name)}</button>\n`
   );
 }
 

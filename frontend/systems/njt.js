@@ -194,6 +194,8 @@ async function loadNjtStops() {
           Date.now() / 1000 - (minClockOffset ?? 0),
           (routeId) => njtRouteColor(routeId, njtRouteColors),
           (routeId) => njtRouteName(routeId, njtRouteNames),
+          // MR5: the paper square this station is drawn as, at the title's size.
+          popupMarkHtml(markerMarkHtml(m)),
         ),
     })).addTo(njtStations);
     registerStation({
@@ -325,6 +327,9 @@ function njtTrainPopup(record) {
       // MR5: the surface the popup actually prints on, so readableInk walks the head's colour
       // against it rather than against the white a Leaflet popup used to be.
       popupSurfaceColor(),
+      // And the tag this train is drawn with, off its own marker: the branch code it resolved
+      // to, the body its provenance earned and the head at the bearing it is drawn at.
+      popupMarkHtml(markerMarkHtml(record.marker)),
     ) +
     // A2: the station this train is drawn on, reachable. A train drawn at its stop
     // covers the station square entirely, so without this the departures a rider

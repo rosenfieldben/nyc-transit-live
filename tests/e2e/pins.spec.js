@@ -918,7 +918,12 @@ const popupRoots = (page, name) =>
    equal non-empty reads and survives only because the loading HTML differs from the settled
    HTML on the next read. Extracted TEXT is shorter and more stable than HTML, so a loading
    state is more likely to read equal twice; "Loading arrivals" would then become the pin. */
-async function popupTextOf(page, name) {
+/* MR5: AND `close` IS AN OPTION, because P5d reads a SECOND view of the same open popup. The
+   residue assertion compares a tree walk against a selector read, and the two have to be of one
+   render: closing in between leaves a detached container whose content is no longer the one the
+   walk saw. Everything else still closes, because a world with two popups open is a world where
+   `.leaflet-popup-content` is not unique (the note at the top of tests/e2e/popup.js). */
+async function popupTextOf(page, name, { close = true } = {}) {
   await closeAllPopups(page);
   await page.evaluate(inPage("MARKERS[which]().openPopup();"), name);
   let previous = null;
@@ -935,7 +940,7 @@ async function popupTextOf(page, name) {
   }
   expect(settled, `${name}: the popup never settled (last seen: ${previous})`).not.toBeNull();
   const roots = await popupRoots(page, name);
-  await closeAllPopups(page);
+  if (close) await closeAllPopups(page);
   return { ...settled, roots };
 }
 
@@ -1096,7 +1101,7 @@ const NOT_RIDER_TEXT = {
     "positionQualifier's SPOKEN form, which reaches a marker's accessible name (positionClause) " +
     "and never a popup. a11y's name specs are its witness, not a popup pin",
   /* MR5, ruling Q1. positionQualifier's COMPACT form, which after Q1 has no reader at all: the
-     railroad popup was its only one, and it now renders `.words` through positionLineHtml like
+     railroad popup was its only one, and it now renders `.words` through positionWords like
      every other popup. So no rider reads this string on any surface, which is why it is here rather
      than in UNREACHED_STATES: that map is for text a rider WOULD read in a state no world reaches,
      and there is no such state left for this one.
@@ -1106,8 +1111,17 @@ const NOT_RIDER_TEXT = {
      tidying. Recorded here so the next stage finds it named rather than guesses. */
   "scheduled (no GPS)":
     "positionQualifier's COMPACT form. After MR5's ruling Q1 it has no reader: the railroad popup " +
-    "was the only surface that rendered it and now takes .words through positionLineHtml. The " +
+    "was the only surface that rendered it and now takes .words through positionWords. The " +
     "contract still defines the form and positions.test.js still pins it; no popup prints it",
+  /* MR5: A CLASS NAME THAT READS AS PROSE, which is the one shape the candidate filter cannot tell
+     from rider text. popupArrRowsHtml writes `class="n now"` on the countdown cell of a row that
+     reads "now", and two words with a space in them is exactly what the filter looks for.
+     NOT SPELLED AROUND IN THE BUILDER. The alternative was `class="n${...}"` with " now" as the
+     literal, which the filter would drop for having no space and no capital: that is hiding a
+     string from the inventory by formatting, and the next class name with a space in it would be
+     back. A waiver with a reason is the honest form, and it is cheap: the rider's word "now" is
+     formatCountdown's and IS pinned, on every board world that has a row under 30 seconds. */
+  "n now": "the countdown cell's class attribute when a row reads now, not a string anyone reads",
 };
 
 const UNREACHED_STATES = {
@@ -1131,12 +1145,163 @@ const UNREACHED_STATES = {
   "Not reporting":
     "the footer's state for a feed with no age at all, which is a feed that has never decoded. " +
     "Every fixture feed decodes on its first poll, so no world here reaches it",
+  /* MR5: FOUND BY THE NEW SCANNER, not by a reviewer. The old extractor read a template's
+     literal pieces and stopped at its interpolations, so a string inside one was invisible;
+     this one scans an interpolation as code, and the first thing it found was a rider-visible
+     fallback that has never been pinned in six stages. */
+  "Unknown route":
+    "busPopup's title for a bus the feed served with no route_id. Every bus in every fixture " +
+    "carries one, so no world here reaches it; the marker's own name has the same gap " +
+    "(busName's bare \"Bus\") and takes the same waiver by being the same state",
   Scheduled:
     "the footer's schedule-only state. The footer is a VEHICLE popup's line (it is " +
     "vehicleStaleLine restyled) and the only schedule-only feed is AirTrain, which has no " +
     "vehicles. A rider reads this word on the feed strip's tooltip, where chrome.spec.js D1a " +
     "holds it; no popup can render it",
 };
+
+/* ---------------- P5d: direction A of the coverage claim, the residue assertion ----------------
+
+   THE CLAIM: every word a rider reads in a popup belongs to a NAMED SLOT of section 5's vocabulary.
+   P5b is direction B (every literal in the call graph is pinned or declared); this is direction A,
+   and the brief asks for both because either alone is circular.
+
+   WHY IT IS NOT CIRCULAR. `seen` is the UNIVERSE: every text node in the popup's subtree, harvested
+   by a tree walk that knows no class and no list. The slots are a PARTITION, read through named
+   selectors. The assertion is that the partition is total, so a string rendered into a popup that no
+   slot claims shows up as residue and fails. It cannot be satisfied by regenerating a golden,
+   because it is not a golden comparison at all: nothing here is pinned.
+
+   AND IT IS THE TEST THE VOCABULARY MADE POSSIBLE. Before MR5 a popup was a run of `<br>`-joined
+   sentences with three classes between them, so "which slot is this word in" had no answer for most
+   of the text. Now every word is in a kicker, a title, a label, a value, a bucket heading, a row
+   cell, the footer, an alerts block, a cross-link, a board line, a muted note or an empty-board
+   notice, and a thirteenth kind of text is a thing this test reports rather than a thing a reader
+   has to notice.
+
+   THE HIDDEN WORDS ARE OUT OF BOTH SIDES. `seen` drops `.visually-hidden` (ruling Q2's live footer
+   says "Live · 12s" to a screen reader and nothing to an eye), so the slots drop it too: this is
+   about what a rider READS. */
+const SLOT_READER = `
+  const norm = (s) =>
+    String(s).replace(/[\\u00a0\\u202f]/g, " ").replace(/\\s+/g, " ").trim().replace(/\\b\\d+s\\b/g, "{n}s");
+  /* EVERY BACKSLASH HERE IS DOUBLED, and that is not decoration. This block is a TEMPLATE LITERAL
+     interpolated into another one by inPage, so a single backslash-s arrives in the page as a bare
+     "s" (and NO BACKTICKS IN HERE either, for the reason the reader above says: a pair of them
+     closed this literal early while this very comment was being written, twice in one stage):
+     measured, the first draft of this reader read "Next stop" as "Next  top" and "Position" as
+     "Po ition", because /s+/g replaced every letter s with a space. The same defect is recorded in
+     the MR5 ledger against popups.spec.js D6i, whose first draft split colours on "s" and compared
+     NaN to 4.5 forever. The residue report is what caught it here, which is the coverage test
+     working on itself.
+     THE NAMED SLOTS, which are section 5's classes plus the four the app has always had (a board's
+     freshness line, a muted note, an empty-board notice, a cross-link). NO BACKTICKS IN HERE: this
+     block is inside one. */
+  const SLOTS = {
+    kicker: ".pk > span",
+    title: ".pt",
+    label: ".kv .k",
+    value: ".kv .v",
+    bucket: ".dir",
+    cell: ".arr > span",
+    footer: ".fresh",
+    alert: ".alert-block",
+    crosslink: ".popup-crosslink",
+    board: ".popup-stale",
+    note: ".popup-sub",
+    empty: ".arr-none",
+  };
+  /* THE SLOT'S TEXT IS ITS TEXT NODES, WALKED, not its textContent, and the rail tag is why: its
+     agency glyph and its branch code are two adjacent <text> elements, so textContent reads "LBAB"
+     where the universe's walk reads "L" and "BAB". Both sides harvest the same way and differ only
+     in WHICH nodes they take, which is what makes this a partition of the universe rather than a
+     second reading of it. */
+  const walk = (root) => {
+    const out = [];
+    const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let n = w.nextNode(); n; n = w.nextNode()) {
+      const t = norm(n.nodeValue);
+      if (t) out.push(t);
+    }
+    return out.join(" ");
+  };
+  const visible = content.cloneNode(true);
+  for (const h of visible.querySelectorAll(".visually-hidden")) h.remove();
+  const out = {};
+  for (const name of Object.keys(SLOTS)) {
+    out[name] = [...visible.querySelectorAll(SLOTS[name])].map(walk).filter(Boolean);
+  }
+  return out;
+`;
+
+const popupSlots = (page, name) => page.evaluate(inPage(CONTENT_OF_MARKER + SLOT_READER), name);
+
+/* The residue, as a WORD MULTISET rather than a string comparison, because the slots are read in
+   selector order and a popup's text nodes in document order, and the two differ wherever a slot
+   nests (a train number inside a row's middle cell, a badge inside its first). What the claim needs
+   is that no word is left over, which is a counting question. */
+function wordResidue(seen, claimed) {
+  const pool = new Map();
+  for (const w of claimed.split(" ").filter(Boolean)) pool.set(w, (pool.get(w) ?? 0) + 1);
+  const left = [];
+  for (const w of seen.split(" ").filter(Boolean)) {
+    const n = pool.get(w) ?? 0;
+    if (n > 0) pool.set(w, n - 1);
+    else left.push(w);
+  }
+  return left;
+}
+
+test("P5d. every word a rider reads in a popup belongs to a named slot (direction A)", async ({ page }) => {
+  await boot(page);
+  // THE COMPARATOR FIRST, because a residue function that always returns [] would make every
+  // assertion below vacuous, and "a test that cannot fail" is one of the four shapes this phase
+  // keeps producing. One word injected into the universe must come back as residue, and a word
+  // claimed twice but read once must not.
+  expect(wordResidue("a b c", "a b c")).toEqual([]);
+  expect(wordResidue("a zzz b", "a b")).toEqual(["zzz"]);
+  expect(wordResidue("a a", "a")).toEqual(["a"], "counting, not membership: two reads need two claims");
+  expect(wordResidue("a", "a a")).toEqual([]);
+
+  for (const which of STOCK_SURFACES) {
+    // BOTH VIEWS OF ONE RENDER, which is why the popup is left open across the two reads.
+    const read = await popupTextOf(page, which, { close: false });
+    const slots = await popupSlots(page, which);
+    await closeAllPopups(page);
+    expect(slots, `${which}: the slot reader found no popup`).not.toBeNull();
+    const claimed = Object.values(slots).flat().join(" ");
+    // A PREMISE PER SURFACE: at least two slots read something. A reader whose selectors all
+    // missed would claim nothing, and then every word would be residue, which fails loudly; a
+    // reader that claimed everything through one catch-all slot would pass and prove nothing.
+    const filled = Object.entries(slots).filter(([, v]) => v.length);
+    expect(filled.length, `${which}: only ${filled.length} slots read anything`).toBeGreaterThanOrEqual(2);
+    expect(
+      wordResidue(read.seen, claimed),
+      `${which}: text in the popup that no named slot claims. Either it belongs in one of section ` +
+        "5's classes, or the vocabulary needs a slot for it and this test needs to know its name.",
+    ).toEqual([]);
+  }
+
+  /* AND THE WHOLE THING PROVED AGAINST A REAL POPUP, not only against the comparator. Fourteen
+     empty residues read exactly like fourteen readers that missed, which is the shape this phase
+     keeps finding, so one unclaimed string is INJECTED into a rendered popup and the machinery has
+     to report it. The injection goes in through the DOM rather than through a builder, so nothing
+     in the app has to be broken to prove the test works. */
+  await page.evaluate(inPage(`
+    MARKERS[which]().openPopup();
+    const el = MARKERS[which]().getPopup().getElement();
+    el.querySelector(".leaflet-popup-content").appendChild(
+      Object.assign(document.createElement("div"), { textContent: "zzq unclaimed" }),
+    );
+  `), "bus");
+  const injected = await popupStrings(page, "bus");
+  const injectedSlots = await popupSlots(page, "bus");
+  expect(
+    wordResidue(injected.seen, Object.values(injectedSlots).flat().join(" ")),
+    "a string in a popup that no slot claims must be reported, or this test proves nothing",
+  ).toEqual(["zzq", "unclaimed"]);
+  await closeAllPopups(page);
+});
 
 test("P5b. every rider-visible literal in the popup call graph is pinned, or has a reason", async ({ page }) => {
   await boot(page);
@@ -1149,29 +1314,74 @@ test("P5b. every rider-visible literal in the popup call graph is pinned, or has
     .toBeGreaterThanOrEqual(8);
 
   const inventory = await page.evaluate((roots) => {
-    /* COMMENTS COME OUT FIRST, with a character scanner rather than a regex, and that is not
-       fastidiousness: measured on the first run, `railroadPopup`'s own comment contains the
-       word "station's", whose apostrophe opened a single-quoted string to a naive scanner
-       that then ran across three template literals and reported four lines of prose as
-       rider text. `frontend/families.test.js` learned the same lesson on the same shape and
-       its stripper is the model for this one. */
-    const strip = (src) => {
-      let out = "";
-      let mode = null;
+    /* ONE SCANNER THAT READS THE SOURCE MODE BY MODE, and it replaced a comment stripper plus a
+       regex in MR5, because that pair could not read the code this stage wrote.
+
+       WHAT IT GOT WRONG, both measured on this run. A template literal nested inside another
+       template's `${...}` ended the outer match at the INNER's opening backtick, so
+       popupTitleHtml reported the fragment "${text ?" as rider prose. And a regex literal
+       carrying a quote (popupMarkHtml's /\s(?:width|height)="[^"]*"/g) opened a string that ran
+       to the next quote in the file, reporting "); return <span class=" as prose. Both are the
+       same false-positive shape as the apostrophe in railroadPopup's comment that this test was
+       written for ("station's"), which is why the answer is not another special case: a scanner
+       that tracks which mode it is in reads all four correctly, and a regex over a stripped
+       string will always be one construct behind the code.
+
+       WHAT IT EMITS: one entry per string or template literal, with \u0001 where an
+       interpolation was, so prose is broken at the boundaries a value fills rather than glued
+       across them. An interpolation's contents are scanned as CODE, so a literal inside one is
+       found rather than skipped (which is how "Unknown route" is reached at all: it lives in
+       `${esc(b.route_id ?? "Unknown route")}`).
+
+       THE REGEX-OR-DIVISION HEURISTIC is the standard one and it is honest about being one: a
+       `/` opens a regex when the last significant character was an operator, an opening bracket
+       or a comma, and divides otherwise. Every regex in this call graph follows `(`, `=`, `,`
+       or `.replace(`, and there is no division in it at all, so the heuristic is measured
+       against the only cases that exist here. */
+    const literals = (src) => {
+      const out = [];
+      const frames = [{ kind: "code", brace: 0, interp: false }];
+      const top = () => frames[frames.length - 1];
+      let prev = "";
       for (let i = 0; i < src.length; i++) {
         const c = src[i], d = src[i + 1];
-        if (mode === null) {
-          if (c === "/" && d === "/") { mode = "line"; i++; continue; }
-          if (c === "/" && d === "*") { mode = "block"; i++; continue; }
-          if (c === '"' || c === "'" || c === "`") mode = c;
-          out += c;
+        const f = top();
+        if (f.kind === "line") { if (c === "\n") frames.pop(); continue; }
+        if (f.kind === "block") { if (c === "*" && d === "/") { frames.pop(); i++; } continue; }
+        if (f.kind === "regex" || f.kind === "class") {
+          if (c === "\\") { i++; continue; }
+          if (f.kind === "regex" && c === "[") { f.kind = "class"; continue; }
+          if (f.kind === "class" && c === "]") { f.kind = "regex"; continue; }
+          if (f.kind === "regex" && c === "/") { frames.pop(); prev = "x"; }
           continue;
         }
-        if (mode === "line") { if (c === "\n") { mode = null; out += c; } continue; }
-        if (mode === "block") { if (c === "*" && d === "/") { mode = null; i++; } continue; }
-        out += c;
-        if (c === "\\") { out += src[++i] ?? ""; continue; }
-        if (c === mode) mode = null;
+        if (f.kind === "str") {
+          if (c === "\\") { f.buf += src[++i] ?? ""; continue; }
+          if (c === f.quote) { out.push(f.buf); frames.pop(); prev = "x"; continue; }
+          f.buf += c;
+          continue;
+        }
+        if (f.kind === "tpl") {
+          if (c === "\\") { f.buf += src[++i] ?? ""; continue; }
+          if (c === "$" && d === "{") { f.buf += "\u0001"; frames.push({ kind: "code", brace: 0, interp: true }); i++; continue; }
+          if (c === "`") { out.push(f.buf); frames.pop(); prev = "x"; continue; }
+          f.buf += c;
+          continue;
+        }
+        // code
+        if (c === "/" && d === "/") { frames.push({ kind: "line" }); i++; continue; }
+        if (c === "/" && d === "*") { frames.push({ kind: "block" }); i++; continue; }
+        if (c === "/") { frames.push(/[(,=:[!&|?{};+\-*%~^<>]/.test(prev) || prev === "" ? { kind: "regex" } : { kind: "divide" }); if (top().kind === "divide") frames.pop(); prev = "/"; continue; }
+        if (c === '"' || c === "'") { frames.push({ kind: "str", quote: c, buf: "" }); continue; }
+        if (c === "`") { frames.push({ kind: "tpl", buf: "" }); continue; }
+        if (c === "{") { f.brace++; prev = "{"; continue; }
+        if (c === "}") {
+          if (f.brace > 0) { f.brace--; prev = "}"; continue; }
+          if (f.interp) { frames.pop(); prev = "x"; continue; }
+          prev = "}";
+          continue;
+        }
+        if (!/\s/.test(c)) prev = c;
       }
       return out;
     };
@@ -1197,11 +1407,10 @@ test("P5b. every rider-visible literal in the popup call graph is pinned, or has
        two or more letters is a candidate. */
     const out = {};
     for (const { name, src } of seen.values()) {
-      const strings = [...strip(src).matchAll(/`([^`\\]*(?:\\.[^`\\]*)*)`|"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'/g)]
-        .map((m) => m[1] ?? m[2] ?? m[3] ?? "");
-      for (const raw of strings) {
-        const noInterp = raw.replace(/\$\{[^}]*\}/g, "\u0001");
-        for (const piece of noInterp.split(/<[^>]*>|\u0001/)) {
+      for (const raw of literals(src)) {
+        // The scanner already marked every interpolation with \u0001, so the split below breaks
+        // prose at those boundaries and at every tag.
+        for (const piece of raw.split(/<[^>]*>|\u0001/)) {
           /* ENTITIES ARE DECODED, because the builder writes `&middot;` and the rider reads
              `\u00b7`: a literal compared against rendered text has to be in the rider's
              alphabet or every entity-bearing string reports as uncovered. */
@@ -1220,6 +1429,12 @@ test("P5b. every rider-visible literal in the popup call graph is pinned, or has
              them identifiers, and a waiver list that long IS the escape hatch. */
           if (!/[A-Za-z]{2}/.test(t)) continue;
           if (!/ /.test(t) && !/[A-Z]/.test(t)) continue;
+          /* AND AN ATTRIBUTE FRAGMENT IS NOT PROSE, which MR5's mark wrapper is why. The tag
+             split above removes whole tags, and it cannot remove a tag whose own opening is an
+             interpolation: popupMarkHtml writes ` width="${w}" height="${h}"` against an <svg>
+             tag that arrives as a value, so the piece `" height="` survived with a space in it
+             and read as two words. No string a rider reads contains `="`. */
+          if (/="/.test(t)) continue;
           (out[t] ??= new Set()).add(name);
         }
       }

@@ -137,6 +137,25 @@ const STOCK_SURFACES = [
   "ferry boat", "ferry dock", "airtrain station",
 ];
 
+/* MR5: A MARK IS ONE TOKEN WHEN A SPEC PINS MARKUP, and the reason is length. Section 5 draws the
+   map's own mark before a popup's title and beside a subway station's kicker, and one subway plate
+   is four hundred characters of SVG: a spec that pins a whole popup's innerHTML would become
+   unreadable, and a reader could not tell the assertion from the drawing.
+
+   THE TOKEN KEEPS THE MARK'S OWN TEXT, so [mark 1] and [mark 2] are different and a board that
+   drew the wrong route still fails. The bytes of a mark are pinned where marks live: pins.spec.js
+   P1f for the drawn plate, frontend/popupvocab.test.js for the re-wrap that sizes it.
+
+   THE SAME HELPER EXISTS IN frontend/boards.test.js for the node tier's board pins, and the two
+   are deliberately not shared: nothing else in this file is importable from a node unit test, and a
+   four-line normaliser copied with its reason is cheaper than a module that exists to be shared by
+   two tiers. If a third tier needs it, it moves. */
+const withoutMarks = (html) =>
+  html.replace(/<span class="pmark"[^>]*>[\s\S]*?<\/span>/g, (svg) => {
+    const label = /<text[^>]*>([^<]*)<\/text>/.exec(svg);
+    return `[mark ${label ? label[1] : "?"}]`;
+  });
+
 module.exports = {
   expectPopupState,
   popupOpen,
@@ -144,5 +163,6 @@ module.exports = {
   MARKER_TABLE,
   inPage,
   closeAllPopups,
+  withoutMarks,
   STOCK_SURFACES,
 };

@@ -330,7 +330,9 @@ test("D6h. a popup open across a theme swap re-inks its head, rather than keepin
     page.evaluate(
       inPage(`
         const el = MARKERS[which]().getPopup().getElement();
-        const head = el.querySelector(".leaflet-popup-content b");
+        // MR5: the head is section 5's title, whose WORDS carry the route ink (the row does not,
+        // so the mark beside them keeps its own paints). popupTitleHtml says why.
+        const head = el.querySelector(".leaflet-popup-content .pt span[style]");
         if (!head) return null;
         const route = trains.get("sub-1").latest.route_id;
         return {

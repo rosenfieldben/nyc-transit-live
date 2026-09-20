@@ -23,16 +23,11 @@
    24x24 hit target and its bottom anchoring are style.css's and are unchanged. */
 function trainIcon(train) {
   const route = train.route_id ?? "";
-  const label = /^[A-Za-z0-9]{1,3}$/.test(route) ? route : "?";
   const color = lineColor(route);
-  const textColor = readableTextOn(color);
-  const html = `<svg viewBox="0 0 18 18">
-      <rect x="0" y="0" width="18" height="18" rx="4" style="fill: var(--paper)" opacity="0.95"/>
-      <rect x="1.5" y="1.5" width="15" height="15" rx="3" fill="${color}"/>
-      <text x="9" y="9.5" text-anchor="middle" dominant-baseline="central"
-            font-size="${label.length > 1 ? 8.5 : 10.5}" font-weight="800"
-            font-family="Archivo, system-ui, sans-serif" fill="${textColor}">${esc(label)}</text>
-    </svg>`;
+  // MR5: the markup is helpers.js's subwayPlateSvg now, byte for byte, because the popup's
+  // title draws this same plate and two copies of a mark is the one thing MR3's rail tag and
+  // MR4's four wrappers were built to avoid. The label's validation went with it.
+  const html = subwayPlateSvg(route, color, readableTextOn(color));
   // A2: OFFSET, not centred, so the square floats above its point instead of covering
   // the station dot underneath. A subway train's position is DERIVED (placed at its
   // stop by stop_id, or interpolated between two stops), so moving the drawing a few
@@ -54,18 +49,30 @@ function trainPopup(record) {
   const position = subwayPosition(t);
   return (
     routeAlertsBlock("subway", t.route_id) +
-    `<b style="color:${readableInk(lineColor(t.route_id), popupSurfaceColor())}">${esc(t.route_id ?? "?")} train</b>` +
-    `<br>Next stop: ${esc(t.stop_name ?? t.stop_id ?? "unknown")}` +
-    (t.direction ? `<br>${esc(t.direction)}` : "") +
-    // 6.3: HOW THIS POSITION WAS OBTAINED, a word this popup never carried. Every subway
-    // train is placed from its trip update (feeds/subway.py), so its provenance is
-    // `placed` and section 3.2's rule (a) says a surface carries its word whenever the
-    // provenance is not `reported`: "scheduled position (no GPS)", with its age once the
-    // clock that dates it (the group header, or the joined vehicle's) is past OBS_FRESH_S.
-    positionLineHtml(position) +
-    `<br><span class="popup-sub">Trip ${esc(t.trip_id ?? "?")}</span>` +
+    // MR5: section 5's grammar, and the words are the ones this popup has always printed. The
+    // kicker is the feed strip's own name for this feed (POPUP_SYSTEM_WORDS), the title is the
+    // head with the plate the map is drawing for THIS train before it (markerMarkHtml), and the
+    // four lines that were `<br>`-joined sentences are the design's label/value rows.
+    popupKickerHtml({ left: POPUP_SYSTEM_WORDS.subway }) +
+    popupTitleHtml({
+      markHtml: popupMarkHtml(markerMarkHtml(record.marker)),
+      text: `${t.route_id ?? "?"} train`,
+      color: readableInk(lineColor(t.route_id), popupSurfaceColor()),
+    }) +
+    popupRowsHtml([
+      { k: "Next stop", v: t.stop_name ?? t.stop_id ?? "unknown" },
+      { k: "Direction", v: t.direction ?? "" },
+      // 6.3: HOW THIS POSITION WAS OBTAINED, a word this popup never carried. Every subway
+      // train is placed from its trip update (feeds/subway.py), so its provenance is
+      // `placed` and section 3.2's rule (a) says a surface carries its word whenever the
+      // provenance is not `reported`: "scheduled position (no GPS)", with its age once the
+      // clock that dates it (the group header, or the joined vehicle's) is past OBS_FRESH_S.
+      // The row is omitted where the words are empty, which is the silence rule ruling Q1 kept.
+      { k: "Position", v: positionWords(position) },
+      { k: "Trip", v: t.trip_id ?? "?" },
+    ]) +
     // C2 restyled as MR5's footer (ruling Q2): how old this train's own FEED GROUP is, when that
-    // group has gone stale and the line above has not already said so. A dimmed marker says "not
+    // group has gone stale and the rows above have not already said so. A dimmed marker says "not
     // current"; this says how far from current. The group's age and not the source's, which is the
     // measured reason popupFreshLine takes an age rather than resolving one.
     popupFreshLine(subwaySystemAge(t), position)
@@ -427,26 +434,40 @@ function subwayArrivalsHtml(station, body) {
   // R1 age line did and speaks only for an empty board; empty while fresh, so a live
   // popup is unchanged.
   const board = boardFreshness("subway", body, now);
+  /* MR5: section 5's kicker and title, and the kicker's right-hand slot carries the station's
+     own route marks, which is what the design asks for there ("right: route bullets"). They are
+     the MAP's plates at the design's small size (popupMarkHtml at POPUP_MARK_ROW), not a second
+     drawing of a bullet: one builder for the train on the map and the route on the board.
+
+     THE ROUTES ARE THE REGISTRY'S, which is the same list the station's dot-or-ring is drawn from
+     (stationMarkStyle), so a station whose feed serves no routes shows no marks rather than a
+     guess. */
+  const plates = (station.routes ?? [])
+    .map((route) => popupMarkHtml(subwayPlateSvg(route, lineColor(route), readableTextOn(lineColor(route))), POPUP_MARK_ROW))
+    .join("");
   let html =
-    `<b>${esc(station.name ?? station.id)}</b>` +
+    popupKickerHtml({ left: POPUP_SYSTEM_WORDS.subway, rightHtml: plates }) +
+    popupTitleHtml({ text: station.name ?? station.id }) +
     boardLineHtml(boardSystemLine(board, stationArrivalsRows(body)));
   for (const dir of ["Northbound", "Southbound"]) {
     const arrivals = body.directions?.[dir] ?? [];
-    html += `<div class="arr-dir">${dir}</div>`;
+    html += popupDirHtml(dir);
     if (!arrivals.length) {
-      html += `<div class="arr-none">No trains</div>`;
+      html += `<div class="arr-none">No trains</div>\n`;
       continue;
     }
-    html += arrivals
-      .map((a) => {
-        const route = a.route_id ?? "";
-        const textColor = readableTextOn(lineColor(route));
-        const badge =
-          `<span class="arr-badge" style="background:${lineColor(route)};color:${textColor}">` +
-          `${esc(route || "?")}</span>`;
-        return `${badge} ${esc(formatCountdown(a.arrival - now))}${qualifierHtml(arrivalQualifier(a, board))}`;
-      })
-      .join("<br>");
+    html += popupArrRowsHtml(
+      arrivals.map((a) => {
+        const color = lineColor(a.route_id ?? "");
+        return {
+          markHtml:
+            `<span class="arr-badge" style="background:${color};color:${readableTextOn(color)}">` +
+            `${esc(a.route_id || "?")}</span>`,
+          extraHtml: qualifierHtml(arrivalQualifier(a, board)),
+          countdown: formatCountdown(a.arrival - now),
+        };
+      }),
+    );
   }
   return html;
 }

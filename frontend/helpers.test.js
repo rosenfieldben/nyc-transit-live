@@ -62,7 +62,6 @@ const {
   positionQualifier,
   orderedRailroadBuckets,
   railroadArrivalsHtml,
-  formatRailroadHead,
   PATH_BUCKET_ORDER,
   PATH_FALLBACK_COLOR,
   PATH_ROUTE_MAX_SLICE,
@@ -275,9 +274,14 @@ test("pathTrainPopupHtml shows placement fields, never the unstable trip id", ()
   const position = positionQualifier({ observed_at: 995, provenance: "placed" }, { now: 1000, servedAt: 1000, system: "path" });
   const html = pathTrainPopupHtml(train, "Newark - World Trade Center", "#d93a30", position);
   assert.ok(html.includes("Newark - World Trade Center"));
-  assert.ok(html.includes("Next stop: Journal Square"));
-  assert.ok(html.includes("To New Jersey"));
-  assert.ok(html.includes("scheduled position (no GPS)"));
+  /* MR5: THE FACTS ARE SECTION 5's LABEL/VALUE ROWS, so "Next stop: Journal Square" is a label
+     cell and a value cell rather than one sentence. The words are the same words; what moved is
+     the colon, which the grid draws as a column. */
+  assert.ok(html.includes('<div class="k">Next stop</div>\n<div class="v">Journal Square</div>'));
+  assert.ok(html.includes('<div class="k">Direction</div>\n<div class="v">To New Jersey</div>'));
+  assert.ok(html.includes('<div class="k">Position</div>\n<div class="v">scheduled position (no GPS)</div>'));
+  // And the kicker is the feed strip's own word for this feed, which is where "PATH" moved to.
+  assert.ok(html.startsWith('<div class="pk"><span>PATH</span>'));
   /* MR5: THE HEAD'S INK IS THE ROUTE COLOUR WALKED AGAINST THE POPUP'S OWN SURFACE, not the
      published colour and not the colour walked against white. This used to assert the raw
      `#d93a30`, which passed because PATH's red happens to clear 4.5 on white and readableInk
@@ -342,13 +346,9 @@ test("pathArrivalsHtml renders No trains for an empty directions dict and escape
   assert.ok(hostile.includes(PATH_FALLBACK_COLOR));
 });
 
-test("formatRailroadHead prefers the route name, falls back to route id, then system", () => {
-  assert.equal(formatRailroadHead("LIRR", "1", "Babylon Branch"), "LIRR · Babylon Branch");
-  assert.equal(formatRailroadHead("LIRR", "1", null), "LIRR route 1");
-  assert.equal(formatRailroadHead("MNR", null, null), "MNR");
-  // Returns plain text (the caller escapes); it does not itself inject markup.
-  assert.equal(formatRailroadHead("MNR", "3", "New Haven"), "MNR · New Haven");
-});
+// formatRailroadHead's test WENT WITH IT, to popupvocab.test.js: MR5 replaced the joined head with
+// railroadHeadParts (a kicker and a title), and that file asserts the parts AND joins them back
+// into the three strings this test used to assert, so the words are still pinned.
 
 test("esc escapes all HTML-significant characters", () => {
   assert.equal(esc(`<b a="1" b='2'>&`), "&lt;b a=&quot;1&quot; b=&#39;2&#39;&gt;&amp;");
@@ -961,16 +961,17 @@ test("airtrainStationPopupHtml: scheduled label + subhead, single-branch station
   const html = airtrainStationPopupHtml(station, AIRTRAIN_ROUTES, 720); // 12:00 -> 4 min
   assert.match(html, /Jamaica Station-Station D/);
   assert.match(html, /scheduled service \(no live tracking\)/);
-  assert.match(html, /Jamaica: every ~4 min/);
-  assert.match(html, /\(scheduled\)/);
+  // MR5: a branch is a label and its headway is the value, in section 5's grid. The colon the
+  // sentence used to carry is the column between them; "(scheduled)" stays inside the value.
+  assert.match(html, /<div class="k">Jamaica<\/div>\n<div class="v">every ~4 min \(scheduled\)<\/div>/);
   assert.doesNotMatch(html, /Howard Beach/); // 160565 is served only by the Jamaica branch
 });
 
 test("airtrainStationPopupHtml: multi-branch station lists every serving branch", () => {
   const station = { id: "160564", name: "Federal Circle-Station C" };
   const html = airtrainStationPopupHtml(station, AIRTRAIN_ROUTES, 720);
-  assert.match(html, /Jamaica: every ~4 min/);
-  assert.match(html, /Howard Beach: every ~4 min/);
+  assert.match(html, /<div class="k">Jamaica<\/div>\n<div class="v">every ~4 min \(scheduled\)<\/div>/);
+  assert.match(html, /<div class="k">Howard Beach<\/div>\n<div class="v">every ~4 min \(scheduled\)<\/div>/);
 });
 
 test("airtrainStationPopupHtml: null band renders a fallback, never 'undefined'", () => {
@@ -993,9 +994,12 @@ test("airtrainStationPopupHtml escapes station and route names", () => {
 test("airtrainStationPopupHtml uses no live-countdown markup", () => {
   const station = { id: "160564", name: "Federal Circle" };
   const html = airtrainStationPopupHtml(station, AIRTRAIN_ROUTES, 720);
-  // None of the CSS classes the live-arrivals countdown popups use.
-  for (const cls of ["arr-dir", "arr-badge", "arr-none"]) {
-    assert.ok(!html.includes(cls), `must not use live-arrivals class ${cls}`);
+  /* None of the CSS classes the live-arrivals countdown popups use. MR5 renamed the bucket heading
+     from .arr-dir to section 5's .dir, and this asks for the class ATTRIBUTE rather than the bare
+     word: "dir" is three letters that occur inside ordinary prose, and a substring test on it would
+     pass or fail for reasons that have nothing to do with a heading. */
+  for (const cls of ["dir", "arr", "arr-badge", "arr-none"]) {
+    assert.ok(!html.includes(`class="${cls}"`), `must not use live-arrivals class ${cls}`);
   }
 });
 
@@ -1524,9 +1528,11 @@ test("ferryBoatPopupHtml shows label, route name, status, and under-way speed in
   assert.ok(html.includes(readableInk("#00839c", POPUP_SURFACE_FALLBACK)));
   assert.ok(contrastRatio(readableInk("#00839c", POPUP_SURFACE_FALLBACK), POPUP_SURFACE_FALLBACK) >= 4.5);
   assert.ok(!html.includes(`color:${readableInk("#00839c")}"`), "the head must not be inked against white");
-  assert.ok(html.includes("Boat H201"));
-  assert.ok(html.includes("Under way"));
-  assert.ok(html.includes("NYC Ferry"));
+  // MR5: section 5's rows. "Boat H201" was one line with the noun in front of the label; it is a
+  // label cell and a value cell now, and "NYC Ferry" is the kicker the popup opens with.
+  assert.ok(html.includes('<div class="k">Boat</div>\n<div class="v">H201</div>'));
+  assert.ok(html.includes('<div class="k">Status</div>\n<div class="v">Under way</div>'));
+  assert.ok(html.startsWith('<div class="pk"><span>NYC Ferry</span>'));
   // Under way above the floor: speed shown in knots (H4). 6.5 m/s = 12.6 kn.
   assert.ok(html.includes("12.6 kn"));
   // The raw m/s value is never surfaced.
@@ -1540,8 +1546,9 @@ test("ferryBoatPopupHtml omits speed for a docked boat", () => {
     "#00839c",
   );
   assert.ok(html.includes("At dock"));
-  // Docked boat: no speed line at all (dock jitter is noise, not motion).
+  // Docked boat: no speed row at all (dock jitter is noise, not motion).
   assert.ok(!html.includes("kn"));
+  assert.ok(!html.includes(">Speed<"));
 });
 
 test("ferryBoatPopupHtml labels a null-route boat Unassigned and omits an unknown status", () => {
@@ -1551,9 +1558,12 @@ test("ferryBoatPopupHtml labels a null-route boat Unassigned and omits an unknow
   // heading text. Its use as a chip FILL is unchanged and covered separately. MR5: against the
   // popup's own surface rather than white, so #60737d becomes #5a6c75.
   assert.ok(html.includes(readableInk(FERRY_FALLBACK_COLOR, POPUP_SURFACE_FALLBACK)));
-  assert.ok(html.includes("Boat H099"));
-  // Unknown status -> no status line at all (ferryStatusText returned null).
+  assert.ok(html.includes('<div class="k">Boat</div>\n<div class="v">H099</div>'));
+  // Unknown status -> no status ROW at all (ferryStatusText returned null, and the grid drops a
+  // row with no value). Asserted on the label as well as on the words, because a row printed with
+  // an empty value would still say "Status" to a rider.
   assert.ok(!html.includes("At dock") && !html.includes("Under way"));
+  assert.ok(!html.includes(">Status<"), "a boat with no status says nothing about its status");
 });
 
 test("ferryBoatPopupHtml escapes hostile route name and label", () => {
@@ -2245,7 +2255,7 @@ test("C2 / MR5 Q2: a board's age line and a vehicle's footer are two surfaces, a
      sources (a board's arrivals against a feed's poll), which is the argument for letting them read
      differently; that they differ only in a capital letter is the argument against. Both forms are
      pinned here so whichever way a later stage resolves it, it does so deliberately. */
-  assert.equal(boardLineHtml("as of 4m ago"), '<div class="popup-stale">as of 4m ago</div>');
+  assert.equal(boardLineHtml("as of 4m ago"), '<div class="popup-stale">as of 4m ago</div>\n');
   assert.equal(boardLineHtml(null), "");
   assert.equal(feedStateWords({ state: "stale", age: 240 }), "As of 4m ago");
   // The divergence, stated as an assertion so it cannot close silently either:
@@ -3716,8 +3726,9 @@ test("AMENDMENT A: a route with no line still gets a colour and a head, never a 
     positionQualifier({ observed_at: 995, provenance: "placed" }, { now: 1000, servedAt: 1000, system: "njt" }),
   );
   assert.match(html, /NJ Transit route 17/);
-  assert.match(html, /Train 1701/);
-  assert.match(html, /To Meadowlands/);
+  // MR5: section 5's rows, so the noun in front of each fact is a label cell now.
+  assert.match(html, /<div class="k">Train<\/div>\n<div class="v">1701<\/div>/);
+  assert.match(html, /<div class="k">To<\/div>\n<div class="v">Meadowlands<\/div>/);
   assert.match(html, /scheduled position \(no GPS\)/);
   assert.doesNotMatch(html, /undefined|null/, "a missing route must not leak a placeholder word");
   // The accessible name takes the same fallback, so the marker a screen reader
@@ -3829,12 +3840,16 @@ test("njtTrainPopupHtml and njtTrainName word one train the same way", () => {
   };
   const position = positionQualifier({ ...train, observed_at: 995, provenance: "placed" }, { now: 1000, servedAt: 1000, system: "njt" });
   const html = njtTrainPopupHtml(train, "Morris & Essex Line", "#08A652", position);
-  assert.match(html, /<span class="popup-sub">scheduled position \(no GPS\)<\/span>$/);
+  // MR5: the position is the LAST row of the grid, which is where the popup's last line was.
+  assert.match(html, /<div class="k">Position<\/div>\n<div class="v">scheduled position \(no GPS\)<\/div><\/div>\n$/);
   assert.match(html, /Morris &amp; Essex Line/, "the ampersand in a real route name is escaped");
-  assert.match(html, /Train 6633/);
-  assert.match(html, /To Dover/);
-  assert.match(html, /Next stop: Summit/);
-  assert.match(html, /4 min late/);
+  // AND ESCAPED ONCE, which is the trap of moving escaping into a builder: a caller that also
+  // escaped would print "&amp;amp;" and no test that only looked for the escaped form would say so.
+  assert.doesNotMatch(html, /&amp;amp;/);
+  assert.match(html, /<div class="k">Train<\/div>\n<div class="v">6633<\/div>/);
+  assert.match(html, /<div class="k">To<\/div>\n<div class="v">Dover<\/div>/);
+  assert.match(html, /<div class="k">Next stop<\/div>\n<div class="v">Summit<\/div>/);
+  assert.match(html, /<div class="k">Delay<\/div>\n<div class="v">4 min late<\/div>/);
   assert.equal(
     njtTrainName(train, "Morris & Essex Line", position),
     "Morris & Essex Line, NJ Transit, train 6633, to Dover, next stop Summit, 4 min late, scheduled position, no GPS",
@@ -3868,7 +3883,7 @@ test("EVERY NJT train popup says how its position was derived, from the served p
   for (const [train, words, spoken] of cases) {
     const position = positionQualifier(train, at);
     const html = njtTrainPopupHtml(train, "Northeast Corridor", "#DD3439", position);
-    assert.ok(html.endsWith(`<span class="popup-sub">${words}</span>`), html);
+    assert.ok(html.endsWith(`<div class="k">Position</div>\n<div class="v">${words}</div></div>\n`), html);
     assert.doesNotMatch(html, /live GPS/);
     assert.ok(njtTrainName(train, "Northeast Corridor", position).endsWith(`, ${spoken}`));
   }
@@ -3909,7 +3924,7 @@ test("njtArrivalsHtml renders a flat chronological board with badges and countdo
   assert.match(html, /NJ Transit/);
   // NO DIRECTION HEADINGS AT ALL. /api/njt-arrivals is flat and chronological;
   // inventing buckets here would be inventing a field the endpoint does not serve.
-  assert.doesNotMatch(html, /arr-dir/);
+  assert.doesNotMatch(html, /class="dir"/);
   assert.match(html, /background:#DD3439/);
   assert.match(html, /Trenton/);
   assert.match(html, /3800/);
@@ -3963,8 +3978,12 @@ test("njtArrivalsHtml renders No trains for an empty board and escapes hostile f
 
 test("njtRowLabel prefers the destination, falls back to the route name, else nothing", () => {
   const nameFor = (id) => (id === "9" ? "Northeast Corridor" : null);
-  assert.equal(njtRowLabel({ route_id: "9", headsign: "Trenton" }, nameFor), " Trenton");
-  assert.equal(njtRowLabel({ route_id: "9" }, nameFor), " Northeast Corridor");
+  /* MR5: PLAIN TEXT, WITH NO LEADING SPACE AND NO ESCAPING. The row's grid cell escapes its own
+     label and the space between cells is a column now, so a helper that kept doing either would
+     double-escape an ampersand and print a stray space inside a flex cell. */
+  assert.equal(njtRowLabel({ route_id: "9", headsign: "Trenton" }, nameFor), "Trenton");
+  assert.equal(njtRowLabel({ route_id: "9" }, nameFor), "Northeast Corridor");
+  assert.equal(njtRowLabel({ route_id: "9", headsign: "Penn & Broad" }, nameFor), "Penn & Broad");
   // A row with neither still renders (the caller keeps its countdown): the train is
   // real and the time is what the rider came for.
   assert.equal(njtRowLabel({ route_id: "17" }, nameFor), "");
@@ -4101,7 +4120,7 @@ test("a route-less arrivals row renders its countdown rather than the word null"
   assert.doesNotMatch(html, /null|undefined/);
   // The row's label still resolves without a route, and njtRowLabel survives a
   // missing row entirely, which its siblings in this family already did.
-  assert.equal(njtRowLabel({ route_id: null, headsign: "Bay Head" }), " Bay Head");
+  assert.equal(njtRowLabel({ route_id: null, headsign: "Bay Head" }), "Bay Head");
   assert.equal(njtRowLabel(null), "");
   assert.equal(njtRowLabel(undefined), "");
 });

@@ -299,6 +299,14 @@ const sandbox = {
   registerCanvasFamily: (_name, paint) => paint,
   scheduledColor: () => "#6d6e71",
   railStationIcon: (system) => ({ __icon: true, opts: { className: `rail-stn-marker rail-${system}-stn` } }),
+  /* MR5 GAVE IT A FOURTH, under the same rule as the three above. Section 5 draws a popup's
+     title with the mark its own marker is wearing, which systems/shared.js reads back through
+     markerMarkHtml, and this driver's labeledMarker stand-in wears no icon at all. The real
+     helper returns "" for a marker with no icon, so a stand-in that returns "" is not a
+     simplification of the behaviour, it IS the behaviour for this marker: the popup then prints
+     a title with words and no square beside them. What this record asks of that popup is the
+     band it names and the label it carries, both of which are below. */
+  markerMarkHtml: () => "",
 };
 sandbox.globalThis = sandbox;
 sandbox.window = sandbox;

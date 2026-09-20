@@ -116,7 +116,11 @@ function productionStationAlertsBlock(alerts) {
 const block = productionStationAlertsBlock(INJECTED_ALERTS);
 
 const row = (text) => `<div class="alert-row">${text}</div>`;
-const wrap = (...rows) => `<div class="alert-block">${rows.join("")}</div>`;
+/* MR5: the rows are separated by a newline and the block ends with one, which is not formatting:
+   a popup's textContent glues adjacent blocks together without it, and two alert headers read as one
+   run-on sentence. CSS ignores a whitespace-only text node between block children (the MR5
+   vocabulary section in helpers.js has the measurement). */
+const wrap = (...rows) => `<div class="alert-block">${rows.join("\n")}</div>\n`;
 
 // The stations, straight off the committed fixtures. The railroad stops fixture
 // publishes no routes-per-station list (the endpoint does not serve one for the

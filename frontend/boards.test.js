@@ -238,26 +238,69 @@ function render(name) {
       " panelAnnounced = null; panelAlertsAnnounced = null; renderStationDetail();",
   );
   return {
-    popup,
+    popup: withoutMarks(popup),
     panel: panelLines(h.byId("stations-detail")),
     spoken: h.byId("stations-announce").textContent,
   };
+}
+
+/* MR5: A MARK IS ONE TOKEN IN THESE PINS, and the reason is length rather than laziness. Section 5
+   gives a subway station's kicker the route marks of every line calling there, drawn by the MAP's
+   own builder (popupMarkHtml over subwayPlateSvg), so Times Sq's board would arrive here with four
+   hundred characters of SVG per route and the pin would become unreadable. What these pins are for
+   is the WORDS and the ORDER of a board, and a mark's bytes are pinned where marks live:
+   pins.spec.js P1f holds the drawn plate, popupvocab.test.js holds the re-wrap.
+
+   THE TOKEN KEEPS THE MARK'S OWN TEXT, so [mark 1] and [mark 2] are different pins and a board that
+   dropped a route, or drew the wrong one, still fails here. */
+function withoutMarks(html) {
+  return html.replace(/<span class="pmark"[^>]*>[\s\S]*?<\/span>/g, (svg) => {
+    const label = /<text[^>]*>([^<]*)<\/text>/.exec(svg);
+    return `[mark ${label ? label[1] : "?"}]`;
+  });
 }
 
 // The subway badge colors, spelled once so the popup literals stay readable.
 const RED = 'style="background:#c0392b;color:#ffffff"';
 const BROWN = 'style="background:#5d4037;color:#ffffff"';
 
+/* MR5: SECTION 5's GRAMMAR, AS FOUR TEMPLATES, so six board pins stay readable after the popup
+   became a kicker, a title and a three-cell grid. These are literal templates written HERE, in the
+   same spirit as RED and BROWN above: a production builder that stopped emitting `class="n"`, or
+   that put its cells in another order, still fails every pin below, because the expected string is
+   assembled from these literals and compared whole.
+
+   AND THE FIRST PIN USES NONE OF THEM. The subway board is spelled out character by character so
+   the grammar itself is pinned in one place with no shared template in the way: if these four ever
+   drifted alongside the builders they describe, that pin is what would still say so. */
+const kicker = (left, right = "") => `<div class="pk"><span>${left}</span>\n<span>${right}</span></div>\n`;
+const title = (text) => `<div class="pt"><span>${text}</span></div>\n`;
+const dir = (text) => `<div class="dir">${text}</div>\n`;
+const arr = (...rows) => `<div class="arr">${rows.join("\n")}</div>\n`;
+// One row: the badge, the middle cell (a route name, a train number, a qualifier, or nothing at
+// all) and the countdown in its own nowrap cell.
+const row = (mark, middle, n) => `<span>${mark}</span>\n<span>${middle}</span>\n<span class="n">${n}</span>`;
+
 test("PIN subway: Times Sq, one contributing group, every row dated by its header", () => {
   const out = render("subway");
+  /* SPELLED OUT IN FULL, which is this file's one unaided pin of MR5's grammar: the kicker with the
+     station's own route marks on the right (three plates, normalised to [mark n] by withoutMarks
+     because a plate is four hundred characters of SVG), the title, a heading per direction and a
+     three-cell row per arrival. Every other pin in this file assembles the same shapes from the
+     four templates above; this one is what would catch those templates drifting. */
   assert.equal(
     out.popup,
-    "<b>Times Sq-42 St</b>" +
-      '<div class="arr-dir">Northbound</div>' +
-      `<span class="arr-badge" ${RED}>1</span> 2 min<br>` +
-      `<span class="arr-badge" ${RED}>2</span> 5 min` +
-      '<div class="arr-dir">Southbound</div>' +
-      `<span class="arr-badge" ${RED}>1</span> 3 min`,
+    '<div class="pk"><span>Subway</span>\n<span>[mark 1][mark 2][mark 3]</span></div>\n' +
+      '<div class="pt"><span>Times Sq-42 St</span></div>\n' +
+      '<div class="dir">Northbound</div>\n' +
+      '<div class="arr">' +
+      `<span><span class="arr-badge" ${RED}>1</span></span>\n<span></span>\n<span class="n">2 min</span>\n` +
+      `<span><span class="arr-badge" ${RED}>2</span></span>\n<span></span>\n<span class="n">5 min</span>` +
+      "</div>\n" +
+      '<div class="dir">Southbound</div>\n' +
+      '<div class="arr">' +
+      `<span><span class="arr-badge" ${RED}>1</span></span>\n<span></span>\n<span class="n">3 min</span>` +
+      "</div>\n",
   );
   assert.deepEqual(out.panel, [
     "h3 Times Sq-42 St (Subway)",
@@ -280,11 +323,12 @@ test("PIN LIRR: Jamaica, each prediction dated by its own trip", () => {
   const out = render("lirr");
   assert.equal(
     out.popup,
-    '<b>Jamaica</b> <span class="popup-sub">LIRR</span>' +
-      '<div class="arr-dir">Inbound</div>' +
-      `<span class="arr-badge" ${BROWN}>1</span> Babylon Branch <span class="popup-sub">#8412</span> 4 min` +
-      '<div class="arr-dir">Outbound</div>' +
-      `<span class="arr-badge" ${BROWN}>1</span> Babylon Branch <span class="popup-sub">#8413</span> 7 min`,
+    kicker("LIRR") +
+      title("Jamaica") +
+      dir("Inbound") +
+      arr(row(`<span class="arr-badge" ${BROWN}>1</span>`, 'Babylon Branch <span class="popup-sub">#8412</span>', "4 min")) +
+      dir("Outbound") +
+      arr(row(`<span class="arr-badge" ${BROWN}>1</span>`, 'Babylon Branch <span class="popup-sub">#8413</span>', "7 min")),
   );
   assert.deepEqual(out.panel, [
     "h3 Jamaica (LIRR)",
@@ -310,11 +354,15 @@ test("PIN Metro-North: Grand Central, whose predictions carry no clock at all", 
   const out = render("mnr");
   assert.equal(
     out.popup,
-    '<b>Grand Central</b> <span class="popup-sub">MNR</span>' +
-      '<div class="arr-dir">Inbound</div>' +
-      `<span class="arr-badge" ${BROWN}>1</span> Hudson <span class="popup-sub">#795</span> 4 min` +
-      '<div class="arr-dir">Outbound</div>' +
-      `<span class="arr-badge" ${BROWN}>1</span> Hudson <span class="popup-sub">#812</span> 6 min`,
+    // MR5: THE KICKER IS THE SERVED CODE, "MNR", where this station's own panel row two assertions
+    // down says "Metro-North". The popup's head has printed the code since phase 9; the divergence
+    // is recorded as an MR5 finding and is not reworded here.
+    kicker("MNR") +
+      title("Grand Central") +
+      dir("Inbound") +
+      arr(row(`<span class="arr-badge" ${BROWN}>1</span>`, 'Hudson <span class="popup-sub">#795</span>', "4 min")) +
+      dir("Outbound") +
+      arr(row(`<span class="arr-badge" ${BROWN}>1</span>`, 'Hudson <span class="popup-sub">#812</span>', "6 min")),
   );
   assert.deepEqual(out.panel, [
     "h3 Grand Central (Metro-North)",
@@ -336,11 +384,12 @@ test("PIN PATH: World Trade Center, two trips with two different clocks", () => 
   const out = render("path");
   assert.equal(
     out.popup,
-    '<b>World Trade Center</b> <span class="popup-sub">PATH</span>' +
-      '<div class="arr-dir">To New York</div>' +
-      '<span class="arr-badge" style="background:#4d92fb;color:#1a1a1a">859</span> Hoboken - 33rd 2 min' +
-      '<div class="arr-dir">To New Jersey</div>' +
-      '<span class="arr-badge" style="background:#d93a30;color:#ffffff">862</span> Newark - World Trade Center 5 min',
+    kicker("PATH") +
+      title("World Trade Center") +
+      dir("To New York") +
+      arr(row('<span class="arr-badge" style="background:#4d92fb;color:#1a1a1a">859</span>', "Hoboken - 33rd", "2 min")) +
+      dir("To New Jersey") +
+      arr(row('<span class="arr-badge" style="background:#d93a30;color:#ffffff">862</span>', "Newark - World Trade Center", "5 min")),
   );
   assert.deepEqual(out.panel, [
     "h3 World Trade Center (PATH)",
@@ -362,10 +411,14 @@ test("PIN NJ Transit: New York Penn, a flat board dated by the TripUpdates heade
   const out = render("njt");
   assert.equal(
     out.popup,
-    '<b>New York Penn Station</b> <span class="popup-sub">NJ Transit</span>' +
-      '<span class="arr-badge" style="background:#DD3439;color:#ffffff">9</span> Trenton <span class="popup-sub">3800</span> 2 min<br>' +
-      '<span class="arr-badge" style="background:#E66859;color:#1a1a1a">2</span> Dover <span class="popup-sub">6634</span> 5 min<br>' +
-      '<span class="arr-badge" style="background:#4a4e69;color:#ffffff">?</span> Bay Head 8 min',
+    // A FLAT BOARD IS ONE .arr WITH THREE ROWS, where every other board opens one per bucket.
+    kicker("NJ Transit") +
+      title("New York Penn Station") +
+      arr(
+        row('<span class="arr-badge" style="background:#DD3439;color:#ffffff">9</span>', 'Trenton <span class="popup-sub">3800</span>', "2 min"),
+        row('<span class="arr-badge" style="background:#E66859;color:#1a1a1a">2</span>', 'Dover <span class="popup-sub">6634</span>', "5 min"),
+        row('<span class="arr-badge" style="background:#4a4e69;color:#ffffff">?</span>', "Bay Head", "8 min"),
+      ),
   );
   assert.deepEqual(out.panel, [
     "h3 New York Penn Station (NJ Transit)",
@@ -388,14 +441,20 @@ test("PIN ferry: Wall St/Pier 11, a dock dated by TripUpdates and a boat dwellin
   const out = render("ferry");
   assert.equal(
     out.popup,
-    '<b>Wall St/Pier 11</b> <span class="popup-sub">NYC Ferry</span>' +
-      ' <span class="popup-access" title="Wheelchair accessible">&#9855;</span>' +
-      // MR5: the bucket headings' ink is walked against the popup's OWN surface now that section
-      // 5 makes it --surface at 94% rather than white. Before this stage: #007c94 and #8c7300,
-      // both walked against #ffffff. The words, the order and the countdowns are unchanged; only
-      // the two ink values moved, and each still clears 4.5 on the surface it is printed on.
-      '<div class="arr-dir" style="color:#006f85">East River</div>2 min' +
-      '<div class="arr-dir" style="color:#735e00">South Brooklyn</div>departs 2 min',
+    /* MR5: the dock's accessibility glyph is the kicker's right-hand slot, which is where section 5
+       puts it, and it keeps the title attribute that is the only place its words exist.
+       The bucket headings' ink is walked against the popup's OWN surface now that section 5 makes
+       it --surface (before this stage: #007c94 and #8c7300, both walked against #ffffff). The
+       words, the order and the countdowns are unchanged; only the two ink values moved, and each
+       still clears 4.5 on the surface it is printed on.
+       A FERRY ROW HAS NO BADGE AND NOTHING TO NAME: its bucket is the route, so the first two
+       cells are empty and the countdown carries its own "departs". */
+    kicker("NYC Ferry", '<span class="popup-access" title="Wheelchair accessible">&#9855;</span>') +
+      title("Wall St/Pier 11") +
+      '<div class="dir" style="color:#006f85">East River</div>\n' +
+      arr(row("", "", "2 min")) +
+      '<div class="dir" style="color:#735e00">South Brooklyn</div>\n' +
+      arr(row("", "", "departs 2 min")),
   );
   assert.deepEqual(out.panel, [
     "h3 Wall St/Pier 11 (Ferry)",
@@ -482,7 +541,11 @@ function renderBody(name, body) {
     "panelStation = __entry; panelBody = __body; panelError = null;" +
       " panelAnnounced = null; panelAlertsAnnounced = null; renderStationDetail();",
   );
-  return { popup, panel: panelLines(h.byId("stations-detail")), spoken: h.byId("stations-announce").textContent };
+  return {
+    popup: withoutMarks(popup),
+    panel: panelLines(h.byId("stations-detail")),
+    spoken: h.byId("stations-announce").textContent,
+  };
 }
 
 test("6.2 the subway board, ten minutes behind: every row says so, in the popup and in the panel", () => {
@@ -491,12 +554,15 @@ test("6.2 the subway board, ten minutes behind: every row says so, in the popup 
   const q = ' <span class="arr-qualifier">as of 10m ago</span>';
   assert.equal(
     out.popup,
-    "<b>Times Sq-42 St</b>" +
-      '<div class="arr-dir">Northbound</div>' +
-      `<span class="arr-badge" ${RED}>1</span> 2 min${q}<br>` +
-      `<span class="arr-badge" ${RED}>2</span> 5 min${q}` +
-      '<div class="arr-dir">Southbound</div>' +
-      `<span class="arr-badge" ${RED}>1</span> 3 min${q}`,
+    kicker("Subway", "[mark 1][mark 2][mark 3]") +
+      title("Times Sq-42 St") +
+      dir("Northbound") +
+      arr(
+        row(`<span class="arr-badge" ${RED}>1</span>`, q, "2 min"),
+        row(`<span class="arr-badge" ${RED}>2</span>`, q, "5 min"),
+      ) +
+      dir("Southbound") +
+      arr(row(`<span class="arr-badge" ${RED}>1</span>`, q, "3 min")),
   );
   assert.deepEqual(out.panel, [
     "h3 Times Sq-42 St (Subway)",
@@ -561,7 +627,14 @@ test("6.2 per ROW, on both surfaces: a board with a lagging contributor and a cu
   };
   const out = renderBody("subway", body);
   assert.deepEqual(popupQualifiers(out.popup), ["as of 10m ago"]);
-  assert.match(out.popup, /5 min <span class="arr-qualifier">as of 10m ago<\/span>/);
+  /* MR5: THE QUALIFIER RIDES THE ROW'S MIDDLE CELL AND THE COUNTDOWN ITS OWN, so "5 min" and
+     "as of 10m ago" are no longer adjacent in the markup. The claim is that they are in the SAME
+     ROW, which the grid says by the three cells being consecutive: the lagging row is the one
+     whose qualifier sits between its badge and its 5 min. */
+  assert.match(
+    out.popup,
+    /<span> <span class="arr-qualifier">as of 10m ago<\/span><\/span>\n<span class="n">5 min<\/span>/,
+  );
   assert.deepEqual(panelQualifiers(out.panel), ["", "as of 10m ago", ""]);
   // And no board-wide line on either surface, though this envelope's content clock IS ten
   // minutes old: the rows carry the age, so a line would say it twice, and say it of the
@@ -604,7 +677,8 @@ test("6.2 Metro-North's stale poll: the line speaks once, the clause rides it, t
   // The rider's word for the system, never the feed code: the panel SPEAKS this line,
   // and "MNR" would be read letter by letter.
   const line = "as of 7m ago; Metro-North prediction age unavailable";
-  assert.match(out.popup, new RegExp(`^<b>Grand Central</b> <span class="popup-sub">MNR</span><div class="popup-stale">${line}</div>`));
+  // MR5: the board line sits under the title, where the head used to be followed by it directly.
+  assert.ok(out.popup.startsWith(kicker("MNR") + title("Grand Central") + `<div class="popup-stale">${line}</div>\n`), out.popup);
   assert.deepEqual(popupQualifiers(out.popup), []);
   assert.deepEqual(out.panel.slice(0, 2), ["h3 Grand Central (Metro-North)", `p.station-detail-stale ${line}`]);
   assert.deepEqual(panelQualifiers(out.panel), ["", ""]);

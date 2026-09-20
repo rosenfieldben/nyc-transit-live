@@ -207,6 +207,8 @@ function ferryBoatPopup(record) {
       ferryColorFor(b.route_id),
       position,
       popupSurfaceColor(),
+      // And the hull this boat is drawn with, off its own marker, at the title's size.
+      popupMarkHtml(markerMarkHtml(record.marker)),
     ) +
     // C2 restyled as MR5's footer (ruling Q2): single-feed source, synthesized system, same
     // footer as every other vehicle popup, and its WORDS are withheld when the boat's own words

@@ -50,12 +50,26 @@ function busPopup(record) {
     // Bus alerts are route-only (no stop selectors); "bus" route ids share the
     // bus layer's id space, so the match is by route_id under system "bus".
     routeAlertsBlock("bus", b.route_id) +
-    `<b style="color:${readableInk(routeColor(b.route_id), popupSurfaceColor())}">${esc(b.route_id ?? "Unknown route")}</b>` +
-    `<br>Bus ${esc(b.id)}<br>Heading: ${heading}` +
-    // 6.3: a bus is GPS, so a fresh one says nothing here, and one whose own fix is past
-    // OBS_FRESH_S says "live GPS, as of 2m ago" (positionLineHtml).
-    positionLineHtml(position) +
-    (showNote ? `<br><span class="popup-sub">${esc(note.message)}</span>` : "") +
+    // MR5: section 5's grammar. The mark is the arrow or the dot this bus is drawn with, at the
+    // bearing it is drawn at, so a rider reads the same heading twice in two forms rather than
+    // once in each of two places.
+    popupKickerHtml({ left: POPUP_SYSTEM_WORDS.buses }) +
+    popupTitleHtml({
+      markHtml: popupMarkHtml(markerMarkHtml(record.marker)),
+      text: b.route_id ?? "Unknown route",
+      color: readableInk(routeColor(b.route_id), popupSurfaceColor()),
+    }) +
+    popupRowsHtml([
+      { k: "Bus", v: b.id ?? "" },
+      // "unknown" STAYS A VALUE rather than becoming an omitted row: a bus with no bearing is
+      // the case busHasHeading draws a dot for, and the dot is a statement. The row says the
+      // same thing in words, which is what it has said since phase 2.
+      { k: "Heading", v: heading },
+      // 6.3: a bus is GPS, so a fresh one says nothing here, and one whose own fix is past
+      // OBS_FRESH_S says "live GPS, as of 2m ago" (positionWords).
+      { k: "Position", v: positionWords(position) },
+    ]) +
+    (showNote ? `<div class="popup-sub">${esc(note.message)}</div>\n` : "") +
     // C2 restyled as MR5's footer (ruling Q2): buses are a single feed, so their system is the
     // synthesized one named after the source. Same freshness footer as every other vehicle popup,
     // so the single-feed sources are not quietly exempt from the freshness rules.

@@ -194,6 +194,8 @@ function pathTrainPopup(record) {
       // MR5: the surface the popup actually prints on, so readableInk walks the head's colour
       // against it rather than against the white a Leaflet popup used to be.
       popupSurfaceColor(),
+      // And the mark this train is drawn with, off its own marker, at the title's size.
+      popupMarkHtml(markerMarkHtml(record.marker)),
     ) +
     // C2 restyled as MR5's footer (ruling Q2): PATH is single-feed, so its system is the
     // synthesized one named after the source (ingestSystems). It gets the SAME footer as the

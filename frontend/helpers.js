@@ -740,6 +740,230 @@ function popupFreshHtml({ state, age = null, position = null } = {}) {
   return `<div class="fresh"><span class="fresh-dot" data-state="${esc(state)}" aria-hidden="true"></span>${body}</div>`;
 }
 
+/* ===== MR5: THE POPUP'S VOCABULARY, AS BUILDERS ==========================================
+
+   README section 5 gives every popup one grammar and this is it: `.pk` the kicker row, `.pt`
+   the title with its family's mark, `.kv` the label/value grid a vehicle's facts sit in,
+   `.dir` an arrivals bucket's heading and `.arr` its rows. `.fresh` is above (popupFreshHtml),
+   and `.alert` and `.xlink` stay with the callers that already build them.
+
+   PURE STRINGS IN helpers.js, WHICH IS THE SEAM THIS FILE ALREADY KEEPS: nothing here touches
+   Leaflet, so node loads all of it and every popup in the app is a string built by functions a
+   unit test can ask one at a time. It is the same seam the marks keep, where railTagSvg is a
+   string and only the L.divIcon wrapper is in systems/shared.js.
+
+   THE ESCAPING IS HERE, ONCE. Every text parameter is run through esc() by the builder, so no
+   caller composes markup out of feed text on its way in, and a caller that pre-escaped would
+   double-escape an ampersand rather than fail loudly. The parameters that DO take markup say
+   so in their names (markHtml, rightHtml, extraHtml) and every value they are given is built
+   by another builder in this file.
+
+   WHAT IS NOT HERE: words. Every string a popup prints is the caller's, and the callers take
+   theirs from the app's own vocabulary rather than from section 5's prose. That is this
+   stage's own defect shape ("a word that came from a literal instead of the app") stated as a
+   rule about this file.
+
+   AND THERE IS A NEWLINE BETWEEN EVERY CELL AND AFTER EVERY BLOCK, which is not formatting: it is
+   what makes the popup's textContent read as words. A grid of adjacent elements with no whitespace between them
+   concatenates to "Train1797", which is what a rider's text reads like to anything that walks
+   the DOM rather than the layout: Playwright's toContainText, a scraper, the specs this stage
+   inherited. CSS ignores a whitespace-only text node in a grid or a flex container (it generates
+   no box and no item), so the separator costs nothing on screen and the pins' reader drops it
+   too, having normalised it away. Measured: without it, A3c read "MNRMHUDHudsonTrain1797", and with
+   it between cells but not after blocks, the AirTrain popup read "Federal Circlescheduled service".
+   The blocks a popup builds outside this section (an alerts block, a board's freshness line, a
+   "No trains" notice, a cross-link button, the bus's route note) end the same way for the same
+   reason. */
+
+/* THE SYSTEM WORD A POPUP'S KICKER CARRIES, and none of the six is coined here.
+
+   Four are the feed strip's own names for the same feed (FEEDS above: Subway, Buses,
+   NJ Transit, PATH), so a rider reads one word for a system on both surfaces. "NYC Ferry" is
+   the word the ferry popups and ferryBoatName already print, where the strip's button says
+   the shorter "Ferry"; "AirTrain JFK" is airtrainStationName's and the AirTrain popup's own.
+   popupvocab.test.js asserts each of the six against those sources, which is what keeps this
+   from becoming six literals that agree with nothing.
+
+   THE RAILROAD IS NOT HERE, because its kicker is the train's own served `system` field, as
+   its head has printed since phase 9. That word is the feed's code ("MNR"), and every SPOKEN
+   surface says railroadSystemLabel's "Metro-North" for the same agency: the divergence is
+   older than this stage, it is recorded as a finding in the MR5 ledger, and it is not quietly
+   changed here. */
+const POPUP_SYSTEM_WORDS = {
+  subway: "Subway",
+  buses: "Buses",
+  njt: "NJ Transit",
+  path: "PATH",
+  ferry: "NYC Ferry",
+  airtrain: "AirTrain JFK",
+};
+
+/* THE TWO MARK SIZES, WHICH ARE THE DESIGN'S OWN. Section 5 draws a title's route mark at
+   `.bul.lg` 24px and the small form at `.bul.sm` 17px, and those are the two heights a popup
+   asks for: 24 in a title, 17 in a kicker or an arrivals row.
+
+   A TITLE MARK IS NEVER SMALLER THAN THE MAP DRAWS IT, which is the one clamp in this section
+   and the reason the rail families pass their own box height instead of this constant: the
+   tag's box is 30 units tall because the stem and the head hang below the 13-unit tag, so
+   scaling that box to 24 would draw the two blocks at 10.4 units with 7px type, smaller and
+   thinner than the map's own. Every other family's box is at most 20, so 24 scales it up. */
+const POPUP_MARK_TITLE = 24;
+const POPUP_MARK_ROW = 17;
+
+/* THE MAP'S OWN MARK AT THE POPUP'S SIZE, and "the map's own" is the whole point: a popup that
+   drew its own route mark would be a second answer to "what does this family look like", and
+   the two would drift the first time either was edited, which is finding N6 one surface out.
+
+   SO THE BODY IS NOT TOUCHED. This re-wraps a builder's string: the opening `<svg>` tag keeps
+   its viewBox, its class and its style, its width and height are replaced with the popup's,
+   and every byte after that tag is copied. popupvocab.test.js asserts exactly that of all six
+   mark builders, which is what makes "the mark in the popup is the mark on the map" a claim a
+   test can check rather than a sentence in a comment.
+
+   WIDTH FOLLOWS THE viewBox, so a mark that is not square (the ferry's 22x14 hull, the rail
+   tag's variable width) keeps its aspect ratio instead of being squashed into a box.
+
+   BOTH DIMENSIONS ARE STRIPPED BEFORE THEY ARE WRITTEN, because the builders disagree about
+   whether they carry them at all: the rail tag and the rail station square set width and
+   height, the bus mark, the PATH diamond and the ferry hull set neither and take their size
+   from the divIcon's box.
+
+   A TITLE ASKS FOR NO HEIGHT AND GETS THE LARGER OF 24 AND THE MARK'S OWN, which is the clamp
+   this section's constants describe, applied here as arithmetic so no caller has to know its
+   family's geometry: the rail tag's 30-unit box holds a 13-unit tag with a stem and a head
+   below it, and scaling that to 24 would draw the tag's two blocks at 10.4 units with 7px
+   type, thinner than the map's own. A kicker or an arrivals row asks for POPUP_MARK_ROW and
+   gets exactly that, because at 17 a mark is a decoration beside words rather than the
+   popup's subject, and the design draws it at `.bul.sm` deliberately.
+
+   aria-hidden ON THE WRAPPER, because the mark repeats in a picture what the title says in
+   words. The subway's plate carries its route letter as SVG TEXT, which a screen reader would
+   otherwise read out before the title says "1 train"; the other five hide themselves already
+   and the attribute changes nothing for them. */
+function popupMarkHtml(svg, height = null) {
+  const source = typeof svg === "string" ? svg : "";
+  const end = source.indexOf(">");
+  if (!source.startsWith("<svg") || end < 0) return "";
+  const open = source.slice(0, end);
+  const box = /viewBox="0 0 ([\d.]+) ([\d.]+)"/.exec(open);
+  if (!box) return "";
+  const h = height == null ? Math.max(POPUP_MARK_TITLE, Number(box[2])) : Number(height);
+  if (!Number.isFinite(h) || h <= 0) return "";
+  const width = Number(((h * Number(box[1])) / Number(box[2])).toFixed(2));
+  const sized = open.replace(/\s(?:width|height)="[^"]*"/g, "");
+  return `<span class="pmark" aria-hidden="true">${sized} width="${width}" height="${h}"${source.slice(end)}</span>`;
+}
+
+/* THE KICKER. Left is the surface's system word, right is whatever small marks it carries: the
+   route plates a subway station is served by, the wheelchair glyph a ferry dock publishes.
+
+   BOTH SPANS ARE EMITTED WHENEVER THE ROW IS, because the row is a flex with space-between and
+   one span would sit at the left edge rather than at the right. An empty row is no row at all,
+   which is the silence rule this whole stage keeps: a surface with no system word and no marks
+   prints no kicker. */
+function popupKickerHtml({ left = "", rightHtml = "" } = {}) {
+  if (!left && !rightHtml) return "";
+  return `<div class="pk"><span>${esc(left)}</span>\n<span>${rightHtml}</span></div>\n`;
+}
+
+/* THE TITLE. `markHtml` is popupMarkHtml's answer (or "" for the three families whose map mark
+   is a canvas circle and therefore has no string builder to borrow), `text` is the head the
+   surface has always printed, and `color` is the ink it printed it in.
+
+   THE INK GOES ON THE TEXT SPAN AND NOT ON THE ROW, so a route colour cannot reach the mark:
+   the marks paint themselves from their own fills and the theme's tokens, and a `color` on
+   their parent would be inherited by anything inside them drawn in currentColor. The callers
+   resolve that ink through readableInk against the popup's own surface, which is what
+   popups.spec.js D6i measures. */
+function popupTitleHtml({ text = "", markHtml = "", color = null } = {}) {
+  if (!text && !markHtml) return "";
+  const tint = color ? ` style="color:${color}"` : "";
+  const words = text ? `<span${tint}>${esc(text)}</span>` : "";
+  return `<div class="pt">${markHtml}${markHtml && words ? "\n" : ""}${words}</div>\n`;
+}
+
+/* THE VEHICLE POPUP'S FACTS, as the design's two-column grid. Rows are [{k, v}] in the order
+   they are to be read, both plain text, both escaped here.
+
+   A ROW WITH NOTHING TO SAY IS NOT PRINTED, which is positionWords' rule generalised to
+   every row in the grid: the app has no word for a fact it does not have, and a "Delay" row
+   reading "unknown" would be a claim where silence is the truth. A row with a value and no
+   LABEL is dropped for the same reason and one of its own: in a two-column grid it would land
+   in the label column and read as a heading.
+
+   AND NO GRID AT ALL WHEN NO ROW SURVIVES, so a popup whose every fact is missing does not
+   print an empty box with a rule across it. */
+function popupRowsHtml(rows) {
+  const cells = (rows || [])
+    .filter((row) => row && row.k && row.v)
+    .map((row) => `<div class="k">${esc(row.k)}</div>\n<div class="v">${esc(row.v)}</div>`)
+    .join("\n");
+  return cells ? `<div class="kv">${cells}</div>\n` : "";
+}
+
+/* AN ARRIVALS BUCKET'S HEADING. `color` is the ferry's: its buckets are ROUTE names, so the
+   heading is the one place a dock's popup can carry a route's colour, and it arrives already
+   resolved against the popup's surface by its caller. Every other family's buckets are
+   directions and take the ink. */
+function popupDirHtml(text, color = null) {
+  if (!text) return "";
+  const tint = color ? ` style="color:${color}"` : "";
+  return `<div class="dir"${tint}>${esc(text)}</div>\n`;
+}
+
+/* THE ARRIVALS ROWS, as the design's three-column grid: the mark, what the row is, and the
+   countdown. One `.arr` per bucket, one row of three spans per arrival.
+
+   THREE SPANS ALWAYS, even when a family has no mark to put in the first one or nothing to
+   name in the second: the grid places cells in order, and a row that emitted two spans would
+   slide its countdown into the middle column and print a board whose numbers do not line up.
+
+   THE ACCENT COMES FROM THE APP'S OWN WORD. Section 5 says a countdown under 30s "reads 'now'
+   in the accent", and formatCountdown is what decides a row reads "now" (countdownParts, at
+   30s). So the class follows the word rather than re-testing the seconds, and the two cannot
+   disagree about which rows are accented.
+
+   `extraHtml` IS THE ROW'S OWN MARKUP: the train number a feed carries and the freshness
+   qualifier arrivalQualifier earned, both already built by helpers in this file. It sits in the
+   middle cell rather than beside the countdown because that cell is the flexible one: the
+   number cell is nowrap and tabular by design, and a parenthetical inside it widens every row
+   in the popup. */
+function popupArrRowsHtml(rows) {
+  const cells = (rows || [])
+    .filter(Boolean)
+    .map((row) => {
+      const countdown = row.countdown ?? "";
+      const cls = countdown === "now" ? "n now" : "n";
+      return (
+        `<span>${row.markHtml ?? ""}</span>\n` +
+        `<span>${row.label ? esc(row.label) : ""}${row.extraHtml ?? ""}</span>\n` +
+        `<span class="${cls}">${esc(countdown)}</span>`
+      );
+    })
+    .join("\n");
+  return cells ? `<div class="arr">${cells}</div>\n` : "";
+}
+
+/* THE RAILROAD HEAD'S TWO PARTS, which is what the popup's kicker and title need from the
+   three fields formatRailroadHead used to join into one string.
+
+   IT REPLACES THAT FORMATTER RATHER THAN SITTING BESIDE IT. Two functions over the same three
+   inputs is the shape this stage keeps finding (N6 in the app, the pins reader in the tests),
+   and the formatter's only caller was the head this stage restyles. Its three cases are this
+   function's three cases and its test moved with them.
+
+   `agency` IS THE SERVED FIELD, unchanged: the popup has printed "LIRR" and "MNR" since phase
+   9 and this stage does not quietly reword a rider-facing string. `line` is the route's name
+   where the tables have one, "route <id>" where they do not, and empty where the feed gave
+   neither: a system with no line still gets a kicker, and the title then carries the agency
+   itself so the popup is never headless. */
+function railroadHeadParts(system, routeId, name) {
+  const agency = system || "";
+  if (name) return { agency, line: name };
+  if (routeId) return { agency, line: `route ${routeId}` };
+  return { agency, line: "" };
+}
+
 /* One entry per feed, ready to render: the count as text, the dot's state, the tooltip,
    and whether the OFF treatment applies.
 
@@ -1999,7 +2223,7 @@ function boardSystemLine(board, rows) {
 // the same element stalePopupLine writes, and a row's qualifier beside its countdown.
 // Escaped like every other string these renderers emit, though both are our own words.
 function boardLineHtml(line) {
-  return line ? `<div class="popup-stale">${esc(line)}</div>` : "";
+  return line ? `<div class="popup-stale">${esc(line)}</div>\n` : "";
 }
 
 function qualifierHtml(qualifier) {
@@ -2941,6 +3165,32 @@ function ferryHullSvg(color) {
   );
 }
 
+/* THE SUBWAY'S PLATE, which is the oldest mark in this app and the last one to become a string
+   builder. It moved here from trainIcon in systems/subway.js in MR5, unchanged to the byte
+   (`pins.spec.js` P1f pins the markup and did not move), for the reason the other five are here:
+   a popup title draws its family's mark, helpers.js is where a mark that is not tied to Leaflet
+   lives, and a popup that drew its own 18x18 rounded square would be a second answer to "what
+   does a subway train look like".
+
+   THE LABEL IS VALIDATED HERE AND NOT BY THE CALLER, which is what moving it buys: the plate
+   holds one to three characters and a feed that served a route id of twenty would otherwise have
+   drawn a plate with a sentence in it. trainIcon did that test inline and the popup would have
+   had to do it again.
+
+   THE TYPE SHRINKS FOR TWO CHARACTERS AND MORE (10.5 to 8.5), which is why the test is on the
+   validated label rather than on the served route: "?" takes the wide size, because it is one
+   character. */
+function subwayPlateSvg(route, color, textColor) {
+  const label = /^[A-Za-z0-9]{1,3}$/.test(route ?? "") ? String(route) : "?";
+  return `<svg viewBox="0 0 18 18">
+      <rect x="0" y="0" width="18" height="18" rx="4" style="fill: var(--paper)" opacity="0.95"/>
+      <rect x="1.5" y="1.5" width="15" height="15" rx="3" fill="${color}"/>
+      <text x="9" y="9.5" text-anchor="middle" dominant-baseline="central"
+            font-size="${label.length > 1 ? 8.5 : 10.5}" font-weight="800"
+            font-family="Archivo, system-ui, sans-serif" fill="${textColor}">${esc(label)}</text>
+    </svg>`;
+}
+
 /* The bus mark, which is TWO marks and one box (README: "Heading known: 14x14 arrow
    `M7 1 L12 13 L7 10 L2 13 Z` rotated to bearing, fill = route colour, paper stroke 0.8.
    Heading unknown: 12x12 dot `r 3.5`, paper stroke 1").
@@ -3117,8 +3367,14 @@ function withheldFix(row, block, servedAt, now) {
   return age != null && age > OBS_MAX_S ? "withheld" : null;
 }
 
-/* The popup line a position's words go on, or nothing for a fresh reported position: silence means
-   current (memo D9), which is the rule every surface in this app follows.
+/* The words a position gets to say in a popup, or nothing for a fresh reported position: silence
+   means current (memo D9), which is the rule every surface in this app follows.
+
+   IT RETURNS WORDS AND NOT MARKUP SINCE MR5, which is the shape the vocabulary wanted: section 5
+   puts a vehicle's facts in a label/value grid, so the Position row is a value like any other and
+   the rule above is what decides whether that row exists. popupRowsHtml drops a row with no value,
+   so the two rules compose rather than being written twice: this one says when a position has
+   nothing to say, and the grid's says what a row with nothing to say looks like (nothing).
 
    MR5 (ruling Q1): EVERY SURFACE NOW, INCLUDING THE RAILROAD POPUP, which had been the one
    exception. That popup printed `position.compact` itself, unconditionally, from a line of its own
@@ -3141,9 +3397,9 @@ function withheldFix(row, block, servedAt, now) {
    never returns one, so today that is belt to the brace `kind` already provides. It is written down
    because a future branch of that function could, and a row rendering `<br><span></span>` would be
    an empty line a rider cannot account for rather than an omission. */
-function positionLineHtml(position) {
+function positionWords(position) {
   if (!position || !position.kind || !position.words) return "";
-  return `<br><span class="popup-sub">${esc(position.words)}</span>`;
+  return position.words;
 }
 
 // A position's clause in a marker's accessible name, under the same rule: its spoken
@@ -3390,16 +3646,21 @@ function orderedRailroadBuckets(directions) {
   return orderedBuckets(RAILROAD_BUCKET_ORDER, directions);
 }
 
-// Rider-facing head text for a railroad TRAIN popup: "LIRR · Babylon Branch"
-// when the route name is known, else "LIRR route 5", else just the system.
-// Returns PLAIN text (system, routeId, and name are all feed-derived, so the
-// caller escapes the whole result before inserting it into markup).
-function formatRailroadHead(system, routeId, name) {
-  const sys = system || "";
-  if (name) return `${sys} · ${name}`;
-  if (routeId) return `${sys} route ${routeId}`;
-  return sys;
-}
+/* formatRailroadHead IS GONE, AND THIS IS WHERE IT WAS. It joined a railroad train's system,
+   route id and route name into one line ("LIRR · Babylon Branch", "LIRR route 5", "MNR") for the
+   one caller that wanted them joined: the popup head MR5 takes apart. Section 5 wants those parts
+   separately, as a kicker and a title, and railroadHeadParts up in the vocabulary section is the
+   same three cases returning them that way.
+
+   ITS WORDS DID NOT CHANGE, only where they sit. The middot it joined with was a visual separator
+   and the two parts are separated by being rows now, which is the argument railroadTrainName's
+   comment already makes for not speaking it.
+
+   A COMMENT RATHER THAN A FUNCTION WITH NO CALLER, which is this stage's third such disposal
+   (vehicleStaleLine and stalePopupLine were the first two, in the footer's commit) under the same
+   rule: a helper nothing calls is a second answer waiting for someone to call it. Its three cases
+   are asserted in popupvocab.test.js against railroadHeadParts, joined back into the three strings
+   it used to return, so the words it carried are still pinned somewhere. */
 
 // Full railroad station arrivals popup HTML. Lives here (not map.js) so node can
 // test the escaping and ordering. `now` is the skew-corrected clock, passed in
@@ -3410,34 +3671,42 @@ function formatRailroadHead(system, routeId, name) {
 // heading and one row per train: a route badge (railroadColor, white text on the
 // dark palette), the route name where known, the train number when the feed
 // carries one, and the countdown. Every feed-derived string is escaped.
-function railroadArrivalsHtml(station, body, now, nameFor = () => null) {
+function railroadArrivalsHtml(station, body, now, nameFor = () => null, markHtml = "") {
   // Every row qualified by its own served age, and the system line where the R1 age
   // line was (6.2; see arrivalQualifier and boardSystemLine).
   const board = boardFreshness("railroad", body, now);
+  /* MR5: section 5's kicker, title and board. The agency moves from a muted tag beside the
+     station's name to the kicker above it, and it is still the SERVED `system` field: "MNR"
+     here, where this station's own panel row says railroadSystemLabel's "Metro-North". That
+     divergence is recorded as an MR5 finding rather than reworded in passing. */
   const header =
-    `<b>${esc(station.name ?? station.id)}</b> ` +
-    `<span class="popup-sub">${esc(station.system ?? "")}</span>` +
+    popupKickerHtml({ left: station.system ?? "" }) +
+    popupTitleHtml({ markHtml, text: station.name ?? station.id }) +
     boardLineHtml(boardSystemLine(board, stationArrivalsRows(body)));
   const buckets = orderedRailroadBuckets(body.directions);
-  if (!buckets.length) return `${header}<div class="arr-none">No trains</div>`;
+  if (!buckets.length) return `${header}<div class="arr-none">No trains</div>\n`;
   let html = header;
   for (const [dir, arrivals] of buckets) {
-    html += `<div class="arr-dir">${esc(dir)}</div>`;
-    html += arrivals
-      .map((a) => {
+    html += popupDirHtml(dir);
+    html += popupArrRowsHtml(
+      arrivals.map((a) => {
         const route = a.route_id ?? "";
-        const badge =
-          `<span class="arr-badge" style="background:${railroadColor(route)};color:${readableTextOn(railroadColor(route))}">` +
-          `${esc(route || "?")}</span>`;
-        const routeName = a.route_id ? nameFor(a.route_id) : null;
-        const label = routeName ? ` ${esc(routeName)}` : "";
-        const num = a.train_num ? ` <span class="popup-sub">#${esc(a.train_num)}</span>` : "";
-        return (
-          `${badge}${label}${num} ${esc(formatCountdown(a.arrival - now))}` +
-          qualifierHtml(arrivalQualifier(a, board))
-        );
-      })
-      .join("<br>");
+        const color = railroadColor(route);
+        return {
+          // THE ROW'S MARK IS THE BOARD'S OWN CHIP, not the map's rail tag: a tag states a
+          // body and a heading, and an arrivals row has neither to state. The chip's two
+          // paints are measured in both themes by pins.spec.js P4c.
+          markHtml:
+            `<span class="arr-badge" style="background:${color};color:${readableTextOn(color)}">` +
+            `${esc(route || "?")}</span>`,
+          label: (a.route_id ? nameFor(a.route_id) : null) || "",
+          extraHtml:
+            (a.train_num ? ` <span class="popup-sub">#${esc(a.train_num)}</span>` : "") +
+            qualifierHtml(arrivalQualifier(a, board)),
+          countdown: formatCountdown(a.arrival - now),
+        };
+      }),
+    );
   }
   return html;
 }
@@ -3475,26 +3744,36 @@ function selectHeadwayBand(bands, minutesSinceMidnight) {
 // clearly labeled "(scheduled)". `minutes` is minutes since NY midnight, computed
 // by the CALLER and passed in (kept pure and testable with a plain numeric input).
 // Every feed-derived string is escaped.
-function airtrainStationPopupHtml(station, routes, minutes) {
+function airtrainStationPopupHtml(station, routes, minutes, markHtml = "") {
   const serving = (routes ?? []).filter((r) => (r.stations ?? []).includes(station.id));
+  /* MR5: section 5's kicker and title, and the branches as its label/value grid. The one
+     sentence this popup used to print as a muted line is now the kicker's "AirTrain JFK" and
+     the line under the title, which is the same split the railroad's head took: the middot
+     was joining two things that are a row apart now. */
   const header =
-    `<b>${esc(station.name ?? station.id)}</b>` +
-    `<div class="popup-sub">AirTrain JFK &middot; scheduled service (no live tracking)</div>`;
+    popupKickerHtml({ left: POPUP_SYSTEM_WORDS.airtrain }) +
+    popupTitleHtml({ markHtml, text: station.name ?? station.id }) +
+    `<div class="popup-sub">scheduled service (no live tracking)</div>\n`;
   if (!serving.length) {
-    return `${header}<div>No AirTrain branch serves this station.</div>`;
+    return `${header}<div>No AirTrain branch serves this station.</div>\n`;
   }
-  let html = header;
-  for (const route of serving) {
-    const band = selectHeadwayBand(route.headways, minutes);
-    const name = esc(route.name ?? route.id);
-    // headway_min is a validated integer (AirTrainHeadwayBand.headway_min: int), not
-    // feed-derived text, so it is interpolated directly; esc() is reserved for the
-    // untrusted string fields (station and route names).
-    html += band
-      ? `<div>${name}: every ~${band.headway_min} min <span class="popup-sub">(scheduled)</span></div>`
-      : `<div>${name}: <span class="popup-sub">schedule unavailable</span></div>`;
-  }
-  return html;
+  /* A BRANCH IS A LABEL AND ITS HEADWAY IS THE VALUE, which is what the grid is for. "(scheduled)"
+     stays inside the value rather than becoming a muted span of its own: the words are the ones
+     this popup has printed since phase 16, and a row's value is one string in this vocabulary.
+     headway_min is a validated integer (AirTrainHeadwayBand.headway_min: int) and the grid escapes
+     every value, so nothing here needs to escape anything itself. */
+  return (
+    header +
+    popupRowsHtml(
+      serving.map((route) => {
+        const band = selectHeadwayBand(route.headways, minutes);
+        return {
+          k: route.name ?? route.id,
+          v: band ? `every ~${band.headway_min} min (scheduled)` : "schedule unavailable",
+        };
+      }),
+    )
+  );
 }
 
 // ---- PATH (phase 13c: map layer over the 13a/13b endpoints) ----
@@ -3538,13 +3817,15 @@ function formatPathHead(routeId, name) {
 // train's positionQualifier answer (6.3): PATH serves every train `placed`, so the line
 // reads "scheduled position (no GPS)", and its age once its own trip update is past
 // OBS_FRESH_S; before 6.3 the line was a constant that could not say either.
-function pathTrainPopupHtml(train, name, color, position = null, surface = POPUP_SURFACE_FALLBACK) {
+function pathTrainPopupHtml(train, name, color, position = null, surface = POPUP_SURFACE_FALLBACK, markHtml = "") {
   return (
-    `<b style="color:${readableInk(color, surface)}">${esc(formatPathHead(train.route_id, name))}</b>` +
-    ` <span class="popup-sub">PATH</span>` +
-    (train.stop_name ? `<br>Next stop: ${esc(train.stop_name)}` : "") +
-    (train.direction ? `<br>${esc(train.direction)}` : "") +
-    positionLineHtml(position)
+    popupKickerHtml({ left: POPUP_SYSTEM_WORDS.path }) +
+    popupTitleHtml({ markHtml, text: formatPathHead(train.route_id, name), color: readableInk(color, surface) }) +
+    popupRowsHtml([
+      { k: "Next stop", v: train.stop_name },
+      { k: "Direction", v: train.direction },
+      { k: "Position", v: positionWords(position) },
+    ])
   );
 }
 
@@ -3554,30 +3835,33 @@ function pathTrainPopupHtml(train, name, color, position = null, surface = POPUP
 // closes both over the /api/path-routes tables, keeping this pure and
 // node-testable. An empty directions dict renders the shared "No trains"
 // treatment. Every feed-derived string is escaped.
-function pathArrivalsHtml(station, body, now, colorFor = () => PATH_FALLBACK_COLOR, nameFor = () => null) {
+function pathArrivalsHtml(station, body, now, colorFor = () => PATH_FALLBACK_COLOR, nameFor = () => null, markHtml = "") {
   // PATH dates every trip itself, so two rows on one board can carry two different
   // ages, and only the old one is qualified (6.2).
   const board = boardFreshness("path", body, now);
   const header =
-    `<b>${esc(station.name ?? station.id)}</b> ` +
-    `<span class="popup-sub">PATH</span>` +
+    popupKickerHtml({ left: POPUP_SYSTEM_WORDS.path }) +
+    popupTitleHtml({ markHtml, text: station.name ?? station.id }) +
     boardLineHtml(boardSystemLine(board, stationArrivalsRows(body)));
   const buckets = orderedPathBuckets(body.directions);
-  if (!buckets.length) return `${header}<div class="arr-none">No trains</div>`;
+  if (!buckets.length) return `${header}<div class="arr-none">No trains</div>\n`;
   let html = header;
   for (const [dir, arrivals] of buckets) {
-    html += `<div class="arr-dir">${esc(dir)}</div>`;
-    html += arrivals
-      .map((a) => {
+    html += popupDirHtml(dir);
+    html += popupArrRowsHtml(
+      arrivals.map((a) => {
         const route = a.route_id ?? "";
-        const badge =
-          `<span class="arr-badge" style="background:${colorFor(a.route_id)};color:${readableTextOn(colorFor(a.route_id))}">` +
-          `${esc(route || "?")}</span>`;
-        const routeName = a.route_id ? nameFor(a.route_id) : null;
-        const label = routeName ? ` ${esc(routeName)}` : "";
-        return `${badge}${label} ${esc(formatCountdown(a.arrival - now))}${qualifierHtml(arrivalQualifier(a, board))}`;
-      })
-      .join("<br>");
+        const color = colorFor(a.route_id);
+        return {
+          markHtml:
+            `<span class="arr-badge" style="background:${color};color:${readableTextOn(color)}">` +
+            `${esc(route || "?")}</span>`,
+          label: (a.route_id ? nameFor(a.route_id) : null) || "",
+          extraHtml: qualifierHtml(arrivalQualifier(a, board)),
+          countdown: formatCountdown(a.arrival - now),
+        };
+      }),
+    );
   }
   return html;
 }
@@ -3689,18 +3973,21 @@ function ferrySpeedKnots(status, speedMs) {
 // the subway/bus popup HTML helpers keep their route-alert prepend in the caller.
 // Every feed-derived string is escaped. `position` is the boat's positionQualifier
 // answer (6.3): a fresh fix adds nothing, since the legend already says a boat is GPS,
-// and one past OBS_FRESH_S adds "live GPS, as of 2m ago" (positionLineHtml).
-function ferryBoatPopupHtml(boat, name, color, position = null, surface = POPUP_SURFACE_FALLBACK) {
-  const routeText = name || "Unassigned";
-  const status = ferryStatusText(boat.status);
-  const speed = ferrySpeedKnots(boat.status, boat.speed);
+// and one past OBS_FRESH_S adds "live GPS, as of 2m ago" (positionWords).
+function ferryBoatPopupHtml(boat, name, color, position = null, surface = POPUP_SURFACE_FALLBACK, markHtml = "") {
   return (
-    `<b style="color:${readableInk(color, surface)}">${esc(routeText)}</b>` +
-    ` <span class="popup-sub">NYC Ferry</span>` +
-    (boat.label ? `<br>Boat ${esc(boat.label)}` : "") +
-    (status ? `<br>${esc(status)}` : "") +
-    (speed ? `<br>${esc(speed)}` : "") +
-    positionLineHtml(position)
+    popupKickerHtml({ left: POPUP_SYSTEM_WORDS.ferry }) +
+    popupTitleHtml({ markHtml, text: name || "Unassigned", color: readableInk(color, surface) }) +
+    popupRowsHtml([
+      { k: "Boat", v: boat.label },
+      // Both of these are null where the feed has nothing to say (a docked boat has no speed,
+      // an unknown status has no words), and the grid drops a row with no value: the popup
+      // says what it knows and is silent about the rest, which is what it did with its
+      // `<br>`-joined lines before section 5's grid.
+      { k: "Status", v: ferryStatusText(boat.status) },
+      { k: "Speed", v: ferrySpeedKnots(boat.status, boat.speed) },
+      { k: "Position", v: positionWords(position) },
+    ])
   );
 }
 
@@ -3712,30 +3999,41 @@ function ferryBoatPopupHtml(boat, name, color, position = null, surface = POPUP_
 // `wheelchair` flag surfaces as a small accessibility marker in the header, the
 // first such display in the app. An empty routes dict renders "No boats". Every
 // feed-derived string is escaped; colorFor returns a validated css color.
-function ferryArrivalsHtml(station, body, now, colorFor = () => FERRY_FALLBACK_COLOR, surface = POPUP_SURFACE_FALLBACK) {
+function ferryArrivalsHtml(station, body, now, colorFor = () => FERRY_FALLBACK_COLOR, surface = POPUP_SURFACE_FALLBACK, markHtml = "") {
+  /* MR5: THE DOCK'S ACCESSIBILITY GLYPH IS THE KICKER'S RIGHT-HAND SLOT, which is where section 5
+     puts it ("right: route bullets / direction / accessibility"). It keeps its title attribute,
+     which is the only place its WORDS exist: pins.spec.js reads them through the `labels` view for
+     exactly that reason. */
   const access = station.wheelchair
-    ? ' <span class="popup-access" title="Wheelchair accessible">&#9855;</span>'
+    ? '<span class="popup-access" title="Wheelchair accessible">&#9855;</span>'
     : "";
   // Dock rows are dated by the TripUpdates clock, never the boat's (6.1), and each is
   // qualified by it here (6.2).
   const board = boardFreshness("ferry", body, now);
   const header =
-    `<b>${esc(station.name ?? station.id)}</b> ` +
-    `<span class="popup-sub">NYC Ferry</span>${access}` +
+    popupKickerHtml({ left: POPUP_SYSTEM_WORDS.ferry, rightHtml: access }) +
+    popupTitleHtml({ markHtml, text: station.name ?? station.id }) +
     boardLineHtml(boardSystemLine(board, stationArrivalsRows(body)));
   const buckets = orderedFerryBuckets(body.routes);
-  if (!buckets.length) return `${header}<div class="arr-none">No boats</div>`;
+  if (!buckets.length) return `${header}<div class="arr-none">No boats</div>\n`;
   let html = header;
   for (const [routeName, rows] of buckets) {
     const color = rows[0] && rows[0].route_id ? colorFor(rows[0].route_id) : FERRY_FALLBACK_COLOR;
-    html += `<div class="arr-dir" style="color:${readableInk(color, surface)}">${esc(routeName)}</div>`;
-    html += rows
-      .map((row) => {
+    // The bucket is a ROUTE here rather than a direction, so it carries the route's colour,
+    // walked against the popup's own surface (readableInk) like every other ink in a popup.
+    html += popupDirHtml(routeName, readableInk(color, surface));
+    html += popupArrRowsHtml(
+      rows.map((row) => {
         const d = ferryArrivalDisplay(row, now);
-        const prefix = d.mode === "departing" ? "departs " : "";
-        return `${prefix}${esc(formatCountdown(d.seconds))}${qualifierHtml(arrivalQualifier(row, board))}`;
-      })
-      .join("<br>");
+        // "departs " STAYS ON THE COUNTDOWN, not in the label cell: it is half of one phrase
+        // ("departs 1 min") and the number cell is the nowrap one, so the phrase cannot break.
+        // The NJ Transit board does the same with the same prefix.
+        return {
+          extraHtml: qualifierHtml(arrivalQualifier(row, board)),
+          countdown: (d.mode === "departing" ? "departs " : "") + formatCountdown(d.seconds),
+        };
+      }),
+    );
   }
   return html;
 }
@@ -3934,16 +4232,22 @@ function njtRouteTables(routes, cumLengths = polylineCumLengths) {
 // train running to schedule is the unremarkable case and "0 min late" is noise.
 // Sign is respected, because NJ Transit does publish negative delays (running
 // early) and rendering one as "late" would be a lie about the direction.
-function njtTrainPopupHtml(train, name, color, position = null, surface = POPUP_SURFACE_FALLBACK) {
+function njtTrainPopupHtml(train, name, color, position = null, surface = POPUP_SURFACE_FALLBACK, markHtml = "") {
   const t = train || {};
   return (
-    `<b style="color:${readableInk(color, surface)}">${esc(formatNjtHead(t.route_id, name))}</b>` +
-    ` <span class="popup-sub">NJ Transit</span>` +
-    (t.train_num ? `<br>Train ${esc(t.train_num)}` : "") +
-    (t.headsign ? `<br>To ${esc(t.headsign)}` : "") +
-    (t.stop_name ? `<br>Next stop: ${esc(t.stop_name)}` : "") +
-    njtDelayLine(t.delay) +
-    positionLineHtml(position)
+    popupKickerHtml({ left: POPUP_SYSTEM_WORDS.njt }) +
+    popupTitleHtml({ markHtml, text: formatNjtHead(t.route_id, name), color: readableInk(color, surface) }) +
+    popupRowsHtml([
+      { k: "Train", v: t.train_num },
+      // "To" IS THE LABEL AND THE HEADSIGN IS THE VALUE, which is the same two words this popup
+      // printed as one line ("To New York") with the preposition doing the labelling.
+      { k: "To", v: t.headsign },
+      { k: "Next stop", v: t.stop_name },
+      // njtDelayText prints nothing for a train running to schedule and nothing for a delay that
+      // rounds to zero, so the grid drops the row: the unremarkable case says nothing at all.
+      { k: "Delay", v: njtDelayText(t.delay) },
+      { k: "Position", v: positionWords(position) },
+    ])
   );
 }
 
@@ -3963,10 +4267,11 @@ function njtDelayText(delaySeconds) {
   return `${minutes} min ${delaySeconds < 0 ? "early" : "late"}`;
 }
 
-function njtDelayLine(delaySeconds) {
-  const text = njtDelayText(delaySeconds);
-  return text ? `<br>${esc(text)}` : "";
-}
+/* njtDelayLine WAS HERE, and it was njtDelayText wrapped in a `<br>` and escaped. MR5's grid
+   escapes its own values and separates rows by being rows, so the wrapper had nothing left to do
+   and njtTrainPopupHtml was its only caller. The rule it carried is in the grid: njtDelayText
+   returns "" for a train running to schedule and for a delay that rounds to zero, and a row with
+   no value is not printed, so the unremarkable case still says nothing at all. */
 
 /* "Jamaica, LIRR, station" and "Grand Central, Metro-North, station". MR3 needed one: the rail
    station was a canvas circleMarker with no element and therefore no accessible name, and the
@@ -4054,33 +4359,35 @@ const njtArrivalDisplay = ferryArrivalDisplay;
 // never rendered; njtRowLabel is the authority and it returns one string.) A row with
 // neither still renders its countdown rather than being dropped: the train is real
 // and the time is the thing the rider came for.
-function njtArrivalsHtml(station, body, now, colorFor = () => NJT_FALLBACK_COLOR, nameFor = () => null) {
+function njtArrivalsHtml(station, body, now, colorFor = () => NJT_FALLBACK_COLOR, nameFor = () => null, markHtml = "") {
   // Every row dated by the TripUpdates header and qualified by it (6.2).
   const board = boardFreshness("njt", body, now);
   const header =
-    `<b>${esc(station.name ?? station.id)}</b> ` +
-    `<span class="popup-sub">NJ Transit</span>` +
+    popupKickerHtml({ left: POPUP_SYSTEM_WORDS.njt }) +
+    popupTitleHtml({ markHtml, text: station.name ?? station.id }) +
     boardLineHtml(boardSystemLine(board, stationArrivalsRows(body)));
   const rows = njtOrderedArrivals(body.arrivals, now);
-  if (!rows.length) return `${header}<div class="arr-none">No trains</div>`;
+  if (!rows.length) return `${header}<div class="arr-none">No trains</div>\n`;
   return (
     header +
-    rows
-      .map((row) => {
+    popupArrRowsHtml(
+      rows.map((row) => {
         const color = colorFor(row.route_id);
-        const badge =
-          `<span class="arr-badge" style="background:${color};color:${readableTextOn(color)}">` +
-          `${esc(row.route_id || "?")}</span>`;
-        const label = njtRowLabel(row, nameFor);
         const display = njtArrivalDisplay(row, now);
-        const prefix = display.mode === "departing" ? "departs " : "";
-        const num = row.train_num ? ` <span class="popup-sub">${esc(row.train_num)}</span>` : "";
-        return (
-          `${badge}${label}${num} ${esc(prefix + formatCountdown(display.seconds))}` +
-          qualifierHtml(arrivalQualifier(row, board))
-        );
-      })
-      .join("<br>")
+        return {
+          markHtml:
+            `<span class="arr-badge" style="background:${color};color:${readableTextOn(color)}">` +
+            `${esc(row.route_id || "?")}</span>`,
+          // njtRowLabel returns PLAIN TEXT since MR5: the grid escapes its own label, and a
+          // helper that escaped first would print "&amp;amp;" for a headsign with an ampersand.
+          label: njtRowLabel(row, nameFor),
+          extraHtml:
+            (row.train_num ? ` <span class="popup-sub">${esc(row.train_num)}</span>` : "") +
+            qualifierHtml(arrivalQualifier(row, board)),
+          countdown: (display.mode === "departing" ? "departs " : "") + formatCountdown(display.seconds),
+        };
+      }),
+    )
   );
 }
 
@@ -4120,8 +4427,7 @@ function njtRowLabel(row, nameFor = () => null) {
   const r = row || {};
   const headsign = r.headsign || null;
   const routeName = r.route_id ? nameFor(r.route_id) : null;
-  const text = headsign || routeName;
-  return text ? ` ${esc(text)}` : "";
+  return headsign || routeName || "";
 }
 
 // ---- Service alerts in the station popups (phase 12b) ----
@@ -4488,7 +4794,7 @@ function bannerRenderKey(shown, stale) {
 function alertsBlockHtml(alerts) {
   const rows = shownAlerts(alerts).map((a) => `<div class="alert-row">${esc(a.header)}</div>`);
   if (!rows.length) return "";
-  return `<div class="alert-block">${rows.join("")}</div>`;
+  return `<div class="alert-block">${rows.join("\n")}</div>\n`;
 }
 
 // The alerts a surface actually SHOWS: those with a header to show. An alert with no
@@ -5298,7 +5604,7 @@ if (typeof module !== "undefined" && module.exports) {
     esc, routeColor, lineColor, staleness, emptyFeedDecision, noteClockOffset,
     formatCountdown, trainLatLng, polylineCumLengths, pointAtArcLength, projectOntoRoute,
     computeRouteSlice, railroadColor, orderedRailroadBuckets,
-    railroadArrivalsHtml, formatRailroadHead, ROUTE_ACCEPT_DIST, ROUTE_MAX_SLICE,
+    railroadArrivalsHtml, ROUTE_ACCEPT_DIST, ROUTE_MAX_SLICE,
     indexAlerts, matchStationAlerts, matchRouteAlerts, bannerAlerts, alertsBlockHtml,
     hashString, bannerRenderKey,
     RAILROAD_ROUTE_MAX_SLICE, RAILROAD_ROUTE_ACCEPT_DIST, RAILROAD_BUCKET_ORDER,
@@ -5321,6 +5627,11 @@ if (typeof module !== "undefined" && module.exports) {
     statusNoteText, FEEDS, feedDotState, feedTooltip, feedStripModel, themeChoice, nextTheme,
     // MR5 (Q2): the state's own words, and the popup footer that says them the strip's way.
     feedStateWords, popupFreshHtml,
+    // MR5: the popup's vocabulary, and the subway plate that became a builder so a title
+    // could draw the map's own mark.
+    POPUP_SYSTEM_WORDS, POPUP_MARK_TITLE, POPUP_MARK_ROW, popupMarkHtml, popupKickerHtml,
+    popupTitleHtml, popupRowsHtml, popupDirHtml, popupArrRowsHtml, railroadHeadParts,
+    subwayPlateSvg,
     MOBILE_MAX_WIDTH_PX, MOBILE_QUERY, narrowViewport,
     INK_LIGHT, INK_DARK,
     humanizeAge, alertsStale, alertsFreshnessBasis, ALERTS_STALE_AFTER_S,
@@ -5333,7 +5644,7 @@ if (typeof module !== "undefined" && module.exports) {
     // 6.3: a vehicle's position, qualified by its own observation, and its rendering.
     OBS_MAX_S, observationAge, observationStaleAt, positionQualifier,
     POSITION_STEP_KEYS, positionSteps, positionBoard, markerAge, glideDeadline, glideAnchored,
-    drawnFromPrediction, railroadHollow, railroadAtItsStation, withheldFix, positionLineHtml, positionClause,
+    drawnFromPrediction, railroadHollow, railroadAtItsStation, withheldFix, positionWords, positionClause,
     // MR3: the commuter rail grammar. Pure, so the state table can be asked one row at a
     // time and the tag's markup read as a string rather than off a screenshot.
     RAIL_BRANCH_CODES, RAIL_NEUTRAL_COLOR, RAIL_AGENCY, railBranchCode, railBranchColor, railBranchInk, railBranchPaint, RAIL_INK_TARGET,
@@ -5362,7 +5673,7 @@ if (typeof module !== "undefined" && module.exports) {
     ferryStatusText, ferrySpeedKnots, ferryBoatPopupHtml, ferryArrivalsHtml,
     // 15c: NJ Transit Rail.
     NJT_FALLBACK_COLOR, njtColor, njtRouteColor, njtRouteName, njtKey, formatNjtHead,
-    njtRouteTables, njtTrainPopupHtml, njtDelayText, njtDelayLine, njtTrainName,
+    njtRouteTables, njtTrainPopupHtml, njtDelayText, njtTrainName,
     njtStationName,
     njtArrivalDisplay, njtArrivalsHtml, njtRowLabel, njtAtItsStation, njtGlideTrain,
     njtOrderedArrivals, isNotConfigured,

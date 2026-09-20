@@ -2013,3 +2013,56 @@ nowhere. AirTrain gets a footer reading "Scheduled", which is the same answer th
 position helpers "landed inert one commit before the gate, and are wired in the gate's own commit",
 for the same reason, that the wiring touches every popup and the arithmetic should be settled and
 tested before it does.
+
+### The flakes, in one list at last, and the branch they get
+
+Five stages have each recorded their own flakes in their own section, which is how a flake that
+appears in three stages reads as three unrelated observations. **The operator's instruction is
+that they become one list, and that the list gets a branch of its own once this phase closes.**
+Collected here rather than fixed here, because a timing fix is a change to a spec this stage is
+not otherwise touching, and a freeze is the wrong moment to start editing one (the A4 freeze made
+the same call about `C2c2`).
+
+| What flakes | Where it was seen | The shape |
+| --- | --- | --- |
+| `crosslink.spec.js`'s `open()` | MR3, round 4 after the push | A PREMISE assertion racing the app's first poll. `open()` asserted a marker count that six vehicles satisfied and one did not, so the local suite won the race every time until it did not. **Already fixed**, by making the premise a wait on `railroads.size > 0 && trains.size > 0`: a premise that can fail on a race was never testing anything, it was reporting one. On the list as the precedent for the shape, not as an open flake. |
+| `smoke.spec.js` 21 (a ferry boat moves between polls without churn) | MR4, once in a three-file parallel run; MR5, once in a full run at `40967b5`'s gates | **`runFor`'s poll racing the assertion.** `page.clock.runFor(15_000)` returns when the clock has advanced, not when the poll it triggers has fetched, parsed and moved the marker. The two locator assertions that follow RETRY, so they pass; `expect(after).toEqual([40.708, -73.985])` reads a value out of `page.evaluate` and cannot retry, so under worker contention it reads the boat's previous position once and fails. It opens no popup, so nothing MR5 changed executes in it, and it passed twice in isolation at the same sha. |
+| `pins.spec.js` P1k (the NJ Transit marks) | MR4, once inside the M33 mutation run; and again in the same stage's three-file run | Local server contention, not the mutation: M33 reaches nothing NJ Transit draws, and an isolated re-run at the same sha passed. The same shape as MR2's P1m under M6, which also failed beside a subway mutation it could not see. |
+| `smoke.spec.js` C2c2 (a healthy group covering no routes still counts as coverage) | the A4 freeze, roughly one run in ten under two-worker contention, 6/6 in isolation | Measured and filed as a follow-up on PR 89 rather than edited during a freeze. Listed here so the follow-up and this branch are the same piece of work. |
+| `mobile.spec.js` A6e (a popup never exceeds the phone's viewport) and `smoke.spec.js` 33 (NJ Transit lines, squares and two ADDED trips) | named by the operator for this list | **Recorded as named, with what the record here does and does not hold.** Neither has a failure written down in MR1 through MR5 or in the A4 rounds, and A6e passed in every run of this stage. So the de-flake branch MEASURES both (repeated runs under contention, which is how C2c2's one-in-ten was established) instead of taking either a memory or this table as evidence. A6e is worth measuring on its own grounds regardless: MR5 changed the geometry it asserts, and it is the one popup spec whose subject this stage moved. |
+
+**The rule until that branch exists is the one this phase has used throughout.** `retries: 0` in
+`playwright.config.js`, with the comment saying why ("no retry masking"); a flake is recorded with
+the run it appeared in and the sha; it is re-run in isolation and the isolated result is reported
+as the isolated result; and it is never retried, quarantined or skipped into green. A mutation run
+that flakes is re-run rather than counted, because a table that launders a flake is worse than one
+with a gap in it.
+
+### The fifth defect shape: two implementations of one reader, of which only one learns
+
+This phase has been naming the shapes its own defects take, and pointing each round's reviewers at
+them: a markup read where the drawn page is what matters, the model believed over the page, a test
+that cannot fail, and a count over a class a later stage widened. **MR5 adds a fifth, and it is
+this stage's own: two implementations of one reader, of which only one learns.**
+
+`pins.spec.js` reads a popup two ways, because two specs find their subject differently: P5a looks
+a surface up by its `MARKERS` name, P5c looks a railroad up by its registry key, since the F01
+capture's ids are not stable across position states. The reader walked text nodes and normalised
+them, and P5c carried its own inlined copy of that walk, the normaliser and the clones.
+
+Then ruling Q2 taught the reader something new. The freshness footer says nothing visible in the
+live state and says "Live, 12s" through A1's `visually-hidden` class, so the eye's view and the
+screen reader's view stop being the same string for the first time in this app: `seen` drops
+`.visually-hidden`, `spoken` drops `[aria-hidden="true"]`. **Only `popupStrings` learned it.** P5c
+regenerated four goldens whose `seen` contained "Live · {n}s", which is a string no rider sees and
+the one sentence memo D9 forbids, recorded in a golden as though it had shipped. Nothing was red.
+The pin matched itself, and the golden was the evidence.
+
+**Why it belongs beside the other four rather than inside "a test that cannot fail".** That shape
+is one test with no teeth. This one is two teeth of different lengths: each reader is correct on
+its own terms, both are exercised, and the defect lives in the gap between them, which only
+appears when one of them is taught something. It is also the second time this phase has paid for
+it one level down: finding N6 was two answers to one question in the app, and this is two answers
+to one question in the tests. **The repair is the same repair.** One `POPUP_READER` string with
+two locators in front of it, `content` as the contract between them, and the reason written above
+it so the next stage that needs a third way to find a popup adds a locator rather than a reader.

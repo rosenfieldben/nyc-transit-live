@@ -134,3 +134,20 @@ side of the pair.
 | ferry dock | `after-popup-ferry-dock.png` | `after-popup-ferry-dock-dark.png` |
 | AirTrain station | `after-popup-airtrain-station.png` | `after-popup-airtrain-station-dark.png` |
 | the popup against the chrome at 375 | `after-chrome-375.png` | `after-chrome-375-dark.png` |
+
+## What this stage changed about the tests
+
+| tier | what is new |
+| --- | --- |
+| node, `frontend/popupvocab.test.js` | the vocabulary asked one builder at a time: the mark's body byte-for-byte across six builders, the size clamp as arithmetic, the escaping happening once, the silence rule, the three-cell row, and the six kicker words asserted against the surfaces they came from |
+| node, `frontend/tokens.test.js` | the popup's surface is the token at full strength, the translucency cannot come back by either spelling, the blur went with it, the ink edge is on the wrapper alone |
+| node, `frontend/boards.test.js` | the six board pins rewritten in section 5's grammar, with one spelled out in full so the grammar itself is pinned with no shared template in the way |
+| browser, `tests/e2e/popups.spec.js` | D6a to D6i: the surface and the edge per theme, the width cap and the 220 floor at every bind site, fourteen surfaces at two widths in two themes, the theme swap re-inking the head, every inline colour a popup prints measured against its own fill or the surface, and the auto-pan's cap, edge, stand-down and desktop recipe |
+| browser, `tests/e2e/pins.spec.js` | P5d (direction A, the residue assertion) and P4d (every non-opaque paint, composited and not), plus P5b's extractor rewritten as a mode-aware scanner |
+
+## Gates
+
+`ruff check`, `ruff format --check`, `mypy` and `pytest` in `backend/` (1738 passed); the
+contract-tier lint; `node --test "frontend/*.test.js" "tests/*.test.js"` (392 passed); the hermetic
+Playwright suite (316 passed); and `docs/reviews/audit-2026-09-05/run_all.sh` (fifteen records, all
+still matching, two of which learned this stage's markup).

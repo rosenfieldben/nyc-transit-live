@@ -2114,6 +2114,13 @@ titles carry words alone. The rail families' station squares are `L.marker`s and
 in that slot ("right: route bullets"), drawn by the map's own plate builder at the small size and
 taken from the registry's own `station.routes`, the same list the dot-or-ring is drawn from.
 
+**Measured at the worst station rather than the fixture's.** Times Sq in the hermetic world serves
+three routes; the real one serves a dozen. Rendered with twelve plates at the popup's 220px floor,
+the kicker's right-hand span is 158px wide, WRAPS to two rows, and the popup's `scrollWidth` equals
+its `clientWidth`: the marks are inline content in a flex item whose min-content is one plate, so
+they wrap rather than pushing the row wider. Nothing about that is a promise the CSS makes on
+purpose, which is why it is measured here rather than assumed.
+
 | Surface | kicker | title | rows |
 | --- | --- | --- | --- |
 | subway train | `Subway` | plate + `1 train` | Next stop, Direction, Position, Trip |

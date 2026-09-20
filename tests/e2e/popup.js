@@ -142,18 +142,32 @@ const STOCK_SURFACES = [
    is four hundred characters of SVG: a spec that pins a whole popup's innerHTML would become
    unreadable, and a reader could not tell the assertion from the drawing.
 
-   THE TOKEN KEEPS THE MARK'S OWN TEXT, so [mark 1] and [mark 2] are different and a board that
-   drew the wrong route still fails. The bytes of a mark are pinned where marks live: pins.spec.js
-   P1f for the drawn plate, frontend/popupvocab.test.js for the re-wrap that sizes it.
+   THE TOKEN CARRIES THE MARK'S IDENTITY, which is the correction a reviewer's mutations forced. The
+   first version kept only the `<text>` label, so a pin could not tell a 17px plate from a 24px one
+   or a route-coloured plate from a black one: drawing the subway station's kicker plates at the
+   title's size, and then in flat black, both left the whole node suite green. The token now carries
+   the label, the drawn size and the fills the mark declares as attributes, which is everything a
+   mark's own arguments decide. Its geometry stays where marks live (pins.spec.js P1f for the drawn
+   plate, frontend/popupvocab.test.js for the re-wrap).
 
-   THE SAME HELPER EXISTS IN frontend/boards.test.js for the node tier's board pins, and the two
-   are deliberately not shared: nothing else in this file is importable from a node unit test, and a
-   four-line normaliser copied with its reason is cheaper than a module that exists to be shared by
-   two tiers. If a third tier needs it, it moves. */
+   ONE COPY, IMPORTED, which is the other half. The node tier's board pins used a byte-identical
+   copy of this function under a comment claiming nothing here is importable from a node test.
+   Measured, it is: `require("../tests/e2e/popup.js")` works because this file requires nothing
+   itself. Two implementations of one reader is the shape this phase's fifth defect is named for,
+   and it does not get to be re-created in the commit that names it. */
 const withoutMarks = (html) =>
   html.replace(/<span class="pmark"[^>]*>[\s\S]*?<\/span>/g, (svg) => {
     const label = /<text[^>]*>([^<]*)<\/text>/.exec(svg);
-    return `[mark ${label ? label[1] : "?"}]`;
+    const size = /width="([\d.]+)" height="([\d.]+)"/.exec(svg);
+    const fills = [...svg.matchAll(/fill="([^"]+)"/g)].map((m) => m[1]).join(",");
+    return [
+      "[mark",
+      label ? label[1] : null,
+      size ? `${size[1]}x${size[2]}` : null,
+      fills || null,
+    ]
+      .filter(Boolean)
+      .join(" ") + "]";
   });
 
 module.exports = {

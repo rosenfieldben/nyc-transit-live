@@ -3152,6 +3152,13 @@ test("A3: every muted ink in style.css clears AA on the surface it prints on", (
       // app uses --muted; the state's colour goes on the square, which is measured below as a
       // graphic. Read by selector so a later edit that "matches the words to the dot" fails here.
       [declared(".fresh"), t.surface, "the popup freshness footer's words"],
+      /* MR5: AND THE COUNTDOWN THAT READS "now", for the same reason one rule down in the
+         stylesheet and because a reviewer found that rule's comment claiming this sweep already
+         measured it. It did not: every other popup ink here is read BY SELECTOR and `.arr .now` was
+         not among them, so the pairing that was actually measured was the bare `--accent-ink`
+         token. An edit taking section 5's own instruction literally ("the countdown reads in the
+         accent") would have shipped 3.47 in the light theme with nothing failing. */
+      [declared(".arr .now"), t.surface, "an arrival row that reads \"now\""],
     ]) {
       const paint = resolved(ink, t, `${theme}: ${what}`);
       const ratio = contrastRatio(paint, resolved(surface, t, `${theme}: ${what} surface`));

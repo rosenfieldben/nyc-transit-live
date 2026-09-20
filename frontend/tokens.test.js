@@ -62,27 +62,64 @@ function popupSurfaceRule() {
   return m[1];
 }
 
+/* EVERY RULE THAT PAINTS A POPUP, and this file's own review finding is why it exists. The
+   translucency and the blur are forbidden of the POPUP, but both absences were asserted of the
+   shared wrapper+tip rule alone, and the popup has eight rules. `.leaflet-popup-content-wrapper`
+   has a second rule of its own two lines below the first (the ink edge), so an `opacity: 0.94` or a
+   `backdrop-filter` added THERE draws exactly the regression these tests exist to stop and passed
+   both of them. The gap is the fourth defect shape this phase keeps producing, one tier down: an
+   assertion over part of a class, passing over the rest of it.
+
+   BY SELECTOR RATHER THAN BY A LIST, so it widens on its own: a ninth popup rule is scanned the day
+   it is written, with nothing here to update. The count below is not a census of the popup's rules
+   and is not pinned to one; it is there so that a regex which stopped matching fails loudly instead
+   of passing over nothing, which is the shape in the paragraph above.
+
+   COMMENTS ARE STRIPPED FIRST, for `declared`'s reason one function up: these rules carry long
+   comments that name `backdrop-filter`, `color-mix` and the 94% in prose, and a scan that read them
+   would fail on the explanation rather than on the page. The body pattern takes no braces, so a
+   rule nested in a media query is found as itself and the `@media` prelude is not mistaken for a
+   selector. */
+function popupRules() {
+  const stripped = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
+  const found = [...stripped.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .filter((m) => m[1].includes("leaflet-popup"))
+    .map((m) => [m[1].trim().replace(/\s+/g, " "), m[2]]);
+  assert.ok(found.length >= 6, `style.css still has the popup's rules (found ${found.length})`);
+  return found;
+}
+
 test("MR5: the popup's surface is the token at full strength", () => {
   const body = popupSurfaceRule();
   assert.match(body, /background:\s*var\(--surface\);/, "the surface is --surface and nothing else");
   assert.match(body, /color:\s*var\(--ink\);/, "and its ink is the token, not Leaflet's #333");
   assert.match(body, /border-radius:\s*0;/, "section 5 has no radius");
   assert.match(body, /box-shadow:\s*var\(--shadow\);/, "and the shadow is the token");
-  // ONE background declaration, not two: a second one is how a translucent value comes back as a
-  // "progressive enhancement" over an opaque fallback, which is exactly the shape this forbids.
-  assert.equal((body.match(/(^|\n)\s*background:/g) || []).length, 1, "exactly one background declaration");
+  /* ONE background declaration IN THE WHOLE POPUP, not two: a second one is how a translucent value
+     comes back as a "progressive enhancement" over an opaque fallback, which is exactly the shape
+     this forbids, and the fallback and the enhancement are most naturally written in two rules. So
+     the count is over every rule that paints a popup rather than over this one. Measured: of the
+     popup's eight rules exactly one declares a background, and it is this one. */
+  const paints = popupRules().filter(([, rule]) => /(^|\n)\s*background:/.test(rule));
+  assert.equal(paints.length, 1, `exactly one popup rule declares a background (${paints.map((p) => p[0])})`);
+  assert.equal(paints[0][0], ".leaflet-popup-content-wrapper, .leaflet-popup-tip", "and it is the surface rule");
+  assert.equal((body.match(/(^|\n)\s*background:/g) || []).length, 1, "declared once inside it");
 });
 
-test("MR5: the design's translucency cannot come back by either spelling", () => {
-  const body = popupSurfaceRule();
+test("MR5: the design's translucency cannot come back by either spelling, in any of the popup's rules", () => {
   /* BOTH SPELLINGS, because they fail differently. color-mix computes to a color() no contrast
      reader in this repo parses, so a popup spelled that way is undecidable to axe AND invisible
      to the tests that would report it. An rgba is parseable and still undecidable to axe, because
-     axe will not composite a background it can see an image through. Neither is allowed. */
-  assert.doesNotMatch(body, /color-mix/, "color-mix reintroduces the 94% and is unparseable besides");
-  assert.doesNotMatch(body, /rgba?\([^)]*\/[^)]*\)/, "a slash-alpha rgb() reintroduces the 94%");
-  assert.doesNotMatch(body, /rgba\(/, "so does a four-argument rgba()");
-  assert.doesNotMatch(body, /opacity:/, "and so does an opacity on the box");
+     axe will not composite a background it can see an image through. Neither is allowed.
+
+     IN EVERY POPUP RULE, which is the correction: an `opacity: 0.94` on the wrapper's own edge rule
+     is the same undecidable popup, and a scan of the surface rule alone said nothing about it. */
+  for (const [selector, rule] of popupRules()) {
+    assert.doesNotMatch(rule, /color-mix/, `${selector}: color-mix reintroduces the 94% and is unparseable besides`);
+    assert.doesNotMatch(rule, /rgba?\([^)]*\/[^)]*\)/, `${selector}: a slash-alpha rgb() reintroduces the 94%`);
+    assert.doesNotMatch(rule, /rgba\(/, `${selector}: so does a four-argument rgba()`);
+    assert.doesNotMatch(rule, /opacity:/, `${selector}: and so does an opacity on the box`);
+  }
 });
 
 test("MR5: the blur went with the translucency, as MR1's F1 took it off the header", () => {
@@ -96,7 +133,9 @@ test("MR5: the blur went with the translucency, as MR1's F1 took it off the head
      backdrop is ever visible. MR1's finding F1 took the filter off the header along with the
      header's 90%, and this is the same pair one surface out. Asserted as an ABSENCE, in the same
      words helpers.test.js's A3 sweep uses for #panel, so the two surfaces read alike. */
-  assert.doesNotMatch(popupSurfaceRule(), /backdrop-filter/, "the popup must not blur a backdrop it hides");
+  for (const [selector, rule] of popupRules()) {
+    assert.doesNotMatch(rule, /backdrop-filter/, `${selector}: the popup must not blur a backdrop it hides`);
+  }
   // And the header's, unchanged since MR1, so this is one rule for both and not a popup exception.
   const headerRule = /#panel \{([\s\S]*?)\n\}/.exec(CSS);
   assert.ok(headerRule, "#panel must still exist in style.css");

@@ -313,9 +313,14 @@ test("MR5: every system word a kicker prints is one the app already says elsewhe
      what its head has printed since phase 9. That word is the feed's code ("MNR") where every
      spoken surface says "Metro-North", and the divergence is recorded as an MR5 finding rather
      than quietly fixed here. */
-  const stripNames = new Set(FEEDS.map((f) => f.name));
+  /* THE MAPPING, NOT THE MEMBERSHIP, and the first draft asked the weaker question. It asked
+     whether each word was SOME feed's name, which a word attached to the wrong system satisfies:
+     measured, `buses: "PATH"` passed the whole node suite, because the bus popup is the one surface
+     with no board pin to hold its words. A key-for-key comparison against the strip's own table is
+     the question this test's title was already claiming to ask. */
+  const stripName = (key) => (FEEDS.find((feed) => feed.key === key) || {}).name;
   for (const key of ["subway", "buses", "njt", "path"]) {
-    assert.ok(stripNames.has(POPUP_SYSTEM_WORDS[key]), `${key}: the strip says ${POPUP_SYSTEM_WORDS[key]}`);
+    assert.equal(POPUP_SYSTEM_WORDS[key], stripName(key), `${key}: the kicker must say what the strip says`);
   }
   assert.ok(
     ferryBoatName({ label: "H201" }, "East River").includes(POPUP_SYSTEM_WORDS.ferry),

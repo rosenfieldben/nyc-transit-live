@@ -21,6 +21,21 @@ Where each part of the redesign lands in the existing frontend. Keep the current
 - Add `railTagIcon(system, route, placed, bearing)` returning the `L.divIcon` per README §4 "Commuter train marker", and `railTagHtml(system, route)` for popups.
 - Add `bearingAlong(map, pts, lat, lon, inbound)`.
 - Popup builders: `vehiclePopupHtml({kicker, sub, mark, title, rows, alerts, age, xlink})` and `stationPopupHtml({kicker, title, buckets, markFor, alerts, age, extra})` using the `.pk/.pt/.kv/.dir/.arr/.fresh/.alert/.xlink` classes. Route the existing `stalePopupLine` / `feedAgeLine` wording into `.fresh`.
+
+> **Erratum, MR5 (2026-09-20): none of the five names in that line exists, and a reviewer asked for
+> this note because this file is what a later stage reads for "how the popups were meant to be
+> built".** The two builders were planned as one per popup KIND and shipped as one per GRAMMAR
+> element, which is the seam `helpers.js` already keeps (a pure string builder, no Leaflet, testable
+> one at a time in node): `popupKickerHtml`, `popupTitleHtml`, `popupRowsHtml`, `popupDirHtml`,
+> `popupArrRowsHtml`, plus `popupMarkHtml` for the mark and `popupFreshHtml` for the footer. A
+> caller composes them, so a popup with no board or no footer omits a call instead of passing an
+> empty option. And the two wordings this line says to route were both already gone: `feedAgeLine`
+> before this stage, `stalePopupLine` with its caller in this one. What `.fresh` renders is
+> `feedStateWords` (the feed strip's own words, ruling Q2) over `feedDotState`'s square, which is
+> the same "take the app's words, not the design's prose" rule the README's erratum records.
+> `frontend/popupvocab.test.js` is the measurement, and README section 5's erratum is the design
+> of record for the deviations.
+
 - Bus route colour: `hsl(h, 45%, 38%)`.
 
 ## frontend/systems/shared.js

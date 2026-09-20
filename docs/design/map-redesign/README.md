@@ -123,8 +123,11 @@ Auto-pan must clear the page chrome: on `popupopen`, measure the rendered header
 > implements a clamped form of it.** Two measurements, both on the shipped frontend. (1) The
 > paddings carry no viewport-fit guard, and Leaflet's own arithmetic lets the TOP padding win
 > unconditionally when top and bottom cannot both be honoured. With the Key panel open at
-> 375x640 the header's bottom edge is 579, so the recipe asks for a top padding of 592 and
+> 375x667 the header's bottom edge is 579, so the recipe asks for a top padding of 592 and
 > `_adjustPan()` puts the popup at `top 592, bottom 718` on a 667px map: 51px off the bottom.
+> (That viewport read "375x640" until a reviewer read the sentence against itself: a 667px map does
+> not fit in a 640px window, 375x667 is the phone this suite uses (`PHONE` in
+> `tests/e2e/a11y.spec.js`), and 718 - 667 = 51 is arithmetic that closes only there.)
 > The app's own `panPopupClearOfChrome` cannot rescue it, because that is a collision solver
 > and the popup is not colliding, it is off-screen. Horizontally `24 + 110` is unsatisfiable
 > below about 400px wide. (2) Leaflet's autopan has no equivalent of this app's
@@ -146,8 +149,9 @@ Shared vocabulary (classes in `reference/map-redesign-v2.css`):
 - `.xlink` cross-link button ("Also here: Jamaica →"): 600 11px, `border 1px --divider`, transparent.
 - `.fresh` footer: `border-top 1px --rule; margin-top 10px; 600 10px uppercase --muted` with a 6×6 square: green `#00933c` "LIVE · UPDATED 12S AGO"; stale → accent text and square, "AS OF 6M AGO · FEED STALE"; schedule-only → gray square, "SCHEDULED HEADWAYS · NO LIVE FEED".
 
-> **Erratum, MR5 (2026-09-20): the vocabulary ships in these class names, with four deviations,
-> each measured.**
+> **Erratum, MR5 (2026-09-20): the vocabulary ships in these class names, with five deviations,
+> each measured.** (Four when this erratum was written: a reviewer counted the items against the
+> prose and found the fourth carrying two unrelated deviations, so it is two items now.)
 >
 > 1. **A popup's route mark is the MAP's mark, not `.bul.lg` / `.sq` / `.rtag`.** The three DOM
 >    forms above would be a second drawing of a mark this app already builds (the subway's plate,
@@ -170,20 +174,30 @@ Shared vocabulary (classes in `reference/map-redesign-v2.css`):
 >    popup state at all**: the footer is a vehicle popup's line and the only schedule-only feed is
 >    AirTrain, which has no vehicles, so a rider reads that word on the feed strip's tooltip.
 >
-> 4. **`.alert` ships as the app's `.alert-block` with `.alert-row` inside it**, carrying this
->    list's rules (accent left edge, `6px 0 6px 10px`, 11px, `--ink`, no fill) on the REGION rather
->    than on each alert. The `.alert + .alert` rule above implies one box per alert, which draws an
->    accent edge per alert: a station popup with three of them would read as three warnings rather
->    than one block of them. **`.xlink` IS renamed**, because there the class was the only thing left
->    to adopt, **but its arrow is not drawn.** Added as an `aria-hidden` span, so that no screen
->    reader would read "right arrow" after the station's name, it made axe report a NEW undecidable
->    finding ("Element content contains only non-text characters") at every width in both themes.
->    The ruling on this surface is that the undecidable inventory does not grow, and a decorative
->    glyph is the weakest reason there is to grow it: the button already says where it goes and its
->    border already says it is pressable.
+> 4. **`.alert` is NOT renamed: it ships as the app's own `.alert-block` with `.alert-row` inside
+>    it**, carrying this list's rules (accent left edge, `6px 0 6px 10px`, 11px, `--ink`, no fill) on
+>    the REGION rather than on each alert. The `.alert + .alert` rule above implies one box per
+>    alert, which draws an accent edge per alert: a station popup with three of them would read as
+>    three warnings rather than one block of them.
 >
-> The `.kv` row list is as given, plus four labels the app's own fields needed (Direction, Status,
-> Speed, To) and two nouns it already printed (Bus, Boat). Full measurements in
+> 5. **`.xlink` IS renamed**, because there the class was the only thing left to adopt, **but its
+>    arrow is not drawn.** Added as an `aria-hidden` span, so that no screen reader would read
+>    "right arrow" after the station's name, it made axe report a NEW undecidable finding ("Element
+>    content contains only non-text characters") at every width in both themes. The ruling on this
+>    surface is that the undecidable inventory does not grow, and a decorative glyph is the weakest
+>    reason there is to grow it: the button already says where it goes and its border already says it
+>    is pressable.
+>
+> **The `.kv` row list ships as given EXCEPT for the Position row's values**, and that exception is a
+> ruling rather than a slip: the three strings in the bullet above ("Live GPS" | "Scheduled, no GPS"
+> | "Placed from arrivals") are printed nowhere in this app. What a rider reads is the freshness
+> contract's own vocabulary through `positionWords`: `scheduled position (no GPS)`, `estimated from a
+> prediction`, and SILENCE for a fresh reported fix, because silence means current (memo D9, ruling
+> Q1). An earlier draft of this erratum certified the row list "as given" with no such note, which
+> would have invited a later stage to reintroduce three strings the contract forbids.
+>
+> The row list gains **five labels the app's own fields needed** (Direction, Status, Speed, To,
+> Heading) and two nouns it already printed (Bus, Boat). Full measurements in
 > `docs/reviews/map-redesign-rounds.md` under Stage MR5.
 
 ---

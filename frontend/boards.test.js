@@ -246,23 +246,33 @@ function render(name) {
 
 /* MR5: A MARK IS ONE TOKEN IN THESE PINS, and the reason is length rather than laziness. Section 5
    gives a subway station's kicker the route marks of every line calling there, drawn by the MAP's
-   own builder (popupMarkHtml over subwayPlateSvg), so Times Sq's board would arrive here with four
-   hundred characters of SVG per route and the pin would become unreadable. What these pins are for
-   is the WORDS and the ORDER of a board, and a mark's bytes are pinned where marks live:
-   pins.spec.js P1f holds the drawn plate, popupvocab.test.js holds the re-wrap.
+   own builder, so Times Sq's board would arrive here with four hundred characters of SVG per route
+   and the pin would become unreadable. What these pins are for is the WORDS and the ORDER of a
+   board; the token carries the mark's label, its drawn size and its declared fills, which is what a
+   board decides about a mark, and its geometry stays where marks live.
 
-   THE TOKEN KEEPS THE MARK'S OWN TEXT, so [mark 1] and [mark 2] are different pins and a board that
-   dropped a route, or drew the wrong one, still fails here. */
-function withoutMarks(html) {
-  return html.replace(/<span class="pmark"[^>]*>[\s\S]*?<\/span>/g, (svg) => {
-    const label = /<text[^>]*>([^<]*)<\/text>/.exec(svg);
-    return `[mark ${label ? label[1] : "?"}]`;
-  });
-}
+   IMPORTED RATHER THAN COPIED, and the first version of this file copied it. tests/e2e/popup.js
+   requires nothing itself, so a node test can require it; the copy's own comment claimed otherwise
+   and was wrong, which made it two implementations of one reader in the commit that named that
+   shape. One now, and the browser tier's markup pins and these read a mark the same way. */
+const { withoutMarks } = require("../tests/e2e/popup.js");
 
 // The subway badge colors, spelled once so the popup literals stay readable.
 const RED = 'style="background:#c0392b;color:#ffffff"';
 const BROWN = 'style="background:#5d4037;color:#ffffff"';
+
+/* ONE OF Times Sq's KICKER PLATES, as withoutMarks prints it: the route the plate carries, the size
+   the popup drew it at, and the fills the plate declares, in the order the SVG lists them (the
+   rounded square, then the numeral). 17 is POPUP_MARK_ROW, the design's small mark, and it is a
+   literal here on purpose: the constant's own value is pinned in frontend/popupvocab.test.js, so if
+   a later stage draws a kicker's plates larger these pins say so rather than following along.
+
+   THE FILLS ARE THE PAIR RED SPELLS ABOVE, which is the reason they are in the token at all: the
+   kicker's plates and the arrival badges below both ask lineColor for the 1 train and both ink
+   against it, so a plate whose paint stopped agreeing with its badge is a defect the reader of a
+   popup can see, and a token that said only [mark 1] could not fail on it. */
+const plate = (route) => `[mark ${route} 17x17 #c0392b,#ffffff]`;
+const TIMES_SQ_PLATES = [1, 2, 3].map(plate).join("");
 
 /* MR5: SECTION 5's GRAMMAR, AS FOUR TEMPLATES, so six board pins stay readable after the popup
    became a kicker, a title and a three-cell grid. These are literal templates written HERE, in the
@@ -284,13 +294,14 @@ const row = (mark, middle, n) => `<span>${mark}</span>\n<span>${middle}</span>\n
 test("PIN subway: Times Sq, one contributing group, every row dated by its header", () => {
   const out = render("subway");
   /* SPELLED OUT IN FULL, which is this file's one unaided pin of MR5's grammar: the kicker with the
-     station's own route marks on the right (three plates, normalised to [mark n] by withoutMarks
-     because a plate is four hundred characters of SVG), the title, a heading per direction and a
+     station's own route marks on the right (three plates, each normalised by withoutMarks to its
+     route, its drawn size and its fills, because a plate is four hundred characters of SVG), the
+     title, a heading per direction and a
      three-cell row per arrival. Every other pin in this file assembles the same shapes from the
      four templates above; this one is what would catch those templates drifting. */
   assert.equal(
     out.popup,
-    '<div class="pk"><span>Subway</span>\n<span>[mark 1][mark 2][mark 3]</span></div>\n' +
+    `<div class="pk"><span>Subway</span>\n<span>${TIMES_SQ_PLATES}</span></div>\n` +
       '<div class="pt"><span>Times Sq-42 St</span></div>\n' +
       '<div class="dir">Northbound</div>\n' +
       '<div class="arr">' +
@@ -554,7 +565,7 @@ test("6.2 the subway board, ten minutes behind: every row says so, in the popup 
   const q = ' <span class="arr-qualifier">as of 10m ago</span>';
   assert.equal(
     out.popup,
-    kicker("Subway", "[mark 1][mark 2][mark 3]") +
+    kicker("Subway", TIMES_SQ_PLATES) +
       title("Times Sq-42 St") +
       dir("Northbound") +
       arr(

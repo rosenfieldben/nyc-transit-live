@@ -90,9 +90,17 @@ future stage has to go looking for is a rule it will miss.
 | --- | --- | --- |
 | **MR1** | **Tokens and chrome.** The Modernist token set on the root with `data-theme`, self-hosted Archivo 400/600/800, the `.leaflet-tile-pane` filters for both themes, and a `localStorage`-persisted theme toggle, **built and tested and then hidden until MR4** (round 3, R2). The `<header>` replaces the right-hand `<aside>`: brand and blinking clock, the subway bullet key (display only, and in the app's own shape), the Key and Stations buttons, the feed strip, the Key panel, and the service alerts strip as a full-width row inside the header. The bottom-right control stack with the City/Rail/Region presets and the restyled zoom control. No marker, line, station, label, popup or route-table change: the pins prove it. | merged |
 | **MR2** | **Subway.** Trunk ribbons (casing plus line, yellow drawn last), the bullet train marker with its halo and lift, local dot versus transfer ring stations, the haloed permanent-tooltip labels with their zoom gating, the Names toggle, and route focus wired to the stage 1 bullets. Every ribbon takes its colour from `lineColor()` and every bullet keeps the app's own rounded rectangle, never the authority's palette or its roundel (round 3, R1). **And, on the operator's instruction after round 2**, the key is derived from the loaded route list rather than written down, every drawn polyline carries the set of routes that ride it, focus is membership in that set, and the key is an ARIA toolbar with one tab stop. **Round 3 adds**, on four more rulings: the subway's ribbons on their own pane below every other family's lines, the station labels on a pane below every vehicle, transfer counted by TRUNK rather than by route id, and an off-focus marker out of the accessibility tree and out of the click path while a route is focused. | merged |
-| **MR3** | **Commuter rail.** The real route tables (§6 of the brief: name-keyed codes for LIRR and Metro-North, the feed's `route_short_name` and `route_color` for NJ Transit, `route_color` added to `/api/railroad-routes` by `claude/railroad-route-colors` and `route_short_name` by this stage), the branch lines with their casings, ONE square station for all three agencies, names from zoom 11, and `railTagIcon` with the §3.1 provenance states: solid versus outlined body, filled versus outlined chevron, dimming for age. Bearing reuses the slice the glide already built and takes the SERVED direction; there is no headsign rule (v3.1). | in review |
-| **MR4** | **The other families.** PATH diamonds and lines, ferry dashed routes, dock dots and hulls, AirTrain's gray dashed service, and the bus arrow and dot at the muted hashed hue. The §3.3 dimmed and absent states for each. **Also the dark theme's release**: MR1 built it and hid the toggle, and MR4 is the stage at which every mark on the map has the casing that makes it legal (round 3, R2). | planned |
-| **MR5** | **Popups.** The `.pk/.pt/.kv/.dir/.arr/.fresh/.alert/.xlink` vocabulary, the §4 words routed from `positionQualifier()` and the per-system freshness rather than re-derived, the arrivals qualifier column, and the autopan padding that clears the stage 1 chrome. | planned |
+| **MR3** | **Commuter rail.** The real route tables (§6 of the brief: name-keyed codes for LIRR and Metro-North, the feed's `route_short_name` and `route_color` for NJ Transit, `route_color` added to `/api/railroad-routes` by `claude/railroad-route-colors` and `route_short_name` by this stage), the branch lines with their casings, ONE square station for all three agencies, names from zoom 11, and `railTagIcon` with the §3.1 provenance states: solid versus outlined body, filled versus outlined chevron, dimming for age. Bearing reuses the slice the glide already built and takes the SERVED direction; there is no headsign rule (v3.1). | merged (PR #119) |
+| **MR4** | **The other families.** PATH diamonds and lines, ferry dashed routes, dock dots and hulls, AirTrain's gray dashed service, and the bus arrow and dot at the muted hashed hue. The §3.3 dimmed and absent states for each. **Also the dark theme's release**: MR1 built it and hid the toggle, and MR4 is the stage at which every mark on the map has the casing that makes it legal (round 3, R2). | merged (PR #120) |
+| **MR5** | **Popups.** The `.pk/.pt/.kv/.dir/.arr/.fresh/.xlink` vocabulary (and the app's own `.alert-block`, which is deviation 4 in the README's erratum: `.alert` is not renamed), the §4 words routed from `positionQualifier()` and the per-system freshness rather than re-derived, the arrivals qualifier column, and the autopan padding that clears the stage 1 chrome. | built; the Stage MR5 section below is its record |
+
+**THE STATE COLUMN WAS THREE ROWS STALE, and a reviewer read it against the file it is in.** MR5's
+row said `planned` in the same commit that added its round sections; MR3 said `in review` and MR4
+`planned` with merged round sections below them, which this stage inherited rather than caused. The
+two merges are `db73f05` (PR #119) and `edd6950` (PR #120), which is also this branch's base. The
+rule this record keeps for itself is the one it keeps for a code citation: a table that describes the
+work is re-read whenever the work moves, or it becomes the most confidently wrong sentence in the
+document.
 
 ### The backend branch this phase owed, and paid
 
@@ -1687,22 +1695,36 @@ against white, reads **4.36** against what A4g could see and **4.02** against th
 | NEC (NJ Transit) | `#DD3439` | `#DD3439` untouched, 4.54 | `#bc2c30`, 4.89 |
 
 `popupSurfaceColor()` resolves the token beside `paperColor()`, `inkColor()` and
-`scheduledColor()`, and `--surface` rather than the composite is deliberate: the popup is 94%
-of `--surface` over `--bg`, and `--surface` is the DARKER of the two in the light theme and the
-LIGHTER in the dark one, so it is the end that gives dark ink and light ink respectively the
-least to work with. Ink that clears here clears on the real composite.
+`scheduledColor()`, and `--surface` is the whole answer because the popup SHIPS OPAQUE: there is no
+composite to reason about (the ruling one section up, and `tokens.test.js` holds it). It was the
+right background at the design's 94% too, which is why this paragraph was written in those terms and
+is corrected here rather than deleted: at 94% the popup would have been `--surface` over `--bg`, and
+`--surface` is the DARKER of the two in the light theme and the LIGHTER in the dark one, so it was
+already the end that gives dark ink and light ink respectively the least to work with. Ink that
+clears against it would have cleared the composite as well. (A reviewer found this sentence, and the
+two beside `popupSurfaceColor` in `systems/shared.js`, still saying the popup *is* 94%.)
 
 **And a resolved token is a string, so a theme swap has to rebuild what resolved it.** This is
 MR4's canvas lesson one surface further out: `applyTheme` repaints the canvas families because
 a 2D context takes a colour string, and it now also calls `popup.update()` on every open popup
 because a popup head takes one too. Without it a popup built in the light theme keeps
-light-theme ink on a dark surface until the next fifteen-second poll, and a STATION popup keeps
-it until the rider closes it. `popup.update()` rather than a close and reopen, so the rider's
-focus stays where it is.
+light-theme ink on a dark surface until the next fifteen-second poll. `popup.update()` rather than a
+close and reopen, so the rider's focus stays where it is.
+
+**AND IT REACHES THE POPUPS BOUND AS FUNCTIONS, WHICH IS NOT ALL OF THEM.** This paragraph said a
+station popup would keep its light-theme ink "until the rider closes it", and a reviewer read
+Leaflet's `_updateContent` against it: `update()` re-invokes bound content only where that content IS
+a function, so it rebuilds every vehicle popup and the AirTrain station popup, while the five ticking
+station boards are bound with a string and filled by `setPopupContent` and get the identical string
+back. They do not need it: `openStationArrivals` re-renders them on a one-second interval, so a
+station board picks the new theme up within a second by itself. The hook is for the vehicles, `D6h`
+measures a rail train's popup, and the comment in `systems/shared.js` now says which popups it
+reaches.
 
 **The clamped horizontal padding leaves a phone-width popup almost no freedom, and two specs
-were staged on the freedom it used to have.** Section 5's 220px content floor makes the popup
-263px wide at 375, and ruling S3's clamp then pins it to x 2..265: 112px of slack in the whole
+were staged on the freedom it used to have.** The measured popup in those specs is
+263px wide at 375 (the content floor itself computes to 256; the note under A4j's finding sorts the
+three widths this document quotes), and ruling S3's clamp then pins it to x 2..265: 112px of slack in the whole
 axis, spent entirely on the design's 110px right padding. Measured consequences, both in
 `layout.spec.js`:
 
@@ -2226,9 +2248,20 @@ to BE a resize the app must decline), the move exists again at 52px, and the two
 what would catch the next chrome that outgrows this. The number is not written down: it is an overlap
 passed to the same measured helper.
 
-**And it is a finding about the app, recorded rather than fixed**: section 5's 220px content floor
-makes a popup 293 wide at 375, and a popup that tall near the map's left edge has no position that
-clears both the header and the control stack. A twelve-row arrivals board reaches that height without
+**And it is a finding about the app, recorded rather than fixed**: this spec's popup is 293 wide at
+375, and a popup that tall near the map's left edge has no position that clears both the header and
+the control stack.
+
+> **Three widths, one quantity, and a reviewer sorted them out.** This document quotes 256, 263 and
+> 293 as a popup's width at 375, two of them attributed to the same 220px content floor. They are
+> three different popups and only one of them is the floor. **256 IS the floor**: `.leaflet-popup-content`
+> is `min-width 220px` plus `margin 14px 16px`, the wrapper carries a 2px left edge and Leaflet adds
+> 1px of its own, so 220 + 32 + 2 + 2 = 256, and that is the number the horizontal-padding arithmetic
+> at ruling S3 uses. **263 is a measured popup** (the one the clamp pins to x 2..265), wider than the
+> floor because its content is. **293 is this spec's popup after its own first growth**, which the
+> paragraph above says in as many words; the sentence that follows used to attribute it to the floor,
+> and the floor does not compute to 293 in any theme or at any width. A later stage deciding whether
+> the clamped padding fits at 375 wants 256. A twelve-row arrivals board reaches that height without
 any help from a spec. The app's answer today is the clamped autopan of ruling S3, which pans the map
 rather than moving the popup; whether the control stack should be an obstacle the correction is
 allowed to overlap is a question for the operator, not for this stage.
@@ -2338,7 +2371,24 @@ if it were opaque, on both surfaces, from all three places it is drawn.
 | map | subway train | rect fill | 0.95 | 1.080 light, 1.171 dark | 1.084 light, 1.180 dark |
 | map | rail tag | rect fill | 0.9 | 1.076 light, 1.162 dark | 1.084 light, 1.180 dark |
 | popup | rail-tag | rect fill | 0.9 | 1.076 light, 1.162 dark | 1.084 light, 1.180 dark |
-| chrome | key-rail-tag | rect fill | 0.9 | 1.076 light, 12.227 dark | 1.084 light, 14.858 dark |
+| chrome | key-rail-tag | rect fill | 0.9 | 1.076 light, 10.495 dark | 1.084 light, 12.596 dark |
+| chrome | svg | rect fill | 0.95 | 1.080 light, 11.516 dark | 1.084 light, 12.596 dark |
+| chrome | svg | path stroke | 0.9 | 1.076 light, 10.495 dark | 1.084 light, 12.596 dark |
+
+**ALL SIX ROWS, AND THE CHROME ROW'S DARK FIGURES WERE THE WRONG COLUMN.** A reviewer ran the pin
+against this table: it held four rows where `contrast/alpha` holds six per theme, under a sentence
+claiming "every non-opaque paint on the page ... from all three places it is drawn", and the chrome
+row's dark numbers (12.227 and 14.858) are that row's `compositedOnPaper` and `opaqueOnPaper` under
+headers that say "on surface". The two missing rows are the Key panel's other alphas, and they are
+the least interesting rows in the table, which is exactly why a table assembled by hand lost them.
+The numbers above are now transcribed from the pin.
+
+**WHY THE CHROME'S DARK NUMBERS ARE LARGE WHILE THE MAP'S ARE NOT**, since the contrast between the
+two halves of this table is the thing a later reader will stumble on: the Key panel keeps ONE surface
+in both themes (MR1's decision), so its glyphs carry the LIGHT paper in the dark theme, and a light
+paper measured against the dark `--surface` is a real 12.6 rather than the 1.18 a paper backing reads
+against its own paper. Nothing is wrong with either; the rows are measured against `--surface` for
+every place, which is the column's definition, and `compositedOnPaper` is in the pin beside it.
 
 **Three decimals, because two rounds the difference away.** A 0.95 backing composited over the light
 surface moves the ratio by about five thousandths, and the whole point of the table is that the

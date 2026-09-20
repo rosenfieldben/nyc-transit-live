@@ -372,6 +372,76 @@ test("D6h. a popup open across a theme swap re-inks its head, rather than keepin
   expect(after.painted, "and it is not the light theme's ink still sitting there").not.toBe(before.painted);
 });
 
+test("D6j. a popup's title mark is the mark its own marker is wearing, and the canvas families have none", async ({
+  page,
+}) => {
+  /* THE CLAIM THE NODE TIER CANNOT MAKE, and a reviewer proved it could not: replacing
+     markerMarkHtml's body with a constant PATH diamond, so every popup title wore the same wrong
+     mark, left all 392 node tests green. popupvocab.test.js asserts that popupMarkHtml COPIES the
+     string it is given, which is a claim about that function; it says nothing about which string
+     any popup asks for. Five of the six marks carry no text at all, so the pins cannot see it
+     either: a bus, a PATH train, a ferry boat, a rail station and an AirTrain station would all
+     read identically with the wrong picture beside the words.
+
+     SO THIS ASKS THE PAGE, per family: the svg inside the popup's `.pmark` and the svg inside the
+     marker's own icon must be the same markup. Not "the same builder called twice" and not "a
+     mark of the right family": the same bytes, which is what "the mark in the popup is the mark on
+     the map" means when the map has already resolved this vehicle's colour, code, body and
+     bearing.
+
+     AND THE THREE CANVAS FAMILIES MUST HAVE NONE. A subway station, a PATH station and a ferry
+     dock are circleMarkers on a shared canvas with no element and no icon, so their titles carry
+     words alone; asserting that is what keeps "no mark" a rule rather than an oversight. */
+  await boot(page);
+  const WITH_MARKS = [
+    "subway train", "bus", "lirr train", "mnr train", "njt train", "path train", "ferry boat",
+    "lirr station", "mnr station", "njt station", "airtrain station",
+  ];
+  const WITHOUT = ["subway station", "path station", "ferry dock"];
+
+  for (const which of WITH_MARKS) {
+    await openSettled(page, which);
+    const read = await page.evaluate(
+      inPage(`
+        const marker = MARKERS[which]();
+        const iconEl = marker.getElement();
+        const markerSvg = iconEl && iconEl.querySelector("svg");
+        const content = marker.getPopup().getElement().querySelector(".leaflet-popup-content");
+        const popupSvg = content.querySelector(".pmark svg");
+        return {
+          hasMarker: !!markerSvg,
+          hasPopup: !!popupSvg,
+          sameBody: !!markerSvg && !!popupSvg && markerSvg.innerHTML === popupSvg.innerHTML,
+          markerClass: markerSvg ? markerSvg.getAttribute("class") : null,
+          popupClass: popupSvg ? popupSvg.getAttribute("class") : null,
+          hidden: popupSvg ? popupSvg.closest(".pmark").getAttribute("aria-hidden") : null,
+        };
+      `),
+      which,
+    );
+    expect(read.hasMarker, `${which}: the marker draws an svg to borrow`).toBe(true);
+    expect(read.hasPopup, `${which}: the popup's title carries a mark`).toBe(true);
+    expect(read.sameBody, `${which}: the popup's mark is not the marker's own markup`).toBe(true);
+    expect(read.popupClass, `${which}: and it kept the mark's class`).toBe(read.markerClass);
+    // The wrapper hides it, because the title says the same thing in words.
+    expect(read.hidden, `${which}: the mark must be hidden from the accessibility tree`).toBe("true");
+  }
+
+  for (const which of WITHOUT) {
+    await openSettled(page, which);
+    const marks = await page.evaluate(
+      inPage(`
+        const content = MARKERS[which]().getPopup().getElement().querySelector(".leaflet-popup-content");
+        return { title: !!content.querySelector(".pt"), marks: content.querySelectorAll(".pt .pmark").length };
+      `),
+      which,
+    );
+    expect(marks.title, `${which}: it still has a title`).toBe(true);
+    expect(marks.marks, `${which}: a canvas family has no icon to borrow, so its title carries none`).toBe(0);
+  }
+  await closeAllPopups(page);
+});
+
 test("D6i. every route colour a popup prints as TEXT clears AA on the popup's own surface", async ({
   page,
 }) => {

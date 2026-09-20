@@ -2504,9 +2504,15 @@ test("C2i. F03's acceptance, board half: at Prospect Av a lagging group's rows s
   // countdowns. Asserted as the popup's actual markup, not as a call to the renderer.
   /* MR5: SECTION 5's GRID. The qualifier rides the row's middle cell and the countdown its own, so
      each arrival is three cells; the bucket heading is `.dir`; and the kicker above the title
-     carries this station's route marks, normalised to [mark n] because a plate is four hundred
-     characters of SVG (withoutMarks in popup.js). The words, the order and the six qualified rows
-     are exactly what they were. */
+     carries this station's route marks, normalised by `withoutMarks` (popup.js) because a plate is
+     four hundred characters of SVG. The words, the order and the six qualified rows are exactly what
+     they were.
+
+     THE MARK TOKEN CARRIES THE PLATE'S OWN ARGUMENTS, which is a reviewer's correction to that
+     normaliser: the route it draws, the size the kicker drew it at (17, the design's small mark) and
+     the two fills it declares. Those fills are this board's own two colours, the same pair the row
+     badges below carry, so a kicker drawing a green 2 or a red 5 fails here rather than reading as
+     [mark 2][mark 5] either way. */
   const q = ' <span class="arr-qualifier">as of 10m ago</span>';
   // The countdown cell's class is spelled by the CALLER here, not derived from the word, so the
   // accent on a row reading "now" is pinned rather than reproduced: section 5 asks for it and
@@ -2517,7 +2523,8 @@ test("C2i. F03's acceptance, board half: at Prospect Av a lagging group's rows s
   await expect(popup(page)).toContainText("Prospect Av");
   await expect(page.locator(".leaflet-popup-content .arr-qualifier")).toHaveCount(6);
   expect(withoutMarks(await popup(page).innerHTML())).toBe(
-    '<div class="pk"><span>Subway</span>\n<span>[mark 2][mark 5]</span></div>\n' +
+    '<div class="pk"><span>Subway</span>\n' +
+      '<span>[mark 2 17x17 #c0392b,#ffffff][mark 5 17x17 #1e8449,#ffffff]</span></div>\n' +
       '<div class="pt"><span>Prospect Av</span></div>\n' +
       '<div class="dir">Northbound</div>\n' +
       '<div class="arr">' +

@@ -52,15 +52,16 @@ reading that board sees a two minute countdown built from a ten minute old predi
 with no qualifier, while `/api/status` says every contributing feed is healthy. Both
 statements are true of what they measure. Neither is true of the board.
 
-The frontend then compounds it rather than catching it. The panel's staleness line is
-computed at `frontend/helpers.js:2193`:
+The frontend then compounds it rather than catching it. The panel's staleness line was
+computed at `frontend/helpers.js:2193` in the tree this was written against (`ageSeconds` is gone
+now; section 4.4's table records what replaced it):
 
 ```js
 ageSeconds: payload.fetched_at == null ? null : now - payload.fetched_at,
 ```
 
-That is the age of OUR ACQUISITION, not the age of the content. `frontend/stations.js:665`
-turns it into the rider-facing sentence, and the popup renders the same line from the same
+That is the age of OUR ACQUISITION, not the age of the content. `frontend/stations.js:665`, in
+that same tree, turned it into the rider-facing sentence, and the popup renders the same line from the same
 threshold through `stalePopupLine`, deliberately, so the two surfaces cannot word it
 differently. They agree, and they are both answering the wrong question: the line appears
 when our poller stops and stays silent when the provider stops.
@@ -538,7 +539,8 @@ those two nothing upstream can widen it.
 
 **The client already computes this enumeration, from the shape of the fields, and that is
 the thing to stop.** This was the whole of the client's provenance system, at
-`frontend/helpers.js:211` when this was written:
+`frontend/helpers.js:211` in the tree this was written against (the function is gone; every line
+number in this diagnosis is that tree's, not today's):
 
 ```js
 function isPlacedRailroad(t) {
@@ -580,7 +582,7 @@ different questions and this codebase already lets them differ freely (`at-stati
 as nothing a rider ever sees). Settled as Q8; see Decisions.
 
 **`reported` and the shipped string "not reporting" are unrelated, and the collision is
-close enough to be worth one sentence.** "{system} not reporting" (`helpers.js:703`) means
+close enough to be worth one sentence.** "{system} not reporting" (`helpers.js:2058`) means
 a system that has NEVER DECODED anything, which is a statement about a feed. `reported` is
 a statement about one observation: the provider sent it as observed rather than us deriving
 it. A system can be reporting fine while every observation in it is `placed`, and a system
@@ -599,14 +601,25 @@ today:
 
 | Shipped string | Where | Says |
 | --- | --- | --- |
-| `live GPS` | `helpers.js:2378`, `systems/railroad.js:158` | a real reported position |
-| `scheduled position (no GPS)` | `helpers.js:1092`, `:1464` | NJT and PATH popups |
-| `scheduled position, no GPS` | `helpers.js:1512`, `:2378`, `:2391` | accessible names |
+| `live GPS` | `helpers.js:2358-2359` (`positionQualifier`) | a real reported position |
+| `scheduled position (no GPS)` | `helpers.js:2365` (`positionQualifier`'s `placed` answer) | a position the app placed from a prediction |
+| `scheduled position, no GPS` | `helpers.js:2367` (the same answer's `.spoken`) | the same fact in an accessible name |
 | `scheduled (no GPS)` | *no reader since MR5, see the note at the end* | the compact form, once the railroad popup's |
-| `as of {age} ago` | `helpers.js:701`, `:730`, `stations.js:666` | the staleness line, one renderer |
-| `{system} not reporting` | `helpers.js:703` | a system that has never decoded |
-| `feed empty, showing last known` | `helpers.js:751`, `:757` | a bounded empty run |
-| `scheduled service (no live tracking)` | `helpers.js:1030` | AirTrain, which has no feed |
+| `as of {age} ago` | `helpers.js:2211` (a row's qualifier), `:2237` (a board's line), `:2056-2057` (the status line); `As of {age} ago` at `:677` (the feed strip and a vehicle popup's footer) | how old the thing just named is |
+| `{system} not reporting` | `helpers.js:2058` (`staleness`'s blind clause) | a system that has never decoded |
+| `feed empty, showing last known` | `helpers.js:3486`, `:3492` | a bounded empty run |
+| `scheduled service (no live tracking)` | `helpers.js:3796` (the AirTrain station popup's sub-line) | AirTrain, which has no feed |
+
+**RE-ANCHORED BY MR5, AND TWO OF THESE ROWS SAID SOMETHING FALSE AS WELL AS POINTING SOMEWHERE
+wrong.** Map redesign stage MR5 grew `helpers.js` by about 940 lines and rebuilt every popup, so
+every anchor in this table pointed at unrelated text until this pass; the phase's own rule
+(`docs/reviews/map-redesign-rounds.md`, "a citation is re-anchored whenever the code it targets is
+touched") is what this is. Beyond the numbers: the `live GPS` row named `systems/railroad.js` as a
+renderer, and ruling Q1 took the words out of that file (what is left there is comment); and
+`scheduled position (no GPS)` was attributed to "NJT and PATH popups" when it is produced centrally
+by `positionQualifier` and now reaches EVERY vehicle popup through `positionWords`. A citation that
+resolves to the wrong place is a claim that reads as evidence, which is why this table is worth a
+pass of its own rather than a note.
 
 **The contract adds three words and fixes one omission.** Building 6.2 added a fourth, the
 board's form of the per-system clause (the last row), recorded under 6.2 as an amendment
@@ -695,7 +708,7 @@ subway train and are therefore dated by the group header rather than undated.
 
 **One implementation hazard, measured, that does not change the decision but decides how it
 lands.** `staleness()` returns `null` when nothing is stale and nothing is blind
-(`frontend/helpers.js:684`), and its own header states the rule it was written under: "THE
+(`frontend/helpers.js:2012`), and its own header states the rule it was written under: "THE
 COMMON CASE MUST NOT GET NOISIER". A population that is PERMANENT rather than transient
 breaks that: Metro-North never has an observation age, so a fourth clause added the same way
 as the first three would make the railroad line non-null forever, and a status line that
@@ -862,7 +875,7 @@ reads (`SystemFreshness.positions`, `:245`), and projected for the operator as
 `_railroad_positions` at `:221`) so the two surfaces cannot disagree about a count. Step 5's
 row says "the marker is gone"; the count is what a rider is given instead, which is Q7's
 answer, rendered as "LIRR 24 trains not shown, last seen over 10m ago" (`withheldClause`,
-`frontend/helpers.js:873`).
+`frontend/helpers.js:2076`).
 
 **Amended while building it, and recorded here so it is not mistaken for a decision this
 section made: the clause RIDES the status line and never raises it.** As built it raised
@@ -1033,13 +1046,13 @@ sibling sits beside it as `_oldest_contributing_content_at` (`:106`).
 
 | Surface | Change |
 | --- | --- |
-| Popup | Render the provenance word and the age line from the SERVED values instead of deriving them. `isPlacedRailroad` is deleted rather than fixed. **Built at 6.3:** it is gone, `positionQualifier` (`helpers.js:1133`) is the one helper every vehicle surface renders a position's words through, and `railroadHollow` (`:1267`) records why the glyph stopped reading `stop_id`. The old anchor, `helpers.js:211`, is now unrelated popup geometry. |
-| Station panel | Stop computing `ageSeconds` as `now - payload.fetched_at` and read the served content clock. Per-row qualification, so a stale contributor's rows are marked and a healthy contributor's are not. **Built at 6.2:** `ageSeconds` is gone and `boardSystemLine` replaced it, which the comment at `helpers.js:2846` states. The old anchor, `helpers.js:2193`, is now a headsign comment. |
-| Marker style | `STALE_MARKER_OPACITY` becomes per-observation. Before 6.3 a marker dimmed only when its whole SYSTEM was stale, which is why 41 stale LIRR observations sat at full opacity inside a healthy feed. **Built at 6.3:** every opacity site asks `vehicleMarkerAge` (`frontend/systems/shared.js:783`), which takes the worse of the system's age and the row's own (`observationAge`, `helpers.js:1066`) before `markerOpacity` (`:669`) sees it. |
+| Popup | Render the provenance word and the age line from the SERVED values instead of deriving them. `isPlacedRailroad` is deleted rather than fixed. **Built at 6.3:** it is gone, `positionQualifier` (`helpers.js:2342`) is the one helper every vehicle surface renders a position's words through, and `railroadHollow` (`:2492`) records why the glyph stopped reading `stop_id`. The old anchor, `helpers.js:211`, points at nothing about provenance in any tree since. |
+| Station panel | Stop computing `ageSeconds` as `now - payload.fetched_at` and read the served content clock. Per-row qualification, so a stale contributor's rows are marked and a healthy contributor's are not. **Built at 6.2:** `ageSeconds` is gone and `boardSystemLine` (`helpers.js:2230`) replaced it, which the comment above that function states. The old anchor, `helpers.js:2193`, points at nothing about freshness. |
+| Marker style | `STALE_MARKER_OPACITY` becomes per-observation. Before 6.3 a marker dimmed only when its whole SYSTEM was stale, which is why 41 stale LIRR observations sat at full opacity inside a healthy feed. **Built at 6.3:** every opacity site asks `vehicleMarkerAge` (`frontend/systems/shared.js:2062`), which takes the worse of the system's age and the row's own (`observationAge`, `helpers.js:2275`) before `markerOpacity` (`:1857`) sees it. |
 | Glide / animation | The freeze deadline (`systemStaleAtOf`, `glideClock`) becomes per-observation too. Dead-reckoning a position from a ten-minute-old fix is the animated form of the same falsehood. |
 | Live region | One write per render, not two. N6 is open on `#page-announce` and a per-observation qualifier is exactly the kind of second writer that trips it. |
-| `ingestSystems` | The single door every freshness value enters through (`helpers.js:498-530`), and it read exactly four names. Any field the contract adds to an envelope reaches no surface at all until this function changes, and nothing currently tests that it drops the rest. This is the first frontend edit, not the last. **Built: it reads six**, the four plus `feed_timestamp` (6.1) and `positions` (6.3). |
-| The shared lag term | `systemAges` computed `ages[name] = Math.max(lag, poll, 0)` with `lag` taken from the ENVELOPE, so every system of a source shared one content-lag number. A per-system content clock replaces that term, and this is the line that makes it possible. **Built at 6.1:** `systemAges` is `helpers.js:643-650` and its lag term is `systemLag` (`:626`), which reads the system's own `feedTimestamp` and falls back to the envelope's only for a block that carries none. |
+| `ingestSystems` | The single door every freshness value enters through (`helpers.js:1595`), and it read exactly four names. Any field the contract adds to an envelope reaches no surface at all until this function changes, and nothing currently tests that it drops the rest. This is the first frontend edit, not the last. **Built: it reads six**, the four plus `feed_timestamp` (6.1) and `positions` (6.3). |
+| The shared lag term | `systemAges` computed `ages[name] = Math.max(lag, poll, 0)` with `lag` taken from the ENVELOPE, so every system of a source shared one content-lag number. A per-system content clock replaces that term, and this is the line that makes it possible. **Built at 6.1:** `systemAges` is `helpers.js:1740` and its lag term is `systemLag` (`:1723`), which reads the system's own `feedTimestamp` and falls back to the envelope's only for a block that carries none. |
 | Suppression count | NEW, and Q7's answer: when the ladder's step 5 drops observations for age, the count reaches the status line and nothing else. A rider can otherwise not tell "no trains on this branch" from "we dropped 24 of them". No per-marker ghost, which is the thing being fixed. |
 | Status line | Gaining two clauses, one of them in new wording. `staleness()` already produces "railroad: MNR as of 6m ago" and the two-clause stale/blind split; it gains a THIRD population (systems whose CONTENT is old while their poll is current), which reuses "as of {age} ago" verbatim, and a FOURTH (systems with no observation clock, per Q5's amendment to 3.2), which is the one new string. Neither may be merged into an existing clause, for the same reason the first two were split: a system in one state announced with another state's age is the exact defect that split them. |
 
@@ -1047,10 +1060,12 @@ sibling sits beside it as `_oldest_contributing_content_at` (`:106`).
 the comment above the popup's age line said that line exists so a popup "must say how old
 they are rather than imply liveness". The mechanism was right and the input was wrong, so
 the line was silent in exactly the case it was written for. **Built at 6.2 and 6.3, and
-neither anchor survives:** `ageSeconds` gave way to `boardSystemLine` (`helpers.js:2846`),
-and `feedAgeLine` is no longer in the tree, its work split between `stalePopupLine`
-(`helpers.js:901`), which still speaks for a system's age, and `positionQualifier`
-(`:1133`), which speaks for the observation's.
+neither anchor survives:** `ageSeconds` gave way to `boardSystemLine` (`helpers.js:2230`),
+and `feedAgeLine` is no longer in the tree, its work split between the vehicle popup's footer,
+which speaks for a system's age, and `positionQualifier` (`:2342`), which speaks for the
+observation's. (MR5 then replaced that footer's own helper: `stalePopupLine`, named here until this
+pass, gave way to `popupFreshHtml` (`helpers.js:740`) and the `.fresh` footer it builds, under
+ruling Q2.)
 
 ### 4.5 The monitor
 

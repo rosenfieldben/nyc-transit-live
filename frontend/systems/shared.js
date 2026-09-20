@@ -328,13 +328,24 @@ function applyTheme(theme) {
      above namesToggleEl. On that first call the array exists and is empty, so nothing is
      repainted, which is correct: no system file has drawn anything yet. */
   repaintCanvasFamilies();
-  /* MR5: AND EVERY OPEN POPUP IS REBUILT, for exactly the reason above one surface further out.
-     A popup's markup is HTML and follows the tokens through the cascade, with one exception: the
-     six heads that print a route colour as text resolve popupSurfaceColor() to a STRING when the
-     popup is built (readableInk needs a background, not a variable). So a popup built in the
-     light theme keeps light-theme ink on a dark surface until something rebuilds it, and without
-     this that something is the next fifteen-second poll for a vehicle and nothing at all for a
-     station. Guarded because this function runs once at load, before the map exists. */
+  /* MR5: AND EVERY OPEN POPUP BOUND AS A FUNCTION IS REBUILT, for exactly the reason above one
+     surface further out. A popup's markup is HTML and follows the tokens through the cascade, with
+     one exception: the six heads that print a route colour as text resolve popupSurfaceColor() to a
+     STRING when the popup is built (readableInk needs a background, not a variable). So a popup
+     built in the light theme keeps light-theme ink on a dark surface until something rebuilds it,
+     and for a VEHICLE popup that something would otherwise be the next fifteen-second poll.
+
+     WHICH POPUPS THIS REACHES, stated because the first version of this comment claimed it reached
+     all of them and a reviewer read Leaflet's own source against it. popup.update() re-invokes the
+     bound content only where that content IS a function (`"function" == typeof this._content`), so
+     it rebuilds every vehicle popup and the AirTrain station popup. The five ticking station boards
+     are bound with a STRING and filled by setPopupContent, so update() re-sets the identical string
+     and changes nothing. That is not a hole: openStationArrivals runs renderStation on a one-second
+     interval, so a station board picks the new theme up within a second on its own, which is also
+     why the old claim ("nothing at all for a station") was false in the other direction.
+     tests/e2e/popups.spec.js D6h measures the case this call is for, a rail train's popup.
+
+     Guarded because this function runs once at load, before the map exists. */
   rebuildOpenPopupsForTheme();
 }
 
@@ -397,9 +408,11 @@ function scheduledColor() {
    why the popup ships opaque, and the arithmetic below is written for the surface either way.)
 
    MEASURED, WHICH IS WHY THIS EXISTS AT ALL. layout.spec.js A4g renders the N train, whose
-   #e6b800 the helper walks to rgb(138, 110, 0): against white that clears, against this popup's
-   surface it reads 4.02 and against the composite it reads 4.05. A4g caught it on the commit
-   that changed the surface, which is the gate doing its job.
+   #e6b800 the helper walks to rgb(138, 110, 0): against white that clears, and against this popup's
+   surface it reads 4.02. (Against the composite the DESIGN asked for it would have read 4.05, which
+   is the comparison the next paragraph turns on; the popup ships opaque, so no composite is drawn
+   anywhere and the 4.02 is the number.) A4g caught it on the commit that changed the surface, which
+   is the gate doing its job.
 
    --surface, WHICH IS NOW THE WHOLE ANSWER AND WAS ALWAYS THE PESSIMISTIC END. The popup ships
    opaque, so the surface IS what the ink is printed on and there is no composite left to reason

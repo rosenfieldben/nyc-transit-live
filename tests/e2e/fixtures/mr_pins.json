@@ -47,6 +47,134 @@
   }
  },
  "census": {
+  "popups": {
+   "mnr train": {
+    "markerIcons": 23,
+    "vehicleSentinel": 15,
+    "railStationMarkers": 8,
+    "markerIconsByClass": {
+     "bus-marker leaflet-interactive": 2,
+     "leaflet-interactive train-marker": 2,
+     "leaflet-interactive rail-mnr rail-tag-marker rail-tag-solid": 1,
+     "leaflet-interactive rail-lirr rail-tag-marker rail-tag-outlined": 1,
+     "leaflet-interactive path-marker": 2,
+     "ferry-active ferry-marker leaflet-interactive": 2,
+     "ferry-docked ferry-marker leaflet-interactive": 1,
+     "leaflet-interactive rail-njt rail-tag-marker rail-tag-outlined": 4,
+     "leaflet-interactive rail-lirr-stn rail-stn-marker": 1,
+     "leaflet-interactive rail-mnr-stn rail-stn-marker": 1,
+     "leaflet-interactive rail-airtrain-stn rail-stn-marker": 3,
+     "leaflet-interactive rail-njt-stn rail-stn-marker": 3
+    },
+    "stnLabels": 9,
+    "stnLabelsSubway": 2,
+    "stnLabelsRail": 5,
+    "stnLabelsHub": 0,
+    "stnLabelsHubSubway": 0,
+    "trainMarkers": 2,
+    "busMarkers": 2,
+    "pathMarkers": 2,
+    "ferryMarkers": 3,
+    "airtrainMarkers": 0,
+    "airtrainStationMarkers": 3,
+    "marks": {
+     "rail-tag": {
+      "map": 6,
+      "popup": 1
+     },
+     "rail-stn": {
+      "map": 8,
+      "popup": 0
+     },
+     "path-diamond": {
+      "map": 2,
+      "popup": 0
+     },
+     "ferry-hull": {
+      "map": 3,
+      "popup": 0
+     },
+     "bus-mark": {
+      "map": 2,
+      "popup": 0
+     }
+    },
+    "popupPlates": 0,
+    "popupMarks": 1,
+    "canvas": {
+     "subwayStations": 2,
+     "pathStations": 2,
+     "ferryDocks": 2,
+     "pathRouteLines": 4,
+     "ferryRouteLines": 2,
+     "airtrainRouteLines": 2,
+     "subwayRibbons": 4
+    }
+   },
+   "subway train": {
+    "markerIcons": 23,
+    "vehicleSentinel": 15,
+    "railStationMarkers": 8,
+    "markerIconsByClass": {
+     "bus-marker leaflet-interactive": 2,
+     "leaflet-interactive train-marker": 2,
+     "leaflet-interactive rail-mnr rail-tag-marker rail-tag-solid": 1,
+     "leaflet-interactive rail-lirr rail-tag-marker rail-tag-outlined": 1,
+     "leaflet-interactive path-marker": 2,
+     "ferry-active ferry-marker leaflet-interactive": 2,
+     "ferry-docked ferry-marker leaflet-interactive": 1,
+     "leaflet-interactive rail-njt rail-tag-marker rail-tag-outlined": 4,
+     "leaflet-interactive rail-lirr-stn rail-stn-marker": 1,
+     "leaflet-interactive rail-mnr-stn rail-stn-marker": 1,
+     "leaflet-interactive rail-airtrain-stn rail-stn-marker": 3,
+     "leaflet-interactive rail-njt-stn rail-stn-marker": 3
+    },
+    "stnLabels": 9,
+    "stnLabelsSubway": 2,
+    "stnLabelsRail": 5,
+    "stnLabelsHub": 0,
+    "stnLabelsHubSubway": 0,
+    "trainMarkers": 2,
+    "busMarkers": 2,
+    "pathMarkers": 2,
+    "ferryMarkers": 3,
+    "airtrainMarkers": 0,
+    "airtrainStationMarkers": 3,
+    "marks": {
+     "rail-tag": {
+      "map": 6,
+      "popup": 0
+     },
+     "rail-stn": {
+      "map": 8,
+      "popup": 0
+     },
+     "path-diamond": {
+      "map": 2,
+      "popup": 0
+     },
+     "ferry-hull": {
+      "map": 3,
+      "popup": 0
+     },
+     "bus-mark": {
+      "map": 2,
+      "popup": 0
+     }
+    },
+    "popupPlates": 1,
+    "popupMarks": 1,
+    "canvas": {
+     "subwayStations": 2,
+     "pathStations": 2,
+     "ferryDocks": 2,
+     "pathRouteLines": 4,
+     "ferryRouteLines": 2,
+     "airtrainRouteLines": 2,
+     "subwayRibbons": 4
+    }
+   }
+  },
   "stock": {
    "markerIcons": 23,
    "vehicleSentinel": 15,
@@ -76,6 +204,30 @@
    "ferryMarkers": 3,
    "airtrainMarkers": 0,
    "airtrainStationMarkers": 3,
+   "marks": {
+    "rail-tag": {
+     "map": 6,
+     "popup": 0
+    },
+    "rail-stn": {
+     "map": 8,
+     "popup": 0
+    },
+    "path-diamond": {
+     "map": 2,
+     "popup": 0
+    },
+    "ferry-hull": {
+     "map": 3,
+     "popup": 0
+    },
+    "bus-mark": {
+     "map": 2,
+     "popup": 0
+    }
+   },
+   "popupPlates": 0,
+   "popupMarks": 0,
    "canvas": {
     "subwayStations": 2,
     "pathStations": 2,

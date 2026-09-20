@@ -619,11 +619,19 @@ test("A4g. every rendered route colour meets AA where it carries or is text", as
     };
     for (const el of document.querySelectorAll(".arr-badge, .station-chip")) sample(el, "fill");
     /* MR5: A POPUP'S ROUTE-COLOURED INK IS ITS TITLE'S WORDS AND ITS BUCKET HEADINGS. The head
-       was a `<b>` until section 5's vocabulary landed; it is `.pt span` now, and the heading's
-       class is `.dir`. Both spellings of the OLD names are gone from the app, so naming them
-       here would sample nothing and this spec's own non-vacuity premise (an N heading must be in
-       the sample) is what caught that: it reported one ink node where there had been several. */
-    for (const el of document.querySelectorAll(".leaflet-popup-content .pt span, .dir")) sample(el, "ink");
+       was a `<b>` until section 5's vocabulary landed; it is the title's own span now, and the
+       heading's class is `.dir`. Both spellings of the OLD names are gone from the app, so naming
+       them here would sample nothing and this spec's own non-vacuity premise (an N heading must be
+       in the sample) is what caught that: it reported one ink node where there had been several.
+
+       AND THE MARK IS EXCLUDED BY NAME, which is a reviewer's correction. `.pt` holds TWO spans: the
+       title's words and `.pmark`, the map's own mark copied in. `sample` reads `textContent`, and a
+       `.pmark` wrapping a subway plate has the route letter in its SVG `<text>`, painted `var(--ink)`
+       and carrying `aria-hidden`. So `.pt span` put an N in the sample that is not route-coloured
+       text at all, and the sharp premise below ("an N heading must be in the sample") could be
+       satisfied by a decoration: the vacuity it was written to prevent, re-entering through the
+       element this stage added. `> span:not(.pmark)` is the title's words and nothing else. */
+    for (const el of document.querySelectorAll(".leaflet-popup-content .pt > span:not(.pmark), .dir")) sample(el, "ink");
     return out;
   });
 

@@ -1055,14 +1055,28 @@ svg.rail-stn {
   font-style: italic;
 }
 
-/* AND THIS ONE IS SHARED, so it keeps A3's grey and the popup gets a scoped override below.
-   staleAlertsMarker() renders into a popup alert block AND into the alert banner, whose surface
-   is the amber #fde8b0 that A3 measured #666 against at 4.74. The banner is not MR5's to change,
-   so the literal stays here and the popup's copy is overridden where the popup's surface is
-   known. That split is also the answer to MR1's standing G3 warning that popup CSS is not
-   scoped: a rule that has to differ by surface must name its surface. */
+/* AND THIS ONE IS SHARED, so it carries the size and the slant and NO COLOUR AT ALL, which is a
+   reviewer's correction of the comment that used to stand here. That comment kept a `color: #666`
+   and defended it on two premises, and both were false:
+
+     - "the banner's surface is the amber #fde8b0". It is not, and has not been since MR1 took the
+       amber away: #fde8b0 appears nowhere in this file as a value, `#alert-banner:not(:empty)`
+       declares only a top rule, and the banner is a row of #panel, which is var(--surface).
+     - "the banner's hedge is still #666". It is not, and has not been since MR1 round 2:
+       `#alert-banner .alert-stale` one screen down paints it var(--accent-ink) at specificity
+       (1,1,0) and wins.
+
+   staleAlertsMarker() renders in exactly two places, the popup's alert block and the banner's
+   strip, and a scoped rule claims each: the popup's copy takes var(--muted) immediately below.
+   So the grey painted nothing anywhere, and it was the one declaration MR5's sweep deliberately
+   exempted. A rule measured to paint nothing is not kept with a comment explaining it, which is
+   the same ruling that took the popup's backdrop-filter out one screen down.
+
+   WHAT IS LEFT IS REAL: the size and the slant are what make this an aside rather than a headline,
+   and a third surface adopting the class now inherits its own ink instead of a grey chosen for a
+   surface that no longer exists. The split is still the answer to MR1's standing G3 warning that
+   popup CSS is not scoped: a rule that has to differ by surface must name its surface. */
 .alert-stale {
-  color: #666;
   font-size: 11px;
   font-style: italic;
 }
@@ -1126,10 +1140,13 @@ svg.rail-stn {
 
    MR1 ROUND 2: SCOPED TO THE STRIP, because `.alert-stale` is not the strip's class. The
    same class carries the same hedge inside every popup's alert block (systems/shared.js's
-   routeAlertsBlock and stationAlertsBlock), where the surface is still the popup's white and
-   the ink is still #666 at 5.74. Unscoped, this rule repainted all of them: 6.09 in the
-   light theme, which is legal and out of scope, and 2.59 in the dark one, which is neither.
-   The pins did not catch it because they hold popup HTML, and this is a computed style. */
+   routeAlertsBlock and stationAlertsBlock). Unscoped, this rule repainted all of them: 6.09 in
+   the light theme, which is legal and out of scope, and 2.59 in the dark one, which is neither.
+   The pins did not catch it because they hold popup HTML, and this is a computed style.
+   (MR5: that sentence used to end "where the surface is still the popup's white and the ink is
+   still #666 at 5.74". Both halves are this stage's to retire: the popup's surface is var(--surface)
+   in both themes now and its copy of this hedge is var(--muted), measured by helpers.test.js's A3
+   sweep on the surface it actually prints on.) */
 #alert-banner .alert-stale {
   color: var(--accent-ink);
   font-weight: 600;
@@ -1362,12 +1379,17 @@ svg.rail-stn {
 .station-arrivals li {
   margin: 2px 0;
 }
-/* F11: the selected station's service alerts, above its arrivals board. The amber
-   left rule, cream ground and #5a4a1a ink are the popup's .alert-block treatment at
-   panel scale, deliberately rather than a second look: a rider who has learned what
-   an alert looks like on the map reads the same thing in the panel, and the pair is
-   already the measured one (see the muted-ink note above, where #5a4a1a on #fdf6e3
-   is the combination those popups ship).
+/* F11: the selected station's service alerts, above its arrivals board. The amber left rule, cream
+   ground and #5a4a1a ink were the popup's .alert-block treatment at panel scale when F11 wrote them,
+   and MR5 BROKE THAT PAIRING: section 5 turned the popup's block into an accent-edged note on the
+   popup's own surface with --ink words, for the measured reasons at .alert-block above, and left the
+   panel alone because the panel is not MR5's to restyle. So the two no longer look alike, and this
+   comment no longer claims they do (a reviewer's correction: the sentence still promised "a rider
+   who has learned what an alert looks like on the map reads the same thing in the panel").
+
+   WHAT IS STILL TRUE is the pair itself: #5a4a1a on #fdf6e3 is a measured combination and
+   #stations-panel is still a literal white, so nothing here is illegible. Re-uniting the two
+   surfaces is the panel's own stage, and this is the note that says why they diverged.
 
    padding-left carries the bullets INSIDE the cream. A ul's default 40px indent would
    hang them out over the white panel beside the amber rule, which reads as a list
@@ -1805,8 +1827,10 @@ svg.rail-stn {
 /* THE INK EDGE IS ON THE WRAPPER ONLY, and the tip is why. Leaflet's tip is one square rotated
    45 degrees, so a border-left on it paints a diagonal stripe across the arrow rather than a
    rule down the popup's left side: the same box, a different geometry, and the design's line
-   belongs to the panel. The tip keeps the surface and the blur so the two read as one piece of
-   glass. */
+   belongs to the panel. The tip keeps the surface, so the two read as one piece of paper. (MR5: this
+   sentence said "the surface and the blur" until a reviewer read it against the rule fourteen lines
+   up, which argues at length that the blur ships nowhere. There is no blur to keep, and
+   frontend/tokens.test.js asserts its absence on every rule that paints a popup.) */
 .leaflet-popup-content-wrapper {
   border-left: 2px solid var(--ink);
 }
@@ -1846,7 +1870,12 @@ svg.rail-stn {
    THE SQUARE IS 6x6 AND HAS NO SHAPE OF ITS OWN, because it is the feed strip's dot at the popup and
    the strip's is a square too. Its colour comes from the state through a data attribute rather than
    from a class per state, so the three rules below sit next to each other and a fourth state would
-   have to be added here rather than defaulting to whichever rule came last.
+   have to be added here rather than defaulting to whichever rule came last. AND THE BASE RULE
+   DECLARES NO BACKGROUND, which is a reviewer's correction rather than a tidy-up: it used to carry
+   `background: var(--scheduled)`, which was both unreachable (popupFreshHtml returns "" with no
+   state and always writes data-state otherwise, and feedDotState returns exactly the three states
+   below) and a contradiction of the sentence before it, since that declaration WAS the default a
+   fourth state would silently have taken. A new state now draws no square until it is given one.
 
    THE THREE PAINTS ARE THE STRIP'S OWN TOKENS, measured on the popup's surface: --live reads 3.31 in
    the light theme and 3.51 in the dark, --scheduled 4.21 and 5.00, and the stale state takes
@@ -1875,7 +1904,6 @@ svg.rail-stn {
   flex: none;
   width: 6px;
   height: 6px;
-  background: var(--scheduled);
 }
 
 .fresh-dot[data-state="live"] {
@@ -2032,7 +2060,10 @@ svg.rail-stn {
    the accent", and --accent as TEXT measures 3.47 against the light surface, below the 4.5 a
    string owes. --accent-ink is the token that exists for that case and it measures 5.03 light and
    5.44 dark on this surface. The hue is the accent's; the lightness is the one a rider can read.
-   helpers.test.js's A3 sweep measures it with the rest of the popup's inks. */
+   helpers.test.js's A3 sweep measures this rule BY SELECTOR with the rest of the popup's inks, which
+   is a reviewer's correction: this line used to claim the sweep measured it while the sweep read the
+   bare token instead, so the regression the paragraph above argues against would not have failed
+   anywhere. */
 .arr .now {
   color: var(--accent-ink);
 }

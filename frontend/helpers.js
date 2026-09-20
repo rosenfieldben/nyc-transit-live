@@ -763,10 +763,18 @@ function popupFreshHtml({ state, age = null, position = null } = {}) {
    so in their names (markHtml, rightHtml, extraHtml) and every value they are given is built
    by another builder in this file.
 
-   WHAT IS NOT HERE: words. Every string a popup prints is the caller's, and the callers take
-   theirs from the app's own vocabulary rather than from section 5's prose. That is this
-   stage's own defect shape ("a word that came from a literal instead of the app") stated as a
-   rule about this file.
+   WHAT IS NOT HERE: words. Every string a popup prints is the caller's, which is this stage's own
+   defect shape ("a word that came from a literal instead of the app") stated as a rule about THIS
+   FILE: no builder here coins a word, so a word a rider reads can always be traced to the popup
+   that chose it.
+
+   AND THE RULE STOPS THERE, which is a reviewer's correction of a sentence that went further. It
+   used to add that the callers take their words "from the app's own vocabulary rather than from
+   section 5's prose", and five of the twelve grid LABELS are section 5's prose: Position, Direction,
+   Delay, Status and Speed appear nowhere else in the app as rider text. Four of those are disclosed
+   in the README's own erratum as labels the app's fields needed, and the fifth (Position) is the
+   design's word for a row memo D9 and ruling Q1 rewrote the VALUES of. They are deliberate and they
+   are recorded; what was wrong was a file claiming a closure over callers it does not own.
 
    AND THERE IS A NEWLINE BETWEEN EVERY CELL AND AFTER EVERY BLOCK, which is not formatting: it is
    what makes the popup's textContent read as words. A grid of adjacent elements with no whitespace between them

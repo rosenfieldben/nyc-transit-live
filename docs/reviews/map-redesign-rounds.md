@@ -1845,3 +1845,62 @@ descendants are all in normal flow. MR1 dropped the filter along with the header
 translucency for this reason. It is kept here by ruling, and the rule in `style.css` says in as
 many words that it draws nothing, with `tokens.test.js` holding that sentence in place so the
 declaration cannot come to be read as doing something.
+
+### The mutations, and the one that survived long enough to find three things
+
+Ten mutations against the chrome commit, each in a worktree detached at it with the sha echoed and
+compared before anything ran. The table is a script,
+`docs/reviews/map-redesign/mr5/mutations.sh`, rather than prose: MR4's F19 was a mutation that had
+been printing `ANCHOR MISS` and testing nothing for a whole round, and standing rule 6 came out of
+it. A table in a markdown file cannot be re-run, so this one is not in one.
+
+Nine ran against the commit as first written; **M66** survived it, and its re-run is against the
+same commit with D6i added, which is what the survivor bought. Rule 6's whole-table re-run at the
+branch tip happens before the push and is recorded there, so this section is the round's finding
+rather than the push's evidence.
+
+| # | the defect introduced | verdict |
+| --- | --- | --- |
+| **M60** | the autopan's top padding taken from a literal instead of the rendered header's edge | **DIED**, D6d: "and the derived one is cut to what is left" |
+| **M61** | the clamp removed, so each padding is the README's recipe verbatim | **DIED**, two S3 node tests |
+| **M62** | the stand-down skips rather than disarms the padding | **DIED**, D6f: "the padding is DISARMED, not merely skipped" |
+| **M63** | `readableInk` only darkens again, as it did before this stage | **DIED**, both new node tests |
+| **M64** | the popup surface goes back to the design's 94% | **DIED**, A3's sweep and two `tokens.test.js` tests |
+| **M65** | `.popup-sub` back to A3's `#666` | **DIED**, A3's sweep |
+| **M66** | the ferry popup head loses the resolved surface, so it inks against the light fallback | **SURVIVED first, then DIED**; see below |
+| **M67** | the theme swap stops rebuilding open popups | **DIED**, D6h: "the head was re-inked against the dark surface" |
+| **M68** | `autoPan` left on, so Leaflet pans and then the app pans again | **DIED**, A5e: "the map must not travel through intermediate positions" |
+| **M69** | one bind site loses `POPUP_OPTIONS` | **DIED**, D6b, naming the bind site |
+
+**M66 SURVIVED, AND THE REASON WAS COVERAGE RATHER THAN A SLEEPING ASSERTION.** Removing
+`popupSurfaceColor()` from the ferry boat popup's arguments makes its head ink against helpers.js's
+light-theme fallback and then print it on the dark surface, measured at **2.42:1**. Nothing failed.
+`a11y.spec.js` A1w's popup states open a SUBWAY train popup and `layout.spec.js` A4g opens the
+subway and NJ Transit ones, so the bus, railroad, PATH and ferry heads and every dock board's
+route-coloured bucket heading were **never measured anywhere**. Five of the six route-coloured heads
+could have been inked against the wrong surface with every gate green, which is the same shape as
+the defect the head's ink was in the first place.
+
+**D6i closes it**: all fourteen surfaces, both themes, every INLINE colour a popup prints, measured
+against what it is actually printed on. Inline specifically, because a colour that came through the
+cascade is a token and follows the theme for free; the ones that cannot are exactly the ones a
+builder resolved to a string. M66 now dies on it, naming `East River, rgb(0, 111, 133) on
+rgb(45, 43, 43), 2.42, need 4.5, ferry boat @ dark`.
+
+**And writing D6i cost two findings of its own, both worth the record.**
+
+1. **Its first draft passed while measuring nothing, in the spec written to close exactly that
+   trap.** The in-page block is a template literal handed to `new Function`, so every escape is read
+   twice: `/[\s,/]+/` in the file arrives as `/[s,/]+/` in the page. That split colour strings on
+   the letter "s", so `Number("(45")` was `NaN`, every ratio was `NaN`, and **`NaN < 4.5` is false**,
+   so there were no failures. It was spotted because the debug dump showed every label with its
+   letter "s" missing ("Ea t River", "Hud on"). The block now parses with `indexOf` and a literal
+   comma and contains no backslash escapes at all, and the spec asserts **every ratio is a finite
+   number** before comparing any of them, because a NaN is indistinguishable from a pass at the
+   point of comparison and the only place to catch it is before.
+2. **Ink on a fill is not ink on the surface.** The first working reader measured `.arr-badge`
+   against the popup surface and reported twelve badges as failures at 1.21. A badge's white or
+   black text is `readableTextOn`'s answer against the badge's own route-coloured fill and is
+   theme-independent; A4g already draws that line between its "ink" and "fill" samples. D6i now
+   measures against an element's own background where it has one, and asserts both kinds are in the
+   sample so a reader that silently classified everything one way cannot certify the other half.

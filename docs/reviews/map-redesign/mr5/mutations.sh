@@ -108,7 +108,11 @@ cat > "$WORK/r" <<'R'
       position,
     ) +
 R
-run M66 frontend/systems/ferry.js "$PW a11y.spec.js --grep 'A1w'"
+# M66 SURVIVED its first run, against a11y.spec.js A1w alone, and the survivor is what found D6i:
+# A1w's popup states open a SUBWAY train popup, so five of the six route-coloured heads were never
+# measured anywhere. D6i sweeps all fourteen surfaces in both themes. Both gates are kept, so the
+# record shows what did not catch it as well as what does.
+run M66 frontend/systems/ferry.js "$PW popups.spec.js --grep D6i" "$PW a11y.spec.js --grep 'A1w'"
 
 # ---- M67: the theme swap stops rebuilding open popups ----
 cat > "$WORK/a" <<'A'

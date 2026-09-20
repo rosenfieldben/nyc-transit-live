@@ -371,6 +371,154 @@ test("D6h. a popup open across a theme swap re-inks its head, rather than keepin
   expect(after.painted, "and it is not the light theme's ink still sitting there").not.toBe(before.painted);
 });
 
+test("D6i. every route colour a popup prints as TEXT clears AA on the popup's own surface", async ({
+  page,
+}) => {
+  /* FOUND BY A SURVIVING MUTATION, WHICH IS WHAT THEY ARE FOR. M66 removes popupSurfaceColor()
+     from the ferry boat popup's arguments, so its head inks against helpers.js's light-theme
+     fallback and is then printed on the dark surface. It SURVIVED the whole suite. The reason is
+     coverage, not a sleeping assertion: a11y.spec.js A1w's popup states open a SUBWAY train popup,
+     and layout.spec.js A4g opens the subway and NJ Transit ones. The bus, railroad, PATH and ferry
+     heads, and every dock board's route-coloured bucket heading, were never measured anywhere. Five
+     of the six route-coloured heads could have been inked against the wrong surface with every gate
+     green, which is the same shape as the defect the head's ink was in the first place.
+
+     SO THIS SWEEPS ALL FOURTEEN SURFACES IN BOTH THEMES and measures every INLINE colour a popup
+     prints. Inline, specifically: a colour that came through the cascade is a token and follows the
+     theme for free, and the ones that cannot are exactly the ones a builder resolved to a string.
+     That is the set at risk and it is found by looking rather than by listing, so a seventh
+     route-coloured surface added later is swept without anyone remembering to add it here.
+
+     THE OBLIGATION, NOT THE MECHANISM. Asserting each value equals readableInk(colour, surface)
+     would mean re-deriving six different route-colour resolvers here and would break the moment one
+     of them legitimately changed. What a rider is owed is 4.5 against the surface the text is
+     actually on, so that is what is asserted, and it is what M66 fails. */
+  test.slow();
+  await boot(page);
+  const measured = [];
+  for (const theme of ["light", "dark"]) {
+    expect(await setTheme(page, theme)).toBe(theme);
+    for (const which of STOCK_SURFACES) {
+      await openSettled(page, which);
+      const rows = await page.evaluate(
+        inPage(`
+          /* NO BACKSLASH ESCAPES IN HERE, AND THAT IS NOT STYLE. This block is a template literal
+             that inPage hands to new Function, so every escape has to survive two readings: a
+             regex written /[\\s,/]+/ in the file arrives as /[s,/]+/ in the page. The first draft
+             of this spec did exactly that and it split colours on the letter "s", which turned
+             every ratio into NaN, and NaN < 4.5 is FALSE, so the spec written to close a vacuity
+             trap passed while measuring nothing. Parsing by indexOf and splitting on a literal
+             comma needs no escapes at all, so there is nothing left to get wrong. The finiteness
+             assertion below is the belt to this brace. */
+          const channels = (value) => {
+            const text = String(value);
+            const open = text.indexOf("("), close = text.lastIndexOf(")");
+            if (open < 0 || close < open) return null;
+            const parts = text.slice(open + 1, close).split(",").map((p) => Number(p.trim()));
+            if (parts.length < 3 || parts.slice(0, 3).some((n) => !isFinite(n))) return null;
+            return parts.slice(0, 3);
+          };
+          const srgb = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+          const lum = (rgb) => 0.2126 * srgb(rgb[0]) + 0.7152 * srgb(rgb[1]) + 0.0722 * srgb(rgb[2]);
+          const ratio = (a, b) => {
+            const hi = Math.max(lum(a), lum(b)), lo = Math.min(lum(a), lum(b));
+            return (hi + 0.05) / (lo + 0.05);
+          };
+          const probe = document.createElement("span");
+          probe.style.color = popupSurfaceColor();
+          document.body.append(probe);
+          const surfaceText = getComputedStyle(probe).color;
+          const surface = channels(surfaceText);
+          probe.remove();
+          /* WHAT A COLOUR IS PRINTED ON, WHICH IS TWO DIFFERENT QUESTIONS. Most inline colours in a
+             popup are ink on the popup's own surface: the six route-coloured heads and the ferry
+             dock's bucket headings. An .arr-badge is NOT: it is text on its own route-coloured fill,
+             which is readableTextOn's job and is theme-independent, so measuring it against the
+             popup surface asks the wrong question and answers 1.21. layout.spec.js A4g draws the
+             same line between its "ink" and "fill" samples. Found by measurement: the first working
+             version of this reader reported twelve arrival badges as failures.
+             A transparent background is detected by its ALPHA rather than by a keyword, because the
+             CSS keyword computes to rgba(0, 0, 0, 0) and never appears as itself. And no backticks
+             in here either: this whole block is inside one, and a pair of them closed the literal
+             early and broke the file's parse. */
+          const ownFill = (el) => {
+            const raw = getComputedStyle(el).backgroundColor;
+            const open = raw.indexOf("("), close = raw.lastIndexOf(")");
+            if (open < 0) return null;
+            const parts = raw.slice(open + 1, close).split(",").map((x) => Number(x.trim()));
+            if (parts.length > 3 && !(parts[3] > 0)) return null;
+            return channels(raw);
+          };
+          const content = MARKERS[which]().getPopup().getElement().querySelector(".leaflet-popup-content");
+          const out = [];
+          // Every element carrying an INLINE color, which is every colour a builder resolved to a
+          // string rather than leaving to the cascade.
+          for (const el of content.querySelectorAll("[style*='color']")) {
+            if (!el.style.color) continue;
+            const box = el.getBoundingClientRect();
+            if (box.width === 0 || box.height === 0) continue;
+            const fg = channels(getComputedStyle(el).color);
+            const cs = getComputedStyle(el);
+            const px = parseFloat(cs.fontSize);
+            const bold = parseInt(cs.fontWeight, 10) >= 700;
+            // Its own fill if it has one, the popup's surface otherwise.
+            const fill = ownFill(el);
+            const base = fill || surface;
+            out.push({
+              tag: el.tagName.toLowerCase(),
+              cls: String(el.className || ""),
+              kind: fill ? "on its own fill" : "on the popup surface",
+              text: (el.textContent || "").trim().split(/[ \\t\\n\\r]+/).join(" ").slice(0, 28),
+              colour: cs.color,
+              base: base ? "rgb(" + base.join(", ") + ")" : null,
+              surface: surfaceText,
+              ratio: fg && base ? +ratio(fg, base).toFixed(2) : null,
+              need: px >= 24 || (bold && px >= 18.66) ? 3 : 4.5,
+            });
+          }
+          return out;
+        `),
+        which,
+      );
+      for (const row of rows) measured.push({ ...row, where: `${which} @ ${theme}` });
+      await closeAllPopups(page);
+    }
+  }
+
+  /* NON-VACUITY FIRST, AND IN THREE WAYS, because this whole spec exists because something passed
+     while measuring nothing. There must be inline colours at all; they must span more than one
+     system, or a sweep that only ever found the subway is the gap again under a new name; and they
+     must not all be one value, which is what measuring var(--ink) six times would look like. */
+  expect(measured.length, "no popup printed an inline colour, so nothing was measured").toBeGreaterThan(10);
+  /* EVERY RATIO IS A FINITE NUMBER, which is the assertion this spec's own first draft needed and
+     did not have. A NaN ratio compares false against any threshold, so an unreadable measurement
+     is indistinguishable from a passing one at the point of comparison; the only place to catch it
+     is here, before the comparison. Measured: the first draft produced NaN for all 42 rows and
+     reported success. */
+  const unreadable = measured.filter((m) => typeof m.ratio !== "number" || !Number.isFinite(m.ratio));
+  expect(unreadable, `a colour could not be measured at all: ${JSON.stringify(unreadable)}`).toEqual([]);
+  // And the text really is text, which is how the NaN was spotted: the mangled regex had eaten
+  // every letter "s" out of the labels ("Ea t River"), and the ratios were nonsense for the same
+  // reason. A label that cannot survive normalisation is a reader that cannot be trusted.
+  expect(
+    measured.some((m) => /East River|Babylon|Corridor/.test(m.text)),
+    `the labels came back mangled: ${JSON.stringify(measured.slice(0, 4).map((m) => m.text))}`,
+  ).toBe(true);
+  const systems = new Set(measured.map((m) => m.where.split(" @ ")[0]));
+  expect(systems.size, `only ${[...systems]} carried an inline colour`).toBeGreaterThanOrEqual(6);
+  expect(new Set(measured.map((m) => m.colour)).size, "every inline colour was the same value").toBeGreaterThan(4);
+  // BOTH KINDS are in the sample, so a reader that had silently classified every node one way cannot
+  // certify the other half. This is the distinction the first working draft of this reader got wrong.
+  for (const kind of ["on the popup surface", "on its own fill"]) {
+    expect(measured.some((m) => m.kind === kind), `nothing was measured ${kind}, so that half is uncertified`).toBe(
+      true,
+    );
+  }
+
+  const failures = measured.filter((m) => m.ratio < m.need);
+  expect(failures, `a popup's own colour is below AA on the popup's surface: ${JSON.stringify(failures)}`).toEqual([]);
+});
+
 /* ---------------- ruling S3: the clamped autopan ---------------- */
 
 // What the app decided, asked OF the app rather than re-derived here: the padding it wrote onto

@@ -36,6 +36,9 @@ run() { # run <label> <file> <gate...>   (anchor in $WORK/a, replacement in $WOR
   echo
 }
 
+# ROWS M60 TO M77 ARE THE STAGE's OWN CLAIMS, one per decision; M78 to M84 at the foot of the file
+# are round 2's, one per guard the adversarial round proved could not fail.
+#
 # ---- M60: the autopan padding not derived from the rendered header (the brief's own) ----
 cat > "$WORK/a" <<'A'
     want: popupAutoPanWant(pageChromeBottom()),
@@ -238,6 +241,103 @@ cat > "$WORK/r" <<'R'
     `<div>scheduled service (no live tracking)</div>\n`;
 R
 run M77 frontend/helpers.js "$PW pins.spec.js --grep P5d"
+
+# ================================================================================================
+# ROUND 2's OWN ROWS (M78 onward). Round 2 did not change what the popups DRAW; it repaired eight
+# guards that passed over the thing they were written for. A repaired guard is a claim like any
+# other, so each row below is the defect that guard could not see before, and each was measured by
+# hand when the repair landed. They are here so they can be re-run, which is what this file is for.
+# ================================================================================================
+
+# ---- M78: the mark token loses the mark's identity again (the reviewer's F3) ----
+# withoutMarks kept only the <text> label, so drawing a kicker's plates at the title's size, or in
+# flat black, left every pin green. The token carries the label, the size and the fills now.
+cat > "$WORK/a" <<'A'
+    const fills = [...svg.matchAll(/fill="([^"]+)"/g)].map((m) => m[1]).join(",");
+A
+cat > "$WORK/r" <<'R'
+    const fills = "";
+R
+run M78 tests/e2e/popup.js "$NODE_ALL" "$PW smoke.spec.js --grep C2i"
+
+# ---- M79: the translucency comes back in a LATER popup rule, which is where the cascade hides it ----
+# The absence assertions read one rule body, so this exact pair (equal specificity, later in the
+# file, so it wins) passed them. The scan is by selector over every rule that paints a popup now.
+cat > "$WORK/a" <<'A'
+.leaflet-popup-content-wrapper {
+  border-left: 2px solid var(--ink);
+}
+A
+cat > "$WORK/r" <<'R'
+.leaflet-popup-content-wrapper {
+  border-left: 2px solid var(--ink);
+  opacity: 0.94;
+  backdrop-filter: blur(14px);
+}
+R
+run M79 frontend/style.css "$NODE_ALL"
+
+# ---- M80: one system's popup prints another system's pinned words (P5b's laundering) ----
+# "Hudson Train" is pinned in the MNR surfaces and in no bus surface. Under a single global haystack
+# this is "covered"; keyed by system it is uncovered, which is what the comment always promised.
+cat > "$WORK/a" <<'A'
+function busPopup(record) {
+  const b = record.latest;
+A
+cat > "$WORK/r" <<'R'
+function busPopup(record) {
+  const mutated = "Hudson Train";
+  const b = record.latest;
+R
+run M80 frontend/systems/buses.js "$PW pins.spec.js --grep P5b"
+
+# ---- M81: the literal scanner reads a regex after a keyword as a division again ----
+# The self-tests in P5b carry the reviewer's own reproduction: a regex with a quote in it, after
+# `return`, swallows the two literals around it and reports a code fragment as prose.
+cat > "$WORK/a" <<'A'
+      "return typeof case in of new delete void instanceof do else yield await throw".split(" "),
+A
+cat > "$WORK/r" <<'R'
+      [],
+R
+run M81 tests/e2e/pins.spec.js "$PW pins.spec.js --grep P5b"
+
+# ---- M82: the rail popup's title loses the mark A1z4's scope closure now counts ----
+# A1z4 asserted every svg.rail-tag belongs to a rail tag marker and never opened a popup, so the
+# axe exception it decides was about a document the axe gate does not scan.
+cat > "$WORK/a" <<'A'
+      markHtml: popupMarkHtml(markerMarkHtml(record.marker)),
+A
+cat > "$WORK/r" <<'R'
+      markHtml: "",
+R
+run M82 frontend/systems/railroad.js "$PW a11y.spec.js --grep A1z4"
+
+# ---- M83: a second surface adopts a mark class, which is the census's whole subject ----
+# P4a recorded none of the six classes this stage widened. The plate carries no class by design
+# (P1f pins its markup byte for byte), so a plate that took one is the widening in its purest form.
+cat > "$WORK/a" <<'A'
+  return `<svg viewBox="0 0 18 18">
+A
+cat > "$WORK/r" <<'R'
+  return `<svg viewBox="0 0 18 18" class="rail-tag">
+R
+run M83 frontend/helpers.js "$PW pins.spec.js --grep P4a"
+
+# ---- M84: the countdown that reads "now" takes --accent, which is 3.47 in the light theme ----
+# The rule's own comment claimed the A3 sweep measured it. The sweep read the bare token instead,
+# so this revert, the one the comment argues against, failed nothing.
+cat > "$WORK/a" <<'A'
+.arr .now {
+  color: var(--accent-ink);
+}
+A
+cat > "$WORK/r" <<'R'
+.arr .now {
+  color: var(--accent);
+}
+R
+run M84 frontend/style.css "$NODE_ALL"
 
 echo "================================================================"
 echo "died: $died   survived: $survived   run failed: $broke"

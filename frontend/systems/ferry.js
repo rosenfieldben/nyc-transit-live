@@ -119,6 +119,8 @@ async function loadFerryStops() {
           b,
           Date.now() / 1000 - (minClockOffset ?? 0),
           (routeId) => ferryColorFor(routeId),
+          // MR5: the surface this board's route headings are printed on, for readableInk.
+          popupSurfaceColor(),
         ),
     })).addTo(ferryDocks);
     registerStation({
@@ -197,7 +199,15 @@ function ferryBoatPopup(record) {
   const position = ferryPosition(b);
   return (
     routeAlertsBlock("ferry", b.route_id) +
-    ferryBoatPopupHtml(b, ferryRouteNames.get(b.route_id) || null, ferryColorFor(b.route_id), position) +
+    // MR5: the surface the popup actually prints on, so readableInk walks the head's colour
+    // against it rather than against the white a Leaflet popup used to be (popupSurfaceColor).
+    ferryBoatPopupHtml(
+      b,
+      ferryRouteNames.get(b.route_id) || null,
+      ferryColorFor(b.route_id),
+      position,
+      popupSurfaceColor(),
+    ) +
     // C2: single-feed source, synthesized system, same age line as every other
     // vehicle popup, unless the boat's own words already stated an age that old.
     vehicleStaleLine(systemAgeOf("ferry", "ferry"), position)
@@ -299,7 +309,7 @@ function applyFerryBoats(data) {
           ferryBaseOpacity(boat),
         ),
       }, ferryMarkerName(boat))
-        .bindPopup(() => ferryBoatPopup(newRecord))
+        .bindPopup(() => ferryBoatPopup(newRecord), POPUP_OPTIONS)
         .addTo(ferryBoats);
       ferryBoatRecords.set(boat.id, newRecord);
     }

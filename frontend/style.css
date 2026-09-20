@@ -942,37 +942,55 @@ body,
    remain as the state markers the icon carries and the e2e suite reads, so there is
    deliberately no rule for them here. */
 
-/* A3: #666 IS THE ONE MUTED INK, and it is the lightest grey that clears 4.5:1 on all
-   three surfaces this app prints muted text on: white popups (5.74), the banner's amber
-   #fde8b0 (4.74) and the popup cream #fdf6e3 (5.32). Measured, not chosen by eye. What
-   it replaces failed on every one of them: .popup-sub was #777 at 4.48 on white, a
-   two-hundredths miss that no eye would catch; .arr-none was #888 at 3.54; .popup-stale
-   was #999 at 2.85; and .alert-stale was #888 at 2.93 on the amber. These are the
-   honesty lines, the "as of 3m ago" and "alerts may be out of date" hedges, so they were
-   the least readable text on the page and the text a rider most needs when the data is
-   wrong. Collapsing four greys to one loses no distinction that was doing work: the
-   stale lines are already italic, which is what separated them. */
+/* A3: #666 WAS THE ONE MUTED INK, AND MR5 RETIRES IT FROM THE POPUP. A3 chose it as the
+   lightest grey that clears 4.5:1 on all three surfaces this app printed muted text on: white
+   popups (5.74), the banner's amber #fde8b0 (4.74) and the popup cream #fdf6e3 (5.32). Measured,
+   not chosen by eye, and it replaced four greys that each failed on every one of them
+   (.popup-sub #777 at 4.48 on white, .arr-none #888 at 3.54, .popup-stale #999 at 2.85,
+   .alert-stale #888 at 2.93 on the amber). Those are the honesty lines, the "as of 3m ago" and
+   "alerts may be out of date" hedges, so they were the least readable text on the page and the
+   text a rider most needs when the data is wrong.
+
+   WHAT MR5 CHANGES IS THE PREMISE: "white popups". Section 5 makes the popup --surface, #eae9e9
+   in the light theme and #2d2b2b in the dark. MEASURED, the light theme is fine and the dark theme
+   is not: #666 reads 4.74 on #eae9e9, still clear, and 2.45 on #2d2b2b. axe named it a serious
+   color-contrast violation on this branch the moment the popup stopped being white, and the
+   violation is the dark theme's alone. So every popup grey becomes var(--muted), #605d5d light and
+   #bab6b6 dark, which reads 5.38 and 7.01 on the surface it is printed on. A3's reasoning is
+   intact and its surface list is the thing that moved; the banner's amber and the station panel
+   keep #666 because neither of those surfaces changed.
+
+   THE ITALIC STILL DOES THE SEPARATING, as A3 said, so collapsing to one token loses nothing. */
 .popup-sub {
-  color: #666;
+  color: var(--muted);
   font-size: 11px;
 }
 
-/* Accessibility marker in a dock popup (the wheelchair_boarding flag): a quiet
-   inline glyph, the first accessibility display in the app. */
+/* Accessibility marker in a dock popup (the wheelchair_boarding flag): a quiet inline glyph, the
+   first accessibility display in the app. MR5: --focus rather than the literal #1565c0 it was
+   drawn in, because the two are the same DECISION (a blue that is not a route colour and is not
+   ink) and --focus already carries it in both themes. MEASURED: #1565c0 reads 4.74 on the light
+   popup surface and 2.45 on the dark one; --focus reads 5.53 and 4.86. It is a glyph rather than
+   prose, so 3:1 would have done, and it clears the text floor in both themes anyway. */
 .popup-access {
-  color: #1565c0;
+  color: var(--focus);
 }
 
-/* Station arrivals popup */
+/* Station arrivals popup. MR5: the divider is --rule rather than #eee, and #eee was wrong in BOTH
+   themes in opposite directions, which is what a fixed near-white hairline does. MEASURED: 1.04
+   against the light surface #eae9e9, so this board has had no visible row separators at all since
+   the popup stopped being white; 12.13 against the dark #2d2b2b, a white line louder than the text
+   it separates. --rule is a 15% ink wash in the light theme and a 14% paper wash in the dark, so it
+   reads as a hairline on whichever surface it is drawn on. */
 .arr-dir {
   font-weight: 600;
   margin-top: 6px;
   padding-top: 4px;
-  border-top: 1px solid #eee;
+  border-top: 1px solid var(--rule);
 }
 
 .arr-none {
-  color: #666;
+  color: var(--muted);
   font-style: italic;
 }
 
@@ -985,47 +1003,67 @@ body,
   text-align: center;
 }
 
-/* Service alerts block in a station popup: a quiet amber-accented note above the
-   arrivals, small text, no MTA branding or official route symbols. */
+/* Service alerts block in a station or vehicle popup: a quiet accented note above the arrivals,
+   small text, no MTA branding or official route symbols.
+
+   MR5 TOKENISES IT AND SECTION 5 CHANGES ITS SHAPE. The design's `.alert` is a left rule and
+   padding on the popup's own surface rather than a filled cream card: `border-left 3px
+   var(--accent); padding 6px 0 6px 10px`. That is what ships, and it retires three literals that
+   were all chosen for a white popup. MEASURED: the cream #fdf6e3 fill reads 13.05 against the dark
+   surface, which is a near-white card on a dark popup rather than a quiet note; the #5a4a1a ink
+   reads 1.63 once that fill is gone; and the #d9a406 rule reads 1.87 against the LIGHT surface, so
+   the accent edge the block is named for was already nearly invisible in the theme it was drawn
+   for. var(--accent) reads 3.47 light and 4.46 dark, clearing the 3:1 a non-text rule answers to in
+   both, and the words take --ink at 13.70 and 12.60 rather than a brown chosen for cream.
+   THE PANEL'S OWN .station-alerts KEEPS THE CREAM, and that is not an oversight: the panel is not
+   MR5's to restyle and its surface did not move. */
 .alert-block {
   margin: 2px 0 6px;
-  padding: 4px 7px;
-  border-left: 3px solid #d9a406;
-  background: #fdf6e3;
-  border-radius: 2px;
+  padding: 6px 0 6px 10px;
+  border-left: 3px solid var(--accent);
   font-size: 11px;
-  color: #5a4a1a;
+  color: var(--ink);
 }
 
 .alert-row + .alert-row {
   margin-top: 3px;
 }
 
-/* R1 freshness markers, quiet and italic. The "as of Xm ago" line on a station/dock
-   popup whose arrivals refresh has failed (.popup-stale), and the "alerts may be out
-   of date" marker on the banner and popup alert blocks (.alert-stale). Honesty, not
-   alarm: low-emphasis so they never compete with the live data they hedge. */
+/* R1 freshness markers, quiet and italic. The "as of Xm ago" line on a station/dock popup whose
+   arrivals refresh has failed (.popup-stale), and the "alerts may be out of date" marker on the
+   banner and popup alert blocks (.alert-stale). Honesty, not alarm: low-emphasis so they never
+   compete with the live data they hedge. */
 .popup-stale {
   margin-top: 2px;
-  color: #666;
+  color: var(--muted);
   font-size: 11px;
   font-style: italic;
 }
 
-/* A board row's own qualifier (6.2): "as of 10m ago", "showing last known, as of 4m
-   ago" or "age unknown", beside the countdown it qualifies. The same honesty treatment
-   as .popup-stale, inline rather than a block, because it belongs to one row and the
-   countdown beside it still counts to the prediction. */
+/* A board row's own qualifier (6.2): "as of 10m ago", "showing last known, as of 4m ago" or "age
+   unknown", beside the countdown it qualifies. The same honesty treatment as .popup-stale, inline
+   rather than a block, because it belongs to one row and the countdown beside it still counts to
+   the prediction. */
 .arr-qualifier {
-  color: #666;
+  color: var(--muted);
   font-size: 11px;
   font-style: italic;
 }
 
+/* AND THIS ONE IS SHARED, so it keeps A3's grey and the popup gets a scoped override below.
+   staleAlertsMarker() renders into a popup alert block AND into the alert banner, whose surface
+   is the amber #fde8b0 that A3 measured #666 against at 4.74. The banner is not MR5's to change,
+   so the literal stays here and the popup's copy is overridden where the popup's surface is
+   known. That split is also the answer to MR1's standing G3 warning that popup CSS is not
+   scoped: a rule that has to differ by surface must name its surface. */
 .alert-stale {
   color: #666;
   font-size: 11px;
   font-style: italic;
+}
+
+.leaflet-popup-content .alert-stale {
+  color: var(--muted);
 }
 
 /* ----- The service alerts row ----------------------------------------------------------
@@ -1464,20 +1502,30 @@ body,
 /* A2: the "Also here" cross-link inside a vehicle popup. A real button, sized to the
    24px hit-target floor including its padding rather than by visual bulk: the text is
    small because a popup is small, and the padding does the reaching. */
+/* MR5 TOKENISES IT AND TAKES SECTION 5'S SHAPE (`.xlink`): 600 11px, a --divider border and a
+   TRANSPARENT ground rather than the #f8fafc card. Four literals go, all four chosen for a white
+   popup. MEASURED: #f8fafc reads 13.45 against the dark surface, so the button was a near-white
+   tile on a dark popup; its #1d4ed8 text reads 2.10 against that same dark surface, and the pairing
+   only ever worked because the tile came with it; #94a3b8 reads 2.12 against the LIGHT surface, so
+   the edge was the faint one in the theme it was drawn for; and the #eef2f7 hover lightened a
+   button that was already the lightest thing in the popup. Transparent ground, --ink words (13.70
+   and 12.60), --divider edge, and a hover that washes the ink in rather than adding a second grey.
+   The 24px hit floor and the padding that reaches it are unchanged: layout.spec.js A4b measures
+   them. */
 .popup-crosslink {
   display: inline-block;
   margin-top: 6px;
   min-height: 24px;
   padding: 4px 8px;
-  border: 1px solid #94a3b8;
+  border: 1px solid var(--divider);
   border-radius: 4px;
-  background: #f8fafc;
-  font: 12px system-ui, sans-serif;
-  color: #1d4ed8;
+  background: transparent;
+  font: 600 11px/1.3 var(--chrome-font);
+  color: var(--ink);
   cursor: pointer;
 }
 .popup-crosslink:hover {
-  background: #eef2f7;
+  background: var(--rule);
 }
 
 /* ----- MR2: the station name labels ------------------------------------------------------
@@ -1700,6 +1748,89 @@ body,
 .reduced-motion #stations-panel {
   transition: none;
   animation: none;
+}
+
+/* ==================================================================
+   MR5: the popup's chrome
+   ==================================================================
+
+   README section 5's wrapper and tip, and nothing about what is inside them: the vocabulary
+   the content is built from is the next commit's. Declared here rather than beside the A1
+   panel because a popup is Leaflet's element and this whole block is an override of
+   frontend/vendor/leaflet/leaflet.css, which sets `background: white`, `color: #333`,
+   `border-radius: 12px` and a shadow of its own on both surfaces.
+
+   AND IT IS DECLARED BEFORE THE A3 MEDIA BLOCK, deliberately: that block already carries a
+   `.leaflet-popup-content` rule (the viewport-width cap), and at equal specificity the later
+   rule wins. A base rule appended after it would silently lose. The comment at #stations-close
+   below records the same trap costing a debugging round. */
+
+/* THE SURFACE IS OPAQUE, AND THE DESIGN'S 94% IS OVERRULED THE WAY MR1 OVERRULED THE HEADER'S
+   90%. Section 5 asks for `color-mix(in srgb, var(--surface) 94%, transparent)`. MR1's finding
+   F1 is the same finding about the same drawing one surface out: "axe cannot resolve the
+   contrast of text over a translucent surface whose backdrop is a tile IMAGE, and opacity took
+   the undecidable set from nine entries to one". The header ships at full --surface for that
+   reason, and so does this.
+
+   MEASURED ON THIS BRANCH, BOTH WAYS ROUND. At 94% every popup's text came back `incomplete`,
+   "background color could not be determined because element contains an image node", at 1280,
+   375 and 320 in both themes. Worse than merely undecidable: the dark theme's REAL
+   color-contrast violation on the head's ink and .popup-sub was reported ONLY as undecidable,
+   so the translucency hid a serious failure rather than obscuring a safe one. Opaque, axe names
+   that violation, which is how this stage came to fix it. Full numbers in the ledger.
+
+   THE BLUR IS KEPT BY RULING AND IT PAINTS NOTHING, which is worth saying in the rule rather than
+   leaving for a reader to discover. backdrop-filter filters what is BEHIND the element and the
+   element's own background then paints over it; at alpha 1 with no radius, none of the filtered
+   backdrop is ever visible. It is not quite without effect, because it still makes this a stacking
+   context and a containing block, and neither changes anything for a popup whose descendants are
+   all in normal flow. MR1 dropped the filter along with the translucency for this reason. It stays
+   here because the operator asked for it to, and because the day a decider spec makes a translucent
+   popup measurable again, the rule is already the design's.
+
+   THE TWO PAINTS THAT PRINT ON IT, measured against this token: --ink reads 13.70 in the light
+   theme and 12.60 in the dark, --muted 5.38 and 7.01. */
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  background: var(--surface);
+  backdrop-filter: blur(14px);
+  color: var(--ink);
+  border-radius: 0;
+  box-shadow: var(--shadow);
+}
+
+/* THE INK EDGE IS ON THE WRAPPER ONLY, and the tip is why. Leaflet's tip is one square rotated
+   45 degrees, so a border-left on it paints a diagonal stripe across the arrow rather than a
+   rule down the popup's left side: the same box, a different geometry, and the design's line
+   belongs to the panel. The tip keeps the surface and the blur so the two read as one piece of
+   glass. */
+.leaflet-popup-content-wrapper {
+  border-left: 2px solid var(--ink);
+}
+
+/* Content metrics: the design's margin and type, and a 220px floor so a two-word popup is still
+   a panel rather than a label. maxWidth 320 is a Leaflet OPTION and is set in systems/shared.js
+   (POPUP_OPTIONS), because Leaflet writes it as an inline width and a CSS max-width cannot
+   reach the element it writes it on. */
+.leaflet-popup-content {
+  margin: 14px 16px;
+  min-width: 220px;
+  font: 13px/1.35 var(--chrome-font);
+  color: var(--ink);
+}
+
+/* The close button follows the tokens rather than Leaflet's two greys, which were chosen against
+   a white popup and are a 2.4 on the dark surface. --muted is 5.38 light and 7.01 dark on this
+   surface, and the hover step is to full ink rather than to a third grey. a11y.spec.js A1z
+   measures this glyph against its own background in both themes. */
+.leaflet-container a.leaflet-popup-close-button {
+  color: var(--muted);
+  font: 16px/24px var(--chrome-font);
+}
+
+.leaflet-container a.leaflet-popup-close-button:hover,
+.leaflet-container a.leaflet-popup-close-button:focus {
+  color: var(--ink);
 }
 
 /* ==================================================================

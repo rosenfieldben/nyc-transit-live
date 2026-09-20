@@ -191,6 +191,9 @@ function pathTrainPopup(record) {
       pathRouteNames.get(t.route_id) || null,
       pathRouteColors.get(t.route_id) ?? PATH_FALLBACK_COLOR,
       position,
+      // MR5: the surface the popup actually prints on, so readableInk walks the head's colour
+      // against it rather than against the white a Leaflet popup used to be.
+      popupSurfaceColor(),
     ) +
     // C2: PATH is single-feed, so its system is the synthesized one named after the
     // source (ingestSystems). It gets the SAME age line as the aggregate systems
@@ -303,7 +306,7 @@ function applyPath(data) {
         },
         pathMarkerName(train, now),
       )
-        .bindPopup(() => pathTrainPopup(newRecord))
+        .bindPopup(() => pathTrainPopup(newRecord), POPUP_OPTIONS)
         .addTo(pathTrains);
       pathTrainRecords.set(train.id, newRecord);
     }

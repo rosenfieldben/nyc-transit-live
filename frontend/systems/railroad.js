@@ -374,7 +374,7 @@ function railroadPopup(record) {
     // Scoped to the train's OWN system (LIRR/MNR) so a numeric route id shared with
     // another mode never leaks in.
     routeAlertsBlock(t.system, t.route_id) +
-    `<b style="color:${readableInk(railroadColor(t.route_id))}">${esc(head)}</b>` +
+    `<b style="color:${readableInk(railroadColor(t.route_id), popupSurfaceColor())}">${esc(head)}</b>` +
     (t.train_num ? `<br>Train ${esc(t.train_num)}` : "") +
     // A train drawn from a prediction names the stop it is at or heading for; a GPS fix
     // names none, so the line is there exactly when the field is.
@@ -538,7 +538,7 @@ function applyRailroads(data) {
         { icon: railroadIcon(train, before, now), opacity: markerOpacity(age) },
         railroadMarkerName(train, now),
       )
-        .bindPopup(() => railroadPopup(newRecord))
+        .bindPopup(() => railroadPopup(newRecord), POPUP_OPTIONS)
         .addTo(railroadVehicleLayer(train.system));
       railroads.set(key, newRecord);
     }

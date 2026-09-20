@@ -50,7 +50,7 @@ function busPopup(record) {
     // Bus alerts are route-only (no stop selectors); "bus" route ids share the
     // bus layer's id space, so the match is by route_id under system "bus".
     routeAlertsBlock("bus", b.route_id) +
-    `<b style="color:${readableInk(routeColor(b.route_id))}">${esc(b.route_id ?? "Unknown route")}</b>` +
+    `<b style="color:${readableInk(routeColor(b.route_id), popupSurfaceColor())}">${esc(b.route_id ?? "Unknown route")}</b>` +
     `<br>Bus ${esc(b.id)}<br>Heading: ${heading}` +
     // 6.3: a bus is GPS, so a fresh one says nothing here, and one whose own fix is past
     // OBS_FRESH_S says "live GPS, as of 2m ago" (positionLineHtml).
@@ -380,7 +380,7 @@ function applyBuses(data) {
         // Dim on the first frame, from the larger of the system's age and the fix's own.
         opacity: markerOpacity(vehicleMarkerAge("buses", systemAgeOf("buses", "buses"), bus)),
       }, busMarkerName(bus))
-        .bindPopup(() => busPopup(newRecord))
+        .bindPopup(() => busPopup(newRecord), POPUP_OPTIONS)
         .on("popupopen", () => showBusRoute(newRecord.latest))
         .on("popupclose", () => releaseBusRoute(newRecord.latest, newRecord.marker))
         .addTo(busLayer);

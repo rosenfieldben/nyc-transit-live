@@ -95,7 +95,7 @@ async function loadAirtrain() {
       icon: airtrainIcon(),
       pane: "stationPane",
     }, airtrainStationName(station))
-      .bindPopup(() => airtrainStationPopupHtml(station, routes, nyMinutesSinceMidnight()))
+      .bindPopup(() => airtrainStationPopupHtml(station, routes, nyMinutesSinceMidnight()), POPUP_OPTIONS)
       .addTo(airtrainStationLayer);
     registerStation({
       key: `airtrain|${station.id}`,

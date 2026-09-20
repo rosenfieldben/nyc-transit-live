@@ -36,6 +36,9 @@ const { test, expect } = require("@playwright/test");
 const { installMocks, json } = require("./mock");
 const fx = require("./fixtures/api");
 const { measureMarkContrast, bestPerFamily } = require("./contrast");
+// MR5: the marker table, the popup-closing sweep and the fourteen stock surfaces moved into
+// popup.js when popups.spec.js needed the same three; their comments moved with them.
+const { inPage, closeAllPopups, STOCK_SURFACES } = require("./popup");
 
 const GOLDEN = path.join(__dirname, "fixtures", "mr_pins.json");
 const REGENERATE = !!process.env.MR_PINS_REGENERATE;
@@ -358,52 +361,7 @@ const captureMarks = (page, spec) =>
 // What a rider sees, read out of .leaflet-popup-content after opening the mark, rather
 // than what a builder returns: three of the eight systems compose their popup inline in
 // their own file with no pure helper to call, so the DOM is the only place the whole
-// string exists.
-// The marker table, sent into the page by name. page.evaluate runs a function's SOURCE in
-// the page's global scope, so the app's top-level consts are in scope the way they are in
-// the console; nothing here closes over this file.
-const MARKER_TABLE = `{
-  "subway train": () => trains.get("sub-1").marker,
-  "subway station": () => stationRegistry.find((e) => e.key === "subway|127").marker,
-  "bus": () => buses.get("MTA NYCT_101").marker,
-  "lirr train": () => railroads.get("LIRR|lirr-placed-1").marker,
-  "lirr station": () => stationRegistry.find((e) => e.key === "LIRR|12").marker,
-  "mnr train": () => railroads.get("MNR|mnr-gps-1").marker,
-  "mnr station": () => stationRegistry.find((e) => e.key === "MNR|1").marker,
-  "njt train": () => njtTrainRecords.get("NJ_3800").marker,
-  "njt station": () => stationRegistry.find((e) => e.key === "NJT|109").marker,
-  "path train": () => pathTrainRecords.get("p-1").marker,
-  "path station": () => stationRegistry.find((e) => e.key === "PATH|26734").marker,
-  "ferry boat": () => ferryBoatRecords.get("H1").marker,
-  "ferry dock": () => stationRegistry.find((e) => e.key === "ferry|18").marker,
-  "airtrain station": () => stationRegistry.find((e) => e.key === "airtrain|A").marker,
-}`;
-
-const inPage = (body) => new Function("which", `const MARKERS = ${MARKER_TABLE}; ${body}`);
-
-/* ONE POPUP AT A TIME, AND READ THROUGH THE MARKER, not through the document. This app
-   can hold a vehicle popup and a station popup open together (state.js carries a "two
-   popups open" witness for exactly that), so `.leaflet-popup-content` is not a unique
-   selector and the previous pin's popup would still be on screen. Asking the marker for
-   its own popup element cannot pick up a neighbour's, and map.closePopup() alone cannot
-   close the second one because only one of them is the map's "current" popup.
-
-   THE SETTLE LOOP RUNS FROM HERE, NOT IN THE PAGE, and that is not a style choice: the
-   boot pauses the clock (page.clock.pauseAt), so a setTimeout inside the page never fires
-   and an in-page wait deadlocks until the test times out. Measured, that is exactly what
-   happened: every station pin sat for the full timeout. Each round trip below is real
-   time on the driver's side, which is what lets a station's arrivals fetch resolve, and
-   the clock is advanced between reads so the app's own timers get their turn too. */
-const closeAllPopups = (page) =>
-  page.evaluate(() => {
-    map.closePopup();
-    for (const record of [...trains.values(), ...railroads.values(), ...buses.values(),
-      ...pathTrainRecords.values(), ...ferryBoatRecords.values(), ...njtTrainRecords.values()]) {
-      record.marker.closePopup();
-    }
-    for (const entry of stationRegistry) if (entry.marker) entry.marker.closePopup();
-  });
-
+// string exists. The marker table and the closing sweep this reads through are in popup.js.
 async function popupHtml(page, name) {
   await closeAllPopups(page);
   await page.evaluate(inPage("MARKERS[which]().openPopup();"), name);
@@ -964,13 +922,6 @@ async function captureWorld(page, surfaces) {
   }
   return { surfaces: out, roots: [...roots] };
 }
-
-const STOCK_SURFACES = [
-  "subway train", "subway station", "bus",
-  "lirr train", "lirr station", "mnr train", "mnr station",
-  "njt train", "njt station", "path train", "path station",
-  "ferry boat", "ferry dock", "airtrain station",
-];
 
 test("P5a. every string a rider reads in the stock world, per system", async ({ page }) => {
   await boot(page);

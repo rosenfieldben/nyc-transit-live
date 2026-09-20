@@ -100,6 +100,20 @@ Unknown route → code = route id, colour #6d6e71. **Map these against the real 
 
 Leaflet popup restyle (`.leaflet-popup-content-wrapper`, `.leaflet-popup-tip`): `background: color-mix(in srgb, var(--surface) 94%, transparent); backdrop-filter: blur(14px); color: var(--ink); border-radius: 0; box-shadow: var(--shadow); border-left: 2px solid var(--ink)`. Content margin `14px 16px`, Archivo 13px / 1.35, min-width 220px, `maxWidth 320`. Close button `--muted`, 16px.
 
+> **Erratum, MR5 (2026-09-20): the popup ships at full `--surface` opacity, and the 94% is
+> overruled the way MR1 overruled the header's 90%.** MR1's finding F1 is the same finding about
+> the same drawing one surface out: "axe cannot resolve the contrast of text over a translucent
+> surface whose backdrop is a tile IMAGE", and making the header opaque took the undecidable set
+> from nine entries to one. Measured on this branch at 94%, every popup's text came back
+> `incomplete` ("background color could not be determined because element contains an image node")
+> at 1280, 375 and 320 in both themes. **And it did worse than obscure a safe surface: the dark
+> theme's real `color-contrast` violation on the popup head's ink and `.popup-sub` was reported
+> ONLY as undecidable, so the translucency hid a serious failure.** Opaque, axe names that
+> violation, which is how MR5 came to fix it. The undecidable inventory does not grow.
+> `backdrop-filter: blur(14px)` is kept by ruling and paints nothing at full opacity, which the
+> rule in `style.css` says in as many words. The ink edge, the radius, the shadow and the content
+> metrics are as drawn. Full measurements in `docs/reviews/map-redesign-rounds.md` under Stage MR5.
+
 Auto-pan must clear the page chrome: on `popupopen`, measure the rendered header + alert strip bottom edge and set `autoPanPaddingTopLeft = [24, bottom + 12]`, `autoPanPaddingBottomRight = [110, 40]`, then call `_adjustPan()`.
 
 > **Erratum, MR5 (2026-09-19): the recipe above is measured broken on this app, and stage MR5

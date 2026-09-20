@@ -1645,3 +1645,203 @@ after "LIRR / Metro-North / NJ Transit train (scheduled or estimated, no GPS); N
 always this" and before "LIRR / Metro-North route line". Nothing else in the file moves, which is
 the point of an ordered equality: had a third row drifted in the same commit, the diff would say
 so.
+
+### The chrome, and three things that only appeared once the popup stopped being white
+
+Section 5's wrapper is the first translucent surface this app has ever painted, and the first
+that is not `#ffffff`. Both facts broke something, and neither was visible by reading.
+
+**The design's own spelling of the surface defeats four contrast readers and axe.** This is
+recorded even though the surface ships opaque, because it is the reason the 94% could not have
+been shipped even if the ruling had gone the other way, and because it says what a future stage
+must not reach for. `color-mix(in srgb, var(--surface) 94%, transparent)` computes, measured in
+the shipped Chromium, to `color(srgb 0.917647 0.913725 0.913725 / 0.94)`. Every contrast reader in
+this repository parses `rgba()` and nothing else: `layout.spec.js` A4g's nearest-opaque-ancestor
+walk, `tests/e2e/contrast.js`'s `parse`, and this stage's own first draft of D6a. Three of them
+read it as absent and one as opaque. Measured: A4g's walk skipped the popup entirely and reported
+the N train's head against `.leaflet-container`'s `--bg` two elements further up, and D6a's
+`alpha()` returned 1 and certified a translucent popup as solid. **The reader that cannot be
+taught is axe-core's**, and an axe that cannot determine a popup's background reports its content
+UNDECIDABLE, which is the exact hole MR1's A4 work climbed out of.
+
+A translucency that reaches the page therefore has to be spelled `rgb(... / 0.94)` to be visible
+to the tests that would report it, and is undecidable to axe either way. `frontend/tokens.test.js`
+asserts both spellings absent from the popup rule for that reason: the `color-mix` form because it
+is unparseable as well as translucent, and any alpha form because of the ruling below.
+
+**Every popup head's ink was computed against white, and a popup is not white.**
+`readableInk(color, background = "#ffffff")` walks a route's published colour toward
+legibility until it clears 4.5:1 against the background it is given, and all six heads took the
+default. That was true while a Leaflet popup was white; in the dark theme it never was, and
+after this commit it is not true in either. A4g caught it on the commit that changed the
+surface, which is the gate doing its job: `rgb(138, 110, 0)`, the N train's `#FCCC0A` walked
+against white, reads **4.36** against what A4g could see and **4.02** against the popup's own
+`--surface`.
+
+| route | published | walked against white | against the popup's surface |
+| --- | --- | --- | --- |
+| N (subway) | `#FCCC0A` | `#8b7005`, 4.75 on white | `#7e6605`, 4.57 |
+| PATH | `#d93a30` | `#d93a30` untouched, 4.57 | `#c3342b`, 4.51 |
+| East River (ferry) | `#00839c` | `#007c94`, 4.87 | `#006f85`, 4.80 |
+| ferry fallback | `#78909c` | `#60737d`, 4.95 | `#5a6c75`, 4.52 |
+| NEC (NJ Transit) | `#DD3439` | `#DD3439` untouched, 4.54 | `#bc2c30`, 4.89 |
+
+`popupSurfaceColor()` resolves the token beside `paperColor()`, `inkColor()` and
+`scheduledColor()`, and `--surface` rather than the composite is deliberate: the popup is 94%
+of `--surface` over `--bg`, and `--surface` is the DARKER of the two in the light theme and the
+LIGHTER in the dark one, so it is the end that gives dark ink and light ink respectively the
+least to work with. Ink that clears here clears on the real composite.
+
+**And a resolved token is a string, so a theme swap has to rebuild what resolved it.** This is
+MR4's canvas lesson one surface further out: `applyTheme` repaints the canvas families because
+a 2D context takes a colour string, and it now also calls `popup.update()` on every open popup
+because a popup head takes one too. Without it a popup built in the light theme keeps
+light-theme ink on a dark surface until the next fifteen-second poll, and a STATION popup keeps
+it until the rider closes it. `popup.update()` rather than a close and reopen, so the rider's
+focus stays where it is.
+
+**The clamped horizontal padding leaves a phone-width popup almost no freedom, and two specs
+were staged on the freedom it used to have.** Section 5's 220px content floor makes the popup
+263px wide at 375, and ruling S3's clamp then pins it to x 2..265: 112px of slack in the whole
+axis, spent entirely on the design's 110px right padding. Measured consequences, both in
+`layout.spec.js`:
+
+- **A4j** dragged 20px LEFT, which now puts the popup at x -18..245, off the map.
+  `popupClearingShift` refuses any move that leaves the viewport, so no clearing move existed
+  and the spec's own anti-vacuity premise read false. The spec has now been wrong in both
+  directions: its first draft dragged RIGHT and pushed the popup past 375. It drags STRAIGHT
+  DOWN, which cannot reach either edge and is a takeover all the same, because `dragstart` does
+  not care about the direction.
+- **A4l** asserted that a clearing move existed immediately after Leaflet's own autopan. With
+  the padding in place that autopan now lands the popup CLEAR of the header, so there was
+  nothing to clear and the premise read false on a build whose guard was working. The premise
+  moved onto the box the guard is actually tested on, the GROWN one, which is where A4j's
+  equivalent premise already lived: the popup is clear before the growth, the growth puts it
+  back under, and a clearing move exists for that box.
+
+Both are re-staged rather than relaxed, and each new number is a measurement.
+
+**And the app took the pan outright, because the clamp could not be applied to Leaflet's.**
+Leaflet's autopan runs inside the open, BEFORE any `popupopen` handler, and the clamped padding
+cannot be in place for it: the padding is a function of the popup's rendered size and the popup has
+no rendered size until it is in the document. Left on, that is TWO pans per open, Leaflet's with
+its default 5px strip and then the app's with the clamped padding. **`motion.spec.js` A5e caught
+it**: its `distinct` centre count went from 1 to 2 against a claim that the map "must not travel
+through intermediate positions". Both pans are synchronous and unanimated, so no frame is painted
+between them and the assertion is a proxy rather than the thing itself, but a proxy that has to be
+argued with is a proxy worth satisfying.
+
+So `POPUP_OPTIONS` carries `autoPan: false` and `applyPopupAutoPan` flips it on for the length of
+one `_adjustPan()` call. One pan per open, with the right padding, owned by the app. **That also
+closes the second break the README's erratum records, structurally rather than by guard**: the
+erratum's complaint was that `popup.update()` re-ran Leaflet's autopan on every fifteen-second poll
+for every open vehicle popup, with no equivalent of `riderOwnsTheView`. With `autoPan` off at rest
+a poll cannot pan at all, and the only autopan in the app is one it asked for and brackets.
+
+**A4l followed, and it is renamed rather than re-staged.** It was "Leaflet's own autopan is not the
+rider taking over" and it drove `popup.update()` to make Leaflet pan. That path now stages nothing,
+so its premise read false on a working build, which is how this was found rather than reasoned. The
+defect it guards is untouched: the app's autopan fires the same `autopanstart` and the same
+`movestart`, so `leafletAutoPanning`'s lifetime is exactly as decidable and exactly as easy to get
+wrong. Only the caller moved, so the staging calls `applyPopupAutoPan` and the title says "an
+autopan".
+
+**Two smaller things, recorded because each cost a wrong assertion.** Leaflet's own default
+`minWidth` is **50**, so "no bind site names a minWidth" cannot be spelled as null: D6b asserts
+instead that every popup reports the SAME number and that it is the library's, which is what
+catches the 170 the station popups used to carry. And the ink edge is on the wrapper alone: the
+tip is one square rotated 45 degrees, so a `border-left` on it paints a diagonal stripe across
+the arrow rather than a rule down the popup's side. D6a asserts that in both directions, so an
+edit that tidies the rule onto the shared selector fails.
+
+**M47, so far.** The stage was asked whether the popup's translucent surface gives the contrast
+measurement's alpha branch an element to reach. Not yet, and not for the reason the question
+supposed: the translucency is a COLOUR alpha on a background, which R15's repair already
+composited, while M47 reverts the ELEMENT alpha (`opacity`, `fill-opacity`, `stroke-opacity`)
+and `tests/e2e/contrast.js` measures marks on the MAP rather than popup content. The live
+question is the next commit's: the rail tag's solid body carries a `--paper` backing at
+`opacity="0.9"`, and on the map that composites over `--paper` and returns it, which is exactly
+why M47 survived. Inside a popup it would composite over `--surface`, where it does not. The
+determination is recorded there.
+
+### Two measurements, one ruling, and one that ruled itself
+
+**`readableInk` cannot make a brand colour readable on a dark surface, and this is what forces
+the design's colourless title.** The function walks a colour toward legibility by SCALING IT
+DOWN (`for (let scale = 0.95; scale >= 0; scale -= 0.05)`) and its last resort is `#000000`,
+under a comment that says in as many words "black fails nothing on a light surface". On the dark
+theme's `--surface` it fails everything: measured, **eighteen of the app's twenty-seven subway
+route colours come back as `#000000` at 1.49:1**, and so does every colour that cannot clear 4.5
+as published. Nine clear it as published; the rest cannot be rescued in the direction this
+function moves.
+
+That was harmless while a Leaflet popup was white in BOTH themes, which it was until this stage:
+the dark theme shipped in MR4 over a white popup, so no caller had ever handed this function a
+dark background. Section 5's surface is the first, the defect is created here, and axe named it on
+`[b, .popup-sub]` at all three widths the moment it was.
+
+**FIXED IN THE HELPER RATHER THAN AT THE SIX CALL SITES**, because the bug is the helper's: a
+function whose contract is "the ink to print ON this background" was returning an unreadable
+answer for two thirds of its inputs and reporting nothing. It now asks the BACKGROUND which way
+there is room to move, by comparing black and white against it, and tints toward white where
+darkening cannot help. `c + (255 - c) * scale` mirrors the scaling A3 chose for the other
+direction and for A3's reason, that it preserves the hue: measured on the dark surface, eight of
+the eleven distinct subway colours move and three already clear, with `#c0392b` becoming `#d67e75`
+at 4.76, `#1e8449` becoming `#56a377` at 4.63, and `#FCCC0A` left alone at 9.24.
+
+**THE DARKENING PATH IS THE OLD LOOP, CHARACTER FOR CHARACTER, AND THAT COST A MEASUREMENT.** The
+obvious rewrite folds both directions into one loop, `1 - step` against `c + (255 - c) * step`.
+That is not the same function: 0.05 has no exact binary form, so counting down by subtraction and
+up by addition accumulate different error, and at a rounding boundary they disagree by one unit per
+channel. Thirteen of this app's own colours came back different on the light surfaces (`#FCCC0A`
+on white went `#8b7005` to `#8b7006`), which would have moved thirteen pins for a reason unrelated
+to the repair. So the two directions are two loops, and `helpers.test.js` compares the new function
+against a transcription of the old body over every colour the app ships and six surfaces: 168
+comparisons, zero differences, and at least eight deliberate disagreements on the dark surface so
+the guard cannot pass by the repair having done nothing.
+
+**Section 5's `.pt` says the same thing in its own vocabulary**, by giving the title a weight, a
+size, a letter-spacing and a route MARK and no colour at all, which is MR2's rule that "the brand
+colour stays on the SHAPES that carry identity". That is the vocabulary commit's to implement; it
+is no longer this measurement's to force, because the helper is correct on either surface now.
+
+**And the translucency does not merely make axe unsure, it hides a real violation.** With the
+popup opaque, axe reports a genuine `color-contrast (serious)` failure on `[b, .popup-sub]` in
+the dark theme at all three widths: the head's ink (above) and `.popup-sub`'s hard-coded `#666`,
+which is a light-theme grey on a dark surface. With the popup at 94%, the SAME two nodes are
+reported as `incomplete` instead, "background color could not be determined because element
+contains an image node", because 6% of a tiled basemap shows through and axe will not composite
+an image. Measured: opaque, three A1w states fail and all three are real violations naming the
+defect; translucent, eight fail and not one of them names it.
+
+| A1w state | opaque | at 94% |
+| --- | --- | --- |
+| popup open with cross-link, light, 1280 / 375 / 320 | pass | 4 undecidables each |
+| popup open with cross-link, dark, 1280 / 375 / 320 | **violation**, `[b, .popup-sub]` | 4 undecidables each |
+| panel detail, 1280 (popup still open) | pass | 4 undecidables |
+
+The `.popup-sub` half and the head's ink are this stage's to fix either way, and fixing them
+does not change the table's right-hand column: a decidable popup is what makes axe's answer mean
+anything, and 6% of tile is what takes it away. `UNDECIDABLE_SHAPES` can hold a popup shape and
+the machinery is built for exactly this ("a new shape to add WITH a decider spec"), but that
+list's own standing rule is that **the inventory shrinks by conversion and never grows by
+exclusion**, so four new entries would have been a policy act rather than an implementation
+detail.
+
+**RULED: the popup ships at full `--surface` opacity, the way MR1 overruled the header's 90%, and
+the undecidable inventory does not grow.** The blur and the ink edge are kept. `tokens.test.js`
+holds the rule against both spellings of a return; `helpers.test.js`'s A3 sweep, whose popup half
+had measured three greys against a literal `#ffffff` since MR1 with the note "until MR5 restyles
+them", now resolves the popup's inks per theme beside the chrome's and asserts the popup surface
+is a token exactly as it already asserted the header's. An erratum sits beside section 5 in
+`docs/design/map-redesign/README.md`.
+
+**And one thing the ruling makes visible that is worth naming: at full opacity
+`backdrop-filter: blur(14px)` paints nothing.** A backdrop filter filters what is behind the
+element and the element's own background then paints over it, so with alpha 1 and no radius none of
+the filtered backdrop is ever visible. It is not wholly without effect (it still makes the element a
+stacking context and a containing block) and neither of those reaches anything in a popup, whose
+descendants are all in normal flow. MR1 dropped the filter along with the header's
+translucency for this reason. It is kept here by ruling, and the rule in `style.css` says in as
+many words that it draws nothing, with `tokens.test.js` holding that sentence in place so the
+declaration cannot come to be read as doing something.

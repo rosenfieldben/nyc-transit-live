@@ -54,7 +54,7 @@ function trainPopup(record) {
   const position = subwayPosition(t);
   return (
     routeAlertsBlock("subway", t.route_id) +
-    `<b style="color:${readableInk(lineColor(t.route_id))}">${esc(t.route_id ?? "?")} train</b>` +
+    `<b style="color:${readableInk(lineColor(t.route_id), popupSurfaceColor())}">${esc(t.route_id ?? "?")} train</b>` +
     `<br>Next stop: ${esc(t.stop_name ?? t.stop_id ?? "unknown")}` +
     (t.direction ? `<br>${esc(t.direction)}` : "") +
     // 6.3: HOW THIS POSITION WAS OBTAINED, a word this popup never carried. Every subway
@@ -615,7 +615,7 @@ function applyTrains(data) {
         },
         subwayMarkerName(train, now),
       )
-        .bindPopup(() => trainPopup(newRecord))
+        .bindPopup(() => trainPopup(newRecord), POPUP_OPTIONS)
         .addTo(subwayLayer);
       trains.set(train.trip_id, newRecord);
     }

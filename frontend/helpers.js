@@ -782,14 +782,79 @@ function readableTextOn(background) {
 // the same hue is text and owes 4.5, and #e6b800 on white is 1.87. Scaling the channels
 // toward black preserves the hue, so an N heading still reads yellow, just readably so.
 // Returns the input unchanged when it already clears the target.
+/* MR5: THE BACKGROUND A POPUP'S ROUTE-COLOURED HEAD IS ACTUALLY PRINTED ON, as this file's own
+   fallback for it. readableInk defaults to `#ffffff` and every popup head took that default,
+   which was true while a Leaflet popup was white and is not true now: section 5 makes the popup
+   --surface, and in the dark theme it was never white at all.
+
+   THE LIVE VALUE IS RESOLVED FROM THE TOKEN, in systems/shared.js's popupSurfaceColor(), and is
+   passed in. This is the value to use when nothing passed one: the light theme's own --surface,
+   for the same case paperColor()'s and inkColor()'s literals cover, a caller with no stylesheet
+   applied (which is every node test in this repo). frontend/tokens.test.js asserts it against
+   style.css, so it cannot drift from the token it stands in for.
+
+   MEASURED, WHICH IS WHY IT IS NOT STILL WHITE: layout.spec.js A4g renders the N train, whose
+   #FCCC0A readableInk walked to rgb(138, 110, 0) against white. That reads 4.02 against this
+   surface, and A4g failed on it the moment the surface changed. */
+const POPUP_SURFACE_FALLBACK = "#eae9e9";
+
+/* MR5: AND IT MOVES IN WHICHEVER DIRECTION THE BACKGROUND LEAVES ROOM IN, which it did not.
+
+   THE BUG, MEASURED. Every version of this before MR5 only ever DARKENED (`c * scale`, scale
+   falling from 0.95 to 0) and fell back to `#000000` under a comment that said "black fails
+   nothing on a light surface". On a DARK background that is exactly backwards and the fallback is
+   the worst answer available: black reads 1.49:1 against the dark theme's --surface. Measured
+   across the app's twenty-seven subway route colours, nine clear 4.5 on that surface as published
+   and **the other eighteen all came back `#000000` at 1.49**. A function whose contract is "the
+   ink to print ON this background" was returning an unreadable answer for two thirds of its
+   inputs and reporting no failure.
+
+   IT WAS LATENT AND THIS STAGE MADE IT LIVE. Until section 5 the popup was Leaflet's white in
+   BOTH themes, so the only background this function was ever handed was a light one, even after
+   MR4 shipped the dark theme. The popup's surface is the first dark background any caller has
+   passed, and axe named the resulting violation on `[b, .popup-sub]` at all three widths the
+   moment it did.
+
+   THE DIRECTION IS ASKED OF THE BACKGROUND, not of a flag or a theme name: whichever of black and
+   white carries further against it is the way there is room to move. That keeps the decision in
+   the one place that can answer it and costs nothing on a light background.
+
+   THE DARKENING PATH IS THE OLD LOOP, CHARACTER FOR CHARACTER, and that is a deliberate refusal
+   to tidy it. The obvious rewrite is one loop with the direction folded into the step, `1 - step`
+   against `c + (255 - c) * step`. Measured, that is not the same function: 0.05 has no exact
+   binary form, so counting DOWN from 0.95 by subtraction and counting UP from 0.05 by addition
+   accumulate different error, and at a rounding boundary the two disagree by one unit per channel.
+   Thirteen of the app's own colours came back different on the light surfaces (#FCCC0A on white
+   went #8b7005 to #8b7006, and so on), which would have moved thirteen pins for a reason that has
+   nothing to do with this repair. So the two directions are two loops, and the darkening one is
+   the one this function has always run. Every light-surface answer is therefore unchanged, proven
+   in helpers.test.js against a transcription of the old body; only the dark-surface answers move,
+   and every one of those was `#000000`.
+
+   THE LIGHTENING PATH IS THE SAME OPERATION MIRRORED, `c + (255 - c) * scale`, which is a tint
+   rather than a hue shift for the reason A3 gives for the scaling: it preserves the hue, so the
+   route stays recognisably its own colour. Measured on the dark surface, eight of the eleven
+   distinct subway colours move and three already clear: #c0392b becomes #d67e75 at 4.76, #1e8449
+   becomes #56a377 at 4.63, and #FCCC0A is left alone at 9.24. */
 function readableInk(color, background = "#ffffff", target = 4.5) {
   const rgb = parseColor(color);
   if (!rgb) return color;
   if ((contrastRatio(color, background) ?? 0) >= target) return color;
+  const hexOf = (channels) => `#${channels.map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+  const clears = (hex) => (contrastRatio(hex, background) ?? 0) >= target;
+  if ((contrastRatio("#ffffff", background) ?? 0) > (contrastRatio("#000000", background) ?? 0)) {
+    // Toward white, because that is the direction this background leaves room in. The loop may
+    // stop a hair short of 1 through the same float accumulation described above; it does not
+    // matter, because scale 1 IS white and white is the fallback below.
+    for (let scale = 0.05; scale <= 1; scale += 0.05) {
+      const hex = hexOf(rgb.map((c) => Math.round(c + (255 - c) * scale)));
+      if (clears(hex)) return hex;
+    }
+    return "#ffffff"; // white fails nothing on a dark surface
+  }
   for (let scale = 0.95; scale >= 0; scale -= 0.05) {
-    const scaled = rgb.map((c) => Math.round(c * scale));
-    const hex = `#${scaled.map((c) => c.toString(16).padStart(2, "0")).join("")}`;
-    if ((contrastRatio(hex, background) ?? 0) >= target) return hex;
+    const hex = hexOf(rgb.map((c) => Math.round(c * scale)));
+    if (clears(hex)) return hex;
   }
   return "#000000"; // black fails nothing on a light surface
 }
@@ -873,6 +938,114 @@ function popupClearingShift(popup, obstacles, viewport) {
   return accepted.reduce((best, move) =>
     Math.abs(move.dx) + Math.abs(move.dy) < Math.abs(best.dx) + Math.abs(best.dy) ? move : best,
   );
+}
+
+/* MR5 (ruling S3): THE AUTOPAN PADDING LEAFLET IS ALLOWED TO HAVE, which is not the one the
+   design asked for. The design's recipe reserves the whole page header above the popup
+   (`autoPanPaddingTopLeft = [24, headerBottom + 12]`) and the control stack's width to its
+   right (`[110, 40]`), and it is measured broken on this app twice over. The erratum beside the
+   recipe in docs/design/map-redesign/README.md and ruling S3 in the ledger carry both
+   measurements; what matters here is the ONE arithmetic fact this function exists for.
+
+   LEAFLET'S PADDING ARITHMETIC IS LAST-WRITE-WINS PER AXIS, so an unsatisfiable pair does not
+   split the difference: it silently honours one end and pushes the popup off the other.
+   Vertically the TOP assignment is second and therefore wins; horizontally the LEFT one is.
+   Measured: with the Key panel open at 375x667 the header's bottom edge is 579, the recipe
+   asks for a top padding of 591, and `_adjustPan()` puts a 126px popup at top 592, bottom 718,
+   which is 51px past the bottom of a 667px map. The app's own `panPopupClearOfChrome` cannot
+   rescue that, because it is a collision solver and a popup that has left the viewport is not
+   colliding with anything.
+
+   SO EACH PADDING IS CLAMPED TO WHAT THE MEASURED MAP AND POPUP CAN ACTUALLY SATISFY. A pair
+   is satisfiable on an axis exactly when `padA + padB + popupExtent <= mapExtent`, which is
+   the same inequality Leaflet's two branches encode; when it fails, the padding that WINS is
+   the one cut, because the loser is already being honoured anyway. That spends the slack on
+   the large derived padding and keeps the small fixed ones, which is the right direction: the
+   110 beside the popup clears the control stack and the 24 is only a margin.
+
+   WHAT IS NOT DECIDED HERE. This says nothing about WHERE the popup ends up, only about how
+   much room Leaflet may demand. `panPopupClearOfChrome` remains the authority for the real
+   boxes and for a popup that grows after its first paint, because it reads rects rather than
+   one header's bottom edge, and because a station popup is 29px tall at popupopen.
+
+   Returns integers, never negative, never more than the axis can hold. `clamped` names the
+   ends that were cut, which is what the e2e pin reads: a cap that had stopped firing would
+   otherwise look exactly like a cap that was never needed. */
+function clampedAutoPanPadding({ want, map: mapBox, popup: popupBox } = {}) {
+  const w = want || {};
+  const m = mapBox || {};
+  const p = popupBox || {};
+  // A missing measurement is not a reason to guess at a padding: with no map or no popup to
+  // fit, the honest answer is Leaflet's own default, which this expresses as no padding at all.
+  // The caller reads `usable: false` and leaves the options alone.
+  const usable = [m.width, m.height, p.width, p.height].every((n) => typeof n === "number" && isFinite(n) && n >= 0);
+  const floor = (n) => Math.max(0, Math.round(typeof n === "number" && isFinite(n) ? n : 0));
+  const [wantTop, wantLeft, wantBottom, wantRight] = [w.top, w.left, w.bottom, w.right].map(floor);
+  if (!usable) return { usable: false, topLeft: [0, 0], bottomRight: [0, 0], clamped: { top: false, left: false } };
+  // The room each axis has for padding once the popup itself is placed in it. Negative when the
+  // popup is larger than the map, which the max turns into "no padding at all": a popup that
+  // cannot fit has no satisfiable padding, and demanding one would only choose which edge it
+  // hangs off.
+  const vertical = Math.max(0, Math.floor(m.height - p.height));
+  const horizontal = Math.max(0, Math.floor(m.width - p.width));
+  const top = Math.min(wantTop, Math.max(0, vertical - wantBottom));
+  const left = Math.min(wantLeft, Math.max(0, horizontal - wantRight));
+  return {
+    usable: true,
+    topLeft: [left, top],
+    bottomRight: [Math.min(wantRight, horizontal), Math.min(wantBottom, vertical)],
+    clamped: { top: top < wantTop, left: left < wantLeft },
+  };
+}
+
+/* The design's own numbers, named so the recipe and the clamp can be read against each other
+   rather than against four literals buried in a handler. `top` is derived from a MEASURED edge
+   (the rendered header and alert strip's bottom) and the rest are the recipe's fixed values.
+   POPUP_AUTOPAN_GAP is the recipe's own 12 rather than POPUP_CLEAR_GAP's 8, because the two are
+   different distances: this one sits between the popup and the page's chrome as the design drew
+   it, and the 8 is the collision solver's step. */
+/* MR5: THE ONE SET OF POPUP OPTIONS, applied at every bind site in this app.
+
+   maxWidth IS AN OPTION AND NOT A STYLE, which is why it cannot live in style.css with the rest
+   of section 5's metrics: Leaflet reads it in _updateLayout and writes the result as an INLINE
+   width on .leaflet-popup-content, so a CSS max-width loses to the very declaration it is trying
+   to bound. The 220px floor IS in the stylesheet, because Leaflet's minWidth writes an inline
+   width too and a floor is a floor either way; keeping it in CSS keeps it beside the margin and
+   the type it has to agree with.
+
+   IT REPLACES A minWidth OF 170 on the station popups, the one bind site that carried options
+   before this. That number predates the design and is below its floor, so leaving it would have
+   made station popups the one surface section 5's metrics did not reach. */
+const POPUP_OPTIONS = { maxWidth: 320, autoPan: false };
+
+/* AND autoPan IS OFF, WHICH IS THE APP TAKING THE PAN RATHER THAN DECLINING IT. Leaflet's own
+   autopan runs inside the open, BEFORE any popupopen handler, so the design's padding cannot be in
+   place for it: the padding is derived from the popup's rendered size and the popup has no rendered
+   size until it is in the document. Left on, that meant TWO pans per open, Leaflet's with its
+   default 5px strip and then ours with the clamped padding. Measured, motion.spec.js A5e caught it:
+   `distinct` centres went from 1 to 2, and its claim is that the map "must not travel through
+   intermediate positions". Both pans are synchronous and unanimated, so no frame is painted between
+   them, but a proxy that has to be argued with is a proxy worth satisfying instead.
+
+   SO THERE IS EXACTLY ONE PAN AND THE APP OWNS IT. systems/shared.js's applyPopupAutoPan sets the
+   clamped padding, turns autoPan on for the length of one _adjustPan() call and off again. That
+   also closes the SECOND break the README's erratum records, structurally rather than by guard:
+   popup.update() re-ran Leaflet's autopan on every fifteen-second poll for every open vehicle
+   popup, with no equivalent of this app's riderOwnsTheView rule. With autoPan off at rest a poll
+   cannot pan at all, and the only autopan that exists is one the app asked for and brackets. */
+/* IT LIVES IN helpers.js AND NOT BESIDE THE BIND SITES, which is a factoring decision a broken
+   audit record made for me. It is pure data with no Leaflet and no DOM in it, so it belongs with
+   this file's other popup constants; and docs/reviews/audit-2026-09-05/f04's node:vm driver loads
+   helpers.js and systems/airtrain.js WITHOUT systems/shared.js, so a constant declared there and
+   referenced in airtrain.js is a ReferenceError in that sandbox. The record failed on this commit
+   with "the node:vm driver ran :: exit 3", which is the harness earning its keep. */
+
+const POPUP_AUTOPAN_GAP = 12;
+const POPUP_AUTOPAN_WANT = { left: 24, right: 110, bottom: 40 };
+
+function popupAutoPanWant(chromeBottom) {
+  const edge = typeof chromeBottom === "number" && isFinite(chromeBottom) ? Math.max(0, chromeBottom) : 0;
+  return { ...POPUP_AUTOPAN_WANT, top: Math.round(edge + POPUP_AUTOPAN_GAP) };
 }
 
 // ---- Staleness thresholds, and the one test seam in this file (C6) ----
@@ -3275,9 +3448,9 @@ function formatPathHead(routeId, name) {
 // train's positionQualifier answer (6.3): PATH serves every train `placed`, so the line
 // reads "scheduled position (no GPS)", and its age once its own trip update is past
 // OBS_FRESH_S; before 6.3 the line was a constant that could not say either.
-function pathTrainPopupHtml(train, name, color, position = null) {
+function pathTrainPopupHtml(train, name, color, position = null, surface = POPUP_SURFACE_FALLBACK) {
   return (
-    `<b style="color:${readableInk(color)}">${esc(formatPathHead(train.route_id, name))}</b>` +
+    `<b style="color:${readableInk(color, surface)}">${esc(formatPathHead(train.route_id, name))}</b>` +
     ` <span class="popup-sub">PATH</span>` +
     (train.stop_name ? `<br>Next stop: ${esc(train.stop_name)}` : "") +
     (train.direction ? `<br>${esc(train.direction)}` : "") +
@@ -3427,12 +3600,12 @@ function ferrySpeedKnots(status, speedMs) {
 // Every feed-derived string is escaped. `position` is the boat's positionQualifier
 // answer (6.3): a fresh fix adds nothing, since the legend already says a boat is GPS,
 // and one past OBS_FRESH_S adds "live GPS, as of 2m ago" (positionLineHtml).
-function ferryBoatPopupHtml(boat, name, color, position = null) {
+function ferryBoatPopupHtml(boat, name, color, position = null, surface = POPUP_SURFACE_FALLBACK) {
   const routeText = name || "Unassigned";
   const status = ferryStatusText(boat.status);
   const speed = ferrySpeedKnots(boat.status, boat.speed);
   return (
-    `<b style="color:${readableInk(color)}">${esc(routeText)}</b>` +
+    `<b style="color:${readableInk(color, surface)}">${esc(routeText)}</b>` +
     ` <span class="popup-sub">NYC Ferry</span>` +
     (boat.label ? `<br>Boat ${esc(boat.label)}` : "") +
     (status ? `<br>${esc(status)}` : "") +
@@ -3449,7 +3622,7 @@ function ferryBoatPopupHtml(boat, name, color, position = null) {
 // `wheelchair` flag surfaces as a small accessibility marker in the header, the
 // first such display in the app. An empty routes dict renders "No boats". Every
 // feed-derived string is escaped; colorFor returns a validated css color.
-function ferryArrivalsHtml(station, body, now, colorFor = () => FERRY_FALLBACK_COLOR) {
+function ferryArrivalsHtml(station, body, now, colorFor = () => FERRY_FALLBACK_COLOR, surface = POPUP_SURFACE_FALLBACK) {
   const access = station.wheelchair
     ? ' <span class="popup-access" title="Wheelchair accessible">&#9855;</span>'
     : "";
@@ -3465,7 +3638,7 @@ function ferryArrivalsHtml(station, body, now, colorFor = () => FERRY_FALLBACK_C
   let html = header;
   for (const [routeName, rows] of buckets) {
     const color = rows[0] && rows[0].route_id ? colorFor(rows[0].route_id) : FERRY_FALLBACK_COLOR;
-    html += `<div class="arr-dir" style="color:${readableInk(color)}">${esc(routeName)}</div>`;
+    html += `<div class="arr-dir" style="color:${readableInk(color, surface)}">${esc(routeName)}</div>`;
     html += rows
       .map((row) => {
         const d = ferryArrivalDisplay(row, now);
@@ -3671,10 +3844,10 @@ function njtRouteTables(routes, cumLengths = polylineCumLengths) {
 // train running to schedule is the unremarkable case and "0 min late" is noise.
 // Sign is respected, because NJ Transit does publish negative delays (running
 // early) and rendering one as "late" would be a lie about the direction.
-function njtTrainPopupHtml(train, name, color, position = null) {
+function njtTrainPopupHtml(train, name, color, position = null, surface = POPUP_SURFACE_FALLBACK) {
   const t = train || {};
   return (
-    `<b style="color:${readableInk(color)}">${esc(formatNjtHead(t.route_id, name))}</b>` +
+    `<b style="color:${readableInk(color, surface)}">${esc(formatNjtHead(t.route_id, name))}</b>` +
     ` <span class="popup-sub">NJ Transit</span>` +
     (t.train_num ? `<br>Train ${esc(t.train_num)}` : "") +
     (t.headsign ? `<br>To ${esc(t.headsign)}` : "") +
@@ -5054,6 +5227,7 @@ if (typeof module !== "undefined" && module.exports) {
     namesToggleAnnouncement, namesToggleTitle,
     // A3: one luminance path for the whole app.
     parseColor, relativeLuminance, contrastRatio, readableTextOn, readableInk, statusLineText,
+    POPUP_SURFACE_FALLBACK,
     statusNoteText, FEEDS, feedDotState, feedTooltip, feedStripModel, themeChoice, nextTheme,
     MOBILE_MAX_WIDTH_PX, MOBILE_QUERY, narrowViewport,
     INK_LIGHT, INK_DARK,
@@ -5117,5 +5291,7 @@ if (typeof module !== "undefined" && module.exports) {
     motionAllowed, watchMotionPreference, REDUCED_MOTION_QUERY,
     // A4: the popup-clearing geometry.
     boxesOverlap, shiftBox, popupClearingShift, POPUP_CLEAR_GAP,
+    clampedAutoPanPadding, popupAutoPanWant, POPUP_AUTOPAN_GAP, POPUP_AUTOPAN_WANT,
+    POPUP_OPTIONS,
   };
 }

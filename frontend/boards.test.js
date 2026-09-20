@@ -390,8 +390,12 @@ test("PIN ferry: Wall St/Pier 11, a dock dated by TripUpdates and a boat dwellin
     out.popup,
     '<b>Wall St/Pier 11</b> <span class="popup-sub">NYC Ferry</span>' +
       ' <span class="popup-access" title="Wheelchair accessible">&#9855;</span>' +
-      '<div class="arr-dir" style="color:#007c94">East River</div>2 min' +
-      '<div class="arr-dir" style="color:#8c7300">South Brooklyn</div>departs 2 min',
+      // MR5: the bucket headings' ink is walked against the popup's OWN surface now that section
+      // 5 makes it --surface at 94% rather than white. Before this stage: #007c94 and #8c7300,
+      // both walked against #ffffff. The words, the order and the countdowns are unchanged; only
+      // the two ink values moved, and each still clears 4.5 on the surface it is printed on.
+      '<div class="arr-dir" style="color:#006f85">East River</div>2 min' +
+      '<div class="arr-dir" style="color:#735e00">South Brooklyn</div>departs 2 min',
   );
   assert.deepEqual(out.panel, [
     "h3 Wall St/Pier 11 (Ferry)",

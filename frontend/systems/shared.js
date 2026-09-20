@@ -328,6 +328,14 @@ function applyTheme(theme) {
      above namesToggleEl. On that first call the array exists and is empty, so nothing is
      repainted, which is correct: no system file has drawn anything yet. */
   repaintCanvasFamilies();
+  /* MR5: AND EVERY OPEN POPUP IS REBUILT, for exactly the reason above one surface further out.
+     A popup's markup is HTML and follows the tokens through the cascade, with one exception: the
+     six heads that print a route colour as text resolve popupSurfaceColor() to a STRING when the
+     popup is built (readableInk needs a background, not a variable). So a popup built in the
+     light theme keeps light-theme ink on a dark surface until something rebuilds it, and without
+     this that something is the next fifteen-second poll for a vehicle and nothing at all for a
+     station. Guarded because this function runs once at load, before the map exists. */
+  rebuildOpenPopupsForTheme();
 }
 
 applyTheme(themeChoice(storedTheme(), document.documentElement.getAttribute("data-theme")));
@@ -377,6 +385,32 @@ function inkColor() {
    it is resolved here beside paper and ink and handed to the registry with them. */
 function scheduledColor() {
   return rootToken("--scheduled", "#6d6e71");
+}
+
+/* MR5: THE FOURTH TOKEN A STRING-BUILDER HAS TO BE TOLD, and this one is not about a canvas.
+
+   Six popup heads print a route's colour as TEXT, through readableInk, which walks the colour
+   toward legibility until it clears 4.5:1 against the background it is given. That background
+   has always been readableInk's default, `#ffffff`, and until this stage the assumption behind
+   it was true: a Leaflet popup is white. Section 5 makes it --surface at 94%, so it is not, and
+   in the DARK theme it never was.
+
+   MEASURED, WHICH IS WHY THIS EXISTS AT ALL. layout.spec.js A4g renders the N train, whose
+   #FCCC0A the helper walks to rgb(138, 110, 0): against white that clears, against this popup's
+   surface it reads 4.02 and against the composite it reads 4.05. A4g caught it on the commit
+   that changed the surface, which is the gate doing its job.
+
+   --surface RATHER THAN THE COMPOSITE, and that is the pessimistic end in both themes. The popup
+   is 94% of --surface over --bg; in the light theme --surface (#eae9e9) is the DARKER of the two
+   and in the dark theme it is the LIGHTER, so in either case it is the end that gives dark ink
+   and light ink respectively the least to work with. Ink that clears 4.5 here clears it on the
+   real composite.
+
+   AND AN OPEN POPUP IS RE-RENDERED WHEN THE THEME CHANGES, in applyTheme below, for the same
+   reason the canvas families are repainted there: this resolves a token to a STRING at build
+   time, so a popup built under one theme keeps that theme's ink until something rebuilds it. */
+function popupSurfaceColor() {
+  return rootToken("--surface", "#eae9e9");
 }
 
 /* MR4 ROUND 1: THE BUS WHEEL'S LIGHTNESS AS A NUMBER, for the one bus colour a cascade cannot
@@ -1124,6 +1158,107 @@ function popupObstacles() {
     .filter((box) => box.width > 0 && box.height > 0);
 }
 
+/* MR5 (ruling S3): THE CHROME THE AUTOPAN RESERVES ROOM ABOVE, which is a SUBSET of the obstacle
+   list and not the same question. POPUP_OBSTACLE_IDS above answers "what paints over the popup
+   pane", and that includes the view preset stack at the BOTTOM right; a top padding derived from
+   that stack's bottom edge would reserve the entire map. So this list is the chrome the design's
+   recipe actually names, the header and the alert strip, and the control stack's share is the
+   recipe's own 110px right padding plus panPopupClearOfChrome, which reads the stack's real rect.
+   That is what "the two measurements compose" means.
+
+   Listed rather than derived for the same reason POPUP_OBSTACLE_IDS is: a third overlay across
+   the top of the page should be a deliberate edit here. */
+const POPUP_TOP_CHROME_IDS = ["panel", "alert-banner"];
+
+/* How far down the MAP the page's top chrome reaches, in the map's own pixels, which is the space
+   Leaflet's padding is measured in. Relative to the map's top rather than the viewport's, because
+   #map is not necessarily at y 0 and a padding that confused the two would be wrong by the
+   difference without ever looking wrong. A hidden or zero-size element reserves nothing, which is
+   the dismissed banner. */
+function pageChromeBottom() {
+  const container = document.getElementById("map");
+  if (!container) return 0;
+  const top = container.getBoundingClientRect().top;
+  let bottom = 0;
+  for (const id of POPUP_TOP_CHROME_IDS) {
+    const el = document.getElementById(id);
+    if (!el || el.hidden) continue;
+    const box = el.getBoundingClientRect();
+    if (box.width <= 0 || box.height <= 0) continue;
+    bottom = Math.max(bottom, box.bottom - top);
+  }
+  return Math.max(0, bottom);
+}
+
+/* THE PADDING LEAFLET IS GIVEN, AND THE STAND-DOWN, which are one decision and so are one
+   function. helpers.js's clampedAutoPanPadding holds the arithmetic and the reasoning; this is
+   the half that needs a rendered page: the header's measured bottom edge, the map's box, the
+   popup's box, and Leaflet's own point type.
+
+   IT IS A WRITE ON popup.options AND THAT IS THE WHOLE RISK. Those options are read again by
+   every popup.update(), which for an open vehicle popup is every fifteen seconds, so a padding
+   left behind keeps pulling the map long after the open that set it. That is why the rider's
+   ownership CLEARS the padding rather than merely skipping this call: skipping would leave the
+   last padding armed. standDownPopupAutoPan below is the other half of that.
+
+   Returns the padding it applied, or null when it applied none, which is what D6d through D6g
+   read. */
+function applyPopupAutoPan(popup) {
+  const root = popup && popup.getElement ? popup.getElement() : null;
+  const container = document.getElementById("map");
+  if (!root || !container) return null;
+  if (riderOwnsTheView) {
+    clearPopupAutoPan(popup);
+    return null;
+  }
+  const mapBox = container.getBoundingClientRect();
+  const popupBox = root.getBoundingClientRect();
+  const pad = clampedAutoPanPadding({
+    want: popupAutoPanWant(pageChromeBottom()),
+    map: { width: mapBox.width, height: mapBox.height },
+    popup: { width: popupBox.width, height: popupBox.height },
+  });
+  if (!pad.usable) {
+    clearPopupAutoPan(popup);
+    return null;
+  }
+  popup.options.autoPanPaddingTopLeft = L.point(pad.topLeft[0], pad.topLeft[1]);
+  popup.options.autoPanPaddingBottomRight = L.point(pad.bottomRight[0], pad.bottomRight[1]);
+  /* _adjustPan IS LEAFLET'S OWN AND IT IS PRIVATE FOR A REASON: there is no public way to run an
+     autopan after changing the padding, and the padding cannot be set before the open because it is
+     derived from the popup's rendered size. Guarded on the method existing, so a Leaflet upgrade
+     that renames it degrades to "no correction" rather than throwing inside a popupopen handler and
+     taking the rest of it with it.
+
+     AND autoPan IS FLIPPED ON FOR THE LENGTH OF THIS ONE CALL, because POPUP_OPTIONS turns it off.
+     _adjustPan's whole body is behind `this.options.autoPan &&`, so with the option off it does
+     nothing, including when we ask. Off at rest is what makes this the ONLY pan a popup gets: see
+     POPUP_OPTIONS in helpers.js for the two pans it replaces and the poll it stops. Restored in a
+     finally, so a throw inside Leaflet cannot leave the option on and hand the next poll an autopan
+     nobody asked for. */
+  if (typeof popup._adjustPan === "function") {
+    const wasAutoPan = popup.options.autoPan;
+    correctingNow = true;
+    popup.options.autoPan = true;
+    try {
+      popup._adjustPan();
+    } finally {
+      popup.options.autoPan = wasAutoPan;
+      correctingNow = false;
+    }
+  }
+  return pad;
+}
+
+// Back to Leaflet's own default, which is a 5px strip: the padding options are DELETED rather
+// than set to zero, so what is left is genuinely the library's behaviour and not a third setting
+// of ours that happens to look like it.
+function clearPopupAutoPan(popup) {
+  if (!popup || !popup.options) return;
+  delete popup.options.autoPanPaddingTopLeft;
+  delete popup.options.autoPanPaddingBottomRight;
+}
+
 function panPopupClearOfChrome(popup) {
   const root = popup && popup.getElement ? popup.getElement() : null;
   const container = document.getElementById("map");
@@ -1176,6 +1311,13 @@ let correctingNow = false;
 
 function noteRiderTookOver() {
   riderOwnsTheView = true;
+  /* MR5 (S3): AND THE PADDING IS DISARMED, not merely skipped from here on. The design's padding
+     lives on popup.options, and popup.update() re-runs Leaflet's autopan against it on every
+     fifteen-second poll for every open vehicle popup. Standing down by returning early from
+     applyPopupAutoPan would leave the last padding in place and the next poll would pull the map
+     anyway, which is the second break the README's erratum records: this app does not tidy a
+     position the rider chose, and Leaflet's autopan has no such rule. */
+  standDownPopupAutoPan();
 }
 map.on("dragstart", noteRiderTookOver);
 map.on("zoomstart", noteRiderTookOver);
@@ -1200,6 +1342,11 @@ map.on("popupopen", (event) => {
   if (popupClearObserver) popupClearObserver.disconnect();
   // A new popup is a new placement, so the rider's ownership of the last one does not carry.
   riderOwnsTheView = false;
+  // MR5 (S3): the design's padding first, clamped to what this map and popup can satisfy, and
+  // then the collision solver over the real boxes. That order IS the composition: the padding
+  // gets the popup out of the band the header occupies, and correctOnce answers for the
+  // obstacles' actual rects, including the control stack the padding only approximates.
+  applyPopupAutoPan(event.popup);
   correctOnce(event.popup);
   popupClearObserved = event.popup;
   if (!root || typeof ResizeObserver !== "function") return;
@@ -1209,6 +1356,10 @@ map.on("popupopen", (event) => {
     // rather than of map._popup, for the reason recorded at openPopupsOnMap below.
     if (!map.hasLayer(event.popup)) return;
     if (riderOwnsTheView) return;
+    // A popup that grew needs the padding recomputed against its new height before the solver
+    // runs, for the same reason the open does: the clamp is a function of the popup's size, and a
+    // station popup is 29px tall at popupopen and 300 once its arrivals land.
+    applyPopupAutoPan(event.popup);
     correctOnce(event.popup);
   });
   popupClearObserver.observe(root);
@@ -1239,6 +1390,42 @@ map.on("popupclose", (event) => openPopups.delete(event.popup));
 
 function openPopupsOnMap() {
   return [...openPopups].filter((popup) => map.hasLayer(popup));
+}
+
+// The stand-down, declared here because it needs the register above, and a function declaration
+// rather than a const so noteRiderTookOver (which is written before it) can call it. Every open
+// popup and not just the current one: two popups can be open at once, and a padding on the one
+// the rider is not standing in pulls the map just as hard.
+function standDownPopupAutoPan() {
+  for (const popup of openPopupsOnMap()) clearPopupAutoPan(popup);
+}
+
+/* Rebuild every open popup's content, which is what a theme swap owes the strings that resolved
+   a token when they were built. popup.update() rather than a close and reopen: it re-runs the
+   bound content function, keeps the popup open and keeps the rider's focus where it is, which
+   closePopupReturningFocus and updatePopupKeepingFocus exist to protect.
+
+   A FUNCTION DECLARATION, AND THE try IS THE TEMPORAL DEAD ZONE. applyTheme is written above
+   this and CALLS IT, and applyTheme itself runs once at module load to apply the stored
+   preference. `openPopups` is a module-scope const declared further down, which is in its
+   temporal dead zone until its own line runs, and `typeof` does not rescue a TDZ binding: it
+   throws for one too. So there is no cheap test for "has that line run yet", and an uncaught
+   throw here would take every script after this one with it. This file has already lost the
+   whole page that way once, which is the sentence written above namesToggleEl and again above
+   the canvas registry. The load-time call has no popup to rebuild by construction, so swallowing
+   that one ReferenceError costs nothing; anything else a popup's own update() throws is not this
+   function's to handle and is re-raised. */
+function rebuildOpenPopupsForTheme() {
+  let open;
+  try {
+    open = openPopupsOnMap();
+  } catch (err) {
+    if (err instanceof ReferenceError) return; // the load-time call, before the register exists
+    throw err;
+  }
+  for (const popup of open) {
+    if (typeof popup.update === "function") popup.update();
+  }
 }
 
 function popupContaining(node) {
@@ -2613,7 +2800,7 @@ async function openStationArrivals({ refresh = false } = {}) {
 // kinds, so they live here once.
 function bindStationPopup(marker, makeDescriptor) {
   return marker
-    .bindPopup("", { minWidth: 170 })
+    .bindPopup("", POPUP_OPTIONS)
     .on("popupopen", function () {
       openStation = makeDescriptor(this);
       openStationArrivals();

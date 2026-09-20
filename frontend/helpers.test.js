@@ -279,7 +279,16 @@ test("pathTrainPopupHtml shows placement fields, never the unstable trip id", ()
   assert.ok(html.includes("Next stop: Journal Square"));
   assert.ok(html.includes("To New Jersey"));
   assert.ok(html.includes("scheduled position (no GPS)"));
-  assert.ok(html.includes("#d93a30"));
+  /* MR5: THE HEAD'S INK IS THE ROUTE COLOUR WALKED AGAINST THE POPUP'S OWN SURFACE, not the
+     published colour and not the colour walked against white. This used to assert the raw
+     `#d93a30`, which passed because PATH's red happens to clear 4.5 on white and readableInk
+     returned it untouched. Section 5 makes the popup --surface at 94%, so it no longer does:
+     measured, #d93a30 reads 4.57 on white and is walked to #c3342b for 4.51 here.
+     ASSERTED AS THE HELPER'S OWN OUTPUT rather than as the new hex, so this is not a second
+     copy of readableInk's arithmetic, and asserted AGAINST the white form too: those two
+     differ, so a builder that went back to the default fails on the second line. */
+  assert.ok(html.includes(readableInk("#d93a30", POPUP_SURFACE_FALLBACK)));
+  assert.ok(!html.includes(`color:${readableInk("#d93a30")}"`), "the head must not be inked against white");
   // The API contract: bridge trip ids are unstable and display-poor, never shown.
   assert.ok(!html.includes("329352234"));
 });
@@ -896,6 +905,8 @@ const { selectHeadwayBand, airtrainStationPopupHtml } = require("./helpers.js");
 const {
   parseColor, contrastRatio, readableTextOn, readableInk, INK_DARK, LINE_COLORS,
   statusLineText, MOBILE_MAX_WIDTH_PX, narrowViewport,
+  // MR5: the background a popup head's ink is walked against now that a popup is not white.
+  POPUP_SURFACE_FALLBACK,
 } = require("./helpers.js");
 
 // The real reconciled bands from data/airtrain_jfk.json (all 3 routes share them):
@@ -1502,13 +1513,18 @@ test("ferryBoatPopupHtml shows label, route name, status, and under-way speed in
     "#00839c",
   );
   assert.ok(html.includes("East River"));
-  // A3: the heading carries the route's IDENTITY, darkened only as far as readability
-  // demands. This fixture colour is a real NYC Ferry route colour and it measures 4.44
-  // on white, so it darkens; the old assertion pinned the literal #00839c and was
-  // therefore pinning an unreadable value. Asserting the obligation instead survives any
-  // future change to how far readableInk goes.
-  assert.ok(html.includes(readableInk("#00839c")));
-  assert.ok(contrastRatio(readableInk("#00839c"), "#ffffff") >= 4.5);
+  /* A3: the heading carries the route's IDENTITY, darkened only as far as readability demands.
+     This fixture colour is a real NYC Ferry route colour and it measures 4.44 on white, so it
+     darkens; the old assertion pinned the literal #00839c and was therefore pinning an
+     unreadable value. Asserting the obligation instead survives any future change to how far
+     readableInk goes.
+     MR5 MOVED THE BACKGROUND, NOT THE OBLIGATION. Section 5 makes the popup --surface at 94%
+     rather than white, so the obligation is now against that: measured, #00839c is walked to
+     #007c94 for 4.87 on white and to #006f85 for 4.80 here. The white form is excluded too,
+     because the two differ and that is the only way this can tell which one shipped. */
+  assert.ok(html.includes(readableInk("#00839c", POPUP_SURFACE_FALLBACK)));
+  assert.ok(contrastRatio(readableInk("#00839c", POPUP_SURFACE_FALLBACK), POPUP_SURFACE_FALLBACK) >= 4.5);
+  assert.ok(!html.includes(`color:${readableInk("#00839c")}"`), "the head must not be inked against white");
   assert.ok(html.includes("Boat H201"));
   assert.ok(html.includes("Under way"));
   assert.ok(html.includes("NYC Ferry"));
@@ -1532,9 +1548,10 @@ test("ferryBoatPopupHtml omits speed for a docked boat", () => {
 test("ferryBoatPopupHtml labels a null-route boat Unassigned and omits an unknown status", () => {
   const html = ferryBoatPopupHtml({ label: "H099", status: null }, null, FERRY_FALLBACK_COLOR);
   assert.ok(html.includes("Unassigned"));
-  // The fallback fill is #78909c, which is 2.72 on white and therefore darkens when used
-  // as heading text. Its use as a chip FILL is unchanged and covered separately.
-  assert.ok(html.includes(readableInk(FERRY_FALLBACK_COLOR)));
+  // The fallback fill is #78909c, which is 2.72 on white and therefore darkens when used as
+  // heading text. Its use as a chip FILL is unchanged and covered separately. MR5: against the
+  // popup's own surface rather than white, so #60737d becomes #5a6c75.
+  assert.ok(html.includes(readableInk(FERRY_FALLBACK_COLOR, POPUP_SURFACE_FALLBACK)));
   assert.ok(html.includes("Boat H099"));
   // Unknown status -> no status line at all (ferryStatusText returned null).
   assert.ok(!html.includes("At dock") && !html.includes("Under way"));
@@ -1560,12 +1577,16 @@ test("ferryArrivalsHtml buckets by route name with arriving/departing countdowns
   assert.ok(html.includes("NYC Ferry"));
   assert.ok(html.includes("&#9855;")); // wheelchair accessibility marker
   assert.ok(html.indexOf("East River") < html.indexOf("South Brooklyn")); // alphabetical
-  // Route-coloured headings, each darkened to clear AA on the white popup. #ffd100 is
-  // the sharper case: bright yellow measures 1.51 on white, which is not text.
-  assert.ok(html.includes(readableInk("#00839c")) && html.includes(readableInk("#ffd100")));
+  // Route-coloured headings, each darkened to clear AA on the popup. #ffd100 is the sharper
+  // case: bright yellow measures 1.51 on white, which is not text. MR5: the popup is --surface
+  // at 94% rather than white, so the background the walk targets is the token's own value.
+  assert.ok(
+    html.includes(readableInk("#00839c", POPUP_SURFACE_FALLBACK)) &&
+      html.includes(readableInk("#ffd100", POPUP_SURFACE_FALLBACK)),
+  );
   for (const raw of ["#00839c", "#ffd100"]) {
     assert.ok(
-      contrastRatio(readableInk(raw), "#ffffff") >= 4.5,
+      contrastRatio(readableInk(raw, POPUP_SURFACE_FALLBACK), POPUP_SURFACE_FALLBACK) >= 4.5,
       `${raw} heading ink is below AA on the popup`,
     );
   }
@@ -3048,24 +3069,17 @@ test("A3: every muted ink in style.css clears AA on the surface it prints on", (
     assert.ok(color, `${selector} must still declare a color`);
     return color[1].trim();
   };
-  // MR1 SPLIT THIS TEST IN TWO HALVES, because the chrome is now tokenised and the popups
-  // are not: the popups keep their literal white surface until MR5 restyles them, while
-  // every chrome ink resolves through a custom property and has to be checked against BOTH
-  // themes. The claim is unchanged in both halves: a muted ink clears AA on the surface it
-  // is actually painted on, and the surfaces this test believes in are asserted too, so a
-  // stylesheet that moved one cannot make the pairing pass while the real thing got worse.
+  /* MR1 SPLIT THIS TEST IN TWO HALVES, because the chrome was tokenised and the popups were not:
+     "the popups keep their literal white surface UNTIL MR5 RESTYLES THEM", it said, and half one
+     measured three popup greys against a literal `#ffffff`. MR5 is that stage, so the halves
+     converge: there is no literal surface left to measure against and both halves resolve tokens
+     per theme. The claim is unchanged throughout, and it is the claim that caught this: a muted
+     ink clears AA on the surface it is ACTUALLY painted on. MR5's popup greys were #666 on white,
+     which is 4.74 on the light surface and 2.45 on the dark one, and axe named the dark one a
+     serious violation the moment the popup stopped being white.
 
-  // Half one: the popup inks, on the literal surface the popups still have.
-  const WHITE = "#ffffff";
-  for (const selector of [".popup-sub", ".arr-none", ".popup-stale"]) {
-    const ink = declared(selector);
-    const ratio = contrastRatio(ink, WHITE);
-    assert.ok(
-      ratio >= 4.5,
-      `${selector} is ${ink} on ${WHITE} = ${ratio.toFixed(2)}, below the 4.5 it owes`,
-    );
-  }
-  assert.ok(css.includes("background: #fff;"), "the popup surface is still opaque white");
+     THE SURFACES THIS TEST BELIEVES IN ARE ASSERTED TOO, so a stylesheet that moved one cannot
+     make a pairing pass while the real thing got worse. */
 
   // Half two: the chrome, resolved per theme out of the two :root blocks. The tokens are
   // read from the stylesheet rather than repeated here, so a token edited without measuring
@@ -3080,6 +3094,19 @@ test("A3: every muted ink in style.css clears AA on the surface it prints on", (
   const light = tokens(":root,\n:root\\[data-theme=\"light\"\\]");
   const dark = tokens(':root\\[data-theme="dark"\\]');
 
+  /* MR5: a declared value may now be `var(--muted)` rather than a hex, because the popup rules are
+     tokenised. Resolved against the theme's own token map, one level, which is all this stylesheet
+     ever nests: a var() whose token the block does not declare fails loudly rather than resolving
+     to undefined and comparing as null, which is how a tokenised rule would otherwise pass this
+     test by being unmeasurable. */
+  const resolved = (value, t, what) => {
+    const ref = /^var\(--([\w-]+)\)$/.exec(String(value).trim());
+    if (!ref) return value;
+    const token = t[ref[1]];
+    assert.ok(token, `${what}: style.css declares var(--${ref[1]}), which this theme does not define`);
+    return token;
+  };
+
   for (const [theme, t] of [["light", light], ["dark", dark]]) {
     // TEXT owes 4.5. Each of these is a real string in the chrome: the muted feed names and
     // the note, the ink the rows are set in, the accent variant the stale note and the OFF
@@ -3090,11 +3117,22 @@ test("A3: every muted ink in style.css clears AA on the surface it prints on", (
       [t["accent-ink"], t.surface, "the accent AS TEXT on the header surface"],
       [t.chipink, t["accent-ink"], "the filled button's label on its own fill"],
       [t.surface, t.ink, "an active view preset's label on its inverted fill"],
+      // MR5: the popup's own strings, on the popup's own surface, which is the same --surface
+      // token the header uses. Read out of the stylesheet by selector so a grey reintroduced in
+      // either rule fails here rather than shipping.
+      [declared(".popup-sub"), t.surface, "the popup's kicker and sub text"],
+      [declared(".arr-none"), t.surface, "the popup's \"No trains\" line"],
+      [declared(".popup-stale"), t.surface, "the popup's freshness hedge"],
+      [declared(".arr-qualifier"), t.surface, "a board row's own age qualifier"],
+      [declared(".alert-block"), t.surface, "the popup's service alert text"],
+      [declared(".popup-crosslink"), t.surface, "the cross-link button's label"],
+      [declared(".leaflet-popup-content .alert-stale"), t.surface, "the popup's alerts-stale hedge"],
     ]) {
-      const ratio = contrastRatio(ink, surface);
+      const paint = resolved(ink, t, `${theme}: ${what}`);
+      const ratio = contrastRatio(paint, resolved(surface, t, `${theme}: ${what} surface`));
       assert.ok(
         ratio != null && ratio >= 4.5,
-        `${theme}: ${what} is ${ink} on ${surface} = ${ratio}, below the 4.5 it owes`,
+        `${theme}: ${what} is ${paint} on ${surface} = ${ratio}, below the 4.5 it owes`,
       );
     }
     // NON-TEXT owes 3. The freshness dots and the focus ring are graphics: each carries a
@@ -3102,15 +3140,19 @@ test("A3: every muted ink in style.css clears AA on the surface it prints on", (
     // none of them is text.
     for (const [mark, surface, what] of [
       [t.accent, t.surface, "the stale freshness dot"],
+      // MR5: the popup's alert rule and its accessibility glyph are graphics, not prose.
+      [t.accent, t.surface, "the popup alert block's 3px accent rule"],
+      [declared(".popup-access"), t.surface, "the dock popup's wheelchair glyph"],
       [t.live, t.surface, "the live freshness dot"],
       [t.scheduled, t.surface, "the scheduled-only freshness dot"],
       [t.focus, t.surface, "the focus ring on the header surface"],
       [t.focus, t.bg, "the focus ring on the map's own backdrop"],
     ]) {
-      const ratio = contrastRatio(mark, surface);
+      const paint = resolved(mark, t, `${theme}: ${what}`);
+      const ratio = contrastRatio(paint, resolved(surface, t, `${theme}: ${what} surface`));
       assert.ok(
         ratio != null && ratio >= 3,
-        `${theme}: ${what} is ${mark} on ${surface} = ${ratio}, below the 3 it owes`,
+        `${theme}: ${what} is ${paint} on ${surface} = ${ratio}, below the 3 it owes`,
       );
     }
   }
@@ -3125,6 +3167,18 @@ test("A3: every muted ink in style.css clears AA on the surface it prints on", (
   assert.match(headerRule[1], /background: var\(--surface\);/, "the header surface is a token");
   assert.doesNotMatch(headerRule[1], /backdrop-filter/, "the header must not blur its backdrop");
   assert.doesNotMatch(headerRule[1], /color-mix|rgba/, "the header surface must not be translucent");
+
+  /* AND MR5's POPUP IS THE SAME RULING ON THE SAME GROUNDS. Section 5 draws it at 94% over the
+     same blurred tiles. Measured on this branch, the translucency did worse than make the popup
+     undecidable: the dark theme's REAL violation on the head's ink and .popup-sub was reported
+     ONLY as incomplete, so it hid the failure this test now catches. frontend/tokens.test.js
+     holds the rule itself; this holds the pairing, and the two together are why the entry above
+     stayed at one. The blur is kept there by ruling and paints nothing at full opacity, so unlike
+     the header this asserts the surface and not the filter. */
+  const popupRule = css.match(/\.leaflet-popup-content-wrapper,\s*\.leaflet-popup-tip \{([\s\S]*?)\n\}/);
+  assert.ok(popupRule, "the popup surface rule must still exist in style.css");
+  assert.match(popupRule[1], /background: var\(--surface\);/, "the popup surface is a token");
+  assert.doesNotMatch(popupRule[1], /color-mix|rgba/, "the popup surface must not be translucent");
 });
 
 test("A3: readableTextOn replaces the hand-curated dark-text set, and is never wrong", () => {
@@ -3191,6 +3245,82 @@ test("A3: readableInk darkens only what must darken, and keeps the hue", () => {
   // Unparseable input passes through rather than throwing: a caller that hands us
   // something odd gets its own colour back, not a crash in a popup.
   assert.equal(readableInk("chartreuse"), "chartreuse");
+});
+
+/* MR5: THE OTHER DIRECTION, WHICH THIS FUNCTION DID NOT HAVE AND SILENTLY FAILED WITHOUT.
+   Every version before MR5 only ever darkened and fell back to `#000000`, under a comment saying
+   "black fails nothing on a light surface". On a DARK background that is backwards and the
+   fallback is the worst answer available: black reads 1.49:1 on the dark theme's --surface.
+   It was latent until this stage because the popup was Leaflet's white in BOTH themes, even after
+   MR4 shipped the dark one, so no caller had ever handed this function a dark background. The
+   popup's surface is the first, and axe named the violation the moment it did. */
+const DARK_SURFACE = "#2d2b2b"; // the dark theme's --surface, which tokens.test.js holds to style.css
+
+test("MR5: readableInk lightens on a dark background, where darkening could only fail", () => {
+  // The exact shape of the old bug: two thirds of the palette came back as unreadable black.
+  assert.ok(contrastRatio("#000000", DARK_SURFACE) < 1.5, "black on this surface is the worst answer");
+  for (const line of Object.keys(LINE_COLORS)) {
+    const ink = readableInk(lineColor(line), DARK_SURFACE);
+    const ratio = contrastRatio(ink, DARK_SURFACE);
+    assert.ok(ratio >= 4.5, `subway ${line} on the dark popup is only ${ratio.toFixed(2)} (${ink})`);
+    assert.notEqual(ink.toLowerCase(), "#000000", `subway ${line} came back black on a dark surface`);
+  }
+  for (let hue = 0; hue < 360; hue += 5) {
+    const ratio = contrastRatio(readableInk(`hsl(${hue}, 75%, 40%)`, DARK_SURFACE), DARK_SURFACE);
+    assert.ok(ratio >= 4.5, `bus hue ${hue} on the dark popup is only ${ratio.toFixed(2)}`);
+  }
+  // And the hue survives the tint, which is the whole reason it is a tint: the 1/2/3's red
+  // lightens to a lighter red rather than washing to grey.
+  const red = parseColor(readableInk("#c0392b", DARK_SURFACE));
+  assert.ok(red[0] > red[1] && red[0] > red[2], "a lightened red must still read red");
+  // A colour that already clears is returned untouched in this direction too.
+  assert.equal(readableInk("#FCCC0A", DARK_SURFACE), "#FCCC0A");
+});
+
+test("MR5: readableInk's darkening path is unchanged, character for character", () => {
+  /* THE REGRESSION GUARD THE REPAIR NEEDED, and it exists because the obvious rewrite fails it.
+     Folding both directions into one loop with `1 - step` against `c + (255 - c) * step` looks
+     identical and is not: 0.05 has no exact binary form, so counting DOWN by subtraction and UP by
+     addition accumulate different error, and at a rounding boundary the two disagree by one unit
+     per channel. Measured, thirteen of this app's own colours came back different on the light
+     surfaces, which would have moved thirteen pins for a reason unrelated to the repair.
+
+     SO THE OLD BODY IS TRANSCRIBED HERE AS THE ORACLE. This is the one place in this repo where a
+     copy of an implementation is the right test: the claim is precisely "the new function agrees
+     with the old one wherever the old one was right", and only the old one can say what that was.
+     It is compared over every colour the app ships and every surface it prints on. */
+  const wasReadableInk = (color, background = "#ffffff", target = 4.5) => {
+    const rgb = parseColor(color);
+    if (!rgb) return color;
+    if ((contrastRatio(color, background) ?? 0) >= target) return color;
+    for (let scale = 0.95; scale >= 0; scale -= 0.05) {
+      const scaled = rgb.map((c) => Math.round(c * scale));
+      const hex = `#${scaled.map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+      if ((contrastRatio(hex, background) ?? 0) >= target) return hex;
+    }
+    return "#000000";
+  };
+  const colours = [
+    ...new Set(Object.values(LINE_COLORS)),
+    "#d93a30", "#546e7a", "#00839c", "#78909c", "#ffd100", "#FCCC0A", "#DD3439", "#08A652",
+    "#e6b800", "#4a4e69", "#6d6e71", "#000", "#fff", "#123456", "#abcdef", "chartreuse", "",
+  ];
+  // Every LIGHT surface this app prints on: white (the old default), the popup's --surface, --bg,
+  // the popup cream the alert block used to carry, the banner's amber, and a mid yellow as the
+  // boundary case where the direction is decided closest to the line.
+  const surfaces = ["#ffffff", "#eae9e9", "#f3f2f2", "#fdf6e3", "#fde8b0", "#ffd100"];
+  let compared = 0;
+  for (const bg of surfaces) {
+    for (const c of colours) {
+      assert.equal(readableInk(c, bg), wasReadableInk(c, bg), `${c} on ${bg} moved`);
+      compared += 1;
+    }
+  }
+  assert.ok(compared >= 120, `the comparison must be broad to mean anything, got ${compared}`);
+  // And the NEW behaviour is genuinely new rather than the old one relabelled: on a dark surface
+  // the two must disagree, or this repair changed nothing.
+  const disagreements = colours.filter((c) => readableInk(c, DARK_SURFACE) !== wasReadableInk(c, DARK_SURFACE));
+  assert.ok(disagreements.length >= 8, `the dark path must differ from the old one, got ${disagreements.length}`);
 });
 
 test("A3: the status line states its order and never truncates a problem", () => {
@@ -3397,6 +3527,98 @@ test("popupClearingShift still prefers a single-axis move when one clears everyt
   const shift = popupClearingShift(popup, [legend], box(360, 1280, 0, 720));
   assert.equal(shift.dy, 0, "one axis is enough here");
   assert.equal(shift.dx, -(1276 - 1030) - POPUP_CLEAR_GAP);
+});
+
+/* MR5 (ruling S3): THE CLAMP, WITH THE MEASUREMENT THAT MADE IT NECESSARY AS ITS FIRST CASE.
+   Same discipline as the block above: these are browser measurements, not invented numbers. The
+   claim under test is one inequality, `padA + padB + popupExtent <= mapExtent`, which is what
+   Leaflet's two per-axis branches encode and what the design's recipe violates at phone widths. */
+const { clampedAutoPanPadding, popupAutoPanWant, POPUP_AUTOPAN_GAP, POPUP_AUTOPAN_WANT } = require("./helpers.js");
+
+test("S3: the design's recipe, unclamped, is the padding that pushes a popup off a phone", () => {
+  const want = popupAutoPanWant(579); // the recipe verbatim: a measured edge plus its own gap
+  assert.equal(want.top, 579 + POPUP_AUTOPAN_GAP, "the top padding is derived, not typed");
+  assert.deepEqual(
+    { left: want.left, right: want.right, bottom: want.bottom },
+    POPUP_AUTOPAN_WANT,
+    "and the other three are the recipe's fixed values",
+  );
+  // Leaflet can honour top and bottom together only while they fit around the popup: this is
+  // the arithmetic the erratum records, 591 + 40 + 126 on a 667px map.
+  assert.equal(want.top + want.bottom + 126 > 667, true, "unsatisfiable, which is the finding");
+});
+
+test("S3: the clamp cuts the padding that WINS, and keeps the one already being honoured", () => {
+  const got = clampedAutoPanPadding({
+    want: popupAutoPanWant(579),
+    map: { width: 375, height: 667 },
+    popup: { width: 256, height: 126 },
+  });
+  const [left, top] = got.topLeft;
+  const [right, bottom] = got.bottomRight;
+  // Vertically Leaflet's TOP branch assigns second and therefore wins, so the top is what is
+  // cut and the 40px below the popup survives intact.
+  assert.equal(bottom, 40, "the small fixed padding is kept whole");
+  assert.equal(top, 667 - 126 - 40, "and the derived one takes exactly the slack that is left");
+  assert.equal(top + bottom + 126, 667, "which makes the pair satisfiable, with nothing spare");
+  // Horizontally the LEFT branch is the one that wins, and the 110 clears the control stack
+  // while the 24 is a margin, so the margin is what gives way.
+  assert.equal(right, 110, "the padding that clears actual chrome is kept whole");
+  assert.equal(left, 375 - 256 - 110, "and the margin takes the slack");
+  assert.deepEqual(got.clamped, { top: true, left: true }, "and it says which ends it cut");
+});
+
+test("S3: at desktop nothing is clamped, so the clamp cannot be hiding a bug", () => {
+  const got = clampedAutoPanPadding({
+    want: popupAutoPanWant(60),
+    map: { width: 1280, height: 720 },
+    popup: { width: 320, height: 200 },
+  });
+  assert.deepEqual(got.topLeft, [24, 72], "the recipe's own numbers, untouched");
+  assert.deepEqual(got.bottomRight, [110, 40]);
+  assert.deepEqual(got.clamped, { top: false, left: false });
+});
+
+test("S3: a popup bigger than the map asks for no padding rather than choosing an edge", () => {
+  const got = clampedAutoPanPadding({
+    want: popupAutoPanWant(579),
+    map: { width: 375, height: 640 },
+    popup: { width: 400, height: 700 },
+  });
+  // There is no satisfiable padding for a popup that does not fit, and demanding one would only
+  // decide which edge it hangs off. Zero leaves that to Leaflet, which at least keeps the
+  // popup's own anchor in view.
+  assert.deepEqual(got.topLeft, [0, 0]);
+  assert.deepEqual(got.bottomRight, [0, 0]);
+  assert.equal(got.usable, true, "the boxes were measurable; it is the fit that failed");
+});
+
+test("S3: an unmeasurable box stands the padding down instead of guessing at one", () => {
+  for (const args of [{}, { map: { width: 375, height: 667 } }, { popup: { width: 1, height: 1 } }]) {
+    const got = clampedAutoPanPadding({ want: popupAutoPanWant(100), ...args });
+    assert.equal(got.usable, false, JSON.stringify(args));
+    assert.deepEqual(got.topLeft, [0, 0]);
+    assert.deepEqual(got.bottomRight, [0, 0]);
+  }
+  // A NaN or an Infinity is the same case: a measurement that did not happen.
+  const nan = { want: popupAutoPanWant(100), map: { width: NaN, height: 667 }, popup: { width: 1, height: 1 } };
+  assert.equal(clampedAutoPanPadding(nan).usable, false);
+});
+
+test("S3: every padding the clamp returns is a non-negative integer", () => {
+  // Leaflet does arithmetic on these and writes the result into a transform, so a fraction or a
+  // negative would land in the page as a sub-pixel pan or a pan the wrong way.
+  const cases = [
+    { chrome: 579, map: { width: 375, height: 667 }, popup: { width: 256.4, height: 126.7 } },
+    { chrome: 0, map: { width: 320.5, height: 640.5 }, popup: { width: 260, height: 300 } },
+    { chrome: 1e6, map: { width: 1280, height: 720 }, popup: { width: 320, height: 200 } },
+  ];
+  for (const c of cases) {
+    const got = clampedAutoPanPadding({ want: popupAutoPanWant(c.chrome), map: c.map, popup: c.popup });
+    for (const n of [...got.topLeft, ...got.bottomRight]) {
+      assert.equal(Number.isInteger(n) && n >= 0, true, `${JSON.stringify(c)} -> ${n}`);
+    }
+  }
 });
 
 test("popupClearingShift re-checks a move against obstacles that were NOT blocking it", () => {

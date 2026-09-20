@@ -322,6 +322,9 @@ function njtTrainPopup(record) {
          constants agreeing would have been a coincidence waiting to be broken. */
       railBranchColor(njtBranch(t).color),
       position,
+      // MR5: the surface the popup actually prints on, so readableInk walks the head's colour
+      // against it rather than against the white a Leaflet popup used to be.
+      popupSurfaceColor(),
     ) +
     // A2: the station this train is drawn on, reachable. A train drawn at its stop
     // covers the station square entirely, so without this the departures a rider
@@ -499,7 +502,7 @@ function applyNjt(data) {
         { icon: njtIcon(train, now), opacity: markerOpacity(age) },
         njtMarkerName(train, now),
       )
-        .bindPopup(() => njtTrainPopup(newRecord))
+        .bindPopup(() => njtTrainPopup(newRecord), POPUP_OPTIONS)
         .addTo(njtTrains);
       njtTrainRecords.set(key, newRecord);
     }

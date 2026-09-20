@@ -814,8 +814,12 @@ def main() -> int:
         print(f"      popup   : {m['popupHtml']}")
         print(f"      actions : {', '.join(m['popupEvents'])} "
               f"(popupopen draws the route line, popupclose clears it)")
+    # MR5 RENAMED THE CROSS-LINK's CLASS from popup-crosslink to section 5's .xlink, and the bare
+    # word is not what this should match: `xlink` is also an SVG namespace prefix (xlink:href), and
+    # a popup now carries the map's own mark as SVG. So the pattern asks for the CLASS, which is
+    # what the question is about, rather than for four letters that occur in two languages.
     interactive_in_popup = [m for m in data["busMarkers"]
-                            if re.search(r"<button|<a\s|tabindex|xlink",
+                            if re.search(r"<button|<a\s|tabindex|class=\"[^\"]*\bxlink\b",
                                          m["popupHtml"] or "")]
     print(f"  bus popups containing any focusable element or cross-link: "
           f"{len(interactive_in_popup)} of {len(data['busMarkers'])}")

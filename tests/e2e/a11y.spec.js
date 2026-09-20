@@ -590,7 +590,9 @@ const STATES = [
            frame 0  opacity 0     frame 1  opacity 0     frame 2  opacity 0.083
          The near-black body text survives that; the muted ink does not. CI reported
          color-contrast on exactly the two muted nodes at 1280 (.popup-sub #666,
-         .xlink #1d4ed8) and four nodes at 375, while this machine passed the same
+         .popup-crosslink #1d4ed8: both are what CI printed at the time, and MR5 has since
+         tokenised the first and renamed the second to .xlink) and four nodes at 375, while
+         this machine passed the same
          commit 16 runs out of 16. A gate whose verdict depends on how fast the machine is
          is not a gate. */
       await expectState(

@@ -193,7 +193,10 @@ contract-tier lint; `node --test "frontend/*.test.js" "tests/*.test.js"` (392 pa
 Playwright suite (317 passed); and `docs/reviews/audit-2026-09-05/run_all.sh` (fifteen records, all
 still matching, two of which learned this stage's markup).
 
-One flake is recorded rather than smoothed over, in the ledger's flake list: `pins.spec.js` P5d
-failed once in a full parallel run at `9edca7e` and passed in isolation, in a full-file run, in a
-four-repeat parallel run and in a second full run. Its message was lost to the isolated re-run, which
-the entry records as its own lesson.
+One flake appeared in this stage's own spec and was fixed rather than recorded: `pins.spec.js` P5d
+failed twice in four full parallel runs with the injected-string proof reporting an empty residue,
+because the app rebuilds an open popup on its fifteen-second poll while the mocked fetch that triggers
+the rebuild resolves in real time, so it can land between the injection and the read. Reproduced
+deterministically, fixed by doing both in one `page.evaluate`, and proved still sharp by forcing the
+rebuild inside it. The ledger's flake list has the mechanism and the process lesson the first
+occurrence cost.

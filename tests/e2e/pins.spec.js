@@ -1286,18 +1286,38 @@ test("P5d. every word a rider reads in a popup belongs to a named slot (directio
      empty residues read exactly like fourteen readers that missed, which is the shape this phase
      keeps finding, so one unclaimed string is INJECTED into a rendered popup and the machinery has
      to report it. The injection goes in through the DOM rather than through a builder, so nothing
-     in the app has to be broken to prove the test works. */
-  await page.evaluate(inPage(`
+     in the app has to be broken to prove the test works.
+
+     INJECTED AND READ IN ONE EVALUATE, WHICH IS A FLAKE FIXED RATHER THAN RECORDED. As three
+     separate calls this failed twice in four full parallel runs, with the residue coming back EMPTY:
+     the app rebuilds an open popup on its fifteen-second poll (`popup.update()`, and a re-skinned bus
+     marker is re-bound outright), the poll is triggered by a clock this suite advances in the settle
+     loops above, but the mocked fetch that answers it resolves in REAL time, so under worker
+     contention it lands between the injection and the read and takes the injected node with it.
+     Reproduced deterministically by forcing `getPopup().update()` between the two calls: the same
+     assertion, the same empty array, the same message CI printed. Nothing can intervene inside one
+     evaluate, so the race is gone rather than retried.
+
+     AND BOTH READERS ARE THE SAME TWO SOURCES, wrapped in an IIFE each so their `norm` and `walk`
+     do not collide. A third copy of either reader is the fifth defect shape this phase named, and it
+     does not get created to fix a timing bug. The node is removed before the evaluate returns, so no
+     later read in this file can see it. */
+  const injected = await page.evaluate(
+    inPage(`
     MARKERS[which]().openPopup();
     const el = MARKERS[which]().getPopup().getElement();
-    el.querySelector(".leaflet-popup-content").appendChild(
-      Object.assign(document.createElement("div"), { textContent: "zzq unclaimed" }),
-    );
-  `), "bus");
-  const injected = await popupStrings(page, "bus");
-  const injectedSlots = await popupSlots(page, "bus");
+    const content = el.querySelector(".leaflet-popup-content");
+    const planted = Object.assign(document.createElement("div"), { textContent: "zzq unclaimed" });
+    content.appendChild(planted);
+    const seen = (() => { ${POPUP_READER} })().seen;
+    const slots = (() => { ${SLOT_READER} })();
+    planted.remove();
+    return { seen, slots };
+  `),
+    "bus",
+  );
   expect(
-    wordResidue(injected.seen, Object.values(injectedSlots).flat().join(" ")),
+    wordResidue(injected.seen, Object.values(injected.slots).flat().join(" ")),
     "a string in a popup that no slot claims must be reported, or this test proves nothing",
   ).toEqual(["zzq", "unclaimed"]);
   await closeAllPopups(page);

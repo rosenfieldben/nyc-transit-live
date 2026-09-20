@@ -389,7 +389,12 @@ function railroadPopup(record) {
        body, and the chevron at the bearing it is drawn at. Rebuilding it here would need the
        train, its previous row and the clock a second time, and the two would disagree on exactly
        the trains whose state is worth looking at. */
-    popupKickerHtml({ left: head.agency }) +
+    /* AND THE AGENCY IS PRINTED ONCE. A train whose feed serves neither a route id nor a name has
+       no line to title, so the title carries the agency and the kicker carries nothing: kicker plus
+       title would read "MNR MNR", which is one word more than the head this replaces printed for
+       the same train. models.RailroadTrain declares route_id nullable, so the state is the feed's
+       to produce even though no fixture does. */
+    popupKickerHtml({ left: head.line ? head.agency : "" }) +
     popupTitleHtml({
       markHtml: popupMarkHtml(markerMarkHtml(record.marker)),
       text: head.line || head.agency,

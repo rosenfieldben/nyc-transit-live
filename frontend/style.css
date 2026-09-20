@@ -878,19 +878,26 @@ body,
    overflow visible, because the 1px paper backing on a solid tag is drawn at x -0.5 and is a
    pixel wider than the viewBox on each side: that backing is what makes the tag legible on a
    dark tile, and a clipped one would lose exactly the edge it exists for. */
-.rail-tag-marker svg,
-.rail-stn-marker svg {
+/* MR5: KEYED ON THE MARK's OWN CLASS RATHER THAN ON THE MARKER's, which is the same repair the
+   type below took and for the same reason. `railTagSvg` and `railStationSvg` write these classes
+   into the string, so a rule keyed on them follows the mark wherever the mark is drawn: on the map
+   inside a divIcon, and since section 5 also inside a popup's title. Keyed on the marker, the
+   popup's copy lost the `overflow: visible` this comment exists for and clipped the 1px paper
+   backing at x -0.5, which is the edge that makes a solid tag legible. */
+svg.rail-tag,
+svg.rail-stn {
   overflow: visible;
   display: block;
 }
 
-.rail-tag-marker svg text {
-  /* Archivo 800 at 8px, the design's type for both blocks. font-weight has to be on the text
-     element rather than inherited: an SVG text node does not take the page's body font stack
-     through the marker div, and Leaflet gives .leaflet-marker-icon no font at all. */
-  font: 800 8px var(--chrome-font);
-  letter-spacing: 0.01em;
-}
+/* .rail-tag-marker svg text WAS HERE, and it is gone because the tag carries its own type now.
+   The rule said "Archivo 800 at 8px, the design's type for both blocks", and its comment gave the
+   reason it existed: an SVG text node does not inherit the page's font through a marker div. What
+   it did not survive is the mark being drawn somewhere else. MR5 puts font-family, font-size,
+   font-weight and letter-spacing on the <text> elements in railTagSvg (RAIL_TAG_TYPE), the way
+   subwayPlateSvg has always carried its own and the way the Key panel's hand-written copies do,
+   so the type travels with the string. Mutation M60 in the ledger is the same lesson on the Key's
+   copies: dropping their inline font "on the theory that a stylesheet supplies it" died. */
 
 /* The station square never takes a pointer event on its own shape: the click is the marker
    div's, which the A2 floor below widens to 24px. Without this a click landing between the
@@ -1983,16 +1990,32 @@ body,
   color: var(--ink);
 }
 
+/* THE ROW's CELLS STRETCH, WHICH IS THE GRID's OWN DEFAULT AND NOT SECTION 5's `align-items:
+   center`, and the measurement is why. A cell is a flex box with its own padding and border, so an
+   EMPTY cell is 11px tall where a filled one is 28.5; centred, their bottom borders land 9px apart
+   and the row's rule is drawn as three stubs at two heights. Two of the six boards print an empty
+   middle cell (a subway row names no destination, a ferry row names neither mark nor destination),
+   so the staircase is on screen rather than hypothetical: measured at 300.4 against 309.2 on the
+   subway board. Stretched, every cell is the row's height and the rule is one line; the CONTENT
+   stays centred because each cell centres its own, which is what the design's rule was reaching
+   for. */
 .arr {
   display: grid;
   grid-template-columns: auto 1fr auto;
   gap: 0 10px;
-  align-items: center;
 }
 
+/* AND THE CELL HAS A GAP, because a flex container drops the whitespace between its items. A row's
+   middle cell carries up to three: the destination, the train number and the freshness qualifier,
+   with a space between them in the markup, and a space between two flex items generates no box at
+   all. Measured: "Babylon Branch #8412" rendered as "Babylon Branch#8412", with the gap between
+   them 0.00px. The markup keeps its spaces, because that is what every text reader in this
+   repository reads (the pins, toContainText, a screen reader's flat string); this draws them. 3px
+   is what a space measures in this popup's 13px type, measured in the page rather than guessed. */
 .arr > span {
   display: flex;
   align-items: center;
+  column-gap: 3px;
   padding: 5px 0;
   border-bottom: 1px solid var(--rule);
 }

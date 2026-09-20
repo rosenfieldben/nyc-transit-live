@@ -397,7 +397,7 @@ function scheduledColor() {
    why the popup ships opaque, and the arithmetic below is written for the surface either way.)
 
    MEASURED, WHICH IS WHY THIS EXISTS AT ALL. layout.spec.js A4g renders the N train, whose
-   #FCCC0A the helper walks to rgb(138, 110, 0): against white that clears, against this popup's
+   #e6b800 the helper walks to rgb(138, 110, 0): against white that clears, against this popup's
    surface it reads 4.02 and against the composite it reads 4.05. A4g caught it on the commit
    that changed the surface, which is the gate doing its job.
 
@@ -2787,10 +2787,25 @@ function renderStation() {
 }
 
 
+/* MR5: THE TWO STATES A BOARD PASSES THROUGH ARE IN THE SAME GRAMMAR AS THE BOARD.
+
+   A station popup has three states, not one: loading, loaded and failed. The loaded one is section
+   5's (a kicker, a title, a board); these two were still MR4's bold name over a muted line, so the
+   first thing a rider saw on every station click was a 13px bold name that then jumped to a 17px
+   title, and a board whose fetch failed kept the old head for as long as the popup stayed open.
+
+   IT IS ALSO WHAT MAKES THE COVERAGE CLAIM TRUE OF STATES AND NOT ONLY OF FAMILIES. pins.spec.js
+   P5d asserts that every word a rider reads in a popup belongs to a named slot, and it opens every
+   surface in its LOADED state; a bare `<b>` belongs to no slot, so the claim held over popup
+   families and would have failed over popup states. Now both states are a title and a note.
+
+   NO KICKER, because these states do not know the system word: `openStation`'s descriptor carries
+   the station and the renderer, and the system word is the renderer's. A title and a note is what
+   this surface can say honestly. */
 function stationError(station, message) {
   return (
-    `<b>${esc(station.name ?? station.id)}</b>` +
-    `<br><span class="popup-sub">${esc(message)}</span>`
+    popupTitleHtml({ text: station.name ?? station.id }) +
+    `<div class="popup-sub">${esc(message)}</div>\n`
   );
 }
 
@@ -2809,7 +2824,8 @@ async function openStationArrivals({ refresh = false } = {}) {
     // Stop the previous tick up front so it cannot fire during this fetch.
     clearInterval(stationTimer);
     stationTimer = null;
-    marker.setPopupContent(`<b>${esc(station.name ?? station.id)}</b><br>Loading arrivals…`);
+    // The loading state in the same grammar as the board it becomes (stationError says why).
+    marker.setPopupContent(stationError(station, "Loading arrivals…"));
   }
   let body;
   try {

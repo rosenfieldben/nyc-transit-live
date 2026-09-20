@@ -165,8 +165,10 @@ Shared vocabulary (classes in `reference/map-redesign-v2.css`):
 >    the same correction the `.fresh` footer's words took under ruling Q2.
 > 3. **The footer's three sentences are not typed anywhere** (ruling Q2): "LIVE · UPDATED 12S AGO"
 >    is the sentence memo D9 forbids, so the live state shows its square and says its words only to
->    a screen reader, and the stale and schedule-only states take the feed strip's own strings from
->    `feedStateWords`. The square, the rule above it and the metrics are as drawn.
+>    a screen reader, and the stale state takes the feed strip's own string from `feedStateWords`.
+>    The square, the rule above it and the metrics are as drawn. **The schedule-only state is not a
+>    popup state at all**: the footer is a vehicle popup's line and the only schedule-only feed is
+>    AirTrain, which has no vehicles, so a rider reads that word on the feed strip's tooltip.
 >
 > 4. **`.alert` ships as the app's `.alert-block` with `.alert-row` inside it**, carrying this
 >    list's rules (accent left edge, `6px 0 6px 10px`, 11px, `--ink`, no fill) on the REGION rather

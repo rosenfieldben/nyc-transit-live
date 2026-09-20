@@ -3305,8 +3305,10 @@ test("MR5: readableInk lightens on a dark background, where darkening could only
   // lightens to a lighter red rather than washing to grey.
   const red = parseColor(readableInk("#c0392b", DARK_SURFACE));
   assert.ok(red[0] > red[1] && red[0] > red[2], "a lightened red must still read red");
-  // A colour that already clears is returned untouched in this direction too.
-  assert.equal(readableInk("#FCCC0A", DARK_SURFACE), "#FCCC0A");
+  // A colour that already clears is returned untouched in this direction too. The app's own N
+  // yellow rather than the authority's #FCCC0A: MR2's ruling R1 is that the palette is this app's,
+  // and a test that reaches for the published value teaches the next reader the wrong colour.
+  assert.equal(readableInk("#e6b800", DARK_SURFACE), "#e6b800");
 });
 
 test("MR5: readableInk's darkening path is unchanged, character for character", () => {
@@ -3334,7 +3336,7 @@ test("MR5: readableInk's darkening path is unchanged, character for character", 
   };
   const colours = [
     ...new Set(Object.values(LINE_COLORS)),
-    "#d93a30", "#546e7a", "#00839c", "#78909c", "#ffd100", "#FCCC0A", "#DD3439", "#08A652",
+    "#d93a30", "#546e7a", "#00839c", "#78909c", "#ffd100", "#e6b800", "#DD3439", "#08A652",
     "#e6b800", "#4a4e69", "#6d6e71", "#000", "#fff", "#123456", "#abcdef", "chartreuse", "",
   ];
   // Every LIGHT surface this app prints on: white (the old default), the popup's --surface, --bg,

@@ -705,10 +705,15 @@ function feedTooltip({ name, state, age = null, hidden = false } = {}) {
    "As of 6m ago" twice to a screen reader and nothing at all to an eye. `.visually-hidden` is A1's
    own class, so the live state's words are in the tree exactly as the stale state's are.
 
-   AIRTRAIN GETS ONE AND IT SAYS "Scheduled", which is the same answer the strip gives it: its feed
-   row has no source, so feedDotState calls it schedule-only rather than ageless. A caller that
-   passes no state at all gets nothing, because inventing a square for a surface with no feed behind
-   it would be a claim.
+   NO POPUP RENDERS THE SCHEDULE-ONLY STATE, and an earlier draft of this comment said the opposite.
+   It read "AirTrain gets one and it says Scheduled", which presumes AirTrain has a popup that calls
+   this: it does not. The footer is a VEHICLE popup's line (popupFreshLine, systems/shared.js) and
+   AirTrain has no vehicles, so `scheduled` is reachable here only through a caller that passes it,
+   and none exists. A rider reads that word on the feed strip's tooltip instead, where chrome.spec.js
+   D1a holds it, and pins.spec.js waives it in UNREACHED_STATES with the same reason. The branch stays
+   because feedStateWords defines three states and this renders whichever it is given; what is not
+   true is that a popup gives it that one. A caller that passes no state at all gets nothing, because
+   inventing a square for a surface with no feed behind it would be a claim.
 
    AND IT IS vehicleStaleLine RESTYLED, NOT A SECOND VOICE, which is the one thing a footer added
    naively would have got wrong. Every vehicle popup used to end in vehicleStaleLine, which printed
@@ -730,8 +735,8 @@ function feedTooltip({ name, state, age = null, hidden = false } = {}) {
 
    THE SQUARE IS NEVER WITHHELD, because the ruling is that it is present in all three states: a
    rider cannot tell "this feed is live" from "this popup forgot to say" unless the mark is always
-   there. Only the words come and go, and a station popup passes no position, so nothing is
-   suppressed on one. */
+   there. Only the words come and go. (A station popup would pass no position and suppress nothing,
+   but no station popup calls this at all: see above.) */
 function popupFreshHtml({ state, age = null, position = null } = {}) {
   if (!state) return "";
   const words = feedStateWords({ state, age });
@@ -933,7 +938,13 @@ function popupArrRowsHtml(rows) {
     .filter(Boolean)
     .map((row) => {
       const countdown = row.countdown ?? "";
-      const cls = countdown === "now" ? "n now" : "n";
+      /* THE ACCENT IS ON THE ROW WHOSE COUNTDOWN READS "now", AND A DEPARTING ROW READS IT TOO.
+         The first draft compared the whole cell to "now", and two of the five boards compose their
+         cell as "departs " plus the countdown (a dwelling boat, a boarding NJ Transit train), so a
+         row leaving in under thirty seconds printed an unaccented "departs now" beside an accented
+         "now" two rows up. Measured on both boards. The test is on the countdown's own last word,
+         which is still formatCountdown's answer and still not a second threshold. */
+      const cls = /(^|\s)now$/.test(countdown) ? "n now" : "n";
       return (
         `<span>${row.markHtml ?? ""}</span>\n` +
         `<span>${row.label ? esc(row.label) : ""}${row.extraHtml ?? ""}</span>\n` +
@@ -1083,7 +1094,7 @@ function readableTextOn(background) {
    style.css, so it cannot drift from the token it stands in for.
 
    MEASURED, WHICH IS WHY IT IS NOT STILL WHITE: layout.spec.js A4g renders the N train, whose
-   #FCCC0A readableInk walked to rgb(138, 110, 0) against white. That reads 4.02 against this
+   #e6b800 readableInk walked to rgb(138, 110, 0) against white. That reads 4.02 against this
    surface, and A4g failed on it the moment the surface changed. */
 const POPUP_SURFACE_FALLBACK = "#eae9e9";
 
@@ -1113,7 +1124,7 @@ const POPUP_SURFACE_FALLBACK = "#eae9e9";
    against `c + (255 - c) * step`. Measured, that is not the same function: 0.05 has no exact
    binary form, so counting DOWN from 0.95 by subtraction and counting UP from 0.05 by addition
    accumulate different error, and at a rounding boundary the two disagree by one unit per channel.
-   Thirteen of the app's own colours came back different on the light surfaces (#FCCC0A on white
+   Thirteen of the app's own colours came back different on the light surfaces (#e6b800 on white
    went #8b7005 to #8b7006, and so on), which would have moved thirteen pins for a reason that has
    nothing to do with this repair. So the two directions are two loops, and the darkening one is
    the one this function has always run. Every light-surface answer is therefore unchanged, proven
@@ -1124,7 +1135,7 @@ const POPUP_SURFACE_FALLBACK = "#eae9e9";
    rather than a hue shift for the reason A3 gives for the scaling: it preserves the hue, so the
    route stays recognisably its own colour. Measured on the dark surface, eight of the eleven
    distinct subway colours move and three already clear: #c0392b becomes #d67e75 at 4.76, #1e8449
-   becomes #56a377 at 4.63, and #FCCC0A is left alone at 9.24. */
+   becomes #56a377 at 4.63, and #e6b800 is left alone at 7.52. */
 function readableInk(color, background = "#ffffff", target = 4.5) {
   const rgb = parseColor(color);
   if (!rgb) return color;
@@ -2909,6 +2920,27 @@ function railTagChevronPath(cx) {
    refuses to trust (kind "unknown") are both "we are not telling you which way this is
    going", and drawing a chevron at an arbitrary angle for either would be worse than
    drawing none. */
+/* THE TAG'S TYPE, ON THE TEXT ELEMENTS THEMSELVES, and MR5 is the stage that had to put it there.
+
+   It was `.rail-tag-marker svg text` in the stylesheet, which drew correctly for as long as every
+   tag this builder made was inside a rail tag MARKER. Section 5 draws a popup's title with the map's
+   own mark, so the same string is now also rendered inside `.pt`, where that selector does not
+   match and the type inherits the title's `font: 800 17px`. Measured in the browser: the map's tag
+   text computes to `800 8px` and the popup's to `800 17px`, with 17px glyphs drawn inside a
+   13-unit block and clipped by the viewport. The shipped captures show it as a smear.
+
+   THE LESSON WAS ALREADY IN THE LEDGER, one surface away: mutation M60 dropped the inline font from
+   the KEY panel's hand-written copies "on the theory that a stylesheet supplies it" and died, with
+   the note "it does not: `.rail-tag-marker svg text` is scoped to the MARKER". A mark that travels
+   has to carry its own type, which is what `subwayPlateSvg` has always done (font-size, font-weight
+   and font-family as presentation attributes) and what the Key's copies do.
+
+   PRESENTATION ATTRIBUTES RATHER THAN AN INLINE STYLE, for the reason the fills next to them are
+   inline styles: a style attribute would beat the theme's `var()` fills nothing here needs to beat,
+   while a presentation attribute is the lowest-priority author form and can still be overridden by
+   a stylesheet if a later surface ever needs to. */
+const RAIL_TAG_TYPE = ' font-family="Archivo, system-ui, sans-serif" font-size="8" font-weight="800" letter-spacing="0.01"';
+
 function railTagSvg({ system, code, color, textColor = null, state, bearing = null } = {}) {
   const geom = railTagGeometry(system, code);
   const { width: w, agencyWidth: aw, codeWidth: cw, glyph, centre: cx } = geom;
@@ -2929,8 +2961,8 @@ function railTagSvg({ system, code, color, textColor = null, state, bearing = nu
       `<rect x="-0.5" y="-0.5" width="${w + 1}" height="14" style="fill: var(--paper)" opacity="0.9"/>` +
       `<rect x="0" y="0" width="${aw}" height="${RAIL_TAG_HEIGHT}" style="fill: var(--ink)"/>` +
       `<rect x="${aw}" y="0" width="${cw}" height="${RAIL_TAG_HEIGHT}" fill="${branch}"/>` +
-      `<text x="${aw / 2}" y="${RAIL_TAG_TEXT_BASELINE}" text-anchor="middle" style="fill: var(--paper)">${esc(glyph)}</text>` +
-      `<text x="${aw + cw / 2}" y="${RAIL_TAG_TEXT_BASELINE}" text-anchor="middle" fill="${branchInk}">${esc(code)}</text>`
+      `<text x="${aw / 2}" y="${RAIL_TAG_TEXT_BASELINE}" text-anchor="middle"${RAIL_TAG_TYPE} style="fill: var(--paper)">${esc(glyph)}</text>` +
+      `<text x="${aw + cw / 2}" y="${RAIL_TAG_TEXT_BASELINE}" text-anchor="middle"${RAIL_TAG_TYPE} fill="${branchInk}">${esc(code)}</text>`
     : // Outlined: one paper box in an ink stroke, a divider at the block edge, both texts in
       // ink, and the branch colour reduced to a stripe along the bottom of its own block.
       // The stroke is 1.2 and centred on the path, so the box is inset 0.6 to stay inside
@@ -2938,8 +2970,8 @@ function railTagSvg({ system, code, color, textColor = null, state, bearing = nu
       `<rect x="0.6" y="0.6" width="${w - 1.2}" height="${RAIL_TAG_HEIGHT - 1.2}" style="fill: var(--paper); stroke: var(--ink)" stroke-width="1.2"/>` +
       `<line x1="${aw}" y1="0.6" x2="${aw}" y2="${RAIL_TAG_HEIGHT - 0.6}" style="stroke: var(--ink)" stroke-width="1.2"/>` +
       `<rect x="${aw + 0.6}" y="${RAIL_TAG_HEIGHT - 0.6 - RAIL_TAG_STRIPE}" width="${cw - 1.2}" height="${RAIL_TAG_STRIPE}" fill="${stripe}"/>` +
-      `<text x="${aw / 2}" y="${RAIL_TAG_TEXT_BASELINE}" text-anchor="middle" style="fill: var(--ink)">${esc(glyph)}</text>` +
-      `<text x="${aw + cw / 2}" y="${RAIL_TAG_TEXT_BASELINE}" text-anchor="middle" style="fill: var(--ink)">${esc(code)}</text>`;
+      `<text x="${aw / 2}" y="${RAIL_TAG_TEXT_BASELINE}" text-anchor="middle"${RAIL_TAG_TYPE} style="fill: var(--ink)">${esc(glyph)}</text>` +
+      `<text x="${aw + cw / 2}" y="${RAIL_TAG_TEXT_BASELINE}" text-anchor="middle"${RAIL_TAG_TYPE} style="fill: var(--ink)">${esc(code)}</text>`;
 
   const stem =
     `<line x1="${cx}" y1="${RAIL_TAG_HEIGHT}" x2="${cx}" y2="${RAIL_TAG_STEM_END}"` +

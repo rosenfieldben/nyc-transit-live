@@ -1674,13 +1674,13 @@ is unparseable as well as translucent, and any alpha form because of the ruling 
 legibility until it clears 4.5:1 against the background it is given, and all six heads took the
 default. That was true while a Leaflet popup was white; in the dark theme it never was, and
 after this commit it is not true in either. A4g caught it on the commit that changed the
-surface, which is the gate doing its job: `rgb(138, 110, 0)`, the N train's `#FCCC0A` walked
+surface, which is the gate doing its job: `rgb(138, 110, 0)`, the N train's `#e6b800` walked
 against white, reads **4.36** against what A4g could see and **4.02** against the popup's own
 `--surface`.
 
 | route | published | walked against white | against the popup's surface |
 | --- | --- | --- | --- |
-| N (subway) | `#FCCC0A` | `#8b7005`, 4.75 on white | `#7e6605`, 4.57 |
+| N (subway) | `#e6b800` | `#8a6e00`, 4.87 on white | `#7e6500`, 4.62 |
 | PATH | `#d93a30` | `#d93a30` untouched, 4.57 | `#c3342b`, 4.51 |
 | East River (ferry) | `#00839c` | `#007c94`, 4.87 | `#006f85`, 4.80 |
 | ferry fallback | `#78909c` | `#60737d`, 4.95 | `#5a6c75`, 4.52 |
@@ -1787,13 +1787,13 @@ there is room to move, by comparing black and white against it, and tints toward
 darkening cannot help. `c + (255 - c) * scale` mirrors the scaling A3 chose for the other
 direction and for A3's reason, that it preserves the hue: measured on the dark surface, eight of
 the eleven distinct subway colours move and three already clear, with `#c0392b` becoming `#d67e75`
-at 4.76, `#1e8449` becoming `#56a377` at 4.63, and `#FCCC0A` left alone at 9.24.
+at 4.76, `#1e8449` becoming `#56a377` at 4.63, and `#e6b800` left alone at 7.52.
 
 **THE DARKENING PATH IS THE OLD LOOP, CHARACTER FOR CHARACTER, AND THAT COST A MEASUREMENT.** The
 obvious rewrite folds both directions into one loop, `1 - step` against `c + (255 - c) * step`.
 That is not the same function: 0.05 has no exact binary form, so counting down by subtraction and
 up by addition accumulate different error, and at a rounding boundary they disagree by one unit per
-channel. Thirteen of this app's own colours came back different on the light surfaces (`#FCCC0A`
+channel. Thirteen of this app's own colours came back different on the light surfaces (`#e6b800`
 on white went `#8b7005` to `#8b7006`), which would have moved thirteen pins for a reason unrelated
 to the repair. So the two directions are two loops, and `helpers.test.js` compares the new function
 against a transcription of the old body over every colour the app ships and six surfaces: 168
@@ -2007,7 +2007,13 @@ What the footer ADDS is the two states that line never had, live and schedule-on
 forgot to say" unless the mark is always there. **And there is no word for live**: the words are said
 through A1's `visually-hidden`, so a screen reader gets the state exactly where an eye gets the
 square. The README's "LIVE · UPDATED 12S AGO" is the sentence memo D9 forbids and it is typed
-nowhere. AirTrain gets a footer reading "Scheduled", which is the same answer the strip gives it.
+nowhere. **Corrected after the adversarial round**: an earlier sentence here said "AirTrain gets a footer
+reading Scheduled, which is the same answer the strip gives it". It does not. The footer is a
+VEHICLE popup's line and AirTrain has no vehicles, so **no popup in this app renders the
+schedule-only state at all**; the strip's tooltip is its only surface, `chrome.spec.js` D1a holds it
+there, and `pins.spec.js` waives it in `UNREACHED_STATES` with that reason. Three readers of this
+stage found the same sentence, which is what a record that contradicts its own waiver looks like
+from outside.
 
 **The helpers land inert one commit before their wiring**, which is this repo's own idiom: 6.3's
 position helpers "landed inert one commit before the gate, and are wired in the gate's own commit",

@@ -146,7 +146,7 @@ Shared vocabulary (classes in `reference/map-redesign-v2.css`):
 - `.xlink` cross-link button ("Also here: Jamaica →"): 600 11px, `border 1px --divider`, transparent.
 - `.fresh` footer: `border-top 1px --rule; margin-top 10px; 600 10px uppercase --muted` with a 6×6 square: green `#00933c` "LIVE · UPDATED 12S AGO"; stale → accent text and square, "AS OF 6M AGO · FEED STALE"; schedule-only → gray square, "SCHEDULED HEADWAYS · NO LIVE FEED".
 
-> **Erratum, MR5 (2026-09-20): the vocabulary ships in these class names, with three deviations,
+> **Erratum, MR5 (2026-09-20): the vocabulary ships in these class names, with four deviations,
 > each measured.**
 >
 > 1. **A popup's route mark is the MAP's mark, not `.bul.lg` / `.sq` / `.rtag`.** The three DOM
@@ -172,11 +172,13 @@ Shared vocabulary (classes in `reference/map-redesign-v2.css`):
 >    list's rules (accent left edge, `6px 0 6px 10px`, 11px, `--ink`, no fill) on the REGION rather
 >    than on each alert. The `.alert + .alert` rule above implies one box per alert, which draws an
 >    accent edge per alert: a station popup with three of them would read as three warnings rather
->    than one block of them. `.xlink` IS renamed, because there the class was the only thing left to
->    adopt, and its arrow is `aria-hidden` so a screen reader does not read "right arrow" after the
->    station's name. Measured, that span made axe report a new undecidable finding ("Element content
->    contains only non-text characters") at every width in both themes, and the ruling on this
->    surface is that the undecidable inventory does not grow, so the arrow is not drawn at all.
+>    than one block of them. **`.xlink` IS renamed**, because there the class was the only thing left
+>    to adopt, **but its arrow is not drawn.** Added as an `aria-hidden` span, so that no screen
+>    reader would read "right arrow" after the station's name, it made axe report a NEW undecidable
+>    finding ("Element content contains only non-text characters") at every width in both themes.
+>    The ruling on this surface is that the undecidable inventory does not grow, and a decorative
+>    glyph is the weakest reason there is to grow it: the button already says where it goes and its
+>    border already says it is pressable.
 >
 > The `.kv` row list is as given, plus four labels the app's own fields needed (Direction, Status,
 > Speed, To) and two nouns it already printed (Bus, Boat). Full measurements in

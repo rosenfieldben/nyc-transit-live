@@ -590,7 +590,7 @@ const STATES = [
            frame 0  opacity 0     frame 1  opacity 0     frame 2  opacity 0.083
          The near-black body text survives that; the muted ink does not. CI reported
          color-contrast on exactly the two muted nodes at 1280 (.popup-sub #666,
-         .popup-crosslink #1d4ed8) and four nodes at 375, while this machine passed the same
+         .xlink #1d4ed8) and four nodes at 375, while this machine passed the same
          commit 16 runs out of 16. A gate whose verdict depends on how fast the machine is
          is not a gate. */
       await expectState(
@@ -602,7 +602,7 @@ const STATES = [
     // The cross-link is named as a target, so the anti-vacuity check fails if the scan
     // stops reaching it. That is the half the first draft was missing: the state reached
     // the wrong popup AND nothing asked whether a cross-link had been examined.
-    targets: ["leaflet-popup", "popup-crosslink"],
+    targets: ["leaflet-popup", "xlink"],
     // BOTH THEMES, by ruling. A popup is the surface a rider reads longest and the one MR1
     // does not restyle: its vocabulary is MR5's. Scanning it in the dark theme now is how
     // "unchanged" stops being an assumption, and it is what will catch MR5 the first time a

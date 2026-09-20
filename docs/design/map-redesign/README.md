@@ -168,6 +168,16 @@ Shared vocabulary (classes in `reference/map-redesign-v2.css`):
 >    a screen reader, and the stale and schedule-only states take the feed strip's own strings from
 >    `feedStateWords`. The square, the rule above it and the metrics are as drawn.
 >
+> 4. **`.alert` ships as the app's `.alert-block` with `.alert-row` inside it**, carrying this
+>    list's rules (accent left edge, `6px 0 6px 10px`, 11px, `--ink`, no fill) on the REGION rather
+>    than on each alert. The `.alert + .alert` rule above implies one box per alert, which draws an
+>    accent edge per alert: a station popup with three of them would read as three warnings rather
+>    than one block of them. `.xlink` IS renamed, because there the class was the only thing left to
+>    adopt, and its arrow is `aria-hidden` so a screen reader does not read "right arrow" after the
+>    station's name. Measured, that span made axe report a new undecidable finding ("Element content
+>    contains only non-text characters") at every width in both themes, and the ruling on this
+>    surface is that the undecidable inventory does not grow, so the arrow is not drawn at all.
+>
 > The `.kv` row list is as given, plus four labels the app's own fields needed (Direction, Status,
 > Speed, To) and two nouns it already printed (Bus, Boat). Full measurements in
 > `docs/reviews/map-redesign-rounds.md` under Stage MR5.

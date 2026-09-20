@@ -2498,7 +2498,11 @@ function applyMarkerName(marker) {
 // worse than no cross-link at all: a rider who follows it gets confidently incorrect
 // arrivals, and nothing on screen tells them so. A vehicle that does not name a
 // station gets no link.
-const CROSSLINK_CLASS = "popup-crosslink";
+// MR5: SECTION 5's OWN NAME FOR THIS BUTTON. It was `popup-crosslink` from A2 until here, and the
+// class is the one vocabulary item this stage could adopt by renaming alone: the rules already
+// matched section 5's `.xlink` (600 11px, a --divider border, a transparent ground) after the
+// chrome commit tokenised them, and the class is written once, here.
+const CROSSLINK_CLASS = "xlink";
 
 // The link's markup, or "" when this vehicle names no station. `stationKey` must be a
 // SYSTEM-QUALIFIED registry key: station ids collide across systems (see the
@@ -2511,9 +2515,19 @@ function crossLinkHtml(stationKey) {
   // station we know. Either way there is nothing to link to, and inventing a
   // destination is the failure this whole comment is about.
   if (!entry) return "";
-  // A real button, not a styled span: it is keyboard reachable, it activates on Enter
-  // and Space without any handler of ours, and it announces as a button. The station
-  // name is IN the accessible name, so "Also here" is never announced on its own.
+  /* A real button, not a styled span: it is keyboard reachable, it activates on Enter
+     and Space without any handler of ours, and it announces as a button. The station
+     name is IN the accessible name, so "Also here" is never announced on its own.
+
+     MR5: SECTION 5's ARROW IS NOT DRAWN, AND IT WAS MEASURED BEFORE IT WAS DROPPED. The design
+     draws this button as "Also here: Jamaica →". Added as an aria-hidden span (so a screen
+     reader would not read "right arrow" after the station's name), axe reported a NEW
+     undecidable finding on it at every width and in both themes: "Element content contains
+     only non-text characters", on `button.xlink span`. The operator's ruling on this stage's
+     surface is that the undecidable inventory does not grow, and a decorative glyph is the
+     weakest possible reason to grow it: the button already says where it goes, and its own
+     border already says it is pressable. So the arrow is recorded as a deviation beside the
+     README's list rather than drawn, and the words are unchanged. */
   return (
     `<button type="button" class="${CROSSLINK_CLASS}" data-station-key="${esc(entry.key)}">` +
     `Also here: ${esc(entry.name)}</button>\n`

@@ -181,7 +181,75 @@ async function measureMarkContrast(page) {
           push(family, paints);
         }
       }
-      return { paper, surface, rows };
+
+      /* MR5: EVERY NON-OPAQUE PAINT ON THE PAGE, WHEREVER IT IS DRAWN, which is the guard the
+         alpha repair above never had.
+
+         WHY IT NEEDED ONE. R15 fixed the compositing and MR4 recorded it as UNGUARDED, because
+         `bestPerFamily` reports a family's STRONGEST paint and the two alphas on this map are both
+         a paper backing behind something else: the subway plate's at 0.95 and the rail tag's at
+         0.9. A paper backing measured against paper reads about 1.04 either way, so it is never a
+         family's best paint and mutation M47 (reverting the compositing) moved no number and
+         survived, exactly as recorded.
+
+         WHAT MR5 CHANGES. Section 5 puts those same two marks INSIDE A POPUP, where the surface
+         under them is `--surface` rather than `--paper`: in the dark theme those are two different
+         greys, so the composite is a different colour and the arithmetic stops being a no-op. So
+         the rows below report each non-opaque paint BOTH ways, composited and as if it were
+         opaque, on both surfaces, and pins.spec.js records them. M47 now moves four numbers.
+
+         ONE READER, TWO ANSWERS, which is why this is the same evaluate rather than a second
+         function: a separate measurement would be a second implementation of parse, ratio,
+         resolve and alphaOf, and this phase has already paid for two implementations of one
+         reader (the pins' popup reader, of which only one copy learned).
+
+         `where` IS map OR popup, read from the element's own ancestry, so a popup left open by a
+         caller is measured as popup content rather than silently counted as a map mark. */
+      const alpha = [];
+      for (const shape of document.querySelectorAll("svg path, svg circle, svg rect, svg text, svg line, svg polyline")) {
+        const tag = shape.tagName.toLowerCase();
+        const style = getComputedStyle(shape);
+        for (const which of PAINTS_FILL.has(tag) ? ["fill", "stroke"] : ["stroke"]) {
+          const effective = alphaOf(style, which);
+          const css = which === "fill" ? style.fill : style.stroke;
+          if (!(effective < 1) || !isColour(css)) continue;
+          const value = resolve(css);
+          const owner = shape.closest("svg");
+          /* THREE PLACES, NOT TWO, and the first draft of this table is why: it labelled everything
+             that was not in a popup "map", and the Key panel's own glyphs came back as map marks
+             carrying the LIGHT paper in the dark theme. They are not map marks and that is not a
+             defect: the Key draws its tags in H3's literals because the panel keeps one surface in
+             both themes, which is a decision MR1 recorded. A row that called them map marks would
+             be a number ledger telling a reader something false. */
+          const place = shape.closest(".leaflet-popup-content")
+            ? "popup"
+            : shape.closest("#panel, #legend")
+              ? "chrome"
+              : "map";
+          /* THE MARK'S NAME IS ITS FAMILY WHERE IT HAS ONE, because the subway's plate carries no
+             class of its own: its `<svg>` has a viewBox and nothing else (pins.spec.js P1f pins that
+             markup byte for byte, so this table asks the question elsewhere rather than adding a
+             class to it). On the map the family selectors above answer; a popup's borrowed mark is
+             outside them, so it falls back to the svg's own class, which five of the six builders
+             set, and to "svg" for the plate. */
+          let family = null;
+          for (const [name, selector] of Object.entries(markFamilies)) {
+            if (shape.closest(selector)) { family = name; break; }
+          }
+          alpha.push({
+            where: place,
+            mark: family || (owner && owner.getAttribute("class") ? owner.getAttribute("class").split(" ")[0] : "svg"),
+            paint: `${tag} ${which}`,
+            colour: value,
+            alpha: Number(effective.toFixed(2)),
+            compositedOnPaper: ratio(value, paper, effective),
+            compositedOnSurface: ratio(value, surface, effective),
+            opaqueOnPaper: ratio(value, paper, 1),
+            opaqueOnSurface: ratio(value, surface, 1),
+          });
+        }
+      }
+      return { paper, surface, rows, alpha };
     },
     { markFamilies: MARK_FAMILIES, canvasFamilies: CANVAS_FAMILIES },
   );
@@ -210,4 +278,30 @@ function bestPerFamily(measured, round = 2) {
   return out;
 }
 
-module.exports = { measureMarkContrast, bestPerFamily, MARK_FAMILIES, CANVAS_FAMILIES };
+/* The alpha rows as one row per (where, mark, paint), because a map draws 136 rail tags and 27
+   subway plates and they carry one arithmetic between them. Numbers are rounded here rather than in
+   the page, for the reason bestPerFamily rounds here: the measurement says what it measured and the
+   golden says what a reader can compare.
+
+   THREE DECIMALS, NOT TWO, and the difference this table exists to show is why: a --paper backing at
+   0.95 composited over --surface moves the ratio by about five thousandths in the light theme, which
+   two decimals rounds away entirely. bestPerFamily's numbers are ratios in double digits and two is
+   right for them; these are ratios near 1 whose interesting part is the third place. */
+function alphaPaints(measured, round = 3) {
+  const out = {};
+  for (const row of measured.alpha) {
+    const key = `${row.where} ${row.mark} ${row.paint}`;
+    if (out[key]) continue;
+    out[key] = {
+      colour: row.colour,
+      alpha: row.alpha,
+      compositedOnPaper: Number(row.compositedOnPaper.toFixed(round)),
+      compositedOnSurface: Number(row.compositedOnSurface.toFixed(round)),
+      opaqueOnPaper: Number(row.opaqueOnPaper.toFixed(round)),
+      opaqueOnSurface: Number(row.opaqueOnSurface.toFixed(round)),
+    };
+  }
+  return out;
+}
+
+module.exports = { measureMarkContrast, bestPerFamily, alphaPaints, MARK_FAMILIES, CANVAS_FAMILIES };

@@ -815,7 +815,7 @@ def main() -> int:
         print(f"      actions : {', '.join(m['popupEvents'])} "
               f"(popupopen draws the route line, popupclose clears it)")
     interactive_in_popup = [m for m in data["busMarkers"]
-                            if re.search(r"<button|<a\s|tabindex|popup-crosslink",
+                            if re.search(r"<button|<a\s|tabindex|xlink",
                                          m["popupHtml"] or "")]
     print(f"  bus popups containing any focusable element or cross-link: "
           f"{len(interactive_in_popup)} of {len(data['busMarkers'])}")

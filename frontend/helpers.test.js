@@ -3145,7 +3145,7 @@ test("A3: every muted ink in style.css clears AA on the surface it prints on", (
       [declared(".popup-stale"), t.surface, "the popup's freshness hedge"],
       [declared(".arr-qualifier"), t.surface, "a board row's own age qualifier"],
       [declared(".alert-block"), t.surface, "the popup's service alert text"],
-      [declared(".popup-crosslink"), t.surface, "the cross-link button's label"],
+      [declared(".xlink"), t.surface, "the cross-link button's label"],
       [declared(".leaflet-popup-content .alert-stale"), t.surface, "the popup's alerts-stale hedge"],
       // MR5 (Q2): the footer's WORDS take --muted, not the state's colour. --accent as text reads
       // 3.47 in the light theme, below the 4.5 a string owes, and every other honesty line in this

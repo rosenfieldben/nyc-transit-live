@@ -1427,7 +1427,7 @@ body,
 #view-stack button:focus-visible,
 #route-clear:focus-visible,
 #alert-banner-dismiss:focus-visible,
-.popup-crosslink:focus-visible,
+.xlink:focus-visible,
 .leaflet-popup-close-button:focus-visible,
 .leaflet-control-zoom a:focus-visible,
 .leaflet-control-attribution a:focus-visible {
@@ -1510,7 +1510,7 @@ body,
    and 12.60), --divider edge, and a hover that washes the ink in rather than adding a second grey.
    The 24px hit floor and the padding that reaches it are unchanged: layout.spec.js A4b measures
    them. */
-.popup-crosslink {
+.xlink {
   display: inline-block;
   margin-top: 6px;
   min-height: 24px;
@@ -1522,7 +1522,7 @@ body,
   color: var(--ink);
   cursor: pointer;
 }
-.popup-crosslink:hover {
+.xlink:hover {
   background: var(--rule);
 }
 

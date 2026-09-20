@@ -2286,3 +2286,54 @@ first draft, which split colours on "s" and compared NaN to 4.5. And a slot's `t
 adjacent text nodes, so the rail tag's agency glyph and branch code read as "LBAB" where the universe
 reads "L" and "BAB": the slots walk text nodes now, the same way the universe does, and differ only in
 which nodes they take. The residue report is what surfaced both.
+
+### The last two classes, and M47's determination
+
+**`.xlink` is a rename and nothing else.** The cross-link button has been `popup-crosslink` since A2;
+the chrome commit had already tokenised its rules into section 5's (600 11px, a `--divider` border, a
+transparent ground), so the class was the only thing left to adopt, and it is written once, in
+`CROSSLINK_CLASS`. **The design's arrow was measured and then not drawn.** Section 5 draws the button as
+"Also here: Jamaica →". Added as an `aria-hidden` span, so that a screen reader would not read "right
+arrow" after the station's name, **axe reported a new undecidable finding on it at every width and in
+both themes**: `color-contrast`, "Element content contains only non-text characters", on
+`button.xlink span`. The ruling on this stage's surface is that the undecidable inventory does not
+grow, and a decorative glyph is the weakest reason there is to grow it: the button already says where
+it goes and its border already says it is pressable. Recorded as a deviation beside the README's list,
+with the measurement, rather than kept behind a waiver.
+
+**`.alert` is not renamed, and this is the deviation.** The app draws a popup's alerts as one
+`.alert-block` region with an `.alert-row` per alert, and MR5's chrome commit had already given that
+region section 5's exact rules: the accent left edge, `6px 0 6px 10px`, 11px, `--ink`, no fill. The
+design's `.alert + .alert { margin-top: -6px }` implies one box PER ALERT, which would draw an accent
+edge per alert rather than one for the region, and a station popup with three alerts would read as
+three warnings rather than one block of them. **So the rules are the design's and the granularity is
+the app's**, which is the same call ruling Q2 made for the footer's square (`.fresh i` became
+`.fresh-dot`). Recorded here and beside the README's list rather than quietly kept.
+
+**M47's determination: it dies now, and the reason it survived is the reason it took a new pin.**
+MR4's R15 fixed the contrast measurement's alpha compositing and recorded the fix as UNGUARDED,
+because the only two element alphas on this map are a `--paper` backing behind something else (the
+subway plate's at 0.95, the rail tag's at 0.9), `bestPerFamily` reports a family's STRONGEST paint,
+and a paper backing over paper reads the same either way. **Section 5 moves those two marks onto a
+new surface**: a popup's title draws the map's own mark, and inside a popup the backing composites
+over `--surface`, which in the dark theme is a different grey from `--paper`. So the arithmetic stops
+being a no-op, and `pins.spec.js` P4d records every non-opaque paint on the page, composited and as
+if it were opaque, on both surfaces, from all three places it is drawn.
+
+| where | mark | paint | alpha | composited on surface | opaque on surface |
+| --- | --- | --- | --- | --- | --- |
+| map | subway train | rect fill | 0.95 | 1.080 light, 1.171 dark | 1.084 light, 1.180 dark |
+| map | rail tag | rect fill | 0.9 | 1.076 light, 1.162 dark | 1.084 light, 1.180 dark |
+| popup | rail-tag | rect fill | 0.9 | 1.076 light, 1.162 dark | 1.084 light, 1.180 dark |
+| chrome | key-rail-tag | rect fill | 0.9 | 1.076 light, 12.227 dark | 1.084 light, 14.858 dark |
+
+**Three decimals, because two rounds the difference away.** A 0.95 backing composited over the light
+surface moves the ratio by about five thousandths, and the whole point of the table is that the
+compositing changes something: the premise asserts at least one row where it does, so a table of
+duplicates fails rather than reading as a clean sheet.
+
+**And the chrome's rows are labelled as chrome, which the first draft got wrong.** It called
+everything that was not in a popup a map mark, and the Key panel's glyphs came back carrying the
+LIGHT paper in the dark theme. They are not map marks and that is not a defect: the Key draws its
+tags in H3's literals because the panel keeps one surface in both themes. A number ledger that called
+them map marks would be telling a reader something false.

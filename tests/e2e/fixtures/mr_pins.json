@@ -88,6 +88,108 @@
   }
  },
  "contrast": {
+  "alpha": {
+   "light": {
+    "map subway train rect fill": {
+     "colour": "rgb(243, 242, 242)",
+     "alpha": 0.95,
+     "compositedOnPaper": 1,
+     "compositedOnSurface": 1.08,
+     "opaqueOnPaper": 1,
+     "opaqueOnSurface": 1.084
+    },
+    "map rail tag rect fill": {
+     "colour": "rgb(243, 242, 242)",
+     "alpha": 0.9,
+     "compositedOnPaper": 1,
+     "compositedOnSurface": 1.076,
+     "opaqueOnPaper": 1,
+     "opaqueOnSurface": 1.084
+    },
+    "popup rail-tag rect fill": {
+     "colour": "rgb(243, 242, 242)",
+     "alpha": 0.9,
+     "compositedOnPaper": 1,
+     "compositedOnSurface": 1.076,
+     "opaqueOnPaper": 1,
+     "opaqueOnSurface": 1.084
+    },
+    "chrome svg rect fill": {
+     "colour": "rgb(243, 242, 242)",
+     "alpha": 0.95,
+     "compositedOnPaper": 1,
+     "compositedOnSurface": 1.08,
+     "opaqueOnPaper": 1,
+     "opaqueOnSurface": 1.084
+    },
+    "chrome svg path stroke": {
+     "colour": "rgb(243, 242, 242)",
+     "alpha": 0.9,
+     "compositedOnPaper": 1,
+     "compositedOnSurface": 1.076,
+     "opaqueOnPaper": 1,
+     "opaqueOnSurface": 1.084
+    },
+    "chrome key-rail-tag rect fill": {
+     "colour": "rgb(243, 242, 242)",
+     "alpha": 0.9,
+     "compositedOnPaper": 1,
+     "compositedOnSurface": 1.076,
+     "opaqueOnPaper": 1,
+     "opaqueOnSurface": 1.084
+    }
+   },
+   "dark": {
+    "map subway train rect fill": {
+     "colour": "rgb(32, 30, 29)",
+     "alpha": 0.95,
+     "compositedOnPaper": 1,
+     "compositedOnSurface": 1.171,
+     "opaqueOnPaper": 1,
+     "opaqueOnSurface": 1.18
+    },
+    "map rail tag rect fill": {
+     "colour": "rgb(32, 30, 29)",
+     "alpha": 0.9,
+     "compositedOnPaper": 1,
+     "compositedOnSurface": 1.162,
+     "opaqueOnPaper": 1,
+     "opaqueOnSurface": 1.18
+    },
+    "popup rail-tag rect fill": {
+     "colour": "rgb(32, 30, 29)",
+     "alpha": 0.9,
+     "compositedOnPaper": 1,
+     "compositedOnSurface": 1.162,
+     "opaqueOnPaper": 1,
+     "opaqueOnSurface": 1.18
+    },
+    "chrome svg rect fill": {
+     "colour": "rgb(243, 242, 242)",
+     "alpha": 0.95,
+     "compositedOnPaper": 13.503,
+     "compositedOnSurface": 11.516,
+     "opaqueOnPaper": 14.858,
+     "opaqueOnSurface": 12.596
+    },
+    "chrome svg path stroke": {
+     "colour": "rgb(243, 242, 242)",
+     "alpha": 0.9,
+     "compositedOnPaper": 12.227,
+     "compositedOnSurface": 10.495,
+     "opaqueOnPaper": 14.858,
+     "opaqueOnSurface": 12.596
+    },
+    "chrome key-rail-tag rect fill": {
+     "colour": "rgb(243, 242, 242)",
+     "alpha": 0.9,
+     "compositedOnPaper": 12.227,
+     "compositedOnSurface": 10.495,
+     "opaqueOnPaper": 14.858,
+     "opaqueOnSurface": 12.596
+    }
+   }
+  },
   "marks": {
    "light": {
     "subway train": {

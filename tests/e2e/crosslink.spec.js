@@ -89,7 +89,7 @@ test("A3a. a railroad train parked on its station links to that station's arriva
   expect(placed, "the fixture must contain a placed railroad train").not.toBeNull();
   await page.evaluate((key) => railroads.get(key).marker.openPopup(), placed.key);
 
-  const link = page.locator(".popup-crosslink");
+  const link = page.locator(".xlink");
   await expect(link).toHaveCount(1);
   // The station NAME is in the accessible name, so "Also here" is never announced on
   // its own with no indication of where.
@@ -118,8 +118,8 @@ test("A3b. the cross-link works from the keyboard, and lands focus in the statio
 
   // Focus the link the way a keyboard rider reaches it, then activate with Enter. It
   // is a real <button>, so Enter activates it with no handler of ours involved.
-  await page.locator(".popup-crosslink").focus();
-  await expect(page.locator(".popup-crosslink")).toBeFocused();
+  await page.locator(".xlink").focus();
+  await expect(page.locator(".xlink")).toBeFocused();
   await page.keyboard.press("Enter");
 
   // The STATION popup is now open, and it is a different popup than the train's.
@@ -168,7 +168,7 @@ test("A3c. a vehicle that names no station gets no link at all", async ({ page }
      nothing. */
   await expect(page.locator(".leaflet-popup-content")).toContainText(`Train ${gps.train}`);
   await expect(page.locator(".leaflet-popup-content"), "a GPS fix names no stop, which is why there is no link").not.toContainText("Next stop");
-  await expect(page.locator(".popup-crosslink"), "no station named, so no link").toHaveCount(0);
+  await expect(page.locator(".xlink"), "no station named, so no link").toHaveCount(0);
 });
 
 test("A3d. a subway train is drawn clear of its station dot, so both are clickable", async ({ page }) => {
@@ -218,8 +218,8 @@ test("A3e. focus parked on the cross-link survives a background refresh", async 
     return null;
   });
   await page.evaluate((key) => railroads.get(key).marker.openPopup(), placed);
-  await page.locator(".popup-crosslink").focus();
-  await expect(page.locator(".popup-crosslink")).toBeFocused();
+  await page.locator(".xlink").focus();
+  await expect(page.locator(".xlink")).toBeFocused();
 
   // One full poll, which re-renders the popup.
   await page.clock.runFor(15_000 + 1000);
@@ -229,7 +229,7 @@ test("A3e. focus parked on the cross-link survives a background refresh", async 
     if (!el || el === document.body) return "BODY";
     return `${el.tagName}.${el.className}`;
   });
-  expect(after, "focus must not be dropped to the body by a refresh").toContain("popup-crosslink");
+  expect(after, "focus must not be dropped to the body by a refresh").toContain("xlink");
 
   // AND IT STILL WORKS. Focus being on something that looks right is not enough: the
   // control must still be the live one, not a detached node left over from the render
@@ -274,21 +274,21 @@ test("A3g. the restored cross-link is the live one, even when the train has move
     return null;
   });
   await page.evaluate((key) => railroads.get(key).marker.openPopup(), placed);
-  await expect(page.locator(".popup-crosslink")).toHaveAttribute("data-station-key", "LIRR|12");
-  await page.locator(".popup-crosslink").focus();
-  await expect(page.locator(".popup-crosslink")).toBeFocused();
+  await expect(page.locator(".xlink")).toHaveAttribute("data-station-key", "LIRR|12");
+  await page.locator(".xlink").focus();
+  await expect(page.locator(".xlink")).toBeFocused();
 
   // The train reaches its next stop, and one poll re-renders the popup around it.
   advanced = true;
   await page.clock.runFor(15_000 + 1000);
-  await expect(page.locator(".popup-crosslink")).toHaveAttribute("data-station-key", "LIRR|13");
+  await expect(page.locator(".xlink")).toHaveAttribute("data-station-key", "LIRR|13");
 
   const after = await page.evaluate(() => {
     const el = document.activeElement;
     if (!el || el === document.body) return "BODY";
     return `${el.className}|${el.getAttribute("data-station-key")}|${el.textContent}`;
   });
-  expect(after, "focus must be on the live cross-link, not on the content div").toContain("popup-crosslink");
+  expect(after, "focus must be on the live cross-link, not on the content div").toContain("xlink");
   expect(after, "and it must be the button as it now reads, naming where it now goes").toContain("Hicksville");
 
   // The assertion that matters: the rider can still act. Focus sitting on a button that
@@ -376,13 +376,13 @@ test("A3h. a train drawn between stations gets no link, and gets one once it has
   // names, and so no link to it.
   const between = await page.evaluate((k) => railroads.get(k).marker.getLatLng(), key);
   expect(between.lat).toBeLessThan(40.7005);
-  await expect(page.locator(".popup-crosslink"), "between stations, so no link").toHaveCount(0);
+  await expect(page.locator(".xlink"), "between stations, so no link").toHaveCount(0);
 
   // Thirty seconds on it has glided onto its stop, and the poll that re-renders the
   // popup gives it the link, naming the station it is now drawn on.
   await page.clock.runFor(30_000 + 1000);
-  await expect(page.locator(".popup-crosslink")).toHaveCount(1);
-  await expect(page.locator(".popup-crosslink")).toHaveAttribute("data-station-key", "LIRR|12");
+  await expect(page.locator(".xlink")).toHaveCount(1);
+  await expect(page.locator(".xlink")).toHaveAttribute("data-station-key", "LIRR|12");
   const there = await page.evaluate((k) => railroads.get(k).marker.getLatLng(), key);
   expect(there.lat).toBeCloseTo(40.7005, 6);
   expect(there.lng).toBeCloseTo(-73.8095, 6);

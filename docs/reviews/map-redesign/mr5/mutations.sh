@@ -141,6 +141,79 @@ cat > "$WORK/r" <<'R'
 R
 run M69 frontend/systems/buses.js "$PW popups.spec.js --grep D6b"
 
+# ================================================================================================
+# THE VOCABULARY's OWN GUARDS (M70 onward). One per claim the vocabulary commit makes, in the same
+# form as the ten above: revert the decision, run the gate that is supposed to see it.
+# ================================================================================================
+
+# ---- M70: the popup's mark REBUILT instead of copied, which is the drift N6 is about ----
+cat > "$WORK/a" <<'A'
+  return `<span class="pmark" aria-hidden="true">${sized} width="${width}" height="${h}"${source.slice(end)}</span>`;
+A
+cat > "$WORK/r" <<'R'
+  return `<span class="pmark" aria-hidden="true"><svg viewBox="0 0 ${box[1]} ${box[2]}" width="${width}" height="${h}"></svg></span>`;
+R
+run M70 frontend/helpers.js "$NODE_ALL"
+
+# ---- M71: the title mark's clamp removed, so the rail tag draws SMALLER than the map draws it ----
+cat > "$WORK/a" <<'A'
+  const h = height == null ? Math.max(POPUP_MARK_TITLE, Number(box[2])) : Number(height);
+A
+cat > "$WORK/r" <<'R'
+  const h = height == null ? POPUP_MARK_TITLE : Number(height);
+R
+run M71 frontend/helpers.js "$NODE_ALL"
+
+# ---- M72: the grid prints a row with nothing to say, which is the silence rule Q1 kept ----
+cat > "$WORK/a" <<'A'
+    .filter((row) => row && row.k && row.v)
+A
+cat > "$WORK/r" <<'R'
+    .filter((row) => row && row.k)
+R
+run M72 frontend/helpers.js "$NODE_ALL" "$PW pins.spec.js --grep 'P5a|P5c'"
+
+# ---- M73: the cell separator dropped, so a popup's textContent glues its words together ----
+cat > "$WORK/a" <<'A'
+    .map((row) => `<div class="k">${esc(row.k)}</div>\n<div class="v">${esc(row.v)}</div>`)
+    .join("\n");
+A
+cat > "$WORK/r" <<'R'
+    .map((row) => `<div class="k">${esc(row.k)}</div><div class="v">${esc(row.v)}</div>`)
+    .join("");
+R
+run M73 frontend/helpers.js "$NODE_ALL"
+
+# ---- M74: a kicker word coined rather than taken from the app ----
+cat > "$WORK/a" <<'A'
+  ferry: "NYC Ferry",
+A
+cat > "$WORK/r" <<'R'
+  ferry: "Ferry Service",
+R
+run M74 frontend/helpers.js "$NODE_ALL"
+
+# ---- M75: a popup prints text in no named slot at all, which is P5d's whole subject ----
+cat > "$WORK/a" <<'A'
+    (showNote ? `<div class="popup-sub">${esc(note.message)}</div>\n` : "") +
+A
+cat > "$WORK/r" <<'R'
+    (showNote ? `<div>${esc(note.message)}</div>\n` : "") +
+R
+run M75 frontend/systems/buses.js "$PW pins.spec.js --grep P5d"
+
+# ---- M76: M47 AGAIN, at the tip, now that the alpha is drawn inside a popup too ----
+# MR4 recorded M47 as a survivor because bestPerFamily only ever reports a family's strongest paint
+# and the two element alphas on this map are both a paper backing. P4d records them directly, so this
+# is the round where the same revert has a guard to meet.
+cat > "$WORK/a" <<'A'
+        return (Number.isFinite(own) ? own : 1) * (Number.isFinite(paint) ? paint : 1);
+A
+cat > "$WORK/r" <<'R'
+        return 1;
+R
+run M76 tests/e2e/contrast.js "$PW pins.spec.js --grep P4d"
+
 echo "================================================================"
 echo "died: $died   survived: $survived   run failed: $broke"
 [ ${#names[@]} -gt 0 ] && printf '  %s\n' "${names[@]}"

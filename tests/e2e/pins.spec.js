@@ -35,7 +35,7 @@ const path = require("node:path");
 const { test, expect } = require("@playwright/test");
 const { installMocks, json } = require("./mock");
 const fx = require("./fixtures/api");
-const { measureMarkContrast, bestPerFamily } = require("./contrast");
+const { measureMarkContrast, bestPerFamily, alphaPaints } = require("./contrast");
 // MR5: the marker table, the popup-closing sweep and the fourteen stock surfaces moved into
 // popup.js when popups.spec.js needed the same three; their comments moved with them.
 const { inPage, closeAllPopups, STOCK_SURFACES } = require("./popup");
@@ -1206,7 +1206,7 @@ const SLOT_READER = `
     cell: ".arr > span",
     footer: ".fresh",
     alert: ".alert-block",
-    crosslink: ".popup-crosslink",
+    crosslink: ".xlink",
     board: ".popup-stale",
     note: ".popup-sub",
     empty: ".arr-none",
@@ -1726,4 +1726,60 @@ test("P4c. every marker family's contrast in BOTH themes, paint by paint", async
     measured[theme] = best;
   }
   pin("contrast/marks", measured);
+});
+
+test("P4d. every non-opaque paint on the page, composited and not, on the map and in a popup", async ({ page }) => {
+  /* MR47's DETERMINATION, AND THE GUARD ITS REPAIR NEVER HAD.
+
+     THE HISTORY, IN ONE PARAGRAPH. Round 1 of MR4 found that the contrast measurement composited a
+     COLOUR's alpha (which no mark on this map has) and ignored the one alpha that is here, an
+     ELEMENT's `opacity` attribute. R15 fixed it and MR4 recorded the fix as UNGUARDED, because
+     mutation M47 reverts it and survives: the two alphas are both a --paper backing behind
+     something else (the subway plate's at 0.95, the rail tag's at 0.9), a paper backing measured
+     against paper reads about the same either way, and `bestPerFamily` only ever records a
+     family's STRONGEST paint.
+
+     WHAT MR5 CHANGES, which is the determination the stage brief asked for. Section 5 draws a
+     popup's title with the map's own mark, so those two alphas are now also drawn INSIDE A POPUP,
+     over `--surface` rather than over `--paper`. In the dark theme those are two different greys,
+     so compositing stops being a no-op and the repair starts changing numbers. This pin is where
+     they are recorded: each non-opaque paint, composited and as if it were opaque, on both
+     surfaces, from the map and from an open popup.
+
+     SO M47 NOW MOVES NUMBERS rather than surviving. The premises below are what make that true of a
+     revert as well as of a rewrite: at least one row's composited value must DIFFER from its opaque
+     one, or the compositing is doing nothing and this pin is a table of duplicates. */
+  await boot(page);
+  // A rail train's popup, because its tag carries the 0.9 backing: this is the mark section 5 moved
+  // onto a new surface, and a popup has to be open for the measurement to see it.
+  await page.evaluate(() => {
+    const [record] = [...railroads.values()];
+    record.marker.openPopup();
+  });
+  await expect(page.locator(".leaflet-popup-content .pmark svg")).toHaveCount(1);
+
+  const measured = {};
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate((want) => applyTheme(want), theme);
+    await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+    // The popup survives a theme swap by being rebuilt (rebuildOpenPopupsForTheme), which D6h
+    // measures; here it only has to still be open, or the popup rows would vanish from the pin.
+    await expect(page.locator(".leaflet-popup-content .pmark svg")).toHaveCount(1);
+    const rows = alphaPaints(await measureMarkContrast(page));
+    // THE PREMISES. Both places are in the table, or a pin of map-only rows would read as though
+    // the popup carried no alpha at all; and the compositing has to change something.
+    const keys = Object.keys(rows);
+    // All three places, so a table of one is never mistaken for the whole page: the map's marks, the
+    // popup's borrowed one, and the Key panel's glyphs, which carry the same 0.9 backing in H3's
+    // light-theme literals because the panel keeps one surface in both themes.
+    for (const place of ["map ", "popup ", "chrome "]) {
+      expect(keys.filter((k) => k.startsWith(place)).length, `${theme}: no ${place.trim()} alpha`).toBeGreaterThan(0);
+    }
+    expect(
+      keys.filter((k) => rows[k].compositedOnSurface !== rows[k].opaqueOnSurface).length,
+      `${theme}: compositing changed no number, so this pin cannot see the alpha at all`,
+    ).toBeGreaterThan(0);
+    measured[theme] = rows;
+  }
+  pin("contrast/alpha", measured);
 });

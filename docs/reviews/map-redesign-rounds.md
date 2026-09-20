@@ -1904,3 +1904,106 @@ rgb(45, 43, 43), 2.42, need 4.5, ferry boat @ dark`.
    theme-independent; A4g already draws that line between its "ink" and "fill" samples. D6i now
    measures against an element's own background where it has one, and asserts both kinds are in the
    sample so a reader that silently classified everything one way cannot certify the other half.
+
+### Ruling Q1: the railroad popup joins the contract, and what its two strings were
+
+The railroad popup was the app's one surface that rendered a position's words itself. It printed
+`position.compact`, from a line written in `systems/railroad.js`, UNCONDITIONALLY, while every other
+popup went through `positionLineHtml`. The ruling unifies on `.words` and keeps the silence rule, and
+because that popup predated the contract, two strings a rider reads change. **The before, as the
+retired pins held it:**
+
+| surface | before | after |
+| --- | --- | --- |
+| `popupText/stock` · lirr train | `... Next stop: Jamaica Outbound scheduled (no GPS) Also here: Jamaica` | `... scheduled position (no GPS) ...` |
+| `popupText/stock` · mnr train | `MNR · Hudson Train 1797 live GPS` | `MNR · Hudson Train 1797` |
+| `popupText/f01` · placed | `... Outbound scheduled (no GPS), as of 29m ago` | `... scheduled position (no GPS), as of 29m ago` |
+| `popupText/f01` · unqualified | `LIRR · Babylon Branch Train 7566 live GPS` | `LIRR · Babylon Branch Train 7566` |
+
+**Two changes, not four.** The first is the contract's own word: `.words` says "scheduled position (no
+GPS)" where `.compact` says "scheduled (no GPS)", which is the single family those two forms differ
+in. The second is the silence rule reaching this popup: a FRESH GPS fix now says nothing, because
+"silence means current" (memo D9) and this was the only place in the app that broke it. An AGED fix
+still speaks, which is the contract working rather than a compromise: `popupText/f01` · aged still
+reads "live GPS, as of 5m ago" and did not move.
+
+**`.compact` is not dead and has not been unified away.** `positionQualifier`'s contract owns both
+forms and `positions.test.js` still holds the difference between them. What is gone is a SURFACE
+choosing between them.
+
+**The pins moved by exactly those four strings and nothing else**, which is what an ordered equality
+is for: no station popup, no other system and no other field in the golden changed. The new pins were
+taken after the change, as the ruling asked, and the diff is the record that nothing else came with
+them.
+
+**And a node test now holds the call site**, in `positions.test.js`, because nothing did: the change
+is rider-visible and the whole node tier stayed green through it. It scrapes `railroadPopup` for
+`positionLineHtml(position)` and for the absence of `position.compact`, asserts the same absence
+across the other five system files, and asserts the two strings from `positionQualifier` directly so
+it says what the change IS rather than only which call moved. **It had to strip comments first**: the
+comment this stage wrote at the changed line necessarily names `position.compact`, and scraping the
+raw source failed a correct build. `pins.spec.js` P5b paid for the same thing in its literal
+extractor.
+
+**Q1 leaves `.compact` with no reader, and P5b is what found it.** The coverage test reported
+`"scheduled (no GPS)"` as a rider-visible literal in the popup call graph that no pin covered, on the
+very commit that unified the call site. It was right: the railroad popup was that form's only reader,
+so after the ruling nothing in the app renders it. **The field stays.** `.compact` is one of the three
+forms section 3.2 of the freshness contract defines, `positions.test.js` still pins its difference
+from `.words`, and deleting a form the contract defines is an amendment to that contract rather than a
+stage's tidying. It is waived in `NOT_RIDER_TEXT` rather than `UNREACHED_STATES`, because that second
+map is for text a rider WOULD read in a state no world reaches and there is no such state left for
+this one. The waiver names the reason so the next stage finds it stated rather than guesses, and the
+comment at `positionLineHtml` was corrected: its first draft said `.compact` "is not dead", which a
+reader could take as "has callers".
+
+**Three specs outside the pins asserted the old strings, and each needed a different repair.**
+
+- **`smoke.spec.js` C2j**, F01's own acceptance test, read "the 27 fresh fixes are exactly what they
+  always were: filled, bright, 'live GPS'". Its `bare()` predicate looked for that string in the
+  popup; the tell for "this reads as live" is now the ABSENCE of a position line, so it is `silent()`.
+  A check was added that separates "says nothing about its position" from "says nothing at all", so
+  it cannot pass on a popup that lost its whole vocabulary. The marker's accessible NAME still says
+  "live GPS", because a name renders `.spoken` and silence on a name would say nothing rather than
+  mean something.
+- **`crosslink.spec.js` A3c** used `toContainText("live GPS")` as its witness that the right popup
+  was open. The ruling takes that fact away, so the witness is the train's own number, read out of the
+  record rather than typed, which identifies THIS train rather than a class of them. The premise
+  nothing had asserted was added with it: that the popup names no next stop, which is WHY there is no
+  link to make.
+- **`a11y.spec.js`** quotes a past capture containing "live GPS" inside a comment. That is history
+  and stays, with a clause naming the ruling so a reader does not take it for a claim about the
+  current build.
+
+### Ruling Q2: the state's words, said one way on two surfaces
+
+`feedTooltip` has carried a feed's state since MR1 with the button's action on the end ("Live · 12s ·
+hide Subway"). The footer's square is "the feed strip's dot at the popup" with "its accessible name
+from the same helper the strip's dot uses", and `feedTooltip` cannot be that helper: a popup has no
+button to press, so its words must not end in what pressing one would do. Re-deriving the clause in
+the footer would have been a second answer to one question, which is finding N6 one stage earlier.
+
+So `feedStateWords({state, age})` came out and `feedTooltip` is now that plus the action. Nothing is
+coined: the four strings are the ones the tooltip already said. The refactor is proven over the whole
+matrix rather than on the design's three examples, because "they agree on the examples" is what a
+copy looks like from outside.
+
+**The footer is `vehicleStaleLine` restyled, not a second voice.** This is the one thing a footer
+added naively gets wrong. Every vehicle popup already ends in `vehicleStaleLine`, which prints "as of
+5m ago" when the vehicle's SYSTEM has gone stale; a footer that also said "As of 6m ago" would put
+one fact on screen twice in two capitalisations. So the footer takes that line's job and its rule:
+where the vehicle's own position has already stated an age at least as old as the feed's, the footer
+shows the SQUARE and withholds the WORDS. `vehicleStaleLine`'s own comment is where the reason is
+written and it has not changed, that an observation's age and a feed's differ by the provider's lag.
+What the footer ADDS is the two states that line never had, live and schedule-only.
+
+**The square is never withheld**, because a rider cannot tell "this feed is live" from "this popup
+forgot to say" unless the mark is always there. **And there is no word for live**: the words are said
+through A1's `visually-hidden`, so a screen reader gets the state exactly where an eye gets the
+square. The README's "LIVE · UPDATED 12S AGO" is the sentence memo D9 forbids and it is typed
+nowhere. AirTrain gets a footer reading "Scheduled", which is the same answer the strip gives it.
+
+**The helpers land inert one commit before their wiring**, which is this repo's own idiom: 6.3's
+position helpers "landed inert one commit before the gate, and are wired in the gate's own commit",
+for the same reason, that the wiring touches every popup and the arithmetic should be settled and
+tested before it does.

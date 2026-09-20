@@ -926,3 +926,80 @@ test("6.3 a no-times Metro-North placement is still a placement: the provenance 
   assert.equal(railroadAtItsStation(train), true);
   assert.equal(q(train, mnr).compact, "scheduled (no GPS)");
 });
+
+/* ===== MR5, ruling Q1: every popup's position line is positionLineHtml's ==================
+
+   THE ONE SURFACE THAT DID NOT USE IT, and the reason this needs a test in this file at all.
+   systems/railroad.js's popup rendered `position.compact` from a line of its own,
+   UNCONDITIONALLY, and it was the app's only surface that did. Two rider-visible differences
+   followed: a `placed` train said "scheduled (no GPS)" instead of the contract's "scheduled
+   position (no GPS)", and a FRESH GPS fix said "live GPS" where every other surface says nothing,
+   because silence means current (memo D9).
+
+   IN NODE, BY READING THE SOURCE, because systems/railroad.js needs Leaflet and a document and
+   cannot be required here. That is the same escape frontend/railtag.test.js takes for the NJ
+   Transit head (finding N6) and for the same reason: the claim is about which function a builder
+   calls, which is a fact about the file. The e2e pins hold what the popup then SAYS.
+
+   AND THE STRINGS ARE ASSERTED HERE TOO, from positionQualifier directly, so this test says what
+   the two changes ARE rather than only which call site moved. A reader who wants the before can
+   see it in the ledger; what is below is the after, derived from the contract rather than typed. */
+/* COMMENTS STRIPPED FIRST, AND THAT IS NOT FUSSINESS: the comment this stage wrote at the changed
+   line SAYS "position.compact", because explaining what moved requires naming it. Scraping the raw
+   source found the word in the prose and failed a correct build. pins.spec.js P5b paid for the same
+   thing in its literal extractor and ended up with a character scanner; a source this small needs
+   only the two comment forms removed, in one pass, longest-first so a line comment inside a block
+   comment cannot end it early. */
+const withoutComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+
+test("MR5 Q1: the railroad popup takes its position line from positionLineHtml, not position.compact", () => {
+  const src = withoutComments(readFileSync(join(__dirname, "systems", "railroad.js"), "utf8"));
+  const body = src.slice(src.indexOf("function railroadPopup("));
+  const fn = body.slice(0, body.indexOf("\n}"));
+
+  assert.match(fn, /positionLineHtml\(position\)/, "the railroad popup must render through positionLineHtml");
+  assert.ok(
+    !/position\.compact/.test(fn),
+    "the railroad popup still reads position.compact, which is the one surface that chose its own form",
+  );
+  // And nowhere else in the app does either: positionLineHtml is the only popup reader of a
+  // position's words now, and .compact has no popup caller at all.
+  for (const rel of ["systems/subway.js", "systems/buses.js", "systems/njt.js", "systems/path.js", "systems/ferry.js"]) {
+    const other = withoutComments(readFileSync(join(__dirname, rel), "utf8"));
+    assert.ok(!/position\.compact/.test(other), `${rel} renders position.compact itself`);
+  }
+  // AND THE SCRAPE IS NOT VACUOUS: the slice really is the function, not an empty string that
+  // trivially contains no forbidden text. This is the check that would have caught a bad indexOf.
+  assert.ok(fn.length > 400, `the railroadPopup slice is only ${fn.length} characters, so it found the wrong thing`);
+  assert.match(fn, /routeAlertsBlock\(/, "and it is the popup builder, which opens with its alerts block");
+});
+
+test("MR5 Q1: the two strings the unification changes, and the two it does not", () => {
+  const board = { now: 1000, servedAt: 1000, system: "LIRR" };
+  const line = (row, b = board) => positionLineHtml(positionQualifier(row, b));
+
+  // ONE: a placed train gains the contract's own word. `.compact` is what the railroad popup used
+  // to print and it still exists, so the difference is asserted rather than described.
+  const placed = positionQualifier({ observed_at: 1000, provenance: "placed" }, board);
+  assert.equal(placed.compact, "scheduled (no GPS)");
+  assert.equal(placed.words, "scheduled position (no GPS)");
+  assert.match(line({ observed_at: 1000, provenance: "placed" }), /scheduled position \(no GPS\)/);
+
+  // TWO: a FRESH reported fix says nothing at all, which is the silence rule reaching this popup.
+  const fresh = positionQualifier({ observed_at: 1000, provenance: "reported" }, board);
+  assert.equal(fresh.kind, "", "a current fix is the unqualified kind");
+  assert.equal(fresh.words, "live GPS", "the words exist; it is the LINE that is withheld");
+  assert.equal(line({ observed_at: 1000, provenance: "reported" }), "", "and the popup prints none of it");
+
+  // AND THE TWO THAT DO NOT MOVE, which is what keeps this a unification rather than a silencing.
+  // An aged fix still speaks, and an estimate always did.
+  const aged = line({ observed_at: 700, provenance: "reported" });
+  assert.match(aged, /live GPS, as of 5m ago/, "an aged fix still says how old it is");
+  assert.match(line({ observed_at: 1000, provenance: "estimated" }), /estimated from a prediction/);
+
+  // The empty-words guard the ruling asked for, which positionQualifier cannot currently trigger:
+  // asserted against a hand-made position so the guard is exercised rather than merely present.
+  assert.equal(positionLineHtml({ kind: "placed", words: "" }), "");
+  assert.equal(positionLineHtml({ kind: "", words: "live GPS" }), "");
+  assert.equal(positionLineHtml(null), "");
+});

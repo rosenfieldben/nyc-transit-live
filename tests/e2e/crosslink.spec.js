@@ -147,13 +147,27 @@ test("A3c. a vehicle that names no station gets no link at all", async ({ page }
   await open(page);
 
   const gps = await page.evaluate(() => {
-    for (const [key, record] of railroads) if (record.latest.provenance === "reported") return key;
+    for (const [key, record] of railroads) {
+      if (record.latest.provenance === "reported") return { key, train: record.latest.train_num ?? null };
+    }
     return null;
   });
   expect(gps, "the fixture must contain a GPS railroad train").not.toBeNull();
-  await page.evaluate((key) => railroads.get(key).marker.openPopup(), gps);
+  expect(gps.train, "and it must carry a train number, which is this spec's witness").not.toBeNull();
+  await page.evaluate((key) => railroads.get(key).marker.openPopup(), gps.key);
 
-  await expect(page.locator(".leaflet-popup-content")).toContainText("live GPS");
+  /* THE WITNESS, AND IT IS THE TRAIN'S OWN NUMBER RATHER THAN ITS POSITION WORDS. This asserted
+     `toContainText("live GPS")` to prove the open popup was the GPS train's. MR5's ruling Q1 took
+     that fact away: the railroad popup was the app's only surface that named a CURRENT fix, and a
+     fresh one now says nothing about its position at all, because silence means current (memo D9).
+     The train number is a better witness anyway, because it identifies THIS train rather than a
+     class of them, and it is read out of the record rather than typed.
+     AND THE ABSENCE OF "Next stop" IS THE CLAIM'S OWN PREMISE, which nothing asserted before: this
+     spec exists because a GPS train carries no stop_id, so there is nothing to link to. A popup
+     naming a next stop would mean the fixture had changed under it and the missing link proved
+     nothing. */
+  await expect(page.locator(".leaflet-popup-content")).toContainText(`Train ${gps.train}`);
+  await expect(page.locator(".leaflet-popup-content"), "a GPS fix names no stop, which is why there is no link").not.toContainText("Next stop");
   await expect(page.locator(".popup-crosslink"), "no station named, so no link").toHaveCount(0);
 });
 

@@ -380,11 +380,16 @@ function railroadPopup(record) {
     // names none, so the line is there exactly when the field is.
     (t.stop_name ? `<br>Next stop: ${esc(t.stop_name)}` : "") +
     (t.direction ? `<br>${esc(t.direction)}` : "") +
-    // HOW THIS POSITION WAS OBTAINED, AND HOW OLD IT IS, in the compact form this popup
-    // has always used: "live GPS", "live GPS, as of 5m ago", "estimated from a
-    // prediction", "scheduled (no GPS)", "showing last known, as of 7m ago". Before 6.3
-    // this line said "live GPS" of a fix fifteen hours old, which is F01.
-    `<br><span class="popup-sub">${esc(position.compact)}</span>` +
+    /* HOW THIS POSITION WAS OBTAINED, AND HOW OLD IT IS. Before 6.3 this line said "live GPS" of a
+       fix fifteen hours old, which is F01.
+       MR5 (ruling Q1): THROUGH positionLineHtml, LIKE EVERY OTHER POPUP. This was the app's one
+       surface that rendered `position.compact` itself, from a line written here, and it did so
+       UNCONDITIONALLY. Two things follow and both are rider-visible. A `placed` train said
+       "scheduled (no GPS)" and now says the contract's "scheduled position (no GPS)". And a FRESH
+       GPS fix said "live GPS" and now says nothing, because silence means current (memo D9) and
+       this popup was the only place in the app that broke that rule. An aged fix still speaks.
+       The before is pinned in the ledger; the pins were retaken after. */
+    positionLineHtml(position) +
     // A2: the station this train is sitting on, reachable. A train drawn AT its
     // station's coordinates covers the dot entirely, so without this the arrivals a
     // rider came for are unreachable at that pixel. "At" is railroadAtItsStation, read

@@ -2653,11 +2653,21 @@ test("C2j. F01's acceptance, map half: no old fix reads as live, a fresh predict
   expect(tally(lirr)).toEqual({ reported: 38, estimated: 6, placed: 56 });
   expect(tally(mnr)).toEqual({ reported: 33, placed: 3 });
 
-  // (a) NO OLD FIX READS AS A LIVE ONE. The acceptance as its own conjunction: no marker
-  // whose own observation is over 90 s is at full opacity with a bare "live GPS"...
-  const bare = (m) => m.popup.includes('<span class="popup-sub">live GPS</span>');
+  /* (a) NO OLD FIX READS AS A LIVE ONE. The acceptance as its own conjunction: no marker whose own
+     observation is over 90 s is at full opacity while its popup says nothing about its position...
+
+     MR5 (ruling Q1) CHANGED WHAT A FRESH FIX SAYS, so it changed what "reads as live" looks like.
+     This popup used to print `position.compact` from a line of its own and was the app's only
+     surface that named a CURRENT fix out loud: a fresh one said "live GPS". It now says nothing,
+     because silence means current (memo D9) and every other surface already obeyed that. So the
+     tell for "this reads as live" is no longer a bare "live GPS" in the popup, it is the ABSENCE of
+     a position line, which is what a fresh one now has. An AGED fix still speaks, and the loop below
+     is unchanged. The marker's accessible NAME still says "live GPS" either way, because
+     positionClause renders `.spoken` and that is a different surface with a different rule: a name
+     has no silence to mean anything with. */
+  const silent = (m) => !/<span class="popup-sub">(live GPS|estimated|scheduled|showing|age unknown)/.test(m.popup);
   const old = lirr.filter((m) => m.age > 90);
-  expect(old.filter((m) => m.opacity === 1 && bare(m))).toEqual([]);
+  expect(old.filter((m) => m.opacity === 1 && silent(m))).toEqual([]);
   // ...and each half on its own, because either one missing is F01 back on one surface.
   // EVERY marker over 90 s is dimmed (the 11 qualified fixes and the 53 placements riding
   // a prediction that old), and every one under it, in this healthy railroad, is not.
@@ -2699,10 +2709,21 @@ test("C2j. F01's acceptance, map half: no old fix reads as live, a fresh predict
   expect(byProvenance("estimated").length).toBe(6);
   expect(byProvenance("placed").length).toBe(59);
   expect(71 + 6 + 59).toBe(markers.length);
-  // And the 27 fresh fixes are exactly what they always were: filled, bright, "live GPS".
+  /* And the 27 fresh fixes: filled, bright, SILENT in the popup and "live GPS" in the name.
+     MR5 (ruling Q1) is the difference. This read "exactly what they always were: filled, bright,
+     'live GPS'", and the popup half of that is what the ruling retires: this was the one surface in
+     the app that named a current fix, and it now says nothing at all about position. The NAME still
+     says it, because a marker's accessible name renders `.spoken` and silence on a name would say
+     nothing rather than mean something.
+     ASSERTED AS AN ABSENCE AND A PRESENCE TOGETHER, so this cannot pass on a popup that lost its
+     whole position vocabulary: the aged loop above requires the words on every old fix, and this
+     requires their absence on every fresh one. Neither half holds alone. */
   const fresh = lirr.filter((m) => m.provenance === "reported" && m.age <= 90);
   expect(fresh).toHaveLength(27);
-  expect(fresh.filter((m) => !(bare(m) && !m.hollow && m.name.endsWith(", live GPS")))).toEqual([]);
+  expect(fresh.filter((m) => !(silent(m) && !m.hollow && m.name.endsWith(", live GPS")))).toEqual([]);
+  // AND THE POPUP REALLY IS A POPUP, not an empty string that is trivially silent. This is the
+  // check that separates "says nothing about its position" from "says nothing at all".
+  expect(fresh.filter((m) => !/Train |Next stop:/.test(m.popup)).map((m) => m.key)).toEqual([]);
 
   // (b) A USABLE PREDICTION, A CLEARLY LABELED ESTIMATE INSTEAD: the design's six, hollow,
   // bright (their predictions are 4 or 5 s old), and saying so in the popup and the name.

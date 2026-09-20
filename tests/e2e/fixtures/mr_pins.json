@@ -896,12 +896,12 @@
     "spoken": "LIRR route 9 Next stop: Port Washington Outbound estimated from a prediction"
    },
    "placed": {
-    "seen": "LIRR · Babylon Branch Next stop: Grand Central Outbound scheduled (no GPS), as of 29m ago",
-    "spoken": "LIRR · Babylon Branch Next stop: Grand Central Outbound scheduled (no GPS), as of 29m ago"
+    "seen": "LIRR · Babylon Branch Next stop: Grand Central Outbound scheduled position (no GPS), as of 29m ago",
+    "spoken": "LIRR · Babylon Branch Next stop: Grand Central Outbound scheduled position (no GPS), as of 29m ago"
    },
    "unqualified": {
-    "seen": "LIRR · Babylon Branch Train 7566 live GPS",
-    "spoken": "LIRR · Babylon Branch Train 7566 live GPS"
+    "seen": "LIRR · Babylon Branch Train 7566",
+    "spoken": "LIRR · Babylon Branch Train 7566"
    }
   },
   "stock": {
@@ -921,8 +921,8 @@
     "labels": []
    },
    "lirr train": {
-    "seen": "LIRR · Babylon Branch Train 521 Next stop: Jamaica Outbound scheduled (no GPS) Also here: Jamaica",
-    "spoken": "LIRR · Babylon Branch Train 521 Next stop: Jamaica Outbound scheduled (no GPS) Also here: Jamaica",
+    "seen": "LIRR · Babylon Branch Train 521 Next stop: Jamaica Outbound scheduled position (no GPS) Also here: Jamaica",
+    "spoken": "LIRR · Babylon Branch Train 521 Next stop: Jamaica Outbound scheduled position (no GPS) Also here: Jamaica",
     "labels": []
    },
    "lirr station": {
@@ -931,8 +931,8 @@
     "labels": []
    },
    "mnr train": {
-    "seen": "MNR · Hudson Train 1797 live GPS",
-    "spoken": "MNR · Hudson Train 1797 live GPS",
+    "seen": "MNR · Hudson Train 1797",
+    "spoken": "MNR · Hudson Train 1797",
     "labels": []
    },
    "mnr station": {

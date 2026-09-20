@@ -566,6 +566,9 @@ const STATES = [
       // draft took `find((r) => r.marker.getPopup())`, meaning "the first railroad with any
       // popup bound", and every railroad has one. Measured, it opened MNR|mnr-gps-1:
       //   {"text":"MNR · HudsonTrain 1797live GPS","hasCrossLink":false,"buttons":[]}
+      // (that capture is history: MR5's ruling Q1 retired the popup's "live GPS" on a FRESH fix,
+      // so the same draft today would capture "MNR · HudsonTrain 1797". The defect it records is
+      // unchanged, and so is the predicate below that fixed it.)
       // so the state named "with cross-link" scanned a popup that has no buttons at all,
       // and the page-wide gate had never examined a cross-link in any state. The reviewer
       // who found it proved the cost by emptying the cross-link's accessible name: the

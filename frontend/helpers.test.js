@@ -4188,6 +4188,8 @@ test("the live region calls NJ Transit by name, never by its payload key", () =>
    Separate require, additive, leaving the blocks above untouched. */
 const {
   FEEDS, feedDotState, feedTooltip, feedStripModel, statusNoteText, themeChoice, nextTheme,
+  // MR5 (Q2): the state's own words, lifted out of the tooltip, and the popup footer that says them.
+  feedStateWords, popupFreshHtml,
 } = require("./helpers.js");
 // FEED_STALE_AFTER_S is already in this file's top import block; named here so the threshold
 // assertions below read as what they are.
@@ -4246,6 +4248,95 @@ test("MR1: the freshness dot is the FEED's, and a null age is never live", () =>
   // reporting"; the dot has a smaller vocabulary and says stale.
   assert.equal(feedDotState({ age: null }), "stale");
   assert.equal(feedDotState({}), "stale");
+});
+
+/* ===== MR5, ruling Q2: the state's words, said one way on two surfaces ====================
+
+   THE TOOLTIP'S CLAUSE, LIFTED OUT SO THE POPUP FOOTER CAN HAVE IT. Section 5 gives every popup a
+   freshness footer, and the ruling is that its square IS the feed strip's dot at the popup, with
+   "its accessible name from the same helper the strip's dot uses so the state is said one way on
+   both surfaces". feedTooltip could not BE that helper: its words end in what pressing the button
+   will do, and a popup has no button. So the state's half came out, and the tooltip is now that
+   half plus the action.
+
+   THE FIRST TEST BELOW IS THEREFORE A REFACTOR PROOF and is deliberately redundant with the
+   tooltip test that follows it: the same three design examples, asserted through the composition,
+   so a change to feedStateWords that moved the tooltip fails twice and visibly. */
+test("MR5 Q2: feedStateWords is the tooltip's own clause, and coins nothing", () => {
+  // The three the design wrote down, without the action.
+  assert.equal(feedStateWords({ state: "live", age: 12 }), "Live · 12s");
+  assert.equal(feedStateWords({ state: "stale", age: 360 }), "As of 6m ago");
+  assert.equal(feedStateWords({ state: "scheduled" }), "Scheduled");
+  // And the fourth the design's examples could not show, because all three of them had an age.
+  assert.equal(feedStateWords({ state: "stale", age: null }), "Not reporting");
+
+  /* THE COMPOSITION IS THE CLAIM: every tooltip is these words plus the action, so no third
+     spelling of a feed's state can exist without this failing. Asserted over the whole matrix
+     rather than three examples, because "they happen to agree on the examples" is what a copy
+     looks like from the outside. */
+  for (const state of ["live", "stale", "scheduled"]) {
+    for (const age of [8, 360, null]) {
+      for (const hidden of [false, true]) {
+        const verb = hidden ? "show" : "hide";
+        assert.equal(
+          feedTooltip({ name: "Subway", state, age, hidden }),
+          `${feedStateWords({ state, age })} · ${verb} Subway`,
+          `${state}/${age}/${hidden}`,
+        );
+      }
+    }
+  }
+});
+
+test("MR5 Q2: the popup's footer is the strip's dot, with no word for live", () => {
+  const square = (state) => `<span class="fresh-dot" data-state="${state}" aria-hidden="true"></span>`;
+
+  /* PRESENT IN ALL THREE STATES, which is the half a "show it when it is bad" footer gets wrong: a
+     rider cannot tell "this feed is live" from "this popup forgot to say" unless the mark is always
+     there. So the square is asserted for each state before anything about the words. */
+  for (const [state, age] of [["live", 9], ["stale", 370], ["scheduled", null]]) {
+    assert.match(popupFreshHtml({ state, age }), /^<div class="fresh">/);
+    assert.ok(popupFreshHtml({ state, age }).includes(square(state)), `${state} draws its square`);
+  }
+
+  /* NO TEXT WHEN LIVE, because this app has no word for "live" on any surface (memo D9, silence
+     means current), and the README's "LIVE · UPDATED 12S AGO" is the sentence that rule forbids. It
+     is still SAID, through A1's visually-hidden class, so a screen reader gets the state exactly
+     where an eye gets the square. */
+  const live = popupFreshHtml({ state: "live", age: 9 });
+  assert.match(live, /<span class="visually-hidden">Live · 9s<\/span>/);
+  assert.ok(!/>Live/.test(live.replace(/<span class="visually-hidden">[^<]*<\/span>/, "")), "no visible live text");
+
+  // The two states that DO have something to show say the app's own strings, not a coined pair.
+  assert.ok(popupFreshHtml({ state: "stale", age: 370 }).endsWith("As of 6m ago</div>"));
+  assert.ok(popupFreshHtml({ state: "scheduled" }).endsWith("Scheduled</div>"));
+  assert.ok(popupFreshHtml({ state: "stale", age: null }).endsWith("Not reporting</div>"));
+
+  /* AND IT IS vehicleStaleLine's RULE, CARRIED OVER. Every vehicle popup already ended in that
+     line, which prints the system's age and withholds itself when the vehicle's own position has
+     already stated an age at least as old: an observation's age and a feed's differ by the
+     provider's lag, so saying both is saying two ages about one train. The footer inherits that,
+     with one difference the ruling requires: the SQUARE is never withheld, only the words. */
+  const older = { kind: "aged", words: "live GPS, as of 7m ago", age: 420 };
+  const younger = { kind: "aged", words: "live GPS, as of 1m ago", age: 60 };
+  const suppressed = popupFreshHtml({ state: "stale", age: 370, position: older });
+  assert.ok(suppressed.includes(square("stale")), "the square survives suppression");
+  assert.match(suppressed, /visually-hidden">As of 6m ago</, "and the words are said once, not shown twice");
+  assert.ok(
+    popupFreshHtml({ state: "stale", age: 370, position: younger }).endsWith("As of 6m ago</div>"),
+    "a position that stated a YOUNGER age does not suppress the feed's older one",
+  );
+  // A station popup passes no position, so nothing is ever suppressed on one.
+  assert.ok(popupFreshHtml({ state: "stale", age: 370 }).endsWith("As of 6m ago</div>"));
+
+  // A surface with no feed behind it gets no footer rather than an empty square: AirTrain is NOT
+  // that case, because its feed row has no source and feedDotState calls it schedule-only.
+  assert.equal(popupFreshHtml({ state: null }), "");
+  assert.equal(popupFreshHtml({}), "");
+  assert.equal(feedDotState({ scheduled: true }), "scheduled");
+
+  // Escaped, like every other builder in this file: the state reaches a data attribute.
+  assert.ok(!popupFreshHtml({ state: 'x"><img>', age: null }).includes('"><img>'));
 });
 
 test("MR1: the tooltip says the state and the ACTION, in the design's words", () => {

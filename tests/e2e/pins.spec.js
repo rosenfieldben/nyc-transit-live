@@ -1051,6 +1051,19 @@ const NOT_RIDER_TEXT = {
   "scheduled position, no GPS":
     "positionQualifier's SPOKEN form, which reaches a marker's accessible name (positionClause) " +
     "and never a popup. a11y's name specs are its witness, not a popup pin",
+  /* MR5, ruling Q1. positionQualifier's COMPACT form, which after Q1 has no reader at all: the
+     railroad popup was its only one, and it now renders `.words` through positionLineHtml like
+     every other popup. So no rider reads this string on any surface, which is why it is here rather
+     than in UNREACHED_STATES: that map is for text a rider WOULD read in a state no world reaches,
+     and there is no such state left for this one.
+     THE FIELD IS NOT REMOVED AND THAT IS DELIBERATE. `.compact` is one of the three forms section
+     3.2 of the freshness contract defines, positions.test.js holds the difference between it and
+     `.words`, and deleting a contract form is an amendment to that contract rather than a stage's
+     tidying. Recorded here so the next stage finds it named rather than guesses. */
+  "scheduled (no GPS)":
+    "positionQualifier's COMPACT form. After MR5's ruling Q1 it has no reader: the railroad popup " +
+    "was the only surface that rendered it and now takes .words through positionLineHtml. The " +
+    "contract still defines the form and positions.test.js still pins it; no popup prints it",
 };
 
 const UNREACHED_STATES = {

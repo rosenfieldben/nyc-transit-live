@@ -657,22 +657,80 @@ function feedDotState({ scheduled = false, age = null } = {}) {
   return age != null && !staleAge(age) ? "live" : "stale";
 }
 
+/* MR5 (ruling Q2): WHAT A FEED'S STATE IS CALLED, lifted out of the tooltip so that one answer
+   can be given on two surfaces. The words are unchanged and nothing here is coined: they are the
+   clause feedTooltip has carried since MR1, with the button's action taken off the end.
+
+   WHY IT HAD TO COME OUT. Section 5 gives every popup a freshness footer, and the ruling is that
+   the footer's square IS the feed strip's dot at the popup, with "its accessible name from the same
+   helper the strip's dot uses so the state is said one way on both surfaces". feedTooltip cannot be
+   that helper, because its words END in what pressing the button will do ("hide Subway"), and a
+   popup footer has no button to press. Re-deriving the clause in the footer would have been a
+   second answer to one question, which is the shape of finding N6 one stage earlier.
+
+   AND A FEED WITH NO AGE SAYS SO. "As of null ago" is the failure this avoids; the word is
+   `not reporting`, which is the status line's own for the same state. */
+function feedStateWords({ state, age = null } = {}) {
+  if (state === "scheduled") return "Scheduled";
+  if (state === "live") return `Live · ${humanizeAge(age)}`;
+  if (age == null) return "Not reporting";
+  return `As of ${humanizeAge(age)} ago`;
+}
+
 /* The tooltip, in the design's words ("Live · 12s · hide Subway", "As of 6m ago · hide
-   Metro-North", "Scheduled · hide NJ Transit"), with two things the design's three
-   examples could not show because all three are of a showing feed:
+   Metro-North", "Scheduled · hide NJ Transit"), which is now the state's words plus the
+   button's action.
 
-   THE VERB IS THE ACTION, NOT THE STATE. A hidden feed's button shows it again, so its
-   tooltip says "show". A tooltip that said "hide" on a button that shows would be wrong
-   in the one place a rider looks to find out what pressing it does.
-
-   AND A FEED WITH NO AGE SAYS SO. "As of null ago" is the failure this avoids; the word
-   is `not reporting`, which is the status line's own for the same state. */
+   THE VERB IS THE ACTION, NOT THE STATE. A hidden feed's button shows it again, so its tooltip
+   says "show". A tooltip that said "hide" on a button that shows would be wrong in the one place a
+   rider looks to find out what pressing it does. That clause is the reason feedStateWords exists
+   separately: it is the half a popup must not repeat. */
 function feedTooltip({ name, state, age = null, hidden = false } = {}) {
-  const action = `${hidden ? "show" : "hide"} ${name}`;
-  if (state === "scheduled") return `Scheduled \u00b7 ${action}`;
-  if (state === "live") return `Live \u00b7 ${humanizeAge(age)} \u00b7 ${action}`;
-  if (age == null) return `Not reporting \u00b7 ${action}`;
-  return `As of ${humanizeAge(age)} ago \u00b7 ${action}`;
+  return `${feedStateWords({ state, age })} · ${hidden ? "show" : "hide"} ${name}`;
+}
+
+/* MR5 (ruling Q2): THE POPUP'S FRESHNESS FOOTER, which is the feed strip's dot at the popup.
+
+   PRESENT IN ALL THREE STATES, which is the half a "show it when it is bad" footer would get
+   wrong: a rider cannot tell "this feed is live" from "this popup forgot to say" unless the mark is
+   always there. So the square is unconditional and only the WORDS come and go.
+
+   NO TEXT WHEN LIVE, because this app has no word for "live" on any surface (memo D9, "silence
+   means current"), and the README's "LIVE · UPDATED 12S AGO" is exactly the sentence that rule
+   forbids. Stale and schedule-only get the app's own strings, from feedStateWords.
+
+   AND THE STATE IS SAID ONCE. The square repeats whatever the words say, so it is decorative and
+   carries aria-hidden; the WORDS are what the accessibility tree gets, visible where there is
+   something to show and visually hidden where there is not. Labelling the square as well would say
+   "As of 6m ago" twice to a screen reader and nothing at all to an eye. `.visually-hidden` is A1's
+   own class, so the live state's words are in the tree exactly as the stale state's are.
+
+   AIRTRAIN GETS ONE AND IT SAYS "Scheduled", which is the same answer the strip gives it: its feed
+   row has no source, so feedDotState calls it schedule-only rather than ageless. A caller that
+   passes no state at all gets nothing, because inventing a square for a surface with no feed behind
+   it would be a claim.
+
+   AND IT IS vehicleStaleLine RESTYLED, NOT A SECOND VOICE, which is the one thing a footer added
+   naively would have got wrong. Every vehicle popup already ends in vehicleStaleLine, which prints
+   "as of 5m ago" when the vehicle's SYSTEM has gone stale, and a footer that also said "As of 6m
+   ago" would put the same fact on screen twice in two capitalisations. So this takes that line's
+   job, and with it that line's rule: `position` is the vehicle's own position, and where its words
+   already state an age at least as old as the feed's, the footer shows the SQUARE and withholds the
+   WORDS. vehicleStaleLine's comment is where the reason is written down and it has not changed: an
+   observation's age and a feed's differ by the provider's lag, so saying both is saying two ages
+   about one train. What the footer adds is the two states that line never had, live and
+   schedule-only, and the square that makes "live" visible at all.
+
+   THE SQUARE IS NEVER WITHHELD, because the ruling is that it is present in all three states: a
+   rider cannot tell "this feed is live" from "this popup forgot to say" unless the mark is always
+   there. Only the words come and go, and a station popup passes no position, so nothing is
+   suppressed on one. */
+function popupFreshHtml({ state, age = null, position = null } = {}) {
+  if (!state) return "";
+  const words = feedStateWords({ state, age });
+  const said = position && position.age != null && (age == null || position.age >= age);
+  const body = state === "live" || said ? `<span class="visually-hidden">${esc(words)}</span>` : esc(words);
+  return `<div class="fresh"><span class="fresh-dot" data-state="${esc(state)}" aria-hidden="true"></span>${body}</div>`;
 }
 
 /* One entry per feed, ready to render: the count as text, the dot's state, the tooltip,
@@ -3045,11 +3103,33 @@ function withheldFix(row, block, servedAt, now) {
   return age != null && age > OBS_MAX_S ? "withheld" : null;
 }
 
-// The popup line a position's words go on, or nothing for a fresh reported position:
-// silence means current on every surface that has never said "live GPS" (memo D9), and
-// the railroad popup, which always has, prints its compact form itself.
+/* The popup line a position's words go on, or nothing for a fresh reported position: silence means
+   current (memo D9), which is the rule every surface in this app follows.
+
+   MR5 (ruling Q1): EVERY SURFACE NOW, INCLUDING THE RAILROAD POPUP, which had been the one
+   exception. That popup printed `position.compact` itself, unconditionally, from a line of its own
+   in systems/railroad.js, and the two differences that made are the whole content of this ruling:
+   its `placed` trains said "scheduled (no GPS)" where the contract says "scheduled position (no
+   GPS)", and its FRESH GPS fixes said "live GPS" where every other surface in the app says nothing.
+   An AGED fix still speaks, which is the contract working rather than a compromise: the silence is
+   only ever about a current one.
+
+   `.compact` STILL EXISTS AND NOW HAS NO READER, which is worth stating precisely rather than
+   softly. It is one of the three forms section 3.2 of the freshness contract defines, it still
+   differs from `.words` in exactly one family (`placed`), and positions.test.js still pins that
+   difference. But the railroad popup was its ONLY caller, so after this ruling nothing in the app
+   renders it. Deleting a form the contract defines is an amendment to that contract rather than a
+   stage's tidying, so it stays, and pins.spec.js P5b carries its string as a waiver naming exactly
+   this reason. P5b is how it was found: the coverage test reported "scheduled (no GPS)" as a
+   rider-visible literal that no pin covered, on the commit that unified the call site.
+
+   THE GUARD IS ON BOTH FIELDS. The ruling says an empty `.words` omits the row, and `positionQualifier`
+   never returns one, so today that is belt to the brace `kind` already provides. It is written down
+   because a future branch of that function could, and a row rendering `<br><span></span>` would be
+   an empty line a rider cannot account for rather than an omission. */
 function positionLineHtml(position) {
-  return position && position.kind ? `<br><span class="popup-sub">${esc(position.words)}</span>` : "";
+  if (!position || !position.kind || !position.words) return "";
+  return `<br><span class="popup-sub">${esc(position.words)}</span>`;
 }
 
 // A position's clause in a marker's accessible name, under the same rule: its spoken
@@ -5229,6 +5309,8 @@ if (typeof module !== "undefined" && module.exports) {
     parseColor, relativeLuminance, contrastRatio, readableTextOn, readableInk, statusLineText,
     POPUP_SURFACE_FALLBACK,
     statusNoteText, FEEDS, feedDotState, feedTooltip, feedStripModel, themeChoice, nextTheme,
+    // MR5 (Q2): the state's own words, and the popup footer that says them the strip's way.
+    feedStateWords, popupFreshHtml,
     MOBILE_MAX_WIDTH_PX, MOBILE_QUERY, narrowViewport,
     INK_LIGHT, INK_DARK,
     humanizeAge, alertsStale, alertsFreshnessBasis, ALERTS_STALE_AFTER_S,

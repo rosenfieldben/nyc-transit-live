@@ -1510,7 +1510,9 @@ marker's accessible name, and `.compact`. The three differ in exactly one family
 
 **`.compact` existed for one caller and that caller is gone.** The railroad popup rendered it
 directly, from a line in `systems/railroad.js`, and it was the only surface in the app that chose
-between the forms rather than going through `positionLineHtml`. Map redesign stage MR5, ruling Q1,
+between the forms rather than going through the shared helper (`positionLineHtml` then, and
+`positionWords` since the vocabulary commit renamed it: section 5's grid renders the words and the
+helper returns them). Map redesign stage MR5, ruling Q1,
 unified every popup on `.words`, which changed two strings a rider reads (a `placed` railroad train
 gained "position", and a FRESH reported fix went silent, because silence means current and this popup
 was the one place that broke that). **Since then nothing in the frontend reads `.compact` at all.**

@@ -2057,6 +2057,7 @@ the same call about `C2c2`).
 | `smoke.spec.js` 21 (a ferry boat moves between polls without churn) | MR4, once in a three-file parallel run; MR5, once in a full run at `40967b5`'s gates | **`runFor`'s poll racing the assertion.** `page.clock.runFor(15_000)` returns when the clock has advanced, not when the poll it triggers has fetched, parsed and moved the marker. The two locator assertions that follow RETRY, so they pass; `expect(after).toEqual([40.708, -73.985])` reads a value out of `page.evaluate` and cannot retry, so under worker contention it reads the boat's previous position once and fails. It opens no popup, so nothing MR5 changed executes in it, and it passed twice in isolation at the same sha. |
 | `pins.spec.js` P1k (the NJ Transit marks) | MR4, once inside the M33 mutation run; and again in the same stage's three-file run | Local server contention, not the mutation: M33 reaches nothing NJ Transit draws, and an isolated re-run at the same sha passed. The same shape as MR2's P1m under M6, which also failed beside a subway mutation it could not see. |
 | `smoke.spec.js` C2c2 (a healthy group covering no routes still counts as coverage) | the A4 freeze, roughly one run in ten under two-worker contention, 6/6 in isolation | Measured and filed as a follow-up on PR 89 rather than edited during a freeze. Listed here so the follow-up and this branch are the same piece of work. |
+| `pins.spec.js` P5d (direction A of the coverage claim) | MR5 round 2, once in a full run at `9edca7e`'s gates | **Recorded with a gap in it, which is the honest version.** The message was LOST: the isolated re-run overwrote `test-results/`, and the full run's output had been read with `tail`, so the only record of the failure is that it happened. It then passed in isolation, in a full-file run of all thirty pins, in a four-repeat two-worker run of P5a/P5c/P5d, and in a second full suite run. What it would be if it is real: P5d is the one spec that reads ONE render twice (a settle loop that advances a PAUSED clock, then a second read of the same still-open popup), and a mocked fetch resolves in real time while that loop advances only the clock. The de-flake branch measures it; this entry does not claim it. **And the process lesson is the entry's other half**: a failing suite run's output goes to a file before anything is re-run, or the evidence is gone. |
 | `mobile.spec.js` A6e (a popup never exceeds the phone's viewport) and `smoke.spec.js` 33 (NJ Transit lines, squares and two ADDED trips) | named by the operator for this list | **Recorded as named, with what the record here does and does not hold.** Neither has a failure written down in MR1 through MR5 or in the A4 rounds, and A6e passed in every run of this stage. So the de-flake branch MEASURES both (repeated runs under contention, which is how C2c2's one-in-ten was established) instead of taking either a memory or this table as evidence. A6e is worth measuring on its own grounds regardless: MR5 changed the geometry it asserts, and it is the one popup spec whose subject this stage moved. |
 
 **The rule until that branch exists is the one this phase has used throughout.** `retries: 0` in
@@ -2435,3 +2436,94 @@ BOTH directions of the coverage test: direction A (P5d) cannot see a string that
 direction B (P5b) reads literals rather than classes, so a class removed from a literal nobody
 disputes is invisible to it. **M77 is the same defect where the stock world does render it**, and it
 dies on P5d, which is what makes the guard real rather than the survivor excusable.
+
+### Round 2: five reviewers, and the half of their findings that was about the guards
+
+Round 1 fixed the three defects the drawn page had and the string did not. **Round 2 is the other
+half of the same five reports**, and it has one shape running through it: a guard that passed over
+the thing it was written for, and a sentence that described a tree that no longer exists. Nothing a
+rider sees changed in this round. Every repair below is a test that can now fail, or a comment that
+can now be believed.
+
+**The reviewers ran in worktrees detached at `790b9a2`**, five of them, pointed at the four shapes
+this phase keeps producing plus this stage's own ("a word that came from a literal instead of the
+app") and, from round 1 on, the fifth ("two implementations of one reader, of which only one
+learns"). Each echoed its sha before reporting. Their findings are below by what they were about
+rather than by reviewer, because four of the five found the same shape in different tiers.
+
+#### The guards that could not fail
+
+| What was asserted | What could happen anyway | The repair, and the mutation that now kills it |
+| --- | --- | --- |
+| `withoutMarks` normalises a mark "and its geometry stays where marks live" | The token kept only the `<text>` label. Drawing the subway station kicker's plates at the TITLE's size, and then in flat black, left all 392 node tests green (the reviewer ran both). Nothing pinned `subwayArrivalsHtml`'s arguments: `markPin` writes `markers/<system>` for the TRAIN's mark, and `popupvocab.test.js` passes its own literals in. | The token carries the route, the drawn size and the declared fills: `[mark 1 17x17 #c0392b,#ffffff]`. Three pins moved (two in `boards.test.js`, one in `smoke.spec.js` C2i) and each now reads the kicker's own paints, which are the same pair the row badges below carry. **M78.** |
+| `withoutMarks` is "imported rather than copied" | It was two byte-identical copies, and the comment defending the duplication said this file "is not importable from a node unit test". It is: `tests/e2e/popup.js` requires nothing. This is the fifth defect shape re-created inside the commit that named it. | One copy, in `popup.js`, required by `boards.test.js`. |
+| `tokens.test.js`: "the design's translucency cannot come back by either spelling" | It read ONE rule body. The reviewer appended a second `.leaflet-popup-content-wrapper` rule with `color-mix` and a blur: equal specificity, later in the file, so it wins, and all 386 node tests passed. `style.css`'s own comment records that exact trap costing a debugging round. | The scan is by SELECTOR over every rule that paints a popup (eight of them today, and a ninth the day it is written), with the count asserted only so a regex that stopped matching fails loudly. The background count is over the same set. **M79.** |
+| P5b: "attributed to the function it came from, so a phrase pinned in one system does not silently cover another's" | The attribution was in the failure message only. Coverage was `haystack.includes(lit)` over every world's text joined into one string, so a literal only one system can reach was covered by a coincidental occurrence in another's pinned text. | A per-system haystack, used when every function a literal came from is the same system's; shared builders still check against the whole golden, because their prose is legitimately pinned wherever it renders. A premise asserts the seven systems the surface keys resolve to, so a renamed world fails loudly instead of checking against an empty string. **M80.** |
+| P5b's scanner "reads all four constructs correctly" | A `/` after a KEYWORD was read as division, so `return /["]/.test(x) ? "ok now" : "not ok"` lost BOTH literals and reported a code fragment as prose. The reviewer extracted the function and ran it. Latent today (this app's two `return /.../` sites carry no quotes and no prose), and a silent loss in the direction that claims totality. | It reads the previous WORD as well as the previous character. And five constructs it has been wrong about once are now run through it as self-tests, in the page, compared here: the nested template, the regex with a quote after `(`, the two keyword cases, and an ordinary division. **M81.** |
+| `a11y.spec.js` A1z4: "every `svg.rail-tag` on the page is a rail train's tag, so a second surface adopting the class fails there" | MR5 IS that second surface, and A1z4 never opened a popup. Worse, the axe exception that names A1z4 as its decider is suppressing `svg.rail-tag text` inside the popup the axe gate's own "popup open with cross-link" state opens, at three widths in both themes. The excuse and the measurement were about two different documents. | A1z4 opens a rail train popup, both tag bodies, one at a time, and counts the class per place (marker, popup, loose) with the popup's two glyphs measured rather than only counted. The exception's decider text says so now. **M82.** |
+| P4a's census, which exists for "a count over a class a later stage widened" | It recorded none of the six classes MR5 widened, so `census/stock` was correctly but vacuously unmoved by the stage that moved them. | The census counts each mark class in both places it can be drawn, and P4a takes it over two popups as well as the map: a rail train's, whose mark carries a class, and a subway train's, whose plate carries none by design. Leaflet removes a closed popup on a 200ms fade timer, which is why each read waits for the previous popup to leave the document. **M83.** |
+| `style.css`: "`helpers.test.js`'s A3 sweep measures `.arr .now` with the rest of the popup's inks" | It did not. Every other popup ink in that sweep is read by selector; this one was not among them, and the pairing actually measured was the bare `--accent-ink` token. The regression the comment argues against would not have failed anywhere. | `declared(".arr .now")` is in the sweep. **M84**, which fails at exactly the 3.47 the comment names. |
+| `layout.spec.js` A4g's sharp premise: "an N heading must be in the sample" | `.pt span` matches `.pmark` too, and `sample()` reads `textContent`, which for a plate is the route letter painted in `--ink`. So the premise added to prevent vacuity could be satisfied by an aria-hidden decoration. Measured: the old selector put a bare `"N"` and an empty span into the ink sample. | `.pt > span:not(.pmark)`. |
+| P4d: "at least one row's composited value must DIFFER from its opaque one" | Every row carries `...OnSurface` numbers whether or not it is on that surface, and `--paper` is never `--surface`, so a map-drawn plate with no popup open satisfies it. The premise did not witness the claim the prose makes. | Asserted per place. The row that actually kills M47's revert is the three-place premise (with `alphaOf` returning 1 the alpha array is empty), and that is recorded where the determination is, so a premise that is not doing the work is not read as if it were. |
+
+#### The prose, held to the same rule
+
+A comment measured to be false is not kept, which is this stage's own ruling about the popup's blur
+one section up. Eight corrections, each named by a reviewer:
+
+- **`.alert-stale`'s `color: #666` is gone**, and with it the two premises that defended keeping it:
+  the banner's surface has not been the amber `#fde8b0` since MR1 took the amber away (the banner is
+  a row of `#panel`, which is `var(--surface)`, and the hex appears nowhere in the file as a value),
+  and the banner's hedge has not been `#666` since MR1 round 2 scoped it to `--accent-ink`. Both
+  elements that carry the class are claimed by a scoped rule, so the grey painted nothing. The size
+  and the slant stay, and a third surface now inherits its own ink.
+- **`.fresh-dot`'s base `background` is gone**, which is sharper than it looks: the block's comment
+  argued that the data-attribute design means "a fourth state would have to be added here rather
+  than defaulting to whichever rule came last", and that declaration WAS the default it disclaimed.
+- **The tip does not keep a blur** it never had; the sentence survived the draft the same block says
+  was discarded.
+- **`rebuildOpenPopupsForTheme` says which popups it reaches.** `popup.update()` re-invokes bound
+  content only where that content is a function, so the five ticking station boards (bound with a
+  string, filled by `setPopupContent`) get the identical string back. They do not need it:
+  `openStationArrivals` re-renders them every second. The old comment was wrong in both directions.
+- **`.station-alerts` no longer promises to look like `.alert-block`**, which MR5 changed out from
+  under it while deliberately leaving the panel alone.
+- **`popupSurfaceColor`'s two comments and this document's own** stopped saying the popup IS 94% of
+  `--surface`, and the one number quoted against a composite says which composite it would have been.
+- **`helpers.js` stopped claiming a closure over words its callers own.** Five of the twelve grid
+  labels are section 5's prose (Position, Direction, Delay, Status, Speed), four of them disclosed in
+  the README's erratum. The rule this file can keep is that no BUILDER here coins a word.
+- **`freshness-contract.md` section 3.2's table is re-anchored line by line**, and two rows were
+  false as well as misaddressed: `live GPS` named a file ruling Q1 emptied of those words, and the
+  `placed` string was attributed to "NJT and PATH popups" when `positionQualifier` produces it
+  centrally and every vehicle popup renders it. Every other frontend citation in that file is
+  re-anchored too, because this stage is what moved them.
+
+And four in the documents of record: the README's erratum counts five deviations rather than four
+items carrying five, splits `.alert` from `.xlink`, adds the `Heading` label the ledger had and it
+did not, stops certifying a Position row whose three strings memo D9 forbids, and measures its
+auto-pan break at the 375x667 its own arithmetic closes at rather than an impossible 375x640; this
+document's alpha table holds all six rows the pin holds, with the chrome row's dark figures taken
+from the column its header names; the three popup widths it quotes at 375 are sorted into the floor
+(256), a measured popup (263) and a spec's grown popup (293); the stage table no longer calls MR5
+`planned` in the file that documents what MR5 shipped, and MR3 and MR4 read `merged` with their PR
+numbers. `IMPLEMENTATION.md` gets its first erratum: the two popup builders it prescribes and the two
+wordings it says to route into `.fresh` are five names that do not exist.
+
+#### What the reviewers checked and found sound, recorded as a negative result
+
+The two python audit records run and their printouts support their dispositions. Every contrast ratio
+quoted in this stage's comments recomputes exactly (26 of them, one reviewer's count). The four other
+rows of the N-train colour table are exact. M47's determination is sound, and one reviewer went
+further than the ledger did by identifying which premise kills the revert.
+
+#### The table, re-run whole at the tip, with this round's rows added
+
+Round 2 changed no popup, so the eighteen rows above are unchanged; seven more are the defects the
+repaired guards could not see, each measured by hand when its repair landed and now in
+`mutations.sh` so they can be re-run. **Re-run whole at `8fb99b5`: twenty-four died, one survived,
+none failed to run, and every anchor matched exactly once.** The survivor is M75, whose reason is
+recorded above and whose defect dies at M77.
+
+Gates at the same tip: `ruff`, `ruff format`, `mypy`, 1738 pytest; the contract-tier lint; 392 node
+tests; 317 playwright; 15 audit records. One flake is in the list above with a gap in it.

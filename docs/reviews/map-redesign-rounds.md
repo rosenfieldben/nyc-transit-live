@@ -2337,3 +2337,38 @@ everything that was not in a popup a map mark, and the Key panel's glyphs came b
 LIGHT paper in the dark theme. They are not map marks and that is not a defect: the Key draws its
 tags in H3's literals because the panel keeps one surface in both themes. A number ledger that called
 them map marks would be telling a reader something false.
+
+### The whole table, re-run at the tip, with every anchor verified
+
+Standing rule 6 asks for the whole table before every push, and an ANCHOR MISS as a failure of the
+run rather than a survivor. **The first re-run, at `dcc07f9`, reported two**, and both are MR4's
+finding F19 one stage later:
+
+- **M64** anchored on `backdrop-filter: blur(14px)` under the popup's background. The footer commit
+  DROPPED that declaration, on the operator's ruling that a rule measured to paint nothing is not
+  kept with a test saying so. The anchor matched zero times and the row tested nothing.
+- **M66** anchored on the four-line argument list of `ferryBoatPopupHtml`'s call site. The
+  vocabulary commit added the mark argument to it, so the anchor matched zero times.
+
+Both re-anchored against the source as it now stands, and the table re-run whole at `c1cfbc3`:
+**seventeen died, one survived, none failed to run.**
+
+| # | Mutation | Result |
+| --- | --- | --- |
+| M60 to M69 | the chrome's ten, re-run unchanged (the autopan's derivation and clamp, the stand-down, `readableInk`'s two directions, the 94% surface, `.popup-sub`'s `#666`, the ferry head's surface, the theme rebuild, `autoPan`, a bind site's options) | **all died**, on the gates recorded when they were written |
+| **M70** | the popup's mark rebuilt instead of copied | **died**, node: the byte-for-byte body assertion across all six builders |
+| **M71** | the title mark's clamp removed, so the rail tag draws smaller than the map draws it | **died**, node |
+| **M72** | the grid prints a row with nothing to say | **died**, node and the pins |
+| **M73** | the cell separator dropped, so a popup's `textContent` glues its words | **died**, node |
+| **M74** | a kicker word coined rather than taken from the app | **died**, node: the six words are asserted against the surfaces they came from |
+| **M75** | the bus's route note loses its class, so its words are in no named slot | **SURVIVED**, and the reason is written down below |
+| **M76** | M47 again: the element's alpha not composited | **died**, P4d. Which is the determination: the same revert survived MR4 and has a guard now |
+| **M77** | the AirTrain sub-line loses its class, which is M75's defect where a fixture renders it | **died**, P5d |
+
+**M75's survival is honest and it names a real limit.** The bus's route note renders only while
+`busRouteNotes` holds an entry inside `NOTE_TTL_MS`, and no pinned world has one, so the mutated
+`<div>` is never drawn. It is an equivalent mutant in every world this suite boots, and it is outside
+BOTH directions of the coverage test: direction A (P5d) cannot see a string that is not rendered, and
+direction B (P5b) reads literals rather than classes, so a class removed from a literal nobody
+disputes is invisible to it. **M77 is the same defect where the stock world does render it**, and it
+dies on P5d, which is what makes the guard real rather than the survivor excusable.

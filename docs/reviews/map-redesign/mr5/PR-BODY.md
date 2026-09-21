@@ -111,7 +111,7 @@ popup.
 ## The mutation table, re-run whole at the tip
 
 **Thirty-three rows at `65b7af3`: thirty-two died, one survived, none failed to run, and every anchor
-matched exactly once.** M85 to M92 are the three rulings' own. The run also found two stale anchors and
+matched exactly once**, and again at `47e80e2`, the last commit to touch a file any row anchors in. M85 to M92 are the three rulings' own. The run also found two stale anchors and
 one mutation that could not fail, none of which is a result about the code, which is what standing rule
 6 exists to make visible; the ledger records all three. Two rows had gone stale since they were written (M64 named the
 `backdrop-filter` the footer commit dropped, M66 named an argument list the vocabulary commit added

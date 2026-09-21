@@ -2740,7 +2740,8 @@ stage.
 #### The table, re-run whole with the rulings' own rows
 
 **Thirty-three rows at `65b7af3`: thirty-two died, one survived, none failed to run, every anchor
-matched exactly once.** M85 to M92 are the rulings': the footer's precedence reverted; the NJ Transit
+matched exactly once**, and again at `47e80e2`, the commit that recorded this round; every commit after
+that one is documentation and no row anchors in a documentation file. M85 to M92 are the rulings': the footer's precedence reverted; the NJ Transit
 board resolver and the panel chip back to a colour of their own; the railroad's paint resolver back to
 the published fill unmoved; the route tag's viewBox origin shifted, which is the silent way to empty
 every kicker; the cap removed; the routes no longer spoken; and the mark token back to its first

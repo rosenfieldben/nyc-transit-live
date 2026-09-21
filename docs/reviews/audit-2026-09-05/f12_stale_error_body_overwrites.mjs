@@ -481,6 +481,14 @@ function bootFrontend({ withBuses = false } = {}) {
   vm.runInContext("function railroadBranchPaint() { return railBranchPaint(null); }", ctx, {
     filename: "harness:branch-paint",
   });
+  // AND `railroadBranch`, which ruling R3's kicker resolver calls for each route a station serves.
+  // Same file, same reason, same real production state: with no colour table and no name table, a
+  // branch is its own id in the neutral, which is what railBranchCode and railBranchColor answer.
+  vm.runInContext(
+    "function railroadBranch(system, routeId) { return { code: railBranchCode(system, routeId, null), color: null, textColor: null }; }",
+    ctx,
+    { filename: "harness:branch" },
+  );
 
   const probe = (expr) => vm.runInContext(`(${expr})`, ctx, { filename: "harness:probe" });
   const exec = (src) => vm.runInContext(src, ctx, { filename: "harness:exec" });
@@ -708,6 +716,19 @@ const RAILROAD_DESCRIPTOR_SRC = `(station, arrivalsUrl) => (m) => ({
       Date.now() / 1000 - (minClockOffset ?? 0),
       (routeId) => railroadBranchPaint(s.system, routeId),
       (routeId) => railroadRouteNames.get(\`\${s.system}|\${routeId}\`) || null,
+      popupMarkHtml(markerMarkHtml(m)),
+      (routeId) => {
+        const branch = railroadBranch(s.system, routeId);
+        return {
+          svg: railRouteTagSvg({
+            system: s.system,
+            code: branch.code,
+            color: branch.color,
+            textColor: branch.textColor,
+          }),
+          name: railroadRouteNames.get(\`\${s.system}|\${routeId}\`) || branch.code,
+        };
+      },
     ),
 })`;
 

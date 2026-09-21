@@ -13,7 +13,7 @@
 //   1. A POPUP'S MARK IS THE MAP'S MARK. popupMarkHtml re-wraps a builder's own string at the
 //      popup's size, and the body is copied byte for byte. A popup that drew its own route mark
 //      would be a second answer to "what does this family look like" and the two would drift,
-//      which is finding N6 one surface out. Asserted of all six builders.
+//      which is finding N6 one surface out. Asserted of all seven builders.
 //   2. THE ESCAPING HAPPENS ONCE, in the builder. Every text parameter is escaped there, so a
 //      caller that pre-escaped would double-escape an ampersand (a silent, rider-visible defect)
 //      rather than fail loudly. Every builder here is given an ampersand.
@@ -42,6 +42,9 @@ const {
   busMarkSvg,
   pathDiamondSvg,
   ferryHullSvg,
+  railRouteTagSvg,
+  popupRouteMarksHtml,
+  POPUP_KICKER_MARKS,
   FEEDS,
   ferryBoatName,
   airtrainStationName,
@@ -63,6 +66,14 @@ const MARKS = [
   { name: "bus dot", natural: 14, svg: busMarkSvg("#605d5d", null) },
   { name: "PATH diamond", natural: 16, svg: pathDiamondSvg("#d93a30") },
   { name: "ferry hull", natural: 14, svg: ferryHullSvg("#00839c") },
+  /* AND RULING R3's SEVENTH: the rail tag with nothing but its body, which a station kicker draws for
+     each branch calling there. Its box is the body's own 13 units rather than the tag's 30, because
+     the stem and the chevron state where a TRAIN is and a route has no position to state. */
+  {
+    name: "rail route tag",
+    natural: 13,
+    svg: railRouteTagSvg({ system: "LIRR", code: "BAB", color: "#00985f", textColor: "#ffffff" }),
+  },
 ];
 
 // An svg string split where the opening tag ends. `indexOf(">")` is the whole parse and it is
@@ -331,4 +342,67 @@ test("MR5: every system word a kicker prints is one the app already says elsewhe
     "and AirTrain's is the one its station's name says",
   );
   assert.equal(Object.keys(POPUP_SYSTEM_WORDS).length, 6, "six words, and the railroad's is the payload's");
+});
+
+/* RULING R3: THE KICKER'S ROUTE MARKS, AND THE ONE RULE ALL FIVE STATION BOARDS SHARE.
+
+   WHY THIS TEST EXISTS RATHER THAN A BROWSER ONE ALONE. No hermetic world serves a station more than
+   three routes (measured: the subway's Times Sq and Canal serve three, NJ Transit's stations two, one
+   and two, the ferry's docks three and one, and the railroad's and PATH's one or two each), so the
+   overflow branch is unreachable from every pinned world. A rule nothing runs is a rule that ships
+   broken, and the browser tier's answer to that is one world with an overridden payload
+   (pins.spec.js P5e); this is the arithmetic, asked one case at a time. */
+test("MR5 R3: a kicker shows the first three routes, counts the rest, and speaks them all", () => {
+  const svgFor = (route) => subwayPlateSvg(route, "#c0392b", "#ffffff");
+  const markFor = (route) => ({ svg: svgFor(route), name: `Route ${route}` });
+  const marks = (html) => (html.match(/<span class="pmark"/g) || []).length;
+  const spoken = (html) => (/<span class="visually-hidden">([^<]*)<\/span>/.exec(html) || [])[1];
+  const more = (html) => (/<span class="pmore" aria-hidden="true">([^<]*)<\/span>/.exec(html) || [])[1];
+
+  // THE CAP IS THREE, and it is a measurement rather than a taste: the five families' marks are 17
+  // units wide to 66.69, and NJ Transit's fourth tag wraps the kicker to a second row at 375 and 320.
+  assert.equal(POPUP_KICKER_MARKS, 3);
+
+  // Under the cap: every route drawn, no count, and the words are all of them.
+  const two = popupRouteMarksHtml(["1", "2"], markFor);
+  assert.equal(marks(two), 2);
+  assert.equal(more(two), undefined, "nothing is withheld, so nothing is counted");
+  assert.equal(spoken(two), "Route 1, Route 2");
+
+  // At the cap: the same, with no count.
+  assert.equal(marks(popupRouteMarksHtml(["1", "2", "3"], markFor)), 3);
+  assert.equal(more(popupRouteMarksHtml(["1", "2", "3"], markFor)), undefined);
+
+  /* OVER THE CAP: three marks, a count of what is left, and EVERY route in the words. The count is
+     aria-hidden and the words are not, which is the same split ruling Q2 made for the freshness
+     footer: the square is for an eye and the words are for a reader, and saying both to a screen
+     reader would say one thing twice. */
+  const twelve = popupRouteMarksHtml(["1", "2", "3", "4", "5", "6", "7", "A", "C", "E", "N", "Q"], markFor);
+  assert.equal(marks(twelve), 3, "three marks, whatever the station serves");
+  assert.equal(more(twelve), "+9");
+  assert.equal(spoken(twelve), "Route 1, Route 2, Route 3, Route 4, Route 5, Route 6, Route 7, Route A, Route C, Route E, Route N, Route Q");
+
+  /* A ROUTE WITH NO MARK IS SKIPPED BEFORE THE CAP IS APPLIED, not after: a station whose first two
+     routes are unknown to the colour table would otherwise spend two thirds of its budget on nothing
+     and draw one mark where it could draw three. */
+  const partial = popupRouteMarksHtml(["x", "y", "1", "2", "3"], (route) =>
+    route === "x" || route === "y" ? null : { svg: svgFor(route), name: `Route ${route}` },
+  );
+  assert.equal(marks(partial), 3);
+  assert.equal(more(partial), undefined, "the two that cannot be drawn are not withheld, they are absent");
+  assert.equal(spoken(partial), "Route 1, Route 2, Route 3");
+
+  // NOTHING AT ALL is the empty string, so popupKickerHtml still prints both of its spans and the
+  // system word stays where it is rather than the row collapsing to one side.
+  for (const empty of [[], null, undefined]) assert.equal(popupRouteMarksHtml(empty, markFor), "");
+  assert.equal(popupRouteMarksHtml(["1", "2"], () => null), "", "and a family that can draw none of them");
+  assert.equal(popupRouteMarksHtml(["1", "2"], null), "", "and a board that passes no resolver at all");
+
+  // The names are escaped once, by this builder, like every other string in this file's vocabulary.
+  assert.ok(popupRouteMarksHtml(["1"], () => ({ svg: svgFor("1"), name: "R & D <b>" })).includes("R &amp; D &lt;b&gt;"));
+
+  /* AND A MARK THE RE-WRAP CANNOT READ IS NOT A MARK. popupMarkHtml requires a viewBox whose origin
+     is "0 0" and returns the empty string otherwise, which is how a shifted box (the Key panel's
+     hand-written tags use one) would make a whole kicker silently mark-free. */
+  assert.equal(popupRouteMarksHtml(["1"], () => ({ svg: '<svg viewBox="-1 -1 36 14"><rect/></svg>', name: "x" })), "");
 });

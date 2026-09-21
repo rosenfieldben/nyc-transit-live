@@ -134,6 +134,13 @@ function panelLines(node, depth = 0, out = []) {
 // Each board's popup is called with the arguments its loader's popup lambda passes, and
 // each panel entry carries the fields its loader's registerStation call gives it. The
 // route lookups are built from the fixtures' route tables with the loaders' own keys.
+/* `S` IS THE SANDBOX AND `H` IS THE MODULE, AND THE DIFFERENCE IS NOT COSMETIC. A `const` declared at
+   the top level of a script run in a vm context does NOT become a property of that context, so
+   `H.FERRY_FALLBACK_COLOR` is `undefined` while `S.pathColor` (a function declaration) is the real
+   thing. Measured, after ruling R3's kicker put the ferry's fallback on the page for the first time:
+   the SV route has no row in the routes fixture, so its hull was drawn `fill="undefined"`. Every
+   CONSTANT here comes from `H`, the same file required as a module, and every FUNCTION from `S`, the
+   loaded page. */
 function boards(S) {
   const railroadNames = new Map(fx.railroadRoutes().map((r) => [`${r.system}|${r.route}`, r.name]));
   const railroadName = (system) => (r) => railroadNames.get(`${system}|${r}`) || null;
@@ -147,11 +154,48 @@ function boards(S) {
     const row = railroadPaints.get(`${system}|${r}`);
     return S.railBranchPaint(row?.color ?? null, row?.text_color ?? null);
   };
+  /* R3: THE KICKER'S ROUTE MARKS, one resolver per family, each the fixture's copy of what its
+     loader closes over. The boards below pass them, because this file's contract is that a board is
+     called with the arguments its loader passes: defaulting them would leave four kickers empty and
+     the four new pins would pin nothing, which is the trap the fixture's own `routes` comment
+     names. */
+  const railroadMark = (system) => (r) => {
+    const row = railroadPaints.get(`${system}|${r}`);
+    return {
+      svg: S.railRouteTagSvg({
+        system,
+        code: S.railBranchCode(system, r, row?.name ?? null),
+        color: row?.color ?? null,
+        textColor: row?.text_color ?? null,
+      }),
+      name: row?.name ?? r,
+    };
+  };
+  const njtMark = (r) => {
+    const paint = njt.paints.get(r);
+    return {
+      svg: S.railRouteTagSvg({
+        system: "NJT",
+        code: S.railBranchCode("NJT", r, njt.names.get(r) ?? null, njt.shortNames.get(r) ?? null),
+        color: paint?.color ?? null,
+        textColor: paint?.textColor ?? null,
+      }),
+      name: njt.names.get(r) || r,
+    };
+  };
+  const pathMark = (r) => ({
+    svg: S.pathDiamondSvg(pathColors.get(r) ?? H.PATH_FALLBACK_COLOR),
+    name: pathNames.get(r) || r,
+  });
+  const ferryMark = (r) => ({
+    svg: S.ferryHullSvg(ferryColors.get(r) ?? H.FERRY_FALLBACK_COLOR),
+    name: ferryNames.get(r) || r,
+  });
   const pathColors = new Map(fx.pathRoutes().map((r) => [r.id, S.pathColor(r.color)]));
   const pathNames = new Map(fx.pathRoutes().map((r) => [r.id, r.name]));
   const njt = S.njtRouteTables(fx.njtRoutes());
   const ferryColors = new Map(
-    fx.ferryRoutes().map((r) => [r.id, S.pathColor(r.color, S.FERRY_FALLBACK_COLOR)]),
+    fx.ferryRoutes().map((r) => [r.id, S.pathColor(r.color, H.FERRY_FALLBACK_COLOR)]),
   );
   const ferryNames = new Map(fx.ferryRoutes().map((r) => [r.id, r.name]));
   const [lirr, mnr] = fx.railroadStops();
@@ -172,29 +216,31 @@ function boards(S) {
     },
     lirr: {
       body: fx.railroadArrivalsLirr(),
-      popup: (b) => S.railroadArrivalsHtml(lirr, b, now, railroadPaint(lirr.system), railroadName(lirr.system)),
+      popup: (b) =>
+        S.railroadArrivalsHtml(lirr, b, now, railroadPaint(lirr.system), railroadName(lirr.system), "", railroadMark(lirr.system)),
       entry: {
         key: `${lirr.system}|${lirr.id}`, kind: "railroad", systemLabel: "LIRR", noun: "train",
-        id: lirr.id, system: lirr.system, name: lirr.name, routes: [], wheelchair: false,
+        id: lirr.id, system: lirr.system, name: lirr.name, routes: lirr.routes ?? [], wheelchair: false,
         arrivalsUrl: `/api/railroad-arrivals/${lirr.system}/${lirr.id}`,
         nameFor: railroadName(lirr.system),
-        // R1: the panel's chip resolver, which registerStation carries now. It renders nothing in
-        // any fixture world (the stops endpoint serves no `routes`), and it is here because this
-        // entry's contract is to carry the fields its loader gives it.
+        // R1: the panel's chip resolver, which registerStation carries now. R3 gave the stops
+        // fixture the `routes` the endpoint has always served, so this draws a chip in the panel
+        // rather than nothing: the comment here used to say it rendered nothing in any world.
         colorFor: (r) => railroadPaint(lirr.system)(r).fill,
       },
     },
     mnr: {
       body: fx.railroadArrivals(),
-      popup: (b) => S.railroadArrivalsHtml(mnr, b, now, railroadPaint(mnr.system), railroadName(mnr.system)),
+      popup: (b) =>
+        S.railroadArrivalsHtml(mnr, b, now, railroadPaint(mnr.system), railroadName(mnr.system), "", railroadMark(mnr.system)),
       entry: {
         key: `${mnr.system}|${mnr.id}`, kind: "railroad", systemLabel: "Metro-North", noun: "train",
-        id: mnr.id, system: mnr.system, name: mnr.name, routes: [], wheelchair: false,
+        id: mnr.id, system: mnr.system, name: mnr.name, routes: mnr.routes ?? [], wheelchair: false,
         arrivalsUrl: `/api/railroad-arrivals/${mnr.system}/${mnr.id}`,
         nameFor: railroadName(mnr.system),
-        // R1: the panel's chip resolver, which registerStation carries now. It renders nothing in
-        // any fixture world (the stops endpoint serves no `routes`), and it is here because this
-        // entry's contract is to carry the fields its loader gives it.
+        // R1: the panel's chip resolver, which registerStation carries now. R3 gave the stops
+        // fixture the `routes` the endpoint has always served, so this draws a chip in the panel
+        // rather than nothing: the comment here used to say it rendered nothing in any world.
         colorFor: (r) => railroadPaint(mnr.system)(r).fill,
       },
     },
@@ -205,8 +251,10 @@ function boards(S) {
           path,
           b,
           now,
-          (r) => pathColors.get(r) ?? S.PATH_FALLBACK_COLOR,
+          (r) => pathColors.get(r) ?? H.PATH_FALLBACK_COLOR,
           (r) => pathNames.get(r) || null,
+          "",
+          pathMark,
         ),
       entry: {
         key: `PATH|${path.id}`, kind: "path", systemLabel: "PATH", noun: "train",
@@ -224,6 +272,8 @@ function boards(S) {
           // R1: the published colour the tag draws with, mirroring systems/njt.js's board resolver.
           (r) => S.railBranchColor(njt.paints.get(r)?.color ?? null),
           (r) => S.njtRouteName(r, njt.names),
+          "",
+          njtMark,
         ),
       entry: {
         key: `NJT|${penn.id}`, kind: "njt", systemLabel: "NJ Transit", noun: "train",
@@ -234,7 +284,15 @@ function boards(S) {
     ferry: {
       body: fx.ferryArrivals(),
       popup: (b) =>
-        S.ferryArrivalsHtml(dock, b, now, (r) => ferryColors.get(r) ?? S.FERRY_FALLBACK_COLOR),
+        S.ferryArrivalsHtml(
+          dock,
+          b,
+          now,
+          (r) => ferryColors.get(r) ?? H.FERRY_FALLBACK_COLOR,
+          undefined,
+          "",
+          ferryMark,
+        ),
       entry: {
         key: `ferry|${dock.id}`, kind: "ferry", systemLabel: "Ferry", noun: "boat",
         id: dock.id, name: dock.name, routes: dock.routes ?? [], wheelchair: dock.wheelchair === true,
@@ -290,17 +348,44 @@ const BABYLON = 'style="background:#00985F;color:#1a1a1a"';
 const HUDSON = 'style="background:#009B3A;color:#1a1a1a"';
 
 /* ONE OF Times Sq's KICKER PLATES, as withoutMarks prints it: the route the plate carries, the size
-   the popup drew it at, and the fills the plate declares, in the order the SVG lists them (the
-   rounded square, then the numeral). 17 is POPUP_MARK_ROW, the design's small mark, and it is a
-   literal here on purpose: the constant's own value is pinned in frontend/popupvocab.test.js, so if
-   a later stage draws a kicker's plates larger these pins say so rather than following along.
+   the popup drew it at, and the fills the plate declares, in the order the SVG lists them (the paper
+   backing, the rounded square, then the numeral). 17 is POPUP_MARK_ROW, the design's small mark, and
+   it is a literal here on purpose: the constant's own value is pinned in frontend/popupvocab.test.js,
+   so if a later stage draws a kicker's plates larger these pins say so rather than following along.
 
-   THE FILLS ARE THE PAIR RED SPELLS ABOVE, which is the reason they are in the token at all: the
-   kicker's plates and the arrival badges below both ask lineColor for the 1 train and both ink
+   THE LAST TWO FILLS ARE THE PAIR RED SPELLS ABOVE, which is the reason they are in the token at all:
+   the kicker's plates and the arrival badges below both ask lineColor for the 1 train and both ink
    against it, so a plate whose paint stopped agreeing with its badge is a defect the reader of a
-   popup can see, and a token that said only [mark 1] could not fail on it. */
-const plate = (route) => `[mark ${route} 17x17 #c0392b,#ffffff]`;
-const TIMES_SQ_PLATES = [1, 2, 3].map(plate).join("");
+   popup can see, and a token that said only [mark 1] could not fail on it. The first is the backing
+   the plate draws under itself, which entered the token when ruling R3 taught withoutMarks to read a
+   fill declared in a `style` attribute: without that the PATH diamond and the ferry hull, which
+   declare theirs only that way, carried no colour in their tokens at all. */
+const plate = (route) => `[mark ${route} 17x17 var(--paper),#c0392b,#ffffff]`;
+/* AND THE WORDS UNDER THE MARKS (ruling R3), which every kicker with routes in it now carries: the
+   marks are aria-hidden, so without this span a rider who cannot see them learns nothing about which
+   routes call at the station. It is the station panel's own pattern for its route chips and its access
+   glyph, and A1's `.visually-hidden` is the class. The list is every route, not the shown ones: the
+   count beside the marks is what an eye reads for the rest. */
+const spokenRoutes = (...names) => `<span class="visually-hidden">${names.join(", ")}</span>`;
+const TIMES_SQ_PLATES = [1, 2, 3].map(plate).join("") + spokenRoutes(1, 2, 3);
+
+/* THE OTHER FOUR FAMILIES' KICKER MARKS, as withoutMarks prints them, one literal per served route
+   in the fixtures. Each is that family's own map mark at the same 17: a BODY-ONLY rail tag (its
+   agency glyph and its branch code, the two <text> nodes joined with a middle dot, and the four
+   paints its two blocks and two letters declare), a PATH diamond, a ferry hull.
+
+   THE WIDTHS ARE THE TAG'S OWN ARITHMETIC and they differ per code length, which is the measurement
+   that set the shared cap at three: 45.77 for a three-letter railroad code, 52.31 and 66.69 for NJ
+   Transit's NEC and MNBTN. A hull is 26.71 and a diamond, like a plate, is 17. */
+const railTag = (glyph, code, width, fill, ink) =>
+  `[mark ${glyph}·${code} ${width}x17 var(--ink),${fill},var(--paper),${ink}]`;
+const BABYLON_TAG = railTag("L", "BAB", 45.77, "#00985F", "#1a1a1a");
+const HUDSON_TAG = railTag("M", "HUD", 45.77, "#009B3A", "#1a1a1a");
+const NEC_TAG = railTag("NJ", "NEC", 52.31, "#DD3439", "#ffffff");
+const MNBTN_TAG = railTag("NJ", "MNBTN", 66.69, "#E66859", "#1a1a1a");
+const diamond = (fill) => `[mark 17x17 ${fill}]`;
+// The hull's second declared paint is its `none` stroke, which is part of what the mark declares.
+const hull = (fill) => `[mark 26.71x17 ${fill},none]`;
 
 /* MR5: SECTION 5's GRAMMAR, AS FOUR TEMPLATES, so six board pins stay readable after the popup
    became a kicker, a title and a three-cell grid. These are literal templates written HERE, in the
@@ -362,7 +447,7 @@ test("PIN LIRR: Jamaica, each prediction dated by its own trip", () => {
   const out = render("lirr");
   assert.equal(
     out.popup,
-    kicker("LIRR") +
+    kicker("LIRR", BABYLON_TAG + spokenRoutes("Babylon Branch")) +
       title("Jamaica") +
       dir("Inbound") +
       arr(row(`<span class="arr-badge" ${BABYLON}>1</span>`, 'Babylon Branch <span class="popup-sub">#8412</span>', "4 min")) +
@@ -396,7 +481,7 @@ test("PIN Metro-North: Grand Central, whose predictions carry no clock at all", 
     // MR5: THE KICKER IS THE SERVED CODE, "MNR", where this station's own panel row two assertions
     // down says "Metro-North". The popup's head has printed the code since phase 9; the divergence
     // is recorded as an MR5 finding and is not reworded here.
-    kicker("MNR") +
+    kicker("MNR", HUDSON_TAG + spokenRoutes("Hudson")) +
       title("Grand Central") +
       dir("Inbound") +
       arr(row(`<span class="arr-badge" ${HUDSON}>1</span>`, 'Hudson <span class="popup-sub">#795</span>', "4 min")) +
@@ -423,7 +508,10 @@ test("PIN PATH: World Trade Center, two trips with two different clocks", () => 
   const out = render("path");
   assert.equal(
     out.popup,
-    kicker("PATH") +
+    kicker(
+      "PATH",
+      diamond("#d93a30") + diamond("#4d92fb") + spokenRoutes("Newark - World Trade Center", "Hoboken - 33rd"),
+    ) +
       title("World Trade Center") +
       dir("To New York") +
       arr(row('<span class="arr-badge" style="background:#4d92fb;color:#1a1a1a">859</span>', "Hoboken - 33rd", "2 min")) +
@@ -451,7 +539,7 @@ test("PIN NJ Transit: New York Penn, a flat board dated by the TripUpdates heade
   assert.equal(
     out.popup,
     // A FLAT BOARD IS ONE .arr WITH THREE ROWS, where every other board opens one per bucket.
-    kicker("NJ Transit") +
+    kicker("NJ Transit", NEC_TAG + MNBTN_TAG + spokenRoutes("Northeast Corridor", "Montclair-Boonton Line")) +
       title("New York Penn Station") +
       arr(
         row('<span class="arr-badge" style="background:#DD3439;color:#ffffff">9</span>', 'Trenton <span class="popup-sub">3800</span>', "2 min"),
@@ -492,7 +580,16 @@ test("PIN ferry: Wall St/Pier 11, a dock dated by TripUpdates and a boat dwellin
        still clears 4.5 on the surface it is printed on.
        A FERRY ROW HAS NO BADGE AND NOTHING TO NAME: its bucket is the route, so the first two
        cells are empty and the countdown carries its own "departs". */
-    kicker("NYC Ferry", '<span class="popup-access" title="Wheelchair accessible">&#9855;</span>') +
+    /* THE ONE KICKER WHOSE RIGHT SLOT WAS ALREADY OCCUPIED: the routes' hulls, then the words, then
+       the access glyph, which stays rightmost where it has always been. SV is the third route this
+       dock serves and the routes fixture does not carry it, so its hull is the ferry's published
+       fallback and its spoken name is its id: the one board here that renders a family's fallback. */
+    kicker(
+      "NYC Ferry",
+      hull("#00839c") + hull("#ffd100") + hull("#78909c") +
+        spokenRoutes("East River", "South Brooklyn", "SV") +
+        '<span class="popup-access" title="Wheelchair accessible">&#9855;</span>',
+    ) +
       title("Wall St/Pier 11") +
       '<div class="dir" style="color:#006f85">East River</div>\n' +
       arr(row("", "", "2 min")) +
@@ -721,7 +818,14 @@ test("6.2 Metro-North's stale poll: the line speaks once, the clause rides it, t
   // and "MNR" would be read letter by letter.
   const line = "as of 7m ago; Metro-North prediction age unavailable";
   // MR5: the board line sits under the title, where the head used to be followed by it directly.
-  assert.ok(out.popup.startsWith(kicker("MNR") + title("Grand Central") + `<div class="popup-stale">${line}</div>\n`), out.popup);
+  assert.ok(
+    out.popup.startsWith(
+      kicker("MNR", HUDSON_TAG + spokenRoutes("Hudson")) +
+        title("Grand Central") +
+        `<div class="popup-stale">${line}</div>\n`,
+    ),
+    out.popup,
+  );
   assert.deepEqual(popupQualifiers(out.popup), []);
   assert.deepEqual(out.panel.slice(0, 2), ["h3 Grand Central (Metro-North)", `p.station-detail-stale ${line}`]);
   assert.deepEqual(panelQualifiers(out.panel), ["", ""]);

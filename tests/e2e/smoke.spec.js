@@ -2524,9 +2524,14 @@ test("C2i. F03's acceptance, board half: at Prospect Av a lagging group's rows s
 
      THE MARK TOKEN CARRIES THE PLATE'S OWN ARGUMENTS, which is a reviewer's correction to that
      normaliser: the route it draws, the size the kicker drew it at (17, the design's small mark) and
-     the two fills it declares. Those fills are this board's own two colours, the same pair the row
-     badges below carry, so a kicker drawing a green 2 or a red 5 fails here rather than reading as
-     [mark 2][mark 5] either way. */
+     the fills it declares. The last two are this board's own colours, the same pair the row badges
+     below carry, so a kicker drawing a green 2 or a red 5 fails here rather than reading as
+     [mark 2][mark 5] either way; the first is the plate's own backing, which entered the token when
+     ruling R3 taught the normaliser to read a fill declared in a `style` attribute.
+
+     AND THE ROUTES ARE SPOKEN (R3): the marks are aria-hidden, so the kicker carries the words in
+     A1's visually-hidden class for a rider who cannot see them. Prospect Av serves two routes, which
+     is under the cap, so no count is drawn here. */
   const q = ' <span class="arr-qualifier">as of 10m ago</span>';
   // The countdown cell's class is spelled by the CALLER here, not derived from the word, so the
   // accent on a row reading "now" is pinned rather than reproduced: section 5 asks for it and
@@ -2538,7 +2543,8 @@ test("C2i. F03's acceptance, board half: at Prospect Av a lagging group's rows s
   await expect(page.locator(".leaflet-popup-content .arr-qualifier")).toHaveCount(6);
   expect(withoutMarks(await popup(page).innerHTML())).toBe(
     '<div class="pk"><span>Subway</span>\n' +
-      '<span>[mark 2 17x17 #c0392b,#ffffff][mark 5 17x17 #1e8449,#ffffff]</span></div>\n' +
+      '<span>[mark 2 17x17 var(--paper),#c0392b,#ffffff][mark 5 17x17 var(--paper),#1e8449,#ffffff]' +
+      '<span class="visually-hidden">2, 5</span></span></div>\n' +
       '<div class="pt"><span>Prospect Av</span></div>\n' +
       '<div class="dir">Northbound</div>\n' +
       '<div class="arr">' +

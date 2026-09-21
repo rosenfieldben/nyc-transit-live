@@ -249,6 +249,22 @@ async function loadRailroadStations() {
           (routeId) => railroadRouteNames.get(`${s.system}|${routeId}`) || null,
           // MR5: the paper square this station is drawn as, at the title's size.
           popupMarkHtml(markerMarkHtml(m)),
+          /* R3: and the branches calling here, in the kicker, as BODY-ONLY tags. The same
+             railroadBranch lookup the tag, the badge and the panel chip use, so a kicker cannot
+             resolve a branch a second way; the name a screen reader hears is the branch's own,
+             falling back to its code where the route table has no name for it. */
+          (routeId) => {
+            const branch = railroadBranch(s.system, routeId);
+            return {
+              svg: railRouteTagSvg({
+                system: s.system,
+                code: branch.code,
+                color: branch.color,
+                textColor: branch.textColor,
+              }),
+              name: railroadRouteNames.get(`${s.system}|${routeId}`) || branch.code,
+            };
+          },
         ),
     })).addTo(railroadStopLayer(station.system));
     registerStation({

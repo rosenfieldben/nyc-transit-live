@@ -157,12 +157,25 @@ const STOCK_SURFACES = [
    and it does not get to be re-created in the commit that names it. */
 const withoutMarks = (html) =>
   html.replace(/<span class="pmark"[^>]*>[\s\S]*?<\/span>/g, (svg) => {
-    const label = /<text[^>]*>([^<]*)<\/text>/.exec(svg);
+    /* EVERY <text>, NOT THE FIRST, which ruling R3 is what forced. A rail tag's body has TWO: the
+       agency glyph and the branch CODE, and `exec` took the glyph, so every LIRR branch read as
+       `[mark L ...]` and the one thing a route mark exists to say was unpinnable. Joined with a
+       middle dot, which is the strip's own separator; a subway plate has one text, so its token is
+       byte-identical and no existing pin moves from this half. */
+    const label = [...svg.matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map((m) => m[1]).filter(Boolean).join("\u00b7");
     const size = /width="([\d.]+)" height="([\d.]+)"/.exec(svg);
-    const fills = [...svg.matchAll(/fill="([^"]+)"/g)].map((m) => m[1]).join(",");
+    /* AND A FILL DECLARED IN A style ATTRIBUTE COUNTS, for the same reason: the PATH diamond and the
+       ferry hull declare theirs as `style="fill: ..."` and nothing else, so their tokens carried NO
+       colour at all and a board drawing every diamond in the fallback slate would have pinned
+       identically to one drawing the published reds and blues. This half DOES move the existing
+       plate tokens, which gain the backing's `var(--paper)`: that is the honest direction, since the
+       backing is part of what the mark declares. */
+    const fills = [...svg.matchAll(/fill="([^"]+)"|style="fill:\s*([^;"]+)/g)]
+      .map((m) => m[1] ?? m[2])
+      .join(",");
     return [
       "[mark",
-      label ? label[1] : null,
+      label || null,
       size ? `${size[1]}x${size[2]}` : null,
       fills || null,
     ]

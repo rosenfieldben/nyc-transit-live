@@ -884,8 +884,9 @@ function popupMarkHtml(svg, height = null) {
   return `<span class="pmark" aria-hidden="true">${sized} width="${width}" height="${h}"${source.slice(end)}</span>`;
 }
 
-/* THE KICKER. Left is the surface's system word, right is whatever small marks it carries: the
-   route plates a subway station is served by, the wheelchair glyph a ferry dock publishes.
+/* THE KICKER. Left is the surface's system word, right is whatever small marks it carries: since
+   ruling R3, the routes calling at a station on all five of its boards, plus the wheelchair glyph a
+   ferry dock publishes, which shares the slot with them.
 
    BOTH SPANS ARE EMITTED WHENEVER THE ROW IS, because the row is a flex with space-between and
    one span would sit at the left edge rather than at the right. An empty row is no row at all,
@@ -894,6 +895,56 @@ function popupMarkHtml(svg, height = null) {
 function popupKickerHtml({ left = "", rightHtml = "" } = {}) {
   if (!left && !rightHtml) return "";
   return `<div class="pk"><span>${esc(left)}</span>\n<span>${rightHtml}</span></div>\n`;
+}
+
+/* THE ROUTES CALLING AT A STATION, AS THE KICKER'S RIGHT-HAND SLOT (ruling R3): one helper for all
+   five station boards, drawing each family's OWN mark at the popup's row size.
+
+   ONE HELPER AND NOT FIVE, which is the ruling's first clause and the reason this is here rather
+   than in each board: the subway board had this slot to itself for a stage, as an unbounded
+   `map().join("")`, and four boards showed a rider nothing about which routes call where. A second
+   copy of the same loop would also be a second answer to the overflow question below.
+
+   THE MARK IS THE MAP'S MARK, through popupMarkHtml at POPUP_MARK_ROW, which is the rule the titles
+   already keep: `markFor(routeId)` returns the family's own builder output and the route's NAME, and
+   a family whose mark cannot be built for a route (no colour table yet, an id nothing knows) returns
+   nothing and is skipped. Skipped BEFORE the cap, or a station with two unnameable routes would
+   spend its budget on nothing.
+
+   THE OVERFLOW RULE, WHICH IS ONE RULE FOR ALL FIVE and is measured rather than chosen. The families'
+   marks are 17 units wide (a subway plate, a PATH diamond) to 66.69 (an NJ Transit tag reading
+   MNBTN), a factor of four, and the popup is sized by Leaflet to its own nowrap content up to
+   maxWidth 320: measured in the app at 1280, 375 and 320, the count at which a kicker first wraps to
+   a second row is 16 for the subway, 13 for the LIRR, 13 for PATH and FOUR for NJ Transit at the two
+   phone widths. So three is the largest shared count that never wraps anywhere, and NJ Transit is the
+   constraint. A shared WIDTH budget would let the subway show nine, and it would be a second rule;
+   the ruling says a count, and this is the count the measurement allows.
+
+   AND THE FULL LIST IS SPOKEN, which is the ruling's last clause and needs one honest note: Leaflet
+   gives a popup no accessible NAME at all (no role, no aria-label; its only aria-label is the close
+   button's), so there is no name to put a list in. What a screen reader can be given is the words,
+   in document order, through A1's `.visually-hidden` class, which is what the station panel already
+   does for its own route chips and its access glyph. Every mark here is aria-hidden (popupMarkHtml
+   writes that), so without this span a rider who cannot see the marks would learn nothing about the
+   routes at all; and the count is aria-hidden for the same reason the square in the footer is, since
+   the words beside it already say what it means. */
+const POPUP_KICKER_MARKS = 3;
+
+function popupRouteMarksHtml(routes, markFor, cap = POPUP_KICKER_MARKS) {
+  const marks = [];
+  for (const routeId of routes ?? []) {
+    const mark = typeof markFor === "function" ? markFor(routeId) : null;
+    const svg = mark && mark.svg ? popupMarkHtml(mark.svg, POPUP_MARK_ROW) : "";
+    if (svg) marks.push({ svg, name: String(mark.name ?? routeId) });
+  }
+  if (!marks.length) return "";
+  const shown = marks.slice(0, Math.max(0, cap));
+  const withheld = marks.length - shown.length;
+  return (
+    shown.map((m) => m.svg).join("") +
+    (withheld > 0 ? `<span class="pmore" aria-hidden="true">+${withheld}</span>` : "") +
+    `<span class="visually-hidden">${esc(marks.map((m) => m.name).join(", "))}</span>`
+  );
 }
 
 /* THE TITLE. `markHtml` is popupMarkHtml's answer (or "" for the three families whose map mark
@@ -2972,6 +3023,42 @@ function railTagChevronPath(cx) {
    a stylesheet if a later surface ever needs to. */
 const RAIL_TAG_TYPE = ' font-family="Archivo, system-ui, sans-serif" font-size="8" font-weight="800" letter-spacing="0.01"';
 
+/* THE TAG'S BODY, WHICH IS TWO BLOCKS AND THEIR TWO LETTERS, extracted so there is ONE answer to
+   "what does a rail tag body look like" (ruling R3). It had one caller and now has two: the map's
+   full tag below, and the BODY-ONLY tag a station kicker draws for each route calling there. The
+   Key panel hand-writes two more in index.html, which is why this is an extraction rather than a
+   copy: a third written body would be a third answer, which is finding N6 inside the stage that
+   just paid it.
+
+   `backing` IS THE ONE PARAMETER THAT IS NOT GEOMETRY. The solid body carries a paper rectangle a
+   half unit larger than the tag at 0.9 opacity, so a tag reads against any basemap tile. A popup's
+   surface is opaque `--surface`, so there is no tile to read against there; and the backing is one
+   of only two non-opaque paints on this whole map (pins.spec.js P4d's `contrast/alpha` pin exists
+   for it), so drawing it inside a popup would put a second instance of it on a second surface. The
+   route form passes false and the map's tag passes true, which is why the map's output is
+   byte-identical to what it was before this extraction. */
+function railTagBodySvg({ w, aw, cw, glyph, code, branch, branchInk, stripe, solid, backing = true }) {
+  return solid
+    ? // A paper backing 1px larger at 0.9, so the tag reads against any tile, then the two
+      // blocks: the agency in ink with a paper glyph, the branch in its own colour.
+      (backing
+        ? `<rect x="-0.5" y="-0.5" width="${w + 1}" height="14" style="fill: var(--paper)" opacity="0.9"/>`
+        : "") +
+      `<rect x="0" y="0" width="${aw}" height="${RAIL_TAG_HEIGHT}" style="fill: var(--ink)"/>` +
+      `<rect x="${aw}" y="0" width="${cw}" height="${RAIL_TAG_HEIGHT}" fill="${branch}"/>` +
+      `<text x="${aw / 2}" y="${RAIL_TAG_TEXT_BASELINE}" text-anchor="middle"${RAIL_TAG_TYPE} style="fill: var(--paper)">${esc(glyph)}</text>` +
+      `<text x="${aw + cw / 2}" y="${RAIL_TAG_TEXT_BASELINE}" text-anchor="middle"${RAIL_TAG_TYPE} fill="${branchInk}">${esc(code)}</text>`
+    : // Outlined: one paper box in an ink stroke, a divider at the block edge, both texts in
+      // ink, and the branch colour reduced to a stripe along the bottom of its own block.
+      // The stroke is 1.2 and centred on the path, so the box is inset 0.6 to stay inside
+      // the 13px it is allowed.
+      `<rect x="0.6" y="0.6" width="${w - 1.2}" height="${RAIL_TAG_HEIGHT - 1.2}" style="fill: var(--paper); stroke: var(--ink)" stroke-width="1.2"/>` +
+      `<line x1="${aw}" y1="0.6" x2="${aw}" y2="${RAIL_TAG_HEIGHT - 0.6}" style="stroke: var(--ink)" stroke-width="1.2"/>` +
+      `<rect x="${aw + 0.6}" y="${RAIL_TAG_HEIGHT - 0.6 - RAIL_TAG_STRIPE}" width="${cw - 1.2}" height="${RAIL_TAG_STRIPE}" fill="${stripe}"/>` +
+      `<text x="${aw / 2}" y="${RAIL_TAG_TEXT_BASELINE}" text-anchor="middle"${RAIL_TAG_TYPE} style="fill: var(--ink)">${esc(glyph)}</text>` +
+      `<text x="${aw + cw / 2}" y="${RAIL_TAG_TEXT_BASELINE}" text-anchor="middle"${RAIL_TAG_TYPE} style="fill: var(--ink)">${esc(code)}</text>`;
+}
+
 function railTagSvg({ system, code, color, textColor = null, state, bearing = null } = {}) {
   const geom = railTagGeometry(system, code);
   const { width: w, agencyWidth: aw, codeWidth: cw, glyph, centre: cx } = geom;
@@ -2986,23 +3073,7 @@ function railTagSvg({ system, code, color, textColor = null, state, bearing = nu
   const headFilled = state.head === "filled";
   const showChevron = state.headingTrusted && bearing != null;
 
-  const body = solid
-    ? // A paper backing 1px larger at 0.9, so the tag reads against any tile, then the two
-      // blocks: the agency in ink with a paper glyph, the branch in its own colour.
-      `<rect x="-0.5" y="-0.5" width="${w + 1}" height="14" style="fill: var(--paper)" opacity="0.9"/>` +
-      `<rect x="0" y="0" width="${aw}" height="${RAIL_TAG_HEIGHT}" style="fill: var(--ink)"/>` +
-      `<rect x="${aw}" y="0" width="${cw}" height="${RAIL_TAG_HEIGHT}" fill="${branch}"/>` +
-      `<text x="${aw / 2}" y="${RAIL_TAG_TEXT_BASELINE}" text-anchor="middle"${RAIL_TAG_TYPE} style="fill: var(--paper)">${esc(glyph)}</text>` +
-      `<text x="${aw + cw / 2}" y="${RAIL_TAG_TEXT_BASELINE}" text-anchor="middle"${RAIL_TAG_TYPE} fill="${branchInk}">${esc(code)}</text>`
-    : // Outlined: one paper box in an ink stroke, a divider at the block edge, both texts in
-      // ink, and the branch colour reduced to a stripe along the bottom of its own block.
-      // The stroke is 1.2 and centred on the path, so the box is inset 0.6 to stay inside
-      // the 13px it is allowed.
-      `<rect x="0.6" y="0.6" width="${w - 1.2}" height="${RAIL_TAG_HEIGHT - 1.2}" style="fill: var(--paper); stroke: var(--ink)" stroke-width="1.2"/>` +
-      `<line x1="${aw}" y1="0.6" x2="${aw}" y2="${RAIL_TAG_HEIGHT - 0.6}" style="stroke: var(--ink)" stroke-width="1.2"/>` +
-      `<rect x="${aw + 0.6}" y="${RAIL_TAG_HEIGHT - 0.6 - RAIL_TAG_STRIPE}" width="${cw - 1.2}" height="${RAIL_TAG_STRIPE}" fill="${stripe}"/>` +
-      `<text x="${aw / 2}" y="${RAIL_TAG_TEXT_BASELINE}" text-anchor="middle"${RAIL_TAG_TYPE} style="fill: var(--ink)">${esc(glyph)}</text>` +
-      `<text x="${aw + cw / 2}" y="${RAIL_TAG_TEXT_BASELINE}" text-anchor="middle"${RAIL_TAG_TYPE} style="fill: var(--ink)">${esc(code)}</text>`;
+  const body = railTagBodySvg({ w, aw, cw, glyph, code, branch, branchInk, stripe, solid, backing: true });
 
   const stem =
     `<line x1="${cx}" y1="${RAIL_TAG_HEIGHT}" x2="${cx}" y2="${RAIL_TAG_STEM_END}"` +
@@ -3022,6 +3093,53 @@ function railTagSvg({ system, code, color, textColor = null, state, bearing = nu
     `<svg viewBox="0 0 ${w} ${RAIL_TAG_BOX_HEIGHT}" width="${w}" height="${RAIL_TAG_BOX_HEIGHT}"` +
     ` class="rail-tag rail-tag-${state.body} rail-head-${state.head}" aria-hidden="true"` +
     ` focusable="false">${body}${stem}${head}</svg>`
+  );
+}
+
+/* THE SAME TAG WITH NOTHING BUT ITS BODY, for a station kicker's route marks (ruling R3).
+
+   A ROUTE HAS NO PROVENANCE, which is what decides every difference from the tag above. The 30-unit
+   box's stem and its chevron-or-dot state where one TRAIN is and whether its heading is trusted, and
+   a route calling at a station has neither: drawing them would be drawing a claim about a vehicle
+   that is not there. So the box is the body's own 13 units, and the class is its own.
+
+   SOLID AND NOT OUTLINED, for the same reason one level down: the outlined body reduces the branch
+   colour to a 2.5-unit stripe and prints both letters in ink, because that is how the map says
+   "this train's position is a schedule estimate". A route's identity IS its colour, so the kicker
+   takes the form that carries it as a block.
+
+   `rail-route-tag` AND NOT `rail-tag`, which is not cosmetic: a11y.spec.js A1z4 asserts where every
+   `svg.rail-tag` on the page is (a rail marker, or a rail TRAIN popup's title) and the axe gate's
+   exception for that class's 8px type rests on A1z4 measuring every place it appears. A kicker full
+   of them would be a third place, excused by an exception whose decider never looks at it, which is
+   the reviewer finding that comment already records. The Key panel took the same road with
+   `key-rail-tag`, and keyglyphs.test.js holds it.
+
+   AND THE viewBox MUST START "0 0", which popupMarkHtml requires to read a box at all: it returns
+   the EMPTY STRING for any other origin, so a shifted box (the Key's hand-written tags use
+   `-3.5 -1.5 42 16`) would make every kicker silently mark-free. popupvocab.test.js puts this
+   builder through the re-wrap for exactly that reason. */
+function railRouteTagSvg({ system, code, color, textColor = null } = {}) {
+  const geom = railTagGeometry(system, code);
+  const { width: w, agencyWidth: aw, codeWidth: cw, glyph } = geom;
+  const paint = railBranchPaint(color, textColor);
+  const body = railTagBodySvg({
+    w,
+    aw,
+    cw,
+    glyph,
+    code,
+    branch: paint.fill,
+    branchInk: paint.ink,
+    stripe: railBranchColor(color),
+    solid: true,
+    // No paper backing: a popup's surface is opaque, and that rect is one of two non-opaque
+    // paints on the map (see railTagBodySvg).
+    backing: false,
+  });
+  return (
+    `<svg viewBox="0 0 ${w} ${RAIL_TAG_HEIGHT}" class="rail-route-tag" aria-hidden="true"` +
+    ` focusable="false">${body}</svg>`
   );
 }
 
@@ -3743,16 +3861,22 @@ function orderedRailroadBuckets(directions) {
 // owes 4.5, and one published colour clears with neither ink (EE0034, four of Metro-North's six
 // routes): the pair is the only resolver that can move such a fill, exactly as the tag's branch
 // block does. The default is the rail neutral rather than a second one.
-function railroadArrivalsHtml(station, body, now, paintFor = () => railBranchPaint(null), nameFor = () => null, markHtml = "") {
+  /* `markFor` IS TRAILING AND DEFAULTED (ruling R3), which is a lesson from R1 one ruling earlier:
+     docs/reviews/audit-2026-09-05/f12 hand-copies one of these calls verbatim, and R1 put a resolver
+     in the MIDDLE of this signature, which slid that copy's nameFor into the paint slot and rendered
+     `background:undefined` while the record kept printing PASS. A trailing slot cannot do that. */
+function railroadArrivalsHtml(station, body, now, paintFor = () => railBranchPaint(null), nameFor = () => null, markHtml = "", markFor = () => null) {
   // Every row qualified by its own served age, and the system line where the R1 age
   // line was (6.2; see arrivalQualifier and boardSystemLine).
   const board = boardFreshness("railroad", body, now);
   /* MR5: section 5's kicker, title and board. The agency moves from a muted tag beside the
      station's name to the kicker above it, and it is still the SERVED `system` field: "MNR"
      here, where this station's own panel row says railroadSystemLabel's "Metro-North". That
-     divergence is recorded as an MR5 finding rather than reworded in passing. */
+     divergence is recorded as an MR5 finding rather than reworded in passing.
+     R3: AND THE KICKER HAS A RIGHT-HAND SIDE NOW, the branches calling at this station as
+     body-only tags, through the shared helper every station board uses. */
   const header =
-    popupKickerHtml({ left: station.system ?? "" }) +
+    popupKickerHtml({ left: station.system ?? "", rightHtml: popupRouteMarksHtml(station.routes, markFor) }) +
     popupTitleHtml({ markHtml, text: station.name ?? station.id }) +
     boardLineHtml(boardSystemLine(board, stationArrivalsRows(body)));
   const buckets = orderedRailroadBuckets(body.directions);
@@ -3910,12 +4034,12 @@ function pathTrainPopupHtml(train, name, color, position = null, surface = POPUP
 // closes both over the /api/path-routes tables, keeping this pure and
 // node-testable. An empty directions dict renders the shared "No trains"
 // treatment. Every feed-derived string is escaped.
-function pathArrivalsHtml(station, body, now, colorFor = () => PATH_FALLBACK_COLOR, nameFor = () => null, markHtml = "") {
+function pathArrivalsHtml(station, body, now, colorFor = () => PATH_FALLBACK_COLOR, nameFor = () => null, markHtml = "", markFor = () => null) {
   // PATH dates every trip itself, so two rows on one board can carry two different
   // ages, and only the old one is qualified (6.2).
   const board = boardFreshness("path", body, now);
   const header =
-    popupKickerHtml({ left: POPUP_SYSTEM_WORDS.path }) +
+    popupKickerHtml({ left: POPUP_SYSTEM_WORDS.path, rightHtml: popupRouteMarksHtml(station.routes, markFor) }) +
     popupTitleHtml({ markHtml, text: station.name ?? station.id }) +
     boardLineHtml(boardSystemLine(board, stationArrivalsRows(body)));
   const buckets = orderedPathBuckets(body.directions);
@@ -4074,7 +4198,7 @@ function ferryBoatPopupHtml(boat, name, color, position = null, surface = POPUP_
 // `wheelchair` flag surfaces as a small accessibility marker in the header, the
 // first such display in the app. An empty routes dict renders "No boats". Every
 // feed-derived string is escaped; colorFor returns a validated css color.
-function ferryArrivalsHtml(station, body, now, colorFor = () => FERRY_FALLBACK_COLOR, surface = POPUP_SURFACE_FALLBACK, markHtml = "") {
+function ferryArrivalsHtml(station, body, now, colorFor = () => FERRY_FALLBACK_COLOR, surface = POPUP_SURFACE_FALLBACK, markHtml = "", markFor = () => null) {
   /* MR5: THE DOCK'S ACCESSIBILITY GLYPH IS THE KICKER'S RIGHT-HAND SLOT, which is where section 5
      puts it ("right: route bullets / direction / accessibility"). It keeps its title attribute,
      which is the only place its WORDS exist: pins.spec.js reads them through the `labels` view for
@@ -4086,7 +4210,12 @@ function ferryArrivalsHtml(station, body, now, colorFor = () => FERRY_FALLBACK_C
   // qualified by it here (6.2).
   const board = boardFreshness("ferry", body, now);
   const header =
-    popupKickerHtml({ left: POPUP_SYSTEM_WORDS.ferry, rightHtml: access }) +
+    // R3: the routes calling at this dock, then the access glyph, which keeps the glyph rightmost
+    // where it has always been and is the one right-hand slot that was already occupied.
+    popupKickerHtml({
+      left: POPUP_SYSTEM_WORDS.ferry,
+      rightHtml: popupRouteMarksHtml(station.routes, markFor) + access,
+    }) +
     popupTitleHtml({ markHtml, text: station.name ?? station.id }) +
     boardLineHtml(boardSystemLine(board, stationArrivalsRows(body)));
   const buckets = orderedFerryBuckets(body.routes);
@@ -4439,11 +4568,11 @@ const njtArrivalDisplay = ferryArrivalDisplay;
 // never rendered; njtRowLabel is the authority and it returns one string.) A row with
 // neither still renders its countdown rather than being dropped: the train is real
 // and the time is the thing the rider came for.
-function njtArrivalsHtml(station, body, now, colorFor = () => RAIL_NEUTRAL_COLOR, nameFor = () => null, markHtml = "") {
+function njtArrivalsHtml(station, body, now, colorFor = () => RAIL_NEUTRAL_COLOR, nameFor = () => null, markHtml = "", markFor = () => null) {
   // Every row dated by the TripUpdates header and qualified by it (6.2).
   const board = boardFreshness("njt", body, now);
   const header =
-    popupKickerHtml({ left: POPUP_SYSTEM_WORDS.njt }) +
+    popupKickerHtml({ left: POPUP_SYSTEM_WORDS.njt, rightHtml: popupRouteMarksHtml(station.routes, markFor) }) +
     popupTitleHtml({ markHtml, text: station.name ?? station.id }) +
     boardLineHtml(boardSystemLine(board, stationArrivalsRows(body)));
   const rows = njtOrderedArrivals(body.arrivals, now);
@@ -5710,6 +5839,7 @@ if (typeof module !== "undefined" && module.exports) {
     // MR5: the popup's vocabulary, and the subway plate that became a builder so a title
     // could draw the map's own mark.
     POPUP_SYSTEM_WORDS, POPUP_MARK_TITLE, POPUP_MARK_ROW, popupMarkHtml, popupKickerHtml,
+    POPUP_KICKER_MARKS, popupRouteMarksHtml,
     popupTitleHtml, popupRowsHtml, popupDirHtml, popupArrRowsHtml, railroadHeadParts,
     subwayPlateSvg,
     MOBILE_MAX_WIDTH_PX, MOBILE_QUERY, narrowViewport,
@@ -5728,6 +5858,7 @@ if (typeof module !== "undefined" && module.exports) {
     // MR3: the commuter rail grammar. Pure, so the state table can be asked one row at a
     // time and the tag's markup read as a string rather than off a screenshot.
     RAIL_BRANCH_CODES, RAIL_NEUTRAL_COLOR, RAIL_AGENCY, railBranchCode, railBranchColor, railBranchInk, railBranchPaint, RAIL_INK_TARGET,
+    railTagBodySvg, railRouteTagSvg,
     RAIL_TAG_HEIGHT, railTagGeometry, railTagState,
     segmentBearing, railTrainBearing, RAIL_HEX,
     railTagSvg, railTagChevronPath, railStationSvg, RAIL_STATION_BOX, RAIL_STATION_SQUARE,

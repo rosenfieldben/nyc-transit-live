@@ -120,6 +120,14 @@ async function loadPathStops() {
           Date.now() / 1000 - (minClockOffset ?? 0),
           (routeId) => pathRouteColors.get(routeId) ?? PATH_FALLBACK_COLOR,
           (routeId) => pathRouteNames.get(routeId) || null,
+          // No title mark: a PATH station is a canvas circle with no icon string to borrow.
+          "",
+          // R3: the routes calling here, as the diamonds the map draws for them, in the published
+          // colour this same call site already resolves for the row badges.
+          (routeId) => ({
+            svg: pathDiamondSvg(pathRouteColors.get(routeId) ?? PATH_FALLBACK_COLOR),
+            name: pathRouteNames.get(routeId) || routeId,
+          }),
         ),
     })).addTo(pathStations);
     registerStation({

@@ -2146,14 +2146,24 @@ titles carry words alone. The rail families' station squares are `L.marker`s and
 
 **The subway station's kicker carries the routes calling there**, which is what section 5 asks for
 in that slot ("right: route bullets"), drawn by the map's own plate builder at the small size and
-taken from the registry's own `station.routes`, the same list the dot-or-ring is drawn from.
+taken from the registry's own `station.routes`, the same list the dot-or-ring is drawn from. **And
+after ruling R3 all five station boards do**, through one helper with one overflow rule; the section
+below this round's own is where that lands, and this sentence is left as the record of the stage in
+which one board had it and four showed a rider nothing.
 
-**Measured at the worst station rather than the fixture's.** Times Sq in the hermetic world serves
-three routes; the real one serves a dozen. Rendered with twelve plates at the popup's 220px floor,
-the kicker's right-hand span is 158px wide, WRAPS to two rows, and the popup's `scrollWidth` equals
-its `clientWidth`: the marks are inline content in a flex item whose min-content is one plate, so
-they wrap rather than pushing the row wider. Nothing about that is a promise the CSS makes on
-purpose, which is why it is measured here rather than assumed.
+**Measured at the worst station rather than the fixture's, and THE FIRST MEASUREMENT WAS WRONG.**
+Times Sq in the hermetic world serves three routes; the real one serves a dozen. This paragraph said
+that twelve plates make the right-hand span 158px wide and WRAP it to two rows, "so they wrap rather
+than pushing the row wider". Re-measured in the real app with the payload overridden to serve twelve:
+the popup's inline width is **267px**, the span is **204px**, `.pk` is **one row 20px tall**, and
+`scrollWidth` equals `clientWidth`. Twelve plates PUSH THE POPUP WIDER; they do not wrap. The
+mechanism is Leaflet's own `_updateLayout`, which sets `white-space: nowrap`, reads the content's
+offsetWidth and clamps it to [minWidth 50, maxWidth 320] before writing an inline width, so the popup
+is sized to the kicker's max-content and wraps only once that cap (or the `calc(100vw - 60px)` cap at
+phone widths) binds. The 220 in the old sentence is the CSS floor, which is reached only when nothing
+in the popup needs more. **Ruling R3 is what re-measured it**, because a cap cannot be sized from a
+wrap that does not happen; the ruling's round entry has the counts at which each family really does
+wrap.
 
 | Surface | kicker | title | rows |
 | --- | --- | --- | --- |
@@ -2164,10 +2174,10 @@ purpose, which is why it is measured here rather than assumed.
 | PATH train | `PATH` | diamond + route name | Next stop, Direction, Position |
 | ferry boat | `NYC Ferry` | hull + route name | Boat, Status, Speed, Position |
 | subway station | `Subway` + its route plates | station name | `.dir` per direction, `.arr` rows |
-| LIRR / MNR station | the served system | square + station name | as above |
-| NJ Transit station | `NJ Transit` | square + station name | one flat `.arr` |
-| PATH station | `PATH` | station name | `.dir` per direction |
-| ferry dock | `NYC Ferry` + its access glyph | dock name | `.dir` per route |
+| LIRR / MNR station | the served system + its branch tags | square + station name | as above |
+| NJ Transit station | `NJ Transit` + its line tags | square + station name | one flat `.arr` |
+| PATH station | `PATH` + its route diamonds | station name | `.dir` per direction |
+| ferry dock | `NYC Ferry` + its route hulls and its access glyph | dock name | `.dir` per route |
 | AirTrain station | `AirTrain JFK` | square + station name | `.kv`: a branch and its headway |
 
 **No word is coined.** The six system words are `POPUP_SYSTEM_WORDS`, and popupvocab.test.js asserts

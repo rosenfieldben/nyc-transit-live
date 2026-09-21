@@ -121,6 +121,14 @@ async function loadFerryStops() {
           (routeId) => ferryColorFor(routeId),
           // MR5: the surface this board's route headings are printed on, for readableInk.
           popupSurfaceColor(),
+          // No title mark: a dock is a canvas circle, like a PATH station.
+          "",
+          // R3: the routes calling here, as hulls in their published colours, sharing the kicker's
+          // right-hand slot with the access glyph this dock was already publishing there.
+          (routeId) => ({
+            svg: ferryHullSvg(ferryColorFor(routeId)),
+            name: ferryRouteNames.get(routeId) || routeId,
+          }),
         ),
     })).addTo(ferryDocks);
     registerStation({

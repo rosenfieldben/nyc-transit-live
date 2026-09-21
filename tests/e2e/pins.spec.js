@@ -611,12 +611,19 @@ const railRegistryEntry = (page, key) =>
   page.evaluate((k) => {
     const entry = stationRegistry.find((row) => row.key === k);
     if (!entry) return null;
-    const { marker, layer, nameFor, ...rest } = entry;
+    const { marker, layer, nameFor, colorFor, ...rest } = entry;
+    const firstRoute = (entry.routes ?? [])[0] ?? "1";
     return {
       ...rest,
       // nameFor is a closure over the route-name index; what is pinned is the answer it
       // gives, because the panel's sentences are built from that and not from the function.
-      nameForFirstRoute: typeof nameFor === "function" ? (nameFor((entry.routes ?? [])[0] ?? "1") ?? null) : null,
+      nameForFirstRoute: typeof nameFor === "function" ? (nameFor(firstRoute) ?? null) : null,
+      /* AND colorFor's ANSWER, for the same reason and because ruling R1 is what put it here: the
+         railroad's panel chip used to hash its route id while the map and the popups read the
+         agency's published colour, and this is the only place on the live page where that resolver's
+         answer is measured. A function spread into a pin serialises as nothing, so the golden would
+         have grown a key that says nothing; the value is the point. */
+      colorForFirstRoute: typeof colorFor === "function" ? (colorFor(firstRoute) ?? null) : null,
       hasPopup: !!marker.getPopup(),
       markerInItsLayer: !!layer && layer.hasLayer(marker),
       drawnOnPane: marker.options.renderer?.options?.pane ?? marker.options.pane ?? "overlayPane",
@@ -985,6 +992,30 @@ test("P5a. every string a rider reads in the stock world, per system", async ({ 
   for (const s of STOCK_SURFACES) {
     expect(world.surfaces[s].seen, `${s}: a raw seconds age reached the golden`).not.toMatch(/\b\d+s\b/);
   }
+
+  /* AND EVERY STATION BOARD'S KICKER DRAWS THE ROUTES CALLING THERE (ruling R3), asserted here
+     because a pin cannot carry it: an empty right-hand slot regenerates as an empty string and then
+     matches forever, which is trap T4 in this file's own words. Three of these five boards had no
+     routes in the fixtures to draw when the ruling landed (the railroad's and PATH's stops payloads
+     carried no `routes` field, though both endpoints serve one), so without this assertion the new
+     pins would have been pins of nothing at all.
+
+     A COUNT PER BOARD AND NOT A TOTAL, so a board that stops drawing them cannot be hidden by
+     another that draws three. The AirTrain station is deliberately absent: it has branches rather
+     than routes, and the ruling names five boards. */
+  const kickerMarks = async (which) => {
+    // THROUGH THE SETTLING READER, not a bare openPopup: a station popup opens on "Loading
+    // arrivals" and its board arrives a fetch later, and the loading state has no kicker at all.
+    // Measured, as this assertion failing with 0 on a board whose golden carries the tag.
+    await popupTextOf(page, which, { close: false });
+    const count = await page.locator(".leaflet-popup-content .pk .pmark").count();
+    await closeAllPopups(page);
+    return count;
+  };
+  for (const which of ["subway station", "lirr station", "mnr station", "njt station", "path station", "ferry dock"]) {
+    expect(await kickerMarks(which), `${which}: its kicker draws no route marks`).toBeGreaterThan(0);
+  }
+  await closeAllPopups(page);
 });
 
 /* THE SECOND WORLD, AND THE ONE THE BRIEF'S "per state" ACTUALLY ASKS FOR. The stock world
@@ -1635,6 +1666,76 @@ test("P5b. every rider-visible literal in the popup call graph is pinned, or has
       "it, or declare it: NOT_RIDER_TEXT if a rider never reads it, UNREACHED_STATES if they " +
       "do and no world here reaches that state.",
   ).toEqual([]);
+});
+
+/* P5e: THE KICKER'S OVERFLOW RULE, IN A WORLD THAT REACHES IT (ruling R3).
+
+   NO HERMETIC FIXTURE SERVES A STATION MORE THAN THREE ROUTES, measured across every stops payload:
+   the subway's Times Sq and Canal serve three, NJ Transit's stations two, one and two, the ferry's
+   docks three and one, the railroad's and PATH's one or two. So the cap, the count and the withheld
+   routes are unreachable from every pinned world, and a rule no world runs is a rule that ships
+   broken and green. frontend/popupvocab.test.js holds the arithmetic one builder at a time; this is
+   the half that can only be asked of a browser, which is whether the drawn row stays ONE row.
+
+   WHY THAT IS THE QUESTION. The ledger recorded that twelve plates "wrap to two rows" inside the
+   popup's 220px floor, and that measurement was wrong: Leaflet sizes a popup to its own nowrap
+   content up to maxWidth 320, so twelve plates make the popup 267px WIDE on one row instead. The cap
+   exists because of the family whose marks are widest (an NJ Transit tag reading MNBTN is 66.69
+   units where a subway plate is 17), and at four of those the row does wrap at phone widths. Three
+   is what never wraps anywhere, and this is where "anywhere" is checked. */
+test("P5e. a kicker with more routes than it can draw shows three, counts the rest, and stays one row", async ({
+  page,
+}) => {
+  // Times Sq's real dozen, which is what the fixture's three stand in for: the overflow rule has to
+  // hold for the station that made it necessary rather than for a number invented here.
+  const twelve = { id: "127", name: "Times Sq-42 St", lat: 40.7557, lon: -73.9865,
+    routes: ["1", "2", "3", "7", "A", "C", "E", "N", "Q", "R", "W", "S"] };
+  await boot(page, (ctx) => {
+    ctx.overrides.subwayStops = (route, fixtures) =>
+      json(route, fixtures.subwayStops().map((stop) => (stop.id === "127" ? twelve : stop)));
+  });
+  await page.waitForFunction(
+    () => typeof stationRegistry !== "undefined" && stationRegistry.some((row) => row.key === "subway|127"),
+  );
+
+  const measured = {};
+  for (const width of [1280, 375]) {
+    await page.setViewportSize({ width, height: 667 });
+    await closeAllPopups(page);
+    await page.clock.runFor(300);
+    await page.evaluate(inPage("MARKERS[which]().openPopup();"), "subway station");
+    await expect(page.locator(".leaflet-popup-content .pk .pmark")).toHaveCount(3);
+    measured[width] = await page.evaluate(() => {
+      const content = document.querySelector(".leaflet-popup-content");
+      const slot = content.querySelector(".pk > span:last-child");
+      const marks = [...slot.querySelectorAll(".pmark")];
+      const row = (el) => Math.round(el.getBoundingClientRect().height);
+      return {
+        marks: marks.length,
+        more: (slot.querySelector(".pmore") || {}).textContent ?? null,
+        spoken: (slot.querySelector(".visually-hidden") || {}).textContent ?? null,
+        // ONE ROW is the whole point: every mark's top edge is the same, and the slot is no taller
+        // than a mark. A wrapped row would double the second number and stagger the first.
+        distinctTops: new Set(marks.map((m) => Math.round(m.getBoundingClientRect().top))).size,
+        slotHeight: row(slot),
+        markHeight: row(marks[0]),
+        contentWidth: Math.round(content.getBoundingClientRect().width),
+      };
+    });
+  }
+
+  /* THE PREMISES, per width, outside pin() so a regeneration cannot swallow them: three marks and
+     nine withheld (the rule applied), one row (the reason the rule has that number), and the popup
+     inside the cap it is allowed (D6c's 320, and at 375 the viewport rule's own narrower cap). */
+  for (const [width, m] of Object.entries(measured)) {
+    expect(m.marks, `${width}: three marks, whatever the station serves`).toBe(3);
+    expect(m.more, `${width}: the nine it did not draw`).toBe("+9");
+    expect(m.spoken, `${width}: every route in the words`).toBe("1, 2, 3, 7, A, C, E, N, Q, R, W, S");
+    expect(m.distinctTops, `${width}: the marks are on ONE row`).toBe(1);
+    expect(m.slotHeight, `${width}: and the row is no taller than a mark`).toBeLessThanOrEqual(m.markHeight + 1);
+    expect(m.contentWidth, `${width}: inside the popup's cap`).toBeLessThanOrEqual(width === "375" ? 315 : 320);
+  }
+  pin("kicker/overflow", measured);
 });
 
 /* ---------------- P4: what stage MR4 is not allowed to change ----------------

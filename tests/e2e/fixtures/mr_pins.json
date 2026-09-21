@@ -16,12 +16,12 @@
     "Babylon Branch train in 4 minutes, 8:04 AM arrival, train 8412",
     "Babylon Branch train in 7 minutes, 8:07 AM arrival, train 8413"
    ],
-   "spoken": "New service alert for this station. Jamaica, LIRR. Inbound: Babylon Branch train in 4 minutes, 8:04 AM arrival, train 8412. Outbound: Babylon Branch train in 7 minutes, 8:07 AM arrival, train 8413",
+   "spoken": "Jamaica, LIRR. Inbound: Babylon Branch train in 4 minutes, 8:04 AM arrival, train 8412. Outbound: Babylon Branch train in 7 minutes, 8:07 AM arrival, train 8413",
    "popupAlerts": [
     "[1] Babylon Branch is single-tracking",
     "Jamaica platforms C and D are closed"
    ],
-   "popup": "<div class=\"alert-block\"><div class=\"alert-row\">[1] Babylon Branch is single-tracking</div>\n<div class=\"alert-row\">Jamaica platforms C and D are closed</div></div>\n<div class=\"pk\"><span>LIRR</span>\n<span></span></div>\n<div class=\"pt\"><span class=\"pmark\" aria-hidden=\"true\"><svg viewBox=\"0 0 20 20\" class=\"rail-stn\" aria-hidden=\"true\" focusable=\"false\" width=\"24\" height=\"24\"><rect x=\"6\" y=\"6\" width=\"8\" height=\"8\" style=\"fill: var(--paper); stroke: var(--ink)\" stroke-width=\"1.6\"></rect></svg></span>\n<span>Jamaica</span></div>\n<div class=\"dir\">Inbound</div>\n<div class=\"arr\"><span><span class=\"arr-badge\" style=\"background:#00985F;color:#1a1a1a\">1</span></span>\n<span>Babylon Branch <span class=\"popup-sub\">#8412</span></span>\n<span class=\"n\">4 min</span></div>\n<div class=\"dir\">Outbound</div>\n<div class=\"arr\"><span><span class=\"arr-badge\" style=\"background:#00985F;color:#1a1a1a\">1</span></span>\n<span>Babylon Branch <span class=\"popup-sub\">#8413</span></span>\n<span class=\"n\">7 min</span></div>\n"
+   "popup": "<div class=\"alert-block\"><div class=\"alert-row\">[1] Babylon Branch is single-tracking</div>\n<div class=\"alert-row\">Jamaica platforms C and D are closed</div></div>\n<div class=\"pk\"><span>LIRR</span>\n<span><span class=\"pmark\" aria-hidden=\"true\"><svg viewBox=\"0 0 35 13\" class=\"rail-route-tag\" aria-hidden=\"true\" focusable=\"false\" width=\"45.77\" height=\"17\"><rect x=\"0\" y=\"0\" width=\"11\" height=\"13\" style=\"fill: var(--ink)\"></rect><rect x=\"11\" y=\"0\" width=\"24\" height=\"13\" fill=\"#00985F\"></rect><text x=\"5.5\" y=\"8.9\" text-anchor=\"middle\" font-family=\"Archivo, system-ui, sans-serif\" font-size=\"8\" font-weight=\"800\" letter-spacing=\"0.01\" style=\"fill: var(--paper)\">L</text><text x=\"23\" y=\"8.9\" text-anchor=\"middle\" font-family=\"Archivo, system-ui, sans-serif\" font-size=\"8\" font-weight=\"800\" letter-spacing=\"0.01\" fill=\"#1a1a1a\">BAB</text></svg></span><span class=\"visually-hidden\">Babylon Branch</span></span></div>\n<div class=\"pt\"><span class=\"pmark\" aria-hidden=\"true\"><svg viewBox=\"0 0 20 20\" class=\"rail-stn\" aria-hidden=\"true\" focusable=\"false\" width=\"24\" height=\"24\"><rect x=\"6\" y=\"6\" width=\"8\" height=\"8\" style=\"fill: var(--paper); stroke: var(--ink)\" stroke-width=\"1.6\"></rect></svg></span>\n<span>Jamaica</span></div>\n<div class=\"dir\">Inbound</div>\n<div class=\"arr\"><span><span class=\"arr-badge\" style=\"background:#00985F;color:#1a1a1a\">1</span></span>\n<span>Babylon Branch <span class=\"popup-sub\">#8412</span></span>\n<span class=\"n\">4 min</span></div>\n<div class=\"dir\">Outbound</div>\n<div class=\"arr\"><span><span class=\"arr-badge\" style=\"background:#00985F;color:#1a1a1a\">1</span></span>\n<span>Babylon Branch <span class=\"popup-sub\">#8413</span></span>\n<span class=\"n\">7 min</span></div>\n"
   }
  },
  "board": {
@@ -43,7 +43,7 @@
    "spoken": "Prospect Av, Subway. Northbound: 5 train in 2 minutes, 8:02 AM arrival, as of 10m ago. 2 train in 3 minutes, 8:02 AM arrival, as of 10m ago. 5 train in 3 minutes, 8:02 AM arrival. 2 train in 5 minutes, 8:05 AM arrival. 5 train in 10 minutes, 8:09 AM arrival, as of 10m ago. 5 train in 12 minutes, 8:11 AM arrival. Southbound: 2 train now, 7:59 AM arrival, as of 10m ago. 5 train in 3 minutes, 8:02 AM arrival, as of 10m ago. 5 train in 3 minutes, 8:03 AM arrival. 2 train in 9 minutes, 8:09 AM arrival. 2 train in 9 minutes, 8:09 AM arrival, as of 10m ago. 5 train in 12 minutes, 8:12 AM arrival",
    "panelStaleLines": 0,
    "qualifiersInPopup": 6,
-   "popup": "<div class=\"pk\"><span>Subway</span>\n<span><span class=\"pmark\" aria-hidden=\"true\"><svg viewBox=\"0 0 18 18\" width=\"17\" height=\"17\">\n      <rect x=\"0\" y=\"0\" width=\"18\" height=\"18\" rx=\"4\" style=\"fill: var(--paper)\" opacity=\"0.95\"></rect>\n      <rect x=\"1.5\" y=\"1.5\" width=\"15\" height=\"15\" rx=\"3\" fill=\"#c0392b\"></rect>\n      <text x=\"9\" y=\"9.5\" text-anchor=\"middle\" dominant-baseline=\"central\" font-size=\"10.5\" font-weight=\"800\" font-family=\"Archivo, system-ui, sans-serif\" fill=\"#ffffff\">2</text>\n    </svg></span><span class=\"pmark\" aria-hidden=\"true\"><svg viewBox=\"0 0 18 18\" width=\"17\" height=\"17\">\n      <rect x=\"0\" y=\"0\" width=\"18\" height=\"18\" rx=\"4\" style=\"fill: var(--paper)\" opacity=\"0.95\"></rect>\n      <rect x=\"1.5\" y=\"1.5\" width=\"15\" height=\"15\" rx=\"3\" fill=\"#1e8449\"></rect>\n      <text x=\"9\" y=\"9.5\" text-anchor=\"middle\" dominant-baseline=\"central\" font-size=\"10.5\" font-weight=\"800\" font-family=\"Archivo, system-ui, sans-serif\" fill=\"#ffffff\">5</text>\n    </svg></span></span></div>\n<div class=\"pt\"><span>Prospect Av</span></div>\n<div class=\"dir\">Northbound</div>\n<div class=\"arr\"><span><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span></span>\n<span> <span class=\"arr-qualifier\">as of 10m ago</span></span>\n<span class=\"n\">2 min</span>\n<span><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span></span>\n<span> <span class=\"arr-qualifier\">as of 10m ago</span></span>\n<span class=\"n\">3 min</span>\n<span><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span></span>\n<span></span>\n<span class=\"n\">3 min</span>\n<span><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span></span>\n<span></span>\n<span class=\"n\">5 min</span>\n<span><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span></span>\n<span> <span class=\"arr-qualifier\">as of 10m ago</span></span>\n<span class=\"n\">10 min</span>\n<span><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span></span>\n<span></span>\n<span class=\"n\">12 min</span></div>\n<div class=\"dir\">Southbound</div>\n<div class=\"arr\"><span><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span></span>\n<span> <span class=\"arr-qualifier\">as of 10m ago</span></span>\n<span class=\"n now\">now</span>\n<span><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span></span>\n<span> <span class=\"arr-qualifier\">as of 10m ago</span></span>\n<span class=\"n\">3 min</span>\n<span><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span></span>\n<span></span>\n<span class=\"n\">3 min</span>\n<span><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span></span>\n<span></span>\n<span class=\"n\">9 min</span>\n<span><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span></span>\n<span> <span class=\"arr-qualifier\">as of 10m ago</span></span>\n<span class=\"n\">9 min</span>\n<span><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span></span>\n<span></span>\n<span class=\"n\">12 min</span></div>\n"
+   "popup": "<div class=\"pk\"><span>Subway</span>\n<span><span class=\"pmark\" aria-hidden=\"true\"><svg viewBox=\"0 0 18 18\" width=\"17\" height=\"17\">\n      <rect x=\"0\" y=\"0\" width=\"18\" height=\"18\" rx=\"4\" style=\"fill: var(--paper)\" opacity=\"0.95\"></rect>\n      <rect x=\"1.5\" y=\"1.5\" width=\"15\" height=\"15\" rx=\"3\" fill=\"#c0392b\"></rect>\n      <text x=\"9\" y=\"9.5\" text-anchor=\"middle\" dominant-baseline=\"central\" font-size=\"10.5\" font-weight=\"800\" font-family=\"Archivo, system-ui, sans-serif\" fill=\"#ffffff\">2</text>\n    </svg></span><span class=\"pmark\" aria-hidden=\"true\"><svg viewBox=\"0 0 18 18\" width=\"17\" height=\"17\">\n      <rect x=\"0\" y=\"0\" width=\"18\" height=\"18\" rx=\"4\" style=\"fill: var(--paper)\" opacity=\"0.95\"></rect>\n      <rect x=\"1.5\" y=\"1.5\" width=\"15\" height=\"15\" rx=\"3\" fill=\"#1e8449\"></rect>\n      <text x=\"9\" y=\"9.5\" text-anchor=\"middle\" dominant-baseline=\"central\" font-size=\"10.5\" font-weight=\"800\" font-family=\"Archivo, system-ui, sans-serif\" fill=\"#ffffff\">5</text>\n    </svg></span><span class=\"visually-hidden\">2, 5</span></span></div>\n<div class=\"pt\"><span>Prospect Av</span></div>\n<div class=\"dir\">Northbound</div>\n<div class=\"arr\"><span><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span></span>\n<span> <span class=\"arr-qualifier\">as of 10m ago</span></span>\n<span class=\"n\">2 min</span>\n<span><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span></span>\n<span> <span class=\"arr-qualifier\">as of 10m ago</span></span>\n<span class=\"n\">3 min</span>\n<span><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span></span>\n<span></span>\n<span class=\"n\">3 min</span>\n<span><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span></span>\n<span></span>\n<span class=\"n\">5 min</span>\n<span><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span></span>\n<span> <span class=\"arr-qualifier\">as of 10m ago</span></span>\n<span class=\"n\">10 min</span>\n<span><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span></span>\n<span></span>\n<span class=\"n\">12 min</span></div>\n<div class=\"dir\">Southbound</div>\n<div class=\"arr\"><span><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span></span>\n<span> <span class=\"arr-qualifier\">as of 10m ago</span></span>\n<span class=\"n now\">now</span>\n<span><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span></span>\n<span> <span class=\"arr-qualifier\">as of 10m ago</span></span>\n<span class=\"n\">3 min</span>\n<span><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span></span>\n<span></span>\n<span class=\"n\">3 min</span>\n<span><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span></span>\n<span></span>\n<span class=\"n\">9 min</span>\n<span><span class=\"arr-badge\" style=\"background:#c0392b;color:#ffffff\">2</span></span>\n<span> <span class=\"arr-qualifier\">as of 10m ago</span></span>\n<span class=\"n\">9 min</span>\n<span><span class=\"arr-badge\" style=\"background:#1e8449;color:#ffffff\">5</span></span>\n<span></span>\n<span class=\"n\">12 min</span></div>\n"
   }
  },
  "census": {
@@ -508,6 +508,28 @@
     "docked": false,
     "option": 0.45,
     "drawn": 0.45
+   }
+  }
+ },
+ "kicker": {
+  "overflow": {
+   "375": {
+    "marks": 3,
+    "more": "+9",
+    "spoken": "1, 2, 3, 7, A, C, E, N, Q, R, W, S",
+    "distinctTops": 1,
+    "slotHeight": 17,
+    "markHeight": 17,
+    "contentWidth": 221
+   },
+   "1280": {
+    "marks": 3,
+    "more": "+9",
+    "spoken": "1, 2, 3, 7, A, C, E, N, Q, R, W, S",
+    "distinctTops": 1,
+    "slotHeight": 17,
+    "markHeight": 17,
+    "contentWidth": 221
    }
   }
  },
@@ -1117,7 +1139,7 @@
   "lirr": {
    "results": [
     "JamaicaAirTrainR1",
-    "JamaicaLIRR"
+    "JamaicaLIRR1"
    ],
    "detailHeading": "Jamaica (LIRR)",
    "arrivals": [
@@ -1170,7 +1192,7 @@
    },
    "subway station": {
     "seen": "Subway 1 2 3 Times Sq-42 St Northbound 1 1 min 2 5 min Southbound 1 3 min",
-    "spoken": "Subway Times Sq-42 St Northbound 1 1 min 2 5 min Southbound 1 3 min",
+    "spoken": "Subway 1, 2, 3 Times Sq-42 St Northbound 1 1 min 2 5 min Southbound 1 3 min",
     "labels": []
    },
    "bus": {
@@ -1184,8 +1206,8 @@
     "labels": []
    },
    "lirr station": {
-    "seen": "LIRR Jamaica Inbound 1 Babylon Branch #8412 4 min Outbound 1 Babylon Branch #8413 7 min",
-    "spoken": "LIRR Jamaica Inbound 1 Babylon Branch #8412 4 min Outbound 1 Babylon Branch #8413 7 min",
+    "seen": "LIRR L BAB Jamaica Inbound 1 Babylon Branch #8412 4 min Outbound 1 Babylon Branch #8413 7 min",
+    "spoken": "LIRR Babylon Branch Jamaica Inbound 1 Babylon Branch #8412 4 min Outbound 1 Babylon Branch #8413 7 min",
     "labels": []
    },
    "mnr train": {
@@ -1194,8 +1216,8 @@
     "labels": []
    },
    "mnr station": {
-    "seen": "MNR Grand Central Inbound 1 Hudson #795 4 min Outbound 1 Hudson #812 6 min",
-    "spoken": "MNR Grand Central Inbound 1 Hudson #795 4 min Outbound 1 Hudson #812 6 min",
+    "seen": "MNR M HUD Grand Central Inbound 1 Hudson #795 4 min Outbound 1 Hudson #812 6 min",
+    "spoken": "MNR Hudson Grand Central Inbound 1 Hudson #795 4 min Outbound 1 Hudson #812 6 min",
     "labels": []
    },
    "njt train": {
@@ -1204,8 +1226,8 @@
     "labels": []
    },
    "njt station": {
-    "seen": "NJ Transit New York Penn Station 9 Trenton 3800 1 min 2 Dover 6634 5 min ? Bay Head 8 min",
-    "spoken": "NJ Transit New York Penn Station 9 Trenton 3800 1 min 2 Dover 6634 5 min ? Bay Head 8 min",
+    "seen": "NJ Transit NJ NEC NJ MNBTN New York Penn Station 9 Trenton 3800 1 min 2 Dover 6634 5 min ? Bay Head 8 min",
+    "spoken": "NJ Transit Northeast Corridor, Montclair-Boonton Line New York Penn Station 9 Trenton 3800 1 min 2 Dover 6634 5 min ? Bay Head 8 min",
     "labels": []
    },
    "path train": {
@@ -1215,7 +1237,7 @@
    },
    "path station": {
     "seen": "PATH World Trade Center To New York 859 Hoboken - 33rd 1 min To New Jersey 862 Newark - World Trade Center 5 min",
-    "spoken": "PATH World Trade Center To New York 859 Hoboken - 33rd 1 min To New Jersey 862 Newark - World Trade Center 5 min",
+    "spoken": "PATH Newark - World Trade Center, Hoboken - 33rd World Trade Center To New York 859 Hoboken - 33rd 1 min To New Jersey 862 Newark - World Trade Center 5 min",
     "labels": []
    },
    "ferry boat": {
@@ -1225,7 +1247,7 @@
    },
    "ferry dock": {
     "seen": "NYC Ferry ♿ Wall St/Pier 11 East River 1 min South Brooklyn departs 1 min",
-    "spoken": "NYC Ferry ♿ Wall St/Pier 11 East River 1 min South Brooklyn departs 1 min",
+    "spoken": "NYC Ferry East River, South Brooklyn, SV ♿ Wall St/Pier 11 East River 1 min South Brooklyn departs 1 min",
     "labels": [
      "Wheelchair accessible"
     ]
@@ -1248,10 +1270,13 @@
    "name": "Jamaica",
    "lat": 40.7005,
    "lon": -73.8095,
-   "routes": [],
+   "routes": [
+    "1"
+   ],
    "wheelchair": false,
    "arrivalsUrl": "/api/railroad-arrivals/LIRR/12",
    "nameForFirstRoute": "Babylon Branch",
+   "colorForFirstRoute": "#00985F",
    "hasPopup": true,
    "markerInItsLayer": true,
    "drawnOnPane": "stationPane"
@@ -1266,10 +1291,13 @@
    "name": "Grand Central",
    "lat": 40.7527,
    "lon": -73.9772,
-   "routes": [],
+   "routes": [
+    "1"
+   ],
    "wheelchair": false,
    "arrivalsUrl": "/api/railroad-arrivals/MNR/1",
    "nameForFirstRoute": "Hudson",
+   "colorForFirstRoute": "#009B3A",
    "hasPopup": true,
    "markerInItsLayer": true,
    "drawnOnPane": "stationPane"
@@ -1290,6 +1318,7 @@
    "wheelchair": false,
    "arrivalsUrl": "/api/njt-arrivals/109",
    "nameForFirstRoute": "Northeast Corridor",
+   "colorForFirstRoute": "#DD3439",
    "hasPopup": true,
    "markerInItsLayer": true,
    "drawnOnPane": "stationPane"

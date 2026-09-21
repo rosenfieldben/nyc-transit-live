@@ -407,7 +407,14 @@ test("D6j. a popup's title mark is the mark its own marker is wearing, and the c
         const iconEl = marker.getElement();
         const markerSvg = iconEl && iconEl.querySelector("svg");
         const content = marker.getPopup().getElement().querySelector(".leaflet-popup-content");
-        const popupSvg = content.querySelector(".pmark svg");
+        // SCOPED TO THE TITLE (ruling R3), which is where this claim has always been about: the
+        // kicker's right-hand slot now carries one pmark per route calling at the station, and it
+        // precedes the title in document order, so an unscoped query compared a route's tag against
+        // the marker's own square and failed. The WITHOUT branch below has always been scoped this
+        // way, which is why the subway station never failed it while carrying kicker plates.
+        // NO BACKTICKS IN HERE: this block is inside one, which is the note the two readers in
+        // pins.spec.js carry for the same reason, and the first draft of this comment had two.
+        const popupSvg = content.querySelector(".pt .pmark svg");
         return {
           hasMarker: !!markerSvg,
           hasPopup: !!popupSvg,

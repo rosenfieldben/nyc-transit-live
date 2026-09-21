@@ -206,6 +206,21 @@ async function loadNjtStops() {
           (routeId) => njtRouteName(routeId, njtRouteNames),
           // MR5: the paper square this station is drawn as, at the title's size.
           popupMarkHtml(markerMarkHtml(m)),
+          // R3: and the lines calling here, as body-only tags, through njtBranch, which R1 re-keyed
+          // by route id for exactly this. NJ Transit's tags are the widest of the five families,
+          // which is what set the shared count at three.
+          (routeId) => {
+            const branch = njtBranch(routeId);
+            return {
+              svg: railRouteTagSvg({
+                system: "NJT",
+                code: branch.code,
+                color: branch.color,
+                textColor: branch.textColor,
+              }),
+              name: njtRouteName(routeId, njtRouteNames) || branch.code,
+            };
+          },
         ),
     })).addTo(njtStations);
     registerStation({

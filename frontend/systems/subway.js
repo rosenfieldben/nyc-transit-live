@@ -441,10 +441,18 @@ function subwayArrivalsHtml(station, body) {
 
      THE ROUTES ARE THE REGISTRY'S, which is the same list the station's dot-or-ring is drawn from
      (stationMarkStyle), so a station whose feed serves no routes shows no marks rather than a
-     guess. */
-  const plates = (station.routes ?? [])
-    .map((route) => popupMarkHtml(subwayPlateSvg(route, lineColor(route), readableTextOn(lineColor(route))), POPUP_MARK_ROW))
-    .join("");
+     guess.
+
+     AND THE LIST GOES THROUGH THE SHARED HELPER NOW (ruling R3), which this board had no version of:
+     the expression here was an unbounded map().join(), so a station serving a dozen routes drew a
+     dozen plates and pushed the popup as wide as Leaflet's cap allowed. popupRouteMarksHtml is the
+     one rule for all five boards, and its comment carries the measurement that chose the count. */
+  const plates = popupRouteMarksHtml(station.routes, (route) => ({
+    svg: subwayPlateSvg(route, lineColor(route), readableTextOn(lineColor(route))),
+    // The route id IS the subway's name for a route, which is what a rider hears where the
+    // plates are aria-hidden. The other four families have a branch or a route name instead.
+    name: route,
+  }));
   let html =
     popupKickerHtml({ left: POPUP_SYSTEM_WORDS.subway, rightHtml: plates }) +
     popupTitleHtml({ text: station.name ?? station.id }) +

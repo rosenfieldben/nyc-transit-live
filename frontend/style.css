@@ -1950,6 +1950,33 @@ svg.rail-stn {
   color: var(--muted);
 }
 
+/* RULING R3: THE KICKER'S RIGHT-HAND SLOT, which since that ruling carries the routes calling at a
+   station on all five boards (and, on a ferry dock, the access glyph beside them).
+
+   A FLEX ROW WITH A GAP, and the gap is the reason this rule exists: the marks abut without it
+   (measured, the slot's width is exactly the sum of its marks'), and two adjacent rail tag BODIES
+   read as one long tag where two subway plates read as two plates. 3px is what a space measures in
+   this popup's own type, which is the same number the arrivals row's cells use.
+
+   IN CSS AND NOT IN THE MARKUP, deliberately: a separator emitted between the marks would move the
+   subway board's pin and smoke.spec.js's C2i, and the whitespace-only text node it would have to be
+   is exactly what a flex container deletes (the note at `.arr > span` has that measurement). A gap
+   costs no pin because it changes geometry and not text. */
+.pk > span:last-child {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+/* The count of the routes the slot did not draw. `.pk` is already 600 10px in --muted, measured at
+   5.38 light and 7.01 dark on the popup's surface, so the count inherits a paint that clears AA; it
+   carries aria-hidden because the full list of routes is spoken beside it, and saying both would say
+   one thing twice (the same split ruling Q2 made for the freshness square). */
+.pmore {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
 /* The title: the family's mark, then the head the surface has always printed. The row's ink is
    the token; a route-coloured head overrides it on the TEXT SPAN alone (popupTitleHtml says
    why), so the mark keeps its own paints. */

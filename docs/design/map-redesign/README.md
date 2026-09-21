@@ -149,9 +149,10 @@ Shared vocabulary (classes in `reference/map-redesign-v2.css`):
 - `.xlink` cross-link button ("Also here: Jamaica →"): 600 11px, `border 1px --divider`, transparent.
 - `.fresh` footer: `border-top 1px --rule; margin-top 10px; 600 10px uppercase --muted` with a 6×6 square: green `#00933c` "LIVE · UPDATED 12S AGO"; stale → accent text and square, "AS OF 6M AGO · FEED STALE"; schedule-only → gray square, "SCHEDULED HEADWAYS · NO LIVE FEED".
 
-> **Erratum, MR5 (2026-09-20): the vocabulary ships in these class names, with five deviations,
+> **Erratum, MR5 (2026-09-20): the vocabulary ships in these class names, with six deviations,
 > each measured.** (Four when this erratum was written: a reviewer counted the items against the
-> prose and found the fourth carrying two unrelated deviations, so it is two items now.)
+> prose and found the fourth carrying two unrelated deviations, so it is two items now, and ruling
+> R3 added the sixth after the adversarial round.)
 >
 > 1. **A popup's route mark is the MAP's mark, not `.bul.lg` / `.sq` / `.rtag`.** The three DOM
 >    forms above would be a second drawing of a mark this app already builds (the subway's plate,
@@ -198,6 +199,15 @@ Shared vocabulary (classes in `reference/map-redesign-v2.css`):
 > prediction`, and SILENCE for a fresh reported fix, because silence means current (memo D9, ruling
 > Q1). An earlier draft of this erratum certified the row list "as given" with no such note, which
 > would have invited a later stage to reintroduce three strings the contract forbids.
+>
+> 6. **The kicker's route marks have a cap the design does not mention** (ruling R3, after the
+>    adversarial round): "right: route bullets" is drawn on all five station boards, through one
+>    helper, showing the first THREE routes, then a `+n` count of the rest, with every route's name in
+>    a visually-hidden span because the marks themselves are aria-hidden. Three is measured rather
+>    than chosen: the five families' marks run from 17 units wide (a subway plate, a PATH diamond) to
+>    66.69 (an NJ Transit tag reading MNBTN), and at four marks that family's kicker wraps to a second
+>    row at 375 and 320. Leaflet sizes a popup to its own nowrap content up to maxWidth 320, so an
+>    uncapped list does not wrap, it widens the popup: twelve subway plates make it 267px.
 >
 > The row list gains **five labels the app's own fields needed** (Direction, Status, Speed, To,
 > Heading) and two nouns it already printed (Bus, Boat). Full measurements in

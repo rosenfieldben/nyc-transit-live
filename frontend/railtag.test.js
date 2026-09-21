@@ -655,6 +655,31 @@ test("MR3 bearing: the served bearing wins, the anchors are next, and nothing le
    a world that serves an unknown route is that every surface reads the SAME RESOLVER the tag does.
    Two constants that happen to be equal would be a coincidence waiting for someone to change one of
    them; one function is a fact. */
+/* RULING R1, THE RAILROAD's HALF, AS A SOURCE FACT for the reason the NJ Transit test below states:
+   the case that matters is one no fixture serves.
+
+   EE0034 is Metro-North's New Haven red, four of that railroad's six routes, and it takes white at
+   4.48 and dark at 3.88: NEITHER ink clears, so the FILL has to move, which is what railBranchPaint
+   does and what railBranchColor does not. A board badge resolved through railBranchColor plus
+   readableTextOn would therefore ship an AA failure on the common case at Grand Central with every
+   gate green, because the hermetic feeds publish 00985F and 009B3A and both of those clear either
+   way. helpers.test.js measures that the BOARD renders the pair it is given; this measures that the
+   resolver behind it is the one that can move a fill. */
+test("MR5 R1: the railroad's board and panel resolve their paint through railBranchPaint", () => {
+  const railroad = readFileSync(join(__dirname, "systems", "railroad.js"), "utf8");
+  const body = railroad.slice(railroad.indexOf("function railroadBranchPaint("));
+  const fn = body.slice(0, body.indexOf("\n}"));
+  assert.match(fn, /railBranchPaint\(/, "the pair resolver is railBranchPaint's");
+  assert.ok(
+    !/railBranchColor\(/.test(fn),
+    "railBranchColor returns the published fill unmoved, which EE0034 needs moved",
+  );
+  // And the two ends of the claim, so this says what the colours ARE and not only which function ran.
+  assert.equal(railBranchPaint("EE0034", "FFFFFF").fill, "#ec0033");
+  assert.equal(railBranchColor("EE0034"), "#EE0034");
+  assert.ok(contrastRatio("#ffffff", "#EE0034") < 4.5, "which is why the fill has to move");
+});
+
 test("MR5 N6: every NJ Transit surface but the route line resolves its colour the way the tag does", () => {
   const njt = readFileSync(join(__dirname, "systems", "njt.js"), "utf8");
   const body = njt.slice(njt.indexOf("function njtTrainPopup("));

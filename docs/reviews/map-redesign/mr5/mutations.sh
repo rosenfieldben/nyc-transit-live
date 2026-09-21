@@ -253,8 +253,12 @@ run M77 frontend/helpers.js "$PW pins.spec.js --grep P5d"
 # ---- M78: the mark token loses the mark's identity again (the reviewer's F3) ----
 # withoutMarks kept only the <text> label, so drawing a kicker's plates at the title's size, or in
 # flat black, left every pin green. The token carries the label, the size and the fills now.
+# RE-ANCHORED BY R3, and standing rule 6 is why it was caught rather than reported as a survivor:
+# the anchor named the single-attribute `fill="..."` capture, and R3 widened it to read a fill declared
+# in a `style` attribute too, so the anchor matched 0 times and this row tested nothing. Exactly MR4's
+# F19 and the same lesson M64 and M66 taught in round 1.
 cat > "$WORK/a" <<'A'
-    const fills = [...svg.matchAll(/fill="([^"]+)"/g)].map((m) => m[1]).join(",");
+    const fills = [...svg.matchAll(/fill="([^"]+)"|style="fill:\s*([^;"]+)/g)]
 A
 cat > "$WORK/r" <<'R'
     const fills = "";
@@ -364,16 +368,20 @@ cat > "$WORK/r" <<'R'
 R
 run M86 frontend/systems/njt.js "$NODE_ALL"
 
-# ---- M87: the railroad badge takes the published fill and computes an ink (R1) ----
-# The EE0034 case: white reads 4.48 on it and dark 3.88, so the fill has to move. No fixture serves
-# that colour, which is why this needs a node assertion of its own rather than a rendered world.
+# ---- M87: the railroad's paint resolver back to the published fill, unmoved (R1) ----
+# The EE0034 case: white reads 4.48 on it and dark 3.88, so the FILL has to move, and railBranchColor
+# returns it unmoved. No fixture publishes that colour, so this is asserted as a source fact in
+# railtag.test.js the way the NJ Transit head's resolver is, and this row is what tests that assertion.
+# (Its first draft mutated the BADGE's markup to re-resolve `paint.fill`, which is a no-op: by then the
+# fill has already been moved. A mutation that cannot change an output is not a test of anything, and
+# it SURVIVED, which is how the row was found.)
 cat > "$WORK/a" <<'A'
-            `<span class="arr-badge" style="background:${paint.fill};color:${paint.ink}">` +
+  return railBranchPaint(branch.color, branch.textColor);
 A
 cat > "$WORK/r" <<'R'
-            `<span class="arr-badge" style="background:${railBranchColor(paint.fill)};color:${readableTextOn(paint.fill)}">` +
+  return { fill: railBranchColor(branch.color), ink: readableTextOn(railBranchColor(branch.color)) };
 R
-run M87 frontend/helpers.js "$NODE_ALL"
+run M87 frontend/systems/railroad.js "$NODE_ALL"
 
 # ---- M88: the panel's railroad chip resolves a colour of its own again (R1) ----
 cat > "$WORK/a" <<'A'
@@ -413,7 +421,7 @@ run M91 frontend/helpers.js "$NODE_ALL" "$PW pins.spec.js --grep 'P5a|P5e'"
 
 # ---- M92: the mark token takes the first <text> again, losing every branch code (R3) ----
 cat > "$WORK/a" <<'A'
-    const label = [...svg.matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map((m) => m[1]).filter(Boolean).join("·");
+    const label = [...svg.matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map((m) => m[1]).filter(Boolean).join("\u00b7");
 A
 cat > "$WORK/r" <<'R'
     const first = /<text[^>]*>([^<]*)<\/text>/.exec(svg);

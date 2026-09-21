@@ -257,13 +257,17 @@ run M77 frontend/helpers.js "$PW pins.spec.js --grep P5d"
 # the anchor named the single-attribute `fill="..."` capture, and R3 widened it to read a fill declared
 # in a `style` attribute too, so the anchor matched 0 times and this row tested nothing. Exactly MR4's
 # F19 and the same lesson M64 and M66 taught in round 1.
+# RE-POINTED AGAIN IN ROUND 3, this time by a FILE move rather than a line edit: the mark normaliser
+# left popup.js for tests/e2e/marktoken.js so the node tier could reach it without @playwright/test,
+# and a row naming the old file would have matched nothing. Same for M92. Both anchors were taken from
+# the file programmatically rather than retyped, which is what M92 cost the last time.
 cat > "$WORK/a" <<'A'
     const fills = [...svg.matchAll(/fill="([^"]+)"|style="fill:\s*([^;"]+)/g)]
 A
 cat > "$WORK/r" <<'R'
     const fills = "";
 R
-run M78 tests/e2e/popup.js "$NODE_ALL" "$PW smoke.spec.js --grep C2i"
+run M78 tests/e2e/marktoken.js "$NODE_ALL" "$PW smoke.spec.js --grep C2i"
 
 # ---- M79: the translucency comes back in a LATER popup rule, which is where the cascade hides it ----
 # The absence assertions read one rule body, so this exact pair (equal specificity, later in the
@@ -427,7 +431,7 @@ cat > "$WORK/r" <<'R'
     const first = /<text[^>]*>([^<]*)<\/text>/.exec(svg);
     const label = first ? first[1] : "";
 R
-run M92 tests/e2e/popup.js "$NODE_ALL"
+run M92 tests/e2e/marktoken.js "$NODE_ALL"
 
 echo "================================================================"
 echo "died: $died   survived: $survived   run failed: $broke"

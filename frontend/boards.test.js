@@ -328,11 +328,16 @@ function render(name) {
    board; the token carries the mark's label, its drawn size and its declared fills, which is what a
    board decides about a mark, and its geometry stays where marks live.
 
-   IMPORTED RATHER THAN COPIED, and the first version of this file copied it. tests/e2e/popup.js
-   requires nothing itself, so a node test can require it; the copy's own comment claimed otherwise
-   and was wrong, which made it two implementations of one reader in the commit that named that
-   shape. One now, and the browser tier's markup pins and these read a mark the same way. */
-const { withoutMarks } = require("../tests/e2e/popup.js");
+   IMPORTED RATHER THAN COPIED, and the first version of this file copied it. One now, and the
+   browser tier's markup pins and these read a mark the same way.
+
+   FROM marktoken.js, NOT popup.js, which is where round 2 pointed it and where CI found the hole.
+   popup.js was picked on the claim that it "requires nothing itself"; it requires @playwright/test,
+   and the frontend-tests job runs `node --test` with no `npm ci`, so this line threw at load and
+   took all thirteen tests in this file with it while a local run stayed green. The reader now sits
+   in a file that requires nothing, and tests/nodetier.test.js holds that of the whole closure so
+   the next import cannot make the same hole quietly. */
+const { withoutMarks } = require("../tests/e2e/marktoken.js");
 
 // The subway badge colors, spelled once so the popup literals stay readable.
 const RED = 'style="background:#c0392b;color:#ffffff"';

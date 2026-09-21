@@ -49,6 +49,7 @@ added lines.
 | `1f065e4` | R3: all five station boards carry the routes calling there, through one helper with one measured cap |
 | `6e6d8c0` | R1 to R3: the eight mutation rows the three rulings owe |
 | `65b7af3` | R1 to R3: two anchors re-anchored and one mutation that could not fail |
+| `47e80e2` and after | the three rulings written into the ledger and this body, and the sha the table was last run at. Documentation only: `65b7af3` is the last commit on this branch to touch a file any mutation row anchors in, which is why the numbers in this body are the branch's rather than a snapshot |
 
 ## What a popup said before, and what it says now
 
